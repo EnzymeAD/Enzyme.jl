@@ -600,21 +600,19 @@ function nodecayed_phis!(mod::LLVM.Module)
                         if done
                             continue
                         end
-                        b = IRBuilder()
-                        position!(b, terminator(pb))
-
 
                         v0 = v
-                        @inline function getparent(@nospecialize(v::LLVM.Value), @nospecialize(offset::LLVM.Value), hasload::Bool)
+                        @inline function getparent(b::LLVM.IRBuilder, @nospecialize(v::LLVM.Value), @nospecialize(offset::LLVM.Value), hasload::Bool)
                             if addr == 11 && addrspace(value_type(v)) == 10
                                 return v, offset, hasload
                             end
                             if addr == 13 && hasload && addrspace(value_type(v)) == 10
                                 return v, offset, hasload
                             end
+
                             if addr == 13  && !hasload
                                 if isa(v, LLVM.LoadInst)
-                                    v2, o2, hl2 = getparent(operands(v)[1], LLVM.ConstantInt(offty, 0), true)
+                                    v2, o2, hl2 = getparent(b, operands(v)[1], LLVM.ConstantInt(offty, 0), true)
                                     @static if VERSION < v"1.11-"
                                     else
                                         @assert offset == LLVM.ConstantInt(offty, 0)
@@ -643,9 +641,9 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     cf = LLVM.called_operand(v)
                                     if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded"
                                         ld = operands(v)[2]
-                                        ld0, o0, ol0 =  getparent(ld, LLVM.ConstantInt(offty, 0), hasload)
+                                        ld0, o0, ol0 =  getparent(b, ld, LLVM.ConstantInt(offty, 0), hasload)
                                         v2 = ld0
-                                        # v2, o2, hl2 = getparent(operands(ld)[1], LLVM.ConstantInt(offty, 0), true)
+                                        # v2, o2, hl2 = getparent(b, operands(ld)[1], LLVM.ConstantInt(offty, 0), true)
 
                                         rhs = LLVM.ConstantInt(offty, sizeof(Int))
                                         o2 = o0
@@ -718,7 +716,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                         preop = operands(preop)[1]
                                     end
                                     v2, offset, skipload =
-                                        getparent(preop, offset, hasload)
+                                        getparent(b, preop, offset, hasload)
                                     v2 = const_bitcast(
                                         v2,
                                         LLVM.PointerType(
@@ -732,7 +730,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 
                                 if opcode(v) == LLVM.API.LLVMGetElementPtr
                                     v2, offset, skipload =
-                                        getparent(operands(v)[1], offset, hasload)
+                                        getparent(b, operands(v)[1], offset, hasload)
                                     offset = const_add(
                                         offset,
                                         API.EnzymeComputeByteOffsetOfGEP(b, v, offty),
@@ -760,7 +758,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     return v2, offset, hasload
                                 end
                                 nv, noffset, nhasload =
-                                    getparent(operands(v)[1], offset, hasload)
+                                    getparent(b, operands(v)[1], offset, hasload)
                                 if eltype(value_type(nv)) != eltype(value_type(v))
                                     nv = bitcast!(
                                         b,
@@ -780,7 +778,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     preop = operands(preop)[1]
                                 end
                                 v2, offset, skipload =
-                                    getparent(preop, offset, hasload)
+                                    getparent(b, preop, offset, hasload)
                                 v2 = bitcast!(
                                     b,
                                     v2,
@@ -798,7 +796,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 operands(v)[2:end],
                             )
                                 v2, offset, skipload =
-                                    getparent(operands(v)[1], offset, hasload)
+                                    getparent(b, operands(v)[1], offset, hasload)
                                 v2 = bitcast!(
                                     b,
                                     v2,
@@ -813,7 +811,7 @@ function nodecayed_phis!(mod::LLVM.Module)
 
                             if isa(v, LLVM.GetElementPtrInst)
                                 v2, offset, skipload =
-                                    getparent(operands(v)[1], offset, hasload)
+                                    getparent(b, operands(v)[1], offset, hasload)
                                 offset = nuwadd!(
                                     b,
                                     offset,
@@ -848,12 +846,48 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 nv = nextvs[v]
                                 return nv, offset, addr == 13
                             end
+                            
+                            @static if VERSION < v"1.11-"
+                            else
+                            if addr == 13 && isa(v, LLVM.PHIInst)
+                                vs = LLVM.Value[]
+                                offs = LLVM.Value[]
+                                blks = LLVM.BasicBlock[]
+                                for (vt, bb) in LLVM.incoming(v) 
+                                    b2 = IRBuilder()
+                                    position!(b2, terminator(bb))
+                                    v2, o2, hl2 = getparent(b2, vt, offset, hasload)
+                                    push!(vs, v2)
+                                    push!(offs, o2)
+                                    push!(blks, bb)
+                                end
+                                B = LLVM.IRBuilder()
+                                position!(B, v)
+                                offset = if all(x->offs[1] == x, offs)
+                                    offs[1]
+                                else
+                                    ophi = phi!(B, value_type(offs[1]))
+                                    append!(incoming(ophi), collect(zip(offs, blks)))
+                                    ophi
+                                end
+                                
+                                nv = if all(x->vs[1] == x, vs)
+                                    v[1]
+                                else
+                                    ophi = phi!(B, value_type(vs[1]))
+                                    append!(incoming(ophi), collect(zip(vs, blks)))
+                                    ophi
+                                end
+
+                                return nv, offset, hasload
+                            end
+                            end
 
                             if isa(v, LLVM.SelectInst)
                                 lhs_v, lhs_offset, lhs_skipload =
-                                    getparent(operands(v)[2], offset, hasload)
+                                    getparent(b, operands(v)[2], offset, hasload)
                                 rhs_v, rhs_offset, rhs_skipload =
-                                    getparent(operands(v)[3], offset, hasload)
+                                    getparent(b, operands(v)[3], offset, hasload)
                                 if value_type(lhs_v) != value_type(rhs_v) ||
                                    value_type(lhs_offset) != value_type(rhs_offset) ||
                                    lhs_skipload != rhs_skipload
@@ -892,8 +926,11 @@ function nodecayed_phis!(mod::LLVM.Module)
                             bt = GPUCompiler.backtrace(inst)
                             throw(EnzymeInternalError(msg, string(f), bt))
                         end
+                    
+                        b = IRBuilder()
+                        position!(b, terminator(pb))
 
-                        v, offset, hadload = getparent(v, LLVM.ConstantInt(offty, 0), false)
+                        v, offset, hadload = getparent(b, v, LLVM.ConstantInt(offty, 0), false)
 
                         if addr == 13
                             @assert hadload
@@ -909,7 +946,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                         push!(nvs, (v, pb))
                         push!(offsets, (offset, pb))
                     end
-
+                        
                     nb = IRBuilder()
                     position!(nb, nonphi)
 
