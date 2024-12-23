@@ -1,4 +1,6 @@
 const nofreefns = Set{String}((
+    "jl_restore_excstack",
+    "ijl_restore_excstack",
     "ClientGetDevice",
     "BufferOnCPU",
     "pcre2_match_8",
