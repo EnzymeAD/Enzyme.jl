@@ -12,7 +12,7 @@ function zerosetfn!(x, i::Int, val)
     nothing
 end
 
-@generated function onehot_internal(fn::F, x::T, startv::Int, lengthv::Int) where {F, T<:Array}
+@generated function onehot_internal(fn::F, x::T, startv::Int, lengthv::Int) where {F, T<:AbstractArray}
     ir = GPUCompiler.JuliaContext() do ctx
         Base.@_inline_meta
 
