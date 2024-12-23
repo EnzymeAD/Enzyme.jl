@@ -1032,6 +1032,7 @@ end
 function __init__()
     API.memmove_warning!(false)
     API.typeWarning!(false)
+    API.EnzymeNonPower2Cache!(false)
     API.EnzymeSetHandler(
         @cfunction(
             julia_error,
