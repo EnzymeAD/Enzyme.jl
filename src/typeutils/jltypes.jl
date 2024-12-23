@@ -63,7 +63,9 @@ function classify_arguments(
                 # - boxed values
                 #   XXX: use `deserves_retbox` instead?
             elseif llvm_source_typ isa LLVM.PointerType
-                @assert llvm_source_typ == codegen_typ
+                if llvm_source_typ != codegen_typ
+                    throw(AssertionError("Mismatch codegen type llvm_source_typ=$(string(llvm_source_typ)) codegen_typ=$(string(codegen_typ)) source_i=$source_i source_sig=$source_sig, source_typ=$source_typ, codegen_i=$codegen_i, codegen_types=$(string(codegen_ft))"))
+                end
                 push!(
                     args,
                     (
