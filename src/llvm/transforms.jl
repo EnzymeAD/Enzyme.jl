@@ -637,11 +637,11 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     cf = LLVM.called_operand(v)
                                     if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded"
                                         ld = operands(v)[2]
-                                        while isa(ld, LLVM.BitCastInst) || isa(ld, LLVM.AddrSpaceCastInst)
-                                            ld = operands(ld)[1]
-                                        end
-                                        if isa(ld, LLVM.LoadInst)
-                                            v2, o2, hl2 = getparent(operands(ld)[1], LLVM.ConstantInt(offty, 0), true)
+                                        ld0, o0, ol0 =  getparent(ld, LLVM.ConstantInt(offty, 0), hasload)
+                                        @assert o0 != LLVM.ConstantInt(offty, 0)
+                                        v2 = ld0
+                                        # v2, o2, hl2 = getparent(operands(ld)[1], LLVM.ConstantInt(offty, 0), true)
+
                                             rhs = LLVM.ConstantInt(offty, sizeof(Int))
 
                                             base_2, off_2 = get_base_and_offset(v2)
@@ -664,7 +664,6 @@ function nodecayed_phis!(mod::LLVM.Module)
                                             add = nuwadd!(b, offset, off2)
                                             metadata(add)["enzyme_type"] = to_md(ity, ctx)
                                             return operands(v)[1], add, true
-                                        end
                                     end
                                 end
                             end
