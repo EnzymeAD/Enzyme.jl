@@ -5,7 +5,7 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false)::Tuple{Bo
     if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst)
         return absint(operands(arg)[1], partial)
     end
-    if isa(arg, ConstantExpr) && value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
+    if isa(arg, ConstantExpr) && ( (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)) || (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Derived)) )
         ce = arg
         while isa(ce, ConstantExpr)
             if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||
@@ -136,7 +136,7 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false)::Tuple{Bo
     end
 
     if isa(arg, LLVM.LoadInst) &&
-       value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
+       ((value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)) || (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Derived)))
         ptr = operands(arg)[1]
         ce, _ = get_base_and_offset(ptr; offsetAllowed=false, inttoptr=true)
         if isa(ce, GlobalVariable)
@@ -287,7 +287,7 @@ function abs_typeof(
     if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst)
         return abs_typeof(operands(arg)[1], partial, seenphis)
     end
-    if isa(arg, ConstantExpr) && value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
+    if isa(arg, ConstantExpr) && ((value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)) || (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Derived)))
         ce, _ = get_base_and_offset(arg; offsetAllowed=false, inttoptr=true)
         if isa(ce, GlobalVariable)
             gname = LLVM.name(ce)
