@@ -615,6 +615,12 @@ function nodecayed_phis!(mod::LLVM.Module)
                             if addr == 13  && !hasload
                                 if isa(v, LLVM.LoadInst)
                                     v2, o2, hl2 = getparent(operands(v)[1], LLVM.ConstantInt(offty, 0), true)
+                                    @static if VERSION < v"1.11-"
+                                    else
+                                        @assert offset == LLVM.ConstantInt(offty, 0)
+                                        return v2, o2, true
+                                    end
+
                                     rhs = LLVM.ConstantInt(offty, 0) 
                                     if o2 != rhs
                                         msg = sprint() do io::IO
@@ -638,11 +644,11 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded"
                                         ld = operands(v)[2]
                                         ld0, o0, ol0 =  getparent(ld, LLVM.ConstantInt(offty, 0), hasload)
-                                        @assert o0 != LLVM.ConstantInt(offty, 0)
                                         v2 = ld0
                                         # v2, o2, hl2 = getparent(operands(ld)[1], LLVM.ConstantInt(offty, 0), true)
 
-                                            rhs = LLVM.ConstantInt(offty, sizeof(Int))
+                                        rhs = LLVM.ConstantInt(offty, sizeof(Int))
+                                        o2 = o0
 
                                             base_2, off_2 = get_base_and_offset(v2)
                                             base_1, off_1 = get_base_and_offset(operands(v)[1])
