@@ -4,11 +4,11 @@ using GPUArraysCore
 using Enzyme
 
 @inline function Enzyme.onehot(x::AbstractGPUArray)
-    Enzyme.onehot_internal(zerosetfn, x, 0, length(x))
+    Enzyme.onehot_internal(Enzyme.zerosetfn, x, 0, length(x))
 end
 
 @inline function Enzyme.onehot(x::AbstractGPUArray, start::Int, endl::Int)
-    Enzyme.onehot_internal(zerosetfn, x, start-1, endl-start+1)
+    Enzyme.onehot_internal(Enzyme.zerosetfn, x, start-1, endl-start+1)
 end
 
 function Enzyme.zerosetfn(x::AbstractGPUArray, i::Int)
