@@ -614,31 +614,33 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
             operands(V)[3] = unsafe_to_llvm(B, Base.RefValue{Ty})
         end
     end
-    
-    if mode == API.DEM_ForwardMode
-        # Zero any jlvalue_t inner elements of preceeding allocation.
-        # Specifically in forward mode, you will first run the original allocation,
-        # then all shadow allocations. These allocations will thus all run before
-        # any value may store into them. For example, as follows:
-        #   %orig = julia.gc_alloc(...)
-        #   %"orig'" = julia.gcalloc(...)
-        #   store orig[0] = jlvaluet
-        #   store "orig'"[0] = jlvaluet'
-        # As a result, by the time of the subsequent GC allocation, the memory in the preceeding
-        # allocation might be undefined, and trigger a GC error. To avoid this,
-        # we will explicitly zero the GC'd fields of the previous allocation.
-        prev = LLVM.Instruction(prev)
-        ccall(:jl_, Cvoid, (Any,), "shadow_alloc_rewrite "*string(prev))
-        B = LLVM.IRBuilder()
-        position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(prev)))
-        LLVMType = convert(LLVM.LLVMType, Ty)
-        ccall(:jl_, Cvoid, (Any,), "Ty "*string(Ty))
-        ccall(:jl_, Cvoid, (Any,), "LLVMType "*string(LLVMType))
-        zeroAll = false
-        T_int64 = LLVM.Int64Type()
-        prev = bitcast!(B, prev, LLVM.PointerType(LLVMType, addrspace(value_type(prev))))
-        prev = addrspacecast!(B, prev, LLVM.PointerType(LLVMType, Derived))
-        zero_single_allocation(B, Ty, LLVMType, prev, zeroAll, LLVM.ConstantInt(T_int64, 0); atomic=true)
+   
+    if Base.datatype_npointers(Ty) != 0
+        if mode == API.DEM_ForwardMode
+            # Zero any jlvalue_t inner elements of preceeding allocation.
+            # Specifically in forward mode, you will first run the original allocation,
+            # then all shadow allocations. These allocations will thus all run before
+            # any value may store into them. For example, as follows:
+            #   %orig = julia.gc_alloc(...)
+            #   %"orig'" = julia.gcalloc(...)
+            #   store orig[0] = jlvaluet
+            #   store "orig'"[0] = jlvaluet'
+            # As a result, by the time of the subsequent GC allocation, the memory in the preceeding
+            # allocation might be undefined, and trigger a GC error. To avoid this,
+            # we will explicitly zero the GC'd fields of the previous allocation.
+            prev = LLVM.Instruction(prev)
+            ccall(:jl_, Cvoid, (Any,), "shadow_alloc_rewrite "*string(prev))
+            B = LLVM.IRBuilder()
+            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(prev)))
+            LLVMType = convert(LLVM.LLVMType, Ty)
+            ccall(:jl_, Cvoid, (Any,), "Ty "*string(Ty))
+            ccall(:jl_, Cvoid, (Any,), "LLVMType "*string(LLVMType))
+            zeroAll = false
+            T_int64 = LLVM.Int64Type()
+            prev = bitcast!(B, prev, LLVM.PointerType(LLVMType, addrspace(value_type(prev))))
+            prev = addrspacecast!(B, prev, LLVM.PointerType(LLVMType, Derived))
+            zero_single_allocation(B, Ty, LLVMType, prev, zeroAll, LLVM.ConstantInt(T_int64, 0); atomic=true)
+        end
     end
 
     nothing
