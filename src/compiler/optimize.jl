@@ -652,6 +652,7 @@ function addOptimizationPasses!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachi
     jl_inst_simplify!(pm)
     jump_threading!(pm)
     dead_store_elimination!(pm)
+    add!(pm, FunctionPass("SafeAtomicToRegularStore", safe_atomic_to_regular_store!))
 
     # More dead allocation (store) deletion before loop optimization
     # consider removing this:
