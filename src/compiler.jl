@@ -615,7 +615,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
         end
     end
    
-    if Base.datatype_npointers(Ty) != 0
+    if !Base.datatype_pointerfree(Ty) 
         if mode == API.DEM_ForwardMode
             # Zero any jlvalue_t inner elements of preceeding allocation.
             # Specifically in forward mode, you will first run the original allocation,
@@ -629,17 +629,22 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
             # allocation might be undefined, and trigger a GC error. To avoid this,
             # we will explicitly zero the GC'd fields of the previous allocation.
             prev = LLVM.Instruction(prev)
-            ccall(:jl_, Cvoid, (Any,), "shadow_alloc_rewrite "*string(prev))
             B = LLVM.IRBuilder()
             position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(prev)))
-            LLVMType = convert(LLVM.LLVMType, Ty)
-            ccall(:jl_, Cvoid, (Any,), "Ty "*string(Ty))
-            ccall(:jl_, Cvoid, (Any,), "LLVMType "*string(LLVMType))
-            zeroAll = false
-            T_int64 = LLVM.Int64Type()
-            prev = bitcast!(B, prev, LLVM.PointerType(LLVMType, addrspace(value_type(prev))))
-            prev = addrspacecast!(B, prev, LLVM.PointerType(LLVMType, Derived))
-            zero_single_allocation(B, Ty, LLVMType, prev, zeroAll, LLVM.ConstantInt(T_int64, 0); atomic=true)
+
+            isboxed_ref = Ref{Bool}()
+            LLVMType = LLVM.LLVMType(ccall(:jl_type_to_llvm, LLVM.API.LLVMTypeRef,
+                        (Any, LLVM.Context, Ptr{Bool}), typ, LLVM.context(), isboxed_ref))
+
+            if isboxed_ref[]
+                throw(AssertionError("Unable to handle type to llvm of boxed type $Ty"))
+            else
+                zeroAll = false
+                T_int64 = LLVM.Int64Type()
+                prev = bitcast!(B, prev, LLVM.PointerType(LLVMType, addrspace(value_type(prev))))
+                prev = addrspacecast!(B, prev, LLVM.PointerType(LLVMType, Derived))
+                zero_single_allocation(B, Ty, LLVMType, prev, zeroAll, LLVM.ConstantInt(T_int64, 0); atomic=true)
+            end
         end
     end
 
