@@ -1,4 +1,5 @@
 const nofreefns = Set{String}((
+    "jl_egal__unboxed", "ijl_egal__unboxed",
     "jl_restore_excstack",
     "ijl_restore_excstack",
     "ClientGetDevice",
@@ -154,6 +155,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "jl_egal__unboxed", "ijl_egal__unboxed",
     "ClientGetDevice",
     "BufferOnCPU",
     "pcre2_match_data_create_from_pattern_8",
