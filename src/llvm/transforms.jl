@@ -850,15 +850,20 @@ function nodecayed_phis!(mod::LLVM.Module)
                             @static if VERSION < v"1.11-"
                             else
                             if addr == 13 && isa(v, LLVM.PHIInst)
-                                vs = LLVM.Value[]
-                                offs = LLVM.Value[]
+                                vs = Union{LLVM.Value, Nothing}[]
+                                offs = Union{LLVM.Value, Nothing}[]
                                 blks = LLVM.BasicBlock[]
                                 for (vt, bb) in LLVM.incoming(v) 
                                     b2 = IRBuilder()
                                     position!(b2, terminator(bb))
-                                    v2, o2, hl2 = getparent(b2, vt, offset, hasload)
-                                    push!(vs, v2)
-                                    push!(offs, o2)
+                                    if v2 == v
+                                        push!(vs, nothing)
+                                        push!(offs, nothing)
+                                    else
+                                        v2, o2, hl2 = getparent(b2, vt, offset, hasload)
+                                        push!(vs, v2)
+                                        push!(offs, o2)
+                                    end
                                     push!(blks, bb)
                                 end
                                 B = LLVM.IRBuilder()
@@ -867,7 +872,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     offs[1]
                                 else
                                     ophi = phi!(B, value_type(offs[1]))
-                                    append!(incoming(ophi), collect(zip(offs, blks)))
+                                    append!(incoming(ophi), collect(zip(map(x->x isa Nothing ? ophi : x, offs), blks)))
                                     ophi
                                 end
                                 
@@ -875,7 +880,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     v[1]
                                 else
                                     ophi = phi!(B, value_type(vs[1]))
-                                    append!(incoming(ophi), collect(zip(vs, blks)))
+                                    append!(incoming(ophi), collect(zip(map(x->x isa Nothing ? ophi : x, vs), blks)))
                                     ophi
                                 end
 
