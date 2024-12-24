@@ -594,6 +594,69 @@ function julia_undef_value_for_type(
     throw(AssertionError("Unknown type to val: $(Ty)"))
 end
 
+function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType), @nospecialize(prev::LLVM.Value))::Nothing
+    if Base.datatype_pointerfree(Ty)
+        return
+    end
+
+    isboxed_ref = Ref{Bool}()
+    LLVMType = LLVM.LLVMType(ccall(:jl_type_to_llvm, LLVM.API.LLVMTypeRef,
+                (Any, LLVM.Context, Ptr{Bool}), typ, LLVM.context(), isboxed_ref))
+
+    if !isboxed_ref[]
+        zeroAll = false
+        T_int64 = LLVM.Int64Type()
+        prev = bitcast!(B, prev, LLVM.PointerType(LLVMType, addrspace(value_type(prev))))
+        prev = addrspacecast!(B, prev, LLVM.PointerType(LLVMType, Derived))
+        zero_single_allocation(B, Ty, LLVMType, prev, zeroAll, LLVM.ConstantInt(T_int64, 0); atomic=true)
+    else
+        @assert fieldcount(Ty) != 0
+
+        T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+
+        T_int8 = LLVM.Int8Type()
+        T_int64 = LLVM.Int64Type()
+        
+        T_pint8 = LLVM.PointerType(T_int8)
+
+        prev2 = bitcast!(B, prev2, LLVM.PointerType(T_int8, addrspace(value_type(prev))))
+
+        for i in 1:fieldcount(Ty)
+            Ty2 = fieldtype(Ty, i)
+            off = fieldoffset(Ty, i)
+    
+            if Base.datatype_pointerfree(Ty2)
+                continue
+            end
+
+            prev3 = inbounds_gep!(
+                B,
+                T_int8,
+                prev2,
+                LLVM.Value[LLVM.ConstantInt(Int64(off))],
+            )
+            
+            fallback = Base.isabstracttype(Ty2)
+
+            @static if VERSION < v"1.11-"
+                fallback |= Ty2 <: Array
+            else
+                fallback |= Ty2 <: GenericMemory
+            end
+
+            if fallback
+                zeroAll = false
+                prev = bitcast!(B, prev, LLVM.PointerType(T_prjlvalue, addrspace(value_type(prev3))))
+                prev = addrspacecast!(B, prev, LLVM.PointerType(T_prjlvalue, Derived))
+                zero_single_allocation(B, Ty, T_prjlvalue, prev, zeroAll, LLVM.ConstantInt(T_int64, 0); atomic=true) 
+            else
+                create_recursive_stores(B, Ty2, prev3)
+            end
+        end
+    end
+end
+
 function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, Orig::LLVM.API.LLVMValueRef, idx::UInt64, prev::API.LLVMValueRef)
     V = LLVM.CallInst(V)
     gutils = GradientUtils(gutils)
@@ -615,37 +678,23 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
         end
     end
    
-    if !Base.datatype_pointerfree(Ty) 
-        if mode == API.DEM_ForwardMode
-            # Zero any jlvalue_t inner elements of preceeding allocation.
-            # Specifically in forward mode, you will first run the original allocation,
-            # then all shadow allocations. These allocations will thus all run before
-            # any value may store into them. For example, as follows:
-            #   %orig = julia.gc_alloc(...)
-            #   %"orig'" = julia.gcalloc(...)
-            #   store orig[0] = jlvaluet
-            #   store "orig'"[0] = jlvaluet'
-            # As a result, by the time of the subsequent GC allocation, the memory in the preceeding
-            # allocation might be undefined, and trigger a GC error. To avoid this,
-            # we will explicitly zero the GC'd fields of the previous allocation.
-            prev = LLVM.Instruction(prev)
-            B = LLVM.IRBuilder()
-            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(prev)))
+    if mode == API.DEM_ForwardMode
+        # Zero any jlvalue_t inner elements of preceeding allocation.
+        # Specifically in forward mode, you will first run the original allocation,
+        # then all shadow allocations. These allocations will thus all run before
+        # any value may store into them. For example, as follows:
+        #   %orig = julia.gc_alloc(...)
+        #   %"orig'" = julia.gcalloc(...)
+        #   store orig[0] = jlvaluet
+        #   store "orig'"[0] = jlvaluet'
+        # As a result, by the time of the subsequent GC allocation, the memory in the preceeding
+        # allocation might be undefined, and trigger a GC error. To avoid this,
+        # we will explicitly zero the GC'd fields of the previous allocation.
+        prev = LLVM.Instruction(prev)
+        B = LLVM.IRBuilder()
+        position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(prev)))
 
-            isboxed_ref = Ref{Bool}()
-            LLVMType = LLVM.LLVMType(ccall(:jl_type_to_llvm, LLVM.API.LLVMTypeRef,
-                        (Any, LLVM.Context, Ptr{Bool}), typ, LLVM.context(), isboxed_ref))
-
-            if isboxed_ref[]
-                throw(AssertionError("Unable to handle type to llvm of boxed type $Ty"))
-            else
-                zeroAll = false
-                T_int64 = LLVM.Int64Type()
-                prev = bitcast!(B, prev, LLVM.PointerType(LLVMType, addrspace(value_type(prev))))
-                prev = addrspacecast!(B, prev, LLVM.PointerType(LLVMType, Derived))
-                zero_single_allocation(B, Ty, LLVMType, prev, zeroAll, LLVM.ConstantInt(T_int64, 0); atomic=true)
-            end
-        end
+        create_recursive_stores(B, Ty, prev)
     end
 
     nothing
