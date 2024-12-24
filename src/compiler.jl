@@ -601,7 +601,7 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
 
     isboxed_ref = Ref{Bool}()
     LLVMType = LLVM.LLVMType(ccall(:jl_type_to_llvm, LLVM.API.LLVMTypeRef,
-                (Any, LLVM.Context, Ptr{Bool}), typ, LLVM.context(), isboxed_ref))
+                (Any, LLVM.Context, Ptr{Bool}), Ty, LLVM.context(), isboxed_ref))
 
     if !isboxed_ref[]
         zeroAll = false
