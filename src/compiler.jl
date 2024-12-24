@@ -646,6 +646,9 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
             end
 
             if fallback
+                if Ty2 <: Union
+                    Ty2 = Any
+                end
                 zeroAll = false
                 prev3 = bitcast!(B, prev3, LLVM.PointerType(T_prjlvalue, addrspace(value_type(prev3))))
                 if addrspace(value_type(prev3)) != Derived
