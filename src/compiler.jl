@@ -626,7 +626,7 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
             Ty2 = fieldtype(Ty, i)
             off = fieldoffset(Ty, i)
     
-            if Base.datatype_pointerfree(Ty2)
+            if Ty2 <: DataType && Base.datatype_pointerfree(Ty2)
                 continue
             end
 
@@ -637,7 +637,7 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
                 LLVM.Value[LLVM.ConstantInt(Int64(off))],
             )
             
-            fallback = Base.isabstracttype(Ty2)
+            fallback = Base.isabstracttype(Ty2) || Ty2 isa Union
 
             @static if VERSION < v"1.11-"
                 fallback |= Ty2 <: Array
