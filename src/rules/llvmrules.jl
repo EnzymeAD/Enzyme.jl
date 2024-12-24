@@ -177,7 +177,17 @@ include("parallelrules.jl")
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        t_shadow = normal
+        width = get_width(gutils)
+        if width != 1 
+            t_shadow = UndefValue(
+                LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
+            )
+            for idx = 1:width
+                t_shadow = insert_value!(B, t_shadow, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, t_shadow.ref)
     end
     # Delete the primal code
     if normal !== nothing
@@ -246,7 +256,17 @@ end
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        t_shadow = normal
+        width = get_width(gutils)
+        if width != 1 
+            t_shadow = UndefValue(
+                LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
+            )
+            for idx = 1:width
+                t_shadow = insert_value!(B, t_shadow, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, t_shadow.ref)
     end
     # Delete the primal code
     if normal !== nothing
