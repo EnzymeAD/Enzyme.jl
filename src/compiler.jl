@@ -647,8 +647,10 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
 
             if fallback
                 zeroAll = false
-                prev = bitcast!(B, prev, LLVM.PointerType(T_prjlvalue, addrspace(value_type(prev3))))
-                prev = addrspacecast!(B, prev, LLVM.PointerType(T_prjlvalue, Derived))
+                prev3 = bitcast!(B, prev3, LLVM.PointerType(T_prjlvalue, addrspace(value_type(prev3))))
+                if addrspace(value_type(prev3)) != Derived
+                  prev3 = addrspacecast!(B, prev3, LLVM.PointerType(T_prjlvalue, Derived))
+                end
                 zero_single_allocation(B, Ty, T_prjlvalue, prev, zeroAll, LLVM.ConstantInt(T_int64, 0); atomic=true) 
             else
                 create_recursive_stores(B, Ty2, prev3)
