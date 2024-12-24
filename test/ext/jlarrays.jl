@@ -1,7 +1,7 @@
 using Enzyme, Test, JLArrays
 
 function jlres(x)
-    2 * x
+    2 * collect(x)
 end
 
 @testset "JLArrays" begin
