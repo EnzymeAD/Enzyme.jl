@@ -620,7 +620,7 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
         
         T_pint8 = LLVM.PointerType(T_int8)
 
-        prev2 = bitcast!(B, prev2, LLVM.PointerType(T_int8, addrspace(value_type(prev))))
+        prev2 = bitcast!(B, prev, LLVM.PointerType(T_int8, addrspace(value_type(prev))))
 
         for i in 1:fieldcount(Ty)
             Ty2 = fieldtype(Ty, i)
