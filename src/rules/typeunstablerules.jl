@@ -1060,7 +1060,18 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
         end
         unsafe_store!(shadowR, shadowres.ref)
     else
-        normal = new_from_original(gutils, orig)
+
+		if !get_runtime_activity(gutils)
+			estr = "Mismatched activity for: " * string(orig) * " const input " *string(origops[2]) * ", differentiable return"
+			shadowres = julia_error(estr, orig.ref, API.ET_MixedActivityError, gutils.ref, orig.ref, B.ref)
+			if shadowres != C_NULL
+				unsafe_store!(shadowR, shadowres)
+				return true
+			end
+		end
+
+	    normal = new_from_original(gutils, orig)
+        
         if width == 1
             shadowres = normal
         else
