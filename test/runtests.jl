@@ -1407,7 +1407,11 @@ function absactfunc(x)
 end
 
 @testset "Forward Mode active runtime activity" begin
-    res = Enzyme.autodiff(Enzyme.Forward, Enzyme.Const(absactfunc), Duplicated(2.7, 3.1))
+    @static if VERSION ≥ v"1.11-"
+        res = Enzyme.autodiff(set_runtime_activity(Enzyme.Forward), Enzyme.Const(absactfunc), Duplicated(2.7, 3.1))
+    else
+        res = Enzyme.autodiff(Enzyme.Forward, Enzyme.Const(absactfunc), Duplicated(2.7, 3.1))
+    end
     @test res[1] ≈ 3.1
 end
 
