@@ -850,7 +850,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                             @static if VERSION < v"1.11-"
                             else
                             if addr == 13 && isa(v, LLVM.PHIInst)
-				if haskey(v, phicache)
+				if haskey(phicache, v)
 				   return (phicache[v]..., hasload)
 				end
                                 vs = Union{LLVM.Value, Nothing}[]
