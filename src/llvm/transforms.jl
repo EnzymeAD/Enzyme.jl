@@ -856,7 +856,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 for (vt, bb) in LLVM.incoming(v) 
                                     b2 = IRBuilder()
                                     position!(b2, terminator(bb))
-                                    if v2 == v
+                                    if vt == v
                                         push!(vs, nothing)
                                         push!(offs, nothing)
                                     else
