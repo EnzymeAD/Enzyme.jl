@@ -660,7 +660,8 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
     end
 end
 
-function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, Orig::LLVM.API.LLVMValueRef, idx::UInt64, prev::API.LLVMValueRef)
+function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, Orig::LLVM.API.LLVMValueRef, idx::UInt64, prev::API.LLVMValueRef, used::UInt8)
+    used = used != 0
     V = LLVM.CallInst(V)
     gutils = GradientUtils(gutils)
     mode = get_mode(gutils)
@@ -681,7 +682,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
         end
     end
    
-    if mode == API.DEM_ForwardMode
+    if mode == API.DEM_ForwardMode && (used || idx != 0)
         # Zero any jlvalue_t inner elements of preceeding allocation.
         # Specifically in forward mode, you will first run the original allocation,
         # then all shadow allocations. These allocations will thus all run before
@@ -1224,7 +1225,7 @@ function __init__()
         @cfunction(
             shadow_alloc_rewrite,
             Cvoid,
-            (LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef, UInt64, LLVM.API.LLVMValueRef)
+            (LLVM.API.LLVMValueRef, API.EnzymeGradientUtilsRef, LLVM.API.LLVMValueRef, UInt64, LLVM.API.LLVMValueRef, UInt8)
         )
     )
     register_alloc_rules()
