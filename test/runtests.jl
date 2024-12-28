@@ -2374,32 +2374,6 @@ end
     @test Enzyme.autodiff(Forward, timsteploop, Duplicated(2.0, 1.0))[1] ≈ 1.0
 end
 
-@testset "Type" begin
-    function foo(in::Ptr{Cvoid}, out::Ptr{Cvoid})
-        markType(Float64, in)
-        ccall(:memcpy,Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t), out, in, 8)
-    end
-
-    x = [2.0]
-    y = [3.0]
-    dx = [5.0]
-    dy = [7.0]
-
-    @test markType(x) === nothing
-    @test markType(zeros(Float32, 64)) === nothing
-    @test markType(view(zeros(64), 16:32)) === nothing
-
-    GC.@preserve x y begin
-        foo(Base.unsafe_convert(Ptr{Cvoid}, x), Base.unsafe_convert(Ptr{Cvoid}, y))
-    end
-
-    GC.@preserve x y dx dy begin
-      autodiff(Reverse, foo,
-                Duplicated(Base.unsafe_convert(Ptr{Cvoid}, x), Base.unsafe_convert(Ptr{Cvoid}, dx)),
-                Duplicated(Base.unsafe_convert(Ptr{Cvoid}, y), Base.unsafe_convert(Ptr{Cvoid}, dy)))
-    end
-end
-
 function bc0_test_function(ps)
     z = view(ps, 26:30)
     C = Matrix{Float64}(undef, 5, 1)

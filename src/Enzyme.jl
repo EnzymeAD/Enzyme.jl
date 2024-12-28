@@ -99,7 +99,7 @@ export autodiff,
     make_zero!
 
 export jacobian, gradient, gradient!, hvp, hvp!, hvp_and_gradient!
-export markType, batch_size, onehot, chunkedonehot
+export batch_size, onehot, chunkedonehot
 
 using LinearAlgebra
 import SparseArrays
@@ -1444,78 +1444,6 @@ result, ∂v, ∂A
         )
     adj_thunk = Compiler.AdjointThunk{Ptr{Cvoid},FA,rt,TT,width,TapeType}(adjoint_ptr)
     aug_thunk, adj_thunk
-end
-
-# White lie, should be `Core.LLVMPtr{Cvoid, 0}` but that's not supported by ccallable
-Base.@ccallable function __enzyme_float(x::Ptr{Cvoid})::Cvoid
-    return nothing
-end
-
-Base.@ccallable function __enzyme_double(x::Ptr{Cvoid})::Cvoid
-    return nothing
-end
-
-@inline function markType(::Type{T}, ptr::Ptr{Cvoid}) where {T}
-    markType(Base.unsafe_convert(Ptr{T}, ptr))
-end
-
-@inline function markType(data::Array{T}) where {T}
-    GC.@preserve data markType(pointer(data))
-end
-
-# TODO(WM): We record the type of a single index here, we could give it a range
-@inline function markType(data::SubArray)
-    GC.@preserve data markType(pointer(data))
-end
-
-@inline function markType(data::Ptr{Float32})
-    @static if sizeof(Int) == sizeof(Int64)
-        Base.llvmcall(
-            (
-                "declare void @__enzyme_float(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_float(i8* %p) ret void }",
-                "c",
-            ),
-            Cvoid,
-            Tuple{Ptr{Float32}},
-            data,
-        )
-    else
-        Base.llvmcall(
-            (
-                "declare void @__enzyme_float(i8* nocapture) nounwind define void @c(i32 %q) nounwind alwaysinline { %p = inttoptr i32 %q to i8* call void @__enzyme_float(i8* %p) ret void }",
-                "c",
-            ),
-            Cvoid,
-            Tuple{Ptr{Float32}},
-            data,
-        )
-    end
-    nothing
-end
-
-@inline function markType(data::Ptr{Float64})
-    @static if sizeof(Int) == sizeof(Int64)
-        Base.llvmcall(
-            (
-                "declare void @__enzyme_double(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_double(i8* %p) ret void }",
-                "c",
-            ),
-            Cvoid,
-            Tuple{Ptr{Float64}},
-            data,
-        )
-    else
-        Base.llvmcall(
-            (
-                "declare void @__enzyme_double(i8* nocapture) nounwind define void @c(i32 %q) nounwind alwaysinline { %p = inttoptr i32 %q to i8* call void @__enzyme_double(i8* %p) ret void }",
-                "c",
-            ),
-            Cvoid,
-            Tuple{Ptr{Float64}},
-            data,
-        )
-    end
-    nothing
 end
 
 include("sugar.jl")
