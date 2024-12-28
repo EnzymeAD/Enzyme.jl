@@ -3547,7 +3547,7 @@ function GPUCompiler.codegen(
 
         # Unsupported calling conv
         # also wouldn't have any type info for this [would for earlier args though]
-        if mi.specTypes.parameters[end] === Vararg{Any}
+        if Base.isvarargtype(mi.specTypes.parameters[end])
             continue
         end
 
