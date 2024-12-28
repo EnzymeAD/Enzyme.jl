@@ -857,7 +857,7 @@ end
 end
 
 
-@register_fwd function genericmemory_copy_fwd(B, orig, gutils, normalR, shadowR)
+@register_fwd function genericmemory_slice_fwd(B, orig, gutils, normalR, shadowR)
     ctx = LLVM.context(orig)
 
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
