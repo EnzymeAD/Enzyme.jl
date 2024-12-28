@@ -87,7 +87,7 @@ end
         LLVM.br!(builder, LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, LLVM.ConstantInt(0), len), exit, loop)
 
         LLVM.position!(builder, loop)
-        idx = LLVM.phi!(builder, ity)
+        idx = LLVM.phi!(builder, ity, "onehot.idx")
 
         push!(LLVM.incoming(idx), (LLVM.ConstantInt(0), entry))
         inc = LLVM.add!(builder, idx, LLVM.ConstantInt(1))
