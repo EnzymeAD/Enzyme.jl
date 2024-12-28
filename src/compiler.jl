@@ -899,7 +899,7 @@ function zero_allocation(
 
         LLVM.br!(builder, loop)
         position!(builder, loop)
-        idx = LLVM.phi!(builder, value_type(Size))
+        idx = LLVM.phi!(builder, value_type(Size), "zero_alloc_idx")
         inc = add!(builder, idx, LLVM.ConstantInt(value_type(Size), 1))
         append!(
             LLVM.incoming(idx),
@@ -3261,7 +3261,7 @@ function lower_convention(
         st = value_type(p)::LLVM.StructType
         phis = LLVM.PHIInst[]
         for (i, t) in enumerate(LLVM.elements(st))
-            np = phi!(nb, t)
+            np = phi!(nb, t, "wrap.fixphi")
             nvs = Tuple{LLVM.Value,LLVM.BasicBlock}[]
             for (v, b) in LLVM.incoming(p)
                 prevbld = IRBuilder()

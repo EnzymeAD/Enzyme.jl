@@ -859,23 +859,24 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 
                                 B = LLVM.IRBuilder()
                                 position!(B, v)
-				vphi = phi!(B, value_type(v))
-				ophi = phi!(B, value_type(offset))
+                                vphi = phi!(B, value_type(v), "nondecay.vphi."*LLVM.name(v))
+                                ophi = phi!(B, value_type(offset), "nondecay.ophi"*LLVM.name(v))
 				phicache[v] = (vphi, ophi)
 
                                 for (vt, bb) in LLVM.incoming(v) 
                                     b2 = IRBuilder()
                                     position!(b2, terminator(bb))
-				    v2, o2, hl2 = getparent(b2, vt, offset, hasload, phicache)
-				    push!(vs, v2)
-				    push!(offs, o2)
+                                    v2, o2, hl2 = getparent(b2, vt, offset, hasload, phicache)
+                                    push!(vs, v2)
+                                    push!(offs, o2)
+                                    push!(blks, bb)
                                 end
                                 
-				append!(incoming(ophi), collect(zip(offs, blks)))
-                                    
-				append!(incoming(vphi), collect(zip(vs, blks)))
+                                append!(incoming(ophi), collect(zip(offs, blks)))
+                                                    
+                                append!(incoming(vphi), collect(zip(vs, blks)))
 
-                                return vphi, offset, hasload
+                                return vphi, ophi, hasload
                             end
                             end
 
