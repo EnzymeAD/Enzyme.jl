@@ -856,6 +856,88 @@ end
     return nothing
 end
 
+
+@register_fwd function genericmemory_copy_fwd(B, orig, gutils, normalR, shadowR)
+    ctx = LLVM.context(orig)
+
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
+        return true
+    end
+
+    origops = LLVM.operands(orig)
+
+    width = get_width(gutils)
+
+    shadowin = invert_pointer(gutils, origops[1], B)
+    shadowdata = invert_pointer(gutils, origops[2], B)
+    len = new_from_original(gutils, origops[3])
+
+    i8 = LLVM.IntType(8)
+    algn = 0
+
+    shadowres =
+        UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+    for idx = 1:width
+        ev = if width == 1
+            shadowin
+        else
+            extract_value!(B, shadowin, idx - 1)
+        end
+        ev2 = if width == 1
+            shadowdata
+        else
+            extract_value!(B, shadowdata, idx - 1)
+        end
+        callv = call_samefunc_with_inverted_bundles!(
+            B,
+            gutils,
+            orig,
+            [ev, ev2, len],
+            [API.VT_Shadow, API.VT_Shadow, API.VT_Primal],
+            false,
+        ) #=lookup=#
+        if is_constant_value(gutils, origops[1])
+            emit_error(B, orig, "ijl_genericmemory_slice memory argument (1st arg) was constant but return was active")
+        end
+        if is_constant_value(gutils, origops[2])
+            emit_error(B, orig, "ijl_genericmemory_slice ptr argument (2nd arg) was constant but return was active")
+        end
+        if get_runtime_activity(gutils)
+            prev = new_from_original(gutils, orig)
+            callv = LLVM.select!(
+                B,
+                LLVM.icmp!(
+                    B,
+                    LLVM.API.LLVMIntNE,
+                    ev,
+                    new_from_original(gutils, origops[1]),
+                ),
+                callv,
+                prev,
+            )
+            if idx == 1
+                API.moveBefore(prev, callv, B)
+            end
+        end
+        shadowres = if width == 1
+            callv
+        else
+            insert_value!(B, shadowres, callv, idx - 1)
+        end
+    end
+
+    unsafe_store!(shadowR, shadowres.ref)
+    return false
+end
+
+@register_aug function genericmemory_slice_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    return genericmemory_slice_fwd(B, orig, gutils, normalR, shadowR)
+end
+
+@register_rev function genericmemory_slice_rev(B, orig, gutils, tape)
+    return nothing
+end
+
 @register_fwd function arrayreshape_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
@@ -2110,6 +2192,12 @@ end
         @augfunc(genericmemory_copy_slice_augfwd),
         @revfunc(genericmemory_copy_slice_rev),
         @fwdfunc(genericmemory_copy_slice_fwd),
+    )
+    register_handler!(
+        ("jl_genericmemory_slice", "ijl_genericmemory_slice"),
+        @augfunc(genericmemory_slice_augfwd),
+        @revfunc(genericmemory_slice_rev),
+        @fwdfunc(genericmemory_slice_fwd),
     )
     register_handler!(
         ("jl_reshape_array", "ijl_reshape_array"),

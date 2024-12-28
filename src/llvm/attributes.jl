@@ -41,6 +41,8 @@ const nofreefns = Set{String}((
     "jl_array_ptr_copy",
     "ijl_array_copy",
     "jl_array_copy",
+    "ijl_genericmemory_slice",
+    "jl_genericmemory_slice",
     "ijl_genericmemory_copy_slice",
     "jl_genericmemory_copy_slice",
     "ijl_get_nth_field_checked",
@@ -644,6 +646,8 @@ function annotate!(mod::LLVM.Module)
         "ijl_alloc_array_3d",
         "jl_array_copy",
         "ijl_array_copy",
+        "jl_genericmemory_slice",
+        "ijl_genericmemory_slice",
         "jl_genericmemory_copy_slice",
         "ijl_genericmemory_copy_slice",
         "jl_alloc_genericmemory",
@@ -670,8 +674,11 @@ function annotate!(mod::LLVM.Module)
                     LLVM.EnumAttribute("inaccessiblememonly")
                 else
                     if fname in (
+                        "jl_genericmemory_slice",
+                        "ijl_genericmemory_slice",
                         "jl_genericmemory_copy_slice",
-                        "ijl_genericmemory_copy_slice",)
+                        "ijl_genericmemory_copy_slice",
+                        )
                         EnumAttribute(
                             "memory",
                             MemoryEffect(
