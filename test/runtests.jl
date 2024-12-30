@@ -3085,7 +3085,8 @@ end
         @test dw ≈ [3.0]
     else
         # TODO broken should not throw
-        @test_throws Enzyme.autodiff(Reverse, inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
+        @test_throws EnzymeRuntimeActivityError Enzyme.autodiff(Reverse, inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
+	Enzyme.autodiff(set_runtime_activity(Reverse), inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
     end
 
     x = Float32[3]
@@ -3101,24 +3102,27 @@ end
     @static if VERSION < v"1.11-"
         dw = Enzyme.autodiff(Reverse, loss, Active, Active(1.0), Const(x), Const(false))[1]
 
-        @test x ≈ [3.0]
-        @test dw[1] ≈ 3.0
     else
         # TODO broken should not throw
-        @test_throws Enzyme.autodiff(Reverse, loss, Active, Active(1.0), Const(x), Const(false))[1]
+        @test_throws EnzymeRuntimeActivityError Enzyme.autodiff(Reverse, loss, Active, Active(1.0), Const(x), Const(false))[1]
+	dw = Enzyme.autodiff(set_runtime_activity(Reverse), loss, Active, Active(1.0), Const(x), Const(false))[1]
     end
+    
+    @test x ≈ [3.0]
+    @test dw[1] ≈ 3.0
 
     c = ones(3)
     inner(e) = c .+ e
 
     @static if VERSION < v"1.11-"
         fres = Enzyme.autodiff(Enzyme.Forward, Const(inner), Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))[1]
-        @test c ≈ [1.0, 1.0, 1.0]
-        @test fres ≈ [1.0, 1.0, 1.0]
     else
         # TODO broken should not throw
         @test_throws Enzyme.autodiff(Enzyme.Forward, Const(inner), Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))
+	fres = Enzyme.autodiff(set_runtime_activity(Enzyme.Forward), Const(inner), Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))
     end
+    @test c ≈ [1.0, 1.0, 1.0]
+    @test fres ≈ [1.0, 1.0, 1.0]
 end
 
 @testset "View Splat" begin
