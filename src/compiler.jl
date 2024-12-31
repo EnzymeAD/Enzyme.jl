@@ -4957,9 +4957,17 @@ end
                 if isboxed
                     push!(types, Any)
                 elseif width == 1
-                    push!(types, F)
+                    if (FA <: MixedDuplicated)
+                        push!(types, Base.RefValue{F})
+                    else
+                        push!(types, F)
+                    end
                 else
-                    push!(types, NTuple{width,F})
+                    if (FA <: BatchMixedDuplicated)
+                        push!(types, NTuple{width,Base.RefValue{F}})
+                    else
+                        push!(types, NTuple{width,F})
+                    end
                 end
                 push!(ccexprs, argexpr)
             end
