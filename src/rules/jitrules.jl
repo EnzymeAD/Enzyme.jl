@@ -817,11 +817,11 @@ function push_if_not_ref(
     return darg
 end
 
-struct PushInnerStruct{Vals}
+struct PushInnerStruct{reverse, Vals}
     vals::Vals
 end
 
-@inline function (v::PushInnerStruct)(@nospecialize(arg), @nospecialize(darg))
+@inline function (v::PushInnerStruct{reverse})(@nospecialize(arg), @nospecialize(darg))
     ty = Core.Typeof(arg)
     actreg = active_reg_nothrow(ty, Val(nothing))
     if actreg == AnyState
@@ -845,7 +845,7 @@ end
     args,
     dargs,
 ) where {reverse}
-    map(PushInnerStruct(vals), args, dargs)
+    map(PushInnerStruct{reverse, typeof(val)}(vals), args, dargs)
 end
 
 @inline function iterate_unwrap_augfwd_batchdup(
