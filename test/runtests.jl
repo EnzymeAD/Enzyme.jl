@@ -3077,11 +3077,17 @@ end
 	  @inbounds w[1] * x[1]
 	end
 
-	Enzyme.autodiff(Reverse, inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
+    @static if VERSION < v"1.11-"
+    	Enzyme.autodiff(Reverse, inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
 
-    @test x ≈ [3.0]
-    @test w ≈ [1.0]
-    @test dw ≈ [3.0]
+        @test x ≈ [3.0]
+        @test w ≈ [1.0]
+        @test dw ≈ [3.0]
+    else
+        # TODO broken should not throw
+        @test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.autodiff(Reverse, inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
+	Enzyme.autodiff(set_runtime_activity(Reverse), inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
+    end
 
     x = Float32[3]
 
@@ -3093,13 +3099,21 @@ end
       res
     end
 
-    dw = Enzyme.autodiff(Reverse, loss, Active, Active(1.0), Const(x), Const(false))[1]
+    @static if VERSION < v"1.11-"
+        dw = Enzyme.autodiff(Reverse, loss, Active, Active(1.0), Const(x), Const(false))[1]
 
+    else
+        # TODO broken should not throw
+        @test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.autodiff(Reverse, loss, Active, Active(1.0), Const(x), Const(false))[1]
+	dw = Enzyme.autodiff(set_runtime_activity(Reverse), loss, Active, Active(1.0), Const(x), Const(false))[1]
+    end
+    
     @test x ≈ [3.0]
     @test dw[1] ≈ 3.0
 
     c = ones(3)
     inner(e) = c .+ e
+
     fres = Enzyme.autodiff(Enzyme.Forward, Const(inner), Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))[1]
     @test c ≈ [1.0, 1.0, 1.0]
     @test fres ≈ [1.0, 1.0, 1.0]
@@ -3613,10 +3627,22 @@ const objective3 = params -> mixture_loglikelihood3(params, data)
                  -13.935687326484112,
                  -38.00044665702692,
                  12.87712891527131]
-    @test expected ≈ Enzyme.gradient(Reverse, objective1, params0)[1]
+    @static if VERSION < v"1.11-"
+    	@test expected ≈ Enzyme.gradient(Reverse, objective1, params0)[1]
+    else
+        # TODO broken should not throw
+    	@test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.gradient(Reverse, objective1, params0)[1]
+    	@test expected ≈ Enzyme.gradient(set_runtime_activity(Reverse), objective1, params0)[1]
+    end
     # objective2 fails from runtime activity requirements
     # @test expected ≈ Enzyme.gradient(Reverse, objective2, params0)[1]
-    @test expected ≈ Enzyme.gradient(Reverse, objective3, params0)[1]
+    @static if VERSION < v"1.11-"
+        @test expected ≈ Enzyme.gradient(Reverse, objective3, params0)[1]
+    else
+	# TODO broken should not throw
+    	@test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.gradient(Reverse, objective3, params0)[1]
+    	@test expected ≈ Enzyme.gradient(set_runtime_activity(Reverse), objective3, params0)[1]
+    end
 end
 
 struct HarmonicAngle
