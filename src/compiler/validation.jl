@@ -1009,7 +1009,9 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
         if occursin("inttoptr", string(dest))
             # extract the literal pointer
             ptr_arg = first(operands(dest))
-            GPUCompiler.@compiler_assert isa(ptr_arg, ConstantInt) job
+            if !isa(ptr_arg, ConstantInt)
+                throw(AssertionError("Call inst $(string(inst)) dest=$(string(dest))"))
+            end
             ptr_val = convert(Int, ptr_arg)
             ptr = Ptr{Cvoid}(ptr_val)
 
