@@ -821,7 +821,7 @@ struct PushInnerStruct{reverse, Vals}
     vals::Vals
 end
 
-@inline function (v::PushInnerStruct{reverse})(@nospecialize(arg), @nospecialize(darg))
+@inline function (v::PushInnerStruct{reverse})(@nospecialize(arg), @nospecialize(darg)) where reverse
     ty = Core.Typeof(arg)
     actreg = active_reg_nothrow(ty, Val(nothing))
     if actreg == AnyState
