@@ -803,11 +803,19 @@ function zero_single_allocation(builder::LLVM.IRBuilder, @nospecialize(jlType::D
             continue
         end
         if isa(ty, LLVM.ArrayType)
-	    @assert jlty isa DataType
+            subTy = if jlty isa DataType
+		eltype(jlty)
+	    elseif !(jlty isa DataType)
+		if eltype(ty) isa LLVM.PointerType && LLVM.addrspace(eltype(ty)) == 10
+		   Any
+		else
+		   throw(AssertionError("jlty=$jlty ty=$ty"))
+		end
+	    end
             for i = 1:length(ty)
                 npath = copy(path)
                 push!(npath, LLVM.ConstantInt(LLVM.IntType(32), i - 1))
-                push!(todo, (npath, eltype(ty), eltype(jlty)))
+                push!(todo, (npath, eltype(ty), subty))
             end
             continue
         end
