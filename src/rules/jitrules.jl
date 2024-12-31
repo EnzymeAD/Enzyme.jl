@@ -817,7 +817,11 @@ function push_if_not_ref(
     return darg
 end
 
-@inline function push_inner(@nospecialize(vals), @nospecialize(arg), @nospecialize(darg))
+struct PushInnerStruct{Vals}
+    vals::Vals
+end
+
+@inline function (v::PushInnerStruct)(@nospecialize(arg), @nospecialize(darg))
     ty = Core.Typeof(arg)
     actreg = active_reg_nothrow(ty, Val(nothing))
     if actreg == AnyState
@@ -828,7 +832,7 @@ end
         darg = Base.inferencebarrier(darg)
         MixedDuplicated(
             arg,
-            push_if_not_ref(Val(reverse), vals, darg, ty)::Base.RefValue{ty},
+            push_if_not_ref(Val(reverse), v.vals, darg, ty)::Base.RefValue{ty},
         )
     else
         Duplicated(arg, darg)
@@ -841,7 +845,7 @@ end
     args,
     dargs,
 ) where {reverse}
-    map(Base.Fix1(push_inner, vals), args, dargs)
+    map(PushInnerStruct(vals), args, dargs)
 end
 
 @inline function iterate_unwrap_augfwd_batchdup(
