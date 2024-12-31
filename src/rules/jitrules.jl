@@ -817,31 +817,35 @@ function push_if_not_ref(
     return darg
 end
 
+struct PushInnerStruct{reverse, Vals}
+    vals::Vals
+end
+
+@inline function (v::PushInnerStruct{reverse})(@nospecialize(arg), @nospecialize(darg)) where reverse
+    ty = Core.Typeof(arg)
+    actreg = active_reg_nothrow(ty, Val(nothing))
+    if actreg == AnyState
+        Const(arg)
+    elseif actreg == ActiveState
+        Active(arg)
+    elseif actreg == MixedState
+        darg = Base.inferencebarrier(darg)
+        MixedDuplicated(
+            arg,
+            push_if_not_ref(Val(reverse), v.vals, darg, ty)::Base.RefValue{ty},
+        )
+    else
+        Duplicated(arg, darg)
+    end
+end
+
 @inline function iterate_unwrap_augfwd_dup(
     ::Val{reverse},
     vals,
     args,
     dargs,
 ) where {reverse}
-    ntuple(Val(length(args))) do i
-        Base.@_inline_meta
-        arg = args[i]
-        ty = Core.Typeof(arg)
-        actreg = active_reg_nothrow(ty, Val(nothing))
-        if actreg == AnyState
-            Const(arg)
-        elseif actreg == ActiveState
-            Active(arg)
-        elseif actreg == MixedState
-            darg = Base.inferencebarrier(dargs[i])
-            MixedDuplicated(
-                arg,
-                push_if_not_ref(Val(reverse), vals, darg, ty)::Base.RefValue{ty},
-            )
-        else
-            Duplicated(arg, dargs[i])
-        end
-    end
+    map(PushInnerStruct{reverse, typeof(vals)}(vals), args, dargs)
 end
 
 @inline function iterate_unwrap_augfwd_batchdup(
