@@ -397,7 +397,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                     newf, _ = get_function!(mod, fused_name, FT)
                     
                     while isa(newf, LLVM.ConstantExpr)
-                        newf = operands(newf)
+                        newf = operands(newf)[1]
                     end
                     push!(function_attributes(newf), StringAttribute("enzyme_math", fname))
                     # TODO we can make this relocatable if desired by having restore lookups re-create this got initializer/etc
