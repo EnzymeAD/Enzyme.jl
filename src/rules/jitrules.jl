@@ -845,7 +845,7 @@ end
     args,
     dargs,
 ) where {reverse}
-    map(PushInnerStruct{reverse, typeof(val)}(vals), args, dargs)
+    map(PushInnerStruct{reverse, typeof(vals)}(vals), args, dargs)
 end
 
 @inline function iterate_unwrap_augfwd_batchdup(
