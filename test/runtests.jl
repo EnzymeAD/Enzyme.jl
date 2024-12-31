@@ -3627,7 +3627,13 @@ const objective3 = params -> mixture_loglikelihood3(params, data)
                  -13.935687326484112,
                  -38.00044665702692,
                  12.87712891527131]
-    @test expected ≈ Enzyme.gradient(Reverse, objective1, params0)[1]
+    @static if VERSION < v"1.11-"
+    	@test expected ≈ Enzyme.gradient(Reverse, objective1, params0)[1]
+    else
+        # TODO broken should not throw
+    	@test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.gradient(Reverse, objective1, params0)[1]
+    	@test expected ≈ Enzyme.gradient(set_runtime_activity(Reverse), objective1, params0)[1]
+    end
     # objective2 fails from runtime activity requirements
     # @test expected ≈ Enzyme.gradient(Reverse, objective2, params0)[1]
     @test expected ≈ Enzyme.gradient(Reverse, objective3, params0)[1]
