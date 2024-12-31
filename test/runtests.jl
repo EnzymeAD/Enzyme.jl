@@ -3114,13 +3114,7 @@ end
     c = ones(3)
     inner(e) = c .+ e
 
-    @static if VERSION < v"1.11-"
-        fres = Enzyme.autodiff(Enzyme.Forward, Const(inner), Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))[1]
-    else
-        # TODO broken should not throw
-        @test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.autodiff(Enzyme.Forward, Const(inner), Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))
-	fres = Enzyme.autodiff(set_runtime_activity(Enzyme.Forward), Const(inner), Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))
-    end
+    fres = Enzyme.autodiff(Enzyme.Forward, Const(inner), Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))[1]
     @test c ≈ [1.0, 1.0, 1.0]
     @test fres ≈ [1.0, 1.0, 1.0]
 end
