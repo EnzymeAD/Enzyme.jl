@@ -1,4 +1,5 @@
 const nofreefns = Set{String}((
+    "julia.gc_loaded",
     "jl_egal__unboxed", "ijl_egal__unboxed",
     "jl_restore_excstack",
     "ijl_restore_excstack",
