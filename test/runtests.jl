@@ -3118,7 +3118,7 @@ end
         fres = Enzyme.autodiff(Enzyme.Forward, Const(inner), Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))[1]
     else
         # TODO broken should not throw
-        @test_throws Enzyme.autodiff(Enzyme.Forward, Const(inner), Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))
+        @test_throws EnzymeRuntimeActivityError Enzyme.autodiff(Enzyme.Forward, Const(inner), Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))
 	fres = Enzyme.autodiff(set_runtime_activity(Enzyme.Forward), Const(inner), Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))
     end
     @test c ≈ [1.0, 1.0, 1.0]
