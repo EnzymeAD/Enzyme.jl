@@ -267,8 +267,9 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                     end
                 end
                 @assert FT !== nothing
-
-                initfn, _ = get_base_and_offset(LLVM.initializer(fn_got); offsetAllowed=false, inttoptr=false)
+                init = LLVM.initializer(fn_got)
+                if init !== nothing
+                initfn, _ = get_base_and_offset(init; offsetAllowed=false, inttoptr=false)
                 loadfn = first(instructions(first(blocks(initfn))))::LLVM.LoadInst
                 opv = operands(loadfn)[1]
                 if !isa(opv, LLVM.GlobalVariable)
@@ -433,6 +434,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                         LLVM.API.LLVMDeleteGlobal(fn_got)
                     end
                 end
+                    end
 
             elseif isInline
                 md = metadata(inst)
