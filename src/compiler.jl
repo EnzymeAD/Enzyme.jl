@@ -763,7 +763,7 @@ function zero_single_allocation(builder::LLVM.IRBuilder, @nospecialize(jlType::D
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
 
-    todo = Tuple{Vector{LLVM.Value},LLVM.LLVMType,DataType}[(
+    todo = Tuple{Vector{LLVM.Value},LLVM.LLVMType,Type}[(
         LLVM.Value[idx],
         LLVMType,
         jlType,
@@ -803,14 +803,24 @@ function zero_single_allocation(builder::LLVM.IRBuilder, @nospecialize(jlType::D
             continue
         end
         if isa(ty, LLVM.ArrayType)
+            subTy = if jlty isa DataType
+		eltype(jlty)
+	    elseif !(jlty isa DataType)
+		if eltype(ty) isa LLVM.PointerType && LLVM.addrspace(eltype(ty)) == 10
+		   Any
+		else
+		   throw(AssertionError("jlty=$jlty ty=$ty"))
+		end
+	    end
             for i = 1:length(ty)
                 npath = copy(path)
                 push!(npath, LLVM.ConstantInt(LLVM.IntType(32), i - 1))
-                push!(todo, (npath, eltype(ty), eltype(jlty)))
+                push!(todo, (npath, eltype(ty), subTy))
             end
             continue
         end
         if isa(ty, LLVM.VectorType)
+	    @assert jlty isa DataType
             for i = 1:size(ty)
                 npath = copy(path)
                 push!(npath, LLVM.ConstantInt(LLVM.IntType(32), i - 1))
@@ -820,6 +830,7 @@ function zero_single_allocation(builder::LLVM.IRBuilder, @nospecialize(jlType::D
         end
         if isa(ty, LLVM.StructType)
             i = 1
+	    @assert jlty isa DataType
             for ii = 1:fieldcount(jlty)
                 jlet = typed_fieldtype(jlty, ii)
                 if isghostty(jlet) || Core.Compiler.isconstType(jlet)
