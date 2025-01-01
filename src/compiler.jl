@@ -815,7 +815,7 @@ function zero_single_allocation(builder::LLVM.IRBuilder, @nospecialize(jlType::D
             for i = 1:length(ty)
                 npath = copy(path)
                 push!(npath, LLVM.ConstantInt(LLVM.IntType(32), i - 1))
-                push!(todo, (npath, eltype(ty), subty))
+                push!(todo, (npath, eltype(ty), subTy))
             end
             continue
         end
