@@ -260,7 +260,9 @@ Core.Compiler.may_compress(@nospecialize(::EnzymeInterpreter)) = true
 #      but as far as I understand Enzyme wants "always inlining, except special cased functions",
 #      so I guess we really don't want to discard sources?
 Core.Compiler.may_discard_trees(@nospecialize(::EnzymeInterpreter)) = false
+@static if VERSION <= v"1.12-"
 Core.Compiler.verbose_stmt_info(@nospecialize(::EnzymeInterpreter)) = false
+end
 
 Core.Compiler.method_table(@nospecialize(interp::EnzymeInterpreter)) = interp.method_table
 
@@ -355,7 +357,11 @@ function Core.Compiler.abstract_call_gf_by_type(
         sv::AbsIntState,
         max_methods::Int,
     )
-    callinfo = ret.info
+    @static if VERSION <= v"1.11-"
+	callinfo = ret.info
+    else
+	callinfo = ret[].info
+    end
     specTypes = simplify_kw(atype)
 
     if is_primitive_func(specTypes)
