@@ -667,6 +667,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
     mode = get_mode(gutils)
     has, Ty, byref = abs_typeof(V)
     if !has
+        fn = LLVM.parent(LLVM.parent(V))
         throw(AssertionError("$(string(fn))\n Allocation could not have its type statically determined $(string(V))"))
     end
     if mode == API.DEM_ReverseModePrimal ||
