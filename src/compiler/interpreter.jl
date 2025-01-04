@@ -129,6 +129,7 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
 
     forward_rules::Bool
     reverse_rules::Bool
+    inactive_rules::Bool
     broadcast_rewrite::Bool
     handler::T
 end
@@ -166,6 +167,7 @@ function EnzymeInterpreter(
     world::UInt,
     forward_rules::Bool,
     reverse_rules::Bool,
+    inactive_rules::Bool,
     broadcast_rewrite::Bool = true,
     handler = nothing
 )
@@ -197,10 +199,12 @@ function EnzymeInterpreter(
             end
         end
 
-        inarules = get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)
-        if !rule_sigs_equal(inarules, LastInaWorld[])
-            LastInaWorld[] = inarules
-            invalid = true
+        if inactive_rules
+            inarules = get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)
+            if !rule_sigs_equal(inarules, LastInaWorld[])
+                LastInaWorld[] = inarules
+                invalid = true
+            end
         end
         
         if invalid
@@ -223,6 +227,7 @@ function EnzymeInterpreter(
         OptimizationParams(),
         forward_rules,
         reverse_rules,
+        inactive_rules,
         broadcast_rewrite,
         handler
     )
@@ -364,20 +369,12 @@ function Core.Compiler.abstract_call_gf_by_type(
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
     else
         method_table = Core.Compiler.method_table(interp)
-        if EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
+        if interp.inactive_rules && EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
             callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
-        else
-            if interp.forward_rules
-              if EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
-                callinfo = NoInlineCallInfo(callinfo, atype, :frule)
-              end
-            end
-        
-            if interp.reverse_rules
-                if EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
-                  callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
-                end
-            end
+        elseif interp.forward_rules && EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
+            callinfo = NoInlineCallInfo(callinfo, atype, :frule)
+        elseif interp.reverse_rules && EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
+            callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
         end
     end
 

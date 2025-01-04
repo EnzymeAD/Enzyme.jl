@@ -27,6 +27,7 @@ function primal_interp_world(
             EnzymeCompilerParams,
             world,
             false,
+            true,
             true
         )
     else
@@ -50,7 +51,8 @@ function primal_interp_world(
             EnzymeCompilerParams,
             world,
             true,
-            false
+            false,
+            true
         )
     else
         Enzyme.Compiler.GLOBAL_FWD_CACHE
