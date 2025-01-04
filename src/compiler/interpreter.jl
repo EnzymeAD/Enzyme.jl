@@ -225,10 +225,10 @@ function EnzymeInterpreter(
         # parameters for inference and optimization
         parms,
         OptimizationParams(),
-        forward_rules,
-        reverse_rules,
-        inactive_rules,
-        broadcast_rewrite,
+        forward_rules::Bool,
+        reverse_rules::Bool,
+        inactive_rules::Bool,
+        broadcast_rewrite::Bool,
         handler
     )
 end
@@ -238,9 +238,10 @@ EnzymeInterpreter(
     mt::Union{Nothing,Core.MethodTable},
     world::UInt,
     mode::API.CDerivativeMode,
+    inactive_rules::Bool,
     broadcast_rewrite::Bool = true,
     handler = nothing
-) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, broadcast_rewrite, handler)
+) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, inactive_rules, broadcast_rewrite, handler)
 
 Core.Compiler.InferenceParams(@nospecialize(interp::EnzymeInterpreter)) = interp.inf_params
 Core.Compiler.OptimizationParams(@nospecialize(interp::EnzymeInterpreter)) = interp.opt_params
