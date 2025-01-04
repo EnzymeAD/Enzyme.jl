@@ -34,7 +34,7 @@ function primal_interp_world(
         Enzyme.Compiler.GLOBAL_REV_CACHE
     end
 
-    Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode)
+    Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true)
 end
 
 function primal_interp_world(
@@ -58,7 +58,7 @@ function primal_interp_world(
         Enzyme.Compiler.GLOBAL_FWD_CACHE
     end
 
-    Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode)
+    Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true)
 end
 
 @inline primal_interp_world(
