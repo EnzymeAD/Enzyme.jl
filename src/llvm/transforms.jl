@@ -537,6 +537,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                             if in(base, seen)
                                 continue
                             end
+			    ccall(:jl_, Cvoid, (Any,), "inst="*string(inst)*" base="*string(base))
                             push!(seen, base)
                             if isa(base, LLVM.Argument) && addrspace(value_type(base)) == 11
                                 continue
@@ -547,6 +548,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 end
                                 continue
                             end
+			    ccall(:jl_, Cvoid, (Any,), "ILLEGAL inst="*string(inst)*" base="*string(base))
                             all_args = false
                             break
                         end
@@ -563,10 +565,12 @@ function nodecayed_phis!(mod::LLVM.Module)
                         while length(addrtodo) != 0
                             v = pop!(addrtodo)
                             base, toffset = get_base_and_offset(v)
+			    ccall(:jl_, Cvoid, (Any,), "v2 inst="*string(inst)*" base="*string(base)*" toffset="*string(toffset)*" offset="*string(offset))
                             if offset === nothing
                                 offset = toffset
                             else
                                 if offset != toffset
+				    ccall(:jl_, Cvoid, (Any,), "ILLEGAL1 v2 inst="*string(inst)*" base="*string(base)*" toffset="*string(toffset)*" offset="*string(offset))
                                     all_args = false
                                     break
                                 end
@@ -584,6 +588,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 end
                                 continue
                             end
+			    ccall(:jl_, Cvoid, (Any,), "ILLEGAL2 v2 inst="*string(inst)*" base="*string(base)*" toffset="*string(toffset)*" offset="*string(offset))
                             all_args = false
                             break
                         end
