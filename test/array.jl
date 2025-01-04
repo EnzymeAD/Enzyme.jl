@@ -2,7 +2,7 @@ using Enzyme, Test
 
 function ptrcopy(B, A)
 @static if VERSION < v"1.11"
-	Base.unsafe_copyto!(B, A, 2)
+	Base.unsafe_copyto!(B, 1, A, 1, 2)
 else
 	Base.unsafe_copyto!(B.ref, A.ref, 2)
 end
