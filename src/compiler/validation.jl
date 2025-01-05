@@ -500,6 +500,10 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
     method_table = Core.Compiler.method_table(interp)
     bt = backtrace(inst)
     dest = called_operand(inst)
+    if isa(dest, LLVM.ConstantExpr) && opcode(dest) == LLVM.API.LLVMIntToPtr && isa(operands(dest)[1], LLVM.ConstantExpr) && opcode(operands(dest)[1]) == LLVM.API.LLVMPtrToInt
+       dest = operands(operands(dest)[1])[1] 
+    end
+
     if isa(dest, LLVM.Function)
         fn = LLVM.name(dest)
 
