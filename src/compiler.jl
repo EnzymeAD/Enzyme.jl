@@ -1313,14 +1313,14 @@ if VERSION >= v"1.11.0-DEV.1552"
         param_type::Type
         last_fwd_rule_world::Union{Nothing, Tuple}
         last_rev_rule_world::Union{Nothing, Tuple}
-        last_ina_rule_world::Tuple
+        last_ina_rule_world::Union{Nothing, Tuple}
     end
 
-    @inline EnzymeCacheToken(target_type::Type, always_inline::Any, method_table::Core.MethodTable, param_type::Type, world::UInt, is_forward::Bool, is_reverse::Bool) =
+    @inline EnzymeCacheToken(target_type::Type, always_inline::Any, method_table::Core.MethodTable, param_type::Type, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
         EnzymeCacheToken(target_type, always_inline, method_table, param_type,
             is_forward ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.forward, Tuple{<:EnzymeCore.EnzymeRules.FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
             is_reverse ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:EnzymeCore.EnzymeRules.RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
-            (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,)
+            inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
         )
 
     GPUCompiler.ci_cache_token(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
@@ -1331,7 +1331,8 @@ if VERSION >= v"1.11.0-DEV.1552"
             typeof(job.config.params),
             job.world,
             job.config.params.mode == API.DEM_ForwardMode,
-            job.config.params.mode != API.DEM_ForwardMode
+            job.config.params.mode != API.DEM_ForwardMode,
+            true
         )
 
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
@@ -1340,6 +1341,7 @@ if VERSION >= v"1.11.0-DEV.1552"
             GPUCompiler.method_table(job),
             job.world,
             job.config.params.mode,
+            true
         )
 else
 
@@ -1365,6 +1367,7 @@ else
             GPUCompiler.method_table(job),
             job.world,
             job.config.params.mode,
+            true
         )
 end
 
