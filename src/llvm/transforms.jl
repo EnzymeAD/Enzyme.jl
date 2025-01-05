@@ -566,7 +566,18 @@ function nodecayed_phis!(mod::LLVM.Module)
                             v = pop!(addrtodo)
                             base, toffset = get_base_and_offset(v)
 			    ccall(:jl_, Cvoid, (Any,), "v2 inst="*string(inst)*" base="*string(base)*" toffset="*string(toffset)*" offset="*string(offset)*" v="*string(v))
-                            if offset === nothing
+
+                            if in(base, seen)
+                                continue
+                            end
+                            push!(seen, base)		
+                            if isa(base, LLVM.PHIInst)
+                                for (v, _) in LLVM.incoming(base)
+                                    push!(addrtodo, v)
+                                end
+                                continue
+                            end
+			    if offset === nothing
                                 offset = toffset
                             else
                                 if offset != toffset
@@ -575,17 +586,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     break
                                 end
                             end
-                            if in(base, seen)
-                                continue
-                            end
-                            push!(seen, base)
                             if isa(base, LLVM.Argument) && addrspace(value_type(base)) == 11
-                                continue
-                            end
-                            if isa(base, LLVM.PHIInst)
-                                for (v, _) in LLVM.incoming(base)
-                                    push!(addrtodo, v)
-                                end
                                 continue
                             end
 			    ccall(:jl_, Cvoid, (Any,), "ILLEGAL2 v2 inst="*string(inst)*" base="*string(base)*" toffset="*string(toffset)*" offset="*string(offset))
