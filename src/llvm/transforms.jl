@@ -565,7 +565,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                         while length(addrtodo) != 0
                             v = pop!(addrtodo)
                             base, toffset = get_base_and_offset(v)
-			    ccall(:jl_, Cvoid, (Any,), "v2 inst="*string(inst)*" base="*string(base)*" toffset="*string(toffset)*" offset="*string(offset))
+			    ccall(:jl_, Cvoid, (Any,), "v2 inst="*string(inst)*" base="*string(base)*" toffset="*string(toffset)*" offset="*string(offset)*" v="*string(v))
                             if offset === nothing
                                 offset = toffset
                             else
