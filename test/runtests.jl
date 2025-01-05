@@ -85,6 +85,7 @@ include("internal_rules.jl")
 include("ruleinvalidation.jl")
 include("typeunstable.jl")
 include("absint.jl")
+include("array.jl")
 
 @static if !Sys.iswindows()
     include("blas.jl")
