@@ -23,3 +23,18 @@ end
 	@test dB[1] === dA1
 	@test dB[2] === dA2
 end
+
+function unsafe_wrap_test(a, i, x)
+	GC.@preserve a begin
+		 ptr = pointer(a)
+		 b = Base.unsafe_wrap(Array, ptr, length(a))
+		 b[i] = x
+	end
+	a[i]
+end
+
+@testset "Unsafe wrap" begin
+	autodiff(Forward, f,  Duplicated(zeros(1), zeros(1)), Const(1), Duplicated(1.0, 2.0))
+
+	# TODO test for batch and reverse
+end
