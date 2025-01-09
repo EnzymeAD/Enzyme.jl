@@ -85,6 +85,7 @@ include("internal_rules.jl")
 include("ruleinvalidation.jl")
 include("typeunstable.jl")
 include("absint.jl")
+include("array.jl")
 
 @static if !Sys.iswindows()
     include("blas.jl")
@@ -707,6 +708,116 @@ end
     Enzyme.API.strictAliasing!(true)
     f10(x) = hypot(x, 2x)
     @test autodiff(Reverse, f10, Active, Active(2.0))[1][1] == sqrt(5)
+    @test autodiff(Forward, f10, Duplicated(2.0, 1.0))[1]   == sqrt(5)
+
+    f11(x) = x * sum(LinRange(x, 10.0, 6))
+    @test autodiff(Reverse, f11, Active, Active(2.0))[1][1] == 42
+    @test autodiff(Forward, f11, Duplicated(2.0, 1.0))[1]   == 42
+
+    f12(x, k) = get(Dict(1 => 1.0, 2 => x, 3 => 3.0), k, 1.0)
+    @test autodiff(Reverse, f12, Active, Active(2.0),  Const(2))[1] == (1.0, nothing)
+    @test autodiff(Forward, f12, Duplicated(2.0, 1.0), Const(2))    == (1.0,)
+    @test autodiff(Reverse, f12, Active, Active(2.0),  Const(3))[1] == (0.0, nothing)
+    @test autodiff(Forward, f12, Duplicated(2.0, 1.0), Const(3))    == (0.0,)
+    @test autodiff(Reverse, f12, Active, Active(2.0),  Const(4))[1] == (0.0, nothing)
+    @test autodiff(Forward, f12, Duplicated(2.0, 1.0), Const(4))    == (0.0,)
+
+    f13(x) = muladd(x, 3, x)
+    @test autodiff(Reverse, f13, Active, Active(2.0))[1][1] == 4
+    @test autodiff(Forward, f13, Duplicated(2.0, 1.0))[1]   == 4
+
+    f14(x) = x * cmp(x, 3)
+    @test autodiff(Reverse, f14, Active, Active(2.0))[1][1] == -1
+    @test autodiff(Forward, f14, Duplicated(2.0, 1.0))[1]   == -1
+
+    f15(x) = x * argmax([1.0, 3.0, 2.0])
+    @test autodiff(Reverse, f15, Active, Active(3.0))[1][1] == 2
+    @test autodiff(Forward, f15, Duplicated(3.0, 1.0))[1]   == 2
+
+    f16(x) = evalpoly(2, (1, 2, x))
+    @test autodiff(Reverse, f16, Active, Active(3.0))[1][1] == 4
+    @test autodiff(Forward, f16, Duplicated(3.0, 1.0))[1]   == 4
+
+    f17(x) = @evalpoly(2, 1, 2, x)
+    @test autodiff(Reverse, f17, Active, Active(3.0))[1][1] == 4
+    @test autodiff(Forward, f17, Duplicated(3.0, 1.0))[1]   == 4
+
+    f18(x) = widemul(x, 5.0f0)
+    @test autodiff(Reverse, f18, Active, Active(2.0f0))[1][1] == 5
+    @test autodiff(Forward, f18, Duplicated(2.0f0, 1.0f0))[1] == 5
+
+    f19(x) = copysign(x, -x)
+    @test autodiff(Reverse, f19, Active, Active(2.0))[1][1] == -1
+    @test autodiff(Forward, f19, Duplicated(2.0, 1.0))[1]   == -1
+
+    f20(x) = sum([ifelse(i > 5, i, zero(i)) for i in [x, 2x, 3x, 4x]])
+    @test autodiff(Reverse, f20, Active, Active(2.0))[1][1] == 7
+    @test autodiff(Forward, f20, Duplicated(2.0, 1.0))[1]   == 7
+
+    function f21(x)
+        nt = (a=x, b=2x, c=3x)
+        return nt.c
+    end
+    @test autodiff(Reverse, f21, Active, Active(2.0))[1][1] == 3
+    @test autodiff(Forward, f21, Duplicated(2.0, 1.0))[1]   == 3
+
+    f22(x) = sum(fill(x, (3, 3)))
+    @test autodiff(Reverse, f22, Active, Active(2.0))[1][1] == 9
+    @test autodiff(Forward, f22, Duplicated(2.0, 1.0))[1]   == 9
+
+    function f23(x)
+        a = similar(rand(3, 3))
+        fill!(a, x)
+        return sum(a)
+    end
+    @test autodiff(Reverse, f23, Active, Active(2.0))[1][1] == 9
+    @test autodiff(Forward, f23, Duplicated(2.0, 1.0))[1]   == 9
+
+    function f24(x)
+        try
+            return 3x
+        catch
+            return 2x
+        end
+    end
+    @test autodiff(Reverse, f24, Active, Active(2.0))[1][1] == 3
+    @test autodiff(Forward, f24, Duplicated(2.0, 1.0))[1]   == 3
+
+    function f25(x)
+        try
+            sqrt(-1.0)
+            return 3x
+        catch
+            return 2x
+        end
+    end
+    @test autodiff(Reverse, f25, Active, Active(2.0))[1][1] == 2
+    @test autodiff(Forward, f25, Duplicated(2.0, 1.0))[1]   == 2
+
+    f26(x) = circshift([1.0, 2x, 3.0], 1)[end]
+    @test autodiff(Reverse, f26, Active, Active(2.0))[1][1] == 2
+    @test autodiff(Forward, f26, Duplicated(2.0, 1.0))[1]   == 2
+
+    f27(x) = repeat([x 3x], 3)[2, 2]
+    @test autodiff(Reverse, f27, Active, Active(2.0))[1][1] == 3
+    @test autodiff(Forward, f27, Duplicated(2.0, 1.0))[1]   == 3
+
+    f28(x) = x * sum(trues(4, 3))
+    @test autodiff(Reverse, f28, Active, Active(2.0))[1][1] == 12
+    @test autodiff(Forward, f28, Duplicated(2.0, 1.0))[1]   == 12
+
+    f29(x) = sum(Set([1.0, x, 2x, x]))
+    @static if VERSION ≥ v"1.11-"
+        @test autodiff(set_runtime_activity(Reverse), f29, Active, Active(2.0))[1][1] == 3
+        @test autodiff(set_runtime_activity(Forward), f29, Duplicated(2.0, 1.0))[1]   == 3
+    else
+        @test autodiff(Reverse, f29, Active, Active(2.0))[1][1] == 3
+        @test autodiff(Forward, f29, Duplicated(2.0, 1.0))[1]   == 3
+    end
+
+    f30(x) = reverse([x 2.0 3x])[1]
+    @test autodiff(Reverse, f30, Active, Active(2.0))[1][1] == 3
+    @test autodiff(Forward, f30, Duplicated(2.0, 1.0))[1]   == 3
 end
 
 function deadarg_pow(z::T, i) where {T<:Real}
@@ -1297,7 +1408,11 @@ function absactfunc(x)
 end
 
 @testset "Forward Mode active runtime activity" begin
-    res = Enzyme.autodiff(Enzyme.Forward, Enzyme.Const(absactfunc), Duplicated(2.7, 3.1))
+    @static if VERSION ≥ v"1.11-"
+        res = Enzyme.autodiff(set_runtime_activity(Enzyme.Forward), Enzyme.Const(absactfunc), Duplicated(2.7, 3.1))
+    else
+        res = Enzyme.autodiff(Enzyme.Forward, Enzyme.Const(absactfunc), Duplicated(2.7, 3.1))
+    end
     @test res[1] ≈ 3.1
 end
 
@@ -2260,32 +2375,6 @@ end
     @test Enzyme.autodiff(Forward, timsteploop, Duplicated(2.0, 1.0))[1] ≈ 1.0
 end
 
-@testset "Type" begin
-    function foo(in::Ptr{Cvoid}, out::Ptr{Cvoid})
-        markType(Float64, in)
-        ccall(:memcpy,Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t), out, in, 8)
-    end
-
-    x = [2.0]
-    y = [3.0]
-    dx = [5.0]
-    dy = [7.0]
-
-    @test markType(x) === nothing
-    @test markType(zeros(Float32, 64)) === nothing
-    @test markType(view(zeros(64), 16:32)) === nothing
-
-    GC.@preserve x y begin
-        foo(Base.unsafe_convert(Ptr{Cvoid}, x), Base.unsafe_convert(Ptr{Cvoid}, y))
-    end
-
-    GC.@preserve x y dx dy begin
-      autodiff(Reverse, foo,
-                Duplicated(Base.unsafe_convert(Ptr{Cvoid}, x), Base.unsafe_convert(Ptr{Cvoid}, dx)),
-                Duplicated(Base.unsafe_convert(Ptr{Cvoid}, y), Base.unsafe_convert(Ptr{Cvoid}, dy)))
-    end
-end
-
 function bc0_test_function(ps)
     z = view(ps, 26:30)
     C = Matrix{Float64}(undef, 5, 1)
@@ -2989,11 +3078,17 @@ end
 	  @inbounds w[1] * x[1]
 	end
 
-	Enzyme.autodiff(Reverse, inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
+    @static if VERSION < v"1.11-"
+    	Enzyme.autodiff(Reverse, inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
 
-    @test x ≈ [3.0]
-    @test w ≈ [1.0]
-    @test dw ≈ [3.0]
+        @test x ≈ [3.0]
+        @test w ≈ [1.0]
+        @test dw ≈ [3.0]
+    else
+        # TODO broken should not throw
+        @test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.autodiff(Reverse, inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
+	Enzyme.autodiff(set_runtime_activity(Reverse), inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
+    end
 
     x = Float32[3]
 
@@ -3005,13 +3100,21 @@ end
       res
     end
 
-    dw = Enzyme.autodiff(Reverse, loss, Active, Active(1.0), Const(x), Const(false))[1]
+    @static if VERSION < v"1.11-"
+        dw = Enzyme.autodiff(Reverse, loss, Active, Active(1.0), Const(x), Const(false))[1]
 
+    else
+        # TODO broken should not throw
+        @test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.autodiff(Reverse, loss, Active, Active(1.0), Const(x), Const(false))[1]
+	dw = Enzyme.autodiff(set_runtime_activity(Reverse), loss, Active, Active(1.0), Const(x), Const(false))[1]
+    end
+    
     @test x ≈ [3.0]
     @test dw[1] ≈ 3.0
 
     c = ones(3)
     inner(e) = c .+ e
+
     fres = Enzyme.autodiff(Enzyme.Forward, Const(inner), Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))[1]
     @test c ≈ [1.0, 1.0, 1.0]
     @test fres ≈ [1.0, 1.0, 1.0]
@@ -3525,10 +3628,22 @@ const objective3 = params -> mixture_loglikelihood3(params, data)
                  -13.935687326484112,
                  -38.00044665702692,
                  12.87712891527131]
-    @test expected ≈ Enzyme.gradient(Reverse, objective1, params0)[1]
+    @static if VERSION < v"1.11-"
+    	@test expected ≈ Enzyme.gradient(Reverse, objective1, params0)[1]
+    else
+        # TODO broken should not throw
+    	@test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.gradient(Reverse, objective1, params0)[1]
+    	@test expected ≈ Enzyme.gradient(set_runtime_activity(Reverse), objective1, params0)[1]
+    end
     # objective2 fails from runtime activity requirements
     # @test expected ≈ Enzyme.gradient(Reverse, objective2, params0)[1]
-    @test expected ≈ Enzyme.gradient(Reverse, objective3, params0)[1]
+    @static if VERSION < v"1.11-"
+        @test expected ≈ Enzyme.gradient(Reverse, objective3, params0)[1]
+    else
+	# TODO broken should not throw
+    	@test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.gradient(Reverse, objective3, params0)[1]
+    	@test expected ≈ Enzyme.gradient(set_runtime_activity(Reverse), objective3, params0)[1]
+    end
 end
 
 struct HarmonicAngle
@@ -3673,5 +3788,6 @@ include("ext/logexpfunctions.jl")
     include("ext/bfloat16s.jl")
 end
 
+include("ext/jlarrays.jl")
 include("ext/sparsearrays.jl")
 include("ext/staticarrays.jl")

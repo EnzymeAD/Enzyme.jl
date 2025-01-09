@@ -19,13 +19,14 @@ function get_job(
 
     tt = Tuple{map(eltype, types.parameters)...}
 
-
-    primal, rt = if world isa Nothing
-        fspec(Core.Typeof(func), types), Compiler.primal_return_type(mode == API.DEM_ForwardMode ? Forward : Reverse, Core.Typeof(func), tt)
-    else
-        fspec(Core.Typeof(func), types, world), Compiler.primal_return_type_world(mode == API.DEM_ForwardMode ? Forward : Reverse, world, Core.Typeof(func), tt)
+    if world isa Nothing
+        world=Base.get_world_counter()
     end
 
+    primal = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, Core.Typeof(func), tt, world)
+    rt = Compiler.primal_return_type_world(mode == API.DEM_ForwardMode ? Forward : Reverse, world, Core.Typeof(func), tt)
+
+    @assert primal !== nothing
     rt = A{rt}
     target = Compiler.EnzymeTarget()
     if modifiedBetween === nothing
@@ -47,18 +48,11 @@ function get_job(
         ErrIfFuncWritten,
         RuntimeActivity,
     )
-    if world isa Nothing
-        return Compiler.CompilerJob(
-            primal,
-            CompilerConfig(target, params; kernel = false),
-        )
-    else
-        return Compiler.CompilerJob(
+    return Compiler.CompilerJob(
             primal,
             CompilerConfig(target, params; kernel = false),
             world,
         )
-    end
 end
 
 function reflect(

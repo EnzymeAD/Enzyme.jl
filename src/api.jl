@@ -1237,6 +1237,11 @@ function memmove_warning!(val)
     ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 
+function EnzymeNonPower2Cache!(val)
+    ptr = cglobal((:EnzymeNonPower2Cache, libEnzyme))
+    ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
 function EnzymeRemoveTrivialAtomicIncrements(func)
     ccall((:EnzymeRemoveTrivialAtomicIncrements, libEnzyme), Cvoid, (LLVMValueRef,), func)
 end

@@ -1,4 +1,8 @@
 const nofreefns = Set{String}((
+    "julia.gc_loaded",
+    "jl_egal__unboxed", "ijl_egal__unboxed",
+    "jl_restore_excstack",
+    "ijl_restore_excstack",
     "ClientGetDevice",
     "BufferOnCPU",
     "pcre2_match_8",
@@ -38,6 +42,8 @@ const nofreefns = Set{String}((
     "jl_array_ptr_copy",
     "ijl_array_copy",
     "jl_array_copy",
+    "ijl_genericmemory_slice",
+    "jl_genericmemory_slice",
     "ijl_genericmemory_copy_slice",
     "jl_genericmemory_copy_slice",
     "ijl_get_nth_field_checked",
@@ -152,6 +158,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "jl_egal__unboxed", "ijl_egal__unboxed",
     "ClientGetDevice",
     "BufferOnCPU",
     "pcre2_match_data_create_from_pattern_8",
@@ -640,6 +647,8 @@ function annotate!(mod::LLVM.Module)
         "ijl_alloc_array_3d",
         "jl_array_copy",
         "ijl_array_copy",
+        "jl_genericmemory_slice",
+        "ijl_genericmemory_slice",
         "jl_genericmemory_copy_slice",
         "ijl_genericmemory_copy_slice",
         "jl_alloc_genericmemory",
@@ -666,8 +675,11 @@ function annotate!(mod::LLVM.Module)
                     LLVM.EnumAttribute("inaccessiblememonly")
                 else
                     if fname in (
+                        "jl_genericmemory_slice",
+                        "ijl_genericmemory_slice",
                         "jl_genericmemory_copy_slice",
-                        "ijl_genericmemory_copy_slice",)
+                        "ijl_genericmemory_copy_slice",
+                        )
                         EnumAttribute(
                             "memory",
                             MemoryEffect(

@@ -417,18 +417,42 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
     end
 
     dup = if Width == 1
-        :(Duplicated(f, df))
+        quote
+            if df isa Base.RefValue && !(f isa Base.RefValue)
+                MixedDuplicated(f, df)
+            else
+                Duplicated(f, df)
+            end
+        end
     else
         fargs = [:df]
         for i = 2:Width
             push!(fargs, Symbol("df_$i"))
         end
-        :(BatchDuplicated(f, ($(fargs...),)))
+        quote
+            if df isa Base.RefValue && !(f isa Base.RefValue)
+                BatchMixedDuplicated(f, ($(fargs...),))
+            else
+                BatchDuplicated(f, ($(fargs...),))
+            end
+        end
     end
     dupty = if Width == 1
-        :(Duplicated{FT})
+        quote
+            if df isa Base.RefValue && !(f isa Base.RefValue)
+                MixedDuplicated{FT}
+            else
+                Duplicated{FT}
+            end
+        end
     else
-        :(BatchDuplicated{FT,$Width})
+        quote
+            if df isa Base.RefValue && !(f isa Base.RefValue)
+                BatchMixedDuplicated{FT,$Width}
+            else
+                BatchDuplicated{FT,$Width}
+            end
+        end
     end
 
     return quote
@@ -817,31 +841,35 @@ function push_if_not_ref(
     return darg
 end
 
+struct PushInnerStruct{reverse, Vals}
+    vals::Vals
+end
+
+@inline function (v::PushInnerStruct{reverse})(@nospecialize(arg), @nospecialize(darg)) where reverse
+    ty = Core.Typeof(arg)
+    actreg = active_reg_nothrow(ty, Val(nothing))
+    if actreg == AnyState
+        Const(arg)
+    elseif actreg == ActiveState
+        Active(arg)
+    elseif actreg == MixedState
+        darg = Base.inferencebarrier(darg)
+        MixedDuplicated(
+            arg,
+            push_if_not_ref(Val(reverse), v.vals, darg, ty)::Base.RefValue{ty},
+        )
+    else
+        Duplicated(arg, darg)
+    end
+end
+
 @inline function iterate_unwrap_augfwd_dup(
     ::Val{reverse},
     vals,
     args,
     dargs,
 ) where {reverse}
-    ntuple(Val(length(args))) do i
-        Base.@_inline_meta
-        arg = args[i]
-        ty = Core.Typeof(arg)
-        actreg = active_reg_nothrow(ty, Val(nothing))
-        if actreg == AnyState
-            Const(arg)
-        elseif actreg == ActiveState
-            Active(arg)
-        elseif actreg == MixedState
-            darg = Base.inferencebarrier(dargs[i])
-            MixedDuplicated(
-                arg,
-                push_if_not_ref(Val(reverse), vals, darg, ty)::Base.RefValue{ty},
-            )
-        else
-            Duplicated(arg, dargs[i])
-        end
-    end
+    map(PushInnerStruct{reverse, typeof(vals)}(vals), args, dargs)
 end
 
 @inline function iterate_unwrap_augfwd_batchdup(

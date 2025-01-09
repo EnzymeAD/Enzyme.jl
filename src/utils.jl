@@ -169,33 +169,131 @@ using Base: _methods_by_ftype
 
 # Julia compiler integration
 
+@inline function has_method(@nospecialize(sig::Type), world::UInt, mt::Union{Nothing,Core.MethodTable})
+    return ccall(:jl_gf_invoke_lookup, Any, (Any, Any, UInt), sig, mt, world) !== nothing
+end
 
-if VERSION >= v"1.11.0-DEV.1552"
+@inline function has_method(@nospecialize(sig::Type), world::UInt, mt::Core.Compiler.InternalMethodTable)
+    return has_method(sig, mt.world, nothing)
+end
 
+@inline function has_method(@nospecialize(sig::Type), world::UInt, mt::Core.Compiler.OverlayMethodTable)
+    return has_method(sig, mt.world, mt.mt) || has_method(sig, mt.world, nothing)
+end
 
-const prevmethodinstance = GPUCompiler.generic_methodinstance
+@inline function lookup_world(
+    @nospecialize(sig::Type),
+    world::UInt,
+    mt::Union{Nothing,Core.MethodTable},
+    min_world::Ref{UInt},
+    max_world::Ref{UInt},
+)
+    res = ccall(
+        :jl_gf_invoke_lookup_worlds,
+        Any,
+        (Any, Any, Csize_t, Ref{Csize_t}, Ref{Csize_t}),
+        sig,
+        mt,
+        world,
+        min_world,
+        max_world,
+    )
+    return res
+end
 
-function methodinstance_generator(world::UInt, source, self, @nospecialize(ft::Type), @nospecialize(tt::Type))
+@inline function lookup_world(
+    @nospecialize(sig::Type),
+    world::UInt,
+    mt::Core.Compiler.InternalMethodTable,
+    min_world::Ref{UInt},
+    max_world::Ref{UInt},
+)
+    res = lookup_world(sig, mt.world, nothing, min_world, max_world)
+    return res
+end
+
+@inline function lookup_world(
+    @nospecialize(sig::Type),
+    world::UInt,
+    mt::Core.Compiler.CachedMethodTable,
+    min_world::Ref{UInt},
+    max_world::Ref{UInt},
+)
+    res = lookup_world(sig, world, mt.table, min_world, max_world)
+    return res
+end
+
+@inline function lookup_world(
+    @nospecialize(sig::Type),
+    world::UInt,
+    mt::Core.Compiler.OverlayMethodTable,
+    min_world::Ref{UInt},
+    max_world::Ref{UInt},
+)
+    res = lookup_world(sig, mt.world, mt.mt, min_world, max_world)
+    if res !== nothing
+        return res
+    else
+        return lookup_world(sig, mt.world, nothing, min_world, max_world)
+    end
+end
+
+@inline function my_methodinstance(@nospecialize(method_table::Union{Core.Compiler.MethodTableView, Nothing}), @nospecialize(ft::Type), @nospecialize(tt::Type), world::UInt, min_world::Union{Nothing, Base.RefValue{UInt}}=nothing, max_world::Union{Nothing, Base.RefValue{UInt}}=nothing)::Union{Core.MethodInstance, Nothing}
+
+    if min_world === nothing
+        min_world = Ref{UInt}(typemin(UInt))
+    end
+    if max_world === nothing
+        max_world = Ref{UInt}(typemax(UInt))
+    end
+
+    sig = Tuple{ft, tt.parameters...}
+    
+    lookup_result = lookup_world(
+        sig, world, method_table, min_world, max_world
+    )
+    if lookup_result === nothing
+        return nothing
+    end
+
+    match = lookup_result::Core.MethodMatch
+    
+    mi = ccall(:jl_specializations_get_linfo, Ref{MethodInstance},
+               (Any, Any, Any), match.method, match.spec_types, match.sparams)
+    return mi::Core.MethodInstance
+end
+
+@inline function my_methodinstance(@nospecialize(interp::Core.Compiler.AbstractInterpreter), @nospecialize(ft::Type), @nospecialize(tt::Type),  min_world::Union{Nothing, Base.RefValue{UInt}}=nothing, max_world::Union{Nothing, Base.RefValue{UInt}}=nothing)::Union{Core.MethodInstance, Nothing}
+    my_methodinstance(Core.Compiler.method_table(interp), ft, tt, interp.world, min_world, max_world)
+end
+
+@inline function my_methodinstance(@nospecialize(mode::Union{EnzymeCore.ForwardMode, EnzymeCore.ReverseMode}), @nospecialize(ft::Type), @nospecialize(tt::Type), world::UInt, min_world::Union{Nothing, Base.RefValue{UInt}}=nothing, max_world::Union{Nothing, Base.RefValue{UInt}}=nothing)::Union{Core.MethodInstance, Nothing}
+    interp = if mode === Nothing
+        Base.NativeInterpreter(; world)
+    else
+        @assert mode == Forward || mode == Reverse
+        Compiler.primal_interp_world(mode, world)
+    end
+    my_methodinstance(interp, ft, tt, min_world, max_world)
+end
+
+function methodinstance_generator(world::UInt, source, self, @nospecialize(mode::Type), @nospecialize(ft::Type), @nospecialize(tt::Type))
     @nospecialize
     @assert Core.Compiler.isType(ft) && Core.Compiler.isType(tt)
     ft = ft.parameters[1]
     tt = tt.parameters[1]
 
-    stub = Core.GeneratedFunctionStub(identity, Core.svec(:methodinstance, :ft, :tt), Core.svec())
+    stub = Core.GeneratedFunctionStub(identity, Core.svec(:methodinstance, :mode, :ft, :tt), Core.svec())
 
     # look up the method match
     method_error = :(throw(MethodError(ft, tt, $world)))
-    sig = Tuple{ft, tt.parameters...}
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
-    match = ccall(:jl_gf_invoke_lookup_worlds, Any,
-                  (Any, Any, Csize_t, Ref{Csize_t}, Ref{Csize_t}),
-                  sig, #=mt=# nothing, world, min_world, max_world)
-    match === nothing && return stub(world, source, method_error)
 
-    # look up the method and code instance
-    mi = ccall(:jl_specializations_get_linfo, Ref{MethodInstance},
-               (Any, Any, Any), match.method, match.spec_types, match.sparams)
+    mi = my_methodinstance(mode.instance, ft, tt, world, min_world, max_world)
+    
+    mi === nothing && return stub(world, source, method_error)
+    
     ci = Core.Compiler.retrieve_code_info(mi, world)
 
     # prepare a new code info
@@ -212,8 +310,8 @@ function methodinstance_generator(world::UInt, source, self, @nospecialize(ft::T
     new_ci.edges = MethodInstance[mi]
 
     # prepare the slots
-    new_ci.slotnames = Symbol[Symbol("#self#"), :ft, :tt]
-    new_ci.slotflags = UInt8[0x00 for i = 1:3]
+    new_ci.slotnames = Symbol[Symbol("#self#"), :mode, :ft, :tt]
+    new_ci.slotflags = UInt8[0x00 for i = 1:4]
 
     # return the method instance
     push!(new_ci.code, Core.Compiler.ReturnNode(mi))
@@ -225,23 +323,15 @@ function methodinstance_generator(world::UInt, source, self, @nospecialize(ft::T
     return new_ci
 end
 
-@eval function prevmethodinstance(ft, tt)::Core.MethodInstance
+@eval function prevmethodinstance(mode, ft, tt)::Core.MethodInstance
     $(Expr(:meta, :generated_only))
     $(Expr(:meta, :generated, methodinstance_generator))
 end
 
 # XXX: version of Base.method_instance that uses a function type
-@inline function my_methodinstance(@nospecialize(ft::Type), @nospecialize(tt::Type),
-                                world::Integer=tls_world_age())::Core.MethodInstance
+@inline function my_methodinstance(@nospecialize(mode::Union{Nothing, EnzymeCore.ForwardMode, EnzymeCore.ReverseMode}), @nospecialize(ft::Type), @nospecialize(tt::Type))::Core.MethodInstance
     sig = GPUCompiler.signature_type_by_tt(ft, tt)
-    if Base.isdispatchtuple(sig)   # JuliaLang/julia#52233
-        return GPUCompiler.methodinstance(ft, tt, world)::Core.MethodInstance
-    else
-        return prevmethodinstance(ft, tt, world)::Core.MethodInstance
-    end
-end
-else
-    import GPUCompiler: methodinstance as my_methodinstance
+    return prevmethodinstance(mode, ft, tt)::Core.MethodInstance
 end
 
 export my_methodinstance

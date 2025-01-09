@@ -267,8 +267,9 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                     end
                 end
                 @assert FT !== nothing
-
-                initfn, _ = get_base_and_offset(LLVM.initializer(fn_got); offsetAllowed=false, inttoptr=false)
+                init = LLVM.initializer(fn_got)
+                if init !== nothing
+                initfn, _ = get_base_and_offset(init; offsetAllowed=false, inttoptr=false)
                 loadfn = first(instructions(first(blocks(initfn))))::LLVM.LoadInst
                 opv = operands(loadfn)[1]
                 if !isa(opv, LLVM.GlobalVariable)
@@ -397,7 +398,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                     newf, _ = get_function!(mod, fused_name, FT)
                     
                     while isa(newf, LLVM.ConstantExpr)
-                        newf = operands(newf)
+                        newf = operands(newf)[1]
                     end
                     push!(function_attributes(newf), StringAttribute("enzyme_math", fname))
                     # TODO we can make this relocatable if desired by having restore lookups re-create this got initializer/etc
@@ -422,13 +423,18 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                 end
                 
                 if !baduse
+                    opv_is_got = opv == fn_got
+
                     push!(deletedfns, initfn)
                     LLVM.initializer!(fn_got, LLVM.null(value_type(LLVM.initializer(fn_got))))
                     replace_uses!(opv, LLVM.null(value_type(opv)))
                     LLVM.API.LLVMDeleteGlobal(opv)
-                    replace_uses!(fn_got, LLVM.null(value_type(fn_got)))
-                    LLVM.API.LLVMDeleteGlobal(fn_got)
+                    if !opv_is_got
+                        replace_uses!(fn_got, LLVM.null(value_type(fn_got)))
+                        LLVM.API.LLVMDeleteGlobal(fn_got)
+                    end
                 end
+                    end
 
             elseif isInline
                 md = metadata(inst)
@@ -474,24 +480,12 @@ const generic_method_offsets = Dict{String,Tuple{Int,Int}}((
     "ijl_apply_generic" => (1, 2),
 ))
 
-@inline function has_method(@nospecialize(sig::Type), world::UInt, mt::Union{Nothing,Core.MethodTable})
-    return ccall(:jl_gf_invoke_lookup, Any, (Any, Any, UInt), sig, mt, world) !== nothing
-end
-
-@inline function has_method(@nospecialize(sig::Type), world::UInt, mt::Core.Compiler.InternalMethodTable)
-    return has_method(sig, mt.world, nothing)
-end
-
-@inline function has_method(@nospecialize(sig::Type), world::UInt, mt::Core.Compiler.OverlayMethodTable)
-    return has_method(sig, mt.mt, mt.world) || has_method(sig, nothing, mt.world)
-end
-
 @inline function is_inactive(@nospecialize(tys::Union{Vector{Union{Type,Core.TypeofVararg}}, Core.SimpleVector}), world::UInt, @nospecialize(mt))
     specTypes = Interpreter.simplify_kw(Tuple{tys...})
-    if has_method(Tuple{typeof(EnzymeRules.inactive),tys...}, world, mt)
+    if Enzyme.has_method(Tuple{typeof(EnzymeRules.inactive),tys...}, world, mt)
         return true
     end
-    if has_method(Tuple{typeof(EnzymeRules.inactive_noinl),tys...}, world, mt)
+    if Enzyme.has_method(Tuple{typeof(EnzymeRules.inactive_noinl),tys...}, world, mt)
         return true
     end
     return false
@@ -506,6 +500,10 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
     method_table = Core.Compiler.method_table(interp)
     bt = backtrace(inst)
     dest = called_operand(inst)
+    if isa(dest, LLVM.ConstantExpr) && opcode(dest) == LLVM.API.LLVMIntToPtr && isa(operands(dest)[1], LLVM.ConstantExpr) && opcode(operands(dest)[1]) == LLVM.API.LLVMPtrToInt
+       dest = operands(operands(dest)[1])[1] 
+    end
+
     if isa(dest, LLVM.Function)
         fn = LLVM.name(dest)
 
@@ -1017,7 +1015,9 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
         if occursin("inttoptr", string(dest))
             # extract the literal pointer
             ptr_arg = first(operands(dest))
-            GPUCompiler.@compiler_assert isa(ptr_arg, ConstantInt) job
+            if !isa(ptr_arg, ConstantInt)
+                throw(AssertionError("Call inst $(string(inst)) dest=$(string(dest))"))
+            end
             ptr_val = convert(Int, ptr_arg)
             ptr = Ptr{Cvoid}(ptr_val)
 
@@ -1033,6 +1033,12 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                 for fn in functions(pmod)
                     if !isempty(LLVM.blocks(fn))
                         linkage!(fn, LLVM.name(fn) != pname ? LLVM.API.LLVMInternalLinkage : LLVM.API.LLVMExternalLinkage)
+                    end
+                end
+                
+                for glob in globals(pmod)
+                    if LLVM.linkage(glob) == LLVM.API.LLVMExternalLinkage
+                        LLVM.initializer!(glob, nothing)
                     end
                 end
 

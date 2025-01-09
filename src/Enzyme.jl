@@ -99,7 +99,7 @@ export autodiff,
     make_zero!
 
 export jacobian, gradient, gradient!, hvp, hvp!, hvp_and_gradient!
-export markType, batch_size, onehot, chunkedonehot
+export batch_size, onehot, chunkedonehot
 
 using LinearAlgebra
 import SparseArrays
@@ -370,7 +370,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     FTy = Core.Typeof(f.val)
 
     rt = if A isa UnionAll
-        Compiler.primal_return_type(mode, FTy, tt)
+        Compiler.primal_return_type(Reverse, FTy, tt)
     else
         eltype(A)
     end
@@ -410,7 +410,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     end
 
     opt_mi = if RABI <: NonGenABI
-        Compiler.fspec(eltype(FA), tt′)
+        my_methodinstance(Reverse, eltype(FA), tt)
     else
         Val(0)
     end
@@ -536,7 +536,7 @@ Like [`autodiff`](@ref) but will try to guess the activity of the return value.
 ) where {FA<:Annotation,CMode<:Mode,Nargs}
     tt = vaEltypeof(args...)
     rt = Compiler.primal_return_type(
-        mode,
+        mode isa ForwardMode ? Forward : Reverse,
         eltype(FA),
         tt,
     )
@@ -632,7 +632,7 @@ f(x) = x*x
     tt = vaEltypeof(args...)
 
     opt_mi = if RABI <: NonGenABI
-        Compiler.fspec(eltype(FA), tt′)
+        my_methodinstance(Forward, eltype(FA), tt)
     else
         Val(0)
     end
@@ -687,7 +687,7 @@ code, as well as high-order differentiation.
     A2 = A
 
     if A isa UnionAll
-        rt = Compiler.primal_return_type(mode, FTy, tt)
+        rt = Compiler.primal_return_type(Reverse, FTy, tt)
         A2 = A{rt}
         if rt == Union{}
             rt = Nothing 
@@ -840,7 +840,7 @@ code, as well as high-order differentiation.
     FT = Core.Typeof(f.val)
 
     if RT isa UnionAll
-        rt = Compiler.primal_return_type(mode, FT, tt)
+        rt = Compiler.primal_return_type(Forward, FT, tt)
 	if rt == Union{}
 	   rt = Nothing
 	end
@@ -968,7 +968,7 @@ result, ∂v, ∂A
 
     tt′ = Tuple{args...}
     opt_mi = if RABI <: NonGenABI
-        Compiler.fspec(eltype(FA), tt′)
+        my_methodinstance(Reverse, eltype(FA), tt)
     else
         Val(0)
     end
@@ -1098,7 +1098,7 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float
 
     tt′ = Tuple{args...}
     opt_mi = if RABI <: NonGenABI
-        Compiler.fspec(eltype(FA), tt′)
+        my_methodinstance(Forward, eltype(FA), tt)
     else
         Val(0)
     end
@@ -1166,7 +1166,7 @@ end
 
     primal_tt = Tuple{map(eltype, args)...}
     opt_mi = if RABI <: NonGenABI
-        Compiler.fspec(eltype(FA), TT)
+        my_methodinstance(Forward, eltype(FA), primal_tt)
     else
         Val(0)
     end
@@ -1196,7 +1196,7 @@ const tape_cache = Dict{UInt,Type}()
 
 const tape_cache_lock = ReentrantLock()
 
-import .Compiler: fspec, remove_innerty, UnknownTapeType
+import .Compiler: remove_innerty, UnknownTapeType
 
 @inline function tape_type(
     parent_job::Union{GPUCompiler.CompilerJob,Nothing},
@@ -1246,7 +1246,7 @@ import .Compiler: fspec, remove_innerty, UnknownTapeType
 
     primal_tt = Tuple{map(eltype, args)...}
 
-    mi = Compiler.fspec(eltype(FA), TT)
+    mi = my_methodinstance(parent_job === nothing ? Reverse : GPUCompiler.get_interpreter(parent_job), eltype(FA), primal_tt)
 
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(
@@ -1381,10 +1381,13 @@ result, ∂v, ∂A
 
     TT = Tuple{args...}
 
-    primal_tt = Tuple{map(eltype, args)...}
-    rt0 = Compiler.primal_return_type(mode, eltype(FA), primal_tt)
-
-    rt = Compiler.remove_innerty(A2){rt0}
+    rt = if A2 isa UnionAll
+        primal_tt = Tuple{map(eltype, args)...}
+	rt0 = Compiler.primal_return_type(Reverse, eltype(FA), primal_tt)
+	A2{rt0}
+    else
+	A2
+    end
 
     primal_ptr = Compiler.deferred_codegen(
         FA,
@@ -1441,78 +1444,6 @@ result, ∂v, ∂A
         )
     adj_thunk = Compiler.AdjointThunk{Ptr{Cvoid},FA,rt,TT,width,TapeType}(adjoint_ptr)
     aug_thunk, adj_thunk
-end
-
-# White lie, should be `Core.LLVMPtr{Cvoid, 0}` but that's not supported by ccallable
-Base.@ccallable function __enzyme_float(x::Ptr{Cvoid})::Cvoid
-    return nothing
-end
-
-Base.@ccallable function __enzyme_double(x::Ptr{Cvoid})::Cvoid
-    return nothing
-end
-
-@inline function markType(::Type{T}, ptr::Ptr{Cvoid}) where {T}
-    markType(Base.unsafe_convert(Ptr{T}, ptr))
-end
-
-@inline function markType(data::Array{T}) where {T}
-    GC.@preserve data markType(pointer(data))
-end
-
-# TODO(WM): We record the type of a single index here, we could give it a range
-@inline function markType(data::SubArray)
-    GC.@preserve data markType(pointer(data))
-end
-
-@inline function markType(data::Ptr{Float32})
-    @static if sizeof(Int) == sizeof(Int64)
-        Base.llvmcall(
-            (
-                "declare void @__enzyme_float(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_float(i8* %p) ret void }",
-                "c",
-            ),
-            Cvoid,
-            Tuple{Ptr{Float32}},
-            data,
-        )
-    else
-        Base.llvmcall(
-            (
-                "declare void @__enzyme_float(i8* nocapture) nounwind define void @c(i32 %q) nounwind alwaysinline { %p = inttoptr i32 %q to i8* call void @__enzyme_float(i8* %p) ret void }",
-                "c",
-            ),
-            Cvoid,
-            Tuple{Ptr{Float32}},
-            data,
-        )
-    end
-    nothing
-end
-
-@inline function markType(data::Ptr{Float64})
-    @static if sizeof(Int) == sizeof(Int64)
-        Base.llvmcall(
-            (
-                "declare void @__enzyme_double(i8* nocapture) nounwind define void @c(i64 %q) nounwind alwaysinline { %p = inttoptr i64 %q to i8* call void @__enzyme_double(i8* %p) ret void }",
-                "c",
-            ),
-            Cvoid,
-            Tuple{Ptr{Float64}},
-            data,
-        )
-    else
-        Base.llvmcall(
-            (
-                "declare void @__enzyme_double(i8* nocapture) nounwind define void @c(i32 %q) nounwind alwaysinline { %p = inttoptr i32 %q to i8* call void @__enzyme_double(i8* %p) ret void }",
-                "c",
-            ),
-            Cvoid,
-            Tuple{Ptr{Float64}},
-            data,
-        )
-    end
-    nothing
 end
 
 include("sugar.jl")

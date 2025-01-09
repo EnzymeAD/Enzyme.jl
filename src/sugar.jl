@@ -7,13 +7,18 @@ function zerosetfn(x, i::Int)
     return res
 end
 
-@generated function onehot_internal(fn::F, x::T, startv::Int, lengthv::Int) where {F, T<:Array}
+function zerosetfn!(x, i::Int, val)
+    @inbounds x[i] += val
+    nothing
+end
+
+@generated function onehot_internal(fn::F, x::T, startv::Int, lengthv::Int) where {F, T<:AbstractArray}
     ir = GPUCompiler.JuliaContext() do ctx
         Base.@_inline_meta
 
         target = Compiler.DefaultCompilerTarget()
         params = Compiler.PrimalCompilerParams(API.DEM_ForwardMode)
-        mi = my_methodinstance(fn, Tuple{T, Int})
+        mi = my_methodinstance(nothing, fn, Tuple{T, Int})
         job = GPUCompiler.CompilerJob(mi, GPUCompiler.CompilerConfig(target, params; kernel = false))
 
         GPUCompiler.prepare_job!(job)
@@ -82,7 +87,7 @@ end
         LLVM.br!(builder, LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, LLVM.ConstantInt(0), len), exit, loop)
 
         LLVM.position!(builder, loop)
-        idx = LLVM.phi!(builder, ity)
+        idx = LLVM.phi!(builder, ity, "onehot.idx")
 
         push!(LLVM.incoming(idx), (LLVM.ConstantInt(0), entry))
         inc = LLVM.add!(builder, idx, LLVM.ConstantInt(1))
@@ -899,7 +904,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
             Core.Typeof(f)
         end
 
-        rt = Compiler.primal_return_type(mode, FRT, tt)
+        rt = Compiler.primal_return_type(Reverse, FRT, tt)
 
         ModifiedBetweenT = (false, false)
         FA = Const{FRT}
@@ -927,7 +932,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
                 dx = MD ? Ref(z) : z
                 res = primal(Const(f), MD ? MixedDuplicated(x, dx) : Duplicated(x, dx))
                 tape = res[1]
-                @inbounds res[3][i] += Compiler.default_adjoint(eltype(typeof(res[3])))
+                zerosetfn!(res[3], i, Compiler.default_adjoint(eltype(typeof(res[3]))))
                 adjoint(Const(f), MD ? MixedDuplicated(x, dx) : Duplicated(x, dx), tape)
                 return MD ? dx[] : dx, (i == 1 ? size(res[3]) : nothing)
             end
@@ -994,8 +999,8 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
                 j = 0
                 for shadow in res[3]
                     j += 1
-                    @inbounds shadow[(i-1)*chunksize+j] +=
-                        Compiler.default_adjoint(eltype(typeof(shadow)))
+                    zerosetfn!(shadow, (i-1)*chunksize+j,
+                               Compiler.default_adjoint(eltype(typeof(shadow))))
                 end
                 (i == num ? adjoint2 : adjoint)(
                     Const(f),
