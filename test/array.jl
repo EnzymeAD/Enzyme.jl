@@ -34,7 +34,7 @@ function unsafe_wrap_test(a, i, x)
 end
 
 @testset "Unsafe wrap" begin
-	autodiff(Forward, f,  Duplicated(zeros(1), zeros(1)), Const(1), Duplicated(1.0, 2.0))
+   autodiff(Forward, unsafe_wrap_test,  Duplicated(zeros(1), zeros(1)), Const(1), Duplicated(1.0, 2.0))
 
 	# TODO test for batch and reverse
 end
