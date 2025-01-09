@@ -1779,6 +1779,57 @@ end
     return nothing
 end
 
+@register_fwd function jl_ptr_to_array_fwd(B, orig, gutils, normalR, shadowR)
+    if is_constant_inst(gutils, orig)
+        return true
+    end
+    origops = collect(operands(orig))
+    width = get_width(gutils)
+    shadowin = invert_pointer(gutils, origops[2], B)
+
+    valTys = API.CValueType[
+        API.VT_Primal,
+        API.VT_Shadow,
+        API.VT_Primal,
+        API.VT_Primal,
+    ]
+
+    shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+    for idx = 1:width
+        ev = if width == 1
+            shadowin
+        else
+            extract_value!(B, shadowin, idx - 1)
+        end
+
+	args = LLVM.Value[
+	        new_from_original(gutils, origops[1]),
+	        ev, # data
+	        new_from_original(gutils, origops[3]),
+	        new_from_original(gutils, origops[4]),
+	]
+	# TODO do runtime activity relevant errors and checks
+
+        cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, valTys, false) #=lookup=#
+        debug_from_orig!(gutils, cal, orig)
+        callconv!(cal, callconv(orig))
+	if width == 1
+	    shadowres = cal
+	else
+            shadowres = insert_value!(B, shadowres, call, idx - 1)
+	end
+    end
+    unsafe_store!(shadowR, shadowres.ref)
+
+    return false
+end
+@register_aug function jl_ptr_to_array_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    jl_ptr_to_array_fwd(B, orig, gutils, normalR, shadowR)
+end
+@register_rev function jl_ptr_to_array_rev(B, orig, gutils, tape)
+    return nothing
+end
+
 @register_fwd function genericmemory_copyto_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_inst(gutils, orig)
         return true
@@ -2399,6 +2450,12 @@ end
         @augfunc(jl_array_ptr_copy_augfwd),
         @revfunc(jl_array_ptr_copy_rev),
         @fwdfunc(jl_array_ptr_copy_fwd),
+    )
+    register_handler!(
+        ("jl_ptr_to_array_1d", "ijl_ptr_to_array_1d", "jl_ptr_to_array", "ijl_ptr_to_array"),
+        @augfunc(jl_ptr_to_array_augfwd),
+        @revfunc(jl_ptr_to_array_rev),
+        @fwdfunc(jl_ptr_to_array_fwd),
     )
     register_handler!(
         (),
