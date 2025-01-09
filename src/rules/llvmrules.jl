@@ -1785,15 +1785,8 @@ end
     end
     origops = collect(operands(orig))
     width = get_width(gutils)
-    origops = collect(operands(orig))
-    width = get_width(gutils)
+    shadowin = invert_pointer(gutils, origops[2], B)
 
-    args = LLVM.Value[
-        new_from_original(gutils, origops[1]),
-        invert_pointer(gutils, origops[2], B), # data
-        new_from_original(gutils, origops[3]),
-        new_from_original(gutils, origops[4]),
-    ]
     valTys = API.CValueType[
         API.VT_Primal,
         API.VT_Shadow,
@@ -1801,28 +1794,30 @@ end
         API.VT_Primal,
     ]
 
-    if width == 1
-        vargs = args
-        cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, vargs, valTys, false) #=lookup=#
+    shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+    for idx = 1:width
+        ev = if width == 1
+            shadowin
+        else
+            extract_value!(B, shadowin, idx - 1)
+        end
+
+	args = LLVM.Value[
+	        new_from_original(gutils, origops[1]),
+	        ev, # data
+	        new_from_original(gutils, origops[3]),
+	        new_from_original(gutils, origops[4]),
+	]
+	# TODO do runtime activity relevant errors and checks
+
+        cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, valTys, false) #=lookup=#
         debug_from_orig!(gutils, cal, orig)
         callconv!(cal, callconv(orig))
-        shadowres = cal
-    else
-        shadowres =
-            UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-        for idx = 1:width
-            vargs = LLVM.Value[
-                args[1],
-                extract_value!(B, args[2], idx - 1), # data
-                args[3],
-                args[4],
-            ]
-            cal =
-                call_samefunc_with_inverted_bundles!(B, gutils, orig, vargs, valTys, false) #=lookup=#
-            debug_from_orig!(gutils, cal, orig)
-            callconv!(cal, callconv(orig))
+	if width == 1
+	    shadowres = cal
+	else
             shadowres = insert_value!(B, shadowres, call, idx - 1)
-        end
+	end
     end
     unsafe_store!(shadowR, shadowres.ref)
 
