@@ -1,7 +1,7 @@
 module RecursiveMaps
 
 using EnzymeCore: EnzymeCore, isvectortype, isscalartype
-using ..Compiler: Compiler, guaranteed_const, guaranteed_const_nongen, guaranteed_nonactive,
+using ..Compiler: guaranteed_const, guaranteed_const_nongen, guaranteed_nonactive,
     guaranteed_nonactive_nongen
 
 ### IsInactive: helper for creating consistent inactive/nonactive type checkers
@@ -225,7 +225,7 @@ function recursive_map(
     f::F,
     ys::YS{Nout,T},
     xs::NTuple{Nin,T},
-    copy_if_inactive::Val=Val{false},
+    copy_if_inactive::Val=Val(false),
     isinactivetype::L=IsInactive{false}(),
 ) where {F,Nout,Nin,T,L}
     newys = if isinactivetype(T)
@@ -244,7 +244,7 @@ function recursive_map(
     f::F,
     ys::YS{Nout,T},
     xs::NTuple{Nin,T},
-    copy_if_inactive::Val=Val{false},
+    copy_if_inactive::Val=Val(false),
     isinactivetype::L=IsInactive{false}(),
 ) where {F,Nout,Nin,T,L}
     # determine whether to continue recursion, copy/share, or retrieve from cache
@@ -742,7 +742,7 @@ end
 
 function _make_zero!!(prev::T) where {T}
     @assert isvectortype(T)  # otherwise infinite loop
-    return (EnzymeCore.make_zero(prev),)::Tuple{T}
+    return (EnzymeCore.make_zero(prev)::T,)
 end
 
 function _make_zero!!(val::T, _val::T) where {T}
@@ -750,7 +750,7 @@ function _make_zero!!(val::T, _val::T) where {T}
     @assert isvectortype(T)   # otherwise infinite loop
     @assert val === _val
     EnzymeCore.make_zero!(val)
-    return (val,)::Tuple{T}
+    return (val::T,)
 end
 
 # alternative entry point for passing custom IdDict

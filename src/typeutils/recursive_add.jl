@@ -21,7 +21,7 @@ non-differentiable values.
 function recursive_add(x::T, y::T, f::F=identity, forcelhs::L=guaranteed_const) where {T,F,L}
     function addf(xi::S, yi::S) where {S}
         @assert EnzymeCore.isvectortype(S)
-        return (xi + f(yi),)::Tuple{S}
+        return ((xi + f(yi))::S,)
     end
     return only(recursive_map(addf, Val(1), (x, y), Val(false), forcelhs))::T
 end
@@ -59,33 +59,33 @@ end
 function accumulate_seen!(
     f::F, seen::IdDict, isinactivetype::RecursiveMaps.IsInactive
 ) where {F}
+    isinactivetype_or_seen = RecursiveMaps.IsInactive(
+        isinactivetype, RecursiveMaps.iscachedtype
+    )
     for (k, v) in seen
-        _accumulate_seen_item!(f, k, v, isinactivetype)
+        _accumulate_seen_item!(f, k, v, isinactivetype, isinactivetype_or_seen)
     end
     return nothing
 end
 
 function _accumulate_seen_item!(
-    f::F, k::T, v::T, isinactivetype::RecursiveMaps.IsInactive
+    f::F, k::T, v::T, isinactivetype, isinactivetype_or_seen
 ) where {F,T}
     function addf!!(ki::S, vi::S) where {S}
         @assert EnzymeCore.isvectortype(S)
-        return (ki .+ f.(vi),)::Tuple{S}
+        return ((ki .+ f.(vi))::S,)
     end
     function addf!!(ki::S, _ki::S, vi::S) where {S}
         @assert !EnzymeCore.isscalartype(S)
         @assert EnzymeCore.isvectortype(S)
         @assert ki === _ki
         ki .+= f.(vi)
-        return (ki,)::Tuple{S}
+        return (ki::S,)
     end
     RecursiveMaps.check_nonactive(T, isinactivetype)
     if !isinactivetype(T)
-        is_inactive_or_seen_type = RecursiveMaps.IsInactive(
-            isinactivetype, RecursiveMaps.iscachedtype
-        )
         newks = RecursiveMaps.recursive_map_inner(
-            nothing, addf!!, (k,), (k, v), Val(false), is_inactive_or_seen_type
+            nothing, addf!!, (k,), (k, v), Val(false), isinactivetype_or_seen
         )
         @assert only(newks) === k
     end
@@ -115,7 +115,7 @@ function accumulate_into!(into::T, from::T) where {T}
     # may not show in coverage but both base cases are covered via deepcopy custom rule tests
     function accumulate_into!!(into_i::S, from_i::S) where {S}
         @assert EnzymeCore.isvectortype(S)
-        return (into_i + from_i, convert(S, zero(from_i)))::Tuple{S,S}
+        return ((into_i + from_i)::S, convert(S, zero(from_i))::S)
     end
     function accumulate_into!!(into_i::S, from_i::S, _into_i::S, _from_i::S) where {S}
         @assert !EnzymeCore.isscalartype(S)
@@ -123,7 +123,7 @@ function accumulate_into!(into::T, from::T) where {T}
         @assert (into_i === _into_i) && (from_i === _from_i)
         into_i .+= from_i
         fill!(from_i, false)
-        return (into_i, from_i)::Tuple{S,S}
+        return (into_i::S, from_i::S)
     end
     recursive_map!(accumulate_into!!, (into, from), (into, from))
     return nothing
