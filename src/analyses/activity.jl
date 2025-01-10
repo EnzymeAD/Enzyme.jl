@@ -414,7 +414,7 @@ Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_c
     return res
 end
 
-Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_const_nongen(::Type{T}, world)::Bool where {T}
+Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_const_nongen(::Type{T}, world=nothing)::Bool where {T}
     rt = active_reg_inner(T, (), world)
     res = rt == AnyState
     return res
@@ -427,7 +427,7 @@ Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_n
     return rt == Enzyme.Compiler.AnyState || rt == Enzyme.Compiler.DupState
 end
 
-Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_nonactive_nongen(::Type{T}, world)::Bool where {T}
+Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_nonactive_nongen(::Type{T}, world=nothing)::Bool where {T}
     rt = Enzyme.Compiler.active_reg_inner(T, (), world)
     return rt == Enzyme.Compiler.AnyState || rt == Enzyme.Compiler.DupState
 end
