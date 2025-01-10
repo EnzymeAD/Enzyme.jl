@@ -143,7 +143,7 @@ function Base.:(==)(a::MutableIncomplete, b::MutableIncomplete)
     return true
 end
 
-mutable struct CustomVector{T} <: AbstractVector{T}
+mutable struct CustomVector{T}
     data::Vector{T}
 end
 
@@ -551,43 +551,35 @@ function test_make_zero()
         @test a[1] === 1.0                        # no mutation of original
     end
     @testset "runtime inactive" begin
-        a = [1.0]
-        v = CustomVector(a)
-        with_logger(SimpleLogger(Warn)) do  # silence @info "make_zero(::CustomVector)"
-            # ensure compile-time methods are evaluated while CustomVector is considered active
-            @assert !EnzymeRules.inactive_type(CustomVector)
-            v_makez = make_zero(v, Val(false), Val(false))
-            @assert v_makez == CustomVector([0.0])
+        # verify that MutableWrapper is seen as active
+        a = MutableWrapper(1.0)
+        @assert !EnzymeRules.inactive_type(typeof(a))
+        a_makez = make_zero(a)
+        @test a_makez == MutableWrapper(0.0)
 
-            # verify that runtime methods also see CustomVector as active
-            v_makez = make_zero(v, Val(false), Val(true))
-            @test v_makez == CustomVector([0.0])
+        # mark MutableWrapper as inactive
+        @eval @inline EnzymeRules.inactive_type(::Type{<:MutableWrapper}) = true
 
-            # mark CustomVector as inactive
-            @eval @inline EnzymeRules.inactive_type(::Type{<:CustomVector}) = true
+        # verify that MutableWrapper is seen as inactive and shared/copied according to
+        # copy_if_inactive
+        @assert a.x === 1.0  # sanity check
+        a_makez = @invokelatest make_zero(a)
+        @test a_makez == a  # equal
+        @assert a.x === 1.0  # sanity check
+        a_makez = @invokelatest make_zero(a, Val(false))
+        @test a_makez === a  # identical
+        @assert a.x === 1.0  # sanity check
+        a_makez = @invokelatest make_zero(a, Val(true))
+        @test a_makez !== a  # not identical
+        @test a_makez == a   # but equal
 
-            # runtime_inactive == false => redefined inactive_type should have no effect
-            v_makez = @invokelatest make_zero(v, Val(false), Val(false))
-            @test v_makez == CustomVector([0.0])
+        # mark MutableWrapper as active again
+        @eval @inline EnzymeRules.inactive_type(::Type{<:MutableWrapper}) = false
 
-            # runtime_inactive == true => redefined inactive_type should take effect:
-            # CustomVector considered inactive and won't be zeroed, but
-            # shared/copied according to copy_if_inactive instead
-            v_makez = @invokelatest make_zero(v, Val(false), Val(true))
-            @test v_makez === v
-            v_makez = @invokelatest make_zero(v, Val(true), Val(true))
-            @test v_makez !== v
-            @test v_makez == CustomVector([1.0])
-
-            # mark CustomVector as active again
-            @eval @inline EnzymeRules.inactive_type(::Type{<:CustomVector}) = false
-
-            # verify that both compile-time and runtime methods see CustomVector as active
-            v_makez = @invokelatest make_zero(v, Val(false), Val(false))
-            @test v_makez == CustomVector([0.0])
-            v_makez = @invokelatest make_zero(v, Val(false), Val(true))
-            @test v_makez == CustomVector([0.0])
-        end
+        # verify that MutableWrapper is seen as active
+        @assert a.x === 1.0  # sanity check
+        a_makez = @invokelatest make_zero(a)
+        @test a_makez == MutableWrapper(0.0)
     end
     @testset "undefined fields/unassigned elements" begin
         @testset "array w inactive/active/mutable/unassigned" begin
@@ -850,45 +842,27 @@ function test_make_zero!()
         @test a[1] === 0.0           # correct value
     end
     @testset "runtime inactive" begin
-        a = [1.0]
-        v = CustomVector(a)
-        with_logger(SimpleLogger(Warn)) do  # silence @info "make_zero!(::CustomVector)"
-            # ensure compile-time methods are evaluated while CustomVector is considered active
-            @assert !EnzymeRules.inactive_type(CustomVector)
-            make_zero!(v, Val(false))
-            @assert v == CustomVector([0.0])
+        # verify that MutableWrapper is seen as active
+        a = MutableWrapper(1.0)
+        @assert !EnzymeRules.inactive_type(typeof(a))
+        make_zero!(a)
+        @test a == MutableWrapper(0.0)
 
-            # verify that runtime methods also see CustomVector as active
-            v.data[1] = 1.0
-            make_zero!(v, Val(true))
-            @test v == CustomVector([0.0])
+        # mark MutableWrapper as inactive
+        @eval @inline EnzymeRules.inactive_type(::Type{<:MutableWrapper}) = true
 
-            # mark CustomVector as inactive
-            @eval @inline EnzymeRules.inactive_type(::Type{<:CustomVector}) = true
+        # verify that MutableWrapper is seen as inactive
+        a.x = 1.0
+        @invokelatest make_zero!(a)
+        @test a == MutableWrapper(1.0)
 
-            # runtime_inactive == false => compile-time methods still used, redefined
-            # inactive_type should have no effect
-            v.data[1] = 1.0
-            @invokelatest make_zero!(v, Val(false))
-            @test v == CustomVector([0.0])
+        # mark MutableWrapper as active again
+        @eval @inline EnzymeRules.inactive_type(::Type{<:MutableWrapper}) = false
 
-            # runtime_inactive == true => redefined inactive_type should take effect
-            # CustomVector considered inactive and won't be zeroed
-            v.data[1] = 1.0
-            @invokelatest make_zero!(v, Val(true))
-            @test v == CustomVector([1.0])
-
-            # mark CustomVector as active again
-            @eval @inline EnzymeRules.inactive_type(::Type{<:CustomVector}) = false
-
-            # verify that both compile-time and runtime methods see CustomVector as active
-            v.data[1] = 1.0
-            @invokelatest make_zero!(v, Val(false))
-            @test v == CustomVector([0.0])
-            v.data[1] = 1.0
-            @invokelatest make_zero!(v, Val(true))
-            @test v == CustomVector([0.0])
-        end
+        # verify that MutableWrapper is seen as active
+        a.x = 1.0
+        @invokelatest make_zero!(a)
+        @test a == MutableWrapper(0.0)
     end
     @testset "undefined fields/unassigned elements" begin
         @testset "array w inactive/active/mutable/unassigned" begin

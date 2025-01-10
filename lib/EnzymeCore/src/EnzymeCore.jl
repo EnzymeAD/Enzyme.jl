@@ -506,60 +506,35 @@ function autodiff_thunk end
 function autodiff_deferred_thunk end
 
 """
-    make_zero(
-        prev::T, ::Val{copy_if_inactive}=Val(false), ::Val{runtime_inactive}=Val(false)
-    )::T
-    make_zero(
-        ::Type{T},
-        seen::IdDict,
-        prev::T,
-        ::Val{copy_if_inactive}=Val(false),
-        ::Val{runtime_inactive}=Val(false),
-    )::T
+    make_zero(prev::T, ::Val{copy_if_inactive}=Val(false))::T
+    make_zero(::Type{T}, seen::IdDict, prev::T, ::Val{copy_if_inactive}=Val(false))::T
 
 Recursively make a copy of the value `prev::T` in which all differentiable values are
 zeroed. The argument `copy_if_inactive` specifies what to do if the type `T` or any
 of its constituent parts is guaranteed to be inactive (non-differentiable): reuse `prev`s
 instance (the default) or make a copy.
 
-The argument `runtime_inactive` specifies whether each constituent type is checked for being
-guaranteed inactive at runtime for every call to `make_zero`, or if this can be checked once
-at compile-time and reused across multiple calls to `make_zero` and related functions (the
-default). Runtime checks are necessary to pick up recently added methods to
-`EnzymeRules.inactive_type`, but may incur a significant performance penalty and is usually
-not needed unless `EnzymeRules.inactive_type` is extended interactively for types that have
-previously been passed to `make_zero` or related functions.
-
 Extending this method for custom types is rarely needed. If you implement a new type, such
-as a GPU array type, for which `make_zero` should directly invoke `zero` rather than
-iterate/broadcast when the eltype is scalar, it is sufficient to implement `Base.zero` and
-make sure your type subtypes `DenseArray`. (If subtyping `DenseArray` is not appropriate,
-extend [`EnzymeCore.isvectortype`](@ref) directly instead.)
+as a GPU array type, on which `make_zero` should directly invoke `zero` when the eltype is
+scalar, it is sufficient to implement `Base.zero` and make sure your type subtypes
+`DenseArray`. (If subtyping `DenseArray` is not appropriate, extend
+[`EnzymeCore.isvectortype`](@ref) instead.)
 """
 function make_zero end
 
 """
-    make_zero!(val::T, [seen::IdDict], ::Val{runtime_inactive}=Val(false))::Nothing
+    make_zero!(val::T, [seen::IdDict])::Nothing
 
 Recursively set a variable's differentiable values to zero. Only applicable for types `T`
 that are mutable or hold all differentiable values in mutable storage (e.g.,
 `Tuple{Vector{Float64}}` qualifies but `Tuple{Float64}` does not). The recursion skips over
 parts of `val` that are guaranteed to be inactive.
 
-The argument `runtime_inactive` specifies whether each constituent type is checked for being
-guaranteed inactive at runtime for every call to `make_zero!`, or if this can be checked once
-at compile-time and reused across multiple calls to `make_zero!` and related functions (the
-default). Runtime checks are necessary to pick up recently added methods to
-`EnzymeRules.inactive_type`, but may incur a significant performance penalty and is usually
-not needed unless `EnzymeRules.inactive_type` is extended interactively for types that have
-previously been passed to `make_zero!` or related functions.
-
 Extending this method for custom types is rarely needed. If you implement a new mutable
-type, such as a GPU array type, for which `make_zero!` should directly invoke
-`fill!(x, false)` rather than iterate/broadcast when the eltype is scalar, it is sufficient
-to implement `Base.zero`, `Base.fill!`, and make sure your type subtypes `DenseArray`. (If
-subtyping `DenseArray` is not appropriate, extend [`EnzymeCore.isvectortype`](@ref) directly
-instead.)
+type, such as a GPU array type, on which `make_zero!` should directly invoke
+`fill!(x, false)` when the eltype is scalar, it is sufficient to implement `Base.zero`,
+`Base.fill!`, and make sure your type subtypes `DenseArray`. (If subtyping `DenseArray` is
+not appropriate, extend [`EnzymeCore.isvectortype`](@ref) instead.)
 """
 function make_zero! end
 
@@ -569,7 +544,7 @@ function make_zero! end
 Trait defining types whose values should be considered leaf nodes when [`make_zero`](@ref)
 and [`make_zero!`](@ref) recurse through an object.
 
-By default, `isvectortype(T) == true` for `T` such that `isscalartype(T) == true` or
+By default, `isvectortype(T) == true` when `isscalartype(T) == true` or when
 `T <: DenseArray{U}` where `U` is a bitstype and `isscalartype(U) == true`.
 
 A new vector type, such as a GPU array type, should normally subtype `DenseArray` and
@@ -607,7 +582,7 @@ in-place mutation through any Julia API; `isscalartype(BigFloat) == true` ensure
 `make_zero!` will not try to mutate `BigFloat` values.[^BigFloat]
 
 By default, `isscalartype(T) == true` and `isscalartype(Complex{T}) == true` for concrete
-`T <: AbstractFloat`.
+types `T <: AbstractFloat`.
 
 A hypothetical new real number type with Enzyme support should usually subtype
 `AbstractFloat` and inherit the `isscalartype` trait that way. If this is not appropriate,
