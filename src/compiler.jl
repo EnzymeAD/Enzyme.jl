@@ -603,7 +603,7 @@ function julia_undef_value_for_type(
 end
 
 function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType), @nospecialize(prev::LLVM.Value))::Nothing
-    if Base.datatype_pointerfree(Ty)
+    if Base.datatype_pointerfree(Ty) || Ty === String
         return
     end
 
