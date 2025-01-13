@@ -1488,7 +1488,7 @@ end
                     end
                 elseif args[i] <: MixedDuplicated
                     :(args[$i].dval[])
-                else
+                else  # args[i] <: BatchMixedDuplicated
                     :(args[$i].dval[$w][])
                 end
 
@@ -1500,9 +1500,11 @@ end
                         T = Core.Typeof(vecld)
                         @assert !(vecld isa Base.RefValue)
                         vec[] = recursive_index_add(T, vecld, Val(idx_in_vec), $expr)
-                    else
+                    elseif $(args[i] <: Active)
                         val = @inbounds vec[idx_in_vec]
                         add_into_vec!(Base.inferencebarrier(val), $expr, vec, idx_in_vec)
+                    else  # args[i] <: MixedDuplicated || args[i] <: BatchMixedDuplicated
+                        @inbounds vec[idx_in_vec] = $expr
                     end
                 end
             else

@@ -66,81 +66,128 @@ end
 
 @testset "Mixed Reverse Apply iterate (tuple)" begin
     x = [((2.0, [2.7]), (3.0, [3.14])), ((7.9, [47.0]), (11.2, [56.0]))]
-    dx = [((0.0, [0.0]), (0.0, [0.0])), ((0.0, [0.0]), (0.0, [0.0]))]
-    res = Enzyme.autodiff(Reverse, mixed_metasumsq, Active, Const(metaconcat), Duplicated(x, dx))
-    @test tupapprox(dx, [((4.0, [5.4]), (6.0, [6.28])), ((15.8, [94.0]), (22.4, [112.0]))])
+    primal = 5562.9996
+    @testset "$label" for (label, dx_pre, dx_post) in [
+        (
+            "dx == 0",
+            [((0.0, [0.0]), (0.0, [0.0])), ((0.0, [0.0]), (0.0, [0.0]))],
+            [((4.0, [5.4]), (6.0, [6.28])), ((15.8, [94.0]), (22.4, [112.0]))],
+        ),
+        (
+            "dx != 0",
+            [((1.0, [-2.0]), (-3.0, [4.0])), ((5.0, [-6.0]), (-7.0, [8.0]))],
+            [((5.0, [3.4]), (3.0, [10.28])), ((20.8, [88.0]), (15.4, [120.0]))],
+        ),
+    ]
+        dx = deepcopy(dx_pre)
+        Enzyme.autodiff(Reverse, mixed_metasumsq, Active, Const(metaconcat), Duplicated(x, dx))
+        @test tupapprox(dx, dx_post)
 
-    x = [((2.0, [2.7]), (3.0, [3.14])), ((7.9, [47.0]), (11.2, [56.0]))]
-
-    dx = [((0.0, [0.0]), (0.0, [0.0])), ((0.0, [0.0]), (0.0, [0.0]))]
-    res = Enzyme.autodiff(ReverseWithPrimal, mixed_metasumsq, Active, Const(metaconcat), Duplicated(x, dx))
-    @test res[2] ≈ 5562.9996
-    @test tupapprox(dx, [((4.0, [5.4]), (6.0, [6.28])), ((15.8, [94.0]), (22.4, [112.0]))])
+        dx = deepcopy(dx_pre)
+        res = Enzyme.autodiff(ReverseWithPrimal, mixed_metasumsq, Active, Const(metaconcat), Duplicated(x, dx))
+        @test res[2] ≈ primal
+        @test tupapprox(dx, dx_post)
+    end
 end
 
 @testset "BatchMixed Reverse Apply iterate (tuple)" begin
     x = [((2.0, [2.7]), (3.0, [3.14])), ((7.9, [47.0]), (11.2, [56.0]))]
-    dx = [((0.0, [0.0]), (0.0, [0.0])), ((0.0, [0.0]), (0.0, [0.0]))]
-    dx2 = [((0.0, [0.0]), (0.0, [0.0])), ((0.0, [0.0]), (0.0, [0.0]))]
+    primal = 5562.9996
+    out_pre, dout_pre, dout2_pre = 0.0, 1.0, 3.0
+    @testset "$label" for (label, dx_pre, dx_post, dx2_post) in [
+        (
+            "dx == 0",
+            [((0.0, [0.0]), (0.0, [0.0])), ((0.0, [0.0]), (0.0, [0.0]))],
+            [((4.0, [5.4]), (6.0, [6.28])), ((15.8, [94.0]), (22.4, [112.0]))],
+            [((3 * 4.0, [3 * 5.4]), (3 * 6.0, [3 * 6.28])), ((3 * 15.8, [3 * 94.0]), (3 * 22.4, [3 * 112.0]))],
+        ),
+        (
+            "dx != 0",
+            [((1.0, [-2.0]), (-3.0, [4.0])), ((5.0, [-6.0]), (-7.0, [8.0]))],
+            [((5.0, [3.4]), (3.0, [10.28])), ((20.8, [88.0]), (15.4, [120.0]))],
+            [((1.0 + 3 * 4.0, [-2.0 + 3 * 5.4]), (-3.0 + 3 * 6.0, [4.0 + 3 * 6.28])), ((5.0 + 3 * 15.8, [-6.0 + 3 * 94.0]), (-7.0 + 3 * 22.4, [8.0 + 3 * 112.0]))],
+        ),
+    ]
+        out, dout, dout2 = Ref.((out_pre, dout_pre, dout2_pre))
+        dx, dx2 = deepcopy.((dx_pre, dx_pre))
+        Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicatedNoNeed(out, (dout, dout2)), Const(mixed_metasumsq), Const(metaconcat), BatchDuplicated(x, (dx, dx2)))
+        @test dout[] ≈ 0
+        @test dout2[] ≈ 0
+        @test tupapprox(dx, dx_post)
+        @test tupapprox(dx2, dx2_post)
 
-    out = Ref(0.0)
-    dout = Ref(1.0)
-    dout2 = Ref(3.0)
-    Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicatedNoNeed(out, (dout, dout2)), Const(mixed_metasumsq), Const(metaconcat), BatchDuplicated(x, (dx, dx2)))
-    @test tupapprox(dx, [((4.0, [5.4]), (6.0, [6.28])), ((15.8, [94.0]), (22.4, [112.0]))])
-    @test tupapprox(dx2, [((3*4.0, [3*5.4]), (3*6.0, [3*6.28])), ((3*15.8, [3*94.0]), (3*22.4, [3*112.0]))])
-
-    x = [((2.0, [2.7]), (3.0, [3.14])), ((7.9, [47.0]), (11.2, [56.0]))]
-    dx = [((0.0, [0.0]), (0.0, [0.0])), ((0.0, [0.0]), (0.0, [0.0]))]
-    dx2 = [((0.0, [0.0]), (0.0, [0.0])), ((0.0, [0.0]), (0.0, [0.0]))]
-
-    out = Ref(0.0)
-    dout = Ref(1.0)
-    dout2 = Ref(3.0)
-    res = Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicated(out, (dout, dout2)), Const(mixed_metasumsq), Const(metaconcat), BatchDuplicated(x, (dx, dx2)))
-    @test out[] ≈ 5562.9996
-    @test tupapprox(dx, [((4.0, [5.4]), (6.0, [6.28])), ((15.8, [94.0]), (22.4, [112.0]))])
-    @test tupapprox(dx2, [((3*4.0, [3*5.4]), (3*6.0, [3*6.28])), ((3*15.8, [3*94.0]), (3*22.4, [3*112.0]))])
+        out, dout, dout2 = Ref.((out_pre, dout_pre, dout2_pre))
+        dx, dx2 = deepcopy.((dx_pre, dx_pre))
+        Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicated(out, (dout, dout2)), Const(mixed_metasumsq), Const(metaconcat), BatchDuplicated(x, (dx, dx2)))
+        @test out[] ≈ primal
+        @test dout[] ≈ 0
+        @test dout2[] ≈ 0
+        @test tupapprox(dx, dx_post)
+        @test tupapprox(dx2, dx2_post)
+    end
 end
-
 
 @testset "Mixed Reverse Apply iterate (list)" begin
     x = [[(2.0, [2.7]), (3.0, [3.14])], [(7.9, [47.0]), (11.2, [56.0])]]
-    dx = [[(0.0, [0.0]), (0.0, [0.0])], [(0.0, [0.0]), (0.0, [0.0])]]
+    primal = 5562.9996
+    @testset "$label" for (label, dx_pre, dx_post) in [
+        (
+            "dx == 0",
+            [[(0.0, [0.0]), (0.0, [0.0])], [(0.0, [0.0]), (0.0, [0.0])]],
+            [[(4.0, [5.4]), (6.0, [6.28])], [(15.8, [94.0]), (22.4, [112.0])]],
+        ),
+        (
+            "dx != 0",
+            [[(1.0, [-2.0]), (-3.0, [4.0])], [(5.0, [-6.0]), (-7.0, [8.0])]],
+            [[(5.0, [3.4]), (3.0, [10.28])], [(20.8, [88.0]), (15.4, [120.0])]],
+        ),
+    ]
+        dx = deepcopy(dx_pre)
+        Enzyme.autodiff(Reverse, mixed_metasumsq, Active, Const(metaconcat), Duplicated(x, dx))
+        @test tupapprox(dx, dx_post)
 
-    res = Enzyme.autodiff(Reverse, mixed_metasumsq, Active, Const(metaconcat), Duplicated(x, dx))
-    @test tupapprox(dx, [[(4.0, [5.4]), (6.0, [6.28])], [(15.8, [94.0]), (22.4, [112.0])]])
-
-    dx = [[(0.0, [0.0]), (0.0, [0.0])], [(0.0, [0.0]), (0.0, [0.0])]]
-
-    res = Enzyme.autodiff(ReverseWithPrimal, mixed_metasumsq, Active, Const(metaconcat), Duplicated(x, dx))
-    @test res[2] ≈ 5562.9996
-    @test tupapprox(dx, [[(4.0, [5.4]), (6.0, [6.28])], [(15.8, [94.0]), (22.4, [112.0])]])
+        dx = deepcopy(dx_pre)
+        res = Enzyme.autodiff(ReverseWithPrimal, mixed_metasumsq, Active, Const(metaconcat), Duplicated(x, dx))
+        @test res[2] ≈ primal
+        @test tupapprox(dx, dx_post)
+    end
 end
 
 @testset "BatchMixed Reverse Apply iterate (list)" begin
     x = [[(2.0, [2.7]), (3.0, [3.14])], [(7.9, [47.0]), (11.2, [56.0])]]
-    dx = [[(0.0, [0.0]), (0.0, [0.0])], [(0.0, [0.0]), (0.0, [0.0])]]
-    dx2 = [[(0.0, [0.0]), (0.0, [0.0])], [(0.0, [0.0]), (0.0, [0.0])]]
+    primal = 5562.9996
+    out_pre, dout_pre, dout2_pre = 0.0, 1.0, 3.0
+    @testset "$label" for (label, dx_pre, dx_post, dx2_post) in [
+        (
+            "dx == 0",
+            [[(0.0, [0.0]), (0.0, [0.0])], [(0.0, [0.0]), (0.0, [0.0])]],
+            [[(4.0, [5.4]), (6.0, [6.28])], [(15.8, [94.0]), (22.4, [112.0])]],
+            [[(3 * 4.0, [3 * 5.4]), (3 * 6.0, [3 * 6.28])], [(3 * 15.8, [3 * 94.0]), (3 * 22.4, [3 * 112.0])]],
+        ),
+        (
+            "dx != 0",
+            [[(1.0, [-2.0]), (-3.0, [4.0])], [(5.0, [-6.0]), (-7.0, [8.0])]],
+            [[(5.0, [3.4]), (3.0, [10.28])], [(20.8, [88.0]), (15.4, [120.0])]],
+            [[(1.0 + 3 * 4.0, [-2.0 + 3 * 5.4]), (-3.0 + 3 * 6.0, [4.0 + 3 * 6.28])], [(5.0 + 3 * 15.8, [-6.0 + 3 * 94.0]), (-7.0 + 3 * 22.4, [8.0 + 3 * 112.0])]],
+        ),
+    ]
+        out, dout, dout2 = Ref.((out_pre, dout_pre, dout2_pre))
+        dx, dx2 = deepcopy.((dx_pre, dx_pre))
+        Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicatedNoNeed(out, (dout, dout2)), Const(mixed_metasumsq), Const(metaconcat), BatchDuplicated(x, (dx, dx2)))
+        @test dout[] ≈ 0
+        @test dout2[] ≈ 0
+        @test tupapprox(dx, dx_post)
+        @test tupapprox(dx2, dx2_post)
 
-    out = Ref(0.0)
-    dout = Ref(1.0)
-    dout2 = Ref(3.0)
-    Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicatedNoNeed(out, (dout, dout2)), Const(mixed_metasumsq), Const(metaconcat), BatchDuplicated(x, (dx, dx2)))
-    @test tupapprox(dx, [[(4.0, [5.4]), (6.0, [6.28])], [(15.8, [94.0]), (22.4, [112.0])]])
-    @test tupapprox(dx2, [[(3*4.0, [3*5.4]), (3*6.0, [3*6.28])], [(3*15.8, [3*94.0]), (3*22.4, [3*112.0])]])
-
-    x = [[(2.0, [2.7]), (3.0, [3.14])], [(7.9, [47.0]), (11.2, [56.0])]]
-    dx = [[(0.0, [0.0]), (0.0, [0.0])], [(0.0, [0.0]), (0.0, [0.0])]]
-    dx2 = [[(0.0, [0.0]), (0.0, [0.0])], [(0.0, [0.0]), (0.0, [0.0])]]
-
-    out = Ref(0.0)
-    dout = Ref(1.0)
-    dout2 = Ref(3.0)
-    res = Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicated(out, (dout, dout2)), Const(mixed_metasumsq), Const(metaconcat), BatchDuplicated(x, (dx, dx2)))
-    @test out[] ≈ 5562.9996
-    @test tupapprox(dx, [[(4.0, [5.4]), (6.0, [6.28])], [(15.8, [94.0]), (22.4, [112.0])]])
-    @test tupapprox(dx2, [[(3*4.0, [3*5.4]), (3*6.0, [3*6.28])], [(3*15.8, [3*94.0]), (3*22.4, [3*112.0])]])
+        out, dout, dout2 = Ref.((out_pre, dout_pre, dout2_pre))
+        dx, dx2 = deepcopy.((dx_pre, dx_pre))
+        Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicated(out, (dout, dout2)), Const(mixed_metasumsq), Const(metaconcat), BatchDuplicated(x, (dx, dx2)))
+        @test out[] ≈ primal
+        @test dout[] ≈ 0
+        @test dout2[] ≈ 0
+        @test tupapprox(dx, dx_post)
+        @test tupapprox(dx2, dx2_post)
+    end
 end
 
 struct MyRectilinearGrid5{FT,FZ}
