@@ -40,20 +40,20 @@ end
 
 Recurse through `Nin` objects `xs = (x1::T, x2::T, ..., xNin::T)` of the same type, mapping the
 function `f` over every differentiable value encountered and building `Nout` new objects
-`(y1::T, y2::T, ..., yNout::T)` from the resulting values
-`(y1_i, ..., yNout_i) = f(x1_i, ..., xNin_i)`.
+`(y1::T, ...)` from the resulting values `(y1_i, ...) = f(x1_i, ..., xNin_i)`. Only
+`Nout == 1` and `Nout == 2` are supported.
 
 The trait `EnzymeCore.isvectortype`(@ref) determines which values are considered
 differentiable leaf nodes at which recursion terminates and `f` is invoked. See the
 docstring for [`EnzymeCore.isvectortype`](@ref) and the related
 [`EnzymeCore.isscalartype`](@ref) for more information.
 
-A tuple of existing objects `ys = (y1::T, ..., yNout::T)` can be passed, in which case the
-`ys` are updated "partially-in-place": any parts of the `ys` that are mutable or
-non-differentiable are reused in the returned object tuple `newys`, while immutable
-differentiable parts are handled out-of-place as if the `ys` were not passed (this can be
-seen as a recursive generalization of the BangBang.jl idiom). If `T` itself is a mutable
-type, the `ys` are modified in-place and returned, such that `newys === ys`.
+A tuple of existing objects `ys = (y1::T, ...)` can be passed, in which case the `ys` are
+updated "partially-in-place": any parts of the `ys` that are mutable or non-differentiable
+are reused in the returned object tuple `newys`, while immutable differentiable parts are
+handled out-of-place as if the `ys` were not passed (this can be seen as a recursive
+generalization of the BangBang.jl idiom). If `T` itself is a mutable type, the `ys` are
+modified in-place and returned, such that `newys === ys`.
 
 The recursion and mapping operates on the structure of `T` as defined by struct fields and
 plain array elements, not on the values provided through an iteration or array interface.
@@ -74,13 +74,13 @@ that the type notionally represents.
   will likely cause errors. This is useful only in specific cases.
 
 * `f`: Function mapping leaf nodes within the `xs` to the corresponding leaf nodes in the
-  `ys`, that is, `(y1_i, ..., yNout_i) = f(x1_i::U, ..., xNin_i::U)::NTuple{Nout,U}`.
-  The function `f` must be applicable to the type of every leaf node, and must return a
-  tuple of values of the same type as its arguments.
+  `ys`, that is, `(y1_i, ...) = f(x1_i::U, ..., xNin_i::U)::NTuple{Nout,U}`. The function
+  `f` must be applicable to the type of every leaf node, and must return a tuple of values
+  of the same type as its arguments.
 
   When an existing object tuple `ys` is passed and contains leaf nodes of a non-isbits
   non-scalar type `U`, `f` should also have a partially-in-place method
-  `(newy1_i, ..., newyNout_i) === f(y1_i::U, ..., yNout_i::U, x1_i::U, ..., xNin_i::U)::NTuple{Nout,U}`
+  `(newy1_i, ...) === f(y1_i::U, ..., yNout_i::U, x1_i::U, ..., xNin_i::U)::NTuple{Nout,U}`
   that modifies and reuses any mutable parts of the `yj_i`; in particular, if `U` is a
   mutable type, this method should return `newyj_i === yj_i`. If a non-isbits type `U`
   should always be handled using the out-of-place signature, extend
@@ -90,10 +90,10 @@ that the type notionally represents.
   details about leaf types and scalar types.
 
 * `::Val{Nout}` or `ys::NTuple{Nout,T}`: For out-of-place operation, pass `Val(Nout)` where
-  `Nout` is the length of the tuple returned by `f`, that is, the length of the expected
-  return value `ys` (this is required; `Nout` never inferred). For partially-in-place
-  operation, pass the existing tuple `ys::NTuple{Nout,T}` containing the values to be
-  modified.
+  `Nout in (1, 2)` is the length of the tuple returned by `f`, that is, the length of the
+  expected return value `ys` (this is required; `Nout` never inferred). For
+  partially-in-place operation, pass the existing tuple `ys::NTuple{Nout,T}` containing the
+  values to be modified.
 
 * `xs::NTuple{N,T}`: Tuple of `N` objects of the same type `T` over which `f` is mapped.
 
@@ -144,6 +144,7 @@ function recursive_map(
     copy_if_inactive::Val=Val(false),
     isinactivetype::L=guaranteed_const_nongen,
 ) where {F,Nout,Nin,T,L}
+    check_nout(ys)
     newys = if isinactivetype(T)
         recursive_map_inactive(nothing, ys, xs, copy_if_inactive)
     elseif isvectortype(T) || isbitstype(T)
@@ -164,6 +165,7 @@ function recursive_map(
     isinactivetype::L=guaranteed_const_nongen,
 ) where {F,Nout,Nin,T,L}
     # determine whether to continue recursion, copy/share, or retrieve from cache
+    check_nout(ys)
     newys = if isinactivetype(T)
         recursive_map_inactive(seen, ys, xs, copy_if_inactive)
     elseif isbitstype(T)  # no object identity to to track in this branch
@@ -350,55 +352,39 @@ Base.@propagate_inbounds function recursive_map_item(
     newys_i = if hasvalues(ys) && isinitialized(first(ys), i)
         check_allinitialized(Base.tail(ys), i)
         ys_i = getitems(ys, i)
-        recursive_map_barrier!!(
-            seen, f, copy_if_inactive, isinactivetype, Val(Nout), ys_i..., xs_i...
-        )
+        recursive_map_barrier!!(seen, f, ys_i..., copy_if_inactive, isinactivetype, xs_i...)
     else
-        recursive_map_barrier(seen, f, copy_if_inactive, isinactivetype, Val(Nout), xs_i...)
+        recursive_map_barrier(seen, f, Val(Nout), copy_if_inactive, isinactivetype, xs_i...)
     end
     return newys_i
 end
 
 # function barriers such that abstractly typed items trigger minimal runtime dispatch
 function recursive_map_barrier(
-    seen, f::F, copy_if_inactive::Val, isinactivetype::L, ::Val{Nout}, xs_i::Vararg{ST,Nin}
+    seen, f::F, ::Val{Nout}, copy_if_inactive::Val, isinactivetype::L, xs_i::Vararg{ST,Nin}
 ) where {F,Nout,Nin,ST,L}
     return recursive_map(
         seen, f, Val(Nout), xs_i, copy_if_inactive, isinactivetype
     )::NTuple{Nout,ST}
 end
 
-function recursive_map_barrier!!(  # TODO: hit this when VectorSpace implemented
-    seen, f::F, copy_if_inactive, isinactivetype::L, ::Val{Nout}, yxs_i::Vararg{ST,M}
-) where {F,Nout,M,ST,L}
-    ys_i, xs_i = yxs_i[1:(Nout::Int)], yxs_i[((Nout::Int)+1):end]
-    return recursive_map(
-        seen, f, ys_i, xs_i, copy_if_inactive, isinactivetype
-    )::NTuple{Nout,ST}
-end
-
-# specialized methods to optimize the common cases Nout == 1 and Nout == 2
 function recursive_map_barrier!!(
-    seen, f::F, copy_if_inactive::Val, isinactivetype::L, ::Val{1}, y_i::ST, xs_i::Vararg{ST,Nin}
+    seen, f::F, y_i::ST, copy_if_inactive::Val, isinactivetype::L, xs_i::Vararg{ST,Nin}
 ) where {F,Nin,ST,L}
-    return recursive_map(
-        seen, f, (y_i,), xs_i, copy_if_inactive, isinactivetype
-    )::NTuple{1,ST}
+    return recursive_map(seen, f, (y_i,), xs_i, copy_if_inactive, isinactivetype)::NTuple{1,ST}
 end
 
 function recursive_map_barrier!!(  # may not show in coverage but is covered via accumulate_into! TODO: ensure coverage via VectorSpace once implemented
     seen,
     f::F,
-    copy_if_inactive::Val,
-    isinactivetype::L,
-    ::Val{2},
     y1_i::ST,
     y2_i::ST,
+    copy_if_inactive::Val,
+    isinactivetype::L,
     xs_i::Vararg{ST,Nin}
 ) where {F,Nin,ST,L}
-    return recursive_map(
-        seen, f, (y1_i, y2_i), xs_i, copy_if_inactive, isinactivetype
-    )::NTuple{2,ST}
+    ys_i = (y1_i, y2_i)
+    return recursive_map(seen, f, ys_i, xs_i, copy_if_inactive, isinactivetype)::NTuple{2,ST}
 end
 
 ## recursion base case handlers
@@ -455,13 +441,15 @@ end
     stability guarantees
 
 Recurse through `Nin` objects `xs = (x1::T, x2::T, ..., xNin::T)` of the same type, mapping
-the function `f!!` over every differentiable value encountered and updating
-`(y1::T, y2::T, ..., yNout::T)`` in-place with the resulting values.
+the function `f!!` over every differentiable value encountered and updating `(y1::T, ...)`
+in-place with the resulting values.
 
 This is a simple wrapper that verifies that `T` is a type where all differentiable values
 can be updated in-place, calls `recursive_map`, and verifies that the returned value is
 indeed identically the same tuple `ys`. See [`recursive_map`](@ref) for details.
 """
+function recursive_map! end
+
 function recursive_map!(
     f!!::F, ys::NTuple{Nout,T}, xs::NTuple{Nin,T}, copy_if_inactives::Vararg{Val,M}
 ) where {F,Nout,Nin,T,M}
@@ -570,6 +558,12 @@ end
 end
 
 ## argument validation
+@inline function check_nout(::YS{Nout}) where {Nout}
+    if Nout > 2
+        throw_nout()
+    end
+end
+
 Base.@propagate_inbounds function check_initialized(x, i, initialized=true)
     if isinitialized(x, i) != initialized
         throw_initialized()  # TODO: hit this when VectorSpace implemented
@@ -609,6 +603,10 @@ end
 end
 
 # TODO: hit all of these via check_* when VectorSpace implemented
+@noinline function throw_nout()
+    throw(ArgumentError("recursive_map(!) only supports mapping to 1 or 2 outputs"))
+end
+
 @noinline function throw_initialized()
     msg = "recursive_map(!) called on objects whose undefined fields/unassigned elements "
     msg *= "don't line up"
