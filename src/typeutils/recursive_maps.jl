@@ -4,9 +4,6 @@ using EnzymeCore: EnzymeCore, isvectortype, isscalartype
 using ..Compiler: guaranteed_const_nongen, guaranteed_nonactive_nongen
 
 ### traits defining active leaf types for recursive_map
-@inline isdensearraytype(::Type{<:DenseArray}) = true
-@inline isdensearraytype(::Type) = false
-
 @inline EnzymeCore.isvectortype(::Type{T}) where {T} = isscalartype(T)
 @inline function EnzymeCore.isvectortype(::Type{<:DenseArray{U}}) where {U}
     return isbitstype(U) && isscalartype(U)
@@ -195,90 +192,116 @@ end
     return newys::NTuple{Nout,T}
 end
 
-@generated function recursive_map_mutable(
+@inline function recursive_map_mutable(
     seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, copy_if_inactive, isinactivetype::L
 ) where {F,Nout,Nin,T,L}
     @assert ismutabletype(T)
-    iteration_i = quote
-        @inbounds if isinitialized(x1, i)
-            check_allinitialized(xtail, i)
-            newys_i = recursive_map_index(i, seen, f, ys, xs, copy_if_inactive, isinactivetype)
-            setitems!(newys, i, newys_i)
-        elseif hasvalues(ys)
-            check_allinitialized(ys, i, false)
+    if !hasvalues(ys) && !(T <: DenseArray) && all(isbitstype, fieldtypes(T))
+        # fast path for out-of-place handling when all fields are bitstypes, which rules
+        # out undefined fields and circular references
+        newys = recursive_map_new(seen, f, ys, xs, copy_if_inactive, isinactivetype)
+        maybecache!(seen, newys, xs)
+    else
+        newys = if hasvalues(ys)
+            ys
+        else
+            x1 = first(xs)
+            ntuple(_ -> (@inline; _similar(x1)), Val(Nout))
+        end
+        maybecache!(seen, newys, xs)
+        recursive_map_mutable_inner!(seen, f, newys, ys, xs, copy_if_inactive, isinactivetype)
+    end
+    return newys::NTuple{Nout,T}
+end
+
+@inline function recursive_map_mutable_inner!(
+    seen,
+    f::F,
+    newys::NTuple{Nout,T},
+    ys::YS{Nout,T},
+    xs::NTuple{Nin,T},
+    copy_if_inactive,
+    isinactivetype::L,
+) where {F,Nout,Nin,T<:DenseArray,L}
+    if (Nout == 1) && isbitstype(eltype(T))
+        newy = only(newys)
+        if hasvalues(ys)
+            y = only(ys)
+            broadcast!(newy, y, xs...) do y_i, xs_i...
+                only(recursive_map(nothing, f, (y_i,), xs_i, copy_if_inactive, isinactivetype))
+            end
+        else
+            broadcast!(newy, xs...) do xs_i...
+                only(recursive_map(nothing, f, Val(1), xs_i, copy_if_inactive, isinactivetype))
+            end
+        end
+    else
+        @inbounds for i in eachindex(newys..., xs...)
+            recursive_map_item!(i, seen, f, newys, ys, xs, copy_if_inactive, isinactivetype)
         end
     end
+    return nothing
+end
+
+@generated function recursive_map_mutable_inner!(
+    seen,
+    f::F,
+    newys::NTuple{Nout,T},
+    ys::YS{Nout,T},
+    xs::NTuple{Nin,T},
+    copy_if_inactive,
+    isinactivetype::L,
+) where {F,Nout,Nin,T,L}
     return quote
         @inline
-        if !hasvalues(ys) && !isdensearraytype(T) && all(isbitstype, fieldtypes(T))
-            # fast path for out-of-place handling when all fields are bitstypes, which rules
-            # out undefined fields and circular references
-            newys = recursive_map_new(seen, f, ys, xs, copy_if_inactive, isinactivetype)
-            maybecache!(seen, newys, xs)
-        else
-            x1, xtail = first(xs), Base.tail(xs)
-            newys = if hasvalues(ys)
-                ys
-            else
-                Base.@ntuple $Nout _ -> _similar(x1)
-            end
-            maybecache!(seen, newys, xs)
-            if isdensearraytype(T)
-                if (Nout == 1) && isbitstype(eltype(T))
-                    recursive_map_broadcast!(
-                        f, newys, ys, xs, copy_if_inactive, isinactivetype
-                    )
-                else
-                    for i in eachindex(newys..., xs...)
-                        $iteration_i
-                    end
-                end
-            else  # unrolled loop over struct fields
-                Base.Cartesian.@nexprs $(fieldcount(T)) i -> $iteration_i
-            end
+        Base.Cartesian.@nexprs $(fieldcount(T)) i -> @inbounds begin
+            recursive_map_item!(i, seen, f, newys, ys, xs, copy_if_inactive, isinactivetype)
         end
-        return newys::NTuple{Nout,T}
+        return nothing
     end
 end
 
-@generated function recursive_map_immutable(
+@inline function recursive_map_immutable(
     seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, copy_if_inactive, isinactivetype::L
 ) where {F,Nout,Nin,T,L}
     @assert !ismutabletype(T)
     nf = fieldcount(T)
+    if nf == 0  # nothing to do (also no known way to hit this branch)
+        newys = recursive_map_inactive(seen, ys, xs, Val(false))
+    else
+        newys = if isinitialized(first(xs), nf)  # fast path when all fields are defined
+            check_allinitialized(Base.tail(xs), nf)
+            recursive_map_new(seen, f, ys, xs, copy_if_inactive, isinactivetype)
+        else
+            recursive_map_immutable_inner(seen, f, ys, xs, copy_if_inactive, isinactivetype)
+        end
+        # maybecache! _should_ be a no-op here; call it anyway for consistency
+        maybecache!(seen, newys, xs)
+    end
+    return newys::NTuple{Nout,T}
+end
+
+@generated function recursive_map_immutable_inner(
+    seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, copy_if_inactive, isinactivetype::L
+) where {F,Nout,Nin,T,L}
+    nf = fieldcount(T)
     return quote
         @inline
-        if $nf == 0  # nothing to do (also no known way to hit this branch)
-            newys = recursive_map_inactive(nothing, ys, xs, Val(false))
-        else
-            x1, xtail = first(xs), Base.tail(xs)
-            if isinitialized(x1, $nf)  # fast path when all fields are defined
-                check_allinitialized(xtail, $nf)
-                newys = recursive_map_new(seen, f, ys, xs, copy_if_inactive, isinactivetype)
+        x1, xtail = first(xs), Base.tail(xs)
+        fields = Base.@ntuple $Nout _ -> Vector{Any}(undef, $(nf - 1))
+        Base.Cartesian.@nexprs $(nf - 1) i -> begin  # unrolled loop over struct fields
+            @inbounds if isinitialized(x1, i)
+                check_allinitialized(xtail, i)
+                newys_i = recursive_map_item(
+                    i, seen, f, ys, xs, copy_if_inactive, isinactivetype
+                )
+                Base.Cartesian.@nexprs $Nout j -> (fields[j][i] = newys_i[j])
             else
-                Base.Cartesian.@nexprs $Nout j -> (fields_j = Vector{Any}(undef, $(nf - 1)))
-                Base.Cartesian.@nexprs $(nf - 1) i -> begin  # unrolled loop over struct fields
-                    @inbounds if isinitialized(x1, i)
-                        check_allinitialized(xtail, i)
-                        newys_i = recursive_map_index(
-                            i, seen, f, ys, xs, copy_if_inactive, isinactivetype
-                        )
-                        Base.Cartesian.@nexprs $Nout j -> (fields_j[i] = newys_i[j])
-                    else
-                        ndef = i - 1  # rest of tail must be undefined values
-                        @goto done    # break out of unrolled loop
-                    end
-                end
-                ndef = $(nf - 1)      # loop didn't break, only last field is undefined
-                @label done
-                newys = Base.@ntuple $Nout j -> begin
-                    ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), T, fields_j, ndef)::T
-                end
+                return new_structvs(T, fields, i - 1)
             end
-            # maybecache! _should_ be a no-op here; call it anyway for consistency
-            maybecache!(seen, newys, xs)
         end
-        return newys::NTuple{Nout,T}
+        @assert !isinitialized(x1, $nf)
+        return new_structvs(T, fields, $(nf - 1))
     end
 end
 
@@ -289,10 +312,8 @@ end
     nf = fieldcount(T)
     return quote
         @inline
-        Base.Cartesian.@nexprs $nf i -> begin
-            newys_i = @inbounds recursive_map_index(
-                i, seen, f, ys, xs, copy_if_inactive, isinactivetype
-            )
+        Base.Cartesian.@nexprs $nf i -> @inbounds begin
+            newys_i = recursive_map_item(i, seen, f, ys, xs, copy_if_inactive, isinactivetype)
         end
         newys = Base.@ntuple $Nout j -> begin
             $(Expr(:splatnew, :T, :(Base.@ntuple $nf i -> newys_i[j])))
@@ -301,36 +322,27 @@ end
     end
 end
 
-@inline function recursive_map_broadcast!(
-    f::F, newys::NTuple{1,T}, ys::YS{1,T}, xs::NTuple{Nin,T}, copy_if_inactive, isinactivetype::L
-) where {F,Nin,T,L}
-    # broadcast recursive_map over array-like inputs with isbits elements
-    @assert isdensearraytype(T)
-    @assert isbitstype(eltype(T))
-    newy = first(newys)
-    if hasvalues(ys)
-        @assert newys === ys
-        broadcast!(
-            (newy_i, xs_i...) -> first(recursive_map_barrier!!(
-                nothing, f, copy_if_inactive, isinactivetype, Val(1), newy_i, xs_i...
-            )),
-            newy,
-            newy,
-            xs...,
-        )
-    else
-        broadcast!(
-            (xs_i...,) -> first(recursive_map_barrier(
-                nothing, f, copy_if_inactive, isinactivetype, Val(1), xs_i...
-            )),
-            newy,
-            xs...,
-        )
+Base.@propagate_inbounds function recursive_map_item!(
+    i,
+    seen,
+    f::F,
+    newys::NTuple{Nout,T},
+    ys::YS{Nout,T},
+    xs::NTuple{Nin,T},
+    copy_if_inactive,
+    isinactivetype::L,
+) where {F,Nout,Nin,T,L}
+    if isinitialized(first(xs), i)
+        check_allinitialized(Base.tail(xs), i)
+        newys_i = recursive_map_item(i, seen, f, ys, xs, copy_if_inactive, isinactivetype)
+        setitems!(newys, i, newys_i)
+    elseif hasvalues(ys)
+        check_allinitialized(ys, i, false)
     end
     return nothing
 end
 
-Base.@propagate_inbounds function recursive_map_index(
+Base.@propagate_inbounds function recursive_map_item(
     i, seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, copy_if_inactive, isinactivetype::L
 ) where {F,Nout,Nin,T,L}
     # recurse into the xs and apply recursive_map to items with index i
@@ -367,10 +379,10 @@ end
 
 # specialized methods to optimize the common cases Nout == 1 and Nout == 2
 function recursive_map_barrier!!(
-    seen, f::F, copy_if_inactive::Val, isinactivetype::L, ::Val{1}, yi::ST, xs_i::Vararg{ST,Nin}
+    seen, f::F, copy_if_inactive::Val, isinactivetype::L, ::Val{1}, y_i::ST, xs_i::Vararg{ST,Nin}
 ) where {F,Nin,ST,L}
     return recursive_map(
-        seen, f, (yi,), xs_i, copy_if_inactive, isinactivetype
+        seen, f, (y_i,), xs_i, copy_if_inactive, isinactivetype
     )::NTuple{1,ST}
 end
 
@@ -394,14 +406,13 @@ end
     seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}
 ) where {F,Nout,Nin,T}
     # apply the mapped function to leaf values
-    newys = if !hasvalues(ys) || isbitstype(T) || isscalartype(T)
-        f(xs...)::NTuple{Nout,T}
+    if !hasvalues(ys) || isbitstype(T) || isscalartype(T)
+        newys = f(xs...)::NTuple{Nout,T}
     else  # !isbitstype(T)
-        newys_ = f(ys..., xs...)::NTuple{Nout,T}
+        newys = f(ys..., xs...)::NTuple{Nout,T}
         if ismutabletype(T)
-            @assert newys_ === ys
+            @assert newys === ys
         end
-        newys_
     end
     maybecache!(seen, newys, xs)
     return newys::NTuple{Nout,T}
@@ -413,18 +424,20 @@ end
     return ys::NTuple{Nout,T}
 end
 
-@generated function recursive_map_inactive(
-    seen, ::Val{Nout}, xs::NTuple{Nin,T}, ::Val{copy_if_inactive}
+@inline function recursive_map_inactive(
+    seen, ::Val{Nout}, (x1,)::NTuple{Nin,T}, ::Val{copy_if_inactive}
 ) where {Nout,Nin,T,copy_if_inactive}
-    return quote
-        @inline
-        y = if copy_if_inactive && !isbitstype(T)
-            Base.deepcopy_internal(first(xs), isnothing(seen) ? IdDict() : seen)
+    @inline
+    y = if copy_if_inactive && !isbitstype(T)
+        if isnothing(seen)
+            deepcopy(x1)
         else
-            first(xs)
+            Base.deepcopy_internal(x1, seen)
         end
-        return (Base.@ntuple $Nout _ -> y)::NTuple{Nout,T}
+    else
+        x1
     end
+    return ntuple(_ -> (@inline; y), Val(Nout))::NTuple{Nout,T}
 end
 
 ### recursive_map!: fully in-place wrapper around recursive_map
@@ -474,6 +487,15 @@ function recursive_map!(
 end
 
 ### recursive_map helpers
+@generated function new_structvs(::Type{T}, fields::NTuple{N,Vector{Any}}, nfields_) where {T,N}
+    return quote
+        @inline
+        return Base.@ntuple $N j -> begin
+            ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), T, fields[j], nfields_)::T
+        end
+    end
+end
+
 @inline _similar(::T) where {T} = ccall(:jl_new_struct_uninit, Any, (Any,), T)::T
 @inline _similar(x::T) where {T<:DenseArray} = similar(x)::T
 Base.@propagate_inbounds isinitialized(x, i) = isdefined(x, i)
@@ -492,22 +514,22 @@ Base.@propagate_inbounds function setfield_force!(x::T, i, v) where {T}
     return nothing
 end
 
-Base.@propagate_inbounds function getitems(xs::Tuple{T,T,Vararg{T,N}}, i) where {T,N}
-    return (getitem(first(xs), i), getitems(Base.tail(xs), i)...)
+Base.@propagate_inbounds function getitems((x1, xtail...)::Tuple{T,T,Vararg{T,N}}, i) where {T,N}
+    return (getitem(x1, i), getitems(xtail, i)...)
 end
 
-Base.@propagate_inbounds getitems(xs::Tuple{T}, i) where {T} = (getitem(only(xs), i),)
+Base.@propagate_inbounds getitems((x1,)::Tuple{T}, i) where {T} = (getitem(x1, i),)
 
 Base.@propagate_inbounds function setitems!(  # may not show in coverage but is covered via accumulate_into! TODO: ensure coverage via VectorSpace once implemented
-    xs::Tuple{T,T,Vararg{T,N}}, i, vs::Tuple{ST,ST,Vararg{ST,N}}
+    (x1, xtail...)::Tuple{T,T,Vararg{T,N}}, i, (v1, vtail...)::Tuple{ST,ST,Vararg{ST,N}}
 ) where {T,ST,N}
-    setitem!(first(xs), i, first(vs))
-    setitems!(Base.tail(xs), i, Base.tail(vs))
+    setitem!(x1, i, v1)
+    setitems!(xtail, i, vtail)
     return nothing
 end
 
-Base.@propagate_inbounds function setitems!(xs::Tuple{T}, i, vs::Tuple{ST}) where {T,ST}
-    setitem!(only(xs), i, only(vs))
+Base.@propagate_inbounds function setitems!((x1,)::Tuple{T}, i, (v1,)::Tuple{ST}) where {T,ST}
+    setitem!(x1, i, v1)
     return nothing
 end
 
@@ -520,28 +542,28 @@ end
 @inline shouldcache(::IdDict, ::Type{T}) where {T} = iscachedtype(T)
 @inline shouldcache(::Nothing, ::Type{T}) where {T} = false
 
-@inline function maybecache!(seen, newys::NTuple{Nout,T}, xs::NTuple{Nin,T}) where {Nout,Nin,T}
+@inline function maybecache!(seen, newys::NTuple{Nout,T}, (x1, xtail...)::NTuple{Nin,T}) where {Nout,Nin,T}
     if shouldcache(seen, T)
-        if (Nout == 1) && (Nin == 1)
-            seen[only(xs)] = only(newys)
+        seen[x1] = if (Nout == 1) && (Nin == 1)
+            only(newys)
         else  # may not show in coverage but is covered via accumulate_into! TODO: ensure coverage via VectorSpace once implemented
-            seen[first(xs)] = (newys..., Base.tail(xs)...)
+            (newys..., xtail...)
         end
     end
     return nothing
 end
 
-@inline function hascache(seen, xs::NTuple{Nin,T}) where {Nin,T}
-    return shouldcache(seen, T) ? haskey(seen, first(xs)) : false
+@inline function hascache(seen, (x1,)::NTuple{Nin,T}) where {Nin,T}
+    return shouldcache(seen, T) ? haskey(seen, x1) : false
 end
 
-@inline function getcached(seen::IdDict, ::Val{Nout}, xs::NTuple{Nin,T}) where {Nout,Nin,T}
+@inline function getcached(seen::IdDict, ::Val{Nout}, (x1, xtail...)::NTuple{Nin,T}) where {Nout,Nin,T}
     newys = if (Nout == 1) && (Nin == 1)
-        (seen[only(xs)]::T,)
+        (seen[x1]::T,)
     else   # may not show in coverage but is covered via accumulate_into! TODO: ensure coverage via VectorSpace once implemented
-        cache = seen[first(xs)]::NTuple{(Nout + Nin - 1),T}
+        cache = seen[x1]::NTuple{(Nout + Nin - 1),T}
         cachedtail = cache[(Nout+1):end]
-        check_identical(cachedtail, Base.tail(xs))  # check compatible layout
+        check_identical(cachedtail, xtail)  # check compatible layout
         cache[1:Nout]
     end
     return newys::NTuple{Nout,T}
@@ -556,17 +578,17 @@ Base.@propagate_inbounds function check_initialized(x, i, initialized=true)
 end
 
 Base.@propagate_inbounds function check_allinitialized(  # TODO: hit this when VectorSpace implemented
-    xs::Tuple{T,T,Vararg{T,N}}, i, initialized=true
+    (x1, xtail...)::Tuple{T,T,Vararg{T,N}}, i, initialized=true
 ) where {T,N}
-    check_initialized(first(xs), i, initialized)
-    check_allinitialized(Base.tail(xs), i, initialized)
+    check_initialized(x1, i, initialized)
+    check_allinitialized(xtail, i, initialized)
     return nothing
 end
 
 Base.@propagate_inbounds function check_allinitialized(
-    xs::Tuple{T}, i, initialized=true
+    (x1,)::Tuple{T}, i, initialized=true
 ) where {T}
-    check_initialized(only(xs), i, initialized)
+    check_initialized(x1, i, initialized)
     return nothing
 end
 
