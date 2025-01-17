@@ -95,16 +95,16 @@ jobs:
         continue-on-error: ${{ matrix.version == 'nightly' }}
         id: build_libenzyme
         run: |
-          julia --project=deps -e 'using Pkg; Pkg.instantiate()'
-          julia --project=deps deps/build_local.jl
+          julia --color=yes --project=deps -e 'using Pkg; Pkg.instantiate()'
+          julia --color=yes --project=deps deps/build_local.jl
           cp LocalPreferences.toml test/
       - name: Build libEnzyme MacOS
         if: ${{ matrix.libEnzyme == 'local' && matrix.os == 'macOS-latest'}}
         continue-on-error: ${{ matrix.version == 'nightly' }}
         id: build_libenzyme_mac
         run: |
-          julia --project=deps -e 'using Pkg; Pkg.instantiate()'
-          SDKROOT=`xcrun --show-sdk-path` julia --project=deps deps/build_local.jl
+          julia --color=yes --project=deps -e 'using Pkg; Pkg.instantiate()'
+          SDKROOT=`xcrun --show-sdk-path` julia --color=yes --project=deps deps/build_local.jl
           cp LocalPreferences.toml test/
       - uses: julia-actions/julia-buildpkg@v1
         if: matrix.version != 'nightly' || steps.build_libenzyme.outcome == 'success' || steps.build_libenzyme_mac.outcome == 'success'
@@ -287,19 +287,18 @@ jobs:
           version: '1'
       - uses: julia-actions/cache@v2
       - run: |
-          julia --project=docs -e '
+          julia --color=yes --project=docs -e '
             using Pkg
-            Pkg.develop([PackageSpec(path="lib/EnzymeCore"), PackageSpec(path="lib/EnzymeTestUtils"), PackageSpec(path=pwd())])
             Pkg.instantiate()'
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - run: |
-          julia --project=docs -e '
+          julia --color=yes --project=docs -e '
             using Documenter: DocMeta, doctest
             using Enzyme
             DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
             doctest(Enzyme)'
-      - run: julia --project=docs docs/make.jl
+      - run: julia --color=yes --project=docs docs/make.jl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
