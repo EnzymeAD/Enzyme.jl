@@ -6,16 +6,22 @@ on:
 permissions:
   pull-requests: write
 
+concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
 jobs:
     generate_plots:
         runs-on: ubuntu-latest
 
         steps:
-            - uses: actions/checkout@v2
-            - uses: julia-actions/setup-julia@v1
+            - uses: actions/checkout@v4
+            - uses: julia-actions/setup-julia@v2
               with:
                 version: "1"
-            - uses: julia-actions/cache@v1
+            - uses: julia-actions/cache@v2
             - name: Extract Package Name from Project.toml
               id: extract-package-name
               run: |
@@ -26,8 +32,8 @@ jobs:
                 JULIA_NUM_THREADS: 2
               run: |
                 # Lightweight build step, as sometimes the runner runs out of memory:
-                julia -e 'ENV["JULIA_PKG_PRECOMPILE_AUTO"]=0; import Pkg; Pkg.add("AirspeedVelocity")'
-                julia -e 'ENV["JULIA_PKG_PRECOMPILE_AUTO"]=0; import Pkg; Pkg.build("AirspeedVelocity")'
+                julia --color=yes -e 'ENV["JULIA_PKG_PRECOMPILE_AUTO"]=0; import Pkg; Pkg.add("AirspeedVelocity")'
+                julia --color=yes -e 'ENV["JULIA_PKG_PRECOMPILE_AUTO"]=0; import Pkg; Pkg.build("AirspeedVelocity")'
             - name: Add ~/.julia/bin to PATH
               run: |
                 echo "$HOME/.julia/bin" >> $GITHUB_PATH
@@ -60,7 +66,7 @@ jobs:
                 echo 'Go to "Actions"->"Benchmark a pull request"->[the most recent run]->"Artifacts" (at the bottom).' >> body.md
 
             - name: Find Comment
-              uses: peter-evans/find-comment@v2
+              uses: peter-evans/find-comment@v3
               id: fcbenchmark
               with:
                 issue-number: ${{ github.event.pull_request.number }}
@@ -68,7 +74,7 @@ jobs:
                 body-includes: Benchmark Results
 
             - name: Comment on PR
-              uses: peter-evans/create-or-update-comment@v3
+              uses: peter-evans/create-or-update-comment@v4
               with:
                 comment-id: ${{ steps.fcbenchmark.outputs.comment-id }}
                 issue-number: ${{ github.event.pull_request.number }}
