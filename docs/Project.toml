@@ -8,9 +8,14 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [compat]
 Documenter = "1"
+EnzymeCore = "0.8"
 Literate = "2"
 
-[sources]
-Enzyme = {path = ".."}
-EnzymeCore = {path = "../lib/EnzymeCore"}
-EnzymeTestUtils = {path = "../lib/EnzymeTestUtils"}
+[sources.Enzyme]
+path = ".."
+
+[sources.EnzymeCore]
+path = "../lib/EnzymeCore"
+
+[sources.EnzymeTestUtils]
+path = "../lib/EnzymeTestUtils"
