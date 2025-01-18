@@ -75,6 +75,9 @@ jobs:
 
             - name: Comment on PR
               uses: peter-evans/create-or-update-comment@v4
+              # Can't post the comment for PRs opened from forks:
+              # <https://github.com/peter-evans/create-or-update-comment/blob/fdb73c443d3a4f66832374f01fb9a713fad84937/README.md#action-inputs>.
+              if: ${{ ! github.event.pull_request.head.repo.fork }}
               with:
                 comment-id: ${{ steps.fcbenchmark.outputs.comment-id }}
                 issue-number: ${{ github.event.pull_request.number }}
