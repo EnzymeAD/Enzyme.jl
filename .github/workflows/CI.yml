@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   test:
+    timeout-minutes: 120
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - assertions=${{ matrix.assertions }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -26,7 +27,7 @@ jobs:
           - 'nightly'
         os:
           - ubuntu-24.04
-          - macOS-latest
+          - macOS-13
           - windows-latest
         arch:
           - x64
@@ -118,6 +119,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false  # or true if you want CI to fail when Codecov fails
   enzymetestutils:
+    timeout-minutes: 60
     name: EnzymeTestUtils - Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.version == 'nightly' }}
@@ -171,6 +173,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false  # or true if you want CI to fail when Codecov fails
   enzymecore:
+    timeout-minutes: 20
     name: EnzymeCore - Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.version == 'nightly' }}
@@ -224,6 +227,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false  # or true if you want CI to fail when Codecov fails
   integration:
+    timeout-minutes: 20
     name: Integration Tests - ${{ matrix.test }}
     runs-on: ${{ matrix.os }}
     env:
@@ -251,6 +255,7 @@ jobs:
             julia --color=yes --project=test/integration/${{ matrix.test }} --threads=auto --check-bounds=yes test/integration/${{ matrix.test }}/runtests.jl
         shell: bash
   docs:
+    timeout-minutes: 20
     name: Documentation
     runs-on: ubuntu-latest
     steps:
