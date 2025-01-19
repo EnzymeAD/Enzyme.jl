@@ -42,7 +42,7 @@ jobs:
       - name: Run Runic
         run: |
           set +e
-          git runic origin/master
+          git runic origin/main
           [ $? -eq 2 ] && exit 1 || exit 0
 
       - name: Suggest changes
