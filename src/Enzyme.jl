@@ -1028,8 +1028,8 @@ ftype when called with args of type `argtypes`.
 `Activity` is the Activity of the return value, it may be `Const` or `Duplicated`
 (or its variants `DuplicatedNoNeed`, `BatchDuplicated`, and`BatchDuplicatedNoNeed`).
 
-The forward function will return the primal (if requested) and the shadow
-(or nothing if not a `Duplicated` variant).
+The forward function will return the shadow (or nothing if not a `Duplicated` variant)
+and the primal (if requested).
 
 Example returning both the return derivative and original return:
 
@@ -1040,7 +1040,7 @@ c = 55; d = 9
 
 f(x) = x*x
 forward = autodiff_thunk(ForwardWithPrimal, Const{typeof(f)}, Duplicated, Duplicated{Float64})
-res, ∂f_∂x = forward(Const(f), Duplicated(3.14, 1.0))
+∂f_∂x, res = forward(Const(f), Duplicated(3.14, 1.0))
 
 # output
 
@@ -1056,7 +1056,7 @@ c = 55; d = 9
 
 f(x) = x*x
 forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float64})
-∂f_∂x = forward(Const(f), Duplicated(3.14, 1.0))
+∂f_∂x, = forward(Const(f), Duplicated(3.14, 1.0))
 
 # output
 
