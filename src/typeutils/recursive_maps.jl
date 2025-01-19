@@ -1,7 +1,86 @@
 module RecursiveMaps
 
 using EnzymeCore: EnzymeCore, isvectortype, isscalartype
-using ..Compiler: guaranteed_const_nongen, guaranteed_nonactive_nongen
+using ..Compiler: guaranteed_const, guaranteed_const_nongen, guaranteed_nonactive,
+    guaranteed_nonactive_nongen
+
+### IsInactive: helper for creating consistent inactive/nonactive type checkers
+"""
+    isinactivetype = IsInactive{runtime::Bool}(extra=(T -> false))
+    isinactivetype = IsInactive(isinactivetype::IsInactive, extra)
+
+!!! warning
+    Internal type, documented for developer convenience but not covered by semver API
+    stability guarantees
+
+Create a callable `isinactivetype` such that `isinactivetype(T) == true` if the type `T` is
+non-differentiable, that is, if differentiable values can never be reached from any instance
+of the type (that is, the activity state of `T` is `AnyState`).
+
+The callable takes an optional argument `Val(nonactive::Bool)`, such that the full signature
+is
+
+```julia
+isinactivetype(::Type{T}, ::Val{nonactive}=Val(false))::Bool
+```
+
+Setting `nonactive == true` selects for _nonactive_ types, which is a superset of inactive
+types that also includes types `T` where every differentiable value can be mutated without
+creating a new instance of `T` (that is, the activity state of `T` is either `AnyState` or
+`DupState`).
+
+The optional argument `extra` takes a function defining additional types that should be
+treated as inactive regardless of their nominal activity state; that is,
+
+```julia
+IsInactive{runtime}(extra)(T, args...) == IsInactive{runtime}()(T, args...) || extra(T)
+```
+
+The constructor `IsInactive(isinactivetype::IsInactive{runtime}, extra)` can be used to
+extend an existing instance `isinactivetype::IsInactive` with an additional `extra`
+function, and is more or less equivalent to
+`IsInactive{runtime}(T -> isinactivetype.extra(T) || extra(T))`.
+
+The type parameter `runtime` specifies whether the activity state of a type is queried at
+runtime every time the callable is invoked (`true`), or if compile-time queries from earlier
+calls can be reused (`false`). Runtime querying is necessary to pick up recently added
+methods to `EnzymeRules.inactive_type`, but may incur a significant performance penalty and
+is usually not needed unless `EnzymeRules.inactive_type` is extended interactively for types
+that have previously been passed to an instance of `IsInactive{false}`.
+"""
+struct IsInactive{runtime,F}
+    extra::F
+    function IsInactive{runtime}(
+        extra::F=(@nospecialize(T) -> (@inline; false))
+    ) where {runtime,F}
+        return new{runtime::Bool,F}(extra)
+    end
+end
+
+function IsInactive(isinactivetype::IsInactive{runtime}, extra::F) where {runtime,F}
+    combinedextra(::Type{T}) where {T} = (isinactivetype.extra(T) || extra(T))
+    return IsInactive{runtime}(combinedextra)
+end
+
+@inline function (f::IsInactive{runtime,F})(
+    ::Type{T}, ::Val{nonactive}=Val(false)
+) where {runtime,F,T,nonactive}
+    if runtime
+        # evaluate f.extra first, as guaranteed_*_nongen may incur runtime dispatch
+        if nonactive
+            return f.extra(T) || guaranteed_nonactive_nongen(T, nothing)
+        else
+            return f.extra(T) || guaranteed_const_nongen(T, nothing)
+        end
+    else
+        # evaluate guaranteed_* first, as these are always known at compile time
+        if nonactive
+            return guaranteed_nonactive(T) || f.extra(T)
+        else
+            return guaranteed_const(T) || f.extra(T)
+        end
+    end
+end
 
 ### traits defining active leaf types for recursive_map
 @inline EnzymeCore.isvectortype(::Type{T}) where {T} = isscalartype(T)
@@ -23,7 +102,7 @@ end
         ::Val{Nout}
         xs::NTuple{Nin,T},
         ::Val{copy_if_inactive}=Val(false),
-        isinactivetype=guaranteed_const_nongen,
+        isinactivetype=IsInactive{false}(),
     )::T
     newys = recursive_map(
         [seen::Union{Nothing,IdDict},]
@@ -31,7 +110,7 @@ end
         ys::NTuple{Nout,T},
         xs::NTuple{Nin,T},
         ::Val{copy_if_inactive}=Val(false),
-        isinactivetype=guaranteed_const_nongen,
+        isinactivetype=IsInactive{false}(),
     )::T
 
 !!! warning
@@ -126,8 +205,10 @@ that the type notionally represents.
   deep-copies such that the object reference graph is reproduced also within the inactive
   parts.)
 
-* `isinactivetype` (optional): Callable mapping types to `Bool` to determines whether the
+* `isinactivetype` (optional): Callable mapping types to `Bool` to determine whether the
   type should be treated according to `copy_if_inactive` (`true`) or recursed into (`false`).
+  The [`IsInactive`](@ref) type is a helper for obtaining a callable with relevant semantics,
+  but any callable that maps types to `true` or `false` can be used.
 """
 function recursive_map end
 
@@ -142,7 +223,7 @@ function recursive_map(
     ys::YS{Nout,T},
     xs::NTuple{Nin,T},
     copy_if_inactive::Val=Val(false),
-    isinactivetype::L=guaranteed_const_nongen,
+    isinactivetype::L=IsInactive{false}(),
 ) where {F,Nout,Nin,T,L}
     check_nout(ys)
     newys = if isinactivetype(T)
@@ -162,7 +243,7 @@ function recursive_map(
     ys::YS{Nout,T},
     xs::NTuple{Nin,T},
     copy_if_inactive::Val=Val(false),
-    isinactivetype::L=guaranteed_const_nongen,
+    isinactivetype::L=IsInactive{false}(),
 ) where {F,Nout,Nin,T,L}
     # determine whether to continue recursion, copy/share, or retrieve from cache
     check_nout(ys)
@@ -433,7 +514,8 @@ end
         f!!,
         ys::NTuple{Nout,T},
         xs::NTuple{Nin,T},
-        [::Val{copy_if_inactive},]
+        ::Val{copy_if_inactive}=Val(false),
+        isinactivetype::IsInactive=IsInactive{false}(),
     )::Nothing
 
 !!! warning
@@ -447,15 +529,23 @@ in-place with the resulting values.
 This is a simple wrapper that verifies that `T` is a type where all differentiable values
 can be updated in-place, calls `recursive_map`, and verifies that the returned value is
 indeed identically the same tuple `ys`. See [`recursive_map`](@ref) for details.
+
+Note that this wrapper only supports instances of [`IsInactive`](@ref) for the
+`isinactivetype` argument, as this is the only way we can insure consistency between the
+upfront compatibility check and actual behavior. If this is not appropriate, use
+`recursive_map` directly.
 """
 function recursive_map! end
 
 function recursive_map!(
-    f!!::F, ys::NTuple{Nout,T}, xs::NTuple{Nin,T}, copy_if_inactives::Vararg{Val,M}
-) where {F,Nout,Nin,T,M}
-    @assert M <= 1
-    check_nonactive(T)
-    newys = recursive_map(f!!, ys, xs, copy_if_inactives...)
+    f!!::F,
+    ys::NTuple{Nout,T},
+    xs::NTuple{Nin,T},
+    copy_if_inactive::Val=Val(false),
+    isinactivetype::IsInactive=IsInactive{false}(),
+) where {F,Nout,Nin,T}
+    check_nonactive(T, isinactivetype)
+    newys = recursive_map(f!!, ys, xs, copy_if_inactive, isinactivetype)
     @assert newys === ys
     return nothing
 end
@@ -465,11 +555,11 @@ function recursive_map!(
     f!!::F,
     ys::NTuple{Nout,T},
     xs::NTuple{Nin,T},
-    copy_if_inactives::Vararg{Val,M},
-) where {F,Nout,Nin,T,M}
-    @assert M <= 1
-    check_nonactive(T)
-    newys = recursive_map(seen, f!!, ys, xs, copy_if_inactives...)
+    copy_if_inactive::Val=Val(false),
+    isinactivetype::IsInactive=IsInactive{false}(),
+) where {F,Nout,Nin,T}
+    check_nonactive(T, isinactivetype)
+    newys = recursive_map(seen, f!!, ys, xs, copy_if_inactive, isinactivetype)
     @assert newys === ys
     return nothing
 end
@@ -595,8 +685,8 @@ Base.@propagate_inbounds check_allinitialized(::Tuple{}, i, initialized=true) = 
     return nothing
 end
 
-@inline function check_nonactive(::Type{T}) where {T}
-    if !guaranteed_nonactive_nongen(T)
+@inline function check_nonactive(::Type{T}, isinactivetype::IsInactive) where {T}
+    if !isinactivetype(T, Val(true))
         throw_nonactive()
     end
     return nothing
@@ -624,26 +714,48 @@ end
 end
 
 ### EnzymeCore.make_zero(!) implementation
-function EnzymeCore.make_zero(prev::T, copy_if_inactives::Vararg{Val,M}) where {T,M}
-    @assert M <= 1
-    new = if iszero(M) && !guaranteed_const_nongen(T) && isvectortype(T)  # fallback
-        # guaranteed_const has precedence over isvectortype for consistency with recursive_map
+function EnzymeCore.make_zero(prev::T, args::Vararg{Any,M}) where {T,M}
+    new = if iszero(M) && !IsInactive{false}()(T) && isvectortype(T)  # fallback
+        # IsInactive has precedence over isvectortype for consistency with recursive handler
         convert(T, zero(prev))  # convert because zero(prev)::T may fail when eltype(T) is abstract
     else
-        only(recursive_map(_make_zero!!, Val(1), (prev,), copy_if_inactives...))
+        _make_zero_inner(prev, args...)
     end
     return new::T
 end
 
-function EnzymeCore.make_zero!(val::T, seens::Vararg{IdDict,M}) where {T,M}
-    @assert M <= 1
+function EnzymeCore.make_zero!(val::T, args::Vararg{Any,M}) where {T,M}
     @assert !isscalartype(T)  # not appropriate for in-place handler
-    if iszero(M) && !guaranteed_const_nongen(T) && isvectortype(T)  # fallback
-        # isinactivetype has precedence over isvectortype for consistency with recursive_map
+    if iszero(M) && !IsInactive{false}()(T) && isvectortype(T)  # fallback
+        # IsInactive has precedence over isvectortype for consistency with recursive handler
         fill!(val, false)
     else
-        recursive_map!(seens..., _make_zero!!, (val,), (val,))
+        _make_zero_inner!(val, args...)
     end
+    return nothing
+end
+
+@inline function _make_zero_inner(
+    prev::T, copy_if_inactive::Val=Val(false), ::Val{runtime_inactive}=Val(false)
+) where {T,runtime_inactive}
+    isinactivetype = IsInactive{runtime_inactive}()
+    news = recursive_map(_make_zero!!, Val(1), (prev,), copy_if_inactive, isinactivetype)
+    return only(news)::T
+end
+
+@inline function _make_zero_inner!(
+    val::T, ::Val{runtime_inactive}=Val(false)
+) where {T,runtime_inactive}
+    isinactivetype = IsInactive{runtime_inactive}()
+    recursive_map!(_make_zero!!, (val,), (val,), Val(false), isinactivetype)
+    return nothing
+end
+
+@inline function _make_zero_inner!(
+    val::T, seen::IdDict, ::Val{runtime_inactive}=Val(false)
+) where {T,runtime_inactive}
+    isinactivetype = IsInactive{runtime_inactive}()
+    recursive_map!(seen, _make_zero!!, (val,), (val,), Val(false), isinactivetype)
     return nothing
 end
 
@@ -662,10 +774,15 @@ end
 
 # alternative entry point for passing custom IdDict
 function EnzymeCore.make_zero(
-    ::Type{T}, seen::IdDict, prev::T, copy_if_inactives::Vararg{Val,M}
-) where {T,M}
-    @assert M <= 1
-    return only(recursive_map(seen, _make_zero!!, Val(1), (prev,), copy_if_inactives...))::T
+    ::Type{T},
+    seen::IdDict,
+    prev::T,
+    copy_if_inactive::Val=Val(false),
+    ::Val{runtime_inactive}=Val(false),
+) where {T,runtime_inactive}
+    isinactivetype = IsInactive{runtime_inactive}()
+    news = recursive_map(seen, _make_zero!!, Val(1), (prev,), copy_if_inactive, isinactivetype)
+    return only(news)::T
 end
 
 end  # module RecursiveMaps

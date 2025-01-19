@@ -551,34 +551,36 @@ function test_make_zero()
         @test a[1] === 1.0                        # no mutation of original
     end
     @testset "runtime inactive" begin
-        # verify that MutableWrapper is seen as active
+        # verify that MutableWrapper is seen as active by both variants
         a = MutableWrapper(1.0)
         @assert !EnzymeRules.inactive_type(typeof(a))
-        a_makez = make_zero(a)
-        @test a_makez == MutableWrapper(0.0)
+        a_makez = make_zero(a, Val(false), Val(false))
+        @assert a_makez == MutableWrapper(0.0)
+        a_makez = make_zero(a, Val(false), Val(true))
+        @assert a_makez == MutableWrapper(0.0)
 
         # mark MutableWrapper as inactive
         @eval @inline EnzymeRules.inactive_type(::Type{<:MutableWrapper}) = true
 
-        # verify that MutableWrapper is seen as inactive and shared/copied according to
-        # copy_if_inactive
-        @assert a.x === 1.0  # sanity check
-        a_makez = @invokelatest make_zero(a)
-        @test a_makez == a  # equal
-        @assert a.x === 1.0  # sanity check
-        a_makez = @invokelatest make_zero(a, Val(false))
-        @test a_makez === a  # identical
-        @assert a.x === 1.0  # sanity check
-        a_makez = @invokelatest make_zero(a, Val(true))
-        @test a_makez !== a  # not identical
-        @test a_makez == a   # but equal
+        # runtime_inactive == false => redefined inactive_type should have no effect
+        a_makez = @invokelatest make_zero(a, Val(false), Val(false))
+        @test a_makez == MutableWrapper(0.0)
+
+        # runtime_inactive == true => redefined inactive_type should take effect
+        # MutableWrapper considered inactive and treated according to copy_if_inactive
+        a_makez = @invokelatest make_zero(a, Val(false), Val(true))
+        @test a_makez === a
+        a_makez = @invokelatest make_zero(a, Val(true), Val(true))
+        @test a_makez !== a
+        @test a_makez == MutableWrapper(1.0)
 
         # mark MutableWrapper as active again
         @eval @inline EnzymeRules.inactive_type(::Type{<:MutableWrapper}) = false
 
-        # verify that MutableWrapper is seen as active
-        @assert a.x === 1.0  # sanity check
-        a_makez = @invokelatest make_zero(a)
+        # verify that MutableWrapper is seen as active by both variants
+        a_makez = @invokelatest make_zero(a, Val(false), Val(false))
+        @test a_makez == MutableWrapper(0.0)
+        a_makez = @invokelatest make_zero(a, Val(false), Val(true))
         @test a_makez == MutableWrapper(0.0)
     end
     @testset "undefined fields/unassigned elements" begin
@@ -842,26 +844,38 @@ function test_make_zero!()
         @test a[1] === 0.0           # correct value
     end
     @testset "runtime inactive" begin
-        # verify that MutableWrapper is seen as active
+        # verify that MutableWrapper is seen as active by both variants
         a = MutableWrapper(1.0)
         @assert !EnzymeRules.inactive_type(typeof(a))
-        make_zero!(a)
-        @test a == MutableWrapper(0.0)
+        make_zero!(a, Val(false))
+        @assert a == MutableWrapper(0.0)
+        a.x = 1.0
+        make_zero!(a, Val(true))
+        @assert a == MutableWrapper(0.0)
 
         # mark MutableWrapper as inactive
         @eval @inline EnzymeRules.inactive_type(::Type{<:MutableWrapper}) = true
 
-        # verify that MutableWrapper is seen as inactive
+        # runtime_inactive == false => redefined inactive_type should have no effect
         a.x = 1.0
-        @invokelatest make_zero!(a)
+        @invokelatest make_zero!(a, Val(false))
+        @test a == MutableWrapper(0.0)
+
+        # runtime_inactive == true => redefined inactive_type should take effect
+        # MutableWrapper considered inactive and won't be zeroed
+        a.x = 1.0
+        @invokelatest make_zero!(a, Val(true))
         @test a == MutableWrapper(1.0)
 
         # mark MutableWrapper as active again
         @eval @inline EnzymeRules.inactive_type(::Type{<:MutableWrapper}) = false
 
-        # verify that MutableWrapper is seen as active
+        # verify that MutableWrapper is seen as active by both variants
         a.x = 1.0
-        @invokelatest make_zero!(a)
+        @invokelatest make_zero!(a, Val(false))
+        @test a == MutableWrapper(0.0)
+        a.x = 1.0
+        @invokelatest make_zero!(a, Val(true))
         @test a == MutableWrapper(0.0)
     end
     @testset "undefined fields/unassigned elements" begin
