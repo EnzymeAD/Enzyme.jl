@@ -506,29 +506,35 @@ function autodiff_thunk end
 function autodiff_deferred_thunk end
 
 """
+    make_zero(prev::T; copy_if_inactive=Val(false), runtime_inactive=Val(false))::T
+    make_zero(prev::T, ::Val{copy_if_inactive}[, ::Val{runtime_inactive}])::T
     make_zero(
-        prev::T, ::Val{copy_if_inactive}=Val(false), ::Val{runtime_inactive}=Val(false)
+        ::Type{T}, seen::IdDict, prev::T;
+        copy_if_inactive=Val(false), runtime_inactive=Val(false),
     )::T
     make_zero(
-        ::Type{T},
-        seen::IdDict,
-        prev::T,
-        ::Val{copy_if_inactive}=Val(false),
-        ::Val{runtime_inactive}=Val(false),
+        ::Type{T}, seen::IdDict, prev::T, ::Val{copy_if_inactive}[, ::Val{runtime_inactive}]
     )::T
 
-Recursively make a copy of the value `prev::T` in which all differentiable values are
-zeroed. The argument `copy_if_inactive` specifies what to do if the type `T` or any
+Recursively make a copy of the value `prev::T` in which all differentiable values are zeroed.
+
+The argument `copy_if_inactive` specifies what to do if the type `T` or any
 of its constituent parts is guaranteed to be inactive (non-differentiable): reuse `prev`s
-instance (the default) or make a copy.
+instance (if `Val(false)`, the default) or make a copy (if `Val(true)`).
 
-The argument `runtime_inactive` specifies whether each constituent type is checked for being
-guaranteed inactive at runtime for every call to `make_zero`, or if this can be checked once
-at compile-time and reused across multiple calls to `make_zero` and related functions (the
-default). Runtime checks are necessary to pick up recently added methods to
-`EnzymeRules.inactive_type`, but may incur a significant performance penalty and is usually
-not needed unless `EnzymeRules.inactive_type` is extended interactively for types that have
-previously been passed to `make_zero` or related functions.
+The argument `runtime_inactive` specifies whether this function should respect runtime
+semantics when determining if a type is guaranteed inactive. If `Val(true)`, changes and
+additions to the methods of `EnzymeRules.inactive_type` will be reflected in the behavior of
+this function. If `Val(false)`, the inactivity of a type is determined once per Julia
+session and reused in every subsequent call with `runtime_inactive=Val(false)`, regardless
+of changes to `EnzymeRules.inactive_type` (in technical terms, there will be no invalidation
+when changing `EnzymeRules.inactive_type`). Using `runtime_inactive = Val(false)` may be
+desireable in interactive sessions, but can sometimes impose a performance penalty and may
+in rare cases break gradient compilation when used inside custom rules. Hence
+`runtime_inactive = Val(true)` is preferred in non-interactive usage and is the default.
+
+`copy_if_inactive` and `runtime_inactive` may be given as either positional or keywords
+arguments, but not a combination.
 
 Extending this method for custom types is rarely needed. If you implement a new type, such
 as a GPU array type, on which `make_zero` should directly invoke `zero` when the eltype is
@@ -539,20 +545,28 @@ scalar, it is sufficient to implement `Base.zero` and make sure your type subtyp
 function make_zero end
 
 """
-    make_zero!(val::T, [seen::IdDict], ::Val{runtime_inactive}=Val(false))::Nothing
+    make_zero!(val::T, [seen::IdDict]; runtime_inactive=Val(true))::Nothing
+    make_zero!(val::T, [seen::IdDict], ::Val{runtime_inactive})::Nothing
 
 Recursively set a variable's differentiable values to zero. Only applicable for types `T`
 that are mutable or hold all differentiable values in mutable storage (e.g.,
 `Tuple{Vector{Float64}}` qualifies but `Tuple{Float64}` does not). The recursion skips over
 parts of `val` that are guaranteed to be inactive.
 
-The argument `runtime_inactive` specifies whether each constituent type is checked for being
-guaranteed inactive at runtime for every call to `make_zero!`, or if this can be checked once
-at compile-time and reused across multiple calls to `make_zero!` and related functions (the
-default). Runtime checks are necessary to pick up recently added methods to
-`EnzymeRules.inactive_type`, but may incur a significant performance penalty and is usually
-not needed unless `EnzymeRules.inactive_type` is extended interactively for types that have
-previously been passed to `make_zero!` or related functions.
+The argument `runtime_inactive` specifies whether this function should respect runtime
+semantics when determining if a type is guaranteed inactive. If `Val(true)`, changes and
+additions to the methods of `EnzymeRules.inactive_type` will be reflected in the behavior of
+this function. If `Val(false)`, the inactivity of a type is determined once per Julia
+session and reused in every subsequent call with `runtime_inactive=Val(false)`, regardless
+of changes to `EnzymeRules.inactive_type` (in technical terms, there will be no invalidation
+when changing `EnzymeRules.inactive_type`).
+
+Using `runtime_inactive = Val(false)` may be preferred in interactive sessions, but can
+sometimes impose a performance penalty and may in rare cases break gradient compilation when
+used inside custom rules. Hence `runtime_inactive = Val(true)` is recommended for
+non-interactive usage and is the default.
+
+`runtime_inactive` may be given as either a positional or a keyword argument.
 
 Extending this method for custom types is rarely needed. If you implement a new mutable
 type, such as a GPU array type, on which `make_zero!` should directly invoke
