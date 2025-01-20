@@ -13,64 +13,62 @@ generalization of `x .+ f.(y)`.
 
 The function `f` must return values of the same type as its argument.
 
-The optional argument `forcelhs` takes a callable such that if `forcelhs(S) == true`, values
-`zi::S` will be set to `zi = xi`. The default returns true for non-differentiable types,
-such that `zi = xi + f(yi)` applies to differentiable values, while `zi = xi` applies to
-non-differentiable values.
+The optional argument `forcelhs` takes a function such that if `forcelhs(S) == true`, values
+`zi::S` will be set to `zi = xi`. The default returns true for non-differentiable (inactive)
+types, such that `zi = xi + f(yi)` applies to differentiable values, while `zi = xi` applies
+to non-differentiable values. If a custom callable is passed, it is combined with the
+default, as `recursive_add` is not generally capable of traversing inactive objects.
 """
 function recursive_add(x::T, y::T, f::F=identity, forcelhs::L=guaranteed_const) where {T,F,L}
     function addf(xi::S, yi::S) where {S}
         @assert EnzymeCore.isvectortype(S)
         return ((xi + f(yi))::S,)
     end
-    return only(recursive_map(addf, Val(1), (x, y), Val(false), forcelhs))::T
+    config = RecursiveMaps.InactiveConfig(forcelhs)
+    return only(recursive_map(addf, Val(1), (x, y), config))::T
 end
 
 """
-    accumulate_seen!(f, seen::IdDict, ::Val{runtime_inactive}=Val(false))
-    accumulate_seen!(f, seen::IdDict, isinactivetype::RecursiveMaps.IsInactive)
+    accumulate_seen!(f, seen::IdDict; frozen_inactive=Val(false))
+    accumulate_seen!(f, seen::IdDict, ::Val{frozen_inactive})
+    accumulate_seen!(
+        f, seen::IdDict, config::RecursiveMaps.InactiveConfig=RecursiveMaps.InactiveConfig()
+    )
 
 !!! warning
     Internal function, documented for developer convenience but not covered by semver API
     stability guarantees
 
-Recursively accumulate from values into keys, generalizing key .+= f.(value), for each
-key-value pair in `seen::IdDict` where each key must be a mutable object or non-isbits
-vector type instance mappping to another object of the same type and structure. Typically
-`seen` is populated by `make_zero` (or some other single-argument invocation of
-`recursive_map`), mapping components of its argument to the corresponding component of the
-returned value.
+Recursively accumulate from values into keys, generalizing `key .+= f.(value)` to arbitrary
+types. This accumulation is applied to each key-value pair in `seen::IdDict` where each key
+is of a mutable or non-isbits vector type and the corresponding value is of the same type
+and structure. Typically `seen` is populated by `make_zero`/`recursive_map`, mapping parts
+of its input to the corresponding parts of the returned value.
 
-The recursion stops at instances of types that are themselves cached by `make_zero`
-(`recursive_map`), as these objects should have their own entries in `seen`. The recursion
-also stops at inactive objects that would not be zeroed by `make_zero`.
+The recursion stops at objects of types that are themselves cached by
+`make_zero`/`recursive_map`, as these objects should have their own entries in `seen`. The
+recursion also stops at inactive objects that would be skipped by `make_zero`/`recursive_map`.
 
-If the optional `::Val{runtime_inactive}` argument was passed to `make_zero`, the same value
-should be passed to `accumulate_seen` for consistency. If needed, a custom
-`RecursiveMaps.IsInactive` instance can be provided instead.
+If the optional argument `::Val{runtime_inactive}` was passed to `make_zero`, or
+`config::RecursiveMaps.InactiveConfig` was passed to `recursive_map`, the same value should
+be passed to `accumulate_seen` to enzure consistency.
 """
-function accumulate_seen!(
-    f::F, seen::IdDict, ::Val{runtime_inactive}=Val(false)
-) where {F,runtime_inactive}
-    accumulate_seen!(f, seen, RecursiveMaps.IsInactive{runtime_inactive}())
+function accumulate_seen! end
+
+function accumulate_seen!(f::F, seen::IdDict, args::Vararg{Any,M}; kws...) where {F,M}
+    accumulate_seen!(f, seen, RecursiveMaps.make_zero!_config(args...; kws...))
     return nothing
 end
 
-function accumulate_seen!(
-    f::F, seen::IdDict, isinactivetype::RecursiveMaps.IsInactive
-) where {F}
-    isinactive_or_cachedtype = RecursiveMaps.IsInactive(
-        isinactivetype, RecursiveMaps.iscachedtype
-    )
+function accumulate_seen!(f::F, seen::IdDict, config::RecursiveMaps.InactiveConfig) where {F}
+    cachedconfig = RecursiveMaps.InactiveConfig(config, RecursiveMaps.iscachedtype)
     for (k, v) in seen
-        _accumulate_seen_item!(f, k, v, isinactivetype, isinactive_or_cachedtype)
+        _accumulate_seen_item!(f, k, v, config, cachedconfig)
     end
     return nothing
 end
 
-function _accumulate_seen_item!(
-    f::F, k::T, v::T, isinactivetype, isinactive_or_cachedtype
-) where {F,T}
+function _accumulate_seen_item!(f::F, k::T, v::T, config, cachedconfig) where {F,T}
     function addf!!(ki::S, vi::S) where {S}
         @assert EnzymeCore.isvectortype(S)
         return ((ki .+ f.(vi))::S,)
@@ -82,11 +80,9 @@ function _accumulate_seen_item!(
         ki .+= f.(vi)
         return (ki::S,)
     end
-    RecursiveMaps.check_nonactive(T, isinactivetype)
-    if !isinactivetype(T)
-        newks = RecursiveMaps.recursive_map_inner(
-            nothing, addf!!, (k,), (k, v), Val(false), isinactive_or_cachedtype
-        )
+    RecursiveMaps.check_nonactive(T, config)
+    if !RecursiveMaps.isinactivetype(T, config)
+        newks = RecursiveMaps.recursive_map_inner(nothing, addf!!, (k,), (k, v), cachedconfig)
         @assert only(newks) === k
     end
     return nothing

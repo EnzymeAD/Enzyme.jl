@@ -4,82 +4,81 @@ using EnzymeCore: EnzymeCore, isvectortype, isscalartype
 using ..Compiler: guaranteed_const, guaranteed_const_nongen, guaranteed_nonactive,
     guaranteed_nonactive_nongen
 
-### IsInactive: helper for creating consistent inactive/nonactive type checkers
+### Config type for setting inactive/nonactive options
 """
-    isinactivetype = IsInactive{runtime::Bool}(extra=(T -> false))
-    isinactivetype = IsInactive(isinactivetype::IsInactive, extra)
+    config = InactiveConfig(
+        extra=(T -> false); copy_if_inactive=Val(false), runtime_inactive=Val(false)
+    )
+    config = InactiveConfig{copy_if_inactive::Bool,runtime_inactive::Bool}(extra)
+    newconfig = InactiveConfig(config::InactiveConfig, extra)
 
 !!! warning
     Internal type, documented for developer convenience but not covered by semver API
     stability guarantees
 
-Create a callable `isinactivetype` such that `isinactivetype(T) == true` if the type `T` is
-non-differentiable, that is, if differentiable values can never be reached from any instance
-of the type (that is, the activity state of `T` is `AnyState`).
+Config type for specifying which parts of objects should be skipped by `recursive_map{!}`.
 
-The callable takes an optional argument `Val(nonactive::Bool)`, such that the full signature
-is
-
-```julia
-isinactivetype(::Type{T}, ::Val{nonactive}=Val(false))::Bool
-```
-
-Setting `nonactive == true` selects for _nonactive_ types, which is a superset of inactive
-types that also includes types `T` where every differentiable value can be mutated without
-creating a new instance of `T` (that is, the activity state of `T` is either `AnyState` or
-`DupState`).
+At a minimum, parts that Enzyme always considers inactive are skipped. An inactive type is a
+type for which Enzyme can prove that a differentiable value can never be reached from any
+instance of the type.
 
 The optional argument `extra` takes a function defining additional types that should be
-treated as inactive regardless of their nominal activity state; that is,
+skipped regardless of their nominal activity. `extra` should be a plain function
+or callable of a singleton type, not a closure or otherwise stateful callable; this is to
+ensure that an `InactiveConfig` instance is fully specified by its type.
 
-```julia
-IsInactive{runtime}(extra)(T, args...) == IsInactive{runtime}()(T, args...) || extra(T)
-```
+The parameter `copy_if_inactive` specifies whether `recursive_map{!}` should share (if
+`Val(false)`, the default) or deep-copy (if `Val(true)`) inactive/skipped parts from inputs
+to outputs.
 
-The constructor `IsInactive(isinactivetype::IsInactive{runtime}, extra)` can be used to
-extend an existing instance `isinactivetype::IsInactive` with an additional `extra`
-function, and is more or less equivalent to
-`IsInactive{runtime}(T -> isinactivetype.extra(T) || extra(T))`.
+The parameter `runtime_inactive` specifies whether `recursive_map{!}` should respect runtime
+semantics when determining if a type is guaranteed inactive. If `Val(false)`, guaranteed
+inactivity is determined once during compilation of the internal generated function
+`active_reg_nothrow`, and won't be invalidated by subsequent changes to the
+`EnzymeRules.inactive_type` method table. If `Val(true)`, the generated function is not used
+and changes to `EnzymeRules.inactive_type` are picked up through invalidation as usual.
 
-The type parameter `runtime` specifies whether the activity state of a type is queried at
-runtime every time the callable is invoked (`true`), or if compile-time queries from earlier
-calls can be reused (`false`). Runtime querying is necessary to pick up recently added
-methods to `EnzymeRules.inactive_type`, but may incur a significant performance penalty and
-is usually not needed unless `EnzymeRules.inactive_type` is extended interactively for types
-that have previously been passed to an instance of `IsInactive{false}`.
+Using `runtime_inactive = Val(false)` may be preferred in interactive sessions, but
+performance may sometimes suffer if the activity states of all types cannot be resolved at
+compile time, and in some cases this mode has been observed to break gradient compilation
+when `recursive_map{!}` is used inside custom rules. Hence `runtime_inactive = Val(true)` is
+recommended for non-interactive usage and is the default.
+
+The updating constructor `InactiveConfig(config::InactiveConfig, extra)` returns a new
+config that extends `config` with an additional `extra` function.
 """
-struct IsInactive{runtime,F}
-    extra::F
-    function IsInactive{runtime}(
-        extra::F=(@nospecialize(T) -> (@inline; false))
-    ) where {runtime,F}
-        return new{runtime::Bool,F}(extra)
+struct InactiveConfig{copy_if_inactive,runtime_inactive,E}
+    extra::E
+    function InactiveConfig{C,R}(extra::E) where {C,R,E}
+        @assert Base.issingletontype(E)
+        return new{C::Bool,R::Bool,E}(extra)
     end
 end
 
-function IsInactive(isinactivetype::IsInactive{runtime}, extra::F) where {runtime,F}
-    combinedextra(::Type{T}) where {T} = (isinactivetype.extra(T) || extra(T))
-    return IsInactive{runtime}(combinedextra)
+function InactiveConfig(
+    extra::E=(_ -> (@nospecialize; false));
+    copy_if_inactive::Val{C}=Val(false), runtime_inactive::Val{R}=Val(false),
+) where {E,C,R}
+    return InactiveConfig{C,R}(extra)
 end
 
-@inline function (f::IsInactive{runtime,F})(
-    ::Type{T}, ::Val{nonactive}=Val(false)
-) where {runtime,F,T,nonactive}
-    if runtime
-        # evaluate f.extra first, as guaranteed_*_nongen may incur runtime dispatch
-        if nonactive
-            return f.extra(T) || guaranteed_nonactive_nongen(T, nothing)
-        else
-            return f.extra(T) || guaranteed_const_nongen(T, nothing)
-        end
-    else
-        # evaluate guaranteed_* first, as these are always known at compile time
-        if nonactive
-            return guaranteed_nonactive(T) || f.extra(T)
-        else
-            return guaranteed_const(T) || f.extra(T)
-        end
-    end
+function InactiveConfig(config::InactiveConfig{C,R}, extra::E) where {C,R,E}
+    @inline combinedextra(::Type{T}) where {T} = (config.extra(T) || extra(T))
+    return InactiveConfig{C,R}(combinedextra)
+end
+
+function isinactivetype(::Type{T}, config::InactiveConfig{C,false}) where {T,C}
+    return guaranteed_const(T) || config.extra(T) # call guaranteed_const first, as this is a constant at runtime
+end
+function isinactivetype(::Type{T}, config::InactiveConfig{C,true}) where {T,C}
+    return config.extra(T) || guaranteed_const_nongen(T, nothing) # call config.extra first, as guaranteed_const_nongen may incur runtime dispatch
+end
+
+function isnonactivetype(::Type{T}, config::InactiveConfig{C,false}) where {T,C}
+    return guaranteed_nonactive(T) || config.extra(T) # call guaranteed_const first, as this is a constant at runtime
+end
+function isnonactivetype(::Type{T}, config::InactiveConfig{C,true}) where {T,C}
+    return config.extra(T) || guaranteed_nonactive_nongen(T, nothing) # call config.extra first, as guaranteed_nonactive_nongen may incur runtime dispatch
 end
 
 ### traits defining active leaf types for recursive_map
@@ -101,44 +100,41 @@ end
         f,
         ::Val{Nout}
         xs::NTuple{Nin,T},
-        ::Val{copy_if_inactive}=Val(false),
-        isinactivetype=IsInactive{false}(),
+        config::InactiveConfig=InactiveConfig(),
     )::T
     newys = recursive_map(
         [seen::Union{Nothing,IdDict},]
         f,
         ys::NTuple{Nout,T},
         xs::NTuple{Nin,T},
-        ::Val{copy_if_inactive}=Val(false),
-        isinactivetype=IsInactive{false}(),
+        config::InactiveConfig=InactiveConfig(),
     )::T
 
 !!! warning
     Internal function, documented for developer convenience but not covered by semver API
     stability guarantees
 
-Recurse through `Nin` objects `xs = (x1::T, x2::T, ..., xNin::T)` of the same type, mapping the
-function `f` over every differentiable value encountered and building `Nout` new objects
+Recurse through `Nin` objects `xs = (x1::T, x2::T, ..., xNin::T)` of the same type, mapping
+the function `f` over every differentiable value encountered and building `Nout` new objects
 `(y1::T, ...)` from the resulting values `(y1_i, ...) = f(x1_i, ..., xNin_i)`. Only
 `Nout == 1` and `Nout == 2` are supported.
 
 The trait `EnzymeCore.isvectortype`(@ref) determines which values are considered
-differentiable leaf nodes at which recursion terminates and `f` is invoked. See the
-docstring for [`EnzymeCore.isvectortype`](@ref) and the related
-[`EnzymeCore.isscalartype`](@ref) for more information.
+leaf nodes at which to terminate recursion invoke `f`. See the docstring for
+[`EnzymeCore.isvectortype`](@ref) and the related [`EnzymeCore.isscalartype`](@ref) for more
+information.
 
 A tuple of existing objects `ys = (y1::T, ...)` can be passed, in which case the `ys` are
 updated "partially-in-place": any parts of the `ys` that are mutable or non-differentiable
 are reused in the returned object tuple `newys`, while immutable differentiable parts are
-handled out-of-place as if the `ys` were not passed (this can be seen as a recursive
-generalization of the BangBang.jl idiom). If `T` itself is a mutable type, the `ys` are
-modified in-place and returned, such that `newys === ys`.
+handled out-of-place as if the `ys` were not passed. If `T` itself is a mutable type, the
+`ys` are modified in-place and returned, such that `newys === ys`.
 
-The recursion and mapping operates on the structure of `T` as defined by struct fields and
-plain array elements, not on the values provided through an iteration or array interface.
-For example, given a structured matrix wrapper or sparse array type, this function recurses
-into the struct type and the plain arrays held within, rather than operating on the array
-that the type notionally represents.
+The recursion and mapping operate on the structure of `T` as defined by struct fields and
+plain array elements, not on the values provided through iteration or array interfaces. For
+example, given a structured matrix wrapper or sparse array type, this function recurses into
+the struct type and operates on the plain arrays held within, rather than operating on the
+array that the type notionally represents.
 
 # Arguments
 
@@ -147,10 +143,9 @@ that the type notionally represents.
   that of the `xs`, including cycles (i.e., recursive substructures) and multiple paths to
   the same objects. If not provided, an `IdDict` will be allocated internally if required.
 
-  If `nothing` is provided, object identity is not tracked. In this case, objects with
-  multiple references are duplicated such that the `ys`s object reference graph becomes a
-  tree, cycles lead to infinite recursion and stack overflow, and `copy_if_inactive == true`
-  will likely cause errors. This is useful only in specific cases.
+  If `nothing` is provided, object identity is tracking is turned off. In this case, objects
+  with multiple references are duplicated such that the `ys`s object reference graph becomes
+  a tree, but cycles will result in infinite recursion and stack overflow.
 
 * `f`: Function mapping leaf nodes within the `xs` to the corresponding leaf nodes in the
   `ys`, that is, `(y1_i, ...) = f(x1_i::U, ..., xNin_i::U)::NTuple{Nout,U}`. The function
@@ -161,54 +156,44 @@ that the type notionally represents.
   non-scalar type `U`, `f` should also have a partially-in-place method
   `(newy1_i, ...) === f(y1_i::U, ..., yNout_i::U, x1_i::U, ..., xNin_i::U)::NTuple{Nout,U}`
   that modifies and reuses any mutable parts of the `yj_i`; in particular, if `U` is a
-  mutable type, this method should return `newyj_i === yj_i`. If a non-isbits type `U`
-  should always be handled using the out-of-place signature, extend
-  [`EnzymeCore.isscalartype`](@ref) such that `isscalartype(U) == true`.
+  mutable type, this method should return `newyj_i === yj_i`.
+
+  If a non-isbits leaf type `U` must always be handled using the out-of-place signature,
+  define the method `EnzymeCore.isscalartype(::Type{U}) = true`.
 
   See [`EnzymeCore.isvectortype`](@ref) and [`EnzymeCore.isscalartype`](@ref) for more
   details about leaf types and scalar types.
 
 * `::Val{Nout}` or `ys::NTuple{Nout,T}`: For out-of-place operation, pass `Val(Nout)` where
-  `Nout in (1, 2)` is the length of the tuple returned by `f`, that is, the length of the
-  expected return value `ys` (this is required; `Nout` never inferred). For
-  partially-in-place operation, pass the existing tuple `ys::NTuple{Nout,T}` containing the
-  values to be modified.
+  `Nout in (1, 2)` matches the length of the tuple returned by `f`. For partially-in-place
+  operation, pass the existing tuple `ys::NTuple{Nout,T}` containing the values to be
+  modified.
 
-* `xs::NTuple{N,T}`: Tuple of `N` objects of the same type `T` over which `f` is mapped.
+* `xs::NTuple{N,T}`: Tuple of `N` objects of the same type `T`.
 
   The first object `x1 = first(xs)` is the reference for graph structure and
   non-differentiable values when constructing the returned object. In particular:
-  * When `ys` is not passed, the returned objects take any non-differentiable parts from
-    `x1`. (When `ys` is passed, its non-differentiable parts are kept unchanged in the
-    returned object, unless they are not initialized, in which case they are taken from
-    `x1`.)
+  * When `ys` is not passed, the returned `ys` take any non-differentiable parts from `x1`.
+  * When `ys` is passed, its non-differentiable parts are kept unchanged, unless they are
+    uninitialized, in which case they are taken from `x1`.
   * The graph of object references in `x1` is the one which is reproduced in the returned
     object. For each instance of multiple paths and cycles within `x1`, the same structure
     must be present in the other objects `x2, ..., xN`, otherwise the corresponding values
-    in the `ys` would not be uniquely defined. However, `x2, ..., xN` may contain multiple
-    paths or cycles that are not present in `x1`; these do not affect the structure of `ys`.
+    in the `ys` would not be uniquely defined. However, `x2, ..., xN` may contain additional
+    converging paths or cycles that are not present in `x1`; these do not affect the `ys`.
   * If any values within `x1` are not initialized (that is, struct fields are undefined or
     array elements are unassigned), they are left uninitialized in the returned object. If
     any such values are mutable and `ys` is passed, the corresponding value in `y` must not
-    already be initialized, since initialized values cannot be nulled. Conversely, for every
+    already be initialized (initialized values cannot be nulled). Conversely, for every
     value in `x1` that is initialized, the corresponding values in `x2, ..., xN` must also
     be initialized, such that the corresponding values of the `ys` can be computed (however,
-    values in `x2, ..., xN` can be initialized while the corresponding value in `x1` is not;
-    such values are ignored.)
+    `x2, ..., xN` may have initialized values where `x1` has uninitialized values).
 
-* `::Val{copy_if_inactive::Bool}` (optional): When a non-differentiable part of `x1` is
-  included in the returned object, either because an object tuple `ys` is not passed or this
-  part of the `ys` is not initialized, `copy_if_inactive` determines how: if
-  `copy_if_inactive == false`, it is shared as `yj_i = x1_i`; if `copy_if_inactive == true`,
-  it is deep-copied, more-or-less as `yj_i = deepcopy(x1_i)` (the difference is that when
-  `x1` has several non-differentiable parts, object identity is tracked across the multiple
-  deep-copies such that the object reference graph is reproduced also within the inactive
-  parts.)
-
-* `isinactivetype` (optional): Callable mapping types to `Bool` to determine whether the
-  type should be treated according to `copy_if_inactive` (`true`) or recursed into (`false`).
-  The [`IsInactive`](@ref) type is a helper for obtaining a callable with relevant semantics,
-  but any callable that maps types to `true` or `false` can be used.
+* `config::InactiveConfig` (optional): Config object detailing how to deal with
+  non-differentiable (inactive) parts. The config specifies whether non-differentiable parts
+  should be shared or deep-copied from `x1` to the `ys`, and whether any additional types
+  should be skipped in addition to those Enzyme always considers inactive. See
+  [`InactiveConfig`](@ref) for details.
 """
 function recursive_map end
 
@@ -219,19 +204,15 @@ const YS{Nout,T} = Union{Val{Nout},NTuple{Nout,T}}
 
 ## main entry point: set default arguments, allocate IdDict if needed, exit early if possible
 function recursive_map(
-    f::F,
-    ys::YS{Nout,T},
-    xs::NTuple{Nin,T},
-    copy_if_inactive::Val=Val(false),
-    isinactivetype::L=IsInactive{false}(),
-) where {F,Nout,Nin,T,L}
+    f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config::InactiveConfig=InactiveConfig()
+) where {F,Nout,Nin,T}
     check_nout(ys)
-    newys = if isinactivetype(T)
-        recursive_map_inactive(nothing, ys, xs, copy_if_inactive)
+    newys = if isinactivetype(T, config)
+        recursive_map_inactive(nothing, ys, xs, config)
     elseif isvectortype(T) || isbitstype(T)
-        recursive_map_inner(nothing, f, ys, xs, copy_if_inactive, isinactivetype)
+        recursive_map_inner(nothing, f, ys, xs, config)
     else
-        recursive_map_inner(IdDict(), f, ys, xs, copy_if_inactive, isinactivetype)
+        recursive_map_inner(IdDict(), f, ys, xs, config)
     end
     return newys::NTuple{Nout,T}
 end
@@ -242,47 +223,46 @@ function recursive_map(
     f::F,
     ys::YS{Nout,T},
     xs::NTuple{Nin,T},
-    copy_if_inactive::Val=Val(false),
-    isinactivetype::L=IsInactive{false}(),
-) where {F,Nout,Nin,T,L}
+    config::InactiveConfig=InactiveConfig(),
+) where {F,Nout,Nin,T}
     # determine whether to continue recursion, copy/share, or retrieve from cache
     check_nout(ys)
-    newys = if isinactivetype(T)
-        recursive_map_inactive(seen, ys, xs, copy_if_inactive)
+    newys = if isinactivetype(T, config)
+        recursive_map_inactive(seen, ys, xs, config)
     elseif isbitstype(T)  # no object identity to to track in this branch
-        recursive_map_inner(nothing, f, ys, xs, copy_if_inactive, isinactivetype)
+        recursive_map_inner(nothing, f, ys, xs, config)
     elseif hascache(seen, xs)
         getcached(seen, Val(Nout), xs)
     else
-        recursive_map_inner(seen, f, ys, xs, copy_if_inactive, isinactivetype)
+        recursive_map_inner(seen, f, ys, xs, config)
     end
     return newys::NTuple{Nout,T}
 end
 
 @inline function recursive_map_inner(
-    seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, copy_if_inactive, isinactivetype::L
-) where {F,Nout,Nin,T,L}
+    seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config
+) where {F,Nout,Nin,T}
     # forward to appropriate handler for leaf vs. mutable vs. immutable type
     @assert !isabstracttype(T)
     @assert isconcretetype(T)
     newys = if isvectortype(T)
         recursive_map_leaf(seen, f, ys, xs)
     elseif ismutabletype(T)
-        recursive_map_mutable(seen, f, ys, xs, copy_if_inactive, isinactivetype)
+        recursive_map_mutable(seen, f, ys, xs, config)
     else
-        recursive_map_immutable(seen, f, ys, xs, copy_if_inactive, isinactivetype)
+        recursive_map_immutable(seen, f, ys, xs, config)
     end
     return newys::NTuple{Nout,T}
 end
 
 @inline function recursive_map_mutable(
-    seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, copy_if_inactive, isinactivetype::L
-) where {F,Nout,Nin,T,L}
+    seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config
+) where {F,Nout,Nin,T}
     @assert ismutabletype(T)
     if !hasvalues(ys) && !(T <: DenseArray) && all(isbitstype, fieldtypes(T))
         # fast path for out-of-place handling when all fields are bitstypes, which rules
         # out undefined fields and circular references
-        newys = recursive_map_new(seen, f, ys, xs, copy_if_inactive, isinactivetype)
+        newys = recursive_map_new(seen, f, ys, xs, config)
         maybecache!(seen, newys, xs)
     else
         newys = if hasvalues(ys)
@@ -292,71 +272,59 @@ end
             ntuple(_ -> (@inline; _similar(x1)), Val(Nout))
         end
         maybecache!(seen, newys, xs)
-        recursive_map_mutable_inner!(seen, f, newys, ys, xs, copy_if_inactive, isinactivetype)
+        recursive_map_mutable_inner!(seen, f, newys, ys, xs, config)
     end
     return newys::NTuple{Nout,T}
 end
 
 @inline function recursive_map_mutable_inner!(
-    seen,
-    f::F,
-    newys::NTuple{Nout,T},
-    ys::YS{Nout,T},
-    xs::NTuple{Nin,T},
-    copy_if_inactive,
-    isinactivetype::L,
-) where {F,Nout,Nin,T<:DenseArray,L}
+    seen, f::F, newys::NTuple{Nout,T}, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config
+) where {F,Nout,Nin,T<:DenseArray}
     if (Nout == 1) && isbitstype(eltype(T))
         newy = only(newys)
         if hasvalues(ys)
             y = only(ys)
             broadcast!(newy, y, xs...) do y_i, xs_i...
-                only(recursive_map(nothing, f, (y_i,), xs_i, copy_if_inactive, isinactivetype))
+                only(recursive_map(nothing, f, (y_i,), xs_i, config))
             end
         else
             broadcast!(newy, xs...) do xs_i...
-                only(recursive_map(nothing, f, Val(1), xs_i, copy_if_inactive, isinactivetype))
+                only(recursive_map(nothing, f, Val(1), xs_i, config))
             end
         end
     else
         @inbounds for i in eachindex(newys..., xs...)
-            recursive_map_item!(i, seen, f, newys, ys, xs, copy_if_inactive, isinactivetype)
+            recursive_map_item!(i, seen, f, newys, ys, xs, config)
         end
     end
     return nothing
 end
 
 @generated function recursive_map_mutable_inner!(
-    seen,
-    f::F,
-    newys::NTuple{Nout,T},
-    ys::YS{Nout,T},
-    xs::NTuple{Nin,T},
-    copy_if_inactive,
-    isinactivetype::L,
-) where {F,Nout,Nin,T,L}
+    seen, f::F, newys::NTuple{Nout,T}, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config
+) where {F,Nout,Nin,T}
     return quote
         @inline
         Base.Cartesian.@nexprs $(fieldcount(T)) i -> @inbounds begin
-            recursive_map_item!(i, seen, f, newys, ys, xs, copy_if_inactive, isinactivetype)
+            recursive_map_item!(i, seen, f, newys, ys, xs, config)
         end
         return nothing
     end
 end
 
 @inline function recursive_map_immutable(
-    seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, copy_if_inactive, isinactivetype::L
-) where {F,Nout,Nin,T,L}
+    seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config
+) where {F,Nout,Nin,T}
     @assert !ismutabletype(T)
     nf = fieldcount(T)
     if nf == 0  # nothing to do (also no known way to hit this branch)
-        newys = recursive_map_inactive(seen, ys, xs, Val(false))
+        newys = recursive_map_inactive(seen, ys, xs, config)
     else
         newys = if isinitialized(first(xs), nf)  # fast path when all fields are defined
             check_allinitialized(Base.tail(xs), nf)
-            recursive_map_new(seen, f, ys, xs, copy_if_inactive, isinactivetype)
+            recursive_map_new(seen, f, ys, xs, config)
         else
-            recursive_map_immutable_inner(seen, f, ys, xs, copy_if_inactive, isinactivetype)
+            recursive_map_immutable_inner(seen, f, ys, xs, config)
         end
         # maybecache! _should_ be a no-op here; call it anyway for consistency
         maybecache!(seen, newys, xs)
@@ -365,8 +333,8 @@ end
 end
 
 @generated function recursive_map_immutable_inner(
-    seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, copy_if_inactive, isinactivetype::L
-) where {F,Nout,Nin,T,L}
+    seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config
+) where {F,Nout,Nin,T}
     nf = fieldcount(T)
     return quote
         @inline
@@ -375,9 +343,7 @@ end
         Base.Cartesian.@nexprs $(nf - 1) i -> begin  # unrolled loop over struct fields
             @inbounds if isinitialized(x1, i)
                 check_allinitialized(xtail, i)
-                newys_i = recursive_map_item(
-                    i, seen, f, ys, xs, copy_if_inactive, isinactivetype
-                )
+                newys_i = recursive_map_item(i, seen, f, ys, xs, config)
                 Base.Cartesian.@nexprs $Nout j -> (fields[j][i] = newys_i[j])
             else
                 return new_structvs(T, fields, i - 1)
@@ -389,14 +355,14 @@ end
 end
 
 @generated function recursive_map_new(
-    seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, copy_if_inactive, isinactivetype::L
-) where {F,Nout,Nin,T,L}
+    seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config
+) where {F,Nout,Nin,T}
     # direct construction of fully initialized non-cyclic structs
     nf = fieldcount(T)
     return quote
         @inline
         Base.Cartesian.@nexprs $nf i -> @inbounds begin
-            newys_i = recursive_map_item(i, seen, f, ys, xs, copy_if_inactive, isinactivetype)
+            newys_i = recursive_map_item(i, seen, f, ys, xs, config)
         end
         newys = Base.@ntuple $Nout j -> begin
             $(Expr(:splatnew, :T, :(Base.@ntuple $nf i -> newys_i[j])))
@@ -406,18 +372,11 @@ end
 end
 
 Base.@propagate_inbounds function recursive_map_item!(
-    i,
-    seen,
-    f::F,
-    newys::NTuple{Nout,T},
-    ys::YS{Nout,T},
-    xs::NTuple{Nin,T},
-    copy_if_inactive,
-    isinactivetype::L,
-) where {F,Nout,Nin,T,L}
+    i, seen, f::F, newys::NTuple{Nout,T}, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config
+) where {F,Nout,Nin,T}
     if isinitialized(first(xs), i)
         check_allinitialized(Base.tail(xs), i)
-        newys_i = recursive_map_item(i, seen, f, ys, xs, copy_if_inactive, isinactivetype)
+        newys_i = recursive_map_item(i, seen, f, ys, xs, config)
         setitems!(newys, i, newys_i)
     elseif hasvalues(ys)
         check_allinitialized(ys, i, false)
@@ -426,46 +385,38 @@ Base.@propagate_inbounds function recursive_map_item!(
 end
 
 Base.@propagate_inbounds function recursive_map_item(
-    i, seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, copy_if_inactive, isinactivetype::L
-) where {F,Nout,Nin,T,L}
+    i, seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config
+) where {F,Nout,Nin,T}
     # recurse into the xs and apply recursive_map to items with index i
     xs_i = getitems(xs, i)
     newys_i = if hasvalues(ys) && isinitialized(first(ys), i)
         check_allinitialized(Base.tail(ys), i)
         ys_i = getitems(ys, i)
-        recursive_map_barrier!!(seen, f, ys_i..., copy_if_inactive, isinactivetype, xs_i...)
+        recursive_map_barrier!!(seen, f, ys_i..., config, xs_i...)
     else
-        recursive_map_barrier(seen, f, Val(Nout), copy_if_inactive, isinactivetype, xs_i...)
+        recursive_map_barrier(seen, f, Val(Nout), config, xs_i...)
     end
     return newys_i
 end
 
 # function barriers such that abstractly typed items trigger minimal runtime dispatch
 function recursive_map_barrier(
-    seen, f::F, ::Val{Nout}, copy_if_inactive::Val, isinactivetype::L, xs_i::Vararg{ST,Nin}
-) where {F,Nout,Nin,ST,L}
-    return recursive_map(
-        seen, f, Val(Nout), xs_i, copy_if_inactive, isinactivetype
-    )::NTuple{Nout,ST}
+    seen, f::F, ::Val{Nout}, config::InactiveConfig, xs_i::Vararg{ST,Nin}
+) where {F,Nout,Nin,ST}
+    return recursive_map(seen, f, Val(Nout), xs_i, config)::NTuple{Nout,ST}
 end
 
 function recursive_map_barrier!!(
-    seen, f::F, y_i::ST, copy_if_inactive::Val, isinactivetype::L, xs_i::Vararg{ST,Nin}
-) where {F,Nin,ST,L}
-    return recursive_map(seen, f, (y_i,), xs_i, copy_if_inactive, isinactivetype)::NTuple{1,ST}
+    seen, f::F, y_i::ST, config::InactiveConfig, xs_i::Vararg{ST,Nin}
+) where {F,Nin,ST}
+    return recursive_map(seen, f, (y_i,), xs_i, config)::NTuple{1,ST}
 end
 
 function recursive_map_barrier!!(  # may not show in coverage but is covered via accumulate_into! TODO: ensure coverage via VectorSpace once implemented
-    seen,
-    f::F,
-    y1_i::ST,
-    y2_i::ST,
-    copy_if_inactive::Val,
-    isinactivetype::L,
-    xs_i::Vararg{ST,Nin}
-) where {F,Nin,ST,L}
+    seen, f::F, y1_i::ST, y2_i::ST, config::InactiveConfig, xs_i::Vararg{ST,Nin}
+) where {F,Nin,ST}
     ys_i = (y1_i, y2_i)
-    return recursive_map(seen, f, ys_i, xs_i, copy_if_inactive, isinactivetype)::NTuple{2,ST}
+    return recursive_map(seen, f, ys_i, xs_i, config)::NTuple{2,ST}
 end
 
 ## recursion base case handlers
@@ -486,13 +437,13 @@ end
 end
 
 @inline function recursive_map_inactive(
-    _, ys::NTuple{Nout,T}, xs::NTuple{Nin,T}, ::Val{copy_if_inactive}
+    _, ys::NTuple{Nout,T}, xs::NTuple{Nin,T}, ::InactiveConfig{copy_if_inactive}
 ) where {Nout,Nin,T,copy_if_inactive}
     return ys::NTuple{Nout,T}
 end
 
 @inline function recursive_map_inactive(
-    seen, ::Val{Nout}, (x1,)::NTuple{Nin,T}, ::Val{copy_if_inactive}
+    seen, ::Val{Nout}, (x1,)::NTuple{Nin,T}, ::InactiveConfig{copy_if_inactive}
 ) where {Nout,Nin,T,copy_if_inactive}
     @inline
     y = if copy_if_inactive && !isbitstype(T)
@@ -514,8 +465,7 @@ end
         f!!,
         ys::NTuple{Nout,T},
         xs::NTuple{Nin,T},
-        ::Val{copy_if_inactive}=Val(false),
-        isinactivetype::IsInactive=IsInactive{false}(),
+        isinactivetype::InactiveConfig=InactiveConfig(),
     )::Nothing
 
 !!! warning
@@ -529,23 +479,14 @@ in-place with the resulting values.
 This is a simple wrapper that verifies that `T` is a type where all differentiable values
 can be updated in-place, calls `recursive_map`, and verifies that the returned value is
 indeed identically the same tuple `ys`. See [`recursive_map`](@ref) for details.
-
-Note that this wrapper only supports instances of [`IsInactive`](@ref) for the
-`isinactivetype` argument, as this is the only way we can insure consistency between the
-upfront compatibility check and actual behavior. If this is not appropriate, use
-`recursive_map` directly.
 """
 function recursive_map! end
 
 function recursive_map!(
-    f!!::F,
-    ys::NTuple{Nout,T},
-    xs::NTuple{Nin,T},
-    copy_if_inactive::Val=Val(false),
-    isinactivetype::IsInactive=IsInactive{false}(),
+    f!!::F, ys::NTuple{Nout,T}, xs::NTuple{Nin,T}, config::InactiveConfig=InactiveConfig()
 ) where {F,Nout,Nin,T}
-    check_nonactive(T, isinactivetype)
-    newys = recursive_map(f!!, ys, xs, copy_if_inactive, isinactivetype)
+    check_nonactive(T, config)
+    newys = recursive_map(f!!, ys, xs, config)
     @assert newys === ys
     return nothing
 end
@@ -555,11 +496,10 @@ function recursive_map!(
     f!!::F,
     ys::NTuple{Nout,T},
     xs::NTuple{Nin,T},
-    copy_if_inactive::Val=Val(false),
-    isinactivetype::IsInactive=IsInactive{false}(),
+    config::InactiveConfig=InactiveConfig(),
 ) where {F,Nout,Nin,T}
-    check_nonactive(T, isinactivetype)
-    newys = recursive_map(seen, f!!, ys, xs, copy_if_inactive, isinactivetype)
+    check_nonactive(T, config)
+    newys = recursive_map(seen, f!!, ys, xs, config)
     @assert newys === ys
     return nothing
 end
@@ -685,8 +625,8 @@ Base.@propagate_inbounds check_allinitialized(::Tuple{}, i, initialized=true) = 
     return nothing
 end
 
-@inline function check_nonactive(::Type{T}, isinactivetype::IsInactive) where {T}
-    if !isinactivetype(T, Val(true))
+@inline function check_nonactive(::Type{T}, config) where {T}
+    if !isnonactivetype(T, config)
         throw_nonactive()
     end
     return nothing
@@ -714,51 +654,51 @@ end
 end
 
 ### EnzymeCore.make_zero(!) implementation
-function EnzymeCore.make_zero(prev::T, args::Vararg{Any,M}) where {T,M}
-    new = if iszero(M) && !IsInactive{false}()(T) && isvectortype(T)  # fallback
-        # IsInactive has precedence over isvectortype for consistency with recursive handler
-        convert(T, zero(prev))  # convert because zero(prev)::T may fail when eltype(T) is abstract
+@inline function EnzymeCore.make_zero(prev::T, args::Vararg{Any,M}; kws...) where {T,M}
+    config = make_zero_config(args...; kws...)
+    new = if iszero(M) && isempty(kws) && !isinactivetype(T, config) && isvectortype(T)  # fallback
+        # isinactivetype precedes over isvectortype for consistency with recursive handler
+        convert(T, zero(prev))  # convert because zero(prev)::T may not hold when eltype(T) is abstract
     else
-        _make_zero_inner(prev, args...)
+        only(recursive_map(_make_zero!!, Val(1), (prev,), config))::T
     end
     return new::T
 end
 
-function EnzymeCore.make_zero!(val::T, args::Vararg{Any,M}) where {T,M}
+@inline function EnzymeCore.make_zero!(val::T, args::Vararg{Any,M}; kws...) where {T,M}
     @assert !isscalartype(T)  # not appropriate for in-place handler
-    if iszero(M) && !IsInactive{false}()(T) && isvectortype(T)  # fallback
-        # IsInactive has precedence over isvectortype for consistency with recursive handler
+    if iszero(M) && isempty(kws) && !isinactivetype(T, make_zero!_config()) && isvectortype(T)  # fallback
+        # isinactivetype precedes over isvectortype for consistency with recursive handler
         fill!(val, false)
     else
-        _make_zero_inner!(val, args...)
+        _make_zero_inner!(val, args...; kws...)
     end
     return nothing
 end
 
-@inline function _make_zero_inner(
-    prev::T, copy_if_inactive::Val=Val(false), ::Val{runtime_inactive}=Val(false)
-) where {T,runtime_inactive}
-    isinactivetype = IsInactive{runtime_inactive}()
-    news = recursive_map(_make_zero!!, Val(1), (prev,), copy_if_inactive, isinactivetype)
-    return only(news)::T
+@inline function _make_zero_inner!(val, args::Vararg{Any,M}; kws...) where {M}
+    return recursive_map!(_make_zero!!, (val,), (val,), make_zero!_config(args...; kws...))
+end
+@inline function _make_zero_inner!(val, seen::IdDict, args::Vararg{Any,M}; kws...) where {M}
+    config = make_zero!_config(args...; kws...)
+    return recursive_map!(seen, _make_zero!!, (val,), (val,), config)
 end
 
-@inline function _make_zero_inner!(
-    val::T, ::Val{runtime_inactive}=Val(false)
-) where {T,runtime_inactive}
-    isinactivetype = IsInactive{runtime_inactive}()
-    recursive_map!(_make_zero!!, (val,), (val,), Val(false), isinactivetype)
-    return nothing
+# map make_zero(!) args/kws to config
+@inline make_zero_config(C) = InactiveConfig(; copy_if_inactive=C)
+@inline make_zero_config(C, R) = InactiveConfig(; copy_if_inactive=C, runtime_inactive=R)
+@inline make_zero_config(; kws...) = InactiveConfig(; kws...)
+
+@inline make_zero!_config(R) = InactiveConfig(; runtime_inactive=R)
+@inline function make_zero!_config(; runtime_inactive=nothing)
+    if isnothing(runtime_inactive)
+        return InactiveConfig()
+    else
+        return InactiveConfig(; runtime_inactive)
+    end
 end
 
-@inline function _make_zero_inner!(
-    val::T, seen::IdDict, ::Val{runtime_inactive}=Val(false)
-) where {T,runtime_inactive}
-    isinactivetype = IsInactive{runtime_inactive}()
-    recursive_map!(seen, _make_zero!!, (val,), (val,), Val(false), isinactivetype)
-    return nothing
-end
-
+# the mapped function: assert leaf type and call back into single-arg make_zero(!)
 function _make_zero!!(prev::T) where {T}
     @assert isvectortype(T)  # otherwise infinite loop
     return (EnzymeCore.make_zero(prev)::T,)
@@ -773,15 +713,11 @@ function _make_zero!!(val::T, _val::T) where {T}
 end
 
 # alternative entry point for passing custom IdDict
-function EnzymeCore.make_zero(
-    ::Type{T},
-    seen::IdDict,
-    prev::T,
-    copy_if_inactive::Val=Val(false),
-    ::Val{runtime_inactive}=Val(false),
-) where {T,runtime_inactive}
-    isinactivetype = IsInactive{runtime_inactive}()
-    news = recursive_map(seen, _make_zero!!, Val(1), (prev,), copy_if_inactive, isinactivetype)
+@inline function EnzymeCore.make_zero(
+    ::Type{T}, seen::IdDict, prev::T, args::Vararg{Any,M}; kws...
+) where {T,M}
+    config = make_zero_config(args...; kws...)
+    news = recursive_map(seen, _make_zero!!, Val(1), (prev,), config)
     return only(news)::T
 end
 
