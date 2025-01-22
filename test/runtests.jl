@@ -600,10 +600,10 @@ end
         return 0.0+1.0im
     end
     @testset "setinact2 Const" reverse_holomorphic_array_tests(
-        setinact2, 3.4 + 2.7im, 0.0; val_expected=2(3.4 + 2.7im), ret=Const, mapf=false
+        setinact2, 3.4 + 2.7im, 0.0; val_expected = 2(3.4 + 2.7im), ret = Const, mapf = false
     )
     @testset "setinact2 Active" reverse_holomorphic_array_tests(
-        setinact2, 3.4 + 2.7im, 0.0; val_expected=2(3.4 + 2.7im), ret=Active, mapf=false
+        setinact2, 3.4 + 2.7im, 0.0; val_expected = 2(3.4 + 2.7im), ret = Active, mapf = false
     )
 
     function setact(z)
@@ -611,10 +611,10 @@ end
         return z[1][1]    # returns scalar for both [x] and [(x,)]
     end
     @testset "setact Const" reverse_holomorphic_array_tests(
-        setact, 3.4 + 2.7im, 0.0; val_expected=2(3.4 + 2.7im), ret=Const, mapf=false
+        setact, 3.4 + 2.7im, 0.0; val_expected = 2(3.4 + 2.7im), ret = Const, mapf = false
     )
     @testset "setact Active" reverse_holomorphic_array_tests(
-        setact, 3.4 + 2.7im, 2.0; val_expected=2(3.4 + 2.7im), ret=Active, mapf=false
+        setact, 3.4 + 2.7im, 2.0; val_expected = 2(3.4 + 2.7im), ret = Active, mapf = false
     )
 
     function upgrade(z)
