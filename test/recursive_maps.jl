@@ -20,7 +20,7 @@ setx!(w, x) = (w[begin] = x)
 sety!(w, y) = (w[end] = y)
 
 # non-isbits MArray doesn't support setindex!, so requires a little hack
-function setx!(w::MArray{S,T}, x) where {S,T}
+function setx!(w::MArray{S, T}, x) where {S, T}
     if isbitstype(T)
         w[begin] = x
     else
@@ -29,7 +29,7 @@ function setx!(w::MArray{S,T}, x) where {S,T}
     return x
 end
 
-function sety!(w::MArray{S,T}, y) where {S,T}
+function sety!(w::MArray{S, T}, y) where {S, T}
     if isbitstype(T)
         w[end] = y
     else
@@ -153,7 +153,7 @@ function Enzyme.EnzymeCore.isvectortype(::Type{CustomVector{T}}) where {T}
     return Enzyme.EnzymeCore.isscalartype(T)
 end
 
-function Enzyme.EnzymeCore.make_zero(prev::CV) where {CV<:CustomVector{<:AbstractFloat}}
+function Enzyme.EnzymeCore.make_zero(prev::CV) where {CV <: CustomVector{<:AbstractFloat}}
     @info "make_zero(::CustomVector)"
     return CustomVector(zero(prev.data))::CV
 end
@@ -268,8 +268,8 @@ function test_make_zero()
     end
     @testset "nested types" begin
         @testset "$T in $(wrapper.name)" for T in scalartypes, wrapper in filter(
-            w -> (w.N == 1), wrappers
-        )
+                    w -> (w.N == 1), wrappers
+                )
             (!wrapper.bitsonly || isbitstype(T)) || continue
             x = oneunit(T)
             w = wrapper.f(x)
@@ -280,8 +280,8 @@ function test_make_zero()
             @test getx(w) === x                  # no mutation of original
             @test x == oneunit(T)                # no mutation of original (relevant for BigFloat)
             @testset "doubly included in $(dualwrapper.name)" for dualwrapper in filter(
-                w -> (w.N == 2), wrappers
-            )
+                    w -> (w.N == 2), wrappers
+                )
                 (!dualwrapper.bitsonly || isbitstype(T)) || continue
                 w_inner = wrapper.f(x)
                 if !dualwrapper.bitsonly || isbits(w_inner)
@@ -315,8 +315,8 @@ function test_make_zero()
                     # some code paths can only be hit with three layers of wrapping:
                     # mutable(immutable(mutable(scalar)))
                     @testset "all wrapped in $(outerwrapper.name)" for outerwrapper in filter(
-                        w -> ((w.N == 1) && w.mutable && !w.bitsonly), wrappers
-                    )
+                            w -> ((w.N == 1) && w.mutable && !w.bitsonly), wrappers
+                        )
                         w_inner = wrapper.f(x)
                         d_middle = dualwrapper.f(w_inner, w_inner)
                         w_outer = outerwrapper.f(d_middle)
@@ -341,9 +341,9 @@ function test_make_zero()
         @testset "in $(wrapper.name)" for wrapper in wrappers
             if wrapper.N == 1
                 for (inactive, condition) in [
-                    (inactivebits, true),
-                    (inactivearr, !wrapper.bitsonly),
-                ]
+                        (inactivebits, true),
+                        (inactivearr, !wrapper.bitsonly),
+                    ]
                     condition || continue
                     w = wrapper.f(inactive)
                     w_makez = make_zero(w)
@@ -363,9 +363,9 @@ function test_make_zero()
                 end
                 @testset "mixed" begin
                     for (inactive, mixed, condition) in [
-                        (inactivebits, (1.0, inactivebits), true),
-                        (inactivearr, [1.0, inactivearr], !wrapper.bitsonly),
-                    ]
+                            (inactivebits, (1.0, inactivebits), true),
+                            (inactivearr, [1.0, inactivearr], !wrapper.bitsonly),
+                        ]
                         condition || continue
                         w = wrapper.f(mixed)
                         w_makez = make_zero(w)
@@ -384,9 +384,9 @@ function test_make_zero()
             else  # wrapper.N == 2
                 @testset "multiple references" begin
                     for (inactive, condition) in [
-                        (inactivebits, true),
-                        (inactivearr, !wrapper.bitsonly),
-                    ]
+                            (inactivebits, true),
+                            (inactivearr, !wrapper.bitsonly),
+                        ]
                         condition || continue
                         w = wrapper.f(inactive, inactive)
                         w_makez = make_zero(w)
@@ -459,7 +459,7 @@ function test_make_zero()
             @test w[2] === w[3]                                  # no mutation of original
             @test w[2] === inactivearr                           # no mutation of original
             @test inactivearr[1] === inactivetup                 # no mutation of original
-            if (args == (Val(true),)) || (kwargs == (; copy_if_inactive=Val(true)))
+            if (args == (Val(true),)) || (kwargs == (; copy_if_inactive = Val(true)))
                 @test typeof(w_makez[2]) === typeof(inactivearr)  # correct type
                 @test w_makez[2] == inactivearr                   # correct value
                 @test w_makez[2][1] !== inactivetup               # correct identity
@@ -508,8 +508,8 @@ function test_make_zero()
     end
     @testset "circular references" begin
         @testset "$(wrapper.name)" for wrapper in filter(
-            w -> (w.mutable && (w.typed in (:partial, false))), wrappers
-        )
+                w -> (w.mutable && (w.typed in (:partial, false))), wrappers
+            )
             a = [1.0]
             if wrapper.N == 1
                 w = wrapper.f(nothing)
@@ -577,7 +577,7 @@ function test_make_zero()
         # runtime_inactive == false => redefined inactive_type should have no effect
         a_makez = @invokelatest make_zero(a, Val(false), Val(false))
         @test a_makez == MutableWrapper(0.0)
-        a_makez = @invokelatest make_zero(a; runtime_inactive=Val(false))
+        a_makez = @invokelatest make_zero(a; runtime_inactive = Val(false))
         @test a_makez == MutableWrapper(0.0)
 
         # runtime_inactive == true => redefined inactive_type should take effect
@@ -648,7 +648,7 @@ function test_make_zero()
         end
         @testset "mutable struct w inactive/const active/active/mutable/undefined" begin
             a = [1.0]
-            incomplete = MutableIncomplete("a", #=const=#1.0, 1.0, a)
+            incomplete = MutableIncomplete("a", #=const=# 1.0, 1.0, a)
             incomplete_makez = make_zero(incomplete)
             @test typeof(incomplete_makez) === typeof(incomplete)              # correct type
             @test typeof(incomplete_makez.w) === typeof(a)                     # correct type
@@ -670,8 +670,8 @@ end
 function test_make_zero!()
     @testset "nested types" begin
         @testset "$T in $(wrapper.name)" for T in scalartypes, wrapper in filter(
-            w -> (w.N == 1), wrappers
-        )
+                    w -> (w.N == 1), wrappers
+                )
             (!wrapper.bitsonly || isbitstype(T)) || continue
             x = oneunit(T)
             if wrapper.mutable
@@ -682,8 +682,8 @@ function test_make_zero!()
                 @test x == oneunit(T)        # no mutation of scalar (relevant for BigFloat)
             end
             @testset "doubly included in $(dualwrapper.name)" for dualwrapper in (
-                filter(w -> ((w.N == 2) && (w.mutable || wrapper.mutable)), wrappers)
-            )
+                    filter(w -> ((w.N == 2) && (w.mutable || wrapper.mutable)), wrappers)
+                )
                 (!dualwrapper.bitsonly || isbitstype(T)) || continue
                 w_inner = wrapper.f(x)
                 if !dualwrapper.bitsonly || isbits(w_inner)
@@ -715,8 +715,8 @@ function test_make_zero!()
                     # some code paths can only be hit with three layers of wrapping:
                     # mutable(immutable(mutable(scalar)))
                     @testset "all wrapped in $(outerwrapper.name)" for outerwrapper in filter(
-                        w -> ((w.N == 1) && w.mutable && !w.bitsonly), wrappers
-                    )
+                            w -> ((w.N == 1) && w.mutable && !w.bitsonly), wrappers
+                        )
                         w_inner = wrapper.f(x)
                         d_middle = dualwrapper.f(w_inner, w_inner)
                         w_outer = outerwrapper.f(d_middle)
@@ -752,9 +752,9 @@ function test_make_zero!()
                 end
                 @testset "mixed" begin
                     for (inactive, mixed, condition) in [
-                        (inactivebits, (1.0, inactivebits), wrapper.mutable),
-                        (inactivearr, [1.0, inactivearr], !wrapper.bitsonly),
-                    ]
+                            (inactivebits, (1.0, inactivebits), wrapper.mutable),
+                            (inactivearr, [1.0, inactivearr], !wrapper.bitsonly),
+                        ]
                         condition || continue
                         w = wrapper.f(mixed)
                         make_zero!(w)
@@ -769,9 +769,9 @@ function test_make_zero!()
             else  # wrapper.N == 2
                 @testset "multiple references" begin
                     for (inactive, condition) in [
-                        (inactivebits, true),
-                        (inactivearr, !wrapper.bitsonly),
-                    ]
+                            (inactivebits, true),
+                            (inactivearr, !wrapper.bitsonly),
+                        ]
                         condition || continue
                         w = wrapper.f(inactive, inactive)
                         make_zero!(w)
@@ -832,8 +832,8 @@ function test_make_zero!()
     end
     @testset "circular references" begin
         @testset "$(wrapper.name)" for wrapper in filter(
-            w -> (w.mutable && (w.typed in (:partial, false))), wrappers
-        )
+                w -> (w.mutable && (w.typed in (:partial, false))), wrappers
+            )
             a = [1.0]
             if wrapper.N == 1
                 w = wrapper.f(nothing)
@@ -895,7 +895,7 @@ function test_make_zero!()
         @invokelatest make_zero!(a, Val(false))
         @test a == MutableWrapper(0.0)
         a.x = 1.0
-        @invokelatest make_zero!(a; runtime_inactive=Val(false))
+        @invokelatest make_zero!(a; runtime_inactive = Val(false))
         @test a == MutableWrapper(0.0)
 
         # runtime_inactive == true => redefined inactive_type should take effect
@@ -904,7 +904,7 @@ function test_make_zero!()
         @invokelatest make_zero!(a, Val(true))
         @test a == MutableWrapper(1.0)
         a.x = 1.0
-        @invokelatest make_zero!(a; runtime_inactive=Val(true))
+        @invokelatest make_zero!(a; runtime_inactive = Val(true))
         @test a == MutableWrapper(1.0)
 
         # mark MutableWrapper as active again
@@ -947,7 +947,7 @@ function test_make_zero!()
         end
         @testset "mutable struct w inactive/const active/active/mutable/undefined" begin
             a = [1.0]
-            incomplete = MutableIncomplete("a", #=const=#1.0, 1.0, a)
+            incomplete = MutableIncomplete("a", #=const=# 1.0, 1.0, a)
             make_zero!(incomplete)
             @test incomplete == MutableIncomplete("a", 0.0, 0.0, [0.0])  # correct value, preserved undefined
             @test incomplete.w === a                                     # preserved identity
@@ -981,7 +981,7 @@ end
 
 # because this is wrapped in a module, we should only run a single top-level testset
 # otherwise a failed test in the first set will prevent the second from running
-@testset "recursive maps" begin  
+@testset "recursive maps" begin
     @testset "make_zero" test_make_zero()
     @testset "make_zero!" test_make_zero!()
 end
