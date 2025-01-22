@@ -553,8 +553,8 @@ end
     @test_throws MethodError autodiff(ReverseHolomorphic, mul3, Active{Complex}, Active(z))
 
     function reverse_holomorphic_array_tests(
-        f, val, dval_expected; val_expected=val, ret=Active, mapf=true
-    )
+            f, val, dval_expected; val_expected = val, ret = Active, mapf = true
+        )
         vals = ComplexF64[val]
         dvals = ComplexF64[zero(val)]
         autodiff(ReverseHolomorphic, f, ret, Duplicated(vals, dvals))
@@ -592,7 +592,7 @@ end
         nothing
     end
     @testset "setinact" reverse_holomorphic_array_tests(
-        setinact, 3.4 + 2.7im, 0.0; val_expected=2(3.4 + 2.7im), ret=Const, mapf=false
+        setinact, 3.4 + 2.7im, 0.0; val_expected = 2(3.4 + 2.7im), ret = Const, mapf = false
     )
 
     function setinact2(z)

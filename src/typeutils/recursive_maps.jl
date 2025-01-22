@@ -88,8 +88,8 @@ end
 end
 
 @inline EnzymeCore.isscalartype(::Type) = false
-@inline EnzymeCore.isscalartype(::Type{T}) where {T<:AbstractFloat} = isconcretetype(T)
-@inline function EnzymeCore.isscalartype(::Type{Complex{T}}) where {T<:AbstractFloat}
+@inline EnzymeCore.isscalartype(::Type{T}) where {T <: AbstractFloat} = isconcretetype(T)
+@inline function EnzymeCore.isscalartype(::Type{Complex{T}}) where {T <: AbstractFloat}
     return isconcretetype(T)
 end
 
@@ -301,8 +301,8 @@ end
 end
 
 @generated function recursive_map_mutable_inner!(
-    seen, f::F, newys::NTuple{Nout,T}, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config
-) where {F,Nout,Nin,T}
+        seen, f::F, newys::NTuple{Nout, T}, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config
+    ) where {F, Nout, Nin, T}
     return quote
         @inline
         Base.Cartesian.@nexprs $(fieldcount(T)) i -> @inbounds begin
@@ -313,8 +313,8 @@ end
 end
 
 @inline function recursive_map_immutable(
-    seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config
-) where {F,Nout,Nin,T}
+        seen, f::F, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config
+    ) where {F, Nout, Nin, T}
     @assert !ismutabletype(T)
     nf = fieldcount(T)
     if nf == 0  # nothing to do (also no known way to hit this branch)
@@ -355,8 +355,8 @@ end
 end
 
 @generated function recursive_map_new(
-    seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config
-) where {F,Nout,Nin,T}
+        seen, f::F, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config
+    ) where {F, Nout, Nin, T}
     # direct construction of fully initialized non-cyclic structs
     nf = fieldcount(T)
     return quote
@@ -385,8 +385,8 @@ Base.@propagate_inbounds function recursive_map_item!(
 end
 
 Base.@propagate_inbounds function recursive_map_item(
-    i, seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config
-) where {F,Nout,Nin,T}
+        i, seen, f::F, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config
+    ) where {F, Nout, Nin, T}
     # recurse into the xs and apply recursive_map to items with index i
     xs_i = getitems(xs, i)
     newys_i = if hasvalues(ys) && isinitialized(first(ys), i)
@@ -455,7 +455,7 @@ end
     else
         x1
     end
-    return ntuple(_ -> (@inline; y), Val(Nout))::NTuple{Nout,T}
+    return ntuple(_ -> (@inline; y), Val(Nout))::NTuple{Nout, T}
 end
 
 ### recursive_map!: fully in-place wrapper around recursive_map
@@ -483,8 +483,8 @@ indeed identically the same tuple `ys`. See [`recursive_map`](@ref) for details.
 function recursive_map! end
 
 function recursive_map!(
-    f!!::F, ys::NTuple{Nout,T}, xs::NTuple{Nin,T}, config::InactiveConfig=InactiveConfig()
-) where {F,Nout,Nin,T}
+        f!!::F, ys::NTuple{Nout, T}, xs::NTuple{Nin, T}, config::InactiveConfig = InactiveConfig()
+    ) where {F, Nout, Nin, T}
     check_nonactive(T, config)
     newys = recursive_map(f!!, ys, xs, config)
     @assert newys === ys
@@ -492,12 +492,12 @@ function recursive_map!(
 end
 
 function recursive_map!(
-    seen::Union{Nothing,IdDict},
-    f!!::F,
-    ys::NTuple{Nout,T},
-    xs::NTuple{Nin,T},
-    config::InactiveConfig=InactiveConfig(),
-) where {F,Nout,Nin,T}
+        seen::Union{Nothing, IdDict},
+        f!!::F,
+        ys::NTuple{Nout, T},
+        xs::NTuple{Nin, T},
+        config::InactiveConfig = InactiveConfig(),
+    ) where {F, Nout, Nin, T}
     check_nonactive(T, config)
     newys = recursive_map(seen, f!!, ys, xs, config)
     @assert newys === ys
@@ -505,7 +505,7 @@ function recursive_map!(
 end
 
 ### recursive_map helpers
-@generated function new_structvs(::Type{T}, fields::NTuple{N,Vector{Any}}, nfields_) where {T,N}
+@generated function new_structvs(::Type{T}, fields::NTuple{N, Vector{Any}}, nfields_) where {T, N}
     return quote
         @inline
         return Base.@ntuple $N j -> begin
@@ -515,7 +515,7 @@ end
 end
 
 @inline _similar(::T) where {T} = ccall(:jl_new_struct_uninit, Any, (Any,), T)::T
-@inline _similar(x::T) where {T<:DenseArray} = similar(x)::T
+@inline _similar(x::T) where {T <: DenseArray} = similar(x)::T
 Base.@propagate_inbounds isinitialized(x, i) = isdefined(x, i)
 Base.@propagate_inbounds isinitialized(x::DenseArray, i) = isassigned(x, i)
 Base.@propagate_inbounds getitem(x, i) = getfield(x, i)
@@ -560,7 +560,7 @@ end
 @inline shouldcache(::IdDict, ::Type{T}) where {T} = iscachedtype(T)
 @inline shouldcache(::Nothing, ::Type{T}) where {T} = false
 
-@inline function maybecache!(seen, newys::NTuple{Nout,T}, (x1, xtail...)::NTuple{Nin,T}) where {Nout,Nin,T}
+@inline function maybecache!(seen, newys::NTuple{Nout, T}, (x1, xtail...)::NTuple{Nin, T}) where {Nout, Nin, T}
     if shouldcache(seen, T)
         seen[x1] = if (Nout == 1) && (Nin == 1)
             only(newys)
@@ -648,7 +648,7 @@ end
 end
 
 ### EnzymeCore.make_zero(!) implementation
-@inline function EnzymeCore.make_zero(prev::T, args::Vararg{Any,M}; kws...) where {T,M}
+@inline function EnzymeCore.make_zero(prev::T, args::Vararg{Any, M}; kws...) where {T, M}
     config = make_zero_config(args...; kws...)
     new = if iszero(M) && isempty(kws) && !isinactivetype(T, config) && isvectortype(T)  # fallback
         # isinactivetype precedes over isvectortype for consistency with recursive handler
@@ -659,7 +659,7 @@ end
     return new::T
 end
 
-@inline function EnzymeCore.make_zero!(val::T, args::Vararg{Any,M}; kws...) where {T,M}
+@inline function EnzymeCore.make_zero!(val::T, args::Vararg{Any, M}; kws...) where {T, M}
     @assert !isscalartype(T)  # not appropriate for in-place handler
     if iszero(M) && isempty(kws) && !isinactivetype(T, make_zero!_config()) && isvectortype(T)  # fallback
         # isinactivetype precedes over isvectortype for consistency with recursive handler
@@ -708,8 +708,8 @@ end
 
 # alternative entry point for passing custom IdDict
 @inline function EnzymeCore.make_zero(
-    ::Type{T}, seen::IdDict, prev::T, args::Vararg{Any,M}; kws...
-) where {T,M}
+        ::Type{T}, seen::IdDict, prev::T, args::Vararg{Any, M}; kws...
+    ) where {T, M}
     config = make_zero_config(args...; kws...)
     news = recursive_map(seen, _make_zero!!, Val(1), (prev,), config)
     return only(news)::T
