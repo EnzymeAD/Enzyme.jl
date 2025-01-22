@@ -192,53 +192,53 @@ const inactivearr = [inactivetup]
 
 #! format: off
 const wrappers = [
-    (name = "Tuple{X}",                     f = tuple,                                           N = 1, mutable = false, typed = true,      bitsonly = false),
-    (name = "@NamedTuple{x::X}",            f = (NamedTuple{(:x,)} ∘ tuple),                     N = 1, mutable = false, typed = true,      bitsonly = false),
-    (name = "struct{X}",                    f = Wrapper,                                         N = 1, mutable = false, typed = true,      bitsonly = false),
+    (name = "Tuple{X}",                      f = tuple,                                            N = 1, mutable = false, typed = true,      bitsonly = false),
+    (name = "@NamedTuple{x::X}",             f = (NamedTuple{(:x,)} ∘ tuple),                      N = 1, mutable = false, typed = true,      bitsonly = false),
+    (name = "struct{X}",                     f = Wrapper,                                          N = 1, mutable = false, typed = true,      bitsonly = false),
 
-    (name = "@NamedTuple{x}",               f = (@NamedTuple{x} ∘ tuple),                        N = 1, mutable = false, typed = false,     bitsonly = false),
-    (name = "struct{Any}",                  f = Wrapper{Any},                                    N = 1, mutable = false, typed = false,     bitsonly = false),
+    (name = "@NamedTuple{x}",                f = (@NamedTuple{x} ∘ tuple),                         N = 1, mutable = false, typed = false,     bitsonly = false),
+    (name = "struct{Any}",                   f = Wrapper{Any},                                     N = 1, mutable = false, typed = false,     bitsonly = false),
 
-    (name = "Array{X}",                     f = (x -> [x]),                                      N = 1, mutable = true,  typed = true,      bitsonly = false),
-    (name = "Base.RefValue{X}",             f = Ref,                                             N = 1, mutable = true,  typed = true,      bitsonly = false),
-    (name = "mutable struct{X}",            f = MutableWrapper,                                  N = 1, mutable = true,  typed = true,      bitsonly = false),
+    (name = "Array{X}",                      f = (x -> [x]),                                       N = 1, mutable = true,  typed = true,      bitsonly = false),
+    (name = "Base.RefValue{X}",              f = Ref,                                              N = 1, mutable = true,  typed = true,      bitsonly = false),
+    (name = "mutable struct{X}",             f = MutableWrapper,                                   N = 1, mutable = true,  typed = true,      bitsonly = false),
 
-    (name = "Array{Any}",                   f = (x -> Any[x]),                                   N = 1, mutable = true,  typed = false,     bitsonly = false),
-    (name = "Base.RefValue{Any}",           f = Ref{Any},                                        N = 1, mutable = true,  typed = false,     bitsonly = false),
-    (name = "Core.Box",                     f = Core.Box,                                        N = 1, mutable = true,  typed = false,     bitsonly = false),
-    (name = "mutable struct{Any}",          f = MutableWrapper{Any},                             N = 1, mutable = true,  typed = false,     bitsonly = false),
+    (name = "Array{Any}",                    f = (x -> Any[x]),                                    N = 1, mutable = true,  typed = false,     bitsonly = false),
+    (name = "Base.RefValue{Any}",            f = Ref{Any},                                         N = 1, mutable = true,  typed = false,     bitsonly = false),
+    (name = "Core.Box",                      f = Core.Box,                                         N = 1, mutable = true,  typed = false,     bitsonly = false),
+    (name = "mutable struct{Any}",           f = MutableWrapper{Any},                              N = 1, mutable = true,  typed = false,     bitsonly = false),
 
-    (name = "Tuple{X,Y}",                   f = tuple,                                           N = 2, mutable = false, typed = true,      bitsonly = false),
-    (name = "@NamedTuple{x::X,y::Y}",       f = (NamedTuple{(:x, :y)} ∘ tuple),                  N = 2, mutable = false, typed = true,      bitsonly = false),
-    (name = "struct{X,Y}",                  f = DualWrapper,                                     N = 2, mutable = false, typed = true,      bitsonly = false),
+    (name = "Tuple{X, Y}",                   f = tuple,                                            N = 2, mutable = false, typed = true,      bitsonly = false),
+    (name = "@NamedTuple{x::X, y::Y}",       f = (NamedTuple{(:x, :y)} ∘ tuple),                   N = 2, mutable = false, typed = true,      bitsonly = false),
+    (name = "struct{X, Y}",                  f = DualWrapper,                                      N = 2, mutable = false, typed = true,      bitsonly = false),
 
-    (name = "@NamedTuple{x,y::Y}",          f = ((x, y) -> @NamedTuple{x,y::typeof(y)}((x, y))), N = 2, mutable = false, typed = :partial,  bitsonly = false),
-    (name = "struct{Any,Y}",                f = DualWrapper{Any},                                N = 2, mutable = false, typed = :partial,  bitsonly = false),
+    (name = "@NamedTuple{x, y::Y}",          f = ((x, y) -> @NamedTuple{x, y::typeof(y)}((x, y))), N = 2, mutable = false, typed = :partial,  bitsonly = false),
+    (name = "struct{Any, Y}",                f = DualWrapper{Any},                                 N = 2, mutable = false, typed = :partial,  bitsonly = false),
 
-    (name = "@NamedTuple{x,y}",             f = (@NamedTuple{x,y} ∘ tuple),                      N = 2, mutable = false, typed = false,     bitsonly = false),
-    (name = "struct{Any}",                  f = DualWrapper{Any,Any},                            N = 2, mutable = false, typed = false,     bitsonly = false),
+    (name = "@NamedTuple{x, y}",             f = (@NamedTuple{x, y} ∘ tuple),                      N = 2, mutable = false, typed = false,     bitsonly = false),
+    (name = "struct{Any}",                   f = DualWrapper{Any, Any},                            N = 2, mutable = false, typed = false,     bitsonly = false),
 
-    (name = "mutable struct{X,Y}",          f = MutableDualWrapper,                              N = 2, mutable = true,  typed = true,      bitsonly = false),
+    (name = "mutable struct{X, Y}",          f = MutableDualWrapper,                               N = 2, mutable = true,  typed = true,      bitsonly = false),
 
-    (name = "Array{promote_type(X,Y)}",     f = ((x, y) -> [x, y]),                              N = 2, mutable = true,  typed = :promoted, bitsonly = false),
-    (name = "mutable struct{Any,Y}",        f = MutableDualWrapper{Any},                         N = 2, mutable = true,  typed = :partial,  bitsonly = false),
+    (name = "Array{promote_type(X, Y)}",     f = ((x, y) -> [x, y]),                               N = 2, mutable = true,  typed = :promoted, bitsonly = false),
+    (name = "mutable struct{Any, Y}",        f = MutableDualWrapper{Any},                          N = 2, mutable = true,  typed = :partial,  bitsonly = false),
 
-    (name = "Array{Any}",                   f = ((x, y) -> Any[x, y]),                           N = 2, mutable = true,  typed = false,     bitsonly = false),
-    (name = "mutable struct{Any,Any}",      f = MutableDualWrapper{Any,Any},                     N = 2, mutable = true,  typed = false,     bitsonly = false),
+    (name = "Array{Any}",                    f = ((x, y) -> Any[x, y]),                            N = 2, mutable = true,  typed = false,     bitsonly = false),
+    (name = "mutable struct{Any, Any}",      f = MutableDualWrapper{Any,Any},                      N = 2, mutable = true,  typed = false,     bitsonly = false),
 
     # StaticArrays extension
-    (name = "SVector{1,X}",                 f = (SVector{1} ∘ tuple),                            N = 1, mutable = false, typed = true,      bitsonly = false),
-    (name = "SVector{1,Any}",               f = (SVector{1,Any} ∘ tuple),                        N = 1, mutable = false, typed = false,     bitsonly = false),
-    (name = "MVector{1,X}",                 f = (MVector{1} ∘ tuple),                            N = 1, mutable = true,  typed = true,      bitsonly = false),
-    (name = "MVector{1,Any}",               f = (MVector{1,Any} ∘ tuple),                        N = 1, mutable = true,  typed = false,     bitsonly = false),
-    (name = "SVector{2,promote_type(X,Y)}", f = (SVector{2} ∘ tuple),                            N = 2, mutable = false, typed = :promoted, bitsonly = false),
-    (name = "SVector{2,Any}",               f = (SVector{2,Any} ∘ tuple),                        N = 2, mutable = false, typed = false,     bitsonly = false),
-    (name = "MVector{2,promote_type(X,Y)}", f = (MVector{2} ∘ tuple),                            N = 2, mutable = true,  typed = :promoted, bitsonly = false),
-    (name = "MVector{2,Any}",               f = (MVector{2,Any} ∘ tuple),                        N = 2, mutable = true,  typed = false,     bitsonly = false),
+    (name = "SVector{1, X}",                  f = (SVector{1} ∘ tuple),                             N = 1, mutable = false, typed = true,      bitsonly = false),
+    (name = "SVector{1, Any}",                f = (SVector{1, Any} ∘ tuple),                        N = 1, mutable = false, typed = false,     bitsonly = false),
+    (name = "MVector{1, X}",                  f = (MVector{1} ∘ tuple),                             N = 1, mutable = true,  typed = true,      bitsonly = false),
+    (name = "MVector{1, Any}",                f = (MVector{1, Any} ∘ tuple),                        N = 1, mutable = true,  typed = false,     bitsonly = false),
+    (name = "SVector{2, promote_type(X, Y)}", f = (SVector{2} ∘ tuple),                             N = 2, mutable = false, typed = :promoted, bitsonly = false),
+    (name = "SVector{2, Any}",                f = (SVector{2, Any} ∘ tuple),                        N = 2, mutable = false, typed = false,     bitsonly = false),
+    (name = "MVector{2, promote_type(X, Y)}", f = (MVector{2} ∘ tuple),                             N = 2, mutable = true,  typed = :promoted, bitsonly = false),
+    (name = "MVector{2, Any}",                f = (MVector{2, Any} ∘ tuple),                        N = 2, mutable = true,  typed = false,     bitsonly = false),
 
     # GPUArrays extension
-    (name = "JLArray{X}",                     f = (x -> JLArray([x])),                           N = 1, mutable = true,  typed = true,      bitsonly = true),
-    (name = "JLArray{promote_type(X,Y)}",     f = ((x, y) -> JLArray([x, y])),                   N = 2, mutable = true,  typed = :promoted, bitsonly = true),
+    (name = "JLArray{X}",                     f = (x -> JLArray([x])),                              N = 1, mutable = true,  typed = true,      bitsonly = true),
+    (name = "JLArray{promote_type(X, Y)}",    f = ((x, y) -> JLArray([x, y])),                      N = 2, mutable = true,  typed = :promoted, bitsonly = true),
 ]
 #! format: on
 
@@ -248,10 +248,10 @@ _memory(x::Vector) = Memory{eltype(x)}(x)
 #! format: off
 push!(
     wrappers,
-    (name = "Memory{X}",                    f = (x -> _memory([x])),                             N = 1, mutable = true,  typed = true,      bitsonly = false),
-    (name = "Memory{Any}",                  f = (x -> _memory(Any[x])),                          N = 1, mutable = true,  typed = false,     bitsonly = false),
-    (name = "Memory{promote_type(X,Y)}",    f = ((x, y) -> _memory([x, y])),                     N = 2, mutable = true,  typed = :promoted, bitsonly = false),
-    (name = "Memory{Any}",                  f = ((x, y) -> _memory(Any[x, y])),                  N = 2, mutable = true,  typed = false,     bitsonly = false),
+    (name = "Memory{X}",                    f = (x -> _memory([x])),                                N = 1, mutable = true,  typed = true,      bitsonly = false),
+    (name = "Memory{Any}",                  f = (x -> _memory(Any[x])),                             N = 1, mutable = true,  typed = false,     bitsonly = false),
+    (name = "Memory{promote_type(X, Y)}",   f = ((x, y) -> _memory([x, y])),                        N = 2, mutable = true,  typed = :promoted, bitsonly = false),
+    (name = "Memory{Any}",                  f = ((x, y) -> _memory(Any[x, y])),                     N = 2, mutable = true,  typed = false,     bitsonly = false),
 )
 #! format: on
 end
