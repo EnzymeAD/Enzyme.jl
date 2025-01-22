@@ -240,12 +240,10 @@ const wrappers = [
     (name = "JLArray{X}",                     f = (x -> JLArray([x])),                              N = 1, mutable = true,  typed = true,      bitsonly = true),
     (name = "JLArray{promote_type(X, Y)}",    f = ((x, y) -> JLArray([x, y])),                      N = 2, mutable = true,  typed = :promoted, bitsonly = true),
 ]
-#! format: on
 
 @static if VERSION < v"1.11-"
 else
 _memory(x::Vector) = Memory{eltype(x)}(x)
-#! format: off
 push!(
     wrappers,
     (name = "Memory{X}",                    f = (x -> _memory([x])),                                N = 1, mutable = true,  typed = true,      bitsonly = false),
@@ -253,8 +251,8 @@ push!(
     (name = "Memory{promote_type(X, Y)}",   f = ((x, y) -> _memory([x, y])),                        N = 2, mutable = true,  typed = :promoted, bitsonly = false),
     (name = "Memory{Any}",                  f = ((x, y) -> _memory(Any[x, y])),                     N = 2, mutable = true,  typed = false,     bitsonly = false),
 )
-#! format: on
 end
+#! format: on
 
 function test_make_zero()
     @testset "scalars" begin
