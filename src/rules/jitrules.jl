@@ -1140,7 +1140,9 @@ end
 ) where {Ann,Nargs}
     expr = Vector{Expr}(undef, Nargs)
     for i = 1:Nargs
-        @assert !(args[i] <: Active)
+        if args[i] <: Active
+            throw(AssertionError("Unsupported Active arg $(args[i])"))
+        end
         @inbounds expr[i] = if args[i] <: Const
             :(args[$i].val)
         elseif args[i] <: MixedDuplicated
