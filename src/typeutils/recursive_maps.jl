@@ -47,37 +47,37 @@ recommended for non-interactive usage and is the default.
 The updating constructor `InactiveConfig(config::InactiveConfig, extra)` returns a new
 config that extends `config` with an additional `extra` function.
 """
-struct InactiveConfig{copy_if_inactive,runtime_inactive,E}
+struct InactiveConfig{copy_if_inactive, runtime_inactive, E}
     extra::E
-    function InactiveConfig{C,R}(extra::E) where {C,R,E}
+    function InactiveConfig{C, R}(extra::E) where {C, R, E}
         @assert Base.issingletontype(E)
-        return new{C::Bool,R::Bool,E}(extra)
+        return new{C::Bool, R::Bool, E}(extra)
     end
 end
 
 function InactiveConfig(
-    extra::E=(_ -> (@nospecialize; false));
-    copy_if_inactive::Val{C}=Val(false), runtime_inactive::Val{R}=Val(false),
-) where {E,C,R}
-    return InactiveConfig{C,R}(extra)
+        extra::E = (_ -> (@nospecialize; false));
+        copy_if_inactive::Val{C} = Val(false), runtime_inactive::Val{R} = Val(false),
+    ) where {E, C, R}
+    return InactiveConfig{C, R}(extra)
 end
 
-function InactiveConfig(config::InactiveConfig{C,R}, extra::E) where {C,R,E}
+function InactiveConfig(config::InactiveConfig{C, R}, extra::E) where {C, R, E}
     @inline combinedextra(::Type{T}) where {T} = (config.extra(T) || extra(T))
-    return InactiveConfig{C,R}(combinedextra)
+    return InactiveConfig{C, R}(combinedextra)
 end
 
-function isinactivetype(::Type{T}, config::InactiveConfig{C,false}) where {T,C}
+function isinactivetype(::Type{T}, config::InactiveConfig{C, false}) where {T, C}
     return guaranteed_const(T) || config.extra(T) # call guaranteed_const first, as this is a constant at runtime
 end
-function isinactivetype(::Type{T}, config::InactiveConfig{C,true}) where {T,C}
+function isinactivetype(::Type{T}, config::InactiveConfig{C, true}) where {T, C}
     return config.extra(T) || guaranteed_const_nongen(T, nothing) # call config.extra first, as guaranteed_const_nongen may incur runtime dispatch
 end
 
-function isnonactivetype(::Type{T}, config::InactiveConfig{C,false}) where {T,C}
+function isnonactivetype(::Type{T}, config::InactiveConfig{C, false}) where {T, C}
     return guaranteed_nonactive(T) || config.extra(T) # call guaranteed_const first, as this is a constant at runtime
 end
-function isnonactivetype(::Type{T}, config::InactiveConfig{C,true}) where {T,C}
+function isnonactivetype(::Type{T}, config::InactiveConfig{C, true}) where {T, C}
     return config.extra(T) || guaranteed_nonactive_nongen(T, nothing) # call config.extra first, as guaranteed_nonactive_nongen may incur runtime dispatch
 end
 
@@ -198,14 +198,14 @@ array that the type notionally represents.
 function recursive_map end
 
 ## type alias for unified handling of out-of-place and partially-in-place recursive_map
-const YS{Nout,T} = Union{Val{Nout},NTuple{Nout,T}}
+const YS{Nout, T} = Union{Val{Nout}, NTuple{Nout, T}}
 @inline hasvalues(::Val{Nout}) where {Nout} = (Nout::Int; false)
 @inline hasvalues(::NTuple) = true
 
 ## main entry point: set default arguments, allocate IdDict if needed, exit early if possible
 function recursive_map(
-    f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config::InactiveConfig=InactiveConfig()
-) where {F,Nout,Nin,T}
+        f::F, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config::InactiveConfig = InactiveConfig()
+    ) where {F, Nout, Nin, T}
     @assert (Nout == 1) || (Nout == 2)
     newys = if isinactivetype(T, config)
         recursive_map_inactive(nothing, ys, xs, config)
@@ -214,17 +214,17 @@ function recursive_map(
     else
         recursive_map_inner(IdDict(), f, ys, xs, config)
     end
-    return newys::NTuple{Nout,T}
+    return newys::NTuple{Nout, T}
 end
 
 ## recursive methods
 function recursive_map(
-    seen::Union{Nothing,IdDict},
-    f::F,
-    ys::YS{Nout,T},
-    xs::NTuple{Nin,T},
-    config::InactiveConfig=InactiveConfig(),
-) where {F,Nout,Nin,T}
+        seen::Union{Nothing, IdDict},
+        f::F,
+        ys::YS{Nout, T},
+        xs::NTuple{Nin, T},
+        config::InactiveConfig = InactiveConfig(),
+    ) where {F, Nout, Nin, T}
     # determine whether to continue recursion, copy/share, or retrieve from cache
     @assert (Nout == 1) || (Nout == 2)
     newys = if isinactivetype(T, config)
@@ -236,12 +236,12 @@ function recursive_map(
     else
         recursive_map_inner(seen, f, ys, xs, config)
     end
-    return newys::NTuple{Nout,T}
+    return newys::NTuple{Nout, T}
 end
 
 @inline function recursive_map_inner(
-    seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config
-) where {F,Nout,Nin,T}
+        seen, f::F, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config
+    ) where {F, Nout, Nin, T}
     # forward to appropriate handler for leaf vs. mutable vs. immutable type
     @assert !isabstracttype(T)
     @assert isconcretetype(T)
@@ -252,12 +252,12 @@ end
     else
         recursive_map_immutable(seen, f, ys, xs, config)
     end
-    return newys::NTuple{Nout,T}
+    return newys::NTuple{Nout, T}
 end
 
 @inline function recursive_map_mutable(
-    seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config
-) where {F,Nout,Nin,T}
+        seen, f::F, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config
+    ) where {F, Nout, Nin, T}
     @assert ismutabletype(T)
     if !hasvalues(ys) && !(T <: DenseArray) && all(isbitstype, fieldtypes(T))
         # fast path for out-of-place handling when all fields are bitstypes, which rules
@@ -274,12 +274,12 @@ end
         maybecache!(seen, newys, xs)
         recursive_map_mutable_inner!(seen, f, newys, ys, xs, config)
     end
-    return newys::NTuple{Nout,T}
+    return newys::NTuple{Nout, T}
 end
 
 @inline function recursive_map_mutable_inner!(
-    seen, f::F, newys::NTuple{Nout,T}, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config
-) where {F,Nout,Nin,T<:DenseArray}
+        seen, f::F, newys::NTuple{Nout, T}, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config
+    ) where {F, Nout, Nin, T <: DenseArray}
     if (Nout == 1) && isbitstype(eltype(T))
         newy = only(newys)
         if hasvalues(ys)
@@ -329,12 +329,12 @@ end
         # maybecache! _should_ be a no-op here; call it anyway for consistency
         maybecache!(seen, newys, xs)
     end
-    return newys::NTuple{Nout,T}
+    return newys::NTuple{Nout, T}
 end
 
 @generated function recursive_map_immutable_inner(
-    seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config
-) where {F,Nout,Nin,T}
+        seen, f::F, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config
+    ) where {F, Nout, Nin, T}
     nf = fieldcount(T)
     return quote
         @inline
@@ -367,13 +367,13 @@ end
         newys = Base.@ntuple $Nout j -> begin
             $(Expr(:splatnew, :T, :(Base.@ntuple $nf i -> newys_i[j])))
         end
-        return newys::NTuple{Nout,T}
+        return newys::NTuple{Nout, T}
     end
 end
 
 Base.@propagate_inbounds function recursive_map_item!(
-    i, seen, f::F, newys::NTuple{Nout,T}, ys::YS{Nout,T}, xs::NTuple{Nin,T}, config
-) where {F,Nout,Nin,T}
+        i, seen, f::F, newys::NTuple{Nout, T}, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config
+    ) where {F, Nout, Nin, T}
     if isinitialized(first(xs), i)
         check_allinitialized(Base.tail(xs), i)
         newys_i = recursive_map_item(i, seen, f, ys, xs, config)
@@ -401,50 +401,50 @@ end
 
 # function barriers such that abstractly typed items trigger minimal runtime dispatch
 function recursive_map_barrier(
-    seen, f::F, ::Val{Nout}, config::InactiveConfig, xs_i::Vararg{ST,Nin}
-) where {F,Nout,Nin,ST}
-    return recursive_map(seen, f, Val(Nout), xs_i, config)::NTuple{Nout,ST}
+        seen, f::F, ::Val{Nout}, config::InactiveConfig, xs_i::Vararg{ST, Nin}
+    ) where {F, Nout, Nin, ST}
+    return recursive_map(seen, f, Val(Nout), xs_i, config)::NTuple{Nout, ST}
 end
 
 function recursive_map_barrier!!(
-    seen, f::F, y_i::ST, config::InactiveConfig, xs_i::Vararg{ST,Nin}
-) where {F,Nin,ST}
-    return recursive_map(seen, f, (y_i,), xs_i, config)::NTuple{1,ST}
+        seen, f::F, y_i::ST, config::InactiveConfig, xs_i::Vararg{ST, Nin}
+    ) where {F, Nin, ST}
+    return recursive_map(seen, f, (y_i,), xs_i, config)::NTuple{1, ST}
 end
 
 function recursive_map_barrier!!(  # may not show in coverage but is covered via accumulate_into! TODO: ensure coverage via VectorSpace once implemented
-    seen, f::F, y1_i::ST, y2_i::ST, config::InactiveConfig, xs_i::Vararg{ST,Nin}
-) where {F,Nin,ST}
+        seen, f::F, y1_i::ST, y2_i::ST, config::InactiveConfig, xs_i::Vararg{ST, Nin}
+    ) where {F, Nin, ST}
     ys_i = (y1_i, y2_i)
-    return recursive_map(seen, f, ys_i, xs_i, config)::NTuple{2,ST}
+    return recursive_map(seen, f, ys_i, xs_i, config)::NTuple{2, ST}
 end
 
 ## recursion base case handlers
 @inline function recursive_map_leaf(
-    seen, f::F, ys::YS{Nout,T}, xs::NTuple{Nin,T}
-) where {F,Nout,Nin,T}
+        seen, f::F, ys::YS{Nout, T}, xs::NTuple{Nin, T}
+    ) where {F, Nout, Nin, T}
     # apply the mapped function to leaf values
     if !hasvalues(ys) || isbitstype(T) || isscalartype(T)
-        newys = f(xs...)::NTuple{Nout,T}
+        newys = f(xs...)::NTuple{Nout, T}
     else  # !isbitstype(T)
-        newys = f(ys..., xs...)::NTuple{Nout,T}
+        newys = f(ys..., xs...)::NTuple{Nout, T}
         if ismutabletype(T)
             @assert newys === ys
         end
     end
     maybecache!(seen, newys, xs)
-    return newys::NTuple{Nout,T}
+    return newys::NTuple{Nout, T}
 end
 
 @inline function recursive_map_inactive(
-    _, ys::NTuple{Nout,T}, xs::NTuple{Nin,T}, ::InactiveConfig{copy_if_inactive}
-) where {Nout,Nin,T,copy_if_inactive}
-    return ys::NTuple{Nout,T}
+        _, ys::NTuple{Nout, T}, xs::NTuple{Nin, T}, ::InactiveConfig{copy_if_inactive}
+    ) where {Nout, Nin, T, copy_if_inactive}
+    return ys::NTuple{Nout, T}
 end
 
 @inline function recursive_map_inactive(
-    seen, ::Val{Nout}, (x1,)::NTuple{Nin,T}, ::InactiveConfig{copy_if_inactive}
-) where {Nout,Nin,T,copy_if_inactive}
+        seen, ::Val{Nout}, (x1,)::NTuple{Nin, T}, ::InactiveConfig{copy_if_inactive}
+    ) where {Nout, Nin, T, copy_if_inactive}
     @inline
     y = if copy_if_inactive && !isbitstype(T)
         if isnothing(seen)
@@ -483,7 +483,10 @@ indeed identically the same tuple `ys`. See [`recursive_map`](@ref) for details.
 function recursive_map! end
 
 function recursive_map!(
-        f!!::F, ys::NTuple{Nout, T}, xs::NTuple{Nin, T}, config::InactiveConfig = InactiveConfig()
+        f!!::F,
+        ys::NTuple{Nout, T},
+        xs::NTuple{Nin, T},
+        config::InactiveConfig = InactiveConfig(),
     ) where {F, Nout, Nin, T}
     check_nonactive(T, config)
     newys = recursive_map(f!!, ys, xs, config)
@@ -505,7 +508,9 @@ function recursive_map!(
 end
 
 ### recursive_map helpers
-@generated function new_structvs(::Type{T}, fields::NTuple{N, Vector{Any}}, nfields_) where {T, N}
+@generated function new_structvs(
+        ::Type{T}, fields::NTuple{N, Vector{Any}}, nfields_
+    ) where {T, N}
     return quote
         @inline
         return Base.@ntuple $N j -> begin
@@ -532,21 +537,25 @@ Base.@propagate_inbounds function setfield_force!(x::T, i, v) where {T}
     return nothing
 end
 
-Base.@propagate_inbounds function getitems((x1, xtail...)::Tuple{T,T,Vararg{T,N}}, i) where {T,N}
+Base.@propagate_inbounds function getitems(
+        (x1, xtail...)::Tuple{T, T, Vararg{T, N}}, i
+    ) where {T, N}
     return (getitem(x1, i), getitems(xtail, i)...)
 end
 
 Base.@propagate_inbounds getitems((x1,)::Tuple{T}, i) where {T} = (getitem(x1, i),)
 
 Base.@propagate_inbounds function setitems!(  # may not show in coverage but is covered via accumulate_into! TODO: ensure coverage via VectorSpace once implemented
-    (x1, xtail...)::Tuple{T,T,Vararg{T,N}}, i, (v1, vtail...)::Tuple{ST,ST,Vararg{ST,N}}
-) where {T,ST,N}
+        (x1, xtail...)::Tuple{T, T, Vararg{T, N}},
+        i,
+        (v1, vtail...)::Tuple{ST, ST, Vararg{ST, N}},
+    ) where {T, ST, N}
     setitem!(x1, i, v1)
     setitems!(xtail, i, vtail)
     return nothing
 end
 
-Base.@propagate_inbounds function setitems!((x1,)::Tuple{T}, i, (v1,)::Tuple{ST}) where {T,ST}
+Base.@propagate_inbounds function setitems!((x1,)::Tuple{T}, i, (v1,)::Tuple{ST}) where {T, ST}
     setitem!(x1, i, v1)
     return nothing
 end
@@ -560,7 +569,9 @@ end
 @inline shouldcache(::IdDict, ::Type{T}) where {T} = iscachedtype(T)
 @inline shouldcache(::Nothing, ::Type{T}) where {T} = false
 
-@inline function maybecache!(seen, newys::NTuple{Nout, T}, (x1, xtail...)::NTuple{Nin, T}) where {Nout, Nin, T}
+@inline function maybecache!(
+        seen, newys::NTuple{Nout, T}, (x1, xtail...)::NTuple{Nin, T}
+    ) where {Nout, Nin, T}
     if shouldcache(seen, T)
         seen[x1] = if (Nout == 1) && (Nin == 1)
             only(newys)
@@ -571,24 +582,26 @@ end
     return nothing
 end
 
-@inline function hascache(seen, (x1,)::NTuple{Nin,T}) where {Nin,T}
+@inline function hascache(seen, (x1,)::NTuple{Nin, T}) where {Nin, T}
     return shouldcache(seen, T) ? haskey(seen, x1) : false
 end
 
-@inline function getcached(seen::IdDict, ::Val{Nout}, (x1, xtail...)::NTuple{Nin,T}) where {Nout,Nin,T}
+@inline function getcached(
+        seen::IdDict, ::Val{Nout}, (x1, xtail...)::NTuple{Nin, T}
+    ) where {Nout, Nin, T}
     newys = if (Nout == 1) && (Nin == 1)
         (seen[x1]::T,)
     else   # may not show in coverage but is covered via accumulate_into! TODO: ensure coverage via VectorSpace once implemented
-        cache = seen[x1]::NTuple{(Nout + Nin - 1),T}
-        cachedtail = cache[(Nout+1):end]
+        cache = seen[x1]::NTuple{(Nout + Nin - 1), T}
+        cachedtail = cache[(Nout + 1):end]
         check_identical(cachedtail, xtail)  # check compatible structure
         cache[1:Nout]
     end
-    return newys::NTuple{Nout,T}
+    return newys::NTuple{Nout, T}
 end
 
 ## argument validation
-Base.@propagate_inbounds function check_initialized(x, i, initialized=true)
+Base.@propagate_inbounds function check_initialized(x, i, initialized = true)
     if isinitialized(x, i) != initialized
         throw_initialized()  # TODO: hit this when VectorSpace implemented
     end
@@ -596,21 +609,21 @@ Base.@propagate_inbounds function check_initialized(x, i, initialized=true)
 end
 
 Base.@propagate_inbounds function check_allinitialized(  # TODO: hit this when VectorSpace implemented
-    (x1, xtail...)::Tuple{T,T,Vararg{T,N}}, i, initialized=true
-) where {T,N}
+        (x1, xtail...)::Tuple{T, T, Vararg{T, N}}, i, initialized = true
+    ) where {T, N}
     check_initialized(x1, i, initialized)
     check_allinitialized(xtail, i, initialized)
     return nothing
 end
 
 Base.@propagate_inbounds function check_allinitialized(
-    (x1,)::Tuple{T}, i, initialized=true
-) where {T}
+        (x1,)::Tuple{T}, i, initialized = true
+    ) where {T}
     check_initialized(x1, i, initialized)
     return nothing
 end
 
-Base.@propagate_inbounds check_allinitialized(::Tuple{}, i, initialized=true) = nothing
+Base.@propagate_inbounds check_allinitialized(::Tuple{}, i, initialized = true) = nothing
 
 @inline function check_identical(u, v)  # TODO: hit this when VectorSpace implemented
     if u !== v
@@ -670,21 +683,21 @@ end
     return nothing
 end
 
-@inline function _make_zero_inner!(val, args::Vararg{Any,M}; kws...) where {M}
+@inline function _make_zero_inner!(val, args::Vararg{Any, M}; kws...) where {M}
     return recursive_map!(_make_zero!!, (val,), (val,), make_zero!_config(args...; kws...))
 end
-@inline function _make_zero_inner!(val, seen::IdDict, args::Vararg{Any,M}; kws...) where {M}
+@inline function _make_zero_inner!(val, seen::IdDict, args::Vararg{Any, M}; kws...) where {M}
     config = make_zero!_config(args...; kws...)
     return recursive_map!(seen, _make_zero!!, (val,), (val,), config)
 end
 
 # map make_zero(!) args/kws to config
-@inline make_zero_config(C) = InactiveConfig(; copy_if_inactive=C)
-@inline make_zero_config(C, R) = InactiveConfig(; copy_if_inactive=C, runtime_inactive=R)
+@inline make_zero_config(C) = InactiveConfig(; copy_if_inactive = C)
+@inline make_zero_config(C, R) = InactiveConfig(; copy_if_inactive = C, runtime_inactive = R)
 @inline make_zero_config(; kws...) = InactiveConfig(; kws...)
 
-@inline make_zero!_config(R) = InactiveConfig(; runtime_inactive=R)
-@inline function make_zero!_config(; runtime_inactive=nothing)
+@inline make_zero!_config(R) = InactiveConfig(; runtime_inactive = R)
+@inline function make_zero!_config(; runtime_inactive = nothing)
     if isnothing(runtime_inactive)
         return InactiveConfig()
     else

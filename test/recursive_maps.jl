@@ -60,12 +60,12 @@ Base.:(==)(a::MutableWrapper, b::MutableWrapper) = (a === b) || (a.x == b.x)
 getx(a::MutableWrapper) = a.x
 setx!(a::MutableWrapper, x) = (a.x = x)
 
-struct DualWrapper{Tx,Ty}
+struct DualWrapper{Tx, Ty}
     x::Tx
     y::Ty
 end
 
-DualWrapper{T}(x::T, y) where {T} = DualWrapper{T,typeof(y)}(x, y)
+DualWrapper{T}(x::T, y) where {T} = DualWrapper{T, typeof(y)}(x, y)
 
 function Base.:(==)(a::DualWrapper, b::DualWrapper)
     return (a === b) || ((a.x == b.x) && (a.y == b.y))
@@ -74,12 +74,12 @@ end
 getx(a::DualWrapper) = a.x
 gety(a::DualWrapper) = a.y
 
-mutable struct MutableDualWrapper{Tx,Ty}
+mutable struct MutableDualWrapper{Tx, Ty}
     x::Tx
     y::Ty
 end
 
-MutableDualWrapper{T}(x::T, y) where {T} = MutableDualWrapper{T,typeof(y)}(x, y)
+MutableDualWrapper{T}(x::T, y) where {T} = MutableDualWrapper{T, typeof(y)}(x, y)
 
 function Base.:(==)(a::MutableDualWrapper, b::MutableDualWrapper)
     return (a === b) || ((a.x == b.x) && (a.y == b.y))
@@ -91,14 +91,14 @@ gety(a::MutableDualWrapper) = a.y
 setx!(a::MutableDualWrapper, x) = (a.x = x)
 sety!(a::MutableDualWrapper, y) = (a.y = y)
 
-struct Incomplete{T,U}
+struct Incomplete{T, U}
     s::String
     x::Float64
     w::T
     y::U  # possibly not initialized
     z  # not initialized
-    Incomplete(s, x, w) = new{typeof(w),Any}(s, x, w)
-    Incomplete(s, x, w, y) = new{typeof(w),typeof(y)}(s, x, w, y)
+    Incomplete(s, x, w) = new{typeof(w), Any}(s, x, w)
+    Incomplete(s, x, w, y) = new{typeof(w), typeof(y)}(s, x, w, y)
 end
 
 function Base.:(==)(a::Incomplete, b::Incomplete)
@@ -564,11 +564,11 @@ function test_make_zero()
         @assert !EnzymeRules.inactive_type(typeof(a))
         a_makez = make_zero(a, Val(false), Val(false))
         @assert a_makez == MutableWrapper(0.0)
-        a_makez = make_zero(a; runtime_inactive=Val(false))
+        a_makez = make_zero(a; runtime_inactive = Val(false))
         @assert a_makez == MutableWrapper(0.0)
         a_makez = make_zero(a, Val(false), Val(true))
         @assert a_makez == MutableWrapper(0.0)
-        a_makez = make_zero(a; runtime_inactive=Val(true))
+        a_makez = make_zero(a; runtime_inactive = Val(true))
         @assert a_makez == MutableWrapper(0.0)
 
         # mark MutableWrapper as inactive
@@ -585,14 +585,14 @@ function test_make_zero()
         a_makez = @invokelatest make_zero(a, Val(false), Val(true))
         @test a_makez === a
         a_makez = @invokelatest make_zero(
-            a; copy_if_inactive=Val(false), runtime_inactive=Val(true)
+            a; copy_if_inactive = Val(false), runtime_inactive = Val(true)
         )
         @test a_makez === a
         a_makez = @invokelatest make_zero(a, Val(true), Val(true))
         @test a_makez !== a
         @test a_makez == MutableWrapper(1.0)
         a_makez = @invokelatest make_zero(
-            a; copy_if_inactive=Val(true), runtime_inactive=Val(true)
+            a; copy_if_inactive = Val(true), runtime_inactive = Val(true)
         )
         @test a_makez !== a
         @test a_makez == MutableWrapper(1.0)
@@ -603,11 +603,11 @@ function test_make_zero()
         # verify that MutableWrapper is seen as active by both variants
         a_makez = @invokelatest make_zero(a, Val(false), Val(false))
         @test a_makez == MutableWrapper(0.0)
-        a_makez = @invokelatest make_zero(a; runtime_inactive=Val(false))
+        a_makez = @invokelatest make_zero(a; runtime_inactive = Val(false))
         @test a_makez == MutableWrapper(0.0)
         a_makez = @invokelatest make_zero(a, Val(false), Val(true))
         @test a_makez == MutableWrapper(0.0)
-        a_makez = @invokelatest make_zero(a; runtime_inactive=Val(true))
+        a_makez = @invokelatest make_zero(a; runtime_inactive = Val(true))
         @test a_makez == MutableWrapper(0.0)
     end
     @testset "undefined fields/unassigned elements" begin
@@ -735,13 +735,13 @@ function test_make_zero!()
     end
     @testset "inactive" begin
         @testset "in $(wrapper.name)" for wrapper in filter(
-            w -> (w.mutable || (w.typed == true)), wrappers
-        )
+                w -> (w.mutable || (w.typed == true)), wrappers
+            )
             if wrapper.N == 1
                 for (inactive, condition) in [
-                    (inactivebits, true),
-                    (inactivearr, !wrapper.bitsonly),
-                ]
+                        (inactivebits, true),
+                        (inactivearr, !wrapper.bitsonly),
+                    ]
                     condition || continue
                     w = wrapper.f(inactive)
                     make_zero!(w)
@@ -880,13 +880,13 @@ function test_make_zero!()
         make_zero!(a, Val(false))
         @assert a == MutableWrapper(0.0)
         a.x = 1.0
-        make_zero!(a; runtime_inactive=Val(false))
+        make_zero!(a; runtime_inactive = Val(false))
         @assert a == MutableWrapper(0.0)
         a.x = 1.0
         make_zero!(a, Val(true))
         @assert a == MutableWrapper(0.0)
         a.x = 1.0
-        make_zero!(a; runtime_inactive=Val(true))
+        make_zero!(a; runtime_inactive = Val(true))
         @assert a == MutableWrapper(0.0)
 
         # mark MutableWrapper as inactive
@@ -917,13 +917,13 @@ function test_make_zero!()
         @invokelatest make_zero!(a, Val(true))
         @test a == MutableWrapper(0.0)
         a.x = 1.0
-        @invokelatest make_zero!(a; runtime_inactive=Val(true))
+        @invokelatest make_zero!(a; runtime_inactive = Val(true))
         @test a == MutableWrapper(0.0)
         a.x = 1.0
         @invokelatest make_zero!(a, Val(false))
         @test a == MutableWrapper(0.0)
         a.x = 1.0
-        @invokelatest make_zero!(a; runtime_inactive=Val(false))
+        @invokelatest make_zero!(a; runtime_inactive = Val(false))
         @test a == MutableWrapper(0.0)
     end
     @testset "undefined fields/unassigned elements" begin
