@@ -191,6 +191,7 @@ const inactivetup = (inactivebits, "a", MutableEmpty())
 const inactivearr = [inactivetup]
 
 const wrappers = [
+    #! format: off
     (name="Tuple{X}",                     f=tuple,                                           N=1, mutable=false, typed=true,      bitsonly=false),
     (name="@NamedTuple{x::X}",            f=(NamedTuple{(:x,)} ∘ tuple),                     N=1, mutable=false, typed=true,      bitsonly=false),
     (name="struct{X}",                    f=Wrapper,                                         N=1, mutable=false, typed=true,      bitsonly=false),
@@ -238,6 +239,7 @@ const wrappers = [
     # GPUArrays extension
     (name="JLArray{X}",                     f=(x -> JLArray([x])),                           N=1, mutable=true,  typed=true,      bitsonly=true),
     (name="JLArray{promote_type(X,Y)}",     f=((x, y) -> JLArray([x, y])),                   N=2, mutable=true,  typed=:promoted, bitsonly=true),
+    #! format: on
 ]
 
 @static if VERSION < v"1.11-"
@@ -245,10 +247,12 @@ else
 _memory(x::Vector) = Memory{eltype(x)}(x)
 push!(
     wrappers,
+    #! format: off
     (name="Memory{X}",                    f=(x -> _memory([x])),                             N=1, mutable=true,  typed=true,      bitsonly=false),
     (name="Memory{Any}",                  f=(x -> _memory(Any[x])),                          N=1, mutable=true,  typed=false,     bitsonly=false),
     (name="Memory{promote_type(X,Y)}",    f=((x, y) -> _memory([x, y])),                     N=2, mutable=true,  typed=:promoted, bitsonly=false),
     (name="Memory{Any}",                  f=((x, y) -> _memory(Any[x, y])),                  N=2, mutable=true,  typed=false,     bitsonly=false),
+    #! format: on
 )
 end
 
@@ -435,11 +439,13 @@ function test_make_zero()
             end
         end
         @testset "copy_if_inactive $value" for (value, args, kwargs) in [
-            ("unspecified",     (), (;)),
+            #! format: off
+            ("unspecified",     (),               (;)),
             ("= false",         (Val(false),), (;)),
-            ("= false (kwarg)", (), (; copy_if_inactive=Val(false))),
-            ("= true",          (Val(true),), (;)),
-            ("= true (kwarg)",  (), (; copy_if_inactive=Val(true))),
+            ("= false (kwarg)", (),               (; copy_if_inactive=Val(false))),
+            ("= true",          (Val(true),),  (;)),
+            ("= true (kwarg)",  (),               (; copy_if_inactive=Val(true))),
+            #! format: on
         ]
             a = [1.0]
             w = Any[a, inactivearr, inactivearr]
@@ -973,7 +979,11 @@ function test_make_zero!()
     return nothing
 end
 
-end  # module RecursiveMapTests
+# because this is wrapped in a module, we should only run a single top-level testset
+# otherwise a failed test in the first set will prevent the second from running
+@testset "recursive maps" begin  
+    @testset "make_zero" test_make_zero()
+    @testset "make_zero!" test_make_zero!()
+end
 
-@testset "make_zero" RecursiveMapTests.test_make_zero()
-@testset "make_zero!" RecursiveMapTests.test_make_zero!()
+end  # module RecursiveMapTests
