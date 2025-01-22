@@ -12,10 +12,6 @@ using ..Compiler: guaranteed_const, guaranteed_const_nongen, guaranteed_nonactiv
     config = InactiveConfig{copy_if_inactive::Bool,runtime_inactive::Bool}(extra)
     newconfig = InactiveConfig(config::InactiveConfig, extra)
 
-!!! warning
-    Internal type, documented for developer convenience but not covered by semver API
-    stability guarantees
-
 Config type for specifying which parts of objects should be skipped by `recursive_map{!}`.
 
 At a minimum, parts that Enzyme always considers inactive are skipped. An inactive type is a
@@ -109,10 +105,6 @@ end
         xs::NTuple{Nin,T},
         config::InactiveConfig=InactiveConfig(),
     )::T
-
-!!! warning
-    Internal function, documented for developer convenience but not covered by semver API
-    stability guarantees
 
 Recurse through `Nin` objects `xs = (x1::T, x2::T, ..., xNin::T)` of the same type, mapping
 the function `f` over every differentiable value encountered and building `Nout` new objects
@@ -467,10 +459,6 @@ end
         xs::NTuple{Nin,T},
         isinactivetype::InactiveConfig=InactiveConfig(),
     )::Nothing
-
-!!! warning
-    Internal function, documented for developer convenience but not covered by semver API
-    stability guarantees
 
 Recurse through `Nin` objects `xs = (x1::T, x2::T, ..., xNin::T)` of the same type, mapping
 the function `f!!` over every differentiable value encountered and updating `(y1::T, ...)`
