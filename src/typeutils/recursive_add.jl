@@ -3,10 +3,6 @@ using .RecursiveMaps: RecursiveMaps, recursive_map, recursive_map!
 """
     recursive_add(x::T, y::T, f=identity, forcelhs=guaranteed_const)
 
-!!! warning
-    Internal function, documented for developer convenience but not covered by semver API
-    stability guarantees
-
 Recursively construct `z::T` such that `zi = xi + f(yi)` where `zi`, `xi`, and `yi` are
 corresponding values from `z`, `x`, and `y`. In other words, this is a recursive
 generalization of `x .+ f.(y)`.
@@ -36,10 +32,6 @@ end
     accumulate_seen!(
         f, seen::IdDict, config::RecursiveMaps.InactiveConfig=RecursiveMaps.InactiveConfig()
     )
-
-!!! warning
-    Internal function, documented for developer convenience but not covered by semver API
-    stability guarantees
 
 Recursively accumulate from values into keys, generalizing `key .+= f.(value)` to arbitrary
 types. This accumulation is applied to each key-value pair in `seen::IdDict` where each key
@@ -92,10 +84,6 @@ end
 
 """
     accumulate_into!(into::T, from::T)
-
-!!! warning
-    Internal function, documented for developer convenience but not covered by semver API
-    stability guarantees
 
 Recursively accumulate from `from` into `into` and zero `from`, such that `into_i += from_i`
 and `from_i = 0`, where `into_i` and `from_i` are corresponding values within `into` and
