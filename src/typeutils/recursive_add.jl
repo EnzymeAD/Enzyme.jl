@@ -19,7 +19,9 @@ types, such that `zi = xi + f(yi)` applies to differentiable values, while `zi =
 to non-differentiable values. If a custom callable is passed, it is combined with the
 default, as `recursive_add` is not generally capable of traversing inactive objects.
 """
-function recursive_add(x::T, y::T, f::F = identity, forcelhs::L = guaranteed_const) where {T, F, L}
+function recursive_add(
+        x::T, y::T, f::F = identity, forcelhs::L = guaranteed_const
+    ) where {T, F, L}
     function addf(xi::S, yi::S) where {S}
         @assert EnzymeCore.isvectortype(S)
         return ((xi + f(yi))::S,)
