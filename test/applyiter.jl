@@ -507,7 +507,9 @@ end
     data = [[3.0], nothing, 2.0]
     ddata = [[0.0], nothing, 0.0]
 
-    @test_throws AssertionError Enzyme.autodiff(Reverse, mktup2, Duplicated(data, ddata))
+    Enzyme.autodiff(Reverse, mktup2, Duplicated(data, ddata))
+    @test ddata[1][1] ≈ 2.0
+    @test ddata[3] ≈ 3.0
 
     function mktup3(v)
         tup = tuple(v..., v...)

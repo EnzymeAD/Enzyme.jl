@@ -1140,11 +1140,10 @@ end
 ) where {Ann,Nargs}
     expr = Vector{Expr}(undef, Nargs)
     for i = 1:Nargs
-        if args[i] <: Active
-            throw(AssertionError("Unsupported Active arg $(args[i])"))
-        end
         @inbounds expr[i] = if args[i] <: Const
             :(args[$i].val)
+        elseif args[i] <: Active
+            :(Enzyme.make_zero(args[$i].val))
         elseif args[i] <: MixedDuplicated
             :(args[$i].dval[])
         else
@@ -1170,9 +1169,10 @@ end
     for w = 1:width
         expr = Vector{Expr}(undef, Nargs)
         for i = 1:Nargs
-            @assert !(args[i] <: Active)
             @inbounds expr[i] = if args[i] <: Const
                 :(args[$i].val)
+            elseif args[i] <: Active
+                :(Enzyme.make_zero(args[$i].val))
             elseif args[i] <: BatchMixedDuplicated
                 :(args[$i].dval[$w][])
             else
