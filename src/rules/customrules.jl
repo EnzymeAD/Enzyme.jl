@@ -989,7 +989,7 @@ function enzyme_custom_common_rev(
 
         if rmi === nothing
             rev_TT = Tuple{typeof(world),functy,rev_TT.parameters...}
-            rmi = my_methodinstance(typeof(custom_rule_method_error), rev_TT, world)
+            rmi = my_methodinstance(Reverse, typeof(custom_rule_method_error), rev_TT, world)
             pushfirst!(args, LLVM.ConstantInt(world))
             rev_RT = Union{}
             applicablefn = false
