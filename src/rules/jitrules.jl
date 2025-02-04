@@ -2,11 +2,11 @@ function setup_macro_wraps(
     forwardMode::Bool,
     N::Int,
     Width::Int,
-    base = nothing,
-    iterate = false;
-    func = true,
-    mixed_or_active = false,
-    reverse = false,
+    base=nothing,
+    iterate=false;
+    func=true,
+    mixed_or_active=false,
+    reverse=false,
 )
     primargs = Union{Symbol,Expr}[]
     shadowargs = Union{Symbol,Expr}[]
@@ -184,7 +184,7 @@ function setup_macro_wraps(
                         elseif $aref == MixedState
                             $((Width == 1) ? :MixedDuplicated : :BatchMixedDuplicated)(
                                 $(primargs[i]),
-                                $(shadowargs[i]),
+                                $(Ref(shadowargs[i])),
                             )
                         else
                             $((Width == 1) ? :Duplicated : :BatchDuplicated)(
@@ -473,7 +473,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
             @assert sizeof(gv) == 0
             (nothing, gv, nothing, Const)
         else
-        
+
             tt = Tuple{$(ElTypes...)}
 
             rt = Compiler.primal_return_type(Reverse, FT, tt)
@@ -592,7 +592,7 @@ function nonzero_active_data(x::T) where {T}
 end
 
 function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, active_refs)
-    outs = Vector{Expr}(undef, N*Width)
+    outs = Vector{Expr}(undef, N * Width)
     for i = 1:N
         for w = 1:Width
             expr = if Width == 1
@@ -841,11 +841,11 @@ function push_if_not_ref(
     return darg
 end
 
-struct PushInnerStruct{reverse, Vals}
+struct PushInnerStruct{reverse,Vals}
     vals::Vals
 end
 
-@inline function (v::PushInnerStruct{reverse})(@nospecialize(arg), @nospecialize(darg)) where reverse
+@inline function (v::PushInnerStruct{reverse})(@nospecialize(arg), @nospecialize(darg)) where {reverse}
     ty = Core.Typeof(arg)
     actreg = active_reg_nothrow(ty, Val(nothing))
     if actreg == AnyState
@@ -869,7 +869,7 @@ end
     args,
     dargs,
 ) where {reverse}
-    map(PushInnerStruct{reverse, typeof(vals)}(vals), args, dargs)
+    map(PushInnerStruct{reverse,typeof(vals)}(vals), args, dargs)
 end
 
 @inline function iterate_unwrap_augfwd_batchdup(
@@ -1461,7 +1461,7 @@ end
 
     nontupexprs = Vector{Union{Symbol,Expr}}(undef, Nargs)
     for i = 1:Nargs
-        @inbounds nontupexprs[i] = if args[i] <: Active || args[i] <: MixedDuplicated || args[i] <: BatchMixedDuplicated 
+        @inbounds nontupexprs[i] = if args[i] <: Active || args[i] <: MixedDuplicated || args[i] <: BatchMixedDuplicated
             if width == 1
                 :(tape.shadow_return[][$i])
             else
@@ -1510,8 +1510,7 @@ end
                     end
                 end
             else
-                quote
-                end
+                quote end
             end
         end
     end
@@ -1686,7 +1685,7 @@ function func_runtime_iterate_rev(N, Width)
     wrapped,
     batchshadowargs,
     modbetween,
-    active_refs = setup_macro_wraps(false, N, Width, nothing, true; reverse = true) #=iterate=#
+    active_refs = setup_macro_wraps(false, N, Width, nothing, true; reverse=true) #=iterate=#
     body = body_runtime_iterate_rev(
         N,
         Width,
@@ -1725,7 +1724,7 @@ end
 ) where {ActivityTup,RuntimeActivity,MB,Width,TapeType,F,DF}
     N = div(length(allargs) + 2, Width + 1) - 1
     primargs, _, primtypes, _, _, wrapped, batchshadowargs, modbetween, active_refs =
-        setup_macro_wraps(false, N, Width, :allargs, true; reverse = true) #=iterate=#
+        setup_macro_wraps(false, N, Width, :allargs, true; reverse=true) #=iterate=#
     return body_runtime_iterate_rev(
         N,
         Width,
@@ -1755,12 +1754,12 @@ function generic_setup(
     start,
     B::LLVM.IRBuilder,
     lookup;
-    sret = nothing,
-    tape = nothing,
-    firstconst = false,
-    endcast = true,
-    firstconst_after_tape = true,
-    runtime_activity = true,
+    sret=nothing,
+    tape=nothing,
+    firstconst=false,
+    endcast=true,
+    firstconst_after_tape=true,
+    runtime_activity=true,
 )
     width = get_width(gutils)
     mode = get_mode(gutils)
