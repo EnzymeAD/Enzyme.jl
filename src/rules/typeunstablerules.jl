@@ -1834,7 +1834,7 @@ end
 function rt_jl_setfield_rev(dptr::T, idx, ::Val{isconst}, val, dval) where {T,isconst}
     RT = Core.Typeof(val)
     if active_reg(RT) && !isconst
-        dval[] += getfield(dptr, idx)
+        dval[] = recursive_add(dval[], getfield(dptr, idx), identity, guaranteed_nonactive)
         setfield!(dptr, idx, make_zero(val))
     end
 end
