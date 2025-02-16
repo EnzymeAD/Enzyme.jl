@@ -650,3 +650,75 @@ end
     # @show J_r_3(u, A, x)
     # @show J_f_3(u, A, x)
 end
+
+using Enzyme: seeded_autodiff_thunk, batch_seeded_autodiff_thunk
+
+@testset "seeded_autodiff_thunk" begin
+
+    f(x::Vector{Float64}, y::Float64) = sum(abs2, x) * y
+    g(x::Vector{Float64}, y::Float64) = [f(x, y)]
+
+    x = [1.0, 2.0, 3.0]
+    y = 4.0
+    dx = similar(x)
+    dresult = 5.0
+    dxs = (similar(x), similar(x))
+    dresults = (5.0, 7.0)
+
+    @testset "simple" begin
+        for mode in (ReverseSplitNoPrimal, ReverseSplitWithPrimal)
+            make_zero!(dx)
+            dinputs_and_maybe_result = seeded_autodiff_thunk(mode, dresult, Const(f), Active, Duplicated(x, dx), Active(y))
+            dinputs = first(dinputs_and_maybe_result)
+            @test isnothing(dinputs[1])
+            @test dinputs[2] == dresult * sum(abs2, x)
+            @test dx == dresult * 2x * y
+            if mode == ReverseSplitWithPrimal
+                @test last(dinputs_and_maybe_result) == f(x, y)
+            end
+        end
+
+        for mode in (ReverseSplitNoPrimal, ReverseSplitWithPrimal)
+            make_zero!(dx)
+            dinputs_and_maybe_result = seeded_autodiff_thunk(mode, [dresult], Const(g), Duplicated, Duplicated(x, dx), Active(y))
+            dinputs = first(dinputs_and_maybe_result)
+            @test isnothing(dinputs[1])
+            @test dinputs[2] == dresult * sum(abs2, x)
+            @test dx == dresult * 2x * y
+            if mode == ReverseSplitWithPrimal
+                @test last(dinputs_and_maybe_result) == g(x, y)
+            end
+        end
+    end
+
+    @testset "batch" begin
+        for mode in (ReverseSplitNoPrimal, ReverseSplitWithPrimal)
+            make_zero!(dxs)
+            dinputs_and_maybe_result = batch_seeded_autodiff_thunk(mode, dresults, Const(f), Active, BatchDuplicated(x, dxs), Active(y))
+            dinputs = first(dinputs_and_maybe_result)
+            @test isnothing(dinputs[1])
+            @test dinputs[2][1] == dresults[1] * sum(abs2, x)
+            @test dinputs[2][2] == dresults[2] * sum(abs2, x)
+            @test dxs[1] == dresults[1] * 2x * y
+            @test dxs[2] == dresults[2] * 2x * y
+            if mode == ReverseSplitWithPrimal
+                @test last(dinputs_and_maybe_result) == f(x, y)
+            end
+        end
+
+        for mode in (ReverseSplitNoPrimal, ReverseSplitWithPrimal)
+            make_zero!(dxs)
+            dinputs_and_maybe_result = batch_seeded_autodiff_thunk(mode, ([dresults[1]], [dresults[2]]), Const(g), BatchDuplicated, BatchDuplicated(x, dxs), Active(y))
+            dinputs = first(dinputs_and_maybe_result)
+            @test isnothing(dinputs[1])
+            @test dinputs[2][1] == dresults[1] * sum(abs2, x)
+            @test dinputs[2][2] == dresults[2] * sum(abs2, x)
+            @test dxs[1] == dresults[1] * 2x * y
+            @test dxs[2] == dresults[2] * 2x * y
+            if mode == ReverseSplitWithPrimal
+                @test last(dinputs_and_maybe_result) == g(x, y)
+            end
+        end
+    end
+
+end
