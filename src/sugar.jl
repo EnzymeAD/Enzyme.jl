@@ -1160,3 +1160,76 @@ grad
     return nothing
 end
 
+
+"""
+    seeded_autodiff_thunk(
+        rmode::ReverseModeSplit,
+        dresult,
+        f,
+        ReturnActivity,
+        annotated_args...
+    )
+    
+Call [`autodiff_thunk`](@ref), execute the forward pass, increment output tangent with `dresult`, then execute the reverse pass.
+
+Useful for computing pullbacks / VJPs for functions whose output is not a scalar.
+"""
+function seeded_autodiff_thunk(
+    rmode::ReverseModeSplit{ReturnPrimal},
+    dresult,
+    f::FA,
+    ::Type{RA},
+    args::Vararg{Annotation,N},
+) where {ReturnPrimal,FA<:Annotation,RA<:Annotation,N}
+    forward, reverse = autodiff_thunk(rmode, FA, RA, typeof.(args)...)
+    tape, result, shadow_result = forward(f, args...)
+    if RA <: Active
+        dinputs = only(reverse(f, args..., dresult, tape))
+    else
+        shadow_result .+= dresult  # TODO: generalize beyond arrays
+        dinputs = only(reverse(f, args..., tape))
+    end
+    if ReturnPrimal
+        return (dinputs, result)
+    else
+        return (dinputs,)
+    end
+end
+
+"""
+    batch_seeded_autodiff_thunk(
+        rmode::ReverseModeSplit,
+        dresults::NTuple,
+        f,
+        ReturnActivity,
+        annotated_args...
+    )
+    
+Call [`autodiff_thunk`](@ref), execute the forward pass, increment each output tangent with the corresponding element from `dresults`, then execute the reverse pass.
+
+Useful for computing pullbacks / VJPs for functions whose output is not a scalar.
+"""
+function batch_seeded_autodiff_thunk(
+    rmode::ReverseModeSplit{ReturnPrimal},
+    dresults::NTuple{B},
+    f::FA,
+    ::Type{RA},
+    args::Vararg{Annotation,N},
+) where {ReturnPrimal,B,FA<:Annotation,RA<:Annotation,N}
+    rmode_rightwidth = ReverseSplitWidth(rmode, Val(B))
+    forward, reverse = autodiff_thunk(rmode_rightwidth, FA, RA, typeof.(args)...)
+    tape, result, shadow_results = forward(f, args...)
+    if RA <: Active
+        dinputs = only(reverse(f, args..., dresults, tape))
+    else
+        foreach(shadow_results, dresults) do d0, d
+            d0 .+= d  # TODO: generalize beyond arrays
+        end
+        dinputs = only(reverse(f, args..., tape))
+    end
+    if ReturnPrimal
+        return (dinputs, result)
+    else
+        return (dinputs,)
+    end
+end
