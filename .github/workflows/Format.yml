@@ -11,9 +11,6 @@ permissions:
   # needed for julia-actions/cache to delete old caches
   actions: write
 
-  # needed for googleapis/code-suggester
-  pull-requests: write
-
 jobs:
   runic:
     runs-on: ubuntu-latest
@@ -42,14 +39,4 @@ jobs:
       - name: Run Runic
         run: |
           set +e
-          git runic origin/main
-          [ $? -eq 2 ] && exit 1 || exit 0
-
-      - name: Suggest changes
-        uses: googleapis/code-suggester@v4
-        env:
-          ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          command: review
-          pull_number: ${{ github.event.pull_request.number }}
-          git_dir: '.'
+          git runic --diff origin/main
