@@ -734,7 +734,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
         # Julia could decide to dead store eliminate the memset (not being read before the store of jlvaluet'), resulting in an error
         B = LLVM.IRBuilder()
         position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(V)))
-        create_recursive_stores(B, Ty, prev)
+        create_recursive_stores(B, Ty, V)
     end
 
     nothing
