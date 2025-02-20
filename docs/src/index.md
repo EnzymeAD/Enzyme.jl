@@ -227,7 +227,7 @@ Enzyme provides convenience functions for second-order derivative computations, 
 
 Unlike [`autodiff`](@ref) and [`gradient`](@ref), a mode is not specified. Here, Enzyme will choose to perform forward over reverse mode (generally the fastest for this type of operation).
 
-```jldoctest hvp; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+```jldoctest hvp; filter = r"([0-9]+\.[0-9]{8})[0-9]+" => s"\1***"
 julia> f(x) = sin(x[1] * x[2]);
 
 julia> hvp(f, [2.0, 3.0], [5.0, 2.7])
@@ -238,7 +238,7 @@ julia> hvp(f, [2.0, 3.0], [5.0, 2.7])
 
 Enzyme also provides an in-place variant which will store the hessian vector product in a pre-allocated array (this will, however, still allocate another array for storing an intermediate gradient).
 
-```jldoctest hvp2; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+```jldoctest hvp2; filter = r"([0-9]+\.[0-9]{8})[0-9]+" => s"\1***"
 julia> f(x) = sin(x[1] * x[2])
 f (generic function with 1 method)
 
@@ -254,7 +254,7 @@ julia> res
 
 Finally. Enzyme provides a second in-place variant which simultaneously computes both the hessian vector product, and the gradient. This function uses no additional allocation, and is much more efficient than separately computing the hvp and the gradient.
 
-```jldoctest hvp3; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+```jldoctest hvp3; filter = r"([0-9]+\.[0-9]{8})[0-9]+" => s"\1***"
 julia> f(x) = sin(x[1] * x[2]);
 
 julia> res = Vector{Float64}(undef, 2);

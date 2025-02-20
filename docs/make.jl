@@ -1,6 +1,3 @@
-pushfirst!(LOAD_PATH, joinpath(@__DIR__, "..")) # add Enzyme to environment stack
-pushfirst!(LOAD_PATH, joinpath(@__DIR__, "..", "lib")) # add EnzymeCore to environment stack
-
 using Enzyme
 using EnzymeCore
 using EnzymeTestUtils

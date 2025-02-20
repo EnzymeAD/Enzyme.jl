@@ -999,7 +999,7 @@ function allocate_sret!(gutils::API.EnzymeGradientUtilsRef, @nospecialize(N::LLV
     allocate_sret!(B, N)
 end
 
-function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.Instruction}), string::String, @nospecialize(errty::Type) = EnzymeRuntimeException)
+function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.Instruction}), string::Union{String, LLVM.Value}, @nospecialize(errty::Type) = EnzymeRuntimeException)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)

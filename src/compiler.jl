@@ -437,7 +437,15 @@ function removed_ret_parms(F::LLVM.Function)
     return retRemove, parmsRemoved
 end
 
+"""
+    CheckNan::Ref{Bool}
+
+If `Enzyme.Compiler.CheckNan[] == true`, Enzyme will error at the first encounter of a `NaN`
+during differentiation. Useful as a debugging tool to help locate the call whose derivative
+is the source of unexpected `NaN`s. Off by default.
+"""
 const CheckNan = Ref(false)
+
 function julia_sanitize(
     orig::LLVM.API.LLVMValueRef,
     val::LLVM.API.LLVMValueRef,

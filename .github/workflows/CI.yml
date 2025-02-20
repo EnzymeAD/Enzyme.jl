@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   test:
+    timeout-minutes: 120
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - assertions=${{ matrix.assertions }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -25,8 +26,8 @@ jobs:
           - '1.11'
           - 'nightly'
         os:
-          - ubuntu-20.04
-          - macOS-latest
+          - ubuntu-24.04
+          - macOS-13
           - windows-latest
         arch:
           - x64
@@ -38,17 +39,17 @@ jobs:
             arch: x64
             libEnzyme: local
         include:
-          - os: ubuntu-20.04
+          - os: ubuntu-24.04
             arch: x86
             libEnzyme: packaged
             version: '1.10'
             assertions: false
-          - os: ubuntu-20.04
+          - os: ubuntu-24.04
             arch: x64
             libEnzyme: packaged
             version: '1.10'
             assertions: true
-          - os: ubuntu-20.04
+          - os: ubuntu-24.04
             arch: x64
             libEnzyme: packaged
             version: '1.11'
@@ -72,16 +73,7 @@ jobs:
           sed -i.bak 's/exit 2/exit 0/g' julia/deps/tools/jlchecksum
           make -C julia -j $(nproc) FORCE_ASSERTIONS=1 LLVM_ASSERTIONS=1 JULIA_PRECOMPILE=0
           echo $PWD/julia/usr/bin >> $GITHUB_PATH
-      - uses: actions/cache@v2
-        env:
-          cache-name: cache-artifacts
-        with:
-          path: ~/.julia/artifacts
-          key: ${{ runner.os }}-test-${{ env.cache-name }}-${{ hashFiles('**/Project.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-test-${{ env.cache-name }}-
-            ${{ runner.os }}-test-
-            ${{ runner.os }}-
+      - uses: julia-actions/cache@v2
       - name: add EnzymeCore
         shell: julia --color=yes --project=. {0}
         run: |
@@ -95,16 +87,16 @@ jobs:
         continue-on-error: ${{ matrix.version == 'nightly' }}
         id: build_libenzyme
         run: |
-          julia --project=deps -e 'using Pkg; Pkg.instantiate()'
-          julia --project=deps deps/build_local.jl
+          julia --color=yes --project=deps -e 'using Pkg; Pkg.instantiate()'
+          julia --color=yes --project=deps deps/build_local.jl
           cp LocalPreferences.toml test/
       - name: Build libEnzyme MacOS
         if: ${{ matrix.libEnzyme == 'local' && matrix.os == 'macOS-latest'}}
         continue-on-error: ${{ matrix.version == 'nightly' }}
         id: build_libenzyme_mac
         run: |
-          julia --project=deps -e 'using Pkg; Pkg.instantiate()'
-          SDKROOT=`xcrun --show-sdk-path` julia --project=deps deps/build_local.jl
+          julia --color=yes --project=deps -e 'using Pkg; Pkg.instantiate()'
+          SDKROOT=`xcrun --show-sdk-path` julia --color=yes --project=deps deps/build_local.jl
           cp LocalPreferences.toml test/
       - uses: julia-actions/julia-buildpkg@v1
         if: matrix.version != 'nightly' || steps.build_libenzyme.outcome == 'success' || steps.build_libenzyme_mac.outcome == 'success'
@@ -120,13 +112,14 @@ jobs:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - uses: julia-actions/julia-processcoverage@v1
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
-      - uses: codecov/codecov-action@v4
+      - uses: codecov/codecov-action@v5
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
-          file: lcov.info
+          files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false  # or true if you want CI to fail when Codecov fails
   enzymetestutils:
+    timeout-minutes: 60
     name: EnzymeTestUtils - Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.version == 'nightly' }}
@@ -150,16 +143,7 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - uses: actions/cache@v2
-        env:
-          cache-name: cache-artifacts
-        with:
-          path: ~/.julia/artifacts
-          key: ${{ runner.os }}-test-${{ env.cache-name }}-${{ hashFiles('**/Project.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-test-${{ env.cache-name }}-
-            ${{ runner.os }}-test-
-            ${{ runner.os }}-
+      - uses: julia-actions/cache@v2
       - name: setup EnzymeTestUtils
         shell: julia --color=yes {0}
         id: setup_testutils
@@ -182,13 +166,14 @@ jobs:
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           directories: lib/EnzymeTestUtils/src
-      - uses: codecov/codecov-action@v4
+      - uses: codecov/codecov-action@v5
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false  # or true if you want CI to fail when Codecov fails
   enzymecore:
+    timeout-minutes: 20
     name: EnzymeCore - Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.version == 'nightly' }}
@@ -212,16 +197,7 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - uses: actions/cache@v2
-        env:
-          cache-name: cache-artifacts
-        with:
-          path: ~/.julia/artifacts
-          key: ${{ runner.os }}-test-${{ env.cache-name }}-${{ hashFiles('**/Project.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-test-${{ env.cache-name }}-
-            ${{ runner.os }}-test-
-            ${{ runner.os }}-
+      - uses: julia-actions/cache@v2
       - name: setup EnzymeCore
         shell: julia --color=yes {0}
         id: setup_testutils
@@ -244,13 +220,14 @@ jobs:
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           directories: lib/EnzymeCore/src
-      - uses: codecov/codecov-action@v4
+      - uses: codecov/codecov-action@v5
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false  # or true if you want CI to fail when Codecov fails
   integration:
+    timeout-minutes: 20
     name: Integration Tests - ${{ matrix.test }}
     runs-on: ${{ matrix.os }}
     env:
@@ -279,6 +256,7 @@ jobs:
             julia --color=yes --project=test/integration/${{ matrix.test }} --threads=auto --check-bounds=yes test/integration/${{ matrix.test }}/runtests.jl
         shell: bash
   docs:
+    timeout-minutes: 20
     name: Documentation
     runs-on: ubuntu-latest
     steps:
@@ -288,19 +266,18 @@ jobs:
           version: '1'
       - uses: julia-actions/cache@v2
       - run: |
-          julia --project=docs -e '
+          julia --color=yes --project=docs -e '
             using Pkg
-            Pkg.develop([PackageSpec(path="lib/EnzymeCore"), PackageSpec(path="lib/EnzymeTestUtils"), PackageSpec(path=pwd())])
             Pkg.instantiate()'
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - run: |
-          julia --project=docs -e '
+          julia --color=yes --project=docs -e '
             using Documenter: DocMeta, doctest
             using Enzyme
             DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
             doctest(Enzyme)'
-      - run: julia --project=docs docs/make.jl
+      - run: julia --color=yes --project=docs docs/make.jl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
