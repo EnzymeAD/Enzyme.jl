@@ -2685,6 +2685,7 @@ function lower_convention(
 
     RT = LLVM.return_type(entry_ft)
 
+
     # generate the wrapper function type & definition
     wrapper_types = LLVM.LLVMType[]
     wrapper_attrs = Vector{LLVM.Attribute}[]
@@ -2700,6 +2701,13 @@ function lower_convention(
     end
     sret = sret !== nothing
     returnRoots = returnRoots !== nothing
+
+    loweredReturn = RetActivity <: Active && (actualRetType === Any)
+    if loweredReturn
+        @assert !sret
+        @assert !returnRoots
+        RT = convert(LLVMType, eltype(RetActivity))
+    end
 
     # TODO removed implications
     retRemoved, parmsRemoved = removed_ret_parms(entry_f)
@@ -2771,8 +2779,8 @@ function lower_convention(
         end
     end
 
-    if length(loweredArgs) == 0 && length(raisedArgs) == 0 && !sret && !sret_union
-        return entry_f, returnRoots, boxedArgs, loweredArgs
+    if length(loweredArgs) == 0 && length(raisedArgs) == 0 && !sret && !sret_union && !loweredReturn
+        return entry_f, returnRoots, boxedArgs, loweredArgs, actualRetType
     end
 
     wrapper_fn = LLVM.name(entry_f)
@@ -3138,28 +3146,69 @@ function lower_convention(
             ret!(builder)
         else
             ctx = LLVM.context(wrapper_f)
-            push!(
-                return_attributes(wrapper_f),
-                StringAttribute(
-                    "enzyme_type",
-                    string(typetree(actualRetType, ctx, dl, seen)),
-                ),
-            )
-            push!(
-                return_attributes(wrapper_f),
-                StringAttribute(
-                    "enzymejl_parmtype",
-                    string(convert(UInt, unsafe_to_pointer(actualRetType))),
-                ),
-            )
-            push!(
-                return_attributes(wrapper_f),
-                StringAttribute(
-                    "enzymejl_parmtype_ref",
-                    string(UInt(GPUCompiler.BITS_REF)),
-                ),
-            )
-            ret!(builder, res)
+
+            if loweredReturn
+                push!(
+                    return_attributes(wrapper_f),
+                    StringAttribute(
+                        "enzyme_type",
+                        string(typetree(eltype(RetActivity), ctx, dl, seen)),
+                    ),
+                )
+                push!(
+                    return_attributes(wrapper_f),
+                    StringAttribute(
+                        "enzymejl_parmtype",
+                        string(convert(UInt, unsafe_to_pointer(eltype(RetActivity)))),
+                    ),
+                )
+                push!(
+                    return_attributes(wrapper_f),
+                    StringAttribute(
+                        "enzymejl_parmtype_ref",
+                        string(UInt(GPUCompiler.BITS_VALUE)),
+                    ),
+                )
+                ty = emit_jltypeof!(builder, res)
+                cmp = icmp!(builder, LLVM.API.LLVMIntEQ, ty, unsafe_to_llvm(builder, eltype(RetActivity)))
+                cmpret = BasicBlock(wrapper_f, "ret")
+                failure = BasicBlock(wrapper_f, "fail")
+                br!(builder, cmp, cmpret, failure)
+
+                position!(builder, cmpret)
+                res = bitcast!(builder, res, LLVM.PointerType(RT, addrspace(value_type(res))))
+                res = addrspacecast!(builder, res, LLVM.PointerType(RT, Derived))
+                res = load!(builder, RT, res)
+                ret!(builder, res)
+
+                position!(builder, failure)
+
+                emit_error(builder, nothing, "Expected return type of primal to be "*string(eltype(RetActivity))*" but did not find a value of that type")
+                unreachable!(builder)
+            else
+                push!(
+                    return_attributes(wrapper_f),
+                    StringAttribute(
+                        "enzyme_type",
+                        string(typetree(actualRetType, ctx, dl, seen)),
+                    ),
+                )
+                push!(
+                    return_attributes(wrapper_f),
+                    StringAttribute(
+                        "enzymejl_parmtype",
+                        string(convert(UInt, unsafe_to_pointer(actualRetType))),
+                    ),
+                )
+                push!(
+                    return_attributes(wrapper_f),
+                    StringAttribute(
+                        "enzymejl_parmtype_ref",
+                        string(UInt(GPUCompiler.BITS_REF)),
+                    ),
+                )
+                ret!(builder, res)
+            end
         end
         dispose(builder)
     end
@@ -3368,7 +3417,7 @@ function lower_convention(
         end
         throw(LLVM.LLVMException(msg))
     end
-    return wrapper_f, returnRoots, boxedArgs, loweredArgs
+    return wrapper_f, returnRoots, boxedArgs, loweredArgs, loweredReturn ? eltype(RetActivity) : actualRetType
 end
 
 using Random
@@ -4206,7 +4255,7 @@ end
     primalf, returnRoots = primalf, false
 
     if lowerConvention
-        primalf, returnRoots, boxedArgs, loweredArgs = lower_convention(
+        primalf, returnRoots, boxedArgs, loweredArgs, actualRetType = lower_convention(
             source_sig,
             mod,
             primalf,
