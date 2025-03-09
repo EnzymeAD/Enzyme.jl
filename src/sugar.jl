@@ -1174,12 +1174,12 @@ Call [`autodiff_thunk`](@ref), execute the forward pass, increment output adjoin
 Useful for computing pullbacks / VJPs for functions whose output is not a scalar.
 """
 function autodiff(
-    rmode::ReverseModeSplit{ReturnPrimal},
-    f::FA,
-    ::Type{RA},
-    dresult::Seed,
-    args::Vararg{Annotation,N},
-) where {ReturnPrimal,FA<:Annotation,RA<:Annotation,N}
+        rmode::ReverseModeSplit{ReturnPrimal},
+        f::FA,
+        ::Type{RA},
+        dresult::Seed,
+        args::Vararg{Annotation, N},
+    ) where {ReturnPrimal, FA <: Annotation, RA <: Annotation, N}
     forward, reverse = autodiff_thunk(rmode, FA, RA, typeof.(args)...)
     tape, result, shadow_result = forward(f, args...)
     if RA <: Active
@@ -1209,12 +1209,12 @@ Call [`autodiff_thunk`](@ref), execute the forward pass, increment each output a
 Useful for computing pullbacks / VJPs for functions whose output is not a scalar.
 """
 function autodiff(
-    rmode::ReverseModeSplit{ReturnPrimal},
-    f::FA,
-    ::Type{RA},
-    dresults::BatchSeed{B},
-    args::Vararg{Annotation,N},
-) where {ReturnPrimal,B,FA<:Annotation,RA<:Annotation,N}
+        rmode::ReverseModeSplit{ReturnPrimal},
+        f::FA,
+        ::Type{RA},
+        dresults::BatchSeed{B},
+        args::Vararg{Annotation, N},
+    ) where {ReturnPrimal, B, FA <: Annotation, RA <: Annotation, N}
     rmode_rightwidth = ReverseSplitWidth(rmode, Val(B))
     forward, reverse = autodiff_thunk(rmode_rightwidth, FA, RA, typeof.(args)...)
     tape, result, shadow_results = forward(f, args...)
