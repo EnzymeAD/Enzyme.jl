@@ -259,13 +259,13 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
 ```
 
 """
-# TODO eventually add an invalidation edge here from inactive_type
 @generated function gradient(
     rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten},
     f::F,
     x::ty_0,
     args::Vararg{Any,N},
 ) where {F,ty_0,ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten,N}
+    # TODO eventually add an invalidation edge here from inactive_type
     rargs = Union{Symbol,Expr}[:x]
     gentys = Type[x]
     acts = Symbol[Symbol("act_0")]
@@ -1159,7 +1159,6 @@ grad
     )
     return nothing
 end
-
 
 """
     autodiff(

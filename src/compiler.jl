@@ -437,7 +437,15 @@ function removed_ret_parms(F::LLVM.Function)
     return retRemove, parmsRemoved
 end
 
+"""
+    CheckNan::Ref{Bool}
+
+If `Enzyme.Compiler.CheckNan[] == true`, Enzyme will error at the first encounter of a `NaN`
+during differentiation. Useful as a debugging tool to help locate the call whose derivative
+is the source of unexpected `NaN`s. Off by default.
+"""
 const CheckNan = Ref(false)
+
 function julia_sanitize(
     orig::LLVM.API.LLVMValueRef,
     val::LLVM.API.LLVMValueRef,
@@ -685,6 +693,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
    
     if mode == API.DEM_ForwardMode && (used || idx != 0)
         # Zero any jlvalue_t inner elements of preceeding allocation.
+
         # Specifically in forward mode, you will first run the original allocation,
         # then all shadow allocations. These allocations will thus all run before
         # any value may store into them. For example, as follows:
@@ -695,11 +704,37 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
         # As a result, by the time of the subsequent GC allocation, the memory in the preceeding
         # allocation might be undefined, and trigger a GC error. To avoid this,
         # we will explicitly zero the GC'd fields of the previous allocation.
+
+        # Reverse mode will do similarly, except doing the shadow first
         prev = LLVM.Instruction(prev)
         B = LLVM.IRBuilder()
         position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(prev)))
 
         create_recursive_stores(B, Ty, prev)
+    end
+    if (mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeCombined) && used
+        # Zero any jlvalue_t inner elements of preceeding allocation.
+
+        # Specifically in reverse mode, you will run the original allocation,
+        # after all shadow allocations. The shadow allocations will thus all run before any value may store into them. For example, as follows:
+        #   %"orig'" = julia.gcalloc(...)
+        #   %orig = julia.gc_alloc(...)
+        #   store "orig'"[0] = jlvaluet'
+        #   store orig[0] = jlvaluet
+        #
+        # Normally this is fine, since we will memset right after the shadow
+        # however we will do this memset non atomically and if you have a case like the following, there will be an issue
+
+        #   %"orig'" = julia.gcalloc(...)
+        #   memset("orig'")
+        #   %orig = julia.gc_alloc(...)
+        #   store "orig'"[0] = jlvaluet'
+        #   store orig[0] = jlvaluet
+        #
+        # Julia could decide to dead store eliminate the memset (not being read before the store of jlvaluet'), resulting in an error
+        B = LLVM.IRBuilder()
+        position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(V)))
+        create_recursive_stores(B, Ty, V)
     end
 
     nothing

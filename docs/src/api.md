@@ -3,7 +3,7 @@
 ## Types and constants
 
 ```@index
-Modules = [Enzyme, EnzymeCore, EnzymeCore.EnzymeRules, EnzymeTestUtils, Enzyme.API]
+Modules = [Enzyme, EnzymeCore, EnzymeCore.EnzymeRules, EnzymeTestUtils, Enzyme.API, Enzyme.Compiler]
 Order = [:type, :constant]
 ```
 
@@ -19,4 +19,8 @@ Order = [:macro, :function]
 ```@autodocs
 Modules = [Enzyme, EnzymeCore, EnzymeCore.EnzymeRules, EnzymeTestUtils, Enzyme.API]
 Order = [:module, :type, :constant, :macro, :function]
+```
+
+```@docs
+Enzyme.Compiler.CheckNan
 ```
