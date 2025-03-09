@@ -4,6 +4,7 @@ export Forward, ForwardWithPrimal, Reverse, ReverseWithPrimal, ReverseSplitNoPri
 export ReverseSplitModified, ReverseSplitWidth, ReverseHolomorphic, ReverseHolomorphicWithPrimal
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, Annotation
 export MixedDuplicated, BatchMixedDuplicated
+export Seed, BatchSeed
 export DefaultABI, FFIABI, InlineABI, NonGenABI
 export BatchDuplicatedFunc
 export within_autodiff
@@ -205,6 +206,24 @@ struct BatchMixedDuplicated{T,N} <: Annotation{T}
 end
 @inline batch_size(::BatchMixedDuplicated{T,N}) where {T,N} = N
 @inline batch_size(::Type{BatchMixedDuplicated{T,N}}) where {T,N} = N
+
+"""
+    Seed(dy)
+
+Wrapper for a single adjoint to the return value in reverse mode.
+"""
+struct Seed{T}
+    dval::T
+end
+
+"""
+    BatchSeed(dys::NTuple)
+
+Wrapper for a tuple of adjoints to the return value in reverse mode.
+"""
+struct BatchSeed{T,N}
+    dvals::NTuple{T,N}
+end
 
 """
     abstract type ABI

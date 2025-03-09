@@ -1162,31 +1162,31 @@ end
 
 
 """
-    seeded_autodiff_thunk(
+    autodiff(
         rmode::ReverseModeSplit,
-        dresult,
-        f,
-        ReturnActivity,
+        f::Annotation,
+        ReturnActivity::Type{<:Annotation},
+        dresult::Seed,
         annotated_args...
     )
     
-Call [`autodiff_thunk`](@ref), execute the forward pass, increment output tangent with `dresult`, then execute the reverse pass.
+Call [`autodiff_thunk`](@ref), execute the forward pass, increment output adjoint with `dresult`, then execute the reverse pass.
 
 Useful for computing pullbacks / VJPs for functions whose output is not a scalar.
 """
-function seeded_autodiff_thunk(
+function autodiff(
     rmode::ReverseModeSplit{ReturnPrimal},
-    dresult,
     f::FA,
     ::Type{RA},
+    dresult::Seed,
     args::Vararg{Annotation,N},
 ) where {ReturnPrimal,FA<:Annotation,RA<:Annotation,N}
     forward, reverse = autodiff_thunk(rmode, FA, RA, typeof.(args)...)
     tape, result, shadow_result = forward(f, args...)
     if RA <: Active
-        dinputs = only(reverse(f, args..., dresult, tape))
+        dinputs = only(reverse(f, args..., dresult.dval, tape))
     else
-        shadow_result .+= dresult  # TODO: generalize beyond arrays
+        shadow_result .+= dresult.dval  # TODO: generalize beyond arrays
         dinputs = only(reverse(f, args..., tape))
     end
     if ReturnPrimal
@@ -1197,32 +1197,32 @@ function seeded_autodiff_thunk(
 end
 
 """
-    batch_seeded_autodiff_thunk(
+    autodiff(
         rmode::ReverseModeSplit,
-        dresults::NTuple,
-        f,
-        ReturnActivity,
+        f::Annotation,
+        ReturnActivity::Type{<:Annotation},
+        dresults::BatchSeed,
         annotated_args...
     )
     
-Call [`autodiff_thunk`](@ref), execute the forward pass, increment each output tangent with the corresponding element from `dresults`, then execute the reverse pass.
+Call [`autodiff_thunk`](@ref), execute the forward pass, increment each output adjoint with the corresponding element from `dresults`, then execute the reverse pass.
 
 Useful for computing pullbacks / VJPs for functions whose output is not a scalar.
 """
-function batch_seeded_autodiff_thunk(
+function autodiff(
     rmode::ReverseModeSplit{ReturnPrimal},
-    dresults::NTuple{B},
     f::FA,
     ::Type{RA},
+    dresults::BatchSeed{B},
     args::Vararg{Annotation,N},
 ) where {ReturnPrimal,B,FA<:Annotation,RA<:Annotation,N}
     rmode_rightwidth = ReverseSplitWidth(rmode, Val(B))
     forward, reverse = autodiff_thunk(rmode_rightwidth, FA, RA, typeof.(args)...)
     tape, result, shadow_results = forward(f, args...)
     if RA <: Active
-        dinputs = only(reverse(f, args..., dresults, tape))
+        dinputs = only(reverse(f, args..., dresults.dvals, tape))
     else
-        foreach(shadow_results, dresults) do d0, d
+        foreach(shadow_results, dresults.dvals) do d0, d
             d0 .+= d  # TODO: generalize beyond arrays
         end
         dinputs = only(reverse(f, args..., tape))

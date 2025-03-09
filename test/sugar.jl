@@ -651,9 +651,7 @@ end
     # @show J_f_3(u, A, x)
 end
 
-using Enzyme: seeded_autodiff_thunk, batch_seeded_autodiff_thunk
-
-@testset "seeded_autodiff_thunk" begin
+@testset "Seeded reverse autodiff" begin
 
     f(x::Vector{Float64}, y::Float64) = sum(abs2, x) * y
     g(x::Vector{Float64}, y::Float64) = [f(x, y)]
@@ -668,7 +666,7 @@ using Enzyme: seeded_autodiff_thunk, batch_seeded_autodiff_thunk
     @testset "simple" begin
         for mode in (ReverseSplitNoPrimal, ReverseSplitWithPrimal)
             make_zero!(dx)
-            dinputs_and_maybe_result = seeded_autodiff_thunk(mode, dresult, Const(f), Active, Duplicated(x, dx), Active(y))
+            dinputs_and_maybe_result = autodiff(mode, Const(f), Active, Seed(dresult), Duplicated(x, dx), Active(y))
             dinputs = first(dinputs_and_maybe_result)
             @test isnothing(dinputs[1])
             @test dinputs[2] == dresult * sum(abs2, x)
@@ -680,7 +678,7 @@ using Enzyme: seeded_autodiff_thunk, batch_seeded_autodiff_thunk
 
         for mode in (ReverseSplitNoPrimal, ReverseSplitWithPrimal)
             make_zero!(dx)
-            dinputs_and_maybe_result = seeded_autodiff_thunk(mode, [dresult], Const(g), Duplicated, Duplicated(x, dx), Active(y))
+            dinputs_and_maybe_result = autodiff(mode, Const(g), Duplicated, Seed([dresult]), Duplicated(x, dx), Active(y))
             dinputs = first(dinputs_and_maybe_result)
             @test isnothing(dinputs[1])
             @test dinputs[2] == dresult * sum(abs2, x)
@@ -694,7 +692,7 @@ using Enzyme: seeded_autodiff_thunk, batch_seeded_autodiff_thunk
     @testset "batch" begin
         for mode in (ReverseSplitNoPrimal, ReverseSplitWithPrimal)
             make_zero!(dxs)
-            dinputs_and_maybe_result = batch_seeded_autodiff_thunk(mode, dresults, Const(f), Active, BatchDuplicated(x, dxs), Active(y))
+            dinputs_and_maybe_result = autodiff(mode, Const(f), Active, BatchSeed(dresults), BatchDuplicated(x, dxs), Active(y))
             dinputs = first(dinputs_and_maybe_result)
             @test isnothing(dinputs[1])
             @test dinputs[2][1] == dresults[1] * sum(abs2, x)
@@ -708,7 +706,7 @@ using Enzyme: seeded_autodiff_thunk, batch_seeded_autodiff_thunk
 
         for mode in (ReverseSplitNoPrimal, ReverseSplitWithPrimal)
             make_zero!(dxs)
-            dinputs_and_maybe_result = batch_seeded_autodiff_thunk(mode, ([dresults[1]], [dresults[2]]), Const(g), BatchDuplicated, BatchDuplicated(x, dxs), Active(y))
+            dinputs_and_maybe_result = autodiff(mode, Const(g), BatchDuplicated, BatchSeed(([dresults[1]], [dresults[2]])), BatchDuplicated(x, dxs), Active(y))
             dinputs = first(dinputs_and_maybe_result)
             @test isnothing(dinputs[1])
             @test dinputs[2][1] == dresults[1] * sum(abs2, x)
