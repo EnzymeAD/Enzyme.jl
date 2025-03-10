@@ -664,33 +664,37 @@ end
     dresults = (5.0, 7.0)
 
     @testset "simple" begin
-        for mode in (ReverseSplitNoPrimal, ReverseSplitWithPrimal)
+        @test_throws ArgumentError autodiff(Reverse, Const(f), Const, Seed(dresult), Duplicated(x, dx), Active(y))
+
+        for mode in (Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal)
             make_zero!(dx)
             dinputs_and_maybe_result = autodiff(mode, Const(f), Active, Seed(dresult), Duplicated(x, dx), Active(y))
             dinputs = first(dinputs_and_maybe_result)
             @test isnothing(dinputs[1])
             @test dinputs[2] == dresult * sum(abs2, x)
             @test dx == dresult * 2x * y
-            if mode == ReverseSplitWithPrimal
+            if Enzyme.Split(mode) == ReverseSplitWithPrimal
                 @test last(dinputs_and_maybe_result) == f(x, y)
             end
         end
 
-        for mode in (ReverseSplitNoPrimal, ReverseSplitWithPrimal)
+        for mode in (Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal)
             make_zero!(dx)
             dinputs_and_maybe_result = autodiff(mode, Const(g), Duplicated, Seed([dresult]), Duplicated(x, dx), Active(y))
             dinputs = first(dinputs_and_maybe_result)
             @test isnothing(dinputs[1])
             @test dinputs[2] == dresult * sum(abs2, x)
             @test dx == dresult * 2x * y
-            if mode == ReverseSplitWithPrimal
+            if Enzyme.Split(mode) == ReverseSplitWithPrimal
                 @test last(dinputs_and_maybe_result) == g(x, y)
             end
         end
     end
 
     @testset "batch" begin
-        for mode in (ReverseSplitNoPrimal, ReverseSplitWithPrimal)
+        @test_throws ArgumentError autodiff(Reverse, Const(f), Const, BatchSeed(dresults), BatchDuplicated(x, dxs), Active(y))
+
+        for mode in (Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal)
             make_zero!(dxs)
             dinputs_and_maybe_result = autodiff(mode, Const(f), Active, BatchSeed(dresults), BatchDuplicated(x, dxs), Active(y))
             dinputs = first(dinputs_and_maybe_result)
@@ -699,12 +703,12 @@ end
             @test dinputs[2][2] == dresults[2] * sum(abs2, x)
             @test dxs[1] == dresults[1] * 2x * y
             @test dxs[2] == dresults[2] * 2x * y
-            if mode == ReverseSplitWithPrimal
+            if Enzyme.Split(mode) == ReverseSplitWithPrimal
                 @test last(dinputs_and_maybe_result) == f(x, y)
             end
         end
 
-        for mode in (ReverseSplitNoPrimal, ReverseSplitWithPrimal)
+        for mode in (Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal)
             make_zero!(dxs)
             dinputs_and_maybe_result = autodiff(mode, Const(g), BatchDuplicated, BatchSeed(([dresults[1]], [dresults[2]])), BatchDuplicated(x, dxs), Active(y))
             dinputs = first(dinputs_and_maybe_result)
@@ -713,7 +717,7 @@ end
             @test dinputs[2][2] == dresults[2] * sum(abs2, x)
             @test dxs[1] == dresults[1] * 2x * y
             @test dxs[2] == dresults[2] * 2x * y
-            if mode == ReverseSplitWithPrimal
+            if Enzyme.Split(mode) == ReverseSplitWithPrimal
                 @test last(dinputs_and_maybe_result) == g(x, y)
             end
         end

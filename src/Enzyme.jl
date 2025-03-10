@@ -54,7 +54,8 @@ import EnzymeCore:
     clear_runtime_activity,
     within_autodiff,
     WithPrimal,
-    NoPrimal
+    NoPrimal,
+    Split
 export Annotation,
     Const,
     Active,

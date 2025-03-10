@@ -1162,30 +1162,33 @@ end
 
 """
     autodiff(
-        rmode::ReverseModeSplit,
+        rmode::Union{ReverseMode,ReverseModeSplit},
         f::Annotation,
         ReturnActivity::Type{<:Annotation},
         dresult::Seed,
         annotated_args...
     )
     
-Call [`autodiff_thunk`](@ref), execute the forward pass, increment output adjoint with `dresult`, then execute the reverse pass.
+Call [`autodiff_thunk`](@ref) in split mode, execute the forward pass, increment output adjoint with `dresult`, then execute the reverse pass.
 
 Useful for computing pullbacks / VJPs for functions whose output is not a scalar.
 """
 function autodiff(
-        rmode::ReverseModeSplit{ReturnPrimal},
+        rmode::Union{ReverseMode{ReturnPrimal},ReverseModeSplit{ReturnPrimal}},
         f::FA,
         ::Type{RA},
         dresult::Seed,
         args::Vararg{Annotation, N},
     ) where {ReturnPrimal, FA <: Annotation, RA <: Annotation, N}
-    forward, reverse = autodiff_thunk(rmode, FA, RA, typeof.(args)...)
+    if RA === Const
+        throw(ArgumentError("Return activity cannot be `Const`."))
+    end
+    forward, reverse = autodiff_thunk(Split(rmode), FA, RA, typeof.(args)...)
     tape, result, shadow_result = forward(f, args...)
     if RA <: Active
         dinputs = only(reverse(f, args..., dresult.dval, tape))
     else
-        shadow_result .+= dresult.dval  # TODO: generalize beyond arrays
+        Compiler.recursive_accumulate(shadow_result, dresult.dval)
         dinputs = only(reverse(f, args..., tape))
     end
     if ReturnPrimal
@@ -1197,32 +1200,35 @@ end
 
 """
     autodiff(
-        rmode::ReverseModeSplit,
+        rmode::Union{ReverseMode,ReverseModeSplit},
         f::Annotation,
         ReturnActivity::Type{<:Annotation},
         dresults::BatchSeed,
         annotated_args...
     )
     
-Call [`autodiff_thunk`](@ref), execute the forward pass, increment each output adjoint with the corresponding element from `dresults`, then execute the reverse pass.
+Call [`autodiff_thunk`](@ref) in split mode, execute the forward pass, increment each output adjoint with the corresponding element from `dresults`, then execute the reverse pass.
 
 Useful for computing pullbacks / VJPs for functions whose output is not a scalar.
 """
 function autodiff(
-        rmode::ReverseModeSplit{ReturnPrimal},
+        rmode::Union{ReverseMode{ReturnPrimal},ReverseModeSplit{ReturnPrimal}},
         f::FA,
         ::Type{RA},
         dresults::BatchSeed{B},
         args::Vararg{Annotation, N},
     ) where {ReturnPrimal, B, FA <: Annotation, RA <: Annotation, N}
-    rmode_rightwidth = ReverseSplitWidth(rmode, Val(B))
+    if RA === Const
+        throw(ArgumentError("Return activity cannot be `Const`."))
+    end
+    rmode_rightwidth = ReverseSplitWidth(Split(rmode), Val(B))
     forward, reverse = autodiff_thunk(rmode_rightwidth, FA, RA, typeof.(args)...)
     tape, result, shadow_results = forward(f, args...)
     if RA <: Active
         dinputs = only(reverse(f, args..., dresults.dvals, tape))
     else
         foreach(shadow_results, dresults.dvals) do d0, d
-            d0 .+= d  # TODO: generalize beyond arrays
+            Compiler.recursive_accumulate(d0, d)
         end
         dinputs = only(reverse(f, args..., tape))
     end
