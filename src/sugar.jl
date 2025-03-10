@@ -1174,7 +1174,7 @@ Call [`autodiff_thunk`](@ref) in split mode, execute the forward pass, increment
 Useful for computing pullbacks / VJPs for functions whose output is not a scalar.
 """
 function autodiff(
-        rmode::Union{ReverseMode{ReturnPrimal},ReverseModeSplit{ReturnPrimal}},
+        rmode::Union{ReverseMode{ReturnPrimal}, ReverseModeSplit{ReturnPrimal}},
         f::FA,
         ::Type{RA},
         dresult::Seed,
@@ -1212,7 +1212,7 @@ Call [`autodiff_thunk`](@ref) in split mode, execute the forward pass, increment
 Useful for computing pullbacks / VJPs for functions whose output is not a scalar.
 """
 function autodiff(
-        rmode::Union{ReverseMode{ReturnPrimal},ReverseModeSplit{ReturnPrimal}},
+        rmode::Union{ReverseMode{ReturnPrimal}, ReverseModeSplit{ReturnPrimal}},
         f::FA,
         ::Type{RA},
         dresults::BatchSeed{B},
