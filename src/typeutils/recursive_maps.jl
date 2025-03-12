@@ -7,9 +7,9 @@ using ..Compiler: guaranteed_const, guaranteed_const_nongen, guaranteed_nonactiv
 ### Config type for setting inactive/nonactive options
 """
     config = InactiveConfig(
-        extra=(T -> false); copy_if_inactive=Val(false), runtime_inactive=Val(false)
+        extra = (T -> false); copy_if_inactive = Val(false), runtime_inactive = Val(false)
     )
-    config = InactiveConfig{copy_if_inactive::Bool,runtime_inactive::Bool}(extra)
+    config = InactiveConfig{copy_if_inactive::Bool, runtime_inactive::Bool}(extra)
     newconfig = InactiveConfig(config::InactiveConfig, extra)
 
 Config type for specifying which parts of objects should be skipped by `recursive_map{!}`.
@@ -29,16 +29,18 @@ to outputs.
 
 The parameter `runtime_inactive` specifies whether `recursive_map{!}` should respect runtime
 semantics when determining if a type is guaranteed inactive. If `Val(false)`, guaranteed
-inactivity is determined once during compilation of the internal generated function
-`active_reg_nothrow`, and won't be invalidated by subsequent changes to the
-`EnzymeRules.inactive_type` method table. If `Val(true)`, the generated function is not used
-and changes to `EnzymeRules.inactive_type` are picked up through invalidation as usual.
+inactivity is determined by `active_reg_nothrow`, which is a generated function and thus
+frozen in the precompilation world age; this means that methods added to
+`EnzymeRules.inactive_type` after `Enzyme` precompilation are not respected. If `Val(true)`,
+the generated function is not used and changes to the `EnzymeRules.inactive_type` method
+table are picked up through invalidation as usual.
 
-Using `runtime_inactive = Val(false)` may be preferred in interactive sessions, but
-performance may sometimes suffer if the activity states of all types cannot be resolved at
+Using `runtime_inactive = Val(false)` may be preferred in interactive sessions or if
+`EnzymeRules.inactive_type` is extended in downstream packages or package extensions.
+However, performance may suffer if the activity states of every type cannot be resolved at
 compile time, and in some cases this mode has been observed to break gradient compilation
-when `recursive_map{!}` is used inside custom rules. Hence `runtime_inactive = Val(true)` is
-recommended for non-interactive usage and is the default.
+when `recursive_map{!}` is used inside custom rules. Hence it is recommended to use
+`runtime_inactive = Val(true)` when possible, and this is the default.
 
 The updating constructor `InactiveConfig(config::InactiveConfig, extra)` returns a new
 config that extends `config` with an additional `extra` function.
@@ -92,18 +94,18 @@ end
 ### recursive_map: walk arbitrary objects and map a function over scalar and vector leaves
 """
     ys = recursive_map(
-        [seen::Union{Nothing,IdDict},]
+        [seen::Union{Nothing, IdDict},]
         f,
         ::Val{Nout}
-        xs::NTuple{Nin,T},
-        config::InactiveConfig=InactiveConfig(),
+        xs::NTuple{Nin, T},
+        config::InactiveConfig = InactiveConfig(),
     )::T
     newys = recursive_map(
-        [seen::Union{Nothing,IdDict},]
+        [seen::Union{Nothing, IdDict},]
         f,
-        ys::NTuple{Nout,T},
-        xs::NTuple{Nin,T},
-        config::InactiveConfig=InactiveConfig(),
+        ys::NTuple{Nout, T},
+        xs::NTuple{Nin, T},
+        config::InactiveConfig = InactiveConfig(),
     )::T
 
 Recurse through `Nin` objects `xs = (x1::T, x2::T, ..., xNin::T)` of the same type, mapping
@@ -111,8 +113,8 @@ the function `f` over every differentiable value encountered and building `Nout`
 `(y1::T, ...)` from the resulting values `(y1_i, ...) = f(x1_i, ..., xNin_i)`. Only
 `Nout == 1` and `Nout == 2` are supported.
 
-The trait `EnzymeCore.isvectortype`(@ref) determines which values are considered
-leaf nodes at which to terminate recursion invoke `f`. See the docstring for
+The trait [`EnzymeCore.isvectortype`](@ref) determines which values are considered leaf
+nodes at which to terminate recursion and invoke `f`. See the docstring for
 [`EnzymeCore.isvectortype`](@ref) and the related [`EnzymeCore.isscalartype`](@ref) for more
 information.
 
@@ -130,14 +132,15 @@ array that the type notionally represents.
 
 # Arguments
 
-* `seen::Union{IdDict,Nothing}` (optional): Dictionary for tracking object identity as
-  needed to construct `y` such that its internal graph of object references is identical to
-  that of the `xs`, including cycles (i.e., recursive substructures) and multiple paths to
-  the same objects. If not provided, an `IdDict` will be allocated internally if required.
+* `seen::Union{IdDict, Nothing}` (optional): Dictionary for tracking object identity as
+  needed to reproduce the object reference graph topology of the `xs` when constructing the
+  `ys`, including cycles (i.e., recursive substructures) and convergent paths. If not
+  provided, an `IdDict` will be allocated internally if required.
 
   If `nothing` is provided, object identity is tracking is turned off. In this case, objects
-  with multiple references are duplicated such that the `ys`s object reference graph becomes
-  a tree, but cycles will result in infinite recursion and stack overflow.
+  with multiple references are duplicated such that the object reference graph within the
+  `ys` becomes a tree. Note that any cycles in the `xs` will result in infinite recursion
+  and stack overflow.
 
 * `f`: Function mapping leaf nodes within the `xs` to the corresponding leaf nodes in the
   `ys`, that is, `(y1_i, ...) = f(x1_i::U, ..., xNin_i::U)::NTuple{Nout,U}`. The function
@@ -146,7 +149,7 @@ array that the type notionally represents.
 
   When an existing object tuple `ys` is passed and contains leaf nodes of a non-isbits
   non-scalar type `U`, `f` should also have a partially-in-place method
-  `(newy1_i, ...) === f(y1_i::U, ..., yNout_i::U, x1_i::U, ..., xNin_i::U)::NTuple{Nout,U}`
+  `(newy1_i, ...) === f(y1_i::U, ..., yNout_i::U, x1_i::U, ..., xNin_i::U)::NTuple{Nout, U}`
   that modifies and reuses any mutable parts of the `yj_i`; in particular, if `U` is a
   mutable type, this method should return `newyj_i === yj_i`.
 
@@ -156,12 +159,12 @@ array that the type notionally represents.
   See [`EnzymeCore.isvectortype`](@ref) and [`EnzymeCore.isscalartype`](@ref) for more
   details about leaf types and scalar types.
 
-* `::Val{Nout}` or `ys::NTuple{Nout,T}`: For out-of-place operation, pass `Val(Nout)` where
+* `::Val{Nout}` or `ys::NTuple{Nout, T}`: For out-of-place operation, pass `Val(Nout)` where
   `Nout in (1, 2)` matches the length of the tuple returned by `f`. For partially-in-place
-  operation, pass the existing tuple `ys::NTuple{Nout,T}` containing the values to be
+  operation, pass the existing tuple `ys::NTuple{Nout, T}` containing the values to be
   modified.
 
-* `xs::NTuple{N,T}`: Tuple of `N` objects of the same type `T`.
+* `xs::NTuple{N, T}`: Tuple of `N` objects of the same type `T`.
 
   The first object `x1 = first(xs)` is the reference for graph structure and
   non-differentiable values when constructing the returned object. In particular:
@@ -453,11 +456,11 @@ end
 ### recursive_map!: fully in-place wrapper around recursive_map
 """
     recursive_map!(
-        [seen::Union{Nothing,IdDict},]
+        [seen::Union{Nothing, IdDict},]
         f!!,
-        ys::NTuple{Nout,T},
-        xs::NTuple{Nin,T},
-        isinactivetype::InactiveConfig=InactiveConfig(),
+        ys::NTuple{Nout, T},
+        xs::NTuple{N, T},
+        isinactivetype::InactiveConfig = InactiveConfig(),
     )::Nothing
 
 Recurse through `Nin` objects `xs = (x1::T, x2::T, ..., xNin::T)` of the same type, mapping
@@ -652,7 +655,7 @@ end
 @inline function EnzymeCore.make_zero(prev::T, args::Vararg{Any, M}; kws...) where {T, M}
     config = make_zero_config(args...; kws...)
     new = if iszero(M) && isempty(kws) && !isinactivetype(T, config) && isvectortype(T)  # fallback
-        # isinactivetype precedes over isvectortype for consistency with recursive handler
+        # isinactivetype has precedence over isvectortype for consistency with recursive_map
         convert(T, zero(prev))  # convert because zero(prev)::T may not hold when eltype(T) is abstract
     else
         only(recursive_map(_make_zero!!, Val(1), (prev,), config))::T
@@ -660,23 +663,23 @@ end
     return new::T
 end
 
-@inline function EnzymeCore.make_zero!(val::T, args::Vararg{Any, M}; kws...) where {T, M}
+@inline function EnzymeCore.make_zero!(val::T, allargs::Vararg{Any, M}; kws...) where {T, M}
     @assert !isscalartype(T)  # not appropriate for in-place handler
-    if iszero(M) && isempty(kws) && !isinactivetype(T, make_zero!_config()) && isvectortype(T)  # fallback
-        # isinactivetype precedes over isvectortype for consistency with recursive handler
-        fill!(val, false)
+    seen, args = if (M > 0) && (first(allargs) isa IdDict)
+        first(allargs), Base.tail(allargs)
     else
-        _make_zero_inner!(val, args...; kws...)
+        nothing, allargs
+    end
+    config = make_zero_config!(args...; kws...)
+    if iszero(M) && isempty(kws) && !isinactivetype(T, config) && isvectortype(T)  # fallback
+        # isinactivetype has precedence over isvectortype for consistency with recursive_map
+        fill!(val, false)
+    elseif isnothing(seen)
+        recursive_map!(_make_zero!!, val, (val,), config)
+    else
+        recursive_map!(seen, _make_zero!!, val, (val,), config)
     end
     return nothing
-end
-
-@inline function _make_zero_inner!(val, args::Vararg{Any, M}; kws...) where {M}
-    return recursive_map!(_make_zero!!, (val,), (val,), make_zero!_config(args...; kws...))
-end
-@inline function _make_zero_inner!(val, seen::IdDict, args::Vararg{Any, M}; kws...) where {M}
-    config = make_zero!_config(args...; kws...)
-    return recursive_map!(seen, _make_zero!!, (val,), (val,), config)
 end
 
 # map make_zero(!) args/kws to config
@@ -684,8 +687,8 @@ end
 @inline make_zero_config(C, R) = InactiveConfig(; copy_if_inactive = C, runtime_inactive = R)
 @inline make_zero_config(; kws...) = InactiveConfig(; kws...)
 
-@inline make_zero!_config(R) = InactiveConfig(; runtime_inactive = R)
-@inline function make_zero!_config(; runtime_inactive = nothing)
+@inline make_zero_config!(R) = InactiveConfig(; runtime_inactive = R)
+@inline function make_zero_config!(; runtime_inactive = nothing)
     if isnothing(runtime_inactive)
         return InactiveConfig()
     else

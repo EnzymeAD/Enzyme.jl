@@ -1,7 +1,7 @@
 using .RecursiveMaps: RecursiveMaps, recursive_map, recursive_map!
 
 """
-    recursive_add(x::T, y::T, f=identity, forcelhs=guaranteed_const)
+    recursive_add(x::T, y::T, f = identity, forcelhs = guaranteed_const)
 
 Recursively construct `z::T` such that `zi = xi + f(yi)` where `zi`, `xi`, and `yi` are
 corresponding values from `z`, `x`, and `y`. In other words, this is a recursive
@@ -27,10 +27,10 @@ function recursive_add(
 end
 
 """
-    accumulate_seen!(f, seen::IdDict; frozen_inactive=Val(false))
-    accumulate_seen!(f, seen::IdDict, ::Val{frozen_inactive})
+    accumulate_seen!(f, seen::IdDict; runtime_inactive = Val(false))
+    accumulate_seen!(f, seen::IdDict, ::Val{runtime_inactive})
     accumulate_seen!(
-        f, seen::IdDict, config::RecursiveMaps.InactiveConfig=RecursiveMaps.InactiveConfig()
+        f, seen::IdDict, config::RecursiveMaps.InactiveConfig = RecursiveMaps.InactiveConfig()
     )
 
 Recursively accumulate from values into keys, generalizing `key .+= f.(value)` to arbitrary
@@ -41,16 +41,17 @@ of its input to the corresponding parts of the returned value.
 
 The recursion stops at objects of types that are themselves cached by
 `make_zero`/`recursive_map`, as these objects should have their own entries in `seen`. The
-recursion also stops at inactive objects that would be skipped by `make_zero`/`recursive_map`.
+recursion also stops at inactive objects that would be skipped by
+`make_zero`/`recursive_map`.
 
 If the optional argument `::Val{runtime_inactive}` was passed to `make_zero`, or
 `config::RecursiveMaps.InactiveConfig` was passed to `recursive_map`, the same value should
-be passed to `accumulate_seen` to enzure consistency.
+be passed to `accumulate_seen` to ensure consistency.
 """
 function accumulate_seen! end
 
 function accumulate_seen!(f::F, seen::IdDict, args::Vararg{Any, M}; kws...) where {F, M}
-    accumulate_seen!(f, seen, RecursiveMaps.make_zero!_config(args...; kws...))
+    accumulate_seen!(f, seen, RecursiveMaps.make_zero_config!(args...; kws...))
     return nothing
 end
 
