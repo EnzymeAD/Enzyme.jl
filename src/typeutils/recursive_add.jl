@@ -1,4 +1,4 @@
-using .RecursiveMaps: RecursiveMaps, recursive_map, recursive_map!
+using .RecursiveMaps: RecursiveMaps, recursive_map, recursive_map!, recursive_map_inner
 
 """
     recursive_add(x::T, y::T, f = identity, forcelhs = guaranteed_const)
@@ -20,10 +20,10 @@ function recursive_add(
     ) where {T, F, L}
     function addf(xi::S, yi::S) where {S}
         @assert EnzymeCore.isvectortype(S)
-        return ((xi + f(yi))::S,)
+        return (xi + f(yi))::S
     end
     config = RecursiveMaps.InactiveConfig(forcelhs)
-    return only(recursive_map(addf, Val(1), (x, y), config))::T
+    return recursive_map(addf, (x, y), config)::T
 end
 
 """
@@ -66,19 +66,19 @@ end
 function _accumulate_seen_item!(f::F, k::T, v::T, config, cachedconfig) where {F, T}
     function addf!!(ki::S, vi::S) where {S}
         @assert EnzymeCore.isvectortype(S)
-        return ((ki .+ f.(vi))::S,)
+        return (ki .+ f.(vi))::S
     end
     function addf!!(ki::S, _ki::S, vi::S) where {S}
         @assert !EnzymeCore.isscalartype(S)
         @assert EnzymeCore.isvectortype(S)
         @assert ki === _ki
         ki .+= f.(vi)
-        return (ki::S,)
+        return ki::S
     end
     RecursiveMaps.check_nonactive(T, config)
     if !RecursiveMaps.isinactivetype(T, config)
-        newks = RecursiveMaps.recursive_map_inner(nothing, addf!!, (k,), (k, v), cachedconfig)
-        @assert only(newks) === k
+        newk = recursive_map_inner(nothing, addf!!, Some(k), (k, v), cachedconfig)
+        @assert newk === k
     end
     return nothing
 end
@@ -102,16 +102,16 @@ function accumulate_into!(into::T, from::T) where {T}
     # may not show in coverage but both base cases are covered via deepcopy custom rule tests
     function accumulate_into!!(into_i::S, from_i::S) where {S}
         @assert EnzymeCore.isvectortype(S)
-        return ((into_i + from_i)::S, convert(S, zero(from_i))::S)
+        return (into_i + from_i)::S
     end
-    function accumulate_into!!(into_i::S, from_i::S, _into_i::S, _from_i::S) where {S}
+    function accumulate_into!!(into_i::S, _into_i::S, from_i::S) where {S}
         @assert !EnzymeCore.isscalartype(S)
         @assert EnzymeCore.isvectortype(S)
-        @assert (into_i === _into_i) && (from_i === _from_i)
+        @assert into_i === _into_i
         into_i .+= from_i
-        fill!(from_i, false)
-        return (into_i::S, from_i::S)
+        return into_i::S
     end
-    recursive_map!(accumulate_into!!, (into, from), (into, from))
+    recursive_map!(accumulate_into!!, into, (into, from))
+    make_zero!(from)
     return nothing
 end

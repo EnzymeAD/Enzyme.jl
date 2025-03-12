@@ -93,36 +93,28 @@ end
 
 ### recursive_map: walk arbitrary objects and map a function over scalar and vector leaves
 """
-    ys = recursive_map(
+    newy = recursive_map(
         [seen::Union{Nothing, IdDict},]
         f,
-        ::Val{Nout}
-        xs::NTuple{Nin, T},
-        config::InactiveConfig = InactiveConfig(),
-    )::T
-    newys = recursive_map(
-        [seen::Union{Nothing, IdDict},]
-        f,
-        ys::NTuple{Nout, T},
-        xs::NTuple{Nin, T},
+        [y::T,]
+        xs::NTuple{N, T},
         config::InactiveConfig = InactiveConfig(),
     )::T
 
-Recurse through `Nin` objects `xs = (x1::T, x2::T, ..., xNin::T)` of the same type, mapping
-the function `f` over every differentiable value encountered and building `Nout` new objects
-`(y1::T, ...)` from the resulting values `(y1_i, ...) = f(x1_i, ..., xNin_i)`. Only
-`Nout == 1` and `Nout == 2` are supported.
+Recurse through `N` objects `xs = (x1::T, x2::T, ..., xN::T)` of the same type, mapping the
+function `f` over every differentiable value encountered and constructing a new object
+`newy::T` from the resulting values `newy_i = f(x1_i, ..., xN_i)`.
 
 The trait [`EnzymeCore.isvectortype`](@ref) determines which values are considered leaf
 nodes at which to terminate recursion and invoke `f`. See the docstring for
 [`EnzymeCore.isvectortype`](@ref) and the related [`EnzymeCore.isscalartype`](@ref) for more
 information.
 
-A tuple of existing objects `ys = (y1::T, ...)` can be passed, in which case the `ys` are
-updated "partially-in-place": any parts of the `ys` that are mutable or non-differentiable
-are reused in the returned object tuple `newys`, while immutable differentiable parts are
-handled out-of-place as if the `ys` were not passed. If `T` itself is a mutable type, the
-`ys` are modified in-place and returned, such that `newys === ys`.
+An existing object `y::T` may be passed, in which case it is updated "partially-in-place":
+any parts of `y` that are mutable or non-differentiable are reused in the returned object
+`newy`, while immutable differentiable parts are handled out-of-place as if `y` were not
+passed. If `T` itself is a mutable type, `y` is modified fully in-place and returned, such
+that `newy === y`.
 
 The recursion and mapping operate on the structure of `T` as defined by struct fields and
 plain array elements, not on the values provided through iteration or array interfaces. For
@@ -133,25 +125,24 @@ array that the type notionally represents.
 # Arguments
 
 * `seen::Union{IdDict, Nothing}` (optional): Dictionary for tracking object identity as
-  needed to reproduce the object reference graph topology of the `xs` when constructing the
-  `ys`, including cycles (i.e., recursive substructures) and convergent paths. If not
-  provided, an `IdDict` will be allocated internally if required.
+  needed to reproduce the object reference graph topology of the `xs` when constructing `y`,
+  including cycles (i.e., recursive substructures) and convergent paths. If not provided, an
+  `IdDict` will be allocated internally if required.
 
-  If `nothing` is provided, object identity is tracking is turned off. In this case, objects
-  with multiple references are duplicated such that the object reference graph within the
-  `ys` becomes a tree. Note that any cycles in the `xs` will result in infinite recursion
+  If `nothing` is provided, object identity tracking is turned off. Objects with multiple
+  references are then duplicated such that the graph of object references within `newy`
+  becomes a tree.  Note that any cycles in the `xs` will result in infinite recursion
   and stack overflow.
 
-* `f`: Function mapping leaf nodes within the `xs` to the corresponding leaf nodes in the
-  `ys`, that is, `(y1_i, ...) = f(x1_i::U, ..., xNin_i::U)::NTuple{Nout,U}`. The function
-  `f` must be applicable to the type of every leaf node, and must return a tuple of values
-  of the same type as its arguments.
+* `f`: Function mapping leaf nodes within the `xs` to the corresponding leaf node in `newy`,
+  that is, `newy_i = f(x1_i::U, ..., xN_i::U)::U`. The function `f` must be applicable to
+  the type of every leaf node, and must return a value of the same type as its arguments.
 
-  When an existing object tuple `ys` is passed and contains leaf nodes of a non-isbits
-  non-scalar type `U`, `f` should also have a partially-in-place method
-  `(newy1_i, ...) === f(y1_i::U, ..., yNout_i::U, x1_i::U, ..., xNin_i::U)::NTuple{Nout, U}`
-  that modifies and reuses any mutable parts of the `yj_i`; in particular, if `U` is a
-  mutable type, this method should return `newyj_i === yj_i`.
+  When an existing object `y` is provided and contains leaf nodes of a non-isbits non-scalar
+  type `U`, `f` should also have a partially-in-place method
+  `newy_i = f(y_i::U, x1_i::U, ..., xN_i::U)::U` that modifies and reuses any mutable parts
+  of `y_i`; in particular, if `U` is a mutable type, this method should return
+  `newy_i === y_i`.
 
   If a non-isbits leaf type `U` must always be handled using the out-of-place signature,
   define the method `EnzymeCore.isscalartype(::Type{U}) = true`.
@@ -159,289 +150,292 @@ array that the type notionally represents.
   See [`EnzymeCore.isvectortype`](@ref) and [`EnzymeCore.isscalartype`](@ref) for more
   details about leaf types and scalar types.
 
-* `::Val{Nout}` or `ys::NTuple{Nout, T}`: For out-of-place operation, pass `Val(Nout)` where
-  `Nout in (1, 2)` matches the length of the tuple returned by `f`. For partially-in-place
-  operation, pass the existing tuple `ys::NTuple{Nout, T}` containing the values to be
-  modified.
+* `y::T` (optional): Instance from which to reuse mutable and non-differentiable parts when
+  mapping (partially) in-place.
 
 * `xs::NTuple{N, T}`: Tuple of `N` objects of the same type `T`.
 
   The first object `x1 = first(xs)` is the reference for graph structure and
   non-differentiable values when constructing the returned object. In particular:
-  * When `ys` is not passed, the returned `ys` take any non-differentiable parts from `x1`.
-  * When `ys` is passed, its non-differentiable parts are kept unchanged, unless they are
-    uninitialized, in which case they are taken from `x1`.
-  * The graph of object references in `x1` is the one which is reproduced in the returned
-    object. For each instance of multiple paths and cycles within `x1`, the same structure
-    must be present in the other objects `x2, ..., xN`, otherwise the corresponding values
-    in the `ys` would not be uniquely defined. However, `x2, ..., xN` may contain additional
-    converging paths or cycles that are not present in `x1`; these do not affect the `ys`.
+  * When `y` is not provided, non-differentiable values within `newy` are shared with/copied
+    from `x1`.
+  * When `y` is provided, its non-differentiable values are kept unchanged, unless they are
+    uninitialized, in which case they are shared with/copied from from `x1`.
+  * The graph topology of object references in `x1` is the one which is reproduced in the
+    returned object. Hence, for each instance of cycles and converging paths within `x1`,
+    the same structure must be present in the other objects `x2, ..., xN`, otherwise the
+    corresponding values in `newy` would not be uniquely defined. However, `x2, ..., xN` may
+    contain additional cycles and converging paths that are not present in `x1`; these do
+    not affect the structure of `newy`.
   * If any values within `x1` are not initialized (that is, struct fields are undefined or
-    array elements are unassigned), they are left uninitialized in the returned object. If
-    any such values are mutable and `ys` is passed, the corresponding value in `y` must not
-    already be initialized (initialized values cannot be nulled). Conversely, for every
-    value in `x1` that is initialized, the corresponding values in `x2, ..., xN` must also
-    be initialized, such that the corresponding values of the `ys` can be computed (however,
-    `x2, ..., xN` may have initialized values where `x1` has uninitialized values).
+    array elements are unassigned), they remain uninitialized in `newy`. If any such values
+    are mutable and `y` is provided, the corresponding value in `y` must not already be
+    initialized, since initialized values cannot be nulled. Conversely, for every value in
+    `x1` that is initialized, the corresponding values in `x2, ..., xN` must also be
+    initialized, such that the corresponding value in `newy` can be computed. However,
+    `x2, ..., xN` may have initialized values where `x1` has uninitialized values; these
+    will remain uninitialized in `newy`.
 
 * `config::InactiveConfig` (optional): Config object detailing how to deal with
   non-differentiable (inactive) parts. The config specifies whether non-differentiable parts
-  should be shared or deep-copied from `x1` to the `ys`, and whether any additional types
+  should be shared or deep-copied from `x1` to `newy`, and whether any additional types
   should be skipped in addition to those Enzyme always considers inactive. See
   [`InactiveConfig`](@ref) for details.
 """
 function recursive_map end
 
-## type alias for unified handling of out-of-place and partially-in-place recursive_map
-const YS{Nout, T} = Union{Val{Nout}, NTuple{Nout, T}}
-@inline hasvalues(::Val{Nout}) where {Nout} = (Nout::Int; false)
-@inline hasvalues(::NTuple) = true
+const Maybe{T} = Union{Nothing, Some{T}}
 
-## main entry point: set default arguments, allocate IdDict if needed, exit early if possible
-function recursive_map(
-        f::F, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config::InactiveConfig = InactiveConfig()
-    ) where {F, Nout, Nin, T}
-    @assert (Nout == 1) || (Nout == 2)
-    newys = if isinactivetype(T, config)
-        recursive_map_inactive(nothing, ys, xs, config)
-    elseif isvectortype(T) || isbitstype(T)
-        recursive_map_inner(nothing, f, ys, xs, config)
-    else
-        recursive_map_inner(IdDict(), f, ys, xs, config)
-    end
-    return newys::NTuple{Nout, T}
+## entry points: set default arguments, deal with nothing/Some
+function recursive_map(f::F, xs::NTuple, config::InactiveConfig = InactiveConfig()) where {F}
+    return recursive_map_main(f, nothing, xs, config)
 end
 
-## recursive methods
+function recursive_map(
+        f::F, y::T, xs::NTuple{N, T}, config::InactiveConfig = InactiveConfig()
+    ) where {F, N, T}
+    return recursive_map_main(f, Some(y), xs, config)
+end
+
 function recursive_map(
         seen::Union{Nothing, IdDict},
         f::F,
-        ys::YS{Nout, T},
-        xs::NTuple{Nin, T},
+        xs::NTuple,
         config::InactiveConfig = InactiveConfig(),
-    ) where {F, Nout, Nin, T}
-    # determine whether to continue recursion, copy/share, or retrieve from cache
-    @assert (Nout == 1) || (Nout == 2)
-    newys = if isinactivetype(T, config)
-        recursive_map_inactive(seen, ys, xs, config)
-    elseif isbitstype(T)  # no object identity to to track in this branch
-        recursive_map_inner(nothing, f, ys, xs, config)
-    elseif hascache(seen, xs)
-        getcached(seen, Val(Nout), xs)
+    ) where {F}
+    return recursive_map_main(seen, f, nothing, xs, config)
+end
+
+function recursive_map(
+        seen::Union{Nothing, IdDict},
+        f::F,
+        y::T,
+        xs::NTuple{N, T},
+        config::InactiveConfig = InactiveConfig(),
+    ) where {F, N, T}
+    return recursive_map_main(seen, f, Some(y), xs, config)
+end
+
+## main dispatcher: allocate IdDict if needed, exit early if possible
+function recursive_map_main(
+        f::F, maybe_y::Maybe{T}, xs::NTuple{N, T}, config::InactiveConfig
+    ) where {F, N, T}
+    newy = if isinactivetype(T, config)
+        recursive_map_inactive(nothing, maybe_y, xs, config)
+    elseif isvectortype(T) || isbitstype(T)
+        recursive_map_inner(nothing, f, maybe_y, xs, config)
     else
-        recursive_map_inner(seen, f, ys, xs, config)
+        recursive_map_inner(IdDict(), f, maybe_y, xs, config)
     end
-    return newys::NTuple{Nout, T}
+    return newy::T
+end
+
+## recursive methods
+function recursive_map_main(
+        seen::Union{Nothing, IdDict},
+        f::F,
+        maybe_y::Maybe{T},
+        xs::NTuple{N, T},
+        config::InactiveConfig,
+    ) where {F, N, T}
+    # determine whether to continue recursion, copy/share, or retrieve from cache
+    newy = if isinactivetype(T, config)
+        recursive_map_inactive(seen, maybe_y, xs, config)
+    elseif isbitstype(T)  # no object identity to to track in this branch
+        recursive_map_inner(nothing, f, maybe_y, xs, config)
+    elseif hascache(seen, xs)
+        getcached(seen, xs)
+    else
+        recursive_map_inner(seen, f, maybe_y, xs, config)
+    end
+    return newy::T
 end
 
 @inline function recursive_map_inner(
-        seen, f::F, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config
-    ) where {F, Nout, Nin, T}
+        seen, f::F, maybe_y::Maybe{T}, xs::NTuple{N, T}, config
+    ) where {F, N, T}
     # forward to appropriate handler for leaf vs. mutable vs. immutable type
     @assert !isabstracttype(T)
     @assert isconcretetype(T)
-    newys = if isvectortype(T)
-        recursive_map_leaf(seen, f, ys, xs)
+    newy = if isvectortype(T)
+        recursive_map_leaf(seen, f, maybe_y, xs)
     elseif ismutabletype(T)
-        recursive_map_mutable(seen, f, ys, xs, config)
+        recursive_map_mutable(seen, f, maybe_y, xs, config)
     else
-        recursive_map_immutable(seen, f, ys, xs, config)
+        recursive_map_immutable(seen, f, maybe_y, xs, config)
     end
-    return newys::NTuple{Nout, T}
+    return newy::T
 end
 
 @inline function recursive_map_mutable(
-        seen, f::F, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config
-    ) where {F, Nout, Nin, T}
+        seen, f::F, maybe_y::Maybe{T}, xs::NTuple{N, T}, config
+    ) where {F, N, T}
     @assert ismutabletype(T)
-    if !hasvalues(ys) && !(T <: DenseArray) && all(isbitstype, fieldtypes(T))
+    if isnothing(maybe_y) && !(T <: DenseArray) && all(isbitstype, fieldtypes(T))
         # fast path for out-of-place handling when all fields are bitstypes, which rules
         # out undefined fields and circular references
-        newys = recursive_map_new(seen, f, ys, xs, config)
-        maybecache!(seen, newys, xs)
+        newy = recursive_map_new(seen, f, nothing, xs, config)
+        maybecache!(seen, newy, xs)
     else
-        newys = if hasvalues(ys)
-            ys
+        newy = if isnothing(maybe_y)
+            _similar(first(xs))
         else
-            x1 = first(xs)
-            ntuple(_ -> (@inline; _similar(x1)), Val(Nout))
+            something(maybe_y)
         end
-        maybecache!(seen, newys, xs)
-        recursive_map_mutable_inner!(seen, f, newys, ys, xs, config)
+        maybecache!(seen, newy, xs)
+        recursive_map_mutable_inner!(seen, f, newy, maybe_y, xs, config)
     end
-    return newys::NTuple{Nout, T}
+    return newy::T
 end
 
 @inline function recursive_map_mutable_inner!(
-        seen, f::F, newys::NTuple{Nout, T}, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config
-    ) where {F, Nout, Nin, T <: DenseArray}
-    if (Nout == 1) && isbitstype(eltype(T))
-        newy = only(newys)
-        if hasvalues(ys)
-            y = only(ys)
-            broadcast!(newy, y, xs...) do y_i, xs_i...
-                only(recursive_map(nothing, f, (y_i,), xs_i, config))
+        seen, f::F, newy::T, maybe_y::Maybe{T}, xs::NTuple{N, T}, config
+    ) where {F, N, T <: DenseArray}
+    if isbitstype(eltype(T))
+        if isnothing(maybe_y)
+            broadcast!(newy, xs...) do xs_i...
+                recursive_map_main(nothing, f, nothing, xs_i, config)
             end
         else
-            broadcast!(newy, xs...) do xs_i...
-                only(recursive_map(nothing, f, Val(1), xs_i, config))
+            broadcast!(newy, something(maybe_y), xs...) do y_i, xs_i...
+                recursive_map_main(nothing, f, Some(y_i), xs_i, config)
             end
         end
     else
-        @inbounds for i in eachindex(newys..., xs...)
-            recursive_map_item!(i, seen, f, newys, ys, xs, config)
+        @inbounds for i in eachindex(newy, xs...)
+            recursive_map_item!(i, seen, f, newy, maybe_y, xs, config)
         end
     end
     return nothing
 end
 
 @generated function recursive_map_mutable_inner!(
-        seen, f::F, newys::NTuple{Nout, T}, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config
-    ) where {F, Nout, Nin, T}
+        seen, f::F, newy::T, maybe_y::Maybe{T}, xs::NTuple{N, T}, config
+    ) where {F, N, T}
     return quote
         @inline
         Base.Cartesian.@nexprs $(fieldcount(T)) i -> @inbounds begin
-            recursive_map_item!(i, seen, f, newys, ys, xs, config)
+            recursive_map_item!(i, seen, f, newy, maybe_y, xs, config)
         end
         return nothing
     end
 end
 
 @inline function recursive_map_immutable(
-        seen, f::F, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config
-    ) where {F, Nout, Nin, T}
+        seen, f::F, maybe_y::Maybe{T}, xs::NTuple{N, T}, config
+    ) where {F, N, T}
     @assert !ismutabletype(T)
     nf = fieldcount(T)
     if nf == 0  # nothing to do (also no known way to hit this branch)
-        newys = recursive_map_inactive(seen, ys, xs, config)
+        newy = recursive_map_inactive(seen, maybe_y, xs, config)
     else
-        newys = if isinitialized(first(xs), nf)  # fast path when all fields are defined
+        newy = if isinitialized(first(xs), nf)  # fast path when all fields are defined
             check_allinitialized(Base.tail(xs), nf)
-            recursive_map_new(seen, f, ys, xs, config)
+            recursive_map_new(seen, f, maybe_y, xs, config)
         else
-            recursive_map_immutable_inner(seen, f, ys, xs, config)
+            recursive_map_immutable_inner(seen, f, maybe_y, xs, config)
         end
         # maybecache! _should_ be a no-op here; call it anyway for consistency
-        maybecache!(seen, newys, xs)
+        maybecache!(seen, newy, xs)
     end
-    return newys::NTuple{Nout, T}
+    return newy::T
 end
 
 @generated function recursive_map_immutable_inner(
-        seen, f::F, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config
-    ) where {F, Nout, Nin, T}
+        seen, f::F, maybe_y::Maybe{T}, xs::NTuple{N, T}, config
+    ) where {F, N, T}
     nf = fieldcount(T)
     return quote
         @inline
         x1, xtail = first(xs), Base.tail(xs)
-        fields = Base.@ntuple $Nout _ -> Vector{Any}(undef, $(nf - 1))
+        fields = Vector{Any}(undef, $(nf - 1))
         Base.Cartesian.@nexprs $(nf - 1) i -> begin  # unrolled loop over struct fields
             @inbounds if isinitialized(x1, i)
                 check_allinitialized(xtail, i)
-                newys_i = recursive_map_item(i, seen, f, ys, xs, config)
-                Base.Cartesian.@nexprs $Nout j -> (fields[j][i] = newys_i[j])
+                fields[i] = recursive_map_item(i, seen, f, maybe_y, xs, config)
             else
-                return new_structvs(T, fields, i - 1)
+                return new_structv(T, fields, i - 1)
             end
         end
         @assert !isinitialized(x1, $nf)
-        return new_structvs(T, fields, $(nf - 1))
+        return new_structv(T, fields, $(nf - 1))
     end
 end
 
 @generated function recursive_map_new(
-        seen, f::F, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config
-    ) where {F, Nout, Nin, T}
+        seen, f::F, maybe_y::Maybe{T}, xs::NTuple{N, T}, config
+    ) where {F, N, T}
     # direct construction of fully initialized non-cyclic structs
     nf = fieldcount(T)
     return quote
         @inline
-        Base.Cartesian.@nexprs $nf i -> @inbounds begin
-            newys_i = recursive_map_item(i, seen, f, ys, xs, config)
+        fields = Base.@ntuple $nf i -> @inbounds begin
+            recursive_map_item(i, seen, f, maybe_y, xs, config)
         end
-        newys = Base.@ntuple $Nout j -> begin
-            $(Expr(:splatnew, :T, :(Base.@ntuple $nf i -> newys_i[j])))
-        end
-        return newys::NTuple{Nout, T}
+        newy = $(Expr(:splatnew, :T, :fields))
+        return newy::T
     end
 end
 
 Base.@propagate_inbounds function recursive_map_item!(
-        i, seen, f::F, newys::NTuple{Nout, T}, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config
-    ) where {F, Nout, Nin, T}
+        i, seen, f::F, newy::T, maybe_y::Maybe{T}, xs::NTuple{N, T}, config
+    ) where {F, N, T}
     if isinitialized(first(xs), i)
         check_allinitialized(Base.tail(xs), i)
-        newys_i = recursive_map_item(i, seen, f, ys, xs, config)
-        setitems!(newys, i, newys_i)
-    elseif hasvalues(ys)
-        check_allinitialized(ys, i, false)
+        setitem!(newy, i, recursive_map_item(i, seen, f, maybe_y, xs, config))
+    elseif !isnothing(maybe_y)
+        check_initialized(something(maybe_y), i, false)
     end
     return nothing
 end
 
 Base.@propagate_inbounds function recursive_map_item(
-        i, seen, f::F, ys::YS{Nout, T}, xs::NTuple{Nin, T}, config
-    ) where {F, Nout, Nin, T}
+        i, seen, f::F, maybe_y::Maybe{T}, xs::NTuple{N, T}, config
+    ) where {F, N, T}
     # recurse into the xs and apply recursive_map to items with index i
-    xs_i = getitems(xs, i)
-    newys_i = if hasvalues(ys) && isinitialized(first(ys), i)
-        check_allinitialized(Base.tail(ys), i)
-        ys_i = getitems(ys, i)
-        recursive_map_barrier!!(seen, f, ys_i..., config, xs_i...)
+    maybe_y_i = if isnothing(maybe_y) || !isinitialized(something(maybe_y), i)
+        nothing
     else
-        recursive_map_barrier(seen, f, Val(Nout), config, xs_i...)
+        Some(getitem(something(maybe_y), i))
     end
-    return newys_i
+    return recursive_map_barrier(seen, f, maybe_y_i, config, getitems(xs, i)...)
 end
 
-# function barriers such that abstractly typed items trigger minimal runtime dispatch
+# function barrier such that abstractly typed items trigger minimal runtime dispatch
+# the idea is that SROA can eliminate the xs_i tuple in the above function, since it's
+# splatted directly into a call; thus, instead of a dynamic dispatch to the Tuple
+# constructor followed by a dynamic dispatch to recursive_map, we only incur a single
+# dynamic dispatch to recursive_map_barrier
 function recursive_map_barrier(
-        seen, f::F, ::Val{Nout}, config::InactiveConfig, xs_i::Vararg{ST, Nin}
-    ) where {F, Nout, Nin, ST}
-    return recursive_map(seen, f, Val(Nout), xs_i, config)::NTuple{Nout, ST}
-end
-
-function recursive_map_barrier!!(
-        seen, f::F, y_i::ST, config::InactiveConfig, xs_i::Vararg{ST, Nin}
-    ) where {F, Nin, ST}
-    return recursive_map(seen, f, (y_i,), xs_i, config)::NTuple{1, ST}
-end
-
-function recursive_map_barrier!!(  # may not show in coverage but is covered via accumulate_into! TODO: ensure coverage via VectorSpace once implemented
-        seen, f::F, y1_i::ST, y2_i::ST, config::InactiveConfig, xs_i::Vararg{ST, Nin}
-    ) where {F, Nin, ST}
-    ys_i = (y1_i, y2_i)
-    return recursive_map(seen, f, ys_i, xs_i, config)::NTuple{2, ST}
+        seen, f::F, maybe_y_i::Maybe{ST}, config::InactiveConfig, xs_i::Vararg{ST, N}
+    ) where {F, N, ST}
+    return recursive_map_main(seen, f, maybe_y_i, xs_i, config)::ST
 end
 
 ## recursion base case handlers
 @inline function recursive_map_leaf(
-        seen, f::F, ys::YS{Nout, T}, xs::NTuple{Nin, T}
-    ) where {F, Nout, Nin, T}
+        seen, f::F, maybe_y::Maybe{T}, xs::NTuple{N, T}
+    ) where {F, N, T}
     # apply the mapped function to leaf values
-    if !hasvalues(ys) || isbitstype(T) || isscalartype(T)
-        newys = f(xs...)::NTuple{Nout, T}
+    if isnothing(maybe_y) || isbitstype(T) || isscalartype(T)
+        newy = f(xs...)::T
     else  # !isbitstype(T)
-        newys = f(ys..., xs...)::NTuple{Nout, T}
+        y = something(maybe_y)
+        newy = f(y, xs...)::T
         if ismutabletype(T)
-            @assert newys === ys
+            @assert newy === y
         end
     end
-    maybecache!(seen, newys, xs)
-    return newys::NTuple{Nout, T}
+    maybecache!(seen, newy, xs)
+    return newy::T
 end
 
 @inline function recursive_map_inactive(
-        _, ys::NTuple{Nout, T}, xs::NTuple{Nin, T}, ::InactiveConfig{copy_if_inactive}
-    ) where {Nout, Nin, T, copy_if_inactive}
-    return ys::NTuple{Nout, T}
-end
-
-@inline function recursive_map_inactive(
-        seen, ::Val{Nout}, (x1,)::NTuple{Nin, T}, ::InactiveConfig{copy_if_inactive}
-    ) where {Nout, Nin, T, copy_if_inactive}
-    @inline
-    y = if copy_if_inactive && !isbitstype(T)
+        seen, maybe_y::Maybe{T}, (x1,)::NTuple{N, T}, ::InactiveConfig{copy_if_inactive}
+    ) where {N, T, copy_if_inactive}
+    newy = if !isnothing(maybe_y)
+        something(maybe_y)
+    elseif copy_if_inactive && !isbitstype(T)
         if isnothing(seen)
             deepcopy(x1)
         else
@@ -450,7 +444,7 @@ end
     else
         x1
     end
-    return ntuple(_ -> (@inline; y), Val(Nout))::NTuple{Nout, T}
+    return newy::T
 end
 
 ### recursive_map!: fully in-place wrapper around recursive_map
@@ -458,55 +452,48 @@ end
     recursive_map!(
         [seen::Union{Nothing, IdDict},]
         f!!,
-        ys::NTuple{Nout, T},
+        y::T,
         xs::NTuple{N, T},
         isinactivetype::InactiveConfig = InactiveConfig(),
     )::Nothing
 
-Recurse through `Nin` objects `xs = (x1::T, x2::T, ..., xNin::T)` of the same type, mapping
-the function `f!!` over every differentiable value encountered and updating `(y1::T, ...)`
-in-place with the resulting values.
+Recurse through `N` objects `xs = (x1::T, x2::T, ..., xN::T)` of the same type, mapping the
+function `f!!` over every differentiable value encountered and updating `y::T` in-place with
+the resulting values.
 
 This is a simple wrapper that verifies that `T` is a type where all differentiable values
 can be updated in-place, calls `recursive_map`, and verifies that the returned value is
-indeed identically the same tuple `ys`. See [`recursive_map`](@ref) for details.
+indeed identically the same object `y`. See [`recursive_map`](@ref) for details.
 """
 function recursive_map! end
 
 function recursive_map!(
-        f!!::F,
-        ys::NTuple{Nout, T},
-        xs::NTuple{Nin, T},
-        config::InactiveConfig = InactiveConfig(),
-    ) where {F, Nout, Nin, T}
+        f!!::F, y::T, xs::NTuple{N, T}, config::InactiveConfig = InactiveConfig()
+    ) where {F, N, T}
     check_nonactive(T, config)
-    newys = recursive_map(f!!, ys, xs, config)
-    @assert newys === ys
+    newy = recursive_map(f!!, y, xs, config)
+    @assert newy === y
     return nothing
 end
 
 function recursive_map!(
         seen::Union{Nothing, IdDict},
         f!!::F,
-        ys::NTuple{Nout, T},
-        xs::NTuple{Nin, T},
+        y::T,
+        xs::NTuple{N, T},
         config::InactiveConfig = InactiveConfig(),
-    ) where {F, Nout, Nin, T}
+    ) where {F, N, T}
     check_nonactive(T, config)
-    newys = recursive_map(seen, f!!, ys, xs, config)
-    @assert newys === ys
+    newy = recursive_map(seen, f!!, y, xs, config)
+    @assert newy === y
     return nothing
 end
 
 ### recursive_map helpers
-@generated function new_structvs(
-        ::Type{T}, fields::NTuple{N, Vector{Any}}, nfields_
-    ) where {T, N}
+@generated function new_structv(::Type{T}, fields::Vector{Any}, nfields_) where {T}
     return quote
         @inline
-        return Base.@ntuple $N j -> begin
-            ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), T, fields[j], nfields_)::T
-        end
+        ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), T, fields, nfields_)::T
     end
 end
 
@@ -536,21 +523,6 @@ end
 
 Base.@propagate_inbounds getitems((x1,)::Tuple{T}, i) where {T} = (getitem(x1, i),)
 
-Base.@propagate_inbounds function setitems!(  # may not show in coverage but is covered via accumulate_into! TODO: ensure coverage via VectorSpace once implemented
-        (x1, xtail...)::Tuple{T, T, Vararg{T, N}},
-        i,
-        (v1, vtail...)::Tuple{ST, ST, Vararg{ST, N}},
-    ) where {T, ST, N}
-    setitem!(x1, i, v1)
-    setitems!(xtail, i, vtail)
-    return nothing
-end
-
-Base.@propagate_inbounds function setitems!((x1,)::Tuple{T}, i, (v1,)::Tuple{ST}) where {T, ST}
-    setitem!(x1, i, v1)
-    return nothing
-end
-
 ## cache (seen) helpers
 @inline function iscachedtype(::Type{T}) where {T}
     # cache all mutable types and any non-isbits types that are also leaf types
@@ -560,35 +532,31 @@ end
 @inline shouldcache(::IdDict, ::Type{T}) where {T} = iscachedtype(T)
 @inline shouldcache(::Nothing, ::Type{T}) where {T} = false
 
-@inline function maybecache!(
-        seen, newys::NTuple{Nout, T}, (x1, xtail...)::NTuple{Nin, T}
-    ) where {Nout, Nin, T}
+@inline function maybecache!(seen, newy::T, (x1, xtail...)::NTuple{N, T}) where {N, T}
     if shouldcache(seen, T)
-        seen[x1] = if (Nout == 1) && (Nin == 1)
-            only(newys)
-        else  # may not show in coverage but is covered via accumulate_into! TODO: ensure coverage via VectorSpace once implemented
-            (newys..., xtail...)
+        seen[x1] = if (N == 1)
+            newy
+        else
+            (newy, xtail...)
         end
     end
     return nothing
 end
 
-@inline function hascache(seen, (x1,)::NTuple{Nin, T}) where {Nin, T}
+@inline function hascache(seen, (x1,)::NTuple{N, T}) where {N, T}
     return shouldcache(seen, T) ? haskey(seen, x1) : false
 end
 
-@inline function getcached(
-        seen::IdDict, ::Val{Nout}, (x1, xtail...)::NTuple{Nin, T}
-    ) where {Nout, Nin, T}
-    newys = if (Nout == 1) && (Nin == 1)
-        (seen[x1]::T,)
+@inline function getcached(seen::IdDict, (x1, xtail...)::NTuple{N, T}) where {N, T}
+    newy = if (N == 1)
+        seen[x1]::T
     else   # may not show in coverage but is covered via accumulate_into! TODO: ensure coverage via VectorSpace once implemented
-        cache = seen[x1]::NTuple{(Nout + Nin - 1), T}
-        cachedtail = cache[(Nout + 1):end]
+        cache = seen[x1]::NTuple{N, T}
+        cachedtail = cache[2:end]
         check_identical(cachedtail, xtail)  # check compatible structure
-        cache[1:Nout]
+        cache[1]
     end
-    return newys::NTuple{Nout, T}
+    return newy::T
 end
 
 ## argument validation
@@ -631,10 +599,6 @@ end
 end
 
 # TODO: hit all of these via check_* when VectorSpace implemented
-@noinline function throw_nout()
-    throw(ArgumentError("recursive_map(!) only supports mapping to 1 or 2 outputs"))
-end
-
 @noinline function throw_initialized()
     msg = "recursive_map(!) called on objects whose undefined fields/unassigned elements "
     msg *= "don't line up"
@@ -658,7 +622,7 @@ end
         # isinactivetype has precedence over isvectortype for consistency with recursive_map
         convert(T, zero(prev))  # convert because zero(prev)::T may not hold when eltype(T) is abstract
     else
-        only(recursive_map(_make_zero!!, Val(1), (prev,), config))::T
+        recursive_map(_make_zero!!, (prev,), config)::T
     end
     return new::T
 end
@@ -699,7 +663,7 @@ end
 # the mapped function: assert leaf type and call back into single-arg make_zero(!)
 function _make_zero!!(prev::T) where {T}
     @assert isvectortype(T)  # otherwise infinite loop
-    return (EnzymeCore.make_zero(prev)::T,)
+    return EnzymeCore.make_zero(prev)::T
 end
 
 function _make_zero!!(val::T, _val::T) where {T}
@@ -707,16 +671,15 @@ function _make_zero!!(val::T, _val::T) where {T}
     @assert isvectortype(T)   # otherwise infinite loop
     @assert val === _val
     EnzymeCore.make_zero!(val)
-    return (val::T,)
+    return val::T
 end
 
 # alternative entry point for passing custom IdDict
 @inline function EnzymeCore.make_zero(
         ::Type{T}, seen::IdDict, prev::T, args::Vararg{Any, M}; kws...
     ) where {T, M}
-    config = make_zero_config(args...; kws...)
-    news = recursive_map(seen, _make_zero!!, Val(1), (prev,), config)
-    return only(news)::T
+    new = recursive_map(seen, _make_zero!!, (prev,), make_zero_config(args...; kws...))
+    return new::T
 end
 
 end  # module RecursiveMaps
