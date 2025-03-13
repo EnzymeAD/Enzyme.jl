@@ -37,10 +37,8 @@ table are picked up through invalidation as usual.
 
 Using `runtime_inactive = Val(false)` may be preferred in interactive sessions or if
 `EnzymeRules.inactive_type` is extended in downstream packages or package extensions.
-However, performance may suffer if the activity states of every type cannot be resolved at
-compile time, and in some cases this mode has been observed to break gradient compilation
-when `recursive_map{!}` is used inside custom rules. Hence it is recommended to use
-`runtime_inactive = Val(true)` when possible, and this is the default.
+However, performance may suffer if the activity of every type cannot be resolved at compile
+time, so `runtime_inactive = Val(true)` is preferable when possible and is the default.
 
 The updating constructor `InactiveConfig(config::InactiveConfig, extra)` returns a new
 config that extends `config` with an additional `extra` function.
