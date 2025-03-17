@@ -867,7 +867,7 @@ function zero_single_allocation(builder::LLVM.IRBuilder, @nospecialize(jlType::D
         if isa(ty, LLVM.StructType)
             i = 1
             if !(jlty isa DataType)
-                throw(AssertionError("Could not handle non datatype $jlty in zero_single_allocation $jlet"))
+                throw(AssertionError("Could not handle non datatype $jlty in zero_single_allocation $ty"))
             end
             for ii = 1:fieldcount(jlty)
                 jlet = typed_fieldtype(jlty, ii)
