@@ -265,6 +265,7 @@ function EnzymeCreatePrimalAndGradient(
     atomicAdd,
 )
     freeMemory = true
+    subsequent_calls_may_write = mode != DEM_ReverseModeCombined
     ccall(
         (:EnzymeCreatePrimalAndGradient, libEnzyme),
         LLVMValueRef,
@@ -286,6 +287,7 @@ function EnzymeCreatePrimalAndGradient(
             LLVMTypeRef,
             UInt8,
             CFnTypeInfo,
+            UInt8,
             Ptr{UInt8},
             Csize_t,
             EnzymeAugmentedReturnPtr,
@@ -308,6 +310,7 @@ function EnzymeCreatePrimalAndGradient(
         additionalArg,
         forceAnonymousTape,
         typeInfo,
+        subsequent_calls_may_write,
         uncacheable_args,
         length(uncacheable_args),
         augmented,
@@ -331,6 +334,7 @@ function EnzymeCreateForwardDiff(
 )
     freeMemory = true
     aug = C_NULL
+    subsequent_calls_may_write = false
     ccall(
         (:EnzymeCreateForwardDiff, libEnzyme),
         LLVMValueRef,
@@ -350,6 +354,7 @@ function EnzymeCreateForwardDiff(
             Cuint,
             LLVMTypeRef,
             CFnTypeInfo,
+            UInt8,
             Ptr{UInt8},
             Csize_t,
             EnzymeAugmentedReturnPtr,
@@ -369,6 +374,7 @@ function EnzymeCreateForwardDiff(
         width,
         additionalArg,
         typeInfo,
+        subsequent_calls_may_write,
         uncacheable_args,
         length(uncacheable_args),
         aug,
@@ -401,6 +407,7 @@ function EnzymeCreateAugmentedPrimal(
     width,
     atomicAdd,
 )
+    subsequent_calls_may_write = true
     ccall(
         (:EnzymeCreateAugmentedPrimal, libEnzyme),
         EnzymeAugmentedReturnPtr,
@@ -416,6 +423,7 @@ function EnzymeCreateAugmentedPrimal(
             UInt8,
             UInt8,
             CFnTypeInfo,
+            UInt8,
             Ptr{UInt8},
             Csize_t,
             UInt8,
@@ -434,6 +442,7 @@ function EnzymeCreateAugmentedPrimal(
         returnUsed,
         shadowReturnUsed,
         typeInfo,
+        subsequent_calls_may_write,
         uncacheable_args,
         length(uncacheable_args),
         forceAnonymousTape,
