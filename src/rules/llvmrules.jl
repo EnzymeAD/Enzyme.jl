@@ -191,7 +191,7 @@ include("parallelrules.jl")
     end
     # Delete the primal code
     if normal !== nothing
-        unsafe_store!(normalR, C_NULL)
+        unsafe_store!(normalR, UndefValue(value_type(orig)).ref)
     else
         ni = new_from_original(gutils, orig)
         API.EnzymeGradientUtilsErase(gutils, ni)
@@ -270,7 +270,7 @@ end
     end
     # Delete the primal code
     if normal !== nothing
-        unsafe_store!(normalR, C_NULL)
+        unsafe_store!(normalR, UndefValue(value_type(orig)).ref)
     else
         ni = new_from_original(gutils, orig)
         API.EnzymeGradientUtilsErase(gutils, ni)
@@ -2089,7 +2089,7 @@ end
     end
     # Delete the primal code
     if normal !== nothing
-        unsafe_store!(normalR, C_NULL)
+        unsafe_store!(normalR, UndefValue(value_type(orig)).ref)
     else
         ni = new_from_original(gutils, orig)
         API.EnzymeGradientUtilsErase(gutils, ni)
@@ -2140,7 +2140,7 @@ end
     end
     # Delete the primal code
     if normal !== nothing
-        unsafe_store!(normalR, C_NULL)
+        unsafe_store!(normalR, UndefValue(value_type(orig)).ref)
     else
         ni = new_from_original(gutils, orig)
         API.EnzymeGradientUtilsErase(gutils, ni)

@@ -839,16 +839,16 @@ function zero_single_allocation(builder::LLVM.IRBuilder, @nospecialize(jlType::D
             continue
         end
         if isa(ty, LLVM.ArrayType)
-            subTy = if jlty isa DataType
-		eltype(jlty)
-	    elseif !(jlty isa DataType)
-		if eltype(ty) isa LLVM.PointerType && LLVM.addrspace(eltype(ty)) == 10
-		   Any
-		else
-		   throw(AssertionError("jlty=$jlty ty=$ty"))
-		end
-	    end
             for i = 1:length(ty)
+                subTy = if jlty isa DataType
+                    typed_fieldtype(jlty, i)
+                elseif !(jlty isa DataType)
+                    if eltype(ty) isa LLVM.PointerType && LLVM.addrspace(eltype(ty)) == 10
+                       Any
+                    else
+                       throw(AssertionError("jlty=$jlty ty=$ty"))
+                    end
+                end
                 npath = copy(path)
                 push!(npath, LLVM.ConstantInt(LLVM.IntType(32), i - 1))
                 push!(todo, (npath, eltype(ty), subTy))
@@ -866,7 +866,9 @@ function zero_single_allocation(builder::LLVM.IRBuilder, @nospecialize(jlType::D
         end
         if isa(ty, LLVM.StructType)
             i = 1
-	    @assert jlty isa DataType
+            if !(jlty isa DataType)
+                throw(AssertionError("Could not handle non datatype $jlty in zero_single_allocation $ty"))
+            end
             for ii = 1:fieldcount(jlty)
                 jlet = typed_fieldtype(jlty, ii)
                 if isghostty(jlet) || Core.Compiler.isconstType(jlet)
