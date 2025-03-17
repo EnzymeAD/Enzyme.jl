@@ -366,11 +366,18 @@ function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nosp
     end
 end
 
-function ref_if_mixed(val::VT) where {VT}
-    if active_reg_inner(Core.Typeof(val), (), nothing, Val(true)) == ActiveState
-        return Ref(val)
+@generated function ref_if_mixed(val::VT) where VT
+    areg = active_reg_inner(VT, (), nothing, Val(true)) 
+    if areg == ActiveState || areg == MixedState
+        quote
+            Base.@_inline_meta
+            Ref(val)
+        end
     else
-        return val
+        quote
+            Base.@_inline_meta
+            val
+        end
     end
 end
 
@@ -380,15 +387,13 @@ function byref_from_val_if_mixed(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Valu
     if !legal
         legal, TT, _ = abs_typeof(val, true)
         act = active_reg_inner(TT, (), world)
-        if act == AnyState
+        if legal && act == AnyState
             return val
         end
-        if !legal
-            return emit_apply_generic!(B, [unsafe_to_llvm(B, ref_if_mixed), val]) 
-        end
+        return emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, ref_if_mixed), val]) 
     end
     act = active_reg_inner(TT, (), world)
-
+    
     if act == ActiveState || act == MixedState
         obj = emit_allocobj!(B, Base.RefValue{TT})
         lty = convert(LLVMType, TT)
