@@ -618,7 +618,9 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
         prev = addrspacecast!(B, prev, LLVM.PointerType(LLVMType, Derived))
         zero_single_allocation(B, Ty, LLVMType, prev, zeroAll, LLVM.ConstantInt(T_int64, 0); atomic=true)
     else
-        @assert fieldcount(Ty) != 0
+        if fieldcount(Ty) == 0
+            error("Error handling recursive stores for $Ty which has a fieldcount of 0")
+        end
 
         T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
