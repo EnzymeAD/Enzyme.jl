@@ -379,10 +379,10 @@ function nested_codegen!(
 
     target = DefaultCompilerTarget()
     params = PrimalCompilerParams(mode)
-    job = CompilerJob(funcspec, CompilerConfig(target, params; kernel = false), world)
+    job = CompilerJob(funcspec, CompilerConfig(target, params; kernel = false, libraries = true, toplevel = true, optimize = false, cleanup = false, only_entry = false, validate = false), world)
 
     GPUCompiler.prepare_job!(job)
-    otherMod, meta = GPUCompiler.emit_llvm(job; libraries=true, toplevel=true, optimize=false, cleanup=false, only_entry=false, validate=false)
+    otherMod, meta = GPUCompiler.emit_llvm(job)
     
     prepare_llvm(otherMod, job, meta)
 
@@ -3477,9 +3477,20 @@ function GPUCompiler.codegen(
     if parent_job === nothing
         primal_target = DefaultCompilerTarget()
         primal_params = PrimalCompilerParams(mode)
+        config2 = CompilerConfig(
+            primal_target,
+            primal_params;
+            kernel = false,
+            libraries = true,
+            toplevel = toplevel,
+            optimize = false,
+            cleanup = false,
+            only_entry = false,
+            validate = false
+        )
         primal_job = CompilerJob(
             primal,
-            CompilerConfig(primal_target, primal_params; kernel = false),
+            config2,
             job.world,
         )
     else
@@ -3490,12 +3501,18 @@ function GPUCompiler.codegen(
             parent_job.config.entry_abi,
             parent_job.config.name,
             parent_job.config.always_inline,
+            libraries = true,
+            toplevel = toplevel,
+            optimize = false,
+            cleanup = false,
+            only_entry = false,
+            validate = false,
         )
         primal_job = CompilerJob(primal, config2, job.world) # TODO EnzymeInterp params, etc
     end
 
     GPUCompiler.prepare_job!(primal_job)
-    mod, meta = GPUCompiler.emit_llvm(primal_job; libraries=true, toplevel=toplevel, optimize=false, cleanup=false, only_entry=false, validate=false)
+    mod, meta = GPUCompiler.emit_llvm(primal_job)
     edges = Any[]
     mod_to_edges[mod] = edges
 
