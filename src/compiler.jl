@@ -647,7 +647,7 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
                 LLVM.Value[LLVM.ConstantInt(Int64(off))],
             )
             
-            fallback = Base.isabstracttype(Ty2) || Ty2 isa Union
+            fallback = Base.isabstracttype(Ty2) || Ty2 isa Union || Ty2 isa Symbol || Ty2 isa String
 
             @static if VERSION < v"1.11-"
                 fallback |= Ty2 <: Array
