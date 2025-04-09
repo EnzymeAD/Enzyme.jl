@@ -1327,6 +1327,9 @@ struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
     mode::API.CDerivativeMode
 end
 
+# Avoid blow-up of higer-order AD
+GPUCompiler.can_safepoint(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) = false
+
 DefaultCompilerTarget(; kwargs...) =
     GPUCompiler.NativeCompilerTarget(; jlruntime = true, kwargs...)
 
