@@ -652,7 +652,6 @@ end
 end
 
 @testset "Seeded reverse autodiff" begin
-
     f(x::Vector{Float64}, y::Float64) = sum(abs2, x) * y
     g(x::Vector{Float64}, y::Float64) = [f(x, y)]
 
@@ -664,11 +663,9 @@ end
     dresults = (5.0, 7.0)
 
     @testset "simple" begin
-        @test_throws ArgumentError autodiff(Reverse, Const(f), Const, Seed(dresult), Duplicated(x, dx), Active(y))
-
         for mode in (Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal)
             make_zero!(dx)
-            dinputs_and_maybe_result = autodiff(mode, Const(f), Active, Seed(dresult), Duplicated(x, dx), Active(y))
+            dinputs_and_maybe_result = autodiff(mode, Const(f), Seed(dresult), Duplicated(x, dx), Active(y))
             dinputs = first(dinputs_and_maybe_result)
             @test isnothing(dinputs[1])
             @test dinputs[2] == dresult * sum(abs2, x)
@@ -680,7 +677,7 @@ end
 
         for mode in (Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal)
             make_zero!(dx)
-            dinputs_and_maybe_result = autodiff(mode, Const(g), Duplicated, Seed([dresult]), Duplicated(x, dx), Active(y))
+            dinputs_and_maybe_result = autodiff(mode, Const(g), Seed([dresult]), Duplicated(x, dx), Active(y))
             dinputs = first(dinputs_and_maybe_result)
             @test isnothing(dinputs[1])
             @test dinputs[2] == dresult * sum(abs2, x)
@@ -692,11 +689,9 @@ end
     end
 
     @testset "batch" begin
-        @test_throws ArgumentError autodiff(Reverse, Const(f), Const, BatchSeed(dresults), BatchDuplicated(x, dxs), Active(y))
-
         for mode in (Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal)
             make_zero!(dxs)
-            dinputs_and_maybe_result = autodiff(mode, Const(f), Active, BatchSeed(dresults), BatchDuplicated(x, dxs), Active(y))
+            dinputs_and_maybe_result = autodiff(mode, Const(f), BatchSeed(dresults), BatchDuplicated(x, dxs), Active(y))
             dinputs = first(dinputs_and_maybe_result)
             @test isnothing(dinputs[1])
             @test dinputs[2][1] == dresults[1] * sum(abs2, x)
@@ -710,7 +705,7 @@ end
 
         for mode in (Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal)
             make_zero!(dxs)
-            dinputs_and_maybe_result = autodiff(mode, Const(g), BatchDuplicated, BatchSeed(([dresults[1]], [dresults[2]])), BatchDuplicated(x, dxs), Active(y))
+            dinputs_and_maybe_result = autodiff(mode, Const(g), BatchSeed(([dresults[1]], [dresults[2]])), BatchDuplicated(x, dxs), Active(y))
             dinputs = first(dinputs_and_maybe_result)
             @test isnothing(dinputs[1])
             @test dinputs[2][1] == dresults[1] * sum(abs2, x)

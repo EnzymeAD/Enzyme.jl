@@ -1164,7 +1164,6 @@ end
     autodiff(
         rmode::Union{ReverseMode,ReverseModeSplit},
         f::Annotation,
-        ReturnActivity::Type{<:Annotation},
         dresult::Seed,
         annotated_args...
     )
@@ -1176,14 +1175,12 @@ Useful for computing pullbacks / VJPs for functions whose output is not a scalar
 function autodiff(
         rmode::Union{ReverseMode{ReturnPrimal}, ReverseModeSplit{ReturnPrimal}},
         f::FA,
-        ::Type{RA},
-        dresult::Seed,
+        dresult::Seed{RT},
         args::Vararg{Annotation, N},
-    ) where {ReturnPrimal, FA <: Annotation, RA <: Annotation, N}
-    if RA === Const
-        throw(ArgumentError("Return activity cannot be `Const`."))
-    end
-    forward, reverse = autodiff_thunk(Split(rmode), FA, RA, typeof.(args)...)
+    ) where {ReturnPrimal, FA <: Annotation, RT, N}
+    rmode_split = Split(rmode)
+    RA = guess_activity(RT, rmode_split)
+    forward, reverse = autodiff_thunk(rmode_split, FA, RA, typeof.(args)...)
     tape, result, shadow_result = forward(f, args...)
     if RA <: Active
         dinputs = only(reverse(f, args..., dresult.dval, tape))
@@ -1198,11 +1195,14 @@ function autodiff(
     end
 end
 
+batchify_activity(::Type{Active{T}}, ::Val{B}) where {T,B} = Active{T}
+batchify_activity(::Type{Duplicated{T}}, ::Val{B}) where {T,B} = BatchDuplicated{T,B}
+
+
 """
     autodiff(
         rmode::Union{ReverseMode,ReverseModeSplit},
         f::Annotation,
-        ReturnActivity::Type{<:Annotation},
         dresults::BatchSeed,
         annotated_args...
     )
@@ -1214,15 +1214,12 @@ Useful for computing pullbacks / VJPs for functions whose output is not a scalar
 function autodiff(
         rmode::Union{ReverseMode{ReturnPrimal}, ReverseModeSplit{ReturnPrimal}},
         f::FA,
-        ::Type{RA},
-        dresults::BatchSeed{B},
+        dresults::BatchSeed{B,RT},
         args::Vararg{Annotation, N},
-    ) where {ReturnPrimal, B, FA <: Annotation, RA <: Annotation, N}
-    if RA === Const
-        throw(ArgumentError("Return activity cannot be `Const`."))
-    end
-    rmode_rightwidth = ReverseSplitWidth(Split(rmode), Val(B))
-    forward, reverse = autodiff_thunk(rmode_rightwidth, FA, RA, typeof.(args)...)
+    ) where {ReturnPrimal, B, FA <: Annotation, RT, N}
+    rmode_split_rightwidth = ReverseSplitWidth(Split(rmode), Val(B))
+    RA = batchify_activity(guess_activity(RT, rmode_split_rightwidth), Val(B))
+    forward, reverse = autodiff_thunk(rmode_split_rightwidth, FA, RA, typeof.(args)...)
     tape, result, shadow_results = forward(f, args...)
     if RA <: Active
         dinputs = only(reverse(f, args..., dresults.dvals, tape))

@@ -221,8 +221,8 @@ end
 
 Wrapper for a tuple of adjoints to the return value in reverse mode.
 """
-struct BatchSeed{T, N}
-    dvals::NTuple{T, N}
+struct BatchSeed{N, T}
+    dvals::NTuple{N, T}
 end
 
 """
