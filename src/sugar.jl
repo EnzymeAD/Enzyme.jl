@@ -1170,7 +1170,7 @@ end
     
 Call [`autodiff_thunk`](@ref) in split mode, execute the forward pass, increment output adjoint with `dresult`, then execute the reverse pass.
 
-Useful for computing pullbacks / VJPs for functions whose output is not a scalar.
+Useful for computing pullbacks / VJPs for functions whose output is not a scalar, or when the scalar seed is not 1.
 """
 function autodiff(
         rmode::Union{ReverseMode{ReturnPrimal}, ReverseModeSplit{ReturnPrimal}},
@@ -1205,7 +1205,7 @@ end
     
 Call [`autodiff_thunk`](@ref) in split mode, execute the forward pass, increment each output adjoint with the corresponding element from `dresults`, then execute the reverse pass.
 
-Useful for computing pullbacks / VJPs for functions whose output is not a scalar.
+Useful for computing pullbacks / VJPs for functions whose output is not a scalar, or when the scalar seed is not 1.
 """
 function autodiff(
         rmode::Union{ReverseMode{ReturnPrimal}, ReverseModeSplit{ReturnPrimal}},
