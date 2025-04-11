@@ -715,61 +715,90 @@ end
 end
 
 @testset "SparseArrays spmatvec reverse rule" begin
-    C = zeros(18)
-    M = sprand(18, 9, 0.1)
-    v = randn(9)
-    α = 2.0
-    β = 1.0
+    Ts = (Float64, ComplexF64)
 
-    for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), 
-        Tα in (Const, Active), Tβ in (Const, Active)
+    for T in Ts
+        C = zeros(T, 18)
+        M = sprand(T, 18, 9, 0.1)
+        v = randn(T, 9)
+        α = T <: Complex ? 2.0 + 0.1im : 2.0
+        β = T <: Complex ? 1.0 + 0.1im : 1.0
 
-        are_activities_compatible(Tret, Tret, TM, Tv, Tα, Tβ) || continue
-        test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, TM), (v, Tv), (α, Tα), (β, Tβ))
+        for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), 
+            Tα in (Const, Active), Tβ in (Const, Active)
+
+            are_activities_compatible(Tret, Tret, TM, Tv, Tα, Tβ) || continue
+            test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, TM), (v, Tv), (α, Tα), (β, Tβ))
+        end
+
+        for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), 
+            Tv in (Const, Duplicated, BatchDuplicated), bα in (true, false), bβ in (true, false)
+            are_activities_compatible(Tret, Tret, TM, Tv) || continue
+            test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (bα, Const), (bβ, Const))
+        end
+
+        test_reverse(LinearAlgebra.mul!, Const, (C, Const), (M, Const), (v, Const), (α, Active), (β, Active))
 
     end
-
-
-    for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), 
-        Tv in (Const, Duplicated, BatchDuplicated), bα in (true, false), bβ in (true, false)
-        are_activities_compatible(Tret, Tret, TM, Tv) || continue
-        test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (bα, Const), (bβ, Const))
-    end
-
-    # Test with a const output and active α and β
-    (_,_,_,dα, dβ), = autodiff(Reverse, LinearAlgebra.mul!, Const, Const(C), Const(M), Const(v), Active(α), Active(β))
-    @test dα ≈ 0
-    @test dβ ≈ 0
-
 end
 
+@testset "SparseArrays spmatvec reverse rule" begin
+    Ts = (Float64, ComplexF64)
+
+    for tm in Ts, tv in Ts, tα in Ts, tβ in Ts
+        tout = promote_type(tm, tv, tα, tβ)
+        C = zeros(tout, 18)
+        M = sprand(tm, 18, 9, 0.1)
+        v = randn(tv, 9)
+        α = tα <: Complex ? 2.0 + 0.1im : 2.0
+        β = tβ <: Complex ? 1.0 + 0.1im : 1.0
+
+        for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), 
+            Tα in (Const, Active), Tβ in (Const, Active)
+
+            are_activities_compatible(Tret, Tret, TM, Tv, Tα, Tβ) || continue
+            test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, TM), (v, Tv), (α, Tα), (β, Tβ))
+        end
+
+        for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), 
+            Tv in (Const, Duplicated, BatchDuplicated), bα in (true, false), bβ in (true, false)
+            are_activities_compatible(Tret, Tret, TM, Tv) || continue
+            test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (bα, Const), (bβ, Const))
+        end
+
+        test_reverse(LinearAlgebra.mul!, Const, (C, Const), (M, Const), (v, Const), (α, Active), (β, Active))
+
+    end
+end
+
+
 @testset "SparseArrays spmatmat reverse rule" begin
-    C = zeros(18, 11)
-    M = sprand(18, 9, 0.1)
-    v = randn(9, 11)
-    α = 2.0
-    β = 1.0
+    Ts = (Float64, ComplexF64)
 
-    for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), 
-        Tα in (Const, Active), Tβ in (Const, Active)
+    for tm in Ts, tv in Ts, tα in Ts, tβ in Ts
+        tout = promote_type(tm, tv, tα, tβ)
+        C = zeros(tout, 18, 11)
+        M = sprand(tm, 18, 9, 0.1)
+        v = randn(tv, 9, 11)
+        α = tα <: Complex ? 2.0 + 0.1im : 2.0
+        β = tβ <: Complex ? 1.0 + 0.1im : 1.0
+        
+        for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), 
+            Tα in (Const, Active), Tβ in (Const, Active)
 
-        are_activities_compatible(Tret, Tret, TM, Tv, Tα, Tβ) || continue
-        test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, TM), (v, Tv), (α, Tα), (β, Tβ))
+            are_activities_compatible(Tret, Tret, TM, Tv, Tα, Tβ) || continue
+            test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, TM), (v, Tv), (α, Tα), (β, Tβ))
+        end
+
+        for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), 
+            Tv in (Const, Duplicated, BatchDuplicated), bα in (true, false), bβ in (true, false)
+            are_activities_compatible(Tret, Tret, TM, Tv) || continue
+            test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (bα, Const), (bβ, Const))
+        end
+
+        test_reverse(LinearAlgebra.mul!, Const, (C, Const), (M, Const), (v, Const), (α, Active), (β, Active))
 
     end
-
-
-    for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), 
-        Tv in (Const, Duplicated, BatchDuplicated), bα in (true, false), bβ in (true, false)
-        are_activities_compatible(Tret, Tret, TM, Tv) || continue
-        test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (bα, Const), (bβ, Const))
-    end
-
-    # Test with a const output and active α and β
-    (_,_,_,dα, dβ), = autodiff(Reverse, LinearAlgebra.mul!, Const, Const(C), Const(M), Const(v), Active(α), Active(β))
-    @test dα ≈ 0
-    @test dβ ≈ 0
-
 end
 
 end # InternalRules
