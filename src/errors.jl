@@ -1,12 +1,24 @@
 const VERBOSE_ERRORS = Ref(false)
 
-abstract type CompilationException <: Base.Exception end
+"""
+    EnzymeError
 
-struct EnzymeRuntimeException <: Base.Exception
+Common supertype for Enzyme-specific errors.
+
+This type is made public so that downstream packages can add custom [error hints](https://docs.julialang.org/en/v1/base/base/#Base.Experimental.register_error_hint) for the most common exceptions thrown by Enzyme.
+"""
+abstract type EnzymeError <: Base.Exception end
+
+abstract type CompilationException <: EnzymeError end
+
+struct EnzymeRuntimeException <: EnzymeError
     msg::Cstring
 end
 
 function Base.showerror(io::IO, ece::EnzymeRuntimeException)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
     print(io, "Enzyme execution failed.\n")
     msg = Base.unsafe_string(ece.msg)
     print(io, msg, '\n')
@@ -19,6 +31,9 @@ struct NoDerivativeException <: CompilationException
 end
 
 function Base.showerror(io::IO, ece::NoDerivativeException)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
     print(io, "Enzyme compilation failed.\n")
     if ece.ir !== nothing
     	if VERBOSE_ERRORS[]
@@ -51,6 +66,9 @@ struct IllegalTypeAnalysisException <: CompilationException
 end
 
 function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
     print(io, "Enzyme compilation failed due to illegal type analysis.\n")
     print(io, " This usually indicates the use of a Union type, which is not fully supported with Enzyme.API.strictAliasing set to true [the default].\n")
     print(io, " Ideally, remove the union (which will also make your code faster), or try setting Enzyme.API.strictAliasing!(false) before any autodiff call.\n")
@@ -78,6 +96,9 @@ struct IllegalFirstPointerException <: CompilationException
 end
 
 function Base.showerror(io::IO, ece::IllegalFirstPointerException)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
     print(io, "Enzyme compilation failed due to an internal error (first pointer exception).\n")
     print(io, " Please open an issue with the code to reproduce and full error log on github.com/EnzymeAD/Enzyme.jl\n")
     print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
@@ -101,6 +122,9 @@ struct EnzymeInternalError <: CompilationException
 end
 
 function Base.showerror(io::IO, ece::EnzymeInternalError)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
     print(io, "Enzyme compilation failed due to an internal error.\n")
     print(io, " Please open an issue with the code to reproduce and full error log on github.com/EnzymeAD/Enzyme.jl\n")
     print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
@@ -123,20 +147,26 @@ function Base.showerror(io::IO, ece::EnzymeInternalError)
     end
 end
 
-struct EnzymeMutabilityException <: Base.Exception
+struct EnzymeMutabilityException <: EnzymeError
     msg::Cstring
 end
 
 function Base.showerror(io::IO, ece::EnzymeMutabilityException)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
     msg = Base.unsafe_string(ece.msg)
     print(io, msg, '\n')
 end
 
-struct EnzymeRuntimeActivityError <: Base.Exception
+struct EnzymeRuntimeActivityError <: EnzymeError
     msg::Cstring
 end
 
 function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
     println(io, "Constant memory is stored (or returned) to a differentiable variable.")
     println(
         io,
@@ -163,31 +193,40 @@ function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)
     print(io, msg, '\n')
 end
 
-struct EnzymeNoTypeError <: Base.Exception
+struct EnzymeNoTypeError <: EnzymeError
     msg::Cstring
 end
 
 function Base.showerror(io::IO, ece::EnzymeNoTypeError)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
     print(io, "Enzyme cannot deduce type\n")
     msg = Base.unsafe_string(ece.msg)
     print(io, msg, '\n')
 end
 
-struct EnzymeNoShadowError <: Base.Exception
+struct EnzymeNoShadowError <: EnzymeError
     msg::Cstring
 end
 
 function Base.showerror(io::IO, ece::EnzymeNoShadowError)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
     print(io, "Enzyme could not find shadow for value\n")
     msg = Base.unsafe_string(ece.msg)
     print(io, msg, '\n')
 end
 
-struct EnzymeNoDerivativeError <: Base.Exception
+struct EnzymeNoDerivativeError <: EnzymeError
     msg::Cstring
 end
 
 function Base.showerror(io::IO, ece::EnzymeNoDerivativeError)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
     msg = Base.unsafe_string(ece.msg)
     print(io, msg, '\n')
 end
@@ -779,4 +818,3 @@ end
     end
     throw(AssertionError("Unknown errtype"))
 end
-
