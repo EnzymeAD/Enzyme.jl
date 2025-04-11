@@ -206,6 +206,7 @@ struct BatchMixedDuplicated{T,N} <: Annotation{T}
 end
 @inline batch_size(::BatchMixedDuplicated{T,N}) where {T,N} = N
 @inline batch_size(::Type{BatchMixedDuplicated{T,N}}) where {T,N} = N
+
 """
     batchify_activity(::Type{A}, ::Val{B})
 
