@@ -1195,10 +1195,6 @@ function autodiff(
     end
 end
 
-batchify_activity(::Type{Active{T}}, ::Val{B}) where {T,B} = Active{T}
-batchify_activity(::Type{Duplicated{T}}, ::Val{B}) where {T,B} = BatchDuplicated{T,B}
-
-
 """
     autodiff(
         rmode::Union{ReverseMode,ReverseModeSplit},
