@@ -4,6 +4,7 @@ export Forward, ForwardWithPrimal, Reverse, ReverseWithPrimal, ReverseSplitNoPri
 export ReverseSplitModified, ReverseSplitWidth, ReverseHolomorphic, ReverseHolomorphicWithPrimal
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, Annotation
 export MixedDuplicated, BatchMixedDuplicated
+export Seed, BatchSeed
 export DefaultABI, FFIABI, InlineABI, NonGenABI
 export BatchDuplicatedFunc
 export within_autodiff
@@ -205,6 +206,46 @@ struct BatchMixedDuplicated{T,N} <: Annotation{T}
 end
 @inline batch_size(::BatchMixedDuplicated{T,N}) where {T,N} = N
 @inline batch_size(::Type{BatchMixedDuplicated{T,N}}) where {T,N} = N
+
+"""
+    batchify_activity(::Type{A}, ::Val{B})
+
+Turn an activity (or [`Annotation`](@ref)) type `A` into the correct activity type for a batch of size `B`.
+
+# Examples
+
+```jldoctest
+julia> using EnzymeCore
+
+julia> EnzymeCore.batchify_activity(Active{Float64}, Val(2))
+Active{Float64}
+
+julia> EnzymeCore.batchify_activity(Duplicated{Vector{Float64}}, Val(2))
+BatchDuplicated{Vector{Float64}, 2}
+```
+"""
+batchify_activity(::Type{Active{T}}, ::Val{B}) where {T,B} = Active{T}
+batchify_activity(::Type{Duplicated{T}}, ::Val{B}) where {T,B} = BatchDuplicated{T,B}
+batchify_activity(::Type{DuplicatedNoNeed{T}}, ::Val{B}) where {T,B} = BatchDuplicatedNoNeed{T,B}
+batchify_activity(::Type{MixedDuplicated{T}}, ::Val{B}) where {T,B} = BatchMixedDuplicated{T,B}
+
+"""
+    Seed(dy)
+
+Wrapper for a single adjoint to the return value in reverse mode.
+"""
+struct Seed{T}
+    dval::T
+end
+
+"""
+    BatchSeed(dys::NTuple)
+
+Wrapper for a tuple of adjoints to the return value in reverse mode.
+"""
+struct BatchSeed{N, T}
+    dvals::NTuple{N, T}
+end
 
 """
     abstract type ABI
