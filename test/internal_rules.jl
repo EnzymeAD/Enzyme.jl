@@ -714,33 +714,6 @@ end
     # @test Enzyme.autodiff(Reverse, (x, y) -> begin y[] = f4(x); nothing end,  Active(0.1), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(2.0)))) == (((0.0,0.0)),)
 end
 
-@testset "SparseArrays spmatvec reverse rule" begin
-    Ts = (Float64, ComplexF64)
-
-    for T in Ts
-        C = zeros(T, 18)
-        M = sprand(T, 18, 9, 0.1)
-        v = randn(T, 9)
-        α = T <: Complex ? 2.0 + 0.1im : 2.0
-        β = T <: Complex ? 1.0 + 0.1im : 1.0
-
-        for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), 
-            Tα in (Const, Active), Tβ in (Const, Active)
-
-            are_activities_compatible(Tret, Tret, TM, Tv, Tα, Tβ) || continue
-            test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, TM), (v, Tv), (α, Tα), (β, Tβ))
-        end
-
-        for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), 
-            Tv in (Const, Duplicated, BatchDuplicated), bα in (true, false), bβ in (true, false)
-            are_activities_compatible(Tret, Tret, TM, Tv) || continue
-            test_reverse(LinearAlgebra.mul!, Tret, (C, Tret), (M, Const), (v, Tv), (bα, Const), (bβ, Const))
-        end
-
-        test_reverse(LinearAlgebra.mul!, Const, (C, Const), (M, Const), (v, Const), (α, Active), (β, Active))
-
-    end
-end
 
 @testset "SparseArrays spmatvec reverse rule" begin
     Ts = (Float64, ComplexF64)
