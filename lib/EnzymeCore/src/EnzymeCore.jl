@@ -217,10 +217,10 @@ Turn an activity (or [`Annotation`](@ref)) type `A` into the correct activity ty
 ```jldoctest
 julia> using EnzymeCore
 
-julia> batchify_activity(Active{Float64}, Val(2))
+julia> EnzymeCore.batchify_activity(Active{Float64}, Val(2))
 Active{Float64}
 
-julia> batchify_activity(Duplicated{Vector{Float64}}, Val(2))
+julia> EnzymeCore.batchify_activity(Duplicated{Vector{Float64}}, Val(2))
 BatchDuplicated{Vector{Float64}, 2}
 ```
 """
