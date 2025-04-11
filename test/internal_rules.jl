@@ -747,11 +747,11 @@ end
 
     for tm in Ts, tv in Ts, tα in Ts, tβ in Ts
         tout = promote_type(tm, tv, tα, tβ)
-        C = zeros(tout, 18)
-        M = sprand(tm, 18, 9, 0.1)
-        v = randn(tv, 9)
-        α = tα <: Complex ? 2.0 + 0.1im : 2.0
-        β = tβ <: Complex ? 1.0 + 0.1im : 1.0
+        C = zeros(tout, 9)
+        M = sprand(tm, 9, 5, 0.1)
+        v = randn(tv, 5)
+        α = rand(tα)
+        β = rand(tβ)
 
         for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), 
             Tα in (Const, Active), Tβ in (Const, Active)
@@ -777,11 +777,11 @@ end
 
     for tm in Ts, tv in Ts, tα in Ts, tβ in Ts
         tout = promote_type(tm, tv, tα, tβ)
-        C = zeros(tout, 18, 11)
-        M = sprand(tm, 18, 9, 0.1)
-        v = randn(tv, 9, 11)
-        α = tα <: Complex ? 2.0 + 0.1im : 2.0
-        β = tβ <: Complex ? 1.0 + 0.1im : 1.0
+        C = zeros(tout, 9, 5)
+        M = sprand(tm, 9, 5, 0.1)
+        v = randn(tv, 5, 5)
+        α = rand(tα)
+        β = rand(tβ)
         
         for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), 
             Tα in (Const, Active), Tβ in (Const, Active)
