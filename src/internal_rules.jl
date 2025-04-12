@@ -913,6 +913,58 @@ function EnzymeRules.reverse(
         end
     end
 
+
+    return (nothing, nothing, nothing, dα, dβ)
+end
+
+
+
+
+
+
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    ::Const{typeof(sort!)},
+    RT::Type{<:Union{Const,DuplicatedNoNeed,Duplicated}},
+    xs::Duplicated{T};
+    kwargs...,
+) where {T<:AbstractArray{<:AbstractFloat}}
+    inds = sortperm(xs.val; kwargs...)
+    xs.val .= xs.val[inds]
+    xs.dval .= xs.dval[inds]
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return xs
+    elseif EnzymeRules.needs_shadow(config)
+        return xs.dval
+    elseif EnzymeRules.needs_primal(config)
+        return xs.val
+    else
+        return nothing
+    end
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    ::Const{typeof(sort!)},
+    RT::Type{<:Union{Const,BatchDuplicatedNoNeed,BatchDuplicated}},
+    xs::BatchDuplicated{T,N};
+    kwargs...,
+) where {T<:AbstractArray{<:AbstractFloat},N}
+    inds = sortperm(xs.val; kwargs...)
+    xs.val .= xs.val[inds]
+    for i = 1:N
+        xs.dval[i] .= xs.dval[i][inds]
+    end
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return xs
+    elseif EnzymeRules.needs_shadow(config)
+        return xs.dval
+    elseif EnzymeRules.needs_primal(config)
+        return xs.val
+    else
+        return nothing
+    end
     return (nothing, nothing, nothing, dα, dβ)
 end
 
