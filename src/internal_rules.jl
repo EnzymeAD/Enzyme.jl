@@ -912,8 +912,7 @@ function EnzymeRules.reverse(
             nothing
         end
     end
-
-
+    
     return (nothing, nothing, nothing, dα, dβ)
 end
 
