@@ -965,7 +965,6 @@ function EnzymeRules.forward(
     else
         return nothing
     end
-    return (nothing, nothing, nothing, dα, dβ)
 end
 
 
