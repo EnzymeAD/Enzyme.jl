@@ -720,9 +720,9 @@ end
 
     for tm in Ts, tv in Ts, tα in Ts, tβ in Ts
         tout = promote_type(tm, tv, tα, tβ)
-        C = zeros(tout, 9)
-        M = sprand(tm, 9, 5, 0.1)
-        v = randn(tv, 5)
+        C = zeros(tout, 5)
+        M = sprand(tm, 5, 3, 0.3)
+        v = randn(tv, 3)
         α = rand(tα)
         β = rand(tβ)
 
@@ -750,9 +750,9 @@ end
 
     for tm in Ts, tv in Ts, tα in Ts, tβ in Ts
         tout = promote_type(tm, tv, tα, tβ)
-        C = zeros(tout, 9, 5)
-        M = sprand(tm, 9, 5, 0.1)
-        v = randn(tv, 5, 5)
+        C = zeros(tout, 5, 3)
+        M = sprand(tm, 5, 3, 0.3)
+        v = randn(tv, 3, 3)
         α = rand(tα)
         β = rand(tβ)
         
