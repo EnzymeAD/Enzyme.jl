@@ -718,13 +718,14 @@ end
 @testset "SparseArrays spmatvec reverse rule" begin
     Ts = (Float64, ComplexF64)
 
-    for tm in Ts, tv in Ts, tα in Ts, tβ in Ts
-        tout = promote_type(tm, tv, tα, tβ)
+    Ms = sprandn.(Ts, 5, 3, 0.3)
+    vs = rand.(Ts, 3)
+    αs = rand.(Ts)
+    βs = rand.(Ts)
+
+    for M in Ms, v in vs, α in αs, β in βs
+        tout = promote_type(eltype(M), eltype(v), typeof(α), typeof(β))
         C = zeros(tout, 5)
-        M = sprand(tm, 5, 3, 0.3)
-        v = randn(tv, 3)
-        α = rand(tα)
-        β = rand(tβ)
 
         for Tret in (Duplicated, BatchDuplicated), TM in (Const, Duplicated, BatchDuplicated), Tv in (Const, Duplicated, BatchDuplicated), 
             Tα in (Const, Active), Tβ in (Const, Active)
