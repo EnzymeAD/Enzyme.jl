@@ -603,7 +603,7 @@ function julia_undef_value_for_type(
 end
 
 function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType), @nospecialize(prev::LLVM.Value))::Nothing
-    if Base.datatype_pointerfree(Ty)
+    if Base.datatype_pointerfree(Ty) || Base.datatype_fieldcount(Ty) == 0
         return
     end
 
@@ -647,7 +647,7 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
                 LLVM.Value[LLVM.ConstantInt(Int64(off))],
             )
             
-            fallback = Base.isabstracttype(Ty2) || Ty2 isa Union
+            fallback = Base.isabstracttype(Ty2) || Ty2 isa Union || Base.datatype_fieldcount(Ty2) == 0
 
             @static if VERSION < v"1.11-"
                 fallback |= Ty2 <: Array
