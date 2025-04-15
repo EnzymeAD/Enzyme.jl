@@ -160,13 +160,13 @@ end
 @inline is_vararg_tup(::Type{Tuple{Vararg{T2}}}) where {T2} = true
 
 @inline function active_reg_inner(
-    ::Type{T},
+    @nospecialize(T),
     @nospecialize(seen),
     world::Union{Nothing,UInt},
     ::Val{justActive} = Val(false),
     ::Val{UnionSret} = Val(false),
     ::Val{AbstractIsMixed} = Val(false),
-)::ActivityState where {T,justActive,UnionSret,AbstractIsMixed}
+)::ActivityState where {justActive,UnionSret,AbstractIsMixed}
     if T === Any
         if AbstractIsMixed
             return MixedState
