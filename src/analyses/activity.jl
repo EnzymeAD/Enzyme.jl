@@ -116,12 +116,12 @@ end
 
 @inline function active_reg_recur(
     ::Type{ST},
-    seen::Seen,
+    @nospecialize(seen),
     world,
     ::Val{justActive},
     ::Val{UnionSret},
     ::Val{AbstractIsMixed},
-)::ActivityState where {ST,Seen,justActive,UnionSret,AbstractIsMixed}
+)::ActivityState where {ST,justActive,UnionSret,AbstractIsMixed}
     if ST isa Union
         return forcefold(
             Val(
@@ -161,12 +161,12 @@ end
 
 @inline function active_reg_inner(
     ::Type{T},
-    seen::ST,
+    @nospecialize(seen),
     world::Union{Nothing,UInt},
     ::Val{justActive} = Val(false),
     ::Val{UnionSret} = Val(false),
     ::Val{AbstractIsMixed} = Val(false),
-)::ActivityState where {ST,T,justActive,UnionSret,AbstractIsMixed}
+)::ActivityState where {T,justActive,UnionSret,AbstractIsMixed}
     if T === Any
         if AbstractIsMixed
             return MixedState
