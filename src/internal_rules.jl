@@ -729,15 +729,16 @@ function EnzymeRules.reverse(
 end
 
 
-function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig, 
-                                      func::Const{typeof(LinearAlgebra.mul!)},
-                                      ::Type{RT}, 
-                                      C::Annotation{<:StridedVecOrMat},
-                                      A::Annotation{<:SparseArrays.SparseMatrixCSCUnion},
-                                      B::Annotation{<:StridedVecOrMat},
-                                      α::Annotation{<:Number},
-                                      β::Annotation{<:Number}
-                                    ) where {RT}
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(LinearAlgebra.mul!)},
+        ::Type{RT},
+        C::Annotation{<:StridedVecOrMat},
+        A::Annotation{<:SparseArrays.SparseMatrixCSCUnion},
+        B::Annotation{<:StridedVecOrMat},
+        α::Annotation{<:Number},
+        β::Annotation{<:Number}
+    ) where {RT}
 
     cache_C = !(isa(β, Const)) ? copy(C.val) : nothing
     # Always need to do forward pass otherwise primal may not be correct
@@ -755,37 +756,56 @@ function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig,
         nothing
     end
 
+
     # Check if A is overwritten and B is active (and thus required)
-    cache_A = ( EnzymeRules.overwritten(config)[5]
-                && !(typeof(B) <: Const)
-                && !(typeof(C) <: Const)
-                ) ? copy(A.val) : nothing
-    
-    cache_B = ( EnzymeRules.overwritten(config)[6] 
-                && !(typeof(A) <: Const) 
-                && !(typeof(C) <: Const)
-               ) ? copy(B.val) : nothing
+    cache_A = (
+            EnzymeRules.overwritten(config)[5]
+            && !(typeof(B) <: Const)
+            && !(typeof(C) <: Const)
+        ) ? copy(A.val) : nothing
+
+    cache_B = (
+            EnzymeRules.overwritten(config)[6]
+            && !(typeof(A) <: Const)
+            && !(typeof(C) <: Const)
+        ) ? copy(B.val) : nothing
 
     if !isa(α, Const)
-        cache_α = A.val*B.val
+        cache_α = A.val * B.val
     else
         cache_α = nothing
     end
-    
+
     cache = (cache_C, cache_A, cache_B, cache_α)
 
     return EnzymeRules.AugmentedReturn(primal, shadow, cache)
 end
 
-function EnzymeRules.reverse(config::EnzymeRules.RevConfig,
-                             func::Const{typeof(LinearAlgebra.mul!)},
-                             ::Type{RT}, cache,
-                             C::Annotation{<:StridedVecOrMat},
-                             A::Annotation{<:SparseArrays.SparseMatrixCSCUnion},
-                             B::Annotation{<:StridedVecOrMat},
-                             α::Annotation{<:Number},
-                             β::Annotation{<:Number}
-                             ) where {RT}
+# This is required to handle arugments that mix real and complex numbers
+_project(::Type{<:Real}, x) = x
+_project(::Type{<:Real}, x::Complex) = real(x)
+_project(::Type{<:Complex}, x) = x
+
+function _muladdproject!(::Type{<:Number}, dB::AbstractArray, A::AbstractArray, C::AbstractArray, α)
+    return LinearAlgebra.mul!(dB, A, C, α, true)
+end
+
+function _muladdproject!(::Type{<:Complex}, dB::AbstractArray{<:Real}, A::AbstractArray, C::AbstractArray, α::Number)
+    tmp = A * C
+    return dB .+= real.(α .* tmp)
+end
+
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(LinearAlgebra.mul!)},
+        ::Type{RT}, cache,
+        C::Annotation{<:StridedVecOrMat},
+        A::Annotation{<:SparseArrays.SparseMatrixCSCUnion},
+        B::Annotation{<:StridedVecOrMat},
+        α::Annotation{<:Number},
+        β::Annotation{<:Number}
+    ) where {RT}
 
     cache_C, cache_A, cache_B, cache_α = cache
     Cval = !isnothing(cache_C) ? cache_C : C.val
@@ -795,38 +815,37 @@ function EnzymeRules.reverse(config::EnzymeRules.RevConfig,
     N = EnzymeRules.width(config)
     if !isa(C, Const)
         dCs = C.dval
-        dBs  = isa(B, Const) ? dCs : B.dval
-
+        dBs = isa(B, Const) ? dCs : B.dval
         dα = if !isa(α, Const)
-                if N == 1
-                    LinearAlgebra.dot(C.dval, cache_α)
-                else
-                    ntuple(Val(N)) do i
-                        Base.@_inline_meta
-                        LinearAlgebra.dot(C.dval[i], cache_α)
-                    end
+            if N == 1
+                _project(typeof(α.val), conj(LinearAlgebra.dot(C.dval, cache_α)))
+            else
+                ntuple(Val(N)) do i
+                    Base.@_inline_meta
+                    _project(typeof(α.val), conj(LinearAlgebra.dot(C.dval[i], cache_α)))
                 end
+            end
         else
             nothing
         end
 
         dβ = if !isa(β, Const)
-                if N == 1
-                    LinearAlgebra.dot(C.dval, Cval)
-                else
-                    ntuple(Val(N)) do i
-                        Base.@_inline_meta
-                        LinearAlgebra.dot(C.dval[i], Cval)
-                    end
+            if N == 1
+                _project(typeof(β.val), conj(LinearAlgebra.dot(C.dval, Cval)))
+            else
+                ntuple(Val(N)) do i
+                    Base.@_inline_meta
+                    _project(typeof(β.val), conj(LinearAlgebra.dot(C.dval[i], Cval)))
                 end
+            end
         else
             nothing
         end
 
         for i in 1:N
             if !isa(A, Const)
-                # dA .+= αdC*B'
-                # You need to be careful so that dA sparsity pattern does not change. Otherwise 
+                # dA .+= α'dC*B'
+                # You need to be careful so that dA sparsity pattern does not change. Otherwise
                 # you will get incorrect gradients. So for now we do the slow and bad way of accumulating
                 dA = EnzymeRules.width(config) == 1 ? A.dval : A.dval[i]
                 dC = EnzymeRules.width(config) == 1 ? C.dval : C.dval[i]
@@ -834,28 +853,33 @@ function EnzymeRules.reverse(config::EnzymeRules.RevConfig,
                 I, J, _ = SparseArrays.findnz(dA)
                 for k in eachindex(I, J)
                     Ik, Jk = I[k], J[k]
-                    tmp = zero(eltype(dA))
-                    for ti in axes(dC,2)
-                        tmp += dC[Ik, ti]*Bval[Jk, ti]
+                    # May need to widen if the eltype differ
+                    tmp = zero(promote_type(eltype(dA), eltype(dC)))
+                    for ti in axes(dC, 2)
+                        tmp += dC[Ik, ti] * conj(Bval[Jk, ti])
                     end
-                    dA[Ik, Jk] += α.val*tmp
+                    dA[Ik, Jk] += _project(eltype(dA), conj(α.val) * tmp)
                 end
                 # mul!(dA, dCs, Bval', α.val, true)
             end
 
             if !isa(B, Const)
                 #dB .+= α*A'*dC
-                if N ==1
-                    func.val(dBs, Aval', dCs, α.val, true)
+                # Get the type of all arguments since we may need to
+                # project down to a smaller type during accumulation
+                if N == 1
+                    Targs = promote_type(eltype(Aval), eltype(dCs), typeof(α.val))
+                    _muladdproject!(Targs, dBs, Aval', dCs, conj(α.val))
                 else
-                    func.val(dBs[i], Aval', dCs[i], α.val, true)
+                    Targs = promote_type(eltype(Aval[i]), eltype(dCs[i]), typeof(α.val))
+                    _muladdproject!(Targs, dBs[i], Aval', dCs[i], conj(α.val))
                 end
             end
-
-            if N==1
-                dCs .*= β.val
+            #dC = dC*conj(β.val)
+            if N == 1
+                dCs .*= _project(eltype(dCs), conj(β.val))
             else
-                dCs[i] .*= β.val
+                dCs[i] .*= _project(eltype(dCs[i]), conj(β.val))
             end
         end
     else
@@ -888,7 +912,7 @@ function EnzymeRules.reverse(config::EnzymeRules.RevConfig,
             nothing
         end
     end
-   
+    
     return (nothing, nothing, nothing, dα, dβ)
 end
 
