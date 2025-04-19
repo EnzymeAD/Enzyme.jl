@@ -423,3 +423,12 @@ end
 
 export sret_ty
 
+@inline function compute_rt(interp::Core.Compiler.AbstractInterpreter, mi::MethodInstance)    
+    @static if VERSION < v"1.11-"
+        return Core.Compiler.typeinf_ext_toplevel(interp, mi).rettype
+    else
+        return Core.Compiler.typeinf_type(interp, mi)
+    end
+end
+
+export compute_rt
