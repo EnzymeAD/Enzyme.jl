@@ -2679,7 +2679,6 @@ end
     y = [5.0, 7.0]
     dy = [0.5,0.7]
     Enzyme.autodiff(Reverse, (x,y)->x' * y, Duplicated(x, dx), Duplicated(y, dy))
-    @show x, dx, y, dy
     @test dx ≈ [5.2, 7.3]
     @test dy ≈ [2.5, 3.7]
 
@@ -2740,7 +2739,7 @@ end;
     autodiff(Reverse, objective!, Duplicated(x, zero(x)), Duplicated(loss, dloss), Const(R))
 
     @test loss[] ≈ 0.0
-    @show dloss[] ≈ 0.0
+    @test dloss[] ≈ 0.0
 end
 
 @testset "Union return" begin
