@@ -379,10 +379,10 @@ function nested_codegen!(
 
     target = DefaultCompilerTarget()
     params = PrimalCompilerParams(mode)
-    job = CompilerJob(funcspec, CompilerConfig(target, params; kernel = false), world)
+    job = CompilerJob(funcspec, CompilerConfig(target, params; kernel = false, libraries = true, toplevel = true, optimize = false, cleanup = false, only_entry = false, validate = false), world)
 
     GPUCompiler.prepare_job!(job)
-    otherMod, meta = GPUCompiler.emit_llvm(job; libraries=true, toplevel=true, optimize=false, cleanup=false, only_entry=false, validate=false)
+    otherMod, meta = GPUCompiler.emit_llvm(job)
     
     prepare_llvm(otherMod, job, meta)
 
@@ -618,7 +618,9 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
         prev = addrspacecast!(B, prev, LLVM.PointerType(LLVMType, Derived))
         zero_single_allocation(B, Ty, LLVMType, prev, zeroAll, LLVM.ConstantInt(T_int64, 0); atomic=true)
     else
-        @assert fieldcount(Ty) != 0
+        if fieldcount(Ty) == 0
+            error("Error handling recursive stores for $Ty which has a fieldcount of 0")
+        end
 
         T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
@@ -645,7 +647,7 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
                 LLVM.Value[LLVM.ConstantInt(Int64(off))],
             )
             
-            fallback = Base.isabstracttype(Ty2) || Ty2 isa Union
+            fallback = Base.isabstracttype(Ty2) || Ty2 isa Union || Ty2 isa Symbol || Ty2 isa String
 
             @static if VERSION < v"1.11-"
                 fallback |= Ty2 <: Array
@@ -1324,6 +1326,9 @@ struct UnknownTapeType end
 struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
     mode::API.CDerivativeMode
 end
+
+# Avoid blow-up of higer-order AD
+GPUCompiler.can_safepoint(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) = false
 
 DefaultCompilerTarget(; kwargs...) =
     GPUCompiler.NativeCompilerTarget(; jlruntime = true, kwargs...)
@@ -2685,6 +2690,7 @@ function lower_convention(
 
     RT = LLVM.return_type(entry_ft)
 
+
     # generate the wrapper function type & definition
     wrapper_types = LLVM.LLVMType[]
     wrapper_attrs = Vector{LLVM.Attribute}[]
@@ -2700,6 +2706,13 @@ function lower_convention(
     end
     sret = sret !== nothing
     returnRoots = returnRoots !== nothing
+
+    loweredReturn = RetActivity <: Active && (actualRetType === Any)
+    if loweredReturn
+        @assert !sret
+        @assert !returnRoots
+        RT = convert(LLVMType, eltype(RetActivity))
+    end
 
     # TODO removed implications
     retRemoved, parmsRemoved = removed_ret_parms(entry_f)
@@ -2771,8 +2784,8 @@ function lower_convention(
         end
     end
 
-    if length(loweredArgs) == 0 && length(raisedArgs) == 0 && !sret && !sret_union
-        return entry_f, returnRoots, boxedArgs, loweredArgs
+    if length(loweredArgs) == 0 && length(raisedArgs) == 0 && !sret && !sret_union && !loweredReturn
+        return entry_f, returnRoots, boxedArgs, loweredArgs, actualRetType
     end
 
     wrapper_fn = LLVM.name(entry_f)
@@ -3138,28 +3151,69 @@ function lower_convention(
             ret!(builder)
         else
             ctx = LLVM.context(wrapper_f)
-            push!(
-                return_attributes(wrapper_f),
-                StringAttribute(
-                    "enzyme_type",
-                    string(typetree(actualRetType, ctx, dl, seen)),
-                ),
-            )
-            push!(
-                return_attributes(wrapper_f),
-                StringAttribute(
-                    "enzymejl_parmtype",
-                    string(convert(UInt, unsafe_to_pointer(actualRetType))),
-                ),
-            )
-            push!(
-                return_attributes(wrapper_f),
-                StringAttribute(
-                    "enzymejl_parmtype_ref",
-                    string(UInt(GPUCompiler.BITS_REF)),
-                ),
-            )
-            ret!(builder, res)
+
+            if loweredReturn
+                push!(
+                    return_attributes(wrapper_f),
+                    StringAttribute(
+                        "enzyme_type",
+                        string(typetree(eltype(RetActivity), ctx, dl, seen)),
+                    ),
+                )
+                push!(
+                    return_attributes(wrapper_f),
+                    StringAttribute(
+                        "enzymejl_parmtype",
+                        string(convert(UInt, unsafe_to_pointer(eltype(RetActivity)))),
+                    ),
+                )
+                push!(
+                    return_attributes(wrapper_f),
+                    StringAttribute(
+                        "enzymejl_parmtype_ref",
+                        string(UInt(GPUCompiler.BITS_VALUE)),
+                    ),
+                )
+                ty = emit_jltypeof!(builder, res)
+                cmp = icmp!(builder, LLVM.API.LLVMIntEQ, ty, unsafe_to_llvm(builder, eltype(RetActivity)))
+                cmpret = BasicBlock(wrapper_f, "ret")
+                failure = BasicBlock(wrapper_f, "fail")
+                br!(builder, cmp, cmpret, failure)
+
+                position!(builder, cmpret)
+                res = bitcast!(builder, res, LLVM.PointerType(RT, addrspace(value_type(res))))
+                res = addrspacecast!(builder, res, LLVM.PointerType(RT, Derived))
+                res = load!(builder, RT, res)
+                ret!(builder, res)
+
+                position!(builder, failure)
+
+                emit_error(builder, nothing, "Expected return type of primal to be "*string(eltype(RetActivity))*" but did not find a value of that type")
+                unreachable!(builder)
+            else
+                push!(
+                    return_attributes(wrapper_f),
+                    StringAttribute(
+                        "enzyme_type",
+                        string(typetree(actualRetType, ctx, dl, seen)),
+                    ),
+                )
+                push!(
+                    return_attributes(wrapper_f),
+                    StringAttribute(
+                        "enzymejl_parmtype",
+                        string(convert(UInt, unsafe_to_pointer(actualRetType))),
+                    ),
+                )
+                push!(
+                    return_attributes(wrapper_f),
+                    StringAttribute(
+                        "enzymejl_parmtype_ref",
+                        string(UInt(GPUCompiler.BITS_REF)),
+                    ),
+                )
+                ret!(builder, res)
+            end
         end
         dispose(builder)
     end
@@ -3368,7 +3422,7 @@ function lower_convention(
         end
         throw(LLVM.LLVMException(msg))
     end
-    return wrapper_f, returnRoots, boxedArgs, loweredArgs
+    return wrapper_f, returnRoots, boxedArgs, loweredArgs, loweredReturn ? eltype(RetActivity) : actualRetType
 end
 
 using Random
@@ -3426,9 +3480,20 @@ function GPUCompiler.codegen(
     if parent_job === nothing
         primal_target = DefaultCompilerTarget()
         primal_params = PrimalCompilerParams(mode)
+        config2 = CompilerConfig(
+            primal_target,
+            primal_params;
+            kernel = false,
+            libraries = true,
+            toplevel = toplevel,
+            optimize = false,
+            cleanup = false,
+            only_entry = false,
+            validate = false
+        )
         primal_job = CompilerJob(
             primal,
-            CompilerConfig(primal_target, primal_params; kernel = false),
+            config2,
             job.world,
         )
     else
@@ -3439,12 +3504,18 @@ function GPUCompiler.codegen(
             parent_job.config.entry_abi,
             parent_job.config.name,
             parent_job.config.always_inline,
+            libraries = true,
+            toplevel = toplevel,
+            optimize = false,
+            cleanup = false,
+            only_entry = false,
+            validate = false,
         )
         primal_job = CompilerJob(primal, config2, job.world) # TODO EnzymeInterp params, etc
     end
 
     GPUCompiler.prepare_job!(primal_job)
-    mod, meta = GPUCompiler.emit_llvm(primal_job; libraries=true, toplevel=toplevel, optimize=false, cleanup=false, only_entry=false, validate=false)
+    mod, meta = GPUCompiler.emit_llvm(primal_job)
     edges = Any[]
     mod_to_edges[mod] = edges
 
@@ -4206,7 +4277,7 @@ end
     primalf, returnRoots = primalf, false
 
     if lowerConvention
-        primalf, returnRoots, boxedArgs, loweredArgs = lower_convention(
+        primalf, returnRoots, boxedArgs, loweredArgs, actualRetType = lower_convention(
             source_sig,
             mod,
             primalf,
