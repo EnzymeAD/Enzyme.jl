@@ -74,12 +74,13 @@ jobs:
           make -C julia -j $(nproc) FORCE_ASSERTIONS=1 LLVM_ASSERTIONS=1 JULIA_PRECOMPILE=0
           echo $PWD/julia/usr/bin >> $GITHUB_PATH
       - uses: julia-actions/cache@v2
-      - name: add EnzymeCore
+      - name: add EnzymeCore EnzymeTestUtils
         shell: julia --color=yes --project=. {0}
         run: |
           using Pkg
           Pkg.develop([PackageSpec(; path) for path in ("lib/EnzymeCore", "lib/EnzymeTestUtils")])
           Pkg.instantiate()
+        if: ${{ matrix.version == '1.10' }}
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - name: Build libEnzyme
