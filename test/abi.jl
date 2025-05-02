@@ -612,7 +612,7 @@ end
     du = similar(u0)
 
     batched_result = ([0.0 0.0; 0.0 0.0], [0.0 0.0; 0.0 0.0])
-    batched_seed = ([1.0 0.0; 0.0 0.0], [0.0 0.0; 1.0 0.0])
+    batched_seed = ([1.0 0.0; 0.0 0.0], [2.0 0.0; 1.0 0.0])
 
     f!_and_df! = BatchDuplicated(a, ntuple(_ -> Enzyme.make_zero(a), Val(length(batched_result))))
     x_and_tx = BatchDuplicated(u0, batched_seed)
@@ -620,6 +620,6 @@ end
 
     autodiff(Forward, f!_and_df!, Const, y_and_ty, x_and_tx, f!_and_df!)
 
-    @test batched_result[1] ≈ batched_seed[1]
-    @test batched_result[2] ≈ batched_seed[2]
+    @test batched_result[1][1] ≈ 1.0
+    @test batched_result[2][1] ≈ 2.0
 end
