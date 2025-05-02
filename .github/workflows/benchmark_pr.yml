@@ -49,6 +49,7 @@ jobs:
                 benchpkgplot ${{ steps.extract-package-name.outputs.package_name }} --rev="${{github.event.repository.default_branch}},${{github.event.pull_request.head.sha}}" --npart=10 --format=png --input-dir=results/ --output-dir=plots/
             - name: Upload plot as artifact
               uses: actions/upload-artifact@v4
+              id: artifact-upload-step
               with:
                 name: plots
                 path: plots
@@ -62,8 +63,7 @@ jobs:
                 echo '' >> body.md
                 echo '' >> body.md
                 echo '### Benchmark Plots' >> body.md
-                echo 'A plot of the benchmark results have been uploaded as an artifact to the workflow run for this PR.' >> body.md
-                echo 'Go to "Actions"->"Benchmark a pull request"->[the most recent run]->"Artifacts" (at the bottom).' >> body.md
+                echo 'A plot of the benchmark results has been uploaded as an artifact at ${{ steps.artifact-upload-step.outputs.artifact-url }}.' >> body.md
 
             - name: Find Comment
               uses: peter-evans/find-comment@v3
