@@ -5074,19 +5074,23 @@ end
                 end
             elseif !(FA <: Const)
                 argexpr = :(fn.dval)
-                if isboxed
-                    push!(types, Any)
-                elseif width == 1
+                F_ABI = F
+                if width == 1
                     if (FA <: MixedDuplicated)
-                        push!(types, Base.RefValue{F})
+                        push!(types, Any)
                     else
-                        push!(types, F)
+                        push!(types, F_ABI)
                     end
                 else
-                    if (FA <: BatchMixedDuplicated)
-                        push!(types, NTuple{width,Base.RefValue{F}})
+                    if F_ABI <: BatchMixedDuplicated
+                        F_ABI = Base.RefValue{F_ABI}
+                    end
+                    F_ABI = NTuple{width, F_ABI}
+                    isboxedvec = GPUCompiler.deserves_argbox(F_ABI)
+                    if isboxedvec
+                        push!(types, Any)
                     else
-                        push!(types, NTuple{width,F})
+                        push!(types, F_ABI)
                     end
                 end
                 push!(ccexprs, argexpr)
