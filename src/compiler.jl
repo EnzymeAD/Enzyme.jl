@@ -1605,7 +1605,16 @@ function enzyme!(
         push!(uncacheable_args, modifiedBetween[i])
         push!(args_known_values, API.IntList())
     end
-    @assert length(uncacheable_args) == length(collect(parameters(primalf)))
+    if length(uncacheable_args) != length(collect(parameters(primalf)))
+                msg = sprint() do io
+		    println(io, "length(uncacheable_args) != length(collect(parameters(primalf)))", TT)
+		    println(io, "TT=", TT)
+                    println(io, "modifiedBetween=", modifiedBetween)
+		    println(io, "uncacheable_args=", uncacheable_args)
+		    println(io, "primal", string(primalf))
+                end
+                throw(AssertionError(msg))
+    end
     @assert length(args_typeInfo) == length(collect(parameters(primalf)))
 
     # The return of createprimal and gradient has this ABI
