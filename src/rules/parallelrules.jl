@@ -306,12 +306,13 @@ end
             has_active = ty == MixedState || ty == ActiveState
             if has_active
                 refed = true
-                e_tt = Tuple{Duplicated{Base.RefValue{funcT}},e_tt.parameters...}
+		e_tt = Tuple{width == 1 ? Duplicated{Base.RefValue{funcT}} : BatchDuplicated{Base.RefValue{funcT}, Int(width)},e_tt.parameters...}
                 funcT = Core.Typeof(referenceCaller)
                 dupClosure = false
                 modifiedBetween = (false, modifiedBetween...)
                 mi2 = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, funcT, Tuple{map(eltype, e_tt.parameters)...}, world)
                 @assert mi2 !== nothing
+    		dFT = (dupClosure ? (width == 1 ? Duplicated : (BatchDuplicated{T, Int(width)} where T)) : Const){funcT}
             end
         end
 
