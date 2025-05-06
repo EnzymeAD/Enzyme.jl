@@ -43,13 +43,8 @@ end
 function EnzymeRules.reverse(config::ConfigWidth{1}, func::Const{Closure},
     dret::Active, tape, args::Vararg{Active,N}) where {N}
 
-    @show tape
-    @show dret
-    @show args
     dargs = ntuple(Val(N)) do i
-        fval = 7 * args[1].val * dret.val + tape[1] * 1000
-        @show fval
-        fval
+        7 * args[1].val * dret.val + tape[1] * 1000
     end
     return dargs
 end

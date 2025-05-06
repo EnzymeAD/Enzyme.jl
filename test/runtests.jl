@@ -275,17 +275,17 @@ sqrtsumsq2(x) = (sum(abs2, x)*sum(abs2,x))
        Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
     end
     @test occursin("diffe",fn)
-    if count("call fastcc void @diffejulia__mapreduce", fn) != 1
-        println(sprint() do io
-           Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true, run_enzyme=false, optimize=false)
-       end)
-        println(sprint() do io
-           Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true, run_enzyme=false)
-       end)
-        println(fn)
-    end
+    # if count("call fastcc void @diffejulia__mapreduce", fn) != 1
+    #     println(sprint() do io
+    #        Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true, run_enzyme=false, optimize=false)
+    #    end)
+    #     println(sprint() do io
+    #        Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true, run_enzyme=false)
+    #    end)
+    #     println(fn)
+    # end
     # TODO per system being run on the indexing in the mapreduce is broken
-    # @test count("call fastcc void @diffejulia__mapreduce", fn) == 1
+    @test_broken count("call fastcc void @diffejulia__mapreduce", fn) == 1
     # TODO we need to have enzyme circumvent the double pointer issue by also considering a broader
     # no memory overwritten state [in addition to the arg-based variant]
     @test_broken !occursin("aug",fn)
@@ -2679,7 +2679,6 @@ end
     y = [5.0, 7.0]
     dy = [0.5,0.7]
     Enzyme.autodiff(Reverse, (x,y)->x' * y, Duplicated(x, dx), Duplicated(y, dy))
-    @show x, dx, y, dy
     @test dx ≈ [5.2, 7.3]
     @test dy ≈ [2.5, 3.7]
 
@@ -2740,7 +2739,7 @@ end;
     autodiff(Reverse, objective!, Duplicated(x, zero(x)), Duplicated(loss, dloss), Const(R))
 
     @test loss[] ≈ 0.0
-    @show dloss[] ≈ 0.0
+    @test dloss[] ≈ 0.0
 end
 
 @testset "Union return" begin

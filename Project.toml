@@ -59,3 +59,6 @@ GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
 LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+[sources]
+EnzymeCore = {path = "lib/EnzymeCore"}
