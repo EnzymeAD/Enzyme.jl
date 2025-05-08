@@ -12,7 +12,6 @@ import .EnzymeRules: augmented_primal, reverse
 using .EnzymeRules
 
 function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(f_kw)}, ::Type{<:Active}, x::Active; kwargs...)
-    @show kwargs
     @assert length(overwritten(config)) == 2
     if needs_primal(config)
         return AugmentedReturn(func.val(x.val), nothing, nothing)
@@ -22,7 +21,7 @@ function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(f_kw)}, 
 end
 
 function reverse(config::RevConfigWidth{1}, ::Const{typeof(f_kw)}, dret::Active, tape, x::Active; kwargs...)
-    @show kwargs # TODO do we want them here?
+    # TODO do we want kwargs here?
     @assert length(overwritten(config)) == 2
     if needs_primal(config)
         return (10+2*x.val*dret.val,)

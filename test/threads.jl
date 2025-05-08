@@ -134,3 +134,20 @@ end
     @test 1.0 ≈ autodiff(Reverse, thr_inactive, Const(true), Active(2.14))[1][2]
     @test 1.0 ≈ autodiff(Forward, thr_inactive, Const(true), Duplicated(2.14, 1.0))[1]
 end
+
+@testset "Batched Forward" begin
+    function f2(du)
+        Threads.@threads for i in eachindex(du)
+            du[i] *= 2
+        end
+        return nothing
+    end
+    du = zeros(2)
+    ty = ntuple(i -> (i + 1) * ones(2), Val(4))
+    y_and_ty = BatchDuplicated(du, ty)
+    autodiff(Forward, f2, Const, y_and_ty)
+    @test ty[1] ≈ [4.0, 4.0]
+    @test ty[2] ≈ [6.0, 6.0]
+    @test ty[3] ≈ [8.0, 8.0]
+    @test ty[4] ≈ [10.0, 10.0]
+end

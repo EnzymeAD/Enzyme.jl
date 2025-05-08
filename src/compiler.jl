@@ -647,7 +647,7 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
                 LLVM.Value[LLVM.ConstantInt(Int64(off))],
             )
             
-            fallback = Base.isabstracttype(Ty2) || Ty2 isa Union
+            fallback = Base.isabstracttype(Ty2) || Ty2 isa Union || Ty2 isa Symbol || Ty2 isa String
 
             @static if VERSION < v"1.11-"
                 fallback |= Ty2 <: Array
@@ -1327,9 +1327,6 @@ struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
     mode::API.CDerivativeMode
 end
 
-# Avoid blow-up of higer-order AD
-GPUCompiler.can_safepoint(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) = false
-
 DefaultCompilerTarget(; kwargs...) =
     GPUCompiler.NativeCompilerTarget(; jlruntime = true, kwargs...)
 
@@ -1608,7 +1605,16 @@ function enzyme!(
         push!(uncacheable_args, modifiedBetween[i])
         push!(args_known_values, API.IntList())
     end
-    @assert length(uncacheable_args) == length(collect(parameters(primalf)))
+    if length(uncacheable_args) != length(collect(parameters(primalf)))
+                msg = sprint() do io
+		    println(io, "length(uncacheable_args) != length(collect(parameters(primalf)))", TT)
+		    println(io, "TT=", TT)
+                    println(io, "modifiedBetween=", modifiedBetween)
+		    println(io, "uncacheable_args=", uncacheable_args)
+		    println(io, "primal", string(primalf))
+                end
+                throw(AssertionError(msg))
+    end
     @assert length(args_typeInfo) == length(collect(parameters(primalf)))
 
     # The return of createprimal and gradient has this ABI
@@ -5077,19 +5083,23 @@ end
                 end
             elseif !(FA <: Const)
                 argexpr = :(fn.dval)
-                if isboxed
-                    push!(types, Any)
-                elseif width == 1
+                F_ABI = F
+                if width == 1
                     if (FA <: MixedDuplicated)
-                        push!(types, Base.RefValue{F})
+                        push!(types, Any)
                     else
-                        push!(types, F)
+                        push!(types, F_ABI)
                     end
                 else
-                    if (FA <: BatchMixedDuplicated)
-                        push!(types, NTuple{width,Base.RefValue{F}})
+                    if F_ABI <: BatchMixedDuplicated
+                        F_ABI = Base.RefValue{F_ABI}
+                    end
+                    F_ABI = NTuple{width, F_ABI}
+                    isboxedvec = GPUCompiler.deserves_argbox(F_ABI)
+                    if isboxedvec
+                        push!(types, Any)
                     else
-                        push!(types, NTuple{width,F})
+                        push!(types, F_ABI)
                     end
                 end
                 push!(ccexprs, argexpr)
