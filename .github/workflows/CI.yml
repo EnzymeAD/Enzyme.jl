@@ -237,7 +237,7 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1.10'
+          - '1.11'
         os:
           - ubuntu-latest
         test:
@@ -252,7 +252,7 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
       - name: "Run tests"
         run: |
-            julia --color=yes --project=test/integration/${{ matrix.test }} -e 'using Pkg; Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")]); Pkg.instantiate()'
+            julia --color=yes --project=test/integration/${{ matrix.test }} -e 'using Pkg; Pkg.instantiate()'
             julia --color=yes --project=test/integration/${{ matrix.test }} --threads=auto --check-bounds=yes test/integration/${{ matrix.test }}/runtests.jl
         shell: bash
   docs:
