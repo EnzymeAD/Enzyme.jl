@@ -2714,10 +2714,15 @@ function lower_convention(
     returnRoots = returnRoots !== nothing
 
     loweredReturn = RetActivity <: Active && (actualRetType === Any)
+    expected_RT = Nothing
     if loweredReturn
         @assert !sret
         @assert !returnRoots
-        RT = convert(LLVMType, eltype(RetActivity))
+        expected_RT = eltype(RetActivity)
+        if expected_RT === Any
+            expected_RT = Float64
+        end
+        RT = convert(LLVMType, expected_RT)
     end
 
     # TODO removed implications
@@ -3170,7 +3175,7 @@ function lower_convention(
                     return_attributes(wrapper_f),
                     StringAttribute(
                         "enzymejl_parmtype",
-                        string(convert(UInt, unsafe_to_pointer(eltype(RetActivity)))),
+                        string(convert(UInt, unsafe_to_pointer(expected_RT))),
                     ),
                 )
                 push!(
@@ -3181,7 +3186,7 @@ function lower_convention(
                     ),
                 )
                 ty = emit_jltypeof!(builder, res)
-                cmp = icmp!(builder, LLVM.API.LLVMIntEQ, ty, unsafe_to_llvm(builder, eltype(RetActivity)))
+                cmp = icmp!(builder, LLVM.API.LLVMIntEQ, ty, unsafe_to_llvm(builder, expected_RT))
                 cmpret = BasicBlock(wrapper_f, "ret")
                 failure = BasicBlock(wrapper_f, "fail")
                 br!(builder, cmp, cmpret, failure)
@@ -3194,7 +3199,7 @@ function lower_convention(
 
                 position!(builder, failure)
 
-                emit_error(builder, nothing, "Expected return type of primal to be "*string(eltype(RetActivity))*" but did not find a value of that type")
+                emit_error(builder, nothing, "Expected return type of primal to be "*string(expected_RT)*" but did not find a value of that type")
                 unreachable!(builder)
             else
                 push!(
@@ -3428,7 +3433,7 @@ function lower_convention(
         end
         throw(LLVM.LLVMException(msg))
     end
-    return wrapper_f, returnRoots, boxedArgs, loweredArgs, loweredReturn ? eltype(RetActivity) : actualRetType
+    return wrapper_f, returnRoots, boxedArgs, loweredArgs, loweredReturn ? expected_RT : actualRetType
 end
 
 using Random
