@@ -2723,6 +2723,7 @@ function lower_convention(
             expected_RT = Float64
         end
         RT = convert(LLVMType, expected_RT)
+        actualRetType = expected_RT
     end
 
     # TODO removed implications
