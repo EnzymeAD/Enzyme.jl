@@ -348,7 +348,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     args::Vararg{Annotation,Nargs},
 ) where {
     FA<:Annotation,
-    A<:Annotation,
+    A0<:Annotation,
     ReturnPrimal,
     RuntimeActivity,
     RABI<:ABI,
