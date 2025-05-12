@@ -2723,7 +2723,6 @@ function lower_convention(
             expected_RT = Float64
         end
         RT = convert(LLVMType, expected_RT)
-        actualRetType = expected_RT
     end
 
     # TODO removed implications
@@ -3434,7 +3433,7 @@ function lower_convention(
         end
         throw(LLVM.LLVMException(msg))
     end
-    return wrapper_f, returnRoots, boxedArgs, loweredArgs, loweredReturn ? eltype(RetActivity) : actualRetType
+    return wrapper_f, returnRoots, boxedArgs, loweredArgs, loweredReturn ? expected_RT : actualRetType
 end
 
 using Random
