@@ -344,7 +344,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
 @inline function autodiff(
     mode::ReverseMode{ReturnPrimal,RuntimeActivity,RABI,Holomorphic,ErrIfFuncWritten},
     f::FA,
-    ::Type{A},
+    ::Type{A0},
     args::Vararg{Annotation,Nargs},
 ) where {
     FA<:Annotation,
@@ -369,15 +369,14 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
 
     FTy = Core.Typeof(f.val)
 
-    rt = if A isa UnionAll
+    rt, A = if A0 isa UnionAll
         rt0 = Compiler.primal_return_type(Reverse, FTy, tt)
-        A = A{rt0}
-        rt0
+        rt0, A0{rt0}
     else
-        eltype(A)
+        eltype(A0), A0
     end
 
-    if A <: Active
+    if A0 <: Active
         if (!allocatedinline(rt) || rt isa Union) && rt != Union{}
             forward, adjoint = autodiff_thunk(
                 ReverseModeSplit{
@@ -403,11 +402,11 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
                 return adjoint(f, args..., tape)
             end
         end
-    elseif A <: Duplicated ||
-           A <: DuplicatedNoNeed ||
-           A <: BatchDuplicated ||
-           A <: BatchDuplicatedNoNeed ||
-           A <: BatchDuplicatedFunc
+    elseif A0 <: Duplicated ||
+           A0 <: DuplicatedNoNeed ||
+           A0 <: BatchDuplicated ||
+           A0 <: BatchDuplicatedNoNeed ||
+           A0 <: BatchDuplicatedFunc
         throw(ErrorException("Duplicated Returns not yet handled"))
     end
 
@@ -417,7 +416,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
         Val(0)
     end
 
-    if (A <: Active && rt <: Complex) && rt != Union{}
+    if (A0 <: Active && rt <: Complex) && rt != Union{}
         if Holomorphic
             seen = IdDict()
             seen2 = IdDict()
@@ -499,7 +498,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
         Val(RuntimeActivity),
     ) #=ShadowInit=#
 
-    if A <: Active
+    if A0 <: Active
         args = (args..., Compiler.default_adjoint(rt))
     end
     thunk(f, args...)
