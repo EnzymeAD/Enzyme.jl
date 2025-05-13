@@ -1327,9 +1327,6 @@ struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
     mode::API.CDerivativeMode
 end
 
-# Avoid blow-up of higer-order AD
-GPUCompiler.can_safepoint(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) = false
-
 DefaultCompilerTarget(; kwargs...) =
     GPUCompiler.NativeCompilerTarget(; jlruntime = true, kwargs...)
 
@@ -1608,7 +1605,16 @@ function enzyme!(
         push!(uncacheable_args, modifiedBetween[i])
         push!(args_known_values, API.IntList())
     end
-    @assert length(uncacheable_args) == length(collect(parameters(primalf)))
+    if length(uncacheable_args) != length(collect(parameters(primalf)))
+                msg = sprint() do io
+		    println(io, "length(uncacheable_args) != length(collect(parameters(primalf)))", TT)
+		    println(io, "TT=", TT)
+                    println(io, "modifiedBetween=", modifiedBetween)
+		    println(io, "uncacheable_args=", uncacheable_args)
+		    println(io, "primal", string(primalf))
+                end
+                throw(AssertionError(msg))
+    end
     @assert length(args_typeInfo) == length(collect(parameters(primalf)))
 
     # The return of createprimal and gradient has this ABI
@@ -2708,10 +2714,15 @@ function lower_convention(
     returnRoots = returnRoots !== nothing
 
     loweredReturn = RetActivity <: Active && (actualRetType === Any)
+    expected_RT = Nothing
     if loweredReturn
         @assert !sret
         @assert !returnRoots
-        RT = convert(LLVMType, eltype(RetActivity))
+        expected_RT = eltype(RetActivity)
+        if expected_RT === Any
+            expected_RT = Float64
+        end
+        RT = convert(LLVMType, expected_RT)
     end
 
     # TODO removed implications
@@ -3164,7 +3175,7 @@ function lower_convention(
                     return_attributes(wrapper_f),
                     StringAttribute(
                         "enzymejl_parmtype",
-                        string(convert(UInt, unsafe_to_pointer(eltype(RetActivity)))),
+                        string(convert(UInt, unsafe_to_pointer(expected_RT))),
                     ),
                 )
                 push!(
@@ -3175,7 +3186,7 @@ function lower_convention(
                     ),
                 )
                 ty = emit_jltypeof!(builder, res)
-                cmp = icmp!(builder, LLVM.API.LLVMIntEQ, ty, unsafe_to_llvm(builder, eltype(RetActivity)))
+                cmp = icmp!(builder, LLVM.API.LLVMIntEQ, ty, unsafe_to_llvm(builder, expected_RT))
                 cmpret = BasicBlock(wrapper_f, "ret")
                 failure = BasicBlock(wrapper_f, "fail")
                 br!(builder, cmp, cmpret, failure)
@@ -3188,7 +3199,7 @@ function lower_convention(
 
                 position!(builder, failure)
 
-                emit_error(builder, nothing, "Expected return type of primal to be "*string(eltype(RetActivity))*" but did not find a value of that type")
+                emit_error(builder, nothing, "Expected return type of primal to be "*string(expected_RT)*" but did not find a value of that type")
                 unreachable!(builder)
             else
                 push!(
@@ -3422,7 +3433,7 @@ function lower_convention(
         end
         throw(LLVM.LLVMException(msg))
     end
-    return wrapper_f, returnRoots, boxedArgs, loweredArgs, loweredReturn ? eltype(RetActivity) : actualRetType
+    return wrapper_f, returnRoots, boxedArgs, loweredArgs, loweredReturn ? expected_RT : actualRetType
 end
 
 using Random
@@ -5077,19 +5088,23 @@ end
                 end
             elseif !(FA <: Const)
                 argexpr = :(fn.dval)
-                if isboxed
-                    push!(types, Any)
-                elseif width == 1
+                F_ABI = F
+                if width == 1
                     if (FA <: MixedDuplicated)
-                        push!(types, Base.RefValue{F})
+                        push!(types, Any)
                     else
-                        push!(types, F)
+                        push!(types, F_ABI)
                     end
                 else
-                    if (FA <: BatchMixedDuplicated)
-                        push!(types, NTuple{width,Base.RefValue{F}})
+                    if F_ABI <: BatchMixedDuplicated
+                        F_ABI = Base.RefValue{F_ABI}
+                    end
+                    F_ABI = NTuple{width, F_ABI}
+                    isboxedvec = GPUCompiler.deserves_argbox(F_ABI)
+                    if isboxedvec
+                        push!(types, Any)
                     else
-                        push!(types, NTuple{width,F})
+                        push!(types, F_ABI)
                     end
                 end
                 push!(ccexprs, argexpr)

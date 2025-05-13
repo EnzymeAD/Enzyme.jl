@@ -244,7 +244,7 @@ end
     refed = false
 
     # TODO: Clean this up and add to `nested_codegen!` asa feature
-    width = get_width(gutils)
+    width = Int(get_width(gutils))
 
     ops = collect(operands(orig))[1:end-1]
     dupClosure =
@@ -252,11 +252,14 @@ end
     pdupClosure = dupClosure
 
     subfunc = nothing
+
+    dFT = (dupClosure ? (width == 1 ? Duplicated : (BatchDuplicated{T, Int(width)} where T)) : Const){funcT}
+
     if mode == API.DEM_ForwardMode
         if fwdmodenm === nothing
             etarget = Compiler.EnzymeTarget()
             eparams = Compiler.EnzymeCompilerParams(
-                Tuple{(dupClosure ? Duplicated : Const){funcT},e_tt.parameters...},
+                Tuple{dFT,e_tt.parameters...},
                 API.DEM_ForwardMode,
                 width,
                 Const{Nothing},
@@ -289,7 +292,7 @@ end
         end
         thunkTy = ForwardModeThunk{
             Ptr{Cvoid},
-            dupClosure ? Duplicated{funcT} : Const{funcT},
+            dFT,
             Const{Nothing},
             e_tt,
             width,
@@ -303,12 +306,13 @@ end
             has_active = ty == MixedState || ty == ActiveState
             if has_active
                 refed = true
-                e_tt = Tuple{Duplicated{Base.RefValue{funcT}},e_tt.parameters...}
+		e_tt = Tuple{width == 1 ? Duplicated{Base.RefValue{funcT}} : BatchDuplicated{Base.RefValue{funcT}, Int(width)},e_tt.parameters...}
                 funcT = Core.Typeof(referenceCaller)
                 dupClosure = false
                 modifiedBetween = (false, modifiedBetween...)
                 mi2 = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, funcT, Tuple{map(eltype, e_tt.parameters)...}, world)
                 @assert mi2 !== nothing
+    		dFT = (dupClosure ? (width == 1 ? Duplicated : (BatchDuplicated{T, Int(width)} where T)) : Const){funcT}
             end
         end
 
@@ -316,7 +320,7 @@ end
             etarget = Compiler.EnzymeTarget()
             # TODO modifiedBetween
             eparams = Compiler.EnzymeCompilerParams(
-                Tuple{(dupClosure ? Duplicated : Const){funcT},e_tt.parameters...},
+                Tuple{dFT,e_tt.parameters...},
                 API.DEM_ReverseModePrimal,
                 width,
                 Const{Nothing},
@@ -367,7 +371,7 @@ end
         if mode == API.DEM_ReverseModePrimal
             thunkTy = AugmentedForwardThunk{
                 Ptr{Cvoid},
-                dupClosure ? Duplicated{funcT} : Const{funcT},
+                dFT,
                 Const{Nothing},
                 e_tt,
                 width,
@@ -378,7 +382,7 @@ end
         else
             thunkTy = AdjointThunk{
                 Ptr{Cvoid},
-                dupClosure ? Duplicated{funcT} : Const{funcT},
+                dFT,
                 Const{Nothing},
                 e_tt,
                 width,
@@ -391,7 +395,7 @@ end
     end
 
     ppfuncT = pfuncT
-    dpfuncT = width == 1 ? pfuncT : NTuple{(Int)width,pfuncT}
+    dpfuncT = width == 1 ? pfuncT : NTuple{Int(width),pfuncT}
 
     if refed
         dpfuncT = Base.RefValue{dpfuncT}
@@ -479,8 +483,18 @@ end
                 spllty = LLVM.LLVMType(API.EnzymeGetShadowType(width, pllty))
                 pv = nothing
                 if value_type(dv) != spllty
-                    pv = dv
-                    dv = load!(B, spllty, dv)
+                    if width == 1
+                        pv = dv
+                        dv = load!(B, spllty, dv)
+                    else
+                        shadowres = UndefValue(spllty)
+                        for idx = 1:width
+                            arg = extract_value!(B, dv, idx - 1)
+                            arg = load!(B, pllty, arg)
+                            shadowres = insert_value!(B, shadowres, arg, idx - 1)
+                        end
+                        dv = shadowres
+                    end
                 end
             else
                 @assert false

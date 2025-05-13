@@ -597,3 +597,29 @@ end
 end
 
 include("usermixed.jl")
+
+mutable struct EmptyStruct end
+
+function (uf::EmptyStruct)(du, u, v)
+    @inbounds du[1] = @inbounds u[1]
+    return nothing
+end
+
+@testset "Batch Duplicated Fn" begin
+
+    a = EmptyStruct()
+    u0 = [1.0 0.5; 0.5 1.0]
+    du = similar(u0)
+
+    batched_result = ([0.0 0.0; 0.0 0.0], [0.0 0.0; 0.0 0.0])
+    batched_seed = ([1.0 0.0; 0.0 0.0], [2.0 0.0; 1.0 0.0])
+
+    f!_and_df! = BatchDuplicated(a, ntuple(_ -> Enzyme.make_zero(a), Val(length(batched_result))))
+    x_and_tx = BatchDuplicated(u0, batched_seed)
+    y_and_ty = BatchDuplicated(du, batched_result)
+
+    autodiff(Forward, f!_and_df!, Const, y_and_ty, x_and_tx, f!_and_df!)
+
+    @test batched_result[1][1] ≈ 1.0
+    @test batched_result[2][1] ≈ 2.0
+end
