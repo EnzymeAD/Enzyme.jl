@@ -623,3 +623,19 @@ end
     @test batched_result[1][1] ≈ 1.0
     @test batched_result[2][1] ≈ 2.0
 end
+
+function f_wb!(c)
+    @inbounds c.a[1] = @inbounds c.b[1] .+ 1
+    return nothing
+end
+
+@testset "Batched Writebarrier" begin
+    c = (; a=[ones(4)], b=[3.1*ones(4)])
+    f!(c)
+
+    dc = ntuple(_ -> make_zero(c), Val(2))
+
+    autodiff(
+        Forward, f_wb!, BatchDuplicated(c, dc)
+    )
+end
