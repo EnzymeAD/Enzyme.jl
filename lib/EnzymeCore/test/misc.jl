@@ -23,5 +23,8 @@ d = @view data[2:end]
 y = @view data[3:end]
 @test_skip @test_throws AssertionError Duplicated(d, y)
 
+dup = Duplicated(data)
+@test dup isa Duplicated
+
 @test_throws ErrorException Active(data)
 @test_skip @test_throws ErrorException Active(d)
