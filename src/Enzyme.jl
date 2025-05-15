@@ -464,12 +464,8 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
             # compute the correct complex derivative in reverse mode by propagating the conjugate return values
             # then subtracting twice the imaginary component to get the correct result
 
-            for (k, v) in seen
-                Compiler.recursive_accumulate(k, v, refn_seed)
-            end
-            for (k, v) in seen2
-                Compiler.recursive_accumulate(k, v, imfn_seed)
-            end
+            Compiler.accumulate_seen!(refn_seed, seen)
+            Compiler.accumulate_seen!(imfn_seed, seen2)
 
             fused = fuse_complex_results(results, args...)
 

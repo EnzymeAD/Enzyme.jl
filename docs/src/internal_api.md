@@ -7,7 +7,7 @@
     without deprecation.
 
 ```@autodocs
-Modules = [Enzyme.Compiler]
+Modules = [Enzyme.Compiler, Enzyme.Compiler.RecursiveMaps]
 Order = [:module, :type, :constant, :macro, :function]
 Filter = t -> !(t === Enzyme.Compiler.CheckNan)
 ```
