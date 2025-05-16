@@ -199,7 +199,48 @@ function emit_jl_throw!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM
     T_prjlvalue = LLVM.PointerType(T_jlvalue, 12)
     FT = LLVM.FunctionType(T_void, [T_prjlvalue])
     fn, _ = get_function!(mod, "jl_throw", FT)
-    call!(B, FT, fn, LLVM.Value[val])
+    cb = call!(B, FT, fn, LLVM.Value[val])
+    LLVM.API.LLVMAddCallSiteAttribute(
+		cb,
+		reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
+		EnumAttribute("noreturn"),
+	    )
+    return cb
+end
+
+function emit_conditional_throw!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospecialize(cond::LLVM.Value))::LLVM.Value
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+    T_void = LLVM.VoidType()
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10)
+    FT = LLVM.FunctionType(T_void, [T_prjlvalue, LLVM.IntType(1)])
+
+    name = "jl_conditional_throw"
+    if haskey(functions(mod), name)
+        fn = functions(mod)[name]
+    else
+        fn = LLVM.Function(mod, "jl_conditional_throw", FT)
+    	linkage!(fn, LLVM.API.LLVMInternalLinkage)
+        err, rcond = LLVM.parameters(fn)
+	 builder = LLVM.IRBuilder()
+         entry = BasicBlock(fn, "entry")
+         errb = BasicBlock(fn, "err")
+         exitb = BasicBlock(fn, "errb")
+         position!(builder, entry)
+	 br!(builder, rcond, errb, exitb)
+         position!(builder, errb)
+	 err = addrspacecast!(builder, err, LLVM.PointerType(T_jlvalue, 12))
+	 thrown = emit_jl_throw!(builder, err)
+	 unreachable!(builder)
+	 position!(builder, exitb)
+	 ret!(builder)
+
+        push!(LLVM.function_attributes(fn), LLVM.EnumAttribute("alwaysinline", 0))
+    end
+
+    call!(B, FT, fn, LLVM.Value[val, cond])
 end
 
 function emit_box_int32!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM.Value
@@ -1004,7 +1045,7 @@ function allocate_sret!(gutils::API.EnzymeGradientUtilsRef, @nospecialize(N::LLV
     allocate_sret!(B, N)
 end
 
-function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.Instruction}), string::Union{String, LLVM.Value}, @nospecialize(errty::Type) = EnzymeRuntimeException)
+function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.Instruction}), string::Union{String, LLVM.Value}, @nospecialize(errty::Type) = EnzymeRuntimeException, @nospecialize(cond::Union{Nothing, LLVM.Value}) = nothing)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -1061,24 +1102,30 @@ function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.I
         err = emit_allocobj!(B, errty)
         err2 = bitcast!(B, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
         store!(B, string, err2)
-        emit_jl_throw!(
-            B,
-            addrspacecast!(B, err, LLVM.PointerType(LLVM.StructType(LLVMType[]), 12)),
-        )
+	if cond !== nothing
+        	emit_conditional_throw!(B, err, cond)
+	else
+		emit_jl_throw!(
+		    B,
+		    addrspacecast!(B, err, LLVM.PointerType(LLVM.StructType(LLVMType[]), 12)),
+		)
+	end
     end
 
     # 2. Call error function and insert unreachable
-    LLVM.API.LLVMAddCallSiteAttribute(
-        ct,
-        reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
-        EnumAttribute("noreturn"),
-    )
-    if EnzymeMutabilityException != errty
-        LLVM.API.LLVMAddCallSiteAttribute(
-            ct,
-            reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
-            StringAttribute("enzyme_error"),
-        )
+    if cond === nothing
+	    LLVM.API.LLVMAddCallSiteAttribute(
+		ct,
+		reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
+		EnumAttribute("noreturn"),
+	    )
+	    if EnzymeMutabilityException != errty
+		LLVM.API.LLVMAddCallSiteAttribute(
+		    ct,
+		    reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
+		    StringAttribute("enzyme_error"),
+		)
+	    end
     end
     return ct
 end
