@@ -310,12 +310,15 @@ function julia_error(
                     println(io)
                 end
             end
-	    if data2 != C_NULL
-		data2 = LLVM.Value(data2)
-                emit_error(B, nothing, msg2, EnzymeNoDerivativeError, data2)
-	    else
-		emit_error(B, nothing, msg2, EnzymeNoDerivativeError)
-	    end
+    	    if data2 != C_NULL
+        		data2 = LLVM.Value(data2)
+                if value_type(data2) != LLVM.IntType(1)
+                    data2 = nothing
+                end
+            else
+                data2 = nothing
+            end
+            emit_error(B, nothing, msg2, EnzymeNoDerivativeError, data2)
             return C_NULL
         end
         throw(NoDerivativeException(msg, ir, bt))
