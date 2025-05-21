@@ -837,7 +837,7 @@ function Base.showerror(io::IO, ece::EnzymeNonScalarReturnException)
         Base.Experimental.show_error_hints(io, ece)
     end
     println(io, "Return type of differentiated function was not a scalar as required, found ", ece.object)
-    println(io, "If calling Enzyme.autodiff(Reverse, f, Active, ...), Enzyme.autodiff_thunk(Reverse, f, Duplicated, ....)")
+    println(io, "If calling Enzyme.autodiff(Reverse, f, Active, ...), try Enzyme.autodiff_thunk(Reverse, f, Duplicated, ....)")
     println(io, "If calling Enzyme.gradient, try Enzyme.jacobian")
     if length(ece.extra) != 0
         print(io, ece.extra)
