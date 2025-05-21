@@ -124,10 +124,7 @@ function body_construct_rev(
                     if $shad isa Base.RefValue
                         $shad[] = recursive_add($shad[], $expr, identity, guaranteed_nonactive)
                     else
-                        error(
-                            "Enzyme Mutability Error: Cannot add one in place to immutable value " *
-                            string($shad),
-                        )
+                        throw(EnzymeNonScalarReturnException($shad, ""))
                     end
                 end
             )

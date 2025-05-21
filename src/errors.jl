@@ -826,3 +826,20 @@ end
     end
     throw(AssertionError("Unknown errtype"))
 end
+
+struct EnzymeNonScalarReturnException <: EnzymeError
+    object
+    extra::String
+end
+
+function Base.showerror(io::IO, ece::EnzymeNonScalarReturnException)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
+    println(io, "Return type of differentiated function was not a scalar as required, found ", ece.object)
+    println(io, "If calling Enzyme.autodiff(Reverse, f, Active, ...), Enzyme.autodiff_thunk(Reverse, f, Duplicated, ....)")
+    println(io, "If calling Enzyme.gradient, try Enzyme.jacobian")
+    if length(ece.extra) != 0
+        print(io, ece.extra)
+    end
+end

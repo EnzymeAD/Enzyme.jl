@@ -2968,6 +2968,7 @@ end
 end
 
 include("sugar.jl")
+include("errors.jl")
 
 @testset "Forward on Reverse" begin
 
