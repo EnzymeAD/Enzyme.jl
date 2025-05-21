@@ -159,5 +159,5 @@ end;
 end;
 
 @testset "Mixed struct output" begin
-    validate_seeded_autodiff(f5, dz6, dzs6)  # TODO: debug this
+    validate_seeded_autodiff(f6, dz6, dzs6)  # TODO: debug this
 end;
