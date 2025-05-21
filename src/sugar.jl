@@ -1161,6 +1161,28 @@ grad
 end
 
 """
+    batchify_activity(::Type{A}, ::Val{B})
+
+Turn an activity (or [`Annotation`](@ref)) type `A` into the correct activity type for a batch of size `B`.
+
+# Examples
+
+```jldoctest
+julia> using Enzyme
+
+julia> Enzyme.batchify_activity(Active{Float64}, Val(2))
+Active{Float64}
+
+julia> Enzyme.batchify_activity(Duplicated{Vector{Float64}}, Val(2))
+BatchDuplicated{Vector{Float64}, 2}
+```
+"""
+batchify_activity(::Type{Active{T}}, ::Val{B}) where {T,B} = Active{T}
+batchify_activity(::Type{Duplicated{T}}, ::Val{B}) where {T,B} = BatchDuplicated{T,B}
+batchify_activity(::Type{DuplicatedNoNeed{T}}, ::Val{B}) where {T,B} = BatchDuplicatedNoNeed{T,B}
+batchify_activity(::Type{MixedDuplicated{T}}, ::Val{B}) where {T,B} = BatchMixedDuplicated{T,B}
+
+"""
     autodiff(
         rmode::Union{ReverseMode,ReverseModeSplit},
         f::Annotation,

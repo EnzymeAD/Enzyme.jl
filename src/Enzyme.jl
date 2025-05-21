@@ -40,7 +40,6 @@ import EnzymeCore:
     DuplicatedNoNeed,
     BatchDuplicated,
     BatchDuplicatedNoNeed,
-    batchify_activity,
     Seed,
     BatchSeed,
     ABI,

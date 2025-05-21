@@ -2969,6 +2969,10 @@ end
 
 include("sugar.jl")
 
+@testset "Seeded autodiff" begin
+    include("seeded.jl")
+end
+
 @testset "Forward on Reverse" begin
 
 	function speelpenning(y, x)
