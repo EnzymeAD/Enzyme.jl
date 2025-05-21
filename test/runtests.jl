@@ -75,7 +75,7 @@ include("abi.jl")
 include("typetree.jl")
 include("passes.jl")
 include("optimize.jl")
-include("make_zero.jl")
+include("recursive_maps.jl")
 
 include("rules.jl")
 include("rrules.jl")
@@ -440,6 +440,25 @@ make3() = (1.0, 2.0, 3.0)
     da = [2.7]
     @test autodiff(Forward, sumdeepcopy, Duplicated(a, da))[1] ≈ 2.7
 
+    # Nested containers to test nontrivial recursion in deepcopy reverse rule
+    b = [[3.14]]
+    db = [[0.0]]
+    sumdeepcopy_nested(x) = sum(sum, deepcopy(x))
+    autodiff(Reverse, sumdeepcopy_nested, Duplicated(b, db))
+    @test db[1][1] ≈ 1.0
+
+    c_inner = [3.14]
+    dc_inner = [0.0]
+    c = [c_inner, c_inner]
+    dc = [dc_inner, dc_inner]
+    autodiff(Reverse, sumdeepcopy_nested, Duplicated(c, dc))
+    @test dc[1] === dc[2]
+    @test dc[1][1] ≈ 2.0
+
+    d = [(3.14,)]
+    dd = [(0.0,)]
+    autodiff(Reverse, sumdeepcopy_nested, Duplicated(d, dd))
+    @test dd[1][1] ≈ 1.0
 end
 
 @testset "Deferred and deferred thunk" begin
@@ -533,94 +552,70 @@ end
     @test_throws MethodError autodiff(ReverseHolomorphic, mul3, Active, Active(z))
     @test_throws MethodError autodiff(ReverseHolomorphic, mul3, Active{Complex}, Active(z))
 
-    vals = Complex{Float64}[3.4 + 2.7im]
-    dvals = Complex{Float64}[0.0]
-    autodiff(ReverseHolomorphic, sum, Active, Duplicated(vals, dvals))
-    @test vals[1] ≈ 3.4 + 2.7im
-    @test dvals[1] ≈ 1.0
+    function reverse_holomorphic_array_tests(
+            f, val, dval_expected; val_expected = val, ret = Active, mapf = true
+        )
+        vals = ComplexF64[val]
+        dvals = ComplexF64[zero(val)]
+        autodiff(ReverseHolomorphic, f, ret, Duplicated(vals, dvals))
+        @test vals[1] ≈ val_expected
+        @test dvals[1] ≈ dval_expected
+
+        # Use tuple to test out-of-place accumulate_seen! base case
+        tvals = [(ComplexF64(val),)]
+        dtvals = [(ComplexF64(zero(val)),)]
+        ft = mapf ? v -> first(map(f, v)) : f
+        autodiff(ReverseHolomorphic, ft, ret, Duplicated(tvals, dtvals))
+        @test tvals[1][1] ≈ val_expected
+        @test dtvals[1][1] ≈ dval_expected
+    end
+
+    @testset "sum" reverse_holomorphic_array_tests(sum, 3.4 + 2.7im, 1.0)
 
     sumsq(x) = sum(x .* x)
-
-    vals = Complex{Float64}[3.4 + 2.7im]
-    dvals = Complex{Float64}[0.0]
-    autodiff(ReverseHolomorphic, sumsq, Active, Duplicated(vals, dvals))
-    @test vals[1] ≈ 3.4 + 2.7im
-    @test dvals[1] ≈ 2 * (3.4 + 2.7im)
+    @testset "sumsq" reverse_holomorphic_array_tests(sumsq, 3.4 + 2.7im, 2(3.4 + 2.7im))
 
     sumsq2(x) = sum(abs2.(x))
-    vals = Complex{Float64}[3.4 + 2.7im]
-    dvals = Complex{Float64}[0.0]
-    autodiff(ReverseHolomorphic, sumsq2, Active, Duplicated(vals, dvals))
-    @test vals[1] ≈ 3.4 + 2.7im
-    @test dvals[1] ≈ 2 * (3.4 + 2.7im)
+    @testset "sumsq2" reverse_holomorphic_array_tests(sumsq2, 3.4 + 2.7im, 2(3.4 + 2.7im))
 
     sumsq2C(x) = Complex{Float64}(sum(abs2.(x)))
-    vals = Complex{Float64}[3.4 + 2.7im]
-    dvals = Complex{Float64}[0.0]
-    autodiff(ReverseHolomorphic, sumsq2C, Active, Duplicated(vals, dvals))
-    @test vals[1] ≈ 3.4 + 2.7im
-    @test dvals[1] ≈ 3.4 - 2.7im
+    @testset "sumsq2C" reverse_holomorphic_array_tests(sumsq2C, 3.4 + 2.7im, 3.4 - 2.7im)
 
-    sumsq3(x) = sum(x .* conj(x))
-    vals = Complex{Float64}[3.4 + 2.7im]
-    dvals = Complex{Float64}[0.0]
-    autodiff(ReverseHolomorphic, sumsq3, Active, Duplicated(vals, dvals))
-    @test vals[1] ≈ 3.4 + 2.7im
-    @test dvals[1] ≈ 3.4 - 2.7im
+    sumsq3(x) = sum(x .* conj.(x))
+    @testset "sumsq3" reverse_holomorphic_array_tests(sumsq3, 3.4 + 2.7im, 3.4 - 2.7im)
 
-    sumsq3R(x) = Float64(sum(x .* conj(x)))
-    vals = Complex{Float64}[3.4 + 2.7im]
-    dvals = Complex{Float64}[0.0]
-    autodiff(ReverseHolomorphic, sumsq3R, Active, Duplicated(vals, dvals))
-    @test vals[1] ≈ 3.4 + 2.7im
-    @test dvals[1] ≈ 2 * (3.4 + 2.7im)
+    sumsq3R(x) = Float64(sum(x .* conj.(x)))
+    @testset "sumsq3R" reverse_holomorphic_array_tests(sumsq3R, 3.4 + 2.7im, 2(3.4 + 2.7im))
 
     function setinact(z)
-        z[1] *= 2
+        z[1] = 2 .* z[1]  # works for both [x] and [(x,)]
         nothing
     end
-
-    vals = Complex{Float64}[3.4 + 2.7im]
-    dvals = Complex{Float64}[0.0]
-    autodiff(ReverseHolomorphic, setinact, Const, Duplicated(vals, dvals))
-    @test vals[1] ≈ 2 * (3.4 + 2.7im)
-    @test dvals[1] ≈ 0.0
-
+    @testset "setinact" reverse_holomorphic_array_tests(
+        setinact, 3.4 + 2.7im, 0.0; val_expected = 2(3.4 + 2.7im), ret = Const, mapf = false
+    )
 
     function setinact2(z)
-        z[1] *= 2
+        z[1] = 2 .* z[1]  # works for both [x] and [(x,)]
         return 0.0+1.0im
     end
-
-    vals = Complex{Float64}[3.4 + 2.7im]
-    dvals = Complex{Float64}[0.0]
-    autodiff(ReverseHolomorphic, setinact2, Const, Duplicated(vals, dvals))
-    @test vals[1] ≈ 2 * (3.4 + 2.7im)
-    @test dvals[1] ≈ 0.0
-
-    vals = Complex{Float64}[3.4 + 2.7im]
-    dvals = Complex{Float64}[0.0]
-    autodiff(ReverseHolomorphic, setinact2, Active, Duplicated(vals, dvals))
-    @test vals[1] ≈ 2 * (3.4 + 2.7im)
-    @test dvals[1] ≈ 0.0
-
+    @testset "setinact2 Const" reverse_holomorphic_array_tests(
+        setinact2, 3.4 + 2.7im, 0.0; val_expected = 2(3.4 + 2.7im), ret = Const, mapf = false
+    )
+    @testset "setinact2 Active" reverse_holomorphic_array_tests(
+        setinact2, 3.4 + 2.7im, 0.0; val_expected = 2(3.4 + 2.7im), ret = Active, mapf = false
+    )
 
     function setact(z)
-        z[1] *= 2
-        return z[1]
+        z[1] = 2 .* z[1]  # works for both [x] and [(x,)]
+        return z[1][1]    # returns scalar for both [x] and [(x,)]
     end
-
-    vals = Complex{Float64}[3.4 + 2.7im]
-    dvals = Complex{Float64}[0.0]
-    autodiff(ReverseHolomorphic, setact, Const, Duplicated(vals, dvals))
-    @test vals[1] ≈ 2 * (3.4 + 2.7im)
-    @test dvals[1] ≈ 0.0
-
-    vals = Complex{Float64}[3.4 + 2.7im]
-    dvals = Complex{Float64}[0.0]
-    autodiff(ReverseHolomorphic, setact, Active, Duplicated(vals, dvals))
-    @test vals[1] ≈ 2 * (3.4 + 2.7im)
-    @test dvals[1] ≈ 2.0
+    @testset "setact Const" reverse_holomorphic_array_tests(
+        setact, 3.4 + 2.7im, 0.0; val_expected = 2(3.4 + 2.7im), ret = Const, mapf = false
+    )
+    @testset "setact Active" reverse_holomorphic_array_tests(
+        setact, 3.4 + 2.7im, 2.0; val_expected = 2(3.4 + 2.7im), ret = Active, mapf = false
+    )
 
     function upgrade(z)
         z = ComplexF64(z)

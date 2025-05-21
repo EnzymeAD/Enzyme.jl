@@ -253,47 +253,6 @@ function EnzymeRules.augmented_primal(
     return EnzymeRules.AugmentedReturn(primal, shadow, shadow)
 end
 
-
-@inline function accumulate_into(
-    into::RT,
-    seen::IdDict,
-    from::RT,
-)::Tuple{RT,RT} where {RT<:Array}
-    if Enzyme.Compiler.guaranteed_const(RT)
-        return (into, from)
-    end
-    if !haskey(seen, into)
-        seen[into] = (into, from)
-        for i in eachindex(from)
-            tup = accumulate_into(into[i], seen, from[i])
-            @inbounds into[i] = tup[1]
-            @inbounds from[i] = tup[2]
-        end
-    end
-    return seen[into]
-end
-
-@inline function accumulate_into(
-    into::RT,
-    seen::IdDict,
-    from::RT,
-)::Tuple{RT,RT} where {RT<:AbstractFloat}
-    if !haskey(seen, into)
-        seen[into] = (into + from, RT(0))
-    end
-    return seen[into]
-end
-
-@inline function accumulate_into(into::RT, seen::IdDict, from::RT)::Tuple{RT,RT} where {RT}
-    if Enzyme.Compiler.guaranteed_const(RT)
-        return (into, from)
-    end
-    if !haskey(seen, into)
-        throw(AssertionError("Unknown type to accumulate into: $RT"))
-    end
-    return seen[into]
-end
-
 function EnzymeRules.reverse(
     config::EnzymeRules.RevConfig,
     func::Const{typeof(Base.deepcopy)},
@@ -302,15 +261,8 @@ function EnzymeRules.reverse(
     x::Annotation{Ty},
 ) where {RT,Ty}
     if EnzymeRules.needs_shadow(config)
-        if EnzymeRules.width(config) == 1
-            accumulate_into(x.dval, IdDict(), shadow)
-        else
-            for i = 1:EnzymeRules.width(config)
-                accumulate_into(x.dval[i], IdDict(), shadow[i])
-            end
-        end
+        Compiler.accumulate_into!(x.dval, shadow)
     end
-
     return (nothing,)
 end
 
