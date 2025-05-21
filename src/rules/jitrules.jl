@@ -606,10 +606,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
                 elseif $shad isa Base.RefValue
                     $shad[] = recursive_add($shad[], $expr)
                 else
-                    error(
-                        "Enzyme Mutability Error: Cannot add one in place to immutable value " *
-                        string($shad) *
-                        " tup[i]=" *
+                    throw(EnzymeNonScalarReturnException($shad, " tup[i]=" *
                         string(tup[$i]) *
                         " i=" *
                         string($i) *
@@ -617,7 +614,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
                         string($w) *
                         " tup=" *
                         string(tup),
-                    )
+                    ))
                 end
             end
             @inbounds outs[(i-1)*Width+w] = out

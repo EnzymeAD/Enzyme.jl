@@ -4986,10 +4986,7 @@ function add_one_in_place(x)
     elseif x isa (Array{T,0} where T)
         x[] = recursive_add(x[], default_adjoint(eltype(Core.Typeof(x))))
     else
-        error(
-            "Enzyme Mutability Error: Cannot add one in place to immutable value " *
-            string(x),
-        )
+        throw(EnzymeNonScalarReturnException(x, ""))
     end
     return nothing
 end
