@@ -3771,6 +3771,15 @@ end
     @test res[2][6] ≈ 6.0
 end
 
+@testset "jl_typeof" begin
+    # https://github.com/EnzymeAD/Enzyme.jl/issues/2405
+    function foo(x)
+        @ccall jl_typeof(Ref(x)::Ref{Float64})::Nothing
+        x + 1
+    end
+    @test autodiff(Reverse, foo, Active(1.0))[1][1] == 1.0
+end
+
 # TEST EXTENSIONS 
 using SpecialFunctions
 @testset "SpecialFunctions ext" begin
@@ -3792,3 +3801,4 @@ end
 include("ext/jlarrays.jl")
 include("ext/sparsearrays.jl")
 include("ext/staticarrays.jl")
+
