@@ -4232,6 +4232,20 @@ end
 
         wrapper_f = LLVM.Function(mod, safe_name(LLVM.name(llvmfn) * "mustwrap"), FT)
 
+        for idx in 1:length(collect(parameters(llvmfn)))
+            for attr in collect(parameter_attributes(llvmfn, idx))
+                push!(parameter_attributes(wrapper_f, idx), attr)
+            end
+        end
+
+        for attr in collect(function_attributes(llvmfn))
+            push!(function_attributes(wrapper_f), attr)
+        end
+
+        for attr in collect(return_attributes(llvmfn))
+            push!(return_attributes(wrapper_f), attr)
+        end
+
         let builder = IRBuilder()
             entry = BasicBlock(wrapper_f, "entry")
             position!(builder, entry)
@@ -4248,7 +4262,7 @@ end
             else
                 EnumAttribute("sret")
             end)
-            for idx in length(collect(parameters(llvmfn)))
+            for idx in 1:length(collect(parameters(llvmfn)))
                 for attr in collect(parameter_attributes(llvmfn, idx))
                     if kind(attr) == sretkind
                         LLVM.API.LLVMAddCallSiteAttribute(
