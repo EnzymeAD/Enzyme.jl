@@ -1,4 +1,5 @@
 const nofreefns = Set{String}((
+    "jl_typeof",
     "julia.gc_loaded",
     "jl_egal__unboxed", "ijl_egal__unboxed",
     "jl_restore_excstack",
@@ -158,6 +159,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "jl_typeof",
     "jl_egal__unboxed", "ijl_egal__unboxed",
     "ClientGetDevice",
     "BufferOnCPU",
