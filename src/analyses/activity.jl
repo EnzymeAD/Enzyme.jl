@@ -192,7 +192,7 @@ end
         return ActiveState
     end
 
-    if is_wrapped_number(T)
+    if EnzymeCore.is_wrapped_number(T)
         return active_reg_inner(
             unwrapped_number_type(T),
             seen,
