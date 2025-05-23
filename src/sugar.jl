@@ -1206,13 +1206,9 @@ function autodiff(
     tape, result, shadow_result = forward(f, args...)
     if RA <: Active
         dinputs = only(reverse(f, args..., dresult.dval, tape))
-    elseif RA <: Duplicated
+    else
         Compiler.recursive_accumulate(shadow_result, dresult.dval)
         dinputs = only(reverse(f, args..., tape))
-    else  # MixedDuplicated
-        @show RA
-        dinputs = nothing
-        error("not implemented")
     end
     if ReturnPrimal
         return (dinputs, result)
@@ -1245,15 +1241,11 @@ function autodiff(
     tape, result, shadow_results = forward(f, args...)
     if RA <: Active
         dinputs = only(reverse(f, args..., dresults.dvals, tape))
-    elseif RA <: BatchDuplicated
+    else
         foreach(shadow_results, dresults.dvals) do d0, d
             Compiler.recursive_accumulate(d0, d)
         end
         dinputs = only(reverse(f, args..., tape))
-    else  # MixedDuplicated
-        @show RA
-        dinputs = nothing
-        error("not implemented")
     end
     if ReturnPrimal
         return (dinputs, result)
