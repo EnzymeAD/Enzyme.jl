@@ -1,4 +1,5 @@
 const nofreefns = Set{String}((
+    "BufferToClient",
     "jl_typeof",
     "julia.gc_loaded",
     "jl_egal__unboxed", "ijl_egal__unboxed",
