@@ -73,14 +73,10 @@ end
     end
 end
 
-@inline numbereltype(::Type{<:EnzymeCore.RNumber{T}}) where {T} = T
-@inline ptreltype(::Type{<:EnzymeCore.RArray{T}}) where {T} = T
 @inline ptreltype(::Type{Ptr{T}}) where {T} = T
 @inline ptreltype(::Type{Core.LLVMPtr{T,N}}) where {T,N} = T
 @inline ptreltype(::Type{Core.LLVMPtr{T} where N}) where {T} = T
 @inline ptreltype(::Type{Base.RefValue{T}}) where {T} = T
-@inline ptreltype(::Type{Array{T,N}}) where {T,N} = T
-@inline ptreltype(::Type{Array{T,N} where N}) where {T} = T
 @inline ptreltype(::Type{Complex{T}}) where {T} = T
 @inline ptreltype(::Type{Tuple{Vararg{T}}}) where {T} = T
 @inline ptreltype(::Type{IdDict{K,V}}) where {K,V} = V
@@ -92,8 +88,6 @@ else
 end
 
 @inline is_arrayorvararg_ty(::Type) = false
-@inline is_arrayorvararg_ty(::Type{Array{T,N}}) where {T,N} = true
-@inline is_arrayorvararg_ty(::Type{Array{T,N} where N}) where {T} = true
 @inline is_arrayorvararg_ty(::Type{Tuple{Vararg{T2}}}) where {T2} = true
 @inline is_arrayorvararg_ty(::Type{Ptr{T}}) where {T} = true
 @inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{T,N}}) where {T,N} = true
@@ -159,6 +153,48 @@ end
 @inline is_vararg_tup(x) = false
 @inline is_vararg_tup(::Type{Tuple{Vararg{T2}}}) where {T2} = true
 
+Base.@nospecializeinfer @inline function is_mutable_array(@nospecialize(T::Type))
+    if T <: Array
+        return true
+    end
+    while T isa UnionAll
+        T = T.body
+    end
+    if T isa DataType
+        if hasproperty(T, :name) && hasproperty(T.name, :module)
+            mod = T.name.module
+            if string(mod) == "Reactant" && (T.name.name == :ConcretePJRTArray || T.name.name == :ConcreteIFRTArray || T.name.name == :TracedRArray)
+                return true
+            end
+        end
+    end
+    return false
+end
+
+Base.@nospecializeinfer @inline function is_wrapped_number(@nospecialize(T::Type))
+    if T isa UnionAll
+        return is_wrapped_number(T.body)
+    end
+    while T isa UnionAll
+        T = T.body
+    end
+    if T isa DataType && hasproperty(T, :name) && hasproperty(T.name, :module)
+        mod = T.name.module
+        if string(mod) == "Reactant" && (T.name.name == :ConcretePJRTNumber || T.name.name == :ConcreteIFRTNumber || T.name.name == :TracedRNumber)
+            return true
+        end
+    end
+    return false
+end
+
+Base.@nospecializeinfer @inline function unwrapped_number_type(@nospecialize(T::Type))
+    while T isa UnionAll
+        T = T.body
+    end
+    return T.parameters[1]
+end
+
+
 @inline function active_reg_inner(
     ::Type{T},
     seen::ST,
@@ -198,9 +234,9 @@ end
         return ActiveState
     end
 
-    if T <: EnzymeCore.RNumber
+    if is_wrapped_number(T)
         return active_reg_inner(
-            numbereltype(T),
+            unwrapped_number_type(T),
             seen,
             world,
             Val(justActive),
@@ -209,11 +245,32 @@ end
         )
     end
 
+    if is_mutable_array(T)
+        if justActive
+            return AnyState
+        end
+
+        if active_reg_inner(
+            eltype(T),
+            seen,
+            world,
+            Val(justActive),
+            Val(UnionSret),
+            Val(AbstractIsMixed),
+        ) == AnyState
+            return AnyState
+        else
+            if AbstractIsMixed
+                return MixedState
+            else
+                return DupState
+            end
+        end
+    end
+
     if T <: Ptr ||
        T <: Core.LLVMPtr ||
-       T <: Base.RefValue ||
-       T <: Array || T <: EnzymeCore.RArray
-       is_arrayorvararg_ty(T)
+       T <: Base.RefValue || is_arrayorvararg_ty(T)
         if justActive
             return AnyState
         end
