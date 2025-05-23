@@ -210,7 +210,7 @@ end
         end
 
         if active_reg_inner(
-            EnzymeCore.mutable_eltype(T),
+            eltype(T),
             seen,
             world,
             Val(justActive),

@@ -701,14 +701,6 @@ Base.@nospecializeinfer @inline is_mutable_array(@nospecialize(T::Type)) = false
 Base.@nospecializeinfer @inline is_mutable_array(@nospecialize(T::Type{<:Array})) = true
 
 """
-    mutable_eltype(::Type)
-
-Returns the unwrapped eltype of the mutable array. Internal-only
-"""
-Base.@nospecializeinfer @inline mutable_eltype(@nospecialize(T)) = eltype(T)
-
-
-"""
     is_wrapped_number(::Type)
 
 Returns whether a given type is a wrapped number. Internal-only
