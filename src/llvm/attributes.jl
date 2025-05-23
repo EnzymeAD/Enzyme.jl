@@ -1,4 +1,5 @@
 const nofreefns = Set{String}((
+    "ClientNumAddressableDevices",
     "BufferToDevice",
     "BufferToClient",
     "jl_typeof",
@@ -161,6 +162,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "ClientNumAddressableDevices",
     "BufferToDevice",
     "BufferToClient",
     "jl_typeof",
