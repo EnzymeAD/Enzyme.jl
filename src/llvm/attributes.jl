@@ -160,6 +160,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "BufferToClient",
     "jl_typeof",
     "jl_egal__unboxed", "ijl_egal__unboxed",
     "ClientGetDevice",
