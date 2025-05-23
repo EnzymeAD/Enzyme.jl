@@ -168,12 +168,6 @@ Base.@nospecializeinfer @inline function is_mutable_array(@nospecialize(T::Type)
             end
         end
     end
-    if T isa DataType && hasproperty(T, :name) && hasproperty(T.name, :module)
-        mod = T.name.module
-        if string(mod) == "Reactant" && (T.name.name == :ConcretePJRTNumber || T.name.name == :ConcreteIFRTNumber || T.name.name == :TracedRNumber)
-            return true
-        end
-    end
     return false
 end
 
@@ -183,6 +177,12 @@ Base.@nospecializeinfer @inline function is_wrapped_number(@nospecialize(T::Type
     end
     while T isa UnionAll
         T = T.body
+    end
+    if T isa DataType && hasproperty(T, :name) && hasproperty(T.name, :module)
+        mod = T.name.module
+        if string(mod) == "Reactant" && (T.name.name == :ConcretePJRTNumber || T.name.name == :ConcreteIFRTNumber || T.name.name == :TracedRNumber)
+            return true
+        end
     end
     return false
 end
@@ -235,14 +235,26 @@ end
     end
 
     if is_wrapped_number(T)
-        return active_reg_inner(
+        if justActive
+            return AnyState
+        end
+
+        if active_reg_inner(
             unwrapped_number_type(T),
             seen,
             world,
             Val(justActive),
             Val(UnionSret),
             Val(AbstractIsMixed),
-        )
+        ) == AnyState
+            return AnyState
+        else
+            if AbstractIsMixed
+                return MixedState
+            else
+                return DupState
+            end
+        end
     end
 
     if is_mutable_array(T)
