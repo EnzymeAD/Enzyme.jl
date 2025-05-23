@@ -1,7 +1,7 @@
 name = "Enzyme"
 uuid = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 authors = ["William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu>"]
-version = "0.13.45"
+version = "0.13.46"
 
 [deps]
 CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"
