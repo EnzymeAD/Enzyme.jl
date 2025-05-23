@@ -73,7 +73,6 @@ end
     end
 end
 
-@inline numbereltype(::Type{<:EnzymeCore.RNumber{T}}) where {T} = T
 @inline ptreltype(::Type{Ptr{T}}) where {T} = T
 @inline ptreltype(::Type{Core.LLVMPtr{T,N}}) where {T,N} = T
 @inline ptreltype(::Type{Core.LLVMPtr{T} where N}) where {T} = T
