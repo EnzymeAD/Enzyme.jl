@@ -1,4 +1,5 @@
 const nofreefns = Set{String}((
+    "BufferToDevice",
     "BufferToClient",
     "jl_typeof",
     "julia.gc_loaded",
@@ -160,6 +161,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "BufferToDevice",
     "BufferToClient",
     "jl_typeof",
     "jl_egal__unboxed", "ijl_egal__unboxed",
