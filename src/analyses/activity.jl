@@ -74,7 +74,7 @@ end
 end
 
 @inline numbereltype(::Type{<:EnzymeCore.RNumber{T}}) where {T} = T
-@inline ptreltype(::Type{<:EnzymeCore.RArray{T}}) where {T} = T
+@inline ptreltype(::Type{<:AbstractArray{T}}) where {T} = T
 @inline ptreltype(::Type{Ptr{T}}) where {T} = T
 @inline ptreltype(::Type{Core.LLVMPtr{T,N}}) where {T,N} = T
 @inline ptreltype(::Type{Core.LLVMPtr{T} where N}) where {T} = T
@@ -212,13 +212,12 @@ end
     if T <: Ptr ||
        T <: Core.LLVMPtr ||
        T <: Base.RefValue ||
-       T <: Array || T <: EnzymeCore.RArray
-       is_arrayorvararg_ty(T)
+       EnzymeCore.is_mutable_array(T) || is_arrayorvararg_ty(T)
         if justActive
             return AnyState
         end
 
-        if is_arrayorvararg_ty(T) &&
+        if (EnzymeCore.is_mutable_array(T) || is_arrayorvararg_ty(T)) &&
            active_reg_inner(
             ptreltype(T),
             seen,
