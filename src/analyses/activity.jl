@@ -153,6 +153,35 @@ end
 @inline is_vararg_tup(x) = false
 @inline is_vararg_tup(::Type{Tuple{Vararg{T2}}}) where {T2} = true
 
+Base.@nospecializeinfer @inline function is_mutable_array(@nospecialize(T::Type))
+    if T <: Array
+        return true
+    end
+    if hasfield(T, :name) && hasfield(T, :module)
+        mod = T.name.module
+        if string(mod) == "Reactant" && (T.name.name == :ConcretePJRTArray || T.name.name == :ConcreteIFRTArray || T.name.name == :TracedRArray)
+            return true
+        end
+    end
+    return false
+end
+
+Base.@nospecializeinfer @inline function is_wrapped_number(@nospecialize(T::Type))
+
+    if hasfield(T, :name) && hasfield(T, :module)
+        mod = T.name.module
+        if string(mod) == "Reactant" && (T.name.name == :ConcretePJRTNumber || T.name.name == :ConcreteIFRTNumber || T.name.name == :TracedRNumber)
+            return true
+        end
+    end
+    return false
+end
+
+Base.@nospecializeinfer @inline function unwrapped_number_type(@nospecialize(T::Type))
+    return T.parameters[1]
+end
+
+
 @inline function active_reg_inner(
     ::Type{T},
     seen::ST,
@@ -192,7 +221,7 @@ end
         return ActiveState
     end
 
-    if EnzymeCore.is_wrapped_number(T)
+    if is_wrapped_number(T)
         return active_reg_inner(
             unwrapped_number_type(T),
             seen,
@@ -203,7 +232,7 @@ end
         )
     end
 
-    if EnzymeCore.is_mutable_array(T)
+    if is_mutable_array(T)
         if justActive
             return AnyState
         end
