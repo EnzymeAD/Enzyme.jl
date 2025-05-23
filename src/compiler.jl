@@ -4246,6 +4246,8 @@ end
             push!(return_attributes(wrapper_f), attr)
         end
 
+        mi, rt = enzyme_custom_extract_mi(primalf)
+
         let builder = IRBuilder()
             entry = BasicBlock(wrapper_f, "entry")
             position!(builder, entry)
@@ -4274,6 +4276,14 @@ end
                 end
             end
 
+            _, _, returnRoots = get_return_info(rt)
+            returnRoots = returnRoots !== nothing
+            if returnRoots
+                attr = StringAttribute("enzymejl_returnRoots", "")
+                push!(parameter_attributes(wrapper_f, 2), attr)
+                LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(2), attr)
+            end
+
             if LLVM.return_type(FT) == LLVM.VoidType()
                 ret!(builder)
             else
@@ -4284,7 +4294,6 @@ end
         end
         attributes = function_attributes(wrapper_f)
         push!(attributes, StringAttribute("enzymejl_world", string(job.world)))
-        mi, rt = enzyme_custom_extract_mi(primalf)
         push!(
             attributes,
             StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))),
