@@ -695,17 +695,32 @@ Combined(mode::ReverseMode) = mode
 """
     is_mutable_array(::Type)
 
-Returns whether a given type is a known mutable array
+Returns whether a given type is a known mutable array. Internal-only
 """
 Base.@nospecializeinfer @inline is_mutable_array(@nospecialize(T::Type)) = false
 Base.@nospecializeinfer @inline is_mutable_array(@nospecialize(T::Type{<:Array})) = true
 
 """
-    Abstract Reactant Number type. See Reactant.jl for more information
-"""
-abstract type RNumber{T<:ReactantPrimitive} <: Number end
-@inline Base.eltype(::RNumber{T}) where T = T
-@inline Base.eltype(::Type{<:RNumber{T}}) where T = T
+    mutable_eltype(::Type)
 
+Returns the unwrapped eltype of the mutable array. Internal-only
+"""
+Base.@nospecializeinfer @inline mutable_eltype(@nospecialize(T)) = eltype(T)
+
+
+"""
+    is_wrapped_number(::Type)
+
+Returns whether a given type is a wrapped number. Internal-only
+"""
+Base.@nospecializeinfer @inline is_wrapped_number(@nospecialize(T::Type)) = false
+
+
+"""
+    unwrapped_number_type(::Type)
+
+Returns the unwrapped type of a wrapped number. Internal-only
+"""
+function unwrapped_number_type end
 
 end # module EnzymeCore
