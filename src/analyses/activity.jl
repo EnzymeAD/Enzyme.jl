@@ -235,14 +235,26 @@ end
     end
 
     if is_wrapped_number(T)
-        return active_reg_inner(
+        if justActive
+            return AnyState
+        end
+
+        if active_reg_inner(
             unwrapped_number_type(T),
             seen,
             world,
             Val(justActive),
             Val(UnionSret),
             Val(AbstractIsMixed),
-        )
+        ) == AnyState
+            return AnyState
+        else
+            if AbstractIsMixed
+                return MixedState
+            else
+                return DupState
+            end
+        end
     end
 
     if is_mutable_array(T)
