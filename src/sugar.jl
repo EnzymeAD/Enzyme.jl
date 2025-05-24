@@ -1206,8 +1206,11 @@ function autodiff(
     tape, result, shadow_result = forward(f, args...)
     if RA <: Active
         dinputs = only(reverse(f, args..., dresult.dval, tape))
-    else
+    elseif RA <: Duplicated
         Compiler.recursive_accumulate(shadow_result, dresult.dval)
+        dinputs = only(reverse(f, args..., tape))
+    else  # RA <: MixedDuplicated
+        Compiler.recursive_accumulate(shadow_result, Ref(dresult.dval))
         dinputs = only(reverse(f, args..., tape))
     end
     if ReturnPrimal
@@ -1241,9 +1244,14 @@ function autodiff(
     tape, result, shadow_results = forward(f, args...)
     if RA <: Active
         dinputs = only(reverse(f, args..., dresults.dvals, tape))
-    else
+    elseif RA <: BatchDuplicated
         foreach(shadow_results, dresults.dvals) do d0, d
             Compiler.recursive_accumulate(d0, d)
+        end
+        dinputs = only(reverse(f, args..., tape))
+    else  # RA <: BatchMixedDuplicated
+        foreach(shadow_results, dresults.dvals) do d0, d
+            Compiler.recursive_accumulate(d0, Ref(d))
         end
         dinputs = only(reverse(f, args..., tape))
     end
