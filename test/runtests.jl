@@ -10,6 +10,7 @@ using Aqua
 using Statistics
 using LinearAlgebra
 using InlineStrings
+using MPI
 
 using Enzyme_jll
 @info "Testing against" Enzyme_jll.libEnzyme
@@ -1183,7 +1184,7 @@ end
 
     bias = Float32[0.0;;;]
     res = Enzyme.autodiff(Reverse, f, Active, Active(x[1]), Const(bias))
-    
+
     @test bias[1][1] ≈ 0.0
     @test res[1][1] ≈ cos(x[1])
 end
@@ -1596,7 +1597,7 @@ end
 
 @inline function myquantile(v::AbstractVector, p::Real; alpha)
     n = length(v)
-    
+
     m = 1.0 + p * (1.0 - alpha - 1.0)
     aleph = n*p + oftype(p, m)
     j = clamp(trunc(Int, aleph), 1, n-1)
@@ -1609,7 +1610,7 @@ end
         a = @inbounds v[j]
         b = @inbounds v[j + 1]
     end
-    
+
     return a + γ*(b-a)
 end
 
@@ -1831,18 +1832,18 @@ end
 	@test 1.0 ≈ Enzyme.autodiff(Forward, inactive_gen, Duplicated(1E4, 1.0))[1]
 
     function whocallsmorethan30args(R)
-        temp = diag(R)     
-         R_inv = [temp[1] 0. 0. 0. 0. 0.; 
-             0. temp[2] 0. 0. 0. 0.; 
-             0. 0. temp[3] 0. 0. 0.; 
-             0. 0. 0. temp[4] 0. 0.; 
-             0. 0. 0. 0. temp[5] 0.; 
+        temp = diag(R)
+         R_inv = [temp[1] 0. 0. 0. 0. 0.;
+             0. temp[2] 0. 0. 0. 0.;
+             0. 0. temp[3] 0. 0. 0.;
+             0. 0. 0. temp[4] 0. 0.;
+             0. 0. 0. 0. temp[5] 0.;
          ]
-    
+
         return sum(R_inv)
     end
-    
-    R = zeros(6,6)    
+
+    R = zeros(6,6)
     dR = zeros(6, 6)
 
     @static if VERSION ≥ v"1.11-"
@@ -2704,7 +2705,7 @@ end
     end
     # TODO: Add test for NoShadowException
 end
-    
+
 function indirectfltret(a)::DataType
     a[] *= 2
     return Float64
@@ -3419,6 +3420,22 @@ end
     )
     @test ad_eta[1] ≈ 0.0
 end
+@testset "MPI" begin
+    testdir = @__DIR__
+    # Test parsing
+    mpi_test = false
+    try
+        include("mpi.jl")
+        mpiexec() do cmd
+                run(`$cmd -n 2 $(Base.julia_cmd()) --project=$testdir $testdir/mpi.jl`)
+        end
+        mpi_test = true
+    catch
+        mpi_test = false
+    end
+    @test mpi_test
+end
+
 
 function absset(out, x)
     @inbounds out[1] = (x,)
@@ -3710,10 +3727,10 @@ end
         Duplicated(inters, dinters),
     )
 
-    @test dinters[1].k ≈ 0.1 
-    @test dinters[1].t0 ≈ 1.0 
-    @test dinters[2].k ≈ 0.3 
-    @test dinters[2].t0 ≈ 2.0 
+    @test dinters[1].k ≈ 0.1
+    @test dinters[1].t0 ≈ 1.0
+    @test dinters[2].k ≈ 0.3
+    @test dinters[2].t0 ≈ 2.0
 end
 
 @testset "Statistics" begin
