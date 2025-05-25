@@ -31,6 +31,8 @@ struct MyMixedStruct
     foo::Vector{Float64}
 end
 
+Base.:(==)(s1::MyMixedStruct, s2::MyMixedStruct) = s1.bar == s2.bar && s1.foo == s2.foo
+
 f1(x, y) = a(x, y) + b(x, y)
 f2(x, y) = [a(x, y), b(x, y)]
 f3(x, y) = (a(x, y), b(x, y))

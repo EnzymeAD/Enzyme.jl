@@ -1211,7 +1211,7 @@ function autodiff(
         dinputs = only(reverse(f, args..., tape))
     else  # RA <: MixedDuplicated
         Compiler.recursive_accumulate(shadow_result, Ref(dresult.dval))
-        dinputs = only(reverse(f, args..., tape))
+        dinputs = only(reverse(f, args..., dresult.dval, tape))
     end
     if ReturnPrimal
         return (dinputs, result)
@@ -1253,7 +1253,7 @@ function autodiff(
         foreach(shadow_results, dresults.dvals) do d0, d
             Compiler.recursive_accumulate(d0, Ref(d))
         end
-        dinputs = only(reverse(f, args..., tape))
+        dinputs = only(reverse(f, args..., dresults.dvals, tape))
     end
     if ReturnPrimal
         return (dinputs, result)
