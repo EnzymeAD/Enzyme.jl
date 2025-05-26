@@ -148,7 +148,7 @@ end
 """
     StackedBatchDuplicated(x::AbstractArray, ∂f_∂xs::AbstractArray)
 
-Like [`BatchDuplicated`](@ref), except the shadows are stacked into a N + 1 dimensional array.
+Like [`BatchDuplicated`](@ref), except the shadows are stacked into a N + 1 dimensional array (last dimension is the batch dimension).
 """
 struct StackedBatchDuplicated{T<:AbstractArray,T2<:AbstractArray} <: Annotation{T}
     val::T
@@ -156,7 +156,7 @@ struct StackedBatchDuplicated{T<:AbstractArray,T2<:AbstractArray} <: Annotation{
 
     @inline function StackedBatchDuplicated(x::AbstractArray{T,N}, dx::AbstractArray{T,M}, check::Bool=true) where {T,M,N}
         if check
-            @assert size(x) == size(dx)[2:end]
+            @assert size(x) == size(dx)[1:end-1]
             @assert N + 1 == M
         end
         return new{typeof(x),typeof(dx)}(x, dx)
@@ -195,7 +195,7 @@ end
     StackedBatchDuplicatedNoNeed(x::AbstractArray, ∂f_∂xs::AbstractArray)
 
 Like [`BatchDuplicatedNoNeed`](@ref), except the shadows are stacked into a N + 1
-dimensional array.
+dimensional array (last dimension is the batch dimension).
 """
 struct StackedBatchDuplicatedNoNeed{T<:AbstractArray,T2<:AbstractArray} <: Annotation{T}
     val::T
@@ -203,7 +203,7 @@ struct StackedBatchDuplicatedNoNeed{T<:AbstractArray,T2<:AbstractArray} <: Annot
 
     @inline function StackedBatchDuplicatedNoNeed(x::AbstractArray{T,N}, dx::AbstractArray{T,M}, check::Bool=true) where {T,M,N}
         if check
-            @assert size(x) == size(dx)[2:end]
+            @assert size(x) == size(dx)[1:end-1]
             @assert N + 1 == M
         end
         return new{typeof(x),typeof(dx)}(x, dx)
@@ -211,9 +211,10 @@ struct StackedBatchDuplicatedNoNeed{T<:AbstractArray,T2<:AbstractArray} <: Annot
 end
 
 @inline batch_size(::BatchDuplicated{T,N}) where {T,N} = N
-@inline batch_size(d::StackedBatchDuplicated) = size(d.dval, 1)
+@inline batch_size(d::StackedBatchDuplicated) = size(d.dval, ndims(d.dval))
 @inline batch_size(::BatchDuplicatedFunc{T,N}) where {T,N} = N
 @inline batch_size(::BatchDuplicatedNoNeed{T,N}) where {T,N} = N
+@inline batch_size(d::StackedBatchDuplicatedNoNeed) = size(d.dval, ndims(d.dval))
 @inline batch_size(::Type{BatchDuplicated{T,N}}) where {T,N} = N
 @inline batch_size(::Type{BatchDuplicatedFunc{T,N}}) where {T,N} = N
 @inline batch_size(::Type{BatchDuplicatedNoNeed{T,N}}) where {T,N} = N
