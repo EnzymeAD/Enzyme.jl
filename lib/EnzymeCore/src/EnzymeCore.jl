@@ -149,6 +149,10 @@ end
     StackedBatchDuplicated(x::AbstractArray, ∂f_∂xs::AbstractArray)
 
 Like [`BatchDuplicated`](@ref), except the shadows are stacked into a N + 1 dimensional array (last dimension is the batch dimension).
+
+!!! warning
+
+    Currently this is mostly supported in Reactant.jl, but extensively not in Enzyme.jl.
 """
 struct StackedBatchDuplicated{T<:AbstractArray,T2<:AbstractArray} <: Annotation{T}
     val::T
@@ -196,6 +200,10 @@ end
 
 Like [`BatchDuplicatedNoNeed`](@ref), except the shadows are stacked into a N + 1
 dimensional array (last dimension is the batch dimension).
+
+!!! warning
+
+    Currently this is mostly supported in Reactant.jl, but extensively not in Enzyme.jl.
 """
 struct StackedBatchDuplicatedNoNeed{T<:AbstractArray,T2<:AbstractArray} <: Annotation{T}
     val::T
