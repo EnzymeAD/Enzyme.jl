@@ -4,11 +4,11 @@ authors = ["William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu
 version = "0.13.46"
 
 [deps]
-BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"
 EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
 Enzyme_jll = "7cc45869-7501-5eee-bdea-0790c847d4ef"
 GPUCompiler = "61eb1bfa-7361-4325-ad38-22787b887f55"
+InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
 LLVM = "929cbde3-209d-540e-8aea-75f648917ca0"
 Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
@@ -27,9 +27,6 @@ LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
-[sources]
-EnzymeCore = {path = "lib/EnzymeCore"}
-
 [extensions]
 EnzymeBFloat16sExt = "BFloat16s"
 EnzymeChainRulesCoreExt = "ChainRulesCore"
@@ -40,7 +37,6 @@ EnzymeStaticArraysExt = "StaticArrays"
 
 [compat]
 BFloat16s = "0.2, 0.3, 0.4, 0.5"
-BenchmarkTools = "1.6.0"
 CEnum = "0.4, 0.5"
 ChainRulesCore = "1"
 EnzymeCore = "0.8.9"
@@ -64,3 +60,6 @@ GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
 LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+[sources.EnzymeCore]
+path = "lib/EnzymeCore"

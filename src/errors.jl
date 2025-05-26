@@ -60,6 +60,7 @@ end
 
 struct IllegalTypeAnalysisException <: CompilationException
     msg::String
+    mi::Union{Nothing, Core.MethodInstance}
     sval::String
     ir::Union{Nothing,String}
     bt::Union{Nothing,Vector{StackTraces.StackFrame}}
@@ -73,6 +74,16 @@ function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
     print(io, " This usually indicates the use of a Union type, which is not fully supported with Enzyme.API.strictAliasing set to true [the default].\n")
     print(io, " Ideally, remove the union (which will also make your code faster), or try setting Enzyme.API.strictAliasing!(false) before any autodiff call.\n")
     print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
+        if ece.mi !== nothing
+        print(io, " Failure within method: ", ece.mi)
+        printstyled(io, "Hint"; bold = true, color = :cyan)
+        printstyled(
+            io,
+            ": catch this exception as `err` and call `code_typed(err; interactive = true)` to",
+            " introspect the erroneous code with Cthulhu.jl";
+            color = :cyan,
+        )
+    end
     if VERBOSE_ERRORS[]
         if ece.ir !== nothing
             print(io, "Current scope: \n")
@@ -86,6 +97,26 @@ function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
         print(io, "\nCaused by:")
         Base.show_backtrace(io, ece.bt)
         println(io)
+    end
+end
+
+
+function InteractiveUtils.code_typed(ece::IllegalTypeAnalysisException; interactive::Bool=false, kwargs...)
+    mi = ece.mi
+    if mi === nothing
+        throw(AssertionError("code_typed(::IllegalTypeAnalysisException; interactive::Bool=false, kwargs...) not supported for error without mi"))
+    end
+    sig = mi.specTypes  # XXX: can we just use the method instance?
+    if interactive
+        # call Cthulhu without introducing a dependency on Cthulhu
+        mod = get(Base.loaded_modules, Cthulhu, nothing)
+        mod===nothing && error("Interactive code reflection requires Cthulhu; please install and load this package first.")
+        interp = get_interpreter(job)
+        descend_code_typed = getfield(mod, :descend_code_typed)
+        descend_code_typed(sig; interp, kwargs...)
+    else
+        interp = get_interpreter(job)
+        Base.code_typed_by_type(sig; interp, kwargs...)
     end
 end
 
@@ -354,20 +385,15 @@ function julia_error(
         sval = Base.unsafe_string(ip)
         API.EnzymeStringFree(ip)
 
+        mi = nothing
+
         if isa(val, LLVM.Instruction)
             mi, rt = enzyme_custom_extract_mi(
                 LLVM.parent(LLVM.parent(val))::LLVM.Function,
                 false,
             ) #=error=#
-            if mi !== nothing
-                msg *= "\n" * string(mi) * "\n"
-            else
-               msg *= "\n val2 =" * string(val) * "\n"
-            end
-        else
-            msg *= "\n val =" * string(val) * "\n"
         end
-        throw(IllegalTypeAnalysisException(msg, sval, ir, bt))
+        throw(IllegalTypeAnalysisException(msg, mi, sval, ir, bt))
     elseif errtype == API.ET_NoType
         @assert B != C_NULL
         B = IRBuilder(B)
