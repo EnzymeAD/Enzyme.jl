@@ -61,6 +61,7 @@ end
 struct IllegalTypeAnalysisException <: CompilationException
     msg::String
     mi::Union{Nothing, Core.MethodInstance}
+    world::Union{Nothing, UInt}
     sval::String
     ir::Union{Nothing,String}
     bt::Union{Nothing,Vector{StackTraces.StackFrame}}
@@ -100,12 +101,33 @@ function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
     end
 end
 
+using InteractiveUtils
 
 function InteractiveUtils.code_typed(ece::IllegalTypeAnalysisException; interactive::Bool=false, kwargs...)
     mi = ece.mi
     if mi === nothing
         throw(AssertionError("code_typed(::IllegalTypeAnalysisException; interactive::Bool=false, kwargs...) not supported for error without mi"))
     end
+    world = ece.world::UInt
+    mode = Enzyme.API.DEM_ReverseModeCombined
+
+    CT = @static if VERSION >= v"1.11.0-DEV.1552"
+        EnzymeCacheToken(
+            typeof(DefaultCompilerTarget()),
+            false,
+            GPUCompiler.GLOBAL_METHOD_TABLE, #=job.config.always_inline=#
+            EnzymeCompilerParams,
+            world,
+            false,
+            true,
+            true
+        )
+    else
+        Enzyme.Compiler.GLOBAL_REV_CACHE
+    end
+
+    interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true)
+
     sig = mi.specTypes  # XXX: can we just use the method instance?
     if interactive
         # call Cthulhu without introducing a dependency on Cthulhu
@@ -386,14 +408,17 @@ function julia_error(
         API.EnzymeStringFree(ip)
 
         mi = nothing
+        world = nothing
 
         if isa(val, LLVM.Instruction)
+            f = LLVM.parent(LLVM.parent(val))::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
-                LLVM.parent(LLVM.parent(val))::LLVM.Function,
+                f,
                 false,
             ) #=error=#
+            world = enzyme_extract_world(f)
         end
-        throw(IllegalTypeAnalysisException(msg, mi, sval, ir, bt))
+        throw(IllegalTypeAnalysisException(msg, mi, world, sval, ir, bt))
     elseif errtype == API.ET_NoType
         @assert B != C_NULL
         B = IRBuilder(B)
