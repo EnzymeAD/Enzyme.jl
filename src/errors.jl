@@ -76,7 +76,7 @@ function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
     print(io, " Ideally, remove the union (which will also make your code faster), or try setting Enzyme.API.strictAliasing!(false) before any autodiff call.\n")
     print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
         if ece.mi !== nothing
-        print(io, " Failure within method: ", ece.mi)
+        print(io, " Failure within method: ", ece.mi, "\n")
         printstyled(io, "Hint"; bold = true, color = :cyan)
         printstyled(
             io,
@@ -133,11 +133,9 @@ function InteractiveUtils.code_typed(ece::IllegalTypeAnalysisException; interact
         # call Cthulhu without introducing a dependency on Cthulhu
         mod = get(Base.loaded_modules, Cthulhu, nothing)
         mod===nothing && error("Interactive code reflection requires Cthulhu; please install and load this package first.")
-        interp = get_interpreter(job)
         descend_code_typed = getfield(mod, :descend_code_typed)
         descend_code_typed(sig; interp, kwargs...)
     else
-        interp = get_interpreter(job)
         Base.code_typed_by_type(sig; interp, kwargs...)
     end
 end
