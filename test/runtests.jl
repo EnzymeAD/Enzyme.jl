@@ -76,6 +76,7 @@ include("typetree.jl")
 include("passes.jl")
 include("optimize.jl")
 include("make_zero.jl")
+include("runtime_calls.jl")
 
 include("rules.jl")
 include("rrules.jl")
@@ -2968,6 +2969,7 @@ end
 end
 
 include("sugar.jl")
+include("errors.jl")
 
 @testset "Forward on Reverse" begin
 

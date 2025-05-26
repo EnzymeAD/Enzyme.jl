@@ -4232,6 +4232,22 @@ end
 
         wrapper_f = LLVM.Function(mod, safe_name(LLVM.name(llvmfn) * "mustwrap"), FT)
 
+        for idx in 1:length(collect(parameters(llvmfn)))
+            for attr in collect(parameter_attributes(llvmfn, idx))
+                push!(parameter_attributes(wrapper_f, idx), attr)
+            end
+        end
+
+        for attr in collect(function_attributes(llvmfn))
+            push!(function_attributes(wrapper_f), attr)
+        end
+
+        for attr in collect(return_attributes(llvmfn))
+            push!(return_attributes(wrapper_f), attr)
+        end
+
+        mi, rt = enzyme_custom_extract_mi(primalf)
+
         let builder = IRBuilder()
             entry = BasicBlock(wrapper_f, "entry")
             position!(builder, entry)
@@ -4248,7 +4264,7 @@ end
             else
                 EnumAttribute("sret")
             end)
-            for idx in length(collect(parameters(llvmfn)))
+            for idx in 1:length(collect(parameters(llvmfn)))
                 for attr in collect(parameter_attributes(llvmfn, idx))
                     if kind(attr) == sretkind
                         LLVM.API.LLVMAddCallSiteAttribute(
@@ -4258,6 +4274,14 @@ end
                         )
                     end
                 end
+            end
+
+            _, _, returnRoots = get_return_info(rt)
+            returnRoots = returnRoots !== nothing
+            if returnRoots
+                attr = StringAttribute("enzymejl_returnRoots", "")
+                push!(parameter_attributes(wrapper_f, 2), attr)
+                LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(2), attr)
             end
 
             if LLVM.return_type(FT) == LLVM.VoidType()
@@ -4270,7 +4294,6 @@ end
         end
         attributes = function_attributes(wrapper_f)
         push!(attributes, StringAttribute("enzymejl_world", string(job.world)))
-        mi, rt = enzyme_custom_extract_mi(primalf)
         push!(
             attributes,
             StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))),
@@ -4986,10 +5009,7 @@ function add_one_in_place(x)
     elseif x isa (Array{T,0} where T)
         x[] = recursive_add(x[], default_adjoint(eltype(Core.Typeof(x))))
     else
-        error(
-            "Enzyme Mutability Error: Cannot add one in place to immutable value " *
-            string(x),
-        )
+        throw(EnzymeNonScalarReturnException(x, ""))
     end
     return nothing
 end

@@ -310,7 +310,15 @@ function julia_error(
                     println(io)
                 end
             end
-            emit_error(B, nothing, msg2, EnzymeNoDerivativeError)
+    	    if data2 != C_NULL
+        		data2 = LLVM.Value(data2)
+                if value_type(data2) != LLVM.IntType(1)
+                    data2 = nothing
+                end
+            else
+                data2 = nothing
+            end
+            emit_error(B, nothing, msg2, EnzymeNoDerivativeError, data2)
             return C_NULL
         end
         throw(NoDerivativeException(msg, ir, bt))
@@ -817,4 +825,21 @@ end
         return C_NULL
     end
     throw(AssertionError("Unknown errtype"))
+end
+
+struct EnzymeNonScalarReturnException <: EnzymeError
+    object
+    extra::String
+end
+
+function Base.showerror(io::IO, ece::EnzymeNonScalarReturnException)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
+    println(io, "Return type of differentiated function was not a scalar as required, found ", ece.object)
+    println(io, "If calling Enzyme.autodiff(Reverse, f, Active, ...), try Enzyme.autodiff_thunk(Reverse, f, Duplicated, ....)")
+    println(io, "If calling Enzyme.gradient, try Enzyme.jacobian")
+    if length(ece.extra) != 0
+        print(io, ece.extra)
+    end
 end

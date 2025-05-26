@@ -282,6 +282,43 @@ end
     end
 end
 
+function two_blas(a, b)
+  a = copy(a)
+  @inline LinearAlgebra.LAPACK.potrf!('L', a)
+  @inline LinearAlgebra.LAPACK.potrf!('L', b)
+  return a[1,1] + b[1,1]
+end
+
+@testset "Forward Mode runtime activity" begin
+
+  a = [2.7 3.5; 7.4 9.2]
+  da = [7.2 5.3; 4.7 2.9]
+
+  b = [3.1 5.6; 13 19]
+  db = [1.3 6.5; .13 .19]
+  
+  res = Enzyme.autodiff(Forward, two_blas, Duplicated(a, da), Duplicated(b, db))[1]
+  @test res ≈ 2.5600654222812564
+
+  a = [2.7 3.5; 7.4 9.2]
+  da = [7.2 5.3; 4.7 2.9]
+
+  b = [3.1 5.6; 13 19]
+  db = [1.3 6.5; .13 .19]
+
+  res = Enzyme.autodiff(set_runtime_activity(Forward), two_blas, Duplicated(a, da), Duplicated(b, db))[1]
+  @test res ≈ 2.5600654222812564
+
+  a = [2.7 3.5; 7.4 9.2]
+  da = [7.2 5.3; 4.7 2.9]
+
+  b = [3.1 5.6; 13 19]
+  db = [1.3 6.5; .13 .19]
+
+  @test_throws Enzyme.Compiler.EnzymeNoDerivativeError Enzyme.autodiff(set_runtime_activity(Forward), two_blas, Duplicated(a, da), Duplicated(b, b))
+
+end
+
 @testset "Cholesky" begin
     function symmetric_definite(n :: Int=10)
         α = one(Float64)
