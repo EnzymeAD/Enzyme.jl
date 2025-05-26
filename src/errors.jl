@@ -362,6 +362,10 @@ function julia_error(
             if mi !== nothing
                 msg *= "\n" * string(mi) * "\n"
             end
+        else
+            if mi !== nothing
+                msg *= "\n val =" * string(val) * "\n"
+            end
         end
         throw(IllegalTypeAnalysisException(msg, sval, ir, bt))
     elseif errtype == API.ET_NoType
