@@ -1159,3 +1159,105 @@ grad
     )
     return nothing
 end
+
+"""
+    batchify_activity(::Type{A}, ::Val{B})
+
+Turn an activity (or [`Annotation`](@ref)) type `A` into the correct activity type for a batch of size `B`.
+
+# Examples
+
+```jldoctest
+julia> using Enzyme
+
+julia> Enzyme.batchify_activity(Active{Float64}, Val(2))
+Active{Float64}
+
+julia> Enzyme.batchify_activity(Duplicated{Vector{Float64}}, Val(2))
+BatchDuplicated{Vector{Float64}, 2}
+```
+"""
+batchify_activity(::Type{Active{T}}, ::Val{B}) where {T,B} = Active{T}
+batchify_activity(::Type{Duplicated{T}}, ::Val{B}) where {T,B} = BatchDuplicated{T,B}
+batchify_activity(::Type{DuplicatedNoNeed{T}}, ::Val{B}) where {T,B} = BatchDuplicatedNoNeed{T,B}
+batchify_activity(::Type{MixedDuplicated{T}}, ::Val{B}) where {T,B} = BatchMixedDuplicated{T,B}
+
+"""
+    autodiff(
+        rmode::Union{ReverseMode,ReverseModeSplit},
+        f::Annotation,
+        dresult::Seed,
+        annotated_args...
+    )
+    
+Call [`autodiff_thunk`](@ref) in split mode, execute the forward pass, increment output adjoint with `dresult`, then execute the reverse pass.
+
+Useful for computing pullbacks / VJPs for functions whose output is not a scalar, or when the scalar seed is not 1.
+"""
+function autodiff(
+        rmode::Union{ReverseMode{ReturnPrimal}, ReverseModeSplit{ReturnPrimal}},
+        f::FA,
+        dresult::Seed{RT},
+        args::Vararg{Annotation, N},
+    ) where {ReturnPrimal, FA <: Annotation, RT, N}
+    rmode_split = Split(rmode)
+    RA = guess_activity(RT, rmode_split)
+    forward, reverse = autodiff_thunk(rmode_split, FA, RA, typeof.(args)...)
+    tape, result, shadow_result = forward(f, args...)
+    if RA <: Active
+        dinputs = only(reverse(f, args..., dresult.dval, tape))
+    elseif RA <: Duplicated
+        Compiler.recursive_accumulate(shadow_result, dresult.dval)
+        dinputs = only(reverse(f, args..., tape))
+    else  # RA <: MixedDuplicated
+        Compiler.recursive_accumulate(shadow_result, Ref(dresult.dval))
+        dinputs = only(reverse(f, args..., dresult.dval, tape))
+    end
+    if ReturnPrimal
+        return (dinputs, result)
+    else
+        return (dinputs,)
+    end
+end
+
+"""
+    autodiff(
+        rmode::Union{ReverseMode,ReverseModeSplit},
+        f::Annotation,
+        dresults::BatchSeed,
+        annotated_args...
+    )
+    
+Call [`autodiff_thunk`](@ref) in split mode, execute the forward pass, increment each output adjoint with the corresponding element from `dresults`, then execute the reverse pass.
+
+Useful for computing pullbacks / VJPs for functions whose output is not a scalar, or when the scalar seed is not 1.
+"""
+function autodiff(
+        rmode::Union{ReverseMode{ReturnPrimal}, ReverseModeSplit{ReturnPrimal}},
+        f::FA,
+        dresults::BatchSeed{B,RT},
+        args::Vararg{Annotation, N},
+    ) where {ReturnPrimal, B, FA <: Annotation, RT, N}
+    rmode_split_rightwidth = ReverseSplitWidth(Split(rmode), Val(B))
+    RA = batchify_activity(guess_activity(RT, rmode_split_rightwidth), Val(B))
+    forward, reverse = autodiff_thunk(rmode_split_rightwidth, FA, RA, typeof.(args)...)
+    tape, result, shadow_results = forward(f, args...)
+    if RA <: Active
+        dinputs = only(reverse(f, args..., dresults.dvals, tape))
+    elseif RA <: BatchDuplicated
+        foreach(shadow_results, dresults.dvals) do d0, d
+            Compiler.recursive_accumulate(d0, d)
+        end
+        dinputs = only(reverse(f, args..., tape))
+    else  # RA <: BatchMixedDuplicated
+        foreach(shadow_results, dresults.dvals) do d0, d
+            Compiler.recursive_accumulate(d0, Ref(d))
+        end
+        dinputs = only(reverse(f, args..., dresults.dvals, tape))
+    end
+    if ReturnPrimal
+        return (dinputs, result)
+    else
+        return (dinputs,)
+    end
+end
