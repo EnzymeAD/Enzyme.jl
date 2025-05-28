@@ -2,7 +2,7 @@ module EnzymeCore
 
 export Forward, ForwardWithPrimal, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
 export ReverseSplitModified, ReverseSplitWidth, ReverseHolomorphic, ReverseHolomorphicWithPrimal
-export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, Annotation
+export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, StackedBatchDuplicated, StackedBatchDuplicatedNoNeed, Annotation
 export MixedDuplicated, BatchMixedDuplicated
 export DefaultABI, FFIABI, InlineABI, NonGenABI
 export BatchDuplicatedFunc
@@ -145,6 +145,28 @@ struct BatchDuplicated{T,N} <: Annotation{T}
     end
 end
 
+"""
+    StackedBatchDuplicated(x::AbstractArray, ∂f_∂xs::AbstractArray)
+
+Like [`BatchDuplicated`](@ref), except the shadows are stacked into a N + 1 dimensional array (last dimension is the batch dimension).
+
+!!! warning
+
+    Currently this is mostly supported in Reactant.jl, but extensively not in Enzyme.jl.
+"""
+struct StackedBatchDuplicated{T<:AbstractArray,T2<:AbstractArray} <: Annotation{T}
+    val::T
+    dval::T2
+
+    @inline function StackedBatchDuplicated(x::AbstractArray{T,N}, dx::AbstractArray{T,M}, check::Bool=true) where {T,M,N}
+        if check
+            @assert size(x) == size(dx)[1:end-1]
+            @assert N + 1 == M
+        end
+        return new{typeof(x),typeof(dx)}(x, dx)
+    end
+end
+
 struct BatchDuplicatedFunc{T,N,Func} <: Annotation{T}
     val::T
 end
@@ -172,13 +194,38 @@ struct BatchDuplicatedNoNeed{T,N} <: Annotation{T}
         new{T1, N}(x, dx)
     end
 end
+
+"""
+    StackedBatchDuplicatedNoNeed(x::AbstractArray, ∂f_∂xs::AbstractArray)
+
+Like [`BatchDuplicatedNoNeed`](@ref), except the shadows are stacked into a N + 1
+dimensional array (last dimension is the batch dimension).
+
+!!! warning
+
+    Currently this is mostly supported in Reactant.jl, but extensively not in Enzyme.jl.
+"""
+struct StackedBatchDuplicatedNoNeed{T<:AbstractArray,T2<:AbstractArray} <: Annotation{T}
+    val::T
+    dval::T2
+
+    @inline function StackedBatchDuplicatedNoNeed(x::AbstractArray{T,N}, dx::AbstractArray{T,M}, check::Bool=true) where {T,M,N}
+        if check
+            @assert size(x) == size(dx)[1:end-1]
+            @assert N + 1 == M
+        end
+        return new{typeof(x),typeof(dx)}(x, dx)
+    end
+end
+
 @inline batch_size(::BatchDuplicated{T,N}) where {T,N} = N
+@inline batch_size(d::StackedBatchDuplicated) = size(d.dval, ndims(d.dval))
 @inline batch_size(::BatchDuplicatedFunc{T,N}) where {T,N} = N
 @inline batch_size(::BatchDuplicatedNoNeed{T,N}) where {T,N} = N
+@inline batch_size(d::StackedBatchDuplicatedNoNeed) = size(d.dval, ndims(d.dval))
 @inline batch_size(::Type{BatchDuplicated{T,N}}) where {T,N} = N
 @inline batch_size(::Type{BatchDuplicatedFunc{T,N}}) where {T,N} = N
 @inline batch_size(::Type{BatchDuplicatedNoNeed{T,N}}) where {T,N} = N
-
 
 """
     MixedDuplicated(x, ∂f_∂x)
