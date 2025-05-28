@@ -641,7 +641,7 @@ end
 import LLVM
 @testset "Enzyme.Compiler.tape_type" begin
     LLVM.@dispose ctx = LLVM.Context() begin
-        opaque = LLVM.StructType(LLVMType[])
+        opaque = LLVM.StructType(LLVM.LLVMType[])
 
         ty = LLVM.StructType(
             [
