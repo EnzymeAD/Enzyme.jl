@@ -125,19 +125,19 @@ end
     end
 end
 
-@inline function onehot(x::Array; stacked::Union{Val{true},Val{false}}=Val(false))
+@inline function onehot(x::Array; stacked::Union{Val{true}, Val{false}} = Val(false))
     ret = onehot_internal(zerosetfn, x, 0, length(x))
     stacked isa Val{false} && return ret
     return stack(ret)
 end
 
-@inline function onehot(x::Array, start::Int, endl::Int; stacked::Union{Val{true},Val{false}}=Val(false))
-    ret = onehot_internal(zerosetfn, x, start-1, endl-start+1)
+@inline function onehot(x::Array, start::Int, endl::Int; stacked::Union{Val{true}, Val{false}} = Val(false))
+    ret = onehot_internal(zerosetfn, x, start - 1, endl - start + 1)
     stacked isa Val{false} && return ret
     return stack(ret)
 end
 
-@inline function onehot(x::AbstractArray; stacked::Union{Val{true},Val{false}}=Val(false))
+@inline function onehot(x::AbstractArray; stacked::Union{Val{true}, Val{false}} = Val(false))
     N = length(x)
     ret = ntuple(Val(N)) do i
         Base.@_inline_meta
@@ -150,7 +150,7 @@ end
     stacked isa Val{false} && return ret
     return stack(ret)
 end
-@inline function onehot(x::AbstractArray, start::Int, endl::Int; stacked::Union{Val{true},Val{false}}=Val(false))
+@inline function onehot(x::AbstractArray, start::Int, endl::Int; stacked::Union{Val{true}, Val{false}} = Val(false))
     ret = ntuple(Val(endl - start + 1)) do i
         Base.@_inline_meta
         res = similar(x)
@@ -163,7 +163,7 @@ end
     return stack(ret)
 end
 
-@inline function onehot(::Type{NTuple{N,T}}; stacked::Union{Val{true},Val{false}}=Val(false)) where {T,N}
+@inline function onehot(::Type{NTuple{N, T}}; stacked::Union{Val{true}, Val{false}} = Val(false)) where {T, N}
     ret = ntuple(Val(N)) do i
         Base.@_inline_meta
         ntuple(Val(N)) do idx
@@ -174,11 +174,11 @@ end
     stacked isa Val{false} && return ret
     return stack(ret)
 end
-@inline onehot(x::Tuple{}; stacked::Union{Val{true},Val{false}}=Val(false)) = ()
-@inline function onehot(x::NTuple{N,T}; stacked::Union{Val{true},Val{false}}=Val(false)) where {T,N}
-    return onehot(NTuple{N,T}; stacked)
+@inline onehot(x::Tuple{}; stacked::Union{Val{true}, Val{false}} = Val(false)) = ()
+@inline function onehot(x::NTuple{N, T}; stacked::Union{Val{true}, Val{false}} = Val(false)) where {T, N}
+    return onehot(NTuple{N, T}; stacked)
 end
-@inline function onehot(x::NTuple{N,T}, start, endl; stacked::Union{Val{true},Val{false}}=Val(false)) where {T,N}
+@inline function onehot(x::NTuple{N, T}, start, endl; stacked::Union{Val{true}, Val{false}} = Val(false)) where {T, N}
     ret = ntuple(Val(endl - start + 1)) do i
         Base.@_inline_meta
         ntuple(Val(N)) do idx
@@ -190,7 +190,7 @@ end
     return stack(ret)
 end
 
-@inline function onehot(x::AbstractFloat; stacked::Union{Val{true},Val{false}}=Val(false))
+@inline function onehot(x::AbstractFloat; stacked::Union{Val{true}, Val{false}} = Val(false))
     stacked isa Val{false} && return (one(x),)
     return [one(x)]
 end

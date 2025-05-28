@@ -14,7 +14,7 @@ end
 
 @inline Enzyme.specialize_output(output, input::StaticArray) = convert(SArray, output)
 
-@inline function Enzyme.onehot(x::StaticArrays.SArray{S, T, N, L}; stacked::Union{Val{true},Val{false}}=Val(false)) where {S, T, N, L}
+@inline function Enzyme.onehot(x::StaticArrays.SArray{S, T, N, L}; stacked::Union{Val{true}, Val{false}} = Val(false)) where {S, T, N, L}
     ret = ntuple(Val(L)) do i
         Base.@_inline_meta
         StaticArrays.SArray{S, T, N, L}(Enzyme.onehot(NTuple{L, T})[i])
@@ -23,8 +23,8 @@ end
     return stack(ret)
 end
 
-@inline function Enzyme.onehot(x::StaticArrays.SArray{S, T, N, L}, start::Int, endl::Int; stacked::Union{Val{true},Val{false}}=Val(false)) where {S, T, N, L}
-    ret = ntuple(Val(endl-start+1)) do i
+@inline function Enzyme.onehot(x::StaticArrays.SArray{S, T, N, L}, start::Int, endl::Int; stacked::Union{Val{true}, Val{false}} = Val(false)) where {S, T, N, L}
+    ret = ntuple(Val(endl - start + 1)) do i
         Base.@_inline_meta
         StaticArrays.SArray{S, T, N, L}(
         ntuple(Val(L)) do idx

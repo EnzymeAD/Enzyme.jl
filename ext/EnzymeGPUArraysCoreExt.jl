@@ -14,7 +14,7 @@ function Enzyme.zerosetfn!(x::AbstractGPUArray, i::Int, val)
     return
 end
 
-@inline function Enzyme.onehot(x::AbstractGPUArray; stacked::Union{Val{true},Val{false}}=Val(false))
+@inline function Enzyme.onehot(x::AbstractGPUArray; stacked::Union{Val{true}, Val{false}} = Val(false))
     # Enzyme.onehot_internal(Enzyme.zerosetfn, x, 0, length(x))
     N = length(x)
     ret = ntuple(Val(N)) do i
@@ -27,7 +27,7 @@ end
     return stack(ret)
 end
 
-@inline function Enzyme.onehot(x::AbstractGPUArray, start::Int, endl::Int; stacked::Union{Val{true},Val{false}}=Val(false))
+@inline function Enzyme.onehot(x::AbstractGPUArray, start::Int, endl::Int; stacked::Union{Val{true}, Val{false}} = Val(false))
     # Enzyme.onehot_internal(Enzyme.zerosetfn, x, start-1, endl-start+1)
     ret = ntuple(Val(endl - start + 1)) do i
         Base.@_inline_meta

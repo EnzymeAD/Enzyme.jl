@@ -3773,13 +3773,13 @@ end
 end
 
 @testset "onehot stacked" begin
-    x = Enzyme.onehot(rand(2, 3); stacked=Val(true))
+    x = Enzyme.onehot(rand(2, 3); stacked = Val(true))
     @test size(x) == (2, 3, 6)
 
-    x = Enzyme.onehot(rand(2, 3), 1, 2; stacked=Val(true))
+    x = Enzyme.onehot(rand(2, 3), 1, 2; stacked = Val(true))
     @test size(x) == (2, 3, 2)
 
-    x = Enzyme.onehot((1, 2, 3); stacked=Val(true))
+    x = Enzyme.onehot((1, 2, 3); stacked = Val(true))
     @test size(x) == (3, 3)
 end
 
