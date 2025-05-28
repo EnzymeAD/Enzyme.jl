@@ -1003,7 +1003,7 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
         TT = Compiler.tape_type(LLVMType)
         if esizeof(TT) != convert(Int, AlignedSize)
             GPUCompiler.@safe_error "Enzyme aligned size and Julia size disagree" AlignedSize =
-                convert(Int, AlignedSize) esizeof(TT) fieldtypes(TT)
+                convert(Int, AlignedSize) esizeof(TT) fieldtypes(TT) LLVMType=strip(string(LLVMType))
             emit_error(B, nothing, "Enzyme: Tape allocation failed.") # TODO: Pick appropriate orig
             return LLVM.API.LLVMValueRef(LLVM.UndefValue(LLVMType).ref)
         end
