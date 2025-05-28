@@ -637,3 +637,55 @@ end
         Forward, f_wb!, BatchDuplicated(c, dc)
     )
 end
+
+import LLVM
+@testset "Enzyme.Compiler.tape_type" begin
+    LLVM.@dispose ctx = LLVM.Context() begin
+        opaque = LLVM.StructType(LLVM.LLVMType[])
+
+        ty = LLVM.StructType(
+            [
+                LLVM.StructType(
+                    [
+                        LLVM.PointerType(opaque, 10),
+                        LLVM.PointerType(opaque, 10),
+                        LLVM.PointerType(opaque, 10),
+                        LLVM.PointerType(opaque, 10),
+                        LLVM.PointerType(LLVM.Int8Type(), 0),
+                        LLVM.PointerType(opaque, 10),
+                        LLVM.PointerType(opaque, 10),
+                        LLVM.PointerType(LLVM.Int8Type(), 0),
+                        LLVM.PointerType(LLVM.Int64Type(), 0),
+                        LLVM.Int64Type(),
+                        LLVM.Int64Type(),
+                        LLVM.Int64Type(),
+                        LLVM.Int64Type(),
+                        LLVM.Int64Type(),
+                        LLVM.Int64Type(),
+                        LLVM.PointerType(opaque, 10),
+                        LLVM.PointerType(LLVM.Int8Type(), 0),
+                        LLVM.PointerType(LLVM.PointerType(LLVM.FloatType(), 0), 0),
+                        LLVM.PointerType(LLVM.VectorType(LLVM.FloatType(), 4), 0),
+                        LLVM.PointerType(LLVM.VectorType(LLVM.FloatType(), 4), 0),
+                        LLVM.PointerType(LLVM.VectorType(LLVM.FloatType(), 4), 0),
+                        LLVM.PointerType(LLVM.VectorType(LLVM.FloatType(), 4), 0),
+                        LLVM.Int64Type(),
+                        LLVM.PointerType(LLVM.VectorType(LLVM.FloatType(), 4), 0),
+                        LLVM.VectorType(LLVM.FloatType(), 4),
+                        LLVM.PointerType(LLVM.FloatType(), 0),
+                        LLVM.VectorType(LLVM.FloatType(), 4),
+                        LLVM.VectorType(LLVM.FloatType(), 4),
+                        LLVM.PointerType(LLVM.FloatType(), 0),
+                        LLVM.VectorType(LLVM.FloatType(), 4),
+                        LLVM.VectorType(LLVM.FloatType(), 4),
+                        LLVM.VectorType(LLVM.FloatType(), 4),
+                        LLVM.Int64Type(),
+                    ]
+                ),
+            ]
+        )
+        TT = Enzyme.Compiler.tape_type(ty)
+        DL = LLVM.DataLayout(LLVM.JITTargetMachine())
+        @test sizeof(TT) == LLVM.sizeof(DL, ty)
+    end
+end
