@@ -3772,6 +3772,17 @@ end
     @test res[2][6] ≈ 6.0
 end
 
+@testset "onehot stacked" begin
+    x = Enzyme.onehot(rand(2, 3); stacked=Val(true))
+    @test size(x) == (2, 3, 6)
+
+    x = Enzyme.onehot(rand(2, 3), 1, 2; stacked=Val(true))
+    @test size(x) == (2, 3, 2)
+
+    x = Enzyme.onehot((1, 2, 3); stacked=Val(true))
+    @test size(x) == (3, 3)
+end
+
 # TEST EXTENSIONS 
 using SpecialFunctions
 @testset "SpecialFunctions ext" begin
