@@ -276,6 +276,7 @@ end
                 FFIABI,
                 false,
                 get_runtime_activity(gutils),
+                get_strong_zero(gutils),
             ) #=ErrIfFuncWritten=#
             ejob = Compiler.CompilerJob(
                 mi2,
@@ -337,6 +338,7 @@ end
                 FFIABI,
                 false,
                 get_runtime_activity(gutils),
+                get_strong_zero(gutils),
             ) #=ErrIfFuncWritten=#
             ejob = Compiler.CompilerJob(
                 mi2,
@@ -700,6 +702,7 @@ end
             new_from_original(gutils, ops[3]),
         ),
         unsafe_to_llvm(B, Val(get_runtime_activity(gutils))),
+        unsafe_to_llvm(B, Val(get_strong_zero(gutils))),
         unsafe_to_llvm(B, Val(width)),
     ]
 
@@ -755,6 +758,7 @@ end
             new_from_original(gutils, ops[3]),
         ),
         unsafe_to_llvm(B, Val(get_runtime_activity(gutils))),
+        unsafe_to_llvm(B, Val(get_strong_zero(gutils))),
         unsafe_to_llvm(B, Val(width)),
         unsafe_to_llvm(B, Val(ModifiedBetween)),
     ]
