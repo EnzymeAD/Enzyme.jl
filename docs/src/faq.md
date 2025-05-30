@@ -278,7 +278,7 @@ Enzyme.autodiff(Reverse, f, Active(1.2), Duplicated(Vector{Float64}(undef, 1), z
 ((10.367999999999999, nothing, nothing, nothing),)
 ```
 
-## Runtime Activity
+## [Runtime Activity](@id faq-runtime-activity)
 
 When computing the derivative of mutable variables, Enzyme also needs additional temporary storage space for the corresponding derivative variables. If an argument `tmp` is marked as Const, Enzyme does not have any temporary storage space for the derivatives!
 
@@ -367,7 +367,7 @@ end
 Enzyme.autodiff(Reverse, f2, Active, Active(3.1))
 ```
 
-## Strong Zero
+## [Strong Zero](@id faq-strong-zero)
 
 By default, Enzyme (and essentially all other) AD tools may assume that intermediate values are finite and not nan. This is beneficial for performance, but also can lead to some non-intuitive behaviors.
 

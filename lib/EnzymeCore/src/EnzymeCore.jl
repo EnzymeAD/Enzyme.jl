@@ -257,8 +257,8 @@ Abstract type for which differentiation mode will be used.
 
 - `ABI`: what runtime [`ABI`](@ref) to use
 - `ErrIfFuncWritten`: whether to error when the function differentiated is a closure and written to.
-- `RuntimeActivity`: whether to enable runtime activity (default off). Runtime Activity is required is the differentiability of all mutable variables cannot be determined statically. For a deeper explanation see the [FAQ](/faq#Runtime-Activity)
-- `StrongZero`: whether to enforce that propagating a zero derivative input always ends up in zero derivative outputs. This is required to avoid nan's if one of the arguments may be infinite or nan. For a deeper explanation see the [FAQ](/faq#Runtime-Activity)
+- `RuntimeActivity`: whether to enable runtime activity (default off). Runtime Activity is required is the differentiability of all mutable variables cannot be determined statically. For a deeper explanation see the [FAQ](@ref faq-runtime-activity)
+- `StrongZero`: whether to enforce that propagating a zero derivative input always ends up in zero derivative outputs. This is required to avoid nan's if one of the arguments may be infinite or nan. For a deeper explanation see the [FAQ](@ref faq-runtime-activity)
 
 !!! warning
     The type parameters of `Mode` are not part of the public API and can change without notice.
@@ -607,7 +607,7 @@ function clear_err_if_func_written end
     set_runtime_activity(::Mode, config::Union{FwdConfig,RevConfig})
     set_runtime_activity(::Mode, prev::Mode)
 
-Return a new mode where runtime activity analysis is activated / set to the desired value. See [Enzyme.Mode](@ref) for more information on runtime activity.
+Return a new mode where runtime activity analysis is activated / set to the desired value. See the [FAQ](@ref faq-runtime-activity) for more information.
 """
 function set_runtime_activity end
 
@@ -624,7 +624,7 @@ function clear_runtime_activity end
     set_strong_zero(::Mode, config::Union{FwdConfig,RevConfig})
     set_strong_zero(::Mode, prev::Mode)
 
-Return a new mode where strong zero is activated / set to the desired value. See [Enzyme.Mode](@ref) for more information on strong zero.
+Return a new mode where strong zero is activated / set to the desired value. See the [FAQ](@ref faq-strong-zero) for more information.
 """
 function set_strong_zero end
 

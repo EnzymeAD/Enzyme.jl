@@ -28,7 +28,8 @@ function forward end
 Configuration type to dispatch on in custom forward rules (see [`forward`](@ref).
 * `NeedsPrimal` and `NeedsShadow`: boolean values specifying whether the primal and shadow (resp.) should be returned. 
 * `Width`: an integer that specifies the number of adjoints/shadows simultaneously being propagated.
-* `RuntimeActivity`: whether runtime activity is enabled.
+* `RuntimeActivity`: whether runtime activity is enabled. See the [FAQ](@ref faq-runtime-activity) for more information.
+* `StrongZero`: whether strong zero is enabled. See the [FAQ](@ref faq-strong-zero) for more information.
 
 Getters for the type parameters are provided by `needs_primal`, `needs_shadow`, `width` `runtime_activity`, and `strong_zero`.
 """
@@ -64,8 +65,8 @@ Configuration type to dispatch on in custom reverse rules (see [`augmented_prima
 * `Width`: an integer that specifies the number of adjoints/shadows simultaneously being propagated.
 * `Overwritten`: a tuple of booleans of whether each argument (including the function itself) is modified between the 
    forward and reverse pass (true if potentially modified between).
-* `RuntimeActivity`: whether runtime activity is enabled.
-* `StrongZero`: whether strong zero is enabled.
+* `RuntimeActivity`: whether runtime activity is enabled. See the [FAQ](@ref faq-runtime-activity) for more information.
+* `StrongZero`: whether strong zero is enabled. See the [FAQ](@ref faq-strong-zero) for more information.
 
 Getters for the type parameters are provided by `needs_primal`, `needs_shadow`, `width`, `overwritten`, `runtime_activity`, and `strong_zero`.
 """
@@ -292,5 +293,7 @@ Mark a particular type `Ty` as always being inactive.
 inactive_type(::Type) = false
 
 @inline EnzymeCore.set_runtime_activity(mode::M, config::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_runtime_activity(mode, runtime_activity(config))
+
+@inline EnzymeCore.set_strong_zero(mode::M, config::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_strong_zero(mode, runtime_activity(config))
 
 end # EnzymeRules
