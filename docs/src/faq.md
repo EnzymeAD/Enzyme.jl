@@ -437,7 +437,7 @@ One can use this from Enzyme.jl as follows and get the intended result:
 Enzyme.gradient(set_strong_zero(Reverse), f, 0.0)
 
 # output
-(0.0,)
+(-0.0,)
 ```
 
 ## Complex numbers
