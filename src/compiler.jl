@@ -1289,7 +1289,7 @@ struct EnzymeTarget{Target<:AbstractCompilerTarget} <: AbstractCompilerTarget
     target::Target
 end
 
-GPUCompiler.llvm_triple(target::EnzymeTarget) = GPUCompiler.llvm_triple(targe.target)
+GPUCompiler.llvm_triple(target::EnzymeTarget) = GPUCompiler.llvm_triple(target.target)
 GPUCompiler.llvm_datalayout(target::EnzymeTarget) = GPUCompiler.llvm_datalayout(target.target)
 GPUCompiler.llvm_machine(target::EnzymeTarget) = GPUCompiler.llvm_machine(target.target)
 GPUCompiler.nest_target(::EnzymeTarget, other::AbstractCompilerTarget) = EnzymeTarget(other)
