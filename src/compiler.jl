@@ -5640,7 +5640,7 @@ end
     @nospecialize(ABI::Type),
     ErrIfFuncWritten::Bool,
     RuntimeActivity::Bool,
-    StrongZero::Bool
+    StrongZero::Bool,
     edges::Union{Nothing, Vector{Any}}
 )
     target = Compiler.EnzymeTarget()
@@ -5828,7 +5828,7 @@ end
             ABI,
             ErrIfFuncWritten,
             RuntimeActivity,
-            StrongZero
+            StrongZero,
             nothing
         )
     finally
@@ -5926,7 +5926,7 @@ function thunk_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::
             ABI,
             ErrIfFuncWritten,
             RuntimeActivity,
-            StrongZero
+            StrongZero,
             edges
         )
     finally
