@@ -1293,10 +1293,16 @@ GPUCompiler.llvm_triple(target::EnzymeTarget) = GPUCompiler.llvm_triple(target.t
 GPUCompiler.llvm_datalayout(target::EnzymeTarget) = GPUCompiler.llvm_datalayout(target.target)
 GPUCompiler.llvm_machine(target::EnzymeTarget) = GPUCompiler.llvm_machine(target.target)
 GPUCompiler.nest_target(::EnzymeTarget, other::AbstractCompilerTarget) = EnzymeTarget(other)
+GPUCompiler.have_fma(target::EnzymeTarget, T::Type) = GPUCompiler.have_fma(target.target, T)
+GPUCompiler.dwarf_version(target::EnzymeTarget) = GPUCompiler.dwarf_version(target.target)
+
+
+DefaultCompilerTarget(; kwargs...) =
+    GPUCompiler.NativeCompilerTarget(; jlruntime = true, kwargs...)
 
 # TODO: Audit uses
 function EnzymeTarget()
-    EnzymeTarget(GPUCompiler.NativeCompilerTarget(;jlruntime=true))
+    EnzymeTarget(DefaultCompilerTarget())
 end
 
 module Runtime end
@@ -1335,8 +1341,6 @@ struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
     mode::API.CDerivativeMode
 end
 
-DefaultCompilerTarget(; kwargs...) =
-    GPUCompiler.NativeCompilerTarget(; jlruntime = true, kwargs...)
 
 ## job
 
@@ -3470,12 +3474,8 @@ function GPUCompiler.compile(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     @show config
     flush(stdout)
     flush(stderr)
-    parent_job = nothing
 
     params = config.params
-    if params.run_enzyme
-        # @assert eltype(params.rt) != Union{}
-    end
 
     expectedTapeType = params.expectedTapeType
     mode = params.mode
@@ -3496,42 +3496,28 @@ function GPUCompiler.compile(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     if !(params.rt <: Const)
         @assert !isghostty(eltype(params.rt))
     end
-    if parent_job === nothing
-        primal_target = DefaultCompilerTarget()
+
+    primal_target = job.config.target
+    if primal_target isa GPUCompiler.NativeCompilerTarget
         primal_params = PrimalCompilerParams(mode)
-        config2 = CompilerConfig(
-            primal_target,
-            primal_params;
-            kernel = false,
-            libraries = true,
-            toplevel = config.toplevel,
-            optimize = false,
-            cleanup = false,
-            only_entry = false,
-            validate = false
-        )
-        primal_job = CompilerJob(
-            primal,
-            config2,
-            job.world,
-        )
     else
-        config2 = CompilerConfig(
-            parent_job.config.target,
-            parent_job.config.params;
-            kernel = false,
-            parent_job.config.entry_abi,
-            parent_job.config.name,
-            parent_job.config.always_inline,
-            libraries = true,
-            toplevel = config.toplevel,
-            optimize = false,
-            cleanup = false,
-            only_entry = false,
-            validate = false,
-        )
-        primal_job = CompilerJob(primal, config2, job.world) # TODO EnzymeInterp params, etc
+        # XXX: This means mode is not propagated and rules are not applied for GPU code.
+        primal_params = config.params
     end
+    primal_config = CompilerConfig(
+        primal_target,
+        primal_params;
+        toplevel = config.toplevel,
+        always_inline = config.always_inline,
+        kernel = false,
+        libraries = true,
+        optimize = false,
+        cleanup = false,
+        only_entry = false,
+        validate = false,
+        # ??? entry_abi
+    )
+    primal_job = CompilerJob(primal, primal_config, job.world)
 
     @safe_debug "Emit LLVM with" primal_job
     GPUCompiler.prepare_job!(primal_job)
