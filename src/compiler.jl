@@ -4318,24 +4318,23 @@ end
         )
     end
 
-    if primal_job.config.target isa GPUCompiler.NativeCompilerTarget
-        target_machine = JIT.get_tm()
-    else
-        target_machine = GPUCompiler.llvm_machine(primal_job.config.target)
-    end
+    # if primal_job.config.target isa GPUCompiler.NativeCompilerTarget
+    #     target_machine = JIT.get_tm()
+    # else
+    target_machine = GPUCompiler.llvm_machine(job.config.target)
 
-    parallel = parent_job === nothing ? Threads.nthreads() > 1 : false
+    parallel = false
     process_module = false
     device_module = false
-    if parent_job !== nothing
-        if parent_job.config.target isa GPUCompiler.PTXCompilerTarget ||
-           parent_job.config.target isa GPUCompiler.GCNCompilerTarget ||
-           parent_job.config.target isa GPUCompiler.MetalCompilerTarget
-            parallel = true
-            device_module = true
-        end
-        if parent_job.config.target isa GPUCompiler.GCNCompilerTarget ||
-           parent_job.config.target isa GPUCompiler.MetalCompilerTarget
+    if primal_target isa GPUCompiler.NativeCompilerTarget 
+        parallel = Base.Threads.nthreads() > 1 
+    else
+        # All other targets are GPU targets
+        parallel = true
+        device_module = true
+        
+        if parent_target isa GPUCompiler.GCNCompilerTarget ||
+           parent_target isa GPUCompiler.MetalCompilerTarget
             process_module = true
         end
     end
@@ -4359,7 +4358,7 @@ end
     optimize!(mod, target_machine)
 
     if process_module
-        GPUCompiler.optimize_module!(parent_job, mod)
+        GPUCompiler.optimize_module!(primal_job, mod)
     end
 
     for name in ("gpu_report_exception", "report_exception")
@@ -4775,8 +4774,8 @@ end
         API.AddPreserveNVVMPass!(pm, false) #=Begin=#
         LLVM.run!(pm, mod)
     end
-    if parent_job !== nothing
-        mark_gpu_intrinsics!(parent_job.config.target, mod)
+    if !(primal_target isa GPUCompiler.NativeCompilerTarget)
+        mark_gpu_intrinsics!(parent_target, mod)
     end
     for (name, fnty) in fnsToInject
         for (T, JT, pf) in
@@ -4832,7 +4831,7 @@ end
         restore_lookups(mod)
     end
 
-    if parent_job !== nothing
+    if !(primal_target isa GPUCompiler.NativeCompilerTarget)
         reinsert_gcmarker!(adjointf)
         augmented_primalf !== nothing && reinsert_gcmarker!(augmented_primalf)
         post_optimze!(mod, target_machine, false) #=machine=#
