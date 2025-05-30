@@ -1778,7 +1778,7 @@ function generic_setup(
     endcast = true,
     firstconst_after_tape = true,
     runtime_activity = true,
-    strong_zero = false
+    strong_zero = true
 )
     width = get_width(gutils)
     mode = get_mode(gutils)
