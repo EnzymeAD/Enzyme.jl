@@ -35,7 +35,7 @@ import EnzymeCore: EnzymeRules, ABI, FFIABI, DefaultABI
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
 
-import GPUCompiler: CompilerJob, codegen, safe_name
+import GPUCompiler: CompilerJob, compile, safe_name
 using LLVM.Interop
 import LLVM: Target, TargetMachine
 import SparseArrays
@@ -3452,19 +3452,12 @@ end
 const DumpPreCheck = Ref(false)
 const DumpPreOpt = Ref(false)
 
-function GPUCompiler.codegen(
-    output::Symbol,
-    job::CompilerJob{<:EnzymeTarget};
-    libraries::Bool = true,
-    deferred_codegen::Bool = true,
-    optimize::Bool = true,
-    toplevel::Bool = true,
-    strip::Bool = false,
-    validate::Bool = true,
-    only_entry::Bool = false,
-    parent_job::Union{Nothing,CompilerJob} = nothing,
-)
-    params = job.config.params
+function GPUCompiler.compile(output::Symbol, job::CompilerJob{<:EnzymeTarget})
+    config = job.config
+    @show config
+    parent_job = nothing
+
+    params = config.params
     if params.run_enzyme
         # @assert eltype(params.rt) != Union{}
     end
@@ -3496,7 +3489,7 @@ function GPUCompiler.codegen(
             primal_params;
             kernel = false,
             libraries = true,
-            toplevel = toplevel,
+            toplevel = config.toplevel,
             optimize = false,
             cleanup = false,
             only_entry = false,
@@ -3516,7 +3509,7 @@ function GPUCompiler.codegen(
             parent_job.config.name,
             parent_job.config.always_inline,
             libraries = true,
-            toplevel = toplevel,
+            toplevel = config.toplevel,
             optimize = false,
             cleanup = false,
             only_entry = false,
@@ -3525,6 +3518,7 @@ function GPUCompiler.codegen(
         primal_job = CompilerJob(primal, config2, job.world) # TODO EnzymeInterp params, etc
     end
 
+    @safe_debug "Emit LLVM with" primal_job
     GPUCompiler.prepare_job!(primal_job)
     mod, meta = GPUCompiler.emit_llvm(primal_job)
     edges = Any[]
@@ -5550,7 +5544,9 @@ const DumpPostOpt = Ref(false)
 
 # actual compilation
 function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, String, Union{String, Nothing}, Type, String}
-    mod, meta = codegen(:llvm, job; optimize = false)
+    config = CompilerConfig(job.config; optimize=false)
+    job = CompilerJob(job.source, config)
+    mod, meta = compile(:llvm, job)
     adjointf, augmented_primalf = meta.adjointf, meta.augmented_primalf
 
 
