@@ -5968,7 +5968,7 @@ end
     abi::Type{ABI},
     erriffuncwritten::Val{ErrIfFuncWritten},
     runtimeactivity::Val{RuntimeActivity},
-    strongzero::Val{StringZero}
+    strongzero::Val{StrongZero}
 ) where {
     FA<:Annotation,
     A<:Annotation,
