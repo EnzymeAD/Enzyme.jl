@@ -298,6 +298,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
             FFIABI,
             Val(false),
             runtimeActivity,
+            strongZero
         ) #=erriffuncwritten=#
 
         res = forward(dupClosure ? $dup : Const(f), args...)
@@ -321,12 +322,13 @@ function func_runtime_generic_fwd(N, Width)
         function runtime_generic_fwd(
             activity::Type{Val{ActivityTup}},
             runtimeActivity::Val{RuntimeActivity},
+            strongZero::Val{StrongZero}
             width::Val{$Width},
             RT::Val{ReturnType},
             f::F,
             df::DF,
             $(allargs...),
-        ) where {ActivityTup,RuntimeActivity,ReturnType,F,DF,$(typeargs...)}
+        ) where {ActivityTup,RuntimeActivity,StrongZero,ReturnType,F,DF,$(typeargs...)}
             $body
         end
     end
@@ -335,12 +337,13 @@ end
 @generated function runtime_generic_fwd(
     activity::Type{Val{ActivityTup}},
     runtimeActivity::Val{RuntimeActivity},
+    strongZero::Val{StrongZero}
     width::Val{Width},
     RT::Val{ReturnType},
     f::F,
     df::DF,
     allargs...,
-) where {ActivityTup,RuntimeActivity,Width,ReturnType,F,DF}
+) where {ActivityTup,RuntimeActivity,StrongZero,Width,ReturnType,F,DF}
     N = div(length(allargs) + 2, Width + 1) - 1
     _, _, primtypes, _, _, wrapped, _, _, _ = setup_macro_wraps(true, N, Width, :allargs)
     return body_runtime_generic_fwd(N, Width, wrapped, primtypes)
@@ -499,6 +502,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
                 FFIABI,
                 Val(false),
                 runtimeActivity,
+                strongZero,
             ) #=erriffuncwritten=#
 
             (forward(dupClosure0 ? $dup : Const(f), args...)..., annotationA)
@@ -538,13 +542,14 @@ function func_runtime_generic_augfwd(N, Width)
         function runtime_generic_augfwd(
             activity::Type{Val{ActivityTup}},
             runtimeActivity::Val{RuntimeActivity},
+            strongZero::Val{StrongZero}
             width::Val{$Width},
             ModifiedBetween::Val{MB},
             RT::Val{ReturnType},
             f::F,
             df::DF,
             $(allargs...),
-        )::ReturnType where {ActivityTup,MB,ReturnType,RuntimeActivity,F,DF,$(typeargs...)}
+        )::ReturnType where {ActivityTup,MB,ReturnType,RuntimeActivity,StrongZero,F,DF,$(typeargs...)}
             $body
         end
     end
@@ -553,13 +558,14 @@ end
 @generated function runtime_generic_augfwd(
     activity::Type{Val{ActivityTup}},
     runtimeActivity::Val{RuntimeActivity},
+    strongZero::Val{StrongZero},
     width::Val{Width},
     ModifiedBetween::Val{MB},
     RT::Val{ReturnType},
     f::F,
     df::DF,
     allargs...,
-)::ReturnType where {ActivityTup,MB,RuntimeActivity,Width,ReturnType,F,DF}
+)::ReturnType where {ActivityTup,MB,RuntimeActivity,StrongZero,Width,ReturnType,F,DF}
     N = div(length(allargs) + 2, Width + 1) - 1
     _, _, primtypes, _, _, wrapped, _, _, active_refs =
         setup_macro_wraps(false, N, Width, :allargs)
@@ -691,6 +697,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
                 FFIABI,
                 Val(false),
                 runtimeActivity,
+                strongZero
             ) #=erriffuncwritten=#
 
             tup =
@@ -724,13 +731,14 @@ function func_runtime_generic_rev(N, Width)
         function runtime_generic_rev(
             activity::Type{Val{ActivityTup}},
             runtimeActivity::Val{RuntimeActivity},
+            strongZero::Val{StrongZero}
             width::Val{$Width},
             ModifiedBetween::Val{MB},
             tape::TapeType,
             f::F,
             df::DF,
             $(allargs...),
-        ) where {ActivityTup,RuntimeActivity,MB,TapeType,F,DF,$(typeargs...)}
+        ) where {ActivityTup,RuntimeActivity,StrongZero,MB,TapeType,F,DF,$(typeargs...)}
             $body
         end
     end
@@ -739,13 +747,14 @@ end
 @generated function runtime_generic_rev(
     activity::Type{Val{ActivityTup}},
     runtimeActivity::Val{RuntimeActivity},
+    strongZero::Val{StrongZero}
     width::Val{Width},
     ModifiedBetween::Val{MB},
     tape::TapeType,
     f::F,
     df::DF,
     allargs...,
-) where {ActivityTup,MB,RuntimeActivity,Width,TapeType,F,DF}
+) where {ActivityTup,MB,RuntimeActivity,StrongZero,Width,TapeType,F,DF}
     N = div(length(allargs) + 2, Width + 1) - 1
     _, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs =
         setup_macro_wraps(false, N, Width, :allargs)
@@ -989,6 +998,7 @@ end
 # This is explicitly escaped here to be what is apply generic in total [and thus all the insides are stable]
 function fwddiff_with_return(
     runtimeActivity::Val{RuntimeActivity},
+    strongZero::Val{StringZero},
     ::Val{width},
     ::Val{dupClosure0},
     ::Type{ReturnType},
@@ -997,7 +1007,7 @@ function fwddiff_with_return(
     f::FT,
     df::DF,
     args::Vararg{Annotation,Nargs},
-)::ReturnType where {RuntimeActivity,width,dupClosure0,ReturnType,FT,tt′,DF,Nargs}
+)::ReturnType where {RuntimeActivity,StrongZero,width,dupClosure0,ReturnType,FT,tt′,DF,Nargs}
     ReturnPrimal = Val(true)
     ModifiedBetween = Val(Enzyme.falses_from_args(Nargs + 1))
 
@@ -1045,6 +1055,7 @@ function fwddiff_with_return(
         FFIABI,
         Val(false),
         runtimeActivity,
+        strongZero
     )(
         fa,
         args...,
@@ -1072,6 +1083,7 @@ function body_runtime_iterate_fwd(N, Width, wrapped, primtypes, active_refs)
         FT = Core.Typeof(f)
         fwddiff_with_return(
             runtimeActivity,
+            strongZero,
             Val($Width),
             Val(ActivityTup[1]),
             ReturnType,
@@ -1093,12 +1105,13 @@ function func_runtime_iterate_fwd(N, Width)
         function runtime_iterate_fwd(
             activity::Type{Val{ActivityTup}},
             runtimeActivity::Val{RuntimeActivity},
+            strongZero::Val{StrongZero}
             width::Val{$Width},
             RT::Val{ReturnType},
             f::F,
             df::DF,
             $(allargs...),
-        ) where {ActivityTup,RuntimeActivity,ReturnType,F,DF,$(typeargs...)}
+        ) where {ActivityTup,RuntimeActivity,StrongZero,ReturnType,F,DF,$(typeargs...)}
             $body
         end
     end
@@ -1107,6 +1120,7 @@ end
 @generated function runtime_iterate_fwd(
     activity::Type{Val{ActivityTup}},
     runtimeActivity::Val{RuntimeActivity},
+    strongZero::Val{StrongZero},
     width::Val{Width},
     RT::Val{ReturnType},
     f::F,
@@ -1192,6 +1206,7 @@ end
 # This is explicitly escaped here to be what is apply generic in total [and thus all the insides are stable]
 function augfwd_with_return(
     runtimeActivity::Val{RuntimeActivity},
+    strongZero::Val{StrongZero},
     ::Val{width},
     ::Val{dupClosure0},
     ::Type{ReturnType},
@@ -1203,6 +1218,7 @@ function augfwd_with_return(
     args::Vararg{Annotation,Nargs},
 )::ReturnType where {
     RuntimeActivity,
+    StrongZero,
     width,
     dupClosure0,
     ReturnType,
@@ -1268,6 +1284,7 @@ function augfwd_with_return(
             FFIABI,
             Val(false),
             runtimeActivity,
+            strongZero
         ) #=erriffuncwritten=#
         forward(fa, args...)
     else
@@ -1355,6 +1372,7 @@ function body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes, a
         FT = Core.Typeof(f)
         tmpvals = augfwd_with_return(
             runtimeActivity,
+            strongZero,
             Val($Width),
             Val(ActivityTup[1]),
             ReturnType,
@@ -1379,13 +1397,14 @@ function func_runtime_iterate_augfwd(N, Width)
         function runtime_iterate_augfwd(
             activity::Type{Val{ActivityTup}},
             runtimeActivity::Val{RuntimeActivity},
+            strongZero::Val{StrongZero}
             width::Val{$Width},
             ModifiedBetween::Val{MB},
             RT::Val{ReturnType},
             f::F,
             df::DF,
             $(allargs...),
-        ) where {ActivityTup,RuntimeActivity,MB,ReturnType,F,DF,$(typeargs...)}
+        ) where {ActivityTup,RuntimeActivity,StrongZero,MB,ReturnType,F,DF,$(typeargs...)}
             $body
         end
     end
@@ -1394,6 +1413,7 @@ end
 @generated function runtime_iterate_augfwd(
     activity::Type{Val{ActivityTup}},
     runtimeActivity::Val{RuntimeActivity},
+    strongZero::Val{StrongZero},
     width::Val{Width},
     ModifiedBetween::Val{MB},
     RT::Val{ReturnType},
