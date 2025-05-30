@@ -45,7 +45,7 @@ function runtime_newtask_augfwd(
     post::Any,
     ssize::Int,
     runtimeActivity::Val{RuntimeActivity},
-    strongZero::Val{StrongZero}
+    strongZero::Val{StrongZero},
     ::Val{width},
     ::Val{ModifiedBetween},
 ) where {FT1,FT2,width,ModifiedBetween,RuntimeActivity,StrongZero}
