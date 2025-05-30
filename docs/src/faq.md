@@ -424,7 +424,7 @@ end
 grad_f(0.0)
 
 # output
-1.0
+NaN
 ```
 
 The problematic point for us that creates the NaN is the derivative rule for `1.0 / x`. In particular it computes `dy * - 1.0 / x^2 `. The right hand side `-1.0 / x^2` is of course infinite (in this case `-Inf`). However, `dy = 0.0` since we computed that the term was not used in the final returned expression. Multiplying these together indeed produces a `NaN`. The problem here, is that in this case the fact that we didn't use the value of `y` in a differentiable way should bind more **tightly** -- in other words, if the partial derivative wrt y is zero (aka `dy == 0.0`), the partial derivative wrt all operands of y should be zero.
