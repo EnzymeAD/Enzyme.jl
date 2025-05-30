@@ -482,6 +482,7 @@ end
         Bool(needsShadow),
         Int(width),
         get_runtime_activity(gutils),
+        get_strong_zero(gutils),
     }
 
     alloctx = LLVM.IRBuilder()
@@ -777,6 +778,7 @@ end
         Int(width),
         overwritten,
         get_runtime_activity(gutils),
+        get_strong_zero(gutils),
     }
 
     mode = get_mode(gutils)
@@ -889,6 +891,7 @@ function enzyme_custom_common_rev(
         Int(width),
         overwritten,
         get_runtime_activity(gutils),
+        get_strong_zero(gutils),
     }
 
     alloctx = LLVM.IRBuilder()
