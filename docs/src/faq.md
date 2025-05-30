@@ -390,7 +390,7 @@ When evaluated at `x=0.0`, `y=Inf`. However due to the `min` the result will be 
 Let's consider what happens for the derivative by applying Enzyme. 
 
 ```jldoctest strongzero
-Enzyme.gradient(Reverse, f, Active(0.0))
+Enzyme.gradient(Reverse, f, 0.0)
 
 # output
 (NaN,)
@@ -427,14 +427,14 @@ grad_f(0.0)
 1.0
 ```
 
-The problematic point for us that creates the NaN is the derivative rule for `1.0 / x`. In particular it computes `dy * - 1.0 / x^2 `. The right hand side `-1.0 / x^2` is of course infinite (in this case `-Inf`). However, `dy = 0.0` since we computed that the term was not used in the final returned expression. Multiplying these together indeed produces a `NaN`. The problem here, is that in this case the fact that we didn't use the value of `y` in a differentiable way should bind more **tightly** -- in other words, if `dy == 0.0`, all computed adjoint derivates also should be zero.
+The problematic point for us that creates the NaN is the derivative rule for `1.0 / x`. In particular it computes `dy * - 1.0 / x^2 `. The right hand side `-1.0 / x^2` is of course infinite (in this case `-Inf`). However, `dy = 0.0` since we computed that the term was not used in the final returned expression. Multiplying these together indeed produces a `NaN`. The problem here, is that in this case the fact that we didn't use the value of `y` in a differentiable way should bind more **tightly** -- in other words, if the partial derivative wrt y is zero (aka `dy == 0.0`), the partial derivative wrt all operands of y should be zero.
 
 This is exactly what the strong zero mode of Enzyme does. It tells the derivative rules to perform an additional runtime check that the derivative to propagate is non-zero. It comes with a nontrivial additional compute cost as a result, but ensures correctness in cases like this where intermediate values of a computation (even if unused) may be infinite or `NaN`.
 
 One can use this from Enzyme.jl as follows and get the intended result:
 
 ```jldoctest strongzero
-Enzyme.gradient(set_strong_zero(Reverse), f, Active(0.0))
+Enzyme.gradient(set_strong_zero(Reverse), f, 0.0)
 
 # output
 (0.0,)
