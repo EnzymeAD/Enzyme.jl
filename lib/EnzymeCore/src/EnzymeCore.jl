@@ -257,8 +257,8 @@ Abstract type for which differentiation mode will be used.
 
 - `ABI`: what runtime [`ABI`](@ref) to use
 - `ErrIfFuncWritten`: whether to error when the function differentiated is a closure and written to.
-- `RuntimeActivity`: whether to enable runtime activity (default off)
-- `StrongZero`: whether to enforce that propagating a zero derivative input always ends up in zero derivative outputs. This is required to avoid nan's if one of the arguments may be infinite or nan.
+- `RuntimeActivity`: whether to enable runtime activity (default off). Runtime Activity is required is the differentiability of all mutable variables cannot be determined statically. For a deeper explanation see the [FAQ](/faq#Runtime-Activity)
+- `StrongZero`: whether to enforce that propagating a zero derivative input always ends up in zero derivative outputs. This is required to avoid nan's if one of the arguments may be infinite or nan. For a deeper explanation see the [FAQ](/faq#Runtime-Activity)
 
 !!! warning
     The type parameters of `Mode` are not part of the public API and can change without notice.
@@ -310,28 +310,28 @@ struct ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIf
 
 Default instance of [`ReverseMode`](@ref) that doesn't return the primal
 """
-const Reverse = ReverseMode{false,false,DefaultABI, false, false, false}()
+const Reverse = ReverseMode{false,false, false, DefaultABI, false, false}()
 
 """
     const ReverseWithPrimal
 
 Default instance of [`ReverseMode`](@ref) that also returns the primal.
 """
-const ReverseWithPrimal = ReverseMode{true,false,DefaultABI, false, false, false}()
+const ReverseWithPrimal = ReverseMode{true,false,false,DefaultABI, false, false}()
 
 """
     const ReverseHolomorphic
 
 Holomorphic instance of [`ReverseMode`](@ref) that doesn't return the primal
 """
-const ReverseHolomorphic = ReverseMode{false,false,DefaultABI, true, false, false}()
+const ReverseHolomorphic = ReverseMode{false,false,false,DefaultABI, true, false}()
 
 """
     const ReverseHolomorphicWithPrimal
 
 Holomorphic instance of [`ReverseMode`](@ref) that also returns the primal
 """
-const ReverseHolomorphicWithPrimal = ReverseMode{true,false,DefaultABI, true, false, false}()
+const ReverseHolomorphicWithPrimal = ReverseMode{true,false,false,DefaultABI, true, false}()
 
 @inline set_err_if_func_written(::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,true}()
 @inline clear_err_if_func_written(::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,false}()
@@ -607,14 +607,14 @@ function clear_err_if_func_written end
     set_runtime_activity(::Mode, config::Union{FwdConfig,RevConfig})
     set_runtime_activity(::Mode, prev::Mode)
 
-Return a new mode where runtime activity analysis is activated / set to the desired value.
+Return a new mode where runtime activity analysis is activated / set to the desired value. See [Enzyme.Mode](@ref) for more information on runtime activity.
 """
 function set_runtime_activity end
 
 """
     clear_runtime_activity(::Mode)
 
-Return a new mode where runtime activity analysis is deactivated.
+Return a new mode where runtime activity analysis is deactivated. See [Enzyme.Mode](@ref) for more information on runtime activity.
 """
 function clear_runtime_activity end
 
@@ -624,14 +624,14 @@ function clear_runtime_activity end
     set_strong_zero(::Mode, config::Union{FwdConfig,RevConfig})
     set_strong_zero(::Mode, prev::Mode)
 
-Return a new mode where strong zero is activated / set to the desired value.
+Return a new mode where strong zero is activated / set to the desired value. See [Enzyme.Mode](@ref) for more information on strong zero.
 """
 function set_strong_zero end
 
 """
     clear_strong_zero(::Mode)
 
-Return a new mode where strong_zero is deactivated.
+Return a new mode where strong_zero is deactivated. See [Enzyme.Mode](@ref) for more information on strong zero.
 """
 function clear_strong_zero end
 

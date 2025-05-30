@@ -367,6 +367,79 @@ end
 Enzyme.autodiff(Reverse, f2, Active, Active(3.1))
 ```
 
+## Strong Zero
+
+By default, Enzyme (and essentially all other) AD tools may assume that intermediate values are finite and not nan. This is beneficial for performance, but also can lead to some non-intuitive correctness behaviors.
+
+Consider the following code snippet:
+
+```jldoctest strongzero
+function f(x)
+    y = 1.0 / x
+    return min(1.0, y)
+end
+
+f(0.0)
+
+# output
+1.0
+```
+
+When evaluated at `x=0.0`, `y=Inf`. However due to the `min` the result will be a finite value. 
+
+Let's consider what happens for the derivative by applying Enzyme. 
+
+```jldoctest strongzero
+Enzyme.gradient(Reverse, f, Active(0.0))
+
+# output
+(NaN,)
+```
+
+We find the derivative is NaN, which is perhaps less than helpful. Let's look at why this happens by writing out the chain rule ourselves.
+
+
+```jldoctest strongzero
+function grad_f(x)
+    y = 1.0 / x
+    z = min(1.0, y)
+
+    # Initialization of the shadow derivatives (which will be +='d into)
+    dx = dy = dz = 0.0
+
+    # derivative of return
+    dz = 1.0
+
+    # derivative of min(1.0, y)
+    dy += (1.0 > y) ? dz : 0.0
+    dz = 0.0
+
+    # derivative of 1.0 / x
+    dx += dy * - 1.0 / x^2 
+    dy = 0.0
+
+    return dx
+end
+
+grad_f(0.0)
+
+# output
+1.0
+```
+
+The problematic point for us that creates the NaN is the derivative rule for `1.0 / x`. In particular it computes `dy * - 1.0 / x^2 `. The right hand side `-1.0 / x^2` is of course infinite (in this case `-Inf`). However, `dy = 0.0` since we computed that the term was not used in the final returned expression. Multiplying these together indeed produces a NaN. The problem here, is that in this case the fact that we didn't use the value of `y` in a differentiable way should bind more "tightly" -- in other words, if `dy == 0.0`, all computed adjoint derivates also should be zero.
+
+This is exactly what the strong zero mode of Enzyme does. It tells the derivative rules to perform an additional runtime check that the derivative to propagate is non-zero. It comes with a nontrivial additional cost as a result, but ensures correctness in cases like this where intermediate values of a computation (even if unused) may be Infinite or NaN.
+
+One can use this from Enzyme.jl as follows and get the intended result:
+
+```jldoctest strongzero
+Enzyme.gradient(set_strong_zero(Reverse), f, Active(0.0))
+
+# output
+(0.0,)
+```
+
 ## Complex numbers
 
 Differentiation of a function which returns a complex number is ambiguous, because there are several different gradients which may be desired. Rather than assume a specific of these conventions and potentially result in user error when the resulting derivative is not the desired one, Enzyme forces users to specify the desired convention by returning a real number instead.

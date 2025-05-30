@@ -67,7 +67,7 @@ Configuration type to dispatch on in custom reverse rules (see [`augmented_prima
 * `RuntimeActivity`: whether runtime activity is enabled.
 * `StrongZero`: whether strong zero is enabled.
 
-Getters for the four type parameters are provided by `needs_primal`, `needs_shadow`, `width`, `overwritten`, `runtime_activity`, and `strong_zero`.
+Getters for the type parameters are provided by `needs_primal`, `needs_shadow`, `width`, `overwritten`, `runtime_activity`, and `strong_zero`.
 """
 struct RevConfig{NeedsPrimal, NeedsShadow, Width, Overwritten, RuntimeActivity, StrongZero} end
 const RevConfigWidth{Width} = RevConfig{<:Any,<:Any, Width}

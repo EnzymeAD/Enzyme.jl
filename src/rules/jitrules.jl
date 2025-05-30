@@ -1894,6 +1894,7 @@ function generic_setup(
     end
 
     pushfirst!(vals, unsafe_to_llvm(B, Val(Int(width))))
+    pushfirst!(vals, unsafe_to_llvm(B, Val(get_strong_zero(gutils))))
     if runtime_activity
         pushfirst!(vals, unsafe_to_llvm(B, Val(get_runtime_activity(gutils))))
     end
