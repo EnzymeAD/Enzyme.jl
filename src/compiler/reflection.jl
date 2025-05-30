@@ -13,7 +13,8 @@ function get_job(
     world = nothing,
     ABI = DefaultABI,
     ErrIfFuncWritten = false,
-    RuntimeActivity = true,
+    RuntimeActivity = false,
+    StrongZero = false,
     kwargs...,
 )
 
@@ -47,6 +48,7 @@ function get_job(
         ABI,
         ErrIfFuncWritten,
         RuntimeActivity,
+        StrongZero
     )
     return Compiler.CompilerJob(
             primal,
