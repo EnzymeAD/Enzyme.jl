@@ -5,7 +5,7 @@ function runtime_newtask_fwd(
     post::Any,
     ssize::Int,
     runtimeActivity::Val{RuntimeActivity},
-    strongZero::Val{StrongZero}
+    strongZero::Val{StrongZero},
     ::Val{width},
 ) where {FT1,FT2,width,RuntimeActivity, StrongZero}
     FT = Core.Typeof(fn)
