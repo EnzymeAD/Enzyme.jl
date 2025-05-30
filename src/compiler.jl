@@ -1285,13 +1285,18 @@ end
 
 # Define EnzymeTarget
 # Base.@kwdef 
-struct EnzymeTarget <: AbstractCompilerTarget end
+struct EnzymeTarget{Target<:AbstractCompilerTarget} <: AbstractCompilerTarget
+    target::Target
+end
 
-GPUCompiler.llvm_triple(::EnzymeTarget) = LLVM.triple(JIT.get_jit())
-GPUCompiler.llvm_datalayout(::EnzymeTarget) = LLVM.datalayout(JIT.get_jit())
+GPUCompiler.llvm_triple(target::EnzymeTarget) = GPUCompiler.llvm_triple(targe.target)
+GPUCompiler.llvm_datalayout(target::EnzymeTarget) = GPUCompiler.llvm_datalayout(target.target)
+GPUCompiler.llvm_machine(target::EnzymeTarget) = GPUCompiler.llvm_machine(target.target)
+GPUCompiler.nest_target(::EnzymeTarget, other::AbstractCompilerTarget) = EnzymeTarget(other)
 
-function GPUCompiler.llvm_machine(::EnzymeTarget)
-    return JIT.get_tm()
+# TODO: Audit uses
+function EnzymeTarget()
+    EnzymeTarget(GPUCompiler.NativeCompilerTarget(;jlruntime=true))
 end
 
 module Runtime end
@@ -3463,6 +3468,8 @@ const DumpPreOpt = Ref(false)
 function GPUCompiler.compile(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     config = job.config
     @show config
+    flush(stdout)
+    flush(stderr)
     parent_job = nothing
 
     params = config.params
@@ -4225,6 +4232,7 @@ end
 
     @assert actualRetType !== nothing
     if params.run_enzyme
+        @show actualRetType
         @assert actualRetType != Union{}
     end
 
