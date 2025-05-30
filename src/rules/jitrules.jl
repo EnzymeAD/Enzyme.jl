@@ -1733,13 +1733,14 @@ end
 @generated function runtime_iterate_rev(
     activity::Type{Val{ActivityTup}},
     runtimeActivity::Val{RuntimeActivity},
+    strongZero::Val{StrongZero},
     width::Val{Width},
     ModifiedBetween::Val{MB},
     tape::TapeType,
     f::F,
     df::DF,
     allargs...,
-) where {ActivityTup,RuntimeActivity,MB,Width,TapeType,F,DF}
+) where {ActivityTup,RuntimeActivity,StrongZero,MB,Width,TapeType,F,DF}
     N = div(length(allargs) + 2, Width + 1) - 1
     primargs, _, primtypes, _, _, wrapped, batchshadowargs, modbetween, active_refs =
         setup_macro_wraps(false, N, Width, :allargs, true; reverse = true) #=iterate=#
