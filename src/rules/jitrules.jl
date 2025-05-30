@@ -1778,6 +1778,7 @@ function generic_setup(
     endcast = true,
     firstconst_after_tape = true,
     runtime_activity = true,
+    strong_zero = false
 )
     width = get_width(gutils)
     mode = get_mode(gutils)
@@ -1894,7 +1895,9 @@ function generic_setup(
     end
 
     pushfirst!(vals, unsafe_to_llvm(B, Val(Int(width))))
-    pushfirst!(vals, unsafe_to_llvm(B, Val(get_strong_zero(gutils))))
+    if strong_zero
+        pushfirst!(vals, unsafe_to_llvm(B, Val(get_strong_zero(gutils))))
+    end
     if runtime_activity
         pushfirst!(vals, unsafe_to_llvm(B, Val(get_runtime_activity(gutils))))
     end
