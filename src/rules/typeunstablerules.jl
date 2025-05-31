@@ -532,6 +532,7 @@ function common_newstructv_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
             endcast = false,
             firstconst_after_tape = true,
             runtime_activity = false,
+            strong_zero = false
         ) #=start=#
 
         if width == 1
@@ -599,6 +600,7 @@ function common_newstructv_rev(offset, B, orig, gutils, tape)
             tape,
             firstconst_after_tape = true,
             runtime_activity = false,
+            strong_zero = false
         ) #=start=#
     end
 
@@ -648,6 +650,7 @@ function common_f_tuple_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
             false;
             endcast = false,
             runtime_activity = false,
+            strong_zero = false
         ) #=start=#
 
         if width == 1
@@ -740,6 +743,7 @@ function common_f_tuple_rev(offset, B, orig, gutils, tape)
             true;
             tape = tape2,
             runtime_activity = false,
+            strong_zero = false
         ) #=start=#
     end
     return nothing

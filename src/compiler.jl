@@ -1319,6 +1319,9 @@ struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
 
     # Whether runtime activity is enabled
     runtimeActivity::Bool
+
+    # Whether to enforce that a zero derivative propagates as a zero (and never a nan)
+    strongZero::Bool
 end
 
 struct UnknownTapeType end
@@ -1537,6 +1540,7 @@ function enzyme!(
     interp = GPUCompiler.get_interpreter(job)
     rt = job.config.params.rt
     runtimeActivity = job.config.params.runtimeActivity
+    strongZero = job.config.params.strongZero
     @assert eltype(rt) != Union{}
 
     shadow_init = job.config.params.shadowInit
@@ -1672,6 +1676,7 @@ function enzyme!(
             uncacheable_args,
             false,
             runtimeActivity,
+            strongZero,
             width,
             parallel,
         ) #=atomicAdd=#
@@ -1724,6 +1729,7 @@ function enzyme!(
                 false,
                 API.DEM_ReverseModeGradient,
                 runtimeActivity,
+                strongZero,
                 width, #=mode=#
                 tape,
                 false,
@@ -1762,6 +1768,7 @@ function enzyme!(
                 false,
                 API.DEM_ReverseModeCombined,
                 runtimeActivity,
+                strongZero,
                 width, #=mode=#
                 C_NULL,
                 false,
@@ -1800,6 +1807,7 @@ function enzyme!(
                 returnUsed,
                 API.DEM_ForwardMode,
                 runtimeActivity,
+                strongZero,
                 width, #=mode=#
                 C_NULL,
                 typeInfo,            #=additionalArg=#
@@ -5632,6 +5640,7 @@ end
     @nospecialize(ABI::Type),
     ErrIfFuncWritten::Bool,
     RuntimeActivity::Bool,
+    StrongZero::Bool,
     edges::Union{Nothing, Vector{Any}}
 )
     target = Compiler.EnzymeTarget()
@@ -5649,6 +5658,7 @@ end
         ABI,
         ErrIfFuncWritten,
         RuntimeActivity,
+        StrongZero
     ) #=abiwrap=#
     tmp_job = if World isa Nothing
         Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false))
@@ -5700,6 +5710,7 @@ end
         ABI,
         ErrIfFuncWritten,
         RuntimeActivity,
+        StrongZero
     ) #=abiwrap=#
     job = if World isa Nothing
         Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false))
@@ -5784,6 +5795,7 @@ end
     ::Type{ABI},
     ::Val{ErrIfFuncWritten},
     ::Val{RuntimeActivity},
+    ::Val{StrongZero}
 ) where {
     FA<:Annotation,
     A<:Annotation,
@@ -5796,6 +5808,7 @@ end
     ABI,
     ErrIfFuncWritten,
     RuntimeActivity,
+    StrongZero
 }
     ts_ctx = JuliaContext()
     ctx = context(ts_ctx)
@@ -5815,6 +5828,7 @@ end
             ABI,
             ErrIfFuncWritten,
             RuntimeActivity,
+            StrongZero,
             nothing
         )
     finally
@@ -5823,10 +5837,10 @@ end
     end
 end
 
-function thunk_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where N)), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ABI::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, @nospecialize(self), @nospecialize(fakeworld), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(abi::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type))
+function thunk_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where N)), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ABI::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, StrongZero::Bool, @nospecialize(self), @nospecialize(fakeworld), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(abi::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type), @nospecialize(strongzero::Type))
     @nospecialize
     
-    parmnames = (:fakeworld, :fa, :a, :tt, :mode, :width, :modifiedbetween, :returnprimal, :shadowinit, :abi, :erriffuncwritten, :runtimeactivity)
+    parmnames = (:fakeworld, :fa, :a, :tt, :mode, :width, :modifiedbetween, :returnprimal, :shadowinit, :abi, :erriffuncwritten, :runtimeactivity, :strongzero)
     stub = Core.GeneratedFunctionStub(identity, Core.svec(:methodinstance, parmnames...), Core.svec())
 
     ft = eltype(FA)
@@ -5912,6 +5926,7 @@ function thunk_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::
             ABI,
             ErrIfFuncWritten,
             RuntimeActivity,
+            StrongZero,
             edges
         )
     finally
@@ -5953,6 +5968,7 @@ end
     abi::Type{ABI},
     erriffuncwritten::Val{ErrIfFuncWritten},
     runtimeactivity::Val{RuntimeActivity},
+    strongzero::Val{StrongZero}
 ) where {
     FA<:Annotation,
     A<:Annotation,
@@ -5965,6 +5981,7 @@ end
     ABI,
     ErrIfFuncWritten,
     RuntimeActivity,
+    StrongZero
 }
     $(Expr(:meta, :generated_only))
     $(Expr(:meta, :generated, thunk_generator))
@@ -5972,10 +5989,10 @@ end
 
 import GPUCompiler: deferred_codegen_jobs
 
-function deferred_id_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where N)), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ExpectedTapeType::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, @nospecialize(self), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(expectedtapetype::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type))
+function deferred_id_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where N)), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ExpectedTapeType::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, StrongZero::Bool, @nospecialize(self), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(expectedtapetype::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type), @nospecialize(strongzero::Type))
     @nospecialize
     
-    parmnames = (:fa, :a, :tt, :mode, :width, :modifiedbetween, :returnprimal, :shadowinit, :expectedtapetype, :erriffuncwritten, :runtimeactivity)
+    parmnames = (:fa, :a, :tt, :mode, :width, :modifiedbetween, :returnprimal, :shadowinit, :expectedtapetype, :erriffuncwritten, :runtimeactivity, :strongzero)
     stub = Core.GeneratedFunctionStub(identity, Core.svec(:methodinstance, parmnames...), Core.svec())
 
     ft = eltype(FA)
@@ -6048,6 +6065,7 @@ function deferred_id_generator(world::UInt, source::LineNumberNode, @nospecializ
         FFIABI,
         ErrIfFuncWritten,
         RuntimeActivity,
+        StrongZero
     ) #=abiwrap=#
     job =
         Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false), world)
@@ -6089,6 +6107,7 @@ end
     expectedtapetype::Type{ExpectedTapeType},
     erriffuncwritten::Val{ErrIfFuncWritten},
     runtimeactivity::Val{RuntimeActivity},
+    strongzero::Val{StrongZero}
 ) where {
     FA<:Annotation,
     A<:Annotation,
@@ -6101,6 +6120,7 @@ end
     ExpectedTapeType,
     ErrIfFuncWritten,
     RuntimeActivity,
+    StrongZero
 }
     $(Expr(:meta, :generated_only))
     $(Expr(:meta, :generated, deferred_id_generator))
@@ -6117,9 +6137,10 @@ end
     @nospecialize(shadowinit::Val),
     @nospecialize(expectedtapetype::Type),
     @nospecialize(erriffuncwritten::Val),
-    @nospecialize(runtimeactivity::Val)
+    @nospecialize(runtimeactivity::Val),
+    @nospecialize(strongzero::Val)
 )
-    id = deferred_id_codegen(fa, a, tt, mode, width, modifiedbetween, returnprimal, shadowinit, expectedtapetype, erriffuncwritten, runtimeactivity)
+    id = deferred_id_codegen(fa, a, tt, mode, width, modifiedbetween, returnprimal, shadowinit, expectedtapetype, erriffuncwritten, runtimeactivity, strongzero)
     ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), id)
 end
 

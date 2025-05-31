@@ -260,11 +260,11 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
 
 """
 @generated function gradient(
-    rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten},
+    rm::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten},
     f::F,
     x::ty_0,
     args::Vararg{Any,N},
-) where {F,ty_0,ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten,N}
+) where {F,ty_0,ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten,N}
     # TODO eventually add an invalidation edge here from inactive_type
     rargs = Union{Symbol,Expr}[:x]
     gentys = Type[x]
@@ -389,11 +389,11 @@ gradient!(ReverseWithPrimal, dx, f, [2.0, 3.0])
 ```
 """
 @inline function gradient!(
-    rm::ReverseMode{ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten},
+    rm::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten},
     dx::X,
     f::F,
     x::X,
-) where {X<:Array,F,ReturnPrimal,RuntimeActivity,ABI,Holomorphic,ErrIfFuncWritten}
+) where {X<:Array,F,ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}
     make_zero!(dx)
     res = autodiff(rm, f, Active, Duplicated(x, dx))
     return if ReturnPrimal
@@ -580,13 +580,13 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
 ```
 """
 @generated function gradient(
-    fm::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity},
+    fm::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero},
     f::F,
     x::ty_0,
     args::Vararg{Any,N};
     chunk::CS = nothing,
     shadows::ST = create_shadows(chunk, x, args...),
-) where {F, ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,CS,ST, ty_0, N}
+) where {F, ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero,CS,ST, ty_0, N}
 
     syms = Union{Symbol,Expr}[:x]
     shads = Union{Symbol,Expr}[:(shadows[1])]
@@ -844,12 +844,12 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
 ```
 """
 @inline function jacobian(
-    mode::ReverseMode{ReturnPrimal,RuntimeActivity,RABI,Holomorphic,ErrIfFuncWritten},
+    mode::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,RABI,Holomorphic,ErrIfFuncWritten},
     f::F,
     x::X;
     n_outs::OutType = nothing,
     chunk::CT = nothing,
-) where {ReturnPrimal,F,X,RABI<:ABI,ErrIfFuncWritten,RuntimeActivity,OutType,CT,Holomorphic}
+) where {ReturnPrimal,F,X,RABI<:ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero,OutType,CT,Holomorphic}
 
     if n_outs == nothing
         res = if f isa Const
@@ -859,7 +859,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
         end
         jac = if res isa AbstractArray
             jacobian(
-                ReverseMode{false,RuntimeActivity,RABI,Holomorphic,ErrIfFuncWritten}(),
+                ReverseMode{false,RuntimeActivity,StrongZero,RABI,Holomorphic,ErrIfFuncWritten}(),
                 f,
                 x;
                 n_outs = Val(size(res)),
@@ -867,7 +867,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
             )
         elseif res isa AbstractFloat
             gradient(
-                ReverseMode{false,RuntimeActivity,RABI,Holomorphic,ErrIfFuncWritten}(),
+                ReverseMode{false,RuntimeActivity,StrongZero,RABI,Holomorphic,ErrIfFuncWritten}(),
                 f,
                 x,
             )
@@ -915,6 +915,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
                     #=ReturnPrimal=#false,
                     #=ReturnShadow=#true,
                     RuntimeActivity,
+                    StrongZero,
                     #=width=#1,
                     ModifiedBetweenT,
                     RABI,
@@ -946,6 +947,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
                     #=ReturnPrimal=#false,
                     #=ReturnShadow=#true,
                     RuntimeActivity,
+                    StrongZero,
                     chunksize,
                     ModifiedBetweenT,
                     RABI,
@@ -971,6 +973,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
                         #=ReturnPrimal=#false,
                         #=ReturnShadow=#true,
                         RuntimeActivity,
+                        StrongZero,
                         last_size,
                         ModifiedBetweenT,
                         RABI,

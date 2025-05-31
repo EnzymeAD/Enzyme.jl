@@ -22,17 +22,18 @@ The third argument is the return type annotation, and all other arguments are th
 function forward end
 
 """
-    FwdConfig{NeedsPrimal, NeedsShadow, Width, RuntimeActivity}
+    FwdConfig{NeedsPrimal, NeedsShadow, Width, RuntimeActivity, StrongZero}
     FwdConfigWidth{Width} = FwdConfig{<:Any, <:Any, Width}
 
 Configuration type to dispatch on in custom forward rules (see [`forward`](@ref).
 * `NeedsPrimal` and `NeedsShadow`: boolean values specifying whether the primal and shadow (resp.) should be returned. 
 * `Width`: an integer that specifies the number of adjoints/shadows simultaneously being propagated.
-* `RuntimeActivity`: whether runtime activity is enabled.
+* `RuntimeActivity`: whether runtime activity is enabled. See the [FAQ](@ref faq-runtime-activity) for more information.
+* `StrongZero`: whether strong zero is enabled. See the [FAQ](@ref faq-strong-zero) for more information.
 
-Getters for the type parameters are provided by `needs_primal`, `needs_shadow`, `width` and `runtime_activity`.
+Getters for the type parameters are provided by `needs_primal`, `needs_shadow`, `width` `runtime_activity`, and `strong_zero`.
 """
-struct FwdConfig{NeedsPrimal, NeedsShadow, Width, RuntimeActivity} end
+struct FwdConfig{NeedsPrimal, NeedsShadow, Width, RuntimeActivity, StrongZero} end
 const FwdConfigWidth{Width} = FwdConfig{<:Any,<:Any,Width}
 
 """
@@ -52,10 +53,11 @@ Whether a custom rule should return the shadow (derivative) of the function resu
 
 @inline width(::FwdConfig{<:Any, <:Any, Width}) where Width = Width
 @inline runtime_activity(::FwdConfig{<:Any, <:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
+@inline strong_zero(::FwdConfig{<:Any, <:Any, <:Any, <:Any, StrongZero}) where StrongZero = StrongZero
 
 
 """
-    RevConfig{NeedsPrimal, NeedsShadow, Width, Overwritten, RuntimeActivity}
+    RevConfig{NeedsPrimal, NeedsShadow, Width, Overwritten, RuntimeActivity, StrongZero}
     RevConfigWidth{Width} = RevConfig{<:Any, <:Any, Width}
 
 Configuration type to dispatch on in custom reverse rules (see [`augmented_primal`](@ref) and [`reverse`](@ref)).
@@ -63,11 +65,12 @@ Configuration type to dispatch on in custom reverse rules (see [`augmented_prima
 * `Width`: an integer that specifies the number of adjoints/shadows simultaneously being propagated.
 * `Overwritten`: a tuple of booleans of whether each argument (including the function itself) is modified between the 
    forward and reverse pass (true if potentially modified between).
-* `RuntimeActivity`: whether runtime activity is enabled.
+* `RuntimeActivity`: whether runtime activity is enabled. See the [FAQ](@ref faq-runtime-activity) for more information.
+* `StrongZero`: whether strong zero is enabled. See the [FAQ](@ref faq-strong-zero) for more information.
 
-Getters for the four type parameters are provided by `needs_primal`, `needs_shadow`, `width`, `overwritten`, and `runtime_activity`.
+Getters for the type parameters are provided by `needs_primal`, `needs_shadow`, `width`, `overwritten`, `runtime_activity`, and `strong_zero`.
 """
-struct RevConfig{NeedsPrimal, NeedsShadow, Width, Overwritten, RuntimeActivity} end
+struct RevConfig{NeedsPrimal, NeedsShadow, Width, Overwritten, RuntimeActivity, StrongZero} end
 const RevConfigWidth{Width} = RevConfig{<:Any,<:Any, Width}
 
 @inline needs_primal(::RevConfig{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
@@ -75,6 +78,7 @@ const RevConfigWidth{Width} = RevConfig{<:Any,<:Any, Width}
 @inline width(::RevConfig{<:Any, <:Any, Width}) where Width = Width
 @inline overwritten(::RevConfig{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
 @inline runtime_activity(::RevConfig{<:Any, <:Any, <:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
+@inline strong_zero(::RevConfig{<:Any, <:Any, <:Any, <:Any, <:Any, StrongZero}) where StrongZero = StrongZero
 
 """
     primal_type(::FwdConfig, ::Type{<:Annotation{RT}})
@@ -289,5 +293,7 @@ Mark a particular type `Ty` as always being inactive.
 inactive_type(::Type) = false
 
 @inline EnzymeCore.set_runtime_activity(mode::M, config::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_runtime_activity(mode, runtime_activity(config))
+
+@inline EnzymeCore.set_strong_zero(mode::M, config::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_strong_zero(mode, runtime_activity(config))
 
 end # EnzymeRules
