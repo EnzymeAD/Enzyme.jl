@@ -73,12 +73,7 @@ function setup_macro_wraps(
     active_refs = Expr[]
     for i = 1:N
         if iterate
-            push!(modbetween, quote
-                ntuple(Val(length($(primargs[i])))) do _
-                    Base.@_inline_meta
-                    MB[$i]
-                end
-            end)
+            push!(modbetween, :(ntuple(Returns(MB[$i]), Val(length($(primargs[i]))))))
         end
         aref = Symbol("active_ref_$i")
         push!(active_refs, quote
@@ -975,17 +970,11 @@ end
 end
 
 @inline function allFirst(::Val{Width}, res) where {Width}
-    ntuple(Val(Width)) do i
-        Base.@_inline_meta
-        res[1]
-    end
+    ntuple(Returns(res[1]), Val(Width))
 end
 
 @inline function allSame(::Val{Width}, res) where {Width}
-    ntuple(Val(Width)) do i
-        Base.@_inline_meta
-        res
-    end
+    ntuple(Returns(res), Val(Width))
 end
 
 @inline function allZero(::Val{Width}, res) where {Width}
@@ -1376,7 +1365,7 @@ function body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes, a
             Val($Width),
             Val(ActivityTup[1]),
             ReturnType,
-            Val(concat($(modbetween...))),
+            Val($(Expr(:call, concat, modbetween...))),
             FT,
             tt′,
             f,
@@ -1453,6 +1442,7 @@ end
 # This is explicitly escaped here to be what is apply generic in total [and thus all the insides are stable]
 @generated function rev_with_return(
     runtimeActivity::Val{RuntimeActivity},
+    strongZero::Val{StrongZero},
     ::Val{width},
     ::Val{dupClosure0},
     ::Val{ModifiedBetween0},
@@ -1466,6 +1456,7 @@ end
     args::Vararg{Annotation,Nargs},
 )::Nothing where {
     RuntimeActivity,
+    StrongZero,
     width,
     dupClosure0,
     ModifiedBetween0,
@@ -1605,6 +1596,7 @@ end
                 FFIABI,
                 Val(false),
                 runtimeActivity,
+                strongZero
             ) #=erriffuncwritten=#
 
             tup = if tape.shadow_return !== nothing
@@ -1681,8 +1673,8 @@ function body_runtime_iterate_rev(
             strongZero,
             Val($Width),
             Val(ActivityTup[1]),
-            Val(concat($(modbetween...))),
-            Val(concat($(lengths...))),
+            Val($(Expr(:call, concat, modbetween...))),
+            Val($(Expr(:call, concat, lengths...))),
             FT,
             tt′,
             f,

@@ -134,10 +134,7 @@ include("internal_rules.jl")
 import .Compiler: CompilationException
 
 @inline function falses_from_args(N)
-    ntuple(Val(N)) do i
-        Base.@_inline_meta
-        false
-    end
+    ntuple(Returns(false), Val(N))
 end
 
 @inline function any_active(args::Vararg{Annotation,N}) where {N}
