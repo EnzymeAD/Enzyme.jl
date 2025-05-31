@@ -1678,6 +1678,7 @@ function body_runtime_iterate_rev(
         FT = Core.Typeof(f)
         rev_with_return(
             runtimeActivity,
+            strongZero,
             Val($Width),
             Val(ActivityTup[1]),
             Val(concat($(modbetween...))),
