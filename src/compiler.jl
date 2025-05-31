@@ -3461,7 +3461,9 @@ end
 const DumpPreCheck = Ref(false)
 const DumpPreOpt = Ref(false)
 
-function GPUCompiler.compile(output::Symbol, job::CompilerJob{<:EnzymeTarget})
+function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeTarget})
+    @assert output == :llvm
+    
     config = job.config
     @show config
     flush(stdout)
