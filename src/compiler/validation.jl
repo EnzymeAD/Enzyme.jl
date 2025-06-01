@@ -386,27 +386,32 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                         throw(AssertionError(msg))
                     end
 
-                    fused_name = if arg1 isa AbstractString
-                        "ejlstr\$$fname\$$arg1"
-                    else
-                        if arg1 == reinterpret(Ptr{Nothing}, UInt(0x3))
-                            fname
-                        else
-                            arg1 = reinterpret(UInt, arg1)
-                            "ejlptr\$$fname\$$arg1"
-                        end
-                    end
+		    newf = nothing
+		    if arg1 isa AbstractString
+			found, newf = try_import_llvmbc(mod, arg1, fname, imported)
+		    end
+		    if newf isa Nothing
+			    fused_name = if arg1 isa AbstractString
+				"ejlstr\$$fname\$$arg1"
+			    else
+				if arg1 == reinterpret(Ptr{Nothing}, UInt(0x3))
+				    fname
+				else
+				    arg1 = reinterpret(UInt, arg1)
+				    "ejlptr\$$fname\$$arg1"
+				end
+			    end
 
-                    newf, _ = get_function!(mod, fused_name, FT)
-                    
-                    while isa(newf, LLVM.ConstantExpr)
-                        newf = operands(newf)[1]
-                    end
-                    push!(function_attributes(newf), StringAttribute("enzyme_math", fname))
-                    # TODO we can make this relocatable if desired by having restore lookups re-create this got initializer/etc
-                    # metadata(newf)["enzymejl_flib"] = flib
-                    # metadata(newf)["enzymejl_flib"] = flib
-
+			    newf, _ = get_function!(mod, fused_name, FT)
+			    
+			    while isa(newf, LLVM.ConstantExpr)
+				newf = operands(newf)[1]
+			    end
+			    push!(function_attributes(newf), StringAttribute("enzyme_math", fname))
+			    # TODO we can make this relocatable if desired by having restore lookups re-create this got initializer/etc
+			    # metadata(newf)["enzymejl_flib"] = flib
+			    # metadata(newf)["enzymejl_flib"] = flib
+		     end
                 end
 
                 if value_type(newf) != value_type(inst)
@@ -498,11 +503,10 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
     found = false
     inmod = nothing
 
-    #try
+    try
         data = open(flib, "r") do io
             lib = only(readmeta(io))
             sections = Sections(lib)
-            @show sections
             llvmbc = nothing
             for s in sections
                 sn = section_name(s)
@@ -519,16 +523,10 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
                 inmod = parse(LLVM.Module, data)
                 found = haskey(functions(inmod), fname)
             catch e2
-                @show e2
             end
         end
-        @show data
-
-    #catch e
-    #    @show e
-    #end
-
-    @show found
+    catch e
+    end
 
     if !found
         return false, nothing
@@ -773,8 +771,6 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                eltype(value_type(fname)) == LLVM.IntType(8)
                fname = String(map(Base.Fix1(convert, UInt8), collect(fname)[1:(end-1)]))
             end
-
-            @show fname, flib
 
             if !isa(fname, String) || !isa(flib, String)
                 return
@@ -1089,13 +1085,9 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
 
                 fn = string(fn)
 
-                @show fn, file, line, linfo, fromC, inlined
-
                 if length(fn) > 1 && fromC
 
                     found, replaceWith = try_import_llvmbc(mod, string(file), fn, imported)
-
-                    @show found, replaceWith
 
                     lfn = nothing
                     if found 
