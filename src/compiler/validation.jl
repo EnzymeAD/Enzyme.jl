@@ -503,10 +503,14 @@ function try_import_llvmbc(flib, fname, imported::Set{String})
             lib = only(readmeta(io))
             sections = Sections(lib)
             @show sections
-            if !(".llvmbc" in sections)
-                return nothing
+            llvmbc = nothing
+            for s in sections
+                sn = section_name(s)
+                if sn == ".llvmbc" || sn == "__LLVM,__bundle"
+                    llvmbc = read(s)
+                    break
+                end
             end
-            llvmbc = read(findfirst(sections, ".llvmbc"))
             return llvmbc
         end
 
