@@ -3544,7 +3544,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         @assert !isghostty(eltype(params.rt))
     end
 
-    primal_target = (job.config.target::EnzymeCompilerTarget).target
+    primal_target = (job.config.target::EnzymeTarget).target
     primal_params = (job.config.params::EnzymeCompilerParams).params
     if primal_target isa GPUCompiler.NativeCompilerTarget
         @assert primal_params isa PrimalCompilerParams 
