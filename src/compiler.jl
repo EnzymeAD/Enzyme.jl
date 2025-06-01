@@ -1308,7 +1308,9 @@ end
 module Runtime end
 
 abstract type AbstractEnzymeCompilerParams <: AbstractCompilerParams end
-struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
+struct EnzymeCompilerParams{Params<:AbstractCompilerParams} <: AbstractEnzymeCompilerParams
+    params::Params
+
     TT::Type{<:Tuple}
     mode::API.CDerivativeMode
     width::Int
@@ -1335,11 +1337,57 @@ struct EnzymeCompilerParams <: AbstractEnzymeCompilerParams
     strongZero::Bool
 end
 
-struct UnknownTapeType end
-
+# FIXME: Should this take something like PTXCompilerParams/CUDAParams?
 struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
     mode::API.CDerivativeMode
 end
+
+function EnzymeCompilerParams(TT, mode, width, rt, run_enzyme, abiwrap,
+                              modifiedBetween, returnPrimal, shadowInit,
+                              expectedTapeType, ABI,
+                              err_if_func_written, runtimeActivity)
+    params = PrimalCompilerParams(mode)
+    EnzymeCompilerParams(
+        params,
+        TT,
+        mode,
+        width,
+        rt,
+        run_enzyme,
+        abiwrap,
+        modifiedBetween,
+        returnPrimal,
+        shadowInit,
+        expectedTapeType,
+        ABI,
+        err_if_func_written,
+        runtimeActivity
+    )
+end
+
+# FIXME: Use params.parent in more places where we rely on the behavior of the underlying 
+function GPUCompiler.nest_params(params::AbstractEnzymeCompilerParams, parent::AbstractCompilerParams)
+    EnzymeCompilerParams(
+        parent,
+        params.TT,
+        params.mode,
+        params.width,
+        params.rt,
+        params.run_enzyme,
+        params.abiwrap,
+        params.modifiedBetween,
+        params.returnPrimal,
+        params.shadowInit,
+        params.expectedTapeType,
+        params.ABI,
+        params.err_if_func_written,
+        params.runtimeActivity,
+    )
+end
+
+struct UnknownTapeType end
+
+
 
 
 ## job
@@ -3473,9 +3521,6 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     @assert output == :llvm
     
     config = job.config
-    @show config
-    flush(stdout)
-    flush(stderr)
 
     params = config.params
 
@@ -3499,12 +3544,12 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         @assert !isghostty(eltype(params.rt))
     end
 
-    primal_target = job.config.target
+    primal_target = (job.config.target::EnzymeCompilerTarget).target
+    primal_params = (job.config.params::EnzymeCompilerParams).params
     if primal_target isa GPUCompiler.NativeCompilerTarget
-        primal_params = PrimalCompilerParams(mode)
+        @assert primal_params isa PrimalCompilerParams 
     else
         # XXX: This means mode is not propagated and rules are not applied for GPU code.
-        primal_params = config.params
     end
     primal_config = CompilerConfig(
         primal_target,
