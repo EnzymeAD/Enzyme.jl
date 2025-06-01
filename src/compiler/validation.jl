@@ -498,12 +498,13 @@ const generic_method_offsets = Dict{String,Tuple{Int,Int}}((
     return false
 end
 
+using LLVMDowngrader_jll
 
 function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, imported::Set{String})
     found = false
     inmod = nothing
 
-    try
+    # try
         data = open(flib, "r") do io
             lib = only(readmeta(io))
             sections = Sections(lib)
@@ -519,7 +520,6 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
         end
 
         if data !== nothing
-	    @show LLVM.context(), LLVM.API.LLVMContextGetDiagnosticHandler(LLVM.context())
 	    if LLVM.API.LLVMContextGetDiagnosticHandler(LLVM.context()) == C_NULL
 	        LLVM._install_handlers(LLVM.context())
 	    end
@@ -527,7 +527,7 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
                 inmod = parse(LLVM.Module, data)
                 found = haskey(functions(inmod), fname)
             catch e2
-		@show e2
+	  	   ccall(:jl_, Cvoid, (Any,), e2)
 	       data2 = let input=Pipe(), output=Pipe()
                     cmd = `$(LLVMDowngrader_jll.llvm_as()) --bitcode-version=7.0 -o -`
                     proc = run(pipeline(cmd, stdin=input, stdout=output); wait=false)
@@ -541,15 +541,16 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
                     fetch(reader)
                 end
 		try
-			inmod = parse(LLVM.Module, data)
+			inmod = parse(LLVM.Module, data2)
 			found = haskey(functions(inmod), fname)
 	        catch e3
-		   @show e3
+	  	   ccall(:jl_, Cvoid, (Any,), e3)
 		end
             end
         end
-    catch e
-    end
+    # catch e
+    #       ccall(:jl_, Cvoid, (Any,), e)
+    # end
 
     if !found
         return false, nothing
