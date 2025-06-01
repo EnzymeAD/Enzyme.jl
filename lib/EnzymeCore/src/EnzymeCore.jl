@@ -273,17 +273,21 @@ abstract type Mode{ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} end
 
 """
     runtime_activity(::Mode)
+    strong_zero(::Type{<:Mode})
 
 Returns whether the given mode has runtime activity set. For a deeper explanation of what strong zero is see the [FAQ](@ref faq-runtime-activity)
 """
 runtime_activity(::Mode{<:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
+runtime_activity(::Type{<:Mode{<:Any, <:Any, RuntimeActivity}}) where RuntimeActivity = RuntimeActivity
 
 """
     strong_zero(::Mode)
+    strong_zero(::Type{<:Mode})
 
 Returns whether the given mode has strong zero set. For a deeper explanation of what strong zero is see the [FAQ](@ref faq-strong-zero)
 """
 strong_zero(::Mode{<:Any, <:Any, <:Any, StrongZero}) where StrongZero = StrongZero
+strong_zero(::Type{<:Mode{<:Any, <:Any, <:Any, StrongZero}}) where StrongZero = StrongZero
 
 """
     struct ReverseMode{
