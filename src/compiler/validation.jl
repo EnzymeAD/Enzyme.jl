@@ -504,7 +504,7 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
     found = false
     inmod = nothing
 
-    # try
+    try
         data = open(flib, "r") do io
             lib = only(readmeta(io))
             sections = Sections(lib)
@@ -527,33 +527,34 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
                 inmod = parse(LLVM.Module, data)
                 found = haskey(functions(inmod), fname)
             catch e2
-	  	   ccall(:jl_, Cvoid, (Any,), e2)
-                    cmd = `$(LLVMDowngrader_jll.llvm_as()) --bitcode-version=7.0 -o -`
-        data2 = open(flib, "r") do io
-            lib = only(readmeta(io))
-            sections = Sections(lib)
-            llvmbc = nothing
-            for s in sections
-                sn = section_name(s)
-                if sn == ".llvmbc" || sn == "__LLVM,__bundle"
-		    read(run(pipeline(cmd, s)))
-                    break
-                end
-            end
-            return nothing
-        end
+                cmd = `$(LLVMDowngrader_jll.llvm_as()) --bitcode-version=7.0 -o -`
+		# TODO MethodError: no method matching redir_out(::Cmd, ::ObjectFile.ELF.ELFSectionRef{ObjectFile.ELF.ELFHandle{IOStream}})
+		@static if false
+			data2 = open(flib, "r") do io
+			    lib = only(readmeta(io))
+			    sections = Sections(lib)
+			    llvmbc = nothing
+			    for s in sections
+				sn = section_name(s)
+				if sn == ".llvmbc" || sn == "__LLVM,__bundle"
+				    read(run(pipeline(cmd, s)))
+				    break
+				end
+			    end
+			    return nothing
+			end
 
-		try
-			inmod = parse(LLVM.Module, data2)
-			found = haskey(functions(inmod), fname)
-	        catch e3
-	  	   ccall(:jl_, Cvoid, (Any,), e3)
+			try
+				inmod = parse(LLVM.Module, data2)
+				found = haskey(functions(inmod), fname)
+			catch e3
+			   # ccall(:jl_, Cvoid, (Any,), e3)
+			end
 		end
             end
         end
-    # catch e
-    #       ccall(:jl_, Cvoid, (Any,), e)
-    # end
+    catch e
+    end
 
     if !found
         return false, nothing
