@@ -534,7 +534,7 @@ function try_import_llvmbc(flib, fname, imported::Set{String})
         return false, nothing
     end
 
-    if !(fn in imported)
+    if !(fname in imported)
         internalize = String[]
         for fn in functions(inmod)
             if !isempty(LLVM.blocks(fn))
@@ -550,8 +550,8 @@ function try_import_llvmbc(flib, fname, imported::Set{String})
         GPUCompiler.link_library!(mod, inmod)
         for n in internalize
             linkage!(functions(mod)[n], LLVM.API.LLVMInternalLinkage)
+            push!(imported, n)
         end
-        push!(imported, fn)
     end
     replaceWith = functions(mod)[fname]
     return true, replaceWith
