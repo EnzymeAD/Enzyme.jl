@@ -500,6 +500,8 @@ end
 
 using LLVMDowngrader_jll
 
+const DebugLTO = Ref(false)
+
 function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, imported::Set{String})
     found = false
     inmod = nothing
@@ -510,6 +512,9 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
             sections = Sections(lib)
             llvmbc = nothing
             for s in sections
+		if DebugLTO[]
+		   ccall(:jl_, Cvoid, (Any,), s)
+		end
                 sn = section_name(s)
                 if sn == ".llvmbc" || sn == "__LLVM,__bundle"
                     llvmbc = read(s)
@@ -527,6 +532,9 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
                 inmod = parse(LLVM.Module, data)
                 found = haskey(functions(inmod), fname)
             catch e2
+		if DebugLTO[]
+		   ccall(:jl_, Cvoid, (Any,), e2)
+		end
                 cmd = `$(LLVMDowngrader_jll.llvm_as()) --bitcode-version=7.0 -o -`
 		# TODO MethodError: no method matching redir_out(::Cmd, ::ObjectFile.ELF.ELFSectionRef{ObjectFile.ELF.ELFHandle{IOStream}})
 		@static if false
@@ -548,12 +556,17 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
 				inmod = parse(LLVM.Module, data2)
 				found = haskey(functions(inmod), fname)
 			catch e3
-			   # ccall(:jl_, Cvoid, (Any,), e3)
+				if DebugLTO[]
+				   ccall(:jl_, Cvoid, (Any,), e2)
+				end
 			end
 		end
             end
         end
     catch e
+				if DebugLTO[]
+				   ccall(:jl_, Cvoid, (Any,), e)
+				end
     end
 
     if !found
