@@ -519,10 +519,15 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
         end
 
         if data !== nothing
+	    @show LLVM.context(), LLVM.API.LLVMContextGetDiagnosticHandler(LLVM.context())
+	    if LLVM.API.LLVMContextGetDiagnosticHandler(LLVM.context()) == C_NULL
+	        LLVM._install_handlers(LLVM.context())
+	    end
             try
                 inmod = parse(LLVM.Module, data)
                 found = haskey(functions(inmod), fname)
             catch e2
+		@show e2
             end
         end
     catch e
