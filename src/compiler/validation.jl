@@ -494,7 +494,7 @@ const generic_method_offsets = Dict{String,Tuple{Int,Int}}((
 end
 
 
-function try_import_llvmbc(flib, fname, imported::Set{String})
+function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, imported::Set{String})
     found = false
     inmod = nothing
 
@@ -780,7 +780,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                 return
             end
 
-            found, replaceWith = try_import_llvmbc(flib, fname, imported)
+            found, replaceWith = try_import_llvmbc(mod, flib, fname, imported)
 
             if found
 
@@ -1093,7 +1093,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
 
                 if length(fn) > 1 && fromC
 
-                    found, replaceWith = try_import_llvmbc(string(file), fn, imported)
+                    found, replaceWith = try_import_llvmbc(mod, string(file), fn, imported)
 
                     @show found, replaceWith
 
