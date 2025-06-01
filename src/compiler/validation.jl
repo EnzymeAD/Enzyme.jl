@@ -528,6 +528,24 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
                 found = haskey(functions(inmod), fname)
             catch e2
 		@show e2
+	       data2 = let input=Pipe(), output=Pipe()
+                    cmd = `$(LLVMDowngrader_jll.llvm_as()) --bitcode-version=7.0 -o -`
+                    proc = run(pipeline(cmd, stdin=input, stdout=output); wait=false)
+                    close(output.in)
+                    writer = @async begin
+                        write(input, data)
+                        close(input)
+                    end
+                    reader = @async read(output)
+                    wait(proc)
+                    fetch(reader)
+                end
+		try
+			inmod = parse(LLVM.Module, data)
+			found = haskey(functions(inmod), fname)
+	        catch e3
+		   @show e3
+		end
             end
         end
     catch e
