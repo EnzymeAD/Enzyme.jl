@@ -493,70 +493,6 @@ const generic_method_offsets = Dict{String,Tuple{Int,Int}}((
     return false
 end
 
-
-function try_import_llvmbc(flib, fname, imported::Set{String})
-    found = false
-    inmod = nothing
-
-    #try
-        data = open(flib, "r") do io
-            lib = only(readmeta(io))
-            sections = Sections(lib)
-            @show sections
-            llvmbc = nothing
-            for s in sections
-                sn = section_name(s)
-                if sn == ".llvmbc" || sn == "__LLVM,__bundle"
-                    llvmbc = read(s)
-                    break
-                end
-            end
-            return llvmbc
-        end
-
-        if data !== nothing
-            try
-                inmod = parse(LLVM.Module, data)
-                found = haskey(functions(inmod), fname)
-            catch e2
-                @show e2
-            end
-        end
-        @show data
-
-    #catch e
-    #    @show e
-    #end
-
-    @show found
-
-    if !found
-        return false, nothing
-    end
-
-    if !(fn in imported)
-        internalize = String[]
-        for fn in functions(inmod)
-            if !isempty(LLVM.blocks(fn))
-                push!(internalize, name(fn))
-            end
-        end
-        for g in globals(inmod)
-            linkage!(g, LLVM.API.LLVMExternalLinkage)
-        end
-        # override libdevice's triple and datalayout to avoid warnings
-        triple!(inmod, triple(mod))
-        datalayout!(inmod, datalayout(mod))
-        GPUCompiler.link_library!(mod, inmod)
-        for n in internalize
-            linkage!(functions(mod)[n], LLVM.API.LLVMInternalLinkage)
-        end
-        push!(imported, fn)
-    end
-    replaceWith = functions(mod)[fname]
-    return true, replaceWith
-end
-
 import GPUCompiler:
     DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
@@ -774,15 +710,51 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                fname = String(map(Base.Fix1(convert, UInt8), collect(fname)[1:(end-1)]))
             end
 
-            @show fname, flib
-
             if !isa(fname, String) || !isa(flib, String)
                 return
             end
 
-            found, replaceWith = try_import_llvmbc(flib, fname, imported)
+            found = false
+
+            try
+                data = open(flib, "r") do io
+                    lib = readmeta(io)
+                    sections = Sections(lib)
+                    if !(".llvmbc" in sections)
+                        return nothing
+                    end
+                    llvmbc = read(findfirst(sections, ".llvmbc"))
+                    return llvmbc
+                end
+
+                if data !== nothing
+                    inmod = parse(LLVM.Module, data)
+                    found = haskey(functions(inmod), fname)
+                end
+            catch e
+            end
 
             if found
+                if !(fn in imported)
+                    internalize = String[]
+                    for fn in functions(inmod)
+                        if !isempty(LLVM.blocks(fn))
+                            push!(internalize, name(fn))
+                        end
+                    end
+                    for g in globals(inmod)
+                        linkage!(g, LLVM.API.LLVMExternalLinkage)
+                    end
+                    # override libdevice's triple and datalayout to avoid warnings
+                    triple!(inmod, triple(mod))
+                    datalayout!(inmod, datalayout(mod))
+                    GPUCompiler.link_library!(mod, inmod)
+                    for n in internalize
+                        linkage!(functions(mod)[n], LLVM.API.LLVMInternalLinkage)
+                    end
+                    push!(imported, fn)
+                end
+                replaceWith = functions(mod)[fname]
 
                 for u in LLVM.uses(inst)
                     st = LLVM.user(u)
@@ -1087,40 +1059,26 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
             if length(frames) >= 1
                 fn, file, line, linfo, fromC, inlined = last(frames)
 
-                fn = string(fn)
-
-                @show fn, file, line, linfo, fromC, inlined
+                fn = FFI.memoize!(ptr, string(fn))
 
                 if length(fn) > 1 && fromC
-
-                    found, replaceWith = try_import_llvmbc(string(file), fn, imported)
-
-                    @show found, replaceWith
-
-                    lfn = nothing
-                    if found 
-                        lfn = replaceWith
+                    mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
+                    lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
+                    if lfn == C_NULL
+                        lfn = LLVM.API.LLVMAddFunction(
+                            mod,
+                            fn,
+                            LLVM.API.LLVMGetCalledFunctionType(inst),
+                        )
+                        # Remember pointer for subsequent restoration
+                        push!(function_attributes(LLVM.Function(lfn)), StringAttribute("enzymejl_needs_restoration", string(reinterpret(UInt, ptr))))
                     else
-                        fn = FFI.memoize!(ptr, fn)
-
-                        mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
-                        lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
-                        if lfn == C_NULL
-                            lfn = LLVM.API.LLVMAddFunction(
-                                mod,
-                                fn,
-                                LLVM.API.LLVMGetCalledFunctionType(inst),
-                            )
-                            # Remember pointer for subsequent restoration
-                            push!(function_attributes(LLVM.Function(lfn)), StringAttribute("enzymejl_needs_restoration", string(reinterpret(UInt, ptr))))
-                        else
-                            lfn = LLVM.API.LLVMConstBitCast(
-                                lfn,
-                                LLVM.PointerType(
-                                    LLVM.FunctionType(LLVM.API.LLVMGetCalledFunctionType(inst)),
-                                ),
-                            )
-                        end
+                        lfn = LLVM.API.LLVMConstBitCast(
+                            lfn,
+                            LLVM.PointerType(
+                                LLVM.FunctionType(LLVM.API.LLVMGetCalledFunctionType(inst)),
+                            ),
+                        )
                     end
                     LLVM.API.LLVMSetOperand(
                         inst,
