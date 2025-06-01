@@ -710,6 +710,8 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                fname = String(map(Base.Fix1(convert, UInt8), collect(fname)[1:(end-1)]))
             end
 
+            @show fname, flib
+
             if !isa(fname, String) || !isa(flib, String)
                 return
             end
@@ -720,6 +722,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                 data = open(flib, "r") do io
                     lib = readmeta(io)
                     sections = Sections(lib)
+                    @show sections
                     if !(".llvmbc" in sections)
                         return nothing
                     end
@@ -1059,7 +1062,10 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
             if length(frames) >= 1
                 fn, file, line, linfo, fromC, inlined = last(frames)
 
+                @show fn, file, line, linfo, fromC, inlined
+
                 fn = FFI.memoize!(ptr, string(fn))
+
 
                 if length(fn) > 1 && fromC
                     mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
