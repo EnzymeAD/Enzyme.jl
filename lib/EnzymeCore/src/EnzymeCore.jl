@@ -258,7 +258,7 @@ Abstract type for which differentiation mode will be used.
 - `ABI`: what runtime [`ABI`](@ref) to use
 - `ErrIfFuncWritten`: whether to error when the function differentiated is a closure and written to.
 - `RuntimeActivity`: whether to enable runtime activity (default off). Runtime Activity is required is the differentiability of all mutable variables cannot be determined statically. For a deeper explanation see the [FAQ](@ref faq-runtime-activity)
-- `StrongZero`: whether to enforce that propagating a zero derivative input always ends up in zero derivative outputs. This is required to avoid nan's if one of the arguments may be infinite or nan. For a deeper explanation see the [FAQ](@ref faq-runtime-activity)
+- `StrongZero`: whether to enforce that propagating a zero derivative input always ends up in zero derivative outputs. This is required to avoid nan's if one of the arguments may be infinite or nan. For a deeper explanation see the [FAQ](@ref faq-strong-zero)
 
 !!! warning
     The type parameters of `Mode` are not part of the public API and can change without notice.
@@ -270,6 +270,24 @@ Abstract type for which differentiation mode will be used.
     - [`set_abi`](@ref)
 """
 abstract type Mode{ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} end
+
+"""
+    runtime_activity(::Mode)
+    strong_zero(::Type{<:Mode})
+
+Returns whether the given mode has runtime activity set. For a deeper explanation of what strong zero is see the [FAQ](@ref faq-runtime-activity)
+"""
+runtime_activity(::Mode{<:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
+runtime_activity(::Type{<:Mode{<:Any, <:Any, RuntimeActivity}}) where RuntimeActivity = RuntimeActivity
+
+"""
+    strong_zero(::Mode)
+    strong_zero(::Type{<:Mode})
+
+Returns whether the given mode has strong zero set. For a deeper explanation of what strong zero is see the [FAQ](@ref faq-strong-zero)
+"""
+strong_zero(::Mode{<:Any, <:Any, <:Any, StrongZero}) where StrongZero = StrongZero
+strong_zero(::Type{<:Mode{<:Any, <:Any, <:Any, StrongZero}}) where StrongZero = StrongZero
 
 """
     struct ReverseMode{

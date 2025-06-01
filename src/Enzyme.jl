@@ -54,7 +54,10 @@ import EnzymeCore:
     clear_strong_zero,
     within_autodiff,
     WithPrimal,
-    NoPrimal
+    NoPrimal,
+    needs_primal,
+    runtime_activity,
+    strong_zero
 export Annotation,
     Const,
     Active,
@@ -75,7 +78,10 @@ export Annotation,
     clear_strong_zero,
     WithPrimal,
     NoPrimal,
-    within_autodiff
+    within_autodiff,
+    needs_primal,
+    runtime_activity,
+    strong_zero
 
 import EnzymeCore: BatchDuplicatedFunc
 export BatchDuplicatedFunc

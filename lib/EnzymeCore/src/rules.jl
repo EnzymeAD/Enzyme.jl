@@ -5,6 +5,7 @@ import EnzymeCore: Annotation, Const, Duplicated, Mode
 export RevConfig, RevConfigWidth
 export FwdConfig, FwdConfigWidth
 export AugmentedReturn
+import ..EnzymeCore: needs_primal
 export needs_primal, needs_shadow, width, overwritten, runtime_activity
 export primal_type, shadow_type, tape_type
 
