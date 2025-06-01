@@ -499,7 +499,7 @@ function try_import_llvmbc(flib, fname, imported::Set{String})
     inmod = nothing
 
     #try
-        data = x do io
+        data = open(flib, "r") do io
             lib = only(readmeta(io))
             sections = Sections(lib)
             @show sections
