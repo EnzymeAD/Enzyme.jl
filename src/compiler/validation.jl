@@ -515,8 +515,12 @@ function try_import_llvmbc(flib, fname, imported::Set{String})
         end
 
         if data !== nothing
-            inmod = parse(LLVM.Module, data)
-            found = haskey(functions(inmod), fname)
+            try
+                inmod = parse(LLVM.Module, data)
+                found = haskey(functions(inmod), fname)
+            catch e2
+                @show e2
+            end
         end
         @show data
 
