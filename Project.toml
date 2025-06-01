@@ -10,7 +10,6 @@ Enzyme_jll = "7cc45869-7501-5eee-bdea-0790c847d4ef"
 GPUCompiler = "61eb1bfa-7361-4325-ad38-22787b887f55"
 InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
 LLVM = "929cbde3-209d-540e-8aea-75f648917ca0"
-LLVMDowngrader_jll = "f52de702-fb25-5922-94ba-81dd59b07444"
 Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 ObjectFile = "d8793406-e978-5875-9003-1fc021f44a92"
@@ -27,9 +26,6 @@ GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
 LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
-
-[sources]
-EnzymeCore = {path = "lib/EnzymeCore"}
 
 [extensions]
 EnzymeBFloat16sExt = "BFloat16s"
@@ -48,7 +44,6 @@ Enzyme_jll = "0.0.181"
 GPUArraysCore = "0.1.6, 0.2"
 GPUCompiler = "1.3"
 LLVM = "6.1, 7, 8, 9"
-LLVMDowngrader_jll = "0.6.0"
 LogExpFunctions = "0.3"
 ObjectFile = "0.4"
 PrecompileTools = "1"
@@ -65,3 +60,6 @@ GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
 LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+[sources.EnzymeCore]
+path = "lib/EnzymeCore"
