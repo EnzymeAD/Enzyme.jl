@@ -498,8 +498,6 @@ const generic_method_offsets = Dict{String,Tuple{Int,Int}}((
     return false
 end
 
-using LLVMDowngrader_jll
-
 const DebugLTO = Ref(false)
 
 function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, imported::Set{String})
