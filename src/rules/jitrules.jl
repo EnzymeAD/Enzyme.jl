@@ -2,7 +2,7 @@
 @generated function create_activity_wrapper(::Val{Width}, ::Val{atup}, ::Val{aref}, primarg::PT, shadowarg) where {Width, atup, aref, PT}
     if atup && aref != AnyState
         @assert PT !== DataType
-        if Aref == ActiveState
+        if aref == ActiveState
             return quote
                 Base.@_inline_meta
                 Active(primarg)
