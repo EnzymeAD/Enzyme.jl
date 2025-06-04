@@ -1124,9 +1124,13 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
 
                 fn = string(fn)
 
-                if length(fn) > 1 && fromC
+                if fromC
 
-                    found, replaceWith = try_import_llvmbc(mod, string(file), fn, imported)
+		    found, replaceWith = if length(fn) > 0
+			try_import_llvmbc(mod, string(file), fn, imported)
+		    else
+			false, nothing
+		    end
 
                     lfn = nothing
                     if found 
@@ -1134,30 +1138,35 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
                     else
                         fn = FFI.memoize!(ptr, fn)
 
-                        mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
-                        lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
-                        if lfn == C_NULL
-                            lfn = LLVM.API.LLVMAddFunction(
-                                mod,
-                                fn,
-                                LLVM.API.LLVMGetCalledFunctionType(inst),
-                            )
-                            # Remember pointer for subsequent restoration
-                            push!(function_attributes(LLVM.Function(lfn)), StringAttribute("enzymejl_needs_restoration", string(reinterpret(UInt, ptr))))
-                        else
-                            lfn = LLVM.API.LLVMConstBitCast(
-                                lfn,
-                                LLVM.PointerType(
-                                    LLVM.FunctionType(LLVM.API.LLVMGetCalledFunctionType(inst)),
-                                ),
-                            )
-                        end
+			if length(fn) > 0
+				mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
+				lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
+				if lfn == C_NULL
+				    lfn = LLVM.API.LLVMAddFunction(
+					mod,
+					fn,
+					LLVM.API.LLVMGetCalledFunctionType(inst),
+				    )
+				    # Remember pointer for subsequent restoration
+				    push!(function_attributes(LLVM.Function(lfn)), StringAttribute("enzymejl_needs_restoration", string(reinterpret(UInt, ptr))))
+				else
+				    lfn = LLVM.API.LLVMConstBitCast(
+					lfn,
+					LLVM.PointerType(
+					    LLVM.FunctionType(LLVM.API.LLVMGetCalledFunctionType(inst)),
+					),
+				    )
+				end
+			end
                     end
-                    LLVM.API.LLVMSetOperand(
-                        inst,
-                        LLVM.API.LLVMGetNumOperands(inst) - 1,
-                        lfn,
-                    )
+
+		    if lfn !== nothing
+			    LLVM.API.LLVMSetOperand(
+				inst,
+				LLVM.API.LLVMGetNumOperands(inst) - 1,
+				lfn,
+			    )
+		    end
                 end
             end
         end
