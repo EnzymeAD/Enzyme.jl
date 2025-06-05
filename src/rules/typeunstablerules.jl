@@ -100,12 +100,10 @@ function body_construct_augfwd(
         push!(shadow_rets, shadow_rets_i)
     end
 
-    refs = Expr[]
-    ref_syms = Symbol[]
+    ref_syms = Expr[]
     res_syms = Symbol[]
     for w = 1:Width
         sres = Symbol("result_$w")
-        ref_res = Symbol("ref_result_$w")
         combined = Expr[]
         for i = 1:N
             push!(combined, shadow_rets[i][w])
@@ -115,10 +113,7 @@ function body_construct_augfwd(
         else
             push!(results, Expr(:(=), sres, Expr(:new, :NewType, combined...)))
         end
-        push!(refs, quote
-            $ref_res = Ref($sres)
-        end)
-        push!(ref_syms, ref_res)
+        push!(ref_syms, Expr(:call, Ref, sres))
         push!(res_syms, sres)
     end
 
@@ -126,7 +121,6 @@ function body_construct_augfwd(
         push!(results,
             quote
                 if any_mixed
-                    $(refs...)
                     $(ref_syms[1])
                 else
                     $(res_syms[1])
@@ -135,7 +129,6 @@ function body_construct_augfwd(
     else
         push!(results, quote
                 if any_mixed
-                    $(refs...)
                     ReturnType(($(ref_syms...),))
                 else
                     ReturnType(($(res_syms...),))
