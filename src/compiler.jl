@@ -882,7 +882,9 @@ function zero_single_allocation(builder::LLVM.IRBuilder, @nospecialize(jlType::D
                 push!(todo, (npath, t, jlet))
                 i += 1
             end
-            @assert i == Int(length(LLVM.elements(ty))) + 1
+            if i != Int(length(LLVM.elements(ty))) + 1
+                throw(AssertionError("Number of non-ghost elements of julia type $jlty ($i) did not match number number of elements of llvmtype $(string(ty)) ($(length(LLVM.elements(ty)))) "))
+            end
             continue
         end
     end
