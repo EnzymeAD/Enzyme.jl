@@ -1,3 +1,45 @@
+
+@generated function create_activity_wrapper(::Val{Width}, ::Val{atup}, ::Val{aref}, primarg::PT, shadowarg) where {Width, atup, aref, PT}
+    if atup && aref != AnyState
+        @assert PT !== DataType
+        if aref == ActiveState
+            return quote
+                Base.@_inline_meta
+                Active(primarg)
+            end
+        elseif aref == MixedState
+            if Width == 1
+                return quote
+                    Base.@_inline_meta
+                    MixedDuplicated(primarg, shadowarg)
+                end
+            else
+                return quote
+                    Base.@_inline_meta
+                    BatchMixedDuplicated(primarg, shadowarg)
+                end
+            end
+        else
+            if Width == 1
+                return quote
+                    Base.@_inline_meta
+                    Duplicated(primarg, shadowarg)
+                end
+            else
+                return quote
+                    Base.@_inline_meta
+                    BatchDuplicated(primarg, shadowarg)
+                end
+            end
+        end
+    else
+        return quote
+            Base.@_inline_meta
+            Const(primarg)
+        end
+    end
+end
+
 function setup_macro_wraps(
     forwardMode::Bool,
     N::Int,
@@ -76,9 +118,7 @@ function setup_macro_wraps(
             push!(modbetween, :(ntuple(Returns(MB[$i]), Val(length($(primargs[i]))))))
         end
         aref = Symbol("active_ref_$i")
-        push!(active_refs, quote
-            $aref = active_reg_nothrow($(primtypes[i]), Val(nothing))
-        end)
+        push!(active_refs, Expr(:(=), aref, Expr(:call, active_reg_nothrow, primtypes[i], Val(nothing))))
         expr = if iterate
             if forwardMode
                 dupexpr = if Width == 1
@@ -171,45 +211,33 @@ function setup_macro_wraps(
                     end
                 end
             else
-                quote
-                    if ActivityTup[$i+1] && $aref != AnyState
-                        @assert $(primtypes[i]) !== DataType
-                        if $aref == ActiveState
-                            Active($(primargs[i]))
-                        elseif $aref == MixedState
-                            $((Width == 1) ? :MixedDuplicated : :BatchMixedDuplicated)(
-                                $(primargs[i]),
-                                $(shadowargs[i]),
-                            )
-                        else
-                            $((Width == 1) ? :Duplicated : :BatchDuplicated)(
-                                $(primargs[i]),
-                                $(shadowargs[i]),
-                            )
-                        end
-                    else
-                        Const($(primargs[i]))
-                    end
-                end
+                Expr(:call, create_activity_wrapper, Val(Width), :(Val(ActivityTup[$i+1])), :(Val($aref)), primargs[i], shadowargs[i])
             end
         end
         push!(wrapped, expr)
     end
 
-    any_mixed = quote
-        false
-    end
+    any_mixed = nothing
     for i = 1:N
         aref = Symbol("active_ref_$i")
         if mixed_or_active
-            any_mixed = :($any_mixed || $aref == MixedState || $aref == ActiveState)
+            if any_mixed isa Nothing
+                any_mixed = :($aref == MixedState || $aref == ActiveState)
+            else
+                any_mixed = :($any_mixed || $aref == MixedState || $aref == ActiveState)
+            end
         else
-            any_mixed = :($any_mixed || $aref == MixedState)
+            if any_mixed isa Nothing
+                any_mixed = :($aref == MixedState)
+            else
+                any_mixed = :($any_mixed || $aref == MixedState)
+            end
         end
     end
-    push!(active_refs, quote
-        any_mixed = $any_mixed
-    end)
+    if any_mixed isa Nothing
+        any_mixed = false
+    end
+    push!(active_refs, Expr(:(=), :any_mixed, any_mixed))
     return primargs,
     shadowargs,
     primtypes,
