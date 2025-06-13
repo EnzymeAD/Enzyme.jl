@@ -1,3 +1,76 @@
+
+
+@generated function create_shadow_ret(::Val{atup}, ::Val{aref}, primarg::PT, batchshadowarg::BSA) where {atup, aref, PT, BSA}
+    if aref == AnyState
+        return quote
+            Base.@_inline_meta
+            primarg
+        end
+    else
+        if !atup
+            if (aref == DupState || aref == MixedState) &&
+               batchshadowarg == Nothing
+                return quote
+                    Base.@_inline_meta
+                    throw(
+                        "Error cannot store inactive but differentiable variable "*string(primarg)*" into active tuple",
+                    )
+                end
+            end
+        end
+        if aref == DupState
+            return quote
+                Base.@_inline_meta
+                batchshadowarg
+            end
+        else
+            return quote
+                Base.@_inline_meta
+                batchshadowarg[]
+            end
+        end
+    end
+
+    if atup && aref != AnyState
+        @assert PT !== DataType
+        if Aref == ActiveState
+            return quote
+                Base.@_inline_meta
+                Active(primarg)
+            end
+        elseif aref == MixedState
+            if Width == 1
+                return quote
+                    Base.@_inline_meta
+                    MixedDuplicated(primarg, shadowarg)
+                end
+            else
+                return quote
+                    Base.@_inline_meta
+                    BatchMixedDuplicated(primarg, shadowarg)
+                end
+            end
+        else
+            if Width == 1
+                return quote
+                    Base.@_inline_meta
+                    Duplicated(primarg, shadowarg)
+                end
+            else
+                return quote
+                    Base.@_inline_meta
+                    BatchDuplicated(primarg, shadowarg)
+                end
+            end
+        end
+    else
+        return quote
+            Base.@_inline_meta
+            Const(primarg)
+        end
+    end
+end
+
 function body_construct_augfwd(
     N,
     Width,
@@ -8,9 +81,10 @@ function body_construct_augfwd(
     tuple,
 )
     shadow_rets = Vector{Expr}[]
-    results = quote
+    results = Expr[quote
         $(active_refs...)
     end
+    ]
     @assert length(primtypes) == N
     @assert length(primargs) == N
     @assert length(batchshadowargs) == N
@@ -21,81 +95,48 @@ function body_construct_augfwd(
         for w = 1:Width
             sref = Symbol("sub_shadow_" * string(i) * "_" * string(w))
             push!(
-                shadow_rets_i,
-                quote
-                    $sref = if $aref == AnyState
-                        $(primargs[i])
-                    else
-                        if !ActivityTup[$i]
-                            if ($aref == DupState || $aref == MixedState) &&
-                               $(batchshadowargs[i][w]) === nothing
-                                prim = $(primargs[i])
-                                throw(
-                                    "Error cannot store inactive but differentiable variable $prim into active tuple",
-                                )
-                            end
-                        end
-                        if $aref == DupState
-                            $(batchshadowargs[i][w])
-                        else
-                            $(batchshadowargs[i][w])[]
-                        end
-                    end
-                end,
-            )
+                shadow_rets_i, Expr(:call, create_shadow_ret, :(Val(ActivityTup[$i])), :(Val($aref)), primargs[i], batchshadowargs[i][w]))
         end
         push!(shadow_rets, shadow_rets_i)
     end
 
-    refs = Expr[]
-    ref_syms = Symbol[]
+    ref_syms = Expr[]
     res_syms = Symbol[]
     for w = 1:Width
         sres = Symbol("result_$w")
-        ref_res = Symbol("ref_result_$w")
         combined = Expr[]
         for i = 1:N
             push!(combined, shadow_rets[i][w])
         end
         if tuple
-            results = quote
-                $results
-                $sres = ($(combined...),)
-            end
+            push!(results, Expr(:(=), sres, Expr(:tuple, combined...)))
         else
-            results = quote
-                $results
-                $sres = $(Expr(:new, :NewType, combined...))
-            end
+            push!(results, Expr(:(=), sres, Expr(:new, :NewType, combined...)))
         end
-        push!(refs, quote
-            $ref_res = Ref($sres)
-        end)
-        push!(ref_syms, ref_res)
+        push!(ref_syms, Expr(:call, Ref, sres))
         push!(res_syms, sres)
     end
 
     if Width == 1
-        return quote
-            $results
-            if any_mixed
-                $(refs...)
-                $(ref_syms[1])
-            else
-                $(res_syms[1])
-            end
-        end
+        push!(results,
+            quote
+                if any_mixed
+                    $(ref_syms[1])
+                else
+                    $(res_syms[1])
+                end
+            end)
     else
-        return quote
-            $results
-            if any_mixed
-                $(refs...)
-                ReturnType(($(ref_syms...),))
-            else
-                ReturnType(($(res_syms...),))
-            end
-        end
+        push!(results, quote
+                if any_mixed
+                    ReturnType(($(ref_syms...),))
+                else
+                    ReturnType(($(res_syms...),))
+                end
+            end)
     end
+
+    return Expr(:block, results...)
 end
 
 
