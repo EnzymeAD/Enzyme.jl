@@ -418,7 +418,7 @@ macro register_make_zero_inplace(sym)
         @inline function $sym(
             prev::Base.RefValue{T},
         )::Nothing where {T<:AbstractFloat}
-            EnzymeCore.$sym(prev, nothing)
+            $sym(prev, nothing)
             return nothing
         end
 
@@ -446,14 +446,14 @@ macro register_make_zero_inplace(sym)
         @inline function $sym(
             prev::GenericMemory{kind, T}
         )::Nothing where {T<:AbstractFloat,kind}
-            fill!(prev, zero(T))
+            $sym(prev, nothing)
             return nothing
         end
 
         @inline function $sym(
             prev::GenericMemory{kind, Complex{T}}
         )::Nothing where {T<:AbstractFloat,kind}
-            fill!(prev, zero(Complex{T}))
+            $sym(prev, nothing)
             return nothing
         end
         end
