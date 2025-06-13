@@ -522,7 +522,7 @@ function test_make_zero()
     return nothing
 end
 
-function test_make_zero!()
+function test_make_zero!(make_zero!=Enzyme.make_zero!)
     @testset "nested types" begin
         @testset "$T in $(wrapper.name)" for
                 T in scalartypes, wrapper in filter(w -> (w.N == 1), wrappers)
@@ -719,7 +719,23 @@ function test_make_zero!()
     return nothing
 end
 
+function test_remake_zero!()
+    test_remake_zero(Enzyme.remake_zero!)
+
+    @testset "Immutable" begin
+        x = (0.0, [4.5])
+        Enzyme.remake_zero!(x)
+        @test x[1] == 0.0
+        @test x[2][1] == 0.0
+
+        x = (2.0, [4.5])
+        Enzyme.remake_zero!(x)
+        @test x[1] == 2.0
+        @test x[2][1] == 0.0
+    end
+end
 @testset "make_zero" test_make_zero()
 @testset "make_zero!" test_make_zero!()
+@testset "remake_zero!" test_remake_zero!()
 
 end  # module MakeZeroTests
