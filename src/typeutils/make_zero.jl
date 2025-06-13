@@ -328,7 +328,7 @@ function make_zero_immutable!(prev::T, seen::S)::T where {T,S}
 end
 
 
-for (sym, imm) in (EnzymeCore.make_zero!, make_zero_immutable!, (EnzymeCore.remake_zero!, make_zero_immutable!)
+for (sym, imm) in ((EnzymeCore.make_zero!, make_zero_immutable!), (EnzymeCore.remake_zero!, make_zero_immutable!))
     @eval quote
 
         @inline function $sym(
