@@ -95,7 +95,7 @@ function body_construct_augfwd(
         for w = 1:Width
             sref = Symbol("sub_shadow_" * string(i) * "_" * string(w))
             push!(
-                shadow_rets_i, Expr(:(=), sref, Expr(:call, create_shadow_ret, :(Val(ActivityTup[$i])), :(Val($aref)), primargs[i], batchshadowargs[i][w])))
+                shadow_rets_i, Expr(:call, create_shadow_ret, :(Val(ActivityTup[$i])), :(Val($aref)), primargs[i], batchshadowargs[i][w]))
         end
         push!(shadow_rets, shadow_rets_i)
     end
