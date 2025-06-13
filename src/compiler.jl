@@ -4382,8 +4382,8 @@ end
         parallel = true
         device_module = true
         
-        if parent_target isa GPUCompiler.GCNCompilerTarget ||
-           parent_target isa GPUCompiler.MetalCompilerTarget
+        if primal_target isa GPUCompiler.GCNCompilerTarget ||
+           primal_target isa GPUCompiler.MetalCompilerTarget
             process_module = true
         end
     end
