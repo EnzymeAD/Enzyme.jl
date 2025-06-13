@@ -1345,7 +1345,7 @@ end
 function EnzymeCompilerParams(TT, mode, width, rt, run_enzyme, abiwrap,
                               modifiedBetween, returnPrimal, shadowInit,
                               expectedTapeType, ABI,
-                              err_if_func_written, runtimeActivity)
+                              err_if_func_written, runtimeActivity, strongZero)
     params = PrimalCompilerParams(mode)
     EnzymeCompilerParams(
         params,
@@ -1361,7 +1361,8 @@ function EnzymeCompilerParams(TT, mode, width, rt, run_enzyme, abiwrap,
         expectedTapeType,
         ABI,
         err_if_func_written,
-        runtimeActivity
+        runtimeActivity,
+        strongZero
     )
 end
 
@@ -1382,6 +1383,7 @@ function GPUCompiler.nest_params(params::AbstractEnzymeCompilerParams, parent::A
         params.ABI,
         params.err_if_func_written,
         params.runtimeActivity,
+        params.strongZero,
     )
 end
 
@@ -6088,6 +6090,7 @@ function deferred_id_generator(world::UInt, source::LineNumberNode, @nospecializ
     end
 
     params = EnzymeCompilerParams(
+        PrimalCompilerParams(Mode),
         Tuple{FA,TT.parameters...},
         Mode,
         Width,
