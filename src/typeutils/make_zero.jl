@@ -327,10 +327,8 @@ function make_zero_immutable!(prev::T, seen::S)::T where {T,S}
     return ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), T, flds, nf)::T
 end
 
-
-for (sym, imm) in ((EnzymeCore.make_zero!, make_zero_immutable!), (EnzymeCore.remake_zero!, make_zero_immutable!))
-    @eval quote
-
+macro register_make_zero_inplace(sym)
+    quote
         @inline function $sym(
             prev::Base.RefValue{T},
             seen::ST,
@@ -358,8 +356,7 @@ for (sym, imm) in ((EnzymeCore.make_zero!, make_zero_immutable!), (EnzymeCore.re
             prev[] = zero(Complex{T})
             return nothing
         end
-
-        @inline function $sym(
+                @inline function $sym(
             prev::Array{T,N},
             seen::ST,
         )::Nothing where {T<:AbstractFloat,N,ST}
@@ -476,7 +473,7 @@ for (sym, imm) in ((EnzymeCore.make_zero!, make_zero_immutable!), (EnzymeCore.re
                     if guaranteed_const_nongen(SBT, nothing)
                         continue
                     elseif !ismutabletype(SBT)
-                        @inbounds prev[I] = $imm(pv, seen)
+                        @inbounds prev[I] = make_zero_immutable!(pv, seen)
                     else
                         $sym(pv, seen)
                     end
@@ -485,6 +482,8 @@ for (sym, imm) in ((EnzymeCore.make_zero!, make_zero_immutable!), (EnzymeCore.re
             return nothing
         end
 
+        @static if VERSION < v"1.11-"
+        else
         @inline function $sym(prev::GenericMemory{kind, T}, seen::ST)::Nothing where {T,kind,ST}
             if guaranteed_const_nongen(T, nothing)
                 return nothing
@@ -500,7 +499,7 @@ for (sym, imm) in ((EnzymeCore.make_zero!, make_zero_immutable!), (EnzymeCore.re
                     if guaranteed_const_nongen(SBT, nothing)
                         continue
                     elseif !ismutabletype(SBT)
-                        @inbounds prev[I] = $imm(pv, seen)
+                        @inbounds prev[I] = make_zero_immutable!(pv, seen)
                     else
                         $sym(pv, seen)
                     end
@@ -526,7 +525,7 @@ for (sym, imm) in ((EnzymeCore.make_zero!, make_zero_immutable!), (EnzymeCore.re
             if guaranteed_const_nongen(SBT, nothing)
                 return nothing
             elseif !ismutabletype(SBT)
-                prev[] = $imm(pv, seen)
+                prev[] = make_zero_immutable!(pv, seen)
             else
                 $sym(pv, seen)
             end
@@ -543,7 +542,7 @@ for (sym, imm) in ((EnzymeCore.make_zero!, make_zero_immutable!), (EnzymeCore.re
             if guaranteed_const_nongen(SBT, nothing)
                 return nothing
             elseif !ismutabletype(SBT)
-                prev.contents = $imm(pv, seen)
+                prev.contents = make_zero_immutable!(pv, seen)
             else
                 $sym(pv, seen)
             end
@@ -553,6 +552,9 @@ for (sym, imm) in ((EnzymeCore.make_zero!, make_zero_immutable!), (EnzymeCore.re
         @inline $sym(prev) = $sym(prev, Base.IdSet())
     end
 end
+
+@register_make_zero_inplace(Enzyme.make_zero!)
+@register_make_zero_inplace(Enzyme.remake_zero!)
 
 @inline function EnzymeCore.make_zero!(prev::T, seen::S)::Nothing where {T,S}
     if guaranteed_const_nongen(T, nothing)
@@ -576,14 +578,14 @@ end
             if activitystate == AnyState  # guaranteed_const
                 continue
             elseif ismutabletype(T) && !ismutabletype(SBT)
-                yi = $imm(xi, seen)
+                yi = make_zero_immutable!(xi, seen)
                 if Base.isconst(T, i)
                     ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), prev, i-1, yi)
                 else
                     setfield!(prev, i, yi)
                 end
             elseif activitystate == DupState
-                EnzymeCore.$sym(xi, seen)
+                EnzymeCore.make_zero!(xi, seen)
             else
                 msg = "cannot set $xi to zero in-place, as it contains differentiable values in immutable positions"
                 throw(ArgumentError(msg))
@@ -615,13 +617,15 @@ end
             if activitystate == AnyState  # guaranteed_const
                 continue
             elseif ismutabletype(T) && !ismutabletype(SBT)
-                yi = $imm(xi, seen)
+                yi = make_zero_immutable!(xi, seen)
                 if Base.isconst(T, i)
                     ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), prev, i-1, yi)
                 else
                     setfield!(prev, i, yi)
                 end
-            elseif activitystate == DupState || activitystate == MixedState
+            elseif activitystate == DupState
+                EnzymeCore.make_zero!(xi, seen)
+            elseif activitystate == MixedState
                 EnzymeCore.remake_zero!(xi, seen)
             end
         end
