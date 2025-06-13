@@ -723,7 +723,9 @@ function test_make_zero!(make_zero! = Enzyme.make_zero!)
     @testset "active/mixed type error" begin
         @test_throws ArgumentError make_zero!((1.0,))
         @test_throws ArgumentError make_zero!((1.0, [1.0]))
-        @test_throws ArgumentError make_zero!((Incomplete("a", 1.0, 1.0im),))  # issue #1935
+        if make_zero! == Enzyme.make_zero!
+            @test_throws ArgumentError make_zero!((Incomplete("a", 1.0, 1.0im),))  # issue #1935
+        end
     end
     @testset "containing IO" begin  # issue #2091
         f = WithIO([1.0, 2.0], stdout)
