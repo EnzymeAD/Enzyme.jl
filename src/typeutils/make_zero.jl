@@ -328,10 +328,10 @@ function make_zero_immutable!(prev::T, seen::S)::T where {T,S}
 end
 
 
-for (sym, imm) in ((:make_zero!, :make_zero_immutable!), (:remake_zero!, :make_zero_immutable!))
+for (sym, imm) in (EnzymeCore.make_zero!, make_zero_immutable!, (EnzymeCore.remake_zero!, make_zero_immutable!)
     @eval quote
 
-        @inline function EnzymeCore.$sym(
+        @inline function $sym(
             prev::Base.RefValue{T},
             seen::ST,
         )::Nothing where {T<:AbstractFloat,ST}
@@ -345,7 +345,7 @@ for (sym, imm) in ((:make_zero!, :make_zero_immutable!), (:remake_zero!, :make_z
             return nothing
         end
 
-        @inline function EnzymeCore.$sym(
+        @inline function $sym(
             prev::Base.RefValue{Complex{T}},
             seen::ST,
         )::Nothing where {T<:AbstractFloat,ST}
@@ -359,7 +359,7 @@ for (sym, imm) in ((:make_zero!, :make_zero_immutable!), (:remake_zero!, :make_z
             return nothing
         end
 
-        @inline function EnzymeCore.$sym(
+        @inline function $sym(
             prev::Array{T,N},
             seen::ST,
         )::Nothing where {T<:AbstractFloat,N,ST}
@@ -373,7 +373,7 @@ for (sym, imm) in ((:make_zero!, :make_zero_immutable!), (:remake_zero!, :make_z
             return nothing
         end
 
-        @inline function EnzymeCore.$sym(
+        @inline function $sym(
             prev::Array{Complex{T},N},
             seen::ST,
         )::Nothing where {T<:AbstractFloat,N,ST}
@@ -389,7 +389,7 @@ for (sym, imm) in ((:make_zero!, :make_zero_immutable!), (:remake_zero!, :make_z
 
         @static if VERSION < v"1.11-"
         else
-        @inline function EnzymeCore.$sym(
+        @inline function $sym(
             prev::GenericMemory{kind, T},
             seen::ST,
         )::Nothing where {T<:AbstractFloat,kind,ST}
@@ -403,7 +403,7 @@ for (sym, imm) in ((:make_zero!, :make_zero_immutable!), (:remake_zero!, :make_z
             return nothing
         end
 
-        @inline function EnzymeCore.$sym(
+        @inline function $sym(
             prev::GenericMemory{kind, Complex{T}},
             seen::ST,
         )::Nothing where {T<:AbstractFloat,kind,ST}
@@ -418,42 +418,42 @@ for (sym, imm) in ((:make_zero!, :make_zero_immutable!), (:remake_zero!, :make_z
         end
         end
 
-        @inline function EnzymeCore.$sym(
+        @inline function $sym(
             prev::Base.RefValue{T},
         )::Nothing where {T<:AbstractFloat}
             EnzymeCore.$sym(prev, nothing)
             return nothing
         end
 
-        @inline function EnzymeCore.$sym(
+        @inline function $sym(
             prev::Base.RefValue{Complex{T}},
         )::Nothing where {T<:AbstractFloat}
-            EnzymeCore.$sym(prev, nothing)
+            $sym(prev, nothing)
             return nothing
         end
 
-        @inline function EnzymeCore.$sym(prev::Array{T,N})::Nothing where {T<:AbstractFloat,N}
-            EnzymeCore.$sym(prev, nothing)
+        @inline function $sym(prev::Array{T,N})::Nothing where {T<:AbstractFloat,N}
+            $sym(prev, nothing)
             return nothing
         end
 
-        @inline function EnzymeCore.$sym(
+        @inline function $sym(
             prev::Array{Complex{T},N},
         )::Nothing where {T<:AbstractFloat,N}
-            EnzymeCore.$sym(prev, nothing)
+            $sym(prev, nothing)
             return nothing
         end
 
         @static if VERSION < v"1.11-"
         else
-        @inline function EnzymeCore.$sym(
+        @inline function $sym(
             prev::GenericMemory{kind, T}
         )::Nothing where {T<:AbstractFloat,kind}
             fill!(prev, zero(T))
             return nothing
         end
 
-        @inline function EnzymeCore.$sym(
+        @inline function $sym(
             prev::GenericMemory{kind, Complex{T}}
         )::Nothing where {T<:AbstractFloat,kind}
             fill!(prev, zero(Complex{T}))
@@ -461,7 +461,7 @@ for (sym, imm) in ((:make_zero!, :make_zero_immutable!), (:remake_zero!, :make_z
         end
         end
 
-        @inline function EnzymeCore.$sym(prev::Array{T,N}, seen::ST)::Nothing where {T,N,ST}
+        @inline function $sym(prev::Array{T,N}, seen::ST)::Nothing where {T,N,ST}
             if guaranteed_const_nongen(T, nothing)
                 return nothing
             end
@@ -478,14 +478,14 @@ for (sym, imm) in ((:make_zero!, :make_zero_immutable!), (:remake_zero!, :make_z
                     elseif !ismutabletype(SBT)
                         @inbounds prev[I] = $imm(pv, seen)
                     else
-                        EnzymeCore.$sym(pv, seen)
+                        $sym(pv, seen)
                     end
                 end
             end
             return nothing
         end
 
-        @inline function EnzymeCore.$sym(prev::GenericMemory{kind, T}, seen::ST)::Nothing where {T,kind,ST}
+        @inline function $sym(prev::GenericMemory{kind, T}, seen::ST)::Nothing where {T,kind,ST}
             if guaranteed_const_nongen(T, nothing)
                 return nothing
             end
@@ -502,7 +502,7 @@ for (sym, imm) in ((:make_zero!, :make_zero_immutable!), (:remake_zero!, :make_z
                     elseif !ismutabletype(SBT)
                         @inbounds prev[I] = $imm(pv, seen)
                     else
-                        EnzymeCore.$sym(pv, seen)
+                        $sym(pv, seen)
                     end
                 end
             end
@@ -510,7 +510,7 @@ for (sym, imm) in ((:make_zero!, :make_zero_immutable!), (:remake_zero!, :make_z
         end
         end
 
-        @inline function EnzymeCore.$sym(
+        @inline function $sym(
             prev::Base.RefValue{T},
             seen::ST,
         )::Nothing where {T,ST}
@@ -528,12 +528,12 @@ for (sym, imm) in ((:make_zero!, :make_zero_immutable!), (:remake_zero!, :make_z
             elseif !ismutabletype(SBT)
                 prev[] = $imm(pv, seen)
             else
-                EnzymeCore.$sym(pv, seen)
+                $sym(pv, seen)
             end
             return nothing
         end
 
-        @inline function EnzymeCore.$sym(prev::Core.Box, seen::ST)::Nothing where {ST}
+        @inline function $sym(prev::Core.Box, seen::ST)::Nothing where {ST}
             if prev in seen
                 return nothing
             end
@@ -545,12 +545,12 @@ for (sym, imm) in ((:make_zero!, :make_zero_immutable!), (:remake_zero!, :make_z
             elseif !ismutabletype(SBT)
                 prev.contents = $imm(pv, seen)
             else
-                EnzymeCore.$sym(pv, seen)
+                $sym(pv, seen)
             end
             return nothing
         end
 
-        @inline EnzymeCore.$sym(prev) = EnzymeCore.$sym(prev, Base.IdSet())
+        @inline $sym(prev) = $sym(prev, Base.IdSet())
     end
 end
 
