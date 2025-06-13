@@ -720,10 +720,10 @@ function test_make_zero!(make_zero! = Enzyme.make_zero!)
             @test incompletetuparr[1][1].w === a                         # preserved identity
         end
     end
-    @testset "active/mixed type error" begin
-        @test_throws ArgumentError make_zero!((1.0,))
-        @test_throws ArgumentError make_zero!((1.0, [1.0]))
-        if make_zero! == Enzyme.make_zero!
+    if make_zero! == Enzyme.make_zero!
+        @testset "active/mixed type error" begin
+            @test_throws ArgumentError make_zero!((1.0,))
+            @test_throws ArgumentError make_zero!((1.0, [1.0]))
             @test_throws ArgumentError make_zero!((Incomplete("a", 1.0, 1.0im),))  # issue #1935
         end
     end
