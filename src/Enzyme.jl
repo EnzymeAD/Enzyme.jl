@@ -99,14 +99,16 @@ import EnzymeCore:
     autodiff_deferred_thunk,
     tape_type,
     make_zero,
-    make_zero!
+    make_zero!,
+    remake_zero!
 export autodiff,
     autodiff_deferred,
     autodiff_thunk,
     autodiff_deferred_thunk,
     tape_type,
     make_zero,
-    make_zero!
+    make_zero!,
+    remake_zero!
 
 export jacobian, gradient, gradient!, hvp, hvp!, hvp_and_gradient!
 export batch_size, onehot, chunkedonehot

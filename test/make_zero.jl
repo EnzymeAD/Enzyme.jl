@@ -166,6 +166,22 @@ function Enzyme.EnzymeCore.make_zero!(prev::CustomVector{<:AbstractFloat})
     return Enzyme.EnzymeCore.make_zero!(prev, nothing)
 end
 
+function Enzyme.EnzymeCore.remake_zero!(prev::CustomVector{<:AbstractFloat}, seen)::Nothing
+    @info "make_zero!(::CustomVector)"
+    if !isnothing(seen)
+        if prev in seen
+            return nothing
+        end
+        push!(seen, prev)
+    end
+    fill!(prev.data, false)
+    return nothing
+end
+
+function Enzyme.EnzymeCore.remake_zero!(prev::CustomVector{<:AbstractFloat})
+    return Enzyme.EnzymeCore.remake_zero!(prev, nothing)
+end
+
 struct WithIO{F}  # issue 2091
     v::Vector{Float64}
     callback::F
@@ -522,7 +538,7 @@ function test_make_zero()
     return nothing
 end
 
-function test_make_zero!()
+function test_make_zero!(make_zero! = Enzyme.make_zero!)
     @testset "nested types" begin
         @testset "$T in $(wrapper.name)" for
                 T in scalartypes, wrapper in filter(w -> (w.N == 1), wrappers)
@@ -704,10 +720,12 @@ function test_make_zero!()
             @test incompletetuparr[1][1].w === a                         # preserved identity
         end
     end
-    @testset "active/mixed type error" begin
-        @test_throws ArgumentError make_zero!((1.0,))
-        @test_throws ArgumentError make_zero!((1.0, [1.0]))
-        @test_throws ArgumentError make_zero!((Incomplete("a", 1.0, 1.0im),))  # issue #1935
+    if make_zero! == Enzyme.make_zero!
+        @testset "active/mixed type error" begin
+            @test_throws ArgumentError make_zero!((1.0,))
+            @test_throws ArgumentError make_zero!((1.0, [1.0]))
+            @test_throws ArgumentError make_zero!((Incomplete("a", 1.0, 1.0im),))  # issue #1935
+        end
     end
     @testset "containing IO" begin  # issue #2091
         f = WithIO([1.0, 2.0], stdout)
@@ -719,7 +737,23 @@ function test_make_zero!()
     return nothing
 end
 
+function test_remake_zero!()
+    test_make_zero!(Enzyme.remake_zero!)
+
+    @testset "Immutable" begin
+        x = (0.0, [4.5])
+        Enzyme.remake_zero!(x)
+        @test x[1] == 0.0
+        @test x[2][1] == 0.0
+
+        x = (2.0, [4.5])
+        Enzyme.remake_zero!(x)
+        @test x[1] == 2.0
+        @test x[2][1] == 0.0
+    end
+end
 @testset "make_zero" test_make_zero()
 @testset "make_zero!" test_make_zero!()
+@testset "remake_zero!" test_remake_zero!()
 
 end  # module MakeZeroTests

@@ -15,7 +15,6 @@ end
     return Base.zero(x)
 end
 
-
 @static if VERSION < v"1.11-"
 else
 @inline function EnzymeCore.make_zero(
@@ -328,222 +327,234 @@ function make_zero_immutable!(prev::T, seen::S)::T where {T,S}
     return ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), T, flds, nf)::T
 end
 
-@inline function EnzymeCore.make_zero!(
-    prev::Base.RefValue{T},
-    seen::ST,
-)::Nothing where {T<:AbstractFloat,ST}
-    if !isnothing(seen)
-        if prev in seen
+macro register_make_zero_inplace(sym)
+    quote
+        @inline function $sym(
+            prev::Base.RefValue{T},
+            seen::ST,
+        )::Nothing where {T<:AbstractFloat,ST}
+            if !isnothing(seen)
+                if prev in seen
+                    return nothing
+                end
+                push!(seen, prev)
+            end
+            prev[] = zero(T)
             return nothing
         end
-        push!(seen, prev)
-    end
-    prev[] = zero(T)
-    return nothing
-end
 
-@inline function EnzymeCore.make_zero!(
-    prev::Base.RefValue{Complex{T}},
-    seen::ST,
-)::Nothing where {T<:AbstractFloat,ST}
-    if !isnothing(seen)
-        if prev in seen
+        @inline function $sym(
+            prev::Base.RefValue{Complex{T}},
+            seen::ST,
+        )::Nothing where {T<:AbstractFloat,ST}
+            if !isnothing(seen)
+                if prev in seen
+                    return nothing
+                end
+                push!(seen, prev)
+            end
+            prev[] = zero(Complex{T})
             return nothing
         end
-        push!(seen, prev)
-    end
-    prev[] = zero(Complex{T})
-    return nothing
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::Array{T,N},
-    seen::ST,
-)::Nothing where {T<:AbstractFloat,N,ST}
-    if !isnothing(seen)
-        if prev in seen
+                @inline function $sym(
+            prev::Array{T,N},
+            seen::ST,
+        )::Nothing where {T<:AbstractFloat,N,ST}
+            if !isnothing(seen)
+                if prev in seen
+                    return nothing
+                end
+                push!(seen, prev)
+            end
+            fill!(prev, zero(T))
             return nothing
         end
-        push!(seen, prev)
-    end
-    fill!(prev, zero(T))
-    return nothing
-end
 
-@inline function EnzymeCore.make_zero!(
-    prev::Array{Complex{T},N},
-    seen::ST,
-)::Nothing where {T<:AbstractFloat,N,ST}
-    if !isnothing(seen)
-        if prev in seen
+        @inline function $sym(
+            prev::Array{Complex{T},N},
+            seen::ST,
+        )::Nothing where {T<:AbstractFloat,N,ST}
+            if !isnothing(seen)
+                if prev in seen
+                    return nothing
+                end
+                push!(seen, prev)
+            end
+            fill!(prev, zero(Complex{T}))
             return nothing
         end
-        push!(seen, prev)
-    end
-    fill!(prev, zero(Complex{T}))
-    return nothing
-end
 
-@static if VERSION < v"1.11-"
-else
-@inline function EnzymeCore.make_zero!(
-    prev::GenericMemory{kind, T},
-    seen::ST,
-)::Nothing where {T<:AbstractFloat,kind,ST}
-    if !isnothing(seen)
-        if prev in seen
+        @static if VERSION < v"1.11-"
+        else
+        @inline function $sym(
+            prev::GenericMemory{kind, T},
+            seen::ST,
+        )::Nothing where {T<:AbstractFloat,kind,ST}
+            if !isnothing(seen)
+                if prev in seen
+                    return nothing
+                end
+                push!(seen, prev)
+            end
+            fill!(prev, zero(T))
             return nothing
         end
-        push!(seen, prev)
-    end
-    fill!(prev, zero(T))
-    return nothing
-end
 
-@inline function EnzymeCore.make_zero!(
-    prev::GenericMemory{kind, Complex{T}},
-    seen::ST,
-)::Nothing where {T<:AbstractFloat,kind,ST}
-    if !isnothing(seen)
-        if prev in seen
+        @inline function $sym(
+            prev::GenericMemory{kind, Complex{T}},
+            seen::ST,
+        )::Nothing where {T<:AbstractFloat,kind,ST}
+            if !isnothing(seen)
+                if prev in seen
+                    return nothing
+                end
+                push!(seen, prev)
+            end
+            fill!(prev, zero(Complex{T}))
             return nothing
         end
-        push!(seen, prev)
-    end
-    fill!(prev, zero(Complex{T}))
-    return nothing
-end
-end
+        end
 
-@inline function EnzymeCore.make_zero!(
-    prev::Base.RefValue{T},
-)::Nothing where {T<:AbstractFloat}
-    EnzymeCore.make_zero!(prev, nothing)
-    return nothing
-end
+        @inline function $sym(
+            prev::Base.RefValue{T},
+        )::Nothing where {T<:AbstractFloat}
+            $sym(prev, nothing)
+            return nothing
+        end
 
-@inline function EnzymeCore.make_zero!(
-    prev::Base.RefValue{Complex{T}},
-)::Nothing where {T<:AbstractFloat}
-    EnzymeCore.make_zero!(prev, nothing)
-    return nothing
-end
+        @inline function $sym(
+            prev::Base.RefValue{Complex{T}},
+        )::Nothing where {T<:AbstractFloat}
+            $sym(prev, nothing)
+            return nothing
+        end
 
-@inline function EnzymeCore.make_zero!(prev::Array{T,N})::Nothing where {T<:AbstractFloat,N}
-    EnzymeCore.make_zero!(prev, nothing)
-    return nothing
-end
+        @inline function $sym(prev::Array{T,N})::Nothing where {T<:AbstractFloat,N}
+            $sym(prev, nothing)
+            return nothing
+        end
 
-@inline function EnzymeCore.make_zero!(
-    prev::Array{Complex{T},N},
-)::Nothing where {T<:AbstractFloat,N}
-    EnzymeCore.make_zero!(prev, nothing)
-    return nothing
-end
+        @inline function $sym(
+            prev::Array{Complex{T},N},
+        )::Nothing where {T<:AbstractFloat,N}
+            $sym(prev, nothing)
+            return nothing
+        end
 
-@inline function EnzymeCore.make_zero!(prev::Array{T,N}, seen::ST)::Nothing where {T,N,ST}
-    if guaranteed_const_nongen(T, nothing)
-        return nothing
-    end
-    if prev in seen
-        return nothing
-    end
-    push!(seen, prev)
-    for I in eachindex(prev)
-        if isassigned(prev, I)
-            pv = prev[I]
+        @static if VERSION < v"1.11-"
+        else
+        @inline function $sym(
+            prev::GenericMemory{kind, T}
+        )::Nothing where {T<:AbstractFloat,kind}
+            $sym(prev, nothing)
+            return nothing
+        end
+
+        @inline function $sym(
+            prev::GenericMemory{kind, Complex{T}}
+        )::Nothing where {T<:AbstractFloat,kind}
+            $sym(prev, nothing)
+            return nothing
+        end
+        end
+
+        @inline function $sym(prev::Array{T,N}, seen::ST)::Nothing where {T,N,ST}
+            if guaranteed_const_nongen(T, nothing)
+                return nothing
+            end
+            if prev in seen
+                return nothing
+            end
+            push!(seen, prev)
+            for I in eachindex(prev)
+                if isassigned(prev, I)
+                    pv = prev[I]
+                    SBT = Core.Typeof(pv)
+                    if guaranteed_const_nongen(SBT, nothing)
+                        continue
+                    elseif !ismutabletype(SBT)
+                        @inbounds prev[I] = make_zero_immutable!(pv, seen)
+                    else
+                        $sym(pv, seen)
+                    end
+                end
+            end
+            return nothing
+        end
+
+        @static if VERSION < v"1.11-"
+        else
+        @inline function $sym(prev::GenericMemory{kind, T}, seen::ST)::Nothing where {T,kind,ST}
+            if guaranteed_const_nongen(T, nothing)
+                return nothing
+            end
+            if prev in seen
+                return nothing
+            end
+            push!(seen, prev)
+            for I in eachindex(prev)
+                if isassigned(prev, I)
+                    pv = prev[I]
+                    SBT = Core.Typeof(pv)
+                    if guaranteed_const_nongen(SBT, nothing)
+                        continue
+                    elseif !ismutabletype(SBT)
+                        @inbounds prev[I] = make_zero_immutable!(pv, seen)
+                    else
+                        $sym(pv, seen)
+                    end
+                end
+            end
+            return nothing
+        end
+        end
+
+        @inline function $sym(
+            prev::Base.RefValue{T},
+            seen::ST,
+        )::Nothing where {T,ST}
+            if guaranteed_const_nongen(T, nothing)
+                return nothing
+            end
+            if prev in seen
+                return nothing
+            end
+            push!(seen, prev)
+            pv = prev[]
             SBT = Core.Typeof(pv)
             if guaranteed_const_nongen(SBT, nothing)
-                continue
+                return nothing
             elseif !ismutabletype(SBT)
-                @inbounds prev[I] = make_zero_immutable!(pv, seen)
+                prev[] = make_zero_immutable!(pv, seen)
             else
-                EnzymeCore.make_zero!(pv, seen)
+                $sym(pv, seen)
             end
+            return nothing
         end
-    end
-    return nothing
-end
 
-@static if VERSION < v"1.11-"
-else
-@inline function EnzymeCore.make_zero!(prev::GenericMemory{kind, T})::Nothing where {T<:AbstractFloat,kind}
-    EnzymeCore.make_zero!(prev, nothing)
-    return nothing
-end
-
-@inline function EnzymeCore.make_zero!(
-    prev::GenericMemory{kind, Complex{T}},
-)::Nothing where {T<:AbstractFloat, kind}
-    EnzymeCore.make_zero!(prev, nothing)
-    return nothing
-end
-
-@inline function EnzymeCore.make_zero!(prev::GenericMemory{kind, T}, seen::ST)::Nothing where {T,kind,ST}
-    if guaranteed_const_nongen(T, nothing)
-        return nothing
-    end
-    if prev in seen
-        return nothing
-    end
-    push!(seen, prev)
-    for I in eachindex(prev)
-        if isassigned(prev, I)
-            pv = prev[I]
+        @inline function $sym(prev::Core.Box, seen::ST)::Nothing where {ST}
+            if prev in seen
+                return nothing
+            end
+            push!(seen, prev)
+            pv = prev.contents
             SBT = Core.Typeof(pv)
             if guaranteed_const_nongen(SBT, nothing)
-                continue
+                return nothing
             elseif !ismutabletype(SBT)
-                @inbounds prev[I] = make_zero_immutable!(pv, seen)
+                prev.contents = make_zero_immutable!(pv, seen)
             else
-                EnzymeCore.make_zero!(pv, seen)
+                $sym(pv, seen)
             end
+            return nothing
         end
+
+        @inline $sym(prev) = $sym(prev, Base.IdSet())
     end
-    return nothing
-end
 end
 
-
-@inline function EnzymeCore.make_zero!(
-    prev::Base.RefValue{T},
-    seen::ST,
-)::Nothing where {T,ST}
-    if guaranteed_const_nongen(T, nothing)
-        return nothing
-    end
-    if prev in seen
-        return nothing
-    end
-    push!(seen, prev)
-    pv = prev[]
-    SBT = Core.Typeof(pv)
-    if guaranteed_const_nongen(SBT, nothing)
-        return nothing
-    elseif !ismutabletype(SBT)
-        prev[] = make_zero_immutable!(pv, seen)
-    else
-        EnzymeCore.make_zero!(pv, seen)
-    end
-    return nothing
-end
-
-@inline function EnzymeCore.make_zero!(prev::Core.Box, seen::ST)::Nothing where {ST}
-    if prev in seen
-        return nothing
-    end
-    push!(seen, prev)
-    pv = prev.contents
-    SBT = Core.Typeof(pv)
-    if guaranteed_const_nongen(SBT, nothing)
-        return nothing
-    elseif !ismutabletype(SBT)
-        prev.contents = make_zero_immutable!(pv, seen)
-    else
-        EnzymeCore.make_zero!(pv, seen)
-    end
-    return nothing
-end
+@register_make_zero_inplace(Enzyme.make_zero!)
+@register_make_zero_inplace(Enzyme.remake_zero!)
 
 @inline function EnzymeCore.make_zero!(prev::T, seen::S)::Nothing where {T,S}
     if guaranteed_const_nongen(T, nothing)
@@ -584,4 +595,40 @@ end
     return nothing
 end
 
-@inline EnzymeCore.make_zero!(prev) = EnzymeCore.make_zero!(prev, Base.IdSet())
+@inline function EnzymeCore.remake_zero!(prev::T, seen::S)::Nothing where {T,S}
+    if guaranteed_const_nongen(T, nothing)
+        return nothing
+    end
+    if prev in seen
+        return nothing
+    end
+    @assert !Base.isabstracttype(T)
+    @assert Base.isconcretetype(T)
+    nf = fieldcount(T)
+    if nf == 0
+        return nothing
+    end
+    push!(seen, prev)
+    for i = 1:nf
+        if isdefined(prev, i)
+            xi = getfield(prev, i)
+            SBT = Core.Typeof(xi)
+            activitystate = active_reg_inner(SBT, (), nothing)
+            if activitystate == AnyState  # guaranteed_const
+                continue
+            elseif ismutabletype(T) && !ismutabletype(SBT)
+                yi = make_zero_immutable!(xi, seen)
+                if Base.isconst(T, i)
+                    ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), prev, i-1, yi)
+                else
+                    setfield!(prev, i, yi)
+                end
+            elseif activitystate == DupState
+                EnzymeCore.make_zero!(xi, seen)
+            elseif activitystate == MixedState
+                EnzymeCore.remake_zero!(xi, seen)
+            end
+        end
+    end
+    return nothing
+end
