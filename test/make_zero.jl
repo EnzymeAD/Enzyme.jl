@@ -720,7 +720,7 @@ function test_make_zero!(make_zero! = Enzyme.make_zero!)
 end
 
 function test_remake_zero!()
-    test_remake_zero(Enzyme.remake_zero!)
+    test_make_zero(Enzyme.remake_zero!)
 
     @testset "Immutable" begin
         x = (0.0, [4.5])
