@@ -166,6 +166,22 @@ function Enzyme.EnzymeCore.make_zero!(prev::CustomVector{<:AbstractFloat})
     return Enzyme.EnzymeCore.make_zero!(prev, nothing)
 end
 
+function Enzyme.EnzymeCore.remake_zero!(prev::CustomVector{<:AbstractFloat}, seen)::Nothing
+    @info "make_zero!(::CustomVector)"
+    if !isnothing(seen)
+        if prev in seen
+            return nothing
+        end
+        push!(seen, prev)
+    end
+    fill!(prev.data, false)
+    return nothing
+end
+
+function Enzyme.EnzymeCore.remake_zero!(prev::CustomVector{<:AbstractFloat})
+    return Enzyme.EnzymeCore.remake_zero!(prev, nothing)
+end
+
 struct WithIO{F}  # issue 2091
     v::Vector{Float64}
     callback::F
