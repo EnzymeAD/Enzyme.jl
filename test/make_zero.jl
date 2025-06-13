@@ -522,7 +522,7 @@ function test_make_zero()
     return nothing
 end
 
-function test_make_zero!(make_zero!=Enzyme.make_zero!)
+function test_make_zero!(make_zero! = Enzyme.make_zero!)
     @testset "nested types" begin
         @testset "$T in $(wrapper.name)" for
                 T in scalartypes, wrapper in filter(w -> (w.N == 1), wrappers)
