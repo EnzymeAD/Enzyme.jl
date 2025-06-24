@@ -1519,6 +1519,8 @@ include("rules/activityrules.jl")
 const DumpPreEnzyme = Ref(false)
 const DumpPostWrap = Ref(false)
 
+using Tracy
+
 function enzyme!(
     job::CompilerJob,
     mod::LLVM.Module,
@@ -1656,7 +1658,7 @@ function enzyme!(
 
     TapeType = Cvoid
 
-    if mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
+    @tracepoint "Enzyme: Create IR" if mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
         returnUsed = !(isghostty(actualRetType) || Core.Compiler.isconstType(actualRetType))
         shadowReturnUsed =
             returnUsed && (
