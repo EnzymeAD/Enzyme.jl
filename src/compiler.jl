@@ -1846,7 +1846,7 @@ function enzyme!(
     for f in collect(functions(mod))
         API.EnzymeFixupBatchedJuliaCallingConvention(f)
     end
-    ModulePassManager() do pm
+    NewPMModulePassManager() do pm
         dce!(pm)
         LLVM.run!(pm, mod)
     end
@@ -3330,7 +3330,7 @@ function lower_convention(
         throw(LLVM.LLVMException(msg))
     end
 
-    ModulePassManager() do pm
+    NewPMModulePassManager() do pm
         always_inliner!(pm)
         LLVM.run!(pm, mod)
     end
@@ -3414,7 +3414,7 @@ function lower_convention(
         LLVM.API.LLVMInstructionEraseFromParent(p)
     end
 
-    ModulePassManager() do pm
+    NewPMModulePassManager() do pm
         # Kill the temporary staging function
         global_dce!(pm)
         global_optimizer!(pm)
@@ -3545,7 +3545,7 @@ function GPUCompiler.codegen(
         permit_inlining!(f)
     end
 
-    LLVM.ModulePassManager() do pm
+    NewPMModulePassManager() do pm
         API.AddPreserveNVVMPass!(pm, true) #=Begin=#
         LLVM.run!(pm, mod)
     end
@@ -3596,7 +3596,7 @@ function GPUCompiler.codegen(
     found = String[]
     if bitcode_replacement() &&
        API.EnzymeBitcodeReplacement(mod, disableFallback, found) != 0
-        ModulePassManager() do pm
+        NewPMModulePassManager() do pm
             instruction_combining!(pm)
             LLVM.run!(pm, mod)
         end
@@ -3639,7 +3639,7 @@ function GPUCompiler.codegen(
             end
         end
 
-        ModulePassManager() do pm
+        NewPMModulePassManager() do pm
             always_inliner!(pm)
             LLVM.run!(pm, mod)
         end
@@ -3657,7 +3657,7 @@ function GPUCompiler.codegen(
             end
         end
         GPUCompiler.@safe_warn "Using fallback BLAS replacements for ($found), performance may be degraded"
-        ModulePassManager() do pm
+        NewPMModulePassManager() do pm
             global_optimizer!(pm)
             LLVM.run!(pm, mod)
         end
@@ -4763,7 +4763,7 @@ end
                 push!(toremove, name(f))
             end
         end
-        ModulePassManager() do pm
+        NewPMModulePassManager() do pm
             always_inliner!(pm)
             LLVM.run!(pm, mod)
         end
@@ -4785,7 +4785,7 @@ end
         augmented_primalf = nothing
     end
 
-    LLVM.ModulePassManager() do pm
+    NewPMModulePassManager() do pm
         API.AddPreserveNVVMPass!(pm, false) #=Begin=#
         LLVM.run!(pm, mod)
     end
@@ -5572,8 +5572,8 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         primal_name = nothing
     end
 
-    LLVM.ModulePassManager() do pm
-        add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
+    NewPMModulePassManager() do pm
+        add!(pm, NewPMFunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
         LLVM.run!(pm, mod)
     end
 
