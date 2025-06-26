@@ -212,7 +212,7 @@ function isapplicable(@nospecialize(f), @nospecialize(TT);
     else
         matches = result
     end
-    fullmatch = Core.Compiler._any(match::Core.MethodMatch->match.fully_covers, matches)
+    fullmatch = any(match::Core.MethodMatch->match.fully_covers, matches)
     if !fullmatch
         if caller isa Core.MethodInstance
             add_mt_backedge!(caller, mt, sig)
