@@ -66,7 +66,7 @@ function run_jl_pipeline(pm::ModulePassManager, tm::LLVM.TargetMachine; kwargs..
         end
         return true
     end
-    add!(pm, ModulePass("JLPipeline", jl_pipeline))
+    add!(pm, NewPMModulePass("JLPipeline", jl_pipeline))
 end
 
 @static if VERSION < v"1.11.0-DEV.428"
@@ -91,16 +91,16 @@ else
             end
             return true
         end
-        add!(pm, ModulePass("GCInvariantVerifier", gc_invariant_verifier))
+        add!(pm, NewPMModulePass("GCInvariantVerifier", gc_invariant_verifier))
     end
 end
 
 @static if VERSION < v"1.11-"
-    function propagate_julia_addrsp_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function propagate_julia_addrsp_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         propagate_julia_addrsp!(pm)
     end
 else
-    function propagate_julia_addrsp_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function propagate_julia_addrsp_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         function prop_julia_addr(mod::LLVM.Module)
             @dispose pb = NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
@@ -112,16 +112,16 @@ else
             end
             return true
         end
-        add!(pm, ModulePass("PropagateJuliaAddrSpace", prop_julia_addr))
+        add!(pm, NewPMModulePass("PropagateJuliaAddrSpace", prop_julia_addr))
     end
 end
 
 @static if VERSION < v"1.11-"
-    function alloc_opt_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function alloc_opt_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         alloc_opt!(pm)
     end
 else
-    function alloc_opt_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function alloc_opt_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         function alloc_opt(mod::LLVM.Module)
             @dispose pb = NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
@@ -133,16 +133,16 @@ else
             end
             return true
         end
-        add!(pm, ModulePass("AllocOpt", alloc_opt))
+        add!(pm, NewPMModulePass("AllocOpt", alloc_opt))
     end
 end
 
 @static if VERSION < v"1.11-"
-    function remove_ni_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function remove_ni_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         remove_ni!(pm)
     end
 else
-    function remove_ni_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function remove_ni_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         function remove_ni(mod::LLVM.Module)
             @dispose pb = NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
@@ -152,16 +152,16 @@ else
             end
             return true
         end
-        add!(pm, ModulePass("RemoveNI", remove_ni))
+        add!(pm, NewPMModulePass("RemoveNI", remove_ni))
     end
 end
 
 @static if VERSION < v"1.11-"
-    function julia_licm_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function julia_licm_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         julia_licm!(pm)
     end
 else
-    function julia_licm_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function julia_licm_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         function julia_licm(mod::LLVM.Module)
             @dispose pb = NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
@@ -176,16 +176,16 @@ else
             return true
         end
         # really looppass
-        add!(pm, ModulePass("JuliaLICM", julia_licm))
+        add!(pm, NewPMModulePass("JuliaLICM", julia_licm))
     end
 end
 
 @static if VERSION < v"1.11-"
-    function lower_simdloop_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function lower_simdloop_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         lower_simdloop!(pm)
     end
 else
-    function lower_simdloop_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function lower_simdloop_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         function lower_simdloop(mod::LLVM.Module)
             @dispose pb = NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
@@ -200,12 +200,12 @@ else
             return true
         end
         # really looppass
-        add!(pm, ModulePass("LowerSIMDLoop", lower_simdloop))
+        add!(pm, NewPMModulePass("LowerSIMDLoop", lower_simdloop))
     end
 end
 
 
-function loop_optimizations_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+function loop_optimizations_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
     @static if true || VERSION < v"1.11-"
         lower_simdloop_tm!(pm, tm)
         licm!(pm)
@@ -235,7 +235,7 @@ function loop_optimizations_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachi
 end
 
 
-function more_loop_optimizations_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+function more_loop_optimizations_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
     @static if true || VERSION < v"1.11-"
         loop_rotate!(pm)
         # moving IndVarSimplify here prevented removing the loop in perf_sumcartesian(10:-1:1)
@@ -287,11 +287,11 @@ function more_loop_optimizations_tm!(pm::LLVM.ModulePassManager, tm::LLVM.Target
 end
 
 @static if VERSION < v"1.11-"
-    function demote_float16_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function demote_float16_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         demote_float16!(pm)
     end
 else
-    function demote_float16_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function demote_float16_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         function demote_float16(mod::LLVM.Module)
             @dispose pb = NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
@@ -303,16 +303,16 @@ else
             end
             return true
         end
-        add!(pm, ModulePass("DemoteFloat16", demote_float16))
+        add!(pm, NewPMModulePass("DemoteFloat16", demote_float16))
     end
 end
 
 @static if VERSION < v"1.11-"
-    function lower_exc_handlers_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function lower_exc_handlers_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         lower_exc_handlers!(pm)
     end
 else
-    function lower_exc_handlers_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function lower_exc_handlers_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         function lower_exc_handlers(mod::LLVM.Module)
             @dispose pb = NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
@@ -324,16 +324,16 @@ else
             end
             return true
         end
-        add!(pm, ModulePass("LowerExcHandlers", lower_exc_handlers))
+        add!(pm, NewPMModulePass("LowerExcHandlers", lower_exc_handlers))
     end
 end
 
 @static if VERSION < v"1.11-"
-    function lower_ptls_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine, dump_native::Bool)
+    function lower_ptls_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine, dump_native::Bool)
         lower_ptls!(pm, dump_native)
     end
 else
-    function lower_ptls_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine, dump_native::Bool)
+    function lower_ptls_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine, dump_native::Bool)
         function lower_ptls(mod::LLVM.Module)
             @dispose pb = NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
@@ -343,16 +343,16 @@ else
             end
             return true
         end
-        add!(pm, ModulePass("LowerPTLS", lower_ptls))
+        add!(pm, NewPMModulePass("LowerPTLS", lower_ptls))
     end
 end
 
 @static if VERSION < v"1.11-"
-    function combine_mul_add_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function combine_mul_add_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         combine_mul_add!(pm)
     end
 else
-    function combine_mul_add_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function combine_mul_add_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
 @static if VERSION < v"1.12.0-DEV.1390"
         function combine_mul_add(mod::LLVM.Module)
             @dispose pb = NewPMPassBuilder() begin
@@ -365,17 +365,17 @@ else
             end
             return true
         end
-        add!(pm, ModulePass("CombineMulAdd", combine_mul_add))
+        add!(pm, NewPMModulePass("CombineMulAdd", combine_mul_add))
 end
     end
 end
 
 @static if VERSION < v"1.11-"
-    function late_lower_gc_frame_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function late_lower_gc_frame_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         late_lower_gc_frame!(pm)
     end
 else
-    function late_lower_gc_frame_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function late_lower_gc_frame_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         function late_lower_gc_frame(mod::LLVM.Module)
             @dispose pb = NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
@@ -387,16 +387,16 @@ else
             end
             return true
         end
-        add!(pm, ModulePass("LateLowerGCFrame", late_lower_gc_frame))
+        add!(pm, NewPMModulePass("LateLowerGCFrame", late_lower_gc_frame))
     end
 end
 
 @static if VERSION < v"1.11-"
-    function final_lower_gc_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function final_lower_gc_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         final_lower_gc!(pm)
     end
 else
-    function final_lower_gc_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function final_lower_gc_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         function final_lower_gc(mod::LLVM.Module)
             @dispose pb = NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
@@ -408,12 +408,12 @@ else
             end
             return true
         end
-        add!(pm, ModulePass("FinalLowerGCFrame", final_lower_gc))
+        add!(pm, NewPMModulePass("FinalLowerGCFrame", final_lower_gc))
     end
 end
 
 @static if VERSION < v"1.11-"
-    function cpu_features_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function cpu_features_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         @static if isdefined(LLVM.Interop, :cpu_features!)
             LLVM.Interop.cpu_features!(pm)
         else
@@ -423,7 +423,7 @@ end
         end
     end
 else
-    function cpu_features_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+    function cpu_features_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine)
         function cpu_features(mod)
             @dispose pb = NewPMPassBuilder() begin
                 add!(pb, NewPMModulePassManager()) do mpm
@@ -433,11 +433,11 @@ else
             end
             return true
         end
-        add!(pm, ModulePass("CPUFeatures", cpu_features))
+        add!(pm, NewPMModulePass("CPUFeatures", cpu_features))
     end
 end
 
-function jl_inst_simplify!(PM::LLVM.ModulePassManager)
+function jl_inst_simplify!(PM::ModulePassManager)
     ccall(
         (:LLVMAddJLInstSimplifyPass, API.libEnzyme),
         Cvoid,
@@ -452,7 +452,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     addr13NoAlias(mod)
     # everying except unroll, slpvec, loop-vec
     # then finish Julia GC
-    ModulePassManager() do pm
+    NewPMModulePassManager() do pm
         add_library_info!(pm, triple(mod))
         add_transform_info!(pm, tm)
 
@@ -472,7 +472,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
 
     # Globalopt is separated as it can delete functions, which invalidates the Julia hardcoded pointers to
     # known functions
-    ModulePassManager() do pm
+    NewPMModulePassManager() do pm
 
         add_library_info!(pm, triple(mod))
         add_transform_info!(pm, tm)
@@ -489,7 +489,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
 
     rewrite_generic_memory!(mod)
     
-    ModulePassManager() do pm
+    NewPMModulePassManager() do pm
         add_library_info!(pm, triple(mod))
         add_transform_info!(pm, tm)
 
@@ -564,7 +564,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     
     # Globalopt is separated as it can delete functions, which invalidates the Julia hardcoded pointers to
     # known functions
-    ModulePassManager() do pm
+    NewPMModulePassManager() do pm
         add_library_info!(pm, triple(mod))
         add_transform_info!(pm, tm)
 
@@ -583,14 +583,14 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
 end
 
 # https://github.com/JuliaLang/julia/blob/2eb5da0e25756c33d1845348836a0a92984861ac/src/aotcompile.cpp#L603
-function addTargetPasses!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine, trip::String)
+function addTargetPasses!(pm::ModulePassManager, tm::LLVM.TargetMachine, trip::String)
     add_library_info!(pm, trip)
     add_transform_info!(pm, tm)
 end
 
 # https://github.com/JuliaLang/julia/blob/2eb5da0e25756c33d1845348836a0a92984861ac/src/aotcompile.cpp#L620
-function addOptimizationPasses!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
-    add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
+function addOptimizationPasses!(pm::ModulePassManager, tm::LLVM.TargetMachine)
+    add!(pm, NewPMFunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
 
     constant_merge!(pm)
 
@@ -652,7 +652,7 @@ function addOptimizationPasses!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachi
     jl_inst_simplify!(pm)
     jump_threading!(pm)
     dead_store_elimination!(pm)
-    add!(pm, FunctionPass("SafeAtomicToRegularStore", safe_atomic_to_regular_store!))
+    add!(pm, NewPMFunctionPass("SafeAtomicToRegularStore", safe_atomic_to_regular_store!))
 
     # More dead allocation (store) deletion before loop optimization
     # consider removing this:
@@ -675,7 +675,7 @@ function addOptimizationPasses!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachi
     aggressive_dce!(pm)
 end
 
-function addMachinePasses!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
+function addMachinePasses!(pm::ModulePassManager, tm::LLVM.TargetMachine)
     combine_mul_add_tm!(pm, tm)
     # TODO: createDivRemPairs[]
 
@@ -683,13 +683,13 @@ function addMachinePasses!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
     gvn!(pm)
 end
 
-function addJuliaLegalizationPasses!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine, lower_intrinsics::Bool = true)
+function addJuliaLegalizationPasses!(pm::ModulePassManager, tm::LLVM.TargetMachine, lower_intrinsics::Bool = true)
     if lower_intrinsics
         # LowerPTLS removes an indirect call. As a result, it is likely to trigger
         # LLVM's devirtualization heuristics, which would result in the entire
         # pass pipeline being re-exectuted. Prevent this by inserting a barrier.
         barrier_noop!(pm)
-        add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
+        add!(pm, NewPMFunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
         lower_exc_handlers_tm!(pm, tm)
         # BUDE.jl demonstrates a bug here TODO
         gc_invariant_verifier_tm!(pm, tm, false)
@@ -750,7 +750,7 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
             ),
         )
     end
-    LLVM.ModulePassManager() do pm
+    NewPMModulePassManager() do pm
         addTargetPasses!(pm, tm, LLVM.triple(mod))
         addOptimizationPasses!(pm, tm)
         LLVM.run!(pm, mod)
@@ -758,7 +758,7 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
     if machine
         # TODO enable validate_return_roots
         # validate_return_roots!(mod)
-        LLVM.ModulePassManager() do pm
+        NewPMModulePassManager() do pm
             addJuliaLegalizationPasses!(pm, tm, true)
             addMachinePasses!(pm, tm)
             LLVM.run!(pm, mod)
