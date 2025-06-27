@@ -254,7 +254,7 @@ end
     RT::Val{ReturnType},
     allargs...,
 )::ReturnType where {ActivityTup,MB,Width,ReturnType}
-    N = div(length(allargs), Width)
+    N = div(length(allargs), Width + 1)
     primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs; func = false, mixed_or_active = true)
     return body_runtime_tuple_augfwd(
@@ -294,7 +294,7 @@ end
     tape::TapeType,
     allargs...,
 ) where {ActivityTup,MB,Width,TapeType}
-    N = div(length(allargs) - (Width - 1), Width)
+    N = div(length(allargs), Width + 1)
     primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs; mixed_or_active = true)
     return body_runtime_tuple_rev(
