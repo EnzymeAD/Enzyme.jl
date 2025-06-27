@@ -499,7 +499,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
             @assert sizeof(gv) == 0
             (nothing, gv, nothing, Const)
         else
-        
+
             tt = Tuple{$(ElTypes...)}
 
             rt = Compiler.primal_return_type(Reverse, FT, tt)
@@ -1497,7 +1497,7 @@ end
 
     nontupexprs = Vector{Union{Symbol,Expr}}(undef, Nargs)
     for i = 1:Nargs
-        @inbounds nontupexprs[i] = if args[i] <: Active || args[i] <: MixedDuplicated || args[i] <: BatchMixedDuplicated 
+        @inbounds nontupexprs[i] = if args[i] <: Active || args[i] <: MixedDuplicated || args[i] <: BatchMixedDuplicated
             if width == 1
                 :(tape.shadow_return[][$i])
             else
@@ -1777,14 +1777,20 @@ end
 end
 
 # Create specializations
-for (N, Width) in Iterators.product(0:30, 1:10)
-    eval(func_runtime_generic_fwd(N, Width))
-    eval(func_runtime_generic_augfwd(N, Width))
-    eval(func_runtime_generic_rev(N, Width))
-    eval(func_runtime_iterate_fwd(N, Width))
-    eval(func_runtime_iterate_augfwd(N, Width))
-    eval(func_runtime_iterate_rev(N, Width))
-end
+setfield!(typeof(runtime_generic_fwd).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
+setfield!(typeof(runtime_generic_augfwd).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
+setfield!(typeof(runtime_generic_rev).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
+setfield!(typeof(runtime_iterate_fwd).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
+setfield!(typeof(runtime_iterate_augfwd).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
+setfield!(typeof(runtime_iterate_rev).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
+# for (N, Width) in Iterators.product(0:30, 1:10)
+#     eval(func_runtime_generic_fwd(N, Width))
+#     eval(func_runtime_generic_augfwd(N, Width))
+#     eval(func_runtime_generic_rev(N, Width))
+#     eval(func_runtime_iterate_fwd(N, Width))
+#     eval(func_runtime_iterate_augfwd(N, Width))
+#     eval(func_runtime_iterate_rev(N, Width))
+# end
 
 function generic_setup(
     orig,

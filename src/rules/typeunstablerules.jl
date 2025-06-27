@@ -419,12 +419,16 @@ end
     )
 end
 
-for (N, Width) in Iterators.product(0:30, 1:10)
-    eval(func_runtime_newstruct_augfwd(N, Width))
-    eval(func_runtime_newstruct_rev(N, Width))
-    eval(func_runtime_tuple_augfwd(N, Width))
-    eval(func_runtime_tuple_rev(N, Width))
-end
+setfield!(typeof(runtime_newstruct_augfwd).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
+setfield!(typeof(runtime_newstruct_rev).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
+setfield!(typeof(runtime_tuple_augfwd).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
+setfield!(typeof(runtime_tuple_rev).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
+# for (N, Width) in Iterators.product(0:30, 1:10)
+#     eval(func_runtime_newstruct_augfwd(N, Width))
+#     eval(func_runtime_newstruct_rev(N, Width))
+#     eval(func_runtime_tuple_augfwd(N, Width))
+#     eval(func_runtime_tuple_rev(N, Width))
+# end
 
 
 # returns if legal and completed
@@ -1051,7 +1055,7 @@ end
             push!(vals, tape)
             push!(vals, shadowsin)
         else
-            for i in 1:width  
+            for i in 1:width
                 push!(vals, extract_value!(B, tape, i - 1))
                 push!(vals, extract_value!(B, shadowsin, i - 1))
             end
@@ -1113,7 +1117,7 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
 		end
 
 	    normal = new_from_original(gutils, orig)
-        
+
         if width == 1
             shadowres = normal
         else
