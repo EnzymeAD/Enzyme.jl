@@ -246,10 +246,11 @@ function setup_macro_wraps(
     wrapped,
     batchshadowargs,
     modbetween,
-    active_refs
+    active_refs,
+    dfns
 end
 
-function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
+function body_runtime_generic_fwd(N, Width, wrapped, primtypes, dfns)
     nnothing = Vector{Nothing}(undef, Width + 1)
     nres = Vector{Expr}(undef, Width + 1)
     fill!(nnothing, nothing)
@@ -271,11 +272,7 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
     dup = if Width == 1
         :(Duplicated(f, df))
     else
-        fargs = [:df]
-        for i = 2:Width
-            push!(fargs, Symbol("df_$i"))
-        end
-        :(BatchDuplicated(f, ($(fargs...),)))
+        :(BatchDuplicated(f, ($(dfns...),)))
     end
     dupty = if Width == 1
         :(Duplicated{FT})
@@ -338,8 +335,8 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes)
 end
 
 function func_runtime_generic_fwd(N, Width)
-    _, _, primtypes, allargs, typeargs, wrapped, _, _, _ = setup_macro_wraps(true, N, Width)
-    body = body_runtime_generic_fwd(N, Width, wrapped, primtypes)
+    _, _, primtypes, allargs, typeargs, wrapped, _, _, _, dfns = setup_macro_wraps(true, N, Width)
+    body = body_runtime_generic_fwd(N, Width, wrapped, primtypes, dfns)
 
     quote
         function runtime_generic_fwd(
@@ -368,11 +365,11 @@ end
     allargs...,
 ) where {ActivityTup,RuntimeActivity,StrongZero,Width,ReturnType,F,DF}
     N = div(length(allargs) + 2, Width + 1) - 1
-    _, _, primtypes, _, _, wrapped, _, _, _ = setup_macro_wraps(true, N, Width, :allargs)
-    return body_runtime_generic_fwd(N, Width, wrapped, primtypes)
+    _, _, primtypes, _, _, wrapped, _, _, _, dfns = setup_macro_wraps(true, N, Width, :allargs)
+    return body_runtime_generic_fwd(N, Width, wrapped, primtypes, dfns)
 end
 
-function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
+function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs, dfns)
     nres = Vector{Symbol}(undef, Width + 1)
     fill!(nres, :origRet)
     nzeros = Vector{Expr}(undef, Width)
@@ -451,15 +448,11 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
             end
         end
     else
-        fargs = [:df]
-        for i = 2:Width
-            push!(fargs, Symbol("df_$i"))
-        end
         quote
             if df isa Base.RefValue && !(f isa Base.RefValue)
                 BatchMixedDuplicated(f, ($(fargs...),))
             else
-                BatchDuplicated(f, ($(fargs...),))
+                BatchDuplicated(f, ($(dfns...),))
             end
         end
     end
@@ -557,9 +550,9 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs)
 end
 
 function func_runtime_generic_augfwd(N, Width)
-    _, _, primtypes, allargs, typeargs, wrapped, _, _, active_refs =
+    _, _, primtypes, allargs, typeargs, wrapped, _, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width)
-    body = body_runtime_generic_augfwd(N, Width, wrapped, primtypes, active_refs)
+    body = body_runtime_generic_augfwd(N, Width, wrapped, primtypes, active_refs, dfns)
 
     quote
         function runtime_generic_augfwd(
@@ -590,9 +583,9 @@ end
     allargs...,
 )::ReturnType where {ActivityTup,MB,RuntimeActivity,StrongZero,Width,ReturnType,F,DF}
     N = div(length(allargs) + 2, Width + 1) - 1
-    _, _, primtypes, _, _, wrapped, _, _, active_refs =
+    _, _, primtypes, _, _, wrapped, _, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs)
-    return body_runtime_generic_augfwd(N, Width, wrapped, primtypes, active_refs)
+    return body_runtime_generic_augfwd(N, Width, wrapped, primtypes, active_refs, dfns)
 end
 
 function nonzero_active_data(x::T) where {T<:AbstractFloat}
@@ -745,7 +738,7 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
 end
 
 function func_runtime_generic_rev(N, Width)
-    _, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs =
+    _, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width)
     body =
         body_runtime_generic_rev(N, Width, wrapped, primtypes, batchshadowargs, active_refs)
@@ -779,7 +772,7 @@ end
     allargs...,
 ) where {ActivityTup,MB,RuntimeActivity,StrongZero,Width,TapeType,F,DF}
     N = div(length(allargs) + 2, Width + 1) - 1
-    _, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs =
+    _, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_rev(
         N,
@@ -1114,7 +1107,7 @@ function body_runtime_iterate_fwd(N, Width, wrapped, primtypes, active_refs)
 end
 
 function func_runtime_iterate_fwd(N, Width)
-    _, _, primtypes, allargs, typeargs, wrapped, _, _, active_refs =
+    _, _, primtypes, allargs, typeargs, wrapped, _, _, active_refs, dfns =
         setup_macro_wraps(true, N, Width, nothing, true) #=iterate=#
     body = body_runtime_iterate_fwd(N, Width, wrapped, primtypes, active_refs)
 
@@ -1145,7 +1138,7 @@ end
     allargs...,
 ) where {ActivityTup,RuntimeActivity,StrongZero,Width,ReturnType,F,DF}
     N = div(length(allargs) + 2, Width + 1) - 1
-    _, _, primtypes, _, _, wrapped, _, _, active_refs =
+    _, _, primtypes, _, _, wrapped, _, _, active_refs, dfns =
         setup_macro_wraps(true, N, Width, :allargs, true) #=iterate=#
     return body_runtime_iterate_fwd(N, Width, wrapped, primtypes, active_refs)
 end
@@ -1405,7 +1398,7 @@ function body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes, a
 end
 
 function func_runtime_iterate_augfwd(N, Width)
-    _, _, primtypes, allargs, typeargs, wrapped, _, modbetween, active_refs =
+    _, _, primtypes, allargs, typeargs, wrapped, _, modbetween, active_refs, dfns =
         setup_macro_wraps(false, N, Width, nothing, true) #=iterate=#
     body =
         body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes, active_refs)
@@ -1439,7 +1432,7 @@ end
     allargs...,
 ) where {ActivityTup,RuntimeActivity,StrongZero,MB,Width,ReturnType,F,DF}
     N = div(length(allargs) + 2, Width + 1) - 1
-    _, _, primtypes, _, _, wrapped, _, modbetween, active_refs =
+    _, _, primtypes, _, _, wrapped, _, modbetween, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs, true) #=iterate=#
     return body_runtime_iterate_augfwd(
         N,
@@ -1724,7 +1717,7 @@ function func_runtime_iterate_rev(N, Width)
     wrapped,
     batchshadowargs,
     modbetween,
-    active_refs = setup_macro_wraps(false, N, Width, nothing, true; reverse = true) #=iterate=#
+    active_refs, dfns = setup_macro_wraps(false, N, Width, nothing, true; reverse = true) #=iterate=#
     body = body_runtime_iterate_rev(
         N,
         Width,
@@ -1763,7 +1756,7 @@ end
     allargs...,
 ) where {ActivityTup,RuntimeActivity,StrongZero,MB,Width,TapeType,F,DF}
     N = div(length(allargs) + 2, Width + 1) - 1
-    primargs, _, primtypes, _, _, wrapped, batchshadowargs, modbetween, active_refs =
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, modbetween, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs, true; reverse = true) #=iterate=#
     return body_runtime_iterate_rev(
         N,

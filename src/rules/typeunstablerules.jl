@@ -147,6 +147,7 @@ function body_construct_rev(
     active_refs,
     primargs,
     batchshadowargs,
+    dfns,
     tuple,
 )
     outs = Vector{Expr}(undef, N*Width)
@@ -177,7 +178,7 @@ function body_construct_rev(
     @inbounds tapes[1] = :(tval_1 = tape[])
     for w = 2:Width
         sym = Symbol("tval_$w")
-        df = Symbol("df_$w")
+        df = dns[w]
         @inbounds tapes[w] = :($sym = $df[])
     end
 
@@ -193,8 +194,8 @@ function body_construct_rev(
 end
 
 
-function body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs)
-    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, true)
+function body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns)
+    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns, true)
 end
 
 function body_runtime_newstruct_rev(
@@ -204,8 +205,9 @@ function body_runtime_newstruct_rev(
     active_refs,
     primargs,
     batchshadowargs,
+    dfns
 )
-    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, false)
+    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns, false)
 end
 
 
@@ -221,7 +223,7 @@ function body_runtime_tuple_augfwd(
 end
 
 function func_runtime_tuple_augfwd(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs =
+    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width; func = false, mixed_or_active = true)
     body = body_runtime_tuple_augfwd(
         N,
@@ -253,7 +255,7 @@ end
     allargs...,
 )::ReturnType where {ActivityTup,MB,Width,ReturnType}
     N = div(length(allargs), Width)
-    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs =
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs; func = false, mixed_or_active = true)
     return body_runtime_tuple_augfwd(
         N,
@@ -267,10 +269,10 @@ end
 
 
 function func_runtime_tuple_rev(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs =
+    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width; mixed_or_active = true)
     body =
-        body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs)
+        body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns)
 
     quote
         function runtime_tuple_rev(
@@ -293,7 +295,7 @@ end
     allargs...,
 ) where {ActivityTup,MB,Width,TapeType}
     N = div(length(allargs) - (Width - 1), Width)
-    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs =
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs; mixed_or_active = true)
     return body_runtime_tuple_rev(
         N,
@@ -302,6 +304,7 @@ end
         active_refs,
         primargs,
         batchshadowargs,
+        dfns
     )
 end
 
@@ -326,7 +329,7 @@ function body_runtime_newstruct_augfwd(
 end
 
 function func_runtime_newstruct_augfwd(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs =
+    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width; mixed_or_active = true)
     body = body_runtime_newstruct_augfwd(
         N,
@@ -360,7 +363,7 @@ end
     allargs...,
 )::ReturnType where {ActivityTup,MB,Width,ReturnType,NewType}
     N = div(length(allargs) + 2, Width + 1) - 1
-    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs =
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs; mixed_or_active = true)
     return body_runtime_newstruct_augfwd(
         N,
@@ -373,7 +376,7 @@ end
 end
 
 function func_runtime_newstruct_rev(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs =
+    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width; mixed_or_active = true)
     body = body_runtime_newstruct_rev(
         N,
@@ -382,6 +385,7 @@ function func_runtime_newstruct_rev(N, Width)
         active_refs,
         primargs,
         batchshadowargs,
+        dfns
     )
 
     quote
@@ -407,7 +411,7 @@ end
     allargs...,
 ) where {ActivityTup,MB,Width,NewStruct,TapeType}
     N = div(length(allargs) - (Width - 1), Width)
-    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs =
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs; mixed_or_active = true)
     return body_runtime_newstruct_rev(
         N,
@@ -416,6 +420,7 @@ end
         active_refs,
         primargs,
         batchshadowargs,
+        dfns
     )
 end
 
