@@ -450,7 +450,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs,
     else
         quote
             if df isa Base.RefValue && !(f isa Base.RefValue)
-                BatchMixedDuplicated(f, ($(fargs...),))
+                BatchMixedDuplicated(f, ($(dfns...),))
             else
                 BatchDuplicated(f, ($(dfns...),))
             end
