@@ -178,7 +178,7 @@ function body_construct_rev(
     @inbounds tapes[1] = :(tval_1 = tape[])
     for w = 2:Width
         sym = Symbol("tval_$w")
-        df = dns[w]
+        df = dfns[w]
         @inbounds tapes[w] = :($sym = $df[])
     end
 
