@@ -362,7 +362,7 @@ end
     RT::Val{ReturnType},
     allargs...,
 )::ReturnType where {ActivityTup,MB,Width,ReturnType,NewType}
-    N = div(length(allargs) + 2, Width + 1) - 1
+    N = div(length(allargs), Width + 1)
     primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs; mixed_or_active = true)
     return body_runtime_newstruct_augfwd(
@@ -410,7 +410,7 @@ end
     tape::TapeType,
     allargs...,
 ) where {ActivityTup,MB,Width,NewStruct,TapeType}
-    N = div(length(allargs) - (Width - 1), Width)
+    N = div(length(allargs), Width + 1)
     primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs; mixed_or_active = true)
     return body_runtime_newstruct_rev(
