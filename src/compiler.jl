@@ -631,14 +631,10 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
         T_pint8 = LLVM.PointerType(T_int8)
 
         prev2 = bitcast!(B, prev, LLVM.PointerType(T_int8, addrspace(value_type(prev))))
-
+        typedesc = Base.DataTypeFieldDesc(Ty)
         for i in 1:fieldcount(Ty)
             Ty2 = fieldtype(Ty, i)
             off = fieldoffset(Ty, i)
-    
-            if Ty2 <: DataType && Base.datatype_pointerfree(Ty2)
-                continue
-            end
 
             prev3 = inbounds_gep!(
                 B,
@@ -646,16 +642,8 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
                 prev2,
                 LLVM.Value[LLVM.ConstantInt(Int64(off))],
             )
-            
-            fallback = Base.isabstracttype(Ty2) || Ty2 isa Union || Ty2 <: Symbol || Ty2 <: String || Ty2 isa UnionAll
-
-            @static if VERSION < v"1.11-"
-                fallback |= Ty2 <: Array
-            else
-                fallback |= Ty2 <: GenericMemory
-            end
-
-            if fallback
+    
+	    if typedesc[i].isptr
                 Ty2 = Any
                 zeroAll = false
                 prev3 = bitcast!(B, prev3, LLVM.PointerType(T_prjlvalue, addrspace(value_type(prev3))))
@@ -806,7 +794,7 @@ function zero_single_allocation(builder::LLVM.IRBuilder, @nospecialize(jlType::D
         LLVMType,
         jlType,
     )]
-
+	    
     addedvals = LLVM.Value[]
     while length(todo) != 0
         path, ty, jlty = popfirst!(todo)
