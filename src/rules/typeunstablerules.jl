@@ -147,6 +147,7 @@ function body_construct_rev(
     active_refs,
     primargs,
     batchshadowargs,
+    dfns,
     tuple,
 )
     outs = Vector{Expr}(undef, N*Width)
@@ -177,7 +178,7 @@ function body_construct_rev(
     @inbounds tapes[1] = :(tval_1 = tape[])
     for w = 2:Width
         sym = Symbol("tval_$w")
-        df = Symbol("df_$w")
+        df = dfns[w]
         @inbounds tapes[w] = :($sym = $df[])
     end
 
@@ -193,8 +194,8 @@ function body_construct_rev(
 end
 
 
-function body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs)
-    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, true)
+function body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns)
+    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns, true)
 end
 
 function body_runtime_newstruct_rev(
@@ -204,8 +205,9 @@ function body_runtime_newstruct_rev(
     active_refs,
     primargs,
     batchshadowargs,
+    dfns
 )
-    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, false)
+    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns, false)
 end
 
 
@@ -221,7 +223,7 @@ function body_runtime_tuple_augfwd(
 end
 
 function func_runtime_tuple_augfwd(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs =
+    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width; func = false, mixed_or_active = true)
     body = body_runtime_tuple_augfwd(
         N,
@@ -252,8 +254,8 @@ end
     RT::Val{ReturnType},
     allargs...,
 )::ReturnType where {ActivityTup,MB,Width,ReturnType}
-    N = div(length(allargs), Width)
-    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs =
+    N = div(length(allargs), Width + 1)
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs; func = false, mixed_or_active = true)
     return body_runtime_tuple_augfwd(
         N,
@@ -267,10 +269,10 @@ end
 
 
 function func_runtime_tuple_rev(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs =
+    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width; mixed_or_active = true)
     body =
-        body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs)
+        body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns)
 
     quote
         function runtime_tuple_rev(
@@ -292,8 +294,8 @@ end
     tape::TapeType,
     allargs...,
 ) where {ActivityTup,MB,Width,TapeType}
-    N = div(length(allargs) - (Width - 1), Width)
-    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs =
+    N = div(length(allargs), Width + 1)
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs; mixed_or_active = true)
     return body_runtime_tuple_rev(
         N,
@@ -302,6 +304,7 @@ end
         active_refs,
         primargs,
         batchshadowargs,
+        dfns
     )
 end
 
@@ -326,7 +329,7 @@ function body_runtime_newstruct_augfwd(
 end
 
 function func_runtime_newstruct_augfwd(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs =
+    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width; mixed_or_active = true)
     body = body_runtime_newstruct_augfwd(
         N,
@@ -359,8 +362,8 @@ end
     RT::Val{ReturnType},
     allargs...,
 )::ReturnType where {ActivityTup,MB,Width,ReturnType,NewType}
-    N = div(length(allargs) + 2, Width + 1) - 1
-    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs =
+    N = div(length(allargs), Width + 1)
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs; mixed_or_active = true)
     return body_runtime_newstruct_augfwd(
         N,
@@ -373,7 +376,7 @@ end
 end
 
 function func_runtime_newstruct_rev(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs =
+    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width; mixed_or_active = true)
     body = body_runtime_newstruct_rev(
         N,
@@ -382,6 +385,7 @@ function func_runtime_newstruct_rev(N, Width)
         active_refs,
         primargs,
         batchshadowargs,
+        dfns
     )
 
     quote
@@ -406,8 +410,8 @@ end
     tape::TapeType,
     allargs...,
 ) where {ActivityTup,MB,Width,NewStruct,TapeType}
-    N = div(length(allargs) - (Width - 1), Width)
-    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs =
+    N = div(length(allargs), Width + 1)
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs; mixed_or_active = true)
     return body_runtime_newstruct_rev(
         N,
@@ -416,15 +420,20 @@ end
         active_refs,
         primargs,
         batchshadowargs,
+        dfns
     )
 end
 
-for (N, Width) in Iterators.product(0:30, 1:10)
-    eval(func_runtime_newstruct_augfwd(N, Width))
-    eval(func_runtime_newstruct_rev(N, Width))
-    eval(func_runtime_tuple_augfwd(N, Width))
-    eval(func_runtime_tuple_rev(N, Width))
-end
+setfield!(typeof(runtime_newstruct_augfwd).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
+setfield!(typeof(runtime_newstruct_rev).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
+setfield!(typeof(runtime_tuple_augfwd).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
+setfield!(typeof(runtime_tuple_rev).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
+# for (N, Width) in Iterators.product(0:30, 1:10)
+#     eval(func_runtime_newstruct_augfwd(N, Width))
+#     eval(func_runtime_newstruct_rev(N, Width))
+#     eval(func_runtime_tuple_augfwd(N, Width))
+#     eval(func_runtime_tuple_rev(N, Width))
+# end
 
 
 # returns if legal and completed
@@ -1051,7 +1060,7 @@ end
             push!(vals, tape)
             push!(vals, shadowsin)
         else
-            for i in 1:width  
+            for i in 1:width
                 push!(vals, extract_value!(B, tape, i - 1))
                 push!(vals, extract_value!(B, shadowsin, i - 1))
             end
@@ -1113,7 +1122,7 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
 		end
 
 	    normal = new_from_original(gutils, orig)
-        
+
         if width == 1
             shadowres = normal
         else
