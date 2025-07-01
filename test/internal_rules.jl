@@ -6,6 +6,7 @@ using LinearAlgebra
 using SparseArrays
 using Test
 import Random
+using EnzymeTestUtils
 
 @testset "SparseArrays spmatvec reverse rule" begin
     Ts = (Float64, ComplexF64)
