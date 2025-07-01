@@ -116,7 +116,10 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
     )
     mi === nothing && return stub(world, source, method_error)
 
-    ci = Core.Compiler.retrieve_code_info(mi, world)::Core.Compiler.CodeInfo
+    ci = Core.Compiler.retrieve_code_info(mi, world)
+
+    # TODO @vchuravy, I have no idea why this fails here
+    ci = ci::Core.Compiler.CodeInfo
 
     # prepare a new code info
     new_ci = copy(ci)
