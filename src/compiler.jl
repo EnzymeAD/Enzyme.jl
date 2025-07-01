@@ -3842,8 +3842,10 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     lowerConvention = true
     customDerivativeNames = String[]
     fnsToInject = Tuple{Symbol,Type}[]
-    for (mi, k) in meta.compiled
-        k_name = GPUCompiler.safe_name(k.specfunc)
+
+    println("pre meta compiled", string(mod))
+
+    function handle_compiled(mod, mi, k_name, rettype)
         has_custom_rule = false
 
         specTypes = Interpreter.simplify_kw(mi.specTypes)
@@ -3863,12 +3865,12 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         end
 
         if !haskey(functions(mod), k_name)
-            continue
+            return
         end
 
         llvmfn = functions(mod)[k_name]
         if llvmfn == primalf
-            actualRetType = k.ci.rettype
+            actualRetType = rettype
         end
 
         if EnzymeRules.noalias_from_sig(mi.specTypes; world, method_table)
@@ -3928,7 +3930,7 @@ end
                 "enzyme_custom",
                 LLVM.Attribute[StringAttribute("enzyme_preserve_primal", "*")],
             )
-            continue
+            return
         end
 
 
@@ -3959,7 +3961,7 @@ end
                     ],
                 )
             end
-            continue
+            return
         end
         if func == typeof(Base.to_tuple_type)
             if LLVM.version().major <= 15
@@ -3994,7 +3996,7 @@ end
                     ],
                 )
             end
-            continue
+            return
         end
         if func == typeof(Base.mightalias)
             if LLVM.version().major <= 15
@@ -4028,7 +4030,7 @@ end
                     false,
                 )
             end
-            continue
+            return
         end
         if func == typeof(Base.Threads.threadid) || func == typeof(Base.Threads.nthreads)
             name = (func == typeof(Base.Threads.threadid)) ? "jl_threadid" : "jl_nthreads"
@@ -4065,7 +4067,7 @@ end
                     ],
                 )
             end
-            continue
+            return
         end
         # Since this is noreturn and it can't write to any operations in the function
         # in a way accessible by the function. Ideally the attributor should actually
@@ -4094,7 +4096,7 @@ end
                     ],
                 )
             end
-            continue
+            return
         end
         if EnzymeRules.is_inactive_from_sig(specTypes; world, method_table)
             push!(edges, mi)
@@ -4108,7 +4110,7 @@ end
                     StringAttribute("enzyme_ta_norecur"),
                 ],
             )
-            continue
+            return
         end
         if EnzymeRules.is_inactive_noinl_from_sig(specTypes; world, method_table)
             push!(edges, mi)
@@ -4154,7 +4156,7 @@ end
                     end
                 end
             end
-            continue
+            return
         end
         if func === typeof(Base.match)
             handleCustom(
@@ -4198,30 +4200,30 @@ end
                     end
                 end
             end
-            continue
+            return
         end
         if func == typeof(Base.enq_work) &&
            length(sparam_vals) == 1 &&
            first(sparam_vals) <: Task
             handleCustom(llvmfn, "jl_enq_work", LLVM.Attribute[StringAttribute("enzyme_ta_norecur")])
-            continue
+            return
         end
         if func == typeof(Base.wait) || func == typeof(Base._wait)
             if length(sparam_vals) == 1 && first(sparam_vals) <: Task
                 handleCustom(llvmfn, "jl_wait", LLVM.Attribute[StringAttribute("enzyme_ta_norecur")])
             end
-            continue
+            return
         end
         if func == typeof(Base.Threads.threading_run)
             if length(sparam_vals) == 1 || length(sparam_vals) == 2
                 handleCustom(llvmfn, "jl_threadsfor")
             end
-            continue
+            return
         end
 
         name, toinject, T = find_math_method(func, sparam_vals)
         if name === nothing
-            continue
+            return
         end
 
         if toinject !== nothing
@@ -4260,7 +4262,37 @@ end
             LLVM.Attribute[EnumAttribute("memory", NoEffects.data), StringAttribute("enzyme_shouldrecompute")]
         end
         handleCustom(llvmfn, name, attrs)
+        return
     end
+
+    for fname in LLVM.name.(functions(mod))
+        fn = functions(mod)[fname]
+        attributes = function_attributes(fn)
+        mi = nothing
+        RT = nothing
+        for fattr in collect(attributes)
+            if isa(fattr, LLVM.StringAttribute)
+                if kind(fattr) == "enzymejl_mi"
+                    ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
+                    mi = Base.unsafe_pointer_to_objref(ptr)
+                end
+            end
+            if kind(fattr) == "enzymejl_rt"
+                ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
+                RT = Base.unsafe_pointer_to_objref(ptr)
+            end
+        end
+        if mi !== nothing && RT !== nothing
+            handle_compiled(mod, mi, fname, RT)
+        end
+    end
+
+    # for (mi, k) in meta.compiled
+    #     k_name = GPUCompiler.safe_name(k.specfunc)
+    #     handle_compiled(mod, mi, k_name, k.ci.rettype)
+    # end
+
+    println("post meta compiled", string(mod))
 
     @assert actualRetType !== nothing
     if params.run_enzyme
@@ -4405,6 +4437,8 @@ end
     if process_module
         GPUCompiler.optimize_module!(primal_job, mod)
     end
+
+    println("post enz optimize", string(mod))
 
     for name in ("gpu_report_exception", "report_exception")
         if haskey(functions(mod), name)
@@ -5617,6 +5651,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         else
             string(mod)
         end
+        println("thunk:", mstr)
         if job.config.params.ABI <: FFIABI || job.config.params.ABI <: NonGenABI
             post_optimze!(mod, JIT.get_tm())
             if DumpPostOpt[]
