@@ -71,4 +71,24 @@ end
 # Aqua.test_all(Enzyme, unbound_args=false, piracies=false, deps_compat=false, stale_deps=(;:ignore=>[:EnzymeTestUtils]))
 # Aqua.test_all(Enzyme, unbound_args=false, piracies=false, deps_compat=false, stale_deps=(;:ignore=>[:EnzymeTestUtils]))
 
-include("blas.jl")
+include("abi.jl")
+include("typetree.jl")
+include("passes.jl")
+include("optimize.jl")
+include("make_zero.jl")
+include("runtime_calls.jl")
+
+include("rules.jl")
+include("rrules.jl")
+include("kwrules.jl")
+include("kwrrules.jl")
+include("internal_rules.jl")
+include("ruleinvalidation.jl")
+include("typeunstable.jl")
+include("absint.jl")
+include("array.jl")
+
+@static if !Sys.iswindows()
+    include("blas.jl")
+end
+
