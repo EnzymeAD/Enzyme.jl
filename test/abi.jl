@@ -689,3 +689,26 @@ import LLVM
         @test sizeof(TT) == LLVM.sizeof(DL, ty)
     end
 end
+
+
+struct UnionStruct
+    x::Union{Float32,Nothing}
+    y::Any
+end
+
+function fsq(x)
+    return x.x::Float32
+end
+
+function make_fsq(x)
+    y = UnionStruct(x, [])
+    Base.inferencebarrier(fsq)(y)
+end
+
+@testset "UnionStruct" begin
+    res = Enzyme.autodiff(Forward, fsq, Duplicated(UnionStruct(3.1, nothing), UnionStruct(1.0, nothing)))
+    @test r[1] ≈ 1.0f0
+
+    res = Enzyme.autodiff(Forward, make_fsq, Duplicated(3.1, 1.0))
+    @test res[1] ≈ 200.0
+end
