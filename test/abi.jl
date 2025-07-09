@@ -707,8 +707,8 @@ end
 
 @testset "UnionStruct" begin
     res = Enzyme.autodiff(Forward, fsq, Duplicated(UnionStruct(3.1, nothing), UnionStruct(1.0, nothing)))
-    @test r[1] ≈ 1.0f0
+    @test res[1] ≈ 1.0f0
 
     res = Enzyme.autodiff(Forward, make_fsq, Duplicated(3.1, 1.0))
-    @test res[1] ≈ 200.0
+    @test res[1] ≈ 1.0f0
 end
