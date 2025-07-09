@@ -859,16 +859,23 @@ function zero_single_allocation(builder::LLVM.IRBuilder, @nospecialize(jlType::D
             if !(jlty isa DataType)
                 throw(AssertionError("Could not handle non datatype $jlty in zero_single_allocation $ty"))
             end
+            desc = Base.DataTypeFieldDesc(jlty)
             for ii = 1:fieldcount(jlty)
                 jlet = typed_fieldtype(jlty, ii)
                 if isghostty(jlet) || Core.Compiler.isconstType(jlet)
                     continue
                 end
+
                 t = LLVM.elements(ty)[i]
                 npath = copy(path)
                 push!(npath, LLVM.ConstantInt(LLVM.IntType(32), i - 1))
                 push!(todo, (npath, t, jlet))
                 i += 1
+
+                # Extra i8 at the end of an inline union type
+                if !desc[ii].isptr && jlet isa Union
+                    i += 1
+                end
             end
             if i != Int(length(LLVM.elements(ty))) + 1
                 throw(AssertionError("Number of non-ghost elements of julia type $jlty ($i) did not match number number of elements of llvmtype $(string(ty)) ($(length(LLVM.elements(ty)))) "))
