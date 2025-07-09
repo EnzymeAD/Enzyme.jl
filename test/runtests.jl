@@ -351,3 +351,91 @@ end
 
 make3() = (1.0, 2.0, 3.0)
 
+
+    f1(x) = 1.0 + x
+    f2(x) = x*x
+    @test autodiff(Reverse, f1, Active, Active(1.0))[1][1] ≈ 1.0
+    @test autodiff(Forward, f1, Duplicated, Duplicated(1.0, 1.0))[1] ≈ 1.0
+    @test autodiff(ForwardWithPrimal, f1, Duplicated, Duplicated(1.0, 1.0))[1] ≈ 1.0
+    @test autodiff(Reverse, f2, Active, Active(1.0))[1][1] ≈ 2.0
+    @test autodiff(Forward, f2, Duplicated(1.0, 1.0))[1] ≈ 2.0
+    tup = autodiff(Forward, f2, BatchDuplicated(1.0, (1.0, 2.0, 3.0)))[1]
+    @test tup[1] ≈ 2.0
+    @test tup[2] ≈ 4.0
+    @test tup[3] ≈ 6.0
+    tup = autodiff(Forward, f2, BatchDuplicatedFunc{Float64, 3, typeof(make3)}(1.0))[1]
+    @test tup[1] ≈ 2.0
+    @test tup[2] ≈ 4.0
+    @test tup[3] ≈ 6.0
+    @test autodiff(Reverse, tanh, Active, Active(1.0))[1][1] ≈ 0.41997434161402606939
+    @test autodiff(Forward, tanh, Duplicated(1.0, 1.0))[1] ≈ 0.41997434161402606939
+    @test autodiff(Reverse, tanh, Active, Active(1.0f0))[1][1] ≈ Float32(0.41997434161402606939)
+    @test autodiff(Forward, tanh, Duplicated(1.0f0, 1.0f0))[1] ≈ Float32(0.41997434161402606939)
+
+    for T in (Float64, Float32, Float16)
+        if T == Float16 && Sys.isapple()
+            continue
+        end
+        res = autodiff(Reverse, tanh, Active, Active(T(1)))[1][1]
+        @test res isa T
+        cmp = if T == Float64
+            T(0.41997434161402606939)
+        else
+            T(0.41997434161402606939f0)
+        end
+        @test res ≈ cmp
+        res = autodiff(Forward, tanh, Duplicated(T(1), T(1)))[1]
+        @test res isa T
+        @test res ≈ cmp
+    end
+
+    test_scalar(f1, 1.0)
+    test_scalar(f2, 1.0)
+    test_scalar(log2, 1.0)
+    test_scalar(log1p, 1.0)
+
+    test_scalar(log10, 1.0)
+    test_scalar(Base.acos, 0.9)
+
+    test_scalar(Base.atan, 0.9)
+
+    res = autodiff(Reverse, Base.atan, Active, Active(0.9), Active(3.4))[1]
+    @test res[1] ≈ 3.4 / (0.9 * 0.9 + 3.4 * 3.4)
+    @test res[2] ≈ -0.9 / (0.9 * 0.9 + 3.4 * 3.4)
+
+    test_scalar(cbrt, 1.0)
+    test_scalar(cbrt, 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
+    test_scalar(Base.sinh, 1.0)
+    test_scalar(Base.cosh, 1.0)
+    test_scalar(Base.sinc, 2.2)
+    test_scalar(Base.FastMath.sinh_fast, 1.0)
+    test_scalar(Base.FastMath.cosh_fast, 1.0)
+    test_scalar(Base.FastMath.exp_fast, 1.0)
+    test_scalar(Base.exp10, 1.0)
+    test_scalar(Base.exp2, 1.0)
+    test_scalar(Base.expm1, 1.0)
+    test_scalar(x->rem(x, 1), 0.7)
+    test_scalar(x->rem2pi(x,RoundDown), 0.7)
+    test_scalar(x->fma(x,x+1,x/3), 2.3)
+    test_scalar(sqrt, 1.7+2.1im)
+
+    @test autodiff(Forward, sincos, Duplicated(1.0, 1.0))[1][1] ≈ cos(1.0)
+
+    @test autodiff(Reverse, (x)->log(x), Active(2.0)) == ((0.5,),)
+
+    a = [3.14]
+    da = [0.0]
+    sumcopy(x) = sum(copy(x))
+    autodiff(Reverse, sumcopy, Duplicated(a, da))
+    @test da[1] ≈ 1.0
+
+    da = [2.7]
+    @test autodiff(Forward, sumcopy, Duplicated(a, da))[1] ≈ 2.7
+
+    da = [0.0]
+    sumdeepcopy(x) = sum(deepcopy(x))
+    autodiff(Reverse, sumdeepcopy, Duplicated(a, da))
+    @test da[1] ≈ 1.0
+
+    da = [2.7]
+    @test autodiff(Forward, sumdeepcopy, Duplicated(a, da))[1] ≈ 2.7
