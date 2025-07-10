@@ -901,12 +901,25 @@ end
         prod(nouts2)
     end
 
-
     exprs = Expr[]
     XTs = Symbol[]
     MDs = Symbol[]
     MDTys = Union{Expr,Symbol}[]
     MDTysLast = Union{Expr,Symbol}[]
+
+    chunksize = if chunk <: Val
+        chunk.parameters[1]
+    else
+        1
+    end
+    num = ((n_out_val + chunksize - 1) ÷ chunksize)
+
+    last_size = if num * chunksize == n_out_val
+        chunksize
+    else
+        n_out_val - (num - 1) * chunksize
+    end
+
     for i in 1:length(xs)
         xti = Symbol("XT_", i)
         push!(XTs, xti)
@@ -917,7 +930,6 @@ end
 
         if xs[i] <: Const
             push!(exprs, Expr(:(=), mdi, false))
-
             push!(MDTys, xti)
             push!(MDTysLast, xti)
         else
@@ -926,255 +938,229 @@ end
             if chunk == Val{1} || chunk == Nothing
                 push!(MDTys, :($mdi ? MixedDuplicated{$xti} : Duplicated{$xti}))
             else
-                push!(MDTys, :($mdi ? BatchMixedDuplicated{$xti, chunksize} : BatchDuplicated{$xti, chunksize}))
-                push!(MDTysLast, :($mdi ? BatchMixedDuplicated{$xti, last_size} : BatchDuplicated{$xti, last_size}))
+                push!(MDTys, :($mdi ? BatchMixedDuplicated{$xti, $chunksize} : BatchDuplicated{$xti, $chunksize}))
+                if last_size == 1
+                    push!(MDTysLast, :($mdi ? MixedDuplicated{$xti} : Duplicated{$xti}))
+                else
+                    push!(MDTysLast, :($mdi ? BatchMixedDuplicated{$xti, $last_size} : BatchDuplicated{$xti, $last_size}))
+                end
             end
         end
     end
 
     ModifiedBetween = ntuple(Returns(false), length(xs)+1)
 
-    if chunk == Val{1} || chunk == Nothing
-        postexprs = Expr[]
+    cst_fn = if f <: Enzyme.Annotation
+        :f
+    else
+        :(Const(f))
+    end
 
-        cst_fn = if f <: Enzyme.Annotation
-            :f
+    postexprs = Expr[]
+
+    torows = Matrix{Union{Expr, Nothing}}(undef, n_out_val, length(xs))
+
+
+    curidx = 1
+    for i in 1:num
+
+        batchcnt = if i == num
+            last_size
         else
-            :(Const(f))
+            chunksize
         end
 
-        torows = Matrix{Union{Expr, Nothing}}(undef, n_out_val, length(xs))
-
-        for i in 1:n_out_val
-
-            args = []
-            dxs = Symbol[]
-            for j in 1:length(xs)
-                if xs[j] <: Enzyme.Const
-                    push!(args, :(xs[$j]))
-                    push!(dxs, :undefined)
-                    continue
-                end
-                zsym = Symbol("zero_", i, "_", j)
-                push!(postexprs, Expr(:(=), zsym, :(make_zero(xs[$j]))))
-
-                dx = Symbol("dx_", i, "_", j)
-                push!(dxs, dx)
-                push!(postexprs, Expr(:(=), dx, :($(MDs[j]) ? Ref($zsym) : $zsym)))
-                push!(args, :($(MDs[j]) ? MixedDuplicated(xs[$j], $dx) : Duplicated(xs[$j], $dx)))
+        args = []
+        dxs = Symbol[]
+        for j in 1:length(xs)
+            if xs[j] <: Enzyme.Const
+                push!(args, :(xs[$j]))
+                push!(dxs, :undefined)
+                continue
             end
 
-            ressym = Symbol("res_", i)
-            push!(postexprs, Expr(:(=), ressym, Expr(:call, :primal, cst_fn, args...)))
+            dx = Symbol("dx_", curidx, "_", j)
 
-            push!(postexprs, :(zerosetfn!($ressym[3], $i, Compiler.default_adjoint(eltype(typeof($ressym[3]))))))
+            e0 = :(make_zero(xs[$j]))
 
-            push!(postexprs, Expr(:call, :adjoint, cst_fn, args..., :($ressym[1])))
+            if batchcnt == 1
+                zsym = Symbol("zero_", curidx, "_", j)
+                push!(postexprs, Expr(:(=), zsym, e0))
+                push!(postexprs, Expr(:(=), dx, :($(MDs[j]) ? Ref($zsym) : $zsym)))
+            else
+                eexprs = Expr[]
+                for b in 1:batchcnt
+                    zsym = Symbol("zero_", curidx, "_", j, "_", b)
+                    push!(postexprs, Expr(:(=), zsym, e0))
+                    push!(eexprs, :($(MDs[j]) ? Ref($zsym) : $zsym))
+                end
+                tup = Expr(:tuple, eexprs...)
+                push!(postexprs, Expr(:(=), dx, tup))
+            end
 
-            if i == 1
+            push!(dxs, dx)
+            if batchcnt == 1
+                push!(args, :($(MDs[j]) ? MixedDuplicated(xs[$j], $dx) : Duplicated(xs[$j], $dx)))
+            else
+                push!(args, :($(MDs[j]) ? BatchMixedDuplicated(xs[$j], $dx) : BatchDuplicated(xs[$j], $dx)))
+            end
+        end
+
+        ressym = Symbol("res_", curidx)
+        push!(postexprs, Expr(:(=), ressym, Expr(:call, (chunksize != 1 && i == num) ? :primal2 : :primal, cst_fn, args...)))
+
+        if batchcnt == 1
+            push!(postexprs, :(zerosetfn!($ressym[3], $curidx, Compiler.default_adjoint(eltype(typeof($ressym[3]))))))
+        else
+            for k in 1:batchcnt
+                push!(postexprs, :(zerosetfn!($ressym[3][$k], $(curidx+k-1), Compiler.default_adjoint(eltype(typeof($ressym[3][$k]))))))
+            end
+        end
+
+        push!(postexprs, Expr(:call, (chunksize != 1 && i == num) ? :adjoint2 : :adjoint, cst_fn, args..., :($ressym[1])))
+
+        if curidx == 1
+            if batchcnt == 1
                 push!(postexprs,
                     Expr(:(=), :outshape, :(size($ressym[3])))
                 )
-            end
-
-            for j in 1:length(xs)
-                if xs[j] <: Enzyme.Const
-                    torows[i, j] = nothing
-                end
-
-                torows[i, j] = :($(MDs[j]) ? $(dxs[j])[] : $(dxs[j]))
+            else
+                push!(postexprs,
+                    Expr(:(=), :outshape, :(size($ressym[3][1])))
+                )
             end
         end
-
-        results = []
-
-        push!(postexprs, Expr(:(=), :num, :(prod(outshape))))
 
         for j in 1:length(xs)
-            if xs[j] <: Enzyme.Const
-                push!(results, nothing)
-                continue
-            end
-            if xs[j] <: AbstractArray
-                inshape = Symbol("inshape_", j)
-                push!(postexprs, Expr(:(=), inshape, :(size(xs[$j]))))
-
-                resj = Symbol("tempres_", j)
-                push!(postexprs, Expr(:(=), resj, :(Array{$(eltype(xs[j]))}(undef, outshape..., $(inshape)...))))
-
-                for i in 1:n_out_val
-                    push!(postexprs, Expr(:call, :(Base.unsafe_copyto!), resj, :(num*($i-1)+1), torows[i, j], 1, :(Base.reinterpret(UInt, num))))
+            if batchcnt == 1
+                if xs[j] <: Enzyme.Const
+                    torows[curidx, j] = nothing
+                else
+                    torows[curidx, j] = :($(MDs[j]) ? $(dxs[j])[] : $(dxs[j]))
                 end
-
-                push!(results, quote
-                    if length(outshape) == 1 && length($inshape) == 1
-                        transpose($resj)
-                    else
-                        transp = (
-                            ((length($inshape)+1):(length($inshape)+length(outshape)))...,
-                            (1:length($inshape))...,
-                        )
-                        PermutedDimsArray(resj, transp)
-                    end
-                end)
             else
-                push!(results, :(reshape($(xs[j])[$(torows[:, j]...)], outshape)))
+                for k in 1:batchcnt
+                    if xs[j] <: Enzyme.Const
+                        torows[curidx+k-1, j] = nothing
+                    else
+                        torows[curidx+k-1, j] = :($(MDs[j]) ? $(dxs[j])[$k][] : $(dxs[j])[$k])
+                    end
+                end
             end
         end
 
-
-        if ReturnPrimal
-            # TODO optimize away redundant fwd pass
-            push!(postexprs, quote
-                derivs = ($(results...),)
-                return (; derivs = derivs, val = $callprim)
-            end)
-        else
-            push!(postexprs, quote
-                return ($(results...),)
-            end)
-        end
-
-        expr = quote
-            Base.@_inline_meta
-            $(exprs...)
-
-            tt = Tuple{$(XTs...,)}
-
-            ModifiedBetweenT = $ModifiedBetween
-            FA = Core.Typeof($cst_fn)
-
-            primal, adjoint = autodiff_thunk(
-                EnzymeCore.Split(EnzymeCore.NoPrimal(mode),
-                    #=ReturnShadow=#Val(true),
-                    #=Width=#Val(1),
-                    #=ModifiedBetween=#Val(ModifiedBetweenT),
-                    #=ShadowInit=#Val(false)
-                ),
-                FA,
-                DuplicatedNoNeed{RT},
-                $(MDTys...)
-            )
-            $(postexprs...)
-        end
-        @show expr
-        return expr
+        curidx += batchcnt
     end
 
-    @assert length(xs) == 1 "Not yet implemented chunked, multi argument"
+    results = []
+
+
+    for j in 1:length(xs)
+        if xs[j] <: Enzyme.Const
+            push!(results, nothing)
+            continue
+        end
+        if xs[j] <: AbstractArray
+            inshape = Symbol("inshape_", j)
+            push!(postexprs, Expr(:(=), inshape, :(size(xs[$j]))))
+
+            resj = Symbol("tempres_", j)
+            push!(postexprs, Expr(:(=), resj, :(Array{$(eltype(xs[j]))}(undef, $(inshape)..., outshape...))))
+
+            numv = Symbol("num_", j)
+            push!(postexprs, Expr(:(=), numv, :(prod($inshape))))
+
+            for i in 1:n_out_val
+                push!(postexprs, Expr(:call, :(Base.unsafe_copyto!), resj, :($numv*($i-1)+1), torows[i, j], 1, :(Base.reinterpret(UInt, $numv))))
+            end
+
+            push!(results, quote
+                if length(outshape) == 1 && length($inshape) == 1
+                    transpose($resj)
+                else
+                    transp = (
+                        ((length($inshape)+1):(length($inshape)+length(outshape)))...,
+                        (1:length($inshape))...,
+                    )
+                    PermutedDimsArray($resj, transp)
+                end
+            end)
+        else
+            push!(results, :(reshape($(xs[j])[$(torows[:, j]...)], outshape)))
+        end
+    end
+
+
+    if ReturnPrimal
+        # TODO optimize away redundant fwd pass
+        push!(postexprs, quote
+            derivs = ($(results...),)
+            return (; derivs = derivs, val = $callprim)
+        end)
+    else
+        push!(postexprs, quote
+            return ($(results...),)
+        end)
+    end
+
+    prim2 = if chunksize == 1
+        quote end
+    else
+        if num * chunksize == n_out_val
+            quote
+                primal2, adjoint2 = primal, adjoint
+            end    
+        else
+            BNN2 = if last_size == 1
+                :(DuplicatedNoNeed{RT})
+            else
+                :(BatchDuplicatedNoNeed{RT, $last_size})
+            end 
+            quote
+                primal2, adjoint2 = autodiff_thunk(
+                    EnzymeCore.Split(EnzymeCore.NoPrimal(mode),
+                        #=ReturnShadow=#Val(true),
+                        #=Width=#Val($last_size),
+                        #=ModifiedBetween=#Val(ModifiedBetweenT),
+                        #=ShadowInit=#Val(false)
+                    ),
+                    FA,
+                    $BNN2,
+                    $(MDTysLast...)
+                )
+            end
+        end
+    end
+
+    DRT = if chunksize == 1
+        :(DuplicatedNoNeed{RT})
+    else
+        :(BatchDuplicatedNoNeed{RT, $chunksize})
+    end
+
     return quote
         Base.@_inline_meta
         $(exprs...)
 
-        tt = Tuple{$(XTs...,)}
-
-        x = xs[1]
-        MD = MD_1
-        XT = XT_1
-
         ModifiedBetweenT = $ModifiedBetween
         FA = Core.Typeof($cst_fn)
 
-        chunksize = Compiler.element(chunk)
         primal, adjoint = autodiff_thunk(
             EnzymeCore.Split(EnzymeCore.NoPrimal(mode),
                 #=ReturnShadow=#Val(true),
-                #=Width=#Val(chunksize),
+                #=Width=#Val($chunksize),
                 #=ModifiedBetween=#Val(ModifiedBetweenT),
                 #=ShadowInit=#Val(false)
             ),
             FA,
-            BatchDuplicatedNoNeed{RT, chunksize},
+            $DRT,
             $(MDTys...)
         )
 
-        num = ((n_out_val + chunksize - 1) ÷ chunksize)
+        $prim2
 
-        if num * chunksize == n_out_val
-            last_size = chunksize
-            primal2, adjoint2 = primal, adjoint
-        else
-            last_size = n_out_val - (num - 1) * chunksize
-            tt′ = Tuple{BatchDuplicated{Core.Typeof(x),last_size}}
-            primal2, adjoint2 = autodiff_thunk(
-                EnzymeCore.Split(EnzymeCore.NoPrimal(mode),
-                    #=ReturnShadow=#Val(true),
-                    #=Width=#Val(last_size),
-                    #=ModifiedBetween=#Val(ModifiedBetweenT),
-                    #=ShadowInit=#Val(false)
-                ),
-                FA,
-                BatchDuplicatedNoNeed{RT, last_size},
-                $(MDTysLast...)
-            )
-        end
-
-        tmp = ntuple(num) do i
-            Base.@_inline_meta
-            dx = ntuple(Val(i == num ? last_size : chunksize)) do idx
-                Base.@_inline_meta
-                z = make_zero(x)
-                MD ? Ref(z) : z
-            end
-            res = (i == num ? primal2 : primal)(
-                Const(f),
-                MD ? BatchMixedDuplicated(x, dx) : BatchDuplicated(x, dx),
-            )
-            tape = res[1]
-            j = 0
-            for shadow in res[3]
-                j += 1
-                zerosetfn!(shadow, (i-1)*chunksize+j,
-                           Compiler.default_adjoint(eltype(typeof(shadow))))
-            end
-            (i == num ? adjoint2 : adjoint)(
-                Const(f),
-                MD ? BatchMixedDuplicated(x, dx) : BatchDuplicated(x, dx),
-                tape,
-            )
-            return MD ? (
-                ntuple(Val(i == num ? last_size : chunksize)) do idx
-                    Base.@_inline_meta
-                    dx[idx][]
-                end
-            ) : dx,
-            (i == 1 ? size(res[3][1]) : nothing)
-        end
-        rows = tupleconcat(map(first, tmp)...)
-        outshape = tmp[1][2]
-
-        res = if x isa AbstractArray
-            inshape = size(x)
-            st2 = tupstack(rows, inshape, outshape) 
-            st3 = if length(outshape) == 1 && length(inshape) == 1
-                transpose(st2)
-            else
-                transp = (
-                    ((length(inshape)+1):(length(inshape)+length(outshape)))...,
-                    (1:length(inshape))...,
-                )
-                PermutedDimsArray(st2, transp)
-            end
-
-            st3
-        else
-            reshape(collect(rows), outshape)
-        end     
-
-        if ReturnPrimal
-            # TODO optimize away redundant fwd pass
-            (; derivs = (res,), val = if f isa Enzyme.Const
-                f.val(x)
-            else
-                f(x)
-            end)
-        else
-            (res,)
-        end
-
+        $(postexprs...)
     end
-
-
 end
 
 """
