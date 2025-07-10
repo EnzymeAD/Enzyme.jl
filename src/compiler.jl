@@ -4456,6 +4456,7 @@ end
                     llrt, sret, returnRoots = get_return_info(RT)
                     if !(sret isa Nothing) && !is_sret_union(RT)
                         metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
+                        metadata(inst)["enzymejl_allocart_name"] = MDNode(LLVM.Metadata[MDString(string(RT))])
                     end
                 end
             end
