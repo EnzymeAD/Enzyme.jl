@@ -975,9 +975,6 @@ end
                 push!(postexprs,
                     Expr(:(=), :outshape, :(size($ressym[3])))
                 )
-                push!(postexprs,
-                    Expr(:(=), :areltype, :(eltype($ressym[3])))
-                )
             end
 
             for j in 1:length(xs)
@@ -1003,12 +1000,10 @@ end
                 push!(postexprs, Expr(:(=), inshape, :(size(xs[$j]))))
 
                 resj = Symbol("tempres_", j)
-                push!(postexprs, Expr(:(=), resj, :(Array{areltype}(undef, outshape..., $(inshape)...))))
+                push!(postexprs, Expr(:(=), resj, :(Array{$(eltype(xs[j]))}(undef, outshape..., $(inshape)...))))
 
                 for i in 1:n_out_val
-                    push!(postexprs, quote
-                        Base.unsafe_copyto!($resj, num*($i-1)+1, $(torows[i, j]), 1, Base.reinterpret(UInt, num))
-                    end)
+                    push!(postexprs, Expr(:call, :(Base.unsafe_copyto!), resj, :(num*($i-1)+1), torows[i, j], 1, :(Base.reinterpret(UInt, num))))
                 end
 
                 push!(results, quote
@@ -1016,7 +1011,7 @@ end
                         transpose($resj)
                     else
                         transp = (
-                            ((length(inshape)+1):(length($inshape)+length(outshape)))...,
+                            ((length($inshape)+1):(length($inshape)+length(outshape)))...,
                             (1:length($inshape))...,
                         )
                         PermutedDimsArray(resj, transp)
