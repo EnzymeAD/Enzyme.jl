@@ -266,7 +266,9 @@ Core.Compiler.may_compress(@nospecialize(::EnzymeInterpreter)) = true
 #      but as far as I understand Enzyme wants "always inlining, except special cased functions",
 #      so I guess we really don't want to discard sources?
 Core.Compiler.may_discard_trees(@nospecialize(::EnzymeInterpreter)) = false
-Core.Compiler.verbose_stmt_info(@nospecialize(::EnzymeInterpreter)) = false
+if isdefined(Core.Compiler, :verbose_stmt_inf)
+    Core.Compiler.verbose_stmt_info(@nospecialize(::EnzymeInterpreter)) = false
+end
 
 Core.Compiler.method_table(@nospecialize(interp::EnzymeInterpreter)) = interp.method_table
 
@@ -352,6 +354,7 @@ function Core.Compiler.abstract_call_gf_by_type(
     sv::AbsIntState,
     max_methods::Int,
 )
+    
     ret = @invoke Core.Compiler.abstract_call_gf_by_type(
         interp::AbstractInterpreter,
         f::Any,
@@ -361,6 +364,28 @@ function Core.Compiler.abstract_call_gf_by_type(
         sv::AbsIntState,
         max_methods::Int,
     )
+    if isdefined(Core.Compiler, :Future) # if stackless inference
+        return Core.Compiler.Future{Core.Compiler.CallMeta}(ret, interp, sv) do ret, interp, sv
+            callinfo = ret.info
+            specTypes = simplify_kw(atype)
+
+            if is_primitive_func(specTypes)
+                callinfo = NoInlineCallInfo(callinfo, atype, :primitive)
+            elseif is_alwaysinline_func(specTypes)
+                callinfo = AlwaysInlineCallInfo(callinfo, atype)
+            else
+                method_table = Core.Compiler.method_table(interp)
+                if interp.inactive_rules && EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
+                    callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
+                elseif interp.forward_rules && EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
+                    callinfo = NoInlineCallInfo(callinfo, atype, :frule)
+                elseif interp.reverse_rules && EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
+                    callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
+                end
+            end
+            return Core.Compiler.CallMeta(ret.rt, ret.exct, ret.effects, callinfo)
+        end
+    end
     callinfo = ret.info
     specTypes = simplify_kw(atype)
 
@@ -378,7 +403,6 @@ function Core.Compiler.abstract_call_gf_by_type(
             callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
         end
     end
-
     @static if VERSION ≥ v"1.11-"
         return Core.Compiler.CallMeta(ret.rt, ret.exct, ret.effects, callinfo)
     else
