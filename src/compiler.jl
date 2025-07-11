@@ -4231,7 +4231,7 @@ end
         end
 
         # If sret, force lower of primitive math fn
-        sret = get_return_info(k.ci.rettype)[2] !== nothing
+        sret = get_return_info(rettype)[2] !== nothing
         if sret
             cur = llvmfn == primalf
             llvmfn, _, boxedArgs, loweredArgs = lower_convention(
@@ -4286,11 +4286,6 @@ end
             handle_compiled(mod, mi, fname, RT)
         end
     end
-
-    # for (mi, k) in meta.compiled
-    #     k_name = GPUCompiler.safe_name(k.specfunc)
-    #     handle_compiled(mod, mi, k_name, k.ci.rettype)
-    # end
 
     println("post meta compiled", string(mod))
 
@@ -5929,7 +5924,7 @@ function thunk_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::
     max_world2 = Ref{UInt}(typemax(UInt))
    
     mi2 = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, typeof(Base.identity), Tuple{Nothing}, world, min_world2, max_world2)
-    
+
     ci = Core.Compiler.retrieve_code_info(mi2, world)::Core.Compiler.CodeInfo
 
     # prepare a new code info
@@ -6004,6 +5999,11 @@ function thunk_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::
             StrongZero,
             edges
         )
+    catch e
+        Base.printstyled("ERROR during autodiff: "; color=:red, bold=true)
+        Base.showerror(stderr, e)
+        Base.show_backtrace(stderr, Base.catch_backtrace())
+        nothing
     finally
         deactivate(ctx)
         dispose(ts_ctx)
