@@ -121,14 +121,7 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
    
     mi2 = my_methodinstance(mode, typeof(Base.identity), Tuple{Nothing}, world, min_world2, max_world2)
 
-    ci = Core.Compiler.retrieve_code_info(mi2, world)
-
-    # TODO @vchuravy, I have no idea why this fails here
-    if ci isa Nothing
-
-    end
-
-    ci = ci::Core.Compiler.CodeInfo
+    ci = Core.Compiler.retrieve_code_info(mi2, world)::Core.Compiler.CodeInfo
 
     # prepare a new code info
     new_ci = copy(ci)

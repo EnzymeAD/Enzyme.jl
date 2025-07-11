@@ -3843,8 +3843,6 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     customDerivativeNames = String[]
     fnsToInject = Tuple{Symbol,Type}[]
 
-    println("pre meta compiled", string(mod))
-
     function handle_compiled(mod, mi, k_name, rettype)
         has_custom_rule = false
 
@@ -4287,8 +4285,6 @@ end
         end
     end
 
-    println("post meta compiled", string(mod))
-
     @assert actualRetType !== nothing
     if params.run_enzyme
         @assert actualRetType != Union{}
@@ -4432,8 +4428,6 @@ end
     if process_module
         GPUCompiler.optimize_module!(primal_job, mod)
     end
-
-    println("post enz optimize", string(mod))
 
     for name in ("gpu_report_exception", "report_exception")
         if haskey(functions(mod), name)
@@ -5646,7 +5640,6 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         else
             string(mod)
         end
-        println("thunk:", mstr)
         if job.config.params.ABI <: FFIABI || job.config.params.ABI <: NonGenABI
             post_optimze!(mod, JIT.get_tm())
             if DumpPostOpt[]
