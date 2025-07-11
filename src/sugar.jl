@@ -1242,7 +1242,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
 
     return quote
         Base.@_inline_meta
-        RT = Compiler.primal_return_type(mode, $fty, $(Tuple{consttys...}))
+        RT = Compiler.primal_return_type(Reverse, $fty, $(Tuple{consttys...}))
         return @inline jacobian_helper(mode, RT, n_outs, chunk, f, xs...)
     end
 end
