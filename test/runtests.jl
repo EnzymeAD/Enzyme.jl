@@ -2644,7 +2644,7 @@ end
 
     x0 = [0.0, 2.0, -1.0, 2.0]
 
-    res = jacobian(Forward, Const(gradient), Const(Reverse), Const(objective), x0)
+    res = Enzyme.jacobian(Forward, Const(Enzyme.gradient), Const(Reverse), Const(objective), x0)
 
     @test res[3][1][1] ≈ [64.0, 8.0, -32.0, 50.48639500938415]
     @test res[3][2][1] ≈ [8.0, 85.30728724172722, -77.2291489669089, -6.0544199624634265]
