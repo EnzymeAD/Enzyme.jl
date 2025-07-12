@@ -6056,11 +6056,6 @@ function thunk_generator(world::UInt, source::LineNumberNode, @nospecialize(FA::
             StrongZero,
             edges
         )
-    catch e
-        Base.printstyled("ERROR during autodiff: "; color=:red, bold=true)
-        Base.showerror(stderr, e)
-        Base.show_backtrace(stderr, Base.catch_backtrace())
-        nothing
     finally
         deactivate(ctx)
         dispose(ts_ctx)
