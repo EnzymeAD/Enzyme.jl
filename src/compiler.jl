@@ -3985,7 +3985,7 @@ end
     else
         LLVM.Attribute[EnumAttribute("memory", NoEffects.data), StringAttribute("enzyme_shouldrecompute")]
     end
-    handleCustom(state, custom, k_name, gllvmfn, name, attrs)
+    handleCustom(state, custom, k_name, llvmfn, name, attrs)
     return
 end
 
