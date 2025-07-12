@@ -4319,6 +4319,9 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     )
 
     for fname in LLVM.name.(functions(mod))
+        if !haskey(functions(mod), fname)
+            continue
+        end
         fn = functions(mod)[fname]
         attributes = function_attributes(fn)
         mi = nothing
