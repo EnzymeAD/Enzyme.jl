@@ -3544,7 +3544,7 @@ function handleCustom(state::HandlerState, custom, k_name::String, llvmfn::LLVM.
     nothing
 end
 
-function handle_compiled(state::HandlerState, mode, world, method_table, custom, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type))::Nothing
+function handle_compiled(state::HandlerState, edges, mode, world, method_table, custom, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type))::Nothing
     has_custom_rule = false
 
     specTypes = Interpreter.simplify_kw(mi.specTypes)
@@ -3985,7 +3985,7 @@ end
     else
         LLVM.Attribute[EnumAttribute("memory", NoEffects.data), StringAttribute("enzyme_shouldrecompute")]
     end
-    handleCustom(state, custom, k_name, llvmfn, name, attrs)
+    handleCustom(state, custom, k_name, gllvmfn, name, attrs)
     return
 end
 
@@ -4336,7 +4336,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             end
         end
         if mi !== nothing && RT !== nothing
-            handle_compiled(state, mode, world, method_table, custom, mod, mi, fname, RT)
+            handle_compiled(state, edges, mode, world, method_table, custom, mod, mi, fname, RT)
         end
     end
 
