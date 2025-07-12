@@ -3962,7 +3962,7 @@ end
             mi.specTypes,
             mod,
             llvmfn,
-            k.ci.rettype,
+            rettype,
             Duplicated,
             nothing,
             params.run_enzyme,
