@@ -116,7 +116,12 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
     )
     mi === nothing && return stub(world, source, method_error)
 
-    ci = Core.Compiler.retrieve_code_info(mi, world)::Core.Compiler.CodeInfo
+    min_world2 = Ref{UInt}(typemin(UInt))
+    max_world2 = Ref{UInt}(typemax(UInt))
+   
+    mi2 = my_methodinstance(mode, typeof(Base.identity), Tuple{Nothing}, world, min_world2, max_world2)
+
+    ci = Core.Compiler.retrieve_code_info(mi2, world)::Core.Compiler.CodeInfo
 
     # prepare a new code info
     new_ci = copy(ci)
