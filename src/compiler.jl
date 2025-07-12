@@ -3544,7 +3544,7 @@ function handleCustom(state::HandlerState, custom, k_name::String, llvmfn::LLVM.
     nothing
 end
 
-function handle_compiled(state::HandlerState, edges, mode, world, method_table, custom, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type))::Nothing
+function handle_compiled(state::HandlerState, edges, run_enzyme::Bool, mode, world::UInt, method_table, custom, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type))::Nothing
     has_custom_rule = false
 
     specTypes = Interpreter.simplify_kw(mi.specTypes)
@@ -3965,7 +3965,7 @@ end
             rettype,
             Duplicated,
             nothing,
-            params.run_enzyme,
+            run_enzyme,
         )
         if cur
             state.primalf = llvmfn
@@ -4336,7 +4336,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             end
         end
         if mi !== nothing && RT !== nothing
-            handle_compiled(state, edges, mode, world, method_table, custom, mod, mi, fname, RT)
+            handle_compiled(state, edges, run_enzyme, mode, world, method_table, custom, mod, mi, fname, RT)
         end
     end
 
