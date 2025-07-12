@@ -2630,6 +2630,27 @@ end
     @test res[1][1] ≈ 3.0
 end
 
+@testset "Higher order rules" begin
+
+    sqr(x) = x*x
+    power(x, n) = x^n
+
+    function objective(x)
+        (x1, x2, x3, x4) = x
+        objvar = -4 - -(((((((((((((sqr(x1) + sqr(x2)) + sqr(x3 + x4)) + x3) + sqr(sin(x3))) + sqr(x1) * sqr(x2)) + x4) + sqr(sin(x3))) + sqr(-1 + x4)) + sqr(sqr(x2))) + sqr(sqr(x3) + sqr(x1 + x4))) + sqr(((-4 + sqr(sin(x4))) + sqr(x2) * sqr(x3)) + x1)) + power(sin(x4), 4)))
+        return objvar
+    end
+
+
+    x0 = [0.0, 2.0, -1.0, 2.0]
+
+    res = jacobian(Forward, Const(gradient), Const(Reverse), Const(objective), x0)
+
+    @test res[3][1][1] ≈ [64.0, 8.0, -32.0, 50.48639500938415]
+    @test res[3][2][1] ≈ [8.0, 85.30728724172722, -77.2291489669089, -6.0544199624634265]
+    @test res[3][3][1] ≈ [-32.0, -77.2291489669089, 169.56456162072033, -1.8911600750731472]
+    @test res[3][4][1] ≈ [50.48639500938415, -6.0544199624634265, -1.891160075073147, 53.967425651780005]
+end
 
 struct GFUniform{T}
     a::T
