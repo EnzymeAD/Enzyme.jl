@@ -587,7 +587,7 @@ end
             elseif activitystate == DupState
                 EnzymeCore.make_zero!(xi, seen)
             else
-                msg = "cannot set $xi to zero in-place, as it contains differentiable values in immutable positions"
+                msg = "cannot set $xi to zero in-place, as it contains differentiable values in immutable positions\nIf the argument is known to have all immutable positions already zero (e.g. was the result of Enzyme.make_zero), Enzyme.remake_zero! will skip this error check."
                 throw(ArgumentError(msg))
             end
         end
