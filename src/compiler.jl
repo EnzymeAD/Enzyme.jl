@@ -4336,7 +4336,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             end
         end
         if mi !== nothing && RT !== nothing
-            handle_compiled(state, edges, run_enzyme, mode, world, method_table, custom, mod, mi, fname, RT)
+            handle_compiled(state, edges, params.run_enzyme, mode, world, method_table, custom, mod, mi, fname, RT)
         end
     end
 
