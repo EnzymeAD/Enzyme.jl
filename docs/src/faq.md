@@ -704,7 +704,7 @@ Enzyme.autodiff(Forward, f_int, Duplicated, Duplicated(3, 1))
 
 # output
 
-ERROR: Return type `Int64` not marked Const, but type is guaranteed to be constant
+ERROR during autodiff: Return type `Int64` not marked Const, but type is guaranteed to be constant
 ```
 
 ```jldoctest types
@@ -724,7 +724,7 @@ autodiff(Forward, f_val, Duplicated(Val(1.0), Val(1.0)))
 
 # output
 
-ERROR: Type of ghost or constant type Duplicated{Val{1.0}} is marked as differentiable.
+ERROR during autodiff: Type of ghost or constant type Duplicated{Val{1.0}} is marked as differentiable.
 ```
 
 
