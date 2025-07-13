@@ -487,15 +487,6 @@ end
 	res
 end
 
-@inline function tupstack(x, outshape::Tuple{Vararg{Int}}, inshape::Tuple{Vararg{Int}})
-    st = Base.stack(x)
-    if length(outshape) == 1
-        st
-    else
-        reshape(st, (outshape..., inshape...))
-    end
-end
-
 @inline specialize_output(output, input) = output
 
 """
@@ -744,12 +735,14 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
                 if argnum > 0
                     quote
                         if $tmp[1] isa AbstractArray
-                            inshape = size($(vals[1]))
+                            inshape = size($(vals[i]))
                             outshape = size($tmp[1])
+                            num = prod(outshape)
+
                             # st : outshape x total inputs
                             tupstack($tmp, outshape, inshape)
                         else
-                            specialize_output(TupleArray($tmp, size($arg)), $(vals[1]))
+                            specialize_output(TupleArray($tmp, size($arg)), $(vals[i]))
                         end
                     end
                 else
