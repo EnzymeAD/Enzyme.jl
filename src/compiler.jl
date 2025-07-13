@@ -3783,7 +3783,6 @@ end
     # handle this and similar not impacting the read/write behavior of the calling
     # fn, but it doesn't presently so for now we will ensure this by hand
     if func == typeof(Base.Checked.throw_overflowerr_binaryop)
-        llvmfn = functions(mod)[k.specfunc]
         if LLVM.version().major <= 15
             handleCustom(
                 state,
