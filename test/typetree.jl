@@ -43,6 +43,11 @@ struct UnionMember
     c::Bool
 end
 
+struct UnionStruct1{T}
+    x::Union{T,Nothing}
+    y::Any
+end
+
 @testset "TypeTree" begin
     @test tt(Float16) == "{[-1]:Float@half}"
     @test tt(Float32) == "{[-1]:Float@float}"
@@ -93,6 +98,8 @@ end
         @test tt(Sibling2{Sibling2{LList2{Tuple{Float32,Float64}}}}) ==
               "{[0]:Pointer, [0,0]:Pointer, [0,4]:Float@float, [0,8]:Float@double, [4]:Integer, [8]:Pointer, [8,0]:Pointer, [8,4]:Float@float, [8,8]:Float@double, [12]:Integer, [16]:Pointer, [16,0]:Pointer, [16,4]:Float@float, [16,8]:Float@double, [20]:Integer, [24]:Pointer, [24,0]:Pointer, [24,4]:Float@float, [24,8]:Float@double}"
     end
+    @test tt(UnionStruct1{Float32}) == "{[0]:Float@float, [4]:Integer, [8]:Pointer}"
+    @test tt(UnionStruct1{Float64}) == "{[0]:Float@double, [8]:Integer, [16]:Pointer}"
 end
 
 @testset "GetOffsets" begin

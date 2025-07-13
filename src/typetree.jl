@@ -388,7 +388,7 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
                 merge!(tt, subtree)
             end
             subtree = copy(typetree(UInt8, ctx, dl, seen))
-            shift!(subtree, dl, 0, sizeof(rmT), offset + desc[f].size - 1)
+            shift!(subtree, dl, 0, 1, offset + desc[f].size - 1)
             merge!(tt, subtree)
             continue
         end
