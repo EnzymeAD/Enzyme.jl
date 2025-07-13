@@ -2,30 +2,53 @@
 
 # Return (bool if could interpret, julia object interpreted to)
 function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false)::Tuple{Bool,Any}
-    if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst)
-        return absint(operands(arg)[1], partial)
-    end
-    if isa(arg, ConstantExpr) && ( (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)) || (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Derived)) )
-        ce = arg
-        while isa(ce, ConstantExpr)
-            if opcode(ce) == LLVM.API.LLVMAddrSpaceCast ||
-               opcode(ce) == LLVM.API.LLVMBitCast ||
-               opcode(ce) == LLVM.API.LLVMIntToPtr
-                ce = operands(ce)[1]
-            else
-                break
+    if (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)) || (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Derived))
+        ce, _ = get_base_and_offset(arg; offsetAllowed=false, inttoptr=true)
+        if isa(ce, GlobalVariable)
+            gname = LLVM.name(ce)
+            for (k, v) in JuliaGlobalNameMap
+                if gname == k
+		    return (true, v)
+                end
+            end
+            for (k, v) in JuliaEnzymeNameMap
+                if gname == "ejl_" * k
+		    return (true, v)
+                end
             end
         end
+	if isa(ce, LLVM.LoadInst)
+	    gv = operands(ce)[1]
+            if isa(gv, LLVM.GlobalVariable)
+	      init = LLVM.initializer(gv)
+	      if init !== nothing
+	         just_load = true
+		 for u in LLVM.uses(gv)
+		   u = LLVM.user(u)
+		   if !isa(u, LLVM.LoadInst)
+		     just_load = false
+		     break
+		   end
+		 end
+		 if just_load
+		   ce, _ = get_base_and_offset(init; offsetAllowed=false, inttoptr=true)
+		 end
+	      end
+	    end
+	end
         if isa(ce, LLVM.ConstantInt)
             ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
-            typ = Base.unsafe_pointer_to_objref(ptr)
-            return (true, typ)
+            val = Base.unsafe_pointer_to_objref(ptr)
+	    return (true, val)
         end
     end
     if isa(arg, ConstantExpr)
         if opcode(arg) == LLVM.API.LLVMAddrSpaceCast || opcode(arg) == LLVM.API.LLVMBitCast
             return absint(operands(arg)[1], partial)
         end
+    end
+    if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst) || isa(arg, LLVM.IntToPtrInst)
+        return absint(operands(arg)[1], partial)
     end
     if isa(arg, LLVM.CallInst)
         fn = LLVM.called_operand(arg)
@@ -253,6 +276,10 @@ function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Boo
             larg = operands(larg)[1]
             continue
         end
+	if LLVM.API.LLVMGetValueKind(larg) == LLVM.API.LLVMGlobalAliasValueKind
+	    larg = LLVM.Value(ccall((:LLVMAliasGetAliasee, LLVM.API.libllvm), LLVM.API.LLVMValueRef, (LLVM.API.LLVMValueRef,), larg))
+	    continue
+	end
         if isa(larg, LLVM.GetElementPtrInst) &&
             all(Base.Fix2(isa, LLVM.ConstantInt), operands(larg)[2:end])
             b = LLVM.IRBuilder()
@@ -284,10 +311,7 @@ function abs_typeof(
     @nospecialize(arg::LLVM.Value),
     partial::Bool = false, seenphis=Set{LLVM.PHIInst}()
 )::Union{Tuple{Bool,Type,GPUCompiler.ArgumentCC},Tuple{Bool,Nothing,Nothing}}
-    if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst)
-        return abs_typeof(operands(arg)[1], partial, seenphis)
-    end
-    if isa(arg, ConstantExpr) && ((value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)) || (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Derived)))
+    if (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)) || (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Derived))
         ce, _ = get_base_and_offset(arg; offsetAllowed=false, inttoptr=true)
         if isa(ce, GlobalVariable)
             gname = LLVM.name(ce)
@@ -296,7 +320,31 @@ function abs_typeof(
                     return (true, Core.Typeof(v), GPUCompiler.BITS_REF)
                 end
             end
+            for (k, v) in JuliaEnzymeNameMap
+                if gname == "ejl_" * k
+		    return (true, Core.Typeof(v), GPUCompiler.BITS_REF)
+                end
+            end
         end
+	if isa(ce, LLVM.LoadInst)
+	    gv = operands(ce)[1]
+            if isa(gv, LLVM.GlobalVariable)
+	      init = LLVM.initializer(gv)
+	      if init !== nothing
+	         just_load = true
+		 for u in LLVM.uses(gv)
+		   u = LLVM.user(u)
+		   if !isa(u, LLVM.LoadInst)
+		     just_load = false
+		     break
+		   end
+		 end
+		 if just_load
+		   ce, _ = get_base_and_offset(init; offsetAllowed=false, inttoptr=true)
+		 end
+	      end
+	    end
+	end
         if isa(ce, LLVM.ConstantInt)
             ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
             val = Base.unsafe_pointer_to_objref(ptr)
@@ -307,6 +355,9 @@ function abs_typeof(
         if opcode(arg) == LLVM.API.LLVMAddrSpaceCast || opcode(arg) == LLVM.API.LLVMBitCast
             return abs_typeof(operands(arg)[1], partial, seenphis)
         end
+    end
+    if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst) || isa(arg, LLVM.IntToPtrInst)
+        return abs_typeof(operands(arg)[1], partial, seenphis)
     end
 
     if isa(arg, LLVM.AllocaInst) || isa(arg, LLVM.CallInst)
