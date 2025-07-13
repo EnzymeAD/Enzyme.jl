@@ -805,7 +805,7 @@ end
 
             LLVM.memset!(
                 B,
-                inttoptr!(B, ev2, LLVM.PointerType(LLVM.IntType(8))),
+                get_memory_data(B, callv),
                 LLVM.ConstantInt(i8, 0, false),
                 length,
                 algn,
