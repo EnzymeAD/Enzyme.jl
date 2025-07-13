@@ -495,6 +495,19 @@ const generic_method_offsets = Dict{String,Tuple{Int,Int}}((
     if Enzyme.has_method(Tuple{typeof(EnzymeRules.inactive_noinl),tys...}, world, mt)
         return true
     end
+    # TODO if we can deduce the return type is inactive, and arg types inactive, we can mark inactive in total
+    @static if false
+    if !Enzyme.Compiler.no_type_setting(specTypes; world)
+      any_active = false
+      for ty in tys
+        if !guaranteed_const_nongen(ty, world)
+	  any_active = true
+	  break
+        end
+      end
+    end
+    end
+
     return false
 end
 
