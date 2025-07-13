@@ -740,12 +740,7 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
                             num = prod(outshape)
 
                             # st : outshape x total inputs
-                            res = similar($tmp[1], outshape..., inshape...)
-                            for (i, val) in enumerate($tmp)
-                                Base.unsafe_copyto!(res, num*(i-1)+1, val, 1, Base.reinterpret(UInt, num))
-                            end
-
-                            res
+                            tupstack($tmp, outshape, inshape)
                         else
                             specialize_output(TupleArray($tmp, size($arg)), $(vals[i]))
                         end
