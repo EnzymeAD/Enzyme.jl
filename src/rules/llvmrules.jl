@@ -439,6 +439,9 @@ end
 
     shadowres =
         UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+
+    found, arty, byref = abs_typeof(origops[1])
+
     for idx = 1:width
         ev = if width == 1
             shadowin
@@ -459,12 +462,16 @@ end
             elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
             len = get_array_len(B, ev)
             length = LLVM.mul!(B, len, elSize)
-            bt = GPUCompiler.backtrace(orig)
-            btstr = sprint() do io
-                print(io, "\nCaused by:")
-                Base.show_backtrace(io, bt)
+
+            if !found && !(eltype(arty) <: Base.IEEEFloat)
+                bt = GPUCompiler.backtrace(orig)
+                btstr = sprint() do io
+                    print(io, "\nCaused by:")
+                    Base.show_backtrace(io, bt)
+                end
+                GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type $btstr"
             end
-            GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type $btstr"
+
             LLVM.memset!(
                 B,
                 get_array_data(B, callv),
@@ -759,6 +766,8 @@ end
     i8 = LLVM.IntType(8)
     algn = 0
 
+    found, arty, byref = abs_typeof(origops[1])
+
     shadowres =
         UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
     for idx = 1:width
@@ -784,12 +793,16 @@ end
             elSize = get_memory_elsz(B, ev)
             elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
             length = LLVM.mul!(B, len, elSize)
-            bt = GPUCompiler.backtrace(orig)
-            btstr = sprint() do io
-                print(io, "\nCaused by:")
-                Base.show_backtrace(io, bt)
+
+            if !found && !(eltype(arty) <: Base.IEEEFloat)
+                bt = GPUCompiler.backtrace(orig)
+                btstr = sprint() do io
+                    print(io, "\nCaused by:")
+                    Base.show_backtrace(io, bt)
+                end
+                GPUCompiler.@safe_warn "TODO forward zero-set of memorycopy used memset rather than runtime type $btstr"
             end
-            GPUCompiler.@safe_warn "TODO forward zero-set of memorycopy used memset rather than runtime type $btstr"
+
             LLVM.memset!(
                 B,
                 inttoptr!(B, ev2, LLVM.PointerType(LLVM.IntType(8))),
