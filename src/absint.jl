@@ -658,17 +658,24 @@ function abs_typeof(
                     throw(AssertionError("Illegal absint of $(string(arg)) ltyp=$ltyp, typ=$typ, offset=$offset, ind=$ind"))
                 end
                 cnt = 0
+                desc = Base.DataTypeFieldDesc(typ)
                 for i = 1:fieldcount(typ)
                     styp = typed_fieldtype(typ, i)
                     if isghostty(styp)
                         continue
                     end
+
+                    # Extra i8 at the end of an inline union type
+                    inline_union = !desc[i].isptr && styp isa Union
                     if cnt == ind
                         typ = styp
+                        if inline_union
+                            typ = remove_nothing_from_union_type(typ)
+                        end
                         break
                     end
                     cnt += 1
-                    if Enzyme.Compiler.is_sret_union(styp)
+                    if inline_union
                         if cnt == ind
                             typ = UInt8
                             break

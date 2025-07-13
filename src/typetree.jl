@@ -373,12 +373,28 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
     end
 
     tt = TypeTree()
+
+    desc = Base.DataTypeFieldDesc(T)
+
     for f = 1:fieldcount(T)
         offset = fieldoffset(T, f)
         subT = typed_fieldtype(T, f)
 
+        if !desc[f].isptr && subT isa Union
+            rmT = remove_nothing_from_union_type(subT)
+            if !(rmT isa Union)
+                subtree = copy(typetree(rmT, ctx, dl, seen))
+                shift!(subtree, dl, 0, sizeof(rmT), offset)
+                merge!(tt, subtree)
+            end
+            subtree = copy(typetree(UInt8, ctx, dl, seen))
+            shift!(subtree, dl, 0, sizeof(rmT), offset + desc[f].size - 1)
+            merge!(tt, subtree)
+            continue
+        end
+
         if subT isa UnionAll || subT isa Union || subT == Union{}
-            if !allocatedinline(subT)
+            if desc[f].isptr
                 subtree = TypeTree(API.DT_Pointer, offset, ctx)
                 merge!(tt, subtree)
             end
@@ -389,7 +405,7 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
         subtree = copy(typetree(subT, ctx, dl, seen))
 
         # Allocated inline so adjust first path
-        if allocatedinline(subT)
+        if !desc[f].isptr
             shift!(subtree, dl, 0, sizeof(subT), offset)
         else
             merge!(subtree, TypeTree(API.DT_Pointer, ctx))
