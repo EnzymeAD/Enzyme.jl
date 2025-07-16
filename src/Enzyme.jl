@@ -706,7 +706,7 @@ code, as well as high-order differentiation.
         rt = Compiler.primal_return_type(Reverse, FTy, tt)
         A2 = A{rt}
         if rt == Union{}
-            rt = Nothing 
+            rt = Nothing
         end
     else
         @assert A isa DataType
@@ -933,7 +933,7 @@ forward, reverse = autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(f)}, Acti
 tape, result, shadow_result  = forward(Const(f), Duplicated(A, ∂A), Active(v))
 _, ∂v = reverse(Const(f), Duplicated(A, ∂A), Active(v), 1.0, tape)[1]
 
-result, ∂v, ∂A 
+result, ∂v, ∂A
 
 # output
 
@@ -1295,6 +1295,12 @@ import .Compiler: remove_innerty, UnknownTapeType
         RuntimeActivity,
         StrongZero
     )
+
+    if parent_job !== nothing
+        target = GPUCompiler.nest_target(target, parent_job.config.target)
+        params = GPUCompiler.nest_params(params, parent_job.config.params)
+    end
+
     job = GPUCompiler.CompilerJob(mi, GPUCompiler.CompilerConfig(target, params; kernel = false))
 
 
@@ -1305,10 +1311,11 @@ import .Compiler: remove_innerty, UnknownTapeType
 
     try
         obj = get(tape_cache, key, nothing)
+        # If the tape is not cached, compile it
         if obj === nothing
 
             Compiler.JuliaContext() do ctx
-                _, meta = Compiler.codegen(:llvm, job; optimize = false, parent_job)
+                _, meta = GPUCompiler.compile(:llvm, job)
                 obj = meta.TapeType
                 tape_cache[key] = obj
             end
@@ -1356,7 +1363,7 @@ forward, reverse = autodiff_deferred_thunk(ReverseSplitWithPrimal, TapeType, Con
 tape, result, shadow_result  = forward(Const(f), Duplicated(A, ∂A), Active(v))
 _, ∂v = reverse(Const(f), Duplicated(A, ∂A), Active(v), 1.0, tape)[1]
 
-result, ∂v, ∂A 
+result, ∂v, ∂A
 
 # output
 
