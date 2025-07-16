@@ -1295,6 +1295,12 @@ import .Compiler: remove_innerty, UnknownTapeType
         RuntimeActivity,
         StrongZero
     )
+
+    if parent_job !== nothing
+        target = GPUCompiler.nest_target(target, parent_job.config.target)
+        params = GPUCompiler.nest_params(params, parent_job.config.params)
+    end
+
     job = GPUCompiler.CompilerJob(mi, GPUCompiler.CompilerConfig(target, params; kernel = false))
 
 
