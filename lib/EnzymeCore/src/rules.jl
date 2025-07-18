@@ -299,4 +299,37 @@ inactive_type(::Type) = false
 
 @inline EnzymeCore.set_strong_zero(mode::M, config::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_strong_zero(mode, runtime_activity(config))
 
+import ..EnzymeCore: stop
+
+function EnzymeRules.forward(config, ::Const{typeof(stop)}, A, x::Duplicated)
+    return Enzyme.make_zero(x.val)
+end
+
+function EnzymeRules.augmented_primal(
+        config, ::Const{typeof(stop)},
+        FA, x
+    )
+    primal = EnzymeRules.needs_primal(config) ? x.val : nothing
+    if x isa Active
+        shadow = nothing
+    else
+        shadow = Enzyme.make_zero(x.val)
+    end
+
+    return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
+end
+function EnzymeRules.reverse(
+        config, ::Const{typeof(stop)},
+        dret::Active, tape, x::Active
+    )
+    return (Enzyme.make_zero(x.val),)
+end
+
+function EnzymeRules.reverse(
+        config, ::Const{typeof(stop)},
+        ::Type{<:Duplicated}, tape, x::Duplicated
+    )
+    return (nothing,)
+end
+
 end # EnzymeRules

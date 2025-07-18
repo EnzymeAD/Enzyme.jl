@@ -88,6 +88,20 @@ include("typeunstable.jl")
 include("absint.jl")
 include("array.jl")
 
+import EnzymeCore: stop
+
+@test autodiff(Enzyme.Reverse, stop, Active(1.0)) == ((0.0,),)
+autodiff(Enzyme.Forward, stop, Duplicated(1.0, 2.0)) == (0.0,)
+
+let
+	x = ones(3)
+	dx = Enzyme.make_zero(x)
+
+	autodiff(Enzyme.Reverse, x->sum(stop(x)), Active,  Duplicated(x, dx))
+	@test all(iszero, dx)
+end
+
+
 @static if !Sys.iswindows()
     include("blas.jl")
 end
