@@ -605,6 +605,15 @@ end
 """
 function compiler_job_from_backend end
 
+"""
+    stop(x)
+
+Detach the gradient of the value returned from `stop` from the gradient of `x`.
+"""
+@noinline function stop(x::T) where T
+    return Base.inferencebarrier(x)::T
+end
+
 include("rules.jl")
 
 if !isdefined(Base, :get_extension)
@@ -773,15 +782,5 @@ function Combined(
 end
 
 Combined(mode::ReverseMode) = mode
-
-"""
-    stop(x)
-
-Detach the gradient of the value returned from `stop` from the gradient of `x`.
-"""
-@noinline function stop(x::T) where T
-    return Base.inferencebarrier(x)::T
-end
-
 
 end # module EnzymeCore
