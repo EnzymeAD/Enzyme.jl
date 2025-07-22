@@ -311,6 +311,7 @@ end
 function memcpy_alloca_to_loadstore(mod::LLVM.Module)
     dl = datalayout(mod)
     ctx = context(mod)
+    seen = TypeTreeTable()
     for f in functions(mod)
         if length(blocks(f)) != 0
             bb = first(blocks(f))
