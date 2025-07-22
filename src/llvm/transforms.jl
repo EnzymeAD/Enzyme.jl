@@ -428,7 +428,7 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
 			    source_typ
 			end
 
-			ec = typetree(source_typ, ctx, dl, seen)
+			ec = typetree(source_typ, ctx, string(dl), seen)
 			if byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF
 			    ec = copy(ec)
 			    merge!(ec, TypeTree(API.DT_Pointer, ctx))
