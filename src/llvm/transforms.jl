@@ -310,6 +310,7 @@ end
 #  amenable to caching analysis infrastructure
 function memcpy_alloca_to_loadstore(mod::LLVM.Module)
     dl = datalayout(mod)
+    ctx = context(mod)
     for f in functions(mod)
         if length(blocks(f)) != 0
             bb = first(blocks(f))
@@ -419,7 +420,6 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
         
             	    legal, source_typ, byref = abs_typeof(src)
                     codegen_typ = value_type(src)
-	            ccall(:jl_, Cvoid, (Any,), ("LSTORE", legal, source_typ, byref, codegen_typ, string(src)))
 		    if legal
 			if codegen_typ isa LLVM.PointerType || codegen_typ isa LLVM.IntegerType
 			else
