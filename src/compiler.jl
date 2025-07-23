@@ -4508,7 +4508,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     ctx = LLVM.context(mod)
     for f in functions(mod), bb in blocks(f), inst in instructions(bb)
         fn = isa(inst, LLVM.CallInst) ? LLVM.called_operand(inst) : nothing
-        
+       
         if !API.HasFromStack(inst) && isa(inst, LLVM.AllocaInst)
 
             calluse = nothing
