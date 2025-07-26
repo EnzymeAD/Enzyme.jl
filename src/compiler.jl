@@ -3510,6 +3510,9 @@ function no_type_setting(@nospecialize(specTypes::Type{<:Tuple}); world = nothin
     if specTypes.parameters[1] == typeof(Random.XoshiroSimd.xoshiro_bulk_nosimd)
         return (true, false)
     end
+    if specTypes.parameters[1] == typeof(Base.hash)
+        return (true, false)
+    end
     return (false, false)
 end
 
