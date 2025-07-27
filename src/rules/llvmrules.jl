@@ -1691,19 +1691,33 @@ end
         algn = 0
 
         i8 = LLVM.IntType(8)
+
+        currentBlock = Base.position(B)
+        ogname = LLVM.name(currentBlock)
+
+        fval = lookup_value(gutils, new_from_original(gutils, origops[1]), B)
+
+        endB = nothing
+
         for idx = 1:width
             anti = if width == 1
                 shadowin
             else
                 extract_value!(B, shadowin, idx - 1)
             end
+
             if get_runtime_activity(gutils)
-                emit_error(
-                    B,
-                    orig,
-                    "Enzyme: Not yet implemented runtime activity for reverse of jl_array_del_end",
-                )
+                cond = icmp!(B, LLVM.API.LLVMIntNE, fval, anti)
+
+                nextB = add_reverse_block!(gutils, currentBlock, ogname*"_active")
+
+                endB = add_reverse_block!(gutils, currentBlock, ogname*"_end", true, false)
+
+                cond_br!(cond, nextB, endB)
+
+                position!(B, nextB)
             end
+
             args = LLVM.Value[anti, offset]
 
             found, arty, byref = abs_typeof(origops[1])
@@ -1724,16 +1738,22 @@ end
             length = LLVM.mul!(B, len, elSize)
 
             if !found && !(eltype(arty) <: Base.IEEEFloat)
-		bt = GPUCompiler.backtrace(orig)
-		btstr = sprint() do io
-		    print(io, "\nCaused by:")
-		    Base.show_backtrace(io, bt)
-		end
+        		bt = GPUCompiler.backtrace(orig)
+        		btstr = sprint() do io
+        		    print(io, "\nCaused by:")
+        		    Base.show_backtrace(io, bt)
+        		end
                 GPUCompiler.@safe_warn "TODO reverse jl_array_del_end zero-set used memset rather than runtime type of $((found, arty)) in $(string(origops[1])) $btstr"
             end
             toset = get_array_data(B, anti)
             toset = gep!(B, i8, toset, LLVM.Value[length])
             LLVM.memset!(B, toset, LLVM.ConstantInt(i8, 0, false), elSize, algn)
+
+
+            if get_runtime_activity(gutils)
+                position!(B, endB)
+                currentBlock = endB
+            end
         end
     end
     return nothing
