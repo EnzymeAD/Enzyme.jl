@@ -1695,7 +1695,11 @@ end
         currentBlock = Base.position(B)
         ogname = LLVM.name(currentBlock)
 
-        fval = lookup_value(gutils, new_from_original(gutils, origops[1]), B)
+        fval = if get_runtime_activity(gutils)
+            lookup_value(gutils, new_from_original(gutils, origops[1]), B)
+        else
+            nothing
+        end
 
         endB = nothing
 
@@ -1711,9 +1715,9 @@ end
 
                 nextB = add_reverse_block!(gutils, currentBlock, ogname*"_active")
 
-                endB = add_reverse_block!(gutils, currentBlock, ogname*"_end", true, false)
+                endB = add_reverse_block!(gutils, nextB, ogname*"_end", true, false)
 
-                cond_br!(cond, nextB, endB)
+                br!(B, cond, nextB, endB)
 
                 position!(B, nextB)
             end
@@ -1749,8 +1753,9 @@ end
             toset = gep!(B, i8, toset, LLVM.Value[length])
             LLVM.memset!(B, toset, LLVM.ConstantInt(i8, 0, false), elSize, algn)
 
-
             if get_runtime_activity(gutils)
+                br!(B, endB)
+                set_reverse_block!(gutils, endB)
                 position!(B, endB)
                 currentBlock = endB
             end

@@ -864,10 +864,10 @@ EnzymeGradientUtilsAddReverseBlock(
     push
 ) = ccall(
     (:EnzymeGradientUtilsAddReverseBlock, libEnzyme),
-    Cvoid,
+    LLVM.API.LLVMBasicBlockRef,
     (
         EnzymeGradientUtilsRef,
-        LLVMValueRef,
+        LLVM.API.LLVMBasicBlockRef,
         Cstring,
         UInt8,
         UInt8,
@@ -877,6 +877,20 @@ EnzymeGradientUtilsAddReverseBlock(
     name,
     forkCache,
     push
+)
+
+EnzymeGradientUtilsSetReverseBlock(
+    gutils,
+    block,
+) = ccall(
+    (:EnzymeGradientUtilsSetReverseBlock, libEnzyme),
+    LLVM.API.LLVMBasicBlockRef,
+    (
+        EnzymeGradientUtilsRef,
+        LLVM.API.LLVMBasicBlockRef,
+    ),
+    gutils,
+    block,
 )
 
 EnzymeGradientUtilsCallWithInvertedBundles(
