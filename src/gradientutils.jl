@@ -89,3 +89,11 @@ function debug_from_orig!(
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, nval, oval)
     nothing
 end
+
+function add_reverse_block!(gutils::GradientUtils, block::LLVM.BasicBlock, name::String, forkCache::Bool = true, push::Bool = true)
+    return LLVM.BasicBlock(API.EnzymeGradientUtilsAddReverseBlock(gutils, block, name, forkCache, push))
+end
+
+function set_reverse_block!(gutils::GradientUtils, block::LLVM.BasicBlock)
+    return LLVM.BasicBlock(API.EnzymeGradientUtilsSetReverseBlock(gutils, block))
+end
