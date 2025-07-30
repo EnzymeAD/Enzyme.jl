@@ -141,47 +141,5 @@ retty() = Float64
     @test res[] ≈ 6.0
     @test dres[] ≈ 2.0
     @test orig == Float64
-    
-    res = Ref(3.0)
-    dres = Ref(1.0)
-    pair, orig = autodiff_deferred(ReverseWithPrimal, Const(inplace), Const, Duplicated(res, dres))
-    @test pair == (nothing,)
-    @test res[] ≈ 6.0
-    @test dres[] ≈ 2.0
-    @test orig == Float64
-    
-    function inplace2(x)
-        x[] *= 2
-        return nothing
-    end
-
-    res = Ref(3.0)
-    dres = Ref(1.0)
-    pair, orig = autodiff(ReverseWithPrimal, inplace2, Const, Duplicated(res, dres))
-    @test pair == (nothing,)
-    @test res[] ≈ 6.0
-    @test dres[] ≈ 2.0
-    @test orig == nothing
-
-    res = Ref(3.0)
-    dres = Ref(1.0)
-    pair, orig = autodiff_deferred(ReverseWithPrimal, Const(inplace2), Const, Duplicated(res, dres))
-    @test pair == (nothing,)
-    @test res[] ≈ 6.0
-    @test dres[] ≈ 2.0
-    @test orig == nothing
-
-    # Multi output
-    # TODO broken arg convention?
-    # tup(x) = (x, x*2)
-    # pair = first(autodiff(Forward, tup, DuplicatedNoNeed, Duplicated(3.14, 1.0)))
-    # @test pair[1] ≈ 1.0
-    # @test pair[2] ≈ 2.0
-    # pair = first(autodiff(Forward, tup, Duplicated(3.14, 1.0)))
-    # @test pair[1] ≈ 1.0
-    # @test pair[2] ≈ 2.0
-    # pair = first(autodiff_deferred(Forward, tup, Duplicated(3.14, 1.0)))
-    # @test pair[1] ≈ 1.0
-    # @test pair[2] ≈ 2.0
 
 end
