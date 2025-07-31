@@ -361,6 +361,13 @@ function prepare_llvm(mod::LLVM.Module, job, meta)
     end
 end
 
+include("compiler/optimize.jl")
+include("compiler/interpreter.jl")
+include("compiler/validation.jl")
+include("typeutils/inference.jl")
+
+import .Interpreter: isKWCallSignature
+
 const mod_to_edges = Dict{LLVM.Module, Vector{Any}}()
 mutable struct HandlerState
     primalf::Union{Nothing, LLVM.Function}
@@ -390,7 +397,7 @@ function handleCustom(state::HandlerState, custom, k_name::String, llvmfn::LLVM.
     nothing
 end
 
-function handle_compiled(state::HandlerState, edges, run_enzyme::Bool, mode, world::UInt, method_table, custom, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type))::Nothing
+function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, mode::API.CDerivativeMode, world::UInt, method_table, custom::Dict{String, LLVM.API.LLVMLinkage}, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type))::Nothing
     has_custom_rule = false
 
     specTypes = Interpreter.simplify_kw(mi.specTypes)
@@ -834,7 +841,7 @@ end
     return
 end
 
-function set_module_types!(mod::LLVM.Module, primalf::Union{Nothing, LLVM.Function})
+function set_module_types!(mod::LLVM.Module, primalf::Union{Nothing, LLVM.Function}, job, edges, run_enzyme, mode::API.CDerivativeMode)
 
     for f in functions(mod)
         mi, RT = enzyme_custom_extract_mi(f, false)
@@ -1008,7 +1015,7 @@ function set_module_types!(mod::LLVM.Module, primalf::Union{Nothing, LLVM.Functi
             end
         end
         if mi !== nothing && RT !== nothing
-            handle_compiled(state, edges, params.run_enzyme, mode, world, method_table, custom, mod, mi, fname, RT)
+            handle_compiled(state, edges, run_enzyme, mode, world, method_table, custom, mod, mi, fname, RT)
         end
     end
 
@@ -1058,10 +1065,8 @@ function nested_codegen!(
 
     # Skipped inline of blas
 
-    set_module_types!(otherMod, nothing)
-
-
-
+    run_enzyme = false
+    set_module_types!(otherMod, nothing, job, edges, run_enzyme, mode)
 
     # Apply first stage of optimization's so that this module is at the same stage as `mod`
     optimize!(otherMod, JIT.get_tm())
@@ -2134,13 +2139,6 @@ else
             true
         )
 end
-
-include("compiler/optimize.jl")
-include("compiler/interpreter.jl")
-include("compiler/validation.jl")
-include("typeutils/inference.jl")
-
-import .Interpreter: isKWCallSignature
 
 """
 Create the methodinstance pair, and lookup the primal return type.
@@ -4363,7 +4361,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         end
     end
 
-    custom, state = set_module_types!(mod, primalf)
+    custom, state = set_module_types!(mod, primalf, job, edges, params.run_enzyme, mode)
 
     primalf = state.primalf
     must_wrap = state.must_wrap
@@ -4702,7 +4700,7 @@ end
     if params.err_if_func_written
         FT = TT.parameters[1]
         Ty = eltype(FT)
-        reg = active_reg_inner(Ty, (), world)
+        reg = active_reg_inner(Ty, (), job.world)
         if reg == DupState || reg == MixedState
             swiftself = has_swiftself(primalf)
             todo = LLVM.Value[parameters(primalf)[1+swiftself]]
