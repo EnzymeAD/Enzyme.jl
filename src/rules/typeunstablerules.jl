@@ -424,10 +424,10 @@ end
     )
 end
 
-setfield!(typeof(runtime_newstruct_augfwd).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
-setfield!(typeof(runtime_newstruct_rev).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
-setfield!(typeof(runtime_tuple_augfwd).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
-setfield!(typeof(runtime_tuple_rev).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
+set_fn_max_args(runtime_newstruct_augfwd)
+set_fn_max_args(runtime_newstruct_rev)
+set_fn_max_args(runtime_tuple_augfwd)
+set_fn_max_args(runtime_tuple_rev)
 # for (N, Width) in Iterators.product(0:30, 1:10)
 #     eval(func_runtime_newstruct_augfwd(N, Width))
 #     eval(func_runtime_newstruct_rev(N, Width))
