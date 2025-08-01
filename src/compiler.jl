@@ -54,6 +54,88 @@ function cpu_features()
     return ccall(:jl_get_cpu_features, String, ())
 end
 
+# Define EnzymeTarget
+# Base.@kwdef 
+struct EnzymeTarget{Target<:AbstractCompilerTarget} <: AbstractCompilerTarget
+    target::Target
+end
+
+GPUCompiler.llvm_triple(target::EnzymeTarget) = GPUCompiler.llvm_triple(target.target)
+GPUCompiler.llvm_datalayout(target::EnzymeTarget) = GPUCompiler.llvm_datalayout(target.target)
+GPUCompiler.llvm_machine(target::EnzymeTarget) = GPUCompiler.llvm_machine(target.target)
+GPUCompiler.nest_target(::EnzymeTarget, other::AbstractCompilerTarget) = EnzymeTarget(other)
+GPUCompiler.have_fma(target::EnzymeTarget, T::Type) = GPUCompiler.have_fma(target.target, T)
+GPUCompiler.dwarf_version(target::EnzymeTarget) = GPUCompiler.dwarf_version(target.target)
+
+module Runtime end
+
+abstract type AbstractEnzymeCompilerParams <: AbstractCompilerParams end
+struct EnzymeCompilerParams{Params<:AbstractCompilerParams} <: AbstractEnzymeCompilerParams
+    params::Params
+
+    TT::Type{<:Tuple}
+    mode::API.CDerivativeMode
+    width::Int
+    rt::Type{<:Annotation{T} where {T}}
+    run_enzyme::Bool
+    abiwrap::Bool
+    # Whether, in split mode, acessible primal argument data is modified
+    # between the call and the split
+    modifiedBetween::NTuple{N,Bool} where {N}
+    # Whether to also return the primal
+    returnPrimal::Bool
+    # Whether to (in aug fwd) += by one
+    shadowInit::Bool
+    expectedTapeType::Type
+    # Whether to use the pointer ABI, default true
+    ABI::Type{<:ABI}
+    # Whether to error if the function is written to
+    err_if_func_written::Bool
+
+    # Whether runtime activity is enabled
+    runtimeActivity::Bool
+
+    # Whether to enforce that a zero derivative propagates as a zero (and never a nan)
+    strongZero::Bool
+end
+
+# FIXME: Should this take something like PTXCompilerParams/CUDAParams?
+struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
+    mode::API.CDerivativeMode
+end
+
+function EnzymeCompilerParams(TT, mode, width, rt, run_enzyme, abiwrap,
+                              modifiedBetween, returnPrimal, shadowInit,
+                              expectedTapeType, ABI,
+                              err_if_func_written, runtimeActivity, strongZero)
+    params = PrimalCompilerParams(mode)
+    EnzymeCompilerParams(
+        params,
+        TT,
+        mode,
+        width,
+        rt,
+        run_enzyme,
+        abiwrap,
+        modifiedBetween,
+        returnPrimal,
+        shadowInit,
+        expectedTapeType,
+        ABI,
+        err_if_func_written,
+        runtimeActivity,
+        strongZero
+    )
+end
+
+DefaultCompilerTarget(; kwargs...) =
+    GPUCompiler.NativeCompilerTarget(; jlruntime = true, kwargs...)
+
+# TODO: Audit uses
+function EnzymeTarget()
+    EnzymeTarget(DefaultCompilerTarget())
+end
+
 import GPUCompiler: @safe_debug, @safe_info, @safe_warn, @safe_error
 
 include("compiler/utils.jl")
@@ -1949,89 +2031,6 @@ function __init__()
     )
     register_alloc_rules()
     register_llvm_rules()
-end
-
-# Define EnzymeTarget
-# Base.@kwdef 
-struct EnzymeTarget{Target<:AbstractCompilerTarget} <: AbstractCompilerTarget
-    target::Target
-end
-
-GPUCompiler.llvm_triple(target::EnzymeTarget) = GPUCompiler.llvm_triple(target.target)
-GPUCompiler.llvm_datalayout(target::EnzymeTarget) = GPUCompiler.llvm_datalayout(target.target)
-GPUCompiler.llvm_machine(target::EnzymeTarget) = GPUCompiler.llvm_machine(target.target)
-GPUCompiler.nest_target(::EnzymeTarget, other::AbstractCompilerTarget) = EnzymeTarget(other)
-GPUCompiler.have_fma(target::EnzymeTarget, T::Type) = GPUCompiler.have_fma(target.target, T)
-GPUCompiler.dwarf_version(target::EnzymeTarget) = GPUCompiler.dwarf_version(target.target)
-
-
-DefaultCompilerTarget(; kwargs...) =
-    GPUCompiler.NativeCompilerTarget(; jlruntime = true, kwargs...)
-
-# TODO: Audit uses
-function EnzymeTarget()
-    EnzymeTarget(DefaultCompilerTarget())
-end
-
-module Runtime end
-
-abstract type AbstractEnzymeCompilerParams <: AbstractCompilerParams end
-struct EnzymeCompilerParams{Params<:AbstractCompilerParams} <: AbstractEnzymeCompilerParams
-    params::Params
-
-    TT::Type{<:Tuple}
-    mode::API.CDerivativeMode
-    width::Int
-    rt::Type{<:Annotation{T} where {T}}
-    run_enzyme::Bool
-    abiwrap::Bool
-    # Whether, in split mode, acessible primal argument data is modified
-    # between the call and the split
-    modifiedBetween::NTuple{N,Bool} where {N}
-    # Whether to also return the primal
-    returnPrimal::Bool
-    # Whether to (in aug fwd) += by one
-    shadowInit::Bool
-    expectedTapeType::Type
-    # Whether to use the pointer ABI, default true
-    ABI::Type{<:ABI}
-    # Whether to error if the function is written to
-    err_if_func_written::Bool
-
-    # Whether runtime activity is enabled
-    runtimeActivity::Bool
-
-    # Whether to enforce that a zero derivative propagates as a zero (and never a nan)
-    strongZero::Bool
-end
-
-# FIXME: Should this take something like PTXCompilerParams/CUDAParams?
-struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
-    mode::API.CDerivativeMode
-end
-
-function EnzymeCompilerParams(TT, mode, width, rt, run_enzyme, abiwrap,
-                              modifiedBetween, returnPrimal, shadowInit,
-                              expectedTapeType, ABI,
-                              err_if_func_written, runtimeActivity, strongZero)
-    params = PrimalCompilerParams(mode)
-    EnzymeCompilerParams(
-        params,
-        TT,
-        mode,
-        width,
-        rt,
-        run_enzyme,
-        abiwrap,
-        modifiedBetween,
-        returnPrimal,
-        shadowInit,
-        expectedTapeType,
-        ABI,
-        err_if_func_written,
-        runtimeActivity,
-        strongZero
-    )
 end
 
 # FIXME: Use params.parent in more places where we rely on the behavior of the underlying 
