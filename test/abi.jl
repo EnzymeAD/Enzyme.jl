@@ -1,5 +1,5 @@
 using Enzyme
-
+Enzyme.API.printall!(true)
 
     f(x) = x
 
