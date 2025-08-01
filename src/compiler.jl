@@ -136,6 +136,84 @@ function EnzymeTarget()
     EnzymeTarget(DefaultCompilerTarget())
 end
 
+# TODO: We shouldn't blanket opt-out
+GPUCompiler.check_invocation(job::CompilerJob{EnzymeTarget}, entry::LLVM.Function) = nothing
+
+GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) = Runtime
+# GPUCompiler.isintrinsic(::CompilerJob{EnzymeTarget}, fn::String) = true
+# GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
+
+# TODO: encode debug build or not in the compiler job
+#       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
+GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
+
+# provide a specific interpreter to use.
+if VERSION >= v"1.11.0-DEV.1552"
+    struct EnzymeCacheToken
+        target_type::Type
+        always_inline::Any
+        method_table::Core.MethodTable
+        param_type::Type
+        last_fwd_rule_world::Union{Nothing, Tuple}
+        last_rev_rule_world::Union{Nothing, Tuple}
+        last_ina_rule_world::Union{Nothing, Tuple}
+    end
+
+    @inline EnzymeCacheToken(target_type::Type, always_inline::Any, method_table::Core.MethodTable, param_type::Type, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
+        EnzymeCacheToken(target_type, always_inline, method_table, param_type,
+            is_forward ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.forward, Tuple{<:EnzymeCore.EnzymeRules.FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
+            is_reverse ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:EnzymeCore.EnzymeRules.RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
+            inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
+        )
+
+    GPUCompiler.ci_cache_token(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+        EnzymeCacheToken(
+            typeof(job.config.target),
+            job.config.always_inline,
+            GPUCompiler.method_table(job),
+            typeof(job.config.params),
+            job.world,
+            job.config.params.mode == API.DEM_ForwardMode,
+            job.config.params.mode != API.DEM_ForwardMode,
+            true
+        )
+
+    GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+        Interpreter.EnzymeInterpreter(
+            GPUCompiler.ci_cache_token(job),
+            GPUCompiler.method_table(job),
+            job.world,
+            job.config.params.mode,
+            true
+        )
+else
+
+    # the codeinstance cache to use -- should only be used for the constructor
+    # Note that the only way the interpreter modifies codegen is either not inlining a fwd mode
+    # rule or not inlining a rev mode rule. Otherwise, all caches can be re-used.
+    const GLOBAL_FWD_CACHE = GPUCompiler.CodeCache()
+    const GLOBAL_REV_CACHE = GPUCompiler.CodeCache()
+    function enzyme_ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams})
+        return if job.config.params.mode == API.DEM_ForwardMode
+            GLOBAL_FWD_CACHE
+        else
+            GLOBAL_REV_CACHE
+        end
+    end
+
+    GPUCompiler.ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+        enzyme_ci_cache(job)
+
+    GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+        Interpreter.EnzymeInterpreter(
+            enzyme_ci_cache(job),
+            GPUCompiler.method_table(job),
+            job.world,
+            job.config.params.mode,
+            true
+        )
+end
+
 import GPUCompiler: @safe_debug, @safe_info, @safe_warn, @safe_error
 
 include("compiler/utils.jl")
@@ -2055,89 +2133,6 @@ function GPUCompiler.nest_params(params::AbstractEnzymeCompilerParams, parent::A
 end
 
 struct UnknownTapeType end
-
-
-
-
-## job
-
-# TODO: We shouldn't blanket opt-out
-GPUCompiler.check_invocation(job::CompilerJob{EnzymeTarget}, entry::LLVM.Function) = nothing
-
-GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) = Runtime
-# GPUCompiler.isintrinsic(::CompilerJob{EnzymeTarget}, fn::String) = true
-# GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
-
-# TODO: encode debug build or not in the compiler job
-#       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
-GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
-
-# provide a specific interpreter to use.
-if VERSION >= v"1.11.0-DEV.1552"
-    struct EnzymeCacheToken
-        target_type::Type
-        always_inline::Any
-        method_table::Core.MethodTable
-        param_type::Type
-        last_fwd_rule_world::Union{Nothing, Tuple}
-        last_rev_rule_world::Union{Nothing, Tuple}
-        last_ina_rule_world::Union{Nothing, Tuple}
-    end
-
-    @inline EnzymeCacheToken(target_type::Type, always_inline::Any, method_table::Core.MethodTable, param_type::Type, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
-        EnzymeCacheToken(target_type, always_inline, method_table, param_type,
-            is_forward ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.forward, Tuple{<:EnzymeCore.EnzymeRules.FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
-            is_reverse ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:EnzymeCore.EnzymeRules.RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
-            inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
-        )
-
-    GPUCompiler.ci_cache_token(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        EnzymeCacheToken(
-            typeof(job.config.target),
-            job.config.always_inline,
-            GPUCompiler.method_table(job),
-            typeof(job.config.params),
-            job.world,
-            job.config.params.mode == API.DEM_ForwardMode,
-            job.config.params.mode != API.DEM_ForwardMode,
-            true
-        )
-
-    GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        Interpreter.EnzymeInterpreter(
-            GPUCompiler.ci_cache_token(job),
-            GPUCompiler.method_table(job),
-            job.world,
-            job.config.params.mode,
-            true
-        )
-else
-
-    # the codeinstance cache to use -- should only be used for the constructor
-    # Note that the only way the interpreter modifies codegen is either not inlining a fwd mode
-    # rule or not inlining a rev mode rule. Otherwise, all caches can be re-used.
-    const GLOBAL_FWD_CACHE = GPUCompiler.CodeCache()
-    const GLOBAL_REV_CACHE = GPUCompiler.CodeCache()
-    function enzyme_ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams})
-        return if job.config.params.mode == API.DEM_ForwardMode
-            GLOBAL_FWD_CACHE
-        else
-            GLOBAL_REV_CACHE
-        end
-    end
-
-    GPUCompiler.ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        enzyme_ci_cache(job)
-
-    GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        Interpreter.EnzymeInterpreter(
-            enzyme_ci_cache(job),
-            GPUCompiler.method_table(job),
-            job.world,
-            job.config.params.mode,
-            true
-        )
-end
 
 """
 Create the methodinstance pair, and lookup the primal return type.
