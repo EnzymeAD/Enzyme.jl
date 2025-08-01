@@ -54,6 +54,166 @@ function cpu_features()
     return ccall(:jl_get_cpu_features, String, ())
 end
 
+# Define EnzymeTarget
+# Base.@kwdef 
+struct EnzymeTarget{Target<:AbstractCompilerTarget} <: AbstractCompilerTarget
+    target::Target
+end
+
+GPUCompiler.llvm_triple(target::EnzymeTarget) = GPUCompiler.llvm_triple(target.target)
+GPUCompiler.llvm_datalayout(target::EnzymeTarget) = GPUCompiler.llvm_datalayout(target.target)
+GPUCompiler.llvm_machine(target::EnzymeTarget) = GPUCompiler.llvm_machine(target.target)
+GPUCompiler.nest_target(::EnzymeTarget, other::AbstractCompilerTarget) = EnzymeTarget(other)
+GPUCompiler.have_fma(target::EnzymeTarget, T::Type) = GPUCompiler.have_fma(target.target, T)
+GPUCompiler.dwarf_version(target::EnzymeTarget) = GPUCompiler.dwarf_version(target.target)
+
+module Runtime end
+
+abstract type AbstractEnzymeCompilerParams <: AbstractCompilerParams end
+struct EnzymeCompilerParams{Params<:AbstractCompilerParams} <: AbstractEnzymeCompilerParams
+    params::Params
+
+    TT::Type{<:Tuple}
+    mode::API.CDerivativeMode
+    width::Int
+    rt::Type{<:Annotation{T} where {T}}
+    run_enzyme::Bool
+    abiwrap::Bool
+    # Whether, in split mode, acessible primal argument data is modified
+    # between the call and the split
+    modifiedBetween::NTuple{N,Bool} where {N}
+    # Whether to also return the primal
+    returnPrimal::Bool
+    # Whether to (in aug fwd) += by one
+    shadowInit::Bool
+    expectedTapeType::Type
+    # Whether to use the pointer ABI, default true
+    ABI::Type{<:ABI}
+    # Whether to error if the function is written to
+    err_if_func_written::Bool
+
+    # Whether runtime activity is enabled
+    runtimeActivity::Bool
+
+    # Whether to enforce that a zero derivative propagates as a zero (and never a nan)
+    strongZero::Bool
+end
+
+# FIXME: Should this take something like PTXCompilerParams/CUDAParams?
+struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
+    mode::API.CDerivativeMode
+end
+
+function EnzymeCompilerParams(TT, mode, width, rt, run_enzyme, abiwrap,
+                              modifiedBetween, returnPrimal, shadowInit,
+                              expectedTapeType, ABI,
+                              err_if_func_written, runtimeActivity, strongZero)
+    params = PrimalCompilerParams(mode)
+    EnzymeCompilerParams(
+        params,
+        TT,
+        mode,
+        width,
+        rt,
+        run_enzyme,
+        abiwrap,
+        modifiedBetween,
+        returnPrimal,
+        shadowInit,
+        expectedTapeType,
+        ABI,
+        err_if_func_written,
+        runtimeActivity,
+        strongZero
+    )
+end
+
+DefaultCompilerTarget(; kwargs...) =
+    GPUCompiler.NativeCompilerTarget(; jlruntime = true, kwargs...)
+
+# TODO: Audit uses
+function EnzymeTarget()
+    EnzymeTarget(DefaultCompilerTarget())
+end
+
+# TODO: We shouldn't blanket opt-out
+GPUCompiler.check_invocation(job::CompilerJob{EnzymeTarget}, entry::LLVM.Function) = nothing
+
+GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) = Runtime
+# GPUCompiler.isintrinsic(::CompilerJob{EnzymeTarget}, fn::String) = true
+# GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
+
+# TODO: encode debug build or not in the compiler job
+#       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
+GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
+
+# provide a specific interpreter to use.
+if VERSION >= v"1.11.0-DEV.1552"
+    struct EnzymeCacheToken
+        target_type::Type
+        always_inline::Any
+        method_table::Core.MethodTable
+        param_type::Type
+        last_fwd_rule_world::Union{Nothing, Tuple}
+        last_rev_rule_world::Union{Nothing, Tuple}
+        last_ina_rule_world::Union{Nothing, Tuple}
+    end
+
+    @inline EnzymeCacheToken(target_type::Type, always_inline::Any, method_table::Core.MethodTable, param_type::Type, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
+        EnzymeCacheToken(target_type, always_inline, method_table, param_type,
+            is_forward ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.forward, Tuple{<:EnzymeCore.EnzymeRules.FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
+            is_reverse ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:EnzymeCore.EnzymeRules.RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
+            inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
+        )
+
+    GPUCompiler.ci_cache_token(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+        EnzymeCacheToken(
+            typeof(job.config.target),
+            job.config.always_inline,
+            GPUCompiler.method_table(job),
+            typeof(job.config.params),
+            job.world,
+            job.config.params.mode == API.DEM_ForwardMode,
+            job.config.params.mode != API.DEM_ForwardMode,
+            true
+        )
+
+    GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+        Interpreter.EnzymeInterpreter(
+            GPUCompiler.ci_cache_token(job),
+            GPUCompiler.method_table(job),
+            job.world,
+            job.config.params.mode,
+            true
+        )
+else
+
+    # the codeinstance cache to use -- should only be used for the constructor
+    # Note that the only way the interpreter modifies codegen is either not inlining a fwd mode
+    # rule or not inlining a rev mode rule. Otherwise, all caches can be re-used.
+    const GLOBAL_FWD_CACHE = GPUCompiler.CodeCache()
+    const GLOBAL_REV_CACHE = GPUCompiler.CodeCache()
+    function enzyme_ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams})
+        return if job.config.params.mode == API.DEM_ForwardMode
+            GLOBAL_FWD_CACHE
+        else
+            GLOBAL_REV_CACHE
+        end
+    end
+
+    GPUCompiler.ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+        enzyme_ci_cache(job)
+
+    GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+        Interpreter.EnzymeInterpreter(
+            enzyme_ci_cache(job),
+            GPUCompiler.method_table(job),
+            job.world,
+            job.config.params.mode,
+            true
+        )
+end
+
 import GPUCompiler: @safe_debug, @safe_info, @safe_warn, @safe_error
 
 include("compiler/utils.jl")
@@ -361,7 +521,666 @@ function prepare_llvm(mod::LLVM.Module, job, meta)
     end
 end
 
+include("compiler/optimize.jl")
+include("compiler/interpreter.jl")
+include("compiler/validation.jl")
+include("typeutils/inference.jl")
+
+import .Interpreter: isKWCallSignature
+
 const mod_to_edges = Dict{LLVM.Module, Vector{Any}}()
+mutable struct HandlerState
+    primalf::Union{Nothing, LLVM.Function}
+    must_wrap::Bool
+    actualRetType::Union{Nothing, Type}
+    lowerConvention::Bool
+    loweredArgs::Set{Int}
+    boxedArgs::Set{Int}
+    fnsToInject::Vector{Tuple{Symbol,Type}}
+end
+
+
+function handleCustom(state::HandlerState, custom, k_name::String, llvmfn::LLVM.Function, name::String, attrs::Vector{LLVM.Attribute} = LLVM.Attribute[], setlink::Bool = true, noinl::Bool = true)
+    attributes = function_attributes(llvmfn)
+    custom[k_name] = linkage(llvmfn)
+    if setlink
+        linkage!(llvmfn, LLVM.API.LLVMExternalLinkage)
+    end
+    for a in attrs
+        push!(attributes, a)
+    end
+    push!(attributes, StringAttribute("enzyme_math", name))
+    if noinl
+        push!(attributes, EnumAttribute("noinline", 0))
+    end
+    state.must_wrap |= llvmfn == state.primalf
+    nothing
+end
+
+function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, mode::API.CDerivativeMode, world::UInt, method_table, custom::Dict{String, LLVM.API.LLVMLinkage}, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type))::Nothing
+    has_custom_rule = false
+
+    specTypes = Interpreter.simplify_kw(mi.specTypes)
+
+    if mode == API.DEM_ForwardMode
+        has_custom_rule =
+            EnzymeRules.has_frule_from_sig(specTypes; world, method_table)
+        if has_custom_rule
+            @safe_debug "Found frule for" mi.specTypes
+        end
+    else
+        has_custom_rule =
+            EnzymeRules.has_rrule_from_sig(specTypes; world, method_table)
+        if has_custom_rule
+            @safe_debug "Found rrule for" mi.specTypes
+        end
+    end
+
+    if !haskey(functions(mod), k_name)
+        return
+    end
+
+    llvmfn = functions(mod)[k_name]
+    if llvmfn == state.primalf
+        state.actualRetType = rettype
+    end
+
+    if EnzymeRules.noalias_from_sig(mi.specTypes; world, method_table)
+        push!(edges, mi)
+        push!(return_attributes(llvmfn), EnumAttribute("noalias"))
+        for u in LLVM.uses(llvmfn)
+            c = LLVM.user(u)
+            if !isa(c, LLVM.CallInst)
+                continue
+            end
+            cf = LLVM.called_operand(c)
+            if cf == llvmfn
+                LLVM.API.LLVMAddCallSiteAttribute(
+                    c,
+                    LLVM.API.LLVMAttributeReturnIndex,
+                    LLVM.EnumAttribute("noalias", 0),
+                )
+            end
+        end
+    end
+
+    func = mi.specTypes.parameters[1]
+
+@static if VERSION < v"1.11-"
+else
+    if func == typeof(Core.memoryref)
+        attributes = function_attributes(llvmfn)
+        push!(attributes, EnumAttribute("alwaysinline", 0))
+    end
+end
+
+    meth = mi.def
+    name = meth.name
+    jlmod = meth.module
+
+    julia_activity_rule(llvmfn)
+    if has_custom_rule
+        handleCustom(
+            state,
+            custom,
+            k_name,
+            llvmfn,
+            "enzyme_custom",
+            LLVM.Attribute[StringAttribute("enzyme_preserve_primal", "*")],
+        )
+        return
+    end
+
+
+    sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
+    if func == typeof(Base.eps) ||
+       func == typeof(Base.nextfloat) ||
+       func == typeof(Base.prevfloat)
+        if LLVM.version().major <= 15
+            handleCustom(
+                state,
+                custom,
+                k_name,
+                llvmfn,
+                "jl_inactive_inout",
+                LLVM.Attribute[
+                    StringAttribute("enzyme_inactive"),
+                    EnumAttribute("readnone"),
+                    EnumAttribute("speculatable"),
+                    StringAttribute("enzyme_shouldrecompute"),
+                ],
+            )
+        else
+            handleCustom(
+                state,
+                custom,
+                k_name,
+                llvmfn,
+                "jl_inactive_inout",
+                LLVM.Attribute[
+                    StringAttribute("enzyme_inactive"),
+                    EnumAttribute("memory", NoEffects.data),
+                    EnumAttribute("speculatable"),
+                    StringAttribute("enzyme_shouldrecompute"),
+                ],
+            )
+        end
+        return
+    end
+    if func == typeof(Base.to_tuple_type)
+        if LLVM.version().major <= 15
+            handleCustom(
+                state,
+                custom,
+                k_name,
+                llvmfn,
+                "jl_to_tuple_type",
+                LLVM.Attribute[
+                    EnumAttribute("readonly"),
+                    EnumAttribute("inaccessiblememonly", 0),
+                    EnumAttribute("speculatable", 0),
+                    StringAttribute("enzyme_shouldrecompute"),
+                    StringAttribute("enzyme_inactive"),
+                ],
+            )
+        else
+            handleCustom(
+                state,
+                custom,
+                k_name,
+                llvmfn,
+                "jl_to_tuple_type",
+                LLVM.Attribute[
+                    EnumAttribute(
+                        "memory",
+                        MemoryEffect(
+                            (MRI_NoModRef << getLocationPos(ArgMem)) |
+                            (MRI_Ref << getLocationPos(InaccessibleMem)) |
+                            (MRI_NoModRef << getLocationPos(Other)),
+                        ).data,
+                    ),
+                    EnumAttribute("inaccessiblememonly", 0),
+                    EnumAttribute("speculatable", 0),
+                    StringAttribute("enzyme_shouldrecompute"),
+                    StringAttribute("enzyme_inactive"),
+                ],
+            )
+        end
+        return
+    end
+    if func == typeof(Base.mightalias)
+        if LLVM.version().major <= 15
+            handleCustom(
+                state,
+                custom,
+                k_name,
+                llvmfn,
+                "jl_mightalias",
+                LLVM.Attribute[
+                    EnumAttribute("readonly"),
+                    StringAttribute("enzyme_shouldrecompute"),
+                    StringAttribute("enzyme_inactive"),
+                    StringAttribute("enzyme_no_escaping_allocation"),
+                    EnumAttribute("nofree"),
+                    StringAttribute("enzyme_ta_norecur"),
+                ],
+                true,
+                false,
+            )
+        else
+            handleCustom(
+                state,
+                custom,
+                k_name,
+                llvmfn,
+                "jl_mightalias",
+                LLVM.Attribute[
+                    EnumAttribute("memory", ReadOnlyEffects.data),
+                    StringAttribute("enzyme_shouldrecompute"),
+                    StringAttribute("enzyme_inactive"),
+                    StringAttribute("enzyme_no_escaping_allocation"),
+                    EnumAttribute("nofree"),
+                    StringAttribute("enzyme_ta_norecur"),
+                ],
+                true,
+                false,
+            )
+        end
+        return
+    end
+    if func == typeof(Base.Threads.threadid) || func == typeof(Base.Threads.nthreads)
+        name = (func == typeof(Base.Threads.threadid)) ? "jl_threadid" : "jl_nthreads"
+        if LLVM.version().major <= 15
+            handleCustom(
+                state,
+                custom,
+                k_name,
+                llvmfn,
+                name,
+                LLVM.Attribute[
+                    EnumAttribute("readonly"),
+                    EnumAttribute("inaccessiblememonly"),
+                    EnumAttribute("speculatable"),
+                    StringAttribute("enzyme_shouldrecompute"),
+                    StringAttribute("enzyme_inactive"),
+                    StringAttribute("enzyme_no_escaping_allocation"),
+                ],
+            )
+        else
+            handleCustom(
+                state,
+                custom,
+                k_name,
+                llvmfn,
+                name,
+                LLVM.Attribute[
+                    EnumAttribute(
+                        "memory",
+                        MemoryEffect(
+                            (MRI_NoModRef << getLocationPos(ArgMem)) |
+                            (MRI_Ref << getLocationPos(InaccessibleMem)) |
+                            (MRI_NoModRef << getLocationPos(Other)),
+                        ).data,
+                    ),
+                    EnumAttribute("speculatable"),
+                    StringAttribute("enzyme_shouldrecompute"),
+                    StringAttribute("enzyme_inactive"),
+                    StringAttribute("enzyme_no_escaping_allocation"),
+                ],
+            )
+        end
+        return
+    end
+    # Since this is noreturn and it can't write to any operations in the function
+    # in a way accessible by the function. Ideally the attributor should actually
+    # handle this and similar not impacting the read/write behavior of the calling
+    # fn, but it doesn't presently so for now we will ensure this by hand
+    if func == typeof(Base.Checked.throw_overflowerr_binaryop)
+        if LLVM.version().major <= 15
+            handleCustom(
+                state,
+                custom,
+                k_name,
+                llvmfn,
+                "enz_noop",
+                LLVM.Attribute[
+                    StringAttribute("enzyme_inactive"),
+                    EnumAttribute("readonly"),
+                    StringAttribute("enzyme_ta_norecur"),
+                ],
+            )
+        else
+            handleCustom(
+                state,
+                custom,
+                k_name,
+                llvmfn,
+                "enz_noop",
+                LLVM.Attribute[
+                    StringAttribute("enzyme_inactive"),
+                    EnumAttribute("memory", ReadOnlyEffects.data),
+                    StringAttribute("enzyme_ta_norecur"),
+                ],
+            )
+        end
+        return
+    end
+    if EnzymeRules.is_inactive_from_sig(specTypes; world, method_table)
+        push!(edges, mi)
+        handleCustom(
+            state,
+            custom,
+            k_name,
+            llvmfn,
+            "enz_noop",
+            LLVM.Attribute[
+                StringAttribute("enzyme_inactive"),
+                EnumAttribute("nofree"),
+                StringAttribute("enzyme_no_escaping_allocation"),
+                StringAttribute("enzyme_ta_norecur"),
+            ],
+        )
+        return
+    end
+    if EnzymeRules.is_inactive_noinl_from_sig(specTypes; world, method_table)
+        push!(edges, mi)
+        handleCustom(
+            state,
+            custom,
+            k_name,
+            llvmfn,
+            "enz_noop",
+            LLVM.Attribute[
+                StringAttribute("enzyme_inactive"),
+                EnumAttribute("nofree"),
+                StringAttribute("enzyme_no_escaping_allocation"),
+                StringAttribute("enzyme_ta_norecur"),
+            ],
+            false,
+            false,
+        )
+        for bb in blocks(llvmfn)
+            for inst in instructions(bb)
+                if isa(inst, LLVM.CallInst)
+                    LLVM.API.LLVMAddCallSiteAttribute(
+                        inst,
+                        reinterpret(
+                            LLVM.API.LLVMAttributeIndex,
+                            LLVM.API.LLVMAttributeFunctionIndex,
+                        ),
+                        StringAttribute("no_escaping_allocation"),
+                    )
+                    LLVM.API.LLVMAddCallSiteAttribute(
+                        inst,
+                        reinterpret(
+                            LLVM.API.LLVMAttributeIndex,
+                            LLVM.API.LLVMAttributeFunctionIndex,
+                        ),
+                        StringAttribute("enzyme_inactive"),
+                    )
+                    LLVM.API.LLVMAddCallSiteAttribute(
+                        inst,
+                        reinterpret(
+                            LLVM.API.LLVMAttributeIndex,
+                            LLVM.API.LLVMAttributeFunctionIndex,
+                        ),
+                        EnumAttribute("nofree"),
+                    )
+                end
+            end
+        end
+        return
+    end
+    if func === typeof(Base.match)
+        handleCustom(
+            state,
+            custom,
+            k_name,
+            llvmfn,
+            "base_match",
+            LLVM.Attribute[
+                StringAttribute("enzyme_inactive"),
+                EnumAttribute("nofree"),
+                StringAttribute("enzyme_no_escaping_allocation"),
+            ],
+            false,
+            false,
+        )
+        for bb in blocks(llvmfn)
+            for inst in instructions(bb)
+                if isa(inst, LLVM.CallInst)
+                    LLVM.API.LLVMAddCallSiteAttribute(
+                        inst,
+                        reinterpret(
+                            LLVM.API.LLVMAttributeIndex,
+                            LLVM.API.LLVMAttributeFunctionIndex,
+                        ),
+                        StringAttribute("no_escaping_allocation"),
+                    )
+                    LLVM.API.LLVMAddCallSiteAttribute(
+                        inst,
+                        reinterpret(
+                            LLVM.API.LLVMAttributeIndex,
+                            LLVM.API.LLVMAttributeFunctionIndex,
+                        ),
+                        StringAttribute("enzyme_inactive"),
+                    )
+                    LLVM.API.LLVMAddCallSiteAttribute(
+                        inst,
+                        reinterpret(
+                            LLVM.API.LLVMAttributeIndex,
+                            LLVM.API.LLVMAttributeFunctionIndex,
+                        ),
+                        EnumAttribute("nofree"),
+                    )
+                end
+            end
+        end
+        return
+    end
+    if func == typeof(Base.enq_work) &&
+       length(sparam_vals) == 1 &&
+       first(sparam_vals) <: Task
+        handleCustom(state, custom, k_name, llvmfn, "jl_enq_work", LLVM.Attribute[StringAttribute("enzyme_ta_norecur")])
+        return
+    end
+    if func == typeof(Base.wait) || func == typeof(Base._wait)
+        if length(sparam_vals) == 1 && first(sparam_vals) <: Task
+            handleCustom(state, custom, k_name, llvmfn, "jl_wait", LLVM.Attribute[StringAttribute("enzyme_ta_norecur")])
+        end
+        return
+    end
+    if func == typeof(Base.Threads.threading_run)
+        if length(sparam_vals) == 1 || length(sparam_vals) == 2
+            handleCustom(state, custom, k_name, llvmfn, "jl_threadsfor")
+        end
+        return
+    end
+
+    name, toinject, T = find_math_method(func, sparam_vals)
+    if name === nothing
+        return
+    end
+
+    if toinject !== nothing
+        push!(state.fnsToInject, toinject)
+    end
+
+    # If sret, force lower of primitive math fn
+    sret = get_return_info(rettype)[2] !== nothing
+    if sret
+        cur = llvmfn == state.primalf
+        llvmfn, _, state.boxedArgs, state.loweredArgs = lower_convention(
+            mi.specTypes,
+            mod,
+            llvmfn,
+            rettype,
+            Duplicated,
+            nothing,
+            run_enzyme,
+        )
+        if cur
+            state.primalf = llvmfn
+            state.lowerConvention = false
+        end
+        k_name = LLVM.name(llvmfn)
+        if !has_fn_attr(llvmfn, EnumAttribute("nofree"))
+            push!(LLVM.function_attributes(llvmfn), EnumAttribute("nofree"))
+        end
+    end
+
+    name = string(name)
+    name = T == Float32 ? name * "f" : name
+
+    attrs = if LLVM.version().major <= 15
+        LLVM.Attribute[LLVM.EnumAttribute("readnone"), StringAttribute("enzyme_shouldrecompute")]
+    else
+        LLVM.Attribute[EnumAttribute("memory", NoEffects.data), StringAttribute("enzyme_shouldrecompute")]
+    end
+    handleCustom(state, custom, k_name, llvmfn, name, attrs)
+    return
+end
+
+function set_module_types!(mod::LLVM.Module, primalf::Union{Nothing, LLVM.Function}, job, edges, run_enzyme, mode::API.CDerivativeMode)
+
+    for f in functions(mod)
+        mi, RT = enzyme_custom_extract_mi(f, false)
+        if mi === nothing
+            continue
+        end
+
+        llRT, sret, returnRoots = get_return_info(RT)
+        retRemoved, parmsRemoved = removed_ret_parms(f)
+
+        dl = string(LLVM.datalayout(LLVM.parent(f)))
+
+        expectLen = (sret !== nothing) + (returnRoots !== nothing)
+        for source_typ in mi.specTypes.parameters
+            if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
+                continue
+            end
+            expectLen += 1
+        end
+        expectLen -= length(parmsRemoved)
+
+        swiftself = has_swiftself(f)
+
+        if swiftself
+            expectLen += 1
+        end
+
+        # Unsupported calling conv
+        # also wouldn't have any type info for this [would for earlier args though]
+        if Base.isvarargtype(mi.specTypes.parameters[end])
+            continue
+        end
+
+        world = enzyme_extract_world(f)
+
+        if expectLen != length(parameters(f))
+            continue
+            throw(
+                AssertionError(
+                    "Wrong number of parameters $(string(f)) expectLen=$expectLen swiftself=$swiftself sret=$sret returnRoots=$returnRoots spec=$(mi.specTypes.parameters) retRem=$retRemoved parmsRem=$parmsRemoved",
+                ),
+            )
+        end
+
+        jlargs = classify_arguments(
+            mi.specTypes,
+            function_type(f),
+            sret !== nothing,
+            returnRoots !== nothing,
+            swiftself,
+            parmsRemoved,
+        )
+
+        ctx = LLVM.context(f)
+
+        push!(function_attributes(f), StringAttribute("enzyme_ta_norecur"))
+
+        if !no_type_setting(mi.specTypes; world)[1]
+            for arg in jlargs
+                if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
+                    continue
+                end
+                push!(
+                    parameter_attributes(f, arg.codegen.i),
+                    StringAttribute(
+                        "enzymejl_parmtype",
+                        string(convert(UInt, unsafe_to_pointer(arg.typ))),
+                    ),
+                )
+                push!(
+                    parameter_attributes(f, arg.codegen.i),
+                    StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))),
+                )
+
+                byref = arg.cc
+
+                rest = copy(typetree(arg.typ, ctx, dl))
+
+                if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
+                    # adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
+                    # object passing this in by ref isnt a {[-1]:Pointer, [-1,-1]:Int}
+                    # aka the next field after this in the bigger object isn't guaranteed to also be the same.
+                    if allocatedinline(arg.typ)
+                        shift!(rest, dl, 0, sizeof(arg.typ), 0)
+                    end
+                    merge!(rest, TypeTree(API.DT_Pointer, ctx))
+                    only!(rest, -1)
+                else
+                    # canonicalize wrt size
+                end
+                push!(
+                    parameter_attributes(f, arg.codegen.i),
+                    StringAttribute("enzyme_type", string(rest)),
+                )
+            end
+        end
+
+        if !no_type_setting(mi.specTypes; world)[2]
+            if sret !== nothing
+                idx = 0
+                if !in(0, parmsRemoved)
+                    rest = typetree(sret, ctx, dl)
+                    push!(
+                        parameter_attributes(f, idx + 1),
+                        StringAttribute("enzyme_type", string(rest)),
+                    )
+                    idx += 1
+                end
+                if returnRoots !== nothing
+                    if !in(1, parmsRemoved)
+                        rest = TypeTree(API.DT_Pointer, -1, ctx)
+                        push!(
+                            parameter_attributes(f, idx + 1),
+                            StringAttribute("enzyme_type", string(rest)),
+                        )
+                    end
+                end
+            end
+
+            if llRT !== nothing &&
+               LLVM.return_type(LLVM.function_type(f)) != LLVM.VoidType()
+                @assert !retRemoved
+                rest = if llRT == Ptr{RT}
+                    typeTree = copy(typetree(RT, ctx, dl))
+                    merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
+                    only!(typeTree, -1)
+                    typeTree
+                else
+                    typetree(RT, ctx, dl)
+                end
+                push!(return_attributes(f), StringAttribute("enzyme_type", string(rest)))
+            end
+        end
+
+    end
+
+    custom = Dict{String,LLVM.API.LLVMLinkage}()
+
+    world = job.world
+    interp = GPUCompiler.get_interpreter(job)
+    method_table = Core.Compiler.method_table(interp)
+
+    state = HandlerState(
+        primalf,
+        #=mustwrap=#false,
+        #=actualRetType=#nothing,
+        #=lowerConvention=#true,
+        #=loweredArgs=#Set{Int}(),
+        #=boxedArgs=#Set{Int}(),
+        #=fnsToInject=#Tuple{Symbol,Type}[],
+    )
+
+    for fname in LLVM.name.(functions(mod))
+        if !haskey(functions(mod), fname)
+            continue
+        end
+        fn = functions(mod)[fname]
+        attributes = function_attributes(fn)
+        mi = nothing
+        RT = nothing
+        for fattr in collect(attributes)
+            if isa(fattr, LLVM.StringAttribute)
+                if kind(fattr) == "enzymejl_mi"
+                    ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
+                    mi = Base.unsafe_pointer_to_objref(ptr)
+                end
+            end
+            if kind(fattr) == "enzymejl_rt"
+                ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
+                RT = Base.unsafe_pointer_to_objref(ptr)
+            end
+        end
+        if mi !== nothing && RT !== nothing
+            handle_compiled(state, edges, run_enzyme, mode, world, method_table, custom, mod, mi, fname, RT)
+        end
+    end
+
+    return custom, state
+end
 
 function nested_codegen!(
     mode::API.CDerivativeMode,
@@ -396,6 +1215,18 @@ function nested_codegen!(
     @assert edges !== nothing
     edges = edges::Vector{Any}
     push!(edges, funcspec)
+
+    LLVM.ModulePassManager() do pm
+        API.AddPreserveNVVMPass!(pm, true) #=Begin=#
+        LLVM.run!(pm, otherMod)
+    end
+
+    check_ir(job, otherMod)
+
+    # Skipped inline of blas
+
+    run_enzyme = false
+    set_module_types!(otherMod, nothing, job, edges, run_enzyme, mode)
 
     # Apply first stage of optimization's so that this module is at the same stage as `mod`
     optimize!(otherMod, JIT.get_tm())
@@ -1280,89 +2111,6 @@ function __init__()
     register_llvm_rules()
 end
 
-# Define EnzymeTarget
-# Base.@kwdef 
-struct EnzymeTarget{Target<:AbstractCompilerTarget} <: AbstractCompilerTarget
-    target::Target
-end
-
-GPUCompiler.llvm_triple(target::EnzymeTarget) = GPUCompiler.llvm_triple(target.target)
-GPUCompiler.llvm_datalayout(target::EnzymeTarget) = GPUCompiler.llvm_datalayout(target.target)
-GPUCompiler.llvm_machine(target::EnzymeTarget) = GPUCompiler.llvm_machine(target.target)
-GPUCompiler.nest_target(::EnzymeTarget, other::AbstractCompilerTarget) = EnzymeTarget(other)
-GPUCompiler.have_fma(target::EnzymeTarget, T::Type) = GPUCompiler.have_fma(target.target, T)
-GPUCompiler.dwarf_version(target::EnzymeTarget) = GPUCompiler.dwarf_version(target.target)
-
-
-DefaultCompilerTarget(; kwargs...) =
-    GPUCompiler.NativeCompilerTarget(; jlruntime = true, kwargs...)
-
-# TODO: Audit uses
-function EnzymeTarget()
-    EnzymeTarget(DefaultCompilerTarget())
-end
-
-module Runtime end
-
-abstract type AbstractEnzymeCompilerParams <: AbstractCompilerParams end
-struct EnzymeCompilerParams{Params<:AbstractCompilerParams} <: AbstractEnzymeCompilerParams
-    params::Params
-
-    TT::Type{<:Tuple}
-    mode::API.CDerivativeMode
-    width::Int
-    rt::Type{<:Annotation{T} where {T}}
-    run_enzyme::Bool
-    abiwrap::Bool
-    # Whether, in split mode, acessible primal argument data is modified
-    # between the call and the split
-    modifiedBetween::NTuple{N,Bool} where {N}
-    # Whether to also return the primal
-    returnPrimal::Bool
-    # Whether to (in aug fwd) += by one
-    shadowInit::Bool
-    expectedTapeType::Type
-    # Whether to use the pointer ABI, default true
-    ABI::Type{<:ABI}
-    # Whether to error if the function is written to
-    err_if_func_written::Bool
-
-    # Whether runtime activity is enabled
-    runtimeActivity::Bool
-
-    # Whether to enforce that a zero derivative propagates as a zero (and never a nan)
-    strongZero::Bool
-end
-
-# FIXME: Should this take something like PTXCompilerParams/CUDAParams?
-struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
-    mode::API.CDerivativeMode
-end
-
-function EnzymeCompilerParams(TT, mode, width, rt, run_enzyme, abiwrap,
-                              modifiedBetween, returnPrimal, shadowInit,
-                              expectedTapeType, ABI,
-                              err_if_func_written, runtimeActivity, strongZero)
-    params = PrimalCompilerParams(mode)
-    EnzymeCompilerParams(
-        params,
-        TT,
-        mode,
-        width,
-        rt,
-        run_enzyme,
-        abiwrap,
-        modifiedBetween,
-        returnPrimal,
-        shadowInit,
-        expectedTapeType,
-        ABI,
-        err_if_func_written,
-        runtimeActivity,
-        strongZero
-    )
-end
-
 # FIXME: Use params.parent in more places where we rely on the behavior of the underlying 
 function GPUCompiler.nest_params(params::AbstractEnzymeCompilerParams, parent::AbstractCompilerParams)
     EnzymeCompilerParams(
@@ -1385,96 +2133,6 @@ function GPUCompiler.nest_params(params::AbstractEnzymeCompilerParams, parent::A
 end
 
 struct UnknownTapeType end
-
-
-
-
-## job
-
-# TODO: We shouldn't blanket opt-out
-GPUCompiler.check_invocation(job::CompilerJob{EnzymeTarget}, entry::LLVM.Function) = nothing
-
-GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) = Runtime
-# GPUCompiler.isintrinsic(::CompilerJob{EnzymeTarget}, fn::String) = true
-# GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
-
-# TODO: encode debug build or not in the compiler job
-#       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
-GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
-
-# provide a specific interpreter to use.
-if VERSION >= v"1.11.0-DEV.1552"
-    struct EnzymeCacheToken
-        target_type::Type
-        always_inline::Any
-        method_table::Core.MethodTable
-        param_type::Type
-        last_fwd_rule_world::Union{Nothing, Tuple}
-        last_rev_rule_world::Union{Nothing, Tuple}
-        last_ina_rule_world::Union{Nothing, Tuple}
-    end
-
-    @inline EnzymeCacheToken(target_type::Type, always_inline::Any, method_table::Core.MethodTable, param_type::Type, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
-        EnzymeCacheToken(target_type, always_inline, method_table, param_type,
-            is_forward ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.forward, Tuple{<:EnzymeCore.EnzymeRules.FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
-            is_reverse ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:EnzymeCore.EnzymeRules.RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
-            inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
-        )
-
-    GPUCompiler.ci_cache_token(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        EnzymeCacheToken(
-            typeof(job.config.target),
-            job.config.always_inline,
-            GPUCompiler.method_table(job),
-            typeof(job.config.params),
-            job.world,
-            job.config.params.mode == API.DEM_ForwardMode,
-            job.config.params.mode != API.DEM_ForwardMode,
-            true
-        )
-
-    GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        Interpreter.EnzymeInterpreter(
-            GPUCompiler.ci_cache_token(job),
-            GPUCompiler.method_table(job),
-            job.world,
-            job.config.params.mode,
-            true
-        )
-else
-
-    # the codeinstance cache to use -- should only be used for the constructor
-    # Note that the only way the interpreter modifies codegen is either not inlining a fwd mode
-    # rule or not inlining a rev mode rule. Otherwise, all caches can be re-used.
-    const GLOBAL_FWD_CACHE = GPUCompiler.CodeCache()
-    const GLOBAL_REV_CACHE = GPUCompiler.CodeCache()
-    function enzyme_ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams})
-        return if job.config.params.mode == API.DEM_ForwardMode
-            GLOBAL_FWD_CACHE
-        else
-            GLOBAL_REV_CACHE
-        end
-    end
-
-    GPUCompiler.ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        enzyme_ci_cache(job)
-
-    GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        Interpreter.EnzymeInterpreter(
-            enzyme_ci_cache(job),
-            GPUCompiler.method_table(job),
-            job.world,
-            job.config.params.mode,
-            true
-        )
-end
-
-include("compiler/optimize.jl")
-include("compiler/interpreter.jl")
-include("compiler/validation.jl")
-include("typeutils/inference.jl")
-
-import .Interpreter: isKWCallSignature
 
 """
 Create the methodinstance pair, and lookup the primal return type.
@@ -3519,478 +4177,6 @@ end
 const DumpPreCheck = Ref(false)
 const DumpPreOpt = Ref(false)
 
-mutable struct HandlerState
-    primalf::LLVM.Function
-    must_wrap::Bool
-    actualRetType::Union{Nothing, Type}
-    lowerConvention::Bool
-    loweredArgs::Set{Int}
-    boxedArgs::Set{Int}
-    fnsToInject::Vector{Tuple{Symbol,Type}}
-end
-
-
-function handleCustom(state::HandlerState, custom, k_name::String, llvmfn::LLVM.Function, name::String, attrs::Vector{LLVM.Attribute} = LLVM.Attribute[], setlink::Bool = true, noinl::Bool = true)
-    attributes = function_attributes(llvmfn)
-    custom[k_name] = linkage(llvmfn)
-    if setlink
-        linkage!(llvmfn, LLVM.API.LLVMExternalLinkage)
-    end
-    for a in attrs
-        push!(attributes, a)
-    end
-    push!(attributes, StringAttribute("enzyme_math", name))
-    if noinl
-        push!(attributes, EnumAttribute("noinline", 0))
-    end
-    state.must_wrap |= llvmfn == state.primalf
-    nothing
-end
-
-function handle_compiled(state::HandlerState, edges, run_enzyme::Bool, mode, world::UInt, method_table, custom, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type))::Nothing
-    has_custom_rule = false
-
-    specTypes = Interpreter.simplify_kw(mi.specTypes)
-
-    if mode == API.DEM_ForwardMode
-        has_custom_rule =
-            EnzymeRules.has_frule_from_sig(specTypes; world, method_table)
-        if has_custom_rule
-            @safe_debug "Found frule for" mi.specTypes
-        end
-    else
-        has_custom_rule =
-            EnzymeRules.has_rrule_from_sig(specTypes; world, method_table)
-        if has_custom_rule
-            @safe_debug "Found rrule for" mi.specTypes
-        end
-    end
-
-    if !haskey(functions(mod), k_name)
-        return
-    end
-
-    llvmfn = functions(mod)[k_name]
-    if llvmfn == state.primalf
-        state.actualRetType = rettype
-    end
-
-    if EnzymeRules.noalias_from_sig(mi.specTypes; world, method_table)
-        push!(edges, mi)
-        push!(return_attributes(llvmfn), EnumAttribute("noalias"))
-        for u in LLVM.uses(llvmfn)
-            c = LLVM.user(u)
-            if !isa(c, LLVM.CallInst)
-                continue
-            end
-            cf = LLVM.called_operand(c)
-            if cf == llvmfn
-                LLVM.API.LLVMAddCallSiteAttribute(
-                    c,
-                    LLVM.API.LLVMAttributeReturnIndex,
-                    LLVM.EnumAttribute("noalias", 0),
-                )
-            end
-        end
-    end
-
-    func = mi.specTypes.parameters[1]
-
-@static if VERSION < v"1.11-"
-else
-    if func == typeof(Core.memoryref)
-        attributes = function_attributes(llvmfn)
-        push!(attributes, EnumAttribute("alwaysinline", 0))
-    end
-end
-
-    meth = mi.def
-    name = meth.name
-    jlmod = meth.module
-
-    julia_activity_rule(llvmfn)
-    if has_custom_rule
-        handleCustom(
-            state,
-            custom,
-            k_name,
-            llvmfn,
-            "enzyme_custom",
-            LLVM.Attribute[StringAttribute("enzyme_preserve_primal", "*")],
-        )
-        return
-    end
-
-
-    sparam_vals = mi.specTypes.parameters[2:end] # mi.sparam_vals
-    if func == typeof(Base.eps) ||
-       func == typeof(Base.nextfloat) ||
-       func == typeof(Base.prevfloat)
-        if LLVM.version().major <= 15
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                "jl_inactive_inout",
-                LLVM.Attribute[
-                    StringAttribute("enzyme_inactive"),
-                    EnumAttribute("readnone"),
-                    EnumAttribute("speculatable"),
-                    StringAttribute("enzyme_shouldrecompute"),
-                ],
-            )
-        else
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                "jl_inactive_inout",
-                LLVM.Attribute[
-                    StringAttribute("enzyme_inactive"),
-                    EnumAttribute("memory", NoEffects.data),
-                    EnumAttribute("speculatable"),
-                    StringAttribute("enzyme_shouldrecompute"),
-                ],
-            )
-        end
-        return
-    end
-    if func == typeof(Base.to_tuple_type)
-        if LLVM.version().major <= 15
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                "jl_to_tuple_type",
-                LLVM.Attribute[
-                    EnumAttribute("readonly"),
-                    EnumAttribute("inaccessiblememonly", 0),
-                    EnumAttribute("speculatable", 0),
-                    StringAttribute("enzyme_shouldrecompute"),
-                    StringAttribute("enzyme_inactive"),
-                ],
-            )
-        else
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                "jl_to_tuple_type",
-                LLVM.Attribute[
-                    EnumAttribute(
-                        "memory",
-                        MemoryEffect(
-                            (MRI_NoModRef << getLocationPos(ArgMem)) |
-                            (MRI_Ref << getLocationPos(InaccessibleMem)) |
-                            (MRI_NoModRef << getLocationPos(Other)),
-                        ).data,
-                    ),
-                    EnumAttribute("inaccessiblememonly", 0),
-                    EnumAttribute("speculatable", 0),
-                    StringAttribute("enzyme_shouldrecompute"),
-                    StringAttribute("enzyme_inactive"),
-                ],
-            )
-        end
-        return
-    end
-    if func == typeof(Base.mightalias)
-        if LLVM.version().major <= 15
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                "jl_mightalias",
-                LLVM.Attribute[
-                    EnumAttribute("readonly"),
-                    StringAttribute("enzyme_shouldrecompute"),
-                    StringAttribute("enzyme_inactive"),
-                    StringAttribute("enzyme_no_escaping_allocation"),
-                    EnumAttribute("nofree"),
-                    StringAttribute("enzyme_ta_norecur"),
-                ],
-                true,
-                false,
-            )
-        else
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                "jl_mightalias",
-                LLVM.Attribute[
-                    EnumAttribute("memory", ReadOnlyEffects.data),
-                    StringAttribute("enzyme_shouldrecompute"),
-                    StringAttribute("enzyme_inactive"),
-                    StringAttribute("enzyme_no_escaping_allocation"),
-                    EnumAttribute("nofree"),
-                    StringAttribute("enzyme_ta_norecur"),
-                ],
-                true,
-                false,
-            )
-        end
-        return
-    end
-    if func == typeof(Base.Threads.threadid) || func == typeof(Base.Threads.nthreads)
-        name = (func == typeof(Base.Threads.threadid)) ? "jl_threadid" : "jl_nthreads"
-        if LLVM.version().major <= 15
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                name,
-                LLVM.Attribute[
-                    EnumAttribute("readonly"),
-                    EnumAttribute("inaccessiblememonly"),
-                    EnumAttribute("speculatable"),
-                    StringAttribute("enzyme_shouldrecompute"),
-                    StringAttribute("enzyme_inactive"),
-                    StringAttribute("enzyme_no_escaping_allocation"),
-                ],
-            )
-        else
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                name,
-                LLVM.Attribute[
-                    EnumAttribute(
-                        "memory",
-                        MemoryEffect(
-                            (MRI_NoModRef << getLocationPos(ArgMem)) |
-                            (MRI_Ref << getLocationPos(InaccessibleMem)) |
-                            (MRI_NoModRef << getLocationPos(Other)),
-                        ).data,
-                    ),
-                    EnumAttribute("speculatable"),
-                    StringAttribute("enzyme_shouldrecompute"),
-                    StringAttribute("enzyme_inactive"),
-                    StringAttribute("enzyme_no_escaping_allocation"),
-                ],
-            )
-        end
-        return
-    end
-    # Since this is noreturn and it can't write to any operations in the function
-    # in a way accessible by the function. Ideally the attributor should actually
-    # handle this and similar not impacting the read/write behavior of the calling
-    # fn, but it doesn't presently so for now we will ensure this by hand
-    if func == typeof(Base.Checked.throw_overflowerr_binaryop)
-        if LLVM.version().major <= 15
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                "enz_noop",
-                LLVM.Attribute[
-                    StringAttribute("enzyme_inactive"),
-                    EnumAttribute("readonly"),
-                    StringAttribute("enzyme_ta_norecur"),
-                ],
-            )
-        else
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                "enz_noop",
-                LLVM.Attribute[
-                    StringAttribute("enzyme_inactive"),
-                    EnumAttribute("memory", ReadOnlyEffects.data),
-                    StringAttribute("enzyme_ta_norecur"),
-                ],
-            )
-        end
-        return
-    end
-    if EnzymeRules.is_inactive_from_sig(specTypes; world, method_table)
-        push!(edges, mi)
-        handleCustom(
-            state,
-            custom,
-            k_name,
-            llvmfn,
-            "enz_noop",
-            LLVM.Attribute[
-                StringAttribute("enzyme_inactive"),
-                EnumAttribute("nofree"),
-                StringAttribute("enzyme_no_escaping_allocation"),
-                StringAttribute("enzyme_ta_norecur"),
-            ],
-        )
-        return
-    end
-    if EnzymeRules.is_inactive_noinl_from_sig(specTypes; world, method_table)
-        push!(edges, mi)
-        handleCustom(
-            state,
-            custom,
-            k_name,
-            llvmfn,
-            "enz_noop",
-            LLVM.Attribute[
-                StringAttribute("enzyme_inactive"),
-                EnumAttribute("nofree"),
-                StringAttribute("enzyme_no_escaping_allocation"),
-                StringAttribute("enzyme_ta_norecur"),
-            ],
-            false,
-            false,
-        )
-        for bb in blocks(llvmfn)
-            for inst in instructions(bb)
-                if isa(inst, LLVM.CallInst)
-                    LLVM.API.LLVMAddCallSiteAttribute(
-                        inst,
-                        reinterpret(
-                            LLVM.API.LLVMAttributeIndex,
-                            LLVM.API.LLVMAttributeFunctionIndex,
-                        ),
-                        StringAttribute("no_escaping_allocation"),
-                    )
-                    LLVM.API.LLVMAddCallSiteAttribute(
-                        inst,
-                        reinterpret(
-                            LLVM.API.LLVMAttributeIndex,
-                            LLVM.API.LLVMAttributeFunctionIndex,
-                        ),
-                        StringAttribute("enzyme_inactive"),
-                    )
-                    LLVM.API.LLVMAddCallSiteAttribute(
-                        inst,
-                        reinterpret(
-                            LLVM.API.LLVMAttributeIndex,
-                            LLVM.API.LLVMAttributeFunctionIndex,
-                        ),
-                        EnumAttribute("nofree"),
-                    )
-                end
-            end
-        end
-        return
-    end
-    if func === typeof(Base.match)
-        handleCustom(
-            state,
-            custom,
-            k_name,
-            llvmfn,
-            "base_match",
-            LLVM.Attribute[
-                StringAttribute("enzyme_inactive"),
-                EnumAttribute("nofree"),
-                StringAttribute("enzyme_no_escaping_allocation"),
-            ],
-            false,
-            false,
-        )
-        for bb in blocks(llvmfn)
-            for inst in instructions(bb)
-                if isa(inst, LLVM.CallInst)
-                    LLVM.API.LLVMAddCallSiteAttribute(
-                        inst,
-                        reinterpret(
-                            LLVM.API.LLVMAttributeIndex,
-                            LLVM.API.LLVMAttributeFunctionIndex,
-                        ),
-                        StringAttribute("no_escaping_allocation"),
-                    )
-                    LLVM.API.LLVMAddCallSiteAttribute(
-                        inst,
-                        reinterpret(
-                            LLVM.API.LLVMAttributeIndex,
-                            LLVM.API.LLVMAttributeFunctionIndex,
-                        ),
-                        StringAttribute("enzyme_inactive"),
-                    )
-                    LLVM.API.LLVMAddCallSiteAttribute(
-                        inst,
-                        reinterpret(
-                            LLVM.API.LLVMAttributeIndex,
-                            LLVM.API.LLVMAttributeFunctionIndex,
-                        ),
-                        EnumAttribute("nofree"),
-                    )
-                end
-            end
-        end
-        return
-    end
-    if func == typeof(Base.enq_work) &&
-       length(sparam_vals) == 1 &&
-       first(sparam_vals) <: Task
-        handleCustom(state, custom, k_name, llvmfn, "jl_enq_work", LLVM.Attribute[StringAttribute("enzyme_ta_norecur")])
-        return
-    end
-    if func == typeof(Base.wait) || func == typeof(Base._wait)
-        if length(sparam_vals) == 1 && first(sparam_vals) <: Task
-            handleCustom(state, custom, k_name, llvmfn, "jl_wait", LLVM.Attribute[StringAttribute("enzyme_ta_norecur")])
-        end
-        return
-    end
-    if func == typeof(Base.Threads.threading_run)
-        if length(sparam_vals) == 1 || length(sparam_vals) == 2
-            handleCustom(state, custom, k_name, llvmfn, "jl_threadsfor")
-        end
-        return
-    end
-
-    name, toinject, T = find_math_method(func, sparam_vals)
-    if name === nothing
-        return
-    end
-
-    if toinject !== nothing
-        push!(state.fnsToInject, toinject)
-    end
-
-    # If sret, force lower of primitive math fn
-    sret = get_return_info(rettype)[2] !== nothing
-    if sret
-        cur = llvmfn == state.primalf
-        llvmfn, _, state.boxedArgs, state.loweredArgs = lower_convention(
-            mi.specTypes,
-            mod,
-            llvmfn,
-            rettype,
-            Duplicated,
-            nothing,
-            run_enzyme,
-        )
-        if cur
-            state.primalf = llvmfn
-            state.lowerConvention = false
-        end
-        k_name = LLVM.name(llvmfn)
-        if !has_fn_attr(llvmfn, EnumAttribute("nofree"))
-            push!(LLVM.function_attributes(llvmfn), EnumAttribute("nofree"))
-        end
-    end
-
-    name = string(name)
-    name = T == Float32 ? name * "f" : name
-
-    attrs = if LLVM.version().major <= 15
-        LLVM.Attribute[LLVM.EnumAttribute("readnone"), StringAttribute("enzyme_shouldrecompute")]
-    else
-        LLVM.Attribute[EnumAttribute("memory", NoEffects.data), StringAttribute("enzyme_shouldrecompute")]
-    end
-    handleCustom(state, custom, k_name, llvmfn, name, attrs)
-    return
-end
-
 function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     @assert output == :llvm
     
@@ -4169,181 +4355,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         end
     end
 
-    for f in functions(mod)
-        mi, RT = enzyme_custom_extract_mi(f, false)
-        if mi === nothing
-            continue
-        end
-
-        llRT, sret, returnRoots = get_return_info(RT)
-        retRemoved, parmsRemoved = removed_ret_parms(f)
-
-        dl = string(LLVM.datalayout(LLVM.parent(f)))
-
-        expectLen = (sret !== nothing) + (returnRoots !== nothing)
-        for source_typ in mi.specTypes.parameters
-            if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
-                continue
-            end
-            expectLen += 1
-        end
-        expectLen -= length(parmsRemoved)
-
-        swiftself = has_swiftself(f)
-
-        if swiftself
-            expectLen += 1
-        end
-
-        # Unsupported calling conv
-        # also wouldn't have any type info for this [would for earlier args though]
-        if Base.isvarargtype(mi.specTypes.parameters[end])
-            continue
-        end
-
-        world = enzyme_extract_world(f)
-
-        if expectLen != length(parameters(f))
-            continue
-            throw(
-                AssertionError(
-                    "Wrong number of parameters $(string(f)) expectLen=$expectLen swiftself=$swiftself sret=$sret returnRoots=$returnRoots spec=$(mi.specTypes.parameters) retRem=$retRemoved parmsRem=$parmsRemoved",
-                ),
-            )
-        end
-
-        jlargs = classify_arguments(
-            mi.specTypes,
-            function_type(f),
-            sret !== nothing,
-            returnRoots !== nothing,
-            swiftself,
-            parmsRemoved,
-        )
-
-        ctx = LLVM.context(f)
-
-        push!(function_attributes(f), StringAttribute("enzyme_ta_norecur"))
-
-        if !no_type_setting(mi.specTypes; world)[1]
-            for arg in jlargs
-                if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
-                    continue
-                end
-                push!(
-                    parameter_attributes(f, arg.codegen.i),
-                    StringAttribute(
-                        "enzymejl_parmtype",
-                        string(convert(UInt, unsafe_to_pointer(arg.typ))),
-                    ),
-                )
-                push!(
-                    parameter_attributes(f, arg.codegen.i),
-                    StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))),
-                )
-
-                byref = arg.cc
-
-                rest = copy(typetree(arg.typ, ctx, dl))
-
-                if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
-                    # adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
-                    # object passing this in by ref isnt a {[-1]:Pointer, [-1,-1]:Int}
-                    # aka the next field after this in the bigger object isn't guaranteed to also be the same.
-                    if allocatedinline(arg.typ)
-                        shift!(rest, dl, 0, sizeof(arg.typ), 0)
-                    end
-                    merge!(rest, TypeTree(API.DT_Pointer, ctx))
-                    only!(rest, -1)
-                else
-                    # canonicalize wrt size
-                end
-                push!(
-                    parameter_attributes(f, arg.codegen.i),
-                    StringAttribute("enzyme_type", string(rest)),
-                )
-            end
-        end
-
-        if !no_type_setting(mi.specTypes; world)[2]
-            if sret !== nothing
-                idx = 0
-                if !in(0, parmsRemoved)
-                    rest = typetree(sret, ctx, dl)
-                    push!(
-                        parameter_attributes(f, idx + 1),
-                        StringAttribute("enzyme_type", string(rest)),
-                    )
-                    idx += 1
-                end
-                if returnRoots !== nothing
-                    if !in(1, parmsRemoved)
-                        rest = TypeTree(API.DT_Pointer, -1, ctx)
-                        push!(
-                            parameter_attributes(f, idx + 1),
-                            StringAttribute("enzyme_type", string(rest)),
-                        )
-                    end
-                end
-            end
-
-            if llRT !== nothing &&
-               LLVM.return_type(LLVM.function_type(f)) != LLVM.VoidType()
-                @assert !retRemoved
-                rest = if llRT == Ptr{RT}
-                    typeTree = copy(typetree(RT, ctx, dl))
-                    merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
-                    only!(typeTree, -1)
-                    typeTree
-                else
-                    typetree(RT, ctx, dl)
-                end
-                push!(return_attributes(f), StringAttribute("enzyme_type", string(rest)))
-            end
-        end
-
-    end
-
-    custom = Dict{String,LLVM.API.LLVMLinkage}()
-
-    world = job.world
-    interp = GPUCompiler.get_interpreter(job)
-    method_table = Core.Compiler.method_table(interp)
-
-    state = HandlerState(
-        primalf,
-        #=mustwrap=#false,
-        #=actualRetType=#nothing,
-        #=lowerConvention=#true,
-        #=loweredArgs=#Set{Int}(),
-        #=boxedArgs=#Set{Int}(),
-        #=fnsToInject=#Tuple{Symbol,Type}[],
-    )
-
-    for fname in LLVM.name.(functions(mod))
-        if !haskey(functions(mod), fname)
-            continue
-        end
-        fn = functions(mod)[fname]
-        attributes = function_attributes(fn)
-        mi = nothing
-        RT = nothing
-        for fattr in collect(attributes)
-            if isa(fattr, LLVM.StringAttribute)
-                if kind(fattr) == "enzymejl_mi"
-                    ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
-                    mi = Base.unsafe_pointer_to_objref(ptr)
-                end
-            end
-            if kind(fattr) == "enzymejl_rt"
-                ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
-                RT = Base.unsafe_pointer_to_objref(ptr)
-            end
-        end
-        if mi !== nothing && RT !== nothing
-            handle_compiled(state, edges, params.run_enzyme, mode, world, method_table, custom, mod, mi, fname, RT)
-        end
-    end
+    custom, state = set_module_types!(mod, primalf, job, edges, params.run_enzyme, mode)
 
     primalf = state.primalf
     must_wrap = state.must_wrap
@@ -4662,7 +4674,7 @@ end
             continue
         end
 
-        if !guaranteed_const_nongen(jTy, world)
+        if !guaranteed_const_nongen(jTy, job.world)
             continue
         end
         if isa(inst, LLVM.CallInst)
@@ -4682,7 +4694,7 @@ end
     if params.err_if_func_written
         FT = TT.parameters[1]
         Ty = eltype(FT)
-        reg = active_reg_inner(Ty, (), world)
+        reg = active_reg_inner(Ty, (), job.world)
         if reg == DupState || reg == MixedState
             swiftself = has_swiftself(primalf)
             todo = LLVM.Value[parameters(primalf)[1+swiftself]]
@@ -4706,7 +4718,7 @@ end
                     if !mayWriteToMemory(user)
                         slegal, foundv, byref = abs_typeof(user)
                         if slegal
-                            reg2 = active_reg_inner(foundv, (), world)
+                            reg2 = active_reg_inner(foundv, (), job.world)
                             if reg2 == ActiveState || reg2 == AnyState
                                 continue
                             end
@@ -4734,7 +4746,7 @@ end
                         if operands(user)[2] == cur
                             slegal, foundv, byref = abs_typeof(operands(user)[1])
                             if slegal
-                                reg2 = active_reg_inner(foundv, (), world)
+                                reg2 = active_reg_inner(foundv, (), job.world)
                                 if reg2 == AnyState
                                     continue
                                 end
@@ -4768,7 +4780,7 @@ end
                             if is_readonly(called)
                                 slegal, foundv, byref = abs_typeof(user)
                                 if slegal
-                                    reg2 = active_reg_inner(foundv, (), world)
+                                    reg2 = active_reg_inner(foundv, (), job.world)
                                     if reg2 == ActiveState || reg2 == AnyState
                                         continue
                                     end
@@ -4786,7 +4798,7 @@ end
                                 end
                                 slegal, foundv, byref = abs_typeof(user)
                                 if slegal
-                                    reg2 = active_reg_inner(foundv, (), world)
+                                    reg2 = active_reg_inner(foundv, (), job.world)
                                     if reg2 == ActiveState || reg2 == AnyState
                                         continue
                                     end
@@ -4917,8 +4929,8 @@ end
             ((LLVM.DoubleType(), Float64, ""), (LLVM.FloatType(), Float32, "f"))
             fname = String(name) * pf
             if haskey(functions(mod), fname)
-                funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, fnty, Tuple{JT}, world)
-                llvmf = nested_codegen!(mode, mod, funcspec, world)
+                funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, fnty, Tuple{JT}, job.world)
+                llvmf = nested_codegen!(mode, mod, funcspec, job.world)
                 push!(function_attributes(llvmf), StringAttribute("implements", fname))
             end
         end
