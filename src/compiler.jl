@@ -4680,7 +4680,7 @@ end
             continue
         end
 
-        if !guaranteed_const_nongen(jTy, world)
+        if !guaranteed_const_nongen(jTy, job.world)
             continue
         end
         if isa(inst, LLVM.CallInst)
@@ -4724,7 +4724,7 @@ end
                     if !mayWriteToMemory(user)
                         slegal, foundv, byref = abs_typeof(user)
                         if slegal
-                            reg2 = active_reg_inner(foundv, (), world)
+                            reg2 = active_reg_inner(foundv, (), job.world)
                             if reg2 == ActiveState || reg2 == AnyState
                                 continue
                             end
@@ -4752,7 +4752,7 @@ end
                         if operands(user)[2] == cur
                             slegal, foundv, byref = abs_typeof(operands(user)[1])
                             if slegal
-                                reg2 = active_reg_inner(foundv, (), world)
+                                reg2 = active_reg_inner(foundv, (), job.world)
                                 if reg2 == AnyState
                                     continue
                                 end
@@ -4786,7 +4786,7 @@ end
                             if is_readonly(called)
                                 slegal, foundv, byref = abs_typeof(user)
                                 if slegal
-                                    reg2 = active_reg_inner(foundv, (), world)
+                                    reg2 = active_reg_inner(foundv, (), job.world)
                                     if reg2 == ActiveState || reg2 == AnyState
                                         continue
                                     end
@@ -4804,7 +4804,7 @@ end
                                 end
                                 slegal, foundv, byref = abs_typeof(user)
                                 if slegal
-                                    reg2 = active_reg_inner(foundv, (), world)
+                                    reg2 = active_reg_inner(foundv, (), job.world)
                                     if reg2 == ActiveState || reg2 == AnyState
                                         continue
                                     end
@@ -4935,8 +4935,8 @@ end
             ((LLVM.DoubleType(), Float64, ""), (LLVM.FloatType(), Float32, "f"))
             fname = String(name) * pf
             if haskey(functions(mod), fname)
-                funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, fnty, Tuple{JT}, world)
-                llvmf = nested_codegen!(mode, mod, funcspec, world)
+                funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, fnty, Tuple{JT}, job.world)
+                llvmf = nested_codegen!(mode, mod, funcspec, job.world)
                 push!(function_attributes(llvmf), StringAttribute("implements", fname))
             end
         end
