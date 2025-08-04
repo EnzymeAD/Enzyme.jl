@@ -1561,5 +1561,6 @@ Returns true if within autodiff, otherwise false.
 @inline EnzymeCore.within_autodiff() = false
 
 include("precompile.jl")
+include("init.jl")
 
 end # module
