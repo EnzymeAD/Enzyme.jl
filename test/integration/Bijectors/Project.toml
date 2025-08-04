@@ -2,8 +2,14 @@
 Bijectors = "76274a88-744f-5084-9051-94815aaf08c4"
 FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
 StableRNGs = "860ef19b-820b-49d6-a774-d7a799459cd3"
+Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
+EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
 
 [compat]
 Bijectors = "=0.13.16"
 FiniteDifferences = "0.12.32"
 StableRNGs = "1.0.2"
+
+[sources]
+Enzyme = {path = "../../../"}
+EnzymeCore = {path = "../../../lib/EnzymeCore"}
