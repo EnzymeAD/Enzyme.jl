@@ -87,11 +87,7 @@ jobs:
         id: run_tests
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
-      - uses: julia-actions/julia-processcoverage@v1
-        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
-      - uses: codecov/codecov-action@v5
-        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
+      - uses: mxschmitt/action-tmate@v3
+        if: ${{ !cancelled() }}
         with:
-          files: lcov.info
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false  # or true if you want CI to fail when Codecov fails
+          limit-access-to-actor: false
