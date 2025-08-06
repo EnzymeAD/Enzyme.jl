@@ -1,4 +1,5 @@
 [deps]
+CMake_jll = "3f4e10e2-61f2-5801-8945-23b9d642d0e6"
 Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 Preferences = "21216c6a-2e73-6563-6e65-726566657250"
