@@ -1770,12 +1770,17 @@ end
 end
 
 # Create specializations
-setfield!(typeof(runtime_generic_fwd).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
-setfield!(typeof(runtime_generic_augfwd).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
-setfield!(typeof(runtime_generic_rev).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
-setfield!(typeof(runtime_iterate_fwd).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
-setfield!(typeof(runtime_iterate_augfwd).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
-setfield!(typeof(runtime_iterate_rev).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
+if !isdefined(Core, :GlobalMethods) # pre https://github.com/JuliaLang/julia/pull/58131
+    set_fn_max_args(f) = setfield!(typeof(f).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
+else
+    set_fn_max_args(f) = setfield!(typeof(f).name, :max_args, fieldtype(Core.TypeName, :max_args)(512), :monotonic)
+end
+set_fn_max_args(runtime_generic_fwd)
+set_fn_max_args(runtime_generic_augfwd)
+set_fn_max_args(runtime_generic_rev)
+set_fn_max_args(runtime_iterate_fwd)
+set_fn_max_args(runtime_iterate_augfwd)
+set_fn_max_args(runtime_iterate_rev)
 # for (N, Width) in Iterators.product(0:30, 1:10)
 #     eval(func_runtime_generic_fwd(N, Width))
 #     eval(func_runtime_generic_augfwd(N, Width))

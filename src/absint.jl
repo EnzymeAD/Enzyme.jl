@@ -601,9 +601,10 @@ function abs_typeof(
                 @assert Base.isconcretetype(typ)
                 seen = false
                 lasti = 1
+		
                 for i in 1:typed_fieldcount(typ)
                     fo = typed_fieldoffset(typ, i)
-                    if fo == offset
+                    if fo == offset && (i == typed_fieldcount(typ) || typed_fieldoffset(typ, i + 1) != offset)
                         offset = 0
                         typ = typed_fieldtype(typ, i)
                         if !Base.allocatedinline(typ)

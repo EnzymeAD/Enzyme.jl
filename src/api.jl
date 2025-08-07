@@ -856,6 +856,43 @@ EnzymeGradientUtilsSubTransferHelper(
     shadowsLookedUp,
 )
 
+EnzymeGradientUtilsAddReverseBlock(
+    gutils,
+    block,
+    name,
+    forkCache,
+    push
+) = ccall(
+    (:EnzymeGradientUtilsAddReverseBlock, libEnzyme),
+    LLVM.API.LLVMBasicBlockRef,
+    (
+        EnzymeGradientUtilsRef,
+        LLVM.API.LLVMBasicBlockRef,
+        Cstring,
+        UInt8,
+        UInt8,
+    ),
+    gutils,
+    block,
+    name,
+    forkCache,
+    push
+)
+
+EnzymeGradientUtilsSetReverseBlock(
+    gutils,
+    block,
+) = ccall(
+    (:EnzymeGradientUtilsSetReverseBlock, libEnzyme),
+    LLVM.API.LLVMBasicBlockRef,
+    (
+        EnzymeGradientUtilsRef,
+        LLVM.API.LLVMBasicBlockRef,
+    ),
+    gutils,
+    block,
+)
+
 EnzymeGradientUtilsCallWithInvertedBundles(
     gutils,
     func,
