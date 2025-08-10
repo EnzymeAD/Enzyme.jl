@@ -400,6 +400,18 @@ Base.@assume_effects :removable :foldable :nothrow function has_fn_attr(fn::LLVM
     return false
 end
 
+Base.@assume_effects :removable :foldable :nothrow function has_arg_attr(fn::LLVM.Function, i::Int, attr::LLVM.StringAttribute)::Bool
+    ekind = LLVM.kind(attr)
+    for attr in collect(parameter_attributes(fn, i))
+        if attr isa LLVM.StringAttribute
+            if kind(attr) == ekind
+                return true
+            end
+        end
+    end
+    return false
+end
+
 function eraseInst(bb::LLVM.BasicBlock, @nospecialize(inst::LLVM.Instruction))
     @static if isdefined(LLVM, Symbol("erase!"))
         LLVM.erase!(inst)

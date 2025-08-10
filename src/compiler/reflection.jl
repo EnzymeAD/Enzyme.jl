@@ -1,8 +1,11 @@
+import GPUCompiler
+
 function get_job(
     @nospecialize(func),
     @nospecialize(A),
     @nospecialize(types);
     run_enzyme::Bool = true,
+    optimize::Bool = true,
     mode::API.CDerivativeMode = API.DEM_ReverseModeCombined,
     dupClosure::Bool = false,
     argwrap::Bool = true,
@@ -13,7 +16,8 @@ function get_job(
     world = nothing,
     ABI = DefaultABI,
     ErrIfFuncWritten = false,
-    RuntimeActivity = true,
+    RuntimeActivity = false,
+    StrongZero = false,
     kwargs...,
 )
 
@@ -47,8 +51,9 @@ function get_job(
         ABI,
         ErrIfFuncWritten,
         RuntimeActivity,
+        StrongZero
     )
-    return Compiler.CompilerJob(
+    return GPUCompiler.CompilerJob(
             primal,
             CompilerConfig(target, params; kernel = false),
             world,
@@ -64,9 +69,9 @@ function reflect(
     kwargs...,
 )
 
-    job = get_job(func, A, types; kwargs...)
+    job = get_job(func, A, types; optimize, kwargs...)
     # Codegen the primal function and all its dependency in one module
-    mod, meta = Compiler.codegen(:llvm, job; optimize) #= validate=false =#
+    mod, meta = GPUCompiler.codegen(:llvm, job) #= validate=false =#
 
     if second_stage
         post_optimze!(mod, JIT.get_tm())

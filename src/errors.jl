@@ -60,6 +60,8 @@ end
 
 struct IllegalTypeAnalysisException <: CompilationException
     msg::String
+    mi::Union{Nothing, Core.MethodInstance}
+    world::Union{Nothing, UInt}
     sval::String
     ir::Union{Nothing,String}
     bt::Union{Nothing,Vector{StackTraces.StackFrame}}
@@ -73,6 +75,15 @@ function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
     print(io, " This usually indicates the use of a Union type, which is not fully supported with Enzyme.API.strictAliasing set to true [the default].\n")
     print(io, " Ideally, remove the union (which will also make your code faster), or try setting Enzyme.API.strictAliasing!(false) before any autodiff call.\n")
     print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
+        if ece.mi !== nothing
+        print(io, " Failure within method: ", ece.mi, "\n")
+        printstyled(io, "Hint"; bold = true, color = :cyan)
+        printstyled(
+            io,
+            ": catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\nIf you have Cthulu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.";
+            color = :cyan,
+        )
+    end
     if VERBOSE_ERRORS[]
         if ece.ir !== nothing
             print(io, "Current scope: \n")
@@ -86,6 +97,45 @@ function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
         print(io, "\nCaused by:")
         Base.show_backtrace(io, ece.bt)
         println(io)
+    end
+end
+
+using InteractiveUtils
+
+function InteractiveUtils.code_typed(ece::IllegalTypeAnalysisException; interactive::Bool=false, kwargs...)
+    mi = ece.mi
+    if mi === nothing
+        throw(AssertionError("code_typed(::IllegalTypeAnalysisException; interactive::Bool=false, kwargs...) not supported for error without mi"))
+    end
+    world = ece.world::UInt
+    mode = Enzyme.API.DEM_ReverseModeCombined
+
+    CT = @static if VERSION >= v"1.11.0-DEV.1552"
+        EnzymeCacheToken(
+            typeof(DefaultCompilerTarget()),
+            false,
+            GPUCompiler.GLOBAL_METHOD_TABLE, #=job.config.always_inline=#
+            EnzymeCompilerParams,
+            world,
+            false,
+            true,
+            true
+        )
+    else
+        Enzyme.Compiler.GLOBAL_REV_CACHE
+    end
+
+    interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true)
+
+    sig = mi.specTypes  # XXX: can we just use the method instance?
+    if interactive
+        # call Cthulhu without introducing a dependency on Cthulhu
+        mod = get(Base.loaded_modules, Cthulhu, nothing)
+        mod===nothing && error("Interactive code reflection requires Cthulhu; please install and load this package first.")
+        descend_code_typed = getfield(mod, :descend_code_typed)
+        descend_code_typed(sig; interp, kwargs...)
+    else
+        Base.code_typed_by_type(sig; interp, kwargs...)
     end
 end
 
@@ -354,16 +404,25 @@ function julia_error(
         sval = Base.unsafe_string(ip)
         API.EnzymeStringFree(ip)
 
+        mi = nothing
+        world = nothing
+
         if isa(val, LLVM.Instruction)
+            f = LLVM.parent(LLVM.parent(val))::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
-                LLVM.parent(LLVM.parent(val))::LLVM.Function,
+                f,
                 false,
             ) #=error=#
-            if mi !== nothing
-                msg *= "\n" * string(mi) * "\n"
-            end
+            world = enzyme_extract_world(f)
+        elseif isa(val, LLVM.Argument)
+            f = parent_scope(val)::LLVM.Function
+            mi, rt = enzyme_custom_extract_mi(
+                f,
+                false,
+            ) #=error=#
+            world = enzyme_extract_world(f)
         end
-        throw(IllegalTypeAnalysisException(msg, sval, ir, bt))
+        throw(IllegalTypeAnalysisException(msg, mi, world, sval, ir, bt))
     elseif errtype == API.ET_NoType
         @assert B != C_NULL
         B = IRBuilder(B)
@@ -825,4 +884,21 @@ end
         return C_NULL
     end
     throw(AssertionError("Unknown errtype"))
+end
+
+struct EnzymeNonScalarReturnException <: EnzymeError
+    object
+    extra::String
+end
+
+function Base.showerror(io::IO, ece::EnzymeNonScalarReturnException)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
+    println(io, "Return type of differentiated function was not a scalar as required, found ", ece.object)
+    println(io, "If calling Enzyme.autodiff(Reverse, f, Active, ...), try Enzyme.autodiff_thunk(Reverse, f, Duplicated, ....)")
+    println(io, "If calling Enzyme.gradient, try Enzyme.jacobian")
+    if length(ece.extra) != 0
+        print(io, ece.extra)
+    end
 end

@@ -256,6 +256,7 @@ function EnzymeCreatePrimalAndGradient(
     dretUsed,
     mode,
     runtimeActivity,
+    strongZero,
     width,
     additionalArg,
     forceAnonymousTape,
@@ -282,6 +283,7 @@ function EnzymeCreatePrimalAndGradient(
             UInt8,
             CDerivativeMode,
             UInt8,
+            UInt8,
             Cuint,
             UInt8,
             LLVMTypeRef,
@@ -305,6 +307,7 @@ function EnzymeCreatePrimalAndGradient(
         dretUsed,
         mode,
         runtimeActivity,
+        strongZero,
         width,
         freeMemory,
         additionalArg,
@@ -327,6 +330,7 @@ function EnzymeCreateForwardDiff(
     returnValue,
     mode,
     runtimeActivity,
+    strongZero,
     width,
     additionalArg,
     typeInfo,
@@ -351,6 +355,7 @@ function EnzymeCreateForwardDiff(
             CDerivativeMode,
             UInt8,
             UInt8,
+            UInt8,
             Cuint,
             LLVMTypeRef,
             CFnTypeInfo,
@@ -371,6 +376,7 @@ function EnzymeCreateForwardDiff(
         mode,
         freeMemory,
         runtimeActivity,
+        strongZero,
         width,
         additionalArg,
         typeInfo,
@@ -404,6 +410,7 @@ function EnzymeCreateAugmentedPrimal(
     uncacheable_args,
     forceAnonymousTape,
     runtimeActivity,
+    strongZero,
     width,
     atomicAdd,
 )
@@ -428,6 +435,7 @@ function EnzymeCreateAugmentedPrimal(
             Csize_t,
             UInt8,
             UInt8,
+            UInt8,
             Cuint,
             UInt8,
         ),
@@ -447,6 +455,7 @@ function EnzymeCreateAugmentedPrimal(
         length(uncacheable_args),
         forceAnonymousTape,
         runtimeActivity,
+        strongZero,
         width,
         atomicAdd,
     )
@@ -609,6 +618,13 @@ EnzymeGradientUtilsGetWidth(gutils) = ccall(
 EnzymeGradientUtilsGetRuntimeActivity(gutils) =
     ccall(
         (:EnzymeGradientUtilsGetRuntimeActivity, libEnzyme),
+        UInt8,
+        (EnzymeGradientUtilsRef,),
+        gutils,
+    ) != 0
+EnzymeGradientUtilsGetStrongZero(gutils) =
+    ccall(
+        (:EnzymeGradientUtilsGetStrongZero, libEnzyme),
         UInt8,
         (EnzymeGradientUtilsRef,),
         gutils,
@@ -838,6 +854,43 @@ EnzymeGradientUtilsSubTransferHelper(
     MTI,
     allowForward,
     shadowsLookedUp,
+)
+
+EnzymeGradientUtilsAddReverseBlock(
+    gutils,
+    block,
+    name,
+    forkCache,
+    push
+) = ccall(
+    (:EnzymeGradientUtilsAddReverseBlock, libEnzyme),
+    LLVM.API.LLVMBasicBlockRef,
+    (
+        EnzymeGradientUtilsRef,
+        LLVM.API.LLVMBasicBlockRef,
+        Cstring,
+        UInt8,
+        UInt8,
+    ),
+    gutils,
+    block,
+    name,
+    forkCache,
+    push
+)
+
+EnzymeGradientUtilsSetReverseBlock(
+    gutils,
+    block,
+) = ccall(
+    (:EnzymeGradientUtilsSetReverseBlock, libEnzyme),
+    LLVM.API.LLVMBasicBlockRef,
+    (
+        EnzymeGradientUtilsRef,
+        LLVM.API.LLVMBasicBlockRef,
+    ),
+    gutils,
+    block,
 )
 
 EnzymeGradientUtilsCallWithInvertedBundles(
@@ -1195,18 +1248,6 @@ Whether generated derivatives have fast math on or off, default on.
 """
 function fast_math!(val)
     ptr = cglobal((:EnzymeFastMath, libEnzyme))
-    ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
-end
-
-"""
-    strong_zero!(val::Bool)
-
-Whether to enforce multiplication by zero as enforcing a zero result even if multiplying
-against a NaN or infinity. Necessary for some programs in which a value has a zero
-derivative since it is unused, even if it has an otherwise infinite or nan derivative.
-"""
-function strong_zero!(val)
-    ptr = cglobal((:EnzymeStrongZero, libEnzyme))
     ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 

@@ -50,7 +50,7 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
         e = LLVM.API.LLVMGetElementType(Type)
         T, sub = to_tape_type(e)
         len = Int(LLVM.API.LLVMGetVectorSize(Type))
-        Tup = NTuple{len,T}
+        Tup = NTuple{len,Core.VecElement{T}}
         if sub
             return NamedTuple{ntuple(Core.Symbol, Val(len)),Tup}, false
         else

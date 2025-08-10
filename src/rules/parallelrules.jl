@@ -5,8 +5,9 @@ function runtime_newtask_fwd(
     post::Any,
     ssize::Int,
     runtimeActivity::Val{RuntimeActivity},
+    strongZero::Val{StrongZero},
     ::Val{width},
-) where {FT1,FT2,width,RuntimeActivity}
+) where {FT1,FT2,width,RuntimeActivity, StrongZero}
     FT = Core.Typeof(fn)
     ghos = guaranteed_const(FT)
     forward = thunk(
@@ -22,6 +23,7 @@ function runtime_newtask_fwd(
         FFIABI,
         Val(false),
         runtimeActivity,
+        strongZero
     ) #=erriffuncwritten=#
     ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     function fclosure()
@@ -43,9 +45,10 @@ function runtime_newtask_augfwd(
     post::Any,
     ssize::Int,
     runtimeActivity::Val{RuntimeActivity},
+    strongZero::Val{StrongZero},
     ::Val{width},
     ::Val{ModifiedBetween},
-) where {FT1,FT2,width,ModifiedBetween,RuntimeActivity}
+) where {FT1,FT2,width,ModifiedBetween,RuntimeActivity,StrongZero}
     # TODO make this AD subcall type stable
     FT = Core.Typeof(fn)
     ghos = guaranteed_const(FT)
@@ -62,6 +65,7 @@ function runtime_newtask_augfwd(
         FFIABI,
         Val(false),
         runtimeActivity,
+        strongZero
     ) #=erriffuncwritten=#
     ft = ghos ? Const(fn) : Duplicated(fn, dfn)
     taperef = Ref{Any}()
@@ -272,6 +276,7 @@ end
                 FFIABI,
                 false,
                 get_runtime_activity(gutils),
+                get_strong_zero(gutils),
             ) #=ErrIfFuncWritten=#
             ejob = Compiler.CompilerJob(
                 mi2,
@@ -333,6 +338,7 @@ end
                 FFIABI,
                 false,
                 get_runtime_activity(gutils),
+                get_strong_zero(gutils),
             ) #=ErrIfFuncWritten=#
             ejob = Compiler.CompilerJob(
                 mi2,
@@ -696,6 +702,7 @@ end
             new_from_original(gutils, ops[3]),
         ),
         unsafe_to_llvm(B, Val(get_runtime_activity(gutils))),
+        unsafe_to_llvm(B, Val(get_strong_zero(gutils))),
         unsafe_to_llvm(B, Val(width)),
     ]
 
@@ -751,6 +758,7 @@ end
             new_from_original(gutils, ops[3]),
         ),
         unsafe_to_llvm(B, Val(get_runtime_activity(gutils))),
+        unsafe_to_llvm(B, Val(get_strong_zero(gutils))),
         unsafe_to_llvm(B, Val(width)),
         unsafe_to_llvm(B, Val(ModifiedBetween)),
     ]

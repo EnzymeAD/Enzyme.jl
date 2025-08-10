@@ -1,3 +1,76 @@
+
+
+@generated function create_shadow_ret(::Val{atup}, ::Val{aref}, primarg::PT, batchshadowarg::BSA) where {atup, aref, PT, BSA}
+    if aref == AnyState
+        return quote
+            Base.@_inline_meta
+            primarg
+        end
+    else
+        if !atup
+            if (aref == DupState || aref == MixedState) &&
+               batchshadowarg == Nothing
+                return quote
+                    Base.@_inline_meta
+                    throw(
+                        "Error cannot store inactive but differentiable variable "*string(primarg)*" into active tuple",
+                    )
+                end
+            end
+        end
+        if aref == DupState
+            return quote
+                Base.@_inline_meta
+                batchshadowarg
+            end
+        else
+            return quote
+                Base.@_inline_meta
+                batchshadowarg[]
+            end
+        end
+    end
+
+    if atup && aref != AnyState
+        @assert PT !== DataType
+        if Aref == ActiveState
+            return quote
+                Base.@_inline_meta
+                Active(primarg)
+            end
+        elseif aref == MixedState
+            if Width == 1
+                return quote
+                    Base.@_inline_meta
+                    MixedDuplicated(primarg, shadowarg)
+                end
+            else
+                return quote
+                    Base.@_inline_meta
+                    BatchMixedDuplicated(primarg, shadowarg)
+                end
+            end
+        else
+            if Width == 1
+                return quote
+                    Base.@_inline_meta
+                    Duplicated(primarg, shadowarg)
+                end
+            else
+                return quote
+                    Base.@_inline_meta
+                    BatchDuplicated(primarg, shadowarg)
+                end
+            end
+        end
+    else
+        return quote
+            Base.@_inline_meta
+            Const(primarg)
+        end
+    end
+end
+
 function body_construct_augfwd(
     N,
     Width,
@@ -8,9 +81,10 @@ function body_construct_augfwd(
     tuple,
 )
     shadow_rets = Vector{Expr}[]
-    results = quote
+    results = Expr[quote
         $(active_refs...)
     end
+    ]
     @assert length(primtypes) == N
     @assert length(primargs) == N
     @assert length(batchshadowargs) == N
@@ -21,81 +95,48 @@ function body_construct_augfwd(
         for w = 1:Width
             sref = Symbol("sub_shadow_" * string(i) * "_" * string(w))
             push!(
-                shadow_rets_i,
-                quote
-                    $sref = if $aref == AnyState
-                        $(primargs[i])
-                    else
-                        if !ActivityTup[$i]
-                            if ($aref == DupState || $aref == MixedState) &&
-                               $(batchshadowargs[i][w]) === nothing
-                                prim = $(primargs[i])
-                                throw(
-                                    "Error cannot store inactive but differentiable variable $prim into active tuple",
-                                )
-                            end
-                        end
-                        if $aref == DupState
-                            $(batchshadowargs[i][w])
-                        else
-                            $(batchshadowargs[i][w])[]
-                        end
-                    end
-                end,
-            )
+                shadow_rets_i, Expr(:call, create_shadow_ret, :(Val(ActivityTup[$i])), :(Val($aref)), primargs[i], batchshadowargs[i][w]))
         end
         push!(shadow_rets, shadow_rets_i)
     end
 
-    refs = Expr[]
-    ref_syms = Symbol[]
+    ref_syms = Expr[]
     res_syms = Symbol[]
     for w = 1:Width
         sres = Symbol("result_$w")
-        ref_res = Symbol("ref_result_$w")
         combined = Expr[]
         for i = 1:N
             push!(combined, shadow_rets[i][w])
         end
         if tuple
-            results = quote
-                $results
-                $sres = ($(combined...),)
-            end
+            push!(results, Expr(:(=), sres, Expr(:tuple, combined...)))
         else
-            results = quote
-                $results
-                $sres = $(Expr(:new, :NewType, combined...))
-            end
+            push!(results, Expr(:(=), sres, Expr(:new, :NewType, combined...)))
         end
-        push!(refs, quote
-            $ref_res = Ref($sres)
-        end)
-        push!(ref_syms, ref_res)
+        push!(ref_syms, Expr(:call, Ref, sres))
         push!(res_syms, sres)
     end
 
     if Width == 1
-        return quote
-            $results
-            if any_mixed
-                $(refs...)
-                $(ref_syms[1])
-            else
-                $(res_syms[1])
-            end
-        end
+        push!(results,
+            quote
+                if any_mixed
+                    $(ref_syms[1])
+                else
+                    $(res_syms[1])
+                end
+            end)
     else
-        return quote
-            $results
-            if any_mixed
-                $(refs...)
-                ReturnType(($(ref_syms...),))
-            else
-                ReturnType(($(res_syms...),))
-            end
-        end
+        push!(results, quote
+                if any_mixed
+                    ReturnType(($(ref_syms...),))
+                else
+                    ReturnType(($(res_syms...),))
+                end
+            end)
     end
+
+    return Expr(:block, results...)
 end
 
 
@@ -106,6 +147,7 @@ function body_construct_rev(
     active_refs,
     primargs,
     batchshadowargs,
+    dfns,
     tuple,
 )
     outs = Vector{Expr}(undef, N*Width)
@@ -124,10 +166,7 @@ function body_construct_rev(
                     if $shad isa Base.RefValue
                         $shad[] = recursive_add($shad[], $expr, identity, guaranteed_nonactive)
                     else
-                        error(
-                            "Enzyme Mutability Error: Cannot add one in place to immutable value " *
-                            string($shad),
-                        )
+                        throw(EnzymeNonScalarReturnException($shad, ""))
                     end
                 end
             )
@@ -139,7 +178,7 @@ function body_construct_rev(
     @inbounds tapes[1] = :(tval_1 = tape[])
     for w = 2:Width
         sym = Symbol("tval_$w")
-        df = Symbol("df_$w")
+        df = dfns[w]
         @inbounds tapes[w] = :($sym = $df[])
     end
 
@@ -155,8 +194,8 @@ function body_construct_rev(
 end
 
 
-function body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs)
-    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, true)
+function body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns)
+    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns, true)
 end
 
 function body_runtime_newstruct_rev(
@@ -166,8 +205,9 @@ function body_runtime_newstruct_rev(
     active_refs,
     primargs,
     batchshadowargs,
+    dfns
 )
-    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, false)
+    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns, false)
 end
 
 
@@ -183,7 +223,7 @@ function body_runtime_tuple_augfwd(
 end
 
 function func_runtime_tuple_augfwd(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs =
+    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width; func = false, mixed_or_active = true)
     body = body_runtime_tuple_augfwd(
         N,
@@ -214,8 +254,8 @@ end
     RT::Val{ReturnType},
     allargs...,
 )::ReturnType where {ActivityTup,MB,Width,ReturnType}
-    N = div(length(allargs), Width)
-    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs =
+    N = div(length(allargs), Width + 1)
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs; func = false, mixed_or_active = true)
     return body_runtime_tuple_augfwd(
         N,
@@ -229,10 +269,10 @@ end
 
 
 function func_runtime_tuple_rev(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs =
+    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width; mixed_or_active = true)
     body =
-        body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs)
+        body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns)
 
     quote
         function runtime_tuple_rev(
@@ -254,8 +294,8 @@ end
     tape::TapeType,
     allargs...,
 ) where {ActivityTup,MB,Width,TapeType}
-    N = div(length(allargs) - (Width - 1), Width)
-    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs =
+    N = div(length(allargs), Width + 1)
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs; mixed_or_active = true)
     return body_runtime_tuple_rev(
         N,
@@ -264,6 +304,7 @@ end
         active_refs,
         primargs,
         batchshadowargs,
+        dfns
     )
 end
 
@@ -288,7 +329,7 @@ function body_runtime_newstruct_augfwd(
 end
 
 function func_runtime_newstruct_augfwd(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs =
+    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width; mixed_or_active = true)
     body = body_runtime_newstruct_augfwd(
         N,
@@ -321,8 +362,8 @@ end
     RT::Val{ReturnType},
     allargs...,
 )::ReturnType where {ActivityTup,MB,Width,ReturnType,NewType}
-    N = div(length(allargs) + 2, Width + 1) - 1
-    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs =
+    N = div(length(allargs), Width + 1)
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs; mixed_or_active = true)
     return body_runtime_newstruct_augfwd(
         N,
@@ -335,7 +376,7 @@ end
 end
 
 function func_runtime_newstruct_rev(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs =
+    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width; mixed_or_active = true)
     body = body_runtime_newstruct_rev(
         N,
@@ -344,6 +385,7 @@ function func_runtime_newstruct_rev(N, Width)
         active_refs,
         primargs,
         batchshadowargs,
+        dfns
     )
 
     quote
@@ -368,8 +410,8 @@ end
     tape::TapeType,
     allargs...,
 ) where {ActivityTup,MB,Width,NewStruct,TapeType}
-    N = div(length(allargs) - (Width - 1), Width)
-    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs =
+    N = div(length(allargs), Width + 1)
+    primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs; mixed_or_active = true)
     return body_runtime_newstruct_rev(
         N,
@@ -378,15 +420,20 @@ end
         active_refs,
         primargs,
         batchshadowargs,
+        dfns
     )
 end
 
-for (N, Width) in Iterators.product(0:30, 1:10)
-    eval(func_runtime_newstruct_augfwd(N, Width))
-    eval(func_runtime_newstruct_rev(N, Width))
-    eval(func_runtime_tuple_augfwd(N, Width))
-    eval(func_runtime_tuple_rev(N, Width))
-end
+set_fn_max_args(runtime_newstruct_augfwd)
+set_fn_max_args(runtime_newstruct_rev)
+set_fn_max_args(runtime_tuple_augfwd)
+set_fn_max_args(runtime_tuple_rev)
+# for (N, Width) in Iterators.product(0:30, 1:10)
+#     eval(func_runtime_newstruct_augfwd(N, Width))
+#     eval(func_runtime_newstruct_rev(N, Width))
+#     eval(func_runtime_tuple_augfwd(N, Width))
+#     eval(func_runtime_tuple_rev(N, Width))
+# end
 
 
 # returns if legal and completed
@@ -535,6 +582,7 @@ function common_newstructv_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
             endcast = false,
             firstconst_after_tape = true,
             runtime_activity = false,
+            strong_zero = false
         ) #=start=#
 
         if width == 1
@@ -602,6 +650,7 @@ function common_newstructv_rev(offset, B, orig, gutils, tape)
             tape,
             firstconst_after_tape = true,
             runtime_activity = false,
+            strong_zero = false
         ) #=start=#
     end
 
@@ -651,6 +700,7 @@ function common_f_tuple_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
             false;
             endcast = false,
             runtime_activity = false,
+            strong_zero = false
         ) #=start=#
 
         if width == 1
@@ -743,6 +793,7 @@ function common_f_tuple_rev(offset, B, orig, gutils, tape)
             true;
             tape = tape2,
             runtime_activity = false,
+            strong_zero = false
         ) #=start=#
     end
     return nothing
@@ -1009,7 +1060,7 @@ end
             push!(vals, tape)
             push!(vals, shadowsin)
         else
-            for i in 1:width  
+            for i in 1:width
                 push!(vals, extract_value!(B, tape, i - 1))
                 push!(vals, extract_value!(B, shadowsin, i - 1))
             end
@@ -1071,7 +1122,7 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
 		end
 
 	    normal = new_from_original(gutils, orig)
-        
+
         if width == 1
             shadowres = normal
         else

@@ -52,9 +52,14 @@ import EnzymeCore:
     set_abi,
     set_runtime_activity,
     clear_runtime_activity,
+    set_strong_zero,
+    clear_strong_zero,
     within_autodiff,
     WithPrimal,
     NoPrimal,
+    needs_primal,
+    runtime_activity,
+    strong_zero,
     Split
 export Annotation,
     Const,
@@ -74,9 +79,14 @@ export Annotation,
     set_abi,
     set_runtime_activity,
     clear_runtime_activity,
+    set_strong_zero,
+    clear_strong_zero,
     WithPrimal,
     NoPrimal,
-    within_autodiff
+    within_autodiff,
+    needs_primal,
+    runtime_activity,
+    strong_zero
 
 import EnzymeCore: BatchDuplicatedFunc
 export BatchDuplicatedFunc
@@ -94,14 +104,16 @@ import EnzymeCore:
     autodiff_deferred_thunk,
     tape_type,
     make_zero,
-    make_zero!
+    make_zero!,
+    remake_zero!
 export autodiff,
     autodiff_deferred,
     autodiff_thunk,
     autodiff_deferred_thunk,
     tape_type,
     make_zero,
-    make_zero!
+    make_zero!,
+    remake_zero!
 
 export jacobian, gradient, gradient!, hvp, hvp!, hvp_and_gradient!
 export batch_size, onehot, chunkedonehot
@@ -135,10 +147,7 @@ include("internal_rules.jl")
 import .Compiler: CompilationException
 
 @inline function falses_from_args(N)
-    ntuple(Val(N)) do i
-        Base.@_inline_meta
-        false
-    end
+    ntuple(Returns(false), Val(N))
 end
 
 @inline function any_active(args::Vararg{Annotation,N}) where {N}
@@ -347,7 +356,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     point values, but cannot do so for integer values in tuples and structs.
 """
 @inline function autodiff(
-    mode::ReverseMode{ReturnPrimal,RuntimeActivity,RABI,Holomorphic,ErrIfFuncWritten},
+    mode::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,RABI,Holomorphic,ErrIfFuncWritten},
     f::FA,
     ::Type{A0},
     args::Vararg{Annotation,Nargs},
@@ -356,6 +365,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     A0<:Annotation,
     ReturnPrimal,
     RuntimeActivity,
+    StrongZero,
     RABI<:ABI,
     Holomorphic,
     Nargs,
@@ -388,6 +398,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
                     ReturnPrimal,
                     #=ReturnShadow=#false,
                     RuntimeActivity,
+                    StrongZero,
                     width,
                     ModifiedBetweenT,
                     RABI,
@@ -462,6 +473,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
                 RABI,
                 Val(ErrIfFuncWritten),
                 Val(RuntimeActivity),
+                Val(StrongZero)
             ) #=ShadowInit=#
 
             results = thunk(f, args..., (rt(0), rt(1), rt(im)))
@@ -501,6 +513,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
         RABI,
         Val(ErrIfFuncWritten),
         Val(RuntimeActivity),
+        Val(StrongZero)
     ) #=ShadowInit=#
 
     if A0 <: Active
@@ -591,14 +604,14 @@ f(x) = x*x
 ```
 """
 @inline function autodiff(
-    mode::ForwardMode{ReturnPrimal,RABI,ErrIfFuncWritten,RuntimeActivity},
+    mode::ForwardMode{ReturnPrimal,RABI,ErrIfFuncWritten,RuntimeActivity,StrongZero},
     f::FA,
     ::Type{A},
     args::Vararg{Annotation,Nargs},
 ) where {
     FA<:Annotation,
     A<:Annotation,
-} where {ReturnPrimal,RABI<:ABI,Nargs,ErrIfFuncWritten,RuntimeActivity}
+} where {ReturnPrimal,RABI<:ABI,Nargs,ErrIfFuncWritten,RuntimeActivity,StrongZero}
     if any_active(args...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
     end
@@ -656,6 +669,7 @@ f(x) = x*x
         RABI,
         Val(ErrIfFuncWritten),
         Val(RuntimeActivity),
+        Val(StrongZero)
     ) #=ShadowInit=#
     thunk(f, args...)
 end
@@ -667,7 +681,7 @@ Same as [`autodiff`](@ref) but uses deferred compilation to support usage in GPU
 code, as well as high-order differentiation.
 """
 @inline function autodiff_deferred(
-    mode::ReverseMode{ReturnPrimal,RuntimeActivity,RABI,Holomorphic,ErrIfFuncWritten},
+    mode::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,RABI,Holomorphic,ErrIfFuncWritten},
     f::FA,
     ::Type{A},
     args::Vararg{Annotation,Nargs},
@@ -680,6 +694,7 @@ code, as well as high-order differentiation.
     Holomorphic,
     ErrIfFuncWritten,
     RuntimeActivity,
+    StrongZero
 }
     tt′ = vaTypeof(args...)
     width = same_or_one(1, args...)
@@ -696,7 +711,7 @@ code, as well as high-order differentiation.
         rt = Compiler.primal_return_type(Reverse, FTy, tt)
         A2 = A{rt}
         if rt == Union{}
-            rt = Nothing 
+            rt = Nothing
         end
     else
         @assert A isa DataType
@@ -716,6 +731,7 @@ code, as well as high-order differentiation.
                     ReturnPrimal,
                     #=ReturnShadow=#false,
                     RuntimeActivity,
+                    StrongZero,
                     width,
                     ModifiedBetweenT,
                     RABI,
@@ -776,6 +792,7 @@ code, as well as high-order differentiation.
         UnknownTapeType,
         Val(ErrIfFuncWritten),
         Val(RuntimeActivity),
+        Val(StrongZero)
     ) #=ShadowInit=#
 
     thunk =
@@ -798,7 +815,7 @@ Same as `autodiff(::ForwardMode, f, Activity, args...)` but uses deferred compil
 code, as well as high-order differentiation.
 """
 @inline function autodiff_deferred(
-    mode::ForwardMode{ReturnPrimal,RABI,ErrIfFuncWritten,RuntimeActivity},
+    mode::ForwardMode{ReturnPrimal,RABI,ErrIfFuncWritten,RuntimeActivity,StrongZero},
     f::FA,
     ::Type{A},
     args::Vararg{Annotation,Nargs},
@@ -810,6 +827,7 @@ code, as well as high-order differentiation.
     RABI<:ABI,
     ErrIfFuncWritten,
     RuntimeActivity,
+    StrongZero
 }
     if any_active(args...)
         throw(ErrorException("Active arguments not allowed in forward mode"))
@@ -878,6 +896,7 @@ code, as well as high-order differentiation.
         UnknownTapeType,
         Val(ErrIfFuncWritten),
         Val(RuntimeActivity),
+        Val(StrongZero)
     ) #=ShadowInit=#
     thunk = Compiler.ForwardModeThunk{Ptr{Cvoid},FA,rt,tt′,width,ReturnPrimal}(adjoint_ptr)
     thunk(f, args...)
@@ -919,7 +938,7 @@ forward, reverse = autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(f)}, Acti
 tape, result, shadow_result  = forward(Const(f), Duplicated(A, ∂A), Active(v))
 _, ∂v = reverse(Const(f), Duplicated(A, ∂A), Active(v), 1.0, tape)[1]
 
-result, ∂v, ∂A 
+result, ∂v, ∂A
 
 # output
 
@@ -931,6 +950,7 @@ result, ∂v, ∂A
         ReturnPrimal,
         ReturnShadow,
         RuntimeActivity,
+        StrongZero,
         Width,
         ModifiedBetweenT,
         RABI,
@@ -953,6 +973,7 @@ result, ∂v, ∂A
     ErrIfFuncWritten,
     ShadowInit,
     RuntimeActivity,
+    StrongZero
 }
     width = if Width == 0
         w = same_or_one(1, args...)
@@ -991,6 +1012,7 @@ result, ∂v, ∂A
         RABI,
         Val(ErrIfFuncWritten),
         Val(RuntimeActivity),
+        Val(StrongZero)
     ) #=ShadowInit=#
 end
 
@@ -1070,7 +1092,7 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float
 ```
 """
 @inline function autodiff_thunk(
-    mode::ForwardMode{ReturnPrimal,RABI,ErrIfFuncWritten,RuntimeActivity},
+    mode::ForwardMode{ReturnPrimal,RABI,ErrIfFuncWritten,RuntimeActivity,StrongZero},
     ::Type{FA},
     ::Type{A},
     args::Vararg{Type{<:Annotation},Nargs},
@@ -1082,6 +1104,7 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float
     Nargs,
     ErrIfFuncWritten,
     RuntimeActivity,
+    StrongZero
 }
     width = same_or_one(1, A, args...)
     if width == 0
@@ -1121,6 +1144,7 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float
         RABI,
         Val(ErrIfFuncWritten),
         Val(RuntimeActivity),
+        Val(StrongZero)
     ) #=ShadowInit=#
 end
 
@@ -1129,6 +1153,7 @@ end
         ReturnPrimal,
         ReturnShadow,
         RuntimeActivity,
+        StrongZero,
         Width,
         ModifiedBetweenT,
         RABI,
@@ -1150,6 +1175,7 @@ end
     Nargs,
     ErrIfFuncWritten,
     RuntimeActivity,
+    StrongZero,
     ShadowInit,
 }
     width = if Width == 0
@@ -1189,7 +1215,8 @@ end
         RABI,
         Val(ErrIfFuncWritten),
         Val(RuntimeActivity),
-    ) #=ShadowInit=#
+        Val(StrongZero)
+    )
     if nondef[1] isa Enzyme.Compiler.PrimalErrorThunk
         return Nothing
     else
@@ -1210,6 +1237,7 @@ import .Compiler: remove_innerty, UnknownTapeType
         ReturnPrimal,
         ReturnShadow,
         RuntimeActivity,
+        StrongZero,
         Width,
         ModifiedBetweenT,
         RABI,
@@ -1230,6 +1258,7 @@ import .Compiler: remove_innerty, UnknownTapeType
     RABI<:ABI,
     Nargs,
     RuntimeActivity,
+    StrongZero,
 }
     width = if Width == 0
         w = same_or_one(1, args...)
@@ -1269,7 +1298,14 @@ import .Compiler: remove_innerty, UnknownTapeType
         RABI,
         false, #=errifwritte=#
         RuntimeActivity,
+        StrongZero
     )
+
+    if parent_job !== nothing
+        target = GPUCompiler.nest_target(target, parent_job.config.target)
+        params = GPUCompiler.nest_params(params, parent_job.config.params)
+    end
+
     job = GPUCompiler.CompilerJob(mi, GPUCompiler.CompilerConfig(target, params; kernel = false))
 
 
@@ -1280,10 +1316,11 @@ import .Compiler: remove_innerty, UnknownTapeType
 
     try
         obj = get(tape_cache, key, nothing)
+        # If the tape is not cached, compile it
         if obj === nothing
 
             Compiler.JuliaContext() do ctx
-                _, meta = Compiler.codegen(:llvm, job; optimize = false, parent_job)
+                _, meta = GPUCompiler.compile(:llvm, job)
                 obj = meta.TapeType
                 tape_cache[key] = obj
             end
@@ -1331,7 +1368,7 @@ forward, reverse = autodiff_deferred_thunk(ReverseSplitWithPrimal, TapeType, Con
 tape, result, shadow_result  = forward(Const(f), Duplicated(A, ∂A), Active(v))
 _, ∂v = reverse(Const(f), Duplicated(A, ∂A), Active(v), 1.0, tape)[1]
 
-result, ∂v, ∂A 
+result, ∂v, ∂A
 
 # output
 
@@ -1343,6 +1380,7 @@ result, ∂v, ∂A
         ReturnPrimal,
         ReturnShadow,
         RuntimeActivity,
+        StrongZero,
         Width,
         ModifiedBetweenT,
         RABI,
@@ -1366,6 +1404,7 @@ result, ∂v, ∂A
     Nargs,
     ErrIfFuncWritten,
     RuntimeActivity,
+    StrongZero,
     ShadowInit
 }
     @assert RABI == FFIABI
@@ -1407,6 +1446,7 @@ result, ∂v, ∂A
         TapeType,
         Val(ErrIfFuncWritten),
         Val(RuntimeActivity),
+        Val(StrongZero)
     ) #=ShadowInit=#
     adjoint_ptr = Compiler.deferred_codegen(
         FA,
@@ -1420,6 +1460,7 @@ result, ∂v, ∂A
         TapeType,
         Val(ErrIfFuncWritten),
         Val(RuntimeActivity),
+        Val(StrongZero)
     ) #=ShadowInit=#
 
     RT = if A2 <: Duplicated && width != 1

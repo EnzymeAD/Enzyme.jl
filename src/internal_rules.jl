@@ -101,6 +101,9 @@ end
 function EnzymeRules.inactive_noinl(::typeof(Base.size), args...)
     return nothing
 end
+function EnzymeRules.inactive_noinl(::typeof(Base.hash), args...)
+    return nothing
+end
 function EnzymeRules.inactive_noinl(
     ::typeof(Base.setindex!),
     ::IdDict{K,V},
@@ -347,6 +350,7 @@ function EnzymeRules.augmented_primal(
         false,
         false,
         EnzymeRules.runtime_activity(config),
+        EnzymeRules.strong_zero(config),
         EnzymeRules.width(config),
         EnzymeRules.overwritten(config)[2:end],
         InlineABI,
@@ -403,6 +407,7 @@ function EnzymeRules.reverse(
         false,
         false,
         EnzymeRules.runtime_activity(config),
+        EnzymeRules.strong_zero(config),
         EnzymeRules.width(config),
         EnzymeRules.overwritten(config)[2:end],
         InlineABI,
@@ -421,10 +426,7 @@ function EnzymeRules.reverse(
         Libc.free(tapes)
     end
 
-    return ntuple(Val(2 + length(args))) do _
-        Base.@_inline_meta
-        nothing
-    end
+    return ntuple(Returns(nothing), Val(2 + length(args)))
 end
 
 
@@ -560,10 +562,7 @@ function EnzymeRules.reverse(
         end
     else
         if typeof(A) <: Const
-            ntuple(Val(EnzymeRules.width(config))) do i
-                Base.@_inline_meta
-                nothing
-            end
+            ntuple(Returns(nothing), Val(EnzymeRules.width(config)))
         else
             A.dval
         end
@@ -577,10 +576,7 @@ function EnzymeRules.reverse(
         end
     else
         if typeof(b) <: Const
-            ntuple(Val(EnzymeRules.width(config))) do i
-                Base.@_inline_meta
-                nothing
-            end
+            ntuple(Returns(nothing), Val(EnzymeRules.width(config)))
         else
             b.dval
         end
@@ -889,10 +885,7 @@ function EnzymeRules.reverse(
             if N == 1
                 zero(α.val)
             else
-                ntuple(Val(N)) do i
-                    Base.@_inline_meta
-                    zero(α.val)
-                end
+                ntuple(Returns(zero(α.val)), Val(N))
             end
         else
             nothing
@@ -903,10 +896,7 @@ function EnzymeRules.reverse(
             if N == 1
                 zero(β.val)
             else
-                ntuple(Val(N)) do i
-                    Base.@_inline_meta
-                    zero(β.val)
-                end
+                ntuple(Returns(zero(β.val)), Val(N))
             end
         else
             nothing
