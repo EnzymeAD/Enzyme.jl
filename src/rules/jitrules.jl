@@ -1770,7 +1770,7 @@ end
 end
 
 # Create specializations
-if !isdefined(Core, :GlobalMethods) # pre https://github.com/JuliaLang/julia/pull/58131
+if !(isdefined(Core, :GlobalMethods) || isdefined(Core, :methodtable)) # pre https://github.com/JuliaLang/julia/pull/58131
     set_fn_max_args(f) = setfield!(typeof(f).name.mt, :max_args, fieldtype(Core.MethodTable, :max_args)(512), :monotonic)
 else
     set_fn_max_args(f) = setfield!(typeof(f).name, :max_args, fieldtype(Core.TypeName, :max_args)(512), :monotonic)
