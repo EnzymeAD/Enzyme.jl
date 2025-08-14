@@ -1534,7 +1534,7 @@ Automatically import a ChainRules.rrule as a custom reverse mode EnzymeRule. Whe
 will end up calling the primal multiple times which results in slower code. This macro assumes that the underlying
 function to be imported is read-only, and returns a Duplicated or Const object. This macro also assumes that the
 inputs permit a .+= operation and that the output has a valid Enzyme.make_zero function defined. It also assumes
-that overwritten(x) accurately describes if there is any non-preserved data from forward to reverse, not just
+that `overwritten(x)` accurately describes if there is any non-preserved data from forward to reverse, not just
 the outermost data structure being overwritten as provided by the specification.
 
 Finally, this macro falls back to almost always caching all of the inputs, even if it may not be needed for the
