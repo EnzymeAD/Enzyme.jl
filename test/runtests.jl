@@ -452,8 +452,8 @@ end
     nt = (a = 0.0,)
     x = [0.5]
 
-    @test Enzyme.gradient(Forward, f, x, Const(nt))[1] ≈ [1.0]
-    @test Enzyme.gradient(Reverse, f, x, Const(nt))[1] ≈ [1.0]
+    @test Enzyme.gradient(Forward, named_deepcopy, x, Const(nt))[1] ≈ [1.0]
+    @test Enzyme.gradient(Reverse, named_deepcopy, x, Const(nt))[1] ≈ [1.0]
 end
 
 @testset "Deferred and deferred thunk" begin
