@@ -162,7 +162,7 @@ end
     primal::RT,
     seen::Union{IdDict,Nothing},
     shadow::RT,
-) where RT
+)::RT where RT
     rt = Enzyme.Compiler.active_reg_inner(RT, (), nothing)
     if rt == Enzyme.Compiler.ActiveState || rt == Enzyme.Compiler.AnyState
         if seen === nothing
@@ -182,8 +182,8 @@ end
         end
 
         if RT <: Array
-            newa = RT(undef, size(shadow))
-            if seen !== nothing
+            newa = similar(primal, size(shadow))
+            if seen === nothing
                 seen = IdDict()
             end
             seen[shadow] = newa
