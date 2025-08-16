@@ -443,6 +443,19 @@ make3() = (1.0, 2.0, 3.0)
 
 end
 
+function named_deepcopy(x, nt)
+    nt2 = deepcopy(nt)
+    return nt2.a + x[1]
+end
+
+@testset "Deepcopy" begin
+    nt = (a = 0.0,)
+    x = [0.5]
+
+    @test Enzyme.gradient(Forward, named_deepcopy, x, Const(nt))[1] ≈ [1.0]
+    @test Enzyme.gradient(Reverse, named_deepcopy, x, Const(nt))[1] ≈ [1.0]
+end
+
 @testset "Deferred and deferred thunk" begin
     function dot(A)
         return A[1] * A[1] + A[2] * A[2] 

@@ -27,7 +27,7 @@ function forward end
     FwdConfigWidth{Width} = FwdConfig{<:Any, <:Any, Width}
 
 Configuration type to dispatch on in custom forward rules (see [`forward`](@ref).
-* `NeedsPrimal` and `NeedsShadow`: boolean values specifying whether the primal and shadow (resp.) should be returned. 
+* `NeedsPrimal` and `NeedsShadow`: boolean values specifying whether the primal and shadow (resp.) should be returned.
 * `Width`: an integer that specifies the number of adjoints/shadows simultaneously being propagated.
 * `RuntimeActivity`: whether runtime activity is enabled. See the [FAQ](@ref faq-runtime-activity) for more information.
 * `StrongZero`: whether strong zero is enabled. See the [FAQ](@ref faq-strong-zero) for more information.
@@ -62,9 +62,9 @@ Whether a custom rule should return the shadow (derivative) of the function resu
     RevConfigWidth{Width} = RevConfig{<:Any, <:Any, Width}
 
 Configuration type to dispatch on in custom reverse rules (see [`augmented_primal`](@ref) and [`reverse`](@ref)).
-* `NeedsPrimal` and `NeedsShadow`: boolean values specifying whether the primal and shadow (resp.) should be returned. 
+* `NeedsPrimal` and `NeedsShadow`: boolean values specifying whether the primal and shadow (resp.) should be returned.
 * `Width`: an integer that specifies the number of adjoints/shadows simultaneously being propagated.
-* `Overwritten`: a tuple of booleans of whether each argument (including the function itself) is modified between the 
+* `Overwritten`: a tuple of booleans of whether each argument (including the function itself) is modified between the
    forward and reverse pass (true if potentially modified between).
 * `RuntimeActivity`: whether runtime activity is enabled. See the [FAQ](@ref faq-runtime-activity) for more information.
 * `StrongZero`: whether strong zero is enabled. See the [FAQ](@ref faq-strong-zero) for more information.
@@ -77,6 +77,13 @@ const RevConfigWidth{Width} = RevConfig{<:Any,<:Any, Width}
 @inline needs_primal(::RevConfig{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
 @inline needs_shadow(::RevConfig{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
 @inline width(::RevConfig{<:Any, <:Any, Width}) where Width = Width
+"""
+    overwritten(::RevConfig)
+
+A tuple of booleans for each argument (including the function itself), indicating if it
+is modified between the forward and reverse pass (`true` if potentially modified
+between).
+"""
 @inline overwritten(::RevConfig{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
 @inline runtime_activity(::RevConfig{<:Any, <:Any, <:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
 @inline strong_zero(::RevConfig{<:Any, <:Any, <:Any, <:Any, <:Any, StrongZero}) where StrongZero = StrongZero
@@ -102,11 +109,11 @@ Compute the exepcted shadow return type given a reverse mode config and return a
 """
     AugmentedReturn(primal, shadow, tape)
 
-Augment the primal return value of a function with its shadow, as well as any additional information needed to correctly 
+Augment the primal return value of a function with its shadow, as well as any additional information needed to correctly
 compute the reverse pass, stored in `tape`.
 
-Unless specified by the config that a variable is not overwritten, rules must assume any arrays/data structures/etc are 
-overwritten between the forward and the reverse pass. Any floats or variables passed by value are always preserved as is 
+Unless specified by the config that a variable is not overwritten, rules must assume any arrays/data structures/etc are
+overwritten between the forward and the reverse pass. Any floats or variables passed by value are always preserved as is
 (as are the arrays themselves, just not necessarily the values in the array).
 
 See also [`augmented_primal`](@ref).
@@ -276,7 +283,7 @@ end
 """
     noalias(func::typeof(f), args...)
 
-Mark a particular function as always being a fresh allocation which does not alias any other 
+Mark a particular function as always being a fresh allocation which does not alias any other
 accessible memory.
 """
 function noalias end
