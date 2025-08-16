@@ -1372,6 +1372,36 @@ batchify_activity(::Type{Duplicated{T}}, ::Val{B}) where {T,B} = BatchDuplicated
 batchify_activity(::Type{DuplicatedNoNeed{T}}, ::Val{B}) where {T,B} = BatchDuplicatedNoNeed{T,B}
 batchify_activity(::Type{MixedDuplicated{T}}, ::Val{B}) where {T,B} = BatchMixedDuplicated{T,B}
 
+
+"""
+    Seed(dy)
+
+Wrapper for a single adjoint to the return value in reverse mode.
+"""
+struct Seed{T,A}
+    dval::T
+
+    function Seed(dval::T) where T
+        A = guess_activity(T, Reverse)
+        return new{T,A}(dval)
+    end
+end
+
+"""
+    BatchSeed(dys::NTuple)
+
+Wrapper for a tuple of adjoints to the return value in reverse mode.
+"""
+struct BatchSeed{N, T, AB}
+    dvals::NTuple{N, T}
+
+    function BatchSeed(dvals::NTuple{N,T}) where {N,T}
+        A = guess_activity(T, Reverse)
+        AB = batchify_activity(A, Val(N))
+        return new{N,T,AB}(dvals)
+    end
+end
+
 """
     autodiff(
         rmode::Union{ReverseMode,ReverseModeSplit},
@@ -1387,11 +1417,10 @@ Useful for computing pullbacks / VJPs for functions whose output is not a scalar
 function autodiff(
         rmode::Union{ReverseMode{ReturnPrimal}, ReverseModeSplit{ReturnPrimal}},
         f::FA,
-        dresult::Seed{RT},
+        dresult::Seed{RT,RA},
         args::Vararg{Annotation, N},
-    ) where {ReturnPrimal, FA <: Annotation, RT, N}
+    ) where {ReturnPrimal, FA <: Annotation, RT, RA, N}
     rmode_split = Split(rmode)
-    RA = guess_activity(RT, rmode_split)
     forward, reverse = autodiff_thunk(rmode_split, FA, RA, typeof.(args)...)
     tape, result, shadow_result = forward(f, args...)
     if RA <: Active
@@ -1425,11 +1454,10 @@ Useful for computing pullbacks / VJPs for functions whose output is not a scalar
 function autodiff(
         rmode::Union{ReverseMode{ReturnPrimal}, ReverseModeSplit{ReturnPrimal}},
         f::FA,
-        dresults::BatchSeed{B,RT},
+        dresults::BatchSeed{B,RT,RA},
         args::Vararg{Annotation, N},
-    ) where {ReturnPrimal, B, FA <: Annotation, RT, N}
+    ) where {ReturnPrimal, B, FA <: Annotation, RT, RA, N}
     rmode_split_rightwidth = ReverseSplitWidth(Split(rmode), Val(B))
-    RA = batchify_activity(guess_activity(RT, rmode_split_rightwidth), Val(B))
     forward, reverse = autodiff_thunk(rmode_split_rightwidth, FA, RA, typeof.(args)...)
     tape, result, shadow_results = forward(f, args...)
     if RA <: Active

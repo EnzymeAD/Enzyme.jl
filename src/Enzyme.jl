@@ -40,8 +40,6 @@ import EnzymeCore:
     DuplicatedNoNeed,
     BatchDuplicated,
     BatchDuplicatedNoNeed,
-    Seed,
-    BatchSeed,
     ABI,
     DefaultABI,
     FFIABI,
@@ -68,8 +66,6 @@ export Annotation,
     DuplicatedNoNeed,
     BatchDuplicated,
     BatchDuplicatedNoNeed,
-    Seed,
-    BatchSeed,
     DefaultABI,
     FFIABI,
     InlineABI,
@@ -117,6 +113,7 @@ export autodiff,
 
 export jacobian, gradient, gradient!, hvp, hvp!, hvp_and_gradient!
 export batch_size, onehot, chunkedonehot
+export Seed, BatchSeed
 
 using LinearAlgebra
 import SparseArrays

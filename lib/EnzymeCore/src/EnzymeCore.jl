@@ -208,24 +208,6 @@ end
 @inline batch_size(::Type{BatchMixedDuplicated{T,N}}) where {T,N} = N
 
 """
-    Seed(dy)
-
-Wrapper for a single adjoint to the return value in reverse mode.
-"""
-struct Seed{T}
-    dval::T
-end
-
-"""
-    BatchSeed(dys::NTuple)
-
-Wrapper for a tuple of adjoints to the return value in reverse mode.
-"""
-struct BatchSeed{N, T}
-    dvals::NTuple{N, T}
-end
-
-"""
     abstract type ABI
 
 Abstract type for what ABI  will be used.
