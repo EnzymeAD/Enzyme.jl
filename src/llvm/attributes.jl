@@ -450,6 +450,20 @@ function annotate!(mod::LLVM.Module)
     for fname in ("jl_types_equal", "ijl_types_equal")
         if haskey(funcs, fname)
             for fn in funcs[fname]
+                if LLVM.version().major <= 15
+                    push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
+                else
+                    push!(function_attributes(fn), 
+                        EnumAttribute(
+                            "memory",
+                            MemoryEffect(
+                                (MRI_Ref << getLocationPos(ArgMem)) |
+                                (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
+                                (MRI_NoModRef << getLocationPos(Other)),
+                            ).data,
+                        )
+                    )
+                end
                 push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
             end
         end
@@ -551,6 +565,50 @@ function annotate!(mod::LLVM.Module)
             for fn in funcs[fname]
                 push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
                 push!(function_attributes(fn), LLVM.StringAttribute("enzyme_nocache"))
+                if LLVM.version().major <= 15
+                    push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
+                else
+                    push!(function_attributes(fn), 
+                        EnumAttribute(
+                            "memory",
+                            MemoryEffect(
+                                (MRI_Ref << getLocationPos(ArgMem)) |
+                                (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
+                                (MRI_NoModRef << getLocationPos(Other)),
+                            ).data,
+                        )
+                    )
+                end
+            end
+        end
+    end
+
+    for fname in (
+        "julia.safepoint",
+        "ijl_pop_handler",
+        "jl_pop_handler",
+        "ijl_pop_handler_noexcept",
+        "jl_pop_handler_noexcept",
+        "ijl_push_handler",
+        "jl_push_handler",
+        "ijl_module_name",
+        "jl_module_name",
+        "ijl_restore_excstack",
+        "jl_restore_excstack",
+        "julia.except_enter",
+        "ijl_get_nth_field_checked",
+        "jl_get_nth_field_checked",
+        "jl_egal__unboxed",
+        "ijl_reshape_array",
+        "jl_reshape_array",
+        "ijl_eqtable_get",
+        "jl_eqtable_get",
+        "ijl_try_substrtod",
+        "jl_try_substrtod",
+    )
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                push!(function_attributes(fn), LLVM.StringAttribute("enzyme_ReadOnlyOrThrow"))
             end
         end
     end
@@ -674,6 +732,7 @@ function annotate!(mod::LLVM.Module)
     )
         if haskey(funcs, fname)
             for fn in funcs[fname]
+                push!(function_attributes(fn), LLVM.StringAttribute("enzyme_ReadOnlyOrThrow"))
                 push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0))
                 push!(return_attributes(fn), LLVM.EnumAttribute("nonnull", 0))
                 push!(function_attributes(fn), no_escaping_alloc)
@@ -726,6 +785,11 @@ function annotate!(mod::LLVM.Module)
                     end
                     cf = LLVM.called_operand(c)
                     if cf == fn
+                        LLVM.API.LLVMAddCallSiteAttribute(
+                            c,
+                            LLVM.API.LLVMAttributeReturnIndex,
+                            LLVM.StringAttribute("enzyme_ReadOnlyOrThrow"),
+                        )
                         LLVM.API.LLVMAddCallSiteAttribute(
                             c,
                             LLVM.API.LLVMAttributeReturnIndex,
@@ -794,6 +858,7 @@ function annotate!(mod::LLVM.Module)
     for fname in ("llvm.julia.gc_preserve_begin", "llvm.julia.gc_preserve_end")
         if haskey(funcs, fname)
             for fn in funcs[fname]
+                push!(function_attributes(fn), LLVM.StringAttribute("enzyme_ReadOnlyOrThrow"))
                 if LLVM.version().major <= 15
                     push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly"))
                 else
