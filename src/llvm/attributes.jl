@@ -447,6 +447,29 @@ function annotate!(mod::LLVM.Module)
         end
     end
 
+    for fname in
+        ("memhash_seed",)
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                if LLVM.version().major <= 15
+                    push!(function_attributes(fn), LLVM.EnumAttribute("readonly"))
+                else
+                    push!(
+                        function_attributes(fn),
+                        EnumAttribute(
+                            "memory",
+                            MemoryEffect(
+                                (MRI_Ref << getLocationPos(ArgMem)) |
+                                (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
+                                (MRI_NoModRef << getLocationPos(Other)),
+                            ).data,
+                        ),
+                    )
+                end
+            end
+        end
+    end
+
     for fname in ("jl_types_equal", "ijl_types_equal")
         if haskey(funcs, fname)
             for fn in funcs[fname]
