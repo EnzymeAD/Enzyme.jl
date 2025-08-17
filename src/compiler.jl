@@ -4830,6 +4830,7 @@ end
         # Generate the adjoint
         memcpy_alloca_to_loadstore(mod)
         force_recompute!(mod)
+        API.EnzymeDetectReadonlyOrThrow(mod)
 
         adjointf, augmented_primalf, TapeType = enzyme!(
             job,
