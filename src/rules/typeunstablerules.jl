@@ -1090,13 +1090,20 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
             end
             shadowres = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), args)
             callconv!(shadowres, callconv(orig))
+            if get_runtime_activity(gutils)
+                is_inactive = icmp!(B, LLVM.API.LLVMIntEQ, shadowin, new_from_original(gutils, origops[2]))
+                newval = new_from_original(gutils, orig)
+                shadowres = select!(B, is_inactive, newval, shadowres)
+                API.moveBefore(newval, shadowres, B)
+            end
         else
             shadowres =
                 UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
             for idx = 1:width
+                shadowin_idx = extract_value!(B, shadowin, idx - 1)
                 args = LLVM.Value[
                     new_from_original(gutils, origops[1]),
-                    extract_value!(B, shadowin, idx - 1),
+                    shadowin_idx,
                 ]
                 for a in origops[3:end-1]
                     push!(args, new_from_original(gutils, a))
@@ -1106,6 +1113,16 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
                 end
                 tmp = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), args)
                 callconv!(tmp, callconv(orig))
+
+                if get_runtime_activity(gutils)
+                    is_inactive = icmp!(B, LLVM.API.LLVMIntEQ, shadowin_idx, new_from_original(gutils, origops[2]))
+                    newval = new_from_original(gutils, orig)
+                    tmp = select!(B, is_inactive, newval, tmp)
+                    if idx == 1
+                        API.moveBefore(newval, tmp, B)
+                    end
+                end
+
                 shadowres = insert_value!(B, shadowres, tmp, idx - 1)
             end
         end

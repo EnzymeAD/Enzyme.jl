@@ -2425,6 +2425,7 @@ function enzyme!(
                 shadow_init,
                 world,
                 interp,
+                runtimeActivity,
             )
         end
 
@@ -2466,6 +2467,7 @@ function enzyme!(
                 shadow_init,
                 world,
                 interp,
+                runtimeActivity
             ) #=returnPrimal=#
         end
     elseif mode == API.DEM_ReverseModeCombined
@@ -2506,11 +2508,19 @@ function enzyme!(
                 shadow_init,
                 world,
                 interp,
+                runtimeActivity
             )
         end
     elseif mode == API.DEM_ForwardMode
         returnUsed = !(isghostty(actualRetType) || Core.Compiler.isconstType(actualRetType))
-        returnUsed &= returnPrimal
+
+        literal_rt = eltype(rt)
+
+        if !isghostty(literal_rt) && runtimeActivity && GPUCompiler.deserves_argbox(actualRetType) && !GPUCompiler.deserves_argbox(literal_rt)
+        else
+            returnUsed &= returnPrimal        
+        end
+
         adjointf = LLVM.Function(
             API.EnzymeCreateForwardDiff(
                 logic,
@@ -2543,6 +2553,7 @@ function enzyme!(
                 shadow_init,
                 world,
                 interp,
+                runtimeActivity
             )
         end
     else
@@ -2597,6 +2608,7 @@ function create_abi_wrapper(
     shadow_init::Bool,
     world::UInt,
     interp,
+    runtime_activity::Bool
 )
     is_adjoint = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModeCombined
     is_split = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModePrimal
@@ -3069,6 +3081,7 @@ function create_abi_wrapper(
 
     @inline function fixup_abi(index::Int, @nospecialize(value::LLVM.Value))
         valty = sret_types[index]
+
         # Union becoming part of a tuple needs to be adjusted
         # See https://github.com/JuliaLang/julia/blob/81afdbc36b365fcbf3ae25b7451c6cb5798c0c3d/src/cgutils.cpp#L3795C1-L3801C121
         if valty isa Union
@@ -3202,7 +3215,7 @@ function create_abi_wrapper(
         count_llvm_Sret = 0
         if !isghostty(actualRetType)
             if !Core.Compiler.isconstType(actualRetType)
-                if returnPrimal
+                if returnPrimal || (!isghostty(literal_rt) && runtime_activity && GPUCompiler.deserves_argbox(actualRetType) && !GPUCompiler.deserves_argbox(literal_rt))
                     count_llvm_Sret += 1
                 end
                 if !(rettype <: Const)
@@ -3219,17 +3232,69 @@ function create_abi_wrapper(
             end
         end
         for returnNum = 0:(count_Sret-1)
-            eval = fixup_abi(
-                returnNum + 1,
-                if count_llvm_Sret == 0
-                    makeInstanceOf(builder, actualRetType)
-                elseif count_llvm_Sret == 1
-                    val
+            eval = if count_llvm_Sret == 0
+                makeInstanceOf(builder, actualRetType)
+            elseif count_llvm_Sret == 1
+                val
+            else
+                @assert count_llvm_Sret > 1
+                if !returnPrimal && (runtime_activity && GPUCompiler.deserves_argbox(actualRetType) && !GPUCompiler.deserves_argbox(literal_rt))
+                    extract_value!(builder, val, 1)
                 else
-                    @assert count_llvm_Sret > 1
                     extract_value!(builder, val, 1 - returnNum)
-                end,
-            )
+                end
+            end
+
+            if count_llvm_Sret != 0 && GPUCompiler.deserves_argbox(actualRetType) && !GPUCompiler.deserves_argbox(literal_rt)
+                twidth = if width == 1
+                    1
+                else
+                    if returnPrimal && returnNum == 0
+                        1
+                    else
+                        width
+                    end
+                end
+
+                SPT0 = convert(LLVMType, literal_rt)
+
+                compare = nothing
+
+                # only compare for derivative (aka returnNum == 0), when runtime activity is on and required checking
+                if returnNum == 0 && runtime_activity && GPUCompiler.deserves_argbox(actualRetType) && !GPUCompiler.deserves_argbox(literal_rt)
+                    compare = extract_value!(builder, val, 0)
+                end
+
+                if twidth == 1
+                    eval0 = eval
+                    SPT = LLVM.PointerType(SPT0, LLVM.addrspace(value_type(eval)))
+                    eval = bitcast!(builder, eval, SPT)
+                    eval = addrspacecast!(builder, eval, LLVM.PointerType(SPT0, Derived))
+                    eval = load!(builder, SPT0, eval)
+                    if !(compare isa Nothing)
+                        is_inactive = icmp!(builder, LLVM.API.LLVMIntEQ, eval0, compare)
+                        eval = select!(builder, is_inactive, LLVM.null(SPT0), eval)
+                    end
+                else
+                    ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(twidth, SPT0)))
+                    for idx = t:width
+                        pv = extract_value!(builder, eval, idx - 1)
+                        pv0 = pv
+                        pv = bitcast!(builder, pv, LLVM.PointerType(SPT0, addrspace(value_type(pv))))
+                        pv = addrspacecast!(builder, pv, LLVM.PointerType(SPT0, Derived))
+                        pv = load!(builder, SPT0, pv)
+                        if !(compare isa Nothing)
+                            is_inactive = icmp!(builder, LLVM.API.LLVMIntEQ, pv0, compare)
+                            pv = select!(builder, is_inactive, LLVM.null(SPT0), pv)
+                        end
+                        ival = insert_value!(builder, ival, pv, idx - 1)
+                    end
+                    eval = ival
+                end
+
+            end
+
+            eval = fixup_abi(returnNum + 1, eval)
             ptr = inbounds_gep!(
                 builder,
                 jltype,
