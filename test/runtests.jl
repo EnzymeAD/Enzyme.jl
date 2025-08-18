@@ -1425,12 +1425,16 @@ end
     res = Enzyme.autodiff(set_runtime_activity(Enzyme.Forward), Enzyme.Const(simple_absactfunc),  Duplicated{Float64}, Duplicated(2.7, 3.1))
     @test res[1] == 0.0
 
+
+    @static if VERSION < v"1.11-"
+    else
     res = Enzyme.autodiff(Enzyme.ForwardWithPrimal, Enzyme.Const(simple_absactfunc),  Duplicated{Float64}, Duplicated(2.7, 3.1))
     @test res[1] == 0.0
     @test res[2] == 1.0
 
     res = Enzyme.autodiff(Enzyme.Forward, Enzyme.Const(simple_absactfunc),  Duplicated{Float64}, Duplicated(2.7, 3.1))
     @test res[1] == 0.0
+    end
 end
 
 function absactfunc(x)
