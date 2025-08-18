@@ -1446,7 +1446,7 @@ end
     res = Enzyme.autodiff(Enzyme.Forward, Enzyme.Const(absactfunc), Duplicated(2.7, 3.1))
     @test res[1] ≈ 3.1
 
-    res = Enzyme.autodiff(set_runtime_activity(Enzyme.Forward), Active{Float64}, Enzyme.Const(absactfunc), Duplicated(2.7, 3.1))
+    res = Enzyme.autodiff(set_runtime_activity(Enzyme.Forward), Enzyme.Const(absactfunc), Duplicated(2.7, 3.1))
 end
 
 # dot product (https://github.com/EnzymeAD/Enzyme.jl/issues/495)
