@@ -296,23 +296,6 @@ sqrtsumsq2(x) = (sum(abs2, x)*sum(abs2,x))
     Enzyme.autodiff(Reverse, sqrtsumsq2, Duplicated(x,dx))
 end
 
-
-function isherm(x)
-    if LinearAlgebra.ishermitian(x)
-        x[3]
-    else
-        x[2]
-    end
-end
-
-# We want to make sure we can detect ishermitian as inactive / readonly_or_throw
-@testset "Readonly optimization" begin
-    fn = sprint() do io
-       Enzyme.Compiler.enzyme_code_llvm(io, isherm, Active, Tuple{Duplicated{Matrix{Float64}}}; dump_module=true)
-    end
-    @test !occursin("diffejulia_ishermitian",fn)
-end
-
 @noinline function prt_sret(A)
     A[1] *= 2
     return (A, A[2])

@@ -720,6 +720,59 @@ function annotate!(mod::LLVM.Module)
         "julia.gc_alloc_obj",
         "jl_gc_alloc_typed",
         "ijl_gc_alloc_typed",
+        "jl_alloc_genericmemory",
+        "ijl_alloc_genericmemory",
+        "jl_alloc_array_1d",
+        "jl_alloc_array_2d",
+        "jl_alloc_array_3d",
+        "ijl_alloc_array_1d",
+        "ijl_alloc_array_2d",
+        "ijl_alloc_array_3d",
+        "jl_alloc_genericmemory",
+        "ijl_alloc_genericmemory",
+        "ijl_new_array",
+        "jl_new_array"
+    )
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                push!(function_attributes(fn), LLVM.StringAttribute("enzyme_ReadOnlyOrThrow"))
+            end
+        end
+    end
+
+    for fname in (
+        "jl_box_float32",
+        "jl_box_float64",
+        "jl_box_int32",
+        "jl_box_int64",
+        "ijl_box_float32",
+        "ijl_box_float64",
+        "ijl_box_int32",
+        "ijl_box_int64",
+        "jl_array_copy",
+        "ijl_array_copy",
+        "jl_genericmemory_slice",
+        "ijl_genericmemory_slice",
+        "jl_genericmemory_copy_slice",
+        "ijl_genericmemory_copy_slice",
+        "jl_f_tuple",
+        "ijl_f_tuple",
+        "jl_new_structv",
+        "ijl_new_structv",
+        "jl_idtable_rehash",
+        "ijl_idtable_rehash",
+    )
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                push!(function_attributes(fn), LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
+            end
+        end
+    end
+
+    for fname in (
+        "julia.gc_alloc_obj",
+        "jl_gc_alloc_typed",
+        "ijl_gc_alloc_typed",
         "jl_box_float32",
         "jl_box_float64",
         "jl_box_int32",
@@ -755,7 +808,6 @@ function annotate!(mod::LLVM.Module)
     )
         if haskey(funcs, fname)
             for fn in funcs[fname]
-                push!(function_attributes(fn), LLVM.StringAttribute("enzyme_ReadOnlyOrThrow"))
                 push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0))
                 push!(return_attributes(fn), LLVM.EnumAttribute("nonnull", 0))
                 push!(function_attributes(fn), no_escaping_alloc)
