@@ -1045,6 +1045,28 @@ function allocate_sret!(gutils::API.EnzymeGradientUtilsRef, @nospecialize(N::LLV
     allocate_sret!(B, N)
 end
 
+function emit_printf(B::LLVM.IRBuilder, string::String, v::LLVM.Value...)
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+
+    string = globalstring_ptr!(B, string, "enz_printf")
+    vt = LLVM.VoidType()
+    args = LLVM.Value[string, v...]
+    for i in 1:length(args)
+        if value_type(args[i]) isa LLVM.PointerType
+            if LLVM.addrspace(value_type(args[i])) == 10
+                args[i] = addrspacecast!(B, args[i], LLVM.PointerType(eltype(value_type(args[i])), 11))
+            end
+            if LLVM.addrspace(value_type(args[i])) == 11
+                args[i] = emit_pointerfromobjref!(B, args[i])
+            end
+        end
+    end
+    exc, _ = get_function!(mod, "printf", LLVM.FunctionType(vt, [value_type(string)], ;vararg=true))
+    call!(B, LLVM.function_type(exc), exc, args)
+end
+
 function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.Instruction}), string::Union{String, LLVM.Value}, @nospecialize(errty::Type) = EnzymeRuntimeException, @nospecialize(cond::Union{Nothing, LLVM.Value}) = nothing)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)

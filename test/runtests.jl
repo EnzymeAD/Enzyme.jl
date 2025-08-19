@@ -1412,6 +1412,31 @@ end
 
 fwdlogpdf(d) = d.σ
 
+function simple_absactfunc(x)
+    dists = AbsFwdType[FwdNormal1{Float64}(1.0)]
+    return @inbounds dists[1].σ
+end
+
+@testset "Simple Forward Mode active runtime activity" begin
+    res = Enzyme.autodiff(set_runtime_activity(Enzyme.ForwardWithPrimal), Enzyme.Const(simple_absactfunc),  Duplicated{Float64}, Duplicated(2.7, 3.1))
+    @test res[1] == 0.0
+    @test res[2] == 1.0
+
+    res = Enzyme.autodiff(set_runtime_activity(Enzyme.Forward), Enzyme.Const(simple_absactfunc),  Duplicated{Float64}, Duplicated(2.7, 3.1))
+    @test res[1] == 0.0
+
+
+    @static if VERSION < v"1.11-"
+    else
+    res = Enzyme.autodiff(Enzyme.ForwardWithPrimal, Enzyme.Const(simple_absactfunc),  Duplicated{Float64}, Duplicated(2.7, 3.1))
+    @test res[1] == 0.0
+    @test res[2] == 1.0
+
+    res = Enzyme.autodiff(Enzyme.Forward, Enzyme.Const(simple_absactfunc),  Duplicated{Float64}, Duplicated(2.7, 3.1))
+    @test res[1] == 0.0
+    end
+end
+
 function absactfunc(x)
 	dists = AbsFwdType[FwdNormal1{Float64}(1.0), FwdNormal2{Float64}(x)]
 	res = Vector{Float64}(undef, 2)
@@ -1422,11 +1447,10 @@ function absactfunc(x)
 end
 
 @testset "Forward Mode active runtime activity" begin
-    @static if VERSION ≥ v"1.11-"
-        res = Enzyme.autodiff(set_runtime_activity(Enzyme.Forward), Enzyme.Const(absactfunc), Duplicated(2.7, 3.1))
-    else
-        res = Enzyme.autodiff(Enzyme.Forward, Enzyme.Const(absactfunc), Duplicated(2.7, 3.1))
-    end
+    res = Enzyme.autodiff(Enzyme.Forward, Enzyme.Const(absactfunc), Duplicated(2.7, 3.1))
+    @test res[1] ≈ 3.1
+
+    res = Enzyme.autodiff(set_runtime_activity(Enzyme.Forward), Enzyme.Const(absactfunc), Duplicated(2.7, 3.1))
     @test res[1] ≈ 3.1
 end
 
