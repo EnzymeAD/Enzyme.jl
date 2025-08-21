@@ -310,6 +310,8 @@ end
 #  amenable to caching analysis infrastructure
 function memcpy_alloca_to_loadstore(mod::LLVM.Module)
     dl = datalayout(mod)
+    ctx = context(mod)
+    seen = TypeTreeTable()
     for f in functions(mod)
         if length(blocks(f)) != 0
             bb = first(blocks(f))
@@ -413,6 +415,41 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
                         bitcast!(B, src, LLVM.PointerType(elty, addrspace(value_type(src))))
 
                     src = load!(B, elty, src)
+        
+		    T_jlvalue = LLVM.StructType(LLVMType[])
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+        
+            	    legal, source_typ, byref = abs_typeof(src)
+                    codegen_typ = value_type(src)
+		    if legal
+			if codegen_typ isa LLVM.PointerType || codegen_typ isa LLVM.IntegerType
+			else
+			    @assert byref == GPUCompiler.BITS_VALUE
+			    source_typ
+			end
+
+			ec = typetree(source_typ, ctx, string(dl), seen)
+			if byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF
+			    ec = copy(ec)
+			    merge!(ec, TypeTree(API.DT_Pointer, ctx))
+			    only!(ec, -1)
+			end
+			    metadata(src)["enzyme_type"] = to_md(ec, ctx)
+			    metadata(src)["enzymejl_source_type_$(source_typ)"] = MDNode(LLVM.Metadata[])
+			    metadata(src)["enzymejl_byref_$(byref)"] = MDNode(LLVM.Metadata[])
+		    
+	@static if VERSION < v"1.11-"
+	else    
+			    legal2, obj = absint(src)
+			    if legal2 obj isa Memory && obj == typeof(obj).instance
+				metadata(src)["nonnull"] = MDNode(LLVM.Metadata[])
+			    end
+	end
+
+		      elseif codegen_typ == T_prjlvalue
+			    metadata(src)["enzyme_type"] =
+				to_md(typetree(Ptr{Cvoid}, ctx, dl, seen), ctx)
+		    end
                     FT = LLVM.FunctionType(
                         LLVM.VoidType(),
                         [LLVM.IntType(64), value_type(dst0)],

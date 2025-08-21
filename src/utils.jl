@@ -423,3 +423,18 @@ end
 
 export sret_ty
 
+function remove_nothing_from_union_type(@nospecialize(T::Type))::Type
+    if T isa Union
+        if T.a === Nothing
+            return remove_nothing_from_union_type(T.b)
+        elseif T.b === Nothing
+            return remove_nothing_from_union_type(T.a)
+        else
+            return Union{remove_nothing_from_union_type(T.a), remove_nothing_from_union_type(T.b)}
+        end
+    else
+        return T
+    end
+end
+
+export remove_nothing_from_union_type

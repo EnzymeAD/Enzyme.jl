@@ -255,15 +255,20 @@ end
     API.moveBefore(newo, err, B)
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        t_shadow = normal
+    if shadowR != C_NULL
+        t_shadow1 = if normal !== nothing
+            normal
+        else
+            LLVM.null(value_type(orig))
+        end
+        t_shadow = t_shadow1
         width = get_width(gutils)
         if width != 1 
             t_shadow = UndefValue(
-                LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
+                LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(t_shadow1))),
             )
             for idx = 1:width
-                t_shadow = insert_value!(B, t_shadow, normal, idx - 1)
+                t_shadow = insert_value!(B, t_shadow, t_shadow1, idx - 1)
             end
         end
         unsafe_store!(shadowR, t_shadow.ref)
@@ -439,6 +444,9 @@ end
 
     shadowres =
         UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+
+    found, arty, byref = abs_typeof(origops[1])
+
     for idx = 1:width
         ev = if width == 1
             shadowin
@@ -459,12 +467,16 @@ end
             elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
             len = get_array_len(B, ev)
             length = LLVM.mul!(B, len, elSize)
-            bt = GPUCompiler.backtrace(orig)
-            btstr = sprint() do io
-                print(io, "\nCaused by:")
-                Base.show_backtrace(io, bt)
+
+            if !found && !(eltype(arty) <: Base.IEEEFloat)
+                bt = GPUCompiler.backtrace(orig)
+                btstr = sprint() do io
+                    print(io, "\nCaused by:")
+                    Base.show_backtrace(io, bt)
+                end
+                GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type $btstr"
             end
-            GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type $btstr"
+
             LLVM.memset!(
                 B,
                 get_array_data(B, callv),
@@ -759,6 +771,8 @@ end
     i8 = LLVM.IntType(8)
     algn = 0
 
+    found, arty, byref = abs_typeof(origops[1])
+
     shadowres =
         UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
     for idx = 1:width
@@ -784,15 +798,19 @@ end
             elSize = get_memory_elsz(B, ev)
             elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
             length = LLVM.mul!(B, len, elSize)
-            bt = GPUCompiler.backtrace(orig)
-            btstr = sprint() do io
-                print(io, "\nCaused by:")
-                Base.show_backtrace(io, bt)
+
+            if !found && !(eltype(arty) <: Base.IEEEFloat)
+                bt = GPUCompiler.backtrace(orig)
+                btstr = sprint() do io
+                    print(io, "\nCaused by:")
+                    Base.show_backtrace(io, bt)
+                end
+                GPUCompiler.@safe_warn "TODO forward zero-set of memorycopy used memset rather than runtime type $btstr"
             end
-            GPUCompiler.@safe_warn "TODO forward zero-set of memorycopy used memset rather than runtime type $btstr"
+
             LLVM.memset!(
                 B,
-                inttoptr!(B, ev2, LLVM.PointerType(LLVM.IntType(8))),
+                get_memory_data(B, callv),
                 LLVM.ConstantInt(i8, 0, false),
                 length,
                 algn,
@@ -1678,19 +1696,37 @@ end
         algn = 0
 
         i8 = LLVM.IntType(8)
+
+        currentBlock = Base.position(B)
+        ogname = LLVM.name(currentBlock)
+
+        fval = if get_runtime_activity(gutils)
+            lookup_value(gutils, new_from_original(gutils, origops[1]), B)
+        else
+            nothing
+        end
+
+        endB = nothing
+
         for idx = 1:width
             anti = if width == 1
                 shadowin
             else
                 extract_value!(B, shadowin, idx - 1)
             end
+
             if get_runtime_activity(gutils)
-                emit_error(
-                    B,
-                    orig,
-                    "Enzyme: Not yet implemented runtime activity for reverse of jl_array_del_end",
-                )
+                cond = icmp!(B, LLVM.API.LLVMIntNE, fval, anti)
+
+                nextB = add_reverse_block!(gutils, currentBlock, ogname*"_active")
+
+                endB = add_reverse_block!(gutils, nextB, ogname*"_end", true, false)
+
+                br!(B, cond, nextB, endB)
+
+                position!(B, nextB)
             end
+
             args = LLVM.Value[anti, offset]
 
             found, arty, byref = abs_typeof(origops[1])
@@ -1711,16 +1747,23 @@ end
             length = LLVM.mul!(B, len, elSize)
 
             if !found && !(eltype(arty) <: Base.IEEEFloat)
-		bt = GPUCompiler.backtrace(orig)
-		btstr = sprint() do io
-		    print(io, "\nCaused by:")
-		    Base.show_backtrace(io, bt)
-		end
+        		bt = GPUCompiler.backtrace(orig)
+        		btstr = sprint() do io
+        		    print(io, "\nCaused by:")
+        		    Base.show_backtrace(io, bt)
+        		end
                 GPUCompiler.@safe_warn "TODO reverse jl_array_del_end zero-set used memset rather than runtime type of $((found, arty)) in $(string(origops[1])) $btstr"
             end
             toset = get_array_data(B, anti)
             toset = gep!(B, i8, toset, LLVM.Value[length])
             LLVM.memset!(B, toset, LLVM.ConstantInt(i8, 0, false), elSize, algn)
+
+            if get_runtime_activity(gutils)
+                br!(B, endB)
+                set_reverse_block!(gutils, endB)
+                position!(B, endB)
+                currentBlock = endB
+            end
         end
     end
     return nothing

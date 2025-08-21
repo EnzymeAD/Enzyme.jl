@@ -58,6 +58,7 @@ function julia_activity_rule(f::LLVM.Function)
     )
 
     if !Enzyme.Compiler.no_type_setting(mi.specTypes; world)[1]
+        any_active = false
         for arg in jlargs
             if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
                 continue
@@ -73,11 +74,10 @@ function julia_activity_rule(f::LLVM.Function)
                     parameter_attributes(f, arg.codegen.i),
                     StringAttribute("enzyme_inactive"),
                 )
+	    else
+		any_active = true
             end
         end
-    end
-
-    if !Enzyme.Compiler.no_type_setting(mi.specTypes; world)[2]
         if sret !== nothing
             idx = 0
             if !in(0, parmsRemoved)
@@ -104,5 +104,20 @@ function julia_activity_rule(f::LLVM.Function)
                 push!(return_attributes(f), StringAttribute("enzyme_inactive"))
             end
         end
+
+	if !any_active && guaranteed_const_nongen(RT, world)
+            push!(
+		function_attributes(f),
+		StringAttribute("enzyme_inactive"),
+	    )
+            push!(
+		function_attributes(f),
+		StringAttribute("enzyme_nofree"),
+	    )
+            push!(
+		function_attributes(f),
+		StringAttribute("enzyme_no_escaping_allocation"),
+	    )
+	end
     end
 end

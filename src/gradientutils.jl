@@ -36,6 +36,9 @@ get_mode(gutils::GradientUtils) = API.EnzymeGradientUtilsGetMode(gutils)
 get_runtime_activity(gutils::GradientUtils) =
     API.EnzymeGradientUtilsGetRuntimeActivity(gutils)
 
+get_strong_zero(gutils::GradientUtils) =
+    API.EnzymeGradientUtilsGetStrongZero(gutils)
+
 function get_shadow_type(gutils::GradientUtils, T::LLVM.LLVMType)
     w = get_width(gutils)
     if w == 1
@@ -85,4 +88,12 @@ function debug_from_orig!(
 )
     API.EnzymeGradientUtilsSetDebugLocFromOriginal(gutils, nval, oval)
     nothing
+end
+
+function add_reverse_block!(gutils::GradientUtils, block::LLVM.BasicBlock, name::String, forkCache::Bool = true, push::Bool = true)
+    return LLVM.BasicBlock(API.EnzymeGradientUtilsAddReverseBlock(gutils, block, name, forkCache, push))
+end
+
+function set_reverse_block!(gutils::GradientUtils, block::LLVM.BasicBlock)
+    return LLVM.BasicBlock(API.EnzymeGradientUtilsSetReverseBlock(gutils, block))
 end

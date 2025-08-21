@@ -101,6 +101,9 @@ end
 function EnzymeRules.inactive_noinl(::typeof(Base.size), args...)
     return nothing
 end
+function EnzymeRules.inactive_noinl(::typeof(Base.hash), args...)
+    return nothing
+end
 function EnzymeRules.inactive_noinl(
     ::typeof(Base.setindex!),
     ::IdDict{K,V},
@@ -157,36 +160,40 @@ end
 @inline function deepcopy_rtact(
     copied::RT,
     primal::RT,
-    seen::IdDict,
+    seen::Union{IdDict,Nothing},
     shadow::RT,
-) where {RT<:Union{Integer,Char}}
-    return Base.deepcopy_internal(shadow, seen)
-end
-@inline function deepcopy_rtact(
-    copied::RT,
-    primal::RT,
-    seen::IdDict,
-    shadow::RT,
-) where {RT<:AbstractFloat}
-    return Base.deepcopy_internal(shadow, seen)
-end
-@inline function deepcopy_rtact(
-    copied::RT,
-    primal::RT,
-    seen::IdDict,
-    shadow::RT,
-) where {RT<:Array}
-    if !haskey(seen, shadow)
+)::RT where RT
+    rt = Enzyme.Compiler.active_reg_inner(RT, (), nothing)
+    if rt == Enzyme.Compiler.ActiveState || rt == Enzyme.Compiler.AnyState
+        if seen === nothing
+            return Base.deepcopy(shadow)
+        else
+            return Base.deepcopy_internal(shadow, seen)
+        end
+    else
+        if seen !== nothing && haskey(seen, shadow)
+            return seen[shadow]
+        end
         if primal === shadow
-            return seen[shadow] = copied
+            if seen !== nothing
+                seen[shadow] = copied
+            end
+            return copied
         end
-        newa = RT(undef, size(shadow))
-        seen[shadow] = newa
-        for i in eachindex(shadow)
-            @inbounds newa[i] = deepcopy_rtact(copied[i], primal[i], seen, shadow[i])
+
+        if RT <: Array
+            newa = similar(primal, size(shadow))
+            if seen === nothing
+                seen = IdDict()
+            end
+            seen[shadow] = newa
+            for i in eachindex(shadow)
+                @inbounds newa[i] = deepcopy_rtact(copied[i], primal[i], seen, shadow[i])
+            end
+            return newa
         end
+        throw(AssertionError("Unimplemented deepcopy with runtime activity for type $RT"))
     end
-    return seen[shadow]
 end
 
 function EnzymeRules.forward(
@@ -196,7 +203,7 @@ function EnzymeRules.forward(
     x::Duplicated,
 )
     primal = func.val(x.val)
-    return Duplicated(primal, deepcopy_rtact(primal, x.val, IdDict(), x.dval))
+    return Duplicated(primal, deepcopy_rtact(primal, x.val, nothing, x.dval))
 end
 
 function EnzymeRules.forward(
@@ -207,7 +214,7 @@ function EnzymeRules.forward(
 ) where {T,N}
     primal = func.val(x.val)
     return BatchDuplicated(primal, ntuple(Val(N)) do i
-        deepcopy_rtact(primal, x.val, IdDict(), x.dval[i])
+        deepcopy_rtact(primal, x.val, nothing, x.dval[i])
     end)
 end
 
@@ -223,8 +230,6 @@ function EnzymeRules.augmented_primal(
         nothing
     end
 
-    @assert !(typeof(x) <: Active)
-
     source = if EnzymeRules.needs_primal(config)
         primal
     else
@@ -232,6 +237,7 @@ function EnzymeRules.augmented_primal(
     end
 
     shadow = if EnzymeRules.needs_shadow(config)
+        @assert !(x isa Active)
         if EnzymeRules.width(config) == 1
             Enzyme.make_zero(
                 source,
@@ -301,6 +307,8 @@ function EnzymeRules.reverse(
     shadow,
     x::Annotation{Ty},
 ) where {RT,Ty}
+    @assert !(x isa Active)
+
     if EnzymeRules.needs_shadow(config)
         if EnzymeRules.width(config) == 1
             accumulate_into(x.dval, IdDict(), shadow)
@@ -313,6 +321,17 @@ function EnzymeRules.reverse(
 
     return (nothing,)
 end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(Base.deepcopy)},
+    dret::Active,
+    shadow,
+    x::Annotation,
+)
+    return (dret.val,)
+end
+
 
 @inline function pmap_fwd(
     idx,
@@ -347,6 +366,7 @@ function EnzymeRules.augmented_primal(
         false,
         false,
         EnzymeRules.runtime_activity(config),
+        EnzymeRules.strong_zero(config),
         EnzymeRules.width(config),
         EnzymeRules.overwritten(config)[2:end],
         InlineABI,
@@ -403,6 +423,7 @@ function EnzymeRules.reverse(
         false,
         false,
         EnzymeRules.runtime_activity(config),
+        EnzymeRules.strong_zero(config),
         EnzymeRules.width(config),
         EnzymeRules.overwritten(config)[2:end],
         InlineABI,
@@ -421,10 +442,7 @@ function EnzymeRules.reverse(
         Libc.free(tapes)
     end
 
-    return ntuple(Val(2 + length(args))) do _
-        Base.@_inline_meta
-        nothing
-    end
+    return ntuple(Returns(nothing), Val(2 + length(args)))
 end
 
 
@@ -560,10 +578,7 @@ function EnzymeRules.reverse(
         end
     else
         if typeof(A) <: Const
-            ntuple(Val(EnzymeRules.width(config))) do i
-                Base.@_inline_meta
-                nothing
-            end
+            ntuple(Returns(nothing), Val(EnzymeRules.width(config)))
         else
             A.dval
         end
@@ -577,10 +592,7 @@ function EnzymeRules.reverse(
         end
     else
         if typeof(b) <: Const
-            ntuple(Val(EnzymeRules.width(config))) do i
-                Base.@_inline_meta
-                nothing
-            end
+            ntuple(Returns(nothing), Val(EnzymeRules.width(config)))
         else
             b.dval
         end
@@ -889,10 +901,7 @@ function EnzymeRules.reverse(
             if N == 1
                 zero(α.val)
             else
-                ntuple(Val(N)) do i
-                    Base.@_inline_meta
-                    zero(α.val)
-                end
+                ntuple(Returns(zero(α.val)), Val(N))
             end
         else
             nothing
@@ -903,10 +912,7 @@ function EnzymeRules.reverse(
             if N == 1
                 zero(β.val)
             else
-                ntuple(Val(N)) do i
-                    Base.@_inline_meta
-                    zero(β.val)
-                end
+                ntuple(Returns(zero(β.val)), Val(N))
             end
         else
             nothing
