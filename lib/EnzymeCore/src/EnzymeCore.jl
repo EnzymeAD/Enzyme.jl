@@ -55,12 +55,13 @@ Active(i::Integer) = Active(float(i))
 Active(ci::Complex{T}) where T <: Integer = Active(float(ci))
 
 """
-    Duplicated(x, ∂f_∂x)
+    Duplicated(x, ∂f_∂x = make_zero(x))
 
 Mark a function argument `x` of [`autodiff`](@ref Enzyme.autodiff) as duplicated, Enzyme will
 auto-differentiate in respect to such arguments, with `dx` acting as an
 accumulator for gradients (so ``\\partial f / \\partial x`` will be *added to*)
 `∂f_∂x`.
+If the second argument is not provided, it is created by [`make_zero`](@ref).
 """
 struct Duplicated{T} <: Annotation{T}
     val::T
@@ -75,6 +76,8 @@ struct Duplicated{T} <: Annotation{T}
         new{T1}(x, dx)
     end
 end
+
+Duplicated(x) = Duplicated(x, make_zero(x), false)
 
 """
     DuplicatedNoNeed(x, ∂f_∂x)
