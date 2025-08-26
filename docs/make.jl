@@ -69,6 +69,8 @@ makedocs(;
                     attributes=Dict(Symbol("data-domain") => "enzyme.mit.edu", :defer => "")
                 )
 	    ],
+        mathengine = MathJax3(),
+        size_threshold = 10_000_000
     ),
     pages = [
         "Home" => "index.md",
