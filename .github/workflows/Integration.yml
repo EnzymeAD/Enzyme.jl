@@ -16,7 +16,7 @@ concurrency:
 jobs:
   integration:
     timeout-minutes: 120
-    name: Integration Tests - ${{ matrix.package }}
+    name: Integration Tests - ${{ matrix.package }} - Julia ${{ matrix.version }}
     runs-on: ${{ matrix.os }}
     container:
       image: ${{ (contains(matrix.os, 'linux') && 'ghcr.io/enzymead/reactant-docker-images@sha256:91e1edb7a7c869d5a70db06e417f22907be0e67ca86641d48adcea221fedc674' ) || '' }}
@@ -43,9 +43,13 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
       - name: "Install Dependencies"
         run: |
-            julia --color=yes --project=test/integration/${{ matrix.package }} -e 'using Pkg; Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")]); Pkg.instantiate()'
+            julia --color=yes --project=test/integration/${{ matrix.package }} -e 'using Pkg; Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")])'
         shell: bash
         if: ${{ matrix.version == '1.10' }}
+      - name: "Instantiate"
+        run: |
+          --color=yes --project=test/integration/${{ matrix.package }} -e 'using Pkg; Pkg.instantiate()'
+        shell: bash
       - name: "Run tests"
         run: |
             julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 test/integration/${{ matrix.package }}/runtests.jl
