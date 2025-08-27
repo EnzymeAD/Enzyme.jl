@@ -1412,6 +1412,31 @@ end
 
 fwdlogpdf(d) = d.σ
 
+function simple_absactfunc(x)
+    dists = AbsFwdType[FwdNormal1{Float64}(1.0)]
+    return @inbounds dists[1].σ
+end
+
+@testset "Simple Forward Mode active runtime activity" begin
+    res = Enzyme.autodiff(set_runtime_activity(Enzyme.ForwardWithPrimal), Enzyme.Const(simple_absactfunc),  Duplicated{Float64}, Duplicated(2.7, 3.1))
+    @test res[1] == 0.0
+    @test res[2] == 1.0
+
+    res = Enzyme.autodiff(set_runtime_activity(Enzyme.Forward), Enzyme.Const(simple_absactfunc),  Duplicated{Float64}, Duplicated(2.7, 3.1))
+    @test res[1] == 0.0
+
+
+    @static if VERSION < v"1.11-"
+    else
+    res = Enzyme.autodiff(Enzyme.ForwardWithPrimal, Enzyme.Const(simple_absactfunc),  Duplicated{Float64}, Duplicated(2.7, 3.1))
+    @test res[1] == 0.0
+    @test res[2] == 1.0
+
+    res = Enzyme.autodiff(Enzyme.Forward, Enzyme.Const(simple_absactfunc),  Duplicated{Float64}, Duplicated(2.7, 3.1))
+    @test res[1] == 0.0
+    end
+end
+
 function absactfunc(x)
 	dists = AbsFwdType[FwdNormal1{Float64}(1.0), FwdNormal2{Float64}(x)]
 	res = Vector{Float64}(undef, 2)
@@ -1422,11 +1447,10 @@ function absactfunc(x)
 end
 
 @testset "Forward Mode active runtime activity" begin
-    @static if VERSION ≥ v"1.11-"
-        res = Enzyme.autodiff(set_runtime_activity(Enzyme.Forward), Enzyme.Const(absactfunc), Duplicated(2.7, 3.1))
-    else
-        res = Enzyme.autodiff(Enzyme.Forward, Enzyme.Const(absactfunc), Duplicated(2.7, 3.1))
-    end
+    res = Enzyme.autodiff(Enzyme.Forward, Enzyme.Const(absactfunc), Duplicated(2.7, 3.1))
+    @test res[1] ≈ 3.1
+
+    res = Enzyme.autodiff(set_runtime_activity(Enzyme.Forward), Enzyme.Const(absactfunc), Duplicated(2.7, 3.1))
     @test res[1] ≈ 3.1
 end
 
@@ -3276,6 +3300,85 @@ end
 		fill!(grads, 0)
 		autodiff(Reverse, ldynloss, Const(X), Const(Y), Duplicated(ps, grads), Active(bs))
 	end
+
+end
+
+@static if VERSION < v"1.11-"
+else
+mutable struct MyDict{K,V}
+    slots::Memory{UInt8}
+    keys::Memory{K}
+    vals::Memory{V}
+    idxfloor::Int
+    maxprobe::Int
+    function MyDict{K,V}() where V where K
+        slots = Memory{UInt8}(undef, 0)
+        fill!(slots, 0x0)
+        new(slots, Memory{K}(undef, 0), Memory{V}(undef, 0), 1, 0)
+    end
+end
+function my_rehash!(h::MyDict{K,V}) where V where K
+    newsz = 16
+    h.idxfloor = 1
+    slots = Memory{UInt8}(undef, newsz)
+    fill!(slots, 0x0)
+    h.slots = slots
+    h.keys = Memory{K}(undef, newsz)
+    h.vals = Memory{V}(undef, newsz)
+    h.maxprobe = 0
+    return h
+end
+function ht_keyindex2_shorthash!(h::MyDict{K,V}, key) where V where K
+    sz = length(h.keys)
+    if sz == 0
+        my_rehash!(h)
+        index, sh = Base.hashindex(key, length(h.keys))
+        return -index, sh
+    end
+    index, sh = Base.hashindex(key, sz)
+    keys = h.keys
+    while true
+        if h.slots[index] == 0x00
+            return -index, sh
+        end
+        if h.slots[index] == sh
+            k = keys[index]
+            if key === k || isequal(key, k)
+                return index, sh
+            end
+        end
+        1 > h.maxprobe && break
+    end
+    return 0, sh
+end
+function my_setindex!(h::MyDict{K,V}, v, key::K) where V where K
+    index, sh = ht_keyindex2_shorthash!(h, key)
+    h.slots[-index] = sh
+    h.keys[-index] = key
+    h.vals[-index] = v
+    return h
+end
+
+struct E{T}
+    e::T
+end
+struct D{sym,T<:E}
+    d::T
+end
+function Base.:(==)(d1::D{sym1}, d2::D{sym2}) where {sym1,sym2}
+    # changing either == to === makes it no longer crash
+    return sym1 == sym2 && d1.d == d2.d
+end
+function f(x)  # x is unused now
+    d = MyDict{D,Int}()
+    my_setindex!(d, 1, D{:s,E{Int}}(E(1)))
+    return 1.0
+end
+
+@testset "Error handler for jlcall" begin
+  res = Enzyme.gradient(set_runtime_activity(Reverse), f, [0.0])
+  @test res[1] ≈ [0.0]
+end
 
 end
 

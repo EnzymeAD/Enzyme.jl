@@ -1470,6 +1470,15 @@ function EnzymeReplaceFunctionImplementation(mod)
     )
 end
 
+function EnzymeDetectReadonlyOrThrow(mod)
+    ccall(
+        (:EnzymeDetectReadonlyOrThrow, libEnzyme),
+        Cvoid,
+        (LLVM.API.LLVMModuleRef,),
+        mod,
+    )
+end
+
 function EnzymeDumpModuleRef(mod)
     ccall((:EnzymeDumpModuleRef, libEnzyme), Cvoid, (LLVM.API.LLVMModuleRef,), mod)
 end

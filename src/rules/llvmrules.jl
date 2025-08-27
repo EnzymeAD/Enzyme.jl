@@ -255,25 +255,23 @@ end
     API.moveBefore(newo, err, B)
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        t_shadow = normal
+    if shadowR != C_NULL
+        t_shadow1 = if normal !== nothing
+            normal
+        else
+            LLVM.null(value_type(orig))
+        end
+        t_shadow = t_shadow1
         width = get_width(gutils)
         if width != 1 
             t_shadow = UndefValue(
-                LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
+                LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(t_shadow1))),
             )
             for idx = 1:width
-                t_shadow = insert_value!(B, t_shadow, normal, idx - 1)
+                t_shadow = insert_value!(B, t_shadow, t_shadow1, idx - 1)
             end
         end
         unsafe_store!(shadowR, t_shadow.ref)
-    end
-    # Delete the primal code
-    if normal !== nothing
-        unsafe_store!(normalR, UndefValue(value_type(orig)).ref)
-    else
-        ni = new_from_original(gutils, orig)
-        API.EnzymeGradientUtilsErase(gutils, ni)
     end
 
     return false
