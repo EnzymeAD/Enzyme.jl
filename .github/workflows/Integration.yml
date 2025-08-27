@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   integration:
-    timeout-minutes: 20
+    timeout-minutes: 120
     name: Integration Tests - ${{ matrix.package }}
     runs-on: ${{ matrix.os }}
     env:
