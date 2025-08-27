@@ -1,0 +1,46 @@
+name: Integration
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - release-*
+    tags: '*'
+
+concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+jobs:
+  integration:
+    timeout-minutes: 20
+    name: Integration Tests - ${{ matrix.package }}
+    runs-on: ${{ matrix.os }}
+    env:
+      JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - '1.10'
+          - '1'
+        os:
+          - ubuntu-latest
+        package:
+          - Bijectors
+          - DifferentiationInterface
+          - DynamicExpressions
+    steps:
+      - uses: actions/checkout@v5
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.version }}
+      - uses: julia-actions/cache@v2
+      - uses: julia-actions/julia-buildpkg@v1
+      - name: "Run tests"
+        run: |
+            julia --color=yes --project=test/integration/${{ matrix.package }} -e 'using Pkg; Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")]); Pkg.instantiate()'
+            julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 test/integration/${{ matrix.package }}/runtests.jl
+        shell: bash
