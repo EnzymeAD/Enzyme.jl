@@ -8,5 +8,5 @@ lib/EnzymeCore/Manifest.toml
 /docs/Manifest.toml
 /docs/build/
 /docs/src/generated/
-
+test/integration/**/Manifest.toml
 .vscode
