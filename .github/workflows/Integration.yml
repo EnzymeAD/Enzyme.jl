@@ -27,7 +27,7 @@ jobs:
           - '1.10'
           - '1'
         os:
-          - ubuntu-latest
+          - linux-x86-n2-32
         package:
           - Bijectors
           - DifferentiationInterface
