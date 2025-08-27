@@ -18,6 +18,8 @@ jobs:
     timeout-minutes: 120
     name: Integration Tests - ${{ matrix.package }}
     runs-on: ${{ matrix.os }}
+    container:
+      image: ${{ (contains(matrix.os, 'linux') && 'ghcr.io/enzymead/reactant-docker-images@sha256:91e1edb7a7c869d5a70db06e417f22907be0e67ca86641d48adcea221fedc674' ) || '' }}
     env:
       JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
     strategy:
@@ -44,8 +46,6 @@ jobs:
             julia --color=yes --project=test/integration/${{ matrix.package }} -e 'using Pkg; Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")]); Pkg.instantiate()'
         shell: bash
         if: ${{ matrix.version == '1.10' }}
-        env:
-          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - name: "Run tests"
         run: |
             julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 test/integration/${{ matrix.package }}/runtests.jl
