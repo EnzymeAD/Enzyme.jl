@@ -48,7 +48,7 @@ jobs:
         if: ${{ matrix.version == '1.10' }}
       - name: "Instantiate"
         run: |
-          --color=yes --project=test/integration/${{ matrix.package }} -e 'using Pkg; Pkg.instantiate()'
+          julia --color=yes --project=test/integration/${{ matrix.package }} -e 'using Pkg; Pkg.instantiate()'
         shell: bash
       - name: "Run tests"
         run: |
