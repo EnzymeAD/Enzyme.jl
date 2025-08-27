@@ -273,13 +273,6 @@ end
         end
         unsafe_store!(shadowR, t_shadow.ref)
     end
-    # Delete the primal code
-    # if normal !== nothing
-    #     unsafe_store!(normalR, UndefValue(value_type(orig)).ref)
-    # else
-    #     ni = new_from_original(gutils, orig)
-    #     API.EnzymeGradientUtilsErase(gutils, ni)
-    # end
 
     return false
 end
