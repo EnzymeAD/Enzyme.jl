@@ -39,8 +39,14 @@ jobs:
           version: ${{ matrix.version }}
       - uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@v1
-      - name: "Run tests"
+      - name: "Install Dependencies"
         run: |
             julia --color=yes --project=test/integration/${{ matrix.package }} -e 'using Pkg; Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")]); Pkg.instantiate()'
+        shell: bash
+        if: ${{ matrix.version == '1.10' }}
+        env:
+          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+      - name: "Run tests"
+        run: |
             julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 test/integration/${{ matrix.package }}/runtests.jl
         shell: bash
