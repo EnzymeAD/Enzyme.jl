@@ -12,6 +12,7 @@ using DifferentiationInterfaceTest:
 using Enzyme: Enzyme
 using EnzymeCore: Forward, Reverse, Const, Duplicated
 using StaticArrays: StaticArrays
+using Test
 
 logging = get(ENV, "CI", "false") == "false"
 
