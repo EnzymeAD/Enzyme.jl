@@ -273,13 +273,6 @@ end
         end
         unsafe_store!(shadowR, t_shadow.ref)
     end
-    # Delete the primal code
-    if normal !== nothing
-        unsafe_store!(normalR, UndefValue(value_type(orig)).ref)
-    else
-        ni = new_from_original(gutils, orig)
-        API.EnzymeGradientUtilsErase(gutils, ni)
-    end
 
     return false
 end
@@ -960,50 +953,51 @@ end
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    origops = LLVM.operands(orig)
-    if is_constant_value(gutils, origops[2])
-        emit_error(B, orig, "Enzyme: reshape array has active return, but inactive input")
+    if unsafe_load(shadowR) != C_NULL
+	    origops = LLVM.operands(orig)
+	    if is_constant_value(gutils, origops[2])
+		emit_error(B, orig, "Enzyme: reshape array has active return, but inactive input")
+	    end
+
+	    width = get_width(gutils)
+
+	    shadowin = invert_pointer(gutils, origops[2], B)
+	    if width == 1
+		args = LLVM.Value[
+		    new_from_original(gutils, origops[1])
+		    shadowin
+		    new_from_original(gutils, origops[3])
+		]
+		shadowres = call_samefunc_with_inverted_bundles!(
+		    B,
+		    gutils,
+		    orig,
+		    args,
+		    [API.VT_Primal, API.VT_Shadow, API.VT_Primal],
+		    false,
+		) #=lookup=#
+	    else
+		shadowres =
+		    UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+		for idx = 1:width
+		    args = LLVM.Value[
+			new_from_original(gutils, origops[1])
+			extract_value!(B, shadowin, idx - 1)
+			new_from_original(gutils, origops[3])
+		    ]
+		    tmp = call_samefunc_with_inverted_bundles!(
+			B,
+			gutils,
+			orig,
+			args,
+			[API.VT_Primal, API.VT_Shadow, API.VT_Primal],
+			false,
+		    ) #=lookup=#
+		    shadowres = insert_value!(B, shadowres, tmp, idx - 1)
+		end
+	    end
+	    unsafe_store!(shadowR, shadowres.ref)
     end
-
-    width = get_width(gutils)
-
-    shadowin = invert_pointer(gutils, origops[2], B)
-    if width == 1
-        args = LLVM.Value[
-            new_from_original(gutils, origops[1])
-            shadowin
-            new_from_original(gutils, origops[3])
-        ]
-        shadowres = call_samefunc_with_inverted_bundles!(
-            B,
-            gutils,
-            orig,
-            args,
-            [API.VT_Primal, API.VT_Shadow, API.VT_Primal],
-            false,
-        ) #=lookup=#
-    else
-        shadowres =
-            UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-        for idx = 1:width
-            args = LLVM.Value[
-                new_from_original(gutils, origops[1])
-                extract_value!(B, shadowin, idx - 1)
-                new_from_original(gutils, origops[3])
-            ]
-            tmp = call_samefunc_with_inverted_bundles!(
-                B,
-                gutils,
-                orig,
-                args,
-                [API.VT_Primal, API.VT_Shadow, API.VT_Primal],
-                false,
-            ) #=lookup=#
-            shadowres = insert_value!(B, shadowres, tmp, idx - 1)
-        end
-    end
-    unsafe_store!(shadowR, shadowres.ref)
-
     return false
 end
 
