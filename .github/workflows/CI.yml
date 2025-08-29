@@ -109,6 +109,8 @@ jobs:
         if: matrix.version != 'nightly' || steps.buildpkg.outcome == 'success'
         continue-on-error: ${{ matrix.version == 'nightly' }}
         id: run_tests
+        # TODO restore coverage post https://github.com/JuliaGPU/GPUCompiler.jl/pull/711
+        coverage: ${{ matrix.version != '1.11' || !matrix.assertions }}
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - uses: julia-actions/julia-processcoverage@v1
