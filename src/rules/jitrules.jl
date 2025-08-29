@@ -991,11 +991,11 @@ end
 end
 
 @inline function allFirst(::Val{Width}, res) where {Width}
-    ntuple(Returns(res[1]), Val(Width))
+    ntuple(_ -> res[1], Val(Width))
 end
 
 @inline function allSame(::Val{Width}, res) where {Width}
-    ntuple(Returns(res), Val(Width))
+    ntuple(_ -> res, Val(Width))
 end
 
 @inline function allZero(::Val{Width}, res) where {Width}
