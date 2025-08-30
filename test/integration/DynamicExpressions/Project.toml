@@ -1,5 +1,11 @@
 [deps]
 DynamicExpressions = "a40a106e-89c9-4ca8-8020-a735e8728b6b"
+Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
+EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
+
+[sources]
+Enzyme = { path = "../../.." }
+EnzymeCore = { path = "../../../lib/EnzymeCore" }
 
 [compat]
 DynamicExpressions = "=0.18.5"
