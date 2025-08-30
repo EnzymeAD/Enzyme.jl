@@ -5674,6 +5674,8 @@ end
         end
         reinsert_gcmarker!(llvm_f)
 
+		API.EnzymeDumpModuleRef(mod.ref)
+		
         ir = string(mod)
         fn = LLVM.name(llvm_f)
         (ir, fn, combinedReturn)
