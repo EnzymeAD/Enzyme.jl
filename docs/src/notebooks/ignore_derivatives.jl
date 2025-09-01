@@ -31,6 +31,9 @@ begin
     )
 end
 
+# ╔═╡ 23a8503f-3c68-4523-aebe-a4ce4575a02b
+import Enzyme: ignore_derivatives
+
 # ╔═╡ df72e42f-7eec-476f-8ce5-72b09f620005
 md"""
 # Reproducing "Stabilizing backpropagation through time to learn complex physics" 
@@ -116,51 +119,6 @@ end
 # ╔═╡ be852753-126d-42fa-a55c-c907f5dce99d
 plot_gradientfield(N, S, x₀, y, θ₁, θ₂, n)
 
-# ╔═╡ 0b6d0456-1f94-479f-b690-89ad7fc61e44
-begin
-    @noinline function ignore_derivatives(x::T) where {T}
-        return Core.inferencebarrier(x)::T
-    end
-
-    function EnzymeRules.forward(
-            config,
-            ::Const{typeof(ignore_derivatives)},
-            A, x::Duplicated
-        )
-        return Enzyme.make_zero(x.val)
-    end
-
-    function EnzymeRules.augmented_primal(
-            config,
-            ::Const{typeof(ignore_derivatives)},
-            FA, x
-        )
-        primal = EnzymeRules.needs_primal(config) ? x.val : nothing
-        if x isa Active
-            shadow = nothing
-        else
-            shadow = Enzyme.make_zero(x.val)
-        end
-
-        return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
-    end
-    function EnzymeRules.reverse(
-            config,
-            ::Const{typeof(ignore_derivatives)},
-            dret::Active, tape, x::Active
-        )
-        return (Enzyme.make_zero(x.val),)
-    end
-
-    function EnzymeRules.reverse(
-            config,
-            ::Const{typeof(ignore_derivatives)},
-            ::Type{<:Duplicated}, tape, x::Duplicated
-        )
-        return (nothing,)
-    end
-end
-
 # ╔═╡ 873e7792-99a1-4472-92c2-6fc32e2889fa
 N_stop(xᵢ, θ) = θ[1] * ignore_derivatives(xᵢ^2) + θ[2] * ignore_derivatives(xᵢ)
 
@@ -170,6 +128,7 @@ plot_gradientfield(N_stop, S, x₀, y, θ₁, θ₂, n)
 # ╔═╡ Cell order:
 # ╠═b72e9218-81ba-11f0-1eba-5bd949c7ade4
 # ╠═9f5c0822-a19a-4c63-95e7-d2f066a7440f
+# ╠═23a8503f-3c68-4523-aebe-a4ce4575a02b
 # ╠═a4453d23-6e31-451f-b2cd-97346accac82
 # ╠═bd0352c3-1b3c-42f5-ab93-7ca4cb67b9ad
 # ╟─df72e42f-7eec-476f-8ce5-72b09f620005
@@ -182,6 +141,5 @@ plot_gradientfield(N_stop, S, x₀, y, θ₁, θ₂, n)
 # ╠═45ee18f4-d6d3-40f4-bbc0-04cbd3b7b840
 # ╠═ae6a671d-1559-4bff-af6e-78d2b54db020
 # ╠═be852753-126d-42fa-a55c-c907f5dce99d
-# ╠═0b6d0456-1f94-479f-b690-89ad7fc61e44
 # ╠═873e7792-99a1-4472-92c2-6fc32e2889fa
 # ╠═d71a22cc-c1f3-4425-8a6f-442a0bc4f215

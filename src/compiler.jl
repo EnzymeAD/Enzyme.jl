@@ -2604,6 +2604,29 @@ function enzyme!(
     if DumpPostWrap[]
         API.EnzymeDumpModuleRef(mod.ref)
     end
+
+    # Rewrite enzyme_ignore_derivatives functions to the identity of their first argument.
+    to_delete = LLVM.Function[]
+    for fn in functions(mod)
+        if startswith(name(fn), "__enzyme_ignore_derivatives")
+            push!(to_delete, fn)
+            to_delete_inst = LLVM.CallInst[]
+            for u in LLVM.uses(fn)
+                ci = LLVM.user(u)
+                @assert isa(ci, LLVM.CallInst)
+                LLVM.replace_uses!(ci, operands(ci)[1])
+                push!(to_delete_inst, ci)
+            end
+            for ci in to_delete_inst
+                LLVM.erase!(ci)
+            end
+        end
+    end
+    for fn in to_delete
+        LLVM.erase!(fn)
+    end
+    LLVM.verify(mod)
+
     API.EnzymeLogicErasePreprocessedFunctions(logic)
     adjointfname = adjointf == nothing ? nothing : LLVM.name(adjointf)
     augmented_primalfname =
