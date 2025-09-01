@@ -1553,6 +1553,14 @@ macro import_rrule(args...)
     return _import_rrule(args...)
 end
 
+function ignore_derivatives(x::T) where T
+    if EnzymeCore.within_autodiff()
+        return ccall("extern __enzyme_ignore_derivatives", llvmcall, Any, (Any,), x) :: T
+    else
+        return x
+    end
+end
+
 include("precompile.jl")
 
 end # module

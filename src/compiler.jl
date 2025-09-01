@@ -2562,6 +2562,18 @@ function enzyme!(
     if DumpPostWrap[]
         API.EnzymeDumpModuleRef(mod.ref)
     end
+
+    if haskey(functions(mod), "__enzyme_ignore_derivatives")
+        ignore_derivatives = LLVM.functions(mod)["__enzyme_ignore_derivatives"]
+        for u in LLVM.uses(ignore_derivatives)
+            ci = LLVM.user(u)
+            @assert isa(ci, LLVM.CallInst)
+            LLVM.replace_uses!(ci, operands(ci)[2])
+            LLVM.remove!(ci)
+        end
+        LLVM.erase!(ignore_derivatives)
+    end
+
     API.EnzymeLogicErasePreprocessedFunctions(logic)
     adjointfname = adjointf == nothing ? nothing : LLVM.name(adjointf)
     augmented_primalfname =
