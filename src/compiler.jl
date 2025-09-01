@@ -2568,12 +2568,13 @@ function enzyme!(
             for u in LLVM.uses(fn)
                 ci = LLVM.user(u)
                 @assert isa(ci, LLVM.CallInst)
-                LLVM.replace_uses!(ci, operands(ci)[2])
-                LLVM.remove!(ci)
+                LLVM.replace_uses!(ci, operands(ci)[1])
+                LLVM.erase!(ci)
             end
-            # LLVM.erase!(fn)
+            LLVM.erase!(fn)
         end
     end
+    LLVM.verify(mod)
 
     API.EnzymeLogicErasePreprocessedFunctions(logic)
     adjointfname = adjointf == nothing ? nothing : LLVM.name(adjointf)
