@@ -1553,11 +1553,14 @@ macro import_rrule(args...)
     return _import_rrule(args...)
 end
 
-function ignore_derivatives(x::T) where T
-    if EnzymeCore.within_autodiff()
-        return ccall("extern __enzyme_ignore_derivatives", llvmcall, Any, (Any,), x) :: T
-    else
-        return x
+@generated function ignore_derivatives(x::T) where T
+    name = "extern __enzyme_ignore_derivatives." * string(T) 
+    quote
+        if EnzymeCore.within_autodiff()
+            return ccall($name, llvmcall, $T, ($T,), x)
+        else
+            return x
+        end
     end
 end
 

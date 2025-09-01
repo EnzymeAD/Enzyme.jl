@@ -2563,15 +2563,16 @@ function enzyme!(
         API.EnzymeDumpModuleRef(mod.ref)
     end
 
-    if haskey(functions(mod), "__enzyme_ignore_derivatives")
-        ignore_derivatives = LLVM.functions(mod)["__enzyme_ignore_derivatives"]
-        for u in LLVM.uses(ignore_derivatives)
-            ci = LLVM.user(u)
-            @assert isa(ci, LLVM.CallInst)
-            LLVM.replace_uses!(ci, operands(ci)[2])
-            LLVM.remove!(ci)
+    for fn in functions(mod)
+        if startswith(name(fn), "__enzyme_ignore_derivatives")
+            for u in LLVM.uses(fn)
+                ci = LLVM.user(u)
+                @assert isa(ci, LLVM.CallInst)
+                LLVM.replace_uses!(ci, operands(ci)[2])
+                LLVM.remove!(ci)
+            end
+            # LLVM.erase!(fn)
         end
-        LLVM.erase!(ignore_derivatives)
     end
 
     API.EnzymeLogicErasePreprocessedFunctions(logic)
