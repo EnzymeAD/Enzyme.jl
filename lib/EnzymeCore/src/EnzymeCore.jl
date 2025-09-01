@@ -6,7 +6,7 @@ export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplic
 export MixedDuplicated, BatchMixedDuplicated
 export DefaultABI, FFIABI, InlineABI, NonGenABI
 export BatchDuplicatedFunc
-export within_autodiff
+export within_autodiff, ignore_derivatives
 export needs_primal
 
 function batch_size end
