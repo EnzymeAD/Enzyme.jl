@@ -621,6 +621,24 @@ Returns true if within autodiff, otherwise false.
 end
 
 """
+    ignore_derivatives(x::T)::T
+
+Behaves like the `identity` function, but disconnects the "shadow"
+associated with `x`. This has the effect of preventing any derivatives
+from being propagated through `x`.
+"""
+@generated function ignore_derivatives(x::T) where T
+    name = "extern __enzyme_ignore_derivatives." * string(T) 
+    quote
+        if EnzymeCore.within_autodiff()
+            return ccall($name, llvmcall, $T, ($T,), x)
+        else
+            return x
+        end
+    end
+end
+
+"""
     set_err_if_func_written(::Mode)
 
 Return a new mode which throws an error for any attempt to write into an unannotated function object.

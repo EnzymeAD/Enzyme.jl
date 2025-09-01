@@ -53,6 +53,7 @@ import EnzymeCore:
     set_strong_zero,
     clear_strong_zero,
     within_autodiff,
+    ignore_derivatives,
     WithPrimal,
     NoPrimal,
     needs_primal,
@@ -1551,17 +1552,6 @@ Enzyme.@import_rrule(typeof(Base.sort), Any);
 """
 macro import_rrule(args...)
     return _import_rrule(args...)
-end
-
-@generated function ignore_derivatives(x::T) where T
-    name = "extern __enzyme_ignore_derivatives." * string(T) 
-    quote
-        if EnzymeCore.within_autodiff()
-            return ccall($name, llvmcall, $T, ($T,), x)
-        else
-            return x
-        end
-    end
 end
 
 include("precompile.jl")
