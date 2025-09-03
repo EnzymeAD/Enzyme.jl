@@ -1553,13 +1553,6 @@ macro import_rrule(args...)
     return _import_rrule(args...)
 end
 
-"""
-   within_autodiff()
-
-Returns true if within autodiff, otherwise false.
-"""
-@inline EnzymeCore.within_autodiff() = false
-
 include("precompile.jl")
 
 end # module
