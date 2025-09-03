@@ -6,7 +6,7 @@ export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplic
 export MixedDuplicated, BatchMixedDuplicated
 export DefaultABI, FFIABI, InlineABI, NonGenABI
 export BatchDuplicatedFunc
-export within_autodiff
+export within_autodiff, ignore_derivatives
 export needs_primal
 
 function batch_size end
@@ -618,6 +618,27 @@ Returns true if within autodiff, otherwise false.
 """
 @inline function within_autodiff()
     return false
+end
+
+"""
+    ignore_derivatives(x::T)::T
+
+Behaves like the `identity` function, but disconnects the "shadow"
+associated with `x`. This has the effect of preventing any derivatives
+from being propagated through `x`.
+
+!!! compat "Enzyme 0.13.74"
+    Support for `ignore_derivatives` was added in Enzyme 0.13.74.
+"""
+@generated function ignore_derivatives(x::T) where {T}
+    name = "extern __enzyme_ignore_derivatives." * string(T)
+    return quote
+        if EnzymeCore.within_autodiff()
+            return ccall($name, llvmcall, $T, ($T,), x)
+        else
+            return x
+        end
+    end
 end
 
 """
