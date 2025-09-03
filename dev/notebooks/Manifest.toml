@@ -347,7 +347,7 @@ version = "0.13.72"
 [[deps.EnzymeCore]]
 path = "../../../lib/EnzymeCore"
 uuid = "f151be2c-9106-41f4-ab19-57ee4f262869"
-version = "0.8.12"
+version = "0.8.13"
 weakdeps = ["Adapt"]
 
     [deps.EnzymeCore.extensions]
