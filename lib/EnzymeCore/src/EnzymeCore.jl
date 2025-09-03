@@ -626,6 +626,9 @@ end
 Behaves like the `identity` function, but disconnects the "shadow"
 associated with `x`. This has the effect of preventing any derivatives
 from being propagated through `x`.
+
+!!! compat "Enzyme 0.13.74"
+    Support for `ignore_derivatives` was added in Enzyme 0.13.74.
 """
 @generated function ignore_derivatives(x::T) where T
     name = "extern __enzyme_ignore_derivatives." * string(T) 
