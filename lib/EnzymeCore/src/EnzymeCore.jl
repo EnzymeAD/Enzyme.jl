@@ -617,7 +617,9 @@ end
 
 Returns true if within autodiff, otherwise false.
 """
-function within_autodiff end
+@inline function within_autodiff()
+    return false
+end
 
 """
     set_err_if_func_written(::Mode)

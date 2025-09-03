@@ -7,12 +7,17 @@ Literate = "98b081ad-f1c9-55d3-8b20-4c87d4299306"
 PlutoStaticHTML = "359b1769-a58e-495b-9770-312e911026ad"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
-[sources]
-Enzyme = {path = ".."}
-EnzymeCore = {path = "../lib/EnzymeCore"}
-EnzymeTestUtils = {path = "../lib/EnzymeTestUtils"}
-
 [compat]
 Documenter = "1"
 EnzymeTestUtils = "0.2"
 Literate = "2"
+PlutoStaticHTML = "7"
+
+[sources.Enzyme]
+path = ".."
+
+[sources.EnzymeCore]
+path = "../lib/EnzymeCore"
+
+[sources.EnzymeTestUtils]
+path = "../lib/EnzymeTestUtils"

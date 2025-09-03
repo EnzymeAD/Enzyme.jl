@@ -1,7 +1,8 @@
 name = "Enzyme"
 uuid = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 authors = ["William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu>"]
-version = "0.13.70"
+version = "0.13.73"
+
 
 [deps]
 CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"
@@ -39,8 +40,8 @@ EnzymeStaticArraysExt = "StaticArrays"
 BFloat16s = "0.2, 0.3, 0.4, 0.5"
 CEnum = "0.4, 0.5"
 ChainRulesCore = "1"
-EnzymeCore = "0.8.11"
-Enzyme_jll = "0.0.193"
+EnzymeCore = "0.8.13"
+Enzyme_jll = "0.0.195"
 GPUArraysCore = "0.1.6, 0.2"
 GPUCompiler = "1.6"
 LLVM = "6.1, 7, 8, 9"
