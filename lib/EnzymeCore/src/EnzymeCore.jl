@@ -630,9 +630,9 @@ from being propagated through `x`.
 !!! compat "Enzyme 0.13.74"
     Support for `ignore_derivatives` was added in Enzyme 0.13.74.
 """
-@generated function ignore_derivatives(x::T) where T
-    name = "extern __enzyme_ignore_derivatives." * string(T) 
-    quote
+@generated function ignore_derivatives(x::T) where {T}
+    name = "extern __enzyme_ignore_derivatives." * string(T)
+    return quote
         if EnzymeCore.within_autodiff()
             return ccall($name, llvmcall, $T, ($T,), x)
         else
