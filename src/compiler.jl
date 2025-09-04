@@ -4792,7 +4792,7 @@ end
                     )
                         if offset < sizeof(jTy) && isa(sz, LLVM.ConstantInt) && sizeof(jTy) - offset >= convert(Int, sz)
                             lim = convert(Int, sz)
-                            md = to_fullmd(jTy, offset, lim)
+                            md = Core._call_in_world_total(job.world, to_fullmd, jTy, offset, lim)
                             @assert byref == GPUCompiler.BITS_REF ||
                                     byref == GPUCompiler.MUT_REF
                             metadata(inst)["enzyme_truetype"] = md
