@@ -3539,6 +3539,7 @@ end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(
+    @nospecialize(job::GPUCompiler.CompilerJob),
     @nospecialize(functy::Type),
     mod::LLVM.Module,
     entry_f::LLVM.Function,
@@ -3810,8 +3811,7 @@ function lower_convention(
                     metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
                 end
                 ctx = LLVM.context(entry_f)
-        
-                typeTree = copy(typetree(arg.typ, ctx, dl, seen))
+                typeTree = copy(typetree_total(job, arg.typ, ctx, dl, seen))
                 merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
                 only!(typeTree, -1)
                 metadata(ptr)["enzyme_type"] = to_md(typeTree, ctx)
@@ -3825,7 +3825,7 @@ function lower_convention(
                     parameter_attributes(wrapper_f, arg.codegen.i - sret - returnRoots),
                     StringAttribute(
                         "enzyme_type",
-                        string(typetree(arg.typ, ctx, dl, seen)),
+                        string(typetree_total(job, arg.typ, ctx, dl, seen)),
                     ),
                 )
                 push!(
@@ -3846,7 +3846,7 @@ function lower_convention(
                 wrapparm = load!(builder, convert(LLVMType, arg.typ), wrapparm)
                 ctx = LLVM.context(wrapparm)
                 push!(wrapper_args, wrapparm)
-                typeTree = copy(typetree(arg.typ, ctx, dl, seen))
+                typeTree = copy(typetree_total(job, arg.typ, ctx, dl, seen))
                 merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
                 only!(typeTree, -1)
                 push!(
@@ -4591,6 +4591,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
 
     if state.lowerConvention
         primalf, returnRoots, boxedArgs, loweredArgs, actualRetType = lower_convention(
+            job,
             source_sig,
             mod,
             primalf,
