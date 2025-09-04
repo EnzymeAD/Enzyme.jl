@@ -3772,7 +3772,7 @@ function lower_convention(
                     metadata(sretPtr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
                 end
         
-                typeTree = copy(typetree(job, actualRetType, ctx, dl, seen))
+                typeTree = copy(typetree_total(job, actualRetType, ctx, dl, seen))
                 merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
                 only!(typeTree, -1)
                 metadata(sretPtr)["enzyme_type"] = to_md(typeTree, ctx)
@@ -3968,7 +3968,7 @@ function lower_convention(
                     return_attributes(wrapper_f),
                     StringAttribute(
                         "enzyme_type",
-                        string(typetree(actualRetType, ctx, dl, seen)),
+                        string(typetree_total(job, actualRetType, ctx, dl, seen)),
                     ),
                 )
                 push!(
@@ -3994,7 +3994,7 @@ function lower_convention(
                     return_attributes(wrapper_f),
                     StringAttribute(
                         "enzyme_type",
-                        string(typetree(actualRetType, ctx, dl, seen)),
+                        string(typetree_total(job, actualRetType, ctx, dl, seen)),
                     ),
                 )
                 push!(
@@ -4023,7 +4023,7 @@ function lower_convention(
                     return_attributes(wrapper_f),
                     StringAttribute(
                         "enzyme_type",
-                        string(typetree(eltype(RetActivity), ctx, dl, seen)),
+                        string(typetree_total(job, eltype(RetActivity), ctx, dl, seen)),
                     ),
                 )
                 push!(
@@ -4061,7 +4061,7 @@ function lower_convention(
                     return_attributes(wrapper_f),
                     StringAttribute(
                         "enzyme_type",
-                        string(typetree(actualRetType, ctx, dl, seen)),
+                        string(typetree_total(job, actualRetType, ctx, dl, seen)),
                     ),
                 )
                 push!(
@@ -4713,7 +4713,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
                     source_typ
                 end
 
-                ec = typetree(source_typ, ctx, dl, seen)
+                ec = typetree_total(job, source_typ, ctx, dl, seen)
                 if byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF
                     ec = copy(ec)
                     merge!(ec, TypeTree(API.DT_Pointer, ctx))
@@ -4752,7 +4752,7 @@ end
                     )
                 else
                     metadata(inst)["enzyme_type"] =
-                        to_md(typetree(Ptr{Cvoid}, ctx, dl, seen), ctx)
+                        to_md(typetree_total(job, Ptr{Cvoid}, ctx, dl, seen), ctx)
                 end
             end
         end
