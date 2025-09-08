@@ -1495,7 +1495,7 @@ function _import_frule end # defined in EnzymeChainRulesCoreExt extension
 """
     import_frule(::fn, tys...)
 
-Automatically import a `ChainRulesCore.frule`` as a custom forward mode `EnzymeRule`. When called in batch mode, this
+Automatically import a `ChainRulesCore.frule` as a custom forward mode `EnzymeRule`. When called in batch mode, this
 will end up calling the primal multiple times, which may result in incorrect behavior if the function mutates,
 and slow code, always. Importing the rule from `ChainRules` is also likely to be slower than writing your own rule,
 and may also be slower than not having a rule at all.
@@ -1530,10 +1530,10 @@ function _import_rrule end # defined in EnzymeChainRulesCoreExt extension
 """
     import_rrule(::fn, tys...)
 
-Automatically import a ChainRules.rrule as a custom reverse mode EnzymeRule. When called in batch mode, this
+Automatically import a `ChainRules.rrule` as a custom reverse mode EnzymeRule. When called in batch mode, this
 will end up calling the primal multiple times which results in slower code. This macro assumes that the underlying
 function to be imported is read-only, and returns a Duplicated or Const object. This macro also assumes that the
-inputs permit a .+= operation and that the output has a valid Enzyme.make_zero function defined. It also assumes
+inputs permit a `.+=` operation and that the output has a valid `Enzyme.make_zero` function defined. It also assumes
 that `overwritten(x)` accurately describes if there is any non-preserved data from forward to reverse, not just
 the outermost data structure being overwritten as provided by the specification.
 
