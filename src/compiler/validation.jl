@@ -177,15 +177,15 @@ function restore_lookups(mod::LLVM.Module)::Nothing
     end
 end
 
-function check_ir(@nospecialize(job::CompilerJob), mod::LLVM.Module)
-    errors = check_ir!(job, IRError[], mod)
+function check_ir(interp, @nospecialize(job::CompilerJob), mod::LLVM.Module)
+    errors = check_ir!(interp, job, IRError[], mod)
     unique!(errors)
     if !isempty(errors)
         throw(InvalidIRError(job, errors))
     end
 end
 
-function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, mod::LLVM.Module)
+function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, mod::LLVM.Module)
     imported = Set(String[])
     if haskey(functions(mod), "malloc")
         f = functions(mod)["malloc"]
@@ -209,7 +209,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, mod
         if in(f, del)
             continue
         end
-        check_ir!(job, errors, imported, f, del, mod)
+        check_ir!(interp, job, errors, imported, f, del, mod)
     end
     for d in del
         LLVM.API.LLVMDeleteFunction(d)
@@ -220,7 +220,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, mod
         if in(f, del)
             continue
         end
-        check_ir!(job, errors, imported, f, del, mod)
+        check_ir!(interp, job, errors, imported, f, del, mod)
     end
     for d in del
         LLVM.API.LLVMDeleteFunction(d)
@@ -229,7 +229,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, mod
     return errors
 end
 
-function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, f::LLVM.Function, deletedfns::Vector{LLVM.Function}, mod::LLVM.Module)
+function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, f::LLVM.Function, deletedfns::Vector{LLVM.Function}, mod::LLVM.Module)
     calls = LLVM.CallInst[]
     isInline = API.EnzymeGetCLBool(cglobal((:EnzymeInline, API.libEnzyme))) != 0
     mod = LLVM.parent(f)
@@ -466,7 +466,7 @@ function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imp
 
     while length(calls) > 0
         inst = pop!(calls)
-        check_ir!(job, errors, imported, inst, calls, mod)
+        check_ir!(interp, job, errors, imported, inst, calls, mod)
     end
     return errors
 end
@@ -610,9 +610,8 @@ end
 import GPUCompiler:
     DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
-function check_ir!(@nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, inst::LLVM.CallInst, calls::Vector{LLVM.CallInst}, mod::LLVM.Module)
+function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, inst::LLVM.CallInst, calls::Vector{LLVM.CallInst}, mod::LLVM.Module)
     world = job.world
-    interp = GPUCompiler.get_interpreter(job)
     method_table = Core.Compiler.method_table(interp)
     bt = backtrace(inst)
     dest = called_operand(inst)

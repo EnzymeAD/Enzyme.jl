@@ -138,14 +138,26 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
     handler::T
 end
 
-
+const SigCache = Dict{Tuple, Dict{UInt, Base.IdSet{Type}}}()
 function get_rule_signatures(f, TT, world)
+    subdict = if haskey(SigCache, (f, TT))
+       SigCache[(f, TT)]
+    else
+       tmp = Dict{UInt, Base.IdSet{Type}}()
+       SigCache[(f, TT)] = tmp
+       tmp
+    end
+    if haskey(subdict, world)
+       return subdict[world]
+    end
     fwdrules_meths = Base._methods(f, TT, -1, world)::Vector
     sigs = Type[]
     for rule in fwdrules_meths
         push!(sigs, (rule::Core.MethodMatch).method.sig)
     end
-    return Base.IdSet{Type}(sigs)
+    result = Base.IdSet{Type}(sigs)
+    subdict[world] = result
+    return result
 end
 
 function rule_sigs_equal(a, b)
