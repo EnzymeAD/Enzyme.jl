@@ -880,30 +880,78 @@ end
 @generated function same_sized(x::Tuple)
     result = :true
     prev = nothing
+    todo = Tuple{Expr, Type}[]
     for i in 1:length(x.parameters)
-        if x.parameters[i] <: Number
+	push!(todo, (:(x[$i]), x.parameters[i]))
+    end
+    while length(todo) != 0
+	expr, ty = pop!(todo)
+        if ty <: Number
             continue
         end
+	if ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing}
+	    for i in 1:length(ty.parameters[4].parameters)
+	       push!(todo, (:($expr.args[$i]), ty.parameters[4].parameters[i]))
+	    end
+	    continue
+	end
+	@assert ty <: AbstractArray
         if prev == nothing
             prev = quote
-                sz = size(x[$i])
+                sz = size($expr)
             end
             continue
         end
         if result == :true
             result = quote
-                sz == size(x[$i])
+                sz == size($expr)
             end
         else
             result = quote
-                $result && sz == size(x[$i])
+                $result && sz == size($expr)
             end
         end
+    end
+    if result == :true
+	return quote
+	   Base.@_inline_meta
+   	   true
+  	end
     end
     return quote
         Base.@_inline_meta
         $prev
         return $result
+    end
+end
+
+@generated function first_array(x::Tuple)
+    result = :true
+    prev = nothing
+    todo = Tuple{Expr, Type}[]
+    for i in 1:length(x.parameters)
+	push!(todo, (:(x[$i]), x.parameters[i]))
+    end
+    while length(todo) != 0
+	expr, ty = pop!(todo)
+        if ty <: Number
+            continue
+        end
+	if ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing}
+	    for i in 1:length(ty.parameters[4].parameters)
+	       push!(todo, (:($expr.args[$i]), ty.parameters[4].parameters[i]))
+	    end
+	    continue
+	end
+	@assert ty <: AbstractArray
+	return quote
+	    Base.@_inline_meta
+	    $expr
+	end
+    end
+    return quote
+        Base.@_inline_meta
+	throw(AssertionError("No array"))
     end
 end
 
@@ -913,23 +961,29 @@ Base.@propagate_inbounds overload_broadcast_getindex(::Ref{Type{T}}, I) where {T
 # Tuples are statically known to be singleton or vector-like
 Base.@propagate_inbounds overload_broadcast_getindex(A::Tuple{Any}, I) = A[1]
 Base.@propagate_inbounds overload_broadcast_getindex(A::Tuple, I) = error("unhandled") # A[I[1]]
-Base.@propagate_inbounds overload_broadcast_getindex(A, I) = A[I]
+Base.@propagate_inbounds overload_broadcast_getindex(bc::Base.Broadcast.Broadcasted, I) = Base.Broadcast._broadcast_getindex_evalf(bc.f, map(Base.Fix2(overload_broadcast_getindex, I), bc.args)...)
+Base.@propagate_inbounds overload_broadcast_getindex(A, I) = @inbounds A[I]
 
 @inline function override_bc_materialize(bc)
     if bc.args isa Tuple{AbstractArray} && bc.f === Base.identity
         return copy(bc.args[1])
     end
     ElType = Base.Broadcast.combine_eltypes(bc.f, bc.args)
-    dest = similar(bc, ElType)
-    if all(isa_array_or_number, bc.args) && same_sized(bc.args)
-        @inbounds @simd for I in 1:length(bc)
-            val = Base.Broadcast._broadcast_getindex_evalf(bc.f, map(Base.Fix2(overload_broadcast_getindex, I), bc.args)...)
+    if isa_bc_or_array_or_number(bc) && same_sized(bc.args)
+        dest = similar(first_array(bc.args), ElType)
+	@inbounds @simd for I in 1:length(bc)
+	    val = overload_broadcast_getindex(bc, I)
             dest[I] = val
         end
+	return dest
     else
-        Base.copyto!(dest, bc)
+       dest = similar(bc, ElType)
+       # The existing code is rather slow for broadcast in practice: https://github.com/EnzymeAD/Enzyme.jl/issues/1434
+       src = Base.Broadcast.preprocess(nothing, bc)
+       idx = Base.eachindex(src)
+       @inline Enzyme.Compiler.Interpreter.lindex_v3(idx, dest, src)
+       return dest
     end
-    return dest 
 end
 
 struct MultiOp{Position, NumUsed, F1, F2}
@@ -958,12 +1012,28 @@ end
     end
 end
 
-@inline function array_or_number(@nospecialize(Ty))::Bool
-    return Ty <: AbstractArray || Ty <: Number
+@inline function bc_or_array_or_number_ty(@nospecialize(Ty::Type))::Bool
+    if Ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing}
+	return all(bc_or_array_or_number_ty, Ty.parameters[4].parameters)
+    else
+	return Ty <: AbstractArray || Ty <: Number
+    end
 end
 
-@inline function isa_array_or_number(@nospecialize(x))::Bool
-    return x isa AbstractArray || x isa Number
+@inline function has_array(@nospecialize(Ty::Type))::Bool
+    if Ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing}
+	return any(has_array, Ty.parameters[4].parameters)
+    else
+	return Ty <: AbstractArray
+    end
+end
+
+@generated function isa_bc_or_array_or_number(x)::Bool
+    res = bc_or_array_or_number_ty(x)
+    return quote
+       Base.@_inline_meta
+       $res
+    end
 end
 
 @inline function num_or_eltype(@nospecialize(Ty))::Type
@@ -1012,7 +1082,7 @@ function abstract_call_known(
     if interp.broadcast_rewrite
         if f === Base.materialize && length(argtypes) == 2
             bcty = widenconst(argtypes[2])
-            if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && all(array_or_number, bcty.parameters[4].parameters) && any(Base.Fix2(Base.:<:, AbstractArray), bcty.parameters[4].parameters)
+	    if Base.isconcretetype(bcty) && bc_or_array_or_number_ty(bcty) && has_array(bcty)
                     arginfo2 = ArgInfo(
                         fargs isa Nothing ? nothing :
                         [:(Enzyme.Compiler.Interpreter.override_bc_materialize), fargs[2:end]...],

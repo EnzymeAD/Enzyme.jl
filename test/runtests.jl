@@ -2033,6 +2033,9 @@ include("applyiter.jl")
     @test 0.5 ≈ Enzyme.autodiff(Reverse, dyn_mwe, Active, Active(1.0), Const((1, 2)))[1][1]
 end
 
+
+sinadd(x, y) = (sin.(x) .+ (y))
+
 @testset "broadcast" begin
     A = rand(10); B = rand(10); R = similar(A)
     dA = zero(A); dB = zero(B); dR = fill!(similar(R), 1)
@@ -2051,6 +2054,9 @@ end
     dA = zero(A); dB = zero(B); dR = fill!(similar(A), 1)
 
     autodiff(Reverse, foo_bc!, Const, Duplicated(A, dR), Duplicated(transpose(A), transpose(dA)), Duplicated(B, dB))
+
+    # no runtime activity required
+    autodiff(Forward, f, Duplicated(rand(3), rand(3)), Const(rand(3)))
 end
 
 
