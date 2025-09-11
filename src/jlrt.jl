@@ -208,22 +208,23 @@ function emit_jl_throw!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM
     return cb
 end
 
-function emit_conditional_throw!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospecialize(cond::LLVM.Value))::LLVM.Value
+function emit_conditional_throw!(B::LLVM.IRBuilder, @nospecialize(cond::LLVM.Value), @nospecialize(errty::Type), @nospecialize(str::LLVM.Value))::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
     T_void = LLVM.VoidType()
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, 10)
-    FT = LLVM.FunctionType(T_void, [T_prjlvalue, LLVM.IntType(1)])
+    strty = LLVM.PointerType(LLVM.Int8Type())
+    FT = LLVM.FunctionType(T_void, [strty, LLVM.IntType(1)])
 
-    name = "jl_conditional_throw"
+    name = "jl_conditional_throw_"*string(errty)
     if haskey(functions(mod), name)
         fn = functions(mod)[name]
     else
-        fn = LLVM.Function(mod, "jl_conditional_throw", FT)
+        fn = LLVM.Function(mod, name, FT)
     	linkage!(fn, LLVM.API.LLVMInternalLinkage)
-        err, rcond = LLVM.parameters(fn)
+        rstr, rcond = LLVM.parameters(fn)
 	 builder = LLVM.IRBuilder()
          entry = BasicBlock(fn, "entry")
          errb = BasicBlock(fn, "err")
@@ -231,8 +232,14 @@ function emit_conditional_throw!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Valu
          position!(builder, entry)
 	 br!(builder, rcond, errb, exitb)
          position!(builder, errb)
-	 err = addrspacecast!(builder, err, LLVM.PointerType(T_jlvalue, 12))
-	 thrown = emit_jl_throw!(builder, err)
+
+        err = emit_allocobj!(builder, errty)
+        err2 = bitcast!(builder, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
+        err2 = addrspacecast!(builder, err2, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), Derived))
+        store!(builder, rstr, err2)
+
+    	 err = addrspacecast!(builder, err, LLVM.PointerType(T_jlvalue, 12))
+	   thrown = emit_jl_throw!(builder, err)
 	 unreachable!(builder)
 	 position!(builder, exitb)
 	 ret!(builder)
@@ -240,7 +247,7 @@ function emit_conditional_throw!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Valu
         push!(LLVM.function_attributes(fn), LLVM.EnumAttribute("alwaysinline", 0))
     end
 
-    call!(B, FT, fn, LLVM.Value[val, cond])
+    call!(B, FT, fn, LLVM.Value[str, cond])
 end
 
 function emit_box_int32!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM.Value
@@ -1121,17 +1128,18 @@ function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.I
         end
         call!(B, trap_ft, trap)
     else
-        err = emit_allocobj!(B, errty)
-        err2 = bitcast!(B, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
-        store!(B, string, err2)
-	if cond !== nothing
-        	emit_conditional_throw!(B, err, cond)
-	else
-		emit_jl_throw!(
-		    B,
-		    addrspacecast!(B, err, LLVM.PointerType(LLVM.StructType(LLVMType[]), 12)),
-		)
-	end
+    	if cond !== nothing
+            emit_conditional_throw!(B, cond, errty, string)
+    	else
+            err = emit_allocobj!(B, errty)
+            err2 = bitcast!(B, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
+            err2 = addrspacecast!(B, err2, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), Derived))
+            store!(B, string, err2)
+    		emit_jl_throw!(
+    		    B,
+    		    addrspacecast!(B, err, LLVM.PointerType(LLVM.StructType(LLVMType[]), 12)),
+    		)
+    	end
     end
 
     # 2. Call error function and insert unreachable

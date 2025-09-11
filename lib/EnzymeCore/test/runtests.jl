@@ -37,3 +37,7 @@ using EnzymeCore
         include("mode_modification.jl")
     end
 end
+
+@testset "within_autodiff" begin
+    @test !EnzymeCore.within_autodiff()
+end
