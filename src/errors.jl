@@ -524,6 +524,30 @@ function julia_error(
                 return seen[cur]
             end
 
+@static if VERSION < v"1.11-"
+else   
+	if isa(cur, LLVM.LoadInst) && isa(value_type(cur), LLVM.PointerType) && LLVM.addrspace(value_type(operands(cur)[1])) == Derived
+                    larg, off = get_base_and_offset(operands(cur)[1]; inst=ncur, inttoptr=true)
+		    if isa(larg, LLVM.ConstantInt) && off == sizeof(Int)
+			ptr = reinterpret(Ptr{Cvoid}, convert(UInt, larg))
+			obj = Base.unsafe_pointer_to_objref(ptr)
+                        if obj isa Memory && obj == typeof(obj).instance
+                            return make_batched(ncur, prevbb)
+                        end
+		    end
+                end
+	if isa(cur, LLVM.ConstantExpr) && isa(value_type(cur), LLVM.PointerType) && LLVM.addrspace(value_type(cur)) == Derived
+		larg, off = get_base_and_offset(cur; inst=first(instructions(position(prevbb))), inttoptr=true)
+		if isa(larg, LLVM.ConstantInt) && (off == sizeof(Int) || off == 0)
+			ptr = reinterpret(Ptr{Cvoid}, convert(UInt, larg))
+			obj = Base.unsafe_pointer_to_objref(ptr)
+                        if obj isa Memory && obj == typeof(obj).instance
+                            return make_batched(ncur, prevbb)
+                        end
+		    end
+                end
+end
+
             legal, TT, byref = abs_typeof(cur, true)
 
             if legal

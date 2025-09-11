@@ -255,8 +255,9 @@ function should_recurse(@nospecialize(typ2), @nospecialize(arg_t::LLVM.LLVMType)
     end
 end
 
-function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Bool = true, inttoptr::Bool = false)::Tuple{LLVM.Value, Int}
+function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Bool = true, inttoptr::Bool = false, inst::Union{LLVM.Instruction, Nothing} = nothing)::Tuple{LLVM.Value, Int}
     offset = 0
+    pinst = isa(larg, LLVM.Instruction) ? larg::LLVM.Instruction : inst
     while true
         if isa(larg, LLVM.ConstantExpr)
             if opcode(larg) == LLVM.API.LLVMBitCast || opcode(larg) == LLVM.API.LLVMAddrSpaceCast || opcode(larg) == LLVM.API.LLVMPtrToInt
@@ -267,6 +268,24 @@ function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Boo
                 larg = operands(larg)[1]
                 continue
             end
+	    if opcode(larg) == LLVM.API.LLVMGetElementPtr && pinst isa LLVM.Instruction
+		    b = LLVM.IRBuilder()
+		    position!(b, pinst)
+		    offty = LLVM.IntType(8 * sizeof(Int))
+		    offset2 = API.EnzymeComputeByteOffsetOfGEP(b, larg, offty)
+		    if isa(offset2, LLVM.ConstantInt)
+			val = convert(Int, offset2)
+			if offsetAllowed || val == 0
+			    offset += val
+			    larg = operands(larg)[1]
+			    continue
+			else
+			    break
+			end
+		    else
+			break
+		    end
+		end
         end
         if isa(larg, LLVM.BitCastInst) || isa(larg, LLVM.AddrSpaceCastInst) || isa(larg, LLVM.IntToPtrInst)
             larg = operands(larg)[1]
