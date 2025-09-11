@@ -482,8 +482,7 @@ function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, @nospecial
     nested_codegen!(mode, mod, funcspec, world)
 end
 
-function prepare_llvm(mod::LLVM.Module, job, meta)
-    interp = GPUCompiler.get_interpreter(job)
+function prepare_llvm(interp, mod::LLVM.Module, job, meta)
     for f in functions(mod)
         attributes = function_attributes(f)
         push!(attributes, StringAttribute("enzymejl_world", string(job.world)))
@@ -1001,7 +1000,7 @@ end
     return
 end
 
-function set_module_types!(mod::LLVM.Module, primalf::Union{Nothing, LLVM.Function}, job, edges, run_enzyme, mode::API.CDerivativeMode)
+function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLVM.Function}, job, edges, run_enzyme, mode::API.CDerivativeMode)
 
     for f in functions(mod)
         mi, RT = enzyme_custom_extract_mi(f, false)
@@ -1141,7 +1140,6 @@ function set_module_types!(mod::LLVM.Module, primalf::Union{Nothing, LLVM.Functi
     custom = Dict{String,LLVM.API.LLVMLinkage}()
 
     world = job.world
-    interp = GPUCompiler.get_interpreter(job)
     method_table = Core.Compiler.method_table(interp)
 
     state = HandlerState(
@@ -1203,7 +1201,8 @@ function nested_codegen!(
     GPUCompiler.prepare_job!(job)
     otherMod, meta = GPUCompiler.emit_llvm(job)
     
-    prepare_llvm(otherMod, job, meta)
+    interp = GPUCompiler.get_interpreter(job)
+    prepare_llvm(interp, otherMod, job, meta)
 
     entry = name(meta.entry)
 
@@ -1221,12 +1220,12 @@ function nested_codegen!(
         LLVM.run!(pm, otherMod)
     end
 
-    check_ir(job, otherMod)
+    check_ir(interp, job, otherMod)
 
     # Skipped inline of blas
 
     run_enzyme = false
-    set_module_types!(otherMod, nothing, job, edges, run_enzyme, mode)
+    set_module_types!(interp, otherMod, nothing, job, edges, run_enzyme, mode)
 
     # Apply first stage of optimization's so that this module is at the same stage as `mod`
     optimize!(otherMod, JIT.get_tm())
@@ -2233,6 +2232,7 @@ const DumpPostWrap = Ref(false)
 
 function enzyme!(
     job::CompilerJob,
+    interp,
     mod::LLVM.Module,
     primalf::LLVM.Function,
     @nospecialize(TT::Type),
@@ -2251,7 +2251,6 @@ function enzyme!(
         API.EnzymeDumpModuleRef(mod.ref)
     end
     world = job.world
-    interp = GPUCompiler.get_interpreter(job)
     rt = job.config.params.rt
     runtimeActivity = job.config.params.runtimeActivity
     strongZero = job.config.params.strongZero
@@ -4290,14 +4289,14 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         # ??? entry_abi
     )
     primal_job = CompilerJob(primal, primal_config, job.world)
-
     @safe_debug "Emit LLVM with" primal_job
     GPUCompiler.prepare_job!(primal_job)
     mod, meta = GPUCompiler.emit_llvm(primal_job)
     edges = Any[]
     mod_to_edges[mod] = edges
 
-    prepare_llvm(mod, primal_job, meta)
+    primal_interp = GPUCompiler.get_interpreter(primal_job)
+    prepare_llvm(primal_interp, mod, primal_job, meta)
     for f in functions(mod)
         permit_inlining!(f)
     end
@@ -4311,7 +4310,8 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     if DumpPreCheck[]
         API.EnzymeDumpModuleRef(mod.ref)
     end
-    check_ir(job, mod)
+    interp = GPUCompiler.get_interpreter(job)
+    check_ir(interp, job, mod)
 
     disableFallback = String[]
 
@@ -4420,7 +4420,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         end
     end
 
-    custom, state = set_module_types!(mod, primalf, job, edges, params.run_enzyme, mode)
+    custom, state = set_module_types!(interp, mod, primalf, job, edges, params.run_enzyme, mode)
 
     primalf = state.primalf
     must_wrap = state.must_wrap
@@ -4899,6 +4899,7 @@ end
 
         adjointf, augmented_primalf, TapeType = enzyme!(
             job,
+	    interp,
             mod,
             primalf,
             TT,
