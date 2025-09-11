@@ -8,11 +8,11 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
-Enzyme = {path = "../../.."}
-EnzymeCore = {path = "../../../lib/EnzymeCore"}
+Enzyme = { path = "../../.." }
+EnzymeCore = { path = "../../../lib/EnzymeCore" }
 
 [compat]
 ADTypes = "1.17.0"
 DifferentiationInterface = "=0.7.7"
-DifferentiationInterfaceTest = "=0.10.1"
+DifferentiationInterfaceTest = "=0.10.2"
 StaticArrays = "1.9"
