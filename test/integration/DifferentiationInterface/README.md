@@ -27,7 +27,7 @@ The suffixes of the left-hand term are defined as follows:
 - `1` for the first call to the operator, `2` for the second call (which is used to check that the preparation object has not been altered and can safely be reused)
 - `_val` if the operator also returns the value of the function (like `DI.value_and_gradient`), `_noval` otherwise
 
-As you can see, several variants of each operator are tested, so a single bug will give rise to many different errors, one for each.
+As you can see, several variants of each operator are tested, so a single bug will give rise to many different errors. In addition, different preparation mechanisms are also cycled through.
 The testset summary at the end of the CI log is probably the right place to start hunting down issues.
 
 ## What to do if a test fails
