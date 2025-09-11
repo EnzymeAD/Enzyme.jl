@@ -298,7 +298,9 @@ end
 x, dx = [1.0], [2.0];
 y = [3.0];
 cond = false;  # return the constant variable
+try  #hide
 Enzyme.autodiff(Forward, g, Const(cond), Duplicated(x, dx), Const(y))
+catch err; showerror(stderr, err); end  #hide
 ```
 
 The returned value here could either by constant or duplicated, depending on the runtime-defined value of `cond`. If `cond` is true, Enzyme simply returns the shadow of `active_var` as the derivative. However, if `cond` is false, there is no derivative shadow for `constant_var` and Enzyme will throw a `EnzymeRuntimeActivityError` error. For some simple types, e.g. a float Enzyme can circumvent this issue, for example by returning the float 0. Similarly, for some types like the Symbol type, which are never differentiable, such a shadow value will never be used, and Enzyme can return the original "primal" value as its derivative.  However, for arbitrary data structures, Enzyme presently has no generic mechanism to resolve this.
@@ -310,7 +312,9 @@ function h(cond, active_var, constant_var)
   return [g(cond, active_var, constant_var), g(cond, active_var, constant_var)]
 end
 
+try  #hide
 Enzyme.autodiff(Forward, h, Const(cond), Duplicated(x, dx), Const(y))
+catch err; showerror(stderr, err); end  #hide
 ```
 
 Enzyme provides a nice utility `Enzyme.make_zero` which takes a data structure and constructs a deepcopy of the data structure with all of the floats set to zero and non-differentiable types like Symbols set to their primal value. If Enzyme gets into such a "Mismatched activity" situation where it needs to return a differentiable data structure from a constant variable, it could try to resolve this situation by constructing a new shadow data structure, such as with `Enzyme.make_zero`. However, this still can lead to incorrect results. In the case of `h` above, suppose that `active_var` and `consant_var` are both arrays, which are mutable (aka in-place) data types. This means that the return of `h` is going to either be `result = [active_var, active_var]` or `result = [constant_var, constant_var]`.  Thus an update to `result[1][1]` would also change `result[2][1]` since `result[1]` and `result[2]` are the same array. 
