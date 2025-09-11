@@ -886,7 +886,7 @@ end
     end
     while length(todo) != 0
 	expr, ty = pop!(todo)
-        if ty <: Number
+        if ty <: Number || ty <: Base.RefValue
             continue
         end
 	if ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing}
@@ -934,7 +934,7 @@ end
     end
     while length(todo) != 0
 	expr, ty = pop!(todo)
-        if ty <: Number
+        if ty <: Number || ty <: Base.RefValue
             continue
         end
 	if ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing}
@@ -1016,7 +1016,7 @@ end
     if Ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing}
 	return all(bc_or_array_or_number_ty, Ty.parameters[4].parameters)
     else
-	return Ty <: AbstractArray || Ty <: Number
+	return Ty <: AbstractArray || Ty <: Number || Ty <: Base.RefValue
     end
 end
 
