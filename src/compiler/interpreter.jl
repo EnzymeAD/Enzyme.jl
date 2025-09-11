@@ -961,7 +961,18 @@ Base.@propagate_inbounds @inline overload_broadcast_getindex(::Ref{Type{T}}, I) 
 # Tuples are statically known to be singleton or vector-like
 Base.@propagate_inbounds @inline overload_broadcast_getindex(A::Tuple{Any}, I) = A[1]
 Base.@propagate_inbounds @inline overload_broadcast_getindex(A::Tuple, I) = error("unhandled") # A[I[1]]
-Base.@propagate_inbounds @inline overload_broadcast_getindex(bc::Base.Broadcast.Broadcasted, I) = Base.Broadcast._broadcast_getindex_evalf(bc.f, map(Base.Fix2(overload_broadcast_getindex, I), bc.args)...)
+Base.@propagate_inbounds @generated function overload_broadcast_getindex(bc::Base.Broadcast.Broadcasted, I)
+   args = Expr[]
+   for i in 1:length(bc.parameters[4].parameters)
+      push!(args, Expr(:call, overload_broadcast_getindex, :(bc.args[$i]), :I))
+   end
+   expr = Expr(:call, Base.Broadcast._broadcast_getindex_evalf, :(bc.f), args...)
+   return quote
+      Base.@_inline_meta
+      $expr
+   end
+end
+
 Base.@propagate_inbounds @inline overload_broadcast_getindex(A, I) = @inbounds A[I]
 
 @inline function override_bc_materialize(bc)
