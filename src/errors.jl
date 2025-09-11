@@ -538,7 +538,7 @@ else
                 end
 	if isa(cur, LLVM.ConstantExpr) && isa(value_type(cur), LLVM.PointerType) && LLVM.addrspace(value_type(cur)) == Derived
 		larg, off = get_base_and_offset(cur; inst=first(instructions(position(prevbb))), inttoptr=true)
-		    if isa(larg, LLVM.ConstantInt) && off == sizeof(Int)
+		if isa(larg, LLVM.ConstantInt) && (off == sizeof(Int) || off == 0)
 			ptr = reinterpret(Ptr{Cvoid}, convert(UInt, larg))
 			obj = Base.unsafe_pointer_to_objref(ptr)
                         if obj isa Memory && obj == typeof(obj).instance
