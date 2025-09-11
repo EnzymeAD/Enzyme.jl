@@ -8,7 +8,8 @@ using DifferentiationInterfaceTest:
     function_place,
     operator_place,
     FIRST_ORDER,
-    SECOND_ORDER
+    SECOND_ORDER,
+    Scenario
 using Enzyme: Enzyme
 using EnzymeCore: Forward, Reverse, Const, Duplicated
 using StaticArrays: StaticArrays
