@@ -2056,7 +2056,7 @@ sinadd(x, y) = (sin.(x) .+ (y))
     autodiff(Reverse, foo_bc!, Const, Duplicated(A, dR), Duplicated(transpose(A), transpose(dA)), Duplicated(B, dB))
 
     # no runtime activity required
-    autodiff(Forward, f, Duplicated(rand(3), rand(3)), Const(rand(3)))
+    autodiff(Forward, sinadd, Duplicated(rand(3), rand(3)), Const(rand(3)))
 end
 
 
