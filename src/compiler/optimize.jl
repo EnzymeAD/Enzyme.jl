@@ -488,6 +488,8 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         gvn!(pm) # Extra
         LLVM.run!(pm, mod)
     end
+
+    rewrite_generic_memory!(mod)
     
     ModulePassManager() do pm
         add_library_info!(pm, triple(mod))
