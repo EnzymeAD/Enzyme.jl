@@ -284,26 +284,33 @@ When computing the derivative of mutable variables, Enzyme also needs additional
 
 Enzyme will error when they detect these latter types of situations, which we will refer to as `activity unstable`. This term is chosen to mirror the Julia notion of type-unstable code (e.g. where a type is not known at compile time). If an expression is activity unstable, it could either be constant, or active, depending on data not known at compile time. For example, consider the following:
 
-```julia
+```@example runtime
+using Enzyme
+
 function g(cond, active_var, constant_var)
-  if cond
-    return active_var
-  else
-    return constant_var
+    if cond
+        return active_var
+    else
+        return constant_var
+    end
 end
 
-Enzyme.autodiff(Forward, g, Const(condition), Duplicated(x, dx), Const(y))
+x, dx = [1.0], [2.0];
+y = [3.0];
+cond = false;  # return the constant variable
+Enzyme.autodiff(Forward, g, Const(cond), Duplicated(x, dx), Const(y))
 ```
 
 The returned value here could either by constant or duplicated, depending on the runtime-defined value of `cond`. If `cond` is true, Enzyme simply returns the shadow of `active_var` as the derivative. However, if `cond` is false, there is no derivative shadow for `constant_var` and Enzyme will throw a `EnzymeRuntimeActivityError` error. For some simple types, e.g. a float Enzyme can circumvent this issue, for example by returning the float 0. Similarly, for some types like the Symbol type, which are never differentiable, such a shadow value will never be used, and Enzyme can return the original "primal" value as its derivative.  However, for arbitrary data structures, Enzyme presently has no generic mechanism to resolve this.
 
 For example consider a third function:
-```julia
+
+```@example runtime
 function h(cond, active_var, constant_var)
   return [g(cond, active_var, constant_var), g(cond, active_var, constant_var)]
 end
 
-Enzyme.autodiff(Forward, h, Const(condition), Duplicated(x, dx), Const(y))
+Enzyme.autodiff(Forward, h, Const(cond), Duplicated(x, dx), Const(y))
 ```
 
 Enzyme provides a nice utility `Enzyme.make_zero` which takes a data structure and constructs a deepcopy of the data structure with all of the floats set to zero and non-differentiable types like Symbols set to their primal value. If Enzyme gets into such a "Mismatched activity" situation where it needs to return a differentiable data structure from a constant variable, it could try to resolve this situation by constructing a new shadow data structure, such as with `Enzyme.make_zero`. However, this still can lead to incorrect results. In the case of `h` above, suppose that `active_var` and `consant_var` are both arrays, which are mutable (aka in-place) data types. This means that the return of `h` is going to either be `result = [active_var, active_var]` or `result = [constant_var, constant_var]`.  Thus an update to `result[1][1]` would also change `result[2][1]` since `result[1]` and `result[2]` are the same array. 
@@ -312,14 +319,20 @@ If one created a new zero'd copy of each return from `g`, this would mean that t
 
 Instead, Enzyme has a special mode known as "Runtime Activity" which can handle these types of situations. It can come with a minor performance reduction, and is therefore off by default. It can be enabled with by setting runtime activity to true in a desired differentiation mode.
 
-The way Enzyme's runtime activity resolves this issue is to return the original primal variable as the derivative whenever it needs to denote the fact that a variable is a constant. As this issue can only arise with mutable variables, they must be represented in memory via a pointer. All addtional loads and stores will now be modified to first check if the primal pointer is the same as the shadow pointer, and if so, treat it as a constant. Note that this check is not saying that the same arrays contain the same values, but rather the same backing memory represents both the primal and the shadow (e.g. `a === b` or equivalently `pointer(a) == pointer(b)`). 
+The way Enzyme's runtime activity resolves this issue is to return the original primal variable as the derivative whenever it needs to denote the fact that a variable is a constant. As this issue can only arise with mutable variables, they must be represented in memory via a pointer. All addtional loads and stores will now be modified to first check if the primal pointer is the same as the shadow pointer, and if so, treat it as a constant. Note that this check is not saying that the same arrays contain the same values, but rather the same backing memory represents both the primal and the shadow (e.g. `a === b` or equivalently `pointer(a) == pointer(b)`).
 
 Enabling runtime activity does therefore, come with a sharp edge, which is that if the computed derivative of a function is mutable, one must also check to see if the primal and shadow represent the same pointer, and if so the true derivative of the function is actually zero.
 
 Generally, the preferred solution to these type of activity unstable codes should be to make your variables all activity-stable (e.g. always containing differentiable memory or always containing non-differentiable memory). However, with care, Enzyme does support "Runtime Activity" as a way to differentiate these programs without having to modify your code. One can enable runtime activity for your code by changing the mode, such as
 
-```julia
-Enzyme.autodiff(set_runtime_activity(Forward), h, Const(condition), Duplicated(x, dx), Const(y))
+```@example runtime
+dout, out = Enzyme.autodiff(Enzyme.set_runtime_activity(ForwardWithPrimal), g, Const(cond), Duplicated(x, dx), Const(y))
+```
+
+However, care must be taken to check derivative aliasing afterwards:
+
+```@example runtime
+dout === out  # if true, the actual derivative is zero
 ```
 
 ## Mixed activity
