@@ -956,13 +956,13 @@ end
 end
 
 
-Base.@propagate_inbounds overload_broadcast_getindex(A::Union{Ref,AbstractArray{<:Any,0},Number}, I) = A[] # Scalar-likes can just ignore all indices
-Base.@propagate_inbounds overload_broadcast_getindex(::Ref{Type{T}}, I) where {T} = T
+Base.@propagate_inbounds @inline overload_broadcast_getindex(A::Union{Ref,AbstractArray{<:Any,0},Number}, I) = A[] # Scalar-likes can just ignore all indices
+Base.@propagate_inbounds @inline overload_broadcast_getindex(::Ref{Type{T}}, I) where {T} = T
 # Tuples are statically known to be singleton or vector-like
-Base.@propagate_inbounds overload_broadcast_getindex(A::Tuple{Any}, I) = A[1]
-Base.@propagate_inbounds overload_broadcast_getindex(A::Tuple, I) = error("unhandled") # A[I[1]]
-Base.@propagate_inbounds overload_broadcast_getindex(bc::Base.Broadcast.Broadcasted, I) = Base.Broadcast._broadcast_getindex_evalf(bc.f, map(Base.Fix2(overload_broadcast_getindex, I), bc.args)...)
-Base.@propagate_inbounds overload_broadcast_getindex(A, I) = @inbounds A[I]
+Base.@propagate_inbounds @inline overload_broadcast_getindex(A::Tuple{Any}, I) = A[1]
+Base.@propagate_inbounds @inline overload_broadcast_getindex(A::Tuple, I) = error("unhandled") # A[I[1]]
+Base.@propagate_inbounds @inline overload_broadcast_getindex(bc::Base.Broadcast.Broadcasted, I) = Base.Broadcast._broadcast_getindex_evalf(bc.f, map(Base.Fix2(overload_broadcast_getindex, I), bc.args)...)
+Base.@propagate_inbounds @inline overload_broadcast_getindex(A, I) = @inbounds A[I]
 
 @inline function override_bc_materialize(bc)
     if bc.args isa Tuple{AbstractArray} && bc.f === Base.identity
