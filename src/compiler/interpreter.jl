@@ -975,11 +975,10 @@ end
 
 Base.@propagate_inbounds @inline overload_broadcast_getindex(A, I) = @inbounds A[I]
 
-@inline function override_bc_materialize(bc)
+@inline function override_bc_materialize(bc, ElType::Type)
     if bc.args isa Tuple{AbstractArray} && bc.f === Base.identity
         return copy(bc.args[1])
     end
-    ElType = @inline Base.Broadcast.combine_eltypes(bc.f, bc.args)
     if isa_bc_or_array_or_number(bc) && same_sized(bc.args)
         dest = @inline similar(first_array(bc.args), ElType)
 	@inbounds @simd for I in 1:length(bc)
@@ -1055,6 +1054,25 @@ end
     end
 end
 
+
+## Computation of inferred result type, for empty and concretely inferred cases only
+ty_broadcast_getindex_eltype(interp, bc::Type{<:Base.Broadcast.Broadcasted}) = ty_combine_eltypes(interp, bc.parameters[3], (bc.parameters[4].parameters...,))
+ty_broadcast_getindex_eltype(interp, A) = eltype(A)  # Tuple, Array, etc.
+
+ty_eltypes(interp, ::Tuple{}) = Tuple{}
+ty_eltypes(interp, t::Tuple{Any}) = Iterators.TupleOrBottom(ty_broadcast_getindex_eltype(interp, t[1]))
+ty_eltypes(interp, t::Tuple{Any,Any}) = Iterators.TupleOrBottom(ty_broadcast_getindex_eltype(interp, t[1]), ty_broadcast_getindex_eltype(interp, t[2]))
+ty_eltypes(interp, t::Tuple) = (TT = ty_eltypes(interp, Base.tail(t)); TT === Union{} ? Union{} : Iterators.TupleOrBottom(ty_broadcast_getindex_eltype(interp, t[1]), TT.parameters...))
+# eltypes(t::Tuple) = Iterators.TupleOrBottom(ntuple(i -> _broadcast_getindex_eltype(t[i]), Val(length(t)))...)
+
+# Inferred eltype of result of broadcast(f, args...)
+function ty_combine_eltypes(interp, f, args::Tuple)
+    argT = ty_eltypes(interp, args)
+    argT === Union{} && return Union{}
+    preprom = Core.Compiler._return_type(interp, Tuple{f, argT.parameters...})
+    return Base.promote_typejoin_union(preprom)
+end
+
 function abstract_call_known(
     interp::EnzymeInterpreter{Handler},
     @nospecialize(f),
@@ -1094,10 +1112,12 @@ function abstract_call_known(
         if f === Base.materialize && length(argtypes) == 2
             bcty = widenconst(argtypes[2])
 	    if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && bc_or_array_or_number_ty(bcty) && has_array(bcty)
+		ElType = ty_broadcast_getindex_eltype(interp, bcty)
+		if ElType !== Union{} && Base.isconcretetype(ElType)
                     arginfo2 = ArgInfo(
                         fargs isa Nothing ? nothing :
-                        [:(Enzyme.Compiler.Interpreter.override_bc_materialize), fargs[2:end]...],
-                        [Core.Const(Enzyme.Compiler.Interpreter.override_bc_materialize), argtypes[2:end]...],
+                        [:(Enzyme.Compiler.Interpreter.override_bc_materialize), fargs[2:end]..., :ElType],
+			[Core.Const(Enzyme.Compiler.Interpreter.override_bc_materialize), argtypes[2:end]..., Core.Const(ElType)],
                     )
                     return Base.@invoke abstract_call_known(
                         interp::AbstractInterpreter,
@@ -1107,6 +1127,7 @@ function abstract_call_known(
                         sv::AbsIntState,
                         max_methods::Int,
                     )
+		end
             end
         end
 
