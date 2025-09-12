@@ -133,8 +133,8 @@ end
         sum_b_binv_test_case(Bijectors.Coupling(Bijectors.Shift, Bijectors.PartitionMask(3, [1], [2])), 3),
         sum_b_binv_test_case(
             Bijectors.InvertibleBatchNorm(3),
-            (3, 3),
-            broken = (VERSION >= v"1.11" ? Both : Neither)
+            (3, 3);
+            runtime_activity = (VERSION >= v"1.11" ? Both : Neither)
         ),
         sum_b_binv_test_case(Bijectors.LeakyReLU(0.2), 3),
         sum_b_binv_test_case(Bijectors.Logit(0.1, 0.3), 3),
