@@ -1,10 +1,24 @@
 name: Integration
 on:
   pull_request:
+    paths:
+      - '.github/workflows/Integration.yml'
+      - 'ext/**'
+      - 'lib/**'
+      - 'src/**'
+      - 'test/**'
+      - 'Project.toml'
   push:
     branches:
       - main
+    paths:
       - release-*
+      - '.github/workflows/Integration.yml'
+      - 'ext/**'
+      - 'lib/**'
+      - 'src/**'
+      - 'test/**'
+      - 'Project.toml'
     tags: '*'
 
 concurrency:
