@@ -190,6 +190,7 @@ end
             end,
             randn(rng, 7);
             name="PlanarLayer7",
+            # https://github.com/TuringLang/Bijectors.jl/issues/415
             broken = (VERSION >= v"1.11" ? Forward : Neither),
         ),
 
