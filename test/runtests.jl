@@ -2033,6 +2033,9 @@ include("applyiter.jl")
     @test 0.5 ≈ Enzyme.autodiff(Reverse, dyn_mwe, Active, Active(1.0), Const((1, 2)))[1][1]
 end
 
+
+sinadd(x, y) = (sin.(x) .+ (y))
+
 @testset "broadcast" begin
     A = rand(10); B = rand(10); R = similar(A)
     dA = zero(A); dB = zero(B); dR = fill!(similar(R), 1)
@@ -2051,6 +2054,10 @@ end
     dA = zero(A); dB = zero(B); dR = fill!(similar(A), 1)
 
     autodiff(Reverse, foo_bc!, Const, Duplicated(A, dR), Duplicated(transpose(A), transpose(dA)), Duplicated(B, dB))
+
+    # no runtime activity required
+    res = autodiff(Forward, sinadd, Duplicated([2.7], [4.2]), Const([.31]))[1]
+    @test [-3.7971029964716574] ≈ res
 end
 
 
@@ -3769,22 +3776,13 @@ const objective3 = params -> mixture_loglikelihood3(params, data)
                  -13.935687326484112,
                  -38.00044665702692,
                  12.87712891527131]
-    @static if VERSION < v"1.11-"
-    	@test expected ≈ Enzyme.gradient(Reverse, objective1, params0)[1]
-    else
-        # TODO broken should not throw
-    	@test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.gradient(Reverse, objective1, params0)[1]
-    	@test expected ≈ Enzyme.gradient(set_runtime_activity(Reverse), objective1, params0)[1]
-    end
+    @test expected ≈ Enzyme.gradient(Reverse, objective1, params0)[1]
+    @test expected ≈ Enzyme.gradient(set_runtime_activity(Reverse), objective1, params0)[1]
+    
     # objective2 fails from runtime activity requirements
     # @test expected ≈ Enzyme.gradient(Reverse, objective2, params0)[1]
-    @static if VERSION < v"1.11-"
-        @test expected ≈ Enzyme.gradient(Reverse, objective3, params0)[1]
-    else
-	# TODO broken should not throw
-    	@test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.gradient(Reverse, objective3, params0)[1]
-    	@test expected ≈ Enzyme.gradient(set_runtime_activity(Reverse), objective3, params0)[1]
-    end
+    @test expected ≈ Enzyme.gradient(Reverse, objective3, params0)[1]
+    @test expected ≈ Enzyme.gradient(set_runtime_activity(Reverse), objective3, params0)[1]
 end
 
 struct HarmonicAngle

@@ -1180,6 +1180,10 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
     return custom, state
 end
 
+const DumpPreNestedCheck = Ref(false)
+const DumpPreNestedOpt = Ref(false)
+const DumpPostNestedOpt = Ref(false)
+
 function nested_codegen!(
     mode::API.CDerivativeMode,
     mod::LLVM.Module,
@@ -1219,8 +1223,16 @@ function nested_codegen!(
         API.AddPreserveNVVMPass!(pm, true) #=Begin=#
         LLVM.run!(pm, otherMod)
     end
+    
+    if DumpPreNestedCheck[]
+	API.EnzymeDumpModuleRef(otherMod.ref)
+    end
 
     check_ir(interp, job, otherMod)
+            
+    if DumpPreNestedOpt[]
+	API.EnzymeDumpModuleRef(otherMod.ref)
+    end
 
     # Skipped inline of blas
 
@@ -1229,6 +1241,11 @@ function nested_codegen!(
 
     # Apply first stage of optimization's so that this module is at the same stage as `mod`
     optimize!(otherMod, JIT.get_tm())
+    
+    if DumpPostNestedOpt[]
+	API.EnzymeDumpModuleRef(otherMod.ref)
+    end
+    
     # 4) Link the corresponding module
     LLVM.link!(mod, otherMod)
     # 5) Call the function
@@ -2228,6 +2245,7 @@ end
 include("rules/activityrules.jl")
 
 const DumpPreEnzyme = Ref(false)
+const DumpPostEnzyme = Ref(false)
 const DumpPostWrap = Ref(false)
 
 function enzyme!(
@@ -2576,6 +2594,9 @@ function enzyme!(
     adjointf = adjointf == nothing ? nothing : functions(mod)[adjointfname]
     augmented_primalf =
         augmented_primalf == nothing ? nothing : functions(mod)[augmented_primalfname]
+    if DumpPostEnzyme[]
+        API.EnzymeDumpModuleRef(mod.ref)
+    end
     return adjointf, augmented_primalf, TapeType
 end
 
@@ -5755,6 +5776,7 @@ function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module
     return CompileResult(adjoint_ptr, primal_ptr, TapeType, edges)
 end
 
+const DumpPrePostOpt = Ref(false)
 const DumpPostOpt = Ref(false)
 
 # actual compilation
@@ -5786,6 +5808,9 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
             string(mod)
         end
         if job.config.params.ABI <: FFIABI || job.config.params.ABI <: NonGenABI
+            if DumpPrePostOpt[]
+                API.EnzymeDumpModuleRef(mod.ref)
+            end
             post_optimze!(mod, JIT.get_tm())
             if DumpPostOpt[]
                 API.EnzymeDumpModuleRef(mod.ref)

@@ -1314,13 +1314,21 @@ import .Compiler: remove_innerty, UnknownTapeType
         # If the tape is not cached, compile it
         if obj === nothing
 
-            Compiler.JuliaContext() do ctx
+	    ts_ctx = Compiler.JuliaContext()
+	    ctx = Compiler.context(ts_ctx)
+	    Compiler.activate(ctx)
+            try
                 _, meta = GPUCompiler.compile(:llvm, job)
                 obj = meta.TapeType
                 tape_cache[key] = obj
+		obj
+    	    finally
+                Compiler.deactivate(ctx)
+		Compiler.dispose(ts_ctx)
             end
+	else
+	    obj
         end
-        obj
     finally
         unlock(tape_cache_lock)
     end

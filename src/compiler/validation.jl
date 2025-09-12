@@ -241,8 +241,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
         if isa(inst, LLVM.CallInst)
             push!(calls, inst)
             # remove illegal invariant.load and jtbaa_const invariants
-        elseif isa(inst, LLVM.LoadInst)
-            
+        elseif isa(inst, LLVM.LoadInst) 
             fn_got, _ = get_base_and_offset(operands(inst)[1]; offsetAllowed=false, inttoptr=false)
             fname = String(name(fn_got))
             match_ = match(r"^jlplt_(.*)_\d+_got$", fname)
@@ -468,6 +467,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
         inst = pop!(calls)
         check_ir!(interp, job, errors, imported, inst, calls, mod)
     end
+
     return errors
 end
 
