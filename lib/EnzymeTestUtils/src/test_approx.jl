@@ -10,14 +10,17 @@ end
 @static if VERSION < v"1.11-"
 else
 using LinearAlgebra
+function zero_copy(x)
+    y = zero(parent(x))
+    copyto!(x.uplo == 'U' ? UpperTriangular(y) : LowerTriangular(y), x.uplo == 'U' ? UpperTriangular(x) : LowerTriangular(x))
+    y
+end
 function test_approx(x::LinearAlgebra.HermOrSym{<:Number}, y::LinearAlgebra.HermOrSym{<:Number}, msg; kwargs...)
     # on 1.11+ similar of a hermitian or symmetric leaves the other part of the array undefined
     # this mean that when we try to compare that data, we compare undefined memory -- which may be different
     # here let's explicitly zero it to make the test more meaningful.
-    x2 = zero(parent(x))
-    y2 = zero(parent(y))
-    copyto!(x2, x)
-    copyto!(y2, y)
+    x2 = zero_copy(x)
+    y2 = zero_copy(y)
     test_approx(x2, y2, msg; kwargs...)
     return nothing
 end
