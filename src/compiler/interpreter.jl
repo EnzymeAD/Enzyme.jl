@@ -324,6 +324,8 @@ end
 
 Core.Compiler.method_table(@nospecialize(interp::EnzymeInterpreter)) = interp.method_table
 
+function override_bc_materialize end
+
 function is_alwaysinline_func(@nospecialize(TT))::Bool
     isa(TT, DataType) || return false
     @static if VERSION ≥ v"1.11-"
@@ -331,9 +333,12 @@ function is_alwaysinline_func(@nospecialize(TT))::Bool
         return true
     end
     end
-    #if TT.parameters[1] == typeof(Base.Broadcast.eltypes)
-    #    return true
-    #end
+    if TT.parameters[1] == typeof(Base.materialize) &&  length(TT.parameters) == 2 && TT.parameters[2] <: Base.Broadcast.Broadcasted
+	return true
+    end
+    if TT.parameters[1] == typeof(override_bc_materialize)
+        return true
+    end
     return false
 end
 
@@ -1116,12 +1121,14 @@ function abstract_call_known(
             bcty = widenconst(argtypes[2])
 	    if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && bc_or_array_or_number_ty(bcty) && has_array(bcty)
 		ElType = ty_broadcast_getindex_eltype(interp, bcty)
+		ccall(:jl_, Cvoid, (Any,), (bcty, ElType, Base.isconcretetype(ElType), ElType !== Union{}))
 		if ElType !== Union{} && Base.isconcretetype(ElType)
                     arginfo2 = ArgInfo(
                         fargs isa Nothing ? nothing :
                         [:(Enzyme.Compiler.Interpreter.override_bc_materialize), fargs[2:end]..., :ElType],
 			[Core.Const(Enzyme.Compiler.Interpreter.override_bc_materialize), argtypes[2:end]..., Core.Const(ElType)],
                     )
+		    ccall(:jl_, Cvoid, (Any,), arginfo2)
                     return Base.@invoke abstract_call_known(
                         interp::AbstractInterpreter,
                         Enzyme.Compiler.Interpreter.override_bc_materialize::Any,

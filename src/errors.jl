@@ -209,8 +209,10 @@ function Base.showerror(io::IO, ece::EnzymeMutabilityException)
     print(io, msg, '\n')
 end
 
-struct EnzymeRuntimeActivityError <: EnzymeError
+struct EnzymeRuntimeActivityError{MT,WT} <: EnzymeError
     msg::Cstring
+    mi::MT
+    world::WT
 end
 
 function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)
@@ -239,9 +241,56 @@ function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)
         io,
         " b) set the Enzyme mode to turn on runtime activity (e.g. autodiff(set_runtime_activity(Reverse), ...) ). This will maintain correctness, but may slightly reduce performance.",
     )
+    if ece.mi !== nothing
+        print(io, " Failure within method: ", ece.mi, "\n")
+        printstyled(io, "Hint"; bold = true, color = :cyan)
+        printstyled(
+            io,
+            ": catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\nIf you have Cthulu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.\n";
+            color = :cyan,
+        )
+    end
     msg = Base.unsafe_string(ece.msg)
     print(io, msg, '\n')
 end
+
+function InteractiveUtils.code_typed(ece::EnzymeRuntimeActivityError; interactive::Bool=false, kwargs...)
+    mi = ece.mi
+    if mi === nothing
+        throw(AssertionError("code_typed(::EnzymeRuntimeActivityError; interactive::Bool=false, kwargs...) not supported for error without mi"))
+    end
+    world = ece.world::UInt
+    mode = Enzyme.API.DEM_ReverseModeCombined
+
+    CT = @static if VERSION >= v"1.11.0-DEV.1552"
+        EnzymeCacheToken(
+            typeof(DefaultCompilerTarget()),
+            false,
+            GPUCompiler.GLOBAL_METHOD_TABLE, #=job.config.always_inline=#
+            EnzymeCompilerParams,
+            world,
+            false,
+            true,
+            true
+        )
+    else
+        Enzyme.Compiler.GLOBAL_REV_CACHE
+    end
+
+    interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true)
+
+    sig = mi.specTypes  # XXX: can we just use the method instance?
+    if interactive
+        # call Cthulhu without introducing a dependency on Cthulhu
+        mod = get(Base.loaded_modules, Cthulhu, nothing)
+        mod===nothing && error("Interactive code reflection requires Cthulhu; please install and load this package first.")
+        descend_code_typed = getfield(mod, :descend_code_typed)
+        descend_code_typed(sig; interp, kwargs...)
+    else
+        Base.code_typed_by_type(sig; interp, kwargs...)
+    end
+end
+
 
 struct EnzymeNoTypeError <: EnzymeError
     msg::Cstring
@@ -890,7 +939,32 @@ end
                 Base.show_backtrace(io, bt)
             end
         end
-        emit_error(b, nothing, msg2, EnzymeRuntimeActivityError)
+        
+	mi = nothing
+        world = nothing
+
+        if isa(val, LLVM.Instruction)
+            f = LLVM.parent(LLVM.parent(val))::LLVM.Function
+            mi, rt = enzyme_custom_extract_mi(
+                f,
+                false,
+            ) #=error=#
+            world = enzyme_extract_world(f)
+        elseif isa(val, LLVM.Argument)
+            f = parent_scope(val)::LLVM.Function
+            mi, rt = enzyme_custom_extract_mi(
+                f,
+                false,
+            ) #=error=#
+            world = enzyme_extract_world(f)
+        end
+        mode = Enzyme.API.DEM_ReverseModeCombined
+
+	if mi !== nothing
+	    emit_error(b, nothing, (msg2, mi, world), EnzymeRuntimeActivityError{Core.MethodInstance, UInt})
+	else
+	    emit_error(b, nothing, msg2, EnzymeRuntimeActivityError{Nothing, Nothing})
+	end
         return C_NULL
     elseif errtype == API.ET_GetIndexError
         @assert B != C_NULL

@@ -1074,26 +1074,32 @@ function emit_printf(B::LLVM.IRBuilder, string::String, v::LLVM.Value...)
     call!(B, LLVM.function_type(exc), exc, args)
 end
 
-function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.Instruction}), string::Union{String, LLVM.Value}, @nospecialize(errty::Type) = EnzymeRuntimeException, @nospecialize(cond::Union{Nothing, LLVM.Value}) = nothing)
+function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.Instruction}), string::Union{String, LLVM.Value, Tuple{String, Core.MethodInstance, UInt}}, @nospecialize(errty::Type) = EnzymeRuntimeException, @nospecialize(cond::Union{Nothing, LLVM.Value}) = nothing)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
 
-    if !isa(string, LLVM.Value)
-        string = globalstring_ptr!(B, string, "enz_exception")
+    stringv = string
+    if stringv isa Tuple
+	stringv = stringv[1]
+    end
+    if !isa(stringv, LLVM.Value)
+        stringv = globalstring_ptr!(B, stringv, "enz_exception")
     end
 
     ct = if occursin("ptx", LLVM.triple(mod)) || occursin("amdgcn", LLVM.triple(mod))
-
+	if string isa Tuple
+	    errty = errty.name.wrapper{Nothing, Nothing}
+	end
         vt = LLVM.VoidType()
         ptr = convert(LLVMType, Ptr{Cvoid})
 
         exc, _ =
             get_function!(mod, "gpu_report_exception", LLVM.FunctionType(vt, [ptr]))
 
-        string = ptrtoint!(B, string, ptr)
+        stringv = ptrtoint!(B, stringv, ptr)
 
-        call!(B, LLVM.function_type(exc), exc, [string])
+        call!(B, LLVM.function_type(exc), exc, [stringv])
 
         framefn, ft = get_function!(
             mod,
@@ -1129,12 +1135,25 @@ function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.I
         call!(B, trap_ft, trap)
     else
     	if cond !== nothing
-            emit_conditional_throw!(B, cond, errty, string)
+	    if string isa Tuple
+	       errty = errty.name.wrapper{Nothing, Nothing}
+	    end
+            emit_conditional_throw!(B, cond, errty, stringv)
     	else
             err = emit_allocobj!(B, errty)
             err2 = bitcast!(B, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
             err2 = addrspacecast!(B, err2, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), Derived))
-            store!(B, string, err2)
+            store!(B, stringv, err2)
+	    if string isa Tuple
+	       g1 = LLVM.inbounds_gep!(B, LLVM.PointerType(LLVM.Int8Type()), err2, [LLVM.ConstantInt(1)])
+	       ts = unsafe_to_llvm(B, string[2])
+	       g1 = LLVM.bitcast!(B, g1, LLVM.PointerType(value_type(ts), Derived))
+	       store!(B, ts, g1)
+	       g2 = LLVM.inbounds_gep!(B, LLVM.PointerType(LLVM.Int8Type()), err2, [LLVM.ConstantInt(2)])
+	       ts = LLVM.ConstantInt(string[3])
+	       g2 = LLVM.bitcast!(B, g2, LLVM.PointerType(value_type(ts), Derived))
+	       store!(B, ts, g2)
+	    end
     		emit_jl_throw!(
     		    B,
     		    addrspacecast!(B, err, LLVM.PointerType(LLVM.StructType(LLVMType[]), 12)),
