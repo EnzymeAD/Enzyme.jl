@@ -979,9 +979,9 @@ Base.@propagate_inbounds @inline overload_broadcast_getindex(A, I) = @inbounds A
     if bc.args isa Tuple{AbstractArray} && bc.f === Base.identity
         return copy(bc.args[1])
     end
-    ElType = Base.Broadcast.combine_eltypes(bc.f, bc.args)
+    ElType = @inline Base.Broadcast.combine_eltypes(bc.f, bc.args)
     if isa_bc_or_array_or_number(bc) && same_sized(bc.args)
-        dest = similar(first_array(bc.args), ElType)
+        dest = @inline similar(first_array(bc.args), ElType)
 	@inbounds @simd for I in 1:length(bc)
 	    val = overload_broadcast_getindex(bc, I)
             dest[I] = val
