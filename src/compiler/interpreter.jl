@@ -331,6 +331,9 @@ function is_alwaysinline_func(@nospecialize(TT))::Bool
         return true
     end
     end
+    #if TT.parameters[1] == typeof(Base.Broadcast.eltypes)
+    #    return true
+    #end
     return false
 end
 
@@ -979,15 +982,15 @@ Base.@propagate_inbounds @inline overload_broadcast_getindex(A, I) = @inbounds A
     if bc.args isa Tuple{AbstractArray} && bc.f === Base.identity
         return copy(bc.args[1])
     end
-    if isa_bc_or_array_or_number(bc) && same_sized(bc.args)
-        dest = @inline similar(first_array(bc.args), ElType)
+    dest = @inline similar(bc, ElType)
+    if same_sized(bc.args)
+        # dest = @inline similar(first_array(bc.args), ElType)
 	@inbounds @simd for I in 1:length(bc)
 	    val = overload_broadcast_getindex(bc, I)
             dest[I] = val
         end
 	return dest
     else
-       dest = @inline similar(bc, ElType)
        # The existing code is rather slow for broadcast in practice: https://github.com/EnzymeAD/Enzyme.jl/issues/1434
        src = @inline Base.Broadcast.preprocess(nothing, bc)
        idx = Base.eachindex(src)
