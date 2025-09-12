@@ -134,7 +134,7 @@ end
         sum_b_binv_test_case(
             Bijectors.InvertibleBatchNorm(3),
             (3, 3),
-            broken=(VERSION>=v"1.11" ? Both : Neither)
+            broken = (VERSION >= v"1.11" ? Both : Neither)
         ),
         sum_b_binv_test_case(Bijectors.LeakyReLU(0.2), 3),
         sum_b_binv_test_case(Bijectors.Logit(0.1, 0.3), 3),
@@ -190,7 +190,7 @@ end
             end,
             randn(rng, 7);
             name="PlanarLayer7",
-            broken=(VERSION>=v"1.11" ? Forward : Neither),
+            broken = (VERSION >= v"1.11" ? Forward : Neither),
         ),
 
         TestCase(
@@ -202,7 +202,7 @@ end
             end,
             randn(rng, 11);
             name="PlanarLayer11",
-            broken=(VERSION>=v"1.11" ? Forward : Neither),
+            broken = (VERSION >= v"1.11" ? Forward : Neither),
         ),
     ]
 
