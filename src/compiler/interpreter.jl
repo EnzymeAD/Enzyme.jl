@@ -988,9 +988,9 @@ Base.@propagate_inbounds @inline overload_broadcast_getindex(A, I) = @inbounds A
         end
 	return dest
     else
-       dest = similar(bc, ElType)
+       dest = @inline similar(bc, ElType)
        # The existing code is rather slow for broadcast in practice: https://github.com/EnzymeAD/Enzyme.jl/issues/1434
-       src = Base.Broadcast.preprocess(nothing, bc)
+       src = @inline Base.Broadcast.preprocess(nothing, bc)
        idx = Base.eachindex(src)
        @inline Enzyme.Compiler.Interpreter.lindex_v3(idx, dest, src)
        return dest
