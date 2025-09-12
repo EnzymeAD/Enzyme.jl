@@ -324,20 +324,12 @@ end
 
 Core.Compiler.method_table(@nospecialize(interp::EnzymeInterpreter)) = interp.method_table
 
-function override_bc_materialize end
-
 function is_alwaysinline_func(@nospecialize(TT))::Bool
     isa(TT, DataType) || return false
     @static if VERSION ≥ v"1.11-"
     if TT.parameters[1] == typeof(Core.memoryref)
         return true
     end
-    end
-    if TT.parameters[1] == typeof(Base.materialize) &&  length(TT.parameters) == 2 && TT.parameters[2] <: Base.Broadcast.Broadcasted
-	return true
-    end
-    if TT.parameters[1] == typeof(override_bc_materialize)
-        return true
     end
     return false
 end
@@ -983,7 +975,10 @@ end
 
 Base.@propagate_inbounds @inline overload_broadcast_getindex(A, I) = @inbounds A[I]
 
-@inline function override_bc_materialize(bc, ElType::Type)
+struct OverrideBCMaterialize{ElType}
+end
+
+@inline function (::OverrideBCMaterialize{ElType})(bc) where ElType
     if bc.args isa Tuple{AbstractArray} && bc.f === Base.identity
         return copy(bc.args[1])
     end
@@ -1121,17 +1116,16 @@ function abstract_call_known(
             bcty = widenconst(argtypes[2])
 	    if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && bc_or_array_or_number_ty(bcty) && has_array(bcty)
 		ElType = ty_broadcast_getindex_eltype(interp, bcty)
-		ccall(:jl_, Cvoid, (Any,), (bcty, ElType, Base.isconcretetype(ElType), ElType !== Union{}))
 		if ElType !== Union{} && Base.isconcretetype(ElType)
+		    fn2 = Enzyme.Compiler.Interpreter.OverrideBCMaterialize{ElType}()
                     arginfo2 = ArgInfo(
                         fargs isa Nothing ? nothing :
-                        [:(Enzyme.Compiler.Interpreter.override_bc_materialize), fargs[2:end]..., :ElType],
-			[Core.Const(Enzyme.Compiler.Interpreter.override_bc_materialize), argtypes[2:end]..., Core.Const(ElType)],
+			[:(fn2), fargs[2:end]...],
+			[Core.Const(fn2), argtypes[2:end]...],
                     )
-		    ccall(:jl_, Cvoid, (Any,), arginfo2)
                     return Base.@invoke abstract_call_known(
                         interp::AbstractInterpreter,
-                        Enzyme.Compiler.Interpreter.override_bc_materialize::Any,
+                        fn2::Any,
                         arginfo2::ArgInfo,
                         si::StmtInfo,
                         sv::AbsIntState,
