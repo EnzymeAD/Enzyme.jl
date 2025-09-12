@@ -7,6 +7,21 @@ function test_approx(x::Array{<:Number}, y::Array{<:Number}, msg; kwargs...)
     @test_msg msg isapprox(x, y; kwargs...)
     return nothing
 end
+@static if VERSION < v"1.11-"
+else
+using LinearAlgebra
+function test_approx(x::LinearAlgebra.HermOrSym{<:Number}, y::LinearAlgebra.HermOrSym{<:Number}, msg; kwargs...)
+    # on 1.11+ similar of a hermitian or symmetric leaves the other part of the array undefined
+    # this mean that when we try to compare that data, we compare undefined memory -- which may be different
+    # here let's explicitly zero it to make the test more meaningful.
+    x2 = zero(parent(x))
+    y2 = zero(parent(y))
+    copyto!(x2, x)
+    copyto!(y2, y)
+    test_approx(x2, y2, msg; kwargs...)
+    return nothing
+end
+end
 function test_approx(x::AbstractArray{<:Number}, y::AbstractArray{<:Number}, msg; kwargs...)
     @test_msg msg isapprox(x, y; kwargs...)
     # for custom array types, fields should also match
