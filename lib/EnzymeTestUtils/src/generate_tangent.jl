@@ -13,6 +13,9 @@ function map_fields_recursive(f, x::T...) where {T<:Union{Array,Tuple,NamedTuple
         map_fields_recursive(f, xi...)
     end
 end
+function map_fields_recursive(f::typeof(Base.copyto!), y::T, x::T) where {T<:LinearAlgebra.HermOrSym{<:Number}}
+    copyto!(x.uplo == 'U' ? UpperTriangular(parent(y)) : LowerTriangular(parent(y)), x.uplo == 'U' ? UpperTriangular(parent(x)) : LowerTriangular(parent(x)))
+end
 map_fields_recursive(f, x::T...) where {T<:AbstractFloat} = f(x...)
 map_fields_recursive(f, x::Array{<:Number}...) = f(x...)
 
@@ -22,7 +25,13 @@ function rand_tangent(rng, x)
     T = eltype(v)
     # make numbers prettier sometimes when errors are printed.
     v_new = rand(rng, -9:T(0.01):9, length(v))
-    return from_vec(v_new)
+    rand_v = from_vec(v_new)
+    if x isa Number
+       return rand_v
+    end
+    zero_v = from_vec(zero(v))
+    map_fields_recursive(Base.copyto!, zero_v, rand_v)
+    return zero_v
 end
 
 # differs from Enzyme.make_zero primarily in that reshaped Arrays in the argument will share

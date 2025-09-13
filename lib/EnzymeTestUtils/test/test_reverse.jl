@@ -90,8 +90,22 @@ end
                 end
             end
         end
+        
+	@testset "structured NaN array inputs/outputs" begin
+	    @testset for Tret in (Const, Duplicated, BatchDuplicated),
+		     Tx in (Const, Duplicated, BatchDuplicated)
 
-        VERSION >= v"1.8" && @testset "structured array inputs/outputs" begin
+		 # if some are batch, none must be duplicated
+		 are_activities_compatible(Tret, Tx) || continue
+
+		 x = Hermitian(Float32[1 2; 3 4])
+
+		 atol = rtol = 0.01
+		 test_reverse(f_structured_nan, Tret, (x, Tx); atol, rtol)
+	    end
+	end
+
+	@testset "structured array inputs/outputs" begin
                                                                         @testset for Tret in (Const, Duplicated, BatchDuplicated),
                                                                                      Tx in (Const, Duplicated, BatchDuplicated),
                                                                                      T in (Float32, Float64, ComplexF32, ComplexF64)
