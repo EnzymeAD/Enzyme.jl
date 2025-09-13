@@ -1311,9 +1311,44 @@ function fix_decayaddr!(mod::LLVM.Module)
     return nothing
 end
 
-function pre_attr!(mod::LLVM.Module)
+function pre_attr!(mod::LLVM.Module, run_attr)
+    if run_attr
+	    for fn in functions(mod)
+		if isempty(blocks(fn))
+		    continue
+		end
+		attrs = collect(function_attributes(fn))
+		prevent = any(
+		    kind(attr) == kind(StringAttribute("enzyme_preserve_primal")) for attr in attrs
+		)
+		if !prevent
+		    continue
+		end
+        
+		if linkage(fn) == LLVM.API.LLVMInternalLinkage
+		    push!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_internal"))
+		    linkage!(fn, LLVM.API.LLVMExternalLinkage)
+		end
+        
+		if linkage(fn) == LLVM.API.LLVMPrivateLinkage
+		    push!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_private"))
+		    linkage!(fn, LLVM.API.LLVMExternalLinkage)
+		end
+		continue
+
+		if !has_fn_attr(fn, EnumAttribute("noinline"))
+		    push!(LLVM.function_attributes(fn), EnumAttribute("noinline"))
+		    push!(LLVM.function_attributes(fn), StringAttribute("remove_noinline"))
+		end
+		
+		if !has_fn_attr(fn, EnumAttribute("optnone"))
+		    push!(LLVM.function_attributes(fn), EnumAttribute("optnone"))
+		    push!(LLVM.function_attributes(fn), StringAttribute("remove_optnone"))
+		end
+	    end
+    end
     return nothing
-    tofinalize = Tuple{LLVM.Function,Bool,Vector{Int64}}[]
+    
     for fn in collect(functions(mod))
         if isempty(blocks(fn))
             continue
@@ -1336,6 +1371,32 @@ function pre_attr!(mod::LLVM.Module)
                 ret!(builder, cv)
             end
         end
+    end
+end
+
+function post_attr!(mod::LLVM.Module, run_attr)
+    if run_attr
+	    for fn in functions(mod)
+		if has_fn_attr(fn, StringAttribute("restorelinkage_internal"))
+		    delete!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_internal"))
+		    linkage!(fn, LLVM.API.LLVMInternalLinkage)
+		end
+		
+		if has_fn_attr(fn, StringAttribute("restorelinkage_private"))
+		    delete!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_private"))
+		    linkage!(fn, LLVM.API.LLVMPrivateLinkage)
+		end
+
+		if has_fn_attr(fn, StringAttribute("remove_noinline"))
+		    delete!(LLVM.function_attributes(fn), EnumAttribute("noinline"))
+		    delete!(LLVM.function_attributes(fn), StringAttribute("remove_noinline"))
+		end
+		
+		if has_fn_attr(fn, StringAttribute("remove_optnone"))
+		    delete!(LLVM.function_attributes(fn), EnumAttribute("optnone"))
+		    delete!(LLVM.function_attributes(fn), StringAttribute("remove_optnone"))
+		end
+	    end
     end
     return nothing
 end
@@ -1781,37 +1842,40 @@ function propagate_returned!(mod::LLVM.Module)
                         LLVM.replace_uses!(arg, val)
                     end
                 end
-                # see if there are no users of the value (excluding recursive/return)
-                baduse = false
-                for u in LLVM.uses(arg)
-                    u = LLVM.user(u)
-                    if argn == i && LLVM.API.LLVMIsAReturnInst(u) != C_NULL
-                        continue
-                    end
-                    if !isa(u, LLVM.CallInst)
-                        baduse = true
-                        break
-                    end
-                    if LLVM.called_operand(u) != fn
-                        baduse = true
-                        break
-                    end
-                    for (si, op) in enumerate(operands(u))
-                        if si == i
-                            continue
-                        end
-                        if op == arg
-                            baduse = true
-                            break
-                        end
-                    end
-                    if baduse
-                        break
-                    end
-                end
-                if !baduse
-                    push!(toremove, i - 1)
-                end
+                
+		# see if there are no users of the value (excluding recursive/return)
+                if !prevent
+			baduse = false
+			for u in LLVM.uses(arg)
+			    u = LLVM.user(u)
+			    if argn == i && LLVM.API.LLVMIsAReturnInst(u) != C_NULL
+				continue
+			    end
+			    if !isa(u, LLVM.CallInst)
+				baduse = true
+				break
+			    end
+			    if LLVM.called_operand(u) != fn
+				baduse = true
+				break
+			    end
+			    for (si, op) in enumerate(operands(u))
+				if si == i
+				    continue
+				end
+				if op == arg
+				    baduse = true
+				    break
+				end
+			    end
+			    if baduse
+				break
+			    end
+			end
+			if !baduse
+			    push!(toremove, i - 1)
+			end
+		end
             end
             illegalUse = !(
                 linkage(fn) == LLVM.API.LLVMInternalLinkage ||
@@ -2498,7 +2562,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         LLVM.run!(pm, mod)
     end
     propagate_returned!(mod)
-    pre_attr!(mod)
+    pre_attr!(mod, RunAttributor[])
     if RunAttributor[]
         if LLVM.version().major >= 13
             ModulePassManager() do pm
@@ -2521,8 +2585,9 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         cse!(pm)
         LLVM.run!(pm, mod)
     end
-    post_attr!(mod)
+    post_attr!(mod, RunAttributor[])
     propagate_returned!(mod)
+    
 
     for u in LLVM.uses(rfunc)
         u = LLVM.user(u)
