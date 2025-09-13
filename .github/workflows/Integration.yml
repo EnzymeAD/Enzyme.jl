@@ -1,10 +1,24 @@
 name: Integration
 on:
   pull_request:
+    paths:
+      - '.github/workflows/Integration.yml'
+      - 'ext/**'
+      - 'lib/**'
+      - 'src/**'
+      - 'test/**'
+      - 'Project.toml'
   push:
     branches:
       - main
       - release-*
+    paths:
+      - '.github/workflows/Integration.yml'
+      - 'ext/**'
+      - 'lib/**'
+      - 'src/**'
+      - 'test/**'
+      - 'Project.toml'
     tags: '*'
 
 concurrency:
@@ -15,7 +29,7 @@ concurrency:
 
 jobs:
   integration:
-    timeout-minutes: 120
+    timeout-minutes: 45
     name: Integration Tests - ${{ matrix.package }} - Julia ${{ matrix.version }}
     runs-on: ${{ matrix.os }}
     container:
@@ -27,7 +41,7 @@ jobs:
       matrix:
         version:
           - '1.10'
-          - '1'
+          - '1.11'
         os:
           - linux-x86-n2-32
         package:
@@ -44,12 +58,12 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
       - name: "Install Dependencies"
         run: |
-            julia --color=yes --project=test/integration/${{ matrix.package }} -e 'using Pkg; Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")])'
+            julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 -e 'using Pkg; Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")])'
         shell: bash
         if: ${{ matrix.version == '1.10' }}
       - name: "Instantiate"
         run: |
-          julia --color=yes --project=test/integration/${{ matrix.package }} -e 'using Pkg; Pkg.instantiate()'
+          julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 -e 'using Pkg; Pkg.instantiate()'
         shell: bash
       - name: "Run tests"
         run: |

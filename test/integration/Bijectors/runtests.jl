@@ -131,7 +131,11 @@ end
         sum_b_binv_test_case(Bijectors.VecCholeskyBijector(:U), 3),
         sum_b_binv_test_case(Bijectors.VecCholeskyBijector(:U), 0),
         sum_b_binv_test_case(Bijectors.Coupling(Bijectors.Shift, Bijectors.PartitionMask(3, [1], [2])), 3),
-        sum_b_binv_test_case(Bijectors.InvertibleBatchNorm(3), (3, 3)),
+        sum_b_binv_test_case(
+            Bijectors.InvertibleBatchNorm(3),
+            (3, 3);
+            runtime_activity = (VERSION >= v"1.11" ? Both : Neither)
+        ),
         sum_b_binv_test_case(Bijectors.LeakyReLU(0.2), 3),
         sum_b_binv_test_case(Bijectors.Logit(0.1, 0.3), 3),
         sum_b_binv_test_case(Bijectors.PDBijector(), (3, 3)),
@@ -186,6 +190,8 @@ end
             end,
             randn(rng, 7);
             name="PlanarLayer7",
+            # https://github.com/TuringLang/Bijectors.jl/issues/415
+            broken = (VERSION >= v"1.11" ? Forward : Neither),
         ),
 
         TestCase(
@@ -197,6 +203,7 @@ end
             end,
             randn(rng, 11);
             name="PlanarLayer11",
+            broken = (VERSION >= v"1.11" ? Forward : Neither),
         ),
     ]
 
