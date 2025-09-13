@@ -1,3 +1,5 @@
+using LinearAlgebra
+
 # recursively apply f to all fields of x for which f is implemented; all other fields are
 # left unchanged
 function map_fields_recursive(f, x::T...) where {T}
