@@ -2,6 +2,14 @@ name: Benchmark a pull request
 
 on:
   pull_request:
+    paths:
+      - '.github/workflows/benchmark_pr.yml'
+      - 'benchmark/**'
+      - 'ext/**'
+      - 'lib/**'
+      - 'src/**'
+      - 'test/**'
+      - 'Project.toml'
 
 permissions:
   pull-requests: write

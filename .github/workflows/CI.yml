@@ -1,10 +1,24 @@
 name: CI
 on:
   pull_request:
+    paths:
+      - '.github/workflows/CI.yml'
+      - 'ext/**'
+      - 'lib/**'
+      - 'src/**'
+      - 'test/**'
+      - 'Project.toml'
   push:
     branches:
       - main
       - release-*
+    paths:
+      - '.github/workflows/CI.yml'
+      - 'ext/**'
+      - 'lib/**'
+      - 'src/**'
+      - 'test/**'
+      - 'Project.toml'
     tags: '*'
 
 concurrency:
@@ -230,29 +244,3 @@ jobs:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false  # or true if you want CI to fail when Codecov fails
-  docs:
-    timeout-minutes: 20
-    name: Documentation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: '1'
-      - uses: julia-actions/cache@v2
-      - run: |
-          julia --color=yes --project=docs -e '
-            using Pkg
-            Pkg.instantiate()'
-        env:
-          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
-      - run: |
-          julia --color=yes --project=docs -e '
-            using Documenter: DocMeta, doctest
-            using Enzyme
-            DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
-            doctest(Enzyme)'
-      - run: julia --color=yes --project=docs docs/make.jl
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
