@@ -60,7 +60,11 @@ function Enzyme._import_frule(fn, tys...)
                 dfn = fn isa Const ? $ChainRulesCore.NoTangent() : fn.dval
                 cres = $ChainRulesCore.frule((dfn, $(tangents...),), fn.val, $(primals...); kwargs...)
                 if RetAnnotation <: Const
-                    return cres[2]::eltype(RetAnnotation)
+                    if EnzymeRules.needs_primal(config)
+                       return cres[1]::eltype(RetAnnotation)
+		    else
+		       return nothing
+		    end
                 elseif RetAnnotation <: Duplicated
                     return Duplicated(cres[1], cres[2])
                 elseif RetAnnotation <: DuplicatedNoNeed
@@ -75,7 +79,11 @@ function Enzyme._import_frule(fn, tys...)
                         dfn = fn isa Const ? $ChainRulesCore.NoTangent() : fn.dval[i]
                         $ChainRulesCore.frule((dfn, $(tangentsi...),), fn.val, $(primals...); kwargs...)
                     end
-                    return cres[1][2]::eltype(RetAnnotation) # nothing
+                    if EnzymeRules.needs_primal(config)
+                       return cres[1][1]::eltype(RetAnnotation) # nothing
+		    else
+		       return nothing
+		    end
                 elseif RetAnnotation <: BatchDuplicated
                     cres1 = begin
                         i = 1

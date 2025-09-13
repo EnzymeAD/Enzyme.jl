@@ -7,8 +7,6 @@ function test_approx(x::Array{<:Number}, y::Array{<:Number}, msg; kwargs...)
     @test_msg msg isapprox(x, y; kwargs...)
     return nothing
 end
-@static if VERSION < v"1.11-"
-else
 using LinearAlgebra
 function zero_copy(x)
     y = zero(parent(x))
@@ -23,7 +21,6 @@ function test_approx(x::LinearAlgebra.HermOrSym{<:Number}, y::LinearAlgebra.Herm
     y2 = zero_copy(y)
     test_approx(x2, y2, msg; kwargs...)
     return nothing
-end
 end
 function test_approx(x::AbstractArray{<:Number}, y::AbstractArray{<:Number}, msg; kwargs...)
     @test_msg msg isapprox(x, y; kwargs...)

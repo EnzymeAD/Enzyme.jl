@@ -446,8 +446,10 @@ function custom_rule_method_error(world::UInt, @nospecialize(fn), @nospecialize(
 end
 
 @register_fwd function enzyme_custom_fwd(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})
-    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
-        return true
+    if is_constant_value(gutils, orig) &&
+       is_constant_inst(gutils, orig) &&
+       !has_rule(orig, gutils)
+        return (false, true)
     end
 
     width = get_width(gutils)
@@ -461,81 +463,23 @@ end
 
     # TODO: don't inject the code multiple times for multiple calls
 
-    # 1) extract out the MI from attributes
-    mi, RealRt = enzyme_custom_extract_mi(orig)
-
-    kwfunc = nothing
-
-    isKWCall = isKWCallSignature(mi.specTypes)
-    if isKWCall
-        kwfunc = Core.kwfunc(EnzymeRules.forward)
-    end
-
-    # 2) Create activity, and annotate function spec
-    args, activity, overwritten, actives, kwtup, _ =
-        enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, false, isKWCall) #=reverse=#
-    RT, needsPrimal, needsShadow, origNeedsPrimal =
-        enzyme_custom_setup_ret(gutils, orig, mi, RealRt, B)
-
-    C = EnzymeRules.FwdConfig{
-        Bool(needsPrimal),
-        Bool(needsShadow),
-        Int(width),
-        get_runtime_activity(gutils),
-        get_strong_zero(gutils),
-    }
-
-    alloctx = LLVM.IRBuilder()
-    position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
-    mode = get_mode(gutils)
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-
-    tt = copy(activity)
-    if isKWCall
-        popfirst!(tt)
-        @assert kwtup !== nothing
-        insert!(tt, 1, kwtup)
-        insert!(tt, 2, Core.typeof(EnzymeRules.forward))
-        insert!(tt, 3, C)
-        insert!(tt, 5, Type{RT})
-    else
-        @assert kwtup === nothing
-        insert!(tt, 1, C)
-        insert!(tt, 3, Type{RT})
-    end
-    TT = Tuple{tt...}
+    fmi, (args, TT, fwd_RT, kwtup, RT, needsPrimal, RealRt, origNeedsPrimal, activity, C) = fwd_mi(orig, gutils, B)
 
     if kwtup !== nothing && kwtup <: Duplicated
         @safe_debug "Non-constant keyword argument found for " TT
         emit_error(B, orig, "Enzyme: Non-constant keyword argument found for " * string(TT))
         return false
     end
+    
+    alloctx = LLVM.IRBuilder()
+    position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
+    mode = get_mode(gutils)
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+    width = get_width(gutils)
 
-    # TODO get world
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     world = enzyme_extract_world(fn)
-    @safe_debug "Trying to apply custom forward rule" TT isKWCall
-    llvmf = nothing
-        
-    functy = if isKWCall
-        rkwfunc = typeof(Core.kwfunc(EnzymeRules.forward))
-    else
-        typeof(EnzymeRules.forward)
-    end
-    @safe_debug "Applying custom forward rule" TT = TT, functy = functy
-    fmi = my_methodinstance(Forward, functy, TT, world)
-    if fmi === nothing
-        TT = Tuple{typeof(world),functy,TT.parameters...}
-        fmi = my_methodinstance(Forward, typeof(custom_rule_method_error), TT, world)
-        pushfirst!(args, LLVM.ConstantInt(world))
-        fwd_RT = Union{}
-    else
-        fwd_RT = primal_return_type_world(Forward, world, fmi)
-    end
-    
-    fmi = fmi::Core.MethodInstance
-    fwd_RT = fwd_RT::Type
 
     llvmf = nested_codegen!(mode, mod, fmi, world)
 
@@ -837,8 +781,82 @@ end
     )
 end
 
-@inline function has_aug_fwd_rule(orig::LLVM.CallInst, gutils::GradientUtils)
-    return aug_fwd_mi(orig, gutils)[1] !== nothing
+@inline function fwd_mi(
+    orig::LLVM.CallInst,
+    gutils::GradientUtils,
+    @nospecialize(B::Union{Nothing, LLVM.IRBuilder}) = nothing,
+)
+    # 1) extract out the MI from attributes
+    mi, RealRt = enzyme_custom_extract_mi(orig)
+
+    kwfunc = nothing
+
+    isKWCall = isKWCallSignature(mi.specTypes)
+    if isKWCall
+        kwfunc = Core.kwfunc(EnzymeRules.forward)
+    end
+
+    # 2) Create activity, and annotate function spec
+    args, activity, overwritten, actives, kwtup, _ =
+        enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, false, isKWCall) #=reverse=#
+    RT, needsPrimal, needsShadow, origNeedsPrimal =
+        enzyme_custom_setup_ret(gutils, orig, mi, RealRt, B)
+    width = get_width(gutils)
+
+    C = EnzymeRules.FwdConfig{
+        Bool(needsPrimal),
+        Bool(needsShadow),
+        Int(width),
+        get_runtime_activity(gutils),
+        get_strong_zero(gutils),
+    }
+
+    tt = copy(activity)
+    if isKWCall
+        popfirst!(tt)
+        @assert kwtup !== nothing
+        insert!(tt, 1, kwtup)
+        insert!(tt, 2, Core.typeof(EnzymeRules.forward))
+        insert!(tt, 3, C)
+        insert!(tt, 5, Type{RT})
+    else
+        @assert kwtup === nothing
+        insert!(tt, 1, C)
+        insert!(tt, 3, Type{RT})
+    end
+    TT = Tuple{tt...}
+
+    fn = LLVM.parent(LLVM.parent(orig))
+    world = enzyme_extract_world(fn)
+    @safe_debug "Trying to apply custom forward rule" TT isKWCall
+        
+    functy = if isKWCall
+        rkwfunc = typeof(Core.kwfunc(EnzymeRules.forward))
+    else
+        typeof(EnzymeRules.forward)
+    end
+    @safe_debug "Applying custom forward rule" TT = TT, functy = functy
+    fmi = my_methodinstance(Forward, functy, TT, world)
+    if fmi === nothing
+        TT = Tuple{typeof(world),functy,TT.parameters...}
+        fmi = my_methodinstance(Forward, typeof(custom_rule_method_error), TT, world)
+        pushfirst!(args, LLVM.ConstantInt(world))
+        fwd_RT = Union{}
+    else
+        fwd_RT = primal_return_type_world(Forward, world, fmi)
+    end
+    
+    fmi = fmi::Core.MethodInstance
+    fwd_RT = fwd_RT::Type
+    return fmi, (args, TT, fwd_RT, kwtup, RT, needsPrimal, RealRt, origNeedsPrimal, activity, C)
+end
+
+@inline function has_rule(orig::LLVM.CallInst, gutils::GradientUtils)
+    if get_mode(gutils) == API.DEM_ForwardMode
+       return fwd_mi(orig, gutils)[1] !== nothing
+    else
+       return aug_fwd_mi(orig, gutils)[1] !== nothing
+    end
 end
 
 function enzyme_custom_common_rev(
@@ -1500,7 +1518,7 @@ end
 @register_aug function enzyme_custom_augfwd(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})
     if is_constant_value(gutils, orig) &&
        is_constant_inst(gutils, orig) &&
-       !has_aug_fwd_rule(orig, gutils)
+       !has_rule(orig, gutils)
         return true
     end
     tape = enzyme_custom_common_rev(true, B, orig, gutils, normalR, shadowR, nothing) #=tape=#
@@ -1513,7 +1531,7 @@ end
 @register_rev function enzyme_custom_rev(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, @nospecialize(tape::Union{Nothing, LLVM.Value}))
     if is_constant_value(gutils, orig) &&
        is_constant_inst(gutils, orig) &&
-       !has_aug_fwd_rule(orig, gutils)
+       !has_rule(orig, gutils)
         return
     end
     enzyme_custom_common_rev(false, B, orig, gutils, reinterpret(Ptr{LLVM.API.LLVMValueRef}, C_NULL), reinterpret(Ptr{LLVM.API.LLVMValueRef}, C_NULL), tape) #=tape=#
@@ -1524,7 +1542,7 @@ end
     # use default
     if is_constant_value(gutils, orig) &&
        is_constant_inst(gutils, orig) &&
-       !has_aug_fwd_rule(orig, gutils)
+       !has_rule(orig, gutils)
         return (false, true)
     end
     non_rooting_use = false

@@ -39,3 +39,12 @@ function f_structured_array(x::Hermitian)
     end
     return y
 end
+
+function f_structured_nan(x::Hermitian)
+    new = Matrix{Float32}(undef, 2, 2)
+    new[1,1] = parent(x)[1,1]
+    new[1,2] = parent(x)[1,2]
+    new[2,1] = NaN
+    new[2,2] = parent(x)[2,2]
+    return Hermitian(new)
+end

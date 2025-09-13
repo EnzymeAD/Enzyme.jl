@@ -31,15 +31,15 @@ function _fd_forward(fdm, f, rettype, y, activities)
     if rettype <: Union{Duplicated,DuplicatedNoNeed}
         all(ignores) && return zero_tangent(y)
         sig_arg_dval_vec, _ = to_vec(ẋs[.!ignores])
-        ret_deval_vec = FiniteDifferences.jvp(fdm, f_vec,
-                                              (sig_arg_val_vec, sig_arg_dval_vec))
+        ret_deval_vec = FiniteDifferences._jvp(fdm, f_vec,
+                                               sig_arg_val_vec, sig_arg_dval_vec)
         return from_vec_out(ret_deval_vec)
     elseif rettype <: Union{BatchDuplicated,BatchDuplicatedNoNeed}
         all(ignores) && return (var"1"=zero_tangent(y),)
         ret_dvals = map(ẋs[.!ignores]...) do sig_args_dvals...
             sig_args_dvals_vec, _ = to_vec(sig_args_dvals)
-            ret_dval_vec = FiniteDifferences.jvp(fdm, f_vec,
-                                                 (sig_arg_val_vec, sig_args_dvals_vec))
+            ret_dval_vec = FiniteDifferences._jvp(fdm, f_vec,
+                                                  sig_arg_val_vec, sig_args_dvals_vec)
             return from_vec_out(ret_dval_vec)
         end
         return NamedTuple{ntuple(Symbol, length(ret_dvals))}(ret_dvals)
@@ -57,6 +57,18 @@ function multi_tovec(active_return, vals)
     else
         to_vec(vals)[1]
     end
+end
+
+function j′vp(fdm, f_vec, ȳ, x)
+  mat = transpose(first(FiniteDifferences.jacobian(fdm, f_vec, x)))
+  result = zero(x)
+  for i in 1:length(ȳ)
+    tp = @inbounds ȳ[i] 
+    if isfinite(tp) && !iszero(tp)
+      result .+= mat[:, i] .* tp
+    end
+  end
+  return result
 end
 
 #=
@@ -98,13 +110,12 @@ function _fd_reverse(fdm, f, ȳ, activities, active_return)
     if !is_batch
         ȳ_extended = (ȳ, s̄igargs...)
         ȳ_extended_vec = multi_tovec(active_return, ȳ_extended)
-        fd_vec = only(FiniteDifferences.j′vp(fdm, f_vec, ȳ_extended_vec, sigargs_vec))
+        fd_vec = j′vp(fdm, f_vec, ȳ_extended_vec, sigargs_vec)
         fd = from_vec_in(fd_vec)
     else
         fd = Tuple(zip(map(ȳ, s̄igargs...) do ȳ_extended...
                            ȳ_extended_vec = multi_tovec(active_return, ȳ_extended)
-                           fd_vec = only(FiniteDifferences.j′vp(fdm, f_vec, ȳ_extended_vec,
-                                                                sigargs_vec))
+                           fd_vec = j′vp(fdm, f_vec, ȳ_extended_vec, sigargs_vec)
                            return from_vec_in(fd_vec)
                        end...))
     end
