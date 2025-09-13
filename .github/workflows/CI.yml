@@ -69,13 +69,13 @@ jobs:
             version: '1.11'
             assertions: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: julia-actions/setup-julia@v2
         if: ${{ ! matrix.assertions }}
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: ${{ matrix.assertions }}
         with:
           repository: 'JuliaLang/julia'
@@ -156,7 +156,7 @@ jobs:
           - x64
         libEnzyme: [packaged]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
@@ -210,7 +210,7 @@ jobs:
           - x64
         libEnzyme: [packaged]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
