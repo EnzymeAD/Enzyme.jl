@@ -446,8 +446,6 @@ function jl_inst_simplify!(PM::LLVM.ModulePassManager)
     )
 end
 
-function post_attr!(mod::LLVM.Module) end
-
 cse!(pm) = LLVM.API.LLVMAddEarlyCSEPass(pm)
 
 function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
