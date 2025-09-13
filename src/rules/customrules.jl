@@ -463,7 +463,7 @@ end
 
     # TODO: don't inject the code multiple times for multiple calls
 
-    fmi, (args, fwd_RT, kwtup, RT, needsPrimal, RealRt, origNeedsPrimal, activity, C) = fwd_mi(orig, gutils, B)
+    fmi, (args, TT, fwd_RT, kwtup, RT, needsPrimal, RealRt, origNeedsPrimal, activity, C) = fwd_mi(orig, gutils, B)
 
     if kwtup !== nothing && kwtup <: Duplicated
         @safe_debug "Non-constant keyword argument found for " TT
@@ -848,7 +848,7 @@ end
     
     fmi = fmi::Core.MethodInstance
     fwd_RT = fwd_RT::Type
-    return fmi, (args, fwd_RT, kwtup, RT, needsPrimal, RealRt, origNeedsPrimal, activity, C)
+    return fmi, (args, TT, fwd_RT, kwtup, RT, needsPrimal, RealRt, origNeedsPrimal, activity, C)
 end
 
 @inline function has_rule(orig::LLVM.CallInst, gutils::GradientUtils)
