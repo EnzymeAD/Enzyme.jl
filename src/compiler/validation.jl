@@ -407,6 +407,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 				newf = operands(newf)[1]
 			    end
 			    push!(function_attributes(newf), StringAttribute("enzyme_math", fname))
+			    push!(function_attributes(newf), StringAttribute("enzyme_preserve_primal", "*"))
 			    # TODO we can make this relocatable if desired by having restore lookups re-create this got initializer/etc
 			    # metadata(newf)["enzymejl_flib"] = flib
 			    # metadata(newf)["enzymejl_flib"] = flib

@@ -205,3 +205,34 @@ end
 @testset "Indirect function call return type analysis" begin
     RetTypeMod.main()
 end
+
+@noinline function blasdot(x, y)
+    n = length(x)
+    s = GC.@preserve x y begin
+	   DX, incx = LinearAlgebra.BLAS.vec_pointer_stride(x)
+	   DY, incy = LinearAlgebra.BLAS.vec_pointer_stride(y)
+	    result = Ref{ComplexF64}()
+            ccall((LinearAlgebra.BLAS.@blasfunc(cblas_zdotc_sub), LinearAlgebra.BLAS.libblastrampoline), Cvoid,
+                (LinearAlgebra.BLAS.BlasInt, Ptr{ComplexF64}, LinearAlgebra.BLAS.BlasInt, Ptr{ComplexF64}, LinearAlgebra.BLAS.BlasInt, Ptr{ComplexF64}),
+                 n, DX, incx, DY, incy, result)
+            result[]
+    end
+    return s
+end
+
+function fwd(x, y)
+	blasdot(x, y)
+end
+
+@testset "Parameter removal" begin
+	# Test that we do not remove parameters, or replace with undef, any parameters from externally linked code (even if replaced via blas)
+	fn = sprint() do io
+	   Enzyme.Compiler.enzyme_code_llvm(io, fwd, Const, Tuple{Const{Vector{ComplexF64}},Const{Vector{ComplexF64}}}; dump_module=true)
+	end
+
+	for s in split(fn, "\n")
+		if occursin(s, "ejlstr")
+			@test !(occursin(" undef",s) || occursin(" poison",s))
+		end
+	end
+end
