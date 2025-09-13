@@ -1,0 +1,66 @@
+name: Documentation
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/Documentation.yml'
+      - 'docs/**'
+      - 'examples/**'
+      - 'lib/**'
+      - 'src/**'
+      - 'Project.toml'
+  push:
+    branches:
+      - main
+      - release-*
+    paths:
+      - '.github/workflows/Documentation.yml'
+      - 'docs/**'
+      - 'examples/**'
+      - 'lib/**'
+      - 'src/**'
+      - 'Project.toml'
+    tags: '*'
+
+concurrency:
+  # Same group concurrency as the `PreviewCleanup.yml` workflow, because they both
+  # git-push to the same branch, so we want to avoid clashes.  NOTE: this is
+  # different from the concurrency group below, which is to cancel successive
+  # jobs from within the PR.
+  group: docs-pushing
+
+jobs:
+  docs:
+    timeout-minutes: 20
+    name: Documentation
+    runs-on: ubuntu-latest
+    concurrency:
+      # Skip intermediate builds: always.
+      # Cancel intermediate builds: only if it is a pull request build.
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v2
+      - name: Instantiate docs environment
+        shell: julia --color=yes --project=docs {0}
+        run: |
+          using Pkg
+          Pkg.instantiate()
+        env:
+          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+      - name: Run doctests
+        shell: julia --color=yes --project=docs {0}
+        run: |
+          using Documenter: DocMeta, doctest
+          using Enzyme
+          DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
+          doctest(Enzyme)
+      - name: Build the docs
+        run: julia --color=yes --project=docs docs/make.jl
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
