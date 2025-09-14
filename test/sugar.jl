@@ -191,6 +191,14 @@ end
 
 end
 
+tupsq(t) = t[1]*t[2]
+
+@testset "Forward differing element tuple of floats" begin
+    res = Enzyme.gradient(Enzyme.Forward, tupsq, (3.0, Float32(2.0)))[1]
+    @test res[1] ≈ 2.0
+    @test res[2] ≈ 3.0
+end
+
 # these are used in gradient and jacobian tests
 struct InpStruct
     i1::Float64

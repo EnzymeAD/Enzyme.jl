@@ -168,7 +168,7 @@ end
 @inline function onehot(x::NTuple{N,T}) where {T,N}
     onehot(NTuple{N,T})
 end
-@inline function onehot(x::NTuple{N,T}, start, endl) where {T,N}
+@inline function onehot(x::NTuple{N,T}, start::Int, endl::Int) where {T,N}
     ntuple(Val(endl - start + 1)) do i
         Base.@_inline_meta
         ntuple(Val(N)) do idx
@@ -180,6 +180,17 @@ end
 
 @inline function onehot(x::AbstractFloat)
     return (one(x),)
+end
+
+@inline function onehot(x::Tuple{Vararg{<:AbstractFloat}})
+    ntuple(Val(length(x))) do i
+        Base.@_inline_meta
+        ntuple(Val(length(x))) do idx
+            Base.@_inline_meta
+            T = typeof(x[idx])
+            return (i == idx) ? T(1) : T(0)
+        end
+    end
 end
 
 """
