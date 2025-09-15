@@ -100,6 +100,16 @@ function enzyme_code_llvm(
     dump_module::Bool = false,
     mode = API.DEM_ReverseModeCombined,
 )
+    if mode == API.DEM_ForwardMode
+        if A <: Active
+            throw(AssertionError("Active not allowed in forward mode"))
+        end
+        for T in types.parameters
+            if T <: Active
+                throw(AssertionError("Active not allowed in forward mode"))
+            end
+        end
+    end
     JuliaContext() do ctx
         entry_fn, ir = reflect(func, A, types; optimize, run_enzyme, second_stage, mode)
         ts_mod = ThreadSafeModule(ir)
