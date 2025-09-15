@@ -100,7 +100,7 @@ function enzyme_code_llvm(
     dump_module::Bool = false,
     mode = API.DEM_ReverseModeCombined,
 )
-    if API.DEM_ForwardMode
+    if mode == API.DEM_ForwardMode
         if A <: Active
             throw(AssertionError("Active not allowed in forward mode"))
         end
