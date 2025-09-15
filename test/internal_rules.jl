@@ -317,7 +317,7 @@ end
 
   if !Sys.iswindows()
       # https://github.com/EnzymeAD/Enzyme.jl/issues/2546
-      @test_throws Enzyme.Compiler.EnzymeNoDerivativeError Enzyme.autodiff(set_runtime_activity(Forward), two_blas, Duplicated(a, da), Duplicated(b, db))
+      @test_throws Enzyme.Compiler.EnzymeNoDerivativeError Enzyme.autodiff(set_runtime_activity(Forward), two_blas, Duplicated(a, da), Duplicated(b, b))
   end
 end
 
