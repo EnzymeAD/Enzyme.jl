@@ -336,7 +336,7 @@ dout, out = Enzyme.autodiff(Enzyme.set_runtime_activity(ForwardWithPrimal), g, C
 However, care must be taken to check derivative aliasing afterwards:
 
 ```@example runtime
-dout === out  # if true, the actual derivative is zero and pointer-like
+dout === out  # if true and pointer-like, the actual derivative is zero 
 ```
 
 ## Mixed activity
