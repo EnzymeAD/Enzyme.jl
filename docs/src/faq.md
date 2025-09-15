@@ -297,9 +297,9 @@ end
 
 x, dx = [1.0], [2.0];
 y = [3.0];
-cond = false;  # return the constant variable
+condition = false;  # return the constant variable
 try  #hide
-Enzyme.autodiff(Forward, g, Const(cond), Duplicated(x, dx), Const(y))
+Enzyme.autodiff(Forward, g, Const(condition), Duplicated(x, dx), Const(y))
 catch err; showerror(stderr, err); end  #hide
 ```
 
@@ -336,7 +336,7 @@ dout, out = Enzyme.autodiff(Enzyme.set_runtime_activity(ForwardWithPrimal), g, C
 However, care must be taken to check derivative aliasing afterwards:
 
 ```@example runtime
-dout === out  # if true, the actual derivative is zero
+dout === out  # if true, the actual derivative is zero and pointer-like
 ```
 
 ## Mixed activity
