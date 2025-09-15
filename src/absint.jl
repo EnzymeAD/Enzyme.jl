@@ -600,7 +600,7 @@ function abs_typeof(
             # add the extra poitner offset when loading here]. However for pointers constructed by ccall outside julia
             # to a julia object, which are not inline by type but appear so, like SparseArrays, this is a problem
             # and merits further investigation. x/ref https://github.com/EnzymeAD/Enzyme.jl/issues/2085
-            if !Base.allocatedinline(typ) && typ != SparseArrays.cholmod_dense_struct
+            if !Base.allocatedinline(typ) && typ != SparseArrays.cholmod_dense_struct && typ != SparseArrays.cholmod_sparse_struct
                 shouldLoad = false
                 offset %= sizeof(Int)
             else
