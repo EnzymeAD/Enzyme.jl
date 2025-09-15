@@ -4292,7 +4292,10 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     primal_target = (job.config.target::EnzymeTarget).target
     primal_params = (job.config.params::EnzymeCompilerParams).params
     if primal_target isa GPUCompiler.NativeCompilerTarget
-        @assert primal_params isa PrimalCompilerParams 
+        if !(primal_params isa PrimalCompilerParams)
+            # XXX: This means mode is not propagated and rules are not applied for GPU code.
+            @safe_debug "NativeCompilerTarget without primal compiler params" primal_params
+        end
     else
         # XXX: This means mode is not propagated and rules are not applied for GPU code.
     end
