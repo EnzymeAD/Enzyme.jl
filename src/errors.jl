@@ -990,7 +990,6 @@ struct EnzymeNonScalarReturnException <: EnzymeError
 end
 
 function Base.showerror(io::IO, ece::EnzymeNonScalarReturnException)
-    ccall(:jl_, Cvoid, (Any,), ece)
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
