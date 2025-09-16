@@ -3,6 +3,8 @@ using EnzymeTestUtils
 using LinearAlgebra
 using Test
 
+# LLVM ERROR: out of memory LLVMWriteBitcodeToMemoryBuffer
+if sizeof(Int) != sizeof(Int64)
 @testset "BLAS rules" begin
     RTs = (Float32, Float64)
     RCs = (ComplexF32, ComplexF64)
@@ -47,4 +49,5 @@ using Test
             end
         end
     end
+end
 end

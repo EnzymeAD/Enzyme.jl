@@ -811,7 +811,6 @@ if sizeof(Int) == sizeof(Int64)
         test_reverse(LinearAlgebra.mul!, T, (C, T), (M, T), (v, T), (α, Active), (real(β), Active))
     end
 end
-end
 
 @testset "SparseArrays spmatmat reverse rule" begin
     Ts = ComplexF64
@@ -830,6 +829,7 @@ end
     # general matrix multiplication works
     test_sparse(M, v, α, β)
 
+end
 end
 
 end # InternalRules
