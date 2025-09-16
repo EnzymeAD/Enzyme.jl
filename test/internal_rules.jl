@@ -776,6 +776,8 @@ function test_sparse(M, v, α, β)
     test_reverse(LinearAlgebra.mul!, Const, (C, Const), (M, Const), (v, Const), (α, Active), (β, Active))
 end
 
+# LLVM ERROR: out of memory _ZN22MyAttributorLegacyPass11runOnModuleERN4llvm6ModuleE at /home/wmoses/.julia/artifacts/61617502a39254b2b056f7aa53ec9b80726eec6b/lib/libEnzyme-16.so (unknown line)
+if sizeof(Int) == sizeof(Int64)
 @testset "SparseArrays spmatvec reverse rule" begin
     Ts = ComplexF64
 
@@ -809,7 +811,7 @@ end
         test_reverse(LinearAlgebra.mul!, T, (C, T), (M, T), (v, T), (α, Active), (real(β), Active))
     end
 end
-
+end
 
 @testset "SparseArrays spmatmat reverse rule" begin
     Ts = ComplexF64
