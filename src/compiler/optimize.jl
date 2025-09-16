@@ -718,7 +718,7 @@ function addJuliaLegalizationPasses!(pm::LLVM.ModulePassManager, tm::LLVM.Target
     end
 end
 
-function post_optimze!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool = true)
+function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool = true)
     addr13NoAlias(mod)
     removeDeadArgs!(mod, tm)
     for f in collect(functions(mod))
@@ -763,6 +763,14 @@ function post_optimze!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool =
             addMachinePasses!(pm, tm)
             LLVM.run!(pm, mod)
         end
+    end
+    for f in functions(mod)
+	if isempty(blocks(f))
+		continue
+	end
+	if !has_fn_attr(f, StringAttribute("frame-pointer"))
+		push!(function_attributes(f), StringAttribute("frame-pointer", "all"))
+	end
     end
     # @safe_show "post_mod", mod
     # flush(stdout)

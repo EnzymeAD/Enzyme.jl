@@ -1997,6 +1997,17 @@ end
 include("rules/allocrules.jl")
 include("rules/llvmrules.jl")
 
+function add_one_in_place(x)
+    if x isa Base.RefValue
+        x[] = recursive_add(x[], default_adjoint(eltype(Core.Typeof(x))))
+    elseif x isa (Array{T,0} where T)
+        x[] = recursive_add(x[], default_adjoint(eltype(Core.Typeof(x))))
+    else
+        throw(EnzymeNonScalarReturnException(x, ""))
+    end
+    return nothing
+end
+
 for (k, v) in (
     ("enz_runtime_newtask_fwd", Enzyme.Compiler.runtime_newtask_fwd),
     ("enz_runtime_newtask_augfwd", Enzyme.Compiler.runtime_newtask_augfwd),
@@ -2018,6 +2029,7 @@ for (k, v) in (
     ("enz_runtime_jl_setfield_rev", Enzyme.Compiler.rt_jl_setfield_rev),
     ("enz_runtime_error_if_differentiable", Enzyme.Compiler.error_if_differentiable),
     ("enz_runtime_error_if_active", Enzyme.Compiler.error_if_active),
+    ("enz_add_one_in_place", Enzyme.Compiler.add_one_in_place),
 )
     JuliaEnzymeNameMap[k] = v
 end
@@ -5072,7 +5084,7 @@ end
     if !(primal_target isa GPUCompiler.NativeCompilerTarget)
         reinsert_gcmarker!(adjointf)
         augmented_primalf !== nothing && reinsert_gcmarker!(augmented_primalf)
-        post_optimze!(mod, target_machine, false) #=machine=#
+        post_optimize!(mod, target_machine, false) #=machine=#
     end
 
     adjointf = functions(mod)[adjointf_name]
@@ -5234,17 +5246,6 @@ include("typeutils/recursive_add.jl")
             "Active return values with automatic pullback (differential return value) deduction only supported for floating-like values and not type $T. If mutable memory, please use Duplicated. Otherwise, you can explicitly specify a pullback by using split mode, e.g. autodiff_thunk(ReverseSplitWithPrimal, ...)",
         )
     end
-end
-
-function add_one_in_place(x)
-    if x isa Base.RefValue
-        x[] = recursive_add(x[], default_adjoint(eltype(Core.Typeof(x))))
-    elseif x isa (Array{T,0} where T)
-        x[] = recursive_add(x[], default_adjoint(eltype(Core.Typeof(x))))
-    else
-        throw(EnzymeNonScalarReturnException(x, ""))
-    end
-    return nothing
 end
 
 @generated function enzyme_call(
@@ -5814,7 +5815,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
             if DumpPrePostOpt[]
                 API.EnzymeDumpModuleRef(mod.ref)
             end
-            post_optimze!(mod, JIT.get_tm())
+            post_optimize!(mod, JIT.get_tm())
             if DumpPostOpt[]
                 API.EnzymeDumpModuleRef(mod.ref)
             end
