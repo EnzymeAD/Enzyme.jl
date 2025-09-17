@@ -38,7 +38,6 @@ import Enzyme_jll
 import GPUCompiler: CompilerJob, compile, safe_name
 using LLVM.Interop
 import LLVM: Target, TargetMachine
-import SparseArrays
 using Printf
 
 using Preferences

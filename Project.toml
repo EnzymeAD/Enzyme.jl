@@ -3,7 +3,6 @@ uuid = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 authors = ["William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu>"]
 version = "0.13.75"
 
-
 [deps]
 CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"
 EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
@@ -18,13 +17,13 @@ PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 Preferences = "21216c6a-2e73-6563-6e65-726566657250"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
-SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 
 [weakdeps]
 BFloat16s = "ab4f0b2a-ad5b-11e8-123f-65d77653426b"
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
 LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
@@ -33,6 +32,7 @@ EnzymeBFloat16sExt = "BFloat16s"
 EnzymeChainRulesCoreExt = "ChainRulesCore"
 EnzymeGPUArraysCoreExt = "GPUArraysCore"
 EnzymeLogExpFunctionsExt = "LogExpFunctions"
+EnzymeSparseArraysExt = "SparseArrays"
 EnzymeSpecialFunctionsExt = "SpecialFunctions"
 EnzymeStaticArraysExt = "StaticArrays"
 
