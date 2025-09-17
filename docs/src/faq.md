@@ -313,7 +313,7 @@ function h(cond, active_var, constant_var)
 end
 
 try  #hide
-Enzyme.autodiff(Forward, h, Const(cond), Duplicated(x, dx), Const(y))
+Enzyme.autodiff(Forward, h, Const(condition), Duplicated(x, dx), Const(y))
 catch err; showerror(stderr, err); end  #hide
 ```
 
@@ -330,7 +330,7 @@ Enabling runtime activity does therefore, come with a sharp edge, which is that 
 Generally, the preferred solution to these type of activity unstable codes should be to make your variables all activity-stable (e.g. always containing differentiable memory or always containing non-differentiable memory). However, with care, Enzyme does support "Runtime Activity" as a way to differentiate these programs without having to modify your code. One can enable runtime activity for your code by changing the mode, such as
 
 ```@example runtime
-dout, out = Enzyme.autodiff(Enzyme.set_runtime_activity(ForwardWithPrimal), g, Const(cond), Duplicated(x, dx), Const(y))
+dout, out = Enzyme.autodiff(Enzyme.set_runtime_activity(ForwardWithPrimal), g, Const(condition), Duplicated(x, dx), Const(y))
 ```
 
 However, care must be taken to check derivative aliasing afterwards:
