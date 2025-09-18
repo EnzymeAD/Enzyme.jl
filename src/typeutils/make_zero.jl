@@ -613,7 +613,7 @@ end
         if isdefined(prev, i)
             xi = getfield(prev, i)
             SBT = Core.Typeof(xi)
-            activitystate = active_reg_inner(SBT)
+            activitystate = active_reg_nothrow(SBT)
             if activitystate == AnyState  # guaranteed_const
                 continue
             elseif ismutabletype(T) && !ismutabletype(SBT)
