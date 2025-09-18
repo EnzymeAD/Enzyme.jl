@@ -93,11 +93,11 @@ function setup_globals()
         optlevel = LLVM.API.LLVMCodeGenLevelAggressive
     end
 
-    tempTM = LLVM.JITTargetMachine(LLVM.triple(), cpu_name(), cpu_features(); optlevel)
+    lljit = JuliaOJIT()
+
+    tempTM = LLVM.JITTargetMachine(LLVM.triple(lljit), cpu_name(), cpu_features(); optlevel)
     LLVM.asm_verbosity!(tempTM, true)
     tm[] = tempTM
-
-    lljit = JuliaOJIT()
 
     jd_main = JITDylib(lljit)
 
