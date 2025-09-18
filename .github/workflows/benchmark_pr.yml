@@ -2,20 +2,34 @@ name: Benchmark a pull request
 
 on:
   pull_request:
+    paths:
+      - '.github/workflows/benchmark_pr.yml'
+      - 'benchmark/**'
+      - 'ext/**'
+      - 'lib/**'
+      - 'src/**'
+      - 'test/**'
+      - 'Project.toml'
 
 permissions:
   pull-requests: write
+
+concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
 jobs:
     generate_plots:
         runs-on: ubuntu-latest
 
         steps:
-            - uses: actions/checkout@v2
-            - uses: julia-actions/setup-julia@v1
+            - uses: actions/checkout@v5
+            - uses: julia-actions/setup-julia@v2
               with:
                 version: "1"
-            - uses: julia-actions/cache@v1
+            - uses: julia-actions/cache@v2
             - name: Extract Package Name from Project.toml
               id: extract-package-name
               run: |
@@ -26,8 +40,8 @@ jobs:
                 JULIA_NUM_THREADS: 2
               run: |
                 # Lightweight build step, as sometimes the runner runs out of memory:
-                julia -e 'ENV["JULIA_PKG_PRECOMPILE_AUTO"]=0; import Pkg; Pkg.add("AirspeedVelocity")'
-                julia -e 'ENV["JULIA_PKG_PRECOMPILE_AUTO"]=0; import Pkg; Pkg.build("AirspeedVelocity")'
+                julia --color=yes -e 'ENV["JULIA_PKG_PRECOMPILE_AUTO"]=0; import Pkg; Pkg.add("AirspeedVelocity")'
+                julia --color=yes -e 'ENV["JULIA_PKG_PRECOMPILE_AUTO"]=0; import Pkg; Pkg.build("AirspeedVelocity")'
             - name: Add ~/.julia/bin to PATH
               run: |
                 echo "$HOME/.julia/bin" >> $GITHUB_PATH
@@ -42,7 +56,8 @@ jobs:
                 mkdir -p plots
                 benchpkgplot ${{ steps.extract-package-name.outputs.package_name }} --rev="${{github.event.repository.default_branch}},${{github.event.pull_request.head.sha}}" --npart=10 --format=png --input-dir=results/ --output-dir=plots/
             - name: Upload plot as artifact
-              uses: actions/upload-artifact@v2
+              uses: actions/upload-artifact@v4
+              id: artifact-upload-step
               with:
                 name: plots
                 path: plots
@@ -56,11 +71,10 @@ jobs:
                 echo '' >> body.md
                 echo '' >> body.md
                 echo '### Benchmark Plots' >> body.md
-                echo 'A plot of the benchmark results have been uploaded as an artifact to the workflow run for this PR.' >> body.md
-                echo 'Go to "Actions"->"Benchmark a pull request"->[the most recent run]->"Artifacts" (at the bottom).' >> body.md
+                echo 'A plot of the benchmark results has been uploaded as an artifact at ${{ steps.artifact-upload-step.outputs.artifact-url }}.' >> body.md
 
             - name: Find Comment
-              uses: peter-evans/find-comment@v2
+              uses: peter-evans/find-comment@v3
               id: fcbenchmark
               with:
                 issue-number: ${{ github.event.pull_request.number }}
@@ -68,7 +82,10 @@ jobs:
                 body-includes: Benchmark Results
 
             - name: Comment on PR
-              uses: peter-evans/create-or-update-comment@v3
+              uses: peter-evans/create-or-update-comment@v4
+              # Can't post the comment for PRs opened from forks:
+              # <https://github.com/peter-evans/create-or-update-comment/blob/fdb73c443d3a4f66832374f01fb9a713fad84937/README.md#action-inputs>.
+              if: ${{ ! github.event.pull_request.head.repo.fork }}
               with:
                 comment-id: ${{ steps.fcbenchmark.outputs.comment-id }}
                 issue-number: ${{ github.event.pull_request.number }}

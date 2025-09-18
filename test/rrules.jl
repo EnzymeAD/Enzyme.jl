@@ -15,7 +15,7 @@ end
 import .EnzymeRules: augmented_primal, reverse, Annotation, has_rrule_from_sig
 using .EnzymeRules
 
-function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active}, x::Active)
+function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(f)}, ::Type{<:Active}, x::Active)
     if needs_primal(config)
         return AugmentedReturn(func.val(x.val), nothing, nothing)
     else
@@ -23,7 +23,7 @@ function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(f)}, ::Type
     end
 end
 
-function reverse(config::ConfigWidth{1}, ::Const{typeof(f)}, dret::Active, tape, x::Active)
+function reverse(config::RevConfigWidth{1}, ::Const{typeof(f)}, dret::Active, tape, x::Active)
     if needs_primal(config)
         return (10+2*x.val*dret.val,)
     else
@@ -31,13 +31,13 @@ function reverse(config::ConfigWidth{1}, ::Const{typeof(f)}, dret::Active, tape,
     end
 end
 
-function augmented_primal(::Config{false, false, 1}, func::Const{typeof(f_ip)}, ::Type{<:Const}, x::Duplicated)
+function augmented_primal(::RevConfig{false, false, 1}, func::Const{typeof(f_ip)}, ::Type{<:Const}, x::Duplicated)
     v = x.val[1]
     x.val[1] *= v
     return AugmentedReturn(nothing, nothing, v)
 end
 
-function reverse(::Config{false, false, 1}, ::Const{typeof(f_ip)}, ::Type{<:Const}, tape, x::Duplicated)
+function reverse(::RevConfig{false, false, 1}, ::Const{typeof(f_ip)}, ::Type{<:Const}, tape, x::Duplicated)
     x.dval[1] = 100 + x.dval[1] * tape
     return (nothing,)
 end
@@ -59,6 +59,32 @@ end
     
     @test x ≈ [4.0]
     @test dx ≈ [102.0]
+end
+
+function augmented_primal(config::RevConfigWidth{2}, func::Const{typeof(f)}, ::Type{<:Active}, x::Active)
+    if needs_primal(config)
+        return AugmentedReturn(func.val(x.val), nothing, nothing)
+    else
+        return AugmentedReturn(nothing, nothing, nothing)
+    end
+end
+
+function reverse(config::RevConfigWidth{2}, ::Const{typeof(f)}, dret::Active, tape, x::Active)
+    return ((10+2*x.val*dret.val,100+2*x.val*dret.val,))
+end
+
+function fip_2(out, in)
+    out[] = f(in[])
+    nothing
+end
+
+@testset "Batch ActiveReverse Rules" begin
+    out = BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(3.0)))
+    in = BatchDuplicated(Ref(2.0), (Ref(0.0), Ref(0.0)))
+    # TODO: Not yet supported: Enzyme custom rule of batch size=2, and active return EnzymeCore.Active{Float64}
+    @test_throws Enzyme.Compiler.EnzymeRuntimeException Enzyme.autodiff(Enzyme.Reverse, fip_2, out, in)
+    @test_broken in.dvals[1][] ≈ 104.0
+    @test_broken in.dvals[1][] ≈ 42.0
 end
 
 function alloc_sq(x)
@@ -107,7 +133,7 @@ end
 end
 
 q(x) = x^2
-function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(q)}, ::Type{<:Active}, x::Active)
+function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(q)}, ::Type{<:Active}, x::Active)
     tape = (Ref(2.0), Ref(3.4))
     if needs_primal(config)
         return AugmentedReturn(func.val(x.val), nothing, tape)
@@ -116,7 +142,7 @@ function augmented_primal(config::ConfigWidth{1}, func::Const{typeof(q)}, ::Type
     end
 end
 
-function reverse(config::ConfigWidth{1}, ::Const{typeof(q)}, dret::Active, tape, x::Active)
+function reverse(config::RevConfigWidth{1}, ::Const{typeof(q)}, dret::Active, tape, x::Active)
     @test tape[1][] == 2.0
     @test tape[2][] == 3.4
     if needs_primal(config)
@@ -133,7 +159,7 @@ end
 foo(x::Complex) = 2x
 
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.ConfigWidth{1},
+    config::EnzymeRules.RevConfigWidth{1},
     func::Const{typeof(foo)},
     ::Type{<:Active},
     x
@@ -154,7 +180,7 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.ConfigWidth{1},
+    config::EnzymeRules.RevConfigWidth{1},
     func::Const{typeof(foo)},
     dret,
     tape,
@@ -177,7 +203,7 @@ function _dot(X::StridedArray{T}, Y::StridedArray{T}) where {T<:Union{Real,Compl
 end
 
 function augmented_primal(
-    config::ConfigWidth{1},
+    config::RevConfigWidth{1},
     func::Const{typeof(_dot)},
     ::Type{<:Union{Const,Active}},
     X::Duplicated{<:StridedArray{T}},
@@ -191,7 +217,7 @@ function augmented_primal(
 end
 
 function reverse(
-    ::ConfigWidth{1},
+    ::RevConfigWidth{1},
     ::Const{typeof(_dot)},
     dret::Union{Active,Type{<:Const}},
     tape,
@@ -235,7 +261,7 @@ function cprimal(x0, y0)
     return @inbounds x[1]
 end
 
-function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{typeof(cmyfunc!)}, ::Type{<:Const},
+function EnzymeRules.augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(cmyfunc!)}, ::Type{<:Const},
     y::Duplicated, x::Duplicated)
     cmyfunc!(y.val, x.val)
     tape = (copy(x.val), 3)
@@ -243,11 +269,10 @@ function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{typeof
 end
 
 const seen = Set()
-function EnzymeRules.reverse(config::ConfigWidth{1}, func::Const{typeof(cmyfunc!)}, ::Type{<:Const}, tape,
+function EnzymeRules.reverse(config::RevConfigWidth{1}, func::Const{typeof(cmyfunc!)}, ::Type{<:Const}, tape,
     y::Duplicated,  x::Duplicated)
     xval = tape[1] 
     p = pointer(xval)
-    @show p, seen
     @assert !in(p, seen)
     push!(seen, p)
     return (nothing, nothing)
@@ -265,7 +290,7 @@ function remultr(arg)
     arg * arg
 end
 
-function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{typeof(remultr)},
+function EnzymeRules.augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(remultr)},
     ::Type{<:Active}, args::Vararg{Active,N}) where {N}
     primal = if EnzymeRules.needs_primal(config)
         func.val(args[1].val)
@@ -275,7 +300,7 @@ function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{typeof
     return AugmentedReturn(primal, nothing, nothing)
 end
 
-function EnzymeRules.reverse(config::ConfigWidth{1}, func::Const{typeof(remultr)},
+function EnzymeRules.reverse(config::RevConfigWidth{1}, func::Const{typeof(remultr)},
     dret::Active, tape, args::Vararg{Active,N}) where {N}
 
     dargs = ntuple(Val(N)) do i
@@ -295,7 +320,6 @@ function plaquette_sum(U)
 end
 
 
-@static if VERSION >= v"1.9"
 @testset "No caching byref julia" begin
     U = Complex{Float64}[3.0 + 4.0im]
     dU = Complex{Float64}[0.0]
@@ -304,8 +328,6 @@ end
 
     @test dU[1] ≈ 7 * ( 3.0 + 4.0im )
 end
-end
-
 
 struct Closure
     v::Vector{Float64}
@@ -318,7 +340,7 @@ function (cl::Closure)(x)
 end
 
 
-function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{Closure},
+function EnzymeRules.augmented_primal(config::RevConfigWidth{1}, func::Const{Closure},
     ::Type{<:Active}, args::Vararg{Active,N}) where {N}
     vec = copy(func.val.v)
     pval = func.val(args[1].val)
@@ -330,7 +352,7 @@ function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{Closur
     return AugmentedReturn(primal, nothing, vec)
 end
 
-function EnzymeRules.reverse(config::ConfigWidth{1}, func::Const{Closure},
+function EnzymeRules.reverse(config::RevConfigWidth{1}, func::Const{Closure},
     dret::Active, tape, args::Vararg{Active,N}) where {N}
     dargs = ntuple(Val(N)) do i
         7 * args[1].val * dret.val + tape[1] * 1000
@@ -376,6 +398,39 @@ end
     dvals = zero(vals)
     Enzyme.autodiff(Reverse, times2_ar, Duplicated(vals, dvals))
     @test dvals ≈ [0., 0., 46.7, 0.]
+end
+
+unstabletape(x) = x^2
+
+function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(unstabletape)}, ::Type{<:Active}, x::Active)
+    tape = if x.val < 3
+        400
+    else
+        (x.val +7 ) * 10
+    end
+    if needs_primal(config)
+        return AugmentedReturn{eltype(x), Nothing, typeof(tape)}(func.val(x.val), nothing, tape)
+    else
+        return AugmentedReturn{Nothing, Nothing, typeof(tape)}(nothing, nothing, tape)
+    end
+end
+
+function reverse(config::RevConfigWidth{1}, ::Const{typeof(unstabletape)}, dret, tape, x::Active{T}) where T
+    return (T(tape)::T,)
+end
+
+unstabletapesq(x) = unstabletape(x)^2
+
+@testset "Unstable Tape" begin
+    @test Enzyme.autodiff(Enzyme.Reverse, unstabletape, Active(2.0))[1][1] ≈ 400.0
+    @test Enzyme.autodiff(Enzyme.ReverseWithPrimal, unstabletape, Active(2.0))[1][1] ≈ 400.0
+    @test Enzyme.autodiff(Enzyme.Reverse, unstabletape, Active(5.0))[1][1] ≈ (5.0 + 7) * 10
+    @test Enzyme.autodiff(Enzyme.ReverseWithPrimal, unstabletape, Active(5.0))[1][1] ≈ (5.0 + 7) * 10
+
+    @test Enzyme.autodiff(Enzyme.Reverse, unstabletapesq, Active(2.0))[1][1] ≈ (400.0)
+    @test Enzyme.autodiff(Enzyme.ReverseWithPrimal, unstabletapesq, Active(2.0))[1][1] ≈ (400.0)
+    @test Enzyme.autodiff(Enzyme.Reverse, unstabletapesq, Active(5.0))[1][1] ≈ ((5.0 + 7) * 10)
+    @test Enzyme.autodiff(Enzyme.ReverseWithPrimal, unstabletapesq, Active(5.0))[1][1] ≈ ((5.0 + 7) * 10)
 end
 
 include("mixedrrule.jl")

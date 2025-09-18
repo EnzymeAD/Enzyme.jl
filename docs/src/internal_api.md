@@ -9,4 +9,5 @@
 ```@autodocs
 Modules = [Enzyme.Compiler]
 Order = [:module, :type, :constant, :macro, :function]
+Filter = t -> !(t === Enzyme.Compiler.CheckNan)
 ```

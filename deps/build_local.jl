@@ -10,10 +10,6 @@ import CMake_jll: cmake
 BUILD_TYPE = "RelWithDebInfo"
 BCLoad = true
 
-# 1. Get a scratch directory
-scratch_dir = get_scratch!(Enzyme_jll, "build")
-isdir(scratch_dir) && rm(scratch_dir; recursive=true)
-
 source_dir = nothing
 branch = nothing
 
@@ -85,6 +81,11 @@ else
 end
 LLVM_DIR = joinpath(LLVM.artifact_dir, "lib", "cmake", "llvm")
 LLVM_VER_MAJOR = Base.libllvm_version.major
+
+# 1. Get a scratch directory
+scratch_dir = get_scratch!(Enzyme_jll, "build_$(LLVM_VER_MAJOR)_$(llvm_assertions)")
+isdir(scratch_dir) && rm(scratch_dir; recursive=true)
+
 
 # Build!
 @info "Building" source_dir scratch_dir LLVM_DIR BUILD_TYPE

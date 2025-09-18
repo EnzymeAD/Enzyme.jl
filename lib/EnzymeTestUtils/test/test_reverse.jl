@@ -17,7 +17,7 @@ function f_kwargs_rev!(x; kwargs...)
 end
 
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.ConfigWidth{1},
+    config::EnzymeRules.RevConfigWidth{1},
     func::Const{typeof(f_kwargs_rev)},
     RT::Type{<:Union{Const,Duplicated,DuplicatedNoNeed}},
     x::Union{Const,Duplicated};
@@ -39,7 +39,7 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.ConfigWidth{1},
+    config::EnzymeRules.RevConfigWidth{1},
     func::Const{typeof(f_kwargs_rev)},
     dret::Type{<:Union{Const,Duplicated,DuplicatedNoNeed}},
     tape,
@@ -90,8 +90,22 @@ end
                 end
             end
         end
+        
+	@testset "structured NaN array inputs/outputs" begin
+	    @testset for Tret in (Const, Duplicated, BatchDuplicated),
+		     Tx in (Const, Duplicated, BatchDuplicated)
 
-        VERSION >= v"1.8" && @testset "structured array inputs/outputs" begin
+		 # if some are batch, none must be duplicated
+		 are_activities_compatible(Tret, Tx) || continue
+
+		 x = Hermitian(Float32[1 2; 3 4])
+
+		 atol = rtol = 0.01
+		 test_reverse(f_structured_nan, Tret, (x, Tx); atol, rtol)
+	    end
+	end
+
+	@testset "structured array inputs/outputs" begin
                                                                         @testset for Tret in (Const, Duplicated, BatchDuplicated),
                                                                                      Tx in (Const, Duplicated, BatchDuplicated),
                                                                                      T in (Float32, Float64, ComplexF32, ComplexF64)
@@ -131,13 +145,7 @@ end
                          Tx in (Const, Duplicated, BatchDuplicated)
 
                 are_activities_compatible(Tret, Tx) || continue
-                if Tx <: Const
-                    test_reverse(f, Tret, (x, Tx))
-                else
-                    @test_broken !fails() do
-                        return test_reverse(f, Tret, (x, Tx))
-                    end
-                end
+                test_reverse(f, Tret, (x, Tx))
             end
         end
 

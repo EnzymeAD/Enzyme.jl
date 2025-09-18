@@ -1,0 +1,71 @@
+name: Integration
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/Integration.yml'
+      - 'ext/**'
+      - 'lib/**'
+      - 'src/**'
+      - 'test/**'
+      - 'Project.toml'
+  push:
+    branches:
+      - main
+    paths:
+      - release-*
+      - '.github/workflows/Integration.yml'
+      - 'ext/**'
+      - 'lib/**'
+      - 'src/**'
+      - 'test/**'
+      - 'Project.toml'
+    tags: '*'
+
+concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+jobs:
+  integration:
+    timeout-minutes: 45
+    name: Integration Tests - ${{ matrix.package }} - Julia ${{ matrix.version }}
+    runs-on: ${{ matrix.os }}
+    container:
+      image: ${{ (contains(matrix.os, 'linux') && 'ghcr.io/enzymead/reactant-docker-images@sha256:91e1edb7a7c869d5a70db06e417f22907be0e67ca86641d48adcea221fedc674' ) || '' }}
+    env:
+      JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - '1.10'
+          - '1.11'
+        os:
+          - linux-x86-n2-32
+        package:
+          - Bijectors
+          - DifferentiationInterface
+          - DynamicExpressions
+          - Lux
+    steps:
+      - uses: actions/checkout@v5
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.version }}
+      - uses: julia-actions/cache@v2
+      - uses: julia-actions/julia-buildpkg@v1
+      - name: "Install Dependencies"
+        run: |
+            julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 -e 'using Pkg; Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")])'
+        shell: bash
+        if: ${{ matrix.version == '1.10' }}
+      - name: "Instantiate"
+        run: |
+          julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 -e 'using Pkg; Pkg.instantiate()'
+        shell: bash
+      - name: "Run tests"
+        run: |
+            julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 test/integration/${{ matrix.package }}/runtests.jl
+        shell: bash

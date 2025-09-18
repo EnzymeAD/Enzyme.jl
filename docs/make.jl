@@ -1,6 +1,3 @@
-pushfirst!(LOAD_PATH, joinpath(@__DIR__, "..")) # add Enzyme to environment stack
-pushfirst!(LOAD_PATH, joinpath(@__DIR__, "..", "lib")) # add EnzymeCore to environment stack
-
 using Enzyme
 using EnzymeCore
 using EnzymeTestUtils
@@ -33,6 +30,31 @@ end
 
 examples = [title => joinpath("generated", string(name, ".md")) for (title, name) in examples]
 
+# Generate Pluto notebooks
+
+using PlutoStaticHTML
+const NOTEBOOK_DIR = joinpath(@__DIR__, "src", "notebooks")
+
+"""
+    build()
+
+Run all Pluto notebooks (".jl" files) in `NOTEBOOK_DIR`.
+"""
+function build()
+    println("Building notebooks in $NOTEBOOK_DIR")
+    oopts = OutputOptions(; append_build_context = false)
+    output_format = documenter_output
+    bopts = BuildOptions(NOTEBOOK_DIR; output_format)
+    build_notebooks(bopts, oopts)
+    return nothing
+end
+
+# Build the notebooks; defaults to true.
+if get(ENV, "BUILD_DOCS_NOTEBOOKS", "true") == "true"
+    build()
+end
+
+
 makedocs(;
     modules=[Enzyme, EnzymeCore, EnzymeTestUtils],
     authors="William Moses <wmoses@mit.edu>, Valentin Churavy <vchuravy@mit.edu>",
@@ -47,10 +69,15 @@ makedocs(;
                     attributes=Dict(Symbol("data-domain") => "enzyme.mit.edu", :defer => "")
                 )
 	    ],
+        mathengine = MathJax3(),
+        size_threshold = 10_000_000
     ),
     pages = [
         "Home" => "index.md",
         "Examples" => examples,
+        "Notebooks" => [
+            "Ignore derivatives" => "notebooks/ignore_derivatives.md",
+        ],
         "FAQ" => "faq.md",
         "API reference" => "api.md",
         "Advanced" => [

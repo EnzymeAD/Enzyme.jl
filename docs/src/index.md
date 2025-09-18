@@ -76,25 +76,36 @@ Both the inplace and "normal" variant return the gradient. The difference is tha
 
 ## Forward mode
 
-The return value of forward mode with a `Duplicated` return is a tuple containing as the first value
-the primal return value and as the second value the derivative.
+The return value when using `ForwardWithPrimal` is a tuple containing as the first value
+the derivative return value and as the second value the original value.
+
+The return value when using `Forward` is a single-element tuple containing the derivative.
 
 In forward mode `Duplicated(x, 0.0)` is equivalent to `Const(x)`,
 except that we can perform more optimizations for `Const`.
 
 ```jldoctest rosenbrock
-julia> autodiff(Forward, rosenbrock, Duplicated, Const(1.0), Duplicated(3.0, 1.0))
+julia> autodiff(ForwardWithPrimal, rosenbrock, Const(1.0), Duplicated(3.0, 1.0))
 (400.0, 400.0)
 
-julia> autodiff(Forward, rosenbrock, Duplicated, Duplicated(1.0, 1.0), Const(3.0))
-(400.0, -800.0)
+julia> autodiff(Forward, rosenbrock, Const(1.0), Duplicated(3.0, 1.0))
+(400.0,)
+
+julia> autodiff(ForwardWithPrimal, rosenbrock, Duplicated(1.0, 1.0), Const(3.0))
+(-800.0, 400.0)
+
+julia> autodiff(Forward, rosenbrock, Duplicated(1.0, 1.0), Const(3.0))
+(-800.0,)
 ```
 
 Of note, when we seed both arguments at once the tangent return is the sum of both.
 
 ```jldoctest rosenbrock
-julia> autodiff(Forward, rosenbrock, Duplicated, Duplicated(1.0, 1.0), Duplicated(3.0, 1.0))
-(400.0, -400.0)
+julia> autodiff(ForwardWithPrimal, rosenbrock, Duplicated(1.0, 1.0), Duplicated(3.0, 1.0))
+(-400.0, 400.0)
+
+julia> autodiff(Forward, rosenbrock, Duplicated(1.0, 1.0), Duplicated(3.0, 1.0))
+(-400.0,)
 ```
 
 We can also use forward mode with our inplace method.
@@ -110,8 +121,8 @@ julia> dx = [1.0, 1.0]
  1.0
  1.0
 
-julia> autodiff(Forward, rosenbrock_inp, Duplicated, Duplicated(x, dx))
-(400.0, -400.0)
+julia> autodiff(ForwardWithPrimal, rosenbrock_inp, Duplicated, Duplicated(x, dx))
+(-400.0, 400.0)
 ```
 
 Note the seeding through `dx`.
@@ -121,8 +132,8 @@ Note the seeding through `dx`.
 We can also use vector mode to calculate both derivatives at once.
 
 ```jldoctest rosenbrock
-julia> autodiff(Forward, rosenbrock, BatchDuplicated, BatchDuplicated(1.0, (1.0, 0.0)), BatchDuplicated(3.0, (0.0, 1.0)))
-(400.0, (var"1" = -800.0, var"2" = 400.0))
+julia> autodiff(ForwardWithPrimal, rosenbrock, BatchDuplicated(1.0, (1.0, 0.0)), BatchDuplicated(3.0, (0.0, 1.0)))
+((var"1" = -800.0, var"2" = 400.0), 400.0)
 
 julia> x = [1.0, 3.0]
 2-element Vector{Float64}:
@@ -131,8 +142,8 @@ julia> x = [1.0, 3.0]
 
 julia> dx_1 = [1.0, 0.0]; dx_2 = [0.0, 1.0];
 
-julia> autodiff(Forward, rosenbrock_inp, BatchDuplicated, BatchDuplicated(x, (dx_1, dx_2)))
-(400.0, (var"1" = -800.0, var"2" = 400.0))
+julia> autodiff(ForwardWithPrimal, rosenbrock_inp, BatchDuplicated(x, (dx_1, dx_2)))
+((var"1" = -800.0, var"2" = 400.0), 400.0)
 ```
 
 ## Gradient Convenience functions
@@ -145,18 +156,20 @@ Like [`autodiff`](@ref), the mode (forward or reverse) is determined by the firs
 
 The functions [`gradient`](@ref) and [`gradient!`](@ref) compute the gradient of function with vector input and scalar return.
 
+Gradient functions take a mode as the first argument. If the mode is `Reverse` or `Forward`, the return type is a tuple of gradients of each argument. 
+If the mode is `ReverseWithPrimal` or `ForwardWithPrimal`, the return type is a named tuple containing both the derivatives and the original return result.
+
 ```jldoctest rosenbrock
 julia> gradient(Reverse, rosenbrock_inp, [1.0, 2.0])
-2-element Vector{Float64}:
- -400.0
-  200.0
+([-400.0, 200.0],)
+
+julia> gradient(ReverseWithPrimal, rosenbrock_inp, [1.0, 2.0])
+(derivs = ([-400.0, 200.0],), val = 100.0)
 
 julia> # inplace variant
        dx = [0.0, 0.0];
        gradient!(Reverse, dx, rosenbrock_inp, [1.0, 2.0])
-2-element Vector{Float64}:
- -400.0
-  200.0
+([-400.0, 200.0],)
 
 julia> dx
 2-element Vector{Float64}:
@@ -164,14 +177,16 @@ julia> dx
   200.0
 
 julia> gradient(Forward, rosenbrock_inp, [1.0, 2.0])
-(-400.0, 200.0)
+([-400.0, 200.0],)
+
+julia> gradient(ForwardWithPrimal, rosenbrock_inp, [1.0, 2.0])
+(derivs = ([-400.0, 200.0],), val = 100.0)
 
 julia> # in forward mode, we can also optionally pass a chunk size
        # to specify the number of derivatives computed simulateneously
        # using vector forward mode
-       chunk_size = Val(2)
-       gradient(Forward, rosenbrock_inp, [1.0, 2.0], chunk_size)
-(-400.0, 200.0)
+       gradient(Forward, rosenbrock_inp, [1.0, 2.0]; chunk=Val(1))
+([-400.0, 200.0],)
 ```
 
 ## Jacobian Convenience functions
@@ -179,31 +194,31 @@ julia> # in forward mode, we can also optionally pass a chunk size
 The function [`jacobian`](@ref) computes the Jacobian of a function vector input and vector return.
 Like [`autodiff`](@ref) and [`gradient`](@ref), the mode (forward or reverse) is determined by the first argument.
 
+Again like [`gradient`](@ref), if the mode is `Reverse` or `Forward`, the return type is a tuple of jacobians of each argument. 
+If the mode is `ReverseWithPrimal` or `ForwardWithPrimal`, the return type is a named tuple containing both the derivatives and the original return result.
+
+Both forward and reverse modes take an optional chunk size to compute several derivatives simultaneously using vector mode, and reverse mode optionally takes `n_outs` which describes the shape of the output value.
+
 ```jldoctest rosenbrock
 julia> foo(x) = [rosenbrock_inp(x), prod(x)];
 
-julia> output_size = Val(2) # here we have to provide the output size of `foo` since it cannot be statically inferred
-       jacobian(Reverse, foo, [1.0, 2.0], output_size) 
-2×2 transpose(::Matrix{Float64}) with eltype Float64:
- -400.0  200.0
-    2.0    1.0
+julia> jacobian(Reverse, foo, [1.0, 2.0]) 
+([-400.0 200.0; 2.0 1.0],)
 
-julia> chunk_size = Val(2) # By specifying the optional chunk size argument, we can use vector inverse mode to propogate derivatives of multiple outputs at once.
-       jacobian(Reverse, foo, [1.0, 2.0], output_size, chunk_size)
-2×2 transpose(::Matrix{Float64}) with eltype Float64:
- -400.0  200.0
-    2.0    1.0
+julia> jacobian(ReverseWithPrimal, foo, [1.0, 2.0]) 
+(derivs = ([-400.0 200.0; 2.0 1.0],), val = [100.0, 2.0])
+
+julia> jacobian(Reverse, foo, [1.0, 2.0]; chunk=Val(2)) 
+([-400.0 200.0; 2.0 1.0],)
+
+julia> jacobian(Reverse, foo, [1.0, 2.0]; chunk=Val(2), n_outs=Val((2,)))
+([-400.0 200.0; 2.0 1.0],)
 
 julia> jacobian(Forward, foo, [1.0, 2.0])
-2×2 Matrix{Float64}:
- -400.0  200.0
-    2.0    1.0
+([-400.0 200.0; 2.0 1.0],)
 
-julia> # Again, the optinal chunk size argument allows us to use vector forward mode
-       jacobian(Forward, foo, [1.0, 2.0], chunk_size)
-2×2 Matrix{Float64}:
- -400.0  200.0
-    2.0    1.0
+julia> jacobian(Forward, foo, [1.0, 2.0], chunk=Val(2))
+([-400.0 200.0; 2.0 1.0],)
 ```
 
 ## Hessian Vector Product Convenience functions
@@ -212,7 +227,7 @@ Enzyme provides convenience functions for second-order derivative computations, 
 
 Unlike [`autodiff`](@ref) and [`gradient`](@ref), a mode is not specified. Here, Enzyme will choose to perform forward over reverse mode (generally the fastest for this type of operation).
 
-```jldoctest hvp; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+```jldoctest hvp; filter = r"([0-9]+\.[0-9]{8})[0-9]+" => s"\1***"
 julia> f(x) = sin(x[1] * x[2]);
 
 julia> hvp(f, [2.0, 3.0], [5.0, 2.7])
@@ -223,7 +238,7 @@ julia> hvp(f, [2.0, 3.0], [5.0, 2.7])
 
 Enzyme also provides an in-place variant which will store the hessian vector product in a pre-allocated array (this will, however, still allocate another array for storing an intermediate gradient).
 
-```jldoctest hvp2; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+```jldoctest hvp2; filter = r"([0-9]+\.[0-9]{8})[0-9]+" => s"\1***"
 julia> f(x) = sin(x[1] * x[2])
 f (generic function with 1 method)
 
@@ -239,7 +254,7 @@ julia> res
 
 Finally. Enzyme provides a second in-place variant which simultaneously computes both the hessian vector product, and the gradient. This function uses no additional allocation, and is much more efficient than separately computing the hvp and the gradient.
 
-```jldoctest hvp3; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+```jldoctest hvp3; filter = r"([0-9]+\.[0-9]{8})[0-9]+" => s"\1***"
 julia> f(x) = sin(x[1] * x[2]);
 
 julia> res = Vector{Float64}(undef, 2);

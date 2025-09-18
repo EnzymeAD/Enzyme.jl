@@ -17,7 +17,7 @@ function mixouter(x,  y)
     return res
 end
 
-function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{typeof(mixfnc)},
+function EnzymeRules.augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(mixfnc)},
     ::Type{<:Active}, tup::MixedDuplicated{Tuple{Float64, Vector{Float64}}})
     pval = func.val(tup.val)
     vec = copy(tup.val[2])
@@ -29,7 +29,7 @@ function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{typeof
     return AugmentedReturn(primal, nothing, vec)
 end
 
-function EnzymeRules.reverse(config::ConfigWidth{1}, func::Const{typeof(mixfnc)},
+function EnzymeRules.reverse(config::RevConfigWidth{1}, func::Const{typeof(mixfnc)},
     dret::Active, tape, tup::MixedDuplicated{Tuple{Float64, Vector{Float64}}})
     prev = tup.dval[]
     tup.dval[] = (7 * tape[1] * dret.val, prev[2])
@@ -57,7 +57,7 @@ function recmixouter(x,  y, z)
     return res
 end
 
-function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{typeof(recmixfnc)},
+function EnzymeRules.augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(recmixfnc)},
     ::Type{<:Active}, tup)
     pval = func.val(tup.val)
     vec = copy(tup.val[2])
@@ -76,7 +76,7 @@ end
     return rt == Enzyme.Compiler.AnyState || rt == Enzyme.Compiler.DupState
 end
 
-function EnzymeRules.reverse(config::ConfigWidth{1}, func::Const{typeof(recmixfnc)},
+function EnzymeRules.reverse(config::RevConfigWidth{1}, func::Const{typeof(recmixfnc)},
     dret::Active, tape, tup)
     prev = tup.dval[]
     dRT = typeof(prev)

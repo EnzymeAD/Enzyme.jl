@@ -1,51 +1,119 @@
 module EnzymeRules
 
-import EnzymeCore: Annotation, Const, Duplicated
-export Config, ConfigWidth, AugmentedReturn
-export needs_primal, needs_shadow, width, overwritten
+import EnzymeCore
+import EnzymeCore: Annotation, Const, Duplicated, Mode
+export RevConfig, RevConfigWidth
+export FwdConfig, FwdConfigWidth
+export AugmentedReturn
+import ..EnzymeCore: needs_primal
+export needs_primal, needs_shadow, width, overwritten, runtime_activity
 export primal_type, shadow_type, tape_type
 
 import Base: unwrapva, isvarargtype, unwrap_unionall, rewrap_unionall
 
 """
-    forward(func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
+    forward(fwdconfig, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
 
-Calculate the forward derivative. The first argument `func` is the callable
-for which the rule applies to. Either wrapped in a [`Const`](@ref)), or
-a [`Duplicated`](@ref) if it is a closure.
-The second argument is the return type annotation, and all other arguments are
-the annotated function arguments.
+Calculate the forward derivative. The first argument is a [`FwdConfig](@ref) object
+describing parameters of the differentiation.
+The second argument `func` is the callable for which the rule applies to.
+Either wrapped in a [`Const`](@ref)), or a [`Duplicated`](@ref) if it is a closure.
+The third argument is the return type annotation, and all other arguments are the annotated function arguments.
 """
 function forward end
 
 """
-    Config{NeedsPrimal, NeedsShadow, Width, Overwritten}
-    ConfigWidth{Width} = Config{<:Any,<:Any, Width}
+    FwdConfig{NeedsPrimal, NeedsShadow, Width, RuntimeActivity, StrongZero}
+    FwdConfigWidth{Width} = FwdConfig{<:Any, <:Any, Width}
+
+Configuration type to dispatch on in custom forward rules (see [`forward`](@ref).
+* `NeedsPrimal` and `NeedsShadow`: boolean values specifying whether the primal and shadow (resp.) should be returned.
+* `Width`: an integer that specifies the number of adjoints/shadows simultaneously being propagated.
+* `RuntimeActivity`: whether runtime activity is enabled. See the [FAQ](@ref faq-runtime-activity) for more information.
+* `StrongZero`: whether strong zero is enabled. See the [FAQ](@ref faq-strong-zero) for more information.
+
+Getters for the type parameters are provided by `needs_primal`, `needs_shadow`, `width` `runtime_activity`, and `strong_zero`.
+"""
+struct FwdConfig{NeedsPrimal, NeedsShadow, Width, RuntimeActivity, StrongZero} end
+const FwdConfigWidth{Width} = FwdConfig{<:Any,<:Any,Width}
+
+"""
+    needs_primal(::FwdConfig)
+    needs_primal(::RevConfig)
+
+Whether a custom rule should return the original result of the function.
+"""
+@inline needs_primal(::FwdConfig{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
+"""
+    needs_shadow(::FwdConfig)
+    needs_shadow(::RevConfig)
+
+Whether a custom rule should return the shadow (derivative) of the function result.
+"""
+@inline needs_shadow(::FwdConfig{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
+
+@inline width(::FwdConfig{<:Any, <:Any, Width}) where Width = Width
+@inline runtime_activity(::FwdConfig{<:Any, <:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
+@inline strong_zero(::FwdConfig{<:Any, <:Any, <:Any, <:Any, StrongZero}) where StrongZero = StrongZero
+
+
+"""
+    RevConfig{NeedsPrimal, NeedsShadow, Width, Overwritten, RuntimeActivity, StrongZero}
+    RevConfigWidth{Width} = RevConfig{<:Any, <:Any, Width}
 
 Configuration type to dispatch on in custom reverse rules (see [`augmented_primal`](@ref) and [`reverse`](@ref)).
-* `NeedsPrimal` and `NeedsShadow`: boolean values specifying whether the primal and shadow (resp.) should be returned. 
+* `NeedsPrimal` and `NeedsShadow`: boolean values specifying whether the primal and shadow (resp.) should be returned.
 * `Width`: an integer that specifies the number of adjoints/shadows simultaneously being propagated.
-* `Overwritten`: a tuple of booleans of whether each argument (including the function itself) is modified between the 
+* `Overwritten`: a tuple of booleans of whether each argument (including the function itself) is modified between the
    forward and reverse pass (true if potentially modified between).
+* `RuntimeActivity`: whether runtime activity is enabled. See the [FAQ](@ref faq-runtime-activity) for more information.
+* `StrongZero`: whether strong zero is enabled. See the [FAQ](@ref faq-strong-zero) for more information.
 
-Getters for the four type parameters are provided by `needs_primal`, `needs_shadow`, `width`, and `overwritten`.
+Getters for the type parameters are provided by `needs_primal`, `needs_shadow`, `width`, `overwritten`, `runtime_activity`, and `strong_zero`.
 """
-struct Config{NeedsPrimal, NeedsShadow, Width, Overwritten} end
-const ConfigWidth{Width} = Config{<:Any,<:Any, Width}
+struct RevConfig{NeedsPrimal, NeedsShadow, Width, Overwritten, RuntimeActivity, StrongZero} end
+const RevConfigWidth{Width} = RevConfig{<:Any,<:Any, Width}
 
-@inline needs_primal(::Config{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
-@inline needs_shadow(::Config{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
-@inline width(::Config{<:Any, <:Any, Width}) where Width = Width
-@inline overwritten(::Config{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
+@inline needs_primal(::RevConfig{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
+@inline needs_shadow(::RevConfig{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
+@inline width(::RevConfig{<:Any, <:Any, Width}) where Width = Width
+"""
+    overwritten(::RevConfig)
+
+A tuple of booleans for each argument (including the function itself), indicating if it
+is modified between the forward and reverse pass (`true` if potentially modified
+between).
+"""
+@inline overwritten(::RevConfig{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
+@inline runtime_activity(::RevConfig{<:Any, <:Any, <:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
+@inline strong_zero(::RevConfig{<:Any, <:Any, <:Any, <:Any, <:Any, StrongZero}) where StrongZero = StrongZero
+
+"""
+    primal_type(::FwdConfig, ::Type{<:Annotation{RT}})
+    primal_type(::RevConfig, ::Type{<:Annotation{RT}})
+
+Compute the exepcted primal return type given a reverse mode config and return activity
+"""
+@inline primal_type(config::FwdConfig, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
+@inline primal_type(config::RevConfig, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
+
+"""
+    shadow_type(::FwdConfig, ::Type{<:Annotation{RT}})
+    shadow_type(::RevConfig, ::Type{<:Annotation{RT}})
+
+Compute the exepcted shadow return type given a reverse mode config and return activity
+"""
+@inline shadow_type(config::FwdConfig, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
+@inline shadow_type(config::RevConfig, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
 
 """
     AugmentedReturn(primal, shadow, tape)
 
-Augment the primal return value of a function with its shadow, as well as any additional information needed to correctly 
+Augment the primal return value of a function with its shadow, as well as any additional information needed to correctly
 compute the reverse pass, stored in `tape`.
 
-Unless specified by the config that a variable is not overwritten, rules must assume any arrays/data structures/etc are 
-overwritten between the forward and the reverse pass. Any floats or variables passed by value are always preserved as is 
+Unless specified by the config that a variable is not overwritten, rules must assume any arrays/data structures/etc are
+overwritten between the forward and the reverse pass. Any floats or variables passed by value are always preserved as is
 (as are the arrays themselves, just not necessarily the values in the array).
 
 See also [`augmented_primal`](@ref).
@@ -73,7 +141,7 @@ end
 @inline tape_type(::Type{AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = TapeType
 @inline tape_type(::AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}) where {PrimalType,ShadowType,TapeType} = TapeType
 """
-    augmented_primal(::Config, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
+    augmented_primal(::RevConfig, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
 
 Must return an [`AugmentedReturn`](@ref) type.
 * The primal must be the same type of the original return if `needs_primal(config)`, otherwise nothing.
@@ -84,8 +152,8 @@ Must return an [`AugmentedReturn`](@ref) type.
 function augmented_primal end
 
 """
-    reverse(::Config, func::Annotation{typeof(f)}, dret::Active, tape, args::Annotation...)
-    reverse(::Config, func::Annotation{typeof(f)}, ::Type{<:Annotation), tape, args::Annotation...)
+    reverse(::RevConfig, func::Annotation{typeof(f)}, dret::Active, tape, args::Annotation...)
+    reverse(::RevConfig, func::Annotation{typeof(f)}, ::Type{<:Annotation), tape, args::Annotation...)
 
 Takes gradient of derivative, activity annotation, and tape. If there is an active return dret is passed
 as Active{T} with the derivative of the active return val. Otherwise dret is passed as Type{Duplicated{T}}, etc.
@@ -115,18 +183,18 @@ end
 function has_frule_from_sig(@nospecialize(TT);
                             world::UInt=Base.get_world_counter(),
                             method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                            caller::Union{Nothing,Core.MethodInstance}=nothing)
+                            caller::Union{Nothing,Core.MethodInstance}=nothing)::Bool
     ft, tt = _annotate_tt(TT)
-    TT = Tuple{<:Annotation{ft}, Type{<:Annotation}, tt...}
+    TT = Tuple{<:FwdConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
     return isapplicable(forward, TT; world, method_table, caller)
 end
 
 function has_rrule_from_sig(@nospecialize(TT);
                             world::UInt=Base.get_world_counter(),
                             method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                            caller::Union{Nothing,Core.MethodInstance}=nothing)
+                            caller::Union{Nothing,Core.MethodInstance}=nothing)::Bool
     ft, tt = _annotate_tt(TT)
-    TT = Tuple{<:Config, <:Annotation{ft}, Type{<:Annotation}, tt...}
+    TT = Tuple{<:RevConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
     return isapplicable(augmented_primal, TT; world, method_table, caller)
 end
 
@@ -136,12 +204,9 @@ end
 function isapplicable(@nospecialize(f), @nospecialize(TT);
                       world::UInt=Base.get_world_counter(),
                       method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                      caller::Union{Nothing,Core.MethodInstance}=nothing)
+                      caller::Union{Nothing,Core.MethodInstance}=nothing)::Bool
     tt = Base.to_tuple_type(TT)
     sig = Base.signature_type(f, tt)
-    @static if VERSION < v"1.7.0"
-        return !isempty(Base._methods_by_ftype(sig, -1, world))
-    end
     mt = ccall(:jl_method_table_for, Any, (Any,), sig)
     mt isa Core.MethodTable || return false
     if method_table === nothing
@@ -154,14 +219,18 @@ function isapplicable(@nospecialize(f), @nospecialize(TT);
     else
         matches = result
     end
-    fullmatch = Core.Compiler._any(match::Core.MethodMatch->match.fully_covers, matches)
-    if caller !== nothing
-        fullmatch || add_mt_backedge!(caller, mt, sig)
+    # merged with Base.any on 1.12
+    _any = isdefined(Core.Compiler, :_any) ? Core.Compiler._any : any
+    fullmatch = _any(match::Core.MethodMatch->match.fully_covers, matches)
+    if !fullmatch
+        if caller isa Core.MethodInstance
+            add_mt_backedge!(caller, mt, sig)
+        end
     end
     if Core.Compiler.isempty(matches)
         return false
     else
-        if caller !== nothing
+        if caller isa Core.MethodInstance
             for i = 1:Core.Compiler.length(matches)
                 match = Core.Compiler.getindex(matches, i)::Core.MethodMatch
                 edge = Core.Compiler.specialize_method(match)::Core.MethodInstance
@@ -182,14 +251,6 @@ function add_mt_backedge!(caller::Core.MethodInstance, mt::Core.MethodTable, @no
     return nothing
 end
 
-function issupported()
-    @static if VERSION < v"1.7.0"
-        return false
-    else
-        return true
-    end
-end
-
 """
     inactive(func::typeof(f), args...)
 
@@ -200,7 +261,7 @@ function inactive end
 function is_inactive_from_sig(@nospecialize(TT);
                               world::UInt=Base.get_world_counter(),
                               method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                              caller::Union{Nothing,Core.MethodInstance}=nothing)
+                              caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
     return isapplicable(inactive, TT; world, method_table, caller)
 end
 
@@ -215,14 +276,14 @@ function inactive_noinl end
 function is_inactive_noinl_from_sig(@nospecialize(TT);
                               world::UInt=Base.get_world_counter(),
                               method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                              caller::Union{Nothing,Core.MethodInstance}=nothing)
+                              caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
     return isapplicable(inactive_noinl, TT; world, method_table, caller)
 end
 
 """
     noalias(func::typeof(f), args...)
 
-Mark a particular function as always being a fresh allocation which does not alias any other 
+Mark a particular function as always being a fresh allocation which does not alias any other
 accessible memory.
 """
 function noalias end
@@ -230,7 +291,7 @@ function noalias end
 function noalias_from_sig(@nospecialize(TT);
                               world::UInt=Base.get_world_counter(),
                               method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                              caller::Union{Nothing,Core.MethodInstance}=nothing)
+                              caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
     return isapplicable(noalias, TT; world, method_table, caller)
 end
 
@@ -240,5 +301,9 @@ end
 Mark a particular type `Ty` as always being inactive.
 """
 inactive_type(::Type) = false
+
+@inline EnzymeCore.set_runtime_activity(mode::M, config::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_runtime_activity(mode, runtime_activity(config))
+
+@inline EnzymeCore.set_strong_zero(mode::M, config::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_strong_zero(mode, runtime_activity(config))
 
 end # EnzymeRules
