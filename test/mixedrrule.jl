@@ -72,7 +72,7 @@ end
 # check if a value is guaranteed to be not contain active[register] data
 # (aka not either mixed or active)
 @inline function guaranteed_nonactive(::Type{T}) where T
-    rt = Enzyme.Compiler.active_reg_inner(T, (), nothing)
+    rt = Enzyme.Compiler.active_reg_nothrow(T)
     return rt == Enzyme.Compiler.AnyState || rt == Enzyme.Compiler.DupState
 end
 
