@@ -304,7 +304,8 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
             )
             push!(states, Compiler.AnyState)
         else
-            state = Compiler.active_reg_inner(genty, (), nothing)
+            # TODO we need to make this call the worldage one
+            state = Compiler.active_reg_inner(genty)
             push!(states, state)
         end
     end

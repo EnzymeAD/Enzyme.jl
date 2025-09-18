@@ -307,7 +307,7 @@ end
 
     elseif mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
         if dupClosure
-            ty = active_reg_nothrow(funcT, Val(world))
+            ty = active_reg_inner(funcT, (), Val(world))
             has_active = ty == MixedState || ty == ActiveState
             if has_active
                 refed = true

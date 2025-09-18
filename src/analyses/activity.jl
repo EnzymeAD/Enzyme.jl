@@ -198,7 +198,7 @@ end
 @inline function active_reg_inner(
     ::Type{T},
     seen::ST,
-    world::Union{Nothing,UInt},
+    world::UInt,
     ::Val{justActive} = Val(false),
     ::Val{UnionSret} = Val(false),
     ::Val{AbstractIsMixed} = Val(false),
@@ -314,28 +314,8 @@ end
         return AnyState
     end
 
-    inactivety = if typeof(world) === Nothing
-        EnzymeCore.EnzymeRules.inactive_type(T)
-    else
-        inmi = my_methodinstance(
-            nothing,
-            typeof(EnzymeCore.EnzymeRules.inactive_type),
-            Tuple{Type{T}},
-            world,
-        )
-        args = Any[EnzymeCore.EnzymeRules.inactive_type, T]
-        GC.@preserve T begin
-            ccall(
-                :jl_invoke,
-                Any,
-                (Any, Ptr{Any}, Cuint, Any),
-                EnzymeCore.EnzymeRules.inactive_type,
-                args,
-                length(args),
-                inmi,
-            )
-        end
-    end
+    # Use _call_in_world_total to perform a concrete eval.
+    inactivety = Core._call_in_world_total(world, EnzymeCore.EnzymeRules.inactive_type, T)
 
     if inactivety
         return AnyState
@@ -449,41 +429,62 @@ end
     return ty
 end
 
-Base.@assume_effects :removable :foldable @inline @generated function active_reg_nothrow(::Type{T}, ::Val{world})::ActivityState where {T,world}
-    return active_reg_inner(T, (), world)
+function active_reg_nothrow_generator(world::UInt, source::LineNumberNode, T, self, _)
+    @nospecialize
+    result = active_reg_inner(T, (), world)
+
+    # create an empty CodeInfo to return the result
+    ci = ccall(:jl_new_code_info_uninit, Ref{Core.CodeInfo}, ())
+    
+    @static if isdefined(Core, :DebugInfo)
+        ci.debuginfo = Core.DebugInfo(:none)
+    else
+        ci.codelocs = Int32[]
+        ci.linetable = [
+            Core.Compiler.LineInfoNode(@__MODULE__, :active_reg_nothrow, source.file, Int32(source.line), Int32(0))
+        ]
+    end
+    ci.min_world = world
+    ci.max_world = typemax(UInt)
+
+    edges = Any[]
+    # Create the edge for the "query"
+    # TODO: Check if we can use `Tuple{typeof(EnzymeRules.inactive_type), T}` directly
+    inactive_type_sig = Tuple{typeof(EnzymeRules.inactive_type), Type}
+    push!(edges, ccall(:jl_method_table_for, Any, (Any,), inactive_type_sig)::Core.MethodTable)
+    push!(edges, inactive_type_sig)
+
+    ci.edges = edges
+
+    # prepare the slots
+    ci.slotnames = Symbol[Symbol("#self#"), :t]
+    ci.slotflags = UInt8[0x00 for i = 1:2]
+
+    # return the result
+    ci.code = Any[Core.Compiler.ReturnNode(result)]
+    ci.ssaflags = UInt32[0x00]   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
+    @static if isdefined(Core, :DebugInfo)
+    else
+        push!(ci.codelocs, 1)
+    end
+
+    ci.ssavaluetypes = 1
+
+    return ci
 end
 
-Base.@assume_effects :removable :foldable @inline function active_reg(
-    ::Type{T},
-    world::Union{Nothing,UInt} = nothing,
-)::Bool where {T}
-    seen = ()
-
-    # check if it could contain an active
-    if active_reg_inner(T, seen, world, Val(true)) == ActiveState #=justActive=#
-        state = active_reg_inner(T, seen, world, Val(false)) #=justActive=#
-        if state == ActiveState
-            return true
-        end
-        @assert state == MixedState
-        throw(
-            AssertionError(
-                string(T) *
-                " has mixed internal activity types. See https://enzyme.mit.edu/julia/stable/faq/#Mixed-activity for more information",
-            ),
-        )
-    else
-        return false
-    end
+@eval Base.@assume_effects :removable :foldable :nothrow @inline function active_reg_nothrow(::Type{T})::ActivityState where {T}
+    $(Expr(:meta, :generated_only))
+    $(Expr(:meta, :generated, active_reg_nothrow_generator))
 end
 
 Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_const(::Type{T})::Bool where {T}
-    rt = active_reg_nothrow(T, Val(nothing))
+    rt = active_reg_nothrow(T)
     res = rt == AnyState
     return res
 end
 
-Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_const_nongen(::Type{T}, world)::Bool where {T}
+Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_const_nongen(::Type{T}, world::UInt)::Bool where {T}
     rt = active_reg_inner(T, (), world)
     res = rt == AnyState
     return res
@@ -492,7 +493,7 @@ end
 # check if a value is guaranteed to be not contain active[register] data
 # (aka not either mixed or active)
 Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_nonactive(::Type{T})::Bool where {T}
-    rt = Enzyme.Compiler.active_reg_nothrow(T, Val(nothing))
+    rt = Enzyme.Compiler.active_reg_nothrow(T)
     return rt == Enzyme.Compiler.AnyState || rt == Enzyme.Compiler.DupState
 end
 
@@ -505,7 +506,7 @@ Base.@assume_effects :removable :foldable :nothrow @inline Enzyme.guess_activity
     guess_activity(T, convert(API.CDerivativeMode, mode))
 
 Base.@assume_effects :removable :foldable :nothrow @inline function Enzyme.guess_activity(::Type{T}, Mode::API.CDerivativeMode) where {T}
-    ActReg = active_reg_nothrow(T, Val(nothing))
+    ActReg = active_reg_nothrow(T)
     if ActReg == AnyState
         return Const{T}
     end

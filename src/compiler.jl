@@ -332,6 +332,10 @@ end
 
 include("llvm/attributes.jl")
 
+include("typeutils/conversion.jl")
+include("typeutils/jltypes.jl")
+include("typeutils/lltypes.jl")
+
 include("analyses/activity.jl")
 
 # User facing interface
@@ -381,9 +385,7 @@ using .JIT
 include("jlrt.jl")
 include("errors.jl")
 
-include("typeutils/conversion.jl")
-include("typeutils/jltypes.jl")
-include("typeutils/lltypes.jl")
+
 
 AnyArray(Length::Int) = NamedTuple{ntuple(Symbol, Val(Length)),NTuple{Length,Any}}
 
@@ -2162,29 +2164,6 @@ end
 
 struct UnknownTapeType end
 
-"""
-Create the methodinstance pair, and lookup the primal return type.
-"""
-@inline function fspec(
-    @nospecialize(F::Type),
-    @nospecialize(TT::Type),
-    world::Union{UInt,Nothing} = nothing,
-)
-
-fdsafdsafsa
-    # primal function. Inferred here to get return type
-    _tt = (TT.parameters...,)
-
-    primal_tt = Tuple{map(eltype, _tt)...}
-
-    primal = if world isa Nothing
-        my_methodinstance(F, primal_tt)
-    else
-        my_methodinstance(F, primal_tt, world)
-    end
-
-    return primal
-end
 
 ##
 # Enzyme compiler step
@@ -5912,7 +5891,7 @@ end
         A
     end
 
-    if run_enzyme && !(A2 <: Const) && guaranteed_const_nongen(rrt, World)
+    if run_enzyme && !(A2 <: Const) && (World isa Nothing ? guaranteed_const(rrt) : guaranteed_const_nongen(rrt, World))
         estr = "Return type `$rrt` not marked Const, but type is guaranteed to be constant"
         return error(estr)
     end

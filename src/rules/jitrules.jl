@@ -118,7 +118,7 @@ function setup_macro_wraps(
             push!(modbetween, :(ntuple(Returns(MB[$i]), Val(length($(primargs[i]))))))
         end
         aref = Symbol("active_ref_$i")
-        push!(active_refs, Expr(:(=), aref, Expr(:call, active_reg_nothrow, primtypes[i], Val(nothing))))
+        push!(active_refs, Expr(:(=), aref, Expr(:call, active_reg_nothrow, primtypes[i])))
         expr = if iterate
             if forwardMode
                 dupexpr = if Width == 1
@@ -869,7 +869,7 @@ end
 
 @inline function (v::PushInnerStruct{reverse})(@nospecialize(arg), @nospecialize(darg)) where reverse
     ty = Core.Typeof(arg)
-    actreg = active_reg_nothrow(ty, Val(nothing))
+    actreg = active_reg_nothrow(ty)
     if actreg == AnyState
         Const(arg)
     elseif actreg == ActiveState
@@ -905,7 +905,7 @@ end
         Base.@_inline_meta
         arg = args[i]
         ty = Core.Typeof(arg)
-        actreg = active_reg_nothrow(ty, Val(nothing))
+        actreg = active_reg_nothrow(ty)
         if actreg == AnyState
             Const(arg)
         elseif actreg == ActiveState
@@ -939,7 +939,7 @@ end
         Base.@_inline_meta
         arg = args[i]
         ty = Core.Typeof(arg)
-        actreg = active_reg_nothrow(ty, Val(nothing))
+        actreg = active_reg_nothrow(ty)
         if actreg == AnyState
             Const(arg)
         elseif actreg == ActiveState
@@ -967,7 +967,7 @@ end
         Base.@_inline_meta
         arg = args[i]
         ty = Core.Typeof(arg)
-        actreg = active_reg_nothrow(ty, Val(nothing))
+        actreg = active_reg_nothrow(ty)
         if actreg == AnyState
             Const(arg)
         elseif actreg == ActiveState
