@@ -393,9 +393,17 @@ Base.@nospecializeinfer @inline function active_reg_inner(
     return ty
 end
 
+const ActivityCache = Dict{Tuple{UInt, Bool, Bool, Bool}, ActivityState}()
+
 Base.@nospecializeinfer @inline function active_reg(@nospecialize(ST::Type), world::UInt; justActive=false, UnionSret = false, AbstractIsMixed = false)
+    key = (world, justActive, UnionSret, AbstractIsMixed)
+    if haskey(ActivityCache, key)
+        return ActivityCache[key]
+    end
     set = Base.IdSet{Type}()
-    return active_reg_inner(ST, set, world, justActive, UnionSret, AbstractIsMixed)
+    result = active_reg_inner(ST, set, world, justActive, UnionSret, AbstractIsMixed)
+    ActivityCache[key] = result
+    return result
 end
 
 function active_reg_nothrow_generator(world::UInt, source::LineNumberNode, T, self, _)
