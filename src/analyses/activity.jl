@@ -358,7 +358,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
 
     ty = AnyState
 
-    for f in fieldcount(nT)
+    for f in 1:typed_fieldcount(nT)
         subT = typed_fieldtype(nT, f)
 
         if justActive && ismutabletype(subT)
@@ -366,7 +366,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
             continue
         end
 
-        ty |= active_reg_inner(
+        sub = active_reg_inner(
             subT,
             seen2,
             world,
@@ -374,6 +374,20 @@ Base.@nospecializeinfer @inline function active_reg_inner(
             UnionSret,
             AbstractIsMixed,
         )
+
+        if sub == AnyState
+            continue
+        end
+
+        if sub == DupState && justActive
+            continue
+        end
+
+        if reftype
+            sub = DupState
+        end
+
+        ty |= sub
     end
 
     return ty
@@ -448,7 +462,14 @@ end
 # check if a value is guaranteed to be not contain active[register] data
 # (aka not either mixed or active)
 Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_nonactive(::Type{T})::Bool where {T}
-    rt = Enzyme.Compiler.active_reg_nothrow(T)
+    rt = active_reg_nothrow(T)
+    return rt == Enzyme.Compiler.AnyState || rt == Enzyme.Compiler.DupState
+end
+
+# check if a value is guaranteed to be not contain active[register] data
+# (aka not either mixed or active)
+@inline function guaranteed_nonactive(@nospecialize(T::Type), world::UInt)::Bool
+    rt = active_reg(T; justActive=true)
     return rt == Enzyme.Compiler.AnyState || rt == Enzyme.Compiler.DupState
 end
 

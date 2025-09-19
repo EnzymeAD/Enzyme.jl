@@ -69,13 +69,6 @@ function EnzymeRules.augmented_primal(config::RevConfigWidth{1}, func::Const{typ
     return AugmentedReturn(primal, nothing, vec)
 end
 
-# check if a value is guaranteed to be not contain active[register] data
-# (aka not either mixed or active)
-@inline function guaranteed_nonactive(::Type{T}) where T
-    rt = Enzyme.Compiler.active_reg_nothrow(T)
-    return rt == Enzyme.Compiler.AnyState || rt == Enzyme.Compiler.DupState
-end
-
 function EnzymeRules.reverse(config::RevConfigWidth{1}, func::Const{typeof(recmixfnc)},
     dret::Active, tape, tup)
     prev = tup.dval[]
@@ -86,7 +79,7 @@ function EnzymeRules.reverse(config::RevConfigWidth{1}, func::Const{typeof(recmi
         pv = getfield(prev, i)
         if i == 1
             next = (7 * tape[1] * dret.val, 31 * tape[1] * dret.val)
-            Enzyme.Compiler.recursive_add(pv, next, identity, guaranteed_nonactive)
+            Enzyme.Compiler.recursive_add(pv, next, identity, Enzyme.Compiler.guaranteed_nonactive)
         else
             pv
         end
