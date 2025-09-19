@@ -393,9 +393,58 @@ Base.@nospecializeinfer @inline function active_reg_inner(
     return ty
 end
 
+const ActivityCache = Dict{Tuple{Type, Bool, Bool, Bool}, ActivityState}()
+
+const ActivityWorldCache = Ref(0)
+
+const ActivityMethodCache = Core.MethodMatch[]
+# given the current worldage of compilation, check if there are any methods 
+# of inactive_type which may invalidate the cache, and if so clear it. 
+function check_activity_cache_invalidations(world::UInt)
+    # We've already guaranteed that this world doesn't have any stale caches
+    if world <= ActivityWorldCache[]
+        return
+    end
+
+    invalid = true
+
+    tt = Tuple{typeof(EnzymeRules.inactive_type), Type}
+
+    methods = Core.MethodMatch[]
+    matches = Base._methods_by_ftype(tt, -1, world)
+    if matches === nothing
+        @assert ActivityCache.size() == 0
+        return
+    end
+
+    methods = Core.MethodMatch[]
+    for match in matches::Vector
+        push!(methods, match::Core.MethodMatch)
+    end
+
+    if methods == ActivityMethodCache
+        return
+    end
+
+    empty!(ActivityCache)
+    empty!(ActivityMethodCache)
+    for match in matches::Vector
+        push!(ActivityMethodCache, match::Core.MethodMatch)
+    end
+
+    ActivityWorldCache[] = world
+
+end
+
 Base.@nospecializeinfer @inline function active_reg(@nospecialize(ST::Type), world::UInt; justActive=false, UnionSret = false, AbstractIsMixed = false)
+    key = (ST, justActive, UnionSret, AbstractIsMixed)
+    if haskey(ActivityCache, key)
+        return ActivityCache[key]
+    end
     set = Base.IdSet{Type}()
-    return active_reg_inner(ST, set, world, justActive, UnionSret, AbstractIsMixed)
+    result = active_reg_inner(ST, set, world, justActive, UnionSret, AbstractIsMixed)
+    ActivityCache[key] = result
+    return result
 end
 
 function active_reg_nothrow_generator(world::UInt, source::LineNumberNode, T, self, _)
@@ -413,6 +462,7 @@ function active_reg_nothrow_generator(world::UInt, source::LineNumberNode, T, se
             Core.Compiler.LineInfoNode(@__MODULE__, :active_reg_nothrow, source.file, Int32(source.line), Int32(0))
         ]
     end
+    check_activity_cache_invalidations(world)
     ci.min_world = world
     ci.max_world = typemax(UInt)
 
