@@ -307,9 +307,7 @@ end
 
     elseif mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
         if dupClosure
-            ty = active_reg_nothrow(funcT, Val(world))
-            has_active = ty == MixedState || ty == ActiveState
-            if has_active
+            if !guaranteed_nonactive(funcT, world)
                 refed = true
 		e_tt = Tuple{width == 1 ? Duplicated{Base.RefValue{funcT}} : BatchDuplicated{Base.RefValue{funcT}, Int(width)},e_tt.parameters...}
                 funcT = Core.Typeof(referenceCaller)

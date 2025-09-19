@@ -304,7 +304,8 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
             )
             push!(states, Compiler.AnyState)
         else
-            state = Compiler.active_reg_inner(genty, (), nothing)
+            # TODO we need to make this call the worldage one
+            state = Compiler.active_reg_nothrow(genty)
             push!(states, state)
         end
     end
@@ -937,7 +938,7 @@ end
             push!(MDTys, xti)
             push!(MDTysLast, xti)
         else
-            push!(exprs, Expr(:(=), mdi, :(Compiler.active_reg_inner($xti, (), nothing, Val(true)) == Compiler.ActiveState)))
+            push!(exprs, Expr(:(=), mdi, :(Compiler.active_reg_nothrow($xti) == Compiler.ActiveState || Compiler.active_reg_nothrow($xti) == Compiler.MixedState)))
 
             if chunk == Val{1} || chunk == Nothing
                 push!(MDTys, :($mdi ? MixedDuplicated{$xti} : Duplicated{$xti}))

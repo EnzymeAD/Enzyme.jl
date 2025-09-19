@@ -466,9 +466,7 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
             if !found_partial
                 return false
             end
-            act =
-                active_reg_inner(typ_partial, (), world, Val(false), Val(false), Val(true)) #=abstractismixed=#
-            if act == MixedState || act == ActiveState
+            if !guaranteed_nonactive(typ_partial, world; AbstractIsMixed=true)
                 return false
             end
         end
@@ -934,8 +932,7 @@ end
     else
         @assert legal
         world = enzyme_extract_world(LLVM.parent(position(B)))
-        act = active_reg_inner(TT, (), world)
-        if act == ActiveState || act == MixedState
+        if !guaranteed_nonactive(TT, world)
             unsafe_store!(tapeR, shadowres.ref)
         end
     end
@@ -1037,8 +1034,7 @@ end
     if legal
         @assert legal
         world = enzyme_extract_world(LLVM.parent(position(B)))
-        act = active_reg_inner(TT, (), world)
-        torun = act == ActiveState || act == MixedState
+        torun = !guaranteed_nonactive(TT, world)
     else
         torun = true
     end
@@ -1211,7 +1207,7 @@ function rt_jl_getfield_aug(
     end
     RT = Core.Typeof(res)
 
-    actreg = active_reg_nothrow(RT, Val(nothing))
+    actreg = active_reg_nothrow(RT)
     if actreg == ActiveState || (isconst && actreg == MixedState)
         if length(dptrs) == 0
             return Ref{RT}(make_zero(res))
@@ -1258,7 +1254,7 @@ function idx_jl_getfield_aug(
         Base.getfield(dptr, symname + 1)
     end
     RT = Core.Typeof(res)
-    actreg = active_reg_nothrow(RT, Val(nothing))
+    actreg = active_reg_nothrow(RT)
     if actreg == ActiveState || (isconst && actreg == MixedState)
         if length(dptrs) == 0
             return Ref{RT}(make_zero(res))::Any
@@ -1329,7 +1325,7 @@ function rt_jl_getfield_rev(
 
     RT = Core.Typeof(cur)
 
-    actreg = active_reg_nothrow(RT, Val(nothing))
+    actreg = active_reg_nothrow(RT)
     if (actreg == ActiveState || actreg == MixedState) && !isconst
         if length(dptrs) == 0
             if dptr isa Base.RefValue
@@ -1411,7 +1407,7 @@ function idx_jl_getfield_rev(
 
     RT = Core.Typeof(cur)
 
-    actreg = active_reg_nothrow(RT, Val(nothing))
+    actreg = active_reg_nothrow(RT)
     if (actreg == ActiveState || actreg == MixedState) && !isconst
         if length(dptrs) == 0
             if dptr isa Base.RefValue
@@ -1892,8 +1888,15 @@ end
 
 function rt_jl_setfield_aug(dptr::T, idx, ::Val{isconst}, val, dval) where {T,isconst}
     RT = Core.Typeof(val)
-    if active_reg(RT)
+
+    state = active_reg_nothrow(RT)
+
+    if state == ActiveState
         setfield!(dptr, idx, make_zero(val))
+    elseif state == MixedState
+        throw(
+            AssertionError("$RT has mixed internal activity types. See https://enzyme.mit.edu/julia/stable/faq/#Mixed-activity for more information"),
+        )
     else
         setfield!(dptr, idx, isconst ? val : dval)
     end
@@ -1901,7 +1904,8 @@ end
 
 function rt_jl_setfield_rev(dptr::T, idx, ::Val{isconst}, val, dval) where {T,isconst}
     RT = Core.Typeof(val)
-    if active_reg(RT) && !isconst
+    state = active_reg_nothrow(RT)
+    if state == ActiveState && !isconst
         dval[] = recursive_add(dval[], getfield(dptr, idx), identity, guaranteed_nonactive)
         setfield!(dptr, idx, make_zero(val))
     end
@@ -2007,8 +2011,7 @@ end
 end
 
 function error_if_differentiable(::Type{T}) where {T}
-    seen = ()
-    areg = active_reg_inner(T, seen, nothing)
+    areg = active_reg_nothrow(T)
     if areg != AnyState
         throw(AssertionError("Found unhandled differentiable variable in jl_f_svec_ref $T"))
     end

@@ -515,7 +515,6 @@ end
     
     tx =  (1.0, 2.0, 3.0)
 
-    @inferred Enzyme.Compiler.active_reg_inner(Tuple{Float64,Float64,Float64}, (), nothing, Val(true))
     @inferred Enzyme.make_zero(tx)
     
     @inferred gradient(Reverse, abssum, tx)

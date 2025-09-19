@@ -332,6 +332,10 @@ end
 
 include("llvm/attributes.jl")
 
+include("typeutils/conversion.jl")
+include("typeutils/jltypes.jl")
+include("typeutils/lltypes.jl")
+
 include("analyses/activity.jl")
 
 # User facing interface
@@ -381,9 +385,7 @@ using .JIT
 include("jlrt.jl")
 include("errors.jl")
 
-include("typeutils/conversion.jl")
-include("typeutils/jltypes.jl")
-include("typeutils/lltypes.jl")
+
 
 AnyArray(Length::Int) = NamedTuple{ntuple(Symbol, Val(Length)),NTuple{Length,Any}}
 
@@ -1520,8 +1522,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
        mode == API.DEM_ReverseModeCombined
         fn = LLVM.parent(LLVM.parent(V))
         world = enzyme_extract_world(fn)
-        rt = active_reg_inner(Ty, (), world)
-        if rt == ActiveState || rt == MixedState
+        if !guaranteed_nonactive(Ty, world)
             B = LLVM.IRBuilder()
             position!(B, V)
             operands(V)[3] = unsafe_to_llvm(B, Base.RefValue{Ty})
@@ -2162,29 +2163,6 @@ end
 
 struct UnknownTapeType end
 
-"""
-Create the methodinstance pair, and lookup the primal return type.
-"""
-@inline function fspec(
-    @nospecialize(F::Type),
-    @nospecialize(TT::Type),
-    world::Union{UInt,Nothing} = nothing,
-)
-
-fdsafdsafsa
-    # primal function. Inferred here to get return type
-    _tt = (TT.parameters...,)
-
-    primal_tt = Tuple{map(eltype, _tt)...}
-
-    primal = if world isa Nothing
-        my_methodinstance(F, primal_tt)
-    else
-        my_methodinstance(F, primal_tt, world)
-    end
-
-    return primal
-end
 
 ##
 # Enzyme compiler step
@@ -3131,7 +3109,7 @@ function create_abi_wrapper(
         # 3 is index of shadow
         if existed[3] != 0 &&
            sret_union &&
-           active_reg_inner(pactualRetType, (), world, Val(true), Val(true)) == ActiveState #=UnionSret=#
+           active_reg(pactualRetType, world; justActive=true, UnionSret=true) == ActiveState
             rewrite_union_returns_as_ref(enzymefn, data[3], world, width)
         end
         returnNum = 0
@@ -4795,7 +4773,7 @@ end
     if params.err_if_func_written
         FT = TT.parameters[1]
         Ty = eltype(FT)
-        reg = active_reg_inner(Ty, (), job.world)
+        reg = active_reg(Ty, job.world)
         if reg == DupState || reg == MixedState
             swiftself = has_swiftself(primalf)
             todo = LLVM.Value[parameters(primalf)[1+swiftself]]
@@ -4819,7 +4797,7 @@ end
                     if !mayWriteToMemory(user)
                         slegal, foundv, byref = abs_typeof(user)
                         if slegal
-                            reg2 = active_reg_inner(foundv, (), job.world)
+                            reg2 = active_reg(foundv, job.world)
                             if reg2 == ActiveState || reg2 == AnyState
                                 continue
                             end
@@ -4847,7 +4825,7 @@ end
                         if operands(user)[2] == cur
                             slegal, foundv, byref = abs_typeof(operands(user)[1])
                             if slegal
-                                reg2 = active_reg_inner(foundv, (), job.world)
+                                reg2 = active_reg(foundv, job.world)
                                 if reg2 == AnyState
                                     continue
                                 end
@@ -4881,7 +4859,7 @@ end
                             if is_readonly(called)
                                 slegal, foundv, byref = abs_typeof(user)
                                 if slegal
-                                    reg2 = active_reg_inner(foundv, (), job.world)
+                                    reg2 = active_reg(foundv, job.world)
                                     if reg2 == ActiveState || reg2 == AnyState
                                         continue
                                     end
@@ -4899,7 +4877,7 @@ end
                                 end
                                 slegal, foundv, byref = abs_typeof(user)
                                 if slegal
-                                    reg2 = active_reg_inner(foundv, (), job.world)
+                                    reg2 = active_reg(foundv, job.world)
                                     if reg2 == ActiveState || reg2 == AnyState
                                         continue
                                     end
@@ -5912,7 +5890,7 @@ end
         A
     end
 
-    if run_enzyme && !(A2 <: Const) && guaranteed_const_nongen(rrt, World)
+    if run_enzyme && !(A2 <: Const) && (World isa Nothing ? guaranteed_const(rrt) : guaranteed_const_nongen(rrt, World))
         estr = "Return type `$rrt` not marked Const, but type is guaranteed to be constant"
         return error(estr)
     end

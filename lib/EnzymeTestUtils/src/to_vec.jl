@@ -51,7 +51,7 @@ end
 # basic containers: loop over defined elements, recursively converting them to vectors
 function to_vec(x::RT, seen_vecs::AliasDict) where {RT<:Array}
     has_seen = haskey(seen_vecs, x)
-    is_const = Enzyme.Compiler.guaranteed_const_nongen(RT, nothing)
+    is_const = Enzyme.Compiler.guaranteed_const(RT)
     if has_seen || is_const
         x_vec = Float32[]
     else
@@ -95,7 +95,7 @@ else
 # basic containers: loop over defined elements, recursively converting them to vectors
 function to_vec(x::RT, seen_vecs::AliasDict) where {RT<:GenericMemory}
     has_seen = haskey(seen_vecs, x)
-    is_const = Enzyme.Compiler.guaranteed_const_nongen(RT, nothing)
+    is_const = Enzyme.Compiler.guaranteed_const(RT)
     if has_seen || is_const
         x_vec = Float32[]
     else
@@ -153,7 +153,7 @@ end
 # fallback: for any other struct, loop over fields, recursively converting them to vectors
 function to_vec(x::RT, seen_vecs::AliasDict) where {RT}
     has_seen = haskey(seen_vecs, x)
-    is_const = Enzyme.Compiler.guaranteed_const_nongen(RT, nothing)
+    is_const = Enzyme.Compiler.guaranteed_const(RT)
     if has_seen || is_const
         x_vec = Float32[]
     else

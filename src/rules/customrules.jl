@@ -159,7 +159,7 @@ function enzyme_custom_setup_args(
 
         elseif activep == API.DFT_OUT_DIFF || (
             mode != API.DEM_ForwardMode &&
-            active_reg_inner(arg.typ, (), world) == ActiveState
+            active_reg(arg.typ, world) == ActiveState
         )
             Ty = Active{arg.typ}
             llty = convert(LLVMType, Ty)
@@ -228,7 +228,7 @@ function enzyme_custom_setup_args(
             mixed = false
             if width == 1
 
-                if active_reg_inner(arg.typ, (), world) == MixedState
+                if active_reg(arg.typ, world) == MixedState
                     # TODO mixedupnoneed
                     shadowty = Base.RefValue{shadowty}
                     Ty = MixedDuplicated{arg.typ}
@@ -242,7 +242,7 @@ function enzyme_custom_setup_args(
                     end
                 end
             else
-                if active_reg_inner(arg.typ, (), world) == MixedState
+                if active_reg(arg.typ, world) == MixedState
                     # TODO batchmixedupnoneed
                     shadowty = Base.RefValue{shadowty}
                     Ty = BatchMixedDuplicated{arg.typ,Int(width)}
@@ -413,9 +413,9 @@ function enzyme_custom_setup_ret(
 
     elseif activep == API.DFT_OUT_DIFF || (
         mode != API.DEM_ForwardMode &&
-        active_reg_inner(RealRt, (), world, Val(true)) == ActiveState
-    ) #=justActive=#
-        if active_reg_inner(RealRt, (), world, Val(false)) == MixedState && B !== nothing #=justActive=#
+        !guaranteed_nonactive(RealRt, world)
+    )
+        if active_reg(RealRt, world) == MixedState && B !== nothing
             emit_error(
                 B,
                 orig,

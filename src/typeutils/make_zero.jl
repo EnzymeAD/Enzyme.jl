@@ -114,7 +114,7 @@ end
     if haskey(seen, prev)
         return seen[prev]
     end
-    if guaranteed_const_nongen(RT, nothing)
+    if guaranteed_const(RT)
         return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
     end
     newa = RT(undef, size(prev))
@@ -141,7 +141,7 @@ else
     if haskey(seen, prev)
         return seen[prev]
     end
-    if guaranteed_const_nongen(RT, nothing)
+    if guaranteed_const(RT)
         return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
     end
     newa = RT(undef, size(prev))
@@ -203,7 +203,7 @@ end
     prev::RT,
     ::Val{copy_if_inactive} = Val(false),
 )::RT where {copy_if_inactive,RT}
-    if guaranteed_const_nongen(RT, nothing)
+    if guaranteed_const(RT)
         return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
     end
     if haskey(seen, prev)
@@ -260,14 +260,14 @@ function make_zero_immutable!(
 end
 
 function make_zero_immutable!(prev::T, seen::S)::T where {T<:Tuple,S}
-    if guaranteed_const_nongen(T, nothing)
+    if guaranteed_const(T)
         return prev  # unreachable from make_zero!
     end
     ntuple(Val(length(T.parameters))) do i
         Base.@_inline_meta
         p = prev[i]
         SBT = Core.Typeof(p)
-        if guaranteed_const_nongen(SBT, nothing)
+        if guaranteed_const(SBT)
             p  # covered by several tests even if not shown in coverage
         elseif !ismutabletype(SBT)
             make_zero_immutable!(p, seen)
@@ -279,14 +279,14 @@ function make_zero_immutable!(prev::T, seen::S)::T where {T<:Tuple,S}
 end
 
 function make_zero_immutable!(prev::NamedTuple{a,b}, seen::S)::NamedTuple{a,b} where {a,b,S}
-    if guaranteed_const_nongen(NamedTuple{a,b}, nothing)
+    if guaranteed_const(NamedTuple{a,b})
         return prev  # unreachable from make_zero!
     end
     NamedTuple{a,b}(ntuple(Val(length(b.parameters))) do i
         Base.@_inline_meta
         p = prev[a[i]]
         SBT = Core.Typeof(p)
-        if guaranteed_const_nongen(SBT, nothing)
+        if guaranteed_const(SBT)
             p  # covered by several tests even if not shown in coverage
         elseif !ismutabletype(SBT)
             make_zero_immutable!(p, seen)
@@ -299,7 +299,7 @@ end
 
 
 function make_zero_immutable!(prev::T, seen::S)::T where {T,S}
-    if guaranteed_const_nongen(T, nothing)
+    if guaranteed_const(T)
         return prev  # unreachable from make_zero!
     end
     @assert !ismutabletype(T)
@@ -311,7 +311,7 @@ function make_zero_immutable!(prev::T, seen::S)::T where {T,S}
         if isdefined(prev, i)
             xi = getfield(prev, i)
             ST = Core.Typeof(xi)
-            flds[i] = if guaranteed_const_nongen(ST, nothing)
+            flds[i] = if guaranteed_const(ST)
                 xi
             elseif !ismutabletype(ST)
                 make_zero_immutable!(xi, seen)
@@ -459,7 +459,7 @@ macro register_make_zero_inplace(sym)
         end
 
         @inline function $sym(prev::Array{T,N}, seen::ST)::Nothing where {T,N,ST}
-            if guaranteed_const_nongen(T, nothing)
+            if guaranteed_const(T)
                 return nothing
             end
             if prev in seen
@@ -470,7 +470,7 @@ macro register_make_zero_inplace(sym)
                 if isassigned(prev, I)
                     pv = prev[I]
                     SBT = Core.Typeof(pv)
-                    if guaranteed_const_nongen(SBT, nothing)
+                    if guaranteed_const(SBT)
                         continue
                     elseif !ismutabletype(SBT)
                         @inbounds prev[I] = make_zero_immutable!(pv, seen)
@@ -485,7 +485,7 @@ macro register_make_zero_inplace(sym)
         @static if VERSION < v"1.11-"
         else
         @inline function $sym(prev::GenericMemory{kind, T}, seen::ST)::Nothing where {T,kind,ST}
-            if guaranteed_const_nongen(T, nothing)
+            if guaranteed_const(T)
                 return nothing
             end
             if prev in seen
@@ -496,7 +496,7 @@ macro register_make_zero_inplace(sym)
                 if isassigned(prev, I)
                     pv = prev[I]
                     SBT = Core.Typeof(pv)
-                    if guaranteed_const_nongen(SBT, nothing)
+                    if guaranteed_const(SBT)
                         continue
                     elseif !ismutabletype(SBT)
                         @inbounds prev[I] = make_zero_immutable!(pv, seen)
@@ -513,7 +513,7 @@ macro register_make_zero_inplace(sym)
             prev::Base.RefValue{T},
             seen::ST,
         )::Nothing where {T,ST}
-            if guaranteed_const_nongen(T, nothing)
+            if guaranteed_const(T)
                 return nothing
             end
             if prev in seen
@@ -522,7 +522,7 @@ macro register_make_zero_inplace(sym)
             push!(seen, prev)
             pv = prev[]
             SBT = Core.Typeof(pv)
-            if guaranteed_const_nongen(SBT, nothing)
+            if guaranteed_const(SBT)
                 return nothing
             elseif !ismutabletype(SBT)
                 prev[] = make_zero_immutable!(pv, seen)
@@ -539,7 +539,7 @@ macro register_make_zero_inplace(sym)
             push!(seen, prev)
             pv = prev.contents
             SBT = Core.Typeof(pv)
-            if guaranteed_const_nongen(SBT, nothing)
+            if guaranteed_const(SBT)
                 return nothing
             elseif !ismutabletype(SBT)
                 prev.contents = make_zero_immutable!(pv, seen)
@@ -557,7 +557,7 @@ end
 @register_make_zero_inplace(Enzyme.remake_zero!)
 
 @inline function EnzymeCore.make_zero!(prev::T, seen::S)::Nothing where {T,S}
-    if guaranteed_const_nongen(T, nothing)
+    if guaranteed_const(T)
         return nothing
     end
     if prev in seen
@@ -574,7 +574,7 @@ end
         if isdefined(prev, i)
             xi = getfield(prev, i)
             SBT = Core.Typeof(xi)
-            activitystate = active_reg_inner(SBT, (), nothing)
+            activitystate = active_reg_nothrow(SBT)
             if activitystate == AnyState  # guaranteed_const
                 continue
             elseif ismutabletype(T) && !ismutabletype(SBT)
@@ -596,7 +596,7 @@ end
 end
 
 @inline function EnzymeCore.remake_zero!(prev::T, seen::S)::Nothing where {T,S}
-    if guaranteed_const_nongen(T, nothing)
+    if guaranteed_const(T)
         return nothing
     end
     if prev in seen
@@ -613,7 +613,7 @@ end
         if isdefined(prev, i)
             xi = getfield(prev, i)
             SBT = Core.Typeof(xi)
-            activitystate = active_reg_inner(SBT, (), nothing)
+            activitystate = active_reg_nothrow(SBT)
             if activitystate == AnyState  # guaranteed_const
                 continue
             elseif ismutabletype(T) && !ismutabletype(SBT)

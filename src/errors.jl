@@ -608,7 +608,7 @@ end
 
                 # Only do so for the immediate operand/etc to a phi, since otherwise we will make multiple
                 if legal2
-                   if active_reg_inner(TT, (), world) == ActiveState &&
+                   if active_reg(TT, world) == ActiveState &&
                    isa(cur, LLVM.ConstantExpr) &&
                    cur == data2
                     if width == 1

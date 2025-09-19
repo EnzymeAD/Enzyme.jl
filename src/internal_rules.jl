@@ -163,7 +163,7 @@ end
     seen::Union{IdDict,Nothing},
     shadow::RT,
 )::RT where RT
-    rt = Enzyme.Compiler.active_reg_inner(RT, (), nothing)
+    rt = Enzyme.Compiler.active_reg_nothrow(RT)
     if rt == Enzyme.Compiler.ActiveState || rt == Enzyme.Compiler.AnyState
         if seen === nothing
             return Base.deepcopy(shadow)
