@@ -426,7 +426,6 @@ function check_activity_cache_invalidations(world::UInt)
         return
     end
 
-    @show world, ActivityMethodCache, methods
     empty!(ActivityCache)
     empty!(ActivityMethodCache)
     for match in matches::Vector
