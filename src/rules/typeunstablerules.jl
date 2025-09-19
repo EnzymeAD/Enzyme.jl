@@ -466,7 +466,7 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
             if !found_partial
                 return false
             end
-            if !guaranteed_const_nongen(typ_partial, world; AbstractIsMixed=true)
+            if !guaranteed_nonactive(typ_partial, world; AbstractIsMixed=true)
                 return false
             end
         end
