@@ -393,10 +393,10 @@ Base.@nospecializeinfer @inline function active_reg_inner(
     return ty
 end
 
-const ActivityCache = Dict{Tuple{UInt, Bool, Bool, Bool}, ActivityState}()
+const ActivityCache = Dict{Tuple{Type, UInt, Bool, Bool, Bool}, ActivityState}()
 
 Base.@nospecializeinfer @inline function active_reg(@nospecialize(ST::Type), world::UInt; justActive=false, UnionSret = false, AbstractIsMixed = false)
-    key = (world, justActive, UnionSret, AbstractIsMixed)
+    key = (ST, world, justActive, UnionSret, AbstractIsMixed)
     if haskey(ActivityCache, key)
         return ActivityCache[key]
     end
