@@ -427,11 +427,13 @@ function check_activity_cache_invalidations(world::UInt)
     end
 
     @show world, ActivityMethodCache, methods
-    ActivityCache.clear()
-    ActivityMethodCache.clear()
+    empty!(ActivityCache)
+    empty!(ActivityMethodCache)
     for match in matches::Vector
         push!(ActivityMethodCache, match::Core.MethodMatch)
     end
+
+    ActivityWorldCache[] = world
 
 end
 
