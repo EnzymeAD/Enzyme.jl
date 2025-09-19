@@ -3110,7 +3110,7 @@ function create_abi_wrapper(
         # 3 is index of shadow
         if existed[3] != 0 &&
            sret_union &&
-           active_reg(pactualRetType, world; justActive=true, UnionSret=true)
+           active_reg(pactualRetType, world; justActive=true, UnionSret=true) == ActiveState
             rewrite_union_returns_as_ref(enzymefn, data[3], world, width)
         end
         returnNum = 0
