@@ -39,4 +39,6 @@ end
     @test Enzyme.Compiler.active_reg(Tuple, Base.get_world_counter()) == Enzyme.Compiler.DupState
     @test Enzyme.Compiler.active_reg(Tuple, Base.get_world_counter(); AbstractIsMixed=true) == Enzyme.Compiler.MixedState
     @test Enzyme.Compiler.active_reg(Tuple{A,A} where A, Base.get_world_counter(), AbstractIsMixed=true) == Enzyme.Compiler.MixedState
+
+    @test Enzyme.Compiler.active_reg(Tuple, Base.get_world_counter(), AbstractIsMixed=true, justActive=true) == Enzyme.Compiler.MixedState
 end

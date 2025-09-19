@@ -210,7 +210,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
     if T <: Ptr ||
        T <: Core.LLVMPtr ||
        T <: Base.RefValue || is_arrayorvararg_ty(T)
-        if justActive
+        if justActive && !AbstractIsMixed
             return AnyState
         end
 
