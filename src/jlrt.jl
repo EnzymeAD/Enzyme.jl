@@ -380,14 +380,14 @@ function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nosp
     if !legal
         legal, TT, _ = abs_typeof(oval, true)
         if legal
-            act = active_reg_inner(TT, (), world)
+            act = active_reg(TT, world)
             if act == AnyState
                 return val
             end
         end
         return emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, load_if_mixed), new_from_original(gutils, oval), val]) 
     end
-    act = active_reg_inner(TT, (), world)
+    act = active_reg(TT, world)
     if act == ActiveState || act == MixedState
         legal2, TT2, _ = abs_typeof(val)
         if legal2
@@ -414,18 +414,12 @@ function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nosp
     end
 end
 
-@generated function ref_if_mixed(val::VT) where VT
-    areg = active_reg_inner(VT, (), nothing, Val(true)) 
+@inline function ref_if_mixed(val::VT) where VT
+    areg = active_reg_nothrow(VT) 
     if areg == ActiveState || areg == MixedState
-        quote
-            Base.@_inline_meta
-            Ref(val)
-        end
+        Ref(val)
     else
-        quote
-            Base.@_inline_meta
-            val
-        end
+        val
     end
 end
 
@@ -434,13 +428,13 @@ function byref_from_val_if_mixed(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Valu
     legal, TT, _ = abs_typeof(val)
     if !legal
         legal, TT, _ = abs_typeof(val, true)
-        act = active_reg_inner(TT, (), world)
+        act = active_reg(TT, world)
         if legal && act == AnyState
             return val
         end
         return emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, ref_if_mixed), val]) 
     end
-    act = active_reg_inner(TT, (), world)
+    act = active_reg(TT, world)
     
     if act == ActiveState || act == MixedState
         obj = emit_allocobj!(B, Base.RefValue{TT})

@@ -9,69 +9,7 @@ end
     ActivityState(Int(a1) | Int(a2))
 end
 
-struct Merger{seen,worldT,justActive,UnionSret,AbstractIsMixed}
-    world::worldT
-end
-
 @inline element(::Val{T}) where {T} = T
-
-@inline function (c::Merger{seen,worldT,justActive,UnionSret,AbstractIsMixed})(
-    f::Int,
-) where {seen,worldT,justActive,UnionSret,AbstractIsMixed}
-    T = element(first(seen))
-
-    reftype = ismutabletype(T) || (T isa UnionAll && !AbstractIsMixed)
-
-    if justActive && reftype
-        return Val(AnyState)
-    end
-
-    subT = typed_fieldtype(T, f)
-
-    if justActive && ismutabletype(subT)
-        return Val(AnyState)
-    end
-
-    sub = active_reg_inner(
-        subT,
-        seen,
-        c.world,
-        Val(justActive),
-        Val(UnionSret),
-        Val(AbstractIsMixed),
-    )
-
-    if sub == AnyState
-        Val(AnyState)
-    else
-        if sub == DupState
-            if justActive
-                Val(AnyState)
-            else
-                Val(DupState)
-            end
-        else
-            if reftype
-                Val(DupState)
-            else
-                Val(sub)
-            end
-        end
-    end
-end
-
-@inline forcefold(::Val{RT}) where {RT} = RT
-
-@inline function forcefold(::Val{ty}, ::Val{sty}, C::Vararg{Any,N})::ActivityState where {ty,sty,N}
-    if sty == AnyState || sty == ty
-        return forcefold(Val(ty), C...)
-    end
-    if ty == AnyState
-        return forcefold(Val(sty), C...)
-    else
-        return MixedState
-    end
-end
 
 @inline ptreltype(::Type{Ptr{T}}) where {T} = T
 @inline ptreltype(::Type{Core.LLVMPtr{T,N}}) where {T,N} = T
@@ -101,42 +39,32 @@ else
 @inline is_arrayorvararg_ty(::Type{Memory{T}}) where T = true
 end
 
-Base.@assume_effects :removable :foldable :nothrow @inline function staticInTup(::Val{T}, tup::NTuple{N,Val})::Bool where {T,N}
-    any(ntuple(Val(N)) do i
-        Base.@_inline_meta
-        Val(T) == tup[i]
-    end)
-end
-
-@inline function active_reg_recur(
-    ::Type{ST},
+function active_reg_recur(
+    @nospecialize(ST::Type),
     seen::Seen,
-    world,
-    ::Val{justActive},
-    ::Val{UnionSret},
-    ::Val{AbstractIsMixed},
-)::ActivityState where {ST,Seen,justActive,UnionSret,AbstractIsMixed}
+    world::UInt,
+    justActive::Bool,
+    UnionSret::Bool,
+    AbstractIsMixed::Bool,
+)::ActivityState where {ST,Seen}
     if ST isa Union
-        return forcefold(
-            Val(
-                active_reg_recur(
-                    ST.a,
-                    seen,
-                    world,
-                    Val(justActive),
-                    Val(UnionSret),
-                    Val(AbstractIsMixed),
-                ),
-            ),
-            Val(
-                active_reg_recur(
-                    ST.b,
-                    seen,
-                    world,
-                    Val(justActive),
-                    Val(UnionSret),
-                    Val(AbstractIsMixed),
-                ),
+        return (
+            active_reg_recur(
+                ST.a,
+                seen,
+                world,
+                justActive,
+                UnionSret,
+                AbstractIsMixed,
+            )
+            |
+            active_reg_recur(
+                ST.b,
+                seen,
+                world,
+                justActive,
+                UnionSret,
+                AbstractIsMixed,
             ),
         )
     end
@@ -144,9 +72,9 @@ end
         ST,
         seen,
         world,
-        Val(justActive),
-        Val(UnionSret),
-        Val(AbstractIsMixed),
+        justActive,
+        UnionSret,
+        AbstractIsMixed,
     )
 end
 
@@ -194,15 +122,14 @@ Base.@nospecializeinfer @inline function unwrapped_number_type(@nospecialize(T::
     return T.parameters[1]
 end
 
-
 @inline function active_reg_inner(
-    ::Type{T},
+    @nospecialize(T::Type),
     seen::ST,
     world::UInt,
-    ::Val{justActive} = Val(false),
-    ::Val{UnionSret} = Val(false),
-    ::Val{AbstractIsMixed} = Val(false),
-)::ActivityState where {ST,T,justActive,UnionSret,AbstractIsMixed}
+    justActive::Bool,
+    UnionSret::Bool,
+    AbstractIsMixed::Bool,
+)::ActivityState where {ST}
     if T === Any
         if AbstractIsMixed
             return MixedState
@@ -220,9 +147,9 @@ end
             ptreltype(T),
             seen,
             world,
-            Val(justActive),
-            Val(UnionSret),
-            Val(AbstractIsMixed),
+            justActive,
+            UnionSret,
+            AbstractIsMixed,
         )
     end
 
@@ -243,9 +170,9 @@ end
             unwrapped_number_type(T),
             seen,
             world,
-            Val(justActive),
-            Val(UnionSret),
-            Val(AbstractIsMixed),
+            justActive,
+            UnionSret,
+            AbstractIsMixed,
         ) == AnyState
             return AnyState
         else
@@ -266,9 +193,9 @@ end
             eltype(T),
             seen,
             world,
-            Val(justActive),
-            Val(UnionSret),
-            Val(AbstractIsMixed),
+            justActive,
+            UnionSret,
+            AbstractIsMixed,
         ) == AnyState
             return AnyState
         else
@@ -292,9 +219,9 @@ end
             ptreltype(T),
             seen,
             world,
-            Val(justActive),
-            Val(UnionSret),
-            Val(AbstractIsMixed),
+            justActive,
+            UnionSret,
+            AbstractIsMixed,
         ) == AnyState
             return AnyState
         else
@@ -348,15 +275,15 @@ end
                 T,
                 seen,
                 world,
-                Val(justActive),
-                Val(UnionSret),
-                Val(AbstractIsMixed),
+                justActive,
+                UnionSret,
+                AbstractIsMixed,
             )
         else
             if justActive
                 return AnyState
             end
-            if active_reg_inner(T.a, seen, world, Val(justActive), Val(UnionSret)) !=
+            if active_reg_inner(T.a, seen, world, justActive, UnionSret) !=
                AnyState
                 if AbstractIsMixed
                     return MixedState
@@ -364,7 +291,7 @@ end
                     return DupState
                 end
             end
-            if active_reg_inner(T.b, seen, world, Val(justActive), Val(UnionSret)) !=
+            if active_reg_inner(T.b, seen, world, justActive, UnionSret) !=
                AnyState
                 if AbstractIsMixed
                     return MixedState
@@ -416,22 +343,50 @@ end
         T
     end
 
-    if staticInTup(Val(nT), seen)
+    if nT in seen
         return MixedState
     end
 
-    seen2 = (Val(nT), seen...)
+    reftype = ismutabletype(nT) || (nT isa UnionAll && !AbstractIsMixed)
 
-    fty = Merger{seen2,typeof(world),justActive,UnionSret,AbstractIsMixed}(world)
+    if justActive && reftype
+        return AnyState
+    end
 
-    ty = forcefold(Val(AnyState), ntuple(fty, Val(fieldcount(nT)))...)
+    seen2 = copy(seen)
+    insert!(seen2, nT)
+
+    ty = AnyState
+    
+    for f in fieldcount(nT)
+        subT = typed_fieldtype(nT, f)
+
+        if justActive && ismutabletype(subT)
+            # AnyState
+            continue
+        end
+
+        ty |= active_reg_inner(
+            subT,
+            c.seen,
+            c.world,
+            c.justActive,
+            c.UnionSret,
+            c.AbstractIsMixed,
+        )
+    end
 
     return ty
 end
 
+@inline function active_reg(@nospecialize(ST::Type), world::UInt; justActive=false, UnionSret = false, AbstractIsMixed = false)
+    set = IdSet{Type}()
+    return active_reg_inner(ST, set, world, justActive, UnionSret, AbstractIsMixed)
+end
+
 function active_reg_nothrow_generator(world::UInt, source::LineNumberNode, T, self, _)
     @nospecialize
-    result = active_reg_inner(T, (), world)
+    result = active_reg(T, world)
 
     # create an empty CodeInfo to return the result
     ci = ccall(:jl_new_code_info_uninit, Ref{Core.CodeInfo}, ())
@@ -485,7 +440,7 @@ Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_c
 end
 
 Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_const_nongen(::Type{T}, world::UInt)::Bool where {T}
-    rt = active_reg_inner(T, (), world)
+    rt = active_reg(T, world)
     res = rt == AnyState
     return res
 end

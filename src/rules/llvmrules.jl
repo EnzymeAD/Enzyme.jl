@@ -1214,9 +1214,7 @@ end
 end
 
 function error_if_active(::Type{T}) where {T}
-    seen = ()
-    areg = active_reg_inner(T, seen, nothing, Val(true)) #=justActive=#
-    if areg == ActiveState
+    if areg == ActiveState || areg == MixedState
         throw(
             AssertionError("Found unhandled active variable in tuple splat, jl_eqtable $T"),
         )
@@ -1888,7 +1886,7 @@ end
 
     fn = LLVM.parent(LLVM.parent(orig))
     world = enzyme_extract_world(fn)
-    reg = active_reg_inner(ET, (), world)
+    reg = active_reg(ET, world)
     if reg == ActiveState || reg == MixedState
         emit_error(B, orig, "Enzyme: element type $ET of generic_memory_copyto is potentially active ($reg) and not presently supported")
     end

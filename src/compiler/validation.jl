@@ -1327,7 +1327,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world
             if nm == "julia.gc_alloc_obj"
                 legal, Ty, byref = abs_typeof(cur)
                 @assert legal
-                reg = active_reg_inner(Ty, (), world)
+                reg = active_reg(Ty, world)
                 if reg == ActiveState || reg == MixedState
                     NTy = Base.RefValue{Ty}
                     @assert sizeof(Ty) == sizeof(NTy)
@@ -1405,7 +1405,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world
            value_type(cur) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
             legal, typ, byref = abs_typeof(cur)
             if legal
-                reg = active_reg_inner(typ, (), world)
+                reg = active_reg(typ, world)
                 if !(reg == ActiveState || reg == MixedState)
                     continue
                 end

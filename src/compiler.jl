@@ -1522,7 +1522,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
        mode == API.DEM_ReverseModeCombined
         fn = LLVM.parent(LLVM.parent(V))
         world = enzyme_extract_world(fn)
-        rt = active_reg_inner(Ty, (), world)
+        rt = active_reg(Ty, world)
         if rt == ActiveState || rt == MixedState
             B = LLVM.IRBuilder()
             position!(B, V)
@@ -3110,7 +3110,7 @@ function create_abi_wrapper(
         # 3 is index of shadow
         if existed[3] != 0 &&
            sret_union &&
-           active_reg_inner(pactualRetType, (), world, Val(true), Val(true)) == ActiveState #=UnionSret=#
+           active_reg(pactualRetType, world; justActive=true, UnionSret=true)
             rewrite_union_returns_as_ref(enzymefn, data[3], world, width)
         end
         returnNum = 0
@@ -4774,7 +4774,7 @@ end
     if params.err_if_func_written
         FT = TT.parameters[1]
         Ty = eltype(FT)
-        reg = active_reg_inner(Ty, (), job.world)
+        reg = active_reg(Ty, job.world)
         if reg == DupState || reg == MixedState
             swiftself = has_swiftself(primalf)
             todo = LLVM.Value[parameters(primalf)[1+swiftself]]
@@ -4798,7 +4798,7 @@ end
                     if !mayWriteToMemory(user)
                         slegal, foundv, byref = abs_typeof(user)
                         if slegal
-                            reg2 = active_reg_inner(foundv, (), job.world)
+                            reg2 = active_reg(foundv, job.world)
                             if reg2 == ActiveState || reg2 == AnyState
                                 continue
                             end
@@ -4826,7 +4826,7 @@ end
                         if operands(user)[2] == cur
                             slegal, foundv, byref = abs_typeof(operands(user)[1])
                             if slegal
-                                reg2 = active_reg_inner(foundv, (), job.world)
+                                reg2 = active_reg(foundv, job.world)
                                 if reg2 == AnyState
                                     continue
                                 end
@@ -4860,7 +4860,7 @@ end
                             if is_readonly(called)
                                 slegal, foundv, byref = abs_typeof(user)
                                 if slegal
-                                    reg2 = active_reg_inner(foundv, (), job.world)
+                                    reg2 = active_reg(foundv, job.world)
                                     if reg2 == ActiveState || reg2 == AnyState
                                         continue
                                     end
@@ -4878,7 +4878,7 @@ end
                                 end
                                 slegal, foundv, byref = abs_typeof(user)
                                 if slegal
-                                    reg2 = active_reg_inner(foundv, (), job.world)
+                                    reg2 = active_reg(foundv, job.world)
                                     if reg2 == ActiveState || reg2 == AnyState
                                         continue
                                     end

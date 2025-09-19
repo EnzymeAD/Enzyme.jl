@@ -938,7 +938,7 @@ end
             push!(MDTys, xti)
             push!(MDTysLast, xti)
         else
-            push!(exprs, Expr(:(=), mdi, :(Compiler.active_reg_inner($xti, (), nothing, Val(true)) == Compiler.ActiveState)))
+            push!(exprs, Expr(:(=), mdi, :(Compiler.active_reg_nothrow($xti) == Compiler.ActiveState || Compiler.active_reg_nothrow($xti) == Compiler.MixedState)))
 
             if chunk == Val{1} || chunk == Nothing
                 push!(MDTys, :($mdi ? MixedDuplicated{$xti} : Duplicated{$xti}))
