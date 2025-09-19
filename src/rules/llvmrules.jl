@@ -1214,6 +1214,7 @@ end
 end
 
 function error_if_active(::Type{T}) where {T}
+    areg = active_reg_nothrow(T)
     if areg == ActiveState || areg == MixedState
         throw(
             AssertionError("Found unhandled active variable in tuple splat, jl_eqtable $T"),
