@@ -39,14 +39,14 @@ else
 @inline is_arrayorvararg_ty(::Type{Memory{T}}) where T = true
 end
 
-function active_reg_recur(
+Base.@nospecializeinfer function active_reg_recur(
     @nospecialize(ST::Type),
-    seen::Seen,
+    seen::Base.IdSet{Type},
     world::UInt,
     justActive::Bool,
     UnionSret::Bool,
     AbstractIsMixed::Bool,
-)::ActivityState where {ST,Seen}
+)::ActivityState
     if ST isa Union
         return (
             active_reg_recur(
@@ -122,14 +122,14 @@ Base.@nospecializeinfer @inline function unwrapped_number_type(@nospecialize(T::
     return T.parameters[1]
 end
 
-@inline function active_reg_inner(
+Base.@nospecializeinfer @inline function active_reg_inner(
     @nospecialize(T::Type),
-    seen::ST,
+    seen::Base.IdSet{Type},
     world::UInt,
     justActive::Bool,
     UnionSret::Bool,
     AbstractIsMixed::Bool,
-)::ActivityState where {ST}
+)::ActivityState
     if T === Any
         if AbstractIsMixed
             return MixedState
@@ -357,7 +357,7 @@ end
     insert!(seen2, nT)
 
     ty = AnyState
-    
+
     for f in fieldcount(nT)
         subT = typed_fieldtype(nT, f)
 
@@ -379,8 +379,8 @@ end
     return ty
 end
 
-@inline function active_reg(@nospecialize(ST::Type), world::UInt; justActive=false, UnionSret = false, AbstractIsMixed = false)
-    set = IdSet{Type}()
+Base.@nospecializeinfer @inline function active_reg(@nospecialize(ST::Type), world::UInt; justActive=false, UnionSret = false, AbstractIsMixed = false)
+    set = Base.IdSet{Type}()
     return active_reg_inner(ST, set, world, justActive, UnionSret, AbstractIsMixed)
 end
 
