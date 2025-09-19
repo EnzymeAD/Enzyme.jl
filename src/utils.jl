@@ -87,7 +87,7 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))::LLVM.Value
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
 
     world = nothing
-    for fattr in collect(function_attributes(LLVM.parent(position(B))))
+    for fattr in collect(LLVM.function_attributes(LLVM.parent(LLVM.position(B))))
         if isa(fattr, LLVM.StringAttribute)
             if kind(fattr) == "enzymejl_world"
                 world = parse(UInt, LLVM.value(fattr))
