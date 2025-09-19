@@ -65,7 +65,7 @@ Base.@nospecializeinfer function active_reg_recur(
                 justActive,
                 UnionSret,
                 AbstractIsMixed,
-            ),
+            )
         )
     end
     return active_reg_inner(
@@ -283,7 +283,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
             if justActive
                 return AnyState
             end
-            if active_reg_inner(T.a, seen, world, justActive, UnionSret) !=
+            if active_reg_inner(T.a, seen, world, justActive, UnionSret, false) !=
                AnyState
                 if AbstractIsMixed
                     return MixedState
@@ -291,7 +291,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
                     return DupState
                 end
             end
-            if active_reg_inner(T.b, seen, world, justActive, UnionSret) !=
+            if active_reg_inner(T.b, seen, world, justActive, UnionSret, false) !=
                AnyState
                 if AbstractIsMixed
                     return MixedState
@@ -354,7 +354,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
     end
 
     seen2 = copy(seen)
-    insert!(seen2, nT)
+    push!(seen2, nT)
 
     ty = AnyState
 
@@ -368,11 +368,11 @@ Base.@nospecializeinfer @inline function active_reg_inner(
 
         ty |= active_reg_inner(
             subT,
-            c.seen,
-            c.world,
-            c.justActive,
-            c.UnionSret,
-            c.AbstractIsMixed,
+            seen2,
+            world,
+            justActive,
+            UnionSret,
+            AbstractIsMixed,
         )
     end
 
