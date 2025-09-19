@@ -5871,9 +5871,7 @@ end
         StrongZero
     ) #=abiwrap=#
     tmp_job = if World isa Nothing
-        jb = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false))
-        check_activity_cache_invalidations(jb.world)
-        jb
+        Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false))
     else
         Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false), World)
     end
@@ -6067,8 +6065,6 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
     
     mi === nothing && return stub(world, source, method_error)
  
-    check_activity_cache_invalidations(world)
-
     min_world2 = Ref{UInt}(typemin(UInt))
     max_world2 = Ref{UInt}(typemax(UInt))
    
