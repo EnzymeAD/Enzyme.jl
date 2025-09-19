@@ -441,7 +441,7 @@ Base.@nospecializeinfer @inline function active_reg(@nospecialize(ST::Type), wor
         return ActivityCache[key]
     end
     set = Base.IdSet{Type}()
-    result = active_reg_inner(ST, world, set, justActive, UnionSret, AbstractIsMixed)
+    result = active_reg_inner(ST, set, world, justActive, UnionSret, AbstractIsMixed)
     ActivityCache[key] = result
     return result
 end
