@@ -468,8 +468,8 @@ end
 
 # check if a value is guaranteed to be not contain active[register] data
 # (aka not either mixed or active)
-@inline function guaranteed_nonactive(@nospecialize(T::Type), world::UInt)::Bool
-    rt = active_reg(T, world; justActive=true)
+@inline function guaranteed_nonactive(@nospecialize(T::Type), world::UInt; AbstractIsMixed=false)::Bool
+    rt = active_reg(T, world; justActive=true, AbstractIsMixed)
     return rt == Enzyme.Compiler.AnyState || rt == Enzyme.Compiler.DupState
 end
 
