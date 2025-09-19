@@ -413,7 +413,7 @@ function enzyme_custom_setup_ret(
 
     elseif activep == API.DFT_OUT_DIFF || (
         mode != API.DEM_ForwardMode &&
-        active_reg(RealRt, world; justActive=true) == ActiveState
+        !guaranteed_nonactive(RealRt, world)
     )
         if active_reg(RealRt, world) == MixedState && B !== nothing
             emit_error(

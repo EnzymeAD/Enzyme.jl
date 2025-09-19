@@ -466,8 +466,7 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
             if !found_partial
                 return false
             end
-            act = active_reg(typ_partial, world, Val(false), Val(false), Val(true)) #=abstractismixed=#
-            if act == MixedState || act == ActiveState
+            if !active_reg(typ_partial, world; justActive=true, AbstractIsMixed=true)
                 return false
             end
         end
@@ -933,8 +932,7 @@ end
     else
         @assert legal
         world = enzyme_extract_world(LLVM.parent(position(B)))
-        act = active_reg(TT, world)
-        if act == ActiveState || act == MixedState
+        if !guaranteed_nonactive(TT, world)
             unsafe_store!(tapeR, shadowres.ref)
         end
     end
@@ -1036,8 +1034,7 @@ end
     if legal
         @assert legal
         world = enzyme_extract_world(LLVM.parent(position(B)))
-        act = active_reg(TT, world)
-        torun = act == ActiveState || act == MixedState
+        torun = !guaranteed_nonactive(TT, world)
     else
         torun = true
     end

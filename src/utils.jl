@@ -86,7 +86,15 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))::LLVM.Value
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
 
-    world = Compiler.enzyme_extract_world(LLVM.parent(position(B)))
+    world = nothing
+    for fattr in collect(function_attributes(LLVM.parent(position(B))))
+        if isa(fattr, LLVM.StringAttribute)
+            if kind(fattr) == "enzymejl_world"
+                world = parse(UInt, LLVM.value(fattr))
+                break
+            end
+        end
+    end
 
     for (k, v) in Compiler.JuliaGlobalNameMap
         if v === val
@@ -98,12 +106,14 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))::LLVM.Value
             gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
 
             API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
-            legal, jTy, byref = Compiler.abs_typeof(gv, true)
-            if legal
-                curent_bb = position(B)
-                fn = LLVM.parent(curent_bb)
-                if Compiler.guaranteed_const_nongen(jTy, world)
-                    API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+            if world isa UInt
+                legal, jTy, byref = Compiler.abs_typeof(gv, true)
+                if legal
+                    curent_bb = position(B)
+                    fn = LLVM.parent(curent_bb)
+                    if Compiler.guaranteed_const_nongen(jTy, world)
+                        API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+                    end
                 end
             end
             return gv
@@ -119,12 +129,14 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))::LLVM.Value
             end
             gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
             API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
-            legal, jTy, byref = Compiler.abs_typeof(gv, true)
-            if legal
-                curent_bb = position(B)
-                fn = LLVM.parent(curent_bb)
-                if Compiler.guaranteed_const_nongen(jTy, world)
-                    API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+            if world isa UInt
+                legal, jTy, byref = Compiler.abs_typeof(gv, true)
+                if legal
+                    curent_bb = position(B)
+                    fn = LLVM.parent(curent_bb)
+                    if Compiler.guaranteed_const_nongen(jTy, world)
+                        API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+                    end
                 end
             end
             return gv

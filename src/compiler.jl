@@ -1522,8 +1522,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
        mode == API.DEM_ReverseModeCombined
         fn = LLVM.parent(LLVM.parent(V))
         world = enzyme_extract_world(fn)
-        rt = active_reg(Ty, world)
-        if rt == ActiveState || rt == MixedState
+        if !guaranteed_nonactive(Ty, world)
             B = LLVM.IRBuilder()
             position!(B, V)
             operands(V)[3] = unsafe_to_llvm(B, Base.RefValue{Ty})
