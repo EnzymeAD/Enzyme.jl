@@ -9,6 +9,14 @@ using Test
     n = 10
 
     @testset for fun in (BLAS.dot, BLAS.dotu, BLAS.dotc)
+
+        # Wrap `test_reverse` and `test_forward` in `Ref` containers to be able to capture
+        # and test the warnings issued by `@generated` functions.  Also, prepare the
+        # expected warning message to test.
+        testrev = Ref{Any}(test_reverse)
+        testfwd = Ref{Any}(test_forward)
+        warn_msg = fun === BLAS.dot ? "" : r"Using fallback BLAS replacements"
+
         @testset "forward" begin
             @testset for Tret in (
                     Const,
@@ -27,7 +35,7 @@ using Test
                 x = randn(T, sz)
                 y = randn(T, sz)
                 atol = rtol = sqrt(eps(real(T)))
-                test_forward(fun, Tret, n, (x, Tx), inc, (y, Ty), inc; atol, rtol)
+                @test_warn warn_msg testfwd[](fun, Tret, n, (x, Tx), inc, (y, Ty), inc; atol, rtol)
             end
         end
 
@@ -43,7 +51,7 @@ using Test
                 x = randn(T, sz)
                 y = randn(T, sz)
                 atol = rtol = sqrt(eps(real(T)))
-                test_reverse(fun, Tret, n, (x, Tx), inc, (y, Ty), inc; atol, rtol)
+                @test_warn warn_msg testrev[](fun, Tret, n, (x, Tx), inc, (y, Ty), inc; atol, rtol)
             end
         end
     end
