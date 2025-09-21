@@ -9,7 +9,7 @@ using LinearSolve, LinearAlgebra
         du[3] = u[1] * u[2] - (8 / 3) * u[3]
     end
 
-    const _saveat =  SA[0.0,0.25,0.5,0.75,1.0,1.25,1.5,1.75,2.0,2.25,2.5,2.75,3.0]
+    _saveat =  SA[0.0,0.25,0.5,0.75,1.0,1.25,1.5,1.75,2.0,2.25,2.5,2.75,3.0]
 
     function f_dt(y::Array{Float64}, u0::Array{Float64})
         tspan = (0.0, 3.0)
@@ -58,7 +58,7 @@ end
     Enzyme.API.typeWarning!(false)
 
     odef(du, u, p, t) = du .= u .* p
-    const prob = ODEProblem(odef, [2.0], (0.0, 1.0), [3.0])
+    prob = ODEProblem(odef, [2.0], (0.0, 1.0), [3.0])
 
     struct senseloss0{T}
         sense::T
