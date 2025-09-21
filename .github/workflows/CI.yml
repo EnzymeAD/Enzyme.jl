@@ -48,13 +48,13 @@ jobs:
           - macOS-latest
           - windows-latest
         arch:
-          - x64
+          - default
         assertions:
           - false
         libEnzyme: [local, packaged]
         exclude:
           - os: windows-latest
-            arch: x64
+            arch: default
             libEnzyme: local
         include:
           - os: ubuntu-24.04
@@ -63,12 +63,12 @@ jobs:
             version: '1.10'
             assertions: false
           - os: ubuntu-24.04
-            arch: x64
+            arch: default
             libEnzyme: packaged
             version: '1.10'
             assertions: true
           - os: ubuntu-24.04
-            arch: x64
+            arch: default
             libEnzyme: packaged
             version: '1.11'
             assertions: true
@@ -157,7 +157,7 @@ jobs:
         os:
           - ubuntu-latest
         arch:
-          - x64
+          - default
         libEnzyme: [packaged]
     steps:
       - uses: actions/checkout@v5
@@ -211,7 +211,7 @@ jobs:
         os:
           - ubuntu-latest
         arch:
-          - x64
+          - default
         libEnzyme: [packaged]
     steps:
       - uses: actions/checkout@v5
