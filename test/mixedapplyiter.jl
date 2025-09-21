@@ -1,17 +1,11 @@
 using Enzyme, Test
 
-concat() = ()
-concat(a) = a
-concat(a, b) = (a..., b...)
-concat(a, b, c...) = concat(concat(a, b), c...)
+mixed_concat() = ()
+mixed_concat(a) = a
+mixed_concat(a, b) = (a..., b...)
+mixed_concat(a, b, c...) = mixed_concat(mixed_concat(a, b), c...)
 
-metaconcat(x) = concat(x...)
-
-metaconcat2(x, y) = concat(x..., y...)
-
-midconcat(x, y) = (x, concat(y...)...)
-
-metaconcat3(x, y, z) = concat(x..., y..., z...)
+mixed_metaconcat(x) = mixed_concat(x...)
 
 function mixed_metasumsq(f, args...) 
 	res = 0.0
@@ -33,35 +27,35 @@ function mixed_metasumsq3(f, args...)
 	return res
 end
 
-function make_byref(out, fn, args...)
+function mixed_make_byref(out, fn, args...)
 	out[] = fn(args...)
 	nothing
 end
 
-function tupapprox(a, b)
-	if a isa Tuple && b isa Tuple
-		if length(a) != length(b)
-			return false
-		end
-		for (aa, bb) in zip(a, b)
-			if !tupapprox(aa, bb)
-				return false
-			end
-		end
-		return true
-	end
-	if a isa Array && b isa Array
-		if size(a) != size(b)
-			return false
-		end
-		for i in length(a)
-			if !tupapprox(a[i], b[i])
-				return false
-			end
-		end
-		return true
-	end
-	return a ≈ b
+function mixed_tupapprox(a, b)
+    if a isa Tuple && b isa Tuple
+        if length(a) != length(b)
+            return false
+        end
+        for (aa, bb) in zip(a, b)
+            if !mixed_tupapprox(aa, bb)
+                return false
+            end
+        end
+        return true
+    end
+    if a isa Array && b isa Array
+        if size(a) != size(b)
+            return false
+        end
+        for i in length(a)
+            if !mixed_tupapprox(a[i], b[i])
+                return false
+            end
+        end
+        return true
+    end
+    return a ≈ b
 end
 
 @testset "Mixed Reverse Apply iterate (tuple)" begin
@@ -80,13 +74,13 @@ end
         ),
     ]
         dx = deepcopy(dx_pre)
-        Enzyme.autodiff(Reverse, mixed_metasumsq, Active, Const(metaconcat), Duplicated(x, dx))
-        @test tupapprox(dx, dx_post)
+        Enzyme.autodiff(Reverse, mixed_metasumsq, Active, Const(mixed_metaconcat), Duplicated(x, dx))
+        @test mixed_tupapprox(dx, dx_post)
 
         dx = deepcopy(dx_pre)
-        res = Enzyme.autodiff(ReverseWithPrimal, mixed_metasumsq, Active, Const(metaconcat), Duplicated(x, dx))
+        res = Enzyme.autodiff(ReverseWithPrimal, mixed_metasumsq, Active, Const(mixed_metaconcat), Duplicated(x, dx))
         @test res[2] ≈ primal
-        @test tupapprox(dx, dx_post)
+        @test mixed_tupapprox(dx, dx_post)
     end
 end
 
@@ -110,20 +104,20 @@ end
     ]
         out, dout, dout2 = Ref.((out_pre, dout_pre, dout2_pre))
         dx, dx2 = deepcopy.((dx_pre, dx_pre))
-        Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicatedNoNeed(out, (dout, dout2)), Const(mixed_metasumsq), Const(metaconcat), BatchDuplicated(x, (dx, dx2)))
+        Enzyme.autodiff(Reverse, mixed_make_byref, Const, BatchDuplicatedNoNeed(out, (dout, dout2)), Const(mixed_metasumsq), Const(mixed_metaconcat), BatchDuplicated(x, (dx, dx2)))
         @test dout[] ≈ 0
         @test dout2[] ≈ 0
-        @test tupapprox(dx, dx_post)
-        @test tupapprox(dx2, dx2_post)
+        @test mixed_tupapprox(dx, dx_post)
+        @test mixed_tupapprox(dx2, dx2_post)
 
         out, dout, dout2 = Ref.((out_pre, dout_pre, dout2_pre))
         dx, dx2 = deepcopy.((dx_pre, dx_pre))
-        Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicated(out, (dout, dout2)), Const(mixed_metasumsq), Const(metaconcat), BatchDuplicated(x, (dx, dx2)))
+        Enzyme.autodiff(Reverse, mixed_make_byref, Const, BatchDuplicated(out, (dout, dout2)), Const(mixed_metasumsq), Const(mixed_metaconcat), BatchDuplicated(x, (dx, dx2)))
         @test out[] ≈ primal
         @test dout[] ≈ 0
         @test dout2[] ≈ 0
-        @test tupapprox(dx, dx_post)
-        @test tupapprox(dx2, dx2_post)
+        @test mixed_tupapprox(dx, dx_post)
+        @test mixed_tupapprox(dx2, dx2_post)
     end
 end
 
@@ -143,13 +137,13 @@ end
         ),
     ]
         dx = deepcopy(dx_pre)
-        Enzyme.autodiff(Reverse, mixed_metasumsq, Active, Const(metaconcat), Duplicated(x, dx))
-        @test tupapprox(dx, dx_post)
+        Enzyme.autodiff(Reverse, mixed_metasumsq, Active, Const(mixed_metaconcat), Duplicated(x, dx))
+        @test mixed_tupapprox(dx, dx_post)
 
         dx = deepcopy(dx_pre)
-        res = Enzyme.autodiff(ReverseWithPrimal, mixed_metasumsq, Active, Const(metaconcat), Duplicated(x, dx))
+        res = Enzyme.autodiff(ReverseWithPrimal, mixed_metasumsq, Active, Const(mixed_metaconcat), Duplicated(x, dx))
         @test res[2] ≈ primal
-        @test tupapprox(dx, dx_post)
+        @test mixed_tupapprox(dx, dx_post)
     end
 end
 
@@ -173,20 +167,20 @@ end
     ]
         out, dout, dout2 = Ref.((out_pre, dout_pre, dout2_pre))
         dx, dx2 = deepcopy.((dx_pre, dx_pre))
-        Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicatedNoNeed(out, (dout, dout2)), Const(mixed_metasumsq), Const(metaconcat), BatchDuplicated(x, (dx, dx2)))
+        Enzyme.autodiff(Reverse, mixed_make_byref, Const, BatchDuplicatedNoNeed(out, (dout, dout2)), Const(mixed_metasumsq), Const(mixed_metaconcat), BatchDuplicated(x, (dx, dx2)))
         @test dout[] ≈ 0
         @test dout2[] ≈ 0
-        @test tupapprox(dx, dx_post)
-        @test tupapprox(dx2, dx2_post)
+        @test mixed_tupapprox(dx, dx_post)
+        @test mixed_tupapprox(dx2, dx2_post)
 
         out, dout, dout2 = Ref.((out_pre, dout_pre, dout2_pre))
         dx, dx2 = deepcopy.((dx_pre, dx_pre))
-        Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicated(out, (dout, dout2)), Const(mixed_metasumsq), Const(metaconcat), BatchDuplicated(x, (dx, dx2)))
+        Enzyme.autodiff(Reverse, mixed_make_byref, Const, BatchDuplicated(out, (dout, dout2)), Const(mixed_metasumsq), Const(mixed_metaconcat), BatchDuplicated(x, (dx, dx2)))
         @test out[] ≈ primal
         @test dout[] ≈ 0
         @test dout2[] ≈ 0
-        @test tupapprox(dx, dx_post)
-        @test tupapprox(dx2, dx2_post)
+        @test mixed_tupapprox(dx, dx_post)
+        @test mixed_tupapprox(dx2, dx2_post)
     end
 end
 
@@ -196,12 +190,12 @@ struct MyRectilinearGrid5{FT,FZ}
 end
 
 
-@inline flatten_tuple(a::Tuple) = @inbounds a[2:end]
-@inline flatten_tuple(a::Tuple{<:Any}) = tuple() #inner_flatten_tuple(a[1])...)
+@inline mixediter_flatten_tuple(a::Tuple) = @inbounds a[2:end]
+@inline mixediter_flatten_tuple(a::Tuple{<:Any}) = tuple() #inner_mixediter_flatten_tuple(a[1])...)
 
 function myupdate_state!(model)
     tupled = Base.inferencebarrier((model,model))
-    flatten_tuple(tupled)
+    mixediter_flatten_tuple(tupled)
     return nothing
 end
 
