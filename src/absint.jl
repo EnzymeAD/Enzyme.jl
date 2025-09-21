@@ -255,12 +255,16 @@ function should_recurse(@nospecialize(typ2), @nospecialize(arg_t::LLVM.LLVMType)
     end
 end
 
-function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Bool = true, inttoptr::Bool = false, inst::Union{LLVM.Instruction, Nothing} = nothing)::Tuple{LLVM.Value, Int}
+function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Bool = true, inttoptr::Bool = false, inst::Union{LLVM.Instruction, Nothing} = nothing, addrcast::Bool=true)::Tuple{LLVM.Value, Int}
     offset = 0
     pinst = isa(larg, LLVM.Instruction) ? larg::LLVM.Instruction : inst
     while true
         if isa(larg, LLVM.ConstantExpr)
-            if opcode(larg) == LLVM.API.LLVMBitCast || opcode(larg) == LLVM.API.LLVMAddrSpaceCast || opcode(larg) == LLVM.API.LLVMPtrToInt
+            if opcode(larg) == LLVM.API.LLVMBitCast || opcode(larg) == LLVM.API.LLVMPtrToInt
+                larg = operands(larg)[1]
+                continue
+            end
+            if addrcast && opcode(larg) == LLVM.API.LLVMAddrSpaceCast
                 larg = operands(larg)[1]
                 continue
             end
@@ -287,7 +291,11 @@ function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Boo
 		    end
 		end
         end
-        if isa(larg, LLVM.BitCastInst) || isa(larg, LLVM.AddrSpaceCastInst) || isa(larg, LLVM.IntToPtrInst)
+        if isa(larg, LLVM.BitCastInst) || isa(larg, LLVM.IntToPtrInst)
+            larg = operands(larg)[1]
+            continue
+        end
+        if addrcast && isa(larg, LLVM.AddrSpaceCastInst)
             larg = operands(larg)[1]
             continue
         end
@@ -332,7 +340,7 @@ function abs_typeof(
     )::Union{Tuple{Bool, Type, GPUCompiler.ArgumentCC}, Tuple{Bool, Nothing, Nothing}}
     if (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)) || (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Derived))
         ce, _ = get_base_and_offset(arg; offsetAllowed = false, inttoptr = true)
-        if isa(ce, GlobalVariable)
+	if isa(ce, GlobalVariable)
             gname = LLVM.name(ce)
             for (k, v) in JuliaGlobalNameMap
                 if gname == k
@@ -778,7 +786,7 @@ function abs_typeof(
             end
             push!(seen, cur)
             for (v, _) in LLVM.incoming(cur)
-                v2, off = get_base_and_offset(v)
+                v2, off = get_base_and_offset(v, inttoptr=false, addrcast=false)
                 if off != 0
                     if isa(v, LLVM.Instruction) && arg in collect(operands(v))
                         legal = false

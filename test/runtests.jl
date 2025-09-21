@@ -817,6 +817,18 @@ end
     @test res[2] ≈ 1.0
 end
 
+@testset "1.11 vcat" begin
+
+        function fcat(x)
+           r = vcat(Any[1])
+           return x
+       end
+
+       res = Enzyme.autodiff(Reverse, fcat, Active(2.0))
+       @test res[1][1] ≈ 1.0
+
+end
+
 @testset "Taylor series tests" begin
 
 # Taylor series for `-log(1-x)`
