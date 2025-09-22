@@ -57,7 +57,8 @@ import EnzymeCore:
     NoPrimal,
     needs_primal,
     runtime_activity,
-    strong_zero
+    strong_zero,
+    Split
 export Annotation,
     Const,
     Active,
@@ -112,6 +113,7 @@ export autodiff,
 
 export jacobian, gradient, gradient!, hvp, hvp!, hvp_and_gradient!
 export batch_size, onehot, chunkedonehot
+export Seed, BatchSeed
 
 using LinearAlgebra
 import SparseArrays
