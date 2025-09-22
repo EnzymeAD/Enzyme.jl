@@ -142,21 +142,6 @@ import GPUCompiler: IRError, InvalidIRError
 
 function restore_lookups(mod::LLVM.Module)::Nothing
     T_size_t = convert(LLVM.LLVMType, Int)
-    for (v, k) in FFI.ptr_map
-        if haskey(functions(mod), k)
-            f = functions(mod)[k]
-            replace_uses!(
-                f,
-                LLVM.Value(
-                    LLVM.API.LLVMConstIntToPtr(
-                        ConstantInt(T_size_t, convert(UInt, v)),
-                        value_type(f),
-                    ),
-                ),
-            )
-            eraseInst(mod, f)
-        end
-    end
     for f in functions(mod)
         for fattr in collect(function_attributes(f))        
             if isa(fattr, LLVM.StringAttribute)
@@ -173,6 +158,21 @@ function restore_lookups(mod::LLVM.Module)::Nothing
                     )
                 end
             end
+        end
+    end
+    for (v, k) in FFI.ptr_map
+        if haskey(functions(mod), k)
+            f = functions(mod)[k]
+            replace_uses!(
+                f,
+                LLVM.Value(
+                    LLVM.API.LLVMConstIntToPtr(
+                        ConstantInt(T_size_t, convert(UInt, v)),
+                        value_type(f),
+                    ),
+                ),
+            )
+            eraseInst(mod, f)
         end
     end
 end
