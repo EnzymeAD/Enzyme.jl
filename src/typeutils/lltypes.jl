@@ -29,18 +29,12 @@ function CountTrackedPointers(@nospecialize(T::LLVM.LLVMType))
             res.all &= sub.all
             res.derived |= sub.derived
         end
-    elseif isa(T, LLVM.ArrayType)
+    elseif isa(T, LLVM.ArrayType) || isa(T, LLVM.VectorType)
         sub = CountTrackedPointers(eltype(T))
         res.count += sub.count
         res.all &= sub.all
         res.derived |= sub.derived
         res.count *= length(T)
-    elseif isa(T, LLVM.VectorType)
-        sub = CountTrackedPointers(eltype(T))
-        res.count += sub.count
-        res.all &= sub.all
-        res.derived |= sub.derived
-        res.count *= size(T)
     end
     if res.count == 0
         res.all = false

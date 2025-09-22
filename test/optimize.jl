@@ -72,7 +72,6 @@ struct MvLocationScale{
 end
 
 @noinline function law(dist, flat::AbstractVector)
-    ccall(:jl_, Cvoid, (Any,), flat)
     n_dims = div(length(flat), 2)
     data = first(flat, n_dims)
     scale = Diagonal(data)
@@ -225,14 +224,14 @@ function fwd(x, y)
 end
 
 @testset "Parameter removal" begin
-	# Test that we do not remove parameters, or replace with undef, any parameters from externally linked code (even if replaced via blas)
-	fn = sprint() do io
-	   Enzyme.Compiler.enzyme_code_llvm(io, fwd, Const, Tuple{Const{Vector{ComplexF64}},Const{Vector{ComplexF64}}}; dump_module=true)
-	end
+    # Test that we do not remove parameters, or replace with undef, any parameters from externally linked code (even if replaced via blas)
+    fn = sprint() do io
+        @test_warn r"Using fallback BLAS replacements for" Enzyme.Compiler.enzyme_code_llvm(io, fwd, Const, Tuple{Const{Vector{ComplexF64}}, Const{Vector{ComplexF64}}}; dump_module = true)
+    end
 
-	for s in split(fn, "\n")
-		if occursin(s, "ejlstr")
-			@test !(occursin(" undef",s) || occursin(" poison",s))
-		end
-	end
+    for s in split(fn, "\n")
+        if occursin(s, "ejlstr")
+            @test !(occursin(" undef", s) || occursin(" poison", s))
+        end
+    end
 end

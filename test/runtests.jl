@@ -606,7 +606,6 @@ end
 end
 
 @testset "Simple Exception" begin
-    f_simple_exc(x, i) = ccall(:jl_, Cvoid, (Any,), x[i])
     y = [1.0, 2.0]
     f_x = zero.(y)
     @test_throws BoundsError autodiff(Reverse, f_simple_exc, Duplicated(y, f_x), Const(0))
@@ -1663,7 +1662,12 @@ end
     end
 
     @testset "Vector to Number" for f in DiffTests.VECTOR_TO_NUMBER_FUNCS
-        test_matrix_to_number(f, y; rtol=1e-6, atol=1e-6)
+        # `test_matrix_to_number` contains a `@generated` function, we wrap it in a
+        # `Ref{Any}` container only to be able to catch and test the warnings emitted during
+        # compilation in the body of the function.
+        test_mat2num = Ref{Any}(test_matrix_to_number)
+        warn_msg = f === DiffTests.vec2num_3 ? r"Using fallback BLAS replacements for" : ""
+        @test_warn warn_msg test_mat2num[](f, y; rtol = 1.0e-6, atol = 1.0e-6)
     end
 
     @testset "Matrix to Number" for f in DiffTests.MATRIX_TO_NUMBER_FUNCS
@@ -3423,7 +3427,7 @@ function uns_sum2(x::Array{T})::T where T
 end
 
 function uns_ad_forward(scale_diag::Vector{T}, c) where T 
-    ccall(:jl_, Cvoid, (Any,), scale_diag) 
+ccall(:jl_, Cvoid, (Any,), scale_diag)
     res = uns_mymean(uns_sum2, [scale_diag,], T, c)
 	return res
 end
