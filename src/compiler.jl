@@ -648,6 +648,10 @@ end
                     StringAttribute("enzyme_inactive"),
                     EnumAttribute("readnone"),
                     EnumAttribute("speculatable"),
+                    EnumAttribute("willreturn"),
+                    EnumAttribute("nosync"),
+                    EnumAttribute("nofree"),
+                    EnumAttribute("nounwind"),
                     StringAttribute("enzyme_shouldrecompute"),
                 ],
             )
@@ -662,6 +666,10 @@ end
                     StringAttribute("enzyme_inactive"),
                     EnumAttribute("memory", NoEffects.data),
                     EnumAttribute("speculatable"),
+                    EnumAttribute("willreturn"),
+                    EnumAttribute("nosync"),
+                    EnumAttribute("nofree"),
+                    EnumAttribute("nounwind"),
                     StringAttribute("enzyme_shouldrecompute"),
                 ],
             )
@@ -680,6 +688,9 @@ end
                     EnumAttribute("readonly"),
                     EnumAttribute("inaccessiblememonly", 0),
                     EnumAttribute("speculatable", 0),
+                    EnumAttribute("willreturn"),
+                    EnumAttribute("nosync"),
+                    EnumAttribute("nofree"),
                     StringAttribute("enzyme_shouldrecompute"),
                     StringAttribute("enzyme_inactive"),
                 ],
@@ -700,6 +711,9 @@ end
                             (MRI_NoModRef << getLocationPos(Other)),
                         ).data,
                     ),
+                    EnumAttribute("willreturn"),
+                    EnumAttribute("nosync"),
+                    EnumAttribute("nofree"),
                     EnumAttribute("inaccessiblememonly", 0),
                     EnumAttribute("speculatable", 0),
                     StringAttribute("enzyme_shouldrecompute"),
@@ -722,6 +736,8 @@ end
                     StringAttribute("enzyme_shouldrecompute"),
                     StringAttribute("enzyme_inactive"),
                     StringAttribute("enzyme_no_escaping_allocation"),
+                    EnumAttribute("willreturn"),
+                    EnumAttribute("nosync"),
                     EnumAttribute("nofree"),
                     StringAttribute("enzyme_ta_norecur"),
                 ],
@@ -740,6 +756,8 @@ end
                     StringAttribute("enzyme_shouldrecompute"),
                     StringAttribute("enzyme_inactive"),
                     StringAttribute("enzyme_no_escaping_allocation"),
+                    EnumAttribute("willreturn"),
+                    EnumAttribute("nosync"),
                     EnumAttribute("nofree"),
                     StringAttribute("enzyme_ta_norecur"),
                 ],
@@ -762,6 +780,10 @@ end
                     EnumAttribute("readonly"),
                     EnumAttribute("inaccessiblememonly"),
                     EnumAttribute("speculatable"),
+                    EnumAttribute("willreturn"),
+                    EnumAttribute("nosync"),
+                    EnumAttribute("nofree"),
+                    EnumAttribute("nounwind"),
                     StringAttribute("enzyme_shouldrecompute"),
                     StringAttribute("enzyme_inactive"),
                     StringAttribute("enzyme_no_escaping_allocation"),
@@ -784,6 +806,10 @@ end
                         ).data,
                     ),
                     EnumAttribute("speculatable"),
+                    EnumAttribute("willreturn"),
+                    EnumAttribute("nosync"),
+                    EnumAttribute("nofree"),
+                    EnumAttribute("nounwind"),
                     StringAttribute("enzyme_shouldrecompute"),
                     StringAttribute("enzyme_inactive"),
                     StringAttribute("enzyme_no_escaping_allocation"),
@@ -994,9 +1020,18 @@ end
     name = T == Float32 ? name * "f" : name
 
     attrs = if LLVM.version().major <= 15
-        LLVM.Attribute[LLVM.EnumAttribute("readnone"), StringAttribute("enzyme_shouldrecompute")]
+        LLVM.Attribute[LLVM.EnumAttribute("readnone"), StringAttribute("enzyme_shouldrecompute"),
+                    EnumAttribute("willreturn"),
+                    EnumAttribute("nosync"),
+                    EnumAttribute("nounwind"),
+                    EnumAttribute("nofree"),
+		      ]
     else
-        LLVM.Attribute[EnumAttribute("memory", NoEffects.data), StringAttribute("enzyme_shouldrecompute")]
+        LLVM.Attribute[EnumAttribute("memory", NoEffects.data), StringAttribute("enzyme_shouldrecompute"),
+                    EnumAttribute("willreturn"),
+                    EnumAttribute("nosync"),
+                    EnumAttribute("nounwind"),
+		    EnumAttribute("nofree")]
     end
     handleCustom(state, custom, k_name, llvmfn, name, attrs)
     return
