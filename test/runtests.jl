@@ -3427,6 +3427,7 @@ function uns_sum2(x::Array{T})::T where T
 end
 
 function uns_ad_forward(scale_diag::Vector{T}, c) where T 
+ccall(:jl_, Cvoid, (Any,), scale_diag)
     res = uns_mymean(uns_sum2, [scale_diag,], T, c)
 	return res
 end
