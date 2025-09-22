@@ -1,14 +1,3 @@
-@enum ActivityState begin
-    AnyState = 0
-    ActiveState = 1
-    DupState = 2
-    MixedState = 3
-end
-
-@inline function Base.:|(a1::ActivityState, a2::ActivityState)
-    ActivityState(Int(a1) | Int(a2))
-end
-
 @inline element(::Val{T}) where {T} = T
 
 @inline ptreltype(::Type{Ptr{T}}) where {T} = T
@@ -391,6 +380,14 @@ Base.@nospecializeinfer @inline function active_reg_inner(
     end
 
     return ty
+end
+
+function active_reg_cached(ctx::EnzymeContext, @nospecialize(ST::Type); justActive=false, UnionSret = false, AbstractIsMixed = false)
+    key = (ST, justActive, UnionSret, AbstractIsMixed)
+    get!(ctx.activity_cache, key) do
+        set = Base.IdSet{Type}()
+        active_reg_inner(ST, set, ctx.world, justActive, UnionSret, AbstractIsMixed)
+    end
 end
 
 Base.@nospecializeinfer @inline function active_reg(@nospecialize(ST::Type), world::UInt; justActive=false, UnionSret = false, AbstractIsMixed = false)

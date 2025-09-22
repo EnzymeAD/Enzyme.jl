@@ -136,6 +136,8 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
     within_autodiff_rewrite::Bool
 
     handler::T
+
+    context::Enzyme.Compiler.EnzymeContext
 end
 
 const SigCache = Dict{Tuple, Dict{UInt, Base.IdSet{Type}}}()
@@ -247,7 +249,8 @@ function EnzymeInterpreter(
         inactive_rules::Bool,
         broadcast_rewrite::Bool,
         within_autodiff_rewrite::Bool,
-        handler
+        handler,
+        Enzyme.Compiler.EnzymeContext(world)
     )
 end
 
@@ -278,7 +281,9 @@ function EnzymeInterpreter(interp::EnzymeInterpreter;
     inactive_rules = interp.inactive_rules,
     broadcast_rewrite = interp.broadcast_rewrite,
     within_autodiff_rewrite = interp.within_autodiff_rewrite,
-    handler = interp.handler)
+    handler = interp.handler,
+    context = interp.context,)
+    @assert context.world == world
     return EnzymeInterpreter(
         cache_or_token,
         mt,
@@ -291,7 +296,8 @@ function EnzymeInterpreter(interp::EnzymeInterpreter;
         inactive_rules,
         broadcast_rewrite,
         within_autodiff_rewrite,
-        handler
+        handler,
+        context
     )
 end
 
