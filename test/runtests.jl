@@ -606,6 +606,7 @@ end
 end
 
 @testset "Simple Exception" begin
+    f_simple_exc(x, i) = x[i]
     y = [1.0, 2.0]
     f_x = zero.(y)
     @test_throws BoundsError autodiff(Reverse, f_simple_exc, Duplicated(y, f_x), Const(0))
@@ -3426,8 +3427,7 @@ function uns_sum2(x::Array{T})::T where T
     return v
 end
 
-function uns_ad_forward(scale_diag::Vector{T}, c) where T 
-ccall(:jl_, Cvoid, (Any,), scale_diag)
+function uns_ad_forward(scale_diag::Vector{T}, c) where T
     res = uns_mymean(uns_sum2, [scale_diag,], T, c)
 	return res
 end
