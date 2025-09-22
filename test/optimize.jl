@@ -72,7 +72,6 @@ struct MvLocationScale{
 end
 
 @noinline function law(dist, flat::AbstractVector)
-    ccall(:jl_, Cvoid, (Any,), flat)
     n_dims = div(length(flat), 2)
     data = first(flat, n_dims)
     scale = Diagonal(data)
