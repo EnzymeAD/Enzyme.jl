@@ -451,7 +451,7 @@ Base.@nospecializeinfer @inline function active_reg(@nospecialize(ST::Type), wor
     return result
 end
 
-function active_reg_nothrow_generator(world::UInt, source::LineNumberNode, T, self, _)
+function active_reg_nothrow_generator(world::UInt, source::Union{Method, LineNumberNode}, T, self, _)
     @nospecialize
     result = active_reg(T, world)
 
@@ -459,6 +459,7 @@ function active_reg_nothrow_generator(world::UInt, source::LineNumberNode, T, se
     ci = ccall(:jl_new_code_info_uninit, Ref{Core.CodeInfo}, ())
     
     @static if isdefined(Core, :DebugInfo)
+        # TODO: Add proper debug info
         ci.debuginfo = Core.DebugInfo(:none)
     else
         ci.codelocs = Int32[]
