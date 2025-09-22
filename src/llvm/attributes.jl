@@ -670,9 +670,6 @@ function annotate!(mod::LLVM.Module)
         if haskey(funcs, fname)
             for fn in funcs[fname]
                 push!(function_attributes(fn), LLVM.StringAttribute("enzyme_ReadOnlyOrThrow"))
-                push!(function_attributes(fn), EnumAttribute("nofree"))
-                push!(function_attributes(fn), EnumAttribute("nosync"))
-                push!(function_attributes(fn), EnumAttribute("willreturn"))
             end
         end
     end
@@ -738,10 +735,7 @@ function annotate!(mod::LLVM.Module)
                 else
                     push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
                 end
-                push!(function_attributes(fn), EnumAttribute("nofree"))
-                push!(function_attributes(fn), EnumAttribute("nosync"))
                 push!(function_attributes(fn), EnumAttribute("nounwind"))
-                push!(function_attributes(fn), EnumAttribute("willreturn"))
             end
         end
     end
@@ -1049,10 +1043,6 @@ function annotate!(mod::LLVM.Module)
             for fn in funcs[fname]
                 push!(parameter_attributes(fn, 3), LLVM.EnumAttribute("readonly"))
                 push!(parameter_attributes(fn, 3), LLVM.EnumAttribute("nocapture"))
-                push!(function_attributes(fn), LLVM.EnumAttribute("mustprogress"))
-                push!(function_attributes(fn), LLVM.EnumAttribute("willreturn"))
-                push!(function_attributes(fn), LLVM.EnumAttribute("nofree"))
-                push!(function_attributes(fn), LLVM.EnumAttribute("nosync"))
             end
         end
     end
