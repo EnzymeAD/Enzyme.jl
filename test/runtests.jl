@@ -606,6 +606,7 @@ end
 end
 
 @testset "Simple Exception" begin
+    f_simple_exc(x, i) = ccall(:jl_, Cvoid, (Any,), x[i])
     y = [1.0, 2.0]
     f_x = zero.(y)
     @test_throws BoundsError autodiff(Reverse, f_simple_exc, Duplicated(y, f_x), Const(0))
