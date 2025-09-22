@@ -119,30 +119,23 @@ function runtime_pfor_augfwd(
     threading_args...,
 ) where {ThunkTy,FT,AnyJL,byRef}
     TapeType = EnzymeRules.tape_type(ThunkTy)
+
+    n = Base.Threads.threadpoolsize()
     tapes = if AnyJL
-        Vector{TapeType}(undef, Base.Threads.nthreads())
+        Vector{TapeType}(undef, n)
     else
         Base.unsafe_convert(
             Ptr{TapeType},
-            Libc.malloc(sizeof(TapeType) * Base.Threads.nthreads()),
+            Libc.malloc(sizeof(TapeType) * n),
         )
     end
 
     function fwd(tid_args...)
-        if length(tid_args) == 0
-            if byRef
-                tres = thunk(Const(referenceCaller), ft)
-            else
-                tres = thunk(ft)
-            end
-            tid = Base.Threads.threadid()
+        tid = tid_args[1]
+        if byRef
+            tres = thunk(Const(referenceCaller), ft, Const(tid))
         else
-            tid = tid_args[1]
-            if byRef
-                tres = thunk(Const(referenceCaller), ft, Const(tid))
-            else
-                tres = thunk(ft, Const(tid))
-            end
+            tres = thunk(ft, Const(tid))
         end
 
         if !AnyJL
@@ -155,6 +148,29 @@ function runtime_pfor_augfwd(
     return tapes
 end
 
+struct ReversePFor{ThunkTy, FT, AnyJL, byRef, TT}
+    thunk::ThunkTy
+    ft::FT
+    tapes::TT
+end
+
+function (st::ReversePFor{ThunkTy, FT, AnyJL, byRef, TT})(tid) where {ThunkTy, FT, AnyJL, byRef, TT}
+
+    tres = if !AnyJL
+        unsafe_load(st.tapes, tid)
+    else
+        @inbounds st.tapes[tid]
+    end
+
+    if byRef
+        st.thunk(Const(referenceCaller), st.ft, Const(tid), tres)
+    else
+        st.thunk(st.ft, Const(tid), tres)
+    end
+
+    nothing
+end
+
 function runtime_pfor_rev(
     thunk::ThunkTy,
     ft::FT,
@@ -163,35 +179,7 @@ function runtime_pfor_rev(
     tapes,
     threading_args...,
 ) where {ThunkTy,FT,AnyJL,byRef}
-    function rev(tid_args...)
-        tid = if length(tid_args) == 0
-            tid = Base.Threads.threadid()
-        else
-            tid_args[1]
-        end
-
-        tres = if !AnyJL
-            unsafe_load(tapes, tid)
-        else
-            @inbounds tapes[tid]
-        end
-
-        if length(tid_args) == 0
-            if byRef
-                thunk(Const(referenceCaller), ft, tres)
-            else
-                thunk(ft, tres)
-            end
-        else
-            if byRef
-                thunk(Const(referenceCaller), ft, Const(tid), tres)
-            else
-                thunk(ft, Const(tid), tres)
-            end
-        end
-    end
-
-    Base.Threads.threading_run(rev, threading_args...)
+    Base.Threads.threading_run(ReversePFor{ThunkTy, FT, AnyJL, byRef, typeof(tapes)}(thunk, ft, tapes), threading_args...)
     if !AnyJL
         Libc.free(tapes)
     end
