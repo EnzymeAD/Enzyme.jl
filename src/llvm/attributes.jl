@@ -579,6 +579,10 @@ function annotate!(mod::LLVM.Module)
                     push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
                 end
                 push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
+                push!(function_attributes(fn), EnumAttribute("nounwind"))
+                push!(function_attributes(fn), EnumAttribute("nosync"))
+                push!(function_attributes(fn), EnumAttribute("nofree"))
+                push!(function_attributes(fn), EnumAttribute("willreturn"))
             end
         end
     end
@@ -602,6 +606,19 @@ function annotate!(mod::LLVM.Module)
                         )
                     )
                 end
+            end
+        end
+    end
+
+    for fname in (
+        "julia.safepoint",
+    )
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                push!(function_attributes(fn), EnumAttribute("nofree"))
+                push!(function_attributes(fn), EnumAttribute("nosync"))
+                push!(function_attributes(fn), EnumAttribute("nounwind"))
+                push!(function_attributes(fn), EnumAttribute("willreturn"))
             end
         end
     end
