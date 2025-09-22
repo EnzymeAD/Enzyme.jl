@@ -411,6 +411,10 @@ function annotate!(mod::LLVM.Module)
                     push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
                 end
                 push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
+                push!(function_attributes(fn), EnumAttribute("nofree"))
+                push!(function_attributes(fn), EnumAttribute("nosync"))
+                push!(function_attributes(fn), EnumAttribute("nounwind"))
+                push!(function_attributes(fn), EnumAttribute("willreturn"))
             end
         end
     end
@@ -466,6 +470,10 @@ function annotate!(mod::LLVM.Module)
                         ),
                     )
                 end
+                push!(function_attributes(fn), EnumAttribute("nofree"))
+                push!(function_attributes(fn), EnumAttribute("nosync"))
+                push!(function_attributes(fn), EnumAttribute("nounwind"))
+                push!(function_attributes(fn), EnumAttribute("willreturn"))
             end
         end
     end
@@ -488,6 +496,10 @@ function annotate!(mod::LLVM.Module)
                     )
                 end
                 push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
+                push!(function_attributes(fn), EnumAttribute("nofree"))
+                push!(function_attributes(fn), EnumAttribute("nosync"))
+                push!(function_attributes(fn), EnumAttribute("nounwind"))
+                push!(function_attributes(fn), EnumAttribute("willreturn"))
             end
         end
     end
@@ -500,6 +512,10 @@ function annotate!(mod::LLVM.Module)
                 if LLVM.version().major <= 15
                     push!(function_attributes(fn), LLVM.StringAttribute("enzyme_math", "__dynamic_cast"))
                 end
+                push!(function_attributes(fn), EnumAttribute("nofree"))
+                push!(function_attributes(fn), EnumAttribute("nosync"))
+                push!(function_attributes(fn), EnumAttribute("nounwind"))
+                push!(function_attributes(fn), EnumAttribute("willreturn"))
             end
         end
     end
@@ -529,6 +545,9 @@ function annotate!(mod::LLVM.Module)
                         )
                     )
                 end
+                push!(function_attributes(fn), EnumAttribute("nofree"))
+                push!(function_attributes(fn), EnumAttribute("nosync"))
+                push!(function_attributes(fn), EnumAttribute("willreturn"))
                 for u in LLVM.uses(fn)
                     c = LLVM.user(u)
                     if !isa(c, LLVM.CallInst)
@@ -579,6 +598,8 @@ function annotate!(mod::LLVM.Module)
                     push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
                 end
                 push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
+                push!(function_attributes(fn), EnumAttribute("nounwind"))
+                push!(function_attributes(fn), EnumAttribute("willreturn"))
             end
         end
     end
@@ -588,6 +609,10 @@ function annotate!(mod::LLVM.Module)
             for fn in funcs[fname]
                 push!(function_attributes(fn), LLVM.StringAttribute("enzyme_shouldrecompute"))
                 push!(function_attributes(fn), LLVM.StringAttribute("enzyme_nocache"))
+                push!(function_attributes(fn), EnumAttribute("nofree"))
+                push!(function_attributes(fn), EnumAttribute("nosync"))
+                push!(function_attributes(fn), EnumAttribute("nounwind"))
+                push!(function_attributes(fn), EnumAttribute("willreturn"))
                 if LLVM.version().major <= 15
                     push!(function_attributes(fn), LLVM.EnumAttribute("readonly", 0))
                 else
@@ -602,6 +627,19 @@ function annotate!(mod::LLVM.Module)
                         )
                     )
                 end
+            end
+        end
+    end
+    
+    for fname in (
+        "julia.safepoint",
+    )
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                push!(function_attributes(fn), EnumAttribute("nofree"))
+                push!(function_attributes(fn), EnumAttribute("nosync"))
+                push!(function_attributes(fn), EnumAttribute("nounwind"))
+                push!(function_attributes(fn), EnumAttribute("willreturn"))
             end
         end
     end
@@ -680,6 +718,9 @@ function annotate!(mod::LLVM.Module)
         if haskey(funcs, fname)
             for fn in funcs[fname]
                 push!(function_attributes(fn), no_escaping_alloc)
+                push!(function_attributes(fn), EnumAttribute("nofree"))
+                push!(function_attributes(fn), EnumAttribute("nosync"))
+                push!(function_attributes(fn), EnumAttribute("willreturn"))
             end
         end
     end
@@ -694,6 +735,7 @@ function annotate!(mod::LLVM.Module)
                 else
                     push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
                 end
+                push!(function_attributes(fn), EnumAttribute("nounwind"))
             end
         end
     end
@@ -712,6 +754,10 @@ function annotate!(mod::LLVM.Module)
                 )
                 push!(function_attributes(fn), no_escaping_alloc)
                 push!(function_attributes(fn), LLVM.EnumAttribute("allockind", (AllocFnKind(AFKE_Alloc) | AllocFnKind(AFKE_Uninitialized)).data))
+                push!(function_attributes(fn), EnumAttribute("nofree"))
+                push!(function_attributes(fn), EnumAttribute("nosync"))
+                push!(function_attributes(fn), EnumAttribute("nounwind"))
+                push!(function_attributes(fn), EnumAttribute("willreturn"))
             end
         end
     end
@@ -736,6 +782,10 @@ function annotate!(mod::LLVM.Module)
         if haskey(funcs, fname)
             for fn in funcs[fname]
                 push!(function_attributes(fn), LLVM.StringAttribute("enzyme_ReadOnlyOrThrow"))
+                push!(function_attributes(fn), EnumAttribute("nofree"))
+                push!(function_attributes(fn), EnumAttribute("nosync"))
+                push!(function_attributes(fn), EnumAttribute("nounwind"))
+                push!(function_attributes(fn), EnumAttribute("willreturn"))
             end
         end
     end
@@ -815,6 +865,7 @@ function annotate!(mod::LLVM.Module)
                 push!(function_attributes(fn), LLVM.EnumAttribute("willreturn"))
                 push!(function_attributes(fn), LLVM.EnumAttribute("nounwind"))
                 push!(function_attributes(fn), LLVM.EnumAttribute("nofree"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("nosync"))
                 accattr = if LLVM.version().major <= 15
                     LLVM.EnumAttribute("inaccessiblememonly")
                 else
@@ -933,6 +984,11 @@ function annotate!(mod::LLVM.Module)
     for fname in ("llvm.julia.gc_preserve_begin", "llvm.julia.gc_preserve_end")
         if haskey(funcs, fname)
             for fn in funcs[fname]
+                push!(function_attributes(fn), LLVM.EnumAttribute("mustprogress"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("willreturn"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("nounwind"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("nofree"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("nosync"))
                 push!(function_attributes(fn), LLVM.StringAttribute("enzyme_ReadOnlyOrThrow"))
                 if LLVM.version().major <= 15
                     push!(function_attributes(fn), LLVM.EnumAttribute("inaccessiblememonly"))
@@ -957,6 +1013,10 @@ function annotate!(mod::LLVM.Module)
     for fname in ("jl_eqtable_get", "ijl_eqtable_get")
         if haskey(funcs, fname)
             for fn in funcs[fname]
+                push!(function_attributes(fn), LLVM.EnumAttribute("mustprogress"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("willreturn"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("nofree"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("nosync"))
                 push!(parameter_attributes(fn, 2), LLVM.StringAttribute("enzyme_inactive"))
                 if LLVM.version().major <= 15
                     push!(function_attributes(fn), LLVM.EnumAttribute("readonly"))
@@ -991,6 +1051,10 @@ function annotate!(mod::LLVM.Module)
     for fname in ("jl_eqtable_put", "ijl_eqtable_put")
         if haskey(funcs, fname)
             for fn in funcs[fname]
+                push!(function_attributes(fn), LLVM.EnumAttribute("mustprogress"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("willreturn"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("nofree"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("nosync"))
                 push!(parameter_attributes(fn, 2), LLVM.StringAttribute("enzyme_inactive"))
                 push!(parameter_attributes(fn, 4), LLVM.StringAttribute("enzyme_inactive"))
                 if value_type(LLVM.parameters(fn)[4]) isa LLVM.PointerType
