@@ -42,6 +42,7 @@ jobs:
         version:
           - '1.10'
           - '1.11'
+          - '1.12' 
         os:
           - linux-x86-n2-32
         package:
@@ -64,6 +65,7 @@ jobs:
       - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
+          include-all-prereleases: true
       - uses: julia-actions/cache@v2
       - name: "Install Dependencies"
         run: |
