@@ -110,6 +110,7 @@ jobs:
           cp LocalPreferences.toml test/
       - name: Build libEnzyme MacOS
         if: ${{ matrix.libEnzyme == 'local' && matrix.os == 'macOS-latest'}}
+        continue-on-error: ${{ matrix.version == 'nightly' }}
         id: build_libenzyme_mac
         run: |
           julia --color=yes --project=deps -e 'using Pkg; Pkg.instantiate()'
