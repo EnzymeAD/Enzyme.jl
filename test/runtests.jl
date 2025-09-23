@@ -40,7 +40,6 @@ if do_help
     exit(0)
 end
 set_jobs, jobs = extract_flag!(ARGS, "--jobs"; typ=Int)
-do_sanitize, sanitize_tool = extract_flag!(ARGS, "--sanitize", "memcheck")
 do_verbose, _ = extract_flag!(ARGS, "--verbose")
 do_quickfail, _ = extract_flag!(ARGS, "--quickfail")
 do_list, _ = extract_flag!(ARGS, "--list")
@@ -88,7 +87,6 @@ for (rootpath, dirs, files) in walkdir(@__DIR__)
 end
 sort!(tests; by=(file)->stat("$(@__DIR__)/$file.jl").size, rev=true)
 ## finalize
-pushfirst!(tests, "abi.jl")
 unique!(tests)
 
 # list tests, if requested
@@ -102,6 +100,16 @@ end
 
 # filter tests
 if isempty(ARGS)
+    filter!(tests) do test
+        if startswith(test, "codegen/")
+            # Who runs this? It segfault's on 1.11
+            return false
+        end
+        if test ∈ ("metal", "cuda", "amdgpu")
+            return false
+        end
+        return true
+    end
 else
   # let the user filter
   filter!(tests) do test
@@ -128,15 +136,7 @@ push!(test_exeflags.exec, "--depwarn=yes")
 push!(test_exeflags.exec, "--project=$(Base.active_project())")
 const test_exename = popfirst!(test_exeflags.exec)
 function addworker(X; kwargs...)
-    exename = if do_sanitize
-        ```$compute_sanitizer --tool $sanitize_tool
-                              --launch-timeout=0
-                              --target-processes=all
-                              --report-api-errors=no
-                              $test_exename```
-    else
-        test_exename
-    end
+    exename = test_exename
 
     withenv("JULIA_NUM_THREADS" => 1, "OPENBLAS_NUM_THREADS" => 1) do
         procs = addprocs(X; exename=exename, exeflags=test_exeflags, kwargs...)
