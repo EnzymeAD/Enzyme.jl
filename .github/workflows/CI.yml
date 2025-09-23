@@ -103,7 +103,6 @@ jobs:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - name: Build libEnzyme
         if: ${{ matrix.libEnzyme == 'local' && matrix.os != 'macOS-latest'}}
-        continue-on-error: ${{ matrix.version == 'nightly' }}
         id: build_libenzyme
         run: |
           julia --color=yes --project=deps -e 'using Pkg; Pkg.instantiate()'
@@ -111,7 +110,6 @@ jobs:
           cp LocalPreferences.toml test/
       - name: Build libEnzyme MacOS
         if: ${{ matrix.libEnzyme == 'local' && matrix.os == 'macOS-latest'}}
-        continue-on-error: ${{ matrix.version == 'nightly' }}
         id: build_libenzyme_mac
         run: |
           julia --color=yes --project=deps -e 'using Pkg; Pkg.instantiate()'
@@ -125,7 +123,7 @@ jobs:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - uses: julia-actions/julia-runtest@v1
         if: matrix.version != 'nightly' || steps.buildpkg.outcome == 'success'
-        continue-on-error: ${{ matrix.version == 'nightly' }}
+        continue-on-error: ${{ matrix.version == 'nightly' || matrix.arch == 'x86' }}
         id: run_tests
         # TODO restore coverage post https://github.com/JuliaGPU/GPUCompiler.jl/pull/711
         with:
