@@ -86,13 +86,13 @@ function test_grad(case::TestCase; rtol=1e-6, atol=1e-6)
 
     if case.broken === Both || case.broken === Forward
         @test_broken(
-            collect(Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
+            Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1] ≈ finitediff,
             rtol = rtol,
             atol = atol,
         )
     else
         @test(
-            collect(Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
+            Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1] ≈ finitediff,
             rtol = rtol,
             atol = atol,
         )
@@ -287,7 +287,9 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
             broken=Forward
         ),
         TestCase(MvNormal([0.2, -0.3], [0.5, 0.6]), [0.4, -0.3]),
-        TestCase(MvNormalCanon([0.1, -0.1], _pdmat([0.5 0.4; 0.45 1.0])), [0.2, -0.25]),
+        # TODO https://github.com/EnzymeAD/Enzyme.jl/issues/2618, trmv error
+        TestCase(MvNormalCanon([0.1, -0.1], _pdmat([0.5 0.4; 0.45 1.0])), [0.2, -0.25]; 
+            broken=(VERSION >= v"1.11" ? Forward : Neither)),
         # TODO Broken tests, see https://github.com/EnzymeAD/Enzyme.jl/issues/1991
         TestCase(
             MvLogNormal(MvNormal([0.2, -0.1], _pdmat([1.0 0.9; 0.7 1.1]))), [0.5, 0.1];
@@ -392,8 +394,7 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
             name="vec", broken=Both
         ),
         TestCase(
-            function (t)
-                X, v = t
+            function (X, v)
                 # LKJCholesky distributes over the Cholesky factorisation of correlation
                 # matrices, so the argument to `logpdf` must be such a matrix.
                 S = X'X
@@ -402,7 +403,7 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
                 return logpdf(LKJCholesky(2, v), C)
             end,
             (randn(rng, 2, 2), 1.1);
-            name="LKJCholesky"
+            name="LKJCholesky", splat=true
         ),
     ]
 
