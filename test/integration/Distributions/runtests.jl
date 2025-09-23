@@ -86,13 +86,13 @@ function test_grad(case::TestCase; rtol=1e-6, atol=1e-6)
 
     if case.broken === Both || case.broken === Forward
         @test_broken(
-            Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1] ≈ finitediff,
+            collect(Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
             rtol = rtol,
             atol = atol,
         )
     else
         @test(
-            Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1] ≈ finitediff,
+            collect(Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
             rtol = rtol,
             atol = atol,
         )
