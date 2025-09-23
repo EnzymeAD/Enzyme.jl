@@ -5,14 +5,14 @@ using Printf: @sprintf
 using Base.Filesystem: path_separator
 
 # parse some command-line arguments
-function extract_flag!(args, flag, default=nothing; typ=typeof(default))
+function extract_flag!(args, flag, default = nothing; typ = typeof(default))
     for f in args
         if startswith(f, flag)
             # Check if it's just `--flag` or if it's `--flag=foo`
             if f != flag
                 val = split(f, '=')[2]
                 if !(typ === Nothing || typ <: AbstractString)
-                  val = parse(typ, val)
+                    val = parse(typ, val)
                 end
             else
                 val = default
@@ -27,7 +27,8 @@ function extract_flag!(args, flag, default=nothing; typ=typeof(default))
 end
 do_help, _ = extract_flag!(ARGS, "--help")
 if do_help
-    println("""
+    println(
+        """
         Usage: runtests.jl [--help] [--list] [--jobs=N] [TESTS...]
 
                --help             Show this text.
@@ -36,10 +37,11 @@ if do_help
                --quickfail        Fail the entire run as soon as a single test errored.
                --jobs=N           Launch `N` processes to perform tests (default: Sys.CPU_THREADS).
 
-               Remaining arguments filter the tests that will be executed.""")
+               Remaining arguments filter the tests that will be executed."""
+    )
     exit(0)
 end
-set_jobs, jobs = extract_flag!(ARGS, "--jobs"; typ=Int)
+set_jobs, jobs = extract_flag!(ARGS, "--jobs"; typ = Int)
 do_verbose, _ = extract_flag!(ARGS, "--verbose")
 do_quickfail, _ = extract_flag!(ARGS, "--quickfail")
 do_list, _ = extract_flag!(ARGS, "--list")
@@ -56,36 +58,36 @@ const tests = []
 const test_runners = Dict()
 ## files in the test folder
 for (rootpath, dirs, files) in walkdir(@__DIR__)
-  # find Julia files
-  filter!(files) do file
-    endswith(file, ".jl") && file !== "setup.jl" && file !== "runtests.jl"
-  end
-  isempty(files) && continue
-
-  # strip extension
-  files = map(files) do file
-    file[1:end-3]
-  end
-
-  # prepend subdir
-  subdir = relpath(rootpath, @__DIR__)
-  if subdir != "."
-    files = map(files) do file
-      joinpath(subdir, file)
+    # find Julia files
+    filter!(files) do file
+        endswith(file, ".jl") && file !== "setup.jl" && file !== "runtests.jl"
     end
-  end
+    isempty(files) && continue
 
-  # unify path separators
-  files = map(files) do file
-    replace(file, path_separator => '/')
-  end
+    # strip extension
+    files = map(files) do file
+        file[1:(end - 3)]
+    end
 
-  append!(tests, files)
-  for file in files
-    test_runners[file] = ()->include("$(@__DIR__)/$file.jl")
-  end
+    # prepend subdir
+    subdir = relpath(rootpath, @__DIR__)
+    if subdir != "."
+        files = map(files) do file
+            joinpath(subdir, file)
+        end
+    end
+
+    # unify path separators
+    files = map(files) do file
+        replace(file, path_separator => '/')
+    end
+
+    append!(tests, files)
+    for file in files
+        test_runners[file] = () -> include("$(@__DIR__)/$file.jl")
+    end
 end
-sort!(tests; by=(file)->stat("$(@__DIR__)/$file.jl").size, rev=true)
+sort!(tests; by = (file) -> stat("$(@__DIR__)/$file.jl").size, rev = true)
 ## finalize
 unique!(tests)
 
@@ -111,10 +113,10 @@ if isempty(ARGS)
         return true
     end
 else
-  # let the user filter
-  filter!(tests) do test
-    any(arg->startswith(test, arg), ARGS)
-  end
+    # let the user filter
+    filter!(tests) do test
+        any(arg -> startswith(test, arg), ARGS)
+    end
 end
 
 # determine parallelism
@@ -138,8 +140,8 @@ const test_exename = popfirst!(test_exeflags.exec)
 function addworker(X; kwargs...)
     exename = test_exename
 
-    withenv("JULIA_NUM_THREADS" => 1, "OPENBLAS_NUM_THREADS" => 1) do
-        procs = addprocs(X; exename=exename, exeflags=test_exeflags, kwargs...)
+    return withenv("JULIA_NUM_THREADS" => 1, "OPENBLAS_NUM_THREADS" => 1) do
+        procs = addprocs(X; exename = exename, exeflags = test_exeflags, kwargs...)
         @everywhere procs include($(joinpath(@__DIR__, "setup.jl")))
         procs
     end
@@ -149,19 +151,25 @@ addworker(min(jobs, length(tests)))
 # pretty print information about gc and mem usage
 testgroupheader = "Test"
 workerheader = "(Worker)"
-name_align        = maximum([textwidth(testgroupheader) + textwidth(" ") +
-                             textwidth(workerheader); map(x -> textwidth(x) +
-                             3 + ndigits(nworkers()), tests)])
-elapsed_align     = textwidth("Time (s)")
-gc_align      = textwidth("GC (s)")
+name_align = maximum(
+    [
+        textwidth(testgroupheader) + textwidth(" ") +
+            textwidth(workerheader); map(
+            x -> textwidth(x) +
+                3 + ndigits(nworkers()), tests
+        )
+    ]
+)
+elapsed_align = textwidth("Time (s)")
+gc_align = textwidth("GC (s)")
 percent_align = textwidth("GC %")
-alloc_align   = textwidth("Alloc (MB)")
-rss_align     = textwidth("RSS (MB)")
+alloc_align = textwidth("Alloc (MB)")
+rss_align = textwidth("RSS (MB)")
 printstyled(" "^(name_align + textwidth(testgroupheader) - 3), " | ")
-printstyled("         | ---------------- CPU ---------------- |\n", color=:white)
-printstyled(testgroupheader, color=:white)
-printstyled(lpad(workerheader, name_align - textwidth(testgroupheader) + 1), " | ", color=:white)
-printstyled("Time (s) |  GC (s) | GC % | Alloc (MB) | RSS (MB) |\n", color=:white)
+printstyled("         | ---------------- CPU ---------------- |\n", color = :white)
+printstyled(testgroupheader, color = :white)
+printstyled(lpad(workerheader, name_align - textwidth(testgroupheader) + 1), " | ", color = :white)
+printstyled("Time (s) |  GC (s) | GC % | Alloc (MB) | RSS (MB) |\n", color = :white)
 print_lock = stdout isa Base.LibuvStream ? stdout.lock : ReentrantLock()
 if stderr isa Base.LibuvStream
     stderr.lock = print_lock
@@ -169,32 +177,34 @@ end
 function print_testworker_stats(test, wrkr, resp)
     @nospecialize resp
     lock(print_lock)
-    try
-        printstyled(test, color=:white)
-        printstyled(lpad("($wrkr)", name_align - textwidth(test) + 1, " "), " | ", color=:white)
-        time_str = @sprintf("%7.2f",resp[2])
-        printstyled(lpad(time_str, elapsed_align, " "), " | ", color=:white)
+    return try
+        printstyled(test, color = :white)
+        printstyled(lpad("($wrkr)", name_align - textwidth(test) + 1, " "), " | ", color = :white)
+        time_str = @sprintf("%7.2f", resp[2])
+        printstyled(lpad(time_str, elapsed_align, " "), " | ", color = :white)
 
         gc_str = @sprintf("%5.2f", resp[4])
-        printstyled(lpad(gc_str, gc_align, " "), " | ", color=:white)
+        printstyled(lpad(gc_str, gc_align, " "), " | ", color = :white)
         percent_str = @sprintf("%4.1f", 100 * resp[4] / resp[2])
-        printstyled(lpad(percent_str, percent_align, " "), " | ", color=:white)
+        printstyled(lpad(percent_str, percent_align, " "), " | ", color = :white)
         alloc_str = @sprintf("%5.2f", resp[3] / 2^20)
-        printstyled(lpad(alloc_str, alloc_align, " "), " | ", color=:white)
+        printstyled(lpad(alloc_str, alloc_align, " "), " | ", color = :white)
 
         rss_str = @sprintf("%5.2f", resp[9] / 2^20)
-        printstyled(lpad(rss_str, rss_align, " "), " |\n", color=:white)
+        printstyled(lpad(rss_str, rss_align, " "), " |\n", color = :white)
     finally
         unlock(print_lock)
     end
 end
-global print_testworker_started = (name, wrkr)->begin
+global print_testworker_started = (name, wrkr) -> begin
     if do_verbose
         lock(print_lock)
         try
-            printstyled(name, color=:white)
-            printstyled(lpad("($wrkr)", name_align - textwidth(name) + 1, " "), " |",
-                " "^elapsed_align, "started at $(now())\n", color=:white)
+            printstyled(name, color = :white)
+            printstyled(
+                lpad("($wrkr)", name_align - textwidth(name) + 1, " "), " |",
+                " "^elapsed_align, "started at $(now())\n", color = :white
+            )
         finally
             unlock(print_lock)
         end
@@ -202,10 +212,12 @@ global print_testworker_started = (name, wrkr)->begin
 end
 function print_testworker_errored(name, wrkr)
     lock(print_lock)
-    try
-        printstyled(name, color=:red)
-        printstyled(lpad("($wrkr)", name_align - textwidth(name) + 1, " "), " |",
-            " "^elapsed_align, " failed at $(now())\n", color=:red)
+    return try
+        printstyled(name, color = :red)
+        printstyled(
+            lpad("($wrkr)", name_align - textwidth(name) + 1, " "), " |",
+            " "^elapsed_align, " failed at $(now())\n", color = :red
+        )
     finally
         unlock(print_lock)
     end
@@ -232,9 +244,9 @@ try
                         break
                     elseif c == '?'
                         println("Currently running: ")
-                        tests = sort(collect(running_tests), by=x->x[2])
+                        tests = sort(collect(running_tests), by = x -> x[2])
                         foreach(tests) do (test, date)
-                            println(test, " (running for ", round(now()-date, Minute), ")")
+                            println(test, " (running for ", round(now() - date, Minute), ")")
                         end
                     end
                 end
@@ -247,7 +259,7 @@ try
     end
     @sync begin
         function recycle_worker(p)
-            rmprocs(p, waitfor=30)
+            rmprocs(p, waitfor = 30)
 
             return nothing
         end
@@ -300,15 +312,17 @@ catch e
     isa(e, InterruptException) || rethrow()
     # If the test suite was merely interrupted, still print the
     # summary, which can be useful to diagnose what's going on
-    foreach(task -> begin
+    foreach(
+        task -> begin
             istaskstarted(task) || return
             istaskdone(task) && return
             try
-                schedule(task, InterruptException(); error=true)
+                schedule(task, InterruptException(); error = true)
             catch ex
-                @error "InterruptException" exception=ex,catch_backtrace()
+                @error "InterruptException" exception = ex, catch_backtrace()
             end
-        end, all_tasks)
+        end, all_tasks
+    )
     for t in all_tasks
         # NOTE: we can't just wait, but need to discard the exception,
         #       because the throwto for --quickfail also kills the worker.
@@ -320,11 +334,11 @@ catch e
     end
 finally
     if @isdefined stdin_monitor
-        schedule(stdin_monitor, InterruptException(); error=true)
+        schedule(stdin_monitor, InterruptException(); error = true)
     end
 end
 t1 = now()
-elapsed = canonicalize(Dates.CompoundPeriod(t1-t0))
+elapsed = canonicalize(Dates.CompoundPeriod(t1 - t0))
 println("Testing finished in $elapsed")
 
 # construct a testset to render the test results
@@ -338,7 +352,7 @@ o_ts = Test.DefaultTestSet("Overall")
             Test.push_testset(resp)
             Test.record(o_ts, resp)
             Test.pop_testset()
-        elseif isa(resp, Tuple{Int,Int})
+        elseif isa(resp, Tuple{Int, Int})
             fake = Test.DefaultTestSet(testname)
             for i in 1:resp[1]
                 Test.record(fake, Test.Pass(:test, nothing, nothing, nothing, nothing))
@@ -386,10 +400,10 @@ else
         for (testname, (resp,)) in results
             push!(completed_tests, testname)
             if isa(resp, Test.DefaultTestSet)
-                Test.@with_testset resp begin 
+                Test.@with_testset resp begin
                     Test.record(o_ts, resp)
-                end 
-            elseif isa(resp, Tuple{Int,Int})
+                end
+            elseif isa(resp, Tuple{Int, Int})
                 fake = Test.DefaultTestSet(testname)
                 for i in 1:resp[1]
                     Test.record(fake, Test.Pass(:test, nothing, nothing, nothing, nothing))
@@ -426,7 +440,7 @@ else
                 # the test runner itself had some problem, so we may have hit a segfault,
                 # deserialization errors or something similar.  Record this testset as Errored.
                 fake = Test.DefaultTestSet(testname)
-                Test.record(fake, Test.Error(:nontest_error, testname, nothing, Base.ExceptionStack([(exception=resp,backtrace=[])]), LineNumberNode(1)))
+                Test.record(fake, Test.Error(:nontest_error, testname, nothing, Base.ExceptionStack([(exception = resp, backtrace = [])]), LineNumberNode(1)))
                 Test.@with_testset fake begin
                     Test.record(o_ts, fake)
                 end
@@ -438,13 +452,17 @@ for test in tests
     (test in completed_tests) && continue
     fake = Test.DefaultTestSet(test)
     @static if VERSION < v"1.13.0-DEV.1044"
-        Test.record(fake, Test.Error(:test_interrupted, test, nothing,
-                                        [("skipped", [])], LineNumberNode(1)))
+        Test.record(
+            fake, Test.Error(
+                :test_interrupted, test, nothing,
+                [("skipped", [])], LineNumberNode(1)
+            )
+        )
         Test.push_testset(fake)
         Test.record(o_ts, fake)
         Test.pop_testset()
     else
-        Test.record(fake, Test.Error(:test_interrupted, test, nothing, Base.ExceptionStack([(exception="skipped",backtrace=[])]), LineNumberNode(1)))
+        Test.record(fake, Test.Error(:test_interrupted, test, nothing, Base.ExceptionStack([(exception = "skipped", backtrace = [])]), LineNumberNode(1)))
         Test.@with_testset fake begin
             Test.record(o_ts, fake)
         end
