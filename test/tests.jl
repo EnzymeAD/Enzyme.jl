@@ -9,7 +9,7 @@ function vrec(start, x)
     if start > length(x)
         return 1.0
     else
-        return x[start] * vrec(start+1, x)
+        return x[start] * vrec(start + 1, x)
     end
 end
 
@@ -23,8 +23,8 @@ import Enzyme: API
         Incomplete(x) = new(x)
         # incomplete constructor & non-bitstype field => !Base.allocatedinline(Incomplete)
     end
-    @test Enzyme.Compiler.active_reg(Tuple{Incomplete}, Base.get_world_counter(); justActive=false) == Enzyme.Compiler.MixedState
-    @test Enzyme.Compiler.active_reg(Tuple{Incomplete}, Base.get_world_counter(); justActive=true) == Enzyme.Compiler.ActiveState
+    @test Enzyme.Compiler.active_reg(Tuple{Incomplete}, Base.get_world_counter(); justActive = false) == Enzyme.Compiler.MixedState
+    @test Enzyme.Compiler.active_reg(Tuple{Incomplete}, Base.get_world_counter(); justActive = true) == Enzyme.Compiler.ActiveState
 
     thunk_a = Enzyme.Compiler.thunk(Val(0), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false), Val(false), Val(false))
     thunk_b = Enzyme.Compiler.thunk(Val(0), Const{typeof(f0)}, Const, Tuple{Const{Float64}}, Val(API.DEM_ReverseModeCombined), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false), Val(false), Val(false))
@@ -40,7 +40,7 @@ import Enzyme: API
 
     forward, pullback = Enzyme.Compiler.thunk(Val(0), Const{typeof(f0)}, Active, Tuple{Active{Float64}}, Val(Enzyme.API.DEM_ReverseModeGradient), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false), Val(false), Val(false))
 
-    @test forward(Const(f0), Active(2.0)) == (nothing,nothing,nothing)
+    @test forward(Const(f0), Active(2.0)) == (nothing, nothing, nothing)
     @test pullback(Const(f0), Active(2.0), 1.0, nothing) == ((1.0,),)
 
     function mul2(x)
@@ -52,9 +52,9 @@ import Enzyme: API
     res = forward(Const(mul2), d)
 
     @static if VERSION < v"1.11-"
-    @test typeof(res[1]) == Tuple{Float64, Float64}
+        @test typeof(res[1]) == Tuple{Float64, Float64}
     else
-    @test typeof(res[1]) == NamedTuple{(Symbol("1"),Symbol("2"),Symbol("3")), Tuple{Any, Float64, Float64}}
+        @test typeof(res[1]) == NamedTuple{(Symbol("1"), Symbol("2"), Symbol("3")), Tuple{Any, Float64, Float64}}
     end
 
     pullback(Const(mul2), d, 1.0, res[1])
@@ -72,20 +72,20 @@ import Enzyme: API
     # @test thunk_split.primal !== thunk_split.adjoint
     # @test thunk_a.adjoint !== thunk_split.adjoint
     #
-    z = ([3.14, 21.5, 16.7], [0,1], [5.6, 8.9])
+    z = ([3.14, 21.5, 16.7], [0, 1], [5.6, 8.9])
     Enzyme.make_zero!(z)
     @test z[1] ≈ [0.0, 0.0, 0.0]
     @test z[2][1] == 0
     @test z[2][2] == 1
     @test z[3] ≈ [0.0, 0.0]
-    
-    z2 = ([3.14, 21.5, 16.7], [0,1], [5.6, 8.9])
+
+    z2 = ([3.14, 21.5, 16.7], [0, 1], [5.6, 8.9])
     Enzyme.make_zero!(z2)
     @test z2[1] ≈ [0.0, 0.0, 0.0]
     @test z2[2][1] == 0
     @test z2[2][2] == 1
     @test z2[3] ≈ [0.0, 0.0]
-    
+
     z3 = [3.4, "foo"]
     Enzyme.make_zero!(z3)
     @test z3[1] ≈ 0.0
@@ -93,7 +93,7 @@ import Enzyme: API
 
     z4 = sin
     Enzyme.make_zero!(z4)
-    
+
     struct Dense
         n_inp::Int
         b::Vector{Float64}
@@ -110,7 +110,7 @@ end
 
 @testset "Reflection" begin
     Enzyme.Compiler.enzyme_code_typed(Active, Tuple{Active{Float64}}) do x
-        x ^ 2
+        x^2
     end
     sprint() do io
         Enzyme.Compiler.enzyme_code_native(io, f0, Active, Tuple{Active{Float64}})
@@ -123,34 +123,34 @@ end
 
 sumsq2(x) = sum(abs2, x)
 sumsin(x) = sum(sin, x)
-sqrtsumsq2(x) = (sum(abs2, x)*sum(abs2,x))
+sqrtsumsq2(x) = (sum(abs2, x) * sum(abs2, x))
 @testset "Recursion optimization" begin
     # Test that we can successfully optimize out the augmented primal from the recursive divide and conquer
     fn = sprint() do io
-       Enzyme.Compiler.enzyme_code_llvm(io, sum, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
+        Enzyme.Compiler.enzyme_code_llvm(io, sum, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module = true)
     end
-    @test occursin("diffe",fn)
+    @test occursin("diffe", fn)
     # TODO we need to fix julia to remove unused bounds checks
     # @test !occursin("aug",fn)
-    
+
     fn = sprint() do io
-       Enzyme.Compiler.enzyme_code_llvm(io, sumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
+        Enzyme.Compiler.enzyme_code_llvm(io, sumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module = true)
     end
-    @test occursin("diffe",fn)
+    @test occursin("diffe", fn)
     # TODO we need to fix julia to remove unused bounds checks
     # @test !occursin("aug",fn)
-    
+
     fn = sprint() do io
-       Enzyme.Compiler.enzyme_code_llvm(io, sumsin, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
+        Enzyme.Compiler.enzyme_code_llvm(io, sumsin, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module = true)
     end
-    @test occursin("diffe",fn)
+    @test occursin("diffe", fn)
     # TODO we need to fix julia to remove unused bounds checks
     # @test !occursin("aug",fn)
-    
+
     fn = sprint() do io
-       Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true)
+        Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module = true)
     end
-    @test occursin("diffe",fn)
+    @test occursin("diffe", fn)
     # if count("call fastcc void @diffejulia__mapreduce", fn) != 1
     #     println(sprint() do io
     #        Enzyme.Compiler.enzyme_code_llvm(io, sqrtsumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module=true, run_enzyme=false, optimize=false)
@@ -164,11 +164,11 @@ sqrtsumsq2(x) = (sum(abs2, x)*sum(abs2,x))
     @test_broken count("call fastcc void @diffejulia__mapreduce", fn) == 1
     # TODO we need to have enzyme circumvent the double pointer issue by also considering a broader
     # no memory overwritten state [in addition to the arg-based variant]
-    @test_broken !occursin("aug",fn)
+    @test_broken !occursin("aug", fn)
 
     x = ones(100)
     dx = zeros(100)
-    Enzyme.autodiff(Reverse, sqrtsumsq2, Duplicated(x,dx))
+    Enzyme.autodiff(Reverse, sqrtsumsq2, Duplicated(x, dx))
 end
 
 @noinline function prt_sret(A)
@@ -177,7 +177,7 @@ end
 end
 
 @noinline function sretf(A2, x, c)
-    x[3] = c * A2[3]
+    return x[3] = c * A2[3]
 end
 
 @noinline function batchdecaysret0(x, A, b)
@@ -193,10 +193,12 @@ function batchdecaysret(x, A, b)
 end
 
 @testset "Batch Reverse sret fix" begin
-    Enzyme.autodiff(Reverse, batchdecaysret,
-                    BatchDuplicated(ones(3), (ones(3), ones(3))),
-                    BatchDuplicated(ones(3), (ones(3), ones(3))),
-                    BatchDuplicated(ones(3), (ones(3), ones(3))))
+    Enzyme.autodiff(
+        Reverse, batchdecaysret,
+        BatchDuplicated(ones(3), (ones(3), ones(3))),
+        BatchDuplicated(ones(3), (ones(3), ones(3))),
+        BatchDuplicated(ones(3), (ones(3), ones(3)))
+    )
 end
 
 struct MyClosure{A}
@@ -229,7 +231,7 @@ make3() = (1.0, 2.0, 3.0)
 
 @testset "Simple tests" begin
     f1(x) = 1.0 + x
-    f2(x) = x*x
+    f2(x) = x * x
     @test autodiff(Reverse, f1, Active, Active(1.0))[1][1] ≈ 1.0
     @test autodiff(Forward, f1, Duplicated, Duplicated(1.0, 1.0))[1] ≈ 1.0
     @test autodiff(ForwardWithPrimal, f1, Duplicated, Duplicated(1.0, 1.0))[1] ≈ 1.0
@@ -290,14 +292,14 @@ make3() = (1.0, 2.0, 3.0)
     test_scalar(Base.exp10, 1.0)
     test_scalar(Base.exp2, 1.0)
     test_scalar(Base.expm1, 1.0)
-    test_scalar(x->rem(x, 1), 0.7)
-    test_scalar(x->rem2pi(x,RoundDown), 0.7)
-    test_scalar(x->fma(x,x+1,x/3), 2.3)
-    test_scalar(sqrt, 1.7+2.1im)
-    
+    test_scalar(x -> rem(x, 1), 0.7)
+    test_scalar(x -> rem2pi(x, RoundDown), 0.7)
+    test_scalar(x -> fma(x, x + 1, x / 3), 2.3)
+    test_scalar(sqrt, 1.7 + 2.1im)
+
     @test autodiff(Forward, sincos, Duplicated(1.0, 1.0))[1][1] ≈ cos(1.0)
 
-    @test autodiff(Reverse, (x)->log(x), Active(2.0)) == ((0.5,),)
+    @test autodiff(Reverse, (x) -> log(x), Active(2.0)) == ((0.5,),)
 
     a = [3.14]
     da = [0.0]
@@ -333,7 +335,7 @@ end
 
 @testset "Deferred and deferred thunk" begin
     function dot(A)
-        return A[1] * A[1] + A[2] * A[2] 
+        return A[1] * A[1] + A[2] * A[2]
     end
     dA = zeros(2)
     A = [3.0, 5.0]
@@ -349,7 +351,7 @@ end
         ReverseSplitWithPrimal,
         Const{typeof(dot)}, Active, Duplicated{typeof(thunk_A)}
     )
-    @test Tuple{Float64,Float64}  === TapeType
+    @test Tuple{Float64, Float64} === TapeType
     Ret = Active
     fwd, rev = Enzyme.autodiff_deferred_thunk(
         ReverseSplitWithPrimal,
@@ -358,8 +360,8 @@ end
         Ret,
         Duplicated{typeof(thunk_A)}
     )
-    tape, primal, _  = fwd(Const(dot), dup)
-    @test isa(tape, Tuple{Float64,Float64})
+    tape, primal, _ = fwd(Const(dot), dup)
+    @test isa(tape, Tuple{Float64, Float64})
     rev(Const(dot), dup, 1.0, tape)
     @test all(primal == 34)
     @test all(dA .== [6.0, 10.0])
@@ -403,7 +405,7 @@ end
     mul2(z) = 2 * z
     square(z) = z * z
 
-    z = 1.0+1.0im
+    z = 1.0 + 1.0im
 
     @test_throws ErrorException autodiff(Reverse, mul2, Active, Active(z))
     @test_throws ErrorException autodiff(ReverseWithPrimal, mul2, Active, Active(z))
@@ -478,7 +480,7 @@ end
 
     function setinact2(z)
         z[1] *= 2
-        return 0.0+1.0im
+        return 0.0 + 1.0im
     end
 
     vals = Complex{Float64}[3.4 + 2.7im]
@@ -513,7 +515,7 @@ end
 
     function upgrade(z)
         z = ComplexF64(z)
-        return z*z
+        return z * z
     end
     @test autodiff(ReverseHolomorphic, upgrade, Active, Active(3.1))[1][1] ≈ 6.2
 end
@@ -533,14 +535,14 @@ end
     ∇x = Ref(0.0)
     ∇y = Ref(0.0)
 
-    autodiff(Reverse, (a,b)->a[]*b[], Active, Duplicated(x, ∇x), Duplicated(y, ∇y))
+    autodiff(Reverse, (a, b) -> a[] * b[], Active, Duplicated(x, ∇x), Duplicated(y, ∇y))
 
     @test ∇y[] == 1.0
     @test ∇x[] == 2.0
 end
 
 @testset "Simple tests" begin
-    g(x) = real((x + im)*(1 - im*x))
+    g(x) = real((x + im) * (1 - im * x))
     @test first(autodiff(Reverse, g, Active, Active(2.0))[1]) ≈ 2.0
     @test first(autodiff(Forward, g, Duplicated(2.0, 1.0))) ≈ 2.0
     @test first(autodiff(Reverse, g, Active, Active(3.0))[1]) ≈ 2.0
@@ -553,37 +555,37 @@ end
 @testset "Base functions" begin
     f1(x) = prod(ntuple(i -> i * x, 3))
     @test autodiff(Reverse, f1, Active, Active(2.0))[1][1] == 72
-    @test autodiff(Forward, f1, Duplicated(2.0, 1.0))[1]   == 72
+    @test autodiff(Forward, f1, Duplicated(2.0, 1.0))[1] == 72
 
     f2(x) = x * something(nothing, 2)
     @test autodiff(Reverse, f2, Active, Active(1.0))[1][1] == 2
-    @test autodiff(Forward, f2, Duplicated(1.0, 1.0))[1]   == 2
+    @test autodiff(Forward, f2, Duplicated(1.0, 1.0))[1] == 2
 
     f3(x) = x * sum(unique([x, 2.0, 2.0, 3.0]))
     @test autodiff(Reverse, f3, Active, Active(1.0))[1][1] == 7
-    @test autodiff(Forward, f3, Duplicated(1.0, 1.0))[1]   == 7
+    @test autodiff(Forward, f3, Duplicated(1.0, 1.0))[1] == 7
 
     for rf in (reduce, foldl, foldr)
         f4(x) = rf(*, [1.0, x, x, 3.0])
         @test autodiff(Reverse, f4, Active, Active(2.0))[1][1] == 12
-        @test autodiff(Forward, f4, Duplicated(2.0, 1.0))[1]   == 12
+        @test autodiff(Forward, f4, Duplicated(2.0, 1.0))[1] == 12
     end
 
     f5(x) = sum(accumulate(+, [1.0, x, x, 3.0]))
     @test autodiff(Reverse, f5, Active, Active(2.0))[1][1] == 5
-    @test autodiff(Forward, f5, Duplicated(2.0, 1.0))[1]   == 5
+    @test autodiff(Forward, f5, Duplicated(2.0, 1.0))[1] == 5
 
     f6(x) = x |> inv |> abs
-    @test autodiff(Reverse, f6, Active, Active(-2.0))[1][1] == 1/4
-    @test autodiff(Forward, f6, Duplicated(-2.0, 1.0))[1]   == 1/4
+    @test autodiff(Reverse, f6, Active, Active(-2.0))[1][1] == 1 / 4
+    @test autodiff(Forward, f6, Duplicated(-2.0, 1.0))[1] == 1 / 4
 
     f7(x) = (inv ∘ abs)(x)
-    @test autodiff(Reverse, f7, Active, Active(-2.0))[1][1] == 1/4
-    @test autodiff(Forward, f7, Duplicated(-2.0, 1.0))[1]   == 1/4
+    @test autodiff(Reverse, f7, Active, Active(-2.0))[1][1] == 1 / 4
+    @test autodiff(Forward, f7, Duplicated(-2.0, 1.0))[1] == 1 / 4
 
     f8(x) = x * count(i -> i > 1, [0.5, x, 1.5])
     @test autodiff(Reverse, f8, Active, Active(2.0))[1][1] == 2
-    @test autodiff(Forward, f8, Duplicated(2.0, 1.0))[1]   == 2
+    @test autodiff(Forward, f8, Duplicated(2.0, 1.0))[1] == 2
 
     Enzyme.API.strictAliasing!(false)
     function f9(x)
@@ -592,44 +594,44 @@ end
         return sum(y)
     end
     @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 8
-    @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 8
+    @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1] == 8
 
     Enzyme.API.strictAliasing!(true)
     f10(x) = hypot(x, 2x)
     @test autodiff(Reverse, f10, Active, Active(2.0))[1][1] == sqrt(5)
-    @test autodiff(Forward, f10, Duplicated(2.0, 1.0))[1]   == sqrt(5)
+    @test autodiff(Forward, f10, Duplicated(2.0, 1.0))[1] == sqrt(5)
 
     f11(x) = x * sum(LinRange(x, 10.0, 6))
     @test autodiff(Reverse, f11, Active, Active(2.0))[1][1] == 42
-    @test autodiff(Forward, f11, Duplicated(2.0, 1.0))[1]   == 42
+    @test autodiff(Forward, f11, Duplicated(2.0, 1.0))[1] == 42
 
     f12(x, k) = get(Dict(1 => 1.0, 2 => x, 3 => 3.0), k, 1.0)
-    @test autodiff(Reverse, f12, Active, Active(2.0),  Const(2))[1] == (1.0, nothing)
-    @test autodiff(Forward, f12, Duplicated(2.0, 1.0), Const(2))    == (1.0,)
-    @test autodiff(Reverse, f12, Active, Active(2.0),  Const(3))[1] == (0.0, nothing)
-    @test autodiff(Forward, f12, Duplicated(2.0, 1.0), Const(3))    == (0.0,)
-    @test autodiff(Reverse, f12, Active, Active(2.0),  Const(4))[1] == (0.0, nothing)
-    @test autodiff(Forward, f12, Duplicated(2.0, 1.0), Const(4))    == (0.0,)
+    @test autodiff(Reverse, f12, Active, Active(2.0), Const(2))[1] == (1.0, nothing)
+    @test autodiff(Forward, f12, Duplicated(2.0, 1.0), Const(2)) == (1.0,)
+    @test autodiff(Reverse, f12, Active, Active(2.0), Const(3))[1] == (0.0, nothing)
+    @test autodiff(Forward, f12, Duplicated(2.0, 1.0), Const(3)) == (0.0,)
+    @test autodiff(Reverse, f12, Active, Active(2.0), Const(4))[1] == (0.0, nothing)
+    @test autodiff(Forward, f12, Duplicated(2.0, 1.0), Const(4)) == (0.0,)
 
     f13(x) = muladd(x, 3, x)
     @test autodiff(Reverse, f13, Active, Active(2.0))[1][1] == 4
-    @test autodiff(Forward, f13, Duplicated(2.0, 1.0))[1]   == 4
+    @test autodiff(Forward, f13, Duplicated(2.0, 1.0))[1] == 4
 
     f14(x) = x * cmp(x, 3)
     @test autodiff(Reverse, f14, Active, Active(2.0))[1][1] == -1
-    @test autodiff(Forward, f14, Duplicated(2.0, 1.0))[1]   == -1
+    @test autodiff(Forward, f14, Duplicated(2.0, 1.0))[1] == -1
 
     f15(x) = x * argmax([1.0, 3.0, 2.0])
     @test autodiff(Reverse, f15, Active, Active(3.0))[1][1] == 2
-    @test autodiff(Forward, f15, Duplicated(3.0, 1.0))[1]   == 2
+    @test autodiff(Forward, f15, Duplicated(3.0, 1.0))[1] == 2
 
     f16(x) = evalpoly(2, (1, 2, x))
     @test autodiff(Reverse, f16, Active, Active(3.0))[1][1] == 4
-    @test autodiff(Forward, f16, Duplicated(3.0, 1.0))[1]   == 4
+    @test autodiff(Forward, f16, Duplicated(3.0, 1.0))[1] == 4
 
     f17(x) = @evalpoly(2, 1, 2, x)
     @test autodiff(Reverse, f17, Active, Active(3.0))[1][1] == 4
-    @test autodiff(Forward, f17, Duplicated(3.0, 1.0))[1]   == 4
+    @test autodiff(Forward, f17, Duplicated(3.0, 1.0))[1] == 4
 
     f18(x) = widemul(x, 5.0f0)
     @test autodiff(Reverse, f18, Active, Active(2.0f0))[1][1] == 5
@@ -637,22 +639,22 @@ end
 
     f19(x) = copysign(x, -x)
     @test autodiff(Reverse, f19, Active, Active(2.0))[1][1] == -1
-    @test autodiff(Forward, f19, Duplicated(2.0, 1.0))[1]   == -1
+    @test autodiff(Forward, f19, Duplicated(2.0, 1.0))[1] == -1
 
     f20(x) = sum([ifelse(i > 5, i, zero(i)) for i in [x, 2x, 3x, 4x]])
     @test autodiff(Reverse, f20, Active, Active(2.0))[1][1] == 7
-    @test autodiff(Forward, f20, Duplicated(2.0, 1.0))[1]   == 7
+    @test autodiff(Forward, f20, Duplicated(2.0, 1.0))[1] == 7
 
     function f21(x)
-        nt = (a=x, b=2x, c=3x)
+        nt = (a = x, b = 2x, c = 3x)
         return nt.c
     end
     @test autodiff(Reverse, f21, Active, Active(2.0))[1][1] == 3
-    @test autodiff(Forward, f21, Duplicated(2.0, 1.0))[1]   == 3
+    @test autodiff(Forward, f21, Duplicated(2.0, 1.0))[1] == 3
 
     f22(x) = sum(fill(x, (3, 3)))
     @test autodiff(Reverse, f22, Active, Active(2.0))[1][1] == 9
-    @test autodiff(Forward, f22, Duplicated(2.0, 1.0))[1]   == 9
+    @test autodiff(Forward, f22, Duplicated(2.0, 1.0))[1] == 9
 
     function f23(x)
         a = similar(rand(3, 3))
@@ -660,7 +662,7 @@ end
         return sum(a)
     end
     @test autodiff(Reverse, f23, Active, Active(2.0))[1][1] == 9
-    @test autodiff(Forward, f23, Duplicated(2.0, 1.0))[1]   == 9
+    @test autodiff(Forward, f23, Duplicated(2.0, 1.0))[1] == 9
 
     function f24(x)
         try
@@ -670,7 +672,7 @@ end
         end
     end
     @test autodiff(Reverse, f24, Active, Active(2.0))[1][1] == 3
-    @test autodiff(Forward, f24, Duplicated(2.0, 1.0))[1]   == 3
+    @test autodiff(Forward, f24, Duplicated(2.0, 1.0))[1] == 3
 
     function f25(x)
         try
@@ -681,35 +683,35 @@ end
         end
     end
     @test autodiff(Reverse, f25, Active, Active(2.0))[1][1] == 2
-    @test autodiff(Forward, f25, Duplicated(2.0, 1.0))[1]   == 2
+    @test autodiff(Forward, f25, Duplicated(2.0, 1.0))[1] == 2
 
     f26(x) = circshift([1.0, 2x, 3.0], 1)[end]
     @test autodiff(Reverse, f26, Active, Active(2.0))[1][1] == 2
-    @test autodiff(Forward, f26, Duplicated(2.0, 1.0))[1]   == 2
+    @test autodiff(Forward, f26, Duplicated(2.0, 1.0))[1] == 2
 
     f27(x) = repeat([x 3x], 3)[2, 2]
     @test autodiff(Reverse, f27, Active, Active(2.0))[1][1] == 3
-    @test autodiff(Forward, f27, Duplicated(2.0, 1.0))[1]   == 3
+    @test autodiff(Forward, f27, Duplicated(2.0, 1.0))[1] == 3
 
     f28(x) = x * sum(trues(4, 3))
     @test autodiff(Reverse, f28, Active, Active(2.0))[1][1] == 12
-    @test autodiff(Forward, f28, Duplicated(2.0, 1.0))[1]   == 12
+    @test autodiff(Forward, f28, Duplicated(2.0, 1.0))[1] == 12
 
     f29(x) = sum(Set([1.0, x, 2x, x]))
     @static if VERSION ≥ v"1.11-"
         @test autodiff(set_runtime_activity(Reverse), f29, Active, Active(2.0))[1][1] == 3
-        @test autodiff(set_runtime_activity(Forward), f29, Duplicated(2.0, 1.0))[1]   == 3
+        @test autodiff(set_runtime_activity(Forward), f29, Duplicated(2.0, 1.0))[1] == 3
     else
         @test autodiff(Reverse, f29, Active, Active(2.0))[1][1] == 3
-        @test autodiff(Forward, f29, Duplicated(2.0, 1.0))[1]   == 3
+        @test autodiff(Forward, f29, Duplicated(2.0, 1.0))[1] == 3
     end
 
     f30(x) = reverse([x 2.0 3x])[1]
     @test autodiff(Reverse, f30, Active, Active(2.0))[1][1] == 3
-    @test autodiff(Forward, f30, Duplicated(2.0, 1.0))[1]   == 3
+    @test autodiff(Forward, f30, Duplicated(2.0, 1.0))[1] == 3
 end
 
-function deadarg_pow(z::T, i) where {T<:Real}
+function deadarg_pow(z::T, i) where {T <: Real}
     zabs = abs(z)
     if sign(z) < zero(T)
         return (zabs^i) * (cos(T(π) * i) + sin(T(π) * i)im)
@@ -732,40 +734,40 @@ end
 
 @testset "1.11 vcat" begin
 
-        function fcat(x)
-           r = vcat(Any[1])
-           return x
-       end
+    function fcat(x)
+        r = vcat(Any[1])
+        return x
+    end
 
-       res = Enzyme.autodiff(Reverse, fcat, Active(2.0))
-       @test res[1][1] ≈ 1.0
+    res = Enzyme.autodiff(Reverse, fcat, Active(2.0))
+    @test res[1][1] ≈ 1.0
 
 end
 
 @testset "Taylor series tests" begin
 
-# Taylor series for `-log(1-x)`
-# eval at -log(1-1/2) = -log(1/2)
-function euroad(f::T) where T
-    g = zero(T)
-    for i in 1:10^7
-        g += f^i / i
+    # Taylor series for `-log(1-x)`
+    # eval at -log(1-1/2) = -log(1/2)
+    function euroad(f::T) where {T}
+        g = zero(T)
+        for i in 1:(10^7)
+            g += f^i / i
+        end
+        return g
     end
-    return g
-end
 
-euroad′(x) = first(autodiff(Reverse, euroad, Active, Active(x)))[1]
+    euroad′(x) = first(autodiff(Reverse, euroad, Active, Active(x)))[1]
 
-@test euroad(0.5) ≈ -log(0.5) # -log(1-x)
-@test euroad′(0.5) ≈ 2.0 # d/dx -log(1-x) = 1/(1-x)
-test_scalar(euroad, 0.5)
+    @test euroad(0.5) ≈ -log(0.5) # -log(1-x)
+    @test euroad′(0.5) ≈ 2.0 # d/dx -log(1-x) = 1/(1-x)
+    test_scalar(euroad, 0.5)
 end
 @noinline function womylogpdf(X::AbstractArray{<:Real})
-  map(womylogpdf, X)
+    return map(womylogpdf, X)
 end
 
 function womylogpdf(x::Real)
-    (x - 2)
+    return (x - 2)
 end
 
 
@@ -779,9 +781,9 @@ end
 end
 
 @testset "Nested AD" begin
-    tonest(x,y) = (x + y)^2
+    tonest(x, y) = (x + y)^2
 
-    @test autodiff(Forward, (x,y) -> autodiff(Forward, Const(tonest), Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
+    @test autodiff(Forward, (x, y) -> autodiff(Forward, Const(tonest), Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
 end
 
 @testset "Hessian" begin
@@ -791,8 +793,8 @@ end
     end
 
     function grad(x, dx, y, dy)
-      Enzyme.autodiff(Reverse, Const(origf), Duplicated(x, dx), DuplicatedNoNeed(y, dy))
-      nothing
+        Enzyme.autodiff(Reverse, Const(origf), Duplicated(x, dx), DuplicatedNoNeed(y, dy))
+        nothing
     end
 
     x = [2.0, 2.0]
@@ -807,11 +809,13 @@ end
     dx2 = [0.0, 0.0]
     dy = [1.0]
 
-    Enzyme.autodiff(Enzyme.Forward, grad,
-                    Enzyme.BatchDuplicated(x, vx),
-                    Enzyme.BatchDuplicated(dx2, hess),
-                    Const(y),
-                    Const(dy))
+    Enzyme.autodiff(
+        Enzyme.Forward, grad,
+        Enzyme.BatchDuplicated(x, vx),
+        Enzyme.BatchDuplicated(dx2, hess),
+        Const(y),
+        Const(dy)
+    )
 
     @test dx ≈ dx2
     @test hess[1][1] ≈ 2.0
@@ -876,7 +880,7 @@ end
     dx = make_zero(x)
     nested_df!(dx, x)
 
-    @test dx ≈ (sech.(x).^2)
+    @test dx ≈ (sech.(x) .^ 2)
 
     v = first(onehot(x))
     hv = make_zero(v)
@@ -885,7 +889,7 @@ end
 
 @testset "Array tests" begin
 
-    function arsum(f::Array{T}) where T
+    function arsum(f::Array{T}) where {T}
         g = zero(T)
         for elem in f
             g += elem
@@ -942,7 +946,7 @@ end
 end
 
 @testset "Advanced array tests" begin
-    function arsum2(f::Array{T}) where T
+    function arsum2(f::Array{T}) where {T}
         return sum(f)
     end
     inp = Float64[1.0, 2.0]
@@ -963,8 +967,8 @@ end
 
     f_dict(params, x) = params[:var] * x
 
-    @test autodiff(Reverse, f_dict, Const(params), Active(5.0)) == ((nothing, 10.0,),)
-    @test autodiff(Reverse, f_dict, Duplicated(params, dparams), Active(5.0)) == ((nothing, 10.0,),)
+    @test autodiff(Reverse, f_dict, Const(params), Active(5.0)) == ((nothing, 10.0),)
+    @test autodiff(Reverse, f_dict, Duplicated(params, dparams), Active(5.0)) == ((nothing, 10.0),)
     @test dparams[:var] == 5.0
 
 
@@ -975,7 +979,7 @@ end
 
     # TODO without Float64 on return
     # there is a potential phi bug
-    function sum_rec(d::Dict{Symbol,MD})::Float64
+    function sum_rec(d::Dict{Symbol, MD})::Float64
         s = 0.0
         for k in keys(d)
             s += d[k].v
@@ -986,11 +990,11 @@ end
 
     par = Dict{Symbol, MD}()
     par[:var] = MD(10.0, Dict{Symbol, MD}())
-    par[:sub] = MD(2.0, Dict{Symbol, MD}(:a=>MD(3.0, Dict{Symbol, MD}())))
+    par[:sub] = MD(2.0, Dict{Symbol, MD}(:a => MD(3.0, Dict{Symbol, MD}())))
 
     dpar = Dict{Symbol, MD}()
     dpar[:var] = MD(0.0, Dict{Symbol, MD}())
-    dpar[:sub] = MD(0.0, Dict{Symbol, MD}(:a=>MD(0.0, Dict{Symbol, MD}())))
+    dpar[:sub] = MD(0.0, Dict{Symbol, MD}(:a => MD(0.0, Dict{Symbol, MD}())))
 
     # TODO
     # autodiff(Reverse, sum_rec, Duplicated(par, dpar))
@@ -1004,12 +1008,12 @@ let
     function loadsin2(xp)
         x = @inbounds xp[1]
         @inbounds xp[1] = 0.0
-        sin(x)
+        return sin(x)
     end
     global invsin2
     function invsin2(xp)
         xp = Base.invokelatest(convert, Vector{Float64}, xp)
-        loadsin2(xp)
+        return loadsin2(xp)
     end
     x = [2.0]
 end
@@ -1022,29 +1026,29 @@ end
 end
 
 function grad_closure(f, x)
-    function noretval(x,res)
+    function noretval(x, res)
         y = f(x)
-        copyto!(res,y)
+        copyto!(res, y)
         return nothing
     end
     n = length(x)
     dx = zeros(n)
-    y  = zeros(n)
+    y = zeros(n)
     dy = zeros(n)
     dy[1] = 1.0
 
-    autodiff(Reverse, Const(noretval), Duplicated(x,dx), Duplicated(y, dy))
+    autodiff(Reverse, Const(noretval), Duplicated(x, dx), Duplicated(y, dy))
     return dx
 end
 
 @testset "Closure" begin
-    x = [2.0,6.0]
-    dx = grad_closure(x->[x[1], x[2]], x)
+    x = [2.0, 6.0]
+    dx = grad_closure(x -> [x[1], x[2]], x)
     @test dx == [1.0, 0.0]
 end
 
 @testset "Advanced array tests sq" begin
-    function arsumsq(f::Array{T}) where T
+    function arsumsq(f::Array{T}) where {T}
         return sum(f) * sum(f)
     end
     inp = Float64[1.0, 2.0]
@@ -1058,7 +1062,7 @@ end
     function fneg(x::Float64)
         xptr = reinterpret(Int64, x)
         y = Int64(-9223372036854775808)
-        out = y ⊻ xptr;
+        out = y ⊻ xptr
         return reinterpret(Float64, out)
     end
     @test autodiff(Reverse, fneg, Active, Active(2.0))[1][1] ≈ -1.0
@@ -1066,7 +1070,7 @@ end
     function expor(x::Float64)
         xptr = reinterpret(Int64, x)
         y = UInt64(4607182418800017408)
-        out = y | xptr;
+        out = y | xptr
         return reinterpret(Float64, out)
     end
     @test autodiff(Reverse, expor, Active, Active(0.42))[1][1] ≈ 4.0
@@ -1076,14 +1080,14 @@ end
 @testset "Reshape Activity" begin
     function f(x, bias)
         mout = x + @inbounds vec(bias)[1]
-       sin(mout)
+        sin(mout)
     end
 
-    x  = [2.0,]
+    x = [2.0]
 
     bias = Float32[0.0;;;]
     res = Enzyme.autodiff(Reverse, f, Active, Active(x[1]), Const(bias))
-    
+
     @test bias[1][1] ≈ 0.0
     @test res[1][1] ≈ cos(x[1])
 end
@@ -1130,13 +1134,13 @@ end
 
     ps =
         (
-            b2 = 1.0f0,
-        )
+        b2 = 1.0f0,
+    )
 
     grads =
         (
-            b2 = 0.0f0,
-        )
+        b2 = 0.0f0,
+    )
 
     t1 = Leaf(ps)
     t1Grads = Leaf(grads)
@@ -1145,7 +1149,7 @@ end
     tape, primal, shadow = forward(Const(LeafF), Duplicated(t1, t1Grads))
 
 
-    struct Foo2{X,Y}
+    struct Foo2{X, Y}
         x::X
         y::Y
     end
@@ -1157,24 +1161,24 @@ end
 end
 
 @testset "Method errors" begin
-     fwd = Enzyme.autodiff_thunk(Forward, Const{typeof(sum)}, Duplicated, Duplicated{Vector{Float64}})
-     @test_throws MethodError fwd(ones(10))
-     @test_throws MethodError fwd(Duplicated(ones(10), ones(10)))
-     @test_throws MethodError fwd(Const(first), Duplicated(ones(10), ones(10)))
-     # TODO
-     # @test_throws MethodError fwd(Const(sum), Const(ones(10)))
-     fwd(Const(sum), Duplicated(ones(10), ones(10)))
+    fwd = Enzyme.autodiff_thunk(Forward, Const{typeof(sum)}, Duplicated, Duplicated{Vector{Float64}})
+    @test_throws MethodError fwd(ones(10))
+    @test_throws MethodError fwd(Duplicated(ones(10), ones(10)))
+    @test_throws MethodError fwd(Const(first), Duplicated(ones(10), ones(10)))
+    # TODO
+    # @test_throws MethodError fwd(Const(sum), Const(ones(10)))
+    fwd(Const(sum), Duplicated(ones(10), ones(10)))
 end
 
 @testset "Generic Active Union Return" begin
 
     function generic_union_ret(A)
-            if 0 < length(A)
-                @inbounds A[1]
-            else
-                nothing
-                Base._InitialValue()
-            end
+        if 0 < length(A)
+            @inbounds A[1]
+        else
+            nothing
+            Base._InitialValue()
+        end
     end
 
     function outergeneric(weights::Vector{Float64})::Float64
@@ -1187,30 +1191,30 @@ end
 
     Enzyme.autodiff(Enzyme.Reverse, outergeneric, Enzyme.Duplicated(weights, dweights))
 
-    @test dweights[1] ≈ 1.
+    @test dweights[1] ≈ 1.0
 end
 
-function Valuation1(z,Ls1)
+function Valuation1(z, Ls1)
     @inbounds Ls1[1] = sum(Base.inferencebarrier(z))
     return nothing
 end
 @testset "Active setindex!" begin
-    v=ones(5)
-    dv=zero(v)
+    v = ones(5)
+    dv = zero(v)
 
-    DV1=Float32[0]
-    DV2=Float32[1]
+    DV1 = Float32[0]
+    DV2 = Float32[1]
 
-    Enzyme.autodiff(Reverse,Valuation1,Duplicated(v,dv),Duplicated(DV1,DV2))
-    @test dv[1] ≈ 1.
-    
-    DV1=Float32[0]
-    DV2=Float32[1]
-    v=ones(5)
-    dv=zero(v)
-    dv[1] = 1.    
-    Enzyme.autodiff(Forward,Valuation1,Duplicated(v,dv),Duplicated(DV1,DV2))
-    @test DV2[1] ≈ 1.
+    Enzyme.autodiff(Reverse, Valuation1, Duplicated(v, dv), Duplicated(DV1, DV2))
+    @test dv[1] ≈ 1.0
+
+    DV1 = Float32[0]
+    DV2 = Float32[1]
+    v = ones(5)
+    dv = zero(v)
+    dv[1] = 1.0
+    Enzyme.autodiff(Forward, Valuation1, Duplicated(v, dv), Duplicated(DV1, DV2))
+    @test DV2[1] ≈ 1.0
 end
 
 @testset "Null init union" begin
@@ -1232,46 +1236,46 @@ end
     forward, pullback = Enzyme.autodiff_thunk(ReverseSplitModified(ReverseSplitNoPrimal, Val((false, true))), Const{typeof(fwdunion)}, Active, Duplicated{Vector{Float64}})
     tape, primal, shadow = forward(Const(fwdunion), Duplicated(data, ddata))
 
-	function firstimpl(itr)
-		v = firstfold(itr)
-		@assert !(v isa Base._InitialValue)
-		return v
-	end
+    function firstimpl(itr)
+        v = firstfold(itr)
+        @assert !(v isa Base._InitialValue)
+        return v
+    end
 
-	function firstfold(itr)
-		op, itr = Base._xfadjoint(Base.BottomRF(Base.add_sum), Base.Generator(Base.identity, itr))
-		y = iterate(itr)
-		init = Base._InitialValue()
-		y === nothing && return init
-		v = op(init, y[1])
-		return v
-	end
+    function firstfold(itr)
+        op, itr = Base._xfadjoint(Base.BottomRF(Base.add_sum), Base.Generator(Base.identity, itr))
+        y = iterate(itr)
+        init = Base._InitialValue()
+        y === nothing && return init
+        v = op(init, y[1])
+        return v
+    end
 
-	function smallrf(weights::Vector{Float64}, data::Vector{Float64})::Float64
-		itr1 = (weight for (weight, mean) in zip(weights, weights))
+    function smallrf(weights::Vector{Float64}, data::Vector{Float64})::Float64
+        itr1 = (weight for (weight, mean) in zip(weights, weights))
 
-		itr2 = (firstimpl(itr1) for x in data)
+        itr2 = (firstimpl(itr1) for x in data)
 
-		firstimpl(itr2)
-	end
+        firstimpl(itr2)
+    end
 
-	data = ones(Float64, 1)
+    data = ones(Float64, 1)
 
-	weights = [0.2]
-	dweights = [0.0]
+    weights = [0.2]
+    dweights = [0.0]
     # Technically this test doesn't need runtimeactivity since the closure combo of active itr1 and const data
     # doesn't use any of the const data values, but now that we error for activity confusion, we need to
     # mark runtimeActivity to let this pass
     Enzyme.autodiff(set_runtime_activity(Enzyme.Reverse), Const(smallrf), Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
-    @test dweights[1] ≈ 1.
+    @test dweights[1] ≈ 1.0
 
     function invokesum(weights::Vector{Float64}, data::Vector{Float64})::Float64
         sum(
             sum(
-                weight
-                for (weight, mean) in zip(weights, weights)
-            )
-            for x in data
+                    weight
+                    for (weight, mean) in zip(weights, weights)
+                )
+                for x in data
         )
     end
 
@@ -1281,20 +1285,20 @@ end
     dweights = [0.0, 0.0]
 
     Enzyme.autodiff(set_runtime_activity(Enzyme.Reverse), invokesum, Enzyme.Duplicated(weights, dweights), Enzyme.Const(data))
-    @test dweights[1] ≈ 20.
-    @test dweights[2] ≈ 20.
+    @test dweights[1] ≈ 20.0
+    @test dweights[2] ≈ 20.0
 end
 
 
 abstract type AbsFwdType end
 
 # Two copies of the same type.
-struct FwdNormal1{T<:Real} <: AbsFwdType
-σ::T
+struct FwdNormal1{T <: Real} <: AbsFwdType
+    σ::T
 end
 
-struct FwdNormal2{T<:Real} <: AbsFwdType
-σ::T
+struct FwdNormal2{T <: Real} <: AbsFwdType
+    σ::T
 end
 
 fwdlogpdf(d) = d.σ
@@ -1305,32 +1309,32 @@ function simple_absactfunc(x)
 end
 
 @testset "Simple Forward Mode active runtime activity" begin
-    res = Enzyme.autodiff(set_runtime_activity(Enzyme.ForwardWithPrimal), Enzyme.Const(simple_absactfunc),  Duplicated{Float64}, Duplicated(2.7, 3.1))
+    res = Enzyme.autodiff(set_runtime_activity(Enzyme.ForwardWithPrimal), Enzyme.Const(simple_absactfunc), Duplicated{Float64}, Duplicated(2.7, 3.1))
     @test res[1] == 0.0
     @test res[2] == 1.0
 
-    res = Enzyme.autodiff(set_runtime_activity(Enzyme.Forward), Enzyme.Const(simple_absactfunc),  Duplicated{Float64}, Duplicated(2.7, 3.1))
+    res = Enzyme.autodiff(set_runtime_activity(Enzyme.Forward), Enzyme.Const(simple_absactfunc), Duplicated{Float64}, Duplicated(2.7, 3.1))
     @test res[1] == 0.0
 
 
     @static if VERSION < v"1.11-"
     else
-    res = Enzyme.autodiff(Enzyme.ForwardWithPrimal, Enzyme.Const(simple_absactfunc),  Duplicated{Float64}, Duplicated(2.7, 3.1))
-    @test res[1] == 0.0
-    @test res[2] == 1.0
+        res = Enzyme.autodiff(Enzyme.ForwardWithPrimal, Enzyme.Const(simple_absactfunc), Duplicated{Float64}, Duplicated(2.7, 3.1))
+        @test res[1] == 0.0
+        @test res[2] == 1.0
 
-    res = Enzyme.autodiff(Enzyme.Forward, Enzyme.Const(simple_absactfunc),  Duplicated{Float64}, Duplicated(2.7, 3.1))
-    @test res[1] == 0.0
+        res = Enzyme.autodiff(Enzyme.Forward, Enzyme.Const(simple_absactfunc), Duplicated{Float64}, Duplicated(2.7, 3.1))
+        @test res[1] == 0.0
     end
 end
 
 function absactfunc(x)
-	dists = AbsFwdType[FwdNormal1{Float64}(1.0), FwdNormal2{Float64}(x)]
-	res = Vector{Float64}(undef, 2)
-	for i in 1:length(dists)
-	    @inbounds res[i] = fwdlogpdf(dists[i])
-	end
-	return @inbounds res[1] + @inbounds res[2]
+    dists = AbsFwdType[FwdNormal1{Float64}(1.0), FwdNormal2{Float64}(x)]
+    res = Vector{Float64}(undef, 2)
+    for i in 1:length(dists)
+        @inbounds res[i] = fwdlogpdf(dists[i])
+    end
+    return @inbounds res[1] + @inbounds res[2]
 end
 
 @testset "Forward Mode active runtime activity" begin
@@ -1345,7 +1349,7 @@ end
 @testset "Dot product" for T in (Float32, Float64)
     xx = rand(T, 10)
     grads = zeros(T, size(xx))
-    autodiff(Reverse, (y) -> mapreduce(x -> x*x, +, y), Duplicated(xx, grads))
+    autodiff(Reverse, (y) -> mapreduce(x -> x * x, +, y), Duplicated(xx, grads))
     @test xx .* 2 == grads
 
     xx = rand(T, 10)
@@ -1370,7 +1374,7 @@ end
     x = 0.2 + sin(3.0)
     fd = central_fdm(5, 1)(asin, x)
 
-    @test fd ≈ 1/sqrt(1-x*x)
+    @test fd ≈ 1 / sqrt(1 - x * x)
     @test fd ≈ first(autodiff(Reverse, asin, Active, Active(x)))[1]
     @test fd ≈ first(autodiff(Forward, asin, Duplicated(x, 1.0)))
     test_scalar(asin, x)
@@ -1385,14 +1389,14 @@ end
     x = 3.0
     fd = central_fdm(5, 1)(foo, x)
 
-    @test fd ≈ cos(x)/sqrt(1-(0.2+sin(x))*(0.2+sin(x)))
+    @test fd ≈ cos(x) / sqrt(1 - (0.2 + sin(x)) * (0.2 + sin(x)))
     @test fd ≈ first(autodiff(Reverse, foo, Active, Active(x)))[1]
     @test fd ≈ first(autodiff(Forward, foo, Duplicated(x, 1.0)))
     test_scalar(foo, x)
 
     # Input type shouldn't matter
     x = 3
-    @test fd ≈ cos(x)/sqrt(1-(0.2+sin(x))*(0.2+sin(x)))
+    @test fd ≈ cos(x) / sqrt(1 - (0.2 + sin(x)) * (0.2 + sin(x)))
     @test fd ≈ first(autodiff(Reverse, foo, Active, Active(x)))[1]
     # They do matter for duplicated, which can't be auto promoted
     # @test fd ≈ first(autodiff(Forward, foo, Duplicated(x, 1)))
@@ -1403,11 +1407,11 @@ end
 end
 
 @testset "SinCos" begin
-	function sumsincos(theta)
-		a, b = sincos(theta)
-		return a + b
-	end
-    test_scalar(sumsincos, 1.0, rtol=1e-5, atol=1e-5)
+    function sumsincos(theta)
+        a, b = sincos(theta)
+        return a + b
+    end
+    test_scalar(sumsincos, 1.0, rtol = 1.0e-5, atol = 1.0e-5)
 end
 
 @testset "BoxFloat" begin
@@ -1425,16 +1429,16 @@ end
 """
     J(ν, z) := ∑ (−1)^k / Γ(k+1) / Γ(k+ν+1) * (z/2)^(ν+2k)
 """
-function mybesselj(ν, z, atol=1e-8)
+function mybesselj(ν, z, atol = 1.0e-8)
     k = 0
-    s = (z/2)^ν / factorial(ν)
+    s = (z / 2)^ν / factorial(ν)
     out = s
     while abs(s) > atol
         k += 1
-        s *= (-1) / k / (k+ν) * (z/2)^2
+        s *= (-1) / k / (k + ν) * (z / 2)^2
         out += s
     end
-    out
+    return out
 end
 mybesselj0(z) = mybesselj(0, z)
 mybesselj1(z) = mybesselj(1, z)
@@ -1444,9 +1448,9 @@ mybesselj1(z) = mybesselj(1, z)
     autodiff(Reverse, mybesselj, Active, Const(0), Active(1.0))
     autodiff(Forward, mybesselj, Const(0), Duplicated(1.0, 1.0))
     autodiff(Forward, mybesselj, Const(0), Duplicated(1.0, 1.0))
-    @testset "besselj0/besselj1" for x in (1.0, -1.0, 0.0, 0.5, 10, -17.1,) # 1.5 + 0.7im)
-        test_scalar(mybesselj0, x, rtol=1e-5, atol=1e-5)
-        test_scalar(mybesselj1, x, rtol=1e-5, atol=1e-5)
+    @testset "besselj0/besselj1" for x in (1.0, -1.0, 0.0, 0.5, 10, -17.1) # 1.5 + 0.7im)
+        test_scalar(mybesselj0, x, rtol = 1.0e-5, atol = 1.0e-5)
+        test_scalar(mybesselj1, x, rtol = 1.0e-5, atol = 1.0e-5)
     end
 end
 
@@ -1474,7 +1478,7 @@ end
 const nn = MyTensorLayer([LegendreBasis(10)])
 
 function dxdt_pred(x)
-  return fn(nn, x)
+    return fn(nn, x)
 end
 
 @testset "AbstractType calling convention" begin
@@ -1495,21 +1499,21 @@ end
 
 
 mutable struct RTGData
-	x
+    x
 end
 
 @noinline function rtg_sub(V, cv)
-	return cv
+    return cv
 end
 
 @noinline function rtg_cast(cv)
-	return cv
+    return cv
 end
 
-function rtg_f(V,@nospecialize(cv))
-	s = rtg_sub(V, Base.inferencebarrier(cv))::RTGData
-	s = rtg_cast(Base.inferencebarrier(s.x))::Float64
-	return s
+function rtg_f(V, @nospecialize(cv))
+    s = rtg_sub(V, Base.inferencebarrier(cv))::RTGData
+    s = rtg_cast(Base.inferencebarrier(s.x))::Float64
+    return s
 end
 
 @testset "RuntimeActivity generic call" begin
@@ -1520,10 +1524,10 @@ end
 
 @inline function myquantile(v::AbstractVector, p::Real; alpha)
     n = length(v)
-    
+
     m = 1.0 + p * (1.0 - alpha - 1.0)
-    aleph = n*p + oftype(p, m)
-    j = clamp(trunc(Int, aleph), 1, n-1)
+    aleph = n * p + oftype(p, m)
+    j = clamp(trunc(Int, aleph), 1, n - 1)
     γ = clamp(aleph - j, 0, 1)
 
     if n == 1
@@ -1533,19 +1537,19 @@ end
         a = @inbounds v[j]
         b = @inbounds v[j + 1]
     end
-    
-    return a + γ*(b-a)
+
+    return a + γ * (b - a)
 end
 
 function fquantile(x)
     v = [1.0, x]
-    return @inbounds (map(y->myquantile(v, y, alpha=1.), [0.7]))[1]
+    return @inbounds (map(y -> myquantile(v, y, alpha = 1.0), [0.7]))[1]
 end
 
 @testset "Attributor issues" begin
 
     cor = fquantile(2.0)
-    res = autodiff(ForwardWithPrimal, fquantile, Duplicated,Duplicated(2.0, 1.0))
+    res = autodiff(ForwardWithPrimal, fquantile, Duplicated, Duplicated(2.0, 1.0))
     @test cor ≈ res[2]
     @test 0.7 ≈ res[1]
 
@@ -1553,9 +1557,9 @@ end
 
 @testset "Threads" begin
     cmd = `$(Base.julia_cmd()) --threads=1 --startup-file=no threads.jl`
-   	@test success(pipeline(cmd, stderr=stderr, stdout=stdout))
+    @test success(pipeline(cmd, stderr = stderr, stdout = stdout))
     cmd = `$(Base.julia_cmd()) --threads=2 --startup-file=no threads.jl`
-   	@test success(pipeline(cmd, stderr=stderr, stdout=stdout))
+    @test success(pipeline(cmd, stderr = stderr, stdout = stdout))
 end
 
 @testset "DiffTest" begin
@@ -1567,7 +1571,7 @@ end
 
     # f returns Number
     @testset "Number to Number" for f in DiffTests.NUMBER_TO_NUMBER_FUNCS
-        test_scalar(f, n; rtol=1e-6, atol=1e-6)
+        test_scalar(f, n; rtol = 1.0e-6, atol = 1.0e-6)
     end
 
     @testset "Vector to Number" for f in DiffTests.VECTOR_TO_NUMBER_FUNCS
@@ -1580,7 +1584,7 @@ end
     end
 
     @testset "Matrix to Number" for f in DiffTests.MATRIX_TO_NUMBER_FUNCS
-        test_matrix_to_number(f, x; rtol=1e-6, atol=1e-6)
+        test_matrix_to_number(f, x; rtol = 1.0e-6, atol = 1.0e-6)
     end
 
     # TODO(vchuravy/wsmoses): Enable these tests
@@ -1623,7 +1627,7 @@ end
 
     function printsq(x)
         println(x)
-        x*x
+        x * x
     end
 
     @test 4.6 ≈ first(autodiff(Reverse, printsq, Active, Active(2.3)))[1]
@@ -1631,7 +1635,7 @@ end
 
     function tostring(x)
         string(x)
-        x*x
+        x * x
     end
 
     @test 4.6 ≈ first(autodiff(Reverse, tostring, Active, Active(2.3)))[1]
@@ -1639,7 +1643,7 @@ end
 end
 
 @testset "hmlstm" begin
-    sigm(x)  = @fastmath 1 / (1 + exp(-x))
+    sigm(x) = @fastmath 1 / (1 + exp(-x))
     @fastmath function hmlstm_update_c_scalar(z, zb, c, f, i, g)
         if z == 1.0f0 # FLUSH
             return sigm(i) * tanh(g)
@@ -1678,54 +1682,54 @@ end
 end
 
 @testset "No speculation" begin
-	mutable struct SpecFoo
+    mutable struct SpecFoo
 
-		iters::Int
-		a::Float64
-		b::Vector{Float64}
+        iters::Int
+        a::Float64
+        b::Vector{Float64}
 
-	end
+    end
 
-	function f(Foo)
-		for i = 1:Foo.iters
+    function f(Foo)
+        for i in 1:Foo.iters
 
-			c = -1.0
+            c = -1.0
 
-			if Foo.a < 0.0
-				X = (-Foo.a)^0.25
-				c = 2*log(X)
-			end
+            if Foo.a < 0.0
+                X = (-Foo.a)^0.25
+                c = 2 * log(X)
+            end
 
-			# set b equal to desired result
-			Foo.b[1] = 1.0 / c
+            # set b equal to desired result
+            Foo.b[1] = 1.0 / c
 
-			return nothing
-		end
-	end
+            return nothing
+        end
+    end
 
-	foo  = SpecFoo(1, 1.0, zeros(Float64, 1))
-	dfoo = SpecFoo(0, 0.0, zeros(Float64, 1))
+    foo = SpecFoo(1, 1.0, zeros(Float64, 1))
+    dfoo = SpecFoo(0, 0.0, zeros(Float64, 1))
 
-	# should not throw a domain error, which
-	# will occur if the pow is mistakenly speculated
-	Enzyme.autodiff(Reverse, f, Duplicated(foo, dfoo))
+    # should not throw a domain error, which
+    # will occur if the pow is mistakenly speculated
+    Enzyme.autodiff(Reverse, f, Duplicated(foo, dfoo))
 end
 
 genlatestsin(x)::Float64 = Base.invokelatest(sin, x)
 function genlatestsinx(xp)
     x = @inbounds xp[1]
     @inbounds xp[1] = 0.0
-    Base.invokelatest(sin, x)::Float64 + 1
+    return Base.invokelatest(sin, x)::Float64 + 1
 end
 
 function loadsin(xp)
     x = @inbounds xp[1]
     @inbounds xp[1] = 0.0
-    sin(x)
+    return sin(x)
 end
 function invsin(xp)
     xp = Base.invokelatest(convert, Vector{Float64}, xp)
-    loadsin(xp)
+    return loadsin(xp)
 end
 
 @testset "generic" begin
@@ -1744,40 +1748,41 @@ end
     @test 0 ≈ x[1]
     @test -0.4161468365471424 ≈ dx[1]
 
-	function inactive_gen(x)
-		n = 1
-		for k in 1:2
-			y = falses(n)
-		end
-		return x
-	end
-    @test 1.0 ≈ Enzyme.autodiff(Reverse, inactive_gen, Active, Active(1E4))[1][1]
-	@test 1.0 ≈ Enzyme.autodiff(Forward, inactive_gen, Duplicated(1E4, 1.0))[1]
+    function inactive_gen(x)
+        n = 1
+        for k in 1:2
+            y = falses(n)
+        end
+        return x
+    end
+    @test 1.0 ≈ Enzyme.autodiff(Reverse, inactive_gen, Active, Active(1.0e4))[1][1]
+    @test 1.0 ≈ Enzyme.autodiff(Forward, inactive_gen, Duplicated(1.0e4, 1.0))[1]
 
     function whocallsmorethan30args(R)
-        temp = diag(R)     
-         R_inv = [temp[1] 0. 0. 0. 0. 0.; 
-             0. temp[2] 0. 0. 0. 0.; 
-             0. 0. temp[3] 0. 0. 0.; 
-             0. 0. 0. temp[4] 0. 0.; 
-             0. 0. 0. 0. temp[5] 0.; 
-         ]
-    
+        temp = diag(R)
+        R_inv = [
+            temp[1] 0.0 0.0 0.0 0.0 0.0;
+            0.0 temp[2] 0.0 0.0 0.0 0.0;
+            0.0 0.0 temp[3] 0.0 0.0 0.0;
+            0.0 0.0 0.0 temp[4] 0.0 0.0;
+            0.0 0.0 0.0 0.0 temp[5] 0.0;
+        ]
+
         return sum(R_inv)
     end
-    
-    R = zeros(6,6)    
+
+    R = zeros(6, 6)
     dR = zeros(6, 6)
 
     @static if VERSION ≥ v"1.11-"
     elseif VERSION ≥ v"1.10.8"
         autodiff(Reverse, whocallsmorethan30args, Active, Duplicated(R, dR))
-    	@test 1.0 ≈ dR[1, 1]
-    	@test 1.0 ≈ dR[2, 2]
-    	@test 1.0 ≈ dR[3, 3]
-    	@test 1.0 ≈ dR[4, 4]
-    	@test 1.0 ≈ dR[5, 5]
-    	@test 0.0 ≈ dR[6, 6]
+        @test 1.0 ≈ dR[1, 1]
+        @test 1.0 ≈ dR[2, 2]
+        @test 1.0 ≈ dR[3, 3]
+        @test 1.0 ≈ dR[4, 4]
+        @test 1.0 ≈ dR[5, 5]
+        @test 0.0 ≈ dR[6, 6]
     else
         @test_broken autodiff(Reverse, whocallsmorethan30args, Active, Duplicated(R, dR))
     end
@@ -1788,13 +1793,13 @@ end
 
     function invtest(arr)
         function f()
-           arr[1] *= 5.0
-           nothing
+            arr[1] *= 5.0
+            nothing
         end
         apply(f)
     end
 
-    x  = [2.0]
+    x = [2.0]
     dx = [1.0]
 
     Enzyme.autodiff(Reverse, invtest, Duplicated(x, dx))
@@ -1845,7 +1850,7 @@ end
 
 
     function revfoo(out, x)
-        out[] = x*x
+        out[] = x * x
         nothing
     end
 
@@ -1880,15 +1885,15 @@ end
 
 
 function batchgf(out, args)
-	res = 0.0
+    res = 0.0
     x = Base.inferencebarrier((args[1][1],))
-	for v in x
-		v = v::Float64
-		res += v
+    for v in x
+        v = v::Float64
+        res += v
         break
-	end
+    end
     out[] = res
-	nothing
+    return nothing
 end
 
 @testset "Batch Getfield" begin
@@ -1911,7 +1916,7 @@ end
 
 @testset "Dynamic Val Construction" begin
 
-    dyn_f(::Val{D}) where D = prod(D)
+    dyn_f(::Val{D}) where {D} = prod(D)
     dyn_mwe(x, t) = x / dyn_f(Val(t))
 
     @test 0.5 ≈ Enzyme.autodiff(Reverse, dyn_mwe, Active, Active(1.0), Const((1, 2)))[1][1]
@@ -1934,13 +1939,13 @@ sinadd(x, y) = (sin.(x) .+ (y))
     # works since aliasing is "simple"
     autodiff(Reverse, foo_bc!, Const, Duplicated(R, dR), Duplicated(R, dR), Duplicated(B, dB))
 
-    A = rand(10,10); B = rand(10, 10)
+    A = rand(10, 10); B = rand(10, 10)
     dA = zero(A); dB = zero(B); dR = fill!(similar(A), 1)
 
     autodiff(Reverse, foo_bc!, Const, Duplicated(A, dR), Duplicated(transpose(A), transpose(dA)), Duplicated(B, dB))
 
     # no runtime activity required
-    res = autodiff(Forward, sinadd, Duplicated([2.7], [4.2]), Const([.31]))[1]
+    res = autodiff(Forward, sinadd, Duplicated([2.7], [4.2]), Const([0.31]))[1]
     @test [-3.7971029964716574] ≈ res
 end
 
@@ -1954,19 +1959,21 @@ end
         @test 1.0 ≈ fo[i]
     end
 
-    @test_throws ErrorException autodiff(Forward, x->x, Active(2.1))
+    @test_throws ErrorException autodiff(Forward, x -> x, Active(2.1))
 end
 
 @testset "Mismatched return" begin
-    @test_throws ErrorException autodiff(Reverse, _->missing, Active, Active(2.1))
-    @test_throws ErrorException autodiff_deferred(Reverse, Const(_->missing), Active, Active(2.1))
+    @test_throws ErrorException autodiff(Reverse, _ -> missing, Active, Active(2.1))
+    @test_throws ErrorException autodiff_deferred(Reverse, Const(_ -> missing), Active, Active(2.1))
 end
 
 @testset "GCPreserve" begin
     function f(x, y)
         GC.@preserve x y begin
-            ccall(:memcpy, Cvoid,
-                (Ptr{Float64},Ptr{Float64},Csize_t), x, y, 8)
+            ccall(
+                :memcpy, Cvoid,
+                (Ptr{Float64}, Ptr{Float64}, Csize_t), x, y, 8
+            )
         end
         nothing
     end
@@ -2023,8 +2030,8 @@ end
 
 @testset "GCPreserve2" begin
     function f!(a_out, a_in)
-           a_out[1:end-1] .= a_in[2:end]
-           return nothing
+        a_out[1:(end - 1)] .= a_in[2:end]
+        return nothing
     end
     a_in = rand(4)
     a_out = a_in
@@ -2058,29 +2065,29 @@ end
 end
 
 @testset "Return GC error" begin
-	t = 0.0
+    t = 0.0
 
-	function tobedifferentiated(cond, a)::Float64
-		if cond
-			t + t
-		else
-			0.0
-		end
-	end
+    function tobedifferentiated(cond, a)::Float64
+        if cond
+            t + t
+        else
+            0.0
+        end
+    end
 
     @test 0.0 ≈ autodiff(Reverse, tobedifferentiated, Const(true), Active(2.1))[1][2]
-	@test 0.0 ≈ autodiff(Forward, tobedifferentiated, Const(true), Duplicated(2.1, 1.0))[1]
+    @test 0.0 ≈ autodiff(Forward, tobedifferentiated, Const(true), Duplicated(2.1, 1.0))[1]
 
-	function tobedifferentiated2(cond, a)::Float64
-		if cond
-			a + t
-		else
-			0.0
-		end
-	end
+    function tobedifferentiated2(cond, a)::Float64
+        if cond
+            a + t
+        else
+            0.0
+        end
+    end
 
     @test 1.0 ≈ autodiff(Reverse, tobedifferentiated2, Const(true), Active(2.1))[1][2]
-	@test 1.0 ≈ autodiff(Forward, tobedifferentiated2, Const(true), Duplicated(2.1, 1.0))[1]
+    @test 1.0 ≈ autodiff(Forward, tobedifferentiated2, Const(true), Duplicated(2.1, 1.0))[1]
 
     @noinline function copy(dest, p1, cond)
         bc = convert(Broadcast.Broadcasted{Nothing}, Broadcast.instantiate(p1))
@@ -2140,7 +2147,7 @@ typeunknownvec = Float64[]
 
 @testset "GC Sret 2" begin
 
-    struct AGriddedInterpolation{K<:Tuple{Vararg{AbstractVector}}} <: AbstractArray{Float64, 1}
+    struct AGriddedInterpolation{K <: Tuple{Vararg{AbstractVector}}} <: AbstractArray{Float64, 1}
         knots::K
         v::Int
     end
@@ -2151,7 +2158,7 @@ typeunknownvec = Float64[]
         AGriddedInterpolation{typeof(knots)}(knots, 2)
     end
 
-    function ainterpolate(A::AbstractArray{Float64,1})
+    function ainterpolate(A::AbstractArray{Float64, 1})
         AGriddedInterpolation(A)
     end
 
@@ -2169,7 +2176,7 @@ end
 @testset "No Decayed / GC" begin
     @noinline function deduplicate_knots!(knots)
         last_knot = first(knots)
-        for i = eachindex(knots)
+        for i in eachindex(knots)
             if i == 1
                 continue
             end
@@ -2207,19 +2214,19 @@ end
 end
 
 @testset "Array Copy" begin
-	F = [2.0, 3.0]
+    F = [2.0, 3.0]
 
-	dF = [0.0, 0.0]
+    dF = [0.0, 0.0]
 
-	function copytest(F)
-		F2 = copy(F)
-		@inbounds F[1] = 1.234
-		@inbounds F[2] = 5.678
-		@inbounds F2[1] * F2[2]
-	end
-	autodiff(Reverse, copytest, Duplicated(F, dF))
-	@test F ≈ [1.234, 5.678]
-	@test dF ≈ [3.0, 2.0]
+    function copytest(F)
+        F2 = copy(F)
+        @inbounds F[1] = 1.234
+        @inbounds F[2] = 5.678
+        @inbounds F2[1] * F2[2]
+    end
+    autodiff(Reverse, copytest, Duplicated(F, dF))
+    @test F ≈ [1.234, 5.678]
+    @test dF ≈ [3.0, 2.0]
 
     @test 31.0 ≈ autodiff(Forward, copytest, Duplicated([2.0, 3.0], [7.0, 5.0]))[1]
 
@@ -2233,8 +2240,8 @@ end
 
 @testset "No inference" begin
     c = 5.0
-    @test 5.0 ≈ autodiff(Reverse, (A,)->c * A, Active, Active(2.0))[1][1]
-    @test 5.0 ≈ autodiff(Forward, (A,)->c * A, Duplicated(2.0, 1.0))[1]
+    @test 5.0 ≈ autodiff(Reverse, (A,) -> c * A, Active, Active(2.0))[1][1]
+    @test 5.0 ≈ autodiff(Forward, (A,) -> c * A, Duplicated(2.0, 1.0))[1]
 end
 
 @testset "Recursive GC" begin
@@ -2329,8 +2336,10 @@ function bc1_loss_function(x)
     return bc1_affine_normalize(x)[1]
 end
 
-function bc2_affine_normalize(::typeof(identity), x::AbstractArray, xmean, xvar,
-    scale::AbstractArray, bias::AbstractArray, epsilon::Real)
+function bc2_affine_normalize(
+        ::typeof(identity), x::AbstractArray, xmean, xvar,
+        scale::AbstractArray, bias::AbstractArray, epsilon::Real
+    )
     _scale = @. scale / sqrt(xvar + epsilon)
     _bias = @. bias - xmean * _scale
     return @. x * _scale + _bias
@@ -2341,37 +2350,39 @@ function bc2_loss_function(x, scale, bias)
     scale_ = reshape(scale, 1, 1, 3, 2, 1)
     bias_ = reshape(bias, 1, 1, 3, 2, 1)
 
-    xmean = mean(x_, dims=(1, 2, 5))
-    xvar = var(x_, corrected=false, mean=xmean, dims=(1, 2, 5))
+    xmean = mean(x_, dims = (1, 2, 5))
+    xvar = var(x_, corrected = false, mean = xmean, dims = (1, 2, 5))
 
-    return sum(abs2, bc2_affine_normalize(identity, x_, xmean, xvar, scale_, bias_, 1e-5))
+    return sum(abs2, bc2_affine_normalize(identity, x_, xmean, xvar, scale_, bias_, 1.0e-5))
 end
 
 @testset "Broadcast noalias" begin
 
     x = ones(30)
-    
+
     @static if VERSION < v"1.11-"
         autodiff(Reverse, bc0_test_function, Active, Const(x))
     else
         # TODO
         @test_broken autodiff(Reverse, bc0_test_function, Active, Const(x))
     end
-    
+
     x = rand(Float32, 2, 3)
     Enzyme.autodiff(Reverse, bc1_loss_function, Duplicated(x, zero(x)))
 
     x = rand(Float32, 6, 6, 6, 2)
     sc = rand(Float32, 6)
     bi = rand(Float32, 6)
-    Enzyme.autodiff(Reverse, bc2_loss_function, Active, Duplicated(x, Enzyme.make_zero(x)),
-        Duplicated(sc, Enzyme.make_zero(sc)), Duplicated(bi, Enzyme.make_zero(bi)))
+    Enzyme.autodiff(
+        Reverse, bc2_loss_function, Active, Duplicated(x, Enzyme.make_zero(x)),
+        Duplicated(sc, Enzyme.make_zero(sc)), Duplicated(bi, Enzyme.make_zero(bi))
+    )
 end
 
-function solve_cubic_eq(poly::AbstractVector{Complex{T}}) where T
-    a1  =  1 / @inbounds poly[1]
-    E1  = 2*a1
-    E12 =  E1*E1
+function solve_cubic_eq(poly::AbstractVector{Complex{T}}) where {T}
+    a1 = 1 / @inbounds poly[1]
+    E1 = 2 * a1
+    E12 = E1 * E1
     s1 = log(E12)
     return nothing
 end
@@ -2383,33 +2394,33 @@ end
 
 @testset "GetField" begin
     mutable struct MyType
-       x::Float64
+        x::Float64
     end
 
     getfield_idx(v, idx) = ccall(:jl_get_nth_field_checked, Any, (Any, UInt), v, idx)
 
     function gf(v::MyType, fld::Symbol)
-       x = getfield(v, fld)
-       x = x::Float64
-       2 * x
+        x = getfield(v, fld)
+        x = x::Float64
+        2 * x
     end
 
     function gf(v::MyType, fld::Integer)
-       x = getfield_idx(v, fld)
-       x = x::Float64
-       2 * x
+        x = getfield_idx(v, fld)
+        x = x::Float64
+        2 * x
     end
 
     function gf2(v::MyType, fld::Integer, fld2::Integer)
-       x = getfield_idx(v, fld)
-       y = getfield_idx(v, fld2)
-       x + y
+        x = getfield_idx(v, fld)
+        y = getfield_idx(v, fld2)
+        x + y
     end
 
     function gf2(v::MyType, fld::Symbol, fld2::Symbol)
-       x = getfield(v, fld)
-       y = getfield(v, fld2)
-       x + y
+        x = getfield(v, fld)
+        y = getfield(v, fld2)
+        x + y
     end
 
     mx = MyType(3.0)
@@ -2474,16 +2485,16 @@ end
     @test dx2.x ≈ 6.28
 
     mutable struct MyType2
-       x::Float64
-       y::Float64
+        x::Float64
+        y::Float64
     end
 
     function sf2(v::MyType2, fld, fld2)
-       x = getfield(v, fld)
-       x = x::Float64
-       r = 2 * x
-       x = setfield!(v, fld2, r)
-       return nothing
+        x = getfield(v, fld)
+        x = x::Float64
+        r = 2 * x
+        x = setfield!(v, fld2, r)
+        return nothing
     end
 
     mt2 = MyType2(3.0, 642.0)
@@ -2496,11 +2507,11 @@ end
     @test dmt2.y ≈ 2.4
 
     function sf_for2(v, fld, fld2, x)
-       setfield!(v, fld, 0.0)
-       for i in 1:100
+        setfield!(v, fld, 0.0)
+        for i in 1:100
             setfield!(v, fld2, getfield(v, fld)::Float64 + x * i)
-       end
-       return getfield(v, fld)::Float64
+        end
+        return getfield(v, fld)::Float64
     end
 
     mt2 = MyType2(0.0, 0.0)
@@ -2510,16 +2521,16 @@ end
     @test adres[1][4] ≈ 5050.0
 
     mutable struct MyType3
-       x::Base.RefValue{Float64}
-       y::Base.RefValue{Float64}
+        x::Base.RefValue{Float64}
+        y::Base.RefValue{Float64}
     end
 
     function sf_for3(v, fld, fld2, x)
-       setfield!(v, fld, Ref(0.0))
-       for i in 1:100
+        setfield!(v, fld, Ref(0.0))
+        for i in 1:100
             setfield!(v, fld2, Base.Ref((getfield(v, fld)::Base.RefValue{Float64})[] + x * i))
-       end
-       return (getfield(v, fld)::Base.RefValue{Float64})[]
+        end
+        return (getfield(v, fld)::Base.RefValue{Float64})[]
     end
 
     mt3 = MyType3(Ref(0.0), Ref(0.0))
@@ -2527,31 +2538,31 @@ end
 
     adres = Enzyme.autodiff(Reverse, sf_for3, Duplicated(mt3, dmt3), Const(:x), Const(:x), Active(3.1))
     @test adres[1][4] ≈ 5050.0
-    
+
     mutable struct MyTypeM
-       x::Float64
-       y
+        x::Float64
+        y
     end
 
     @noinline function unstable_mul(x, y)
-        return (x*y)::Float64
+        return (x * y)::Float64
     end
 
     function gf3(y, v::MyTypeM, fld::Symbol)
-       x = getfield(v, fld)
-       unstable_mul(x, y)
+        x = getfield(v, fld)
+        unstable_mul(x, y)
     end
 
     function gf3(y, v::MyTypeM, fld::Integer)
-       x = getfield_idx(v, fld)
-       unstable_mul(x, y)
+        x = getfield_idx(v, fld)
+        unstable_mul(x, y)
     end
-    
+
     mx = MyTypeM(3.0, 1)
     res = Enzyme.autodiff(Reverse, gf3, Active, Active(2.7), Const(mx), Const(:x))
     @test mx.x ≈ 3.0
     @test res[1][1] ≈ 3.0
-    
+
     mx = MyTypeM(3.0, 1)
     res = Enzyme.autodiff(Reverse, gf3, Active, Active(2.7), Const(mx), Const(0))
     @test mx.x ≈ 3.0
@@ -2560,7 +2571,7 @@ end
 
 @testset "Higher order rules" begin
 
-    sqr(x) = x*x
+    sqr(x) = x * x
     power(x, n) = x^n
 
     function objective(x)
@@ -2599,12 +2610,12 @@ function GFlogpdf(d::GFProductDist, x::Vector)
     dists = d.dists
     s = zero(eltype(x))
     for i in eachindex(x)
-	s += GFlogpdf(dists[i], x[i])
+        s += GFlogpdf(dists[i], x[i])
     end
     return s
 end
 
-struct GFNamedDist{Names, D<:NamedTuple{Names}}
+struct GFNamedDist{Names, D <: NamedTuple{Names}}
     dists::D
 end
 
@@ -2616,7 +2627,7 @@ end
 
 
 @testset "Getfield with reference" begin
-    d = GFNamedDist((;a = GFNormal(0.0, 1.0), b = GFProductDist([GFUniform(0.0, 1.0), GFUniform(0.0, 1.0)])))
+    d = GFNamedDist((; a = GFNormal(0.0, 1.0), b = GFProductDist([GFUniform(0.0, 1.0), GFUniform(0.0, 1.0)])))
     p = (a = 1.0, b = [0.5, 0.5])
     dp = Enzyme.make_zero(p)
     GFlogpdf(d, p)
@@ -2625,15 +2636,15 @@ end
 
 @testset "BLAS" begin
     x = [2.0, 3.0]
-    dx = [0.2,0.3]
+    dx = [0.2, 0.3]
     y = [5.0, 7.0]
-    dy = [0.5,0.7]
-    Enzyme.autodiff(Reverse, (x,y)->x' * y, Duplicated(x, dx), Duplicated(y, dy))
+    dy = [0.5, 0.7]
+    Enzyme.autodiff(Reverse, (x, y) -> x' * y, Duplicated(x, dx), Duplicated(y, dy))
     @test dx ≈ [5.2, 7.3]
     @test dy ≈ [2.5, 3.7]
 
-    f_exc(x) = sum(x*x)
-    y = [[1.0, 2.0] [3.0,4.0]]
+    f_exc(x) = sum(x * x)
+    y = [[1.0, 2.0] [3.0, 4.0]]
     f_x = zero.(y)
     Enzyme.autodiff(Reverse, f_exc, Duplicated(y, f_x))
     @test f_x ≈ [7.0 9.0; 11.0 13.0]
@@ -2645,7 +2656,7 @@ end
     @test_throws Enzyme.Compiler.EnzymeNoDerivativeError autodiff(Reverse, f_no_derv, Active, Active(0.5))
 
     f_union(cond, x) = cond ? x : 0
-    g_union(cond, x) = f_union(cond,x)*x
+    g_union(cond, x) = f_union(cond, x) * x
     if sizeof(Int) == sizeof(Int64)
         @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, Const(true), Active(1.0))
     else
@@ -2653,7 +2664,7 @@ end
     end
     # TODO: Add test for NoShadowException
 end
-    
+
 function indirectfltret(a)::DataType
     a[] *= 2
     return Float64
@@ -2671,7 +2682,7 @@ end
 function objective!(x, loss, R)
     for i in 1:1000
         y = zeros(3)
-        y[1] = R[1,1] * x[1] + R[1,2] * x[2] + R[1,3] * x[3]
+        y[1] = R[1, 1] * x[1] + R[1, 2] * x[2] + R[1, 3] * x[3]
 
         loss[] = y[1]
     end
@@ -2680,9 +2691,11 @@ end;
 
 @testset "Static tape allocation" begin
     x = zeros(3)
-    R = [1.0 0.0 0.0
+    R = [
+        1.0 0.0 0.0
         0.0 1.0 0.0
-        0.0 0.0 1.0]
+        0.0 0.0 1.0
+    ]
     loss = Ref(0.0)
     dloss = Ref(1.0)
 
@@ -2729,13 +2742,13 @@ end
         ((nothing,), MyFlux()),
         ((nothing,), MyFlux()),
         1,
-        nothing
+        nothing,
     )
-    
+
     nt1 = Enzyme.Compiler.runtime_generic_augfwd(args...)
     @test nt1[1] == (nothing,)
     @test nt1[2] == (nothing,)
-    
+
     args2 = (
         Val{(false, false, false)},
         Val(false),
@@ -2748,25 +2761,29 @@ end
         ((nothing,), MyFlux()),
         ((nothing,), MyFlux()),
         2,
-        nothing
+        nothing,
     )
-    
+
     nt = Enzyme.Compiler.runtime_generic_augfwd(args2...)
     @test nt[1] == MyFlux()
     @test nt[2] == MyFlux()
 end
 
 @testset "Batched inactive" begin
-    augres = Enzyme.Compiler.runtime_generic_augfwd(Val{(false, false, false)}, Val(false), Val(false), Val(2), Val((true, true, true)),
-                                                    Val(Enzyme.Compiler.AnyArray(2+Int(2))),
-                                ==, nothing, nothing,
-                                :foo, nothing, nothing,
-                                :bar, nothing, nothing)
+    augres = Enzyme.Compiler.runtime_generic_augfwd(
+        Val{(false, false, false)}, Val(false), Val(false), Val(2), Val((true, true, true)),
+        Val(Enzyme.Compiler.AnyArray(2 + Int(2))),
+        ==, nothing, nothing,
+        :foo, nothing, nothing,
+        :bar, nothing, nothing
+    )
 
-    Enzyme.Compiler.runtime_generic_rev(Val{(false, false, false)}, Val(false), Val(false), Val(2), Val((true, true, true)), augres[end],
-                                ==, nothing, nothing,
-                                :foo, nothing, nothing,
-                                :bar, nothing, nothing)
+    Enzyme.Compiler.runtime_generic_rev(
+        Val{(false, false, false)}, Val(false), Val(false), Val(2), Val((true, true, true)), augres[end],
+        ==, nothing, nothing,
+        :foo, nothing, nothing,
+        :bar, nothing, nothing
+    )
 end
 
 @testset "Array push" begin
@@ -2776,7 +2793,7 @@ end
         x[1] + x[2]
     end
 
-    x  = [2.3]
+    x = [2.3]
     dx = [0.0]
     rf = @static if VERSION < v"1.11-"
         nothing
@@ -2788,7 +2805,7 @@ end
         @test dx ≈ [1.0]
     else
         @test dx ≈ [0.0, 0.0]
-        @test rf ≈ [1.0,]
+        @test rf ≈ [1.0]
     end
 
     function double_push(x)
@@ -2797,7 +2814,7 @@ end
         push!(a, 1.0)
         return x
     end
-    y, = Enzyme.autodiff(Reverse, double_push,Active(1.0))[1]
+    y, = Enzyme.autodiff(Reverse, double_push, Active(1.0))[1]
     @test y == 1.0
 
     function aloss(a, arr)
@@ -2815,25 +2832,25 @@ end
         Active,
         Active(1.0),
         Duplicated(arr, darr)
-       )[1][1]
+    )[1][1]
     @test y == 1.0
 end
 
 @testset "Batch Forward" begin
-    square(x)=x*x
+    square(x) = x * x
     bres = autodiff(Forward, square, BatchDuplicated, BatchDuplicated(3.0, (1.0, 2.0, 3.0)))
     @test length(bres) == 1
     @test length(bres[1]) == 3
-    @test bres[1][1] ≈  6.0
+    @test bres[1][1] ≈ 6.0
     @test bres[1][2] ≈ 12.0
     @test bres[1][3] ≈ 18.0
 
-    bres = autodiff(Forward, square, BatchDuplicated, BatchDuplicated(3.0 + 7.0im, (1.0+0im, 2.0+0im, 3.0+0im)))
-    @test bres[1][1] ≈  6.0 + 14.0im
+    bres = autodiff(Forward, square, BatchDuplicated, BatchDuplicated(3.0 + 7.0im, (1.0 + 0im, 2.0 + 0im, 3.0 + 0im)))
+    @test bres[1][1] ≈ 6.0 + 14.0im
     @test bres[1][2] ≈ 12.0 + 28.0im
     @test bres[1][3] ≈ 18.0 + 42.0im
 
-    squareidx(x)=x[1]*x[1]
+    squareidx(x) = x[1] * x[1]
     inp = Float32[3.0]
 
     # Shadow offset is not the same as primal so following doesn't work
@@ -2842,7 +2859,7 @@ end
 
     d_inp = (Float32[1.0], Float32[2.0], Float32[3.0])
     bres = autodiff(Forward, squareidx, BatchDuplicated, BatchDuplicated(inp, d_inp))
-    @test bres[1][1] ≈  6.0
+    @test bres[1][1] ≈ 6.0
     @test bres[1][2] ≈ 12.0
     @test bres[1][3] ≈ 18.0
 end
@@ -2851,32 +2868,32 @@ end
     function refbatchbwd(out, x)
         v = x[]
         out[1] = v
-        out[2] = v*v
-        out[3] = v*v*v
+        out[2] = v * v
+        out[3] = v * v * v
         nothing
     end
 
     dxs = (Ref(0.0), Ref(0.0), Ref(0.0))
-    out = Float64[0,0,0]
+    out = Float64[0, 0, 0]
     x = Ref(2.0)
 
     autodiff(Reverse, refbatchbwd, BatchDuplicated(out, Enzyme.onehot(out)), BatchDuplicated(x, dxs))
-    @test dxs[1][] ≈  1.0
-    @test dxs[2][] ≈  4.0
+    @test dxs[1][] ≈ 1.0
+    @test dxs[2][] ≈ 4.0
     @test dxs[3][] ≈ 12.0
 
     function batchbwd(out, v)
         out[1] = v
-        out[2] = v*v
-        out[3] = v*v*v
+        out[2] = v * v
+        out[3] = v * v * v
         nothing
     end
 
     bres = Enzyme.autodiff(Reverse, batchbwd, BatchDuplicated(out, Enzyme.onehot(out)), Active(2.0))[1]
     @test length(bres) == 2
     @test length(bres[2]) == 3
-    @test bres[2][1] ≈  1.0
-    @test bres[2][2] ≈  4.0
+    @test bres[2][1] ≈ 1.0
+    @test bres[2][2] ≈ 4.0
     @test bres[2][3] ≈ 12.0
 
     times2(x) = x * 2
@@ -2912,7 +2929,7 @@ end
     @test grad.x == [3.0, 4.0]
     @test grad.y === xy.y  # make_zero did not copy this
 
-    grad = Enzyme.gradient(Reverse, z -> (z.x * z.y), (x=5.0, y=6.0))[1]
+    grad = Enzyme.gradient(Reverse, z -> (z.x * z.y), (x = 5.0, y = 6.0))[1]
     @test grad == (x = 6.0, y = 5.0)
 
     grad = Enzyme.gradient(Reverse, abs2, 7.0)[1]
@@ -2924,14 +2941,16 @@ include("errors.jl")
 
 @testset "Forward on Reverse" begin
 
-	function speelpenning(y, x)
-		ccall(:memmove, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t),
-								  y, x, 2 * 8)
-		return nothing
-	end
+    function speelpenning(y, x)
+        ccall(
+            :memmove, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t),
+            y, x, 2 * 8
+        )
+        return nothing
+    end
 
-	x = [0.5, 0.3]
-	y = zeros(2)
+    x = [0.5, 0.3]
+    y = zeros(2)
     dx = ones(2)
     rx = zeros(2)
     drx = zeros(2)
@@ -2947,8 +2966,8 @@ include("errors.jl")
     autodiff(Forward, foo, Duplicated(x, dx), Duplicated(rx, drx), Duplicated(y, dy), Duplicated(ry, dry))
 end
 
-using  Documenter
-DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
+using Documenter
+DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive = true)
 @testset "DocTests" begin
     doctest(Enzyme; manual = false)
 end
@@ -2956,36 +2975,36 @@ end
 using Random
 
 @testset "Random" begin
-    f_rand(x) = x*rand()
-    f_randn(x, N) = x*sum(randn(N))
+    f_rand(x) = x * rand()
+    f_randn(x, N) = x * sum(randn(N))
     @test 0 <= autodiff(Reverse, f_rand, Active, Active(1.0))[1][1] < 1
     @test !iszero(autodiff(Reverse, f_randn, Active, Active(1.0), Const(64))[1][1])
     @test iszero(autodiff(Reverse, x -> rand(), Active, Active(1.0))[1][1])
     @test iszero(autodiff(Reverse, (x, N) -> sum(randn(N)), Active, Active(1.0), Const(64))[1][1])
     @test autodiff(Reverse, x -> x * sum(randcycle(5)), Active, Active(1.0))[1][1] == 15
-    @test autodiff(Reverse, x -> x * sum(randperm( 5)), Active, Active(1.0))[1][1] == 15
+    @test autodiff(Reverse, x -> x * sum(randperm(5)), Active, Active(1.0))[1][1] == 15
     @test autodiff(Reverse, x -> x * sum(shuffle(1:5)), Active, Active(1.0))[1][1] == 15
 end
 
 @testset "Reshape" begin
 
-	function rs(x)
-		y = reshape(x, 2, 2)
-		y[1,1] *= y[1, 2]
-		y[2, 2] *= y[2, 1]
-		nothing
-	end
+    function rs(x)
+        y = reshape(x, 2, 2)
+        y[1, 1] *= y[1, 2]
+        y[2, 2] *= y[2, 1]
+        nothing
+    end
 
-    data = Float64[1.,2.,3.,4.]
-	ddata = ones(4)
+    data = Float64[1.0, 2.0, 3.0, 4.0]
+    ddata = ones(4)
 
-	autodiff(Reverse, rs, Duplicated(data, ddata))
-	@test ddata ≈ [3.0, 5.0, 2.0, 2.0]
+    autodiff(Reverse, rs, Duplicated(data, ddata))
+    @test ddata ≈ [3.0, 5.0, 2.0, 2.0]
 
-    data = Float64[1.,2.,3.,4.]
-	ddata = ones(4)
-	autodiff(Forward, rs, Duplicated(data, ddata))
-	@test ddata ≈ [4.0, 1.0, 1.0, 6.0]
+    data = Float64[1.0, 2.0, 3.0, 4.0]
+    ddata = ones(4)
+    autodiff(Forward, rs, Duplicated(data, ddata))
+    @test ddata ≈ [4.0, 1.0, 1.0, 6.0]
 end
 
 
@@ -3003,8 +3022,9 @@ function set_paramsPE(nn, params)
     i = 1
     for l in nn.layers
         W = l.W # nn.layers[1].W
-        Base.copyto!(W, reshape(view(params,i:(i+length(W)-1)), size(W)))
+        Base.copyto!(W, reshape(view(params, i:(i + length(W) - 1)), size(W)))
     end
+    return
 end
 
 @testset "Illegal phi erasure" begin
@@ -3012,27 +3032,27 @@ end
     fwd, rev = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(set_paramsPE)}, Const, Duplicated{NNPE}, Duplicated{Vector{Float64}})
     @test fwd !== nothing
     @test rev !== nothing
-    nn = NNPE( ( DensePE(1, Matrix{Float64}(undef, 4, 4)), DensePE(1, Matrix{Float64}(undef, 4, 4)) ) )
-    dnn = NNPE( ( DensePE(1, Matrix{Float64}(undef, 4, 4)), DensePE(1, Matrix{Float64}(undef, 4, 4)) ) )
+    nn = NNPE((DensePE(1, Matrix{Float64}(undef, 4, 4)), DensePE(1, Matrix{Float64}(undef, 4, 4))))
+    dnn = NNPE((DensePE(1, Matrix{Float64}(undef, 4, 4)), DensePE(1, Matrix{Float64}(undef, 4, 4))))
     l = Vector{Float64}(undef, 32)
     dl = Vector{Float64}(undef, 32)
     fwd(Const(set_paramsPE), Duplicated(nn, dnn), Duplicated(l, dl))
 end
 
 @testset "Copy Broadcast arg" begin
-	x = Float32[3]
-	w = Float32[1]
-	dw = zero(w)
+    x = Float32[3]
+    w = Float32[1]
+    dw = zero(w)
 
-	function inactiveArg(w, x, cond)
-	   if cond
-		  x = copy(x)
-	   end
-	  @inbounds w[1] * x[1]
-	end
+    function inactiveArg(w, x, cond)
+        if cond
+            x = copy(x)
+        end
+        @inbounds w[1] * x[1]
+    end
 
     @static if VERSION < v"1.11-"
-    	Enzyme.autodiff(Reverse, inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
+        Enzyme.autodiff(Reverse, inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
 
         @test x ≈ [3.0]
         @test w ≈ [1.0]
@@ -3040,17 +3060,17 @@ end
     else
         # TODO broken should not throw
         @test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.autodiff(Reverse, inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
-	Enzyme.autodiff(set_runtime_activity(Reverse), inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
+        Enzyme.autodiff(set_runtime_activity(Reverse), inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
     end
 
     x = Float32[3]
 
     function loss(w, x, cond)
-      dest = Array{Float32}(undef, 1)
-      r = cond ? copy(x) : x
-      res = @inbounds w[1] * r[1]
-      @inbounds dest[1] = res
-      res
+        dest = Array{Float32}(undef, 1)
+        r = cond ? copy(x) : x
+        res = @inbounds w[1] * r[1]
+        @inbounds dest[1] = res
+        res
     end
 
     @static if VERSION < v"1.11-"
@@ -3059,40 +3079,40 @@ end
     else
         # TODO broken should not throw
         @test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.autodiff(Reverse, loss, Active, Active(1.0), Const(x), Const(false))[1]
-	dw = Enzyme.autodiff(set_runtime_activity(Reverse), loss, Active, Active(1.0), Const(x), Const(false))[1]
+        dw = Enzyme.autodiff(set_runtime_activity(Reverse), loss, Active, Active(1.0), Const(x), Const(false))[1]
     end
-    
+
     @test x ≈ [3.0]
     @test dw[1] ≈ 3.0
 
     c = ones(3)
     inner(e) = c .+ e
 
-    fres = Enzyme.autodiff(Enzyme.Forward, Const(inner), Duplicated{Vector{Float64}}, Duplicated([0., 0., 0.], [1., 1., 1.]))[1]
+    fres = Enzyme.autodiff(Enzyme.Forward, Const(inner), Duplicated{Vector{Float64}}, Duplicated([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]))[1]
     @test c ≈ [1.0, 1.0, 1.0]
     @test fres ≈ [1.0, 1.0, 1.0]
 end
 
 @testset "View Splat" begin
-	function getloc(locs, i)
-		loss = 0.0
-		if i==1
-			x, y = 0.0, 0.0
-		else
-		# correct
-			# x, y = locs[1,i-1], locs[2,i-1]
-		# incorrect
-		x, y = @inbounds locs[:,i-1]
-		end
-		loss += y
-		return loss
-	end
+    function getloc(locs, i)
+        loss = 0.0
+        if i == 1
+            x, y = 0.0, 0.0
+        else
+            # correct
+            # x, y = locs[1,i-1], locs[2,i-1]
+            # incorrect
+            x, y = @inbounds locs[:, i - 1]
+        end
+        loss += y
+        return loss
+    end
 
-	x0 = ones(2, 9)
-	din = zeros(2, 9)
-	Enzyme.autodiff(Reverse, getloc, Duplicated(x0, din), Const(2))
-	@test din[1, 1] ≈ 0.0
-	@test din[2, 1] ≈ 1.0
+    x0 = ones(2, 9)
+    din = zeros(2, 9)
+    Enzyme.autodiff(Reverse, getloc, Duplicated(x0, din), Const(2))
+    @test din[1, 1] ≈ 0.0
+    @test din[2, 1] ≈ 1.0
 end
 
 @testset "View Vars" begin
@@ -3101,22 +3121,23 @@ end
     dx = [Float32(0.0)]
     rng = Base.UnitRange{Int64}(1, 0)
 
-    f = Const(Base.SubArray{T, N, P, I, L} where L where I where P where N where T)
+    f = Const(Base.SubArray{T, N, P, I, L} where {L} where {I} where {P} where {N} where {T})
     a1 = Const(Base.IndexLinear())
     a2 = Duplicated(x, dx)
     a3 = Const((rng,))
     a4 = Const((true,))
 
-    fwd, rev = autodiff_thunk(ReverseSplitWithPrimal,
-         typeof(f),
-         Duplicated,
-         typeof(a1),
-         typeof(a2),
-         typeof(a3),
-         typeof(a4)
+    fwd, rev = autodiff_thunk(
+        ReverseSplitWithPrimal,
+        typeof(f),
+        Duplicated,
+        typeof(a1),
+        typeof(a2),
+        typeof(a3),
+        typeof(a4)
     )
 
-    res = fwd(f,a1,a2,a3,a4)
+    res = fwd(f, a1, a2, a3, a4)
     @test res[2].indices == (rng,)
     @test res[3].indices == (rng,)
     @test res[2].offset1 == 0
@@ -3128,22 +3149,23 @@ end
     dx = [Float32(0.0)]
     rng = Base.UnitRange{Int64}(1, 0)
 
-    f = Const(Base.SubArray{T, N, P, I, L} where L where I where P where N where T)
+    f = Const(Base.SubArray{T, N, P, I, L} where {L} where {I} where {P} where {N} where {T})
     a1 = Const(Base.IndexLinear())
     a2 = Duplicated(x, dx)
     a3 = Const((rng,))
     a4 = Const((true,))
 
-    fwd, rev = autodiff_thunk(set_runtime_activity(ReverseSplitWithPrimal),
-         typeof(f),
-         Duplicated,
-         typeof(a1),
-         typeof(a2),
-         typeof(a3),
-         typeof(a4)
+    fwd, rev = autodiff_thunk(
+        set_runtime_activity(ReverseSplitWithPrimal),
+        typeof(f),
+        Duplicated,
+        typeof(a1),
+        typeof(a2),
+        typeof(a3),
+        typeof(a4)
     )
 
-    res = fwd(f,a1,a2,a3,a4)
+    res = fwd(f, a1, a2, a3, a4)
     @test res[2].indices == (rng,)
     @test res[3].indices == (rng,)
     @test res[2].offset1 == 0
@@ -3154,12 +3176,12 @@ end
 
 @testset "Uncached batch sizes" begin
     genericsin(x) = Base.invokelatest(sin, x)
-    res = Enzyme.autodiff(Forward, genericsin, BatchDuplicated(2.0, NTuple{10,Float64}((Float64(i) for i in 1:10))))[1]
+    res = Enzyme.autodiff(Forward, genericsin, BatchDuplicated(2.0, NTuple{10, Float64}((Float64(i) for i in 1:10))))[1]
     for (i, v) in enumerate(res)
         @test v ≈ i * -0.4161468365471424
     end
     @assert length(res) == 10
-    res = Enzyme.autodiff(Forward, genericsin, BatchDuplicated(2.0, NTuple{40,Float64}((Float64(i) for i in 1:40))))[1]
+    res = Enzyme.autodiff(Forward, genericsin, BatchDuplicated(2.0, NTuple{40, Float64}((Float64(i) for i in 1:40))))[1]
     for (i, v) in enumerate(res)
         @test v ≈ i * -0.4161468365471424
     end
@@ -3167,159 +3189,159 @@ end
 end
 @testset "Large dynamic tape" begin
 
-	function ldynloss(X, Y, ps, bs)
-		ll = 0.0f0
-		for (x, y) in zip(X, Y)
-			yhat = ps * x .+ bs
-			ll += (yhat[1] - y)^2
-		end
-		return ll
-	end
+    function ldynloss(X, Y, ps, bs)
+        ll = 0.0f0
+        for (x, y) in zip(X, Y)
+            yhat = ps * x .+ bs
+            ll += (yhat[1] - y)^2
+        end
+        return ll
+    end
 
-	ps = randn(Float32, (1, 5))
-	bs = randn(Float32)
+    ps = randn(Float32, (1, 5))
+    bs = randn(Float32)
 
-	X = map(x->rand(Float32, 5), 1:1000)
-	Y = map(x->rand(Float32), 1:1000)
+    X = map(x -> rand(Float32, 5), 1:1000)
+    Y = map(x -> rand(Float32), 1:1000)
 
-	grads = zero(ps)
-	for epoch=1:1000
-		fill!(grads, 0)
-		autodiff(Reverse, ldynloss, Const(X), Const(Y), Duplicated(ps, grads), Active(bs))
-	end
+    grads = zero(ps)
+    for epoch in 1:1000
+        fill!(grads, 0)
+        autodiff(Reverse, ldynloss, Const(X), Const(Y), Duplicated(ps, grads), Active(bs))
+    end
 
 end
 
 @static if VERSION < v"1.11-"
 else
-mutable struct MyDict{K,V}
-    slots::Memory{UInt8}
-    keys::Memory{K}
-    vals::Memory{V}
-    idxfloor::Int
-    maxprobe::Int
-    function MyDict{K,V}() where V where K
-        slots = Memory{UInt8}(undef, 0)
-        fill!(slots, 0x0)
-        new(slots, Memory{K}(undef, 0), Memory{V}(undef, 0), 1, 0)
+    mutable struct MyDict{K, V}
+        slots::Memory{UInt8}
+        keys::Memory{K}
+        vals::Memory{V}
+        idxfloor::Int
+        maxprobe::Int
+        function MyDict{K, V}() where {V} where {K}
+            slots = Memory{UInt8}(undef, 0)
+            fill!(slots, 0x00)
+            new(slots, Memory{K}(undef, 0), Memory{V}(undef, 0), 1, 0)
+        end
     end
-end
-function my_rehash!(h::MyDict{K,V}) where V where K
-    newsz = 16
-    h.idxfloor = 1
-    slots = Memory{UInt8}(undef, newsz)
-    fill!(slots, 0x0)
-    h.slots = slots
-    h.keys = Memory{K}(undef, newsz)
-    h.vals = Memory{V}(undef, newsz)
-    h.maxprobe = 0
-    return h
-end
-function ht_keyindex2_shorthash!(h::MyDict{K,V}, key) where V where K
-    sz = length(h.keys)
-    if sz == 0
-        my_rehash!(h)
-        index, sh = Base.hashindex(key, length(h.keys))
-        return -index, sh
+    function my_rehash!(h::MyDict{K, V}) where {V} where {K}
+        newsz = 16
+        h.idxfloor = 1
+        slots = Memory{UInt8}(undef, newsz)
+        fill!(slots, 0x00)
+        h.slots = slots
+        h.keys = Memory{K}(undef, newsz)
+        h.vals = Memory{V}(undef, newsz)
+        h.maxprobe = 0
+        return h
     end
-    index, sh = Base.hashindex(key, sz)
-    keys = h.keys
-    while true
-        if h.slots[index] == 0x00
+    function ht_keyindex2_shorthash!(h::MyDict{K, V}, key) where {V} where {K}
+        sz = length(h.keys)
+        if sz == 0
+            my_rehash!(h)
+            index, sh = Base.hashindex(key, length(h.keys))
             return -index, sh
         end
-        if h.slots[index] == sh
-            k = keys[index]
-            if key === k || isequal(key, k)
-                return index, sh
+        index, sh = Base.hashindex(key, sz)
+        keys = h.keys
+        while true
+            if h.slots[index] == 0x00
+                return -index, sh
             end
+            if h.slots[index] == sh
+                k = keys[index]
+                if key === k || isequal(key, k)
+                    return index, sh
+                end
+            end
+            1 > h.maxprobe && break
         end
-        1 > h.maxprobe && break
+        return 0, sh
     end
-    return 0, sh
-end
-function my_setindex!(h::MyDict{K,V}, v, key::K) where V where K
-    index, sh = ht_keyindex2_shorthash!(h, key)
-    h.slots[-index] = sh
-    h.keys[-index] = key
-    h.vals[-index] = v
-    return h
-end
+    function my_setindex!(h::MyDict{K, V}, v, key::K) where {V} where {K}
+        index, sh = ht_keyindex2_shorthash!(h, key)
+        h.slots[-index] = sh
+        h.keys[-index] = key
+        h.vals[-index] = v
+        return h
+    end
 
-struct E{T}
-    e::T
-end
-struct D{sym,T<:E}
-    d::T
-end
-function Base.:(==)(d1::D{sym1}, d2::D{sym2}) where {sym1,sym2}
-    # changing either == to === makes it no longer crash
-    return sym1 == sym2 && d1.d == d2.d
-end
-function f(x)  # x is unused now
-    d = MyDict{D,Int}()
-    my_setindex!(d, 1, D{:s,E{Int}}(E(1)))
-    return 1.0
-end
+    struct E{T}
+        e::T
+    end
+    struct D{sym, T <: E}
+        d::T
+    end
+    function Base.:(==)(d1::D{sym1}, d2::D{sym2}) where {sym1, sym2}
+        # changing either == to === makes it no longer crash
+        return sym1 == sym2 && d1.d == d2.d
+    end
+    function f(x)  # x is unused now
+        d = MyDict{D, Int}()
+        my_setindex!(d, 1, D{:s, E{Int}}(E(1)))
+        return 1.0
+    end
 
-@testset "Error handler for jlcall" begin
-  res = Enzyme.gradient(set_runtime_activity(Reverse), f, [0.0])
-  @test res[1] ≈ [0.0]
-end
+    @testset "Error handler for jlcall" begin
+        res = Enzyme.gradient(set_runtime_activity(Reverse), f, [0.0])
+        @test res[1] ≈ [0.0]
+    end
 
 end
 
 @testset "Union return getproperty" begin
-	using Enzyme
+    using Enzyme
 
-	struct DOSData
-		interp_func
-	end
+    struct DOSData
+        interp_func
+    end
 
-	function get_dos(Ef=0.)
-		return x->x+Ef
-	end
+    function get_dos(Ef = 0.0)
+        return x -> x + Ef
+    end
 
-	struct MyMarcusHushChidseyDOS
-		A::Float64
-		dos::DOSData
-	end
+    struct MyMarcusHushChidseyDOS
+        A::Float64
+        dos::DOSData
+    end
 
-	mhcd = MyMarcusHushChidseyDOS(0.3,  DOSData(get_dos()));
+    mhcd = MyMarcusHushChidseyDOS(0.3, DOSData(get_dos()))
 
-	function myintegrand(V, a_r)
-		function z(E)
-			dos = mhcd.dos
+    function myintegrand(V, a_r)
+        function z(E)
+            dos = mhcd.dos
 
-			interp = dos.interp_func
+            interp = dos.interp_func
 
-			res = interp(V)
+            res = interp(V)
 
-			return res
-		end
-		return z
-	end
+            return res
+        end
+        return z
+    end
 
-	function f2(V)
-		fn = myintegrand(V, 1.0)
+    function f2(V)
+        fn = myintegrand(V, 1.0)
 
-		fn(0.0)
-	end
+        fn(0.0)
+    end
 
     res = autodiff(set_runtime_activity(ForwardWithPrimal), Const(f2), Duplicated, Duplicated(0.2, 1.0))
     @test res[2] ≈ 0.2
     # broken as the return of an apply generic is {primal, primal}
-    # but since the return is abstractfloat doing the 
+    # but since the return is abstractfloat doing the
     @test res[1] ≈ 1.0
 end
 
-@inline function uns_mymean(f, A, ::Type{T}, c) where T
+@inline function uns_mymean(f, A, ::Type{T}, c) where {T}
     c && return Base.inferencebarrier(nothing)
     x1 = f(@inbounds A[1]) / 1
     return @inbounds A[1][1]
 end
 
-function uns_sum2(x::Array{T})::T where T
+function uns_sum2(x::Array{T})::T where {T}
     op = Base.add_sum
     itr = x
     y = iterate(itr)::Tuple{T, Int}
@@ -3332,9 +3354,9 @@ function uns_sum2(x::Array{T})::T where T
     return v
 end
 
-function uns_ad_forward(scale_diag::Vector{T}, c) where T
-    res = uns_mymean(uns_sum2, [scale_diag,], T, c)
-	return res
+function uns_ad_forward(scale_diag::Vector{T}, c) where {T}
+    res = uns_mymean(uns_sum2, [scale_diag], T, c)
+    return res
 end
 
 @testset "Split box float32" begin
@@ -3374,13 +3396,15 @@ end
 
     parameters = (a = 1, b = 0.1)
 
-    bc   = (north=1, top=tuple(parameters, tuple(:c)))
+    bc = (north = 1, top = tuple(parameters, tuple(:c)))
     d_bc = Enzyme.make_zero(bc)
     Enzyme.API.looseTypeAnalysis!(true)
 
-    dc²_dκ = autodiff(Enzyme.Reverse,
-                      permute_boundary_conditions,
-                      Duplicated(bc, d_bc))
+    dc²_dκ = autodiff(
+        Enzyme.Reverse,
+        permute_boundary_conditions,
+        Duplicated(bc, d_bc)
+    )
 
     Enzyme.API.looseTypeAnalysis!(false)
 end
@@ -3396,7 +3420,7 @@ end
         o = t.obs
         y = (x .- o)
         yv = @inbounds y[1]
-        return yv*yv
+        return yv * yv
     end
 
     obs = [1.0]
@@ -3442,7 +3466,8 @@ end
     u_v_eta = Float64[NaN]
     ad_eta = zeros(1)
 
-    autodiff(Reverse, advance,
+    autodiff(
+        Reverse, advance,
         Duplicated(u_v_eta, ad_eta),
         Const(rhs_terms),
     )
@@ -3458,11 +3483,12 @@ end
     out = Tuple{Any}[(9.7,)]
     dout = Tuple{Any}[(4.3,)]
 
-    autodiff(Enzyme.Forward,
-                      absset,
-                      Duplicated(out, dout),
-                      Duplicated(3.1, 2.4)
-                      )
+    autodiff(
+        Enzyme.Forward,
+        absset,
+        Duplicated(out, dout),
+        Duplicated(3.1, 2.4)
+    )
     @test dout[1][1] ≈ 2.4
 end
 
@@ -3478,7 +3504,7 @@ end
     end
 
     function g(f)
-        return f.x*5.0
+        return f.x * 5.0
     end
 
     res = autodiff(Reverse, g, Active, Active(Roo(3.0, "a")))[1][1]
@@ -3492,7 +3518,7 @@ end
 
 @testset "Type preservation" begin
     # Float16 fails due to #870
-    for T in (Float64, Float32, #=Float16=#)
+    for T in (Float64, Float32 #=Float16=#)
         res = autodiff(Reverse, x -> x * 2.0, Active, Active(T(1.0)))[1][1]
         @test res isa T
         @test res == 2
@@ -3518,10 +3544,10 @@ end
     @test Enzyme.gradient(Enzyme.Forward, fexpandempty, vec)[1] ≈ [1.0]
 end
 
-const CUmemoryPool2 = Ptr{Float64} 
+const CUmemoryPool2 = Ptr{Float64}
 
 struct CUmemPoolProps2
-    reserved::NTuple{31,Char}
+    reserved::NTuple{31, Char}
 end
 
 mutable struct CuMemoryPool2
@@ -3538,9 +3564,11 @@ function ccall_macro_lower(func, rettype, types, args, nreq)
     for (typ, arg) in zip(types, args)
         var = gensym("$(func)_cconvert")
         push!(cconvert_args, var)
-        push!(cconvert_exprs, quote
-            $var = Base.cconvert($(esc(typ)), $(esc(arg)))
-        end)
+        push!(
+            cconvert_exprs, quote
+                $var = Base.cconvert($(esc(typ)), $(esc(arg)))
+            end
+        )
     end
 
     unsafe_convert_exprs = []
@@ -3548,42 +3576,50 @@ function ccall_macro_lower(func, rettype, types, args, nreq)
     for (typ, arg) in zip(types, cconvert_args)
         var = gensym("$(func)_unsafe_convert")
         push!(unsafe_convert_args, var)
-        push!(unsafe_convert_exprs, quote
-            $var = Base.unsafe_convert($(esc(typ)), $arg)
-        end)
+        push!(
+            unsafe_convert_exprs, quote
+                $var = Base.unsafe_convert($(esc(typ)), $arg)
+            end
+        )
     end
 
-    quote
+    return quote
         $(cconvert_exprs...)
 
         $(unsafe_convert_exprs...)
 
-        ret = ccall($(esc(func)), $(esc(rettype)), $(Expr(:tuple, map(esc, types)...)),
-                    $(unsafe_convert_args...))
+        ret = ccall(
+            $(esc(func)), $(esc(rettype)), $(Expr(:tuple, map(esc, types)...)),
+            $(unsafe_convert_args...)
+        )
     end
 end
 
 macro gcsafe_ccall(expr)
-    ccall_macro_lower(Base.ccall_macro_parse(expr)...)
+    return ccall_macro_lower(Base.ccall_macro_parse(expr)...)
 end
 
 function cuMemPoolCreate2(pool, poolProps)
     # CUDA.initialize_context()
     #CUDA.
     gc_state = @ccall(jl_gc_safe_enter()::Int8)
-    @gcsafe_ccall cuMemPoolCreate(pool::Ptr{CUmemoryPool2},
-                                          poolProps::Ptr{CUmemPoolProps2})::Cvoid
-    @ccall(jl_gc_safe_leave(gc_state::Int8)::Cvoid)
+    @gcsafe_ccall cuMemPoolCreate(
+        pool::Ptr{CUmemoryPool2},
+        poolProps::Ptr{CUmemPoolProps2}
+    )::Cvoid
+    return @ccall(jl_gc_safe_leave(gc_state::Int8)::Cvoid)
 end
 
 function cual()
-        props = Ref(CUmemPoolProps2( 
-            ntuple(i->Char(0), 31)
-        ))
-        handle_ref = Ref{CUmemoryPool2}()
-        cuMemPoolCreate2(handle_ref, props)
+    props = Ref(
+        CUmemPoolProps2(
+            ntuple(i -> Char(0), 31)
+        )
+    )
+    handle_ref = Ref{CUmemoryPool2}()
+    cuMemPoolCreate2(handle_ref, props)
 
-        CuMemoryPool2(handle_ref[])
+    return CuMemoryPool2(handle_ref[])
 end
 
 @testset "Unused shadow phi rev" begin
@@ -3606,30 +3642,30 @@ normal_pdf(x, mean, var) =
 # original objective (doesn't work)
 function mixture_loglikelihood1(params::AbstractVector{<:Real}, data::AbstractVector{<:Real})::Real
     K = length(params) ÷ 3
-    weights, means, stds = @views params[1:K], params[K+1:2K], params[2K+1:end]
-    mat = normal_pdf.(data, means', stds' .^2) # (N, K)
-    sum(mat .* weights', dims=2) .|> log |> sum
+    weights, means, stds = @views params[1:K], params[(K + 1):2K], params[(2K + 1):end]
+    mat = normal_pdf.(data, means', stds' .^ 2) # (N, K)
+    return sum(mat .* weights', dims = 2) .|> log |> sum
 end
 
 # another form of original objective (doesn't work)
 function mixture_loglikelihood2(params::AbstractVector{<:Real}, data::AbstractVector{<:Real})::Real
     K = length(params) ÷ 3
-    weights, means, stds = @views params[1:K], params[K+1:2K], params[2K+1:end]
-    mat = normal_pdf.(data, means', stds' .^2) # (N, K)
-    obj_true = sum(
+    weights, means, stds = @views params[1:K], params[(K + 1):2K], params[(2K + 1):end]
+    mat = normal_pdf.(data, means', stds' .^ 2) # (N, K)
+    return obj_true = sum(
         sum(
-            weight * normal_pdf(x, mean, std^2)
-            for (weight, mean, std) in zip(weights, means, stds)
-        ) |> log
-        for x in data
+                weight * normal_pdf(x, mean, std^2)
+                for (weight, mean, std) in zip(weights, means, stds)
+            ) |> log
+            for x in data
     )
 end
 
 # objective re-written by me
 function mixture_loglikelihood3(params::AbstractVector{<:Real}, data::AbstractVector{<:Real})::Real
     K = length(params) ÷ 3
-    weights, means, stds = @views params[1:K], params[K+1:2K], params[2K+1:end]
-    mat = normal_pdf.(data, means', stds' .^2) # (N, K)
+    weights, means, stds = @views params[1:K], params[(K + 1):2K], params[(2K + 1):end]
+    mat = normal_pdf.(data, means', stds' .^ 2) # (N, K)
 
     obj = zero(eltype(mat))
     for x in data
@@ -3647,21 +3683,23 @@ const objective2 = params -> mixture_loglikelihood2(params, data)
 const objective3 = params -> mixture_loglikelihood3(params, data)
 
 @testset "Type unsstable return" begin
-    expected =  [289.7308495620467,
-                199.27559524985728,
-                 236.6894577756876,
-                 292.0612340227955,
-                  -9.429799389881452,
-                  26.722295646439047,
-                  -1.9180355546752244,
-                  37.98749089573396,
-                 -24.095620148778277,
-                 -13.935687326484112,
-                 -38.00044665702692,
-                 12.87712891527131]
+    expected = [
+        289.7308495620467,
+        199.27559524985728,
+        236.6894577756876,
+        292.0612340227955,
+        -9.429799389881452,
+        26.722295646439047,
+        -1.9180355546752244,
+        37.98749089573396,
+        -24.095620148778277,
+        -13.935687326484112,
+        -38.00044665702692,
+        12.87712891527131,
+    ]
     @test expected ≈ Enzyme.gradient(Reverse, objective1, params0)[1]
     @test expected ≈ Enzyme.gradient(set_runtime_activity(Reverse), objective1, params0)[1]
-    
+
     # objective2 fails from runtime activity requirements
     # @test expected ≈ Enzyme.gradient(Reverse, objective2, params0)[1]
     @test expected ≈ Enzyme.gradient(Reverse, objective3, params0)[1]
@@ -3695,7 +3733,7 @@ end
 
 _logpdf(d, x) = invwsumsq(d.Σ.diag, x .- d.μ)
 
-function demo_func(x::Any=transpose([1.5 2.0;]);)
+function demo_func(x::Any = transpose([1.5 2.0;]))
     m = [-0.30725218207431315, 0.5492115788562757]
     d = (; Σ = LinearAlgebra.Diagonal([1.0, 1.0]), μ = m)
     logp = _logpdf(d, reshape(x, (2,)))
@@ -3718,7 +3756,7 @@ end
     inters = [HarmonicAngle(1.0, 0.1), HarmonicAngle(2.0, 0.3)]
     inter_list = [1, 3]
     dinters = [HarmonicAngle(0.0, 0.0), HarmonicAngle(0.0, 0.0)]
-    coords   = [(1.0, 2.0, 3.0), (1.1, 2.1, 3.1), (1.2, 2.2, 3.2)]
+    coords = [(1.0, 2.0, 3.0), (1.1, 2.1, 3.1), (1.2, 2.2, 3.2)]
     d_coords = [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)]
 
     autodiff(
@@ -3730,52 +3768,52 @@ end
         Duplicated(inters, dinters),
     )
 
-    @test dinters[1].k ≈ 0.1 
-    @test dinters[1].t0 ≈ 1.0 
-    @test dinters[2].k ≈ 0.3 
-    @test dinters[2].t0 ≈ 2.0 
+    @test dinters[1].k ≈ 0.1
+    @test dinters[1].t0 ≈ 1.0
+    @test dinters[2].k ≈ 0.3
+    @test dinters[2].t0 ≈ 2.0
 end
 
 @testset "Statistics" begin
     f1(x) = var([x, 2.0, 3.0])
-    @test autodiff(Reverse, f1, Active, Active(0.0))[1][1] ≈ -5/3
-    @test autodiff(Forward, f1, Duplicated(0.0, 1.0))[1]   ≈ -5/3
+    @test autodiff(Reverse, f1, Active, Active(0.0))[1][1] ≈ -5 / 3
+    @test autodiff(Forward, f1, Duplicated(0.0, 1.0))[1] ≈ -5 / 3
 
-    f2(x) = varm([x, 2.0, 3.0], 5/3)
-    @test autodiff(Reverse, f2, Active, Active(0.0))[1][1] ≈ -5/3
-    @test autodiff(Forward, f2, Duplicated(0.0, 1.0))[1]   ≈ -5/3
+    f2(x) = varm([x, 2.0, 3.0], 5 / 3)
+    @test autodiff(Reverse, f2, Active, Active(0.0))[1][1] ≈ -5 / 3
+    @test autodiff(Forward, f2, Duplicated(0.0, 1.0))[1] ≈ -5 / 3
 
     f3(x) = std([x, 2.0, 3.0])
     @test autodiff(Reverse, f3, Active, Active(0.0))[1][1] ≈ -0.54554472559
-    @test autodiff(Forward, f3, Duplicated(0.0, 1.0))[1]   ≈ -0.54554472559
+    @test autodiff(Forward, f3, Duplicated(0.0, 1.0))[1] ≈ -0.54554472559
 
-    f4(x) = stdm([x, 2.0, 3.0], 5/3)
+    f4(x) = stdm([x, 2.0, 3.0], 5 / 3)
     @test autodiff(Reverse, f4, Active, Active(0.0))[1][1] ≈ -0.54554472559
-    @test autodiff(Forward, f4, Duplicated(0.0, 1.0))[1]   ≈ -0.54554472559
+    @test autodiff(Forward, f4, Duplicated(0.0, 1.0))[1] ≈ -0.54554472559
 
     f5(x) = cor([2.0, x, 1.0], [1.0, 2.0, 3.0])
-    @test autodiff(Reverse, f5, Active, Active(4.0))[1][1] ≈ 0.11690244120
-    @test autodiff(Forward, f5, Duplicated(4.0, 1.0))[1]   ≈ 0.11690244120
+    @test autodiff(Reverse, f5, Active, Active(4.0))[1][1] ≈ 0.1169024412
+    @test autodiff(Forward, f5, Duplicated(4.0, 1.0))[1] ≈ 0.1169024412
 
     f6(x) = cov([2.0, x, 1.0])
-    @test autodiff(Reverse, f6, Active, Active(4.0))[1][1] ≈ 5/3
-    @test autodiff(Forward, f6, Duplicated(4.0, 1.0))[1]   ≈ 5/3
+    @test autodiff(Reverse, f6, Active, Active(4.0))[1][1] ≈ 5 / 3
+    @test autodiff(Forward, f6, Duplicated(4.0, 1.0))[1] ≈ 5 / 3
 
     f7(x) = median([2.0, 1.0, x])
     @test autodiff(Reverse, f7, Active, Active(1.5))[1][1] == 1
-    @test autodiff(Forward, f7, Duplicated(1.5, 1.0))[1]   == 1
+    @test autodiff(Forward, f7, Duplicated(1.5, 1.0))[1] == 1
     @test autodiff(Reverse, f7, Active, Active(2.5))[1][1] == 0
-    @test autodiff(Forward, f7, Duplicated(2.5, 1.0))[1]   == 0
+    @test autodiff(Forward, f7, Duplicated(2.5, 1.0))[1] == 0
 
     f8(x) = middle([2.0, x, 1.0])
     @test autodiff(Reverse, f8, Active, Active(2.5))[1][1] == 0.5
-    @test autodiff(Forward, f8, Duplicated(2.5, 1.0))[1]   == 0.5
+    @test autodiff(Forward, f8, Duplicated(2.5, 1.0))[1] == 0.5
     @test autodiff(Reverse, f8, Active, Active(1.5))[1][1] == 0
-    @test autodiff(Forward, f8, Duplicated(1.5, 1.0))[1]   == 0
+    @test autodiff(Forward, f8, Duplicated(1.5, 1.0))[1] == 0
 
     f9(x) = sum(quantile([1.0, x], [0.5, 0.7]))
     @test autodiff(Reverse, f9, Active, Active(2.0))[1][1] == 1.2
-    @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1]   == 1.2
+    @test autodiff(Forward, f9, Duplicated(2.0, 1.0))[1] == 1.2
 end
 
 @testset "hvcat_fill" begin
