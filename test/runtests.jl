@@ -110,6 +110,9 @@ if isempty(ARGS)
         if test ∈ ("metal", "cuda", "amdgpu")
             return false
         end
+        if Sys.iswindows() && test == "ext/specialfunctions"
+            return false
+        end
         return true
     end
 else
