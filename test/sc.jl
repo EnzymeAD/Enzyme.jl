@@ -1,9 +1,8 @@
-module ReverseRules
+@testset "sc" begin
 
 using Enzyme
 using Enzyme: EnzymeRules
 using LinearAlgebra
-using Test
 
 f(x) = x^2
 
@@ -14,8 +13,6 @@ end
 
 import .EnzymeRules: augmented_primal, reverse, Annotation, has_rrule_from_sig
 using .EnzymeRules
-
-Enzyme.API.printall!(true)
 
 struct Closure
     v::Vector{Float64}
@@ -28,7 +25,7 @@ function (cl::Closure)(x)
 end
 
 
-function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{Closure},
+function EnzymeRules.augmented_primal(config::RevConfigWidth{1}, func::Const{Closure},
     ::Type{<:Active}, args::Vararg{Active,N}) where {N}
     vec = copy(func.val.v)
     pval = func.val(args[1].val)
@@ -40,7 +37,7 @@ function EnzymeRules.augmented_primal(config::ConfigWidth{1}, func::Const{Closur
     return AugmentedReturn(primal, nothing, vec)
 end
 
-function EnzymeRules.reverse(config::ConfigWidth{1}, func::Const{Closure},
+function EnzymeRules.reverse(config::RevConfigWidth{1}, func::Const{Closure},
     dret::Active, tape, args::Vararg{Active,N}) where {N}
 
     dargs = ntuple(Val(N)) do i
@@ -53,7 +50,7 @@ end
     cl = Closure([3.14])
     res = autodiff(Reverse, cl, Active, Active(2.7))[1][1]
     @test res ≈ 7 * 2.7 + 3.14 * 1000
-    @test cl[1] ≈ 0.0
+    @test cl.v[1] ≈ 0.0
 end
 
-end # ReverseRules
+end # testset "sc"
