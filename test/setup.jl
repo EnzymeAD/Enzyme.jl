@@ -139,9 +139,6 @@ macro grab_output(ex)
             open(fname, "w") do fout
                 redirect_stdout(fout) do
                     ret = $(esc(ex))
-
-                    # NOTE: CUDA requires a 'proper' sync to flush its printf buffer
-                    synchronize(context())
                 end
             end
             ret, read(fname, String)
@@ -150,7 +147,6 @@ macro grab_output(ex)
 end
 
 function julia_exec(args::Cmd, env...)
-    # FIXME: this doesn't work when the compute mode is set to exclusive
     cmd = Base.julia_cmd()
     cmd = `$cmd --project=$(Base.active_project()) --color=no $args`
 
