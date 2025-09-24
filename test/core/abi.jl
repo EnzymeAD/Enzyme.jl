@@ -595,8 +595,6 @@ end
 end
 end
 
-include("usermixed.jl")
-
 mutable struct EmptyStruct end
 
 function (uf::EmptyStruct)(du, u, v)

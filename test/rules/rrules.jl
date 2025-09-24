@@ -433,5 +433,4 @@ unstabletapesq(x) = unstabletape(x)^2
     @test Enzyme.autodiff(Enzyme.ReverseWithPrimal, unstabletapesq, Active(5.0))[1][1] ≈ ((5.0 + 7) * 10)
 end
 
-include("mixedrrule.jl")
 end # ReverseRules
