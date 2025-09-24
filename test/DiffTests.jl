@@ -29,8 +29,8 @@ num2num_3(x) = 10.31^(x + x) - x
 num2num_4(x) = 1.0
 num2num_5(x) = 1. / (1. + exp(-x))
 
-const NUMBER_TO_NUMBER_FUNCS = (num2num_1, num2num_2, num2num_3,
-                                num2num_4, num2num_5, identity)
+NUMBER_TO_NUMBER_FUNCS = (num2num_1, num2num_2, num2num_3,
+                          num2num_4, num2num_5, identity)
 
 #######################
 # f(x::Number)::Array #
@@ -47,7 +47,7 @@ function num2arr_1(x)
                     num2num_3(x)], 2, 2, 2)
 end
 
-const NUMBER_TO_ARRAY_FUNCS = (num2arr_1,)
+NUMBER_TO_ARRAY_FUNCS = (num2arr_1,)
 
 ####################################
 # f!(y::Array, x::Number)::Nothing #
@@ -61,7 +61,7 @@ function num2arr_1!(y, x)
     return nothing
 end
 
-const INPLACE_NUMBER_TO_ARRAY_FUNCS = (num2arr_1!,)
+INPLACE_NUMBER_TO_ARRAY_FUNCS = (num2arr_1!,)
 
 ########################
 # f(x::Vector)::Number #
@@ -117,10 +117,10 @@ self_weighted_logit(x) = inv(1.0 + exp(-dot(x, x)))
 
 # vec2num_6 fails due to #708
 # rosenbrock_4 fails on nightly for unknown reasons
-const VECTOR_TO_NUMBER_FUNCS = (vec2num_1, vec2num_2,  vec2num_3, vec2num_4, vec2num_5,
-                                #=vec2num_6,=# vec2num_7, rosenbrock_1, rosenbrock_2,
-                                rosenbrock_3, #=rosenbrock_4,=# ackley, self_weighted_logit,
-                                first)
+VECTOR_TO_NUMBER_FUNCS = (vec2num_1, vec2num_2,  vec2num_3, vec2num_4, vec2num_5,
+                          #=vec2num_6,=# vec2num_7, rosenbrock_1, rosenbrock_2,
+                          rosenbrock_3, #=rosenbrock_4,=# ackley, self_weighted_logit,
+                          first)
 ########################
 # f(x::Matrix)::Number #
 ########################
@@ -145,27 +145,27 @@ mat2num_4(x) = mean(sum(sin.(x) * x, dims=2))
 softmax(x) = sum(exp.(x) ./ sum(exp.(x), dims=2))
 
 # det and mat2num_1 fail due to #709
-const MATRIX_TO_NUMBER_FUNCS = (#=det, mat2num_1,=# mat2num_2, mat2num_3, mat2num_4, softmax)
+MATRIX_TO_NUMBER_FUNCS = (#=det, mat2num_1,=# mat2num_2, mat2num_3, mat2num_4, softmax)
 
 ####################
 # binary broadcast #
 ####################
 
-const BINARY_BROADCAST_OPS = ((a, b) -> broadcast(+, a, b),
-                              (a, b) -> broadcast(-, a, b),
-                              (a, b) -> broadcast(*, a, b),
-                              (a, b) -> broadcast(/, a, b),
-                              (a, b) -> broadcast(\, a, b),
-                              (a, b) -> broadcast(^, a, b))
-
+BINARY_BROADCAST_OPS = ((a, b) -> broadcast(+, a, b),
+                        (a, b) -> broadcast(-, a, b),
+                        (a, b) -> broadcast(*, a, b),
+                        (a, b) -> broadcast(/, a, b),
+                        (a, b) -> broadcast(\, a, b),
+                        (a, b) -> broadcast(^, a, b))
+ 
 #################################
 # f(::Matrix, ::Matrix)::Number #
 #################################
 
-const BINARY_MATRIX_TO_MATRIX_FUNCS = (+, -, *, /, \,
-                                       BINARY_BROADCAST_OPS...,
-                                       (a, b) -> a * transpose(b), (a, b) -> transpose(a) * b, (a, b) -> transpose(a) * transpose(b),
-                                       (a, b) -> a * adjoint(b), (a, b) -> adjoint(a) * b, (a, b) -> adjoint(a) * adjoint(b))
+BINARY_MATRIX_TO_MATRIX_FUNCS = (+, -, *, /, \,
+                                 BINARY_BROADCAST_OPS...,
+                                 (a, b) -> a * transpose(b), (a, b) -> transpose(a) * b, (a, b) -> transpose(a) * transpose(b),
+                                 (a, b) -> a * adjoint(b), (a, b) -> adjoint(a) * b, (a, b) -> adjoint(a) * adjoint(b))
 
 ###########################################
 # f(::Matrix, ::Matrix, ::Matrix)::Number #
@@ -175,7 +175,7 @@ relu(x) = log.(1.0 .+ exp.(x))
 sigmoid(n) = 1. / (1. + exp.(-n))
 neural_step(x1, w1, w2) = sigmoid(dot(w2[1:size(w1, 2)], relu(w1 * x1[1:size(w1, 2)])))
 
-const TERNARY_MATRIX_TO_NUMBER_FUNCS = (neural_step,)
+TERNARY_MATRIX_TO_NUMBER_FUNCS = (neural_step,)
 
 ###################################
 # f!(y::Array, x::Array)::Nothing #
@@ -248,8 +248,8 @@ function mutation_test_2!(y, x)
     return nothing
 end
 
-const INPLACE_ARRAY_TO_ARRAY_FUNCS = (chebyquad!, brown_almost_linear!, trigonometric!,
-                                      mutation_test_1!, mutation_test_2!)
+INPLACE_ARRAY_TO_ARRAY_FUNCS = (chebyquad!, brown_almost_linear!, trigonometric!,
+                                mutation_test_1!, mutation_test_2!)
 
 ######################
 # f(x::Array)::Array #
@@ -269,14 +269,14 @@ arr2arr_1(x) = (sum(x .* x); fill(zero(eltype(x)), size(x)))
 
 arr2arr_2(x) = x[1, :] .+ x[1, :] .+ first(x)
 
-const ARRAY_TO_ARRAY_FUNCS = (-, chebyquad, brown_almost_linear, trigonometric, arr2arr_1,
-                              arr2arr_2, mutation_test_1, mutation_test_2, identity)
+ARRAY_TO_ARRAY_FUNCS = (-, chebyquad, brown_almost_linear, trigonometric, arr2arr_1,
+                        arr2arr_2, mutation_test_1, mutation_test_2, identity)
 
 #######################
 # f(::Matrix)::Matrix #
 #######################
 
-const MATRIX_TO_MATRIX_FUNCS = (inv,)
+MATRIX_TO_MATRIX_FUNCS = (inv,)
 
 
 n = 1 + rand()
@@ -284,11 +284,11 @@ x, y = 1 .+ rand(5, 5), 1 .+ rand(5)
 A, B = 1 .+ rand(5, 5), 1 .+ rand(5, 5)
 
 # f returns Number
-@testset "Number to Number" for f in DiffTests.NUMBER_TO_NUMBER_FUNCS
+@testset "Number to Number" for f in NUMBER_TO_NUMBER_FUNCS
     test_scalar(f, n; rtol = 1.0e-6, atol = 1.0e-6)
 end
 
-@testset "Vector to Number" for f in DiffTests.VECTOR_TO_NUMBER_FUNCS
+@testset "Vector to Number" for f in VECTOR_TO_NUMBER_FUNCS
     # `test_matrix_to_number` contains a `@generated` function, we wrap it in a
     # `Ref{Any}` container only to be able to catch and test the warnings emitted during
     # compilation in the body of the function.
@@ -297,42 +297,42 @@ end
     @test_warn warn_msg test_mat2num[](f, y; rtol = 1.0e-6, atol = 1.0e-6)
 end
 
-@testset "Matrix to Number" for f in DiffTests.MATRIX_TO_NUMBER_FUNCS
+@testset "Matrix to Number" for f in MATRIX_TO_NUMBER_FUNCS
     test_matrix_to_number(f, x; rtol = 1.0e-6, atol = 1.0e-6)
 end
 
 # TODO(vchuravy/wsmoses): Enable these tests
-# for f in DiffTests.TERNARY_MATRIX_TO_NUMBER_FUNCS
+# for f in TERNARY_MATRIX_TO_NUMBER_FUNCS
 #     @test isa(f(A, B, x), Number)
 # end
 
 # # f returns Array
 
-# for f in DiffTests.NUMBER_TO_ARRAY_FUNCS
+# for f in NUMBER_TO_ARRAY_FUNCS
 #     @test isa(f(n), Array)
 # end
 
-# for f in DiffTests.ARRAY_TO_ARRAY_FUNCS
+# for f in ARRAY_TO_ARRAY_FUNCS
 #     @test isa(f(A), Array)
 #     @test isa(f(y), Array)
 # end
 
-# for f in DiffTests.MATRIX_TO_MATRIX_FUNCS
+# for f in MATRIX_TO_MATRIX_FUNCS
 #     @test isa(f(A), Array)
 # end
 
-# for f in DiffTests.BINARY_MATRIX_TO_MATRIX_FUNCS
+# for f in BINARY_MATRIX_TO_MATRIX_FUNCS
 #     @test isa(f(A, B), Array)
 # end
 
 # # f! returns Nothing
 
-# for f! in DiffTests.INPLACE_ARRAY_TO_ARRAY_FUNCS
+# for f! in INPLACE_ARRAY_TO_ARRAY_FUNCS
 #     @test isa(f!(y, x), Nothing)
 # end
 
-# for f! in DiffTests.INPLACE_NUMBER_TO_ARRAY_FUNCS
+# for f! in INPLACE_NUMBER_TO_ARRAY_FUNCS
 #     @test isa(f!(y, n), Nothing)
 # end
 
-end # module
+end # testset DiffTests
