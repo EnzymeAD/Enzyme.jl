@@ -118,6 +118,18 @@ else
     end
 end
 
+#Always set the max rss so that if tests add large global variables (which they do) we don't make the GC's life too hard
+if Sys.WORD_SIZE == 64
+    const JULIA_TEST_MAXRSS_MB = 3800
+else
+    # Assume that we only have 3.5GB available to a single process, and that a single
+    # test can take up to 2GB of RSS.  This means that we should instruct the test
+    # framework to restart any worker that comes into a test set with 1.5GB of RSS.
+    const JULIA_TEST_MAXRSS_MB = 1536
+end
+
+const max_worker_rss = JULIA_TEST_MAXRSS_MB * 2^20
+
 # determine parallelism
 if !set_jobs
     jobs = Sys.CPU_THREADS
@@ -298,6 +310,11 @@ try
                         p = recycle_worker(p)
                     else
                         print_testworker_stats(test, wrkr, resp)
+                        if resp[end] > max_worker_rss
+                            # the worker has reached the max-rss limit, recycle it
+                            # so future tests start with a smaller working set
+                            p = recycle_worker(p)
+                        end
                     end
                 end
 
