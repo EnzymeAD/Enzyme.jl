@@ -103,10 +103,6 @@ end
 # filter tests
 if isempty(ARGS)
     filter!(tests) do test
-        if startswith(test, "codegen/")
-            # Who runs this? It segfault's on 1.11
-            return false
-        end
         if test ∈ ("metal", "cuda", "amdgpu")
             return false
         end
