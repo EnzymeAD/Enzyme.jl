@@ -1,5 +1,11 @@
 using SpecialFunctions
 
+@testset "SpecialFunctions ext" begin
+    lgabsg(x) = SpecialFunctions.logabsgamma(x)[1]
+    test_scalar(lgabsg, 1.0; rtol = 1.0e-5, atol = 1.0e-5)
+    test_scalar(lgabsg, 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
+end
+
 # From https://github.com/JuliaDiff/ChainRules.jl/blob/02e7857e34b5c01067a288262f69cfcb9fce069b/test/rulesets/packages/SpecialFunctions.jl#L1
 
 @testset "SpecialFunctions" for x in (1, -1, 0, 0.5, 10, -17.1, 1.5 + 0.7im)
