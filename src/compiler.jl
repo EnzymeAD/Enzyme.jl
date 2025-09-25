@@ -2389,7 +2389,10 @@ function enzyme!(
         convert(API.CDIFFE_TYPE, rt)
     end
 
-    logic = Logic()
+    enzyme_context = EnzymeContext()
+    GC.@preserve enzyme_context begin
+    LLVM.@dispose logic  = Logic(enzyme_context) begin
+
     TA = TypeAnalysis(logic)
 
     retTT = if !isa(actualRetType, Union) &&
@@ -2622,6 +2625,9 @@ function enzyme!(
     if DumpPostEnzyme[]
         API.EnzymeDumpModuleRef(mod.ref)
     end
+
+    end # @dispose logic
+    end # GC.preserve enzyme_context
     return adjointf, augmented_primalf, TapeType
 end
 
