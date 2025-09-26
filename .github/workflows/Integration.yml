@@ -50,6 +50,7 @@ jobs:
           - Distributions
           - DynamicExpressions
           - Lux
+          - SciML
     steps:
       - uses: actions/checkout@v5
       - uses: julia-actions/setup-julia@v2
