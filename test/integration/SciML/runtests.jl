@@ -54,26 +54,24 @@ using LinearSolve, LinearAlgebra
     @test d_u0 ≈ fdg
 end
 
-#@testset "SciMLSensitivity Adjoint Interface" begin
-    Enzyme.API.typeWarning!(false)
+odef(du, u, p, t) = du .= u .* p
+prob = ODEProblem(odef, [2.0], (0.0, 1.0), [3.0])
+struct senseloss0{T}
+    sense::T
+end
+function (f::senseloss0)(u0p)
+    prob = ODEProblem{true}(odef, u0p[1:1], (0.0, 1.0), u0p[2:2])
+    sum(solve(prob, Tsit5(), abstol = 1e-12, reltol = 1e-12, saveat = 0.1))
+end
 
-    odef(du, u, p, t) = du .= u .* p
-    prob = ODEProblem(odef, [2.0], (0.0, 1.0), [3.0])
-
-    struct senseloss0{T}
-        sense::T
-    end
-    function (f::senseloss0)(u0p)
-        prob = ODEProblem{true}(odef, u0p[1:1], (0.0, 1.0), u0p[2:2])
-        sum(solve(prob, Tsit5(), abstol = 1e-12, reltol = 1e-12, saveat = 0.1))
-    end
+@testset "SciMLSensitivity Adjoint Interface" begin
     u0p = [2.0, 3.0]
     du0p = zeros(2)
     @test senseloss0(InterpolatingAdjoint())(u0p) isa Number
     dup = Zygote.gradient(senseloss0(InterpolatingAdjoint()), u0p)[1]
     Enzyme.autodiff(Reverse, senseloss0(InterpolatingAdjoint()), Active, Duplicated(u0p, du0p))
     @test du0p ≈ dup
-#end
+end
 
   @testset "LinearSolve Adjoints" begin
     n = 4
