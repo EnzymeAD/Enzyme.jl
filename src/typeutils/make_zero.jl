@@ -572,13 +572,13 @@ end
         return nothing
     end
     push!(seen, prev)
-    for i in 1:nf
+    ntuple(Val(nf)) do i
+        @inline
         if isdefined(prev, i)
             xi = getfield(prev, i)
             SBT = Core.Typeof(xi)
             activitystate = active_reg_nothrow(SBT)
             if activitystate == AnyState  # guaranteed_const
-                continue
             elseif ismutabletype(T) && !ismutabletype(SBT)
                 yi = make_zero_immutable!(xi, seen)
                 if Base.isconst(T, i)
@@ -593,6 +593,7 @@ end
                 throw(ArgumentError(msg))
             end
         end
+        return nothing
     end
     return nothing
 end
@@ -611,13 +612,13 @@ end
         return nothing
     end
     push!(seen, prev)
-    for i in 1:nf
+    ntuple(Val(nf)) do i
+        @inline
         if isdefined(prev, i)
             xi = getfield(prev, i)
             SBT = Core.Typeof(xi)
             activitystate = active_reg_nothrow(SBT)
             if activitystate == AnyState  # guaranteed_const
-                continue
             elseif ismutabletype(T) && !ismutabletype(SBT)
                 yi = make_zero_immutable!(xi, seen)
                 if Base.isconst(T, i)
@@ -631,6 +632,7 @@ end
                 EnzymeCore.remake_zero!(xi, seen)
             end
         end
+        return nothing
     end
     return nothing
 end

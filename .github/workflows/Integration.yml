@@ -50,13 +50,13 @@ jobs:
           - Distributions
           - DynamicExpressions
           - Lux
+          - SciML
     steps:
       - uses: actions/checkout@v5
       - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
       - uses: julia-actions/cache@v2
-      - uses: julia-actions/julia-buildpkg@v1
       - name: "Install Dependencies"
         run: |
             julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 -e 'using Pkg; Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")])'

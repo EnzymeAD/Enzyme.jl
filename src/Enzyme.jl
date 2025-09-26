@@ -53,6 +53,7 @@ import EnzymeCore:
     set_strong_zero,
     clear_strong_zero,
     within_autodiff,
+    ignore_derivatives,
     WithPrimal,
     NoPrimal,
     needs_primal,
