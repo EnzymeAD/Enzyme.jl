@@ -830,4 +830,33 @@ end
 
 end
 
+
+@testset "hypot rules" begin
+    hypot2(x, y, xs...) = hypot(x, y, xs...)^2
+
+    @testset "forward" begin
+        @testset for RT in (Const, DuplicatedNoNeed, Duplicated),
+            Tx in (Const, Duplicated),
+            Ty in (Const, Duplicated),
+            Tz in (Const, Duplicated)
+
+            x, y, z = 2.0, 3.0, 5.0
+            test_forward(hypot, RT, (x, Tx), (y, Ty))
+            test_forward(hypot, RT, (x, Tx), (y, Ty), (z, Tz))
+        end
+    end
+    @testset "reverse" begin
+        @testset for RT in (Active,),
+            Tx in (Const, Active),
+            Ty in (Const, Active),
+            Tz in (Const, Active),
+            fun in (hypot, hypot2)
+
+            x, y, z = 2.0, 3.0, 5.0
+            test_reverse(fun, RT, (x, Tx), (y, Ty))
+            test_reverse(fun, RT, (x, Tx), (y, Ty), (z, Tz))
+        end
+    end
+end
+
 end # InternalRules
