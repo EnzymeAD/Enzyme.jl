@@ -41,3 +41,7 @@ end
 @testset "within_autodiff" begin
     @test !EnzymeCore.within_autodiff()
 end
+
+@testset "ignore_derivatives" begin
+    @test EnzymeCore.ignore_derivatives(3) == 3
+end
