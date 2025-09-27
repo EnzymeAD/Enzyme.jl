@@ -1735,8 +1735,7 @@ function EnzymeRules.augmented_primal(
 ) where {N}
     h = hypot(x.val, y.val, map(x->x.val, xs)...)
     primal = needs_primal(config) ? h : nothing
-    tape = h
-    return EnzymeRules.AugmentedReturn(primal, nothing, tape)
+    return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
 end
 
 function EnzymeRules.reverse(
@@ -1748,7 +1747,7 @@ function EnzymeRules.reverse(
     y::Annotation{<:Real},
     xs::Vararg{Annotation{<:Real},N}
 ) where {N}
-    h = tape
+    h = hypot(x.val, y.val, map(x->x.val, xs)...)
     w = Val(EnzymeRules.width(config))
     dx = _hypotreverse(x, w, dret, h)
     dy = _hypotreverse(y, w, dret, h)
