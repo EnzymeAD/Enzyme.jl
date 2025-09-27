@@ -836,9 +836,9 @@ end
 
     @testset "forward" begin
         @testset for RT in (Const, DuplicatedNoNeed, Duplicated),
-            Tx in (Const, Duplicated),
-            Ty in (Const, Duplicated),
-            Tz in (Const, Duplicated)
+                Tx in (Const, Duplicated),
+                Ty in (Const, Duplicated),
+                Tz in (Const, Duplicated)
 
             x, y, z = 2.0, 3.0, 5.0
             test_forward(hypot, RT, (x, Tx), (y, Ty))
@@ -847,10 +847,10 @@ end
     end
     @testset "reverse" begin
         @testset for RT in (Active,),
-            Tx in (Const, Active),
-            Ty in (Const, Active),
-            Tz in (Const, Active),
-            fun in (hypot, hypot2)
+                Tx in (Const, Active),
+                Ty in (Const, Active),
+                Tz in (Const, Active),
+                fun in (hypot, hypot2)
 
             x, y, z = 2.0, 3.0, 5.0
             test_reverse(fun, RT, (x, Tx), (y, Ty))
