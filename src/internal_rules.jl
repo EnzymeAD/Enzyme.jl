@@ -1662,7 +1662,7 @@ function EnzymeRules.forward(
         y::Annotation,
         xs::Vararg{Annotation, N}
     ) where {N}
-    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+    if EnzymeRules.needs_shadow(config)
         h = func.val(x.val, y.val, map(x -> x.val, xs)...)
         if EnzymeRules.width(config) == 1
             dh = (
@@ -1670,38 +1670,27 @@ function EnzymeRules.forward(
                     _hypotforward(y) +
                     sum(_hypotforward, xs, init = zero(real(x.val)))
             ) / h
-            return Duplicated(h, dh)
+            if EnzymeRules.needs_primal(config)
+                return Duplicated(h, dh)
+            else
+                return dh
+            end
         else
-            return BatchDuplicated(
-                h,
-                ntuple(
-                    i -> (
-                        _hypotforward(x, i) +
-                            _hypotforward(y, i) +
-                            sum(x -> _hypotforward(x, i), xs; init = zero(real(x.val)))
-                    ) / h,
-                    Val(EnzymeRules.width(config)),
-                ),
-            )
-        end
-    elseif EnzymeRules.needs_shadow(config)
-        if EnzymeRules.width(config) == 1
-            return (
-                _hypotforward(x) +
-                    _hypotforward(y) +
-                    sum(_hypotforward, xs, init = zero(real(x.val)))
-            ) / func.val(x.val, y.val, map(x -> x.val, xs)...)
-        else
-            return ntuple(
+            dh = ntuple(
                 i -> (
                     _hypotforward(x, i) +
                         _hypotforward(y, i) +
                         sum(x -> _hypotforward(x, i), xs; init = zero(real(x.val)))
-                ) / func.val(x.val, y.val, map(x -> x.val, xs)...),
+                ) / h,
                 Val(EnzymeRules.width(config)),
             )
+            if EnzymeRules.needs_primal(config)
+                return BatchDuplicated(h, dh)
+            else
+                return dh
+            end
         end
-    elseif needs_primal(config)
+    elseif EnzymeRules.needs_primal(config)
         return func.val(x.val, y.val, map(x -> x.val, xs)...)
     else
         return nothing
