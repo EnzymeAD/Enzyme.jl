@@ -1664,12 +1664,13 @@ function EnzymeRules.forward(
     ) where {N}
     if EnzymeRules.needs_shadow(config)
         h = func.val(x.val, y.val, map(x -> x.val, xs)...)
+        n = iszero(h) ? one(h) : h
         if EnzymeRules.width(config) == 1
             dh = (
                 _hypotforward(x) +
                     _hypotforward(y) +
                     sum(_hypotforward, xs, init = zero(real(x.val)))
-            ) / h
+            ) / n
             if EnzymeRules.needs_primal(config)
                 return Duplicated(h, dh)
             else
@@ -1681,7 +1682,7 @@ function EnzymeRules.forward(
                     _hypotforward(x, i) +
                         _hypotforward(y, i) +
                         sum(x -> _hypotforward(x, i), xs; init = zero(real(x.val)))
-                ) / h,
+                ) / n,
                 Val(EnzymeRules.width(config)),
             )
             if EnzymeRules.needs_primal(config)
@@ -1737,9 +1738,10 @@ function EnzymeRules.reverse(
         xs::Vararg{Annotation, N}
     ) where {N}
     h = hypot(x.val, y.val, map(x -> x.val, xs)...)
+    n = iszero(h) ? one(h) : h
     w = Val(EnzymeRules.width(config))
-    dx = _hypotreverse(x, w, dret, h)
-    dy = _hypotreverse(y, w, dret, h)
-    dxs = map(x -> _hypotreverse(x, w, dret, h), xs)
+    dx = _hypotreverse(x, w, dret, n)
+    dy = _hypotreverse(y, w, dret, n)
+    dxs = map(x -> _hypotreverse(x, w, dret, n), xs)
     return (dx, dy, dxs...)
 end
