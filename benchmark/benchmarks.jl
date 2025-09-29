@@ -57,11 +57,11 @@ end
 y1d = rand(40);
 dist1d = fill(10.0, 40);
 
-SUITE["fold_broadcast"]["multidim_sum_bcast"]["1D"] = @benchmarkable multidim_sum_bcast($dist1d, $y1d)
+SUITE["fold_broadcast"]["multidim_sum_bcast"]["1D"] = @benchmarkable Enzyme.gradient(Reverse, multidim_sum_bcast, Const($dist1d), $y1d)
 
 y2d = rand(10, 4);
 dist2d = fill(10.0, 10, 4);
 
-SUITE["fold_broadcast"]["multidim_sum_bcast"]["2D"] = @benchmarkable multidim_sum_bcast($dist2d, $y2d)
+SUITE["fold_broadcast"]["multidim_sum_bcast"]["2D"] = @benchmarkable Enzyme.gradient(Reverse, multidim_sum_bcast, Const($dist2d), $y2d)
 
 
