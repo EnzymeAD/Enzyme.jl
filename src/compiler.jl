@@ -1525,34 +1525,57 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
 
         prev2 = bitcast!(B, prev, LLVM.PointerType(T_int8, addrspace(value_type(prev))))
         typedesc = Base.DataTypeFieldDesc(Ty)
-        for i in 1:fieldcount(Ty)
-            Ty2 = fieldtype(Ty, i)
-            off = fieldoffset(Ty, i)
 
-            prev3 = inbounds_gep!(
-                B,
-                T_int8,
-                prev2,
-                LLVM.Value[LLVM.ConstantInt(Int64(off))],
-            )
-	
-	    if typedesc[i].isptr
-	    	@assert count === nothing
-                Ty2 = Any
-                zeroAll = false
-                prev3 = bitcast!(B, prev3, LLVM.PointerType(T_prjlvalue, addrspace(value_type(prev3))))
-                if addrspace(value_type(prev3)) != Derived
-                  prev3 = addrspacecast!(B, prev3, LLVM.PointerType(T_prjlvalue, Derived))
-                end
-                zero_single_allocation(B, Ty2, T_prjlvalue, prev3, zeroAll, LLVM.ConstantInt(T_int64, 0); atomic=true) 
-            else
-		if count !== nothing
-		   @assert off == 0
-		   @assert fieldsize(Ty) == fieldsize(Ty2)
+	needs_fullzero = false
+	if count !== nothing
+		for i in 1:fieldcount(Ty)
+		    Ty2 = fieldtype(Ty, i)
+		    off = fieldoffset(Ty, i)
+
+		    if typedesc[i].isptr || !(off == 0 && Base.aligned_sizeof(Ty) == Base.aligned_sizeof(Ty2))
+			needs_fullzero = true
+			break
+		    end
 		end
-                create_recursive_stores(B, Ty2, prev3, count)
-            end
-        end
+	end
+        
+	if needs_fullzero
+		zeroAll = false
+		prev = bitcast!(B, prev, LLVM.PointerType(LLVMType, addrspace(value_type(prev))))
+		prev = addrspacecast!(B, prev, LLVM.PointerType(LLVMType, Derived))
+		atomic = true
+	    (Size, AlignedSize) = count
+	    zero_allocation(B, Ty, LLVMType, prev, AlignedSize, Size, zeroAll, atomic)
+	else
+		for i in 1:fieldcount(Ty)
+		    Ty2 = fieldtype(Ty, i)
+		    off = fieldoffset(Ty, i)
+
+		    prev3 = inbounds_gep!(
+			B,
+			T_int8,
+			prev2,
+			LLVM.Value[LLVM.ConstantInt(Int64(off))],
+		    )
+		
+		    if typedesc[i].isptr
+			@assert count === nothing
+			Ty2 = Any
+			zeroAll = false
+			prev3 = bitcast!(B, prev3, LLVM.PointerType(T_prjlvalue, addrspace(value_type(prev3))))
+			if addrspace(value_type(prev3)) != Derived
+			  prev3 = addrspacecast!(B, prev3, LLVM.PointerType(T_prjlvalue, Derived))
+			end
+			zero_single_allocation(B, Ty2, T_prjlvalue, prev3, zeroAll, LLVM.ConstantInt(T_int64, 0); atomic=true) 
+		    else
+			if count !== nothing
+			   @assert off == 0
+			   @assert Base.aligned_sizeof(Ty) == Base.aligned_sizeof(Ty2)
+			end
+			create_recursive_stores(B, Ty2, prev3, count)
+		    end
+		end
+	end
     end
 end
 
