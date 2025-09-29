@@ -718,6 +718,17 @@ end
     @test autodiff(Forward, (x, y) -> autodiff(Forward, Const(tonest), Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
 end
 
+catsin(x::Number) = hcat(sin.(x .* [1, 2]))
+
+function inner_reverse(x)
+    Enzyme.jacobian(Enzyme.Reverse, catsin, x)[1]
+end
+
+@testset "Nested AD With Allocation" begin
+    @test Enzyme.autodiff(Enzyme.Forward, inner_reverse, Enzyme.Duplicated(3.1, 2.7))[1] ≈ reshape([-0.11226778856988433 0.8973655504289612 ], (2, 1))
+end
+
+
 @testset "Hessian" begin
     function origf(x::Array{Float64}, y::Array{Float64})
         y[1] = x[1] * x[1] + x[2] * x[1]

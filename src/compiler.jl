@@ -1486,7 +1486,8 @@ function julia_undef_value_for_type(
     throw(AssertionError("Unknown type to val: $(Ty)"))
 end
 
-function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType), @nospecialize(prev::LLVM.Value))::Nothing
+# If count is nothing, it represents that we have an allocation of one of `Ty`. If it is a tuple LLVM values, it represents {the total size in bytes, the aligned size of each element}
+function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType), @nospecialize(prev::LLVM.Value), @nospecialize(count::Union{Nothing, Tuple{LLVM.Value, LLVM.ConstantInt}}))::Nothing
     if Base.datatype_pointerfree(Ty)
         return
     end
@@ -1497,10 +1498,18 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
 
     if !isboxed_ref[]
         zeroAll = false
-        T_int64 = LLVM.Int64Type()
         prev = bitcast!(B, prev, LLVM.PointerType(LLVMType, addrspace(value_type(prev))))
         prev = addrspacecast!(B, prev, LLVM.PointerType(LLVMType, Derived))
-        zero_single_allocation(B, Ty, LLVMType, prev, zeroAll, LLVM.ConstantInt(T_int64, 0); atomic=true)
+	atomic = true
+	if count === nothing
+	    T_int64 = LLVM.Int64Type()
+            zero_single_allocation(B, Ty, LLVMType, prev, zeroAll, LLVM.ConstantInt(T_int64, 0); atomic)
+	    nothing
+	else
+	    (Size, AlignedSize) = count
+	    zero_allocation(B, Ty, LLVMType, prev, AlignedSize, Size, zeroAll, atomic)
+	    nothing
+	end
     else
         if fieldcount(Ty) == 0
             error("Error handling recursive stores for $Ty which has a fieldcount of 0")
@@ -1526,8 +1535,9 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
                 prev2,
                 LLVM.Value[LLVM.ConstantInt(Int64(off))],
             )
-    
+	
 	    if typedesc[i].isptr
+	    	@assert count === nothing
                 Ty2 = Any
                 zeroAll = false
                 prev3 = bitcast!(B, prev3, LLVM.PointerType(T_prjlvalue, addrspace(value_type(prev3))))
@@ -1536,7 +1546,11 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
                 end
                 zero_single_allocation(B, Ty2, T_prjlvalue, prev3, zeroAll, LLVM.ConstantInt(T_int64, 0); atomic=true) 
             else
-                create_recursive_stores(B, Ty2, prev3)
+		if count !== nothing
+		   @assert off == 0
+		   @assert fieldsize(Ty) == fieldsize(Ty2)
+		end
+                create_recursive_stores(B, Ty2, prev3, count)
             end
         end
     end
@@ -1548,10 +1562,68 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
     gutils = GradientUtils(gutils)
     mode = get_mode(gutils)
     has, Ty, byref = abs_typeof(V)
+    partial = false
+    count = nothing
     if !has
-        fn = LLVM.parent(LLVM.parent(V))
-        throw(AssertionError("$(string(fn))\n Allocation could not have its type statically determined $(string(V))"))
+        arg = V
+	if isa(arg, LLVM.CallInst)
+		fn = LLVM.called_operand(arg)
+		nm = ""
+		if isa(fn, LLVM.Function)
+		    nm = LLVM.name(fn)
+		end
+
+		# Type tag is arg 3
+		if nm == "julia.gc_alloc_obj" ||
+			nm == "jl_gc_alloc_typed" ||
+			nm == "ijl_gc_alloc_typed"
+		   totalsize = operands(arg)[2]
+
+		   @assert value_type(totalsize) isa LLVM.IntegerType
+		   
+		   arg = operands(arg)[3]
+
+	           if isa(arg, LLVM.CallInst)
+			fn = LLVM.called_operand(arg)
+			nm = ""
+			if isa(fn, LLVM.Function)
+			    nm = LLVM.name(fn)
+			end
+			if LLVM.callconv(arg) == 37 || nm == "julia.call"
+			    index = 1
+			    if LLVM.callconv(arg) != 37
+				fn = first(operands(arg))
+				nm = LLVM.name(fn)
+				index += 1
+			    end
+			    if nm == "jl_f_apply_type" || nm == "ijl_f_apply_type"
+				index += 1
+				found = Any[]
+				legal, Ty = absint(operands(arg)[index], partial)
+				if legal && Ty == NTuple
+				   legal, Ty = absint(operands(arg)[index+2])
+				   if legal
+					# count should represent {the total size in bytes, the aligned size of each element}
+					B = LLVM.IRBuilder()
+					position!(B, V)
+					alignsize = LLVM.ConstantInt(value_type(totalsize), Base.aligned_sizeof(Ty))
+					count = (totalsize, alignsize)
+					has = true
+				end
+			    end
+			end
+	            end
+		end
+            end
+        end
+
+
+	if !has
+            fn = LLVM.parent(LLVM.parent(V))
+	    throw(AssertionError("$(string(fn))\n Allocation could not have its type statically determined $(string(V))"))
+	end
     end
+
     if mode == API.DEM_ReverseModePrimal ||
        mode == API.DEM_ReverseModeGradient ||
        mode == API.DEM_ReverseModeCombined
@@ -1563,7 +1635,11 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
             operands(V)[3] = unsafe_to_llvm(B, Base.RefValue{Ty})
         end
     end
-   
+  
+    if Base.datatype_pointerfree(Ty)
+	return
+    end
+
     if mode == API.DEM_ForwardMode && (used || idx != 0)
         # Zero any jlvalue_t inner elements of preceeding allocation.
 
@@ -1583,7 +1659,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
         B = LLVM.IRBuilder()
         position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(prev)))
 
-        create_recursive_stores(B, Ty, prev)
+	create_recursive_stores(B, Ty, prev, count)
     end
     if (mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeCombined) && used
         # Zero any jlvalue_t inner elements of preceeding allocation.
@@ -1607,7 +1683,8 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
         # Julia could decide to dead store eliminate the memset (not being read before the store of jlvaluet'), resulting in an error
         B = LLVM.IRBuilder()
         position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(V)))
-        create_recursive_stores(B, Ty, V)
+	
+	create_recursive_stores(B, Ty, V, count)
     end
 
     nothing
@@ -1783,6 +1860,7 @@ function zero_allocation(
     @nospecialize(AlignedSize::LLVM.Value),
     @nospecialize(Size::LLVM.Value),
     zeroAll::Bool,
+    atomic::Bool=false
 )::LLVM.API.LLVMValueRef
     func = LLVM.parent(position(B))
     mod = LLVM.parent(func)
@@ -1792,9 +1870,14 @@ function zero_allocation(
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
 
+    name = "zeroType." * string(jlType)
+    if atomic
+	name = name * ".atomic"
+    end
+
     wrapper_f = LLVM.Function(
         mod,
-        "zeroType",
+        name,
         LLVM.FunctionType(LLVM.VoidType(), [value_type(obj), T_int8, value_type(Size)]),
     )
     push!(function_attributes(wrapper_f), StringAttribute("enzyme_math", "enzyme_zerotype"))
@@ -1837,7 +1920,7 @@ function zero_allocation(
             [(LLVM.ConstantInt(value_type(Size), 0), entry), (inc, loop)],
         )
 
-        zero_single_allocation(builder, jlType, LLVMType, nobj, zeroAll, idx)
+        zero_single_allocation(builder, jlType, LLVMType, nobj, zeroAll, idx; atomic)
 
         br!(
             builder,
