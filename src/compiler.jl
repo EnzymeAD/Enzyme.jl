@@ -4310,6 +4310,8 @@ end
 const DumpPreCheck = Ref(false)
 const DumpPreOpt = Ref(false)
 
+LLVM.@module_pass "preserve-nvvm" PreserveNVVMPass
+
 function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     @assert output == :llvm
     
@@ -4371,6 +4373,15 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     prepare_llvm(primal_interp, mod, primal_job, meta)
     for f in functions(mod)
         permit_inlining!(f)
+    end
+
+    LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
+        @ccall libEnzyme.registerEnzymeAndPassPipeline(pb::Ptr{Cvoid}, 0::UInt8)::Cvoid
+        
+        LLVM.add!(pb, LLVM.NewPMModulePassManager()) do mpm
+            LLVM.add!(mpm, PreserveNVVMPass(true))
+        end
+        LLVM.run!(pb, mod)
     end
 
     NewPMModulePassManager() do pm
