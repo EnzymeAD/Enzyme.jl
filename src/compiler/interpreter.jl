@@ -1182,7 +1182,7 @@ function abstract_call_known(
             end
         end
        
-	if f === Base._foldl_impl &&  length(argtypes) == 4
+	if f === Base._foldl_impl &&  length(argtypes) == 4 && false
 	    
 	    bcty = widenconst(argtypes[4])
 
