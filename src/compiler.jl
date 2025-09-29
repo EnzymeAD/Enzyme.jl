@@ -1546,6 +1546,7 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
 		atomic = true
 	    (Size, AlignedSize) = count
 	    zero_allocation(B, Ty, LLVMType, prev, AlignedSize, Size, zeroAll, atomic)
+	    nothing
 	else
 		for i in 1:fieldcount(Ty)
 		    Ty2 = fieldtype(Ty, i)
@@ -1575,6 +1576,7 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
 			create_recursive_stores(B, Ty2, prev3, count)
 		    end
 		end
+		nothing
 	end
     end
 end
