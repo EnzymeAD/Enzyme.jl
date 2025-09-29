@@ -999,6 +999,28 @@ end
     end
 end
 
+@inline function override_bc_foldl(op, init, itr)
+    # Unroll the while loop once; if init is known, the call to op may
+    # be evaluated at compile time
+    y = iterate(itr)
+    y === nothing && return init
+    v = op(init, y[1])
+   
+    if same_sized(itr.args)
+	@inbounds @simd for I in 2:length(itr)
+	    val = overload_broadcast_getindex(itr, I)
+            v = op(v, val)
+        end
+    else
+	while true
+	    y = iterate(itr, y[2])
+	    y === nothing && break
+	    v = op(v, y[1])
+	end
+    end
+    return v
+end
+
 struct MultiOp{Position, NumUsed, F1, F2}
     f1::F1
     f2::F2
@@ -1025,17 +1047,19 @@ end
     end
 end
 
-@inline function bc_or_array_or_number_ty(@nospecialize(Ty::Type))::Bool
-    if Ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing}
-	return all(bc_or_array_or_number_ty, Ty.parameters[4].parameters)
+@inline function bc_or_array_or_number_ty(@nospecialize(Ty::Type), midnothing::Bool=true)::Bool
+    if ( midnothing && Ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing}) ||
+       (!midnothing && Ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle})
+        return all(Base.Fix2(bc_or_array_or_number_ty, midnothing), Ty.parameters[4].parameters)
     else
 	return Ty <: AbstractArray || Ty <: Number || Ty <: Base.RefValue
     end
 end
 
-@inline function has_array(@nospecialize(Ty::Type))::Bool
-    if Ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing}
-	return any(has_array, Ty.parameters[4].parameters)
+@inline function has_array(@nospecialize(Ty::Type), midnothing::Bool=true)::Bool
+    if ( midnothing && Ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing}) ||
+       (!midnothing && Ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle})
+        return any(Base.Fix2(has_array, midnothing), Ty.parameters[4].parameters)
     else
 	return Ty <: AbstractArray
     end
@@ -1150,6 +1174,32 @@ function abstract_call_known(
                 return Base.@invoke abstract_call_known(
                     interp::AbstractInterpreter,
                     Enzyme.Compiler.Interpreter.override_bc_copyto!::Any,
+                    arginfo2::ArgInfo,
+                    si::StmtInfo,
+                    sv::AbsIntState,
+                    max_methods::Int,
+                )
+            end
+        end
+       
+	if f === Base._foldl_impl &&  length(argtypes) == 4
+	    
+	    bcty = widenconst(argtypes[4])
+
+
+            if widenconst(argtypes[3]) <: Base._InitialValue &&
+	       bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle} && ndims(bcty) >= 2 &&
+	       bc_or_array_or_number_ty(bcty, false) && has_array(bcty, false)
+           
+                arginfo2 = ArgInfo(
+                    fargs isa Nothing ? nothing :
+                    [:(Enzyme.Compiler.Interpreter.override_bc_foldl), fargs[2:end]...],
+                    [Core.Const(Enzyme.Compiler.Interpreter.override_bc_foldl), argtypes[2:end]...],
+                )
+
+                return Base.@invoke abstract_call_known(
+                    interp::AbstractInterpreter,
+                    Enzyme.Compiler.Interpreter.override_bc_foldl::Any,
                     arginfo2::ArgInfo,
                     si::StmtInfo,
                     sv::AbsIntState,
