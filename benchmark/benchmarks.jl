@@ -54,7 +54,7 @@ function multidim_sum_bcast(dist, y)
 end
 
 
-y1d = rand(10, 40);
+y1d = rand(40);
 dist1d = fill(10.0, 40);
 
 SUITE["fold_broadcast"]["multidim_sum_bcast"]["1D"] = @benchmarkable multidim_sum_bcast($dist1d, $y1d)
