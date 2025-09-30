@@ -5,8 +5,10 @@ LLVM.@checked struct Logic
     ctx::EnzymeContext
     function Logic(ctx::EnzymeContext)
         ref = API.CreateLogic()
-        API.LogicSetExternalContext(ref, ctx)
-        new(ref, ctx)
+        GC.@preserve ctx begin
+            API.LogicSetExternalContext(ref, Base.pointer_from_objref(ctx))
+            return new(ref, ctx)
+        end
     end
 end
 Base.unsafe_convert(::Type{API.EnzymeLogicRef}, logic::Logic) = logic.ref
