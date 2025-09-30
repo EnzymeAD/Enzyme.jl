@@ -13,6 +13,7 @@ import Enzyme:
     guess_activity,
     eltype,
     API,
+    EnzymeContext,
     TypeTree,
     typetree,
     TypeTreeTable,
