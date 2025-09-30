@@ -121,3 +121,40 @@ end
 	                flattened_unique_values,
 	                Duplicated(thing, dthing))
 end
+
+
+
+
+function literalrt(x)
+    y = Base.inferencebarrier(x * x)
+    y2 = Base.inferencebarrier(x * x * x)
+    return (y, y2)
+end
+
+@testset "Literal RT mismatch" begin
+  fwd, rev = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(literalrt)}, Active{Tuple{Float64, Float64}}, Active{Float64})
+
+  tape, = fwd(Const(literalrt), Active(3.1))
+
+  x = 3.1
+  @test rev(Const(literalrt), Active(3.1), (2.7, 0.2), tape)[1][1] ≈ 2 * x * 2.7 + 3 * x * x * 0.2
+
+end
+
+function literalrt_mixed(x)
+    y = Base.inferencebarrier(x * x)
+    y2 = Base.inferencebarrier([x * x * x])
+    return (y, y2)
+end
+
+@testset "Mixed Literal RT mismatch" begin
+   fwd, rev = Enzyme.autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(literalrt_mixed)}, MixedDuplicated{Tuple{Float64, Vector{Float64}}}, Active{Float64})
+
+   tape, prim, shad = fwd(Const(literalrt_mixed), Active(3.1))
+
+   shad[][2][1] = 0.2
+
+   x = 3.1
+   @test rev(Const(literalrt_mixed), Active(3.1), (2.7, shad[][2]), tape)[1][1] ≈ 2 * x * 2.7 + 3 * x * x * 0.2
+end
+
