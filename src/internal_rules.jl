@@ -1380,7 +1380,7 @@ function EnzymeRules.augmented_primal(
     start::Annotation{<:AbstractFloat},
     step::Annotation{<:AbstractFloat},
     stop::Annotation{<:AbstractFloat},
-) where RT <: Active
+) where RT <: Union{Active,Const}
 
     if EnzymeRules.needs_primal(config)
         primal = func.val(start.val, step.val, stop.val)
@@ -1393,6 +1393,52 @@ function EnzymeRules.augmented_primal(
         Nothing
     }(primal, nothing, nothing)
 end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    func::Const{Colon},
+    dret::Const,
+    tape::Nothing,
+    start::Annotation{T1},
+    step::Annotation{T2},
+    stop::Annotation{T3},
+) where {T1<:AbstractFloat,T2<:AbstractFloat,T3<:AbstractFloat}
+    dstart = if start isa Const
+        nothing
+    elseif EnzymeRules.width(config) == 1
+        zero(T1)
+    else
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+	    zero(T1)
+        end
+    end
+
+    dstep = if step isa Const
+        nothing
+    elseif EnzymeRules.width(config) == 1
+        zero(T2)
+    else
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+	    zero(T2)
+        end
+    end
+
+    dstop = if stop isa Const
+        nothing
+    elseif EnzymeRules.width(config) == 1
+        zero(T3)
+    else
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            zero(T3)
+        end
+    end
+
+    return (dstart, dstep, dstop)
+end
+
 
 function EnzymeRules.reverse(
     config::EnzymeRules.RevConfig,
