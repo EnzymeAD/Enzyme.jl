@@ -3676,7 +3676,8 @@ function lower_convention(
     sret = sret !== nothing
     returnRoots = returnRoots !== nothing
 
-    loweredReturn = RetActivity <: Active && (actualRetType === Any)
+    loweredReturn = (RetActivity <: Active || RetActivity <: MixedDuplicated ||  RetActivity <: BatchMixedDuplicated) && (actualRetType === Any || !allocatedinline(actualRetType))
+    
     expected_RT = Nothing
     if loweredReturn
         @assert !sret
