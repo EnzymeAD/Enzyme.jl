@@ -13,6 +13,7 @@ import Enzyme:
     guess_activity,
     eltype,
     API,
+    EnzymeContext,
     TypeTree,
     typetree,
     TypeTreeTable,
@@ -2497,7 +2498,10 @@ function enzyme!(
         convert(API.CDIFFE_TYPE, rt)
     end
 
-    logic = Logic()
+    enzyme_context = EnzymeContext()
+    GC.@preserve enzyme_context begin
+    LLVM.@dispose logic  = Logic(enzyme_context) begin
+
     TA = TypeAnalysis(logic)
 
     retTT = if !isa(actualRetType, Union) &&
@@ -2753,7 +2757,10 @@ function enzyme!(
     if DumpPostEnzyme[]
         API.EnzymeDumpModuleRef(mod.ref)
     end
+
     return adjointf, augmented_primalf, TapeType
+    end # @dispose logic
+    end # GC.preserve enzyme_context
 end
 
 function get_subprogram(f::LLVM.Function)
