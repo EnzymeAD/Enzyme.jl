@@ -121,3 +121,19 @@ end
 	                flattened_unique_values,
 	                Duplicated(thing, dthing))
 end
+
+
+
+function literalrt(x)
+    y = Base.inferencebarrier(x * x)
+    return (y, y)
+end
+
+@testset "Literal RT mismatch" begin
+  fwd, rev = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(literalrt)}, Active{Tuple{Float64, Float64}}, Active{Float64})
+
+  tape, = fwd(Const(literalrt), Active(3.1))
+
+  @test rev(Const(literalrt), Active(3.1), (2.7, 0.2), tape)[1][1] ≈ 17.98
+
+end
