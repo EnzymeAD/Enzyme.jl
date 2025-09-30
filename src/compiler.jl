@@ -42,6 +42,25 @@ import LLVM: Target, TargetMachine
 import SparseArrays
 using Printf
 
+@enum ActivityState begin
+    AnyState = 0
+    ActiveState = 1
+    DupState = 2
+    MixedState = 3
+end
+
+@inline function Base.:|(a1::ActivityState, a2::ActivityState)
+    ActivityState(Int(a1) | Int(a2))
+end
+
+mutable struct EnzymeContext
+    world::UInt
+    activity_cache::Dict{Tuple{Type,Bool,Bool,Bool},ActivityState}
+    function EnzymeContext(world)
+        new(world, Dict{Tuple{Type,Bool,Bool,Bool},ActivityState}())
+    end
+end
+
 using Preferences
 
 bitcode_replacement() = parse(Bool, @load_preference("bitcode_replacement", "true"))
@@ -3282,7 +3301,7 @@ function create_abi_wrapper(
         # 3 is index of shadow
         if existed[3] != 0 &&
            sret_union &&
-           active_reg(pactualRetType, world; justActive=true, UnionSret=true) == ActiveState
+           active_reg_cached(interp.context, pactualRetType; justActive=true, UnionSret=true) == ActiveState
             rewrite_union_returns_as_ref(enzymefn, data[3], world, width)
         end
         returnNum = 0
@@ -4951,7 +4970,7 @@ end
     if params.err_if_func_written
         FT = TT.parameters[1]
         Ty = eltype(FT)
-        reg = active_reg(Ty, job.world)
+        reg = active_reg_cached(interp.context, Ty)
         if reg == DupState || reg == MixedState
             swiftself = has_swiftself(primalf)
             todo = LLVM.Value[parameters(primalf)[1+swiftself]]
@@ -4975,7 +4994,7 @@ end
                     if !mayWriteToMemory(user)
                         slegal, foundv, byref = abs_typeof(user)
                         if slegal
-                            reg2 = active_reg(foundv, job.world)
+                            reg2 = active_reg_cached(interp.context, foundv)
                             if reg2 == ActiveState || reg2 == AnyState
                                 continue
                             end
@@ -5003,7 +5022,7 @@ end
                         if operands(user)[2] == cur
                             slegal, foundv, byref = abs_typeof(operands(user)[1])
                             if slegal
-                                reg2 = active_reg(foundv, job.world)
+                                reg2 = active_reg_cached(interp.context, foundv)
                                 if reg2 == AnyState
                                     continue
                                 end
@@ -5037,7 +5056,7 @@ end
                             if is_readonly(called)
                                 slegal, foundv, byref = abs_typeof(user)
                                 if slegal
-                                    reg2 = active_reg(foundv, job.world)
+                                    reg2 = active_reg_cached(interp.context, foundv)
                                     if reg2 == ActiveState || reg2 == AnyState
                                         continue
                                     end
@@ -5055,7 +5074,7 @@ end
                                 end
                                 slegal, foundv, byref = abs_typeof(user)
                                 if slegal
-                                    reg2 = active_reg(foundv, job.world)
+                                    reg2 = active_reg_cached(interp.context, foundv)
                                     if reg2 == ActiveState || reg2 == AnyState
                                         continue
                                     end
