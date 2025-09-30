@@ -2758,9 +2758,9 @@ function enzyme!(
         API.EnzymeDumpModuleRef(mod.ref)
     end
 
+    return adjointf, augmented_primalf, TapeType
     end # @dispose logic
     end # GC.preserve enzyme_context
-    return adjointf, augmented_primalf, TapeType
 end
 
 function get_subprogram(f::LLVM.Function)
