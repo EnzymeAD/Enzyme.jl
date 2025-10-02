@@ -1192,6 +1192,7 @@ function julia_error(
             ) #=error=#
             world = enzyme_extract_world(f)
         end
+        @assert world == enzyme_gutils_context(gutils).world
         throw(IllegalTypeAnalysisException(msg, mi, world, sval, ir, bt))
     elseif errtype == API.ET_NoType
         @assert B != C_NULL
@@ -1373,6 +1374,7 @@ function julia_error(
         illegal = false
         created = LLVM.Instruction[]
         world = enzyme_extract_world(LLVM.parent(position(IRBuilder(B))))
+        @assert world == enzyme_context(gutils).world
         width = get_width(gutils)
         function make_batched(@nospecialize(cur::LLVM.Value), B::LLVM.IRBuilder)::LLVM.Value
             if width == 1
@@ -1800,7 +1802,7 @@ end
             end
         end
         
-	    mi = nothing
+        mi = nothing
         world = nothing
 
         if isa(val, LLVM.Instruction)
@@ -1818,6 +1820,7 @@ end
             ) #=error=#
             world = enzyme_extract_world(f)
         end
+        @assert world == enzyme_gutils_context(gutils).world
         mode = Enzyme.API.DEM_ReverseModeCombined
 
         if mi !== nothing
