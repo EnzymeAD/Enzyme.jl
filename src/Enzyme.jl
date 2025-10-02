@@ -133,6 +133,7 @@ Base.convert(::Type{API.CDerivativeMode}, ::ForwardMode) = API.DEM_ForwardMode
 function guess_activity end
 
 mutable struct EnzymeContext
+    world::UInt64
 end
 
 include("logic.jl")
