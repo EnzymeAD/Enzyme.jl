@@ -228,7 +228,7 @@ import .Enzyme: GradientUtils, call_samefunc_with_inverted_bundles!,
                 get_strong_zero, get_shadow_type, get_uncacheable,
                 erase_with_placeholder, is_constant_value, is_constant_inst,
                 new_from_original, lookup_value, invert_pointer, debug_from_orig!,
-                add_reverse_block!, set_reverse_block!, enzyme_context
+                add_reverse_block!, set_reverse_block!, enzyme_context, enzyme_gutils_context
 
 # Julia function to LLVM stem and arity
 const cmplx_known_ops =
