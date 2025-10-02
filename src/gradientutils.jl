@@ -366,3 +366,15 @@ function batch_call_same_with_inverted_arg_if_active!(
 
     return shadow
 end
+
+function enzyme_context(gutils::GradientUtils)
+    ptr = API.EnzymeGradientUtilsGetExternalContext(gutils)
+    @assert ptr != C_NULL
+    return unsafe_pointer_to_objref(ptr)::EnzymeContext
+end
+
+function enzyme_gutils_context(gutils::API.EnzymeGradientUtilsRef)
+    ptr = API.EnzymeGradientUtilsGetExternalContext(gutils)
+    @assert ptr != C_NULL
+    return unsafe_pointer_to_objref(ptr)::EnzymeContext
+end
