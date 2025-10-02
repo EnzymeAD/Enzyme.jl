@@ -133,10 +133,12 @@ Base.convert(::Type{API.CDerivativeMode}, ::ForwardMode) = API.DEM_ForwardMode
 function guess_activity end
 
 mutable struct EnzymeContext
+    world::UInt64
     modules_to_link::Vector{LLVM.Module}
     edges::Vector{Any}
     nested_cache::Dict{Core.MethodInstance, String}
-    EnzymeContext() = new(
+    EnzymeContext(world::UInt64) = new(
+        world,
         LLVM.Module[],
         Any[],
         Dict{Core.MethodInstance, String}()
