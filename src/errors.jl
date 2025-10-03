@@ -1726,6 +1726,7 @@ end
             ) #=error=#
             world = enzyme_extract_world(f)
         end
+        # TODO(vchuravy)
         # what is data?
         # Can we get world here?
         # @assert world == enzyme_context(gutils).world
