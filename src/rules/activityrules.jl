@@ -1,5 +1,5 @@
 
-function julia_activity_rule(f::LLVM.Function, method_table)
+function julia_activity_rule(f::LLVM.Function, world, method_table)
     if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1") || startswith(LLVM.name(f), "jlcapi")
         return
     end
@@ -18,8 +18,6 @@ function julia_activity_rule(f::LLVM.Function, method_table)
     if mi.specTypes.parameters[end] === Vararg{Any}
         return
     end
-    world = enzyme_extract_world(f)
-    # TODO: Access to gutils
 
     jlargs = classify_arguments(
         mi.specTypes,
