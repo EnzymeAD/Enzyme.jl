@@ -629,7 +629,7 @@ end
     name = meth.name
     jlmod = meth.module
 
-    julia_activity_rule(llvmfn)
+    julia_activity_rule(llvmfn, world)
     if has_custom_rule
         handleCustom(
             state,

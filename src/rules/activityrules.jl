@@ -1,5 +1,5 @@
 
-function julia_activity_rule(f::LLVM.Function)
+function julia_activity_rule(f::LLVM.Function, world)
     if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1")
         return
     end
@@ -30,8 +30,6 @@ function julia_activity_rule(f::LLVM.Function)
     if mi.specTypes.parameters[end] === Vararg{Any}
         return
     end
-    world = enzyme_extract_world(f)
-    # TODO: Access to gutils
 
     # TODO fix the attributor inlining such that this can assert always true
     if expectLen != length(parameters(f))
