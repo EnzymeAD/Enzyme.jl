@@ -19,6 +19,7 @@ function julia_activity_rule(f::LLVM.Function, method_table)
         return
     end
     world = enzyme_extract_world(f)
+    # TODO: Access to gutils
 
     jlargs = classify_arguments(
         mi.specTypes,
