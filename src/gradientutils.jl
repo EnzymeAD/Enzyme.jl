@@ -66,6 +66,7 @@ erase_with_placeholder(
     orig::LLVM.Instruction,
     erase::Bool = true,
 ) = API.EnzymeGradientUtilsEraseWithPlaceholder(gutils, inst, orig, erase)
+
 is_constant_value(gutils::GradientUtils, val::LLVM.Value) =
     API.EnzymeGradientUtilsIsConstantValue(gutils, val) != 0
 
@@ -96,4 +97,16 @@ end
 
 function set_reverse_block!(gutils::GradientUtils, block::LLVM.BasicBlock)
     return LLVM.BasicBlock(API.EnzymeGradientUtilsSetReverseBlock(gutils, block))
+end
+
+function enzyme_context(gutils::GradientUtils)
+    ptr = API.EnzymeGradientUtilsGetExternalContext(gutils)
+    @assert ptr != C_NULL
+    return unsafe_pointer_to_objref(ptr)::EnzymeContext
+end
+
+function enzyme_gutils_context(gutils::API.EnzymeGradientUtilsRef)
+    ptr = API.EnzymeGradientUtilsGetExternalContext(gutils)
+    @assert ptr != C_NULL
+    return unsafe_pointer_to_objref(ptr)::EnzymeContext
 end

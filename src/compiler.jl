@@ -221,8 +221,12 @@ include("compiler/utils.jl")
 
 include("compiler/orcv2.jl")
 
-include("gradientutils.jl")
-
+import .Enzyme: GradientUtils, call_samefunc_with_inverted_bundles!,
+                get_width, get_mode, get_runtime_activity,
+                get_strong_zero, get_shadow_type, get_uncacheable,
+                erase_with_placeholder, is_constant_value, is_constant_inst,
+                new_from_original, lookup_value, invert_pointer, debug_from_orig!,
+                add_reverse_block!, set_reverse_block!, enzyme_context, enzyme_gutils_context
 
 # Julia function to LLVM stem and arity
 const cmplx_known_ops =
@@ -620,7 +624,7 @@ end
     name = meth.name
     jlmod = meth.module
 
-    julia_activity_rule(llvmfn)
+    julia_activity_rule(llvmfn, world)
     if has_custom_rule
         handleCustom(
             state,
@@ -1073,6 +1077,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
         end
 
         world = enzyme_extract_world(f)
+        @assert world == interp.world
 
         if expectLen != length(parameters(f))
             continue
@@ -1655,6 +1660,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
        mode == API.DEM_ReverseModeCombined
         fn = LLVM.parent(LLVM.parent(V))
         world = enzyme_extract_world(fn)
+        @assert world == enzyme_context(gutils).world
         if !guaranteed_nonactive(Ty, world)
             B = LLVM.IRBuilder()
             position!(B, V)
@@ -2498,7 +2504,7 @@ function enzyme!(
         convert(API.CDIFFE_TYPE, rt)
     end
 
-    enzyme_context = EnzymeContext()
+    enzyme_context = EnzymeContext(job.world)
     GC.@preserve enzyme_context begin
     LLVM.@dispose logic  = Logic(enzyme_context) begin
 

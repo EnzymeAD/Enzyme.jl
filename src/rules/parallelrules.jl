@@ -227,6 +227,7 @@ end
     modifiedBetween = (mode != API.DEM_ForwardMode, false)
 
     world = enzyme_extract_world(LLVM.parent(position(B)))
+    @assert world == enzyme_context(gutils).world
 
     pfuncT = funcT
 
@@ -550,6 +551,7 @@ end
     tt = Tuple{thunkTy,dfuncT,Bool}
     mode = get_mode(gutils)
     world = enzyme_extract_world(LLVM.parent(position(B)))
+    @assert world == enzyme_context(gutils).world
     entry = nested_codegen!(mode, mod, runtime_pfor_fwd, tt, world)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
@@ -594,6 +596,7 @@ end
     }
     mode = get_mode(gutils)
     world = enzyme_extract_world(LLVM.parent(position(B)))
+    @assert world == enzyme_context(gutils).world
     entry = nested_codegen!(mode, mod, runtime_pfor_augfwd, tt, world)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
@@ -627,6 +630,7 @@ end
 @register_rev function threadsfor_rev(B, orig, gutils, tape)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     world = enzyme_extract_world(LLVM.parent(position(B)))
+    @assert world == enzyme_context(gutils).world
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return
     end
@@ -675,6 +679,7 @@ end
     mode = get_mode(gutils)
 
     world = enzyme_extract_world(LLVM.parent(position(B)))
+    @assert world == enzyme_context(gutils).world
 
     ops = collect(operands(orig))
 
@@ -731,6 +736,7 @@ end
     ModifiedBetween = (uncacheable[1] != 0,)
 
     world = enzyme_extract_world(LLVM.parent(position(B)))
+    @assert world == enzyme_context(gutils).world
 
     ops = collect(operands(orig))
 
