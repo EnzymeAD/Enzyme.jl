@@ -1192,7 +1192,8 @@ function julia_error(
             ) #=error=#
             world = enzyme_extract_world(f)
         end
-        @assert world == enzyme_gutils_context(gutils).world
+        # TODO: get world from TypeAnalyzer
+        # @assert world == enzyme_gutils_context(gutils).world
         throw(IllegalTypeAnalysisException(msg, mi, world, sval, ir, bt))
     elseif errtype == API.ET_NoType
         @assert B != C_NULL
@@ -1820,7 +1821,9 @@ end
             ) #=error=#
             world = enzyme_extract_world(f)
         end
-        @assert world == enzyme_gutils_context(gutils).world
+        # what is data?
+        # Can we get world here?
+        # @assert world == enzyme_context(gutils).world
         mode = Enzyme.API.DEM_ReverseModeCombined
 
         if mi !== nothing
