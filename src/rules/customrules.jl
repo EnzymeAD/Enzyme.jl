@@ -159,6 +159,7 @@ function enzyme_custom_setup_args(
 
     ofn = LLVM.parent(LLVM.parent(orig))
     world = enzyme_extract_world(ofn)
+    @assert world == enzyme_context(gutils).world
 
     for arg in jlargs
         @assert arg.cc != RemovedParam
@@ -468,6 +469,7 @@ function enzyme_custom_setup_ret(
     mode = get_mode(gutils)
 
     world = enzyme_extract_world(LLVM.parent(LLVM.parent(orig)))
+    @assert world == enzyme_context(gutils).world
 
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
@@ -591,6 +593,7 @@ end
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     world = enzyme_extract_world(fn)
+    @assert world == enzyme_context(gutils).world
 
     llvmf = nested_codegen!(mode, mod, fmi, world)
 
@@ -826,6 +829,7 @@ end
 
     fn = LLVM.parent(LLVM.parent(orig))
     world = enzyme_extract_world(fn)
+    @assert world == enzyme_context(gutils).world
 
     C = EnzymeRules.RevConfig{
         Bool(needsPrimal),
@@ -939,6 +943,7 @@ end
 
     fn = LLVM.parent(LLVM.parent(orig))
     world = enzyme_extract_world(fn)
+    @assert world == enzyme_context(gutils).world
     @safe_debug "Trying to apply custom forward rule" TT isKWCall
         
     functy = if isKWCall
@@ -1049,6 +1054,7 @@ function enzyme_custom_common_rev(
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     world = enzyme_extract_world(fn)
+    @assert world == enzyme_context(gutils).world
 
     mode = get_mode(gutils)
 

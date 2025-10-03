@@ -31,6 +31,7 @@ function julia_activity_rule(f::LLVM.Function)
         return
     end
     world = enzyme_extract_world(f)
+    # TODO: Access to gutils
 
     # TODO fix the attributor inlining such that this can assert always true
     if expectLen != length(parameters(f))

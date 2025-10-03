@@ -442,6 +442,7 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
     width = get_width(gutils)
 
     world = enzyme_extract_world(LLVM.parent(position(B)))
+    @assert world == enzyme_context(gutils).world
 
     @assert is_constant_value(gutils, origops[offset])
     icvs = [is_constant_value(gutils, v) for v in origops[offset+1:end-1]]
@@ -932,6 +933,7 @@ end
     else
         @assert legal
         world = enzyme_extract_world(LLVM.parent(position(B)))
+        @assert world == enzyme_context(gutils).world
         if !guaranteed_nonactive(TT, world)
             unsafe_store!(tapeR, shadowres.ref)
         end
@@ -1034,6 +1036,7 @@ end
     if legal
         @assert legal
         world = enzyme_extract_world(LLVM.parent(position(B)))
+    @assert world == enzyme_context(gutils).world
         torun = !guaranteed_nonactive(TT, world)
     else
         torun = true
