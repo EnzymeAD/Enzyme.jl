@@ -1036,7 +1036,7 @@ end
     if legal
         @assert legal
         world = enzyme_extract_world(LLVM.parent(position(B)))
-    @assert world == enzyme_context(gutils).world
+        @assert world == enzyme_context(gutils).world
         torun = !guaranteed_nonactive(TT, world)
     else
         torun = true

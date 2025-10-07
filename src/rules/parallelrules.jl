@@ -550,9 +550,8 @@ end
 
     tt = Tuple{thunkTy,dfuncT,Bool}
     mode = get_mode(gutils)
-    world = enzyme_extract_world(LLVM.parent(position(B)))
-    @assert world == enzyme_context(gutils).world
-    entry = nested_codegen!(mode, mod, runtime_pfor_fwd, tt, world)
+    ctx = enzyme_context(gutils)
+    entry = nested_codegen!(ctx, mode, mod, runtime_pfor_fwd, tt)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
     pval = const_ptrtoint(functions(mod)[sname], convert(LLVMType, Ptr{Cvoid}))
@@ -595,9 +594,8 @@ end
         Bool,
     }
     mode = get_mode(gutils)
-    world = enzyme_extract_world(LLVM.parent(position(B)))
-    @assert world == enzyme_context(gutils).world
-    entry = nested_codegen!(mode, mod, runtime_pfor_augfwd, tt, world)
+    ctx = enzyme_context(gutils)
+    entry = nested_codegen!(ctx, mode, mod, runtime_pfor_augfwd, tt)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
     pval = const_ptrtoint(functions(mod)[sname], convert(LLVMType, Ptr{Cvoid}))
@@ -629,8 +627,6 @@ end
 
 @register_rev function threadsfor_rev(B, orig, gutils, tape)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    world = enzyme_extract_world(LLVM.parent(position(B)))
-    @assert world == enzyme_context(gutils).world
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return
     end
@@ -653,7 +649,8 @@ end
         Bool,
     }
     mode = get_mode(gutils)
-    entry = nested_codegen!(mode, mod, runtime_pfor_rev, tt, world)
+    ctx = enzyme_context(gutils)
+    entry = nested_codegen!(ctx, mode, mod, runtime_pfor_rev, tt)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
     pval = const_ptrtoint(functions(mod)[sname], convert(LLVMType, Ptr{Cvoid}))
