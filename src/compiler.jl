@@ -529,12 +529,13 @@ include("llvm/transforms.jl")
 include("llvm/passes.jl")
 include("typeutils/make_zero.jl")
 
-function nested_codegen!(enzyme_context::EnzymeContext, mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type), world::UInt)
-    funcspec = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, typeof(f), tt, world)
-    nested_codegen!(enzyme_context, mode, mod, funcspec, world)
+function nested_codegen!(enzyme_context::EnzymeContext, mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type))
+    funcspec = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, typeof(f), tt, enzyme_context.world)
+    nested_codegen!(enzyme_context, mode, mod, funcspec)
 end
 
 function prepare_llvm(interp, mod::LLVM.Module, job, meta)
+    # TODO: remove enzymejl_world
     for f in functions(mod)
         attributes = function_attributes(f)
         push!(attributes, StringAttribute("enzymejl_world", string(job.world)))
@@ -1323,9 +1324,9 @@ function nested_codegen!(
     mode::API.CDerivativeMode,
     mod::LLVM.Module,
     funcspec::Core.MethodInstance,
-    world::UInt,
     alwaysinline::Bool=false,
 )
+    world = enzyme_context.world
     cache_key = funcspec
     if haskey(enzyme_context.nested_cache, cache_key)
         fname = enzyme_context.nested_cache[cache_key]
@@ -1352,6 +1353,7 @@ function nested_codegen!(
     GPUCompiler.prepare_job!(job)
     otherMod, meta = GPUCompiler.emit_llvm(job)
     
+    # TODO: interp should be cached since it contains internal caches
     interp = GPUCompiler.get_interpreter(job)
     prepare_llvm(interp, otherMod, job, meta)
 
@@ -2792,7 +2794,6 @@ function enzyme!(
                 width,
                 returnPrimal,
                 shadow_init,
-                world,
                 interp,
                 runtimeActivity,
             )
@@ -2835,7 +2836,6 @@ function enzyme!(
                 width,
                 false,
                 shadow_init,
-                world,
                 interp,
                 runtimeActivity
             ) #=returnPrimal=#
@@ -2877,7 +2877,6 @@ function enzyme!(
                 width,
                 returnPrimal,
                 shadow_init,
-                world,
                 interp,
                 runtimeActivity
             )
@@ -2923,7 +2922,6 @@ function enzyme!(
                 width,
                 returnPrimal,
                 shadow_init,
-                world,
                 interp,
                 runtimeActivity
             )
@@ -3007,10 +3005,10 @@ function create_abi_wrapper(
     width::Int,
     returnPrimal::Bool,
     shadow_init::Bool,
-    world::UInt,
     interp,
     runtime_activity::Bool
 )
+    world = enzyme_context.world
     is_adjoint = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModeCombined
     is_split = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModePrimal
     needs_tape = Mode == API.DEM_ReverseModeGradient
@@ -3310,6 +3308,7 @@ function create_abi_wrapper(
     realparms = LLVM.Value[]
     i = 1
 
+    # TODO(vchuravy): remove
     for attr in collect(function_attributes(enzymefn))
         if kind(attr) == "enzymejl_world"
             push!(function_attributes(llvm_f), attr)
@@ -3510,7 +3509,7 @@ function create_abi_wrapper(
 	    end
             Func = get_func(T)
             funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, Func, Tuple{}, world)
-            llvmf = nested_codegen!(enzyme_context, Mode, mod, funcspec, world)
+            llvmf = nested_codegen!(enzyme_context, Mode, mod, funcspec)
             push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
             Func_RT = return_type(interp, funcspec)
             @assert Func_RT == NTuple{width,T′}
@@ -6033,7 +6032,7 @@ end
         adjointf, augmented_primalf, TapeType = enzyme!(
             enzyme_context,
             job,
-	    interp,
+	        interp,
             mod,
             primalf,
             TT,
@@ -6141,7 +6140,7 @@ end
             fname = String(name) * pf
             if haskey(functions(mod), fname)
                 funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, fnty, Tuple{JT}, job.world)
-                llvmf = nested_codegen!(enzyme_context, mode, mod, funcspec, job.world)
+                llvmf = nested_codegen!(enzyme_context, mode, mod, funcspec)
 
                 llvmf = LLVM.name(llvmf)
 
@@ -6152,6 +6151,7 @@ end
                 empty!(enzyme_context.modules_to_link)
 
                 llvmf = functions(mod)[llvmf]
+
 
                 push!(function_attributes(llvmf), StringAttribute("implements", fname))
             end
