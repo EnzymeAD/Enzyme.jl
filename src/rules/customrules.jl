@@ -1012,8 +1012,7 @@ end
     width = get_width(gutils)
 
 
-    ctx = enzyme_context(gutils)
-    llvmf = nested_codegen!(ctx, mode, mod, fmi, ctx.world, true)
+    llvmf = nested_codegen!(enzyme_context(gutils), mode, mod, fmi, true)
 
     orig_swiftself = has_swiftself(LLVM.called_operand(orig))
 
@@ -1588,8 +1587,8 @@ function enzyme_custom_common_rev(
 
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
-    world = enzyme_extract_world(fn)
-    @assert world == enzyme_context(gutils).world
+    ctx = enzyme_context(gutils)
+    world = ctx.world
 
     mode = get_mode(gutils)
 
@@ -1655,8 +1654,7 @@ function enzyme_custom_common_rev(
     final_mi = nothing
 
     if forward
-        enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
-        llvmf = nested_codegen!(enzyme_ctx, mode, mod, ami, world, true)
+        llvmf = nested_codegen!(ctx, mode, mod, ami, true)
         @assert llvmf !== nothing
         rev_RT = nothing
         final_mi = ami
@@ -1699,8 +1697,7 @@ function enzyme_custom_common_rev(
         
         rmi = rmi::Core.MethodInstance
         rev_RT = rev_RT::Type
-        enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
-        llvmf = nested_codegen!(enzyme_ctx, mode, mod, rmi, world, true)
+        llvmf = nested_codegen!(ctx, mode, mod, rmi, true)
         final_mi = rmi
     end
 
