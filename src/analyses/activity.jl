@@ -19,7 +19,9 @@ end
 @inline ptreltype(::Type{Tuple{Vararg{T}}}) where {T} = T
 @inline ptreltype(::Type{IdDict{K,V}}) where {K,V} = V
 @inline ptreltype(::Type{IdDict{K,V} where K}) where {V} = V
+@static if Base.USE_GPL_LIBS
 @inline ptreltype(::Type{SparseArrays.CHOLMOD.Dense{T}}) where T = T
+end
 @static if VERSION < v"1.11-"
 else
 @inline ptreltype(::Type{Memory{T}}) where T = T
@@ -33,7 +35,9 @@ end
 @inline is_arrayorvararg_ty(::Type{Base.RefValue{T}}) where {T} = true
 @inline is_arrayorvararg_ty(::Type{IdDict{K,V}}) where {K,V} = true
 @inline is_arrayorvararg_ty(::Type{IdDict{K,V} where K}) where {V} = true
+@static if Base.USE_GPL_LIBS
 @inline is_arrayorvararg_ty(::Type{SparseArrays.CHOLMOD.Dense{T}}) where T = true
+end
 @static if VERSION < v"1.11-"
 else
 @inline is_arrayorvararg_ty(::Type{Memory{T}}) where T = true
