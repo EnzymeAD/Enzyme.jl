@@ -1565,6 +1565,8 @@ macro import_rrule(args...)
     return _import_rrule(args...)
 end
 
-include("precompile.jl")
+if VERSION < v"1.12.0"
+    include("precompile.jl")
+end
 
 end # module
