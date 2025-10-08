@@ -372,6 +372,7 @@ end
 include("tfunc.jl")
 
 import Core.Compiler: CallInfo
+
 struct NoInlineCallInfo <: CallInfo
     info::CallInfo # wrapped call
     tt::Any # ::Type
@@ -384,6 +385,11 @@ Core.Compiler.getsplit_impl(info::NoInlineCallInfo, idx::Int) =
     Core.Compiler.getsplit(info.info, idx)
 Core.Compiler.getresult_impl(info::NoInlineCallInfo, idx::Int) =
     Core.Compiler.getresult(info.info, idx)
+if VERSION >= v"1.12.0-DEV.1531"
+    Core.Compiler.add_edges_impl(edges::Vector{Any}, info::NoInlineCallInfo) =
+        Core.Compiler.add_edges!(edges, info.info)
+end
+
 struct AlwaysInlineCallInfo <: CallInfo
     info::CallInfo # wrapped call
     tt::Any # ::Type
@@ -394,6 +400,11 @@ Core.Compiler.getsplit_impl(info::AlwaysInlineCallInfo, idx::Int) =
     Core.Compiler.getsplit(info.info, idx)
 Core.Compiler.getresult_impl(info::AlwaysInlineCallInfo, idx::Int) =
     Core.Compiler.getresult(info.info, idx)
+if VERSION >= v"1.12.0-DEV.1531"
+    Core.Compiler.add_edges_impl(edges::Vector{Any}, info::AlwaysInlineCallInfo) =
+        Core.Compiler.add_edges!(edges, info.info)
+end
+
 
 import .EnzymeRules: FwdConfig, RevConfig, Annotation
 using Core.Compiler: ArgInfo, StmtInfo, AbsIntState
@@ -550,11 +561,6 @@ import Core.Compiler:
     widenconst,
     mapany,
     MethodResultPure
-
-struct AutodiffCallInfo <: CallInfo
-    # ...
-    info::CallInfo
-end
 
 @static if VERSION < v"1.11.0-"
 else
