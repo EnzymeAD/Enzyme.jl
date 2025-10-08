@@ -8,6 +8,7 @@ export DefaultABI, FFIABI, InlineABI, NonGenABI
 export BatchDuplicatedFunc
 export within_autodiff, ignore_derivatives
 export needs_primal
+export ChunkStrategy, OneChunk, AutoChunk, pick_chunksize
 
 function batch_size end
 
@@ -796,5 +797,44 @@ function Combined(
 end
 
 Combined(mode::ReverseMode) = mode
+
+"""
+    ChunkStrategy
+
+Abstract type gathering strategies for chunk size selection.
+
+# See also
+
+- [`OneChunk`](@ref)
+- [`AutoChunk`](@ref)
+"""
+abstract type ChunkStrategy end
+
+"""
+    OneChunk()
+
+Select chunk size so that the corresponding array is processed in a single chunk.
+"""
+struct OneChunk <: ChunkStrategy end
+
+"""
+    AutoChunk()
+
+Select chunk size automatically based on internal Enzyme-specific heuristics.
+"""
+struct AutoChunk <: ChunkStrategy end
+
+const DEFAULT_CHUNK_SIZE = 16
+
+"""
+    pick_chunksize(s::ChunkStrategy, a::AbstractArray)
+
+Return the chunk size chosen by strategy `s` based on the dimension of array `a`.
+
+- In forward-mode gradients and Jacobians, `a` would be the input array.
+- In reverse-mode Jacobians, `a` would be the output array.
+"""
+pick_chunksize(::OneChunk, a::AbstractArray) = length(a)
+pick_chunksize(::AutoChunk, a::AbstractArray) = min(DEFAULT_CHUNK_SIZE, length(a))
 
 end # module EnzymeCore

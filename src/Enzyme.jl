@@ -111,6 +111,8 @@ export autodiff,
     make_zero!,
     remake_zero!
 
+import EnzymeCore: ChunkStrategy, pick_chunksize
+
 export jacobian, gradient, gradient!, hvp, hvp!, hvp_and_gradient!
 export batch_size, onehot, chunkedonehot
 

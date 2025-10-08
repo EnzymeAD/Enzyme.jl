@@ -666,3 +666,12 @@ end
     # @show J_r_3(u, A, x)
     # @show J_f_3(u, A, x)
 end
+
+@testset "Chunk size strategies" begin  # not passing yet
+    @test_nowarn gradient(Forward, sum, ones(10); chunk=OneChunk())
+    @test_nowarn gradient(Forward, sum, ones(10); chunk=AutoChunk())
+    @test_nowarn jacobian(Forward, copy, ones(10); chunk=OneChunk())
+    @test_nowarn jacobian(Forward, copy, ones(10); chunk=AutoChunk())
+    @test_nowarn jacobian(Reverse, copy, ones(10); chunk=OneChunk())
+    @test_nowarn jacobian(Reverse, copy, ones(10); chunk=AutoChunk())
+end
