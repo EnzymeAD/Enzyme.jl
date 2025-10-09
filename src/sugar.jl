@@ -428,6 +428,10 @@ end
     return ((one(x),),)
 end
 
+@inline function chunkedonehot(x, strategy::ChunkStrategy)
+    return chunkedonehot(x, Val(pick_chunksize(strategy, x)))
+end
+
 @inline tupleconcat(x) = x
 @inline tupleconcat(x, y) = (x..., y...)
 @inline tupleconcat(x, y, z...) = (x..., tupleconcat(y, z...)...)
@@ -712,7 +716,7 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
                 push!(subderivatives, :(values($resp[1])))
             end
             :(($(subderivatives...),))
-        else
+        else  # TODO: handle OneChunk and MaxChunk
             subderivatives = Union{Symbol,Expr}[]
             for an in 1:argnum
                 dargs = Union{Symbol,Expr}[]
@@ -914,7 +918,7 @@ end
 
     chunksize = if chunk <: Val
         chunk.parameters[1]
-    else
+    else  # TODO: handle OneChunk and MaxChunk
         1
     end
     num = ((n_out_val + chunksize - 1) ÷ chunksize)
