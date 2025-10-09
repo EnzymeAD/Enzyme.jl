@@ -6,7 +6,7 @@ on:
       - 'ext/**'
       - 'lib/**'
       - 'src/**'
-      - 'test/**'
+      - 'test/integration/**'
       - 'Project.toml'
   push:
     branches:
@@ -17,7 +17,7 @@ on:
       - 'ext/**'
       - 'lib/**'
       - 'src/**'
-      - 'test/**'
+      - 'test/integration/**'
       - 'Project.toml'
     tags: '*'
 
