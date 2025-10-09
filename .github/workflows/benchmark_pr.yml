@@ -81,7 +81,7 @@ jobs:
                 body-includes: Benchmark Results
 
             - name: Comment on PR
-              uses: peter-evans/create-or-update-comment@v4
+              uses: peter-evans/create-or-update-comment@v5
               # Can't post the comment for PRs opened from forks:
               # <https://github.com/peter-evans/create-or-update-comment/blob/fdb73c443d3a4f66832374f01fb9a713fad84937/README.md#action-inputs>.
               if: ${{ ! github.event.pull_request.head.repo.fork }}
