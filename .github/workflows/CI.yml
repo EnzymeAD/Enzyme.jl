@@ -42,6 +42,7 @@ jobs:
         version:
           - '1.10'
           - '1.11'
+          - '1.12'
           - 'nightly'
         os:
           - ubuntu-24.04
@@ -72,6 +73,11 @@ jobs:
             libEnzyme: packaged
             version: '1.11'
             assertions: true
+          - os: ubuntu-24.04
+            arch: default
+            libEnzyme: packaged
+            version: '1.12'
+            assertions: true
     steps:
       - uses: actions/checkout@v5
       - uses: julia-actions/setup-julia@v2
@@ -79,6 +85,7 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
+          include-all-prereleases: true
       - uses: actions/checkout@v5
         if: ${{ matrix.assertions }}
         with:
@@ -152,6 +159,7 @@ jobs:
         version:
           - '1.10'
           - '1.11'
+          - '1.12'
           - 'nightly'
         os:
           - ubuntu-latest
@@ -164,6 +172,7 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
+          include-all-prereleases: true
       - uses: julia-actions/cache@v2
       - name: setup EnzymeTestUtils
         shell: julia --color=yes {0}
@@ -206,6 +215,7 @@ jobs:
         version:
           - '1.10'
           - '1.11'
+          - '1.12'
           - 'nightly'
         os:
           - ubuntu-latest
@@ -218,6 +228,7 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
+          include-all-prereleases: true
       - uses: julia-actions/cache@v2
       - name: setup EnzymeCore
         shell: julia --color=yes {0}
