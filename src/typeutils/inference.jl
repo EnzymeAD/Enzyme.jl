@@ -89,6 +89,8 @@ primal_return_type_world(
     @nospecialize(TT::Type),
    ) = primal_return_type_world(mode, world, Tuple{FT, TT.parameters...})
 
+function primal_return_type end
+
 function primal_return_type_generator(world::UInt, source, self, @nospecialize(mode::Type), @nospecialize(ft::Type), @nospecialize(tt::Type))
     @nospecialize
     @assert Core.Compiler.isType(ft) && Core.Compiler.isType(tt)
@@ -101,67 +103,62 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
     ft <: Core.Builtin &&
         error("$(GPUCompiler.unsafe_function_from_type(ft)) is not a generic function")
 
-    # look up the method
-    method_error = :(throw(MethodError(ft, tt, $world)))
-    
+    # look up the method    
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
    
     mi = my_methodinstance(mode, ft, tt, world, min_world, max_world)
 
     stub = Core.GeneratedFunctionStub(
-        identity,
-        Core.svec(:methodinstance, :mode, :ft, :tt),
+        primal_return_type,
+        Core.svec(Symbol("#self#"), :mode, :ft, :tt),
         Core.svec(),
     )
-    mi === nothing && return stub(world, source, method_error)
+    mi === nothing && return stub(world, source, :(throw(MethodError(ft, tt, $world))))
 
-    min_world2 = Ref{UInt}(typemin(UInt))
-    max_world2 = Ref{UInt}(typemax(UInt))
-   
-    mi2 = my_methodinstance(mode, typeof(Base.identity), Tuple{Nothing}, world, min_world2, max_world2)
-
-    ci = Core.Compiler.retrieve_code_info(mi2, world)::Core.Compiler.CodeInfo
-
-    # prepare a new code info
-    new_ci = copy(ci)
-    empty!(new_ci.code)
+    # create an empty CodeInfo to return the result
+    ci = ccall(:jl_new_code_info_uninit, Ref{Core.CodeInfo}, ())
+        
     @static if isdefined(Core, :DebugInfo)
-      new_ci.debuginfo = Core.DebugInfo(:none)
+        # TODO: Add proper debug info
+        ci.debuginfo = Core.DebugInfo(:none)
     else
-      empty!(new_ci.codelocs)
-      resize!(new_ci.linetable, 1)                # see note below
+        ci.codelocs = Int32[]
+        ci.linetable = [
+            Core.Compiler.LineInfoNode(@__MODULE__, :primal_return_type, source.file, Int32(source.line), Int32(0))
+        ]
     end
-    empty!(new_ci.ssaflags)
-    new_ci.ssavaluetypes = 0
-    new_ci.min_world = min_world[]
-    new_ci.max_world = max_world[]
-    new_ci.edges = Core.MethodInstance[mi]
+
+    ci.min_world = world
+    ci.max_world = max_world
+
+    edges = Any[]
     # XXX: setting this edge does not give us proper method invalidation, see
     #      JuliaLang/julia#34962 which demonstrates we also need to "call" the kernel.
     #      invoking `code_llvm` also does the necessary codegen, as does calling the
     #      underlying C methods -- which GPUCompiler does, so everything Just Works.
+    push!(edges, mi)
+
+    ci.edges = edges
 
     # prepare the slots
-    new_ci.slotnames = Symbol[Symbol("#self#"), :mode, :ft, :tt]
-    new_ci.slotflags = UInt8[0x00 for i = 1:4]
+    ci.slotnames = Symbol[Symbol("#self#"), :mode, :ft, :tt]
+    ci.slotflags = UInt8[0x00 for _ in 1:4]
 
-    # return the codegen world age
-    res = primal_return_type_world(mode, world, mi)
-    push!(new_ci.code, Core.Compiler.ReturnNode(res))
-    push!(new_ci.ssaflags, 0x00)   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
+    # return the result
+    result = primal_return_type_world(mode, world, mi)
+
+    # return the result
+    ci.code = Any[Core.Compiler.ReturnNode(result)]
+    ci.ssaflags = UInt32[0x00]   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
     @static if isdefined(Core, :DebugInfo)
     else
-      push!(new_ci.codelocs, 1)   # see note below
+        push!(ci.codelocs, 1)
     end
-    new_ci.ssavaluetypes += 1
 
-    # NOTE: we keep the first entry of the original linetable, and use it for location info
-    #       on the call to check_cache. we can't not have a codeloc (using 0 causes
-    #       corruption of the back trace), and reusing the target function's info
-    #       has as advantage that we see the name of the kernel in the backtraces.
-
-    return new_ci
+    ci.ssavaluetypes = 1
+    
+    return ci
 end
 
 @eval Base.@assume_effects :removable :foldable :nothrow @inline function primal_return_type(mode::Mode, ft::Type, tt::Type)
