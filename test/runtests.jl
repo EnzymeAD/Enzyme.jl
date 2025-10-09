@@ -12,4 +12,4 @@ function testfilter(test)
     return true
 end
 
-runtests(ARGS, testfilter)
+runtests(ARGS; testfilter)
