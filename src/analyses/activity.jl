@@ -484,6 +484,7 @@ function active_reg_nothrow_generator(world::UInt, source::Union{Method, LineNum
     ci.slotnames = Symbol[Symbol("#self#"), :t]
     ci.slotflags = UInt8[0x00 for i = 1:2]
     ci.nargs = 2
+    ci.isva = false
 
     # return the result
     ci.code = Any[Core.Compiler.ReturnNode(result)]

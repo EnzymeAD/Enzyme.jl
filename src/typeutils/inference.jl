@@ -145,6 +145,7 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
     ci.slotnames = Symbol[Symbol("#self#"), :mode, :ft, :tt]
     ci.slotflags = UInt8[0x00 for _ in 1:4]
     ci.nargs = 4
+    ci.isva = false
 
     # return the result
     result = primal_return_type_world(mode, world, mi)
