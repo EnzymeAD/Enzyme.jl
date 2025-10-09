@@ -8,7 +8,7 @@
 function unsafe_to_pointer end
 export unsafe_to_pointer
 
-if VERSION < v"1.12"
+if VERSION >= v"1.12-"
     @inline function unsafe_to_pointer(@nospecialize(val::Type))
         return Core.Intrinsics.llvmcall((
             """

@@ -472,11 +472,15 @@ function active_reg_nothrow_generator(world::UInt, source::Union{Method, LineNum
     ci.max_world = typemax(UInt)
 
     edges = Any[]
-    # Create the edge for the "query"
-    # TODO: Check if we can use `Tuple{typeof(EnzymeRules.inactive_type), T}` directly
     inactive_type_sig = Tuple{typeof(EnzymeRules.inactive_type), Type}
-    push!(edges, ccall(:jl_method_table_for, Any, (Any,), inactive_type_sig)::Core.MethodTable)
-    push!(edges, inactive_type_sig)
+    if VERSION < v"1.12-"
+        # Create the edge for the "query"
+        # TODO: Check if we can use `Tuple{typeof(EnzymeRules.inactive_type), T}` directly
+        push!(edges, ccall(:jl_method_table_for, Any, (Any,), inactive_type_sig)::Core.MethodTable)
+        push!(edges, inactive_type_sig)
+    else
+        push!(edges, ccall(:jl_method_table_for, Any, (Any,), inactive_type_sig)::Core.MethodTable)
+    end
 
     ci.edges = edges
 
