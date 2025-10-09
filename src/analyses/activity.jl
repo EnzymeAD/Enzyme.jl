@@ -479,7 +479,7 @@ function active_reg_nothrow_generator(world::UInt, source::Union{Method, LineNum
         push!(edges, ccall(:jl_method_table_for, Any, (Any,), inactive_type_sig)::Core.MethodTable)
         push!(edges, inactive_type_sig)
     else
-        push!(edges, ccall(:jl_method_table_for, Any, (Any,), inactive_type_sig)::Core.MethodTable)
+        # push!(edges, ccall(:jl_method_table_for, Any, (Any,), inactive_type_sig)::Core.MethodTable)
     end
 
     ci.edges = edges
