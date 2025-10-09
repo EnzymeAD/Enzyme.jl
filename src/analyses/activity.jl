@@ -473,13 +473,16 @@ function active_reg_nothrow_generator(world::UInt, source::Union{Method, LineNum
 
     edges = Any[]
     inactive_type_sig = Tuple{typeof(EnzymeRules.inactive_type), Type}
+    # Create the edge for the "query"
     if VERSION < v"1.12-"
-        # Create the edge for the "query"
         # TODO: Check if we can use `Tuple{typeof(EnzymeRules.inactive_type), T}` directly
+        # TODO: Check order on 1.10-1.11
         push!(edges, ccall(:jl_method_table_for, Any, (Any,), inactive_type_sig)::Core.MethodTable)
         push!(edges, inactive_type_sig)
     else
-        # push!(edges, ccall(:jl_method_table_for, Any, (Any,), inactive_type_sig)::Core.MethodTable)
+        # 1.12 requires invokesig, mt
+        push!(edges, inactive_type_sig)
+        push!(edges, ccall(:jl_method_table_for, Any, (Any,), inactive_type_sig)::Core.MethodTable)
     end
 
     ci.edges = edges
