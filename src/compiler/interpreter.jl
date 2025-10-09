@@ -559,7 +559,6 @@ import Core.Compiler:
     Effects,
     NoCallInfo,
     widenconst,
-    mapany,
     MethodResultPure
 
 @static if VERSION < v"1.11.0-"
