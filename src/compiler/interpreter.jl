@@ -70,17 +70,12 @@ function rule_backedge_holder_generator(world::UInt, source, self, ft::Type)
 
     if ft == typeof(EnzymeRules.augmented_primal)
         sig = Tuple{typeof(EnzymeRules.augmented_primal), <:RevConfig, <:Annotation, Type{<:Annotation},Vararg{Annotation}}
-        push!(edges, ccall(:jl_method_table_for, Any, (Any,), sig))
-        push!(edges, sig)
     elseif ft == typeof(EnzymeRules.forward)
         sig = Tuple{typeof(EnzymeRules.forward), <:FwdConfig, <:Annotation, Type{<:Annotation},Vararg{Annotation}}
-        push!(edges, ccall(:jl_method_table_for, Any, (Any,), sig))
-        push!(edges, sig)
     else
         sig = Tuple{typeof(EnzymeRules.inactive), Vararg{Annotation}}
-        push!(edges, ccall(:jl_method_table_for, Any, (Any,), sig))
-        push!(edges, sig)
     end
+    add_edge!(edges, sig)
 
     new_ci.edges = edges
 

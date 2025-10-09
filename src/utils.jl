@@ -263,6 +263,67 @@ end
     end
 end
 
+
+"""
+    create_fresh_codeinfo(fn, source, world)
+
+Create a fresh `Core.CodeInfo` for a generated function `fn` with source location `source` and world age `world`.
+Callers are responsible for setting `ci.edges`
+"""
+function create_fresh_codeinfo(fn, source, world, slotnames, code)
+    ci = ccall(:jl_new_code_info_uninit, Ref{Core.CodeInfo}, ())
+    
+    @static if isdefined(Core, :DebugInfo)
+        # TODO: Add proper debug info
+        ci.debuginfo = Core.DebugInfo(:none)
+    else
+        ci.codelocs = Int32[]
+        ci.linetable = [
+            Core.Compiler.LineInfoNode(@__MODULE__, fn, source.file, Int32(source.line), Int32(0))
+        ]
+    end
+
+    ci.min_world = world
+    ci.max_world = typemax(UInt)
+
+    ci.slotnames = Symbol[sym for sym in slotnames]
+    ci.slotflags = UInt8[0x00 for i = 1:length(slotnames)]
+    if VERSION >= v"1.12-"
+        ci.nargs = length(slotnames)
+        ci.isva = false
+    end
+
+    ci.code = code
+    ci.ssaflags = UInt8[0x00 for i = 1:length(code)]   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
+    @static if isdefined(Core, :DebugInfo)
+    else
+        for _ in 1:length(code)
+            push!(ci.codelocs, 1)   # all instructions map to the first line
+        end
+    end
+
+    ci.ssavaluetypes = length(code)
+
+    return ci
+end
+
+function add_edge!(edges::Vector{Any}, @nospecialize(invoke_sig::Type))
+    mt = ccall(:jl_method_table_for, Any, (Any,), invoke_sig)
+    if VERSION >= v"1.12-"
+        push!(edges, mt)
+        push!(edges, invoke_sig)
+    else
+        push!(edges, invoke_sig)
+        push!(edges, mt)
+    end
+    return edges
+end
+
+function add_edge!(edges::Vector{Any}, mi::Core.MethodInstance)
+    push!(edges, mi)
+    return edges
+end
+
 @inline function my_methodinstance(@nospecialize(method_table::Union{Core.Compiler.MethodTableView, Nothing}), @nospecialize(ft::Type), @nospecialize(tt::Type), world::UInt, min_world::Union{Nothing, Base.RefValue{UInt}}=nothing, max_world::Union{Nothing, Base.RefValue{UInt}}=nothing)::Union{Core.MethodInstance, Nothing}
 
     if min_world === nothing
@@ -302,50 +363,32 @@ end
     my_methodinstance(interp, ft, tt, min_world, max_world)
 end
 
+function prevmethodinstance end
+
 function methodinstance_generator(world::UInt, source, self, @nospecialize(mode::Type), @nospecialize(ft::Type), @nospecialize(tt::Type))
     @nospecialize
     @assert Core.Compiler.isType(ft) && Core.Compiler.isType(tt)
     ft = ft.parameters[1]
     tt = tt.parameters[1]
 
-    stub = Core.GeneratedFunctionStub(identity, Core.svec(:methodinstance, :mode, :ft, :tt), Core.svec())
+    slotnames = Core.svec(Symbol("#self#"), :mode, :ft, :tt)
+    stub = Core.GeneratedFunctionStub(prevmethodinstance, slotnames, Core.svec())
 
     # look up the method match
-    method_error = :(throw(MethodError(ft, tt, $world)))
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
-
     mi = my_methodinstance(mode.instance, ft, tt, world, min_world, max_world)
     
-    mi === nothing && return stub(world, source, method_error)
+    mi === nothing && return stub(world, source, :(throw(MethodError(ft, tt, $world))))
     
-    ci = Core.Compiler.retrieve_code_info(mi, world)
+    code = Any[Core.Compiler.ReturnNode(mi)]
 
-    # prepare a new code info
-    new_ci = copy(ci)
-    empty!(new_ci.code)
-    empty!(new_ci.codelocs)
-    empty!(new_ci.linetable)
-    empty!(new_ci.ssaflags)
-    new_ci.ssavaluetypes = 0
+    ci = create_fresh_codeinfo(prevmethodinstance, source, world, slotnames, code)
+    ci.min_world = min_world[]
+    ci.max_world = max_world[]
 
-    # propagate edge metadata
-    new_ci.min_world = min_world[]
-    new_ci.max_world = max_world[]
-    new_ci.edges = MethodInstance[mi]
-
-    # prepare the slots
-    new_ci.slotnames = Symbol[Symbol("#self#"), :mode, :ft, :tt]
-    new_ci.slotflags = UInt8[0x00 for i = 1:4]
-
-    # return the method instance
-    push!(new_ci.code, Core.Compiler.ReturnNode(mi))
-    push!(new_ci.ssaflags, 0x00)
-    push!(new_ci.linetable, GPUCompiler.@LineInfoNode(methodinstance))
-    push!(new_ci.codelocs, 1)
-    new_ci.ssavaluetypes += 1
-
-    return new_ci
+    # TODO: Missing edge handling
+    return ci
 end
 
 @eval function prevmethodinstance(mode, ft, tt)::Core.MethodInstance

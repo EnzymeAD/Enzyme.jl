@@ -27,7 +27,9 @@ import Enzyme:
     FnTypeInfo,
     Logic,
     allocatedinline,
-    ismutabletype
+    ismutabletype,
+    create_fresh_codeinfo,
+    add_edge!
 using Enzyme
 
 import EnzymeCore
@@ -6269,33 +6271,30 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
     new_ci.min_world = world
     new_ci.max_world = max_world[]
 
-    edges = Any[mi]
+    edges = Any[]
+    add_edge!(edges, mi)
+
 
     if Mode == API.DEM_ForwardMode
         fwd_sig = Tuple{typeof(EnzymeRules.forward), <:EnzymeRules.FwdConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
-        push!(edges, ccall(:jl_method_table_for, Any, (Any,), fwd_sig)::Core.MethodTable)
-        push!(edges, fwd_sig)
+        add_edge!(edges, fwd_sig)
     else
         rev_sig = Tuple{typeof(EnzymeRules.augmented_primal), <:EnzymeRules.RevConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
-        push!(edges, ccall(:jl_method_table_for, Any, (Any,), rev_sig)::Core.MethodTable)
-        push!(edges, rev_sig)
+        add_edge!(edges, rev_sig)
         
         rev_sig = Tuple{typeof(EnzymeRules.reverse), <:EnzymeRules.RevConfig, <:Enzyme.EnzymeCore.Annotation, Union{Type{<:Enzyme.EnzymeCore.Annotation}, Enzyme.EnzymeCore.Active}, Any, Vararg{Enzyme.EnzymeCore.Annotation}}
-        push!(edges, ccall(:jl_method_table_for, Any, (Any,), rev_sig)::Core.MethodTable)
-        push!(edges, rev_sig)
+        add_edge!(edges, rev_sig)
     end
     
     ina_sig = Tuple{typeof(EnzymeRules.inactive), Vararg{Any}}
-    push!(edges, ccall(:jl_method_table_for, Any, (Any,), ina_sig)::Core.MethodTable)
-    push!(edges, ina_sig)
+    add_edge!(edges, ina_sig)
     
     for gen_sig in (
         Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{Any}},
         Tuple{typeof(EnzymeRules.noalias), Vararg{Any}},
         Tuple{typeof(EnzymeRules.inactive_type), Type},
     )
-        push!(edges, ccall(:jl_method_table_for, Any, (Any,), gen_sig)::Core.MethodTable)
-        push!(edges, gen_sig)
+        add_edge!(edges, gen_sig)
     end
 
     new_ci.edges = edges
