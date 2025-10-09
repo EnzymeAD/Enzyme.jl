@@ -130,7 +130,7 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
     end
 
     ci.min_world = world
-    ci.max_world = max_world
+    ci.max_world = max_world[]
 
     edges = Any[]
     # XXX: setting this edge does not give us proper method invalidation, see
@@ -144,6 +144,7 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
     # prepare the slots
     ci.slotnames = Symbol[Symbol("#self#"), :mode, :ft, :tt]
     ci.slotflags = UInt8[0x00 for _ in 1:4]
+    ci.nargs = 4
 
     # return the result
     result = primal_return_type_world(mode, world, mi)
@@ -157,7 +158,7 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
     end
 
     ci.ssavaluetypes = 1
-    
+
     return ci
 end
 
