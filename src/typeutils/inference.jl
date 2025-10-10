@@ -144,8 +144,10 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
     # prepare the slots
     ci.slotnames = Symbol[Symbol("#self#"), :mode, :ft, :tt]
     ci.slotflags = UInt8[0x00 for _ in 1:4]
-    ci.nargs = 4
-    ci.isva = false
+    if VERSION < v"1.12-"
+        ci.nargs = 4
+        ci.isva = false
+    end
 
     # return the result
     result = primal_return_type_world(mode, world, mi)
