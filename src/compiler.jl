@@ -27,7 +27,8 @@ import Enzyme:
     FnTypeInfo,
     Logic,
     allocatedinline,
-    ismutabletype
+    ismutabletype,
+    create_fresh_codeinfo
 using Enzyme
 
 import EnzymeCore
@@ -6294,8 +6295,12 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
         Tuple{typeof(EnzymeRules.noalias), Vararg{Any}},
         Tuple{typeof(EnzymeRules.inactive_type), Type},
     )
-        push!(edges, ccall(:jl_method_table_for, Any, (Any,), gen_sig)::Core.MethodTable)
-        push!(edges, gen_sig)
+        if VERSION < v"1.12-"
+            push!(edges, ccall(:jl_method_table_for, Any, (Any,), gen_sig)::Core.MethodTable)
+            push!(edges, gen_sig)
+        else
+            push!(edges, ccall(:jl_method_table_for, Any, (Any,), gen_sig)::Core.MethodTable)
+        end
     end
 
     new_ci.edges = edges
