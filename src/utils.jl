@@ -358,17 +358,15 @@ function methodinstance_generator(world::UInt, source, self, @nospecialize(mode:
     stub = Core.GeneratedFunctionStub(prevmethodinstance, slotnames, Core.svec())
 
     # look up the method match
-    method_error = :(throw(MethodError(ft, tt, $world)))
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
-
     mi = my_methodinstance(mode.instance, ft, tt, world, min_world, max_world)
     
-    mi === nothing && return stub(world, source, method_error)
+    mi === nothing && return stub(world, source, :(throw(MethodError(ft, tt, $world))))
     
     code = Any[Core.Compiler.ReturnNode(mi)]
 
-    ci = create_fresh_codeinfo(:methodinstance, source, world, slotnames, code)
+    ci = create_fresh_codeinfo(prevmethodinstance, source, world, slotnames, code)
     ci.min_world = min_world[]
     ci.max_world = max_world[]
 
