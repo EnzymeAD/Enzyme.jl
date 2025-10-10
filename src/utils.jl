@@ -286,7 +286,7 @@ function create_fresh_codeinfo(fn, source, world, slotnames, code)
     ci.min_world = world
     ci.max_world = typemax(UInt)
 
-    ci.slotnames = slotnames
+    ci.slotnames = Symbol[sym for sym in slotnames]
     ci.slotflags = UInt8[0x00 for i = 1:length(slotnames)]
     if VERSION >= v"1.12-"
         ci.nargs = length(slotnames)
