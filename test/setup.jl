@@ -34,6 +34,3 @@ function test_scalar(f, x; rtol = 1.0e-9, atol = 1.0e-9, fdm = central_fdm(5, 1)
     return @test isapproxfn((Enzyme.Reverse, f), ∂x, finite_diff; rtol = rtol, atol = atol, kwargs...)
 
 end
-
-using Enzyme_jll
-@info "Testing against" Enzyme_jll.libEnzyme

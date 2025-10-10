@@ -1,4 +1,5 @@
-import ParallelTestRunner: runtests
+using ParallelTestRunner: runtests
+using Enzyme_jll: Enzyme_jll
 
 include("setup.jl")     # make sure everything is precompiled
 
@@ -12,4 +13,5 @@ function testfilter(test)
     return true
 end
 
+@info "Testing against" Enzyme_jll.libEnzyme
 runtests(ARGS; testfilter, init_code=:(include("setup.jl")))
