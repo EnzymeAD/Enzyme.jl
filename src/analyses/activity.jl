@@ -451,26 +451,17 @@ Base.@nospecializeinfer @inline function active_reg(@nospecialize(ST::Type), wor
     return result
 end
 
+function active_reg_nothrow end
+
 function active_reg_nothrow_generator(world::UInt, source::Union{Method, LineNumberNode}, T, self, _)
     @nospecialize
     result = active_reg(T, world)
-
-    # create an empty CodeInfo to return the result
-    ci = ccall(:jl_new_code_info_uninit, Ref{Core.CodeInfo}, ())
-    
-    @static if isdefined(Core, :DebugInfo)
-        # TODO: Add proper debug info
-        ci.debuginfo = Core.DebugInfo(:none)
-    else
-        ci.codelocs = Int32[]
-        ci.linetable = [
-            Core.Compiler.LineInfoNode(@__MODULE__, :active_reg_nothrow, source.file, Int32(source.line), Int32(0))
-        ]
-    end
     check_activity_cache_invalidations(world)
-    ci.min_world = world
-    ci.max_world = typemax(UInt)
 
+    slotnames = Core.svec(Symbol("#self#"), :T)
+    code = Any[Core.Compiler.ReturnNode(result)]
+    ci = create_fresh_codeinfo(active_reg_nothrow, source, world, slotnames, code)
+    
     edges = Any[]
     inactive_type_sig = Tuple{typeof(EnzymeRules.inactive_type), Type}
     # Create the edge for the "query"
@@ -486,25 +477,6 @@ function active_reg_nothrow_generator(world::UInt, source::Union{Method, LineNum
     end
 
     ci.edges = edges
-
-    # prepare the slots
-    ci.slotnames = Symbol[Symbol("#self#"), :t]
-    ci.slotflags = UInt8[0x00 for i = 1:2]
-    if VERSION < v"1.12-"
-        ci.nargs = 2
-        ci.isva = false
-    end
-
-    # return the result
-    ci.code = Any[Core.Compiler.ReturnNode(result)]
-    ci.ssaflags = UInt32[0x00]   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
-    @static if isdefined(Core, :DebugInfo)
-    else
-        push!(ci.codelocs, 1)
-    end
-
-    ci.ssavaluetypes = 1
-
     return ci
 end
 

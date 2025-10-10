@@ -288,7 +288,7 @@ function create_fresh_codeinfo(fn, source, world, slotnames, code)
 
     ci.slotnames = slotnames
     ci.slotflags = UInt8[0x00 for i = 1:length(slotnames)]
-    if VERSION < v"1.12-"
+    if VERSION >= v"1.12-"
         ci.nargs = length(slotnames)
         ci.isva = false
     end

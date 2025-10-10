@@ -109,27 +109,18 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
    
     mi = my_methodinstance(mode, ft, tt, world, min_world, max_world)
 
+    slotnames = Core.svec(Symbol("#self#"), :mode, :ft, :tt)
     stub = Core.GeneratedFunctionStub(
         primal_return_type,
-        Core.svec(Symbol("#self#"), :mode, :ft, :tt),
+        slotnames,
         Core.svec(),
     )
     mi === nothing && return stub(world, source, :(throw(MethodError(ft, tt, $world))))
 
+    result = primal_return_type_world(mode, world, mi)
+    code = Any[Core.Compiler.ReturnNode(result)]
     # create an empty CodeInfo to return the result
-    ci = ccall(:jl_new_code_info_uninit, Ref{Core.CodeInfo}, ())
-        
-    @static if isdefined(Core, :DebugInfo)
-        # TODO: Add proper debug info
-        ci.debuginfo = Core.DebugInfo(:none)
-    else
-        ci.codelocs = Int32[]
-        ci.linetable = [
-            Core.Compiler.LineInfoNode(@__MODULE__, :primal_return_type, source.file, Int32(source.line), Int32(0))
-        ]
-    end
-
-    ci.min_world = world
+    ci = create_fresh_codeinfo(primal_return_type, source, world, slotnames, code)
     ci.max_world = max_world[]
 
     edges = Any[]
@@ -138,29 +129,7 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
     #      invoking `code_llvm` also does the necessary codegen, as does calling the
     #      underlying C methods -- which GPUCompiler does, so everything Just Works.
     push!(edges, mi)
-
     ci.edges = edges
-
-    # prepare the slots
-    ci.slotnames = Symbol[Symbol("#self#"), :mode, :ft, :tt]
-    ci.slotflags = UInt8[0x00 for _ in 1:4]
-    if VERSION < v"1.12-"
-        ci.nargs = 4
-        ci.isva = false
-    end
-
-    # return the result
-    result = primal_return_type_world(mode, world, mi)
-
-    # return the result
-    ci.code = Any[Core.Compiler.ReturnNode(result)]
-    ci.ssaflags = UInt32[0x00]   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
-    @static if isdefined(Core, :DebugInfo)
-    else
-        push!(ci.codelocs, 1)
-    end
-
-    ci.ssavaluetypes = 1
 
     return ci
 end

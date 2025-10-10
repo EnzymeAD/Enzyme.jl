@@ -27,7 +27,8 @@ import Enzyme:
     FnTypeInfo,
     Logic,
     allocatedinline,
-    ismutabletype
+    ismutabletype,
+    create_fresh_codeinfo
 using Enzyme
 
 import EnzymeCore
