@@ -27,6 +27,7 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 [sources]
 Enzyme = {path = ".."}
 EnzymeTestUtils = {path = "../lib/EnzymeTestUtils"}
+ParallelTestRunner = {url = "https://github.com/JuliaTesting/ParallelTestRunner.jl", rev="tb/avoid_iocapture"}
 
 [compat]
 EnzymeTestUtils = "0.2.1"
