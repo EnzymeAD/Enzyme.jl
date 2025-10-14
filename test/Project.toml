@@ -30,4 +30,4 @@ EnzymeTestUtils = {path = "../lib/EnzymeTestUtils"}
 
 [compat]
 EnzymeTestUtils = "0.2.1"
-ParallelTestRunner = "0.1.1"
+ParallelTestRunner = "1"
