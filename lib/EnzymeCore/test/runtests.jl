@@ -36,12 +36,13 @@ using EnzymeCore
     @testset "Mode modification" begin
         include("mode_modification.jl")
     end
-end
-
-@testset "within_autodiff" begin
-    @test !EnzymeCore.within_autodiff()
-end
-
-@testset "ignore_derivatives" begin
-    @test EnzymeCore.ignore_derivatives(3) == 3
+    @testset "Chunk strategy" begin
+        include("chunk.jl")
+    end
+    @testset "within_autodiff" begin
+        @test !EnzymeCore.within_autodiff()
+    end
+    @testset "ignore_derivatives" begin
+        @test EnzymeCore.ignore_derivatives(3) == 3
+    end
 end
