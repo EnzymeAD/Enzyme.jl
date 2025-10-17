@@ -336,6 +336,8 @@ parent_scope(@nospecialize(val::LLVM.Value), depth = 0) = parent_scope(LLVM.pare
 parent_scope(val::LLVM.Argument, depth = 0) =
     parent_scope(LLVM.Function(LLVM.API.LLVMGetParamParent(val)), depth + 1)
 
+
+const ENZYME_FULL_ERROR = Ref(false)
 function julia_error(
     cstr::Cstring,
     val::LLVM.API.LLVMValueRef,
@@ -385,7 +387,9 @@ function julia_error(
         else
             # Need to convert function to string, since when the error is going to be printed
             # the module might have been destroyed
-            ir = string(parent_scope(val))
+            if ENZYME_FULL_ERROR[]
+                ir = string(parent_scope(val))
+            end
         end
     end
 
