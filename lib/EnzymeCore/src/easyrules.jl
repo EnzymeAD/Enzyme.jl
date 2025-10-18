@@ -159,11 +159,11 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
         push!(exprs, Expr(:(=), rname, :($sname.val)))
     end
 
-    tosum0 = Vector{Tuple{Int, Symbol, Expr}}[]
+    tosum0 = Vector{Tuple{Int, Symbol, Any}}[]
 
     for (o, partial0) in enumerate(partials)
         @assert partial0 isa Array && length(partial0) == length(inputs)
-        tosum = Tuple{Int, Symbol, Expr}[]
+        tosum = Tuple{Int, Symbol, Any}[]
         push!(tosum0, tosum)
         for (i, (p, sname)) in enumerate(zip(partial0, input_names))
             if p == :(EnzymeCore.Const)
@@ -210,7 +210,7 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
                             end
 
                             msym = Symbol("m_", string(w), "_partial_", string(o), "_", sname)
-                            dval = actives[i]::Expr
+                            dval = actives[i]
                             if W != 1
                                 dval = Expr(:call, getfield, dval, w)
                             end
