@@ -24,6 +24,10 @@ Internal function.
 
 Checks if `a` contains a use of the symbol `b`.
 """
+function uses_symbol(a, b::Symbol)
+    return false
+end
+
 function uses_symbol(a::Expr, b::Symbol)
     for arg in a.args
         if uses_symbol(arg, b)
@@ -166,7 +170,7 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
         tosum = Tuple{Int, Symbol, Any}[]
         push!(tosum0, tosum)
         for (i, (p, sname)) in enumerate(zip(partial0, input_names))
-            if p == :(EnzymeCore.Const)
+            if p == :(EnzymeCore.Const) || p == :(Enzyme.Const) || p == :(Const)
                 continue
             end
             push!(tosum, (i , sname, p))
@@ -187,7 +191,7 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
             genexprs = Expr[$(exprs...,)...]
             gensetup = Expr[$(setup_stmts...,)...]
 
-            has_omega = false
+            has_omega = needs_primal(config)
             
             tosum0 = $tosum0
 
@@ -220,7 +224,7 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
 
                                 # Descend through the rule to see if any users require the original result, Ω
                                 # for now, conservatively assume this is indeed the case
-                                if uses_symbol(p, Ω)
+                                if uses_symbol(p, :Ω)
                                     has_omega = true
                                 end
 
@@ -255,7 +259,7 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
                     outexpr = Symbol("outres_$w")
                     outres[w] = outexpr
                     if $(esc(:RT)) <: Tuple                    
-                        push!(gensetup, Expr(:(=), outexpr, outsyms[:, w]...))
+                        push!(gensetup, Expr(:(=), outexpr, Expr(:tuple, outsyms[:, w]...)))
                     else
                         @assert length(tosum0) == 1
                         push!(gensetup, Expr(:(=), outexpr, outsyms[1, w]))
