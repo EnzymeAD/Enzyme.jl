@@ -851,12 +851,32 @@ end
     return fmi, (args, TT, fwd_RT, kwtup, RT, needsPrimal, RealRt, origNeedsPrimal, activity, C)
 end
 
-@inline function has_rule(orig::LLVM.CallInst, gutils::GradientUtils)
+@inline function has_easy_rule(orig::LLVM.CallInst, gutils::GradientUtils)::Bool
+    fn = LLVM.parent(LLVM.parent(orig))
+    world = enzyme_extract_world(fn)
+    mi, RealRt = enzyme_custom_extract_mi(orig)
+    specTypes = Interpreter.simplify_kw(mi.specTypes)
+    return EnzymeRules.has_easy_rule_from_sig(specTypes; world)
+end
+
+@inline function has_rule(orig::LLVM.CallInst, gutils::GradientUtils)::Bool
     if get_mode(gutils) == API.DEM_ForwardMode
-       return fwd_mi(orig, gutils)[1] !== nothing
+       tup = fwd_mi(orig, gutils)
+        if tup[1] === nothing
+           return false
+        end
     else
-       return aug_fwd_mi(orig, gutils)[1] !== nothing
+       if aug_fwd_mi(orig, gutils)[1] === nothing
+            return false
+        end
     end
+
+    # Having an easy rule for a constant instruction -> no rule override
+    if has_easy_rule(orig, gutils) && is_constant_inst(gutils, org)
+        return false
+    end
+
+    return true
 end
 
 function enzyme_custom_common_rev(
