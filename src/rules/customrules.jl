@@ -855,7 +855,8 @@ end
     fn = LLVM.parent(LLVM.parent(orig))
     world = enzyme_extract_world(fn)
     mi, RealRt = enzyme_custom_extract_mi(orig)
-    return EnzymeRules.has_easy_rule_from_sig(Tuple{mi.specTypes...}, world)
+    specTypes = Interpreter.simplify_kw(mi.specTypes)
+    return EnzymeRules.has_easy_rule_from_sig(specTypes, world)
 end
 
 @inline function has_rule(orig::LLVM.CallInst, gutils::GradientUtils)::Bool
