@@ -309,7 +309,7 @@ end
 
 function add_edge!(edges::Vector{Any}, @nospecialize(invoke_sig::Type))
     mt = ccall(:jl_method_table_for, Any, (Any,), invoke_sig)
-    if VERSION >= v"1.12-"
+    if VERSION < v"1.12-"
         push!(edges, mt)
         push!(edges, invoke_sig)
     else

@@ -6253,6 +6253,9 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
  
     check_activity_cache_invalidations(world)
 
+    edges = Any[]
+    add_edge!(edges, mi)
+    
     ts_ctx = JuliaContext()
     ctx = context(ts_ctx)
     activate(ctx)
@@ -6282,8 +6285,6 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
     code = Any[Core.Compiler.ReturnNode(result)]
     ci = create_fresh_codeinfo(thunk, source, world, slotnames, code)
 
-    edges = Any[]
-    add_edge!(edges, mi)
 
 
     if Mode == API.DEM_ForwardMode
