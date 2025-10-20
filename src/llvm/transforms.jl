@@ -299,6 +299,7 @@ function addr13NoAlias(mod::LLVM.Module)
             end
         end
     end
+    return true
 end
 
 ## given code like
@@ -2369,30 +2370,32 @@ function checkNoAssumeFalse(mod::LLVM.Module, shouldshow::Bool = false)
 end
 
 function rewrite_generic_memory!(mod::LLVM.Module)
-@static if VERSION < v"1.11-"
-else    
-    for f in functions(mod), bb in blocks(f)
-    iter = LLVM.API.LLVMGetFirstInstruction(bb)
-    while iter != C_NULL
-        inst = LLVM.Instruction(iter)
-        iter = LLVM.API.LLVMGetNextInstruction(iter)
-        if !isa(inst, LLVM.LoadInst)
-	   continue
-	end
-	
-	if isa(operands(inst)[1], LLVM.ConstantExpr)
+    @static if VERSION < v"1.11-"
+        return false
+    else    
+        for f in functions(mod), bb in blocks(f)
+            iter = LLVM.API.LLVMGetFirstInstruction(bb)
+            while iter != C_NULL
+                inst = LLVM.Instruction(iter)
+                iter = LLVM.API.LLVMGetNextInstruction(iter)
+                if !isa(inst, LLVM.LoadInst)
+                    continue
+                end
+        
+                if isa(operands(inst)[1], LLVM.ConstantExpr)
                     legal2, obj = absint(inst)
                     if legal2 && obj isa Memory && obj == typeof(obj).instance
-			b = LLVM.IRBuilder()
-			position!(b, inst)
-                       replace_uses!(inst, unsafe_to_llvm(b, obj))
-		       LLVM.API.LLVMInstructionEraseFromParent(inst)
-		       continue
-		    end
-		end
+                        b = LLVM.IRBuilder()
+                        position!(b, inst)
+                        replace_uses!(inst, unsafe_to_llvm(b, obj))
+                        LLVM.API.LLVMInstructionEraseFromParent(inst)
+                        continue
+                    end
+                end
+            end
+        end
+        return true
     end
-    end
-end
 end
 
 function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
