@@ -22,277 +22,123 @@ end
 EnzymeAttributorPass() = NewPMModulePass("enzyme_attributor", enzyme_attributor_pass!)
 ReinsertGCMarkerPass() = NewPMFunctionPass("reinsert_gcmarker", reinsert_gcmarker_pass!)
 SafeAtomicToRegularStorePass() = NewPMFunctionPass("safe_atomic_to_regular_store", safe_atomic_to_regular_store!)
-
-@static if VERSION < v"1.11.0-DEV.428"
-else
-    barrier_noop!(pm) = nothing
-end
-
-@static if VERSION < v"1.11-"
-    function gc_invariant_verifier_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine, cond::Bool)
-        gc_invariant_verifier!(pm, cond)
-    end
-else
-    function gc_invariant_verifier_tm!(pm::ModulePassManager, tm::LLVM.TargetMachine, cond::Bool)
-        function gc_invariant_verifier(mod::LLVM.Module)
-            @dispose pb = NewPMPassBuilder() begin
-                add!(pb, NewPMModulePassManager()) do mpm
-                    add!(mpm, NewPMFunctionPassManager()) do fpm
-                        add!(fpm, GCInvariantVerifierPass(; strong = cond))
-                    end
-                end
-                run!(pb, mod)
-            end
-            return true
-        end
-        add!(pm, ModulePass("GCInvariantVerifier", gc_invariant_verifier))
-    end
-end
-
-@static if VERSION < v"1.11-"
-    function propagate_julia_addrsp_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
-        propagate_julia_addrsp!(pm)
-    end
-else
-    function propagate_julia_addrsp_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
-        function prop_julia_addr(mod::LLVM.Module)
-            @dispose pb = NewPMPassBuilder() begin
-                add!(pb, NewPMModulePassManager()) do mpm
-                    add!(mpm, NewPMFunctionPassManager()) do fpm
-                        add!(fpm, PropagateJuliaAddrspacesPass())
-                    end
-                end
-                run!(pb, mod)
-            end
-            return true
-        end
-        add!(pm, ModulePass("PropagateJuliaAddrSpace", prop_julia_addr))
-    end
-end
-
-@static if VERSION < v"1.11-"
-    function alloc_opt_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
-        alloc_opt!(pm)
-    end
-else
-    function alloc_opt_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
-        function alloc_opt(mod::LLVM.Module)
-            @dispose pb = NewPMPassBuilder() begin
-                add!(pb, NewPMModulePassManager()) do mpm
-                    add!(mpm, NewPMFunctionPassManager()) do fpm
-                        add!(fpm, AllocOptPass())
-                    end
-                end
-                run!(pb, mod)
-            end
-            return true
-        end
-        add!(pm, ModulePass("AllocOpt", alloc_opt))
-    end
-end
-
-@static if VERSION < v"1.11-"
-    function lower_simdloop_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
-        lower_simdloop!(pm)
-    end
-else
-    function lower_simdloop_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
-        function lower_simdloop(mod::LLVM.Module)
-            @dispose pb = NewPMPassBuilder() begin
-                add!(pb, NewPMModulePassManager()) do mpm
-                    add!(mpm, NewPMFunctionPassManager()) do fpm
-                        add!(fpm, NewPMLoopPassManager()) do lpm
-                            add!(lpm, LowerSIMDLoopPass())
-                        end
-                    end
-                end
-                run!(pb, mod)
-            end
-            return true
-        end
-        # really looppass
-        add!(pm, ModulePass("LowerSIMDLoop", lower_simdloop))
-    end
-end
-
-function loop_optimizations_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
-    lower_simdloop_tm!(pm, tm)
-    licm!(pm)
-    if LLVM.version() >= v"15"
-        simple_loop_unswitch_legacy!(pm)
-    else
-        loop_unswitch!(pm)
-    end
-end
-
-@static if VERSION < v"1.11-"
-    function cpu_features_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
-        @static if isdefined(LLVM.Interop, :cpu_features!)
-            LLVM.Interop.cpu_features!(pm)
-        else
-            @static if isdefined(GPUCompiler, :cpu_features!)
-                GPUCompiler.cpu_features!(pm)
-            end
-        end
-    end
-else
-    function cpu_features_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
-        function cpu_features(mod)
-            @dispose pb = NewPMPassBuilder() begin
-                add!(pb, NewPMModulePassManager()) do mpm
-                    add!(mpm, CPUFeaturesPass())
-                end
-                run!(pb, mod)
-            end
-            return true
-        end
-        add!(pm, ModulePass("CPUFeatures", cpu_features))
-    end
-end
-
-function jl_inst_simplify!(PM::LLVM.ModulePassManager)
-    ccall(
-        (:LLVMAddJLInstSimplifyPass, API.libEnzyme),
-        Cvoid,
-        (LLVM.API.LLVMPassManagerRef,),
-        PM,
-    )
-end
-
-cse!(pm) = LLVM.API.LLVMAddEarlyCSEPass(pm)
+Addr13NoAliasPass() = NewPMModulePass("addr13_noalias", addr13NoAlias)
+RewriteGenericMemoryPass() = NewPMModulePass("rewrite_generic_memory", rewrite_generic_memory!)
 
 function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
-    addr13NoAlias(mod)
-    # everying except unroll, slpvec, loop-vec
-    # then finish Julia GC
-    ModulePassManager() do pm
-        add_library_info!(pm, triple(mod))
-        add_transform_info!(pm, tm)
+    @dispose pb = NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+        register!(pb, Addr13NoAliasPass())
+        register!(pb, RewriteGenericMemoryPass())
+        add!(pb, NewPMAAManager()) do aam
+            add!(aam, ScopedNoAliasAA())
+            add!(aam, TypeBasedAA())
+            add!(aam, BasicAA())
+        end
+        add!(pb, NewPMModulePassManager()) do mpm
+            add!(mpm, Addr13NoAliasPass())
 
-        propagate_julia_addrsp_tm!(pm, tm)
-        scoped_no_alias_aa!(pm)
-        type_based_alias_analysis!(pm)
-        basic_alias_analysis!(pm)
-        cfgsimplification!(pm)
-        dce!(pm)
-        cpu_features_tm!(pm, tm)
-        scalar_repl_aggregates_ssa!(pm) # SSA variant?
-        mem_cpy_opt!(pm)
-        always_inliner!(pm)
-        alloc_opt_tm!(pm, tm)
-        LLVM.run!(pm, mod)
+            add!(mpm, NewPMFunctionPassManager()) do fpm
+                add!(fpm, PropagateJuliaAddrspacesPass())
+                add!(fpm, SimplifyCFGPass())
+                add!(fpm, DCEPass())
+            end
+            add!(mpm, CPUFeaturesPass())
+            add!(mpm, NewPMFunctionPassManager()) do fpm
+                add!(fpm, SROAPass())
+                add!(fpm, MemCpyOptPass())
+            end
+            add!(mpm, AlwaysInlinerPass())
+            add!(mpm, NewPMFunctionPassManager()) do fpm
+                add!(fpm, AllocOptPass())
+            end            
+
+            add!(mpm, GlobalOptPass())
+            add!(mpm, NewPMFunctionPassManager()) do fpm
+                add!(fpm, GVNPass())
+            end
+
+            add!(mpm, RewriteGenericMemoryPass())
+
+            add!(mpm, NewPMFunctionPassManager()) do fpm
+                add!(fpm, InstCombinePass())
+                add!(fpm, JLInstSimplifyPass())
+                add!(fpm, SimplifyCFGPass())
+                add!(fpm, SROAPass())
+                add!(fpm, InstCombinePass())
+                add!(fpm, JLInstSimplifyPass())
+                add!(fpm, JumpThreadingPass())
+                add!(fpm, CorrelatedValuePropagationPass())
+                add!(fpm, InstCombinePass())
+                add!(fpm, JLInstSimplifyPass())
+                add!(fpm, ReassociatePass())
+                add!(fpm, EarlyCSEPass())
+                add!(fpm, AllocOptPass())
+                add!(fpm, NewPMLoopPassManager(use_memory_ssa=true)) do lpm
+                    add!(lpm, LoopIdiomRecognizePass())
+                    add!(lpm, LoopRotatePass())
+                    add!(lpm, LowerSIMDLoopPass())
+                    add!(lpm, LICMPass())
+                    add!(lpm, JuliaLICMPass())
+                    add!(lpm, SimpleLoopUnswitchPass())
+                end
+
+                add!(fpm, InstCombinePass())
+                add!(fpm, JLInstSimplifyPass())
+                add!(fpm, NewPMLoopPassManager()) do lpm
+                    add!(lpm, IndVarSimplifyPass())
+                    add!(lpm, LoopDeletionPass())
+                end
+                add!(fpm, LoopUnrollPass(opt_level=2))
+                add!(fpm, AllocOptPass())
+                add!(fpm, SROAPass())
+                add!(fpm, GVNPass())
+
+                # This InstCombine needs to be after GVN
+                # Otherwise it will generate load chains in GPU code...
+                add!(fpm, InstCombinePass())
+                add!(fpm, JLInstSimplifyPass())
+                add!(fpm, MemCpyOptPass())
+                add!(fpm, SCCPPass())
+                add!(fpm, InstCombinePass())
+                add!(fpm, JLInstSimplifyPass())
+                add!(fpm, JumpThreadingPass())
+                add!(fpm, DSEPass())
+                add!(fpm, AllocOptPass())
+                add!(fpm, SimplifyCFGPass())
+
+
+                add!(fpm, NewPMLoopPassManager()) do lpm
+                    add!(lpm, LoopIdiomRecognizePass())
+                    add!(lpm, LoopDeletionPass())
+                end
+                add!(fpm, JumpThreadingPass())
+                add!(fpm, CorrelatedValuePropagationPass())
+
+                add!(fpm, ADCEPass())
+                add!(fpm, InstCombinePass())
+                add!(fpm, JLInstSimplifyPass())
+
+                # GC passes
+                add!(fpm, GCInvariantVerifierPass(strong=false))
+                add!(fpm, SimplifyCFGPass())
+                add!(fpm, InstCombinePass())
+                add!(fpm, JLInstSimplifyPass())
+            end
+
+            add!(mpm, GlobalOptPass())
+            add!(mpm, NewPMFunctionPassManager()) do fpm
+                add!(fpm, GVNPass())
+            end
+        end
+
+        run!(pb, mod, tm)
+
+        # TODO: Turn into passes?
+        removeDeadArgs!(mod, tm)
+        detect_writeonly!(mod)
+        nodecayed_phis!(mod)
     end
-
-    # Globalopt is separated as it can delete functions, which invalidates the Julia hardcoded pointers to
-    # known functions
-    ModulePassManager() do pm
-
-        add_library_info!(pm, triple(mod))
-        add_transform_info!(pm, tm)
-
-        scoped_no_alias_aa!(pm)
-        type_based_alias_analysis!(pm)
-        basic_alias_analysis!(pm)
-        cpu_features_tm!(pm, tm)
-
-        LLVM.API.LLVMAddGlobalOptimizerPass(pm) # Extra
-        gvn!(pm) # Extra
-        LLVM.run!(pm, mod)
-    end
-
-    rewrite_generic_memory!(mod)
-    
-    ModulePassManager() do pm
-        add_library_info!(pm, triple(mod))
-        add_transform_info!(pm, tm)
-
-        scoped_no_alias_aa!(pm)
-        type_based_alias_analysis!(pm)
-        basic_alias_analysis!(pm)
-        cpu_features_tm!(pm, tm)
-
-        instruction_combining!(pm)
-        jl_inst_simplify!(pm)
-        cfgsimplification!(pm)
-        scalar_repl_aggregates_ssa!(pm) # SSA variant?
-        instruction_combining!(pm)
-        jl_inst_simplify!(pm)
-        jump_threading!(pm)
-        correlated_value_propagation!(pm)
-        instruction_combining!(pm)
-        jl_inst_simplify!(pm)
-        reassociate!(pm)
-        early_cse!(pm)
-        alloc_opt_tm!(pm, tm)
-        loop_idiom!(pm)
-        loop_rotate!(pm)
-
-        loop_optimizations_tm!(pm, tm)
-
-        instruction_combining!(pm)
-        jl_inst_simplify!(pm)
-        ind_var_simplify!(pm)
-        loop_deletion!(pm)
-        loop_unroll!(pm)
-        alloc_opt_tm!(pm, tm)
-        scalar_repl_aggregates_ssa!(pm) # SSA variant?
-        gvn!(pm)
-
-        # This InstCombine needs to be after GVN
-        # Otherwise it will generate load chains in GPU code...
-        instruction_combining!(pm)
-        jl_inst_simplify!(pm)
-        mem_cpy_opt!(pm)
-        sccp!(pm)
-        instruction_combining!(pm)
-        jl_inst_simplify!(pm)
-        jump_threading!(pm)
-        dead_store_elimination!(pm)
-        alloc_opt_tm!(pm, tm)
-        cfgsimplification!(pm)
-        loop_idiom!(pm)
-        loop_deletion!(pm)
-        jump_threading!(pm)
-        correlated_value_propagation!(pm)
-        # SLP_Vectorizer -- not for Enzyme
-
-        LLVM.run!(pm, mod)
-
-        aggressive_dce!(pm)
-        instruction_combining!(pm)
-        jl_inst_simplify!(pm)
-        # Loop Vectorize -- not for Enzyme
-        # InstCombine
-
-        # GC passes
-        barrier_noop!(pm)
-        gc_invariant_verifier_tm!(pm, tm, false)
-
-        # FIXME: Currently crashes printing
-        cfgsimplification!(pm)
-        instruction_combining!(pm) # Extra for Enzyme
-        jl_inst_simplify!(pm)
-        LLVM.run!(pm, mod)
-    end
-    
-    # Globalopt is separated as it can delete functions, which invalidates the Julia hardcoded pointers to
-    # known functions
-    ModulePassManager() do pm
-        add_library_info!(pm, triple(mod))
-        add_transform_info!(pm, tm)
-
-        scoped_no_alias_aa!(pm)
-        type_based_alias_analysis!(pm)
-        basic_alias_analysis!(pm)
-        cpu_features_tm!(pm, tm)
-
-        LLVM.API.LLVMAddGlobalOptimizerPass(pm) # Exxtra
-        gvn!(pm) # Exxtra
-        LLVM.run!(pm, mod)
-    end
-    removeDeadArgs!(mod, tm)
-    detect_writeonly!(mod)
-    nodecayed_phis!(mod)
 end
 
 function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
