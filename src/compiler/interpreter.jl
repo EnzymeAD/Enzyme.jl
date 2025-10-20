@@ -24,48 +24,14 @@ else
     import Core.Compiler: get_world_counter, get_world_counter as get_inference_world
 end
 
+function rule_backedge_holder end
+
 function rule_backedge_holder_generator(world::UInt, source, self, ft::Type)
     @nospecialize
-    sig = Tuple{typeof(Base.identity), Int}
-    min_world = Ref{UInt}(typemin(UInt))
-    max_world = Ref{UInt}(typemax(UInt))
-    has_ambig = Ptr{Int32}(C_NULL)
-    mthds = Base._methods_by_ftype(
-        sig,
-        nothing,
-        -1, #=lim=#
-        world,
-        false, #=ambig=#
-        min_world,
-        max_world,
-        has_ambig,
-    )
-    mtypes, msp, m = mthds[1]
-    mi = ccall(
-        :jl_specializations_get_linfo,
-        Ref{Core.MethodInstance},
-        (Any, Any, Any),
-        m,
-        mtypes,
-        msp,
-    )
-    ci = Core.Compiler.retrieve_code_info(mi, world)::Core.Compiler.CodeInfo
 
-    # prepare a new code info
-    new_ci = copy(ci)
-    empty!(new_ci.code)
-    @static if isdefined(Core, :DebugInfo)
-      new_ci.debuginfo = Core.DebugInfo(:none)
-    else
-      empty!(new_ci.codelocs)
-      resize!(new_ci.linetable, 1)                # see note below
-    end
-    empty!(new_ci.ssaflags)
-    new_ci.ssavaluetypes = 0
-    new_ci.min_world = min_world[]
-    new_ci.max_world = max_world[]
+    code = Any[Core.Compiler.ReturnNode(world)]
+    ci = Core.Compiler.create_fresh_codeinfo(rule_backedge_holder, source, world, Core.svec(Symbol("#self#"), :ft), code)
 
-    ### TODO: backedge from inactive, augmented_primal, forward, reverse
     edges = Any[]
 
     if ft == typeof(EnzymeRules.augmented_primal)
@@ -77,27 +43,9 @@ function rule_backedge_holder_generator(world::UInt, source, self, ft::Type)
     end
     add_edge!(edges, sig)
 
-    new_ci.edges = edges
+    ci.edges = edges
 
-    # XXX: setting this edge does not give us proper method invalidation, see
-    #      JuliaLang/julia#34962 which demonstrates we also need to "call" the kernel.
-    #      invoking `code_llvm` also does the necessary codegen, as does calling the
-    #      underlying C methods -- which GPUCompiler does, so everything Just Works.
-
-    # prepare the slots
-    new_ci.slotnames = Symbol[Symbol("#self#"), :ft]
-    new_ci.slotflags = UInt8[0x00 for i = 1:2]
-
-    # return the codegen world age
-    push!(new_ci.code, Core.Compiler.ReturnNode(world))
-    push!(new_ci.ssaflags, 0x00)   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
-    @static if isdefined(Core, :DebugInfo)
-    else
-      push!(new_ci.codelocs, 1)   # see note below
-    end
-    new_ci.ssavaluetypes += 1
-
-    return new_ci
+    return ci
 end
 
 @eval Base.@assume_effects :removable :foldable :nothrow @inline function rule_backedge_holder(ft)
