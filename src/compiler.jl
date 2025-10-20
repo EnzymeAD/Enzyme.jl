@@ -2758,7 +2758,7 @@ function enzyme!(
             LLVM.run!(pm, mod)
         end
     else
-        # TODO(NewPM)
+        run!(DCEPass(), mod)
     end
     fix_decayaddr!(mod)
     adjointf = adjointf == nothing ? nothing : functions(mod)[adjointfname]
@@ -5170,11 +5170,11 @@ end
         end
         if LLVM.has_oldpm()
             ModulePassManager() do pm
-                    always_inliner!(pm)
-                    LLVM.run!(pm, mod)
+                always_inliner!(pm)
+                LLVM.run!(pm, mod)
             end
         else
-            # TODO(NewPM)
+            run!(AlwaysInlinerPass(), mod)
         end
         for fname in toremove
             if haskey(functions(mod), fname)
