@@ -2752,9 +2752,13 @@ function enzyme!(
     for f in collect(functions(mod))
         API.EnzymeFixupBatchedJuliaCallingConvention(f)
     end
-    ModulePassManager() do pm
-        dce!(pm)
-        LLVM.run!(pm, mod)
+    if LLVM.has_oldpm()
+        ModulePassManager() do pm
+            dce!(pm)
+            LLVM.run!(pm, mod)
+        end
+    else
+        # TODO(NewPM)
     end
     fix_decayaddr!(mod)
     adjointf = adjointf == nothing ? nothing : functions(mod)[adjointfname]
@@ -5164,9 +5168,13 @@ end
                 push!(toremove, name(f))
             end
         end
-        ModulePassManager() do pm
-            always_inliner!(pm)
-            LLVM.run!(pm, mod)
+        if LLVM.has_oldpm()
+            ModulePassManager() do pm
+                    always_inliner!(pm)
+                    LLVM.run!(pm, mod)
+            end
+        else
+            # TODO(NewPM)
         end
         for fname in toremove
             if haskey(functions(mod), fname)

@@ -450,6 +450,10 @@ cse!(pm) = LLVM.API.LLVMAddEarlyCSEPass(pm)
 
 function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     addr13NoAlias(mod)
+    if !LLVM.has_oldpm()
+        # TODO(NewPM)
+        return
+    end
     # everying except unroll, slpvec, loop-vec
     # then finish Julia GC
     ModulePassManager() do pm
@@ -750,19 +754,23 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
             ),
         )
     end
-    LLVM.ModulePassManager() do pm
-        addTargetPasses!(pm, tm, LLVM.triple(mod))
-        addOptimizationPasses!(pm, tm)
-        LLVM.run!(pm, mod)
-    end
-    if machine
-        # TODO enable validate_return_roots
-        # validate_return_roots!(mod)
+    if LLVM.has_oldpm()
         LLVM.ModulePassManager() do pm
-            addJuliaLegalizationPasses!(pm, tm, true)
-            addMachinePasses!(pm, tm)
+            addTargetPasses!(pm, tm, LLVM.triple(mod))
+            addOptimizationPasses!(pm, tm)
             LLVM.run!(pm, mod)
         end
+        if machine
+            # TODO enable validate_return_roots
+            # validate_return_roots!(mod)
+            LLVM.ModulePassManager() do pm
+                addJuliaLegalizationPasses!(pm, tm, true)
+                addMachinePasses!(pm, tm)
+                LLVM.run!(pm, mod)
+            end
+        end
+    else
+        # TODO(NewPM)
     end
     for f in functions(mod)
 	if isempty(blocks(f))
