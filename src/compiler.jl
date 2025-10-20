@@ -6416,7 +6416,7 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
     deferred_codegen_jobs[id] = job
 
     code = Any[Core.Compiler.ReturnNode(reinterpret(Ptr{Cvoid}, id))]
-    ci = create_fresh_codeinfo(deferred_if_codegen, source, world, slotnames, code)
+    ci = create_fresh_codeinfo(deferred_id_codegen, source, world, slotnames, code)
 
     ci.edges = Any[mi]
 
