@@ -27,7 +27,9 @@ import Enzyme:
     FnTypeInfo,
     Logic,
     allocatedinline,
-    ismutabletype
+    ismutabletype,
+    create_fresh_codeinfo,
+    add_edge!
 using Enzyme
 
 import EnzymeCore
@@ -6227,88 +6229,37 @@ end
     end
 end
 
+function thunk end
+
 function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where N)), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ABI::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, StrongZero::Bool, @nospecialize(self), @nospecialize(fakeworld), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(abi::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type), @nospecialize(strongzero::Type))
     @nospecialize
     
-    parmnames = (:fakeworld, :fa, :a, :tt, :mode, :width, :modifiedbetween, :returnprimal, :shadowinit, :abi, :erriffuncwritten, :runtimeactivity, :strongzero)
-    stub = Core.GeneratedFunctionStub(identity, Core.svec(:methodinstance, parmnames...), Core.svec())
+    slotnames = Core.svec(Symbol("#self#"), 
+                    :fakeworld, :fa, :a, :tt, :mode, :width,
+                    :modifiedbetween, :returnprimal, :shadowinit,
+                    :abi, :erriffuncwritten, :runtimeactivity, :strongzero)
+    stub = Core.GeneratedFunctionStub(thunk, slotnames, Core.svec())
 
     ft = eltype(FA)
     primal_tt = Tuple{map(eltype, TT.parameters)...}
     # look up the method match
-    method_error = :(throw(MethodError($ft, $primal_tt, $world)))
     
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
     
     mi = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
     
-    mi === nothing && return stub(world, source, method_error)
+    mi === nothing && return stub(world, source, :(throw(MethodError($ft, $primal_tt, $world))))
  
     check_activity_cache_invalidations(world)
 
-    min_world2 = Ref{UInt}(typemin(UInt))
-    max_world2 = Ref{UInt}(typemax(UInt))
-   
-    mi2 = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, typeof(Base.identity), Tuple{Nothing}, world, min_world2, max_world2)
-
-    ci = Core.Compiler.retrieve_code_info(mi2, world)::Core.Compiler.CodeInfo
-
-    # prepare a new code info
-    new_ci = copy(ci)
-    empty!(new_ci.code)
-    @static if isdefined(Core, :DebugInfo)
-      new_ci.debuginfo = Core.DebugInfo(:none)
-    else
-      empty!(new_ci.codelocs)
-      resize!(new_ci.linetable, 1)                # see note below
-    end
-    empty!(new_ci.ssaflags)
-    new_ci.ssavaluetypes = 0
-    # new_ci.min_world = min_world[]
-    new_ci.min_world = world
-    new_ci.max_world = max_world[]
-
-    edges = Any[mi]
-
-    if Mode == API.DEM_ForwardMode
-        fwd_sig = Tuple{typeof(EnzymeRules.forward), <:EnzymeRules.FwdConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
-        push!(edges, ccall(:jl_method_table_for, Any, (Any,), fwd_sig)::Core.MethodTable)
-        push!(edges, fwd_sig)
-    else
-        rev_sig = Tuple{typeof(EnzymeRules.augmented_primal), <:EnzymeRules.RevConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
-        push!(edges, ccall(:jl_method_table_for, Any, (Any,), rev_sig)::Core.MethodTable)
-        push!(edges, rev_sig)
-        
-        rev_sig = Tuple{typeof(EnzymeRules.reverse), <:EnzymeRules.RevConfig, <:Enzyme.EnzymeCore.Annotation, Union{Type{<:Enzyme.EnzymeCore.Annotation}, Enzyme.EnzymeCore.Active}, Any, Vararg{Enzyme.EnzymeCore.Annotation}}
-        push!(edges, ccall(:jl_method_table_for, Any, (Any,), rev_sig)::Core.MethodTable)
-        push!(edges, rev_sig)
-    end
-    
-    ina_sig = Tuple{typeof(EnzymeRules.inactive), Vararg{Any}}
-    push!(edges, ccall(:jl_method_table_for, Any, (Any,), ina_sig)::Core.MethodTable)
-    push!(edges, ina_sig)
-    
-    for gen_sig in (
-        Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{Any}},
-        Tuple{typeof(EnzymeRules.noalias), Vararg{Any}},
-        Tuple{typeof(EnzymeRules.inactive_type), Type},
-    )
-        push!(edges, ccall(:jl_method_table_for, Any, (Any,), gen_sig)::Core.MethodTable)
-        push!(edges, gen_sig)
-    end
-
-    new_ci.edges = edges
-
-    # XXX: setting this edge does not give us proper method invalidation, see
-    #      JuliaLang/julia#34962 which demonstrates we also need to "call" the kernel.
-    #      invoking `code_llvm` also does the necessary codegen, as does calling the
-    #      underlying C methods -- which GPUCompiler does, so everything Just Works.
+    edges = Any[]
+    add_edge!(edges, mi)
     
     ts_ctx = JuliaContext()
     ctx = context(ts_ctx)
     activate(ctx)
-    res = try
+    result = try
         thunkbase(
             mi,
             world,
@@ -6331,25 +6282,35 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
         dispose(ts_ctx)
     end
 
-    # prepare the slots
-    new_ci.slotnames = Symbol[Symbol("#self#"), parmnames...]
-    new_ci.slotflags = UInt8[0x00 for i = 1:length(new_ci.slotnames)]
+    code = Any[Core.Compiler.ReturnNode(result)]
+    ci = create_fresh_codeinfo(thunk, source, world, slotnames, code)
 
-    # return the codegen world age
-    push!(new_ci.code, Core.Compiler.ReturnNode(res))
-    push!(new_ci.ssaflags, 0x00)   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
-    @static if isdefined(Core, :DebugInfo)
+
+
+    if Mode == API.DEM_ForwardMode
+        fwd_sig = Tuple{typeof(EnzymeRules.forward), <:EnzymeRules.FwdConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
+        add_edge!(edges, fwd_sig)
     else
-      push!(new_ci.codelocs, 1)   # see note below
+        rev_sig = Tuple{typeof(EnzymeRules.augmented_primal), <:EnzymeRules.RevConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
+        add_edge!(edges, rev_sig)
+        
+        rev_sig = Tuple{typeof(EnzymeRules.reverse), <:EnzymeRules.RevConfig, <:Enzyme.EnzymeCore.Annotation, Union{Type{<:Enzyme.EnzymeCore.Annotation}, Enzyme.EnzymeCore.Active}, Any, Vararg{Enzyme.EnzymeCore.Annotation}}
+        add_edge!(edges, rev_sig)
     end
-    new_ci.ssavaluetypes += 1
+    
+    ina_sig = Tuple{typeof(EnzymeRules.inactive), Vararg{Any}}
+    add_edge!(edges, ina_sig)
+    
+    for gen_sig in (
+        Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{Any}},
+        Tuple{typeof(EnzymeRules.noalias), Vararg{Any}},
+        Tuple{typeof(EnzymeRules.inactive_type), Type},
+    )
+        add_edge!(edges, gen_sig)
+    end
 
-    # NOTE: we keep the first entry of the original linetable, and use it for location info
-    #       on the call to check_cache. we can't not have a codeloc (using 0 causes
-    #       corruption of the back trace), and reusing the target function's info
-    #       has as advantage that we see the name of the kernel in the backtraces.
-
-    return new_ci
+    ci.edges = edges
+    return ci
 end
 
 @eval @inline function thunk(
@@ -6386,48 +6347,30 @@ end
 
 import GPUCompiler: deferred_codegen_jobs
 
+function deferred_id_codegen end
+
 function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode}, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where N)), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ExpectedTapeType::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, StrongZero::Bool, @nospecialize(self), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(expectedtapetype::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type), @nospecialize(strongzero::Type))
     @nospecialize
     
-    parmnames = (:fa, :a, :tt, :mode, :width, :modifiedbetween, :returnprimal, :shadowinit, :expectedtapetype, :erriffuncwritten, :runtimeactivity, :strongzero)
-    stub = Core.GeneratedFunctionStub(identity, Core.svec(:methodinstance, parmnames...), Core.svec())
+    slotnames = Core.svec(Symbol("#self#"),
+                          :fa, :a, :tt, :mode, :width, :modifiedbetween,
+                          :returnprimal, :shadowinit, :expectedtapetype,
+                          :erriffuncwritten, :runtimeactivity, :strongzero)
+
+    stub = Core.GeneratedFunctionStub(deferred_id_generator, slotnames, Core.svec())
 
     ft = eltype(FA)
     primal_tt = Tuple{map(eltype, TT.parameters)...}
     # look up the method match
-    method_error = :(throw(MethodError($ft, $primal_tt, $world)))
     
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
  
     mi = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
     
-    mi === nothing && return stub(world, source, method_error)
+    mi === nothing && return stub(world, source, :(throw(MethodError($ft, $primal_tt, $world))))
     
-    ci = Core.Compiler.retrieve_code_info(mi, world)::Core.Compiler.CodeInfo
-
-    # prepare a new code info
-    new_ci = copy(ci)
-    empty!(new_ci.code)
-    @static if isdefined(Core, :DebugInfo)
-      new_ci.debuginfo = Core.DebugInfo(:none)
-    else
-      empty!(new_ci.codelocs)
-      resize!(new_ci.linetable, 1)                # see note below
-    end
-    empty!(new_ci.ssaflags)
-    new_ci.ssavaluetypes = 0
-    # new_ci.min_world = min_world[]
-    new_ci.min_world = world
-    new_ci.max_world = max_world[]
-    new_ci.edges = Core.MethodInstance[mi]
-    # XXX: setting this edge does not give us proper method invalidation, see
-    #      JuliaLang/julia#34962 which demonstrates we also need to "call" the kernel.
-    #      invoking `code_llvm` also does the necessary codegen, as does calling the
-    #      underlying C methods -- which GPUCompiler does, so everything Just Works.
-        
     target = EnzymeTarget()
-
     rt2 = if A isa UnionAll
         rrt = primal_return_type_world(Mode == API.DEM_ForwardMode ? Forward : Reverse, world, mi)
 
@@ -6472,25 +6415,12 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
     id = Base.reinterpret(Int, pointer(addr))
     deferred_codegen_jobs[id] = job
 
-    # prepare the slots
-    new_ci.slotnames = Symbol[Symbol("#self#"), parmnames...]
-    new_ci.slotflags = UInt8[0x00 for i = 1:length(new_ci.slotnames)]
+    code = Any[Core.Compiler.ReturnNode(reinterpret(Ptr{Cvoid}, id))]
+    ci = create_fresh_codeinfo(deferred_id_codegen, source, world, slotnames, code)
 
-    # return the codegen world age
-    push!(new_ci.code, Core.Compiler.ReturnNode(reinterpret(Ptr{Cvoid}, id)))
-    push!(new_ci.ssaflags, 0x00)   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
-    @static if isdefined(Core, :DebugInfo)
-    else
-      push!(new_ci.codelocs, 1)   # see note below
-    end
-    new_ci.ssavaluetypes += 1
+    ci.edges = Any[mi]
 
-    # NOTE: we keep the first entry of the original linetable, and use it for location info
-    #       on the call to check_cache. we can't not have a codeloc (using 0 causes
-    #       corruption of the back trace), and reusing the target function's info
-    #       has as advantage that we see the name of the kernel in the backtraces.
-
-    return new_ci
+    return ci
 end
 
 @eval @inline function deferred_id_codegen(
