@@ -647,7 +647,7 @@ end
                  (∂f₂_∂x₁, ∂f₂_∂x₂, ...),
                  ...)
 
-A convenience macro that generates simple forward (and eventually reverse) Enzyme rules using
+A convenience macro that generates simple forward and reverse Enzyme rules using
 the provided partial derivatives.
 
 This macro assumes all inputs are scalars, and all results are scalars, or tuples of scalars. For each output result (a single output is assumed if a scalar is returned), a tuple of partial derivatives is expected. Specifically, each tuple contains one entry for each argument to `f`.
