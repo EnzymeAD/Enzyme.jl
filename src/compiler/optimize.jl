@@ -687,6 +687,17 @@ function addMachinePasses!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
     gvn!(pm)
 end
 
+function addMachinePasses_newPM!(mpm::LLVM.NewPMPassManager)
+    add!(mpm, NewPMFunctionPassManager()) do fpm
+        if VERSION < v"1.12.0-DEV.1390"
+            add!(fpm, CombineMulAddPass())
+        end
+        add!(fpm, DivRemPairsPass())
+        add!(fpm, DemoteFloat16Pass())
+        add!(fpm, GVNPass())              
+    end
+end
+
 function addJuliaLegalizationPasses!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine, lower_intrinsics::Bool = true)
     if lower_intrinsics
         # LowerPTLS removes an indirect call. As a result, it is likely to trigger
@@ -719,6 +730,46 @@ function addJuliaLegalizationPasses!(pm::LLVM.ModulePassManager, tm::LLVM.Target
     else
         barrier_noop!(pm)
         remove_ni_tm!(pm, tm)
+    end
+end
+
+ReinsertGCMarkerPass() = NewPMFunctionPass("reinsert_gcmarker", reinsert_gcmarker_pass!)
+
+function addJuliaLegalizationPasses_newPM!(mpm::LLVM.NewPMPassManager, lower_intrinsics::Bool = true)
+    if lower_intrinsics
+        add!(mpm, NewPMFunctionPassManager()) do fpm
+            add!(fpm, ReinsertGCMarkerPass())
+            if VERSION < v"1.13.0-DEV.36"
+                add!(fpm, LowerExcHandlersPass())
+            end
+            # TODO: strong=false?
+            add!(fpm, GCInvariantVerifierPass())
+        end
+        add!(mpm, VerifierPass())
+        add!(mpm, RemoveNIPass())
+        add!(mpm, NewPMFunctionPassManager()) do fpm
+            add!(fpm, LateLowerGCPass())
+            if VERSION >= v"1.11.0-DEV.208"
+                add!(fpm, FinalLowerGCPass())
+            end
+        end
+        if VERSION < v"1.11.0-DEV.208"
+            add!(mpm, FinalLowerGCPass())
+        end        
+        add!(mpm, NewPMFunctionPassManager()) do fpm
+            add!(fpm, GVNPass())
+            add!(fpm, SCCPPass())
+            add!(fpm, DCEPass())
+        end
+        add!(mpm, LowerPTLSPass())
+        add!(mpm, NewPMFunctionPassManager()) do fpm
+            add!(fpm, InstructionCombiningPass())
+            # TODO: from libEnzyme
+            # add!(fpm, JLInstSimplifyPass())
+            add!(fpm, SimplifyCFGPass(; aggressiveSimplifyCFGOptions...))
+        end
+    else
+        add!(mpm, RemoveNIPass())
     end
 end
 
@@ -770,7 +821,21 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
             end
         end
     else
-        # TODO(NewPM)
+        @dispose pb = NewPMPassBuilder() begin
+            register!(pb, ReinsertGCMarkerPass())
+            add!(pb, NewPMModulePassManager()) do mpm
+                # TODO(NewPM)
+                # addTargetPasses!(mpm, tm, LLVM.triple(mod))
+                # addOptimizationPasses!(mpm, tm)
+            end
+            if machine
+                add!(pb, NewPMModulePassManager()) do mpm
+                    addJuliaLegalizationPasses_newPM!(mpm, true)
+                    addMachinePasses_newPM!(mpm)
+                end
+            end
+            run!(pb, mod, tm)
+        end
     end
     for f in functions(mod)
 	if isempty(blocks(f))
