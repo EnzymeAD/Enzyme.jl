@@ -98,6 +98,13 @@ function multiply_fwd(partial::AbstractFloat, dx::AbstractFloat)
     return partial * dx
 end
 
+function multiply_rev(partial::AbstractFloat, dx::AbstractFloat)
+    return partial * dx
+end
+
+function multiply_rev(partial::Union{AbstractFloat,Complex}, dx::Union{AbstractFloat,Complex})
+    return conj(partial * conj(dx))
+end
 
 """
     add_fwd(partial::AbstractFloat, dx::AbstractFloat)
@@ -107,6 +114,9 @@ Internal function.
 Add together two partial derivatives.
 """
 function add_fwd end
+function add_rev(x, y)
+    add_fwd(x, y)
+end
 
 
 """
@@ -243,12 +253,18 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
                         end
 
                         if !seen
+                            KT = RT
                             inp = :Ω
                             if $(esc(:RT)) <: Tuple
+                                KT = RT.parameters[o]
                                 inp = :(Ω[$o])
                             end
-                            has_omega = true
-                            push!(gensetup, Expr(:(=), outexpr, Expr(:call, EnzymeCore.make_zero, inp)))
+                            if KT <: AbstractFloat
+                                push!(gensetup, Expr(:(=), outexpr, Expr(:call, Base.zero, KT)))
+                            else
+                                has_omega = true
+                                push!(gensetup, Expr(:(=), outexpr, Expr(:call, EnzymeCore.make_zero, inp)))
+                            end
                         end
                     end
                 end
@@ -307,6 +323,322 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
     end
 end
 
+function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names, partials)
+
+    call2 = Expr(:call, esc(:f), call.args[2:end]...)
+
+    exprs = Expr[]
+    revexprs = Expr[]
+
+    ann_names = Symbol[]
+    arg_names = Symbol[]
+    for (i, sname) in enumerate(input_names)
+        rname = Symbol(String(sname)[length("ann_")+1:end])
+        push!(ann_names, sname)
+        push!(arg_names, rname)
+        push!(exprs, Expr(:(=), rname, Expr(:call, getfield, sname, :val)))
+        push!(revexprs, Expr(:(=), rname,
+            Expr(:if,
+                Expr(:call, Base.isa, :(cache[($i)]), Nothing),
+                Expr(:call, getfield, sname, :val),
+                :(cache[($i)])
+                )))
+    end
+
+    tosum0 = Vector{Tuple{Int, Symbol, Any}}[]
+
+    for (o, partial0) in enumerate(partials)
+        @assert partial0 isa Array && length(partial0) == length(inputs)
+        tosum = Tuple{Int, Symbol, Any}[]
+        push!(tosum0, tosum)
+        for (i, (p, sname)) in enumerate(zip(partial0, input_names))
+            if p == :(EnzymeCore.Const) || p == :(Enzyme.Const) || p == :(Const)
+                continue
+            end
+            push!(tosum, (i , sname, p))
+        end
+    end
+
+    actives = Expr[]
+    for ann_name in input_names
+        push!(actives, Expr(:if, Expr(:call, <:, esc(ann_name), EnzymeCore.Const), nothing, :(Expr(:(.), Symbol($(String(ann_name))), :(:dval)))))
+    end
+
+    N = length(inputs)
+
+    return @strip_linenos quote
+
+        # _ is the input derivative w.r.t. function internals. since we do not
+        # allow closures/functors with @scalar_rule, it is always ignored
+        @generated function EnzymeCore.EnzymeRules.augmented_primal($(esc(:config)), $(esc(:fn))::Annotation{<:$(Core.Typeof)($f)}, RTA::Type{<:Annotation{$(esc(:RT))}}, $(inputs...)) where $(esc(:RT))
+            genexprs = Expr[$(exprs...,)...]
+            gensetup = Expr[$(setup_stmts...,)...]
+
+            has_omega = needs_primal(config)
+            
+            inp_types = Type{<:Annotation}[$(ann_names...,)]
+            tosum0 = $tosum0
+
+            N = $N
+            W = width(config)
+
+            actives = Union{Nothing, Expr}[$(actives...)]
+
+            inp_names = String[$((String.(input_names))...,)]
+
+            cache_inputs = Vector{Bool}(undef, B)
+            fill!(cache_inputs, false)
+
+            if needs_shadow(config)
+                outsyms = Matrix{Symbol}(undef, length(tosum0), W)
+                for (o, tosum) in enumerate(tosum0)
+                    for w in 1:W
+                        outexpr = Symbol("outsym_", string(o), "_", string(w))
+                        outsyms[o, w] = outexpr
+
+                        KT = RT
+                        inp = :Ω
+                        if $(esc(:RT)) <: Tuple
+                            KT = RT.parameters[o]
+                            inp = :(Ω[$o])
+                        end
+                        if KT <: AbstractFloat
+                            push!(gensetup, Expr(:(=), outexpr, Expr(:call, Base.zero, KT)))
+                        else
+                            has_omega = true
+                            push!(gensetup, Expr(:(=), outexpr, Expr(:call, EnzymeCore.make_zero, inp)))
+                        end
+                    end
+                end
+
+                @assert length(outsyms) > 0
+
+                outres = Vector{Symbol}(undef, W)
+                for w in 1:W
+                    outexpr = Symbol("outres_$w")
+                    outres[w] = outexpr
+                    if $(esc(:RT)) <: Tuple                    
+                        push!(gensetup, Expr(:(=), outexpr, Expr(:tuple, outsyms[:, w]...)))
+                    else
+                        @assert length(tosum0) == 1
+                        push!(gensetup, Expr(:(=), outexpr, outsyms[1, w]))
+                    end
+                end
+
+                if W == 1
+                    push!(gensetup, Expr(:(=), :dΩ, outres[1]))
+                else
+                    push!(gensetup, Expr(:(=), :dΩ, Expr(:tuple, outres...)))
+                end
+            end
+
+            caches = []
+            for (inum, sym_name) in enumerate(inp_names)
+                if (RTA <: Const)
+                    push!(caches, nothing)
+                    continue
+                end
+
+                if !EnzymeRules.overwritten(config)[inum+1]
+                    push!(caches, nothing)
+                    continue
+                end
+                sym = Symbol("cache_$(sym_name)")
+                used = nothing
+                for (o, tosum) in enumerate(tosum0)
+                    for (i, sname, p) in tosum
+                        if actives[i] isa Nothing
+                            continue
+                        end
+                        if inp_types[i] <: Const
+                            continue
+                        end
+                        if !uses_symbol(p, Symbol(sym_name))
+                            continue
+                        end
+
+                        expr = :(!($name <: AbstractFloat || $name <: Integer))
+
+                        if used == nothing
+                            used = expr
+                        else
+                            used = Expr(:|, used, expr)
+                        end
+                    end
+                end
+
+                if used == nothing
+                    push!(caches, nothing)
+                else
+                    push!(caches, Expr(:if,
+                        used,
+                        Expr(:call, Base.copy, Symbol(sym_name)),
+                        nothing
+                    ))
+                end
+            end
+            if needs_shadow(config)
+                push!(caches, :dΩ)
+            end
+            push!(genexprs, Expr(:(=), :cache, Expr(:tuple, caches...)))
+
+            genres = if needs_primal(config)
+                if needs_shadow(config)
+                    if width(config) == 1
+                        Expr(:call, EnzymeRules.AugmentedReturn, :Ω, :dΩ, :cache)
+                    else
+                        Expr(:call, EnzymeRules.AugmentedReturn, :Ω, :dΩ, :cache)
+                    end
+                else
+                    Expr(:call, EnzymeRules.AugmentedReturn, :Ω, nothing, :cache)
+                end
+            else
+                if needs_shadow(config)
+                    Expr(:call, EnzymeRules.AugmentedReturn, nothing, :dΩ, :cache)
+                else
+                    Expr(:call, EnzymeRules.AugmentedReturn, nothing, nothing, :cache)
+                end
+            end
+
+            if has_omega
+                push!(genexprs, Expr(:(=), :Ω, Expr(:call, :f, $arg_names...)))
+            end
+
+            return quote
+                Base.@_inline_meta
+                $($(__source__))
+                f = fn.val
+                $(genexprs...)
+                $(gensetup...)
+                return $genres
+            end
+        end
+
+        # _ is the input derivative w.r.t. function internals. since we do not
+        # allow closures/functors with @scalar_rule, it is always ignored
+        @generated function EnzymeCore.EnzymeRules.reverse($(esc(:config)), $(esc(:fn))::Annotation{<:$(Core.Typeof)($f)}, RTA, cache, $(inputs...))
+            genexprs = Expr[$(revexprs...,)...]
+            gensetup = Expr[$(setup_stmts...,)...]
+
+            has_omega = needs_primal(config)
+            inp_types = Type{<:Annotation}[$(ann_names...,)]
+            
+            tosum0 = $tosum0
+
+            if RTA <: Active
+                push!(genexprs, Expr(:(=), :dΩ, :(RTA.val)))
+                #if eltype(RTA) <: Complex
+                #    push!(genexprs, Expr(:(=), :dΩ, Expr(:call, Base.conj, :dΩ)))
+                #end
+            elseif RTA <: Union{DuplicatedNoNeed,Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}
+                push!(genexprs, Expr(:(=), :dΩ, :(cache[end])))
+            else
+                @assert RTA <: Const
+            end
+
+            N = $N
+            W = width(config)
+
+            actives = Union{Nothing, Expr}[$(actives...)]
+
+            results = []
+
+            visited = zeros(Bool, length(tosum0), N)
+
+            insyms = Matrix{Symbol}(undef, N, W)
+
+            for (inum, sym_name) in enumerate(inp_names)
+                if (RTA <: Const)
+                    push!(results, nothing)
+                    continue
+                end
+
+                if inp_types[inum] <: Const
+                    push!(results, nothing)
+                    continue
+                end
+
+                seen = false
+                for (o, tosum) in enumerate(tosum0)
+                    for (i, sname, p) in tosum
+                        if actives[i] isa Nothing
+                            continue
+                        end
+                        if i != inum
+                            continue
+                        end
+
+                        pname = Symbol("partial_", string(o), "_", string(i), "_",  sname)
+                        if !visited[o, i]
+
+                            # Descend through the rule to see if any users require the original result, Ω
+                            # for now, conservatively assume this is indeed the case
+                            if uses_symbol(p, :Ω)
+                                has_omega = true
+                            end
+
+                            push!(gensetup, Expr(:(=), pname, p))
+                        end
+
+                        for w in 1:W
+
+                            dval = :dΩ
+                            if W != 1
+                                dval = Expr(:call, getfield, dval, w)
+                            end
+
+                            msym = Symbol("m_", string(w), "_partial_", string(i), "_", sname)
+
+                            push!(gensetup, Expr(:(=), msym, Expr(:call, multiply_rev, pname, dval)))
+
+                            inexpr = Symbol("insym_", string(i), "_", string(w))
+                            insyms[i, w] = inexpr
+
+                            if !seen
+                                push!(gensetup, Expr(:(=), inexpr, msym))
+                                seen = true
+                                continue
+                            end
+
+                            push!(gensetup, Expr(:(=), inexpr, Expr(:call, add_rev, inexpr, msym)))
+                        end
+                        seen = true
+                    end
+                end
+
+                if !seen && inp_types[inum] <: Active
+                    for w in 1:W
+                        inexpr = Symbol("insym_", string(i), "_", string(w))
+                        insyms[i, w] = inexpr
+
+                        push!(gensetup, Expr(:(=), inexpr, Expr(:call, Enzyme.make_zero, Expr(getfield, Symbol("ann_"*inp_names[i]), :val) )))
+                    end
+                end
+
+                if W == 1
+                    push!(results, insyms[i, 1])
+                else
+                    push!(results, Expr(:tuple, insyms[i, :]...))
+                end
+            end
+
+            genres = Expr(:tuple, results...)
+
+            if has_omega
+                push!(genexprs, Expr(:(=), :Ω, Expr(:call, :f, $arg_names...)))
+            end
+
+            return quote
+                Base.@_inline_meta
+                $($(__source__))
+                f = fn.val
+                $(genexprs...)
+                $(gensetup...)
+                return $genres
+            end
+        end
+    end
+end
 
 """
     @easy_scalar_rule(f(x₁, x₂, ...),
@@ -364,6 +696,7 @@ macro easy_scalar_rule(call, maybe_setup, partials...)
     f = call.args[1]
 
     frule_expr = scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names, partials)
+    rrule_expr = scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names, partials)
 
     # Final return: building the expression to insert in the place of this macro
     return quote
@@ -377,5 +710,6 @@ macro easy_scalar_rule(call, maybe_setup, partials...)
 
         has_easy_rule(::Core.Typeof($f), $(normal_inputs...)) = true
         $(frule_expr)
+        $(rrule_expr)
     end
 end
