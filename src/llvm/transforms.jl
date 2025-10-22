@@ -2401,10 +2401,15 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     # and including 12 (but fixed 13+), Attributor will incorrectly change functions that
     # call code with undef to become unreachable, even when there exist other valid
     # callsites. See: https://godbolt.org/z/9Y3Gv6q5M
-    ModulePassManager() do pm
-        global_dce!(pm)
-        LLVM.run!(pm, mod)
+    if LLVM.has_oldpm()
+        ModulePassManager() do pm
+            global_dce!(pm)
+            LLVM.run!(pm, mod)
+        end
+    else
+        run!(GlobalDCEPass(), mod)
     end
+
     # Prevent dead-arg-elimination of functions which we may require args for in the derivative
     funcT = LLVM.FunctionType(LLVM.VoidType(), LLVMType[], vararg = true)
     if LLVM.version().major <= 15
@@ -2560,37 +2565,49 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         end
     end
     propagate_returned!(mod)
-    ModulePassManager() do pm
-        instruction_combining!(pm)
-        jl_inst_simplify!(pm)
-        alloc_opt_tm!(pm, tm)
-        scalar_repl_aggregates_ssa!(pm) # SSA variant?
-        cse!(pm)
-        LLVM.run!(pm, mod)
+    if LLVM.has_oldpm()
+        ModulePassManager() do pm
+            instruction_combining!(pm)
+            jl_inst_simplify!(pm)
+            alloc_opt_tm!(pm, tm)
+            scalar_repl_aggregates_ssa!(pm) # SSA variant?
+            cse!(pm)
+            LLVM.run!(pm, mod)
+        end
+    else
+        # TODO(NewPM)
     end
     propagate_returned!(mod)
     pre_attr!(mod, RunAttributor[])
     if RunAttributor[]
-        if LLVM.version().major >= 13
-            ModulePassManager() do pm
-                API.EnzymeAddAttributorLegacyPass(pm)
-                LLVM.run!(pm, mod)
+        if LLVM.has_oldpm()
+            if LLVM.version().major >= 13
+                ModulePassManager() do pm
+                    API.EnzymeAddAttributorLegacyPass(pm)
+                    LLVM.run!(pm, mod)
+                end
             end
+        else
+            # TODO(NewPM)
         end
     end
     propagate_returned!(mod)
-    ModulePassManager() do pm
-        instruction_combining!(pm)
-        jl_inst_simplify!(pm)
-        alloc_opt_tm!(pm, tm)
-        scalar_repl_aggregates_ssa!(pm) # SSA variant?
-        if RunAttributor[]
-            if LLVM.version().major >= 13
-                API.EnzymeAddAttributorLegacyPass(pm)
+    if LLVM.has_oldpm()
+        ModulePassManager() do pm
+            instruction_combining!(pm)
+            jl_inst_simplify!(pm)
+            alloc_opt_tm!(pm, tm)
+            scalar_repl_aggregates_ssa!(pm) # SSA variant?
+            if RunAttributor[]
+                if LLVM.version().major >= 13
+                    API.EnzymeAddAttributorLegacyPass(pm)
+                end
             end
+            cse!(pm)
+            LLVM.run!(pm, mod)
         end
-        cse!(pm)
-        LLVM.run!(pm, mod)
+    else
+        # TODO(NewPM)
     end
     post_attr!(mod, RunAttributor[])
     propagate_returned!(mod)

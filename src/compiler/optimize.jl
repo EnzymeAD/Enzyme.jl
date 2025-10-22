@@ -763,9 +763,14 @@ function addJuliaLegalizationPasses_newPM!(mpm::LLVM.NewPMPassManager, lower_int
         end
         add!(mpm, LowerPTLSPass())
         add!(mpm, NewPMFunctionPassManager()) do fpm
-            add!(fpm, InstructionCombiningPass())
+            add!(fpm, InstCombinePass())
             # TODO: from libEnzyme
             # add!(fpm, JLInstSimplifyPass())
+            aggressiveSimplifyCFGOptions =
+                (forward_switch_cond=true,
+                   switch_range_to_icmp=true,
+                   switch_to_lookup=true,
+                   hoist_common_insts=true)
             add!(fpm, SimplifyCFGPass(; aggressiveSimplifyCFGOptions...))
         end
     else
