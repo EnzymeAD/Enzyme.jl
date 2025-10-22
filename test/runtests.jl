@@ -9,6 +9,10 @@ function test_filter(test)
     if Sys.iswindows() && test == "ext/specialfunctions"
         return false
     end
+    if test == "threads"
+        # We run the "threads" tests via the "multi-threads" driver.
+        return false
+    end
     return true
 end
 
