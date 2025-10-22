@@ -1,3 +1,10 @@
+function registerEnzymeAndPassPipeline!(pb::NewPMPassBuilder)
+    enzyme_callback = cglobal((:registerEnzymeAndPassPipeline, API.libEnzyme))
+    LLVM.API.LLVMPassBuilderExtensionsPushRegistrationCallbacks(pb.exts, enzyme_callback)
+end
+
+LLVM.@function_pass "jl-inst-simplify" JLInstSimplifyPass
+
 struct PipelineConfig
     Speedup::Cint
     Size::Cint
@@ -764,8 +771,7 @@ function addJuliaLegalizationPasses_newPM!(mpm::LLVM.NewPMPassManager, lower_int
         add!(mpm, LowerPTLSPass())
         add!(mpm, NewPMFunctionPassManager()) do fpm
             add!(fpm, InstCombinePass())
-            # TODO: from libEnzyme
-            # add!(fpm, JLInstSimplifyPass())
+            add!(fpm, JLInstSimplifyPass())
             aggressiveSimplifyCFGOptions =
                 (forward_switch_cond=true,
                    switch_range_to_icmp=true,
@@ -827,6 +833,7 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
         end
     else
         @dispose pb = NewPMPassBuilder() begin
+            registerEnzymeAndPassPipeline!(pb)
             register!(pb, ReinsertGCMarkerPass())
             add!(pb, NewPMModulePassManager()) do mpm
                 # TODO(NewPM)
