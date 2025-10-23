@@ -1,11 +1,16 @@
+import Enzyme
+import Enzyme_jll
 using ParallelTestRunner: runtests
-using Enzyme_jll: Enzyme_jll
 
-function testfilter(test)
+function test_filter(test)
     if test ∈ ("metal", "cuda", "amdgpu")
         return false
     end
     if Sys.iswindows() && test == "ext/specialfunctions"
+        return false
+    end
+    if test == "threads"
+        # We run the "threads" tests via the "multi-threads" driver.
         return false
     end
     return true
@@ -50,4 +55,4 @@ const init_code = quote
 end
 
 @info "Testing against" Enzyme_jll.libEnzyme
-runtests(ARGS; testfilter, init_code)
+runtests(Enzyme, ARGS; test_filter, init_code)
