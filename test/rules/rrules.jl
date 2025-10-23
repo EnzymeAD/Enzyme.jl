@@ -69,8 +69,8 @@ function augmented_primal(config::RevConfigWidth{2}, func::Const{typeof(f)}, ::T
     end
 end
 
-function reverse(config::RevConfigWidth{2}, ::Const{typeof(f)}, dret::Active, tape, x::Active)
-    return ((10+2*x.val*dret.val,100+2*x.val*dret.val,))
+function reverse(config::RevConfigWidth{2}, ::Const{typeof(f)}, dret::NTuple{2, Active}, tape, x::Active)
+    return ((10+2*x.val*dret[1].val,100+2*x.val*dret[2].val,),)
 end
 
 function fip_2(out, in)
@@ -81,10 +81,9 @@ end
 @testset "Batch ActiveReverse Rules" begin
     out = BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(3.0)))
     in = BatchDuplicated(Ref(2.0), (Ref(0.0), Ref(0.0)))
-    # TODO: Not yet supported: Enzyme custom rule of batch size=2, and active return EnzymeCore.Active{Float64}
-    @test_throws Enzyme.Compiler.EnzymeRuntimeException Enzyme.autodiff(Enzyme.Reverse, fip_2, out, in)
-    @test_broken in.dvals[1][] ≈ 104.0
-    @test_broken in.dvals[1][] ≈ 42.0
+    Enzyme.autodiff(Enzyme.Reverse, fip_2, out, in)
+    @test in.dval[1][] ≈ 10 + 2 * 2 * 1
+    @test in.dval[2][] ≈ 100 + 2 * 2 * 3
 end
 
 function alloc_sq(x)
