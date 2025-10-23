@@ -674,6 +674,8 @@ For each output result (a single output is assumed if a scalar is returned), a t
 
 The arguments to `f` can either have no type constraints, or specific type constraints.
 
+The result of `f(x₁, x₂, ...)` is automatically bound to `Ω`. This allows the primal result to be referenced (as `Ω`) within the derivative/setup expressions.
+
 At present this does not support defining for closures/functors.
 
 The `@setup` argument can be elided if no setup code is need. In other

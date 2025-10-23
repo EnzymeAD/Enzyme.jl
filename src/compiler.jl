@@ -564,7 +564,7 @@ function handleCustom(state::HandlerState, custom, k_name::String, llvmfn::LLVM.
     nothing
 end
 
-function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, mode::API.CDerivativeMode, world::UInt, method_table, custom::Dict{String, LLVM.API.LLVMLinkage}, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type))::Nothing
+function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, mode::API.CDerivativeMode, world::UInt, method_table, custom::Dict{String, LLVM.API.LLVMLinkage}, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type), world::UInt)::Nothing
     has_custom_rule = false
 
     specTypes = Interpreter.simplify_kw(mi.specTypes)
@@ -1011,7 +1011,7 @@ end
             Duplicated,
             nothing,
             run_enzyme,
-            job.world
+            world
         )
         if cur
             state.primalf = llvmfn
@@ -1217,7 +1217,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
             end
         end
         if mi !== nothing && RT !== nothing
-            handle_compiled(state, edges, run_enzyme, mode, world, method_table, custom, mod, mi, fname, RT)
+            handle_compiled(state, edges, run_enzyme, mode, world, method_table, custom, mod, mi, fname, RT, world)
         end
     end
 
