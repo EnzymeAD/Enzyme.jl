@@ -1009,12 +1009,12 @@ function enzyme_custom_common_rev(
             insert!(tt, 1, kwtup)
             insert!(tt, 2, Core.typeof(EnzymeRules.reverse))
             insert!(tt, 3, C)
-            insert!(tt, 5, RT <: Active ? RT : Type{RT})
+            insert!(tt, 5, RT <: Active ? (width == 1 ? RT : NTuple{Int(width), RT}) : Type{RT})
             insert!(tt, 6, TapeT)
         else
             @assert kwtup === nothing
             insert!(tt, 1, C)
-            insert!(tt, 3, RT <: Active ? RT : Type{RT})
+            insert!(tt, 3, RT <: Active ? (width == 1 ? RT : NTuple{Int(width), RT}) : Type{RT})
             insert!(tt, 4, TapeT)
         end
         rev_TT = Tuple{tt...}
@@ -1145,12 +1145,13 @@ function enzyme_custom_common_rev(
             insert!(args, tape_idx, tape)
         end
         if RT <: Active
-            if width != 1
-                emit_error(B, orig, "Not yet supported: Enzyme custom rule of batch size=$width, and active return $RT")
-                return tapeV
+            nRT = if width == 1
+                RT
+            else
+                NTuple{Int(width), RT}
             end
 
-            llty = convert(LLVMType, RT)
+            llty = convert(LLVMType, nRT)
 
             if API.EnzymeGradientUtilsGetDiffeType(gutils, orig, false) == API.DFT_OUT_DIFF #=isforeign=#
                 val = LLVM.Value(API.EnzymeGradientUtilsDiffe(gutils, orig, B))
@@ -1167,19 +1168,25 @@ function enzyme_custom_common_rev(
                 end
             end
 
-            al0 = al = emit_allocobj!(B, RT)
+            al0 = al = emit_allocobj!(B, nRT)
             al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             al = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
 
-            ptr = inbounds_gep!(
-                B,
-                llty,
-                al,
-                [
-                    LLVM.ConstantInt(LLVM.IntType(64), 0),
-                    LLVM.ConstantInt(LLVM.IntType(32), 0),
-                ],
-            )
+            if width == 1
+                ptr = inbounds_gep!(
+                    B,
+                    llty,
+                    al,
+                    [
+                        LLVM.ConstantInt(LLVM.IntType(64), 0),
+                        LLVM.ConstantInt(LLVM.IntType(32), 0),
+                    ],
+                )
+            else
+                llety = convert(LLVMType, eltype(RT); allow_boxed = true)
+                pty = LLVM.LLVMType(API.EnzymeGetShadowType(width, llety))
+                ptr = bitcast!(B, al, LLVM.PointerType(pty, Derived))
+            end
             store!(B, val, ptr)
 
             if any_jltypes(llty)

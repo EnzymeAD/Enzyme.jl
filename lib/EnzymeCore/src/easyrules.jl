@@ -336,11 +336,11 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
         rname = Symbol(String(sname)[length("ann_")+1:end])
         push!(ann_names, sname)
         push!(arg_names, rname)
-        push!(exprs, Expr(:(=), rname, Expr(:call, getfield, sname, :val)))
+        push!(exprs, Expr(:(=), rname, Expr(:call, getfield, sname, :(:val))))
         push!(revexprs, Expr(:(=), rname,
             Expr(:if,
                 Expr(:call, Base.isa, :(cache[($i)]), Nothing),
-                Expr(:call, getfield, sname, :val),
+                Expr(:call, getfield, sname, :(:val)),
                 :(cache[($i)])
                 )))
     end
@@ -366,17 +366,17 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
 
     N = length(inputs)
 
-    return @strip_linenos quote
+    @strip_linenos quote
 
         # _ is the input derivative w.r.t. function internals. since we do not
         # allow closures/functors with @scalar_rule, it is always ignored
-        @generated function EnzymeCore.EnzymeRules.augmented_primal($(esc(:config)), $(esc(:fn))::Annotation{<:$(Core.Typeof)($f)}, RTA::Type{<:Annotation{$(esc(:RT))}}, $(inputs...)) where $(esc(:RT))
+        @generated function EnzymeCore.EnzymeRules.augmented_primal($(esc(:config)), $(esc(:fn))::Annotation{<:$(Core.Typeof)($f)}, $(esc(:RTA))::Type{<:Annotation{$(esc(:RT))}}, $(inputs...)) where $(esc(:RT))
             genexprs = Expr[$(exprs...,)...]
             gensetup = Expr[$(setup_stmts...,)...]
 
             has_omega = needs_primal(config)
             
-            inp_types = Type{<:Annotation}[$(ann_names...,)]
+            inp_types = ($(map(esc, ann_names)...),)
             tosum0 = $tosum0
 
             N = $N
@@ -384,9 +384,9 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
 
             actives = Union{Nothing, Expr}[$(actives...)]
 
-            inp_names = String[$((String.(input_names))...,)]
+            inp_names = String[($((String.(input_names))...),)...]
 
-            cache_inputs = Vector{Bool}(undef, B)
+            cache_inputs = Vector{Bool}(undef, N)
             fill!(cache_inputs, false)
 
             if needs_shadow(config)
@@ -434,7 +434,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
 
             caches = []
             for (inum, sym_name) in enumerate(inp_names)
-                if (RTA <: Const)
+                if $(esc(:RTA)) <: Const
                     push!(caches, nothing)
                     continue
                 end
@@ -516,28 +516,47 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
 
         # _ is the input derivative w.r.t. function internals. since we do not
         # allow closures/functors with @scalar_rule, it is always ignored
-        @generated function EnzymeCore.EnzymeRules.reverse($(esc(:config)), $(esc(:fn))::Annotation{<:$(Core.Typeof)($f)}, RTA, cache, $(inputs...))
+        @generated function EnzymeCore.EnzymeRules.reverse($(esc(:config)), $(esc(:fn))::Annotation{<:$(Core.Typeof)($f)}, $(esc(:RTA)), $(esc(:cache)), $(inputs...))
             genexprs = Expr[$(revexprs...,)...]
             gensetup = Expr[$(setup_stmts...,)...]
 
-            has_omega = needs_primal(config)
-            inp_types = Type{<:Annotation}[$(ann_names...,)]
-            
-            tosum0 = $tosum0
+            has_omega = false
+            inp_types = ($(map(esc, ann_names)...),)
 
-            if RTA <: Active
-                push!(genexprs, Expr(:(=), :dΩ, :(RTA.val)))
-                #if eltype(RTA) <: Complex
-                #    push!(genexprs, Expr(:(=), :dΩ, Expr(:call, Base.conj, :dΩ)))
-                #end
-            elseif RTA <: Union{DuplicatedNoNeed,Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}
-                push!(genexprs, Expr(:(=), :dΩ, :(cache[end])))
-            else
-                @assert RTA <: Const
-            end
+            inp_names = String[($((String.(input_names))...),)...]
+
+            tosum0 = $tosum0
 
             N = $N
             W = width(config)
+
+            RT = if RTA <: Active
+                eltype(RTA)
+            elseif (RTA <: Tuple && RTA.parameters[1] <: Active)
+                eltype(RTA.parameters[1])
+            else
+                eltype(RTA)
+            end
+
+            if RTA <: Active || (RTA <: Tuple && RTA.parameters[1] <: Active)
+                if W == 1
+                    push!(genexprs, Expr(:(=), :dΩ, Expr(:call, getfield, Symbol("RTA"), 1)))
+                else
+                    syms = Expr[]
+                    for w in 1:W
+                        push!(syms, Expr(:call, getfield, Expr(:call, getfield, Symbol("RTA"), w), 1))
+                    end
+                    push!(genexprs, Expr(:(=), :dΩ, Expr(:tuple, syms...)))
+                end
+                #if eltype(RTA) <: Complex
+                #    push!(genexprs, Expr(:(=), :dΩ, Expr(:call, Base.conj, :dΩ)))
+                #end
+            elseif RTA <: Type{<:Union{EnzymeCore.DuplicatedNoNeed,EnzymeCore.Duplicated, EnzymeCore.BatchDuplicated, EnzymeCore.BatchDuplicatedNoNeed}}
+                push!(genexprs, Expr(:(=), :dΩ, :(cache[end])))
+            else
+                @show RTA
+                @assert RTA <: Type{<:EnzymeCore.Const}
+            end
 
             actives = Union{Nothing, Expr}[$(actives...)]
 
@@ -548,12 +567,12 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
             insyms = Matrix{Symbol}(undef, N, W)
 
             for (inum, sym_name) in enumerate(inp_names)
-                if (RTA <: Const)
+                if (RTA <: EnzymeCore.Const)
                     push!(results, nothing)
                     continue
                 end
 
-                if inp_types[inum] <: Const
+                if inp_types[inum] <: EnzymeCore.Const
                     push!(results, nothing)
                     continue
                 end
@@ -587,6 +606,12 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                                 dval = Expr(:call, getfield, dval, w)
                             end
 
+                            if RT <: Tuple        
+                                dval = Expr(:call, getfield, dval, o)
+                            else
+                                @assert length(tosum0) == 1
+                            end
+
                             msym = Symbol("m_", string(w), "_partial_", string(i), "_", sname)
 
                             push!(gensetup, Expr(:(=), msym, Expr(:call, multiply_rev, pname, dval)))
@@ -596,7 +621,6 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
 
                             if !seen
                                 push!(gensetup, Expr(:(=), inexpr, msym))
-                                seen = true
                                 continue
                             end
 
@@ -608,17 +632,17 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
 
                 if !seen && inp_types[inum] <: Active
                     for w in 1:W
-                        inexpr = Symbol("insym_", string(i), "_", string(w))
-                        insyms[i, w] = inexpr
+                        inexpr = Symbol("insym_", string(inum), "_", string(w))
+                        insyms[inum, w] = inexpr
 
-                        push!(gensetup, Expr(:(=), inexpr, Expr(:call, Enzyme.make_zero, Expr(getfield, Symbol("ann_"*inp_names[i]), :val) )))
+                        push!(gensetup, Expr(:(=), inexpr, Expr(:call, EnzymeCore.make_zero, Expr(:call, getfield, Symbol(inp_names[inum]), 1) )))
                     end
                 end
 
                 if W == 1
-                    push!(results, insyms[i, 1])
+                    push!(results, insyms[inum, 1])
                 else
-                    push!(results, Expr(:tuple, insyms[i, :]...))
+                    push!(results, Expr(:tuple, insyms[inum, :]...))
                 end
             end
 

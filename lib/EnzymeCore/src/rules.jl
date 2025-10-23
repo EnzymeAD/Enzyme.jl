@@ -101,12 +101,15 @@ const RevConfigWidth{Width} = RevConfig{<:Any,<:Any, Width}
 
 """
     overwritten(::RevConfig)
+    overwritten(::Type{<:RevConfig})
 
 A tuple of booleans for each argument (including the function itself), indicating if it
 is modified between the forward and reverse pass (`true` if potentially modified
 between).
 """
 @inline overwritten(::RevConfig{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
+@inline overwritten(::Type{<:RevConfig{<:Any, <:Any, <:Any, Overwritten}}) where Overwritten = Overwritten
+
 @inline runtime_activity(::RevConfig{<:Any, <:Any, <:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
 @inline strong_zero(::RevConfig{<:Any, <:Any, <:Any, <:Any, <:Any, StrongZero}) where StrongZero = StrongZero
 
