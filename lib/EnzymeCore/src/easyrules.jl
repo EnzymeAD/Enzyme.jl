@@ -71,7 +71,7 @@ function _constrain_and_name(arg::Expr)
     #     return Expr(:(...), _constrain_and_name(arg.args[1], :Annotation))
     return error("malformed arguments: $arg")
 end
-_constrain_and_name(name::Symbol) = error("malformed input: $arg, must explicitly provide type annotation")
+_constrain_and_name(name::Symbol) = Expr(:(::), Symbol("ann_", name), :Annotation)
 
 
 """
@@ -86,38 +86,27 @@ function _just_name(arg::Expr)
     return arg.args[1]
 end
 
-
 """
-    multiply_fwd(partial::AbstractFloat, dx::AbstractFloat)
+    multiply_fwd_into(prev, partial, dx)
 
 Internal function.
 
 Multiply a partial derivative (df/dx) by its shadow input (dx) to form `df`.
+
+Specifically, perform prev + partial * dx, returning the result or re-using prev's memory, where applicable.
 """
-function multiply_fwd(partial::AbstractFloat, dx::AbstractFloat)
-    return partial * dx
-end
-
-function multiply_rev(partial::AbstractFloat, dx::AbstractFloat)
-    return partial * dx
-end
-
-function multiply_rev(partial::Union{AbstractFloat,Complex}, dx::Union{AbstractFloat,Complex})
-    return conj(partial * conj(dx))
-end
+function multiply_fwd_into end
 
 """
-    add_fwd(partial::AbstractFloat, dx::AbstractFloat)
+    multiply_rev_into(prev, partial, df)
 
 Internal function.
 
-Add together two partial derivatives.
-"""
-function add_fwd end
-function add_rev(x, y)
-    add_fwd(x, y)
-end
+Multiply a partial derivative (df/dx) by its shadow input (df) to form `dx`.
 
+Specifically, perform prev + conj(partial * conj(dx)), returning the result or re-using prev's memory, where applicable.
+"""
+function multiply_rev_into end
 
 """
     _normalize_scalarrules_macro_input(call, maybe_setup, partials)
@@ -196,8 +185,8 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
 
     return @strip_linenos quote
         # _ is the input derivative w.r.t. function internals. since we do not
-        # allow closures/functors with @scalar_rule, it is always ignored
-        @generated function EnzymeCore.EnzymeRules.forward($(esc(:config)), $(esc(:fn))::Annotation{<:$(Core.Typeof)($f)}, ::Type{<:Annotation{$(esc(:RT))}}, $(inputs...)) where $(esc(:RT))
+        # allow closures/functors with @easy_rule, it is always ignored
+        @generated function EnzymeCore.EnzymeRules.forward($(esc(:config)), $(esc(:fn))::Const{<:$(Core.Typeof)($f)}, ::Type{<:Annotation{$(esc(:RT))}}, $(inputs...)) where $(esc(:RT))
             genexprs = Expr[$(exprs...,)...]
             gensetup = Expr[$(setup_stmts...,)...]
 
@@ -223,7 +212,6 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
                                 continue
                             end
 
-                            msym = Symbol("m_", string(w), "_partial_", string(o), "_", sname)
                             dval = actives[i]
                             if W != 1
                                 dval = Expr(:call, getfield, dval, w)
@@ -241,22 +229,20 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
                                 push!(gensetup, Expr(:(=), pname, p))
                                 visited[o, i] = true
                             end
-                            push!(gensetup, Expr(:(=), msym, Expr(:call, multiply_fwd, pname, dval)))
 
                             if !seen
-                                push!(gensetup, Expr(:(=), outexpr, msym))
+                                push!(gensetup, Expr(:(=), outexpr, nothing))
                                 seen = true
-                                continue
                             end
 
-                            push!(gensetup, Expr(:(=), outexpr, Expr(:call, add_fwd, outexpr, msym)))
+                            push!(gensetup, Expr(:(=), outexpr, Expr(:call, EnzymeCore.EnzymeRules.multiply_fwd_into, outexpr, pname, dval)))
                         end
 
                         if !seen
-                            KT = RT
+                            KT = $(esc(:RT))
                             inp = :Ω
-                            if $(esc(:RT)) <: Tuple
-                                KT = RT.parameters[o]
+                            if KT <: Tuple
+                                KT = KT.parameters[o]
                                 inp = :(Ω[$o])
                             end
                             if KT <: AbstractFloat
@@ -370,7 +356,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
 
         # _ is the input derivative w.r.t. function internals. since we do not
         # allow closures/functors with @scalar_rule, it is always ignored
-        @generated function EnzymeCore.EnzymeRules.augmented_primal($(esc(:config)), $(esc(:fn))::Annotation{<:$(Core.Typeof)($f)}, $(esc(:RTA))::Type{<:Annotation{$(esc(:RT))}}, $(inputs...)) where $(esc(:RT))
+        @generated function EnzymeCore.EnzymeRules.augmented_primal($(esc(:config)), $(esc(:fn))::Const{<:$(Core.Typeof)($f)}, $(esc(:RTA))::Type{<:Annotation{$(esc(:RT))}}, $(inputs...)) where $(esc(:RT))
             genexprs = Expr[$(exprs...,)...]
             gensetup = Expr[$(setup_stmts...,)...]
 
@@ -396,10 +382,10 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                         outexpr = Symbol("outsym_", string(o), "_", string(w))
                         outsyms[o, w] = outexpr
 
-                        KT = RT
+                        KT = $(esc(:RT))
                         inp = :Ω
                         if $(esc(:RT)) <: Tuple
-                            KT = RT.parameters[o]
+                            KT = KT.parameters[o]
                             inp = :(Ω[$o])
                         end
                         if KT <: AbstractFloat
@@ -480,7 +466,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
             if needs_shadow(config)
                 push!(caches, :dΩ)
             end
-            push!(genexprs, Expr(:(=), :cache, Expr(:tuple, caches...)))
+            push!(gensetup, Expr(:(=), :cache, Expr(:tuple, caches...)))
 
             genres = if needs_primal(config)
                 if needs_shadow(config)
@@ -516,7 +502,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
 
         # _ is the input derivative w.r.t. function internals. since we do not
         # allow closures/functors with @scalar_rule, it is always ignored
-        @generated function EnzymeCore.EnzymeRules.reverse($(esc(:config)), $(esc(:fn))::Annotation{<:$(Core.Typeof)($f)}, $(esc(:RTA)), $(esc(:cache)), $(inputs...))
+        @generated function EnzymeCore.EnzymeRules.reverse($(esc(:config)), $(esc(:fn))::Const{<:$(Core.Typeof)($f)}, $(esc(:RTA)), $(esc(:cache)), $(inputs...))
             genexprs = Expr[$(revexprs...,)...]
             gensetup = Expr[$(setup_stmts...,)...]
 
@@ -554,8 +540,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
             elseif RTA <: Type{<:Union{EnzymeCore.DuplicatedNoNeed,EnzymeCore.Duplicated, EnzymeCore.BatchDuplicated, EnzymeCore.BatchDuplicatedNoNeed}}
                 push!(genexprs, Expr(:(=), :dΩ, :(cache[end])))
             else
-                @show RTA
-                @assert RTA <: Type{<:EnzymeCore.Const}
+                throw(AssertionError("Easy Rule should never be provided a constant reverse seed"))
             end
 
             actives = Union{Nothing, Expr}[$(actives...)]
@@ -612,23 +597,28 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                                 @assert length(tosum0) == 1
                             end
 
-                            msym = Symbol("m_", string(w), "_partial_", string(i), "_", sname)
-
-                            push!(gensetup, Expr(:(=), msym, Expr(:call, multiply_rev, pname, dval)))
-
                             inexpr = Symbol("insym_", string(i), "_", string(w))
                             insyms[i, w] = inexpr
 
                             if !seen
-                                push!(gensetup, Expr(:(=), inexpr, msym))
-                                continue
+                                if inp_types[inum] <: Active
+                                    push!(gensetup, Expr(:(=), inexpr, nothing))
+                                else
+                                    dexpr = Expr(:call, getfield, Symbol(inp_names[inum]), 2)
+                                    if W != 1
+                                        dexpr = Expr(:call, getfield, inp_names, w)
+                                    end
+                                    push!(gensetup, Expr(:(=), inexpr, dexpr))
+                                end
                             end
 
-                            push!(gensetup, Expr(:(=), inexpr, Expr(:call, add_rev, inexpr, msym)))
+                            push!(gensetup, Expr(:(=), inexpr, Expr(:call, multiply_rev_into, inexpr, pname, dval)))
                         end
                         seen = true
                     end
                 end
+
+
 
                 if !seen && inp_types[inum] <: Active
                     for w in 1:W
@@ -639,7 +629,9 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                     end
                 end
 
-                if W == 1
+                if !(inp_types[inum] <: Active)
+                    push!(results, nothing)
+                elseif W == 1
                     push!(results, insyms[inum, 1])
                 else
                     push!(results, Expr(:tuple, insyms[inum, :]...))
@@ -665,7 +657,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
 end
 
 """
-    @easy_scalar_rule(f(x₁, x₂, ...),
+    @easy_rule(f(x₁::T1, x₂::T2, ...),
                  @setup(statement₁, statement₂, ...),
                  (∂f₁_∂x₁, ∂f₁_∂x₂, ...),
                  (∂f₂_∂x₁, ∂f₂_∂x₂, ...),
@@ -674,9 +666,11 @@ end
 A convenience macro that generates simple forward and reverse Enzyme rules using
 the provided partial derivatives.
 
-This macro assumes all inputs are scalars, and all results are scalars, or tuples of scalars. For each output result (a single output is assumed if a scalar is returned), a tuple of partial derivatives is expected. Specifically, each tuple contains one entry for each argument to `f`.
+The `easy_rule` macro assumes that the function `f` does not mutate any of its arguments, does not read from global data, and no output aliases with any other output nor input.
 
-Use of an easy_rule assumes that the function does not mutate any of its arguments, does not read from global data, and no output aliases with any other output nor input.
+The `easy_rule` macro only works if inputs are scalars or arrays of scalars, and the result is a scalar, array, or tuple thereof.
+
+For each output result (a single output is assumed if a scalar is returned), a tuple of partial derivatives is expected. Specifically, each tuple contains one entry for each argument to `f`. This entry should contain the jacobian `∂fi_∂xj` where `i` is the number of the output, and `j` is the number of the input. If both input `i` and output `j` are scalars, `∂fi_∂xj` should be a scalar. If at least one of these are an abstractarray, `∂fi_∂xj` should be a tensor of size `(size(output[j])..., size(input[i])...)`, where scalars are considered zero-dimensional.
 
 The arguments to `f` can either have no type constraints, or specific type constraints.
 
@@ -686,7 +680,7 @@ The `@setup` argument can be elided if no setup code is need. In other
 words:
 
 ```julia
-@easy_scalar_rule(f(x₁, x₂, ...),
+@easy_rule(f(x₁, x₂, ...),
              (∂f₁_∂x₁, ∂f₁_∂x₂, ...),
              (∂f₂_∂x₁, ∂f₂_∂x₂, ...),
              ...)
@@ -695,7 +689,7 @@ words:
 is equivalent to:
 
 ```julia
-@easy_scalar_rule(f(x₁, x₂, ...),
+@easy_rule(f(x₁, x₂, ...),
              @setup(nothing),
              (∂f₁_∂x₁, ∂f₁_∂x₂, ...),
              (∂f₂_∂x₁, ∂f₂_∂x₂, ...),
@@ -705,7 +699,7 @@ is equivalent to:
 If a specific argument has no partial derivative, then all corresponding argument values can instead be marked `Enzyme.Const`. For example, consider the case where `config` has no derivative.
 
 ```julia
-@easy_scalar_rule(f(config, x, ...),
+@easy_rule(f(config, x, ...),
              @setup(nothing),
              (Enzyme.Const, ∂f₁_∂x, ...),
              (Enzyme.Const, ∂f₂_∂x, ...),
@@ -713,7 +707,7 @@ If a specific argument has no partial derivative, then all corresponding argumen
 ```
 
 """
-macro easy_scalar_rule(call, maybe_setup, partials...)
+macro easy_rule(call, maybe_setup, partials...)
     call, setup_stmts, inputs, input_names, normal_inputs, partials = _normalize_scalarrules_macro_input(
         call, maybe_setup, partials
     )
@@ -723,16 +717,8 @@ macro easy_scalar_rule(call, maybe_setup, partials...)
     rrule_expr = scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names, partials)
 
     # Final return: building the expression to insert in the place of this macro
-    return quote
-        if !($f isa $Type) && $fieldcount($typeof($f)) > 0
-            $throw(
-                $ArgumentError(
-                    "@easy_scalar_rule cannot be used on closures/functors (such as $($f))"
-                ),
-            )
-        end
-
-        has_easy_rule(::Core.Typeof($f), $(normal_inputs...)) = true
+    quote
+        EnzymeRules.has_easy_rule(::Core.Typeof($f), $(normal_inputs...)) = true
         $(frule_expr)
         $(rrule_expr)
     end

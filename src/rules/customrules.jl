@@ -1,3 +1,100 @@
+import LinearAlgebra
+
+@inline add_fwd(prev, post) = recursive_add(prev, post)
+
+@generated function EnzymeCore.EnzymeRules.multiply_fwd_into(prev, partial::Union{AbstractArray,Number}, dx::Union{AbstractArray,Number})
+
+    if partial <: Number || dx isa Number
+        if prev !== Nothing
+            return quote
+                Base.@_inline_meta
+                EnzymeCore.EnzymeRules.add_fwd(prev, EnzymeCore.EnzymeRules.multiply_fwd_into(nothing, partial, dx))
+            end
+        end
+        return quote
+            Base.@_inline_meta
+            partial * dx
+        end
+    end
+
+    @assert partial <: AbstractArray
+    @assert dx <: AbstractArray
+    N = ndims(partial)
+    M = ndims(dx)
+
+    if N == M
+        if prev !== Nothing
+            return quote
+                Base.@_inline_meta
+                EnzymeCore.EnzymeRules.add_fwd(prev, EnzymeCore.EnzymeRules.multiply_fwd_into(nothing, partial, dx))
+            end
+        end
+
+        res = if partial <: AbstractFloat || partial <: AbstractArray{<:AbstractFloat}
+            :(LinearAlgebra.dot(partial,dx))
+        elseif dx <: AbstractFloat || dx <: AbstractArray{<:AbstractFloat}
+            :(LinearAlgebra.dot(dx, partial))
+        else
+            :(LinearAlgebra.dot(adjoint(partial),dx))
+        end
+        return quote
+            Base.@_inline_meta
+            $res
+        end
+    end
+
+    if N < M
+        return quote
+            Base.@_inline_meta
+            throw(MethodError(EnzymeCore.EnzymeRules.multiply_fwd_into, prev, partial, dx))
+        end
+    end
+
+    init = if prev === Nothing
+        :(prev = similar(partial, size(partial)[1:$(N-M)]...))
+    end
+
+    idxs = Symbol[]
+    for i in 1:(N-M)
+        push!(idxs, Symbol("i_$i"))
+    end
+    others = Symbol[]
+    for i in 1:M
+        push!(others, :(:))
+    end
+
+    outp = :prev
+    if N-M != 1
+        outp = Expr(:call, Base.reshape, outp, Expr(:call, Base.length, outp))
+    end
+    inp = :dx
+    if M != 1
+        inp = Expr(:call, Base.reshape, inp, Expr(:call, Base.length, inp))
+    end
+
+    matp = :partial
+    if N-M != 1 || M != 1
+        matp = Expr(:call, Base.reshape, matp, Expr(:call, Base.length, outp), Expr(:call, Base.length, inp))
+    end
+
+    outexpr = if prev === Nothing
+        Expr(:call, LinearAlgebra.mul!, outp, matp, inp)
+    else
+        Expr(:call, LinearAlgebra.mul!, outp, matp, inp, true, true)
+    end
+
+    quote
+        Base.@_inline_meta
+        @assert size(partial)[$(N-M+1):end] == size(dx)
+        $init
+        @inbounds $outexpr
+        return prev
+    end
+end
+
+@inline function EnzymeCore.EnzymeRules.multiply_rev_into(prev, partial, dx)
+    EnzymeCore.EnzymeRules.multiply_fwd_into(prev, adjoint(partial), dx)
+end
 
 function enzyme_custom_setup_args(
     @nospecialize(B::Union{Nothing, LLVM.IRBuilder}),
@@ -449,7 +546,7 @@ end
     if is_constant_value(gutils, orig) &&
        is_constant_inst(gutils, orig) &&
        !has_rule(orig, gutils)
-        return (false, true)
+        return false
     end
 
     width = get_width(gutils)
@@ -851,7 +948,7 @@ end
     return fmi, (args, TT, fwd_RT, kwtup, RT, needsPrimal, RealRt, origNeedsPrimal, activity, C)
 end
 
-@inline function has_easy_rule(orig::LLVM.CallInst, gutils::GradientUtils)::Bool
+@inline function has_easy_rule_from_call(orig::LLVM.CallInst, gutils::GradientUtils)::Bool
     fn = LLVM.parent(LLVM.parent(orig))
     world = enzyme_extract_world(fn)
     mi, RealRt = enzyme_custom_extract_mi(orig)
@@ -872,7 +969,7 @@ end
     end
 
     # Having an easy rule for a constant instruction -> no rule override
-    if has_easy_rule(orig, gutils) && is_constant_inst(gutils, org)
+    if has_easy_rule_from_call(orig, gutils) && is_constant_inst(gutils, orig)
         return false
     end
 

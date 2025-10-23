@@ -18,7 +18,7 @@ function myexp(x)
     return exp(x)
 end
 
-EnzymeRules.@easy_scalar_rule(
+EnzymeRules.@easy_rule(
     mysin(x1::Float32),
     @setup(),
     (myexp(x1),)
@@ -96,7 +96,7 @@ function mymul(x, y)
     return x * y
 end
 
-EnzymeRules.@easy_scalar_rule(
+EnzymeRules.@easy_rule(
     mymul(x::Float64, y::Float64),
     (myexp(x), Enzyme.Const)
 )
@@ -148,7 +148,7 @@ function mytup(x, y)
     return (sin(x), cos(y))
 end
 
-EnzymeRules.@easy_scalar_rule(
+EnzymeRules.@easy_rule(
     mytup(x::Float64, y::Float64),
     (myexp(x), Enzyme.Const),
     (Enzyme.Const, 0.123456),
@@ -157,7 +157,7 @@ EnzymeRules.@easy_scalar_rule(
 @testset "Forward EasyRule mytup" begin
     calls[] = 0
 
-    res = autodiff(Forward, mytup, Duplicated(2.0, 1.2), Duplicated(3.1, 2.7))[1]
+    res = autodiff(Forward, mytup, Duplicated, Duplicated(2.0, 1.2), Duplicated(3.1, 2.7))[1]
     @test res[1] ≈ 1.2 * exp(2.0)
     @test res[2] ≈ 2.7 * 0.123456
     @test calls[] == 1
@@ -170,6 +170,49 @@ end
     @test res[1][3] ≈ 1.2 * exp(2.0)
     @test res[1][4] ≈ 2.7 * 0.123456
     @test calls[] == 1
+end
+
+function vec_both(x)
+    return [sin(x[1]), cos(x[2]) * x[3]]
+end
+
+function both_jac(x)
+    res = Matrix{Float64}(undef, 2, 3)
+    res[1, 1] = x[1]
+    res[2, 1] = sin(x[2])
+    res[1, 2] = 3.1
+    res[2, 2] = exp(x[1])
+    res[1, 3] = x[1]
+    res[2, 3] = x[3]
+    return res
+end
+
+EnzymeRules.@easy_rule(
+    vec_both(x1),
+    @setup(),
+    (both_jac(x1),)
+)
+
+@testset "Forward EasyRule both_jac" begin
+    x = [2.7, 3.1, 9.2]
+    dx = [4.9, 5.6, 1.2]
+    res = autodiff(Forward, vec_both, Duplicated(copy(x), copy(dx)))[1]
+    @test res ≈ both_jac(x) * dx
+end
+
+@testset "Reverse EasyRule both_jac" begin
+    x = [2.7, 3.1, 9.2]
+    dx0 = [0.54, 0.27, 0.1234]
+    dx = copy(dx0)
+
+    fwd, rev = autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(vec_both)}, Duplicated, Duplicated{Vector{Float64}})
+
+    dy = [4.9, 5.6]
+    tape, _, shadow = fwd(Const(vec_both), Duplicated(x, dx))
+    copyto!(shadow, dy)
+
+    rev(Const(vec_both), Duplicated(x, dx), tape)
+    @test dx ≈ (adjoint(both_jac(x)) * dy) .+ dx0
 end
 
 end # module EasyRules

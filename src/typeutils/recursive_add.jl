@@ -41,8 +41,6 @@ end
     return x + f(y)
 end
 
-@inline EnzymeCore.EnzymeRules.add_fwd(prev, post) = recursive_add(prev, post)
-
 @inline mutable_register(::Type{T}) where {T<:Integer} = true
 @inline mutable_register(::Type{T}) where {T<:AbstractFloat} = false
 @inline mutable_register(::Type{Complex{T}}) where {T<:AbstractFloat} = false
