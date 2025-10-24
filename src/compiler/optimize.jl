@@ -5,6 +5,8 @@ end
 
 LLVM.@function_pass "jl-inst-simplify" JLInstSimplifyPass
 
+const RunAttributor = Ref(true)
+
 function enzyme_attributor_pass!(mod::LLVM.Module)
     ccall(
         (:RunAttributorOnModule, API.libEnzyme),
@@ -16,87 +18,6 @@ function enzyme_attributor_pass!(mod::LLVM.Module)
 end
 
 EnzymeAttributorPass() = NewPMModulePass("enzyme_attributor", enzyme_attributor_pass!)
-
-
-struct PipelineConfig
-    Speedup::Cint
-    Size::Cint
-    lower_intrinsics::Cint
-    dump_native::Cint
-    external_use::Cint
-    llvm_only::Cint
-    always_inline::Cint
-    enable_early_simplifications::Cint
-    enable_early_optimizations::Cint
-    enable_scalar_optimizations::Cint
-    enable_loop_optimizations::Cint
-    enable_vector_pipeline::Cint
-    remove_ni::Cint
-    cleanup::Cint
-end
-
-const RunAttributor = Ref(true)
-
-function pipeline_options(;
-    lower_intrinsics::Bool = true,
-    dump_native::Bool = false,
-    external_use::Bool = false,
-    llvm_only::Bool = false,
-    always_inline::Bool = true,
-    enable_early_simplifications::Bool = true,
-    enable_early_optimizations::Bool = true,
-    enable_scalar_optimizations::Bool = true,
-    enable_loop_optimizations::Bool = true,
-    enable_vector_pipeline::Bool = true,
-    remove_ni::Bool = true,
-    cleanup::Bool = true,
-    Size::Cint = Cint(0),
-    Speedup::Cint = Cint(3),
-)
-    return PipelineConfig(
-        Speedup,
-        Size,
-        lower_intrinsics,
-        dump_native,
-        external_use,
-        llvm_only,
-        always_inline,
-        enable_early_simplifications,
-        enable_early_optimizations,
-        enable_scalar_optimizations,
-        enable_loop_optimizations,
-        enable_vector_pipeline,
-        remove_ni,
-        cleanup,
-    )
-end
-
-function run_jl_pipeline(pm::ModulePassManager, tm::LLVM.TargetMachine; kwargs...)
-    config = Ref(pipeline_options(; kwargs...))
-    function jl_pipeline(m)
-        @dispose pb = NewPMPassBuilder() begin
-            add!(pb, NewPMModulePassManager()) do mpm
-                @ccall jl_build_newpm_pipeline(
-                    mpm.ref::Ptr{Cvoid},
-                    pb.ref::Ptr{Cvoid},
-                    config::Ptr{PipelineConfig},
-                )::Cvoid
-            end
-            LLVM.run!(mpm, m, tm)
-        end
-        return true
-    end
-    add!(pm, ModulePass("JLPipeline", jl_pipeline))
-end
-
-function julia_pipeline(pb, mpm; kwargs...)
-    config = Ref(pipeline_options(; kwargs...))
-    @ccall jl_build_newpm_pipeline(
-        mpm.ref::Ptr{Cvoid},
-        pb.ref::Ptr{Cvoid},
-        config::Ptr{PipelineConfig},
-    )::Cvoid
-end
 
 @static if VERSION < v"1.11.0-DEV.428"
 else
@@ -233,86 +154,32 @@ else
     end
 end
 
-
 function loop_optimizations_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
-    @static if true || VERSION < v"1.11-"
-        lower_simdloop_tm!(pm, tm)
-        licm!(pm)
-        if LLVM.version() >= v"15"
-            simple_loop_unswitch_legacy!(pm)
-        else
-            loop_unswitch!(pm)
-        end
+    lower_simdloop_tm!(pm, tm)
+    licm!(pm)
+    if LLVM.version() >= v"15"
+        simple_loop_unswitch_legacy!(pm)
     else
-        run_jl_pipeline(
-            pm,
-            tm;
-            lower_intrinsics = false,
-            dump_native = false,
-            external_use = false,
-            llvm_only = false,
-            always_inline = false,
-            enable_early_simplifications = false,
-            enable_early_optimizations = false,
-            enable_scalar_optimizations = false,
-            enable_loop_optimizations = true,
-            enable_vector_pipeline = false,
-            remove_ni = false,
-            cleanup = false,
-        )
+        loop_unswitch!(pm)
     end
 end
 
-
 function more_loop_optimizations_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachine)
-    @static if true || VERSION < v"1.11-"
-        loop_rotate!(pm)
-        # moving IndVarSimplify here prevented removing the loop in perf_sumcartesian(10:-1:1)
-        loop_idiom!(pm)
+    loop_rotate!(pm)
+    # moving IndVarSimplify here prevented removing the loop in perf_sumcartesian(10:-1:1)
+    loop_idiom!(pm)
 
-        # LoopRotate strips metadata from terminator, so run LowerSIMD afterwards
-        lower_simdloop_tm!(pm, tm) # Annotate loop marked with "loopinfo" as LLVM parallel loop
-        licm!(pm)
-        julia_licm_tm!(pm, tm)
-        # Subsequent passes not stripping metadata from terminator
-        instruction_combining!(pm) # TODO: createInstSimplifyLegacy
-        jl_inst_simplify!(pm)
+    # LoopRotate strips metadata from terminator, so run LowerSIMD afterwards
+    lower_simdloop_tm!(pm, tm) # Annotate loop marked with "loopinfo" as LLVM parallel loop
+    licm!(pm)
+    julia_licm_tm!(pm, tm)
+    # Subsequent passes not stripping metadata from terminator
+    instruction_combining!(pm) # TODO: createInstSimplifyLegacy
+    jl_inst_simplify!(pm)
 
-        ind_var_simplify!(pm)
-        loop_deletion!(pm)
-        loop_unroll!(pm) # TODO: in Julia createSimpleLoopUnroll
-    else
-        # LowerSIMDLoopPass
-        # LoopRotatePass [opt >= 2]
-        # LICMPass
-        # JuliaLICMPass
-        # SimpleLoopUnswitchPass
-        # LICMPass
-        # JuliaLICMPass
-        # IRCEPass
-        # LoopInstSimplifyPass
-        #   - in ours this is instcombine with jlinstsimplify
-        # LoopIdiomRecognizePass
-        # IndVarSimplifyPass
-        # LoopDeletionPass
-        # LoopFullUnrollPass
-        run_jl_pipeline(
-            pm,
-            tm;
-            lower_intrinsics = false,
-            dump_native = false,
-            external_use = false,
-            llvm_only = false,
-            always_inline = false,
-            enable_early_simplifications = false,
-            enable_early_optimizations = false,
-            enable_scalar_optimizations = false,
-            enable_loop_optimizations = true,
-            enable_vector_pipeline = false,
-            remove_ni = false,
-            cleanup = false,
-        )
-    end
+    ind_var_simplify!(pm)
+    loop_deletion!(pm)
+    loop_unroll!(pm) # TODO: in Julia createSimpleLoopUnroll
 end
 
 @static if VERSION < v"1.11-"
@@ -860,11 +727,8 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
             register!(pb, ReinsertGCMarkerPass())
             add!(pb, NewPMModulePassManager()) do mpm
                 # TODO(NewPM)
-                # addTargetPasses!(mpm, tm, LLVM.triple(mod))
                 # addOptimizationPasses!(mpm, tm)
-            end
-            if machine
-                add!(pb, NewPMModulePassManager()) do mpm
+                if machine
                     addJuliaLegalizationPasses_newPM!(mpm, true)
                     addMachinePasses_newPM!(mpm)
                 end
@@ -872,35 +736,6 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
             run!(pb, mod, tm)
         end
     end
-    # Wanted to use this but julia_pipeline is not ready for prime time
-    # @dispose pb = NewPMPassBuilder() begin
-    #     registerEnzymeAndPassPipeline!(pb)
-    #     register!(pb, ReinsertGCMarkerPass())
-
-    #     add!(pb, NewPMModulePassManager()) do mpm
-    #         if machine
-    #             add!(mpm, NewPMFunctionPassManager()) do fpm
-    #                 add!(fpm, ReinsertGCMarkerPass())
-    #             end
-    #         end
-
-    #         julia_pipeline(pb, mpm;
-    #             lower_intrinsics = machine,
-    #             dump_native = false,
-    #             external_use = false,
-    #             llvm_only = false,
-    #             always_inline = true,
-    #             enable_early_simplifications = true,
-    #             enable_early_optimizations = true,
-    #             enable_scalar_optimizations = true,
-    #             enable_loop_optimizations = true,
-    #             enable_vector_pipeline = true,
-    #             remove_ni = true,
-    #             cleanup = true,
-    #         )
-    #     end
-    #     run!(pb, mod, tm)
-    # end
     for f in functions(mod)
 	if isempty(blocks(f))
 		continue
