@@ -124,7 +124,7 @@ function _normalize_scalarrules_macro_input(call, maybe_setup, partials)
     # Setup: normalizing input form etc
 
     if Meta.isexpr(maybe_setup, :macrocall) && maybe_setup.args[1] == Symbol("@setup")
-        setup_stmts = Any[esc(ex) for ex in maybe_setup.args[3:end]]
+        setup_stmts = Any[ex for ex in maybe_setup.args[3:end]]
     else
         setup_stmts = []
         partials = (maybe_setup, partials...)
@@ -191,6 +191,11 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
             gensetup = Expr[$(setup_stmts...,)...]
 
             has_omega = needs_primal(config)
+            for expr in gensetup                
+                if uses_symbol(expr, :Ω)
+                    has_omega = true
+                end
+            end
             
             tosum0 = $tosum0
 
@@ -358,7 +363,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
         # allow closures/functors with @scalar_rule, it is always ignored
         @generated function EnzymeCore.EnzymeRules.augmented_primal($(esc(:config)), $(esc(:fn))::Const{<:$(Core.Typeof)($f)}, $(esc(:RTA))::Type{<:Annotation{$(esc(:RT))}}, $(inputs...)) where $(esc(:RT))
             genexprs = Expr[$(exprs...,)...]
-            gensetup = Expr[$(setup_stmts...,)...]
+            gensetup = Expr[]
 
             has_omega = needs_primal(config)
             
@@ -490,7 +495,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                 push!(genexprs, Expr(:(=), :Ω, Expr(:call, :f, $arg_names...)))
             end
 
-            return quote
+            quote
                 Base.@_inline_meta
                 $($(__source__))
                 f = fn.val
@@ -507,6 +512,12 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
             gensetup = Expr[$(setup_stmts...,)...]
 
             has_omega = false
+            for expr in gensetup                
+                if uses_symbol(expr, :Ω)
+                    has_omega = true
+                end
+            end
+
             inp_types = ($(map(esc, ann_names)...),)
 
             inp_names = String[($((String.(input_names))...),)...]
@@ -644,7 +655,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                 push!(genexprs, Expr(:(=), :Ω, Expr(:call, :f, $arg_names...)))
             end
 
-            return quote
+            quote
                 Base.@_inline_meta
                 $($(__source__))
                 f = fn.val
