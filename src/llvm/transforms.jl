@@ -2401,7 +2401,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     # and including 12 (but fixed 13+), Attributor will incorrectly change functions that
     # call code with undef to become unreachable, even when there exist other valid
     # callsites. See: https://godbolt.org/z/9Y3Gv6q5M
-    if LLVM.has_oldpm()
+    if !LLVM.has_newpm()
         ModulePassManager() do pm
             global_dce!(pm)
             LLVM.run!(pm, mod)
@@ -2565,7 +2565,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         end
     end
     propagate_returned!(mod)
-    if LLVM.has_oldpm()
+    if !LLVM.has_newpm()
         ModulePassManager() do pm
             instruction_combining!(pm)
             jl_inst_simplify!(pm)
@@ -2592,7 +2592,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     propagate_returned!(mod)
     pre_attr!(mod, RunAttributor[])
     if RunAttributor[]
-        if LLVM.has_oldpm()
+        if !LLVM.has_newpm()
             if LLVM.version().major >= 13
                 ModulePassManager() do pm
                     API.EnzymeAddAttributorLegacyPass(pm)
@@ -2604,7 +2604,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         end
     end
     propagate_returned!(mod)
-    if LLVM.has_oldpm()
+    if !LLVM.has_newpm()
         ModulePassManager() do pm
             instruction_combining!(pm)
             jl_inst_simplify!(pm)

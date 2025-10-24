@@ -2752,7 +2752,7 @@ function enzyme!(
     for f in collect(functions(mod))
         API.EnzymeFixupBatchedJuliaCallingConvention(f)
     end
-    if LLVM.has_oldpm()
+    if !LLVM.has_newpm()
         ModulePassManager() do pm
             dce!(pm)
             LLVM.run!(pm, mod)
@@ -5168,7 +5168,7 @@ end
                 push!(toremove, name(f))
             end
         end
-        if LLVM.has_oldpm()
+        if !LLVM.has_newpm()
             ModulePassManager() do pm
                 always_inliner!(pm)
                 LLVM.run!(pm, mod)

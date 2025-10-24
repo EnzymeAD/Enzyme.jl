@@ -825,6 +825,7 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
             ),
         )
     end
+    # TODO(NewPM): Swap conditionals when the pipeline is ready
     if LLVM.has_oldpm()
         LLVM.ModulePassManager() do pm
             addTargetPasses!(pm, tm, LLVM.triple(mod))
