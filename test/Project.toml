@@ -2,6 +2,7 @@
 BFloat16s = "ab4f0b2a-ad5b-11e8-123f-65d77653426b"
 ChainRules = "082447d4-558c-5d27-93f4-14fc19e9eca2"
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+Clang_jll = "0ee61d77-7f21-5576-8119-9fcc46b10100"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 EnzymeTestUtils = "12d8515a-0907-448a-8884-5fe00fdf1c5a"
@@ -12,6 +13,7 @@ InlineStrings = "842dd82b-1e85-43dc-bf29-5d0ee9dffc48"
 JLArrays = "27aeb0d3-9eb9-45fb-866b-73c2ecf80fcb"
 LLVM = "929cbde3-209d-540e-8aea-75f648917ca0"
 LLVM_jll = "86de99a1-58d6-5da7-8064-bd56ce2e322c"
+Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
 ParallelTestRunner = "d3525ed8-44d0-4b2c-a655-542cee43accc"
@@ -29,5 +31,6 @@ Enzyme = {path = ".."}
 EnzymeTestUtils = {path = "../lib/EnzymeTestUtils"}
 
 [compat]
+Clang_jll = "16.0.6"
 EnzymeTestUtils = "0.2.1"
 ParallelTestRunner = "1.0.1"
