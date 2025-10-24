@@ -362,7 +362,7 @@ function Enzyme.EnzymeRules.forward(config, ::Const{typeof(mysin)}, ::Type, x)
         println("Avoiding computing sin!")
         return cos(x.val) * x.dval
     else
-        println("Still computing sin =/")
+        println("Still computing sin")
         return Duplicated(sin(x.val), cos(x.val) * x.dval)
     end
 end
@@ -381,7 +381,8 @@ Enzyme.gradient(Forward, mysquare, 2.0);
 
 # output
 Avoiding computing sin!
-Still computing sin =/
+Still computing sin
+(-0.7568024953079283,)
 ```
 
 For more information, see [the custom rule docs](./generated/custom_rule), [`EnzymeRules.forward`](@ref),  [`EnzymeRules.augmented_primal`](@ref), and [`EnzymeRules.reverse`](@ref).
