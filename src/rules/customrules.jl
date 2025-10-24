@@ -1,3 +1,100 @@
+import LinearAlgebra
+
+@inline add_fwd(prev, post) = recursive_add(prev, post)
+
+@generated function EnzymeCore.EnzymeRules.multiply_fwd_into(prev, partial::Union{AbstractArray,Number}, dx::Union{AbstractArray,Number})
+
+    if partial <: Number || dx isa Number
+        if prev !== Nothing
+            return quote
+                Base.@_inline_meta
+                add_fwd(prev, EnzymeCore.EnzymeRules.multiply_fwd_into(nothing, partial, dx))
+            end
+        end
+        return quote
+            Base.@_inline_meta
+            partial * dx
+        end
+    end
+
+    @assert partial <: AbstractArray
+    @assert dx <: AbstractArray
+    N = ndims(partial)
+    M = ndims(dx)
+
+    if N == M
+        if prev !== Nothing
+            return quote
+                Base.@_inline_meta
+                add_fwd(prev, EnzymeCore.EnzymeRules.multiply_fwd_into(nothing, partial, dx))
+            end
+        end
+
+        res = if partial <: AbstractFloat || partial <: AbstractArray{<:AbstractFloat}
+            :(LinearAlgebra.dot(partial,dx))
+        elseif dx <: AbstractFloat || dx <: AbstractArray{<:AbstractFloat}
+            :(LinearAlgebra.dot(dx, partial))
+        else
+            :(LinearAlgebra.dot(adjoint(partial),dx))
+        end
+        return quote
+            Base.@_inline_meta
+            $res
+        end
+    end
+
+    if N < M
+        return quote
+            Base.@_inline_meta
+            throw(MethodError(EnzymeCore.EnzymeRules.multiply_fwd_into, prev, partial, dx))
+        end
+    end
+
+    init = if prev === Nothing
+        :(prev = similar(partial, size(partial)[1:$(N-M)]...))
+    end
+
+    idxs = Symbol[]
+    for i in 1:(N-M)
+        push!(idxs, Symbol("i_$i"))
+    end
+    others = Symbol[]
+    for i in 1:M
+        push!(others, :(:))
+    end
+
+    outp = :prev
+    if N-M != 1
+        outp = Expr(:call, Base.reshape, outp, Expr(:call, Base.length, outp))
+    end
+    inp = :dx
+    if M != 1
+        inp = Expr(:call, Base.reshape, inp, Expr(:call, Base.length, inp))
+    end
+
+    matp = :partial
+    if N-M != 1 || M != 1
+        matp = Expr(:call, Base.reshape, matp, Expr(:call, Base.length, outp), Expr(:call, Base.length, inp))
+    end
+
+    outexpr = if prev === Nothing
+        Expr(:call, LinearAlgebra.mul!, outp, matp, inp)
+    else
+        Expr(:call, LinearAlgebra.mul!, outp, matp, inp, true, true)
+    end
+
+    quote
+        Base.@_inline_meta
+        @assert size(partial)[$(N-M+1):end] == size(dx)
+        $init
+        @inbounds $outexpr
+        return prev
+    end
+end
+
+@inline function EnzymeCore.EnzymeRules.multiply_rev_into(prev, partial, dx)
+    EnzymeCore.EnzymeRules.multiply_fwd_into(prev, adjoint(partial), dx)
+end
 
 function enzyme_custom_setup_args(
     @nospecialize(B::Union{Nothing, LLVM.IRBuilder}),
@@ -449,7 +546,7 @@ end
     if is_constant_value(gutils, orig) &&
        is_constant_inst(gutils, orig) &&
        !has_rule(orig, gutils)
-        return (false, true)
+        return false
     end
 
     width = get_width(gutils)
@@ -851,12 +948,32 @@ end
     return fmi, (args, TT, fwd_RT, kwtup, RT, needsPrimal, RealRt, origNeedsPrimal, activity, C)
 end
 
-@inline function has_rule(orig::LLVM.CallInst, gutils::GradientUtils)
+@inline function has_easy_rule_from_call(orig::LLVM.CallInst, gutils::GradientUtils)::Bool
+    fn = LLVM.parent(LLVM.parent(orig))
+    world = enzyme_extract_world(fn)
+    mi, RealRt = enzyme_custom_extract_mi(orig)
+    specTypes = Interpreter.simplify_kw(mi.specTypes)
+    return EnzymeRules.has_easy_rule_from_sig(specTypes; world)
+end
+
+@inline function has_rule(orig::LLVM.CallInst, gutils::GradientUtils)::Bool
     if get_mode(gutils) == API.DEM_ForwardMode
-       return fwd_mi(orig, gutils)[1] !== nothing
+       tup = fwd_mi(orig, gutils)
+        if tup[1] === nothing
+           return false
+        end
     else
-       return aug_fwd_mi(orig, gutils)[1] !== nothing
+       if aug_fwd_mi(orig, gutils)[1] === nothing
+            return false
+        end
     end
+
+    # Having an easy rule for a constant instruction -> no rule override
+    if has_easy_rule_from_call(orig, gutils) && is_constant_inst(gutils, orig)
+        return false
+    end
+
+    return true
 end
 
 function enzyme_custom_common_rev(
@@ -989,12 +1106,12 @@ function enzyme_custom_common_rev(
             insert!(tt, 1, kwtup)
             insert!(tt, 2, Core.typeof(EnzymeRules.reverse))
             insert!(tt, 3, C)
-            insert!(tt, 5, RT <: Active ? RT : Type{RT})
+            insert!(tt, 5, RT <: Active ? (width == 1 ? RT : NTuple{Int(width), RT}) : Type{RT})
             insert!(tt, 6, TapeT)
         else
             @assert kwtup === nothing
             insert!(tt, 1, C)
-            insert!(tt, 3, RT <: Active ? RT : Type{RT})
+            insert!(tt, 3, RT <: Active ? (width == 1 ? RT : NTuple{Int(width), RT}) : Type{RT})
             insert!(tt, 4, TapeT)
         end
         rev_TT = Tuple{tt...}
@@ -1125,12 +1242,13 @@ function enzyme_custom_common_rev(
             insert!(args, tape_idx, tape)
         end
         if RT <: Active
-            if width != 1
-                emit_error(B, orig, "Not yet supported: Enzyme custom rule of batch size=$width, and active return $RT")
-                return tapeV
+            nRT = if width == 1
+                RT
+            else
+                NTuple{Int(width), RT}
             end
 
-            llty = convert(LLVMType, RT)
+            llty = convert(LLVMType, nRT)
 
             if API.EnzymeGradientUtilsGetDiffeType(gutils, orig, false) == API.DFT_OUT_DIFF #=isforeign=#
                 val = LLVM.Value(API.EnzymeGradientUtilsDiffe(gutils, orig, B))
@@ -1147,19 +1265,25 @@ function enzyme_custom_common_rev(
                 end
             end
 
-            al0 = al = emit_allocobj!(B, RT)
+            al0 = al = emit_allocobj!(B, nRT)
             al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             al = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
 
-            ptr = inbounds_gep!(
-                B,
-                llty,
-                al,
-                [
-                    LLVM.ConstantInt(LLVM.IntType(64), 0),
-                    LLVM.ConstantInt(LLVM.IntType(32), 0),
-                ],
-            )
+            if width == 1
+                ptr = inbounds_gep!(
+                    B,
+                    llty,
+                    al,
+                    [
+                        LLVM.ConstantInt(LLVM.IntType(64), 0),
+                        LLVM.ConstantInt(LLVM.IntType(32), 0),
+                    ],
+                )
+            else
+                llety = convert(LLVMType, eltype(RT); allow_boxed = true)
+                pty = LLVM.LLVMType(API.EnzymeGetShadowType(width, llety))
+                ptr = bitcast!(B, al, LLVM.PointerType(pty, Derived))
+            end
             store!(B, val, ptr)
 
             if any_jltypes(llty)
