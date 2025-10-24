@@ -353,22 +353,22 @@ Like before, Enzyme takes a specification of the function the rule applies to, a
 using Enzyme
 
 function mysin(x)
-    return x
+    return sin(x)
 end
 
-function Enzyme.EnzymeRules.forward(config, ::typeof(mysin), ::Type, x)
+function Enzyme.EnzymeRules.forward(config, ::Const{typeof(mysin)}, ::Type, x)
     # If we don't need the original result, let's avoid computing it (and print)
     if !needs_primal(config)
-        @show "Avoiding computing sin!"
+        println("Avoiding computing sin!")
         return cos(x.val) * x.dval
     else
-        @show "Still computing sin =/"
+        println("Still computing sin =/")
         return Duplicated(sin(x.val), cos(x.val) * x.dval)
     end
 end
 
 function mysquare(x)
-    y = sin(x)
+    y = mysin(x)
     return y*y
 end
 
@@ -393,7 +393,7 @@ Enzyme can also import rules from the `ChainRules` ecosystem. This is often help
 Enzyme can import the forward rule, reverse rule, or both.
 
 ```jldoctest chainrule
-using Enzyme, ChainRules
+using Enzyme, ChainRulesCore
 
 f(x) = sin(x)
 ChainRulesCore.@scalar_rule f(x)  (cos(x),)
