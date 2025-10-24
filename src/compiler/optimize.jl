@@ -76,6 +76,15 @@ function run_jl_pipeline(pm::ModulePassManager, tm::LLVM.TargetMachine; kwargs..
     add!(pm, ModulePass("JLPipeline", jl_pipeline))
 end
 
+function julia_pipeline(pb, mpm; kwargs...)
+    config = Ref(pipeline_options(; kwargs...))
+    @ccall jl_build_newpm_pipeline(
+        mpm.ref::Ptr{Cvoid},
+        pb.ref::Ptr{Cvoid},
+        config::Ptr{PipelineConfig},
+    )::Cvoid
+end
+
 @static if VERSION < v"1.11.0-DEV.428"
 else
     barrier_noop!(pm) = nothing
