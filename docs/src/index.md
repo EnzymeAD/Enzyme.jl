@@ -315,7 +315,7 @@ When writing an [`EnzymeRules.@easy_rule`](@ref) one first describes the functio
 
 One can also define certain arguments as not having a derivative via `@Constant`. 
 
-For more information see the [`@easy_rule`](@ref) documentation.
+For more information see the [`EnzymeRules.@easy_rule`](@ref) documentation.
 
 ```jldoctest easyrules
 using Enzyme
