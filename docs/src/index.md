@@ -356,7 +356,7 @@ function mysin(x)
     return x
 end
 
-function Enzyme.EnzymeRules.forward(config, ::typeof(mysin), x)
+function Enzyme.EnzymeRules.forward(config, ::typeof(mysin), ::Type, x)
     # If we don't need the original result, let's avoid computing it (and print)
     if !needs_primal(config)
         @show "Avoiding computing sin!"
