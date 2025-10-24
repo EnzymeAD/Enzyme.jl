@@ -513,6 +513,9 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
             attributes,
             StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(RT)))),
         )
+        if EnzymeRules.has_easy_rule_from_sig(Interpreter.simplify_kw(mi.specTypes); job.world)
+            push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
+        end
         if returnRoots
             attr = StringAttribute("enzymejl_returnRoots", "")
             push!(parameter_attributes(llvmfn, 2), attr)
@@ -1008,6 +1011,7 @@ end
             Duplicated,
             nothing,
             run_enzyme,
+            world
         )
         if cur
             state.primalf = llvmfn
@@ -3663,6 +3667,7 @@ function lower_convention(
     @nospecialize(RetActivity::Type),
     @nospecialize(TT::Union{Type, Nothing}),
     run_enzyme::Bool,
+    world::UInt
 )
     entry_ft = LLVM.function_type(entry_f)
 
@@ -4222,7 +4227,9 @@ function lower_convention(
         attributes,
         StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(rt)))),
     )
-
+    if EnzymeRules.has_easy_rule_from_sig(Interpreter.simplify_kw(mi.specTypes); world)
+        push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
+    end
     for prev in collect(function_attributes(entry_f))
         if kind(prev) == kind(StringAttribute("enzyme_ta_norecur"))
             push!(attributes, prev)
@@ -4720,6 +4727,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             job.config.params.rt,
             TT,
             params.run_enzyme,
+            job.world
         )
     end
 
@@ -6475,3 +6483,4 @@ end
 include("compiler/reflection.jl")
 
 end
+
