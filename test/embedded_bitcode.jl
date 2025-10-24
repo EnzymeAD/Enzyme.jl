@@ -82,8 +82,6 @@ end
             gradient(Reverse, func_ccall, Const(0.0), b)
         catch e
             err_llvmir = e
-            #    finally
-            #        redirect_stdout(old_stdout)
         end
 
         @test err_llvmir !== nothing
