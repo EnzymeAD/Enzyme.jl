@@ -8,7 +8,7 @@ import LinearAlgebra
         if prev !== Nothing
             return quote
                 Base.@_inline_meta
-                EnzymeCore.EnzymeRules.add_fwd(prev, EnzymeCore.EnzymeRules.multiply_fwd_into(nothing, partial, dx))
+                add_fwd(prev, EnzymeCore.EnzymeRules.multiply_fwd_into(nothing, partial, dx))
             end
         end
         return quote
@@ -26,7 +26,7 @@ import LinearAlgebra
         if prev !== Nothing
             return quote
                 Base.@_inline_meta
-                EnzymeCore.EnzymeRules.add_fwd(prev, EnzymeCore.EnzymeRules.multiply_fwd_into(nothing, partial, dx))
+                add_fwd(prev, EnzymeCore.EnzymeRules.multiply_fwd_into(nothing, partial, dx))
             end
         end
 
