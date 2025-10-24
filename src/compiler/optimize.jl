@@ -5,6 +5,19 @@ end
 
 LLVM.@function_pass "jl-inst-simplify" JLInstSimplifyPass
 
+function enzyme_attributor_pass!(mod::LLVM.Module)
+    ccall(
+        (:LLVMRunEnzymeAttributorPass, API.libEnzyme),
+        Cvoid,
+        (LLVM.API.LLVMModuleRef,),
+        mod,
+    )
+    return true
+end
+
+EnzymeAttributorPass() = NewPMModulePass("enzyme_attributor", enzyme_attributor_pass!)
+
+
 struct PipelineConfig
     Speedup::Cint
     Size::Cint

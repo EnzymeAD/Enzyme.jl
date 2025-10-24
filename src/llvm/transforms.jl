@@ -2600,7 +2600,13 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 end
             end
         else
-            LLVM.run!(AttributorPass(), mod)
+            LLVM.@dispose pb = NewPMPassBuilder() begin
+                register!(pb, EnzymeAttributorPass())
+                add!(pb, NewPMModulePassManager()) do mpm
+                    add!(mpm, EnzymeAttributorPass())
+                end
+                LLVM.run!(pb, mod)
+            end
         end
     end
     propagate_returned!(mod)
@@ -2621,6 +2627,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     else
         LLVM.@dispose pb = NewPMPassBuilder() begin
             registerEnzymeAndPassPipeline!(pb)
+            register!(pb, EnzymeAttributorPass())
             add!(pb, NewPMModulePassManager()) do mpm
                 add!(mpm, NewPMFunctionPassManager()) do fpm
                     add!(fpm, InstCombinePass())
@@ -2628,7 +2635,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                     add!(fpm, AllocOptPass())
                     add!(fpm, SROAPass())
                 end
-                add!(mpm, AttributorPass())
+                add!(mpm, EnzymeAttributorPass())
                 add!(mpm, NewPMFunctionPassManager()) do fpm
                     add!(fpm, EarlyCSEPass())
                 end
