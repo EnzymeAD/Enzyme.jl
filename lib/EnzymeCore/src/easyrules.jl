@@ -169,7 +169,7 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
         tosum = Tuple{Int, Symbol, Any}[]
         push!(tosum0, tosum)
         for (i, (p, sname)) in enumerate(zip(partial0, input_names))
-            if p == Symbol("@Constant")
+            if Meta.isexpr(p, :macrocall) && p.args[1] == Symbol("@Constant")
                 continue
             end
             push!(tosum, (i , sname, p))
@@ -338,7 +338,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
         tosum = Tuple{Int, Symbol, Any}[]
         push!(tosum0, tosum)
         for (i, (p, sname)) in enumerate(zip(partial0, input_names))
-            if p == Symbol("@Constant")
+            if Meta.isexpr(p, :macrocall) && p.args[1] == Symbol("@Constant")
                 continue
             end
             push!(tosum, (i , sname, p))
