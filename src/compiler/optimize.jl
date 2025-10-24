@@ -50,8 +50,8 @@ function pipeline_options(;
     enable_vector_pipeline::Bool = true,
     remove_ni::Bool = true,
     cleanup::Bool = true,
-    Size::Cint = 0,
-    Speedup::Cint = 3,
+    Size::Cint = Cint(0),
+    Speedup::Cint = Cint(3),
 )
     return PipelineConfig(
         Speedup,
@@ -872,6 +872,35 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
             run!(pb, mod, tm)
         end
     end
+    # Wanted to use this but julia_pipeline is not ready for prime time
+    # @dispose pb = NewPMPassBuilder() begin
+    #     registerEnzymeAndPassPipeline!(pb)
+    #     register!(pb, ReinsertGCMarkerPass())
+
+    #     add!(pb, NewPMModulePassManager()) do mpm
+    #         if machine
+    #             add!(mpm, NewPMFunctionPassManager()) do fpm
+    #                 add!(fpm, ReinsertGCMarkerPass())
+    #             end
+    #         end
+
+    #         julia_pipeline(pb, mpm;
+    #             lower_intrinsics = machine,
+    #             dump_native = false,
+    #             external_use = false,
+    #             llvm_only = false,
+    #             always_inline = true,
+    #             enable_early_simplifications = true,
+    #             enable_early_optimizations = true,
+    #             enable_scalar_optimizations = true,
+    #             enable_loop_optimizations = true,
+    #             enable_vector_pipeline = true,
+    #             remove_ni = true,
+    #             cleanup = true,
+    #         )
+    #     end
+    #     run!(pb, mod, tm)
+    # end
     for f in functions(mod)
 	if isempty(blocks(f))
 		continue
