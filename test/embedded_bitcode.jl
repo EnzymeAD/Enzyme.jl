@@ -77,8 +77,6 @@ end
     err_llvmir = nothing
     b = @view a[1:5]
 
-    @show errstream
-
     redirect_stdio(stdout=errstream, stderr=errstream, stdin=devnull) do
         try
             gradient(Reverse, func_ccall, Const(0.0), b)
