@@ -2752,14 +2752,7 @@ function enzyme!(
     for f in collect(functions(mod))
         API.EnzymeFixupBatchedJuliaCallingConvention(f)
     end
-    if !LLVM.has_newpm()
-        ModulePassManager() do pm
-            dce!(pm)
-            LLVM.run!(pm, mod)
-        end
-    else
-        run!(DCEPass(), mod)
-    end
+    run!(DCEPass(), mod)
     fix_decayaddr!(mod)
     adjointf = adjointf == nothing ? nothing : functions(mod)[adjointfname]
     augmented_primalf =
@@ -5168,14 +5161,7 @@ end
                 push!(toremove, name(f))
             end
         end
-        if !LLVM.has_newpm()
-            ModulePassManager() do pm
-                always_inliner!(pm)
-                LLVM.run!(pm, mod)
-            end
-        else
-            run!(AlwaysInlinerPass(), mod)
-        end
+        run!(AlwaysInlinerPass(), mod)
         for fname in toremove
             if haskey(functions(mod), fname)
                 f = functions(mod)[fname]
