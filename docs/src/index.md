@@ -330,6 +330,15 @@ Enzyme.EnzymeRules.@easy_rule(f(x,y),
     # df2/dx, #df2/dy
     (cos(y), x * sin(y))
 )
+
+function g(x, y)
+    return f(x, y)[2]
+end
+
+Enzyme.gradient(Reverse, g, 2.0, 3.0)
+
+# output
+(-0.9899924966004454, 0.2822400161197344)
 ```
 
 Enzyme will automatically generate efficient derivatives for forward mode, reverse mode, batched forward and reverse mode, overwritten data, inactive inputs, and more from the given specification macro.
@@ -358,17 +367,21 @@ function Enzyme.EnzymeRules.forward(config, ::typeof(mysin), x)
     end
 end
 
-# Prints "Avoiding computing sin!"
-Enzyme.gradient(Forward, mysin, 2.0)
-
 function mysquare(x)
     y = sin(x)
     return y*y
 end
 
+# Prints "Avoiding computing sin!"
+Enzyme.gradient(Forward, mysin, 2.0);
+
 # Prints "Still computing sin =/" as d/dx sin(x)^2 = 2 * sin(x) * sin'(x)
 # so the original result is still needed
-Enzyme.gradient(Forward, mysquare, 2.0)
+Enzyme.gradient(Forward, mysquare, 2.0);
+
+# output
+Avoiding computing sin!
+Still computing sin =/
 ```
 
 For more information, see [the custom rule docs](./generated/custom_rule), [`EnzymeRules.forward`](@ref),  [`EnzymeRules.augmented_primal`](@ref), and [`EnzymeRules.reverse`](@ref).
@@ -390,6 +403,8 @@ Enzyme.@import_rrule typeof(f) Float32
 
 # Import the forward rule for float32
 Enzyme.@import_frule typeof(f) Float32
+
+# output
 ```
 
 See the docs on [`Enzyme.@import_frule`](@ref) and [`Enzyme.@import_rrule`](@ref) for more information.
