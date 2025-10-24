@@ -169,7 +169,7 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
         tosum = Tuple{Int, Symbol, Any}[]
         push!(tosum0, tosum)
         for (i, (p, sname)) in enumerate(zip(partial0, input_names))
-            if p == :(EnzymeCore.Const) || p == :(Enzyme.Const) || p == :(Const)
+            if p == Symbol("@Constant")
                 continue
             end
             push!(tosum, (i , sname, p))
@@ -338,7 +338,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
         tosum = Tuple{Int, Symbol, Any}[]
         push!(tosum0, tosum)
         for (i, (p, sname)) in enumerate(zip(partial0, input_names))
-            if p == :(EnzymeCore.Const) || p == :(Enzyme.Const) || p == :(Const)
+            if p == Symbol("@Constant")
                 continue
             end
             push!(tosum, (i , sname, p))
@@ -698,13 +698,13 @@ is equivalent to:
              ...)
 ```
 
-If a specific argument has no partial derivative, then all corresponding argument values can instead be marked `Enzyme.Const`. For example, consider the case where `config` has no derivative.
+If a specific argument has no partial derivative, then all corresponding argument values can instead be marked `@Constant`. For example, consider the case where `config` has no derivative.
 
 ```julia
 @easy_rule(f(config, x, ...),
              @setup(nothing),
-             (Enzyme.Const, ∂f₁_∂x, ...),
-             (Enzyme.Const, ∂f₂_∂x, ...),
+             (@Constant, ∂f₁_∂x, ...),
+             (@Constant, ∂f₂_∂x, ...),
              ...)
 ```
 

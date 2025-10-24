@@ -98,7 +98,7 @@ end
 
 EnzymeRules.@easy_rule(
     mymul(x::Float64, y::Float64),
-    (myexp(x), Enzyme.Const)
+    (myexp(x), @Constant)
 )
 
 @testset "Forward EasyRule mymul" begin
@@ -150,8 +150,8 @@ end
 
 EnzymeRules.@easy_rule(
     mytup(x::Float64, y::Float64),
-    (myexp(x), Enzyme.Const),
-    (Enzyme.Const, 0.123456),
+    (myexp(x), @Constant),
+    (@Constant, 0.123456),
 )
 
 @testset "Forward EasyRule mytup" begin
