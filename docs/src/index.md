@@ -277,7 +277,7 @@ julia> grad
 
 ## Defining rules
 
-While Enzyme will automatically generate derivative functions for you, there may be instances in which it is necessary or helpful to define custom derivative rules. Enzyme has three primary ways for defining derivative rules: inactive annotations, `@easy_rule` macro definitions, general purpose derivative rules, and importing from `ChainRules`.
+While Enzyme will automatically generate derivative functions for you, there may be instances in which it is necessary or helpful to define custom derivative rules. Enzyme has three primary ways for defining derivative rules: inactive annotations, [`EnzymeRules.@easy_rule`](@ref) macro definitions, general purpose derivative rules, and importing from `ChainRules`.
 
 ### Inactive Annotations
 
@@ -299,7 +299,7 @@ using Enzyme.EnzymeRules
 EnzymeRules.inactive(::typeof(det), ::UnitaryMatrix) = true
 ```
 
-Specifically, we define a new overload of the method `EnzymeRules.inactive` where the first argument is the type of the function being marked inactive, and the corresponding arguments match the arguments we want to overload the method for. This enables us, for example, to only mark the determinant of the `UnitaryMatrix` class here as inactive, and not the determinant of a general Matrix.
+Specifically, we define a new overload of the method [`EnzymeRules.inactive`](@ref) where the first argument is the type of the function being marked inactive, and the corresponding arguments match the arguments we want to overload the method for. This enables us, for example, to only mark the determinant of the `UnitaryMatrix` class here as inactive, and not the determinant of a general Matrix.
 
 Enzyme also supports a second way to mark things inactive, where the marker is "less strong" and not guaranteed to apply if other optimizations might otherwise simplify the code first.
 
@@ -309,9 +309,9 @@ EnzymeRules.inactive_noinl(::typeof(det), ::UnitaryMatrix) = true
 
 ### Easy Rules
 
-The recommended way for writing rules for most use cases is through the `EnzymeRules.@easy_rule` macro. This macro enables users to write derivatives for any functions which only read from their arguments (e.g. do not overwrite memory), and has numbers, matricies of numbers, or tuples thereof as arguments/result types. 
+The recommended way for writing rules for most use cases is through the [`EnzymeRules.@easy_rule`](@ref) macro. This macro enables users to write derivatives for any functions which only read from their arguments (e.g. do not overwrite memory), and has numbers, matricies of numbers, or tuples thereof as arguments/result types. 
 
-When writing an `@easy_rule` one first describes the function signature one wants the derivative rule to apply to. In each subsequent line, one should write a tuple, where each element of the tuple represents the derivative of the corresponding input argument. In that sense writing an `@easy_rule` is equivalent to specifying the Jacobian. Inside of this tuple, one can call arbitrary Julia code.
+When writing an [`EnzymeRules.@easy_rule`](@ref) one first describes the function signature one wants the derivative rule to apply to. In each subsequent line, one should write a tuple, where each element of the tuple represents the derivative of the corresponding input argument. In that sense writing an [`EnzymeRules.@easy_rule`](@ref) is equivalent to specifying the Jacobian. Inside of this tuple, one can call arbitrary Julia code.
 
 One can also define certain arguments as not having a derivative via `@Constant`. 
 
@@ -385,11 +385,11 @@ Still computing sin
 (-0.7568024953079283,)
 ```
 
-For more information, see [the custom rule docs](./generated/custom_rule), [`EnzymeRules.forward`](@ref),  [`EnzymeRules.augmented_primal`](@ref), and [`EnzymeRules.reverse`](@ref).
+For more information, see [the custom rule docs](@ref custom_rules), [`EnzymeRules.forward`](@ref),  [`EnzymeRules.augmented_primal`](@ref), and [`EnzymeRules.reverse`](@ref).
 
 ### Importing ChainRules
 
-Enzyme can also import rules from the `ChainRules` ecosystem. This is often helpful when first getting started, though it will generally be much more efficient to write either an [`@easy_rule`](@ref) or general custom rule.
+Enzyme can also import rules from the `ChainRules` ecosystem. This is often helpful when first getting started, though it will generally be much more efficient to write either an [`EnzymeRules.@easy_rule`](@ref) or general custom rule.
 
 Enzyme can import the forward rule, reverse rule, or both.
 
