@@ -828,7 +828,16 @@ end
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        width = get_width(gutils)
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx = 1:width
+            if width == 1
+                shadowres = normal
+            else
+                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
     end
 
     return false
@@ -885,7 +894,16 @@ end
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        width = get_width(gutils)
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx = 1:width
+            if width == 1
+                shadowres = normal
+            else
+                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
     end
     return false
 end
@@ -897,7 +915,16 @@ end
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        width = get_width(gutils)
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx = 1:width
+            if width == 1
+                shadowres = normal
+            else
+                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
     end
     return false
 end
