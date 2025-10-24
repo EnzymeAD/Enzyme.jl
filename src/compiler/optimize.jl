@@ -7,7 +7,7 @@ LLVM.@function_pass "jl-inst-simplify" JLInstSimplifyPass
 
 function enzyme_attributor_pass!(mod::LLVM.Module)
     ccall(
-        (:LLVMRunEnzymeAttributorPass, API.libEnzyme),
+        (:RunAttributorOnModule, API.libEnzyme),
         Cvoid,
         (LLVM.API.LLVMModuleRef,),
         mod,
