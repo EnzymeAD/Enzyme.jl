@@ -28,6 +28,8 @@ function Base.setindex!(d::AliasDict, val, key)
     return d
 end
 
+const ElementType = Union{Base.IEEEFloat, Complex{<:Base.IEEEFloat}}
+
 # alternative to FiniteDifferences.to_vec to use Enzyme's semantics for arrays instead of
 # ChainRules': Enzyme treats tangents of AbstractArrays the same as tangents of any other
 # struct (i.e. with a container of the same type as the original), while ChainRules
@@ -38,39 +40,66 @@ end
 
 function to_vec(x)
     x_vec, from_vec_inner = to_vec(x, AliasDict())
-    from_vec(x_vec::Vector{<:AbstractFloat}) = from_vec_inner(x_vec, AliasDict())
+    from_vec(x_vec::Vector{<:ElementType) = from_vec_inner(x_vec, AliasDict())
     return x_vec, from_vec
 end
 
 # base case: we've unwrapped to a number, so we break the recursion
-function to_vec(x::AbstractFloat, seen_vecs::AliasDict)
-    AbstractFloat_from_vec(v::Vector{<:AbstractFloat}, _) = oftype(x, only(v))
+function to_vec(x::ElementType, seen_vecs::AliasDict)
+    AbstractFloat_from_vec(v::Vector{<:ElementType}, _) = oftype(x, only(v))
     return [x], AbstractFloat_from_vec
 end
 
 # basic containers: loop over defined elements, recursively converting them to vectors
-function to_vec(x::RT, seen_vecs::AliasDict) where {RT<:Array}
+function to_vec(x::Array{<:ElementType}, seen_vecs::AliasDict)
     has_seen = haskey(seen_vecs, x)
-    is_const = Enzyme.Compiler.guaranteed_const(RT)
+    is_const = Enzyme.Compiler.guaranteed_const(Core.Typeof(x))
     if has_seen || is_const
         x_vec = Float32[]
     else
-        x_vecs = Vector{<:AbstractFloat}[]
+        x_vec = x
+        seen_vecs[x] = reshape(x_vec, length(x_vec))
+    end
+    sz = size(x)
+    function Array_from_vec(x_vec_new::Vector{<:ElementType}, seen_xs::AliasDict)
+        if xor(has_seen, haskey(seen_xs, x))
+            throw(ErrorException("Arrays must be reconstructed in the same order as they are vectorized."))
+        end
+        has_seen && return reshape(seen_xs[x], size(x))
+        is_const && return x
+        x_new = reshape(x_vec_new, sz)
+        if Core.Typeof(x_new) != Core.Typeof(x)
+            x_new = Core.Typeof(x)(x_new)
+        end
+        seen_xs[x] = x_new
+        return x_new
+    end
+    return x_vec, Array_from_vec
+end
+
+# basic containers: loop over defined elements, recursively converting them to vectors
+function to_vec(x::Array, seen_vecs::AliasDict)
+    has_seen = haskey(seen_vecs, x)
+    is_const = Enzyme.Compiler.guaranteed_const(Core.Typeof(x))
+    if has_seen || is_const
+        x_vec = Float32[]
+    else
+        x_vecs = ElementType[]
         from_vecs = []
         subvec_inds = UnitRange{Int}[]
         l = 0
         for i in eachindex(x)
             isassigned(x, i) || continue
             xi_vec, xi_from_vec = to_vec(x[i], seen_vecs)
-            push!(x_vecs, xi_vec)
-            push!(from_vecs, xi_from_vec)
             push!(subvec_inds, (l + 1):(l + length(xi_vec)))
+            push!(from_vecs, xi_from_vec)
+            append!(x_vecs, xi_vec)
             l += length(xi_vec)
         end
         x_vec = reduce(vcat, x_vecs; init=Float32[])
         seen_vecs[x] = x_vec
     end
-    function Array_from_vec(x_vec_new::Vector{<:AbstractFloat}, seen_xs::AliasDict)
+    function Array_from_vec(x_vec_new::Vector{<:ElementType}, seen_xs::AliasDict)
         if xor(has_seen, haskey(seen_xs, x))
             throw(ErrorException("Arrays must be reconstructed in the same order as they are vectorized."))
         end
@@ -93,28 +122,26 @@ end
 @static if VERSION < v"1.11-"
 else
 # basic containers: loop over defined elements, recursively converting them to vectors
-function to_vec(x::RT, seen_vecs::AliasDict) where {RT<:GenericMemory}
+function to_vec(x::GenericMemory, seen_vecs::AliasDict)
     has_seen = haskey(seen_vecs, x)
-    is_const = Enzyme.Compiler.guaranteed_const(RT)
+    is_const = Enzyme.Compiler.guaranteed_const(Core.Typeof(x))
     if has_seen || is_const
         x_vec = Float32[]
     else
-        x_vecs = Vector{<:AbstractFloat}[]
-        from_vecs = []
+        from_vecs = ElementType[]
         subvec_inds = UnitRange{Int}[]
         l = 0
         for i in eachindex(x)
             isassigned(x, i) || continue
             xi_vec, xi_from_vec = to_vec(x[i], seen_vecs)
-            push!(x_vecs, xi_vec)
             push!(from_vecs, xi_from_vec)
             push!(subvec_inds, (l + 1):(l + length(xi_vec)))
+            append!(x_vecs, xi_vec)
             l += length(xi_vec)
         end
-        x_vec = reduce(vcat, x_vecs; init=Float32[])
         seen_vecs[x] = x_vec
     end
-    function Memory_from_vec(x_vec_new::Vector{<:AbstractFloat}, seen_xs::AliasDict)
+    function Memory_from_vec(x_vec_new::Vector{<:ElementType}, seen_xs::AliasDict)
         if xor(has_seen, haskey(seen_xs, x))
             throw(ErrorException("Arrays must be reconstructed in the same order as they are vectorized."))
         end
@@ -128,6 +155,29 @@ function to_vec(x::RT, seen_vecs::AliasDict) where {RT<:GenericMemory}
             x_new[i] = xi
             k += 1
         end
+        seen_xs[x] = x_new
+        return x_new
+    end
+    return x_vec, Memory_from_vec
+end
+
+# basic containers: loop over defined elements, recursively converting them to vectors
+function to_vec(x::GenericMemory{<:ElementType}, seen_vecs::AliasDict)
+    has_seen = haskey(seen_vecs, x)
+    is_const = Enzyme.Compiler.guaranteed_const(Core.Typeof(x))
+    if has_seen || is_const
+        x_vec = Float32[]
+    else
+        seen_vecs[x] = collect(x)
+    end
+    function Memory_from_vec(x_vec_new::Vector{<:ElementType}, seen_xs::AliasDict)
+        if xor(has_seen, haskey(seen_xs, x))
+            throw(ErrorException("Arrays must be reconstructed in the same order as they are vectorized."))
+        end
+        has_seen && return reshape(seen_xs[x], size(x))
+        is_const && return x
+        x_new = typeof(x)(undef, size(x))
+        copyto!(x_new, x_vec_new)
         seen_xs[x] = x_new
         return x_new
     end
