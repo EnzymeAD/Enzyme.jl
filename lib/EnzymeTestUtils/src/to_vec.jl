@@ -190,7 +190,7 @@ function to_vec(x::GenericMemory, seen_vecs::AliasDict)
     if has_seen || is_const
         x_vec = Float32[]
     else
-        from_vecs = ElementType[]
+        from_vecs = []
         subvec_inds = UnitRange{Int}[]
         l = 0
         for i in eachindex(x)
