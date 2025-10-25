@@ -193,14 +193,20 @@ function to_vec(x::GenericMemory, seen_vecs::AliasDict)
         from_vecs = []
         subvec_inds = UnitRange{Int}[]
         l = 0
+        x_vecs = nothing
         for i in eachindex(x)
             isassigned(x, i) || continue
             xi_vec, xi_from_vec = to_vec(x[i], seen_vecs)
             push!(from_vecs, xi_from_vec)
             push!(subvec_inds, (l + 1):(l + length(xi_vec)))
-            append!(x_vecs, xi_vec)
+            x_vecs = append_or_merge(x_vecs, xi_vec)
             l += length(xi_vec)
         end
+
+        if x_vecs === nothing
+            x_vecs = (Float32[], true)
+        end
+        x_vec = x_vecs[1]
         seen_vecs[x] = x_vec
     end
     function Memory_from_vec(x_vec_new::AbstractVector{<:ElementType}, seen_xs::AliasDict)
