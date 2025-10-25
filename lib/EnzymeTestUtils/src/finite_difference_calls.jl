@@ -60,7 +60,18 @@ function multi_tovec(active_return, vals)
 end
 
 function j′vp(fdm, f_vec, ȳ, x)
-  mat = transpose(first(FiniteDifferences.jacobian(fdm, f_vec, x)))
+  ẏs = map(eachindex(x)) do n
+    return fdm(zero(eltype(x))) do ε
+        xn = x[n]
+        try
+            x[n] = xn + ε
+            return copy(f_vec(x))  # copy required incase `f(x)` returns something that aliases `x`
+        finally
+            x[n] = xn  # Can't do `x[n] -= ϵ` as floating-point math is not associative
+        end
+    end
+  end
+  mat = transpose(reduce(hcat, ẏs))
   result = zero(x)
   for i in 1:length(ȳ)
     tp = @inbounds ȳ[i] 
