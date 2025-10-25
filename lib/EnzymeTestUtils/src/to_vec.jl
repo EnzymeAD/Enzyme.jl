@@ -40,7 +40,7 @@ const ElementType = Union{Base.IEEEFloat, Complex{<:Base.IEEEFloat}}
 
 function to_vec(x)
     x_vec, from_vec_inner = to_vec(x, AliasDict())
-    from_vec(x_vec::Vector{<:ElementType) = from_vec_inner(x_vec, AliasDict())
+    from_vec(x_vec::Vector{<:ElementType}) = from_vec_inner(x_vec, AliasDict())
     return x_vec, from_vec
 end
 
