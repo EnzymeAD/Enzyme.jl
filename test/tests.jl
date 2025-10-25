@@ -1005,3 +1005,17 @@ end
     @test dinters[2].k ≈ 0.3
     @test dinters[2].t0 ≈ 2.0
 end
+
+function multisum(M)
+  return sum(i -> sum(j -> M[j, i], 1:size(M, 1)), 1:size(M, 2))
+end
+
+@testset "Switch decay" begin
+    M_sym = Symmetric([0.0 0.5624902964298075 0.017384758763595687 0.7231016696278582; 0.5624902964298075 0.0 0.33640285380605206 0.6064246107556078; 0.017384758763595687 0.33640285380605206 0.0 0.771113711577472; 0.7231016696278582 0.6064246107556078 0.771113711577472 0.0])
+
+    dM_sym = make_zero(M_sym)
+
+    Enzyme.autodiff(Reverse, multisum, Active, Duplicated(M_sym, dM_sym))
+
+    @test dM_sym ≈ [1.0 2.0 2.0 2.0; 2.0 1.0 2.0 2.0; 2.0 2.0 1.0 2.0; 2.0 2.0 2.0 1.0]
+end
