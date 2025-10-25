@@ -1015,7 +1015,7 @@ end
 
     dM_sym = make_zero(M_sym)
 
-    Enzyme.autodiff(Reverse, test, Active, Duplicated(M_sym, dM_sym))
+    Enzyme.autodiff(Reverse, multisum, Active, Duplicated(M_sym, dM_sym))
 
     @test dM_sym ≈ [1.0 2.0 2.0 2.0; 2.0 1.0 2.0 2.0; 2.0 2.0 1.0 2.0; 2.0 2.0 2.0 1.0]
 end
