@@ -940,13 +940,20 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 ophi = phi!(B, value_type(offset), "nondecay.ophi"*LLVM.name(v))
 				phicache[v] = (vphi, ophi)
 
+                                bbcache = Dict{BasicBlock, Value}()
                                 for (vt, bb) in LLVM.incoming(v) 
                                     b2 = IRBuilder()
                                     position!(b2, terminator(bb))
                                     v2, o2, hl2 = getparent(b2, vt, offset, hasload, phicache)
                                     if value_type(v2) != sPT
-                                        v2 = bitcast!(b2, v2, sPT)
+                                        if haskey(bbcache, bb)
+                                            v2 = bbcache[bb]
+                                        else
+                                            v2 = bitcast!(b2, v2, sPT)
+                                            bbcache[bb] = v2
+                                        end
                                     end
+
                                     @assert sPT == value_type(v2)
                                     push!(vs, v2)
                                     @assert value_type(offset) == value_type(o2)
