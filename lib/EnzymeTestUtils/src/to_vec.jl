@@ -86,6 +86,26 @@ function to_vec(x::Array{<:ElementType}, seen_vecs::AliasDict)
     return x_vec, FastArray_from_vec
 end
 
+# Returns (vector, bool if new allocation)
+function append_or_merge(prev, newv)
+    if prev === nothing
+        return (newv, false)
+    elseif prev[2] && eltype(newv) <: eltype(prev[1])
+        append!(prev[1], newv)
+        return prev
+    else
+        ET2 = Base.promote_type(eltype(prev[1]), eltype(newv))
+        if prev[2] && ET2 == eltype(prev[1])
+            append!(prev[1], newv)
+        else
+            res = Vector{ET2}(undef, length(prev[1]) + length(newv))
+            copyto!(@view(res[1:length(prev[1])]), prev[1])
+            copyto!(@view(res[length(prev[1]):end]), newv)
+            return (res, true)
+        end
+    end
+end
+
 # basic containers: loop over defined elements, recursively converting them to vectors
 function to_vec(x::Array{<:Complex{<:ElementType}}, seen_vecs::AliasDict)
     has_seen = haskey(seen_vecs, x)
@@ -121,7 +141,7 @@ function to_vec(x::Array, seen_vecs::AliasDict)
     if has_seen || is_const
         x_vec = Float32[]
     else
-        x_vecs = ElementType[]
+        x_vecs = nothing
         from_vecs = []
         subvec_inds = UnitRange{Int}[]
         l = 0
@@ -130,10 +150,14 @@ function to_vec(x::Array, seen_vecs::AliasDict)
             xi_vec, xi_from_vec = to_vec(x[i], seen_vecs)
             push!(subvec_inds, (l + 1):(l + length(xi_vec)))
             push!(from_vecs, xi_from_vec)
-            append!(x_vecs, xi_vec)
+            x_vecs = append_or_merge(x_vecs, xi_vec)
             l += length(xi_vec)
         end
-        x_vec = reduce(vcat, x_vecs; init=Float32[])
+
+        if x_vecs === nothing
+            x_vecs = (Float32[], true)
+        end
+        x_vec = x_vecs[1]
         seen_vecs[x] = x_vec
     end
     function Array_from_vec(x_vec_new::AbstractVector{<:ElementType}, seen_xs::AliasDict)
@@ -223,12 +247,41 @@ end
 end
 
 function to_vec(x::Tuple, seen_vecs::AliasDict)
-    x_vec, from_vec = to_vec(collect(x), seen_vecs)
+    is_const = Enzyme.Compiler.guaranteed_const(Core.Typeof(x))
+    if is_const
+        x_vec = Float32[]
+    else
+        x_vecs = nothing
+        from_vecs = []
+        subvec_inds = UnitRange{Int}[]
+        l = 0
+        for xi in x
+            xi_vec, xi_from_vec = to_vec(xi, seen_vecs)
+            push!(subvec_inds, (l + 1):(l + length(xi_vec)))
+            push!(from_vecs, xi_from_vec)
+            x_vecs = append_or_merge(x_vecs, xi_vec)
+            l += length(xi_vec)
+        end
+        if x_vecs === nothing
+            x_vecs = (Float32[], true)
+        end
+        x_vec = x_vecs[1]
+        seen_vecs[x] = x_vec
+    end
     function Tuple_from_vec(x_vec_new::AbstractVector{<:ElementType}, seen_xs::AliasDict)
-        return typeof(x)(Tuple(from_vec(x_vec_new, seen_xs)))
+        is_const && return x
+        x_new = Vector{Any}(undef, length(x))
+        for i in 1:length(x)
+            xi = from_vecs[i](@view(x_vec_new[subvec_inds[i]]), seen_xs)
+            x_new[i] = xi
+        end
+        x_new = (x_new...,)
+        seen_xs[x] = x_new
+        return x_new
     end
     return x_vec, Tuple_from_vec
 end
+
 function to_vec(x::NamedTuple, seen_vecs::AliasDict)
     x_vec, from_vec = to_vec(values(x), seen_vecs)
     function NamedTuple_from_vec(x_vec_new::AbstractVector{<:ElementType}, seen_xs::AliasDict)
