@@ -87,7 +87,7 @@ function to_vec(x::Array{<:ElementType}, seen_vecs::AliasDict)
 end
 
 # Returns (vector, bool if new allocation)
-function append_or_merge(prev, newv)
+function append_or_merge(prev::Union{Nothing, Tuple{Vector, Bool}}, newv::Vector)::Tuple{Vector, Bool}
     if prev === nothing
         return (newv, false)
     elseif prev[2] && eltype(newv) <: eltype(prev[1])
@@ -97,10 +97,11 @@ function append_or_merge(prev, newv)
         ET2 = Base.promote_type(eltype(prev[1]), eltype(newv))
         if prev[2] && ET2 == eltype(prev[1])
             append!(prev[1], newv)
+            return prev
         else
             res = Vector{ET2}(undef, length(prev[1]) + length(newv))
             copyto!(@view(res[1:length(prev[1])]), prev[1])
-            copyto!(@view(res[length(prev[1]):end]), newv)
+            copyto!(@view(res[length(prev[1])+1:end]), newv)
             return (res, true)
         end
     end
@@ -125,7 +126,7 @@ function to_vec(x::Array{<:Complex{<:ElementType}}, seen_vecs::AliasDict)
         has_seen && return reshape(seen_xs[x], size(x))
         is_const && return x
         x_new = Core.Typeof(x)(undef, sz)
-        @inbounds @simd for i in 1:length(sz)
+        @inbounds @simd for i in 1:length(x)
             x_new[i] = eltype(x)(x_vec_new[i], x_vec_new[i + length(x)])
         end
         seen_xs[x] = x_new
