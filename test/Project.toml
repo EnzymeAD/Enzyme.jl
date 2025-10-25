@@ -31,6 +31,5 @@ Enzyme = {path = ".."}
 EnzymeTestUtils = {path = "../lib/EnzymeTestUtils"}
 
 [compat]
-Clang_jll = "16.0.6"
 EnzymeTestUtils = "0.2.1"
 ParallelTestRunner = "1.0.1"
