@@ -25,6 +25,7 @@ RewriteGenericMemoryPass() = NewPMModulePass("rewrite_generic_memory", rewrite_g
 
 function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     @dispose pb = NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
         register!(pb, Addr13NoAliasPass())
         register!(pb, RewriteGenericMemoryPass())
         add!(pb, NewPMAAManager()) do aam
@@ -34,15 +35,19 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         end
         add!(pb, NewPMModulePassManager()) do mpm
             add!(mpm, Addr13NoAliasPass())
-            add!(mpm, PropagateJuliaAddrspacesPass())
 
             add!(mpm, NewPMFunctionPassManager()) do fpm
+                add!(fpm, PropagateJuliaAddrspacesPass())
                 add!(fpm, SimplifyCFGPass())
                 add!(fpm, DCEPass())
-                add!(fpm, CPUFeaturesPass())
+            end
+            add!(mpm, CPUFeaturesPass())
+            add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, SROAPass())
                 add!(fpm, MemCpyOptPass())
-                add!(fpm, AlwaysInlinerPass())
+            end
+            add!(mpm, AlwaysInlinerPass())
+            add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, AllocOptPass())
             end            
 
