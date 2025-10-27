@@ -382,7 +382,7 @@ function julia_error(
                     bt = GPUCompiler.backtrace(val)
                 end
             end
-        elseif isa val LLVM.Function
+        elseif val isa LLVM.Function
             # Need to convert function to string, since when the error is going to be printed
             # the module might have been destroyed
             ir = string(val)
