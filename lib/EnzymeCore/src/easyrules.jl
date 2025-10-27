@@ -741,6 +741,9 @@ myderiv   = autodiff(Forward, mycos, Duplicated(2.0f0, 1.2f0))[1] # -1.091157f0
 truederiv = autodiff(Forward, cos, Duplicated(2.0f0, 1.2f0))[1] # -1.091157f0
 @assert myderiv = truederiv
 ```
+
+For more information about easy rules, see the [manual](@ref man-easy-rule).
+
 """
 macro easy_rule(call, maybe_setup, partials...)
     call, setup_stmts, inputs, input_names, normal_inputs, partials = _normalize_scalarrules_macro_input(
