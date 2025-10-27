@@ -68,8 +68,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 add!(fpm, EarlyCSEPass())
                 add!(fpm, AllocOptPass())
                 add!(fpm, NewPMLoopPassManager()) do lpm
-                    # TODO(NewPM)
-                    # loop idiom
+                    add!(lpm, LoopIdiomRecognizePass())
                     add!(lpm, LoopRotatePass())
                     add!(lpm, LowerSIMDLoopPass())
                     add!(lpm, LICMPass())
@@ -102,9 +101,10 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 add!(fpm, SimplifyCFGPass())
 
 
-                # TODO(NewPM)
-                # loop idiom
-                # loop deletion
+                add!(fpm, NewPMLoopPassManager()) do lpm
+                    add!(lpm, LoopIdiomRecognizePass())
+                    add!(lpm, LoopDeletionPass())
+                end
                 add!(fpm, JumpThreadingPass())
                 add!(fpm, CorrelatedValuePropagationPass())
 
@@ -178,7 +178,7 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         add!(fpm, NewPMLoopPassManager()) do lpm
             add!(lpm, LoopRotatePass())
             # moving IndVarSimplify here prevented removing the loop in perf_sumcartesian(10:-1:1)
-            # add!(lpm, LoopIdiomPass()) TODO(NewPM): This seems to have gotten removed
+            add!(lpm, LoopIdiomRecognizePass())
 
             # LoopRotate strips metadata from terminator, so run LowerSIMD afterwards
             add!(lpm, LowerSIMDLoopPass()) # Annotate loop marked with "loopinfo" as LLVM parallel loop
