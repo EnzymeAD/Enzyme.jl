@@ -385,7 +385,7 @@ function julia_error(
         else
             # Need to convert function to string, since when the error is going to be printed
             # the module might have been destroyed
-            ir = string(parent_scope(val))
+            ir = string(parent_scope(val)::LLVM.Function)
         end
     end
 
@@ -426,7 +426,7 @@ function julia_error(
 
         msgN = sprint() do io::IO
             if isa(val, LLVM.Argument)
-                fn = parent_scope(val)
+                fn = parent_scope(val)::LLVM.Function
                 ir = string(LLVM.name(fn)) * string(function_type(fn))
                 print(io, "Current scope: \n")
                 print(io, ir)
@@ -496,7 +496,7 @@ function julia_error(
                 Base.show_backtrace(io, bt)
                 println(io)
             end
-            pscope = parent_scope(val)
+            pscope = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(pscope, false) #=error=#
             if mi !== nothing
                 println(io, "within ", mi)
