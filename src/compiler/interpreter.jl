@@ -351,47 +351,13 @@ end
 
 import .EnzymeRules: FwdConfig, RevConfig, Annotation
 using Core.Compiler: ArgInfo, StmtInfo, AbsIntState
-function Core.Compiler.abstract_call_gf_by_type(
-    @nospecialize(interp::EnzymeInterpreter),
-    @nospecialize(f),
-    arginfo::ArgInfo,
-    si::StmtInfo,
-    @nospecialize(atype),
-    sv::AbsIntState,
-    max_methods::Int,
-)
-    
-    ret = @invoke Core.Compiler.abstract_call_gf_by_type(
-        interp::AbstractInterpreter,
-        f::Any,
-        arginfo::ArgInfo,
-        si::StmtInfo,
-        atype::Any,
-        sv::AbsIntState,
-        max_methods::Int,
-    )
-    if isdefined(Core.Compiler, :Future) # if stackless inference
-        return Core.Compiler.Future{Core.Compiler.CallMeta}(ret, interp, sv) do ret, interp, sv
-            callinfo = ret.info
-            specTypes = simplify_kw(atype)
 
-            if is_primitive_func(specTypes)
-                callinfo = NoInlineCallInfo(callinfo, atype, :primitive)
-            elseif is_alwaysinline_func(specTypes)
-                callinfo = AlwaysInlineCallInfo(callinfo, atype)
-            else
-                method_table = Core.Compiler.method_table(interp)
-                if interp.inactive_rules && EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
-                    callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
-                elseif interp.forward_rules && EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
-                    callinfo = NoInlineCallInfo(callinfo, atype, :frule)
-                elseif interp.reverse_rules && EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
-                    callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
-                end
-            end
-            return Core.Compiler.CallMeta(ret.rt, ret.exct, ret.effects, callinfo)
-        end
-    end
+struct FutureCallinfoByType
+    atype::Any
+end
+
+@inline function (closure::FutureCallinfoByType)(ret::Core.Compiler.CallMeta, @nospecialize(interp::AbstractInterpreter), sv::AbsIntState)
+    atype = closure.atype
     callinfo = ret.info
     specTypes = simplify_kw(atype)
 
@@ -415,6 +381,34 @@ function Core.Compiler.abstract_call_gf_by_type(
         return Core.Compiler.CallMeta(ret.rt, ret.effects, callinfo)
     end
 end
+
+function Core.Compiler.abstract_call_gf_by_type(
+    @nospecialize(interp::EnzymeInterpreter),
+    @nospecialize(f),
+    arginfo::ArgInfo,
+    si::StmtInfo,
+    @nospecialize(atype),
+    sv::AbsIntState,
+    max_methods::Int,
+)
+
+    ret = @invoke Core.Compiler.abstract_call_gf_by_type(
+        interp::AbstractInterpreter,
+        f::Any,
+        arginfo::ArgInfo,
+        si::StmtInfo,
+        atype::Any,
+        sv::AbsIntState,
+        max_methods::Int,
+    )
+
+    if isdefined(Core.Compiler, :Future) # if stackless inference
+        return Core.Compiler.Future{Core.Compiler.CallMeta}(FutureCallinfoByType(atype), ret, interp, sv)
+    end
+
+    return FutureCallinfoByType(atype)(ret, interp, sv)
+end
+
 
 let # overload `inlining_policy`
     @static if VERSION ≥ v"1.11.0-DEV.879"
@@ -481,10 +475,12 @@ let # overload `inlining_policy`
                 @assert info.kind === :rrule
                 @safe_debug "Blocking inlining due to rrule" info.tt
             end
-            return nothing
+
+            return false
         elseif info isa AlwaysInlineCallInfo
             @safe_debug "Forcing inlining for primitive func" info.tt
-            return src
+
+            return true
         end
         return @invoke Core.Compiler.src_inlining_policy($(args_ex.args...))
     end
@@ -1063,8 +1059,10 @@ function abstract_call_known(
         if length(argtypes) != 1
             @static if VERSION < v"1.11.0-"
                 return CallMeta(Union{}, Effects(), NoCallInfo())
-            else
+            elseif VERSION < v"1.12.0-"
                 return CallMeta(Union{}, Union{}, Effects(), NoCallInfo())
+            else
+                return Core.Compiler.Future{Core.Compiler.CallMeta}(CallMeta(Union{}, Union{}, Effects(), NoCallInfo()))
             end
         end
         @static if VERSION < v"1.11.0-"
@@ -1073,28 +1071,35 @@ function abstract_call_known(
                 Core.Compiler.EFFECTS_TOTAL,
                 MethodResultPure(),
             )
-        else
+        elseif VERSION < v"1.12.0-"
             return CallMeta(
                 Core.Const(true),
                 Union{},
                 Core.Compiler.EFFECTS_TOTAL,
                 MethodResultPure(),
             )
+        else
+            return Core.Compiler.Future{Core.Compiler.CallMeta}(CallMeta(
+                Core.Const(true),
+                Union{},
+                Core.Compiler.EFFECTS_TOTAL,
+                MethodResultPure(),
+            ))
         end
     end
     
     if interp.broadcast_rewrite
         if f === Base.materialize && length(argtypes) == 2
             bcty = widenconst(argtypes[2])
-	    if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && bc_or_array_or_number_ty(bcty) && has_array(bcty)
-		ElType = ty_broadcast_getindex_eltype(interp, bcty)
-		if ElType !== Union{} && Base.isconcretetype(ElType)
-		    fn2 = Enzyme.Compiler.Interpreter.OverrideBCMaterialize{ElType}()
+    	    if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && bc_or_array_or_number_ty(bcty) && has_array(bcty)
+        		ElType = ty_broadcast_getindex_eltype(interp, bcty)
+        		if ElType !== Union{} && Base.isconcretetype(ElType)
+        		    fn2 = Enzyme.Compiler.Interpreter.OverrideBCMaterialize{ElType}()
                     arginfo2 = ArgInfo(
-                        fargs isa Nothing ? nothing :
-			[:(fn2), fargs[2:end]...],
-			[Core.Const(fn2), argtypes[2:end]...],
+                        fargs isa Nothing ? nothing : [:(fn2), fargs[2:end]...],
+        	           [Core.Const(fn2), argtypes[2:end]...],
                     )
+
                     return Base.@invoke abstract_call_known(
                         interp::AbstractInterpreter,
                         fn2::Any,
@@ -1103,7 +1108,7 @@ function abstract_call_known(
                         sv::AbsIntState,
                         max_methods::Int,
                     )
-		end
+                end
             end
         end
 
@@ -1119,6 +1124,7 @@ function abstract_call_known(
                     [:(Enzyme.Compiler.Interpreter.override_bc_copyto!), fargs[2:end]...],
                     [Core.Const(Enzyme.Compiler.Interpreter.override_bc_copyto!), argtypes[2:end]...],
                 )
+
                 return Base.@invoke abstract_call_known(
                     interp::AbstractInterpreter,
                     Enzyme.Compiler.Interpreter.override_bc_copyto!::Any,
