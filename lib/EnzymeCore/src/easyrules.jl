@@ -719,6 +719,31 @@ If a specific argument has no partial derivative, then all corresponding argumen
              ...)
 ```
 
+# Examples
+
+Let's write an `@easy_rule` for a simple trigonometric function. Enzyme already has rules for `sin` and `cos`, but for the sake of illustration we can define a new pass-through function to oen of them to demostrate the `@easy_rule` interface.
+
+```julia
+mycos(x) = cos(x)
+
+# forward-mode rule for the new function
+EnzymeRules.@easy_rule(
+    mycos(x::AbstractFloat),
+    @setup(),
+    (-sin(x),)
+)
+```
+
+Then this rule can be tested by running `Enzyme.autodiff` and comparing with the result for the regular `cos` function:
+
+```julia
+myderiv   = autodiff(Forward, mycos, Duplicated(2.0f0, 1.2f0))[1] # -1.091157f0
+truederiv = autodiff(Forward, cos, Duplicated(2.0f0, 1.2f0))[1] # -1.091157f0
+@assert myderiv = truederiv
+```
+
+For more information about easy rules, see the [manual](@ref man-easy-rule).
+
 """
 macro easy_rule(call, maybe_setup, partials...)
     call, setup_stmts, inputs, input_names, normal_inputs, partials = _normalize_scalarrules_macro_input(

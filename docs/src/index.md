@@ -307,7 +307,7 @@ Enzyme also supports a second way to mark things inactive, where the marker is "
 EnzymeRules.inactive_noinl(::typeof(det), ::UnitaryMatrix) = true
 ```
 
-### Easy Rules
+### [Easy Rules](@id man-easy-rule)
 
 The recommended way for writing rules for most use cases is through the [`EnzymeRules.@easy_rule`](@ref) macro. This macro enables users to write derivatives for any functions which only read from their arguments (e.g. do not overwrite memory), and has numbers, matricies of numbers, or tuples thereof as arguments/result types. 
 
