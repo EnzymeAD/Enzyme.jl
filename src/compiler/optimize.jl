@@ -21,7 +21,7 @@ EnzymeAttributorPass() = NewPMModulePass("enzyme_attributor", enzyme_attributor_
 ReinsertGCMarkerPass() = NewPMFunctionPass("reinsert_gcmarker", reinsert_gcmarker_pass!)
 SafeAtomicToRegularStorePass() = NewPMFunctionPass("safe_atomic_to_regular_store", safe_atomic_to_regular_store!)
 Addr13NoAliasPass() = NewPMModulePass("addr13_noalias", addr13NoAlias)
-RewriteGenericMemoryPass() = NewPMModulePass("rewrite_generic_memory", rewrite_generic_memory)
+RewriteGenericMemoryPass() = NewPMModulePass("rewrite_generic_memory", rewrite_generic_memory!)
 
 function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     @dispose pb = NewPMPassBuilder() begin
