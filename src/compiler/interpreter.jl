@@ -1077,7 +1077,7 @@ function abstract_call_known(
                 Core.Compiler.EFFECTS_TOTAL,
                 MethodResultPure(),
             )
-        else if VERSION < v"1.12.0-"
+        elseif VERSION < v"1.12.0-"
             return CallMeta(
                 Core.Const(true),
                 Union{},
