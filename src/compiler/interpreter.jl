@@ -378,7 +378,7 @@ end
     @static if VERSION ≥ v"1.11-"
         return Core.Compiler.CallMeta(ret.rt, ret.exct, ret.effects, callinfo)
     else
-        return Core.Compiler.CallMeta(ret.rt, ret.exct, ret.effects, callinfo)
+        return Core.Compiler.CallMeta(ret.rt, ret.effects, callinfo)
     end
 end
 
