@@ -1578,7 +1578,7 @@ function __init__()
             being we recommend using 1.11 or LTS.
 
             For latest updates, check the status of support for Julia 1.12+ at
-            https://github.com/EnzymeAD/Enzyme.jl/issues/2665.
+            https://github.com/EnzymeAD/Enzyme.jl/issues/2699.
             """ maxlog = 1
         end
     end
