@@ -481,10 +481,12 @@ let # overload `inlining_policy`
                 @assert info.kind === :rrule
                 @safe_debug "Blocking inlining due to rrule" info.tt
             end
-            return nothing
+
+            return false
         elseif info isa AlwaysInlineCallInfo
             @safe_debug "Forcing inlining for primitive func" info.tt
-            return src
+
+            return true
         end
         return @invoke Core.Compiler.src_inlining_policy($(args_ex.args...))
     end
