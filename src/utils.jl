@@ -386,6 +386,7 @@ function methodinstance_generator(world::UInt, source, self, @nospecialize(mode:
     ci = create_fresh_codeinfo(prevmethodinstance, source, world, slotnames, code)
     ci.min_world = min_world[]
     ci.max_world = max_world[]
+    ci.edges = Any[mi]
 
     # TODO: Missing edge handling
     return ci
