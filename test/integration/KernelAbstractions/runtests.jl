@@ -42,7 +42,7 @@ end
     A .= (1:1:64)
     dA .= 1
 
-    _, dB, _ = Enzyme.autodiff(Reverse, mul_caller, Duplicated(A, dA), Active(1.2))[1]
+    _, dB = Enzyme.autodiff(Reverse, mul_caller, Duplicated(A, dA), Active(1.2))[1]
 
     @test all(dA .≈ 1.2)
     @test dB ≈ sum(1:1:64)
