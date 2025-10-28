@@ -299,6 +299,7 @@ function addr13NoAlias(mod::LLVM.Module)
             end
         end
     end
+    return true
 end
 
 ## given code like
