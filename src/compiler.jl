@@ -1263,9 +1263,12 @@ function nested_codegen!(
     edges = edges::Vector{Any}
     push!(edges, funcspec)
 
-    LLVM.ModulePassManager() do pm
-        API.AddPreserveNVVMPass!(pm, true) #=Begin=#
-        LLVM.run!(pm, otherMod)
+    LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+        LLVM.add!(pb, LLVM.NewPMModulePassManager()) do mpm
+            LLVM.add!(mpm, PreserveNVVMPass())
+        end
+        LLVM.run!(pb, mod)
     end
     
     if DumpPreNestedCheck[]
@@ -2752,10 +2755,7 @@ function enzyme!(
     for f in collect(functions(mod))
         API.EnzymeFixupBatchedJuliaCallingConvention(f)
     end
-    ModulePassManager() do pm
-        dce!(pm)
-        LLVM.run!(pm, mod)
-    end
+    run!(DCEPass(), mod)
     fix_decayaddr!(mod)
     adjointf = adjointf == nothing ? nothing : functions(mod)[adjointfname]
     augmented_primalf =
@@ -4502,9 +4502,12 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         permit_inlining!(f)
     end
 
-    LLVM.ModulePassManager() do pm
-        API.AddPreserveNVVMPass!(pm, true) #=Begin=#
-        LLVM.run!(pm, mod)
+    LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+        LLVM.add!(pb, LLVM.NewPMModulePassManager()) do mpm
+            LLVM.add!(mpm, PreserveNVVMPass())
+        end
+        LLVM.run!(pb, mod)
     end
 
     primalf = meta.entry
@@ -5164,10 +5167,7 @@ end
                 push!(toremove, name(f))
             end
         end
-        ModulePassManager() do pm
-            always_inliner!(pm)
-            LLVM.run!(pm, mod)
-        end
+        run!(AlwaysInlinerPass(), mod)
         for fname in toremove
             if haskey(functions(mod), fname)
                 f = functions(mod)[fname]
@@ -5186,10 +5186,14 @@ end
         augmented_primalf = nothing
     end
 
-    LLVM.ModulePassManager() do pm
-        API.AddPreserveNVVMPass!(pm, false) #=Begin=#
-        LLVM.run!(pm, mod)
+    LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+        LLVM.add!(pb, LLVM.NewPMModulePassManager()) do mpm
+            LLVM.add!(mpm, PreserveNVVMEndPass())
+        end
+        LLVM.run!(pb, mod)
     end
+
     if !(primal_target isa GPUCompiler.NativeCompilerTarget)
         mark_gpu_intrinsics!(primal_target, mod)
     end
