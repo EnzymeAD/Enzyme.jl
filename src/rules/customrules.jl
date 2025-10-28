@@ -18,6 +18,20 @@ import LinearAlgebra
     end
 
     @assert partial <: AbstractArray
+    if dx <: Number
+        if prev !== Nothing
+	   return quote
+		Base.@_inline_meta
+		LinearAlgebra.daxpy!(dx, partial, prev)
+		prev
+	   end
+	else
+	   return quote
+		Base.@_inline_meta
+		partial * dx
+	   end
+	end
+    end
     @assert dx <: AbstractArray
     N = ndims(partial)
     M = ndims(dx)
