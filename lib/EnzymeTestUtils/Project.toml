@@ -1,7 +1,7 @@
 name = "EnzymeTestUtils"
 uuid = "12d8515a-0907-448a-8884-5fe00fdf1c5a"
 authors = ["Seth Axen <seth@sethaxen.com>", "William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu>"]
-version = "0.2.5"
+version = "0.2.6"
 
 [deps]
 ConstructionBase = "187b0558-2788-49d3-abe0-74a17ed4e7c9"
@@ -12,16 +12,24 @@ LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
+[weakdeps]
+GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
+
+[extensions]
+EnzymeTestUtilsGPUArraysCoreExt = ["Enzyme", "GPUArraysCore"]
+
 [compat]
 ConstructionBase = "1.4.1"
 Enzyme = "0.13.78"
 EnzymeCore = "0.5, 0.6, 0.7, 0.8"
 FiniteDifferences = "0.12.33"
+GPUArraysCore = "0.1.6, 0.2"
 MetaTesting = "0.1"
 Quaternions = "0.7"
 julia = "1.10"
 
 [extras]
+GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 MetaTesting = "9e32d19f-1e4f-477a-8631-b16c78aa0f56"
 Quaternions = "94ee1d12-ae83-5a48-8b1c-48b8ff168ae0"

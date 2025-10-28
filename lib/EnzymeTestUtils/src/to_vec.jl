@@ -86,8 +86,10 @@ function to_vec(x::Array{<:ElementType}, seen_vecs::AliasDict)
     return x_vec, FastArray_from_vec
 end
 
+acopyto!(dst, src) = Base.copyto!(dst, src)
+
 # Returns (vector, bool if new allocation)
-function append_or_merge(prev::Union{Nothing, Tuple{Vector, Bool}}, newv::Vector)::Tuple{Vector, Bool}
+function append_or_merge(prev::Union{Nothing, Tuple{AbstractVector, Bool}}, newv::AbstractVector)::Tuple{AbstractVector, Bool}
     if prev === nothing
         return (newv, false)
     elseif prev[2] && eltype(newv) <: eltype(prev[1])
@@ -100,8 +102,8 @@ function append_or_merge(prev::Union{Nothing, Tuple{Vector, Bool}}, newv::Vector
             return prev
         else
             res = Vector{ET2}(undef, length(prev[1]) + length(newv))
-            copyto!(@view(res[1:length(prev[1])]), prev[1])
-            copyto!(@view(res[length(prev[1])+1:end]), newv)
+            acopyto!(@view(res[1:length(prev[1])]), prev[1])
+            acopyto!(@view(res[length(prev[1])+1:end]), newv)
             return (res, true)
         end
     end
