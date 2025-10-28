@@ -1,19 +1,11 @@
-struct PipelineConfig
-    Speedup::Cint
-    Size::Cint
-    lower_intrinsics::Cint
-    dump_native::Cint
-    external_use::Cint
-    llvm_only::Cint
-    always_inline::Cint
-    enable_early_simplifications::Cint
-    enable_early_optimizations::Cint
-    enable_scalar_optimizations::Cint
-    enable_loop_optimizations::Cint
-    enable_vector_pipeline::Cint
-    remove_ni::Cint
-    cleanup::Cint
+function registerEnzymeAndPassPipeline!(pb::NewPMPassBuilder)
+    enzyme_callback = cglobal((:registerEnzymeAndPassPipeline, API.libEnzyme))
+    LLVM.API.LLVMPassBuilderExtensionsPushRegistrationCallbacks(pb.exts, enzyme_callback)
 end
+
+LLVM.@function_pass "jl-inst-simplify" JLInstSimplifyPass
+LLVM.@module_pass "preserve-nvvm" PreserveNVVMPass
+LLVM.@module_pass "preserve-nvvm-end" PreserveNVVMEndPass
 
 const RunAttributor = Ref(true)
 
