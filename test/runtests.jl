@@ -7,6 +7,11 @@ testsuite = find_tests(@__DIR__)
 # Add threads tests to be run with multiple Julia threads (will be configured in
 # `test_worker`).
 testsuite["threads/2"] = :(include($(joinpath(@__DIR__, "threads.jl"))))
+# Exclude integration tests, they're handled differently (they each run in their
+# own environment)
+for (k, _) in testsuite
+    startswith(k, "integration/") && delete!(testsuite, k)
+end
 
 # Parse arguments
 args = parse_args(ARGS)
