@@ -29,7 +29,6 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     @dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, Addr13NoAliasPass())
-        register!(pb, RewriteGenericMemoryPass())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
@@ -51,13 +50,38 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
             add!(mpm, AlwaysInlinerPass())
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, AllocOptPass())
-            end            
+            end
+        end
+        run!(pb, mod, tm)
+    end
 
+    # Globalopt is separated as it can delete functions, which invalidates the Julia hardcoded pointers to
+    # known functions
+    @dispose pb = NewPMPassBuilder() begin
+        add!(pb, NewPMAAManager()) do aam
+            add!(aam, ScopedNoAliasAA())
+            add!(aam, TypeBasedAA())
+            add!(aam, BasicAA())
+        end
+        add!(pb, NewPMModulePassManager()) do mpm
             add!(mpm, GlobalOptPass())
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, GVNPass())
             end
+        end
+        run!(pb, mod, tm)
+    end
 
+    # Note: Enzyme uses to run this part twice
+    @dispose pb = NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+        register!(pb, RewriteGenericMemoryPass())
+        add!(pb, NewPMAAManager()) do aam
+            add!(aam, ScopedNoAliasAA())
+            add!(aam, TypeBasedAA())
+            add!(aam, BasicAA())
+        end
+        add!(pb, NewPMModulePassManager()) do mpm
             add!(mpm, RewriteGenericMemoryPass())
 
             add!(mpm, NewPMFunctionPassManager()) do fpm
@@ -74,6 +98,11 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 add!(fpm, ReassociatePass())
                 add!(fpm, EarlyCSEPass())
                 add!(fpm, AllocOptPass())
+
+                add!(fpm, InstCombinePass())
+                add!(fpm, JLInstSimplifyPass())
+                add!(fpm, JumpThreadingPass())
+
                 add!(fpm, NewPMLoopPassManager(use_memory_ssa=true)) do lpm
                     add!(lpm, LoopIdiomRecognizePass())
                     add!(lpm, LoopRotatePass())
@@ -89,7 +118,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                     add!(lpm, IndVarSimplifyPass())
                     add!(lpm, LoopDeletionPass())
                 end
-                add!(fpm, LoopUnrollPass(opt_level=2))
+                add!(fpm, LoopUnrollPass(opt_level=2)) # what opt level?
                 add!(fpm, AllocOptPass())
                 add!(fpm, SROAPass())
                 add!(fpm, GVNPass())
@@ -125,20 +154,29 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 add!(fpm, InstCombinePass())
                 add!(fpm, JLInstSimplifyPass())
             end
+        end
+        run!(pb, mod, tm)
+    end
 
+    # Globalopt is separated as it can delete functions, which invalidates the Julia hardcoded pointers to
+    # known functions
+    @dispose pb = NewPMPassBuilder() begin
+        add!(pb, NewPMAAManager()) do aam
+            add!(aam, ScopedNoAliasAA())
+            add!(aam, TypeBasedAA())
+            add!(aam, BasicAA())
+        end
+        add!(pb, NewPMModulePassManager()) do mpm
             add!(mpm, GlobalOptPass())
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, GVNPass())
             end
         end
-
         run!(pb, mod, tm)
-
-        # TODO: Turn into passes?
-        removeDeadArgs!(mod, tm)
-        detect_writeonly!(mod)
-        nodecayed_phis!(mod)
     end
+    removeDeadArgs!(mod, tm)
+    detect_writeonly!(mod)
+    nodecayed_phis!(mod)
 end
 
 function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
