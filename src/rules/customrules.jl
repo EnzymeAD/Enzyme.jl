@@ -22,7 +22,7 @@ import LinearAlgebra
         if prev !== Nothing
 	   return quote
 		Base.@_inline_meta
-		LinearAlgebra.daxpy!(dx, partial, prev)
+		LinearAlgebra.axpy!(dx, partial, prev)
 		prev
 	   end
 	else
