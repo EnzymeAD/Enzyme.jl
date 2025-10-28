@@ -1,73 +1,13 @@
-struct PipelineConfig
-    Speedup::Cint
-    Size::Cint
-    lower_intrinsics::Cint
-    dump_native::Cint
-    external_use::Cint
-    llvm_only::Cint
-    always_inline::Cint
-    enable_early_simplifications::Cint
-    enable_early_optimizations::Cint
-    enable_scalar_optimizations::Cint
-    enable_loop_optimizations::Cint
-    enable_vector_pipeline::Cint
-    remove_ni::Cint
-    cleanup::Cint
+function registerEnzymeAndPassPipeline!(pb::NewPMPassBuilder)
+    enzyme_callback = cglobal((:registerEnzymeAndPassPipeline, API.libEnzyme))
+    LLVM.API.LLVMPassBuilderExtensionsPushRegistrationCallbacks(pb.exts, enzyme_callback)
 end
+
+LLVM.@function_pass "jl-inst-simplify" JLInstSimplifyPass
+LLVM.@module_pass "preserve-nvvm" PreserveNVVMPass
+LLVM.@module_pass "preserve-nvvm-end" PreserveNVVMEndPass
 
 const RunAttributor = Ref(true)
-
-function pipeline_options(;
-    lower_intrinsics::Bool = true,
-    dump_native::Bool = false,
-    external_use::Bool = false,
-    llvm_only::Bool = false,
-    always_inline::Bool = true,
-    enable_early_simplifications::Bool = true,
-    enable_early_optimizations::Bool = true,
-    enable_scalar_optimizations::Bool = true,
-    enable_loop_optimizations::Bool = true,
-    enable_vector_pipeline::Bool = true,
-    remove_ni::Bool = true,
-    cleanup::Bool = true,
-    Size::Cint = 0,
-    Speedup::Cint = 3,
-)
-    return PipelineConfig(
-        Speedup,
-        Size,
-        lower_intrinsics,
-        dump_native,
-        external_use,
-        llvm_only,
-        always_inline,
-        enable_early_simplifications,
-        enable_early_optimizations,
-        enable_scalar_optimizations,
-        enable_loop_optimizations,
-        enable_vector_pipeline,
-        remove_ni,
-        cleanup,
-    )
-end
-
-function run_jl_pipeline(pm::ModulePassManager, tm::LLVM.TargetMachine; kwargs...)
-    config = Ref(pipeline_options(; kwargs...))
-    function jl_pipeline(m)
-        @dispose pb = NewPMPassBuilder() begin
-            add!(pb, NewPMModulePassManager()) do mpm
-                @ccall jl_build_newpm_pipeline(
-                    mpm.ref::Ptr{Cvoid},
-                    pb.ref::Ptr{Cvoid},
-                    config::Ptr{PipelineConfig},
-                )::Cvoid
-            end
-            LLVM.run!(mpm, m, tm)
-        end
-        return true
-    end
-    add!(pm, ModulePass("JLPipeline", jl_pipeline))
-end
 
 @static if VERSION < v"1.11.0-DEV.428"
 else
@@ -215,22 +155,7 @@ function loop_optimizations_tm!(pm::LLVM.ModulePassManager, tm::LLVM.TargetMachi
             loop_unswitch!(pm)
         end
     else
-        run_jl_pipeline(
-            pm,
-            tm;
-            lower_intrinsics = false,
-            dump_native = false,
-            external_use = false,
-            llvm_only = false,
-            always_inline = false,
-            enable_early_simplifications = false,
-            enable_early_optimizations = false,
-            enable_scalar_optimizations = false,
-            enable_loop_optimizations = true,
-            enable_vector_pipeline = false,
-            remove_ni = false,
-            cleanup = false,
-        )
+        @assert false
     end
 end
 
@@ -253,36 +178,7 @@ function more_loop_optimizations_tm!(pm::LLVM.ModulePassManager, tm::LLVM.Target
         loop_deletion!(pm)
         loop_unroll!(pm) # TODO: in Julia createSimpleLoopUnroll
     else
-        # LowerSIMDLoopPass
-        # LoopRotatePass [opt >= 2]
-        # LICMPass
-        # JuliaLICMPass
-        # SimpleLoopUnswitchPass
-        # LICMPass
-        # JuliaLICMPass
-        # IRCEPass
-        # LoopInstSimplifyPass
-        #   - in ours this is instcombine with jlinstsimplify
-        # LoopIdiomRecognizePass
-        # IndVarSimplifyPass
-        # LoopDeletionPass
-        # LoopFullUnrollPass
-        run_jl_pipeline(
-            pm,
-            tm;
-            lower_intrinsics = false,
-            dump_native = false,
-            external_use = false,
-            llvm_only = false,
-            always_inline = false,
-            enable_early_simplifications = false,
-            enable_early_optimizations = false,
-            enable_scalar_optimizations = false,
-            enable_loop_optimizations = true,
-            enable_vector_pipeline = false,
-            remove_ni = false,
-            cleanup = false,
-        )
+        @assert false
     end
 end
 
