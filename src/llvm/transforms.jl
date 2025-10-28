@@ -2558,37 +2558,47 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         end
     end
     propagate_returned!(mod)
-    ModulePassManager() do pm
-        instruction_combining!(pm)
-        jl_inst_simplify!(pm)
-        alloc_opt_tm!(pm, tm)
-        scalar_repl_aggregates_ssa!(pm) # SSA variant?
-        cse!(pm)
-        LLVM.run!(pm, mod)
+    LLVM.@dispose pb = NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+        add!(pb, NewPMModulePassManager()) do mpm
+            add!(mpm, NewPMFunctionPassManager()) do fpm
+                add!(fpm, InstCombinePass())
+                add!(fpm, JLInstSimplifyPass())
+                add!(fpm, AllocOptPass())
+                add!(fpm, SROAPass())
+                add!(fpm, EarlyCSEPass())
+            end
+        end
+        LLVM.run!(pb, mod)
     end
     propagate_returned!(mod)
     pre_attr!(mod, RunAttributor[])
     if RunAttributor[]
-        if LLVM.version().major >= 13
-            ModulePassManager() do pm
-                API.EnzymeAddAttributorLegacyPass(pm)
-                LLVM.run!(pm, mod)
+        LLVM.@dispose pb = NewPMPassBuilder() begin
+            register!(pb, EnzymeAttributorPass())
+            add!(pb, NewPMModulePassManager()) do mpm
+                add!(mpm, EnzymeAttributorPass())
             end
+            LLVM.run!(pb, mod)
         end
     end
     propagate_returned!(mod)
-    ModulePassManager() do pm
-        instruction_combining!(pm)
-        jl_inst_simplify!(pm)
-        alloc_opt_tm!(pm, tm)
-        scalar_repl_aggregates_ssa!(pm) # SSA variant?
-        if RunAttributor[]
-            if LLVM.version().major >= 13
-                API.EnzymeAddAttributorLegacyPass(pm)
+    LLVM.@dispose pb = NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+        register!(pb, EnzymeAttributorPass())
+        add!(pb, NewPMModulePassManager()) do mpm
+            add!(mpm, NewPMFunctionPassManager()) do fpm
+                add!(fpm, InstCombinePass())
+                add!(fpm, JLInstSimplifyPass())
+                add!(fpm, AllocOptPass())
+                add!(fpm, SROAPass())
+            end
+            add!(mpm, EnzymeAttributorPass())
+            add!(mpm, NewPMFunctionPassManager()) do fpm
+                add!(fpm, EarlyCSEPass())
             end
         end
-        cse!(pm)
-        LLVM.run!(pm, mod)
+        LLVM.run!(pb, mod)
     end
     post_attr!(mod, RunAttributor[])
     propagate_returned!(mod)
