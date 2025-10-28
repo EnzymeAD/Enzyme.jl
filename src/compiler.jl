@@ -1263,9 +1263,12 @@ function nested_codegen!(
     edges = edges::Vector{Any}
     push!(edges, funcspec)
 
-    LLVM.ModulePassManager() do pm
-        API.AddPreserveNVVMPass!(pm, true) #=Begin=#
-        LLVM.run!(pm, otherMod)
+    LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+        LLVM.add!(pb, LLVM.NewPMModulePassManager()) do mpm
+            LLVM.add!(mpm, PreserveNVVMPass())
+        end
+        LLVM.run!(pb, mod)
     end
     
     if DumpPreNestedCheck[]
@@ -4499,9 +4502,12 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         permit_inlining!(f)
     end
 
-    LLVM.ModulePassManager() do pm
-        API.AddPreserveNVVMPass!(pm, true) #=Begin=#
-        LLVM.run!(pm, mod)
+    LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+        LLVM.add!(pb, LLVM.NewPMModulePassManager()) do mpm
+            LLVM.add!(mpm, PreserveNVVMPass())
+        end
+        LLVM.run!(pb, mod)
     end
 
     primalf = meta.entry
@@ -5180,10 +5186,14 @@ end
         augmented_primalf = nothing
     end
 
-    LLVM.ModulePassManager() do pm
-        API.AddPreserveNVVMPass!(pm, false) #=Begin=#
-        LLVM.run!(pm, mod)
+    LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+        LLVM.add!(pb, LLVM.NewPMModulePassManager()) do mpm
+            LLVM.add!(mpm, PreserveNVVMEndPass())
+        end
+        LLVM.run!(pb, mod)
     end
+
     if !(primal_target isa GPUCompiler.NativeCompilerTarget)
         mark_gpu_intrinsics!(primal_target, mod)
     end

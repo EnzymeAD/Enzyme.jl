@@ -4,6 +4,8 @@ function registerEnzymeAndPassPipeline!(pb::NewPMPassBuilder)
 end
 
 LLVM.@function_pass "jl-inst-simplify" JLInstSimplifyPass
+LLVM.@module_pass "preserve-nvvm" PreserveNVVMPass
+LLVM.@module_pass "preserve-nvvm-end" PreserveNVVMEndPass
 
 const RunAttributor = Ref(true)
 
