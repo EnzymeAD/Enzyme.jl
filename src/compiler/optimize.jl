@@ -72,7 +72,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 add!(fpm, ReassociatePass())
                 add!(fpm, EarlyCSEPass())
                 add!(fpm, AllocOptPass())
-                add!(fpm, NewPMLoopPassManager()) do lpm
+                add!(fpm, NewPMLoopPassManager(use_memory_ssa=true)) do lpm
                     add!(lpm, LoopIdiomRecognizePass())
                     add!(lpm, LoopRotatePass())
                     add!(lpm, LowerSIMDLoopPass())
@@ -180,7 +180,7 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         # remove those before optimizing loops.
         add!(fpm, AllocOptPass())
 
-        add!(fpm, NewPMLoopPassManager()) do lpm
+        add!(fpm, NewPMLoopPassManageruse(use_memory_ssa=true)) do lpm
             add!(lpm, LoopRotatePass())
             # moving IndVarSimplify here prevented removing the loop in perf_sumcartesian(10:-1:1)
             add!(lpm, LoopIdiomRecognizePass())
