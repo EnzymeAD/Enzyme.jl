@@ -1202,12 +1202,23 @@ end
         return true
     end
 
-    emit_error(B, orig, "Enzyme: Not yet implemented forward for jl_eqtable_get")
+    err = emit_error(B, orig, "Enzyme: Not yet implemented forward for jl_eqtable_get")
 
+    newo = new_from_original(gutils, orig)
+    API.moveBefore(newo, err, B)
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        width = get_width(gutils)
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx = 1:width
+            if width == 1
+                shadowres = normal
+            else
+                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
     end
 
     return false
@@ -1362,12 +1373,23 @@ end
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    emit_error(B, orig, "Enzyme: Not yet implemented forward for jl_eqtable_put")
+    err = emit_error(B, orig, "Enzyme: Not yet implemented forward for jl_eqtable_put")
+    newo = new_from_original(gutils, orig)
+    API.moveBefore(newo, err, B)
 
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        width = get_width(gutils)
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx = 1:width
+            if width == 1
+                shadowres = normal
+            else
+                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
     end
 
     return false
@@ -1481,12 +1503,24 @@ end
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    emit_error(B, orig, "Enzyme: Not yet implemented forward for jl_idtable_rehash")
+    err = emit_error(B, orig, "Enzyme: Not yet implemented forward for jl_idtable_rehash")
+
+    newo = new_from_original(gutils, orig)
+    API.moveBefore(newo, err, B)
 
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        width = get_width(gutils)
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx = 1:width
+            if width == 1
+                shadowres = normal
+            else
+                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
     end
 
     return false
@@ -1496,16 +1530,27 @@ end
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    emit_error(
+    err = emit_error(
         B,
         orig,
         "Enzyme: Not yet implemented augmented forward for jl_idtable_rehash",
     )
+    newo = new_from_original(gutils, orig)
+    API.moveBefore(newo, err, B)
 
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        width = get_width(gutils)
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx = 1:width
+            if width == 1
+                shadowres = normal
+            else
+                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
     end
 
     return false
@@ -2101,7 +2146,16 @@ end
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        width = get_width(gutils)
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx = 1:width
+            if width == 1
+                shadowres = normal
+            else
+                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
     end
     return false
 end
@@ -2120,7 +2174,16 @@ end
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        width = get_width(gutils)
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx = 1:width
+            if width == 1
+                shadowres = normal
+            else
+                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
     end
     # Delete the primal code
     if normal !== nothing
@@ -2152,7 +2215,16 @@ end
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        width = get_width(gutils)
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx = 1:width
+            if width == 1
+                shadowres = normal
+            else
+                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
     end
     return false
 end
@@ -2171,7 +2243,16 @@ end
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        width = get_width(gutils)
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx = 1:width
+            if width == 1
+                shadowres = normal
+            else
+                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
     end
     # Delete the primal code
     if normal !== nothing

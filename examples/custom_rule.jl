@@ -1,4 +1,4 @@
-# # Enzyme custom rules tutorial
+# # [Enzyme custom rules tutorial](@id custom_rules)
 #
 # !!! note "More Examples"
 #     The tutorial below focuses on a simple setting to illustrate the basic concepts of writing custom rules.

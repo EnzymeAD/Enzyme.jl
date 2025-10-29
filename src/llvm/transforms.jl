@@ -940,13 +940,20 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 ophi = phi!(B, value_type(offset), "nondecay.ophi"*LLVM.name(v))
 				phicache[v] = (vphi, ophi)
 
+                                bbcache = Dict{BasicBlock, Value}()
                                 for (vt, bb) in LLVM.incoming(v) 
                                     b2 = IRBuilder()
                                     position!(b2, terminator(bb))
                                     v2, o2, hl2 = getparent(b2, vt, offset, hasload, phicache)
                                     if value_type(v2) != sPT
-                                        v2 = bitcast!(b2, v2, sPT)
+                                        if haskey(bbcache, bb)
+                                            v2 = bbcache[bb]
+                                        else
+                                            v2 = bitcast!(b2, v2, sPT)
+                                            bbcache[bb] = v2
+                                        end
                                     end
+
                                     @assert sPT == value_type(v2)
                                     push!(vs, v2)
                                     @assert value_type(offset) == value_type(o2)
@@ -2394,10 +2401,8 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     # and including 12 (but fixed 13+), Attributor will incorrectly change functions that
     # call code with undef to become unreachable, even when there exist other valid
     # callsites. See: https://godbolt.org/z/9Y3Gv6q5M
-    ModulePassManager() do pm
-        global_dce!(pm)
-        LLVM.run!(pm, mod)
-    end
+    run!(GlobalDCEPass(), mod)
+
     # Prevent dead-arg-elimination of functions which we may require args for in the derivative
     funcT = LLVM.FunctionType(LLVM.VoidType(), LLVMType[], vararg = true)
     if LLVM.version().major <= 15

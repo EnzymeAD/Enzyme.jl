@@ -27,7 +27,7 @@ jobs:
             - uses: actions/checkout@v5
             - uses: julia-actions/setup-julia@v2
               with:
-                version: "1"
+                version: "1.11"
             - uses: julia-actions/cache@v2
             - name: Extract Package Name from Project.toml
               id: extract-package-name
@@ -55,7 +55,7 @@ jobs:
                 mkdir -p plots
                 benchpkgplot ${{ steps.extract-package-name.outputs.package_name }} --rev="${{github.event.repository.default_branch}},${{github.event.pull_request.head.sha}}" --npart=10 --format=png --input-dir=results/ --output-dir=plots/
             - name: Upload plot as artifact
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v5
               id: artifact-upload-step
               with:
                 name: plots
@@ -73,7 +73,7 @@ jobs:
                 echo 'A plot of the benchmark results has been uploaded as an artifact at ${{ steps.artifact-upload-step.outputs.artifact-url }}.' >> body.md
 
             - name: Find Comment
-              uses: peter-evans/find-comment@v3
+              uses: peter-evans/find-comment@v4
               id: fcbenchmark
               with:
                 issue-number: ${{ github.event.pull_request.number }}
@@ -81,7 +81,7 @@ jobs:
                 body-includes: Benchmark Results
 
             - name: Comment on PR
-              uses: peter-evans/create-or-update-comment@v4
+              uses: peter-evans/create-or-update-comment@v5
               # Can't post the comment for PRs opened from forks:
               # <https://github.com/peter-evans/create-or-update-comment/blob/fdb73c443d3a4f66832374f01fb9a713fad84937/README.md#action-inputs>.
               if: ${{ ! github.event.pull_request.head.repo.fork }}

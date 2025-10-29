@@ -1615,7 +1615,12 @@ end
             invert_pointer(gutils, origops[1], B)
         else
             estr = "Mismatched activity for: " * string(orig) * " const input " *string(origops[1]) * ", differentiable return"
-            LLVM.Value(julia_error(estr, orig.ref, API.ET_MixedActivityError, gutils.ref, origops[1].ref, B.ref))
+            eres = julia_error(estr, orig.ref, API.ET_MixedActivityError, gutils.ref, origops[1].ref, B.ref)
+            if eres != C_NULL
+                LLVM.Value(eres)
+            else
+                invert_pointer(gutils, origops[1], B)
+            end
         end
         if width == 1
             args = LLVM.Value[
@@ -1819,7 +1824,16 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        width = get_width(gutils)
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx = 1:width
+            if width == 1
+                shadowres = normal
+            else
+                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
     end
 
     origops = collect(operands(orig))[offset:end]
@@ -1916,7 +1930,16 @@ function common_setfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        width = get_width(gutils)
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx = 1:width
+            if width == 1
+                shadowres = normal
+            else
+                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
     end
 
     origops = collect(operands(orig))[offset:end]
@@ -2178,11 +2201,22 @@ function common_finalizer_fwd(offset, B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    emit_error(B, orig, "Enzyme: unhandled forward for jl_f_finalizer")
+    err = emit_error(B, orig, "Enzyme: unhandled forward for jl_f_finalizer")
+    newo = new_from_original(gutils, orig)
+    API.moveBefore(newo, err, B)
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        width = get_width(gutils)
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx = 1:width
+            if width == 1
+                shadowres = normal
+            else
+                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
     end
     return false
 end
@@ -2191,11 +2225,22 @@ function common_finalizer_augfwd(offset, B, orig, gutils, normalR, shadowR, tape
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_f_finalizer")
+    err = emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_f_finalizer")
+    newo = new_from_original(gutils, orig)
+    API.moveBefore(newo, err, B)
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
-        unsafe_store!(shadowR, normal.ref)
+        width = get_width(gutils)
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx = 1:width
+            if width == 1
+                shadowres = normal
+            else
+                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
     end
     return false
 end

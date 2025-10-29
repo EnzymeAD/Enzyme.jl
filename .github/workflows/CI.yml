@@ -72,6 +72,11 @@ jobs:
             libEnzyme: packaged
             version: '1.11'
             assertions: true
+          - os: ubuntu-24.04
+            arch: default
+            libEnzyme: packaged
+            version: '1.12'
+            assertions: true
     steps:
       - uses: actions/checkout@v5
       - uses: julia-actions/setup-julia@v2
@@ -122,6 +127,17 @@ jobs:
         id: buildpkg
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+      - name: "Set test arguments"
+        shell: bash
+        run: |
+          # Run tests in verbose mode
+          TEST_ARGS=(--verbose)
+          if [[ ${{ runner.os }} == "macOS" ]]; then
+              # Encourage ParallelTestRunner to use two jobs on macOS, rather
+              # than the single one it'd use by default.
+              TEST_ARGS+=(--jobs=2)
+          fi
+          echo "runtest_test_args=${TEST_ARGS[@]}" >> "${GITHUB_ENV}"
       - uses: julia-actions/julia-runtest@v1
         if: matrix.version != 'nightly' || steps.buildpkg.outcome == 'success'
         continue-on-error: ${{ matrix.version == 'nightly' }}
@@ -129,6 +145,7 @@ jobs:
         # TODO restore coverage post https://github.com/JuliaGPU/GPUCompiler.jl/pull/711
         with:
           coverage: ${{ matrix.version != '1.11' || !matrix.assertions }}
+          test_args: ${{ env.runtest_test_args }}
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - uses: julia-actions/julia-processcoverage@v1
@@ -139,6 +156,7 @@ jobs:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false  # or true if you want CI to fail when Codecov fails
+
   enzymetestutils:
     timeout-minutes: 60
     name: EnzymeTestUtils - Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - ${{ github.event_name }}
@@ -193,6 +211,7 @@ jobs:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false  # or true if you want CI to fail when Codecov fails
+
   enzymecore:
     timeout-minutes: 20
     name: EnzymeCore - Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - ${{ github.event_name }}

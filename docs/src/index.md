@@ -145,8 +145,9 @@ julia> dx_1 = [1.0, 0.0]; dx_2 = [0.0, 1.0];
 julia> autodiff(ForwardWithPrimal, rosenbrock_inp, BatchDuplicated(x, (dx_1, dx_2)))
 ((var"1" = -800.0, var"2" = 400.0), 400.0)
 ```
+## Convenience functions (gradient, jacobian, hessian)
 
-## Gradient Convenience functions
+### Gradient Convenience functions
 
 !!! note
     While the convenience functions discussed below use [`autodiff`](@ref) internally, they are generally more limited in their functionality. Beyond that, these convenience functions may also come with performance penalties; especially if one makes a closure of a multi-argument function instead of calling the appropriate multi-argument [`autodiff`](@ref) function directly.
@@ -189,7 +190,7 @@ julia> # in forward mode, we can also optionally pass a chunk size
 ([-400.0, 200.0],)
 ```
 
-## Jacobian Convenience functions
+### Jacobian Convenience functions
 
 The function [`jacobian`](@ref) computes the Jacobian of a function vector input and vector return.
 Like [`autodiff`](@ref) and [`gradient`](@ref), the mode (forward or reverse) is determined by the first argument.
@@ -221,7 +222,7 @@ julia> jacobian(Forward, foo, [1.0, 2.0], chunk=Val(2))
 ([-400.0 200.0; 2.0 1.0],)
 ```
 
-## Hessian Vector Product Convenience functions
+### Hessian Vector Product Convenience functions
 
 Enzyme provides convenience functions for second-order derivative computations, like [`hvp`](@ref) to compute Hessian vector products. Mathematically, this computes $H(x) v$, where $H$ is the hessian operator.
 
@@ -273,3 +274,138 @@ julia> grad
  2.880510859951098
  1.920340573300732
 ```
+
+## Defining rules
+
+While Enzyme will automatically generate derivative functions for you, there may be instances in which it is necessary or helpful to define custom derivative rules. Enzyme has three primary ways for defining derivative rules: inactive annotations, [`EnzymeRules.@easy_rule`](@ref) macro definitions, general purpose derivative rules, and importing from `ChainRules`.
+
+### Inactive Annotations
+
+The simplest custom derivative is simply telling Enzyme that a given function does not need to be differentiated. For example, consider computing `det(Unitary Matrix)`. The determinant is always 1 so the derivative is always zero. Without this high level mathematical insight, the default rule Enzyme generates will add up a bunch of numbers that eventually come to zero. Instead of unnecessarily doing this work, we can just tell Enzyme that the derivative is always zero.
+
+In autodiff-parlance we are telling Enzyme that the given result is `inactive` (aka makes no impact on the derivative). This can be done as follows:
+
+```julia
+
+# Our existing function and types
+struct UnitaryMatrix
+    ...
+end
+
+det(::UnitaryMatrix) = ...
+
+using Enzyme.EnzymeRules
+
+EnzymeRules.inactive(::typeof(det), ::UnitaryMatrix) = true
+```
+
+Specifically, we define a new overload of the method [`EnzymeRules.inactive`](@ref) where the first argument is the type of the function being marked inactive, and the corresponding arguments match the arguments we want to overload the method for. This enables us, for example, to only mark the determinant of the `UnitaryMatrix` class here as inactive, and not the determinant of a general Matrix.
+
+Enzyme also supports a second way to mark things inactive, where the marker is "less strong" and not guaranteed to apply if other optimizations might otherwise simplify the code first.
+
+```julia
+EnzymeRules.inactive_noinl(::typeof(det), ::UnitaryMatrix) = true
+```
+
+### [Easy Rules](@id man-easy-rule)
+
+The recommended way for writing rules for most use cases is through the [`EnzymeRules.@easy_rule`](@ref) macro. This macro enables users to write derivatives for any functions which only read from their arguments (e.g. do not overwrite memory), and has numbers, matricies of numbers, or tuples thereof as arguments/result types. 
+
+When writing an [`EnzymeRules.@easy_rule`](@ref) one first describes the function signature one wants the derivative rule to apply to. In each subsequent line, one should write a tuple, where each element of the tuple represents the derivative of the corresponding input argument. In that sense writing an [`EnzymeRules.@easy_rule`](@ref) is equivalent to specifying the Jacobian. Inside of this tuple, one can call arbitrary Julia code.
+
+One can also define certain arguments as not having a derivative via `@Constant`. 
+
+For more information see the [`EnzymeRules.@easy_rule`](@ref) documentation.
+
+```jldoctest easyrules
+using Enzyme
+
+function f(x, y)
+    return (x*x, cos(y) * x)
+end
+
+Enzyme.EnzymeRules.@easy_rule(f(x,y),
+    # df1/dx, #df1/dy
+    (2*x, @Constant),
+    # df2/dx, #df2/dy
+    (cos(y), x * sin(y))
+)
+
+function g(x, y)
+    return f(x, y)[2]
+end
+
+Enzyme.gradient(Reverse, g, 2.0, 3.0)
+
+# output
+(-0.9899924966004454, 0.2822400161197344)
+```
+
+Enzyme will automatically generate efficient derivatives for forward mode, reverse mode, batched forward and reverse mode, overwritten data, inactive inputs, and more from the given specification macro.
+
+### General Purpose EnzymeRules
+
+Finally Enzyme supports general-purpose EnzymeRules. For a given function, one can specify arbitrary behavior to occur when differentiting a given function. This is useful if you want to write efficient derivatives for mutating code, are handling funky behavior like GPU/distributed runtime calls, and more.
+
+Like before, Enzyme takes a specification of the function the rule applies to, and passes various configuration data for full user-level customization.
+
+```jldoctest genrules
+using Enzyme
+
+function mysin(x)
+    return sin(x)
+end
+
+function Enzyme.EnzymeRules.forward(config, ::Const{typeof(mysin)}, ::Type, x)
+    # If we don't need the original result, let's avoid computing it (and print)
+    if !needs_primal(config)
+        println("Avoiding computing sin!")
+        return cos(x.val) * x.dval
+    else
+        println("Still computing sin")
+        return Duplicated(sin(x.val), cos(x.val) * x.dval)
+    end
+end
+
+function mysquare(x)
+    y = mysin(x)
+    return y*y
+end
+
+# Prints "Avoiding computing sin!"
+Enzyme.gradient(Forward, mysin, 2.0);
+
+# Prints "Still computing sin =/" as d/dx sin(x)^2 = 2 * sin(x) * sin'(x)
+# so the original result is still needed
+Enzyme.gradient(Forward, mysquare, 2.0);
+
+# output
+Avoiding computing sin!
+Still computing sin
+(-0.7568024953079283,)
+```
+
+For more information, see [the custom rule docs](@ref custom_rules), [`EnzymeRules.forward`](@ref),  [`EnzymeRules.augmented_primal`](@ref), and [`EnzymeRules.reverse`](@ref).
+
+### Importing ChainRules
+
+Enzyme can also import rules from the `ChainRules` ecosystem. This is often helpful when first getting started, though it will generally be much more efficient to write either an [`EnzymeRules.@easy_rule`](@ref) or general custom rule.
+
+Enzyme can import the forward rule, reverse rule, or both.
+
+```jldoctest chainrule
+using Enzyme, ChainRulesCore
+
+f(x) = sin(x)
+ChainRulesCore.@scalar_rule f(x)  (cos(x),)
+
+# Import the reverse rule for float32
+Enzyme.@import_rrule typeof(f) Float32
+
+# Import the forward rule for float32
+Enzyme.@import_frule typeof(f) Float32
+
+# output
+```
+
+See the docs on [`Enzyme.@import_frule`](@ref) and [`Enzyme.@import_rrule`](@ref) for more information.

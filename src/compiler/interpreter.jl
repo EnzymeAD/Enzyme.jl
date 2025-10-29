@@ -24,85 +24,28 @@ else
     import Core.Compiler: get_world_counter, get_world_counter as get_inference_world
 end
 
+function rule_backedge_holder end
+
 function rule_backedge_holder_generator(world::UInt, source, self, ft::Type)
     @nospecialize
-    sig = Tuple{typeof(Base.identity), Int}
-    min_world = Ref{UInt}(typemin(UInt))
-    max_world = Ref{UInt}(typemax(UInt))
-    has_ambig = Ptr{Int32}(C_NULL)
-    mthds = Base._methods_by_ftype(
-        sig,
-        nothing,
-        -1, #=lim=#
-        world,
-        false, #=ambig=#
-        min_world,
-        max_world,
-        has_ambig,
-    )
-    mtypes, msp, m = mthds[1]
-    mi = ccall(
-        :jl_specializations_get_linfo,
-        Ref{Core.MethodInstance},
-        (Any, Any, Any),
-        m,
-        mtypes,
-        msp,
-    )
-    ci = Core.Compiler.retrieve_code_info(mi, world)::Core.Compiler.CodeInfo
 
-    # prepare a new code info
-    new_ci = copy(ci)
-    empty!(new_ci.code)
-    @static if isdefined(Core, :DebugInfo)
-      new_ci.debuginfo = Core.DebugInfo(:none)
-    else
-      empty!(new_ci.codelocs)
-      resize!(new_ci.linetable, 1)                # see note below
-    end
-    empty!(new_ci.ssaflags)
-    new_ci.ssavaluetypes = 0
-    new_ci.min_world = min_world[]
-    new_ci.max_world = max_world[]
+    code = Any[Core.Compiler.ReturnNode(world)]
+    ci = Core.Compiler.create_fresh_codeinfo(rule_backedge_holder, source, world, Core.svec(Symbol("#self#"), :ft), code)
 
-    ### TODO: backedge from inactive, augmented_primal, forward, reverse
     edges = Any[]
 
     if ft == typeof(EnzymeRules.augmented_primal)
         sig = Tuple{typeof(EnzymeRules.augmented_primal), <:RevConfig, <:Annotation, Type{<:Annotation},Vararg{Annotation}}
-        push!(edges, ccall(:jl_method_table_for, Any, (Any,), sig))
-        push!(edges, sig)
     elseif ft == typeof(EnzymeRules.forward)
         sig = Tuple{typeof(EnzymeRules.forward), <:FwdConfig, <:Annotation, Type{<:Annotation},Vararg{Annotation}}
-        push!(edges, ccall(:jl_method_table_for, Any, (Any,), sig))
-        push!(edges, sig)
     else
         sig = Tuple{typeof(EnzymeRules.inactive), Vararg{Annotation}}
-        push!(edges, ccall(:jl_method_table_for, Any, (Any,), sig))
-        push!(edges, sig)
     end
+    add_edge!(edges, sig)
 
-    new_ci.edges = edges
+    ci.edges = edges
 
-    # XXX: setting this edge does not give us proper method invalidation, see
-    #      JuliaLang/julia#34962 which demonstrates we also need to "call" the kernel.
-    #      invoking `code_llvm` also does the necessary codegen, as does calling the
-    #      underlying C methods -- which GPUCompiler does, so everything Just Works.
-
-    # prepare the slots
-    new_ci.slotnames = Symbol[Symbol("#self#"), :ft]
-    new_ci.slotflags = UInt8[0x00 for i = 1:2]
-
-    # return the codegen world age
-    push!(new_ci.code, Core.Compiler.ReturnNode(world))
-    push!(new_ci.ssaflags, 0x00)   # Julia's native compilation pipeline (and its verifier) expects `ssaflags` to be the same length as `code`
-    @static if isdefined(Core, :DebugInfo)
-    else
-      push!(new_ci.codelocs, 1)   # see note below
-    end
-    new_ci.ssavaluetypes += 1
-
-    return new_ci
+    return ci
 end
 
 @eval Base.@assume_effects :removable :foldable :nothrow @inline function rule_backedge_holder(ft)
@@ -372,6 +315,7 @@ end
 include("tfunc.jl")
 
 import Core.Compiler: CallInfo
+
 struct NoInlineCallInfo <: CallInfo
     info::CallInfo # wrapped call
     tt::Any # ::Type
@@ -384,6 +328,11 @@ Core.Compiler.getsplit_impl(info::NoInlineCallInfo, idx::Int) =
     Core.Compiler.getsplit(info.info, idx)
 Core.Compiler.getresult_impl(info::NoInlineCallInfo, idx::Int) =
     Core.Compiler.getresult(info.info, idx)
+if VERSION >= v"1.12.0-DEV.1531"
+    Core.Compiler.add_edges_impl(edges::Vector{Any}, info::NoInlineCallInfo) =
+        Core.Compiler.add_edges!(edges, info.info)
+end
+
 struct AlwaysInlineCallInfo <: CallInfo
     info::CallInfo # wrapped call
     tt::Any # ::Type
@@ -394,50 +343,21 @@ Core.Compiler.getsplit_impl(info::AlwaysInlineCallInfo, idx::Int) =
     Core.Compiler.getsplit(info.info, idx)
 Core.Compiler.getresult_impl(info::AlwaysInlineCallInfo, idx::Int) =
     Core.Compiler.getresult(info.info, idx)
+if VERSION >= v"1.12.0-DEV.1531"
+    Core.Compiler.add_edges_impl(edges::Vector{Any}, info::AlwaysInlineCallInfo) =
+        Core.Compiler.add_edges!(edges, info.info)
+end
+
 
 import .EnzymeRules: FwdConfig, RevConfig, Annotation
 using Core.Compiler: ArgInfo, StmtInfo, AbsIntState
-function Core.Compiler.abstract_call_gf_by_type(
-    @nospecialize(interp::EnzymeInterpreter),
-    @nospecialize(f),
-    arginfo::ArgInfo,
-    si::StmtInfo,
-    @nospecialize(atype),
-    sv::AbsIntState,
-    max_methods::Int,
-)
-    
-    ret = @invoke Core.Compiler.abstract_call_gf_by_type(
-        interp::AbstractInterpreter,
-        f::Any,
-        arginfo::ArgInfo,
-        si::StmtInfo,
-        atype::Any,
-        sv::AbsIntState,
-        max_methods::Int,
-    )
-    if isdefined(Core.Compiler, :Future) # if stackless inference
-        return Core.Compiler.Future{Core.Compiler.CallMeta}(ret, interp, sv) do ret, interp, sv
-            callinfo = ret.info
-            specTypes = simplify_kw(atype)
 
-            if is_primitive_func(specTypes)
-                callinfo = NoInlineCallInfo(callinfo, atype, :primitive)
-            elseif is_alwaysinline_func(specTypes)
-                callinfo = AlwaysInlineCallInfo(callinfo, atype)
-            else
-                method_table = Core.Compiler.method_table(interp)
-                if interp.inactive_rules && EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
-                    callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
-                elseif interp.forward_rules && EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
-                    callinfo = NoInlineCallInfo(callinfo, atype, :frule)
-                elseif interp.reverse_rules && EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
-                    callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
-                end
-            end
-            return Core.Compiler.CallMeta(ret.rt, ret.exct, ret.effects, callinfo)
-        end
-    end
+struct FutureCallinfoByType
+    atype::Any
+end
+
+@inline function (closure::FutureCallinfoByType)(ret::Core.Compiler.CallMeta, @nospecialize(interp::AbstractInterpreter), sv::AbsIntState)
+    atype = closure.atype
     callinfo = ret.info
     specTypes = simplify_kw(atype)
 
@@ -461,6 +381,34 @@ function Core.Compiler.abstract_call_gf_by_type(
         return Core.Compiler.CallMeta(ret.rt, ret.effects, callinfo)
     end
 end
+
+function Core.Compiler.abstract_call_gf_by_type(
+    @nospecialize(interp::EnzymeInterpreter),
+    @nospecialize(f),
+    arginfo::ArgInfo,
+    si::StmtInfo,
+    @nospecialize(atype),
+    sv::AbsIntState,
+    max_methods::Int,
+)
+
+    ret = @invoke Core.Compiler.abstract_call_gf_by_type(
+        interp::AbstractInterpreter,
+        f::Any,
+        arginfo::ArgInfo,
+        si::StmtInfo,
+        atype::Any,
+        sv::AbsIntState,
+        max_methods::Int,
+    )
+
+    if isdefined(Core.Compiler, :Future) # if stackless inference
+        return Core.Compiler.Future{Core.Compiler.CallMeta}(FutureCallinfoByType(atype), ret, interp, sv)
+    end
+
+    return FutureCallinfoByType(atype)(ret, interp, sv)
+end
+
 
 let # overload `inlining_policy`
     @static if VERSION ≥ v"1.11.0-DEV.879"
@@ -527,10 +475,12 @@ let # overload `inlining_policy`
                 @assert info.kind === :rrule
                 @safe_debug "Blocking inlining due to rrule" info.tt
             end
-            return nothing
+
+            return false
         elseif info isa AlwaysInlineCallInfo
             @safe_debug "Forcing inlining for primitive func" info.tt
-            return src
+
+            return true
         end
         return @invoke Core.Compiler.src_inlining_policy($(args_ex.args...))
     end
@@ -548,13 +498,7 @@ import Core.Compiler:
     Effects,
     NoCallInfo,
     widenconst,
-    mapany,
     MethodResultPure
-
-struct AutodiffCallInfo <: CallInfo
-    # ...
-    info::CallInfo
-end
 
 @static if VERSION < v"1.11.0-"
 else
@@ -1115,8 +1059,10 @@ function abstract_call_known(
         if length(argtypes) != 1
             @static if VERSION < v"1.11.0-"
                 return CallMeta(Union{}, Effects(), NoCallInfo())
-            else
+            elseif VERSION < v"1.12.0-"
                 return CallMeta(Union{}, Union{}, Effects(), NoCallInfo())
+            else
+                return Core.Compiler.Future{Core.Compiler.CallMeta}(CallMeta(Union{}, Union{}, Effects(), NoCallInfo()))
             end
         end
         @static if VERSION < v"1.11.0-"
@@ -1125,28 +1071,35 @@ function abstract_call_known(
                 Core.Compiler.EFFECTS_TOTAL,
                 MethodResultPure(),
             )
-        else
+        elseif VERSION < v"1.12.0-"
             return CallMeta(
                 Core.Const(true),
                 Union{},
                 Core.Compiler.EFFECTS_TOTAL,
                 MethodResultPure(),
             )
+        else
+            return Core.Compiler.Future{Core.Compiler.CallMeta}(CallMeta(
+                Core.Const(true),
+                Union{},
+                Core.Compiler.EFFECTS_TOTAL,
+                MethodResultPure(),
+            ))
         end
     end
     
     if interp.broadcast_rewrite
         if f === Base.materialize && length(argtypes) == 2
             bcty = widenconst(argtypes[2])
-	    if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && bc_or_array_or_number_ty(bcty) && has_array(bcty)
-		ElType = ty_broadcast_getindex_eltype(interp, bcty)
-		if ElType !== Union{} && Base.isconcretetype(ElType)
-		    fn2 = Enzyme.Compiler.Interpreter.OverrideBCMaterialize{ElType}()
+    	    if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && bc_or_array_or_number_ty(bcty) && has_array(bcty)
+        		ElType = ty_broadcast_getindex_eltype(interp, bcty)
+        		if ElType !== Union{} && Base.isconcretetype(ElType)
+        		    fn2 = Enzyme.Compiler.Interpreter.OverrideBCMaterialize{ElType}()
                     arginfo2 = ArgInfo(
-                        fargs isa Nothing ? nothing :
-			[:(fn2), fargs[2:end]...],
-			[Core.Const(fn2), argtypes[2:end]...],
+                        fargs isa Nothing ? nothing : [:(fn2), fargs[2:end]...],
+        	           [Core.Const(fn2), argtypes[2:end]...],
                     )
+
                     return Base.@invoke abstract_call_known(
                         interp::AbstractInterpreter,
                         fn2::Any,
@@ -1155,7 +1108,7 @@ function abstract_call_known(
                         sv::AbsIntState,
                         max_methods::Int,
                     )
-		end
+                end
             end
         end
 
@@ -1171,6 +1124,7 @@ function abstract_call_known(
                     [:(Enzyme.Compiler.Interpreter.override_bc_copyto!), fargs[2:end]...],
                     [Core.Const(Enzyme.Compiler.Interpreter.override_bc_copyto!), argtypes[2:end]...],
                 )
+
                 return Base.@invoke abstract_call_known(
                     interp::AbstractInterpreter,
                     Enzyme.Compiler.Interpreter.override_bc_copyto!::Any,

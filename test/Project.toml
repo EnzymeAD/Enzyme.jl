@@ -2,8 +2,6 @@
 BFloat16s = "ab4f0b2a-ad5b-11e8-123f-65d77653426b"
 ChainRules = "082447d4-558c-5d27-93f4-14fc19e9eca2"
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
-Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
-Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 EnzymeTestUtils = "12d8515a-0907-448a-8884-5fe00fdf1c5a"
@@ -16,9 +14,8 @@ LLVM = "929cbde3-209d-540e-8aea-75f648917ca0"
 LLVM_jll = "86de99a1-58d6-5da7-8064-bd56ce2e322c"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
+ParallelTestRunner = "d3525ed8-44d0-4b2c-a655-542cee43accc"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
-Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
-REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
@@ -28,8 +25,9 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
-EnzymeTestUtils = {path = "../lib/EnzymeTestUtils"}
 Enzyme = {path = ".."}
+EnzymeTestUtils = {path = "../lib/EnzymeTestUtils"}
 
 [compat]
 EnzymeTestUtils = "0.2.1"
+ParallelTestRunner = "2.0.1"

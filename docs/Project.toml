@@ -1,4 +1,5 @@
 [deps]
+ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
@@ -8,6 +9,7 @@ PlutoStaticHTML = "359b1769-a58e-495b-9770-312e911026ad"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [compat]
+ChainRulesCore = "1"
 Documenter = "1"
 EnzymeTestUtils = "0.2"
 Literate = "2"

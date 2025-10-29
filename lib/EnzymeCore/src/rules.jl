@@ -1,13 +1,13 @@
 module EnzymeRules
 
 import EnzymeCore
-import EnzymeCore: Annotation, Const, Duplicated, Mode
+import EnzymeCore: Annotation, Const, Duplicated, BatchDuplicated, Active, Mode
 export RevConfig, RevConfigWidth
 export FwdConfig, FwdConfigWidth
 export AugmentedReturn
 import ..EnzymeCore: needs_primal
 export needs_primal, needs_shadow, width, overwritten, runtime_activity
-export primal_type, shadow_type, tape_type
+export primal_type, shadow_type, tape_type, easy_scalar_rule
 
 import Base: unwrapva, isvarargtype, unwrap_unionall, rewrap_unionall
 
@@ -40,19 +40,37 @@ const FwdConfigWidth{Width} = FwdConfig{<:Any,<:Any,Width}
 """
     needs_primal(::FwdConfig)
     needs_primal(::RevConfig)
+    needs_primal(::Type{<:FwdConfig})
+    needs_primal(::Type{<:RevConfig})
 
 Whether a custom rule should return the original result of the function.
 """
 @inline needs_primal(::FwdConfig{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
+@inline needs_primal(::Type{<:FwdConfig{NeedsPrimal}}) where NeedsPrimal = NeedsPrimal
+
 """
     needs_shadow(::FwdConfig)
     needs_shadow(::RevConfig)
+    needs_shadow(::Type{<:FwdConfig})
+    needs_shadow(::Type{<:RevConfig})
 
 Whether a custom rule should return the shadow (derivative) of the function result.
 """
 @inline needs_shadow(::FwdConfig{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
+@inline needs_shadow(::Type{<:FwdConfig{<:Any, NeedsShadow}}) where NeedsShadow = NeedsShadow
 
+
+"""
+    width(::FwdConfig)
+    width(::RevConfig)
+    width(::Type{<:FwdConfig})
+    width(::Type{<:RevConfig})
+
+Get the size of a batch
+"""
 @inline width(::FwdConfig{<:Any, <:Any, Width}) where Width = Width
+@inline width(::Type{<:FwdConfig{<:Any, <:Any, Width}}) where Width = Width
+
 @inline runtime_activity(::FwdConfig{<:Any, <:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
 @inline strong_zero(::FwdConfig{<:Any, <:Any, <:Any, <:Any, StrongZero}) where StrongZero = StrongZero
 
@@ -75,16 +93,23 @@ struct RevConfig{NeedsPrimal, NeedsShadow, Width, Overwritten, RuntimeActivity, 
 const RevConfigWidth{Width} = RevConfig{<:Any,<:Any, Width}
 
 @inline needs_primal(::RevConfig{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
+@inline needs_primal(::Type{<:RevConfig{NeedsPrimal}}) where NeedsPrimal = NeedsPrimal
 @inline needs_shadow(::RevConfig{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
+@inline needs_shadow(::Type{<:RevConfig{<:Any, NeedsShadow}}) where NeedsShadow = NeedsShadow
 @inline width(::RevConfig{<:Any, <:Any, Width}) where Width = Width
+@inline width(::Type{<:RevConfig{<:Any, <:Any, Width}}) where Width = Width
+
 """
     overwritten(::RevConfig)
+    overwritten(::Type{<:RevConfig})
 
 A tuple of booleans for each argument (including the function itself), indicating if it
 is modified between the forward and reverse pass (`true` if potentially modified
 between).
 """
 @inline overwritten(::RevConfig{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
+@inline overwritten(::Type{<:RevConfig{<:Any, <:Any, <:Any, Overwritten}}) where Overwritten = Overwritten
+
 @inline runtime_activity(::RevConfig{<:Any, <:Any, <:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
 @inline strong_zero(::RevConfig{<:Any, <:Any, <:Any, <:Any, <:Any, StrongZero}) where StrongZero = StrongZero
 
@@ -305,5 +330,7 @@ inactive_type(::Type) = false
 @inline EnzymeCore.set_runtime_activity(mode::M, config::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_runtime_activity(mode, runtime_activity(config))
 
 @inline EnzymeCore.set_strong_zero(mode::M, config::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_strong_zero(mode, runtime_activity(config))
+
+include("easyrules.jl")
 
 end # EnzymeRules
