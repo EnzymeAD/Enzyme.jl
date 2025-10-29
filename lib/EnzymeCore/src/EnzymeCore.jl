@@ -8,7 +8,7 @@ export DefaultABI, FFIABI, InlineABI, NonGenABI
 export BatchDuplicatedFunc
 export within_autodiff, ignore_derivatives
 export needs_primal
-export ChunkStrategy, OneChunk, AutoChunk, pick_chunksize
+export ChunkStrategy, SingleChunk, AutoChunk, pick_chunksize
 
 function batch_size end
 
@@ -805,22 +805,22 @@ Abstract type gathering strategies for chunk size selection.
 
 # See also
 
-- [`OneChunk`](@ref)
+- [`SingleChunk`](@ref)
 - [`AutoChunk`](@ref)
 """
 abstract type ChunkStrategy end
 
 """
-    OneChunk()
+    SingleChunk()
 
-Select chunk size so that the corresponding array is processed in a single chunk.
+Select chunk size equal to the number of elements, so that the corresponding array is processed in a single chunk.
 """
-struct OneChunk <: ChunkStrategy end
+struct SingleChunk <: ChunkStrategy end
 
 """
     AutoChunk()
 
-Select chunk size automatically based on internal Enzyme-specific heuristics.
+Select chunk size automatically based on internal Enzyme-specific heuristics, which are subject to change.
 """
 struct AutoChunk <: ChunkStrategy end
 
@@ -829,12 +829,15 @@ const DEFAULT_CHUNK_SIZE = 16
 """
     pick_chunksize(s::ChunkStrategy, a::AbstractArray)
 
-Return the chunk size chosen by strategy `s` based on the dimension of array `a`.
+Return the chunk size chosen by strategy `s` based on the dimension of array `a`, as a `Val{C}` object.
 
 - In forward-mode gradients and Jacobians, `a` would be the input array.
 - In reverse-mode Jacobians, `a` would be the output array.
+
+!!! warning
+    For `SingleChunk` and `AutoChunk` strategies, this function is type-unstable.
 """
-pick_chunksize(::OneChunk, a::AbstractArray) = length(a)
-pick_chunksize(::AutoChunk, a::AbstractArray) = min(DEFAULT_CHUNK_SIZE, length(a))
+pick_chunksize(::SingleChunk, a::AbstractArray) = Val(length(a))
+pick_chunksize(::AutoChunk, a::AbstractArray) = Val(min(DEFAULT_CHUNK_SIZE, length(a)))
 
 end # module EnzymeCore

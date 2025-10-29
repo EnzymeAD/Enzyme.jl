@@ -1,12 +1,12 @@
 using Test
 using EnzymeCore
 
-@testset "OneChunk" begin
-    @test pick_chunksize(OneChunk(), ones(10)) == 10
-    @test pick_chunksize(OneChunk(), ones(100)) == 100
+@testset "SingleChunk" begin
+    @test pick_chunksize(SingleChunk(), ones(10)) == Val(10)
+    @test pick_chunksize(SingleChunk(), ones(100)) == Val(100)
 end
 
 @testset "AutoChunk" begin
-    @test pick_chunksize(AutoChunk(), ones(10)) == 10
-    @test pick_chunksize(AutoChunk(), ones(100)) == 16
+    @test pick_chunksize(AutoChunk(), ones(10)) == Val(10)
+    @test pick_chunksize(AutoChunk(), ones(100)) == Val(16)
 end

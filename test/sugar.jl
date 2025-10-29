@@ -667,11 +667,42 @@ end
     # @show J_f_3(u, A, x)
 end
 
-@testset "Chunk size strategies" begin  # not passing yet
-    @test_nowarn gradient(Forward, sum, ones(10); chunk=OneChunk())
-    @test_nowarn gradient(Forward, sum, ones(10); chunk=AutoChunk())
-    @test_nowarn jacobian(Forward, copy, ones(10); chunk=OneChunk())
-    @test_nowarn jacobian(Forward, copy, ones(10); chunk=AutoChunk())
-    @test_nowarn jacobian(Reverse, copy, ones(10); chunk=OneChunk())
-    @test_nowarn jacobian(Reverse, copy, ones(10); chunk=AutoChunk())
+fchunk1(x) = sum(sin, x)
+fchunk2(x) = map(sin, x) + map(cos, reverse(x))
+
+@testset "Chunking strategies" begin
+    @testset "ChunkedOneHot" begin
+        @test chunkedonehot(ones(10), SingleChunk()) isa Tuple{NTuple{10}}
+        @test chunkedonehot(ones(30), SingleChunk()) isa Tuple{NTuple{30}}
+        @test chunkedonehot(ones(10), AutoChunk()) isa Tuple{NTuple{10}}
+        @test chunkedonehot(ones(30), AutoChunk()) isa Tuple{NTuple{16}, NTuple{14}}
+        @test chunkedonehot(ones(30), AutoChunk()) isa Tuple{NTuple{16}, NTuple{14}}
+        @test chunkedonehot(ones(40), AutoChunk()) isa Tuple{NTuple{16}, NTuple{16}, NTuple{8}}
+    end
+
+    @testset "Forward gradient" begin
+        for n in (10, 30)
+            x = ones(n)
+            g = gradient(Forward, fchunk1, x)
+            @test g == gradient(Forward, fchunk1, x; chunk = SingleChunk())
+            @test g == gradient(Forward, fchunk1, x; chunk = AutoChunk())
+        end
+    end
+    @testset "Forward Jacobian" begin
+        for n in (10, 30)
+            x = ones(n)
+            J = jacobian(Forward, fchunk2, x)
+            @test J == jacobian(Forward, fchunk2, x; chunk = SingleChunk())
+            @test J == jacobian(Forward, fchunk2, x; chunk = AutoChunk())
+        end
+    end
+    @testset "Reverse Jacobian" begin
+        for n in (10, 30)
+            x = ones(n)
+            J = jacobian(Forward, fchunk2, x)
+            # TODO: fix this
+            @test_broken J == jacobian(Reverse, fchunk2, x; chunk = SingleChunk())
+            @test_broken J == jacobian(Reverse, fchunk2, x; chunk = AutoChunk())
+        end
+    end
 end

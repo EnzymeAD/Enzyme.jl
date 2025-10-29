@@ -429,7 +429,7 @@ end
 end
 
 @inline function chunkedonehot(x, strategy::ChunkStrategy)
-    return chunkedonehot(x, Val(pick_chunksize(strategy, x)))
+    return chunkedonehot(x, pick_chunksize(strategy, x))
 end
 
 @inline tupleconcat(x) = x
@@ -506,10 +506,11 @@ end
 @inline specialize_output(output, input) = output
 
 """
-    gradient(::ForwardMode, f, x; shadows=onehot(x), chunk=nothing)
+    gradient(::ForwardMode, f, x, args...; chunk=nothing, shadows=create_shadows(chunk, x, args...))
 
-Compute the gradient of an array-input function `f` using forward mode. The
-optional keyword argument `shadow` is a vector of one-hot vectors of type `x`
+Compute the gradient of an array-input function `f` using forward mode.
+The optional keyword argument `chunk` optionally denotes the chunk size to use: it can be either `nothing`, `Val(C)` for some `C`, `SingleChunk()` or `AutoChunk()`.
+The optional keyword argument `shadow` is a vector of one-hot vectors of type `x`
 which are used to forward-propagate into the return. For performance reasons,
 this should be computed once, outside the call to `gradient`, rather than
 within this call.
@@ -716,7 +717,7 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
                 push!(subderivatives, :(values($resp[1])))
             end
             :(($(subderivatives...),))
-        else  # TODO: handle OneChunk and MaxChunk
+        else
             subderivatives = Union{Symbol,Expr}[]
             for an in 1:argnum
                 dargs = Union{Symbol,Expr}[]
@@ -792,7 +793,7 @@ end
 """
     jacobian(::ForwardMode, args...; kwargs...)
 
-Equivalent to gradient(::ForwardMode, args...; kwargs...)
+Equivalent to `gradient(::ForwardMode, args...; kwargs...)`.
 """
 @inline function jacobian(fm::ForwardMode, args...; kwargs...)
     gradient(fm, args...; kwargs...)
@@ -918,7 +919,9 @@ end
 
     chunksize = if chunk <: Val
         chunk.parameters[1]
-    else  # TODO: handle OneChunk and MaxChunk
+    else
+        # TODO: handle SingleChunk and MaxChunk
+        # this will change the generated function because the chunksize might be determined at runtime
         1
     end
     num = ((n_out_val + chunksize - 1) ÷ chunksize)
@@ -1177,7 +1180,7 @@ end
     jacobian(::ReverseMode, f, x)
 
 Compute the jacobian of a array-output function `f` using (potentially vector)
-reverse mode. The `chunk` argument optionally denotes the chunk size to use and
+reverse mode. The `chunk` argument optionally denotes the chunk size to use (it can be either `nothing` or `Val(C)` for some `C`) and
 `n_outs` optionally denotes the shape of the array returned by `f` (e.g `size(f(x))`).
 
 Example:
