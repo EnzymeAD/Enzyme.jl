@@ -1180,7 +1180,7 @@ end
     jacobian(::ReverseMode, f, x)
 
 Compute the jacobian of a array-output function `f` using (potentially vector)
-reverse mode. The `chunk` argument optionally denotes the chunk size to use (it can be either `nothing` or `Val(C)` for some `C`) and
+reverse mode. The `chunk` argument optionally denotes the chunk size to use (it can be either `nothing` or `Val(C)` for some integer `C`) and
 `n_outs` optionally denotes the shape of the array returned by `f` (e.g `size(f(x))`).
 
 Example:
