@@ -509,7 +509,7 @@ end
     gradient(::ForwardMode, f, x, args...; chunk=nothing, shadows=create_shadows(chunk, x, args...))
 
 Compute the gradient of an array-input function `f` using forward mode.
-The optional keyword argument `chunk` optionally denotes the chunk size to use: it can be either `nothing`, `Val(C)` for some `C`, `SingleChunk()` or `AutoChunk()`.
+The optional keyword argument `chunk` denotes the chunk size to use: it can be either `nothing`, `Val(C)` for some integer `C`, `SingleChunk()` or `AutoChunk()`.
 The optional keyword argument `shadow` is a vector of one-hot vectors of type `x`
 which are used to forward-propagate into the return. For performance reasons,
 this should be computed once, outside the call to `gradient`, rather than
