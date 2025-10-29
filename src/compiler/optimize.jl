@@ -64,6 +64,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
             add!(aam, BasicAA())
         end
         add!(pb, NewPMModulePassManager()) do mpm
+            add!(mpm, CPUFeaturesPass()) # why is this duplicated?
             add!(mpm, GlobalOptPass())
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, GVNPass())
@@ -72,7 +73,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         run!(pb, mod, tm)
     end
 
-    # Note: Enzyme uses to run this part twice
+    function middle_optimize!(second_stage=false)
     @dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, RewriteGenericMemoryPass())
@@ -83,6 +84,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         end
         add!(pb, NewPMModulePassManager()) do mpm
             add!(mpm, RewriteGenericMemoryPass())
+            add!(mpm, CPUFeaturesPass()) # why is this duplicated?
 
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, InstCombinePass())
@@ -98,10 +100,6 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 add!(fpm, ReassociatePass())
                 add!(fpm, EarlyCSEPass())
                 add!(fpm, AllocOptPass())
-
-                add!(fpm, InstCombinePass())
-                add!(fpm, JLInstSimplifyPass())
-                add!(fpm, JumpThreadingPass())
 
                 add!(fpm, NewPMLoopPassManager(use_memory_ssa=true)) do lpm
                     add!(lpm, LoopIdiomRecognizePass())
@@ -143,6 +141,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 end
                 add!(fpm, JumpThreadingPass())
                 add!(fpm, CorrelatedValuePropagationPass())
+                if second_stage
 
                 add!(fpm, ADCEPass())
                 add!(fpm, InstCombinePass())
@@ -153,10 +152,15 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 add!(fpm, SimplifyCFGPass())
                 add!(fpm, InstCombinePass())
                 add!(fpm, JLInstSimplifyPass())
+                end # second_stage
             end
         end
         run!(pb, mod, tm)
     end
+    end # middle_optimize!
+
+    middle_optimize!()
+    middle_optimize!(true)
 
     # Globalopt is separated as it can delete functions, which invalidates the Julia hardcoded pointers to
     # known functions
