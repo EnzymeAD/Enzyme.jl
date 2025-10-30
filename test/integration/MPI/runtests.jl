@@ -3,9 +3,8 @@ using Enzyme
 using Test
 
 # Current MPI support (needs to be tested from Julia)
-# - MPI_Recv/MPI_Send
 # - MPI_Ssend
-# - MPI_Irecv/MPI_Isend with MPI_Wait/MPI_Waitall
+# - MPI_Waitall
 # - MPI_Barrier/MPI_Probe
 # - MPI_Allreduce
 # - MPI_Bcast
@@ -13,11 +12,12 @@ using Test
 # - MPI_Gather/MPI_Scatter
 # - MPI_Allgather
 
+# Test MPI_Recv/MPI_Send with a blocking ring communication pattern
 @testset "blocking_ring" for np in (1, 2, 4)
-    run(`$(mpiexec()) -n $np $(Base.julia_cmd()) $(joinpath(@__DIR__, "blocking_ring.jl"))`)
+    run(`$(mpiexec()) -n $np $(Base.julia_cmd()) --project=$(@__DIR__) $(joinpath(@__DIR__, "blocking_ring.jl"))`)
 end
 
+# Test MPI_Irecv/MPI_Isend/MPI_Wait with a non-blocking halo exchange pattern
 @testset "nonblocking_halo" for np in (1, 2, 4)
-    run(`$(mpiexec()) -n $np $(Base.julia_cmd()) $(joinpath(@__DIR__, "nonblocking_halo.jl "))`)
+    run(`$(mpiexec()) -n $np $(Base.julia_cmd()) --project=$(@__DIR__) $(joinpath(@__DIR__, "nonblocking_halo.jl "))`)
 end
-
