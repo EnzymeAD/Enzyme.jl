@@ -450,7 +450,7 @@ end
             push!(exprs, :(nothing))
         elseif ty <: AbstractFloat
             push!(exprs, :(nothing))
-        elseif ChunkTy == Nothing || ChunkTy == Val{1}
+        elseif ChunkTy == Nothing || ChunkTy == Val{1} || ChunkTy == SmallestChunk || ChunkTy == FixedChunk{1}
             push!(exprs, :(onehot($arg)))
         else
             push!(exprs, :(chunkedonehot($arg, chunk)))
@@ -509,7 +509,7 @@ end
     gradient(::ForwardMode, f, x, args...; chunk=nothing, shadows=create_shadows(chunk, x, args...))
 
 Compute the gradient of an array-input function `f` using forward mode.
-The optional keyword argument `chunk` denotes the chunk size to use: it can be either `nothing`, `Val(C)` / `FixedChunk{C}()` for some integer `C` (both are equivalent), `SingleChunk()` or `AutoChunk()`.
+The optional keyword argument `chunk` denotes the chunk size to use: it can be either `nothing`, `Val(C)` for some integer `C`, or a subtype of [`EnzymeCore.ChunkStrategy`](@ref EnzymeCore.ChunkStrategy).
 The optional keyword argument `shadow` is a vector of one-hot vectors of type `x`
 which are used to forward-propagate into the return. For performance reasons,
 this should be computed once, outside the call to `gradient`, rather than
@@ -664,7 +664,7 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
             :($resp[1])
         elseif argnum == 0
             vals[i]
-        elseif CS == Nothing
+        elseif CS == Nothing || CS == SmallestChunk
             dargs = Union{Symbol,Expr}[]
             for (j, arg2) in enumerate(syms)
                 if i == j
@@ -919,10 +919,10 @@ end
 
     chunksize = if chunk <: Val || chunk <: FixedChunk
         chunk.parameters[1]
-    else
-        # TODO: handle SingleChunk and MaxChunk
-        # this will change the generated function because the chunksize might be determined at runtime
+    elseif chunk == Nothing || chunk == SmallestChunk
         1
+    else  # chunk isa Union{LargestChunk, MaxChunk} and pick_chunksize returns a Val{C}()
+        typeof(pick_chunksize(chunk(), n_out_val)).parameters[1]
     end
     num = ((n_out_val + chunksize - 1) ÷ chunksize)
 
@@ -947,7 +947,7 @@ end
         else
             push!(exprs, Expr(:(=), mdi, :(Compiler.active_reg_nothrow($xti) == Compiler.ActiveState || Compiler.active_reg_nothrow($xti) == Compiler.MixedState)))
 
-            if chunk == Val{1} || chunk == Nothing
+            if chunk == Val{1} || chunk == Nothing || chunk == SmallestChunk || chunk == FixedChunk{1}
                 push!(MDTys, :($mdi ? MixedDuplicated{$xti} : Duplicated{$xti}))
             else
                 push!(MDTys, :($mdi ? BatchMixedDuplicated{$xti, $chunksize} : BatchDuplicated{$xti, $chunksize}))
@@ -1180,7 +1180,7 @@ end
     jacobian(::ReverseMode, f, x)
 
 Compute the jacobian of a array-output function `f` using (potentially vector) reverse mode.
-The optional keyword argument `chunk` denotes the chunk size to use: it can be either `nothing` or `Val(C)` / `FixedChunk{C}()` for some integer `C` (both are equivalent).
+The optional keyword argument `chunk` denotes the chunk size to use: it can be either `nothing`, `Val(C)` for some integer `C`, or a subtype of [`EnzymeCore.ChunkStrategy`](@ref EnzymeCore.ChunkStrategy).
 The optional keyword argument `n_outs` denotes the shape of the array returned by `f` (e.g `size(f(x))`).
 
 Example:
