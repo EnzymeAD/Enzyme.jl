@@ -14,10 +14,10 @@ using Test
 # - MPI_Allgather
 
 @testset "blocking_ring" for np in (1, 2, 4)
-    run(`$(mpiexec()) -n $np $(Base.julia_cmd()) blocking_ring.jl`)
+    run(`$(mpiexec()) -n $np $(Base.julia_cmd()) $(joinpath(@__DIR__, "blocking_ring.jl"))`)
 end
 
 @testset "nonblocking_halo" for np in (1, 2, 4)
-    run(`$(mpiexec()) -n $np $(Base.julia_cmd()) nonblocking_halo.jl`)
+    run(`$(mpiexec()) -n $np $(Base.julia_cmd()) $(joinpath(@__DIR__, "nonblocking_halo.jl "))`)
 end
 
