@@ -688,28 +688,40 @@ fchunk2(x) = map(sin, x) + map(cos, reverse(x))
 
     @testset "Forward gradient" begin
         @testset for chunk in strategies
-            for n in (10, 30)
+            for n in (2, 10)
                 x = ones(n)
                 g = gradient(Forward, fchunk1, x)
-                @test g == gradient(Forward, fchunk1, x; chunk)
+                if chunk isa FixedChunk{3} && n == 2
+                    @test_throws ErrorException gradient(Forward, fchunk1, x; chunk)
+                else
+                    @test g == gradient(Forward, fchunk1, x; chunk)
+                end
             end
         end
     end
     @testset "Forward Jacobian" begin
         @testset for chunk in strategies
-            for n in (10, 30)
+            for n in (2, 10)
                 x = ones(n)
                 J = jacobian(Forward, fchunk2, x)
-                @test J == jacobian(Forward, fchunk2, x; chunk)
+                if chunk isa FixedChunk{3} && n == 2
+                    @test_throws ErrorException jacobian(Forward, fchunk2, x; chunk)
+                else
+                    @test J == jacobian(Forward, fchunk2, x; chunk)
+                end
             end
         end
     end
     @testset "Reverse Jacobian" begin
         @testset for chunk in strategies
-            for n in (10, 30)
+            for n in (2, 10)
                 x = ones(n)
                 J = jacobian(Forward, fchunk2, x)
-                @test J == jacobian(Reverse, fchunk2, x; chunk)
+                if chunk isa FixedChunk{3} && n == 2
+                    @test_throws ErrorException jacobian(Reverse, fchunk2, x; chunk)
+                else
+                    @test J == jacobian(Reverse, fchunk2, x; chunk)
+                end
             end
         end
     end
