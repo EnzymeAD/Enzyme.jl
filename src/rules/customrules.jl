@@ -159,6 +159,7 @@ function enzyme_custom_setup_args(
 
     ofn = LLVM.parent(LLVM.parent(orig))
     world = enzyme_extract_world(ofn)
+    @assert world == enzyme_context(gutils).world
 
     for arg in jlargs
         @assert arg.cc != RemovedParam
@@ -468,6 +469,7 @@ function enzyme_custom_setup_ret(
     mode = get_mode(gutils)
 
     world = enzyme_extract_world(LLVM.parent(LLVM.parent(orig)))
+    @assert world == enzyme_context(gutils).world
 
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
@@ -590,9 +592,8 @@ end
 
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
-    world = enzyme_extract_world(fn)
 
-    llvmf = nested_codegen!(mode, mod, fmi, world)
+    llvmf = nested_codegen!(enzyme_context(gutils), mode, mod, fmi)
 
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
 
@@ -826,6 +827,7 @@ end
 
     fn = LLVM.parent(LLVM.parent(orig))
     world = enzyme_extract_world(fn)
+    @assert world == enzyme_context(gutils).world
 
     C = EnzymeRules.RevConfig{
         Bool(needsPrimal),
@@ -939,6 +941,7 @@ end
 
     fn = LLVM.parent(LLVM.parent(orig))
     world = enzyme_extract_world(fn)
+    @assert world == enzyme_context(gutils).world
     @safe_debug "Trying to apply custom forward rule" TT isKWCall
         
     functy = if isKWCall
@@ -1048,7 +1051,8 @@ function enzyme_custom_common_rev(
 
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
-    world = enzyme_extract_world(fn)
+    ctx = enzyme_context(gutils)
+    world = ctx.world
 
     mode = get_mode(gutils)
 
@@ -1109,7 +1113,7 @@ function enzyme_custom_common_rev(
     applicablefn = true
 
     if forward
-        llvmf = nested_codegen!(mode, mod, ami, world)
+        llvmf = nested_codegen!(ctx, mode, mod, ami)
         @assert llvmf !== nothing
         rev_RT = nothing
     else
@@ -1151,7 +1155,7 @@ function enzyme_custom_common_rev(
         
         rmi = rmi::Core.MethodInstance
         rev_RT = rev_RT::Type
-        llvmf = nested_codegen!(mode, mod, rmi, world)
+        llvmf = nested_codegen!(ctx, mode, mod, rmi)
     end
 
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))

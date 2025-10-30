@@ -1932,6 +1932,7 @@ end
 
     fn = LLVM.parent(LLVM.parent(orig))
     world = enzyme_extract_world(fn)
+    @assert world == enzyme_context(gutils).world
     if !guaranteed_nonactive(ET, world)
         emit_error(B, orig, "Enzyme: element type $ET of generic_memory_copyto is potentially active ($reg) and not presently supported")
     end
