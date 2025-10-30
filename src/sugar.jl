@@ -509,7 +509,7 @@ end
     gradient(::ForwardMode, f, x, args...; chunk=nothing, shadows=create_shadows(chunk, x, args...))
 
 Compute the gradient of an array-input function `f` using forward mode.
-The optional keyword argument `chunk` denotes the chunk size to use: it can be either `nothing`, `Val(C)` for some integer `C`, `SingleChunk()` or `AutoChunk()`.
+The optional keyword argument `chunk` denotes the chunk size to use: it can be either `nothing`, `Val(C)` / `FixedChunk{C}()` for some integer `C` (both are equivalent), `SingleChunk()` or `AutoChunk()`.
 The optional keyword argument `shadow` is a vector of one-hot vectors of type `x`
 which are used to forward-propagate into the return. For performance reasons,
 this should be computed once, outside the call to `gradient`, rather than
@@ -693,7 +693,7 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
             end
 
             :(values($resp[1]))
-        elseif CS == Val{1}
+        elseif CS == Val{1} || CS == FixedChunk{1}
             subderivatives = Union{Symbol,Expr}[]
             for an in 1:argnum
                 dargs = Union{Symbol,Expr}[]
@@ -917,7 +917,7 @@ end
     MDTys = Union{Expr,Symbol}[]
     MDTysLast = Union{Expr,Symbol}[]
 
-    chunksize = if chunk <: Val
+    chunksize = if chunk <: Val || chunk <: FixedChunk
         chunk.parameters[1]
     else
         # TODO: handle SingleChunk and MaxChunk
@@ -1179,9 +1179,9 @@ end
     jacobian(::ReverseMode, f, x; n_outs=nothing, chunk=nothing)
     jacobian(::ReverseMode, f, x)
 
-Compute the jacobian of a array-output function `f` using (potentially vector)
-reverse mode. The `chunk` argument optionally denotes the chunk size to use (it can be either `nothing` or `Val(C)` for some integer `C`) and
-`n_outs` optionally denotes the shape of the array returned by `f` (e.g `size(f(x))`).
+Compute the jacobian of a array-output function `f` using (potentially vector) reverse mode.
+The optional keyword argument `chunk` denotes the chunk size to use: it can be either `nothing` or `Val(C)` / `FixedChunk{C}()` for some integer `C` (both are equivalent).
+The optional keyword argument `n_outs` denotes the shape of the array returned by `f` (e.g `size(f(x))`).
 
 Example:
 

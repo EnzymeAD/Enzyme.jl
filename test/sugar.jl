@@ -674,6 +674,8 @@ fchunk2(x) = map(sin, x) + map(cos, reverse(x))
     @testset "ChunkedOneHot" begin
         @test chunkedonehot(ones(10), SingleChunk()) isa Tuple{NTuple{10}}
         @test chunkedonehot(ones(30), SingleChunk()) isa Tuple{NTuple{30}}
+        @test chunkedonehot(ones(10), FixedChunk{4}()) isa Tuple{NTuple{4},NTuple{4},NTuple{2}}
+        @test chunkedonehot(ones(10), FixedChunk{5}()) isa Tuple{NTuple{5},NTuple{5}}
         @test chunkedonehot(ones(10), AutoChunk()) isa Tuple{NTuple{10}}
         @test chunkedonehot(ones(30), AutoChunk()) isa Tuple{NTuple{16}, NTuple{14}}
         @test chunkedonehot(ones(30), AutoChunk()) isa Tuple{NTuple{16}, NTuple{14}}
@@ -684,6 +686,7 @@ fchunk2(x) = map(sin, x) + map(cos, reverse(x))
         for n in (10, 30)
             x = ones(n)
             g = gradient(Forward, fchunk1, x)
+            @test g == gradient(Forward, fchunk1, x; chunk = FixedChunk{3}())
             @test g == gradient(Forward, fchunk1, x; chunk = SingleChunk())
             @test g == gradient(Forward, fchunk1, x; chunk = AutoChunk())
         end
@@ -692,6 +695,7 @@ fchunk2(x) = map(sin, x) + map(cos, reverse(x))
         for n in (10, 30)
             x = ones(n)
             J = jacobian(Forward, fchunk2, x)
+            @test J == jacobian(Forward, fchunk2, x; chunk = FixedChunk{3}())
             @test J == jacobian(Forward, fchunk2, x; chunk = SingleChunk())
             @test J == jacobian(Forward, fchunk2, x; chunk = AutoChunk())
         end
@@ -700,6 +704,7 @@ fchunk2(x) = map(sin, x) + map(cos, reverse(x))
         for n in (10, 30)
             x = ones(n)
             J = jacobian(Forward, fchunk2, x)
+            @test J == jacobian(Reverse, fchunk2, x; chunk = FixedChunk{3}())
             # TODO: fix this
             @test_broken J == jacobian(Reverse, fchunk2, x; chunk = SingleChunk())
             @test_broken J == jacobian(Reverse, fchunk2, x; chunk = AutoChunk())

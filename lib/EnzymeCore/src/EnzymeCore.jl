@@ -8,7 +8,7 @@ export DefaultABI, FFIABI, InlineABI, NonGenABI
 export BatchDuplicatedFunc
 export within_autodiff, ignore_derivatives
 export needs_primal
-export ChunkStrategy, SingleChunk, AutoChunk, pick_chunksize
+export ChunkStrategy, SingleChunk, FixedChunk, AutoChunk, pick_chunksize
 
 function batch_size end
 
@@ -806,6 +806,7 @@ Abstract type gathering strategies for chunk size selection.
 # See also
 
 - [`SingleChunk`](@ref)
+- [`FixedChunk`](@ref)
 - [`AutoChunk`](@ref)
 """
 abstract type ChunkStrategy end
@@ -816,6 +817,16 @@ abstract type ChunkStrategy end
 Select chunk size equal to the number of elements, so that the corresponding array is processed in a single chunk.
 """
 struct SingleChunk <: ChunkStrategy end
+
+"""
+    FixedChunk{C}()
+
+Select chunk size equal to a fixed integer `C`.
+
+!!! warning
+    This chunk strategy will error if the corresponding array has length `< C`.
+"""
+struct FixedChunk{C} <: ChunkStrategy end
 
 """
     AutoChunk()
@@ -839,5 +850,12 @@ Return the chunk size chosen by strategy `s` based on the dimension of array `a`
 """
 pick_chunksize(::SingleChunk, a::AbstractArray) = Val(length(a))
 pick_chunksize(::AutoChunk, a::AbstractArray) = Val(min(DEFAULT_CHUNK_SIZE, length(a)))
+
+function pick_chunksize(::FixedChunk{C}, a::AbstractArray) where {C}
+    if length(a) < C
+        error("Chunk size $C is larger than array length $(length(a))")
+    end
+    return Val{C}()
+end
 
 end # module EnzymeCore

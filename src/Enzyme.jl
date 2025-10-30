@@ -111,11 +111,11 @@ export autodiff,
     make_zero!,
     remake_zero!
 
-import EnzymeCore: ChunkStrategy, SingleChunk, AutoChunk, pick_chunksize
+import EnzymeCore: ChunkStrategy, SingleChunk, FixedChunk, AutoChunk, pick_chunksize
 
 export jacobian, gradient, gradient!, hvp, hvp!, hvp_and_gradient!
 export batch_size, onehot, chunkedonehot
-export SingleChunk, AutoChunk
+export SingleChunk, FixedChunk, AutoChunk
 
 using LinearAlgebra
 import SparseArrays
