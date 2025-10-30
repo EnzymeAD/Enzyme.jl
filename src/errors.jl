@@ -291,18 +291,74 @@ function InteractiveUtils.code_typed(ece::EnzymeRuntimeActivityError; interactiv
     end
 end
 
-
-struct EnzymeNoTypeError <: EnzymeError
+struct EnzymeNoTypeError{MT,WT} <: EnzymeError
     msg::Cstring
+    mi::MT
+    world::WT
 end
 
 function Base.showerror(io::IO, ece::EnzymeNoTypeError)
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
-    print(io, "Enzyme cannot deduce type\n")
-    msg = Base.unsafe_string(ece.msg)
-    print(io, msg, '\n')
+    print(io, "Enzyme cannot statically prove the type of a value being differentiated and risks a correctness error if it gets it wrong.\n")
+    print(io, " Generally this shouldn't occur as Enzyme records type information from julia, but may be expected if you, for example copy untyped data.\n")
+    print(io, " or alternatively emit very large sized registers that exceed the maximum size of Enzyme's type analysis. If it seems reasonable to differentiate\n")
+    print(io, " this code, open an issue! If the cause of the error is too large of a register, you can request Enzyme increase the size (https://enzyme.mit.edu/julia/dev/api/#Enzyme.API.maxtypeoffset!-Tuple{Any})\n")
+    print(io, " or depth (https://enzyme.mit.edu/julia/dev/api/#Enzyme.API.maxtypedepth!-Tuple{Any}) of its type analysis.\n");
+    print(io, " Alternatively, you can tell Enzyme to take its best guess from context with (https://enzyme.mit.edu/julia/dev/api/#Enzyme.API.looseTypeAnalysis!-Tuple{Any})\n")
+    print(io, " All of these settings are global configurations that need to be set immeidately after loading Enzyme, before any differentiation occurs\n")
+    print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
+    if VERBOSE_ERRORS[]
+        msg = Base.unsafe_string(ece.msg)
+        print(io, msg, '\n')
+    end
+    if ece.mi !== nothing
+        print(io, " Failure within method: ", ece.mi, "\n")
+        printstyled(io, "Hint"; bold = true, color = :cyan)
+        printstyled(
+            io,
+            ": catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\nIf you have Cthulu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.\n";
+            color = :cyan,
+        )
+    end
+end
+
+function InteractiveUtils.code_typed(ece::EnzymeNoTypeError; interactive::Bool=false, kwargs...)
+    mi = ece.mi
+    if mi === nothing
+        throw(AssertionError("code_typed(::EnzymeNoTypeError; interactive::Bool=false, kwargs...) not supported for error without mi"))
+    end
+    world = ece.world::UInt
+    mode = Enzyme.API.DEM_ReverseModeCombined
+
+    CT = @static if VERSION >= v"1.11.0-DEV.1552"
+        EnzymeCacheToken(
+            typeof(DefaultCompilerTarget()),
+            false,
+            GPUCompiler.GLOBAL_METHOD_TABLE, #=job.config.always_inline=#
+            EnzymeCompilerParams,
+            world,
+            false,
+            true,
+            true
+        )
+    else
+        Enzyme.Compiler.GLOBAL_REV_CACHE
+    end
+
+    interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true)
+
+    sig = mi.specTypes  # XXX: can we just use the method instance?
+    if interactive
+        # call Cthulhu without introducing a dependency on Cthulhu
+        mod = get(Base.loaded_modules, Cthulhu, nothing)
+        mod===nothing && error("Interactive code reflection requires Cthulhu; please install and load this package first.")
+        descend_code_typed = getfield(mod, :descend_code_typed)
+        descend_code_typed(sig; interp, kwargs...)
+    else
+        Base.code_typed_by_type(sig; interp, kwargs...)
+    end
 end
 
 struct EnzymeNoShadowError <: EnzymeError
@@ -506,7 +562,30 @@ function julia_error(
                 println(io, "within ", mi)
             end
         end
-        emit_error(B, nothing, msg2, EnzymeNoTypeError)
+	    
+        mi = nothing
+        world = nothing
+
+        if isa(val, LLVM.Instruction)
+            f = LLVM.parent(LLVM.parent(val))::LLVM.Function
+            mi, rt = enzyme_custom_extract_mi(
+                f,
+                false,
+            ) #=error=#
+            world = enzyme_extract_world(f)
+        elseif isa(val, LLVM.Argument)
+            f = parent_scope(val)::LLVM.Function
+            mi, rt = enzyme_custom_extract_mi(
+                f,
+                false,
+            ) #=error=#
+            world = enzyme_extract_world(f)
+        end
+        if mi !== nothing
+            emit_error(B, nothing, (msg2, mi, world), EnzymeNoTypeError{Core.MethodInstance, UInt})
+        else
+            emit_error(B, nothing, msg2, EnzymeNoTypeError{Nothing, Nothing})
+        end
         return C_NULL
     elseif errtype == API.ET_IllegalFirstPointer
         throw(IllegalFirstPointerException(msg, ir, bt))
@@ -944,7 +1023,7 @@ end
             end
         end
         
-	mi = nothing
+	    mi = nothing
         world = nothing
 
         if isa(val, LLVM.Instruction)
@@ -964,11 +1043,11 @@ end
         end
         mode = Enzyme.API.DEM_ReverseModeCombined
 
-	if mi !== nothing
-	    emit_error(b, nothing, (msg2, mi, world), EnzymeRuntimeActivityError{Core.MethodInstance, UInt})
-	else
-	    emit_error(b, nothing, msg2, EnzymeRuntimeActivityError{Nothing, Nothing})
-	end
+        if mi !== nothing
+            emit_error(b, nothing, (msg2, mi, world), EnzymeRuntimeActivityError{Core.MethodInstance, UInt})
+        else
+            emit_error(b, nothing, msg2, EnzymeRuntimeActivityError{Nothing, Nothing})
+        end
         return C_NULL
     elseif errtype == API.ET_GetIndexError
         @assert B != C_NULL
