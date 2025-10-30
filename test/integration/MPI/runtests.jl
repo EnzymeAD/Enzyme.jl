@@ -1,5 +1,6 @@
 using MPI
 using Enzyme
+using Test
 
 # Current MPI support (needs to be tested from Julia)
 # - MPI_Recv/MPI_Send
