@@ -806,7 +806,7 @@ Abstract type gathering strategies for chunk size selection.
 # Subtypes
 
 - [`SmallestChunk`](@ref)
-- [`LargestChunkk`](@ref)
+- [`LargestChunk`](@ref)
 - [`FixedChunk`](@ref)
 - [`AutoChunk`](@ref)
 """
