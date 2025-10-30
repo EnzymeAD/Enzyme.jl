@@ -3438,7 +3438,7 @@ function create_abi_wrapper(
                 twidth = if width == 1
                     1
                 else
-                    if returnPrimal && returnNum == 0
+                    if (rettype <: Const) && returnNum == 0
                         1
                     else
                         width
@@ -4410,7 +4410,7 @@ function lower_convention(
             println(io, string(mod))
             println(
                 io,
-                LVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMPrintMessageAction),
+                LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMPrintMessageAction),
             )
             println(io, string(wrapper_f))
             println(io, "Broken function")
