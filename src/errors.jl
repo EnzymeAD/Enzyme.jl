@@ -304,9 +304,9 @@ function Base.showerror(io::IO, ece::EnzymeNoTypeError)
     print(io, "Enzyme cannot statically prove the type of a value being differentiated and risks a correctness error if it gets it wrong.\n")
     print(io, " Generally this shouldn't occur as Enzyme records type information from julia, but may be expected if you, for example copy untyped data.\n")
     print(io, " or alternatively emit very large sized registers that exceed the maximum size of Enzyme's type analysis. If it seems reasonable to differentiate\n")
-    print(io, " this code, open an issue! If the cause of the error is too large of a register, you can request Enzyme increase the size (https://enzymead.github.io/Enzyme.jl/dev/api/#Enzyme.API.maxtypeoffset!-Tuple{Any})\n")
-    print(io, " or depth (https://enzymead.github.io/Enzyme.jl/dev/api/#Enzyme.API.maxtypedepth!-Tuple{Any}) of its Type analysis.\n");
-    print(io, " Alternatively, you can tell Enzyme to take its best guess from context with (https://enzymead.github.io/Enzyme.jl/dev/api/#Enzyme.API.looseTypeAnalysis!-Tuple{Any})\n")
+    print(io, " this code, open an issue! If the cause of the error is too large of a register, you can request Enzyme increase the size (https://enzyme.mit.edu/julia/dev/api/#Enzyme.API.maxtypeoffset!-Tuple{Any})\n")
+    print(io, " or depth (https://enzyme.mit.edu/julia/dev/api/#Enzyme.API.maxtypedepth!-Tuple{Any}) of its type analysis.\n");
+    print(io, " Alternatively, you can tell Enzyme to take its best guess from context with (https://enzyme.mit.edu/julia/dev/api/#Enzyme.API.looseTypeAnalysis!-Tuple{Any})\n")
     print(io, " All of these settings are global configurations that need to be set immeidately after loading Enzyme, before any differentiation occurs\n")
     print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
     if VERBOSE_ERRORS[]
