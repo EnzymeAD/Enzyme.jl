@@ -862,7 +862,6 @@ end
 end
 
 function abs_cstring(@nospecialize(arg::LLVM.Value))::Tuple{Bool, String}
-    if isa(arg, ConstantExpr)
         ce = arg
         while isa(ce, ConstantExpr)
             if opcode(ce) == LLVM.API.LLVMAddrSpaceCast || opcode(ce) == LLVM.API.LLVMBitCast ||  opcode(ce) == LLVM.API.LLVMIntToPtr
@@ -877,13 +876,19 @@ function abs_cstring(@nospecialize(arg::LLVM.Value))::Tuple{Bool, String}
                 break
             end
         end
-        if isa(ce, LLVM.GlobalVariable)
-            ce = LLVM.initializer(ce)
-            if (isa(ce, LLVM.ConstantArray) || isa(ce, LLVM.ConstantDataArray)) && eltype(value_type(ce)) == LLVM.IntType(8)
-                return (true, String(map(Base.Fix1(convert, UInt8), collect(ce)[1:(end - 1)])))
+        
+        larg = nothing
+        if LLVM.API.LLVMGetValueKind(ce) == LLVM.API.LLVMGlobalAliasValueKind
+            larg = LLVM.Value(ccall((:LLVMAliasGetAliasee, LLVM.API.libllvm), LLVM.API.LLVMValueRef, (LLVM.API.LLVMValueRef,), ce))
+        elseif isa(ce, LLVM.GlobalVariable)
+            larg = LLVM.initializer(ce)
+        end
+
+        if larg !== nothing
+            if (isa(larg, LLVM.ConstantArray) || isa(larg, LLVM.ConstantDataArray)) && eltype(value_type(larg)) == LLVM.IntType(8)
+                return (true, String(map(Base.Fix1(convert, UInt8), collect(larg)[1:(end - 1)])))
             end
 
         end
-    end
     return (false, "")
 end
