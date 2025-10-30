@@ -4410,7 +4410,7 @@ function lower_convention(
             println(io, string(mod))
             println(
                 io,
-                LVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMPrintMessageAction),
+                LLVM.API.LLVMVerifyFunction(wrapper_f, LLVM.API.LLVMPrintMessageAction),
             )
             println(io, string(wrapper_f))
             println(io, "Broken function")
