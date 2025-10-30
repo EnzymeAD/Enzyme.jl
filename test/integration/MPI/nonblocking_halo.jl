@@ -56,6 +56,3 @@ end
 if rank != np-1
     @test dcontext.x[end-1] == Float64(rank + rank + 1)
 end
-if !isinteractive()
-    MPI.Finalize()
-end
