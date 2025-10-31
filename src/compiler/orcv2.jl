@@ -47,29 +47,23 @@ function absolute_symbol_materialization(name, ptr)
 end
 
 const hnd_string_map = Dict{String, Ref{Ptr{Cvoid}}}()
+const hnd_int_map = Dict{Int, Ref{Ptr{Cvoid}}}()
 
 function fix_ptr_lookup(name)
     if startswith(name, "ejlstr\$") || startswith(name, "ejlptr\$")
         _, fname, arg1 = split(name, "\$")
         if startswith(name, "ejlstr\$")
-            ptr = if haskey(hnd_string_map, arg1)
-                hnd_string_map[arg1]
-            else
-                val = Ref{Ptr{Cvoid}}(C_NULL)
-                hnd_string_map[arg1] = val
-                val
+            hnd_cache = get!(hnd_string_map, arg1) do
+                Ref{Ptr{Cvoid}}(C_NULL)
             end
-
-            return ccall(
-                :ijl_load_and_lookup,
-                Ptr{Cvoid},
-                (Cstring, Cstring, Ptr{Cvoid}),
-                arg1,
-                fname,
-                ptr
-            )
         else
+            arg1 =  parse(Int, arg1)
+            hnd_cache = get!(hnd_int_map, arg1) do
+                Ref{Ptr{Cvoid}}(C_NULL)
+            end
+            arg1 = reinterpret(Ptr{Cchar}, arg1)
         end
+        return @ccall jl_load_and_lookup(arg1::Cstring, fname::Cstring, hnd_cache::Ptr{Cvoid})::Ptr{Cvoid}
     end
     return nothing
 end
