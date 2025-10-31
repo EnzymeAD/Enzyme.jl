@@ -69,6 +69,7 @@ function fix_ptr_lookup(name)
                 ptr
             )
         else
+            return cglobal(fname)
         end
     end
     return nothing
