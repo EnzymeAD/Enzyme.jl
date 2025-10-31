@@ -1161,6 +1161,11 @@ function printunnecessary!(val)
     ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 
+function assume_unknown_nofree!(val)
+    ptr = cglobal((:EnzymeAssumeUnknownNoFree, libEnzyme))
+    ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
 """
     inlineall!(val::Bool)
 

@@ -2,6 +2,8 @@ using MPI
 using Enzyme
 using Test
 
+Enzyme.API.assume_unknown_nofree!(true)
+
 struct Context
     x::Vector{Float64}
 end
