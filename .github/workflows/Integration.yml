@@ -52,6 +52,7 @@ jobs:
           - Lux
           - SciML
           - KernelAbstractions
+          - Molly
     steps:
       - uses: actions/checkout@v5
       - uses: julia-actions/setup-julia@v2
