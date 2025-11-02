@@ -793,7 +793,7 @@ function EnzymeRules.augmented_primal(
     return EnzymeRules.AugmentedReturn(primal, shadow, cache)
 end
 
-# This is required to handle arugments that mix real and complex numbers
+# This is required to handle arguments that mix real and complex numbers
 _project(::Type{<:Real}, x) = x
 _project(::Type{<:Real}, x::Complex) = real(x)
 _project(::Type{<:Complex}, x) = x
@@ -922,11 +922,26 @@ function EnzymeRules.reverse(
     return (nothing, nothing, nothing, dα, dβ)
 end
 
-
-
-
-
-
+function cofactor(A)
+    cofA     = zeros(eltype(A), size(A))
+    minorAij = zeros(eltype(A), size(A, 1) - 1, size(A, 2) - 1)
+    for i in 1:size(A, 1), j in 1:size(A, 2)
+        # build minor matrix
+        for k in 1:size(A, 1), l in 1:size(A, 2)
+            if !(k == i || l == j)
+                ki = k < i ? k : k - 1
+                li = l < j ? l : l - 1
+                @inbounds minorAij[ki, li] = A[k, l]
+            end
+        end
+        @inbounds cofA[i, j] = (-1)^(i - 1 + j - 1) * det(minorAij)
+        minorAij .= zero(eltype(A))
+    end
+    return cofA
+end
+# partial derivative of the determinant is the matrix of
+# cofactors
+EnzymeRules.@easy_rule(LinearAlgebra.det(A), (cofactor(A),))
 
 function EnzymeRules.forward(
     config::EnzymeRules.FwdConfig,
