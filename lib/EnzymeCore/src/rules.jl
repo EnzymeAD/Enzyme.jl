@@ -14,11 +14,17 @@ import Base: unwrapva, isvarargtype, unwrap_unionall, rewrap_unionall
 """
     forward(fwdconfig, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
 
-Calculate the forward derivative. The first argument is a [`FwdConfig](@ref) object
+Calculate the forward derivative. The first argument is a [`FwdConfig`](@ref) object
 describing parameters of the differentiation.
-The second argument `func` is the callable for which the rule applies to.
-Either wrapped in a [`Const`](@ref)), or a [`Duplicated`](@ref) if it is a closure.
-The third argument is the return type annotation, and all other arguments are the annotated function arguments.
+The second argument `func` is the callable to which the rule applies,
+either wrapped in a [`Const`](@ref)), or a [`Duplicated`](@ref) if it is a closure.
+The third argument is the return type annotation, and all other arguments are the annotated arguments
+to the function `f`.
+
+Valid types for `RT` are:
+  - [`Duplicated`](@ref)
+  - [`DuplicatedNoNeed`](@ref)
+  - [`Const`](@ref)
 """
 function forward end
 
