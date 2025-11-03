@@ -46,7 +46,20 @@ function absolute_symbol_materialization(name, ptr)
     return LLVM.absolute_symbols(Ref(gv))
 end
 
-const hnd_string_map = Dict{String, Ref{Ptr{Cvoid}}}()
+const hnd_string_map = Dict{String,Ref{Ptr{Cvoid}}}()
+const glob_vars_maps = Dict{String,Int}()
+
+function rename_global!(glob_var)
+    glob_var_name = LLVM.name(glob_var)
+    if haskey(glob_vars_maps, glob_var_name)
+        glob_vars_maps[glob_var_name] += 1
+        new_name = glob_var_name * "_$(glob_vars_maps[glob_var_name])"
+        LLVM.name!(glob_var, new_name)
+        glob_vars_maps[new_name] = 1
+    else
+        glob_vars_maps[glob_var_name] = 1
+    end
+end
 
 function fix_ptr_lookup(name)
     if startswith(name, "ejlstr\$") || startswith(name, "ejlptr\$")
@@ -257,6 +270,9 @@ function add!(mod)
         ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.function_type(f)))
         replace_uses!(f, ptr)
         Compiler.eraseInst(mod, f)
+    end
+    for glob_var in collect(globals(mod))
+        rename_global!(glob_var)
     end
     lljit = jit[].jit
     jd = LLVM.JITDylib(lljit)
