@@ -60,7 +60,7 @@ import LinearAlgebra
     if N < M
         return quote
             Base.@_inline_meta
-            throw(MethodError(EnzymeCore.EnzymeRules.multiply_fwd_into, prev, partial, dx))
+            throw(MethodError(EnzymeCore.EnzymeRules.multiply_fwd_into, (prev, partial, dx)))
         end
     end
 
