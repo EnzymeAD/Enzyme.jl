@@ -22,9 +22,9 @@ The third argument is the return type annotation, and all other arguments are th
 to the function `f`.
 
 Valid types for `RT` are:
-  - [`Duplicated`](@ref)
-  - [`DuplicatedNoNeed`](@ref)
-  - [`Const`](@ref)
+  - [`EnzymeCore.Duplicated`](@ref)
+  - [`EnzymeCore.DuplicatedNoNeed`](@ref)
+  - [`EnzymeCore.Const`](@ref)
 """
 function forward end
 
