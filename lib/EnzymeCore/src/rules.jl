@@ -38,7 +38,8 @@ Configuration type to dispatch on in custom forward rules (see [`forward`](@ref)
 * `RuntimeActivity`: whether runtime activity is enabled. See the [FAQ](@ref faq-runtime-activity) for more information.
 * `StrongZero`: whether strong zero is enabled. See the [FAQ](@ref faq-strong-zero) for more information.
 
-Getters for the type parameters are provided by `needs_primal`, `needs_shadow`, `width` `runtime_activity`, and `strong_zero`.
+Getters for the type parameters are provided by [`needs_primal`](@ref), [`needs_shadow`](@ref),
+[`width`](@ref), `runtime_activity`, and `strong_zero`.
 """
 struct FwdConfig{NeedsPrimal, NeedsShadow, Width, RuntimeActivity, StrongZero} end
 const FwdConfigWidth{Width} = FwdConfig{<:Any,<:Any,Width}
@@ -72,7 +73,7 @@ Whether a custom rule should return the shadow (derivative) of the function resu
     width(::Type{<:FwdConfig})
     width(::Type{<:RevConfig})
 
-Get the size of a batch
+Get the size of a batch.
 """
 @inline width(::FwdConfig{<:Any, <:Any, Width}) where Width = Width
 @inline width(::Type{<:FwdConfig{<:Any, <:Any, Width}}) where Width = Width
@@ -89,11 +90,12 @@ Configuration type to dispatch on in custom reverse rules (see [`augmented_prima
 * `NeedsPrimal` and `NeedsShadow`: boolean values specifying whether the primal and shadow (resp.) should be returned.
 * `Width`: an integer that specifies the number of adjoints/shadows simultaneously being propagated.
 * `Overwritten`: a tuple of booleans of whether each argument (including the function itself) is modified between the
-   forward and reverse pass (true if potentially modified between).
+   forward and reverse pass (`true` if potentially modified between).
 * `RuntimeActivity`: whether runtime activity is enabled. See the [FAQ](@ref faq-runtime-activity) for more information.
 * `StrongZero`: whether strong zero is enabled. See the [FAQ](@ref faq-strong-zero) for more information.
 
-Getters for the type parameters are provided by `needs_primal`, `needs_shadow`, `width`, `overwritten`, `runtime_activity`, and `strong_zero`.
+Getters for the type parameters are provided by [`needs_primal`](@ref), [`needs_shadow`](@ref), [`width`](@ref),
+[`overwritten`](@ref), `runtime_activity`, and `strong_zero`.
 """
 struct RevConfig{NeedsPrimal, NeedsShadow, Width, Overwritten, RuntimeActivity, StrongZero} end
 const RevConfigWidth{Width} = RevConfig{<:Any,<:Any, Width}
@@ -123,7 +125,7 @@ between).
     primal_type(::FwdConfig, ::Type{<:Annotation{RT}})
     primal_type(::RevConfig, ::Type{<:Annotation{RT}})
 
-Compute the exepcted primal return type given a reverse mode config and return activity
+Compute the expected primal return type given a reverse mode config and return activity
 """
 @inline primal_type(config::FwdConfig, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
 @inline primal_type(config::RevConfig, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
@@ -132,7 +134,7 @@ Compute the exepcted primal return type given a reverse mode config and return a
     shadow_type(::FwdConfig, ::Type{<:Annotation{RT}})
     shadow_type(::RevConfig, ::Type{<:Annotation{RT}})
 
-Compute the exepcted shadow return type given a reverse mode config and return activity
+Compute the expected shadow return type given a reverse mode config and return activity
 """
 @inline shadow_type(config::FwdConfig, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
 @inline shadow_type(config::RevConfig, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
@@ -175,10 +177,12 @@ end
     augmented_primal(::RevConfig, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
 
 Must return an [`AugmentedReturn`](@ref) type.
-* The primal must be the same type of the original return if `needs_primal(config)`, otherwise nothing.
-* The shadow must be nothing if needs_shadow(config) is false. If width is 1, the shadow should be the same
-  type of the original return. If the width is greater than 1, the shadow should be NTuple{original return, width}.
-* The tape can be any type (including Nothing) and is preserved for the reverse call.
+* The primal must be the same type of the original return if [`needs_primal(config)`](@ref needs_primal),
+  otherwise nothing.
+* The shadow must be nothing if [`needs_shadow(config)`](@ref needs_shadow) is `false`.
+  If width is 1, the shadow should be the same type of the original return.
+  If the width is greater than 1, the shadow should be `NTuple{original return, width}`.
+* The tape can be any type (including `Nothing`), and is preserved for the reverse call.
 """
 function augmented_primal end
 
@@ -186,8 +190,9 @@ function augmented_primal end
     reverse(::RevConfig, func::Annotation{typeof(f)}, dret::Active, tape, args::Annotation...)
     reverse(::RevConfig, func::Annotation{typeof(f)}, ::Type{<:Annotation), tape, args::Annotation...)
 
-Takes gradient of derivative, activity annotation, and tape. If there is an active return dret is passed
-as Active{T} with the derivative of the active return val. Otherwise dret is passed as Type{Duplicated{T}}, etc.
+Takes gradient of derivative, activity annotation, and tape. If there is an active return, `dret` is passed
+as `Active{T}` with the derivative of the active return value. Otherwise, `dret` is passed
+as `Type{Duplicated{T}}`, etc.
 """
 function reverse end
 
