@@ -1830,7 +1830,7 @@ function EnzymeRules.augmented_primal(config, ::Const{typeof(Base.finalizer)}, :
     primal = EnzymeRules.needs_primal(config) ? o.val : nothing
     shadow = EnzymeRules.needs_shadow(config) ? o.dval : nothing
 
-    return AugmentedReturn(primal, shadow, nothing)
+    return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
 end
 
 function EnzymeRules.reverse(config, ::Const{typeof(Base.finalizer)}, dret, tape, f::Const, o)
