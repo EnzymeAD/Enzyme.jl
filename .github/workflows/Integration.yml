@@ -52,6 +52,11 @@ jobs:
           - Lux
           - SciML
           - KernelAbstractions
+          - Molly
+        exclude:
+          - version: '1.10'
+            os: linux-x86-n2-32
+            package: Molly
     steps:
       - uses: actions/checkout@v5
       - uses: julia-actions/setup-julia@v2
