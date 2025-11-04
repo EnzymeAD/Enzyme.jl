@@ -47,17 +47,32 @@ function absolute_symbol_materialization(name, ptr)
 end
 
 const hnd_string_map = Dict{String,Ref{Ptr{Cvoid}}}()
+
+# These are special (external or private) global
+# constants that should not be incremented (renamed)
+const global_var_prefixes = ("ejl_enz_", "ejl_jl_", "enz_exception", "_j_const_", "jl_", "_j_str")
+
+# store non-special external global constants
+# They will be incremented to produce new names
 const glob_vars_maps = Dict{String,Int}()
 
+# TODO: may not be necessary once the core
+# issue is found regarding linkage type of
+# private constants is change to external
+# when ccall is used.
 function rename_global!(glob_var)
-    glob_var_name = LLVM.name(glob_var)
-    if haskey(glob_vars_maps, glob_var_name)
-        glob_vars_maps[glob_var_name] += 1
-        new_name = glob_var_name * "_$(glob_vars_maps[glob_var_name])"
-        LLVM.name!(glob_var, new_name)
-        glob_vars_maps[new_name] = 1
+    _name = LLVM.name(glob_var)
+    if any(startswith.(_name, global_var_prefixes))
     else
-        glob_vars_maps[glob_var_name] = 1
+        if haskey(glob_vars_maps, _name)
+            glob_vars_maps[_name] += 1
+            _new_name = _name * ".$(glob_vars_maps[_name])"
+            LLVM.name!(glob_var, _new_name)
+            glob_vars_maps[_new_name] = 1
+        else
+            glob_vars_maps[_name] = 1
+        end
+
     end
 end
 
@@ -271,6 +286,10 @@ function add!(mod)
         replace_uses!(f, ptr)
         Compiler.eraseInst(mod, f)
     end
+
+    # rename non-special global constants that
+    # have external linkage (modified by the ccall
+    # execution path)
     for glob_var in collect(globals(mod))
         rename_global!(glob_var)
     end
