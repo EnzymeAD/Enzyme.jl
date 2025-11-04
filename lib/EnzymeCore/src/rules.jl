@@ -38,7 +38,8 @@ Configuration type to dispatch on in custom forward rules (see [`forward`](@ref)
 * `RuntimeActivity`: whether runtime activity is enabled. See the [FAQ](@ref faq-runtime-activity) for more information.
 * `StrongZero`: whether strong zero is enabled. See the [FAQ](@ref faq-strong-zero) for more information.
 
-Getters for the type parameters are provided by `needs_primal`, `needs_shadow`, `width` `runtime_activity`, and `strong_zero`.
+Getters for the type parameters are provided by [`needs_primal`](@ref), [`needs_shadow`](@ref),
+[`width`](@ref), `runtime_activity`, and `strong_zero`.
 """
 struct FwdConfig{NeedsPrimal, NeedsShadow, Width, RuntimeActivity, StrongZero} end
 const FwdConfigWidth{Width} = FwdConfig{<:Any,<:Any,Width}
@@ -72,7 +73,7 @@ Whether a custom rule should return the shadow (derivative) of the function resu
     width(::Type{<:FwdConfig})
     width(::Type{<:RevConfig})
 
-Get the size of a batch
+Get the size of a batch.
 """
 @inline width(::FwdConfig{<:Any, <:Any, Width}) where Width = Width
 @inline width(::Type{<:FwdConfig{<:Any, <:Any, Width}}) where Width = Width
@@ -94,7 +95,7 @@ Configuration type to dispatch on in custom reverse rules (see [`augmented_prima
 * `StrongZero`: whether strong zero is enabled. See the [FAQ](@ref faq-strong-zero) for more information.
 
 Getters for the type parameters are provided by [`needs_primal`](@ref), [`needs_shadow`](@ref), [`width`](@ref),
-[`overwritten`](@ref), [`runtime_activity`](@ref), and [`strong_zero`](@ref).
+[`overwritten`](@ref), `runtime_activity`, and `strong_zero`.
 """
 struct RevConfig{NeedsPrimal, NeedsShadow, Width, Overwritten, RuntimeActivity, StrongZero} end
 const RevConfigWidth{Width} = RevConfig{<:Any,<:Any, Width}
