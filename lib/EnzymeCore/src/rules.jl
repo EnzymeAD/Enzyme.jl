@@ -190,8 +190,8 @@ function augmented_primal end
     reverse(::RevConfig, func::Annotation{typeof(f)}, dret::Active, tape, args::Annotation...)
     reverse(::RevConfig, func::Annotation{typeof(f)}, ::Type{<:Annotation), tape, args::Annotation...)
 
-Takes gradient of derivative, activity annotation, and tape. If there is an active return, `dret`` is passed
-as `Active{T}`` with the derivative of the active return value. Otherwise, `dret` is passed
+Takes gradient of derivative, activity annotation, and tape. If there is an active return, `dret` is passed
+as `Active{T}` with the derivative of the active return value. Otherwise, `dret` is passed
 as `Type{Duplicated{T}}`, etc.
 """
 function reverse end
