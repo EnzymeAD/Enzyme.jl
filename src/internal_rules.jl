@@ -1797,3 +1797,43 @@ function EnzymeRules.reverse(
     dxs = map(x -> _hypotreverse(x, w, dret, n), xs)
     return (dx, dy, dz, dxs...)
 end
+
+
+function EnzymeRules.forward(config, ::Const{typeof(Base.finalizer)}, ::Type{T}, f::Const, o) where T
+    f = f.val
+    Base.finalizer(f, o.val)
+    if o isa Duplicated
+        Base.finalizer(f, o.dval)
+    elseif o isa BatchDuplicated
+        for dv in o.dval
+            Base.finalizer(f, dv)
+        end
+    end
+    if T <: Const
+        return nothing
+    end
+
+    return o
+end
+
+function EnzymeRules.augmented_primal(config, ::Const{typeof(Base.finalizer)}, ::Type{T}, f::Const, o) where T
+    @assert !(o isa Active)
+    f = f.val
+    Base.finalizer(f, o.val)
+    if o isa Duplicated
+        Base.finalizer(f, o.dval)
+    elseif o isa BatchDuplicated
+        for dv in o.dval
+            Base.finalizer(f, dv)
+        end
+    end
+    primal = EnzymeRules.needs_primal(config) ? o.val : nothing
+    shadow = EnzymeRules.needs_shadow(config) ? o.dval : nothing
+
+    return AugmentedReturn(primal, shadow, nothing)
+end
+
+function EnzymeRules.reverse(config, ::Const{typeof(Base.finalizer)}, dret, tape, f::Const, o)
+    # No-op
+    return (nothing, nothing)
+end
