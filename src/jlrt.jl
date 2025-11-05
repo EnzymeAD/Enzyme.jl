@@ -1,5 +1,5 @@
 # For julia runtime function emission
-    
+
 function emit_allocobj!(
     B::LLVM.IRBuilder,
     @nospecialize(tag::LLVM.Value),
@@ -27,7 +27,7 @@ function emit_allocobj!(
         [LLVM.ConstantInt(current_task_offset())],
     )
 
-    @static if VERSION < v"1.11.0-"    
+    @static if VERSION < v"1.11.0-"
         ptls_field = inbounds_gep!(B, T_pjlvalue, ct, [LLVM.ConstantInt(current_ptls_offset())])
         T_ppint8 = LLVM.PointerType(T_pint8)
         ptls = load!(B, T_pint8, bitcast!(B, ptls_field, T_ppint8))
@@ -356,7 +356,7 @@ function emit_svec!(B::LLVM.IRBuilder, args::Vector{LLVM.Value})::LLVM.Value
     LLVM.FunctionType(T_prjlvalue, [sz]; vararg = true)
 
     sz = convert(LLVMType, Csize_t)
-    
+
     nargs = Vector{LLVM.Value}(undef, 1+length(args))
     nargs[1] = LLVM.ConstantInt(sz, length(args))
     for (i, v) in enumerate(args)
@@ -384,7 +384,7 @@ function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nosp
                 return val
             end
         end
-        return emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, load_if_mixed), new_from_original(gutils, oval), val]) 
+        return emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, load_if_mixed), new_from_original(gutils, oval), val])
     end
     if !guaranteed_nonactive(TT, world)
         legal2, TT2, _ = abs_typeof(val)
@@ -413,7 +413,7 @@ function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nosp
 end
 
 @inline function ref_if_mixed(val::VT) where VT
-    areg = active_reg_nothrow(VT) 
+    areg = active_reg_nothrow(VT)
     if areg == ActiveState || areg == MixedState
         Ref(val)
     else
@@ -429,9 +429,9 @@ function byref_from_val_if_mixed(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Valu
         if legal && active_reg(TT, world) == AnyState
             return val
         end
-        return emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, ref_if_mixed), val]) 
+        return emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, ref_if_mixed), val])
     end
-    
+
     if !guaranteed_nonactive(TT, world)
         obj = emit_allocobj!(B, Base.RefValue{TT})
         lty = convert(LLVMType, TT)
@@ -712,13 +712,13 @@ function get_array_struct()
         #     // T inl[];
         # #endif
         # } jl_genericmemory_t;
-        # 
+        #
         # JL_EXTENSION typedef struct {
         #     JL_DATA_TYPE
         #     void *ptr_or_offset;
         #     jl_genericmemory_t *mem;
         # } jl_genericmemoryref_t;
-        # 
+        #
         # JL_EXTENSION typedef struct {
         #     JL_DATA_TYPE
         #     jl_genericmemoryref_t ref;
@@ -877,7 +877,7 @@ function emit_layout_of_type!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value))
 	@assert !isa(ty, LLVM.Constant)
 	dt = get_datatype_struct()
 	lty = bitcast!(B, ty, LLVM.PointerType(dt, addrspace(value_type(ty))))
-	layoutp = inbounds_gep!(B, dt, lty, 
+	layoutp = inbounds_gep!(B, dt, lty,
         LLVM.Value[LLVM.ConstantInt(Int32(0)), LLVM.ConstantInt(Int32(5))],
 	)
 	jlvaluet = LLVM.PointerType(LLVM.StructType(LLVMType[]), 10)
@@ -1053,7 +1053,14 @@ function emit_printf(B::LLVM.IRBuilder, string::String, v::LLVM.Value...)
     for i in 1:length(args)
         if value_type(args[i]) isa LLVM.PointerType
             if LLVM.addrspace(value_type(args[i])) == 10
-                args[i] = addrspacecast!(B, args[i], LLVM.PointerType(eltype(value_type(args[i])), 11))
+                # TODO: Opaque pointer - maintain pointer type
+                argty = value_type(args[i])
+                target_ty = if is_opaque_pointer(argty)
+                    LLVM.PointerType(LLVM.context(argty), 11)
+                else
+                    LLVM.PointerType(eltype(argty), 11)
+                end
+                args[i] = addrspacecast!(B, args[i], target_ty)
             end
             if LLVM.addrspace(value_type(args[i])) == 11
                 args[i] = emit_pointerfromobjref!(B, args[i])

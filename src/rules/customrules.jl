@@ -254,8 +254,17 @@ function enzyme_custom_setup_args(
                         LLVM.ConstantInt(LLVM.IntType(32), 0),
                     ],
                 )
-                if value_type(val) != eltype(value_type(ptr))
-                    val = load!(B, arty, val)
+                # TODO: Opaque pointer - skip type comparison for opaque pointers
+                ptrty = value_type(ptr)
+                if !(ptrty isa LLVM.PointerType && is_opaque_pointer(ptrty))
+                    if value_type(val) != eltype(ptrty)
+                        val = load!(B, arty, val)
+                    end
+                else
+                    # For opaque pointers, conservatively try to load if val is a pointer
+                    if value_type(val) isa LLVM.PointerType
+                        val = load!(B, arty, val)
+                    end
                 end
                 store!(B, val, ptr)
 
@@ -289,38 +298,52 @@ function enzyme_custom_setup_args(
                         LLVM.ConstantInt(LLVM.IntType(32), 0),
                     ],
                 )
-                if value_type(val) != eltype(value_type(ptr))
-                    if overwritten[end]
-                        emit_error(
-                            B,
-                            orig,
-                            "Enzyme: active by ref type $Ty is overwritten in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr)). " *
-                            "As a workaround until support for this is added, try passing values as separate arguments rather than as an aggregate of type $Ty.",
-                        )
+                # TODO: Opaque pointer - skip type comparison for opaque pointers
+                ptrty = value_type(ptr)
+                valty = value_type(val)
+                if !(ptrty isa LLVM.PointerType && is_opaque_pointer(ptrty))
+                    if valty != eltype(ptrty)
+                        if overwritten[end]
+                            emit_error(
+                                B,
+                                orig,
+                                "Enzyme: active by ref type $Ty is overwritten in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr)). " *
+                                "As a workaround until support for this is added, try passing values as separate arguments rather than as an aggregate of type $Ty.",
+                            )
+                        end
+                        if valty isa LLVM.PointerType && !is_opaque_pointer(valty) && arty == eltype(valty)
+                            val = load!(B, arty, val)
+                        else
+                            val = LLVM.UndefValue(arty)
+                            emit_error(
+                                B,
+                                orig,
+                                "Enzyme: active by ref type $Ty is wrong type in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))",
+                            )
+                        end
                     end
-                    if arty == eltype(value_type(val))
-                        val = load!(B, arty, val)
-                    else
-                        val = LLVM.UndefValue(arty)
-                        emit_error(
-                            B,
-                            orig,
-                            "Enzyme: active by ref type $Ty is wrong type in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))",
-                        )
-                    end
-                end
 
-                if eltype(value_type(ptr)) == value_type(val)
+                    if eltype(ptrty) == value_type(val)
+                        store!(B, val, ptr)
+                        if any_jltypes(llty)
+                            emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
+                        end
+                    else
+                        emit_error(
+                            B,
+                            orig,
+                            "Enzyme: active by ref type $Ty is wrong store type in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))",
+                        )
+                    end
+                else
+                    # For opaque pointers, skip type checks and store directly
+                    if valty isa LLVM.PointerType && !is_opaque_pointer(valty)
+                        val = load!(B, arty, val)
+                    end
                     store!(B, val, ptr)
                     if any_jltypes(llty)
                         emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
                     end
-                else
-                    emit_error(
-                        B,
-                        orig,
-                        "Enzyme: active by ref type $Ty is wrong store type in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))",
-                    )
                 end
 
                 push!(args, al)
@@ -388,19 +411,39 @@ function enzyme_custom_setup_args(
                     ],
                 )
                 needsload = false
-                if value_type(val) != eltype(value_type(ptr))
-                    val = load!(B, arty, val)
-                    if !mixed
-                        ptr_val = ival
-                        ival = UndefValue(siarty)
-                        for idx = 1:width
-                            ev =
-                                (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
-                            ld = load!(B, iarty, ev)
-                            ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
+                # TODO: Opaque pointer - skip type comparison for opaque pointers
+                ptrty = value_type(ptr)
+                if !(ptrty isa LLVM.PointerType && is_opaque_pointer(ptrty))
+                    if value_type(val) != eltype(ptrty)
+                        val = load!(B, arty, val)
+                        if !mixed
+                            ptr_val = ival
+                            ival = UndefValue(siarty)
+                            for idx = 1:width
+                                ev =
+                                    (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
+                                ld = load!(B, iarty, ev)
+                                ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
+                            end
                         end
+                        needsload = true
                     end
-                    needsload = true
+                else
+                    # For opaque pointers, conservatively load if val is a pointer
+                    if value_type(val) isa LLVM.PointerType
+                        val = load!(B, arty, val)
+                        if !mixed
+                            ptr_val = ival
+                            ival = UndefValue(siarty)
+                            for idx = 1:width
+                                ev =
+                                    (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
+                                ld = load!(B, iarty, ev)
+                                ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
+                            end
+                        end
+                        needsload = true
+                    end
                 end
                 store!(B, val, ptr)
 
@@ -581,7 +624,7 @@ end
         emit_error(B, orig, "Enzyme: Non-constant keyword argument found for " * string(TT))
         return false
     end
-    
+
     alloctx = LLVM.IRBuilder()
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
     mode = get_mode(gutils)
@@ -650,13 +693,20 @@ end
     end
 
     if sret !== nothing
+        # TODO: Opaque pointer - using i8 as conservative fallback for sret
+        param1_ty = value_type(parameters(llvmf)[1])
+        sret_elty = if param1_ty isa LLVM.PointerType && is_opaque_pointer(param1_ty)
+            LLVM.IntType(8)
+        else
+            eltype(param1_ty)
+        end
         if LLVM.version().major >= 12
-            attr = TypeAttribute("sret", eltype(value_type(parameters(llvmf)[1])))
+            attr = TypeAttribute("sret", sret_elty)
         else
             attr = EnumAttribute("sret")
         end
         LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1), attr)
-        res = load!(B, eltype(value_type(parameters(llvmf)[1])), sret)
+        res = load!(B, sret_elty, sret)
     end
     if swiftself
         attr = EnumAttribute("swiftself")
@@ -940,7 +990,7 @@ end
     fn = LLVM.parent(LLVM.parent(orig))
     world = enzyme_extract_world(fn)
     @safe_debug "Trying to apply custom forward rule" TT isKWCall
-        
+
     functy = if isKWCall
         rkwfunc = typeof(Core.kwfunc(EnzymeRules.forward))
     else
@@ -956,7 +1006,7 @@ end
     else
         fwd_RT = primal_return_type_world(Forward, world, fmi)
     end
-    
+
     fmi = fmi::Core.MethodInstance
     fwd_RT = fwd_RT::Type
     return fmi, (args, TT, fwd_RT, kwtup, RT, needsPrimal, RealRt, origNeedsPrimal, activity, C)
@@ -1102,7 +1152,7 @@ function enzyme_custom_common_rev(
     else
         TapeT = Any
     end
-    
+
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     llvmf = nothing
@@ -1148,7 +1198,7 @@ function enzyme_custom_common_rev(
         else
             rev_RT = return_type(interp, rmi)
         end
-        
+
         rmi = rmi::Core.MethodInstance
         rev_RT = rev_RT::Type
         llvmf = nested_codegen!(mode, mod, rmi, world)
@@ -1402,8 +1452,15 @@ function enzyme_custom_common_rev(
     end
 
     if sret !== nothing
+        # TODO: Opaque pointer - using i8 as conservative fallback for sret
+        param_ty = value_type(parameters(llvmf)[1+swiftself])
+        sret_elty = if param_ty isa LLVM.PointerType && is_opaque_pointer(param_ty)
+            LLVM.IntType(8)
+        else
+            eltype(param_ty)
+        end
         if LLVM.version().major >= 12
-            attr = TypeAttribute("sret", eltype(value_type(parameters(llvmf)[1+swiftself])))
+            attr = TypeAttribute("sret", sret_elty)
         else
             attr = EnumAttribute("sret")
         end
@@ -1412,7 +1469,7 @@ function enzyme_custom_common_rev(
             LLVM.API.LLVMAttributeIndex(1 + swiftself),
             attr,
         )
-        res = load!(B, eltype(value_type(parameters(llvmf)[1+swiftself])), sret)
+        res = load!(B, sret_elty, sret)
         API.SetMustCache!(res)
     end
     if swiftself

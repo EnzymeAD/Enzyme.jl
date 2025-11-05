@@ -306,7 +306,7 @@ end
 #  % a = alloca
 #  ...
 #  memref(cast(%a), %b, constant size == sizeof(a))
-#   
+#
 #  turn this into load/store, as this is more
 #  amenable to caching analysis infrastructure
 function memcpy_alloca_to_loadstore(mod::LLVM.Module)
@@ -416,10 +416,10 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
                         bitcast!(B, src, LLVM.PointerType(elty, addrspace(value_type(src))))
 
                     src = load!(B, elty, src)
-        
+
 		    T_jlvalue = LLVM.StructType(LLVMType[])
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-        
+
             	    legal, source_typ, byref = abs_typeof(src)
                     codegen_typ = value_type(src)
 		    if legal
@@ -438,9 +438,9 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
 			    metadata(src)["enzyme_type"] = to_md(ec, ctx)
 			    metadata(src)["enzymejl_source_type_$(source_typ)"] = MDNode(LLVM.Metadata[])
 			    metadata(src)["enzymejl_byref_$(byref)"] = MDNode(LLVM.Metadata[])
-		    
+
 	@static if VERSION < v"1.11-"
-	else    
+	else
 			    legal2, obj = absint(src)
 			    if legal2 obj isa Memory && obj == typeof(obj).instance
 				metadata(src)["nonnull"] = MDNode(LLVM.Metadata[])
@@ -605,7 +605,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                             if in(base, seen)
                                 continue
                             end
-                            push!(seen, base)		
+                            push!(seen, base)
                             if isa(base, LLVM.PHIInst)
                                 for (v, _) in LLVM.incoming(base)
                                     push!(addrtodo, v)
@@ -695,7 +695,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                         return v2, o2, true
                                     end
 
-                                    rhs = LLVM.ConstantInt(offty, 0) 
+                                    rhs = LLVM.ConstantInt(offty, 0)
                                     if o2 != rhs
                                         msg = sprint() do io::IO
                                             println(
@@ -753,10 +753,14 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     v2 = operands(v)[1]
                                     if addrspace(value_type(v2)) == 0
                                         if addr == 13 && isa(v, LLVM.ConstantExpr)
-                                            v2 = const_addrspacecast(
-                                                operands(v)[1],
-                                                LLVM.PointerType(eltype(value_type(v)), 10),
-                                            )
+                                            # TODO: Opaque pointer - maintain pointer type
+                                            vty = value_type(v)
+                                            target_ty = if vty isa LLVM.PointerType && is_opaque_pointer(vty)
+                                                LLVM.PointerType(LLVM.context(vty), 10)
+                                            else
+                                                LLVM.PointerType(eltype(vty), 10)
+                                            end
+                                            v2 = const_addrspacecast(operands(v)[1], target_ty)
                                             return v2, offset, hasload
                                         end
                                     end
@@ -771,18 +775,26 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     end
                                     if addrspace(value_type(v2)) == 0
                                         if addr == 11
-                                            v2 = const_addrspacecast(
-                                                v2,
-                                                LLVM.PointerType(eltype(value_type(v)), 10),
-                                            )
+                                            # TODO: Opaque pointer - maintain pointer type
+                                            vty = value_type(v)
+                                            target_ty = if vty isa LLVM.PointerType && is_opaque_pointer(vty)
+                                                LLVM.PointerType(LLVM.context(vty), 10)
+                                            else
+                                                LLVM.PointerType(eltype(vty), 10)
+                                            end
+                                            v2 = const_addrspacecast(v2, target_ty)
                                             return v2, offset, hasload
                                         end
                                     end
                                     if LLVM.isnull(v2)
-                                        v2 = const_addrspacecast(
-                                            v2,
-                                            LLVM.PointerType(eltype(value_type(v)), 10),
-                                        )
+                                        # TODO: Opaque pointer - maintain pointer type
+                                        vty = value_type(v)
+                                        target_ty = if vty isa LLVM.PointerType && is_opaque_pointer(vty)
+                                            LLVM.PointerType(LLVM.context(vty), 10)
+                                        else
+                                            LLVM.PointerType(eltype(vty), 10)
+                                        end
+                                        v2 = const_addrspacecast(v2, target_ty)
                                         return v2, offset, hasload
                                     end
                                 end
@@ -793,17 +805,25 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     end
                                     v2, offset, skipload =
                                         getparent(b, preop, offset, hasload, phicache)
-                                    v2 = const_bitcast(
-                                        v2,
-                                        LLVM.PointerType(
-                                            eltype(value_type(v)),
-                                            addrspace(value_type(v2)),
-                                        ),
-                                    )
-                                    @assert eltype(value_type(v2)) == eltype(value_type(v))
-                                    return v2, offset, skipload
+                                    # TODO: Opaque pointer - skip bitcast for opaque pointers
+                                    vty = value_type(v)
+                                    v2ty = value_type(v2)
+                                    if vty isa LLVM.PointerType && is_opaque_pointer(vty)
+                                        # For opaque pointers, bitcast isn't needed, just return v2
+                                        return v2, offset, skipload
+                                    else
+                                        v2 = const_bitcast(
+                                            v2,
+                                            LLVM.PointerType(
+                                                eltype(vty),
+                                                addrspace(v2ty),
+                                            ),
+                                        )
+                                        @assert eltype(v2ty) == eltype(vty)
+                                        return v2, offset, skipload
+                                    end
                                 end
-                                
+
                                 if opcode(v) == LLVM.API.LLVMGetElementPtr
                                     v2, offset, skipload =
                                         getparent(b, operands(v)[1], offset, hasload, phicache)
@@ -811,39 +831,55 @@ function nodecayed_phis!(mod::LLVM.Module)
                                         offset,
                                         API.EnzymeComputeByteOffsetOfGEP(b, v, offty),
                                     )
-                                    v2 = const_bitcast(
-                                        v2,
-                                        LLVM.PointerType(
-                                            eltype(value_type(v)),
-                                            addrspace(value_type(v2)),
-                                        ),
-                                    )
-                                    @assert eltype(value_type(v2)) == eltype(value_type(v))
-                                    return v2, offset, skipload
+                                    # TODO: Opaque pointer - skip bitcast for opaque pointers
+                                    vty = value_type(v)
+                                    v2ty = value_type(v2)
+                                    if vty isa LLVM.PointerType && is_opaque_pointer(vty)
+                                        # For opaque pointers, bitcast isn't needed
+                                        return v2, offset, skipload
+                                    else
+                                        v2 = const_bitcast(
+                                            v2,
+                                            LLVM.PointerType(
+                                                eltype(vty),
+                                                addrspace(v2ty),
+                                            ),
+                                        )
+                                        @assert eltype(v2ty) == eltype(vty)
+                                        return v2, offset, skipload
+                                    end
                                 end
 
                             end
 
                             if isa(v, LLVM.AddrSpaceCastInst)
                                 if addrspace(value_type(operands(v)[1])) == 0
-                                    v2 = addrspacecast!(
-                                        b,
-                                        operands(v)[1],
-                                        LLVM.PointerType(eltype(value_type(v)), 10),
-                                    )
+                                    # TODO: Opaque pointer - maintain pointer type
+                                    vty = value_type(v)
+                                    target_ty = if vty isa LLVM.PointerType && is_opaque_pointer(vty)
+                                        LLVM.PointerType(LLVM.context(vty), 10)
+                                    else
+                                        LLVM.PointerType(eltype(vty), 10)
+                                    end
+                                    v2 = addrspacecast!(b, operands(v)[1], target_ty)
                                     return v2, offset, hasload
                                 end
                                 nv, noffset, nhasload =
                                     getparent(b, operands(v)[1], offset, hasload, phicache)
-                                if eltype(value_type(nv)) != eltype(value_type(v))
-                                    nv = bitcast!(
-                                        b,
-                                        nv,
-                                        LLVM.PointerType(
-                                            eltype(value_type(v)),
-                                            addrspace(value_type(nv)),
-                                        ),
-                                    )
+                                # TODO: Opaque pointer - skip type comparison/bitcast for opaque pointers
+                                vty = value_type(v)
+                                nvty = value_type(nv)
+                                if !(vty isa LLVM.PointerType && is_opaque_pointer(vty))
+                                    if eltype(nvty) != eltype(vty)
+                                        nv = bitcast!(
+                                            b,
+                                            nv,
+                                            LLVM.PointerType(
+                                                eltype(vty),
+                                                addrspace(nvty),
+                                            ),
+                                        )
+                                    end
                                 end
                                 return nv, noffset, nhasload
                             end
@@ -855,16 +891,24 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 end
                                 v2, offset, skipload =
                                     getparent(b, preop, offset, hasload, phicache)
-                                v2 = bitcast!(
-                                    b,
-                                    v2,
-                                    LLVM.PointerType(
-                                        eltype(value_type(v)),
-                                        addrspace(value_type(v2)),
-                                    ),
-                                )
-                                @assert eltype(value_type(v2)) == eltype(value_type(v))
-                                return v2, offset, skipload
+                                # TODO: Opaque pointer - skip bitcast for opaque pointers
+                                vty = value_type(v)
+                                v2ty = value_type(v2)
+                                if vty isa LLVM.PointerType && is_opaque_pointer(vty)
+                                    # For opaque pointers, bitcast isn't needed
+                                    return v2, offset, skipload
+                                else
+                                    v2 = bitcast!(
+                                        b,
+                                        v2,
+                                        LLVM.PointerType(
+                                            eltype(vty),
+                                            addrspace(v2ty),
+                                        ),
+                                    )
+                                    @assert eltype(v2ty) == eltype(vty)
+                                    return v2, offset, skipload
+                                end
                             end
 
                             if isa(v, LLVM.GetElementPtrInst) && all(
@@ -873,16 +917,24 @@ function nodecayed_phis!(mod::LLVM.Module)
                             )
                                 v2, offset, skipload =
                                     getparent(b, operands(v)[1], offset, hasload, phicache)
-                                v2 = bitcast!(
-                                    b,
-                                    v2,
-                                    LLVM.PointerType(
-                                        eltype(value_type(v)),
-                                        addrspace(value_type(v2)),
-                                    ),
-                                )
-                                @assert eltype(value_type(v2)) == eltype(value_type(v))
-                                return v2, offset, skipload
+                                # TODO: Opaque pointer - skip bitcast for opaque pointers
+                                vty = value_type(v)
+                                v2ty = value_type(v2)
+                                if vty isa LLVM.PointerType && is_opaque_pointer(vty)
+                                    # For opaque pointers, bitcast isn't needed
+                                    return v2, offset, skipload
+                                else
+                                    v2 = bitcast!(
+                                        b,
+                                        v2,
+                                        LLVM.PointerType(
+                                            eltype(vty),
+                                            addrspace(v2ty),
+                                        ),
+                                    )
+                                    @assert eltype(v2ty) == eltype(vty)
+                                    return v2, offset, skipload
+                                end
                             end
 
                             if isa(v, LLVM.GetElementPtrInst)
@@ -893,16 +945,24 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     offset,
                                     API.EnzymeComputeByteOffsetOfGEP(b, v, offty),
                                 )
-                                v2 = bitcast!(
-                                    b,
-                                    v2,
-                                    LLVM.PointerType(
-                                        eltype(value_type(v)),
-                                        addrspace(value_type(v2)),
-                                    ),
-                                )
-                                @assert eltype(value_type(v2)) == eltype(value_type(v))
-                                return v2, offset, skipload
+                                # TODO: Opaque pointer - skip bitcast for opaque pointers
+                                vty = value_type(v)
+                                v2ty = value_type(v2)
+                                if vty isa LLVM.PointerType && is_opaque_pointer(vty)
+                                    # For opaque pointers, bitcast isn't needed
+                                    return v2, offset, skipload
+                                else
+                                    v2 = bitcast!(
+                                        b,
+                                        v2,
+                                        LLVM.PointerType(
+                                            eltype(vty),
+                                            addrspace(v2ty),
+                                        ),
+                                    )
+                                    @assert eltype(v2ty) == eltype(vty)
+                                    return v2, offset, skipload
+                                end
                             end
 
                             undeforpoison = isa(v, LLVM.UndefValue)
@@ -910,9 +970,14 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 undeforpoison |= isa(v, LLVM.PoisonValue)
                             end
                             if undeforpoison
-                                return LLVM.UndefValue(
-                                    LLVM.PointerType(eltype(value_type(v)), 10),
-                                ),
+                                # TODO: Opaque pointer - maintain pointer type
+                                vty = value_type(v)
+                                undef_ty = if vty isa LLVM.PointerType && is_opaque_pointer(vty)
+                                    LLVM.PointerType(LLVM.context(vty), 10)
+                                else
+                                    LLVM.PointerType(eltype(vty), 10)
+                                end
+                                return LLVM.UndefValue(undef_ty),
                                 offset,
                                 addr == 13
                             end
@@ -922,27 +987,33 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 nv = nextvs[v]
                                 return nv, offset, addr == 13
                             end
-                            
+
                             @static if VERSION < v"1.11-"
                             else
-                            if addr == 13 && isa(v, LLVM.PHIInst)
+			if addr == 13 && isa(v, LLVM.PHIInst)
 				if haskey(phicache, v)
 				   return (phicache[v]..., hasload)
 				end
                                 vs = Union{LLVM.Value, Nothing}[]
                                 offs = Union{LLVM.Value, Nothing}[]
                                 blks = LLVM.BasicBlock[]
-                                
+
                                 B = LLVM.IRBuilder()
                                 position!(B, v)
 
-                                sPT = LLVM.PointerType(eltype(value_type(v)), 10)
+                                # TODO: Opaque pointer - maintain pointer type
+                                vty = value_type(v)
+                                sPT = if vty isa LLVM.PointerType && is_opaque_pointer(vty)
+                                    LLVM.PointerType(LLVM.context(vty), 10)
+                                else
+                                    LLVM.PointerType(eltype(vty), 10)
+                                end
                                 vphi = phi!(B, sPT, "nondecay.vphi."*LLVM.name(v))
                                 ophi = phi!(B, value_type(offset), "nondecay.ophi"*LLVM.name(v))
 				phicache[v] = (vphi, ophi)
 
                                 bbcache = Dict{BasicBlock, Value}()
-                                for (vt, bb) in LLVM.incoming(v) 
+                                for (vt, bb) in LLVM.incoming(v)
                                     b2 = IRBuilder()
                                     position!(b2, terminator(bb))
                                     v2, o2, hl2 = getparent(b2, vt, offset, hasload, phicache)
@@ -963,7 +1034,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 end
 
                                 append!(incoming(ophi), collect(zip(offs, blks)))
-                                                    
+
                                 append!(incoming(vphi), collect(zip(vs, blks)))
 
                                 return vphi, ophi, hasload
@@ -1013,7 +1084,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                             bt = GPUCompiler.backtrace(inst)
                             throw(EnzymeInternalError(msg, string(f), bt))
                         end
-                    
+
                         b = IRBuilder()
                         position!(b, terminator(pb))
 
@@ -1024,17 +1095,21 @@ function nodecayed_phis!(mod::LLVM.Module)
                             @assert hadload
                         end
 
-                        if eltype(value_type(v)) != el_ty
-                            v = bitcast!(
-                                b,
-                                v,
-                                LLVM.PointerType(el_ty, addrspace(value_type(v))),
-                            )
+                        # TODO: Opaque pointer - skip bitcast for opaque pointers
+                        vty = value_type(v)
+                        if !(vty isa LLVM.PointerType && is_opaque_pointer(vty))
+                            if eltype(vty) != el_ty
+                                v = bitcast!(
+                                    b,
+                                    v,
+                                    LLVM.PointerType(el_ty, addrspace(vty)),
+                                )
+                            end
                         end
                         push!(nvs, (v, pb))
                         push!(offsets, (offset, pb))
                     end
-                        
+
                     nb = IRBuilder()
                     position!(nb, nonphi)
 
@@ -1289,7 +1364,13 @@ function fix_decayaddr!(mod::LLVM.Module)
                     throw(AssertionError(msg))
                 end
 
-                elt = eltype(value_type(inst))
+                # TODO: Opaque pointer - using i8 as conservative fallback
+                instty = value_type(inst)
+                elt = if instty isa LLVM.PointerType && is_opaque_pointer(instty)
+                    LLVM.IntType(8)
+                else
+                    eltype(instty)
+                end
                 if temp === nothing
                     nb = IRBuilder()
                     position!(nb, first(instructions(first(blocks(f)))))
@@ -1332,12 +1413,12 @@ function pre_attr!(mod::LLVM.Module, run_attr)
 		if !prevent
 		    continue
 		end
-        
+
 		if linkage(fn) == LLVM.API.LLVMInternalLinkage
 		    push!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_internal"))
 		    linkage!(fn, LLVM.API.LLVMExternalLinkage)
 		end
-        
+
 		if linkage(fn) == LLVM.API.LLVMPrivateLinkage
 		    push!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_private"))
 		    linkage!(fn, LLVM.API.LLVMExternalLinkage)
@@ -1348,7 +1429,7 @@ function pre_attr!(mod::LLVM.Module, run_attr)
 		    push!(LLVM.function_attributes(fn), EnumAttribute("noinline"))
 		    push!(LLVM.function_attributes(fn), StringAttribute("remove_noinline"))
 		end
-		
+
 		if !has_fn_attr(fn, EnumAttribute("optnone"))
 		    push!(LLVM.function_attributes(fn), EnumAttribute("optnone"))
 		    push!(LLVM.function_attributes(fn), StringAttribute("remove_optnone"))
@@ -1356,7 +1437,7 @@ function pre_attr!(mod::LLVM.Module, run_attr)
 	    end
     end
     return nothing
-    
+
     for fn in collect(functions(mod))
         if isempty(blocks(fn))
             continue
@@ -1389,7 +1470,7 @@ function post_attr!(mod::LLVM.Module, run_attr)
 		    delete!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_internal"))
 		    linkage!(fn, LLVM.API.LLVMInternalLinkage)
 		end
-		
+
 		if has_fn_attr(fn, StringAttribute("restorelinkage_private"))
 		    delete!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_private"))
 		    linkage!(fn, LLVM.API.LLVMPrivateLinkage)
@@ -1399,7 +1480,7 @@ function post_attr!(mod::LLVM.Module, run_attr)
 		    delete!(LLVM.function_attributes(fn), EnumAttribute("noinline"))
 		    delete!(LLVM.function_attributes(fn), StringAttribute("remove_noinline"))
 		end
-		
+
 		if has_fn_attr(fn, StringAttribute("remove_optnone"))
 		    delete!(LLVM.function_attributes(fn), EnumAttribute("optnone"))
 		    delete!(LLVM.function_attributes(fn), StringAttribute("remove_optnone"))
@@ -1655,7 +1736,7 @@ function propagate_returned!(mod::LLVM.Module)
                 kind(attr) == kind(StringAttribute("enzyme_preserve_primal")) for
                 attr in attrs
             )
-            # if any(kind(attr) == kind(EnumAttribute("noinline")) for attr in attrs) 
+            # if any(kind(attr) == kind(EnumAttribute("noinline")) for attr in attrs)
             #     continue
             # end
             argn = nothing
@@ -1682,10 +1763,15 @@ function propagate_returned!(mod::LLVM.Module)
                     illegalUse = false
                     torem = LLVM.Instruction[]
                     argeltype = if LLVM.version().major >= 12
-                        # TODO try to get sret element type if possible
-                        # note currently opaque pointers has this break [and we need to doa check if opaque
-                        # and if so get inner piece]
-                        eltype(value_type(arg))
+                        # TODO: Opaque pointer handling - using conservative i8 type as fallback
+                        # Should try to extract sret element type from function attributes if available
+                        argty = value_type(arg)
+                        if argty isa LLVM.PointerType && is_opaque_pointer(argty)
+                            # Use i8 as conservative fallback for opaque pointers
+                            LLVM.IntType(8)
+                        else
+                            eltype(argty)
+                        end
                     else
                         eltype(value_type(arg))
                     end
@@ -1714,7 +1800,13 @@ function propagate_returned!(mod::LLVM.Module)
                         eltype = if isa(ops[i], LLVM.AllocaInst)
                             LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(ops[i]))
                         else
-                            LLVM.eltype(value_type(ops[i]))
+                            # TODO: Opaque pointer handling - using conservative i8 type as fallback
+                            opsty = value_type(ops[i])
+                            if opsty isa LLVM.PointerType && is_opaque_pointer(opsty)
+                                LLVM.IntType(8)
+                            else
+                                LLVM.eltype(opsty)
+                            end
                         end
                         seenfn = false
                         todo = LLVM.Instruction[]
@@ -1850,7 +1942,7 @@ function propagate_returned!(mod::LLVM.Module)
                         LLVM.replace_uses!(arg, val)
                     end
                 end
-                
+
 		# see if there are no users of the value (excluding recursive/return)
                 if !prevent
 			baduse = false
@@ -2372,7 +2464,7 @@ end
 function rewrite_generic_memory!(mod::LLVM.Module)
     @static if VERSION < v"1.11-"
         return false
-    else    
+    else
         for f in functions(mod), bb in blocks(f)
             iter = LLVM.API.LLVMGetFirstInstruction(bb)
             while iter != C_NULL
@@ -2381,7 +2473,7 @@ function rewrite_generic_memory!(mod::LLVM.Module)
                 if !isa(inst, LLVM.LoadInst)
                     continue
                 end
-        
+
                 if isa(operands(inst)[1], LLVM.ConstantExpr)
                     legal2, obj = absint(inst)
                     if legal2 && obj isa Memory && obj == typeof(obj).instance
@@ -2400,7 +2492,7 @@ end
 
 function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     # We need to run globalopt first. This is because remove dead args will otherwise
-    # take internal functions and replace their args with undef. Then on LLVM up to 
+    # take internal functions and replace their args with undef. Then on LLVM up to
     # and including 12 (but fixed 13+), Attributor will incorrectly change functions that
     # call code with undef to become unreachable, even when there exist other valid
     # callsites. See: https://godbolt.org/z/9Y3Gv6q5M
@@ -2476,7 +2568,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                         EnumAttribute("nocapture"),
                     )
                 end
-            end 
+            end
         end
 
         # Ensure that interprocedural optimizations do not delete the use of returnRoots (or shadows)
@@ -2605,7 +2697,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     end
     post_attr!(mod, RunAttributor[])
     propagate_returned!(mod)
-    
+
 
     for u in LLVM.uses(rfunc)
         u = LLVM.user(u)

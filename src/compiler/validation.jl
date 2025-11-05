@@ -143,7 +143,7 @@ import GPUCompiler: IRError, InvalidIRError
 function restore_lookups(mod::LLVM.Module)::Nothing
     T_size_t = convert(LLVM.LLVMType, Int)
     for f in functions(mod)
-        for fattr in collect(function_attributes(f))        
+        for fattr in collect(function_attributes(f))
             if isa(fattr, LLVM.StringAttribute)
                 if kind(fattr) == "enzymejl_needs_restoration"
                     v = parse(UInt, LLVM.value(fattr))
@@ -192,7 +192,15 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
         name!(f, "")
         ptr8 = LLVM.PointerType(LLVM.IntType(8))
 
-        prev_ft = eltype(value_type(f)::LLVM.PointerType)::LLVM.FunctionType
+        # TODO: Opaque pointer - handle function pointer type extraction
+        fty = value_type(f)::LLVM.PointerType
+        prev_ft = if is_opaque_pointer(fty)
+            # For opaque pointers, we can't get the function type directly
+            # Assume malloc has the standard signature: ptr(size_t)
+            LLVM.FunctionType(ptr8, [LLVM.IntType(sizeof(Csize_t) * 8)])
+        else
+            eltype(fty)::LLVM.FunctionType
+        end
 
         mfn = LLVM.API.LLVMAddFunction(
             mod,
@@ -203,7 +211,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
         eraseInst(mod, f)
     end
     Compiler.rewrite_ccalls!(mod)
-        
+
     del = LLVM.Function[]
     for f in collect(functions(mod))
         if in(f, del)
@@ -214,7 +222,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     for d in del
         LLVM.API.LLVMDeleteFunction(d)
     end
-    
+
     del = LLVM.Function[]
     for f in collect(functions(mod))
         if in(f, del)
@@ -241,7 +249,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
         if isa(inst, LLVM.CallInst)
             push!(calls, inst)
             # remove illegal invariant.load and jtbaa_const invariants
-        elseif isa(inst, LLVM.LoadInst) 
+        elseif isa(inst, LLVM.LoadInst)
             fn_got, _ = get_base_and_offset(operands(inst)[1]; offsetAllowed=false, inttoptr=false)
             fname = String(name(fn_got))
             match_ = match(r"^jlplt_(.*)_\d+_got$", fname)
@@ -362,7 +370,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                             end
                             throw(AssertionError(msg))
                         end
-        
+
                         arg1 = reinterpret(Ptr{Cvoid}, convert(UInt, arg1))
                     end
 
@@ -402,7 +410,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 			    end
 
 			    newf, _ = get_function!(mod, fused_name, FT)
-			    
+
 			    while isa(newf, LLVM.ConstantExpr)
 				newf = operands(newf)[1]
 			    end
@@ -419,7 +427,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 end
                 replace_uses!(inst, newf)
                 LLVM.API.LLVMInstructionEraseFromParent(inst)
-               
+
                 baduse = false
                 for u in LLVM.uses(fn_got)
                     u = LLVM.user(u)
@@ -428,7 +436,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                     end
                     baduse = true
                 end
-                
+
                 if !baduse
                     opv_is_got = opv == fn_got
 
@@ -617,7 +625,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     bt = backtrace(inst)
     dest = called_operand(inst)
     if isa(dest, LLVM.ConstantExpr) && opcode(dest) == LLVM.API.LLVMIntToPtr && isa(operands(dest)[1], LLVM.ConstantExpr) && opcode(operands(dest)[1]) == LLVM.API.LLVMPtrToInt
-       dest = operands(operands(dest)[1])[1] 
+       dest = operands(operands(dest)[1])[1]
     end
 
     if isa(dest, LLVM.Function)
@@ -781,13 +789,13 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
             if isa(flib, LLVM.LoadInst)
                 op, _ = get_base_and_offset(operands(flib)[1]; offsetAllowed=false, inttoptr=true)
-                
+
                 if isa(op, LLVM.LoadInst)
                     pop, _ = get_base_and_offset(operands(op)[1]; offsetAllowed=false, inttoptr=true)
 
                     if isa(pop, LLVM.GlobalVariable)
                         zop, _ = get_base_and_offset(LLVM.initializer(pop); offsetAllowed=false, inttoptr=true)
-                
+
                         rep = zop
                         PT = value_type(rep)
                         if isa(PT, LLVM.PointerType)
@@ -800,7 +808,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         op = zop
                     end
                 end
-                        
+
                 if isa(op, ConstantInt)
                     rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, op) + 8)
                     ld = unsafe_load(convert(Ptr{Ptr{Cvoid}}, rep))
@@ -819,9 +827,18 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 fname = LLVM.initializer(fname)
             end
 
-            if (isa(fname, LLVM.ConstantArray) || isa(fname, LLVM.ConstantDataArray)) &&
-               eltype(value_type(fname)) == LLVM.IntType(8)
-               fname = String(map(Base.Fix1(convert, UInt8), collect(fname)[1:(end-1)]))
+            # TODO: Opaque pointer - skip type check for opaque pointers
+            if (isa(fname, LLVM.ConstantArray) || isa(fname, LLVM.ConstantDataArray))
+               fnamety = value_type(fname)
+               is_i8 = if fnamety isa LLVM.ArrayType
+                   elty = eltype(fnamety)
+                   elty == LLVM.IntType(8)
+               else
+                   false
+               end
+               if is_i8
+                   fname = String(map(Base.Fix1(convert, UInt8), collect(fname)[1:(end-1)]))
+               end
             end
 
             if !isa(fname, String) || !isa(flib, String)
@@ -907,7 +924,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                             end
                         end
                     end
-    
+
                     b = IRBuilder()
                     position!(b, inst)
                     replacement = LLVM.inttoptr!(b, replaceWith, value_type(inst))
@@ -921,7 +938,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                 x -> first(x) == inst || first(x) == replacement,
                                 LLVM.incoming(u),
                             )
-    
+
                                 for u in LLVM.uses(u)
                                     u = LLVM.user(u)
                                     if isa(u, LLVM.CallInst)
@@ -1113,7 +1130,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         linkage!(fn, LLVM.name(fn) != pname ? LLVM.API.LLVMInternalLinkage : LLVM.API.LLVMExternalLinkage)
                     end
                 end
-                
+
                 for glob in globals(pmod)
                     if LLVM.linkage(glob) == LLVM.API.LLVMExternalLinkage
                         LLVM.initializer!(glob, nothing)
@@ -1146,7 +1163,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 		    end
 
                     lfn = nothing
-                    if found 
+                    if found
                         lfn = replaceWith
                     else
                         fn = FFI.memoize!(ptr, fn)

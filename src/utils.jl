@@ -60,6 +60,47 @@ const Tracked = 10
 const Derived = 11
 export Tracked, Derived
 
+"""
+    is_opaque_pointer(ty::LLVM.PointerType)
+
+Check if a pointer type is opaque (has no element type information).
+In LLVM 15+ with opaque pointers enabled (Julia 1.12+), pointers don't carry pointee type information.
+"""
+@inline function is_opaque_pointer(ty::LLVM.PointerType)
+    # Use LLVM.jl's built-in function if available
+    if isdefined(LLVM, :is_opaque)
+        return LLVM.is_opaque(ty)
+    end
+    # Fallback: Try to check via eltype and catch the error
+    try
+        eltype(ty)
+        return false
+    catch
+        return true
+    end
+end
+export is_opaque_pointer
+
+"""
+    safe_eltype(ty::LLVM.PointerType, fallback::LLVM.LLVMType)
+
+Safely get the element type of a pointer, returning fallback for opaque pointers.
+For opaque pointers (Julia 1.12+), returns the fallback type (typically i8).
+
+# TODO: Opaque pointer handling - improve fallback strategy
+- For sret/byval parameters, extract element type from attributes
+- For GEP operations, use explicit type operands
+- Consider using struct types when appropriate instead of i8
+"""
+@inline function safe_eltype(ty::LLVM.PointerType, fallback::LLVM.LLVMType)
+    if is_opaque_pointer(ty)
+        return fallback
+    else
+        return eltype(ty)
+    end
+end
+export safe_eltype
+
 const captured_constants = Base.IdSet{Any}()
 
 function unsafe_nothing_to_llvm(mod::LLVM.Module)
@@ -272,7 +313,7 @@ Callers are responsible for setting `ci.edges`
 """
 function create_fresh_codeinfo(fn, source, world, slotnames, code)
     ci = ccall(:jl_new_code_info_uninit, Ref{Core.CodeInfo}, ())
-    
+
     @static if isdefined(Core, :DebugInfo)
         # TODO: Add proper debug info
         ci.debuginfo = Core.DebugInfo(:none)
@@ -334,7 +375,7 @@ end
     end
 
     sig = Tuple{ft, tt.parameters...}
-    
+
     lookup_result = lookup_world(
         sig, world, method_table, min_world, max_world
     )
@@ -343,7 +384,7 @@ end
     end
 
     match = lookup_result::Core.MethodMatch
-    
+
     mi = ccall(:jl_specializations_get_linfo, Ref{MethodInstance},
                (Any, Any, Any), match.method, match.spec_types, match.sparams)
     return mi::Core.MethodInstance
@@ -378,9 +419,9 @@ function methodinstance_generator(world::UInt, source, self, @nospecialize(mode:
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
     mi = my_methodinstance(mode.instance, ft, tt, world, min_world, max_world)
-    
+
     mi === nothing && return stub(world, source, :(throw(MethodError(ft, tt, $world))))
-    
+
     code = Any[Core.Compiler.ReturnNode(mi)]
 
     ci = create_fresh_codeinfo(prevmethodinstance, source, world, slotnames, code)
@@ -454,7 +495,7 @@ end
             sum += sizeof(tys[idx])
             idx+=1
         end
-        return sum 
+        return sum
     else
         fieldoffset(T, i)
     end
