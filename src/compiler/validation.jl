@@ -593,7 +593,7 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
             end
         end
         for g in globals(inmod)
-            linkage!(g, LLVM.API.LLVMExternalLinkage)
+            linkage!(g, LLVM.API.LLVMInternalLinkage)
         end
         # override libdevice's triple and datalayout to avoid warnings
         triple!(inmod, triple(mod))
