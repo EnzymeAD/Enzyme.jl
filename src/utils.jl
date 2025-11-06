@@ -468,7 +468,7 @@ function is_memory_ref_field2_an_offset(@nospecialize(T::Type{<:GenericMemoryRef
     # 0 = inlinealloc
     # 1 = isboxed
     # 2 = isbitsunion
-    
+    ccall(:jl_, Cvoid, (Any,), (T, ET))
     return (ET isa Union || (Base.datatype_arrayelem(ET) == 2)) || Base.datatype_layoutsize(ET) == 0
 end
 
