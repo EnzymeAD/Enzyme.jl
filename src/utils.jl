@@ -462,10 +462,24 @@ end
 
 else
 
+function is_memory_ref_field2_an_offset(@nospecialize(T::Type{<:GenericMemoryRef}))
+    ET = eltype(T)
+
+    # 0 = inlinealloc
+    # 1 = isboxed
+    # 2 = isbitsunion
+    
+    return (ET isa Union || (Base.datatype_arrayelem(ET) == 2)) || Base.datatype_layoutsize(ET) == 0
+end
+
 @inline function typed_fieldtype(@nospecialize(T::Type), i::Int)::Type
     if T <: GenericMemoryRef && i == 1 || T <: GenericMemory && i == 2
-        eT = eltype(T)
-        Ptr{eT}
+        if T <: GenericMemoryRef && i == 1 && is_memory_ref_field2_an_offset(T)
+            Int
+        else
+            eT = eltype(T)
+            Ptr{eT}
+        end
     else
         fieldtype(T, i)
     end
