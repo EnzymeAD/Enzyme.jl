@@ -465,17 +465,11 @@ else
 function is_memory_ref_field2_an_offset(@nospecialize(T::Type{<:GenericMemoryRef}))
     ET = eltype(T)
 
-    if !(ET isa DataType) || ET === Any
-        return false
-    end
-
     # 0 = inlinealloc
     # 1 = isboxed
     # 2 = isbitsunion
-
-    ccall(:jl_, Cvoid, (Any,), (T, ET))
-
-    return (ET isa Union || (Base.datatype_arrayelem(ET) == 2)) || Base.datatype_layoutsize(ET) == 0
+    
+    return (Base.datatype_arrayelem(T) == 2) || Base.datatype_layoutsize(T) == 0
 end
 
 @inline function typed_fieldtype(@nospecialize(T::Type), i::Int)::Type
