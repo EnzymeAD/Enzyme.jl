@@ -465,7 +465,7 @@ else
 function is_memory_ref_field2_an_offset(@nospecialize(T::Type{<:GenericMemoryRef}))
     ET = eltype(T)
 
-    if !(ET isa DataType)
+    if !(ET isa DataType) || ET === Any
         return false
     end
 
@@ -474,7 +474,7 @@ function is_memory_ref_field2_an_offset(@nospecialize(T::Type{<:GenericMemoryRef
     # 2 = isbitsunion
 
     ccall(:jl_, Cvoid, (Any,), (T, ET))
-    
+
     return (ET isa Union || (Base.datatype_arrayelem(ET) == 2)) || Base.datatype_layoutsize(ET) == 0
 end
 
