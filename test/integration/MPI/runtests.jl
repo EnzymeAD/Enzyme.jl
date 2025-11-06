@@ -26,4 +26,3 @@ end
 @testset "nonblocking_halo" for np in (1, 2, 4)
     run(`$(mpiexec()) -n $np $(Base.julia_cmd()) --project=$(@__DIR__) $(joinpath(@__DIR__, "nonblocking_halo.jl "))`)
 end
-
