@@ -4328,10 +4328,7 @@ function lower_convention(
         throw(LLVM.LLVMException(msg))
     end
 
-    ModulePassManager() do pm
-        add!(pm, AlwaysInlinerPass())
-        LLVM.run!(pm, mod)
-    end
+    run!(AlwaysInlinerPass(), mod)
     if !hasReturnsTwice
         LLVM.API.LLVMRemoveEnumAttributeAtIndex(
             wrapper_f,
@@ -4624,10 +4621,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             end
         end
 
-        ModulePassManager() do pm
-            add!(pm, AlwaysInlinerPass())
-            LLVM.run!(pm, mod)
-        end
+        run!(AlwaysInlinerPass(), mod)
         for fname in toremove
             if haskey(functions(mod), fname)
                 f = functions(mod)[fname]

@@ -819,7 +819,6 @@ function nodecayed_phis!(mod::LLVM.Module)
                                                 addrspace(v2ty),
                                             ),
                                         )
-                                        @assert eltype(v2ty) == eltype(vty)
                                         return v2, offset, skipload
                                     end
                                 end
@@ -845,7 +844,6 @@ function nodecayed_phis!(mod::LLVM.Module)
                                                 addrspace(v2ty),
                                             ),
                                         )
-                                        @assert eltype(v2ty) == eltype(vty)
                                         return v2, offset, skipload
                                     end
                                 end
@@ -906,7 +904,6 @@ function nodecayed_phis!(mod::LLVM.Module)
                                             addrspace(v2ty),
                                         ),
                                     )
-                                    @assert eltype(v2ty) == eltype(vty)
                                     return v2, offset, skipload
                                 end
                             end
@@ -932,7 +929,6 @@ function nodecayed_phis!(mod::LLVM.Module)
                                             addrspace(v2ty),
                                         ),
                                     )
-                                    @assert eltype(v2ty) == eltype(vty)
                                     return v2, offset, skipload
                                 end
                             end
@@ -960,7 +956,6 @@ function nodecayed_phis!(mod::LLVM.Module)
                                             addrspace(v2ty),
                                         ),
                                     )
-                                    @assert eltype(v2ty) == eltype(vty)
                                     return v2, offset, skipload
                                 end
                             end
