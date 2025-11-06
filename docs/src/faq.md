@@ -744,4 +744,38 @@ autodiff(Forward, f_val, Duplicated(Val(1.0), Val(1.0)))
 ERROR: Type of ghost or constant type Duplicated{Val{1.0}} is marked as differentiable.
 ```
 
+## Finalizers
+
+Julia supports attaching finalizers to objects (see the listing below for an example) 
+
+```julia
+mutable struct Obj
+    x::Float64
+    function Obj(x)
+        o = new(x)
+        finalizer(o) do o
+            # do someting with o
+        end
+        return o
+    end
+end
+```
+
+When Enzyme encounters a code like:
+
+```julia
+function f(x)
+    o = Obj(x)
+    # computations over o
+    return o.x
+end
+
+autodiff(Forward, f, Duplicated(1.0, 1.0))
+```
+
+Enzyme has to allocate a shadow object for `o` and in the process encounters the finalizer being attached to the primal object.
+Now the question is what should Enzyme do with the finalizer for the shadow objects? One option would be to simply ignore it,
+but finalizers are often used for resource management (like manually allocating memory) and thus we would leak resources that are attached
+to the shadow object. Instead, we define finalizers to be inactive (contain no instructions that are relevant with respect to AD),
+yet we must attach them to the shadow object to release resources attached to them. 
 
