@@ -1193,13 +1193,38 @@ function fix_decayaddr!(mod::LLVM.Module)
             end
             prety = value_type(operands(inst)[1])
             postty = value_type(inst)
-            if addrspace(prety) != 10
-                continue
+
+            # Check for illegal casts (Julia 1.12 issue #2707):
+            # 1. AS 10 (Tracked) → AS 0 (Generic): Decay of tracked pointer
+            # 2. AS 11 (Derived) → AS 10 (Tracked): Invalid promotion to tracked
+            # 3. AS 11 (Derived) → AS 0 (Generic): Invalid decay of derived pointer
+            # 4. Any cast FROM AS 11: Julia 1.12 forbids derived pointer casts
+            is_illegal = false
+
+            pre_as = addrspace(prety)
+            post_as = addrspace(postty)
+
+
+            if pre_as == 10 && post_as == 0
+                is_illegal = true  # AS 10 → AS 0 (existing case)
             end
-            if addrspace(postty) != 0
-                continue
+
+            if pre_as == 11 && post_as == 10
+                is_illegal = true  # AS 11 → AS 10 (Julia 1.12)
             end
-            push!(invalid, inst)
+
+            if pre_as == 11 && post_as == 0
+                is_illegal = true  # AS 11 → AS 0 (Julia 1.12)
+            end
+
+            # Catch-all: Julia 1.12 forbids ANY cast from AS 11
+            if pre_as == 11
+                is_illegal = true
+            end
+
+            if is_illegal
+                push!(invalid, inst)
+            end
         end
 
         for inst in invalid

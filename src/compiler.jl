@@ -3770,7 +3770,13 @@ function lower_convention(
                 push!(wrapper_types, typ)
                 push!(wrapper_attrs, LLVM.Attribute[EnumAttribute("noalias")])
             else
-                push!(wrapper_types, eltype(typ))
+                # TODO: Opaque pointer handling - using conservative i8 fallback
+                elty = if typ isa LLVM.PointerType && is_opaque_pointer(typ)
+                    LLVM.IntType(8)
+                else
+                    eltype(typ)
+                end
+                push!(wrapper_types, elty)
                 push!(wrapper_attrs, LLVM.Attribute[])
                 push!(loweredArgs, arg.arg_i)
             end
@@ -4323,7 +4329,7 @@ function lower_convention(
     end
 
     ModulePassManager() do pm
-        always_inliner!(pm)
+        add!(pm, AlwaysInlinerPass())
         LLVM.run!(pm, mod)
     end
     if !hasReturnsTwice
@@ -4619,7 +4625,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         end
 
         ModulePassManager() do pm
-            always_inliner!(pm)
+            add!(pm, AlwaysInlinerPass())
             LLVM.run!(pm, mod)
         end
         for fname in toremove
@@ -6010,6 +6016,8 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
             if DumpPrePostOpt[]
                 API.EnzymeDumpModuleRef(mod.ref)
             end
+            # Fix any remaining address space casts before Julia's GC verifier runs
+            fix_decayaddr!(mod)
             post_optimize!(mod, JIT.get_tm())
             if DumpPostOpt[]
                 API.EnzymeDumpModuleRef(mod.ref)
