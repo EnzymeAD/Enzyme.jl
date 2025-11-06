@@ -1798,35 +1798,36 @@ function EnzymeRules.reverse(
     return (dx, dy, dz, dxs...)
 end
 
-
-function EnzymeRules.forward(config, ::Const{typeof(Base.finalizer)}, ::Type{T}, f::Const, o) where T
+function EnzymeRules.forward(config, ::Const{typeof(Base.finalizer)}, _, f::Const, o)
     f = f.val
     Base.finalizer(f, o.val)
-    if o isa Duplicated
+    if EnzymeRules.width(config) == 1
         Base.finalizer(f, o.dval)
-    elseif o isa BatchDuplicated
-        for dv in o.dval
+    else
+        foreach(o.dval) do dv
             Base.finalizer(f, dv)
         end
     end
-    if T <: Const
+
+    if EnzymeRules.needs_primal(config)
+        return o
+    else
         return nothing
     end
-
-    return o
 end
 
-function EnzymeRules.augmented_primal(config, ::Const{typeof(Base.finalizer)}, ::Type{T}, f::Const, o) where T
+function EnzymeRules.augmented_primal(config, ::Const{typeof(Base.finalizer)}, _, f::Const, o)
     @assert !(o isa Active)
     f = f.val
     Base.finalizer(f, o.val)
-    if o isa Duplicated
+    if EnzymeRules.width(config) == 1
         Base.finalizer(f, o.dval)
-    elseif o isa BatchDuplicated
-        for dv in o.dval
+    else
+        foreach(o.dval) do dv
             Base.finalizer(f, dv)
         end
     end
+
     primal = EnzymeRules.needs_primal(config) ? o.val : nothing
     shadow = EnzymeRules.needs_shadow(config) ? o.dval : nothing
 

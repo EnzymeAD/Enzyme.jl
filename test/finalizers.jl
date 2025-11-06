@@ -40,3 +40,9 @@ empty!(FREE_LIST)
 GC.gc()
 @test length(FREE_LIST) == 2
 empty!(FREE_LIST)
+
+dx, x = autodiff(ForwardWithPrimal, compute, DuplicatedBatched(1.0, (1.0, 2.0)))
+@test dx == 4.0
+GC.gc()
+@test length(FREE_LIST) == 3
+empty!(FREE_LIST)
