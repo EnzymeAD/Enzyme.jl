@@ -24,13 +24,17 @@ function compute(x::Float64)
     return compute(c)
 end
 
-compute(1.0)
-GC.gc()
-@test length(FREE_LIST) == 1
-empty!(FREE_LIST)
+@testset "primal" begin
+    x = compute(1.0)
+    @test x == 1.0
+    GC.gc()
+    @test length(FREE_LIST) == 1
+    empty!(FREE_LIST)
+end
 
 @testset "forward" begin
     dx, x = autodiff(ForwardWithPrimal, compute, Duplicated(1.0, 2.0))
+    @test x == 1.0
     @test dx == 4.0
     GC.gc()
     @test length(FREE_LIST) == 2
@@ -45,13 +49,16 @@ end
 
 @testset "batched forward" begin
     dx, x = autodiff(ForwardWithPrimal, compute, BatchDuplicated(1.0, (1.0, 2.0)))
-    @test dx == 4.0
+    @test x == 1.0
+    @test dx[1] == 2.0
+    @test dx[2] == 4.0
     GC.gc()
     @test length(FREE_LIST) == 3
     empty!(FREE_LIST)
 
     dx, = autodiff(Forward, compute, BatchDuplicated(1.0, (1.0, 2.0)))
-    @test dx == 4.0
+    @test dx[1] == 2.0
+    @test dx[2] == 4.0
     GC.gc()
     @test length(FREE_LIST) == 3
     empty!(FREE_LIST)
@@ -59,12 +66,13 @@ end
 
 @testset "reverse" begin
     ((dx,), x) = autodiff(ReverseWithPrimal, compute, Active(1.0))
+    @test x == 1.0
     @test dx == 2.0
     GC.gc()
     @test length(FREE_LIST) == 2
     empty!(FREE_LIST)
 
-    ((dx,), x) = autodiff(Reverse, compute, Active(1.0))
+    ((dx,),) = autodiff(Reverse, compute, Active(1.0))
     @test dx == 2.0
     GC.gc()
     @test length(FREE_LIST) == 2
