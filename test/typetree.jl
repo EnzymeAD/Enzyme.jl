@@ -48,6 +48,9 @@ struct UnionStruct1{T}
     y::Any
 end
 
+struct EmptyStruct
+end
+
 @testset "TypeTree" begin
     @test tt(Float16) == "{[-1]:Float@half}"
     @test tt(Float32) == "{[-1]:Float@float}"
@@ -97,6 +100,14 @@ end
               "{[-1]:Pointer, [-1,0]:Pointer, [-1,4]:Integer, [-1,5]:Integer, [-1,6]:Integer, [-1,7]:Integer, [-1,8]:Float@double}"
         @test tt(Sibling2{Sibling2{LList2{Tuple{Float32,Float64}}}}) ==
               "{[0]:Pointer, [0,0]:Pointer, [0,4]:Float@float, [0,8]:Float@double, [4]:Integer, [8]:Pointer, [8,0]:Pointer, [8,4]:Float@float, [8,8]:Float@double, [12]:Integer, [16]:Pointer, [16,0]:Pointer, [16,4]:Float@float, [16,8]:Float@double, [20]:Integer, [24]:Pointer, [24,0]:Pointer, [24,4]:Float@float, [24,8]:Float@double}"
+    end
+
+    @static if VERSION >= v"1.11-"
+        if Sys.WORD_SIZE == 64
+            @test tt(MemoryRef{EmptyStruct}) == "{[0]:Integer, [1]:Integer, [2]:Integer, [3]:Integer, [4]:Integer, [5]:Integer, [6]:Integer, [7]:Integer, [8]:Pointer, [8,0]:Integer, [8,1]:Integer, [8,2]:Integer, [8,3]:Integer, [8,4]:Integer, [8,5]:Integer, [8,6]:Integer, [8,7]:Integer, [8,8]:Pointer}"
+            @test tt(MemoryRef{Union{Float64, Int64}}) == "{[0]:Integer, [1]:Integer, [2]:Integer, [3]:Integer, [4]:Integer, [5]:Integer, [6]:Integer, [7]:Integer, [8]:Pointer, [8,0]:Integer, [8,1]:Integer, [8,2]:Integer, [8,3]:Integer, [8,4]:Integer, [8,5]:Integer, [8,6]:Integer, [8,7]:Integer, [8,8]:Pointer}"
+            @test tt(MemoryRef{Float64}) == "{[-1]:Pointer, [0,-1]:Float@double, [8,0]:Integer, [8,1]:Integer, [8,2]:Integer, [8,3]:Integer, [8,4]:Integer, [8,5]:Integer, [8,6]:Integer, [8,7]:Integer, [8,8]:Pointer, [8,8,-1]:Float@double}"
+        end
     end
 
     @test tt(UnionStruct1{Float32}) == "{[0]:Float@float, [4]:Integer, [8]:Pointer}"
