@@ -440,67 +440,39 @@ end
 
     found, arty, byref = abs_typeof(origops[1])
 
-    for idx = 1:width
-        ev = if width == 1
-            shadowin
-        else
-            extract_value!(B, shadowin, idx - 1)
+    function post_memset(B, callv, _)
+        elSize = get_array_elsz(B, ev)
+        elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
+        len = get_array_len(B, ev)
+        length = LLVM.mul!(B, len, elSize)
+
+        if !found && !(eltype(arty) <: Base.IEEEFloat)
+            bt = GPUCompiler.backtrace(orig)
+            btstr = sprint() do io
+                print(io, "\nCaused by:")
+                Base.show_backtrace(io, bt)
+            end
+            GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type $btstr"
         end
 
-        callv = call_samefunc_with_inverted_bundles!(
+        LLVM.memset!(
             B,
-            gutils,
-            orig,
-            [ev],
-            [API.VT_Shadow],
-            false,
-        ) #=lookup=#
-        if is_constant_value(gutils, origops[1])
-            elSize = get_array_elsz(B, ev)
-            elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
-            len = get_array_len(B, ev)
-            length = LLVM.mul!(B, len, elSize)
-
-            if !found && !(eltype(arty) <: Base.IEEEFloat)
-                bt = GPUCompiler.backtrace(orig)
-                btstr = sprint() do io
-                    print(io, "\nCaused by:")
-                    Base.show_backtrace(io, bt)
-                end
-                GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type $btstr"
-            end
-
-            LLVM.memset!(
-                B,
-                get_array_data(B, callv),
-                LLVM.ConstantInt(i8, 0, false),
-                length,
-                algn,
-            )
-        end
-        if get_runtime_activity(gutils)
-            prev = new_from_original(gutils, orig)
-            callv = LLVM.select!(
-                B,
-                LLVM.icmp!(
-                    B,
-                    LLVM.API.LLVMIntNE,
-                    ev,
-                    new_from_original(gutils, origops[1]),
-                ),
-                callv,
-                prev,
-            )
-            if idx == 1
-                API.moveBefore(prev, callv, B)
-            end
-        end
-        shadowres = if width == 1
-            callv
-        else
-            insert_value!(B, shadowres, callv, idx - 1)
-        end
+            get_array_data(B, callv),
+            LLVM.ConstantInt(i8, 0, false),
+            length,
+            algn,
+        )
     end
+
+    shadowres = batch_call_same_with_inverted_arg_if_active!(
+        B,
+        gutils,
+        orig,
+        [shadowin],
+        [API.VT_Shadow],
+        false;
+        postprocess=is_constant_value(gutils, origops[1]) ? post_memset : nothing
+    ) #=lookup=#
 
     unsafe_store!(shadowR, shadowres.ref)
     return false
@@ -766,72 +738,38 @@ end
 
     found, arty, byref = abs_typeof(origops[1])
 
-    shadowres =
-        UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-    for idx = 1:width
-        ev = if width == 1
-            shadowin
-        else
-            extract_value!(B, shadowin, idx - 1)
+    function zero_mem(B, callv, _)
+        elSize = get_memory_elsz(B, ev)
+        elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
+        length = LLVM.mul!(B, len, elSize)
+
+        if !found && !(eltype(arty) <: Base.IEEEFloat)
+            bt = GPUCompiler.backtrace(orig)
+            btstr = sprint() do io
+                print(io, "\nCaused by:")
+                Base.show_backtrace(io, bt)
+            end
+            GPUCompiler.@safe_warn "TODO forward zero-set of memorycopy used memset rather than runtime type $btstr"
         end
-        ev2 = if width == 1
-            shadowdata
-        else
-            extract_value!(B, shadowdata, idx - 1)
-        end
-        callv = call_samefunc_with_inverted_bundles!(
+
+        LLVM.memset!(
             B,
-            gutils,
-            orig,
-            [ev, ev2, len],
-            [API.VT_Shadow, API.VT_Shadow, API.VT_Primal],
-            false,
-        ) #=lookup=#
-        if is_constant_value(gutils, origops[1])
-            elSize = get_memory_elsz(B, ev)
-            elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
-            length = LLVM.mul!(B, len, elSize)
-
-            if !found && !(eltype(arty) <: Base.IEEEFloat)
-                bt = GPUCompiler.backtrace(orig)
-                btstr = sprint() do io
-                    print(io, "\nCaused by:")
-                    Base.show_backtrace(io, bt)
-                end
-                GPUCompiler.@safe_warn "TODO forward zero-set of memorycopy used memset rather than runtime type $btstr"
-            end
-
-            LLVM.memset!(
-                B,
-                get_memory_data(B, callv),
-                LLVM.ConstantInt(i8, 0, false),
-                length,
-                algn,
-            )
-        end
-        if get_runtime_activity(gutils)
-            prev = new_from_original(gutils, orig)
-            callv = LLVM.select!(
-                B,
-                LLVM.icmp!(
-                    B,
-                    LLVM.API.LLVMIntNE,
-                    ev,
-                    new_from_original(gutils, origops[1]),
-                ),
-                callv,
-                prev,
-            )
-            if idx == 1
-                API.moveBefore(prev, callv, B)
-            end
-        end
-        shadowres = if width == 1
-            callv
-        else
-            insert_value!(B, shadowres, callv, idx - 1)
-        end
+            get_memory_data(B, callv),
+            LLVM.ConstantInt(i8, 0, false),
+            length,
+            algn,
+        )
     end
+
+    shadowres = batch_call_same_with_inverted_arg_if_active!(
+        B,
+        gutils,
+        orig,
+        [shadowin, shadowdata, len],
+        [API.VT_Shadow, API.VT_Shadow, API.VT_Primal],
+        false;
+        postprocess=is_constant_value(gutils, origops[1]) ? zero_mem : nothing
+    ) #=lookup=#
 
     unsafe_store!(shadowR, shadowres.ref)
     return false
@@ -956,46 +894,28 @@ end
     if unsafe_load(shadowR) != C_NULL
 	    origops = LLVM.operands(orig)
 	    if is_constant_value(gutils, origops[2])
-		emit_error(B, orig, "Enzyme: reshape array has active return, but inactive input")
+    		emit_error(B, orig, "Enzyme: reshape array has active return, but inactive input")
 	    end
 
 	    width = get_width(gutils)
 
 	    shadowin = invert_pointer(gutils, origops[2], B)
-	    if width == 1
-		args = LLVM.Value[
+
+	    args = LLVM.Value[
 		    new_from_original(gutils, origops[1])
-		    shadowin
-		    new_from_original(gutils, origops[3])
-		]
-		shadowres = call_samefunc_with_inverted_bundles!(
-		    B,
-		    gutils,
-		    orig,
-		    args,
-		    [API.VT_Primal, API.VT_Shadow, API.VT_Primal],
-		    false,
-		) #=lookup=#
-	    else
-		shadowres =
-		    UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-		for idx = 1:width
-		    args = LLVM.Value[
-			new_from_original(gutils, origops[1])
-			extract_value!(B, shadowin, idx - 1)
-			new_from_original(gutils, origops[3])
-		    ]
-		    tmp = call_samefunc_with_inverted_bundles!(
+            shadowin
+            new_from_original(gutils, origops[3])
+	    ]
+
+		shadowres = batch_call_same_with_inverted_arg_if_active!(
 			B,
 			gutils,
 			orig,
 			args,
 			[API.VT_Primal, API.VT_Shadow, API.VT_Primal],
-			false,
+			false;
+            cmpidx = 2
 		    ) #=lookup=#
-		    shadowres = insert_value!(B, shadowres, tmp, idx - 1)
-		end
-	    end
 	    unsafe_store!(shadowR, shadowres.ref)
     end
     return false
@@ -1036,35 +956,19 @@ end
 
     shadowin1 = invert_pointer(gutils, origops[1], B)
     shadowin2 = invert_pointer(gutils, origops[2], B)
-    if width == 1
-        args = LLVM.Value[shadowin1, shadowin2]
-        shadowres = call_samefunc_with_inverted_bundles!(
-            B,
-            gutils,
-            orig,
-            args,
-            [API.VT_Shadow, API.VT_Shadow],
-            false,
-        ) #=lookup=#
-    else
-        shadowres =
-            UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-        for idx = 1:width
-            args = LLVM.Value[
-                extract_value!(B, shadowin1, idx - 1)
-                extract_value!(B, shadowin2, idx - 1)
-            ]
-            tmp = call_samefunc_with_inverted_bundles!(
-                B,
-                gutils,
-                orig,
-                args,
-                [API.VT_Shadow, API.VT_Shadow],
-                false,
-            ) #=lookup=#
-            shadowres = insert_value!(B, shadowres, tmp, idx - 1)
-        end
-    end
+    args = LLVM.Value[
+        shadowin1,
+        shadowin2
+    ]
+    shadowres = batch_call_same_with_inverted_arg_if_active!(
+        B,
+        gutils,
+        orig,
+        args,
+        [API.VT_Shadow, API.VT_Shadow],
+        false,
+    ) #=lookup=#
+
     unsafe_store!(shadowR, shadowres.ref)
 
     return false
@@ -1325,41 +1229,26 @@ end
 
     newvals = API.CValueType[API.VT_Shadow, API.VT_Primal, API.VT_Shadow]
 
-    shadowres = if width == 1
-        newops = LLVM.Value[shadowh, new_from_original(gutils, origkey), shadowdflt]
-        cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, false) #=lookup=#
-        callconv!(cal, callconv(orig))
+    function post_err_if_active(B, cal, args)
         emit_apply_generic!(
             B,
             LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, cal)],
         )
-        cal
-    else
-        ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
-        shadow = LLVM.UndefValue(ST)
-        for j = 1:width
-            newops = LLVM.Value[
-                extract_value!(B, shadowh, j - 1),
-                new_from_original(gutils, origkey),
-                extract_value!(B, shadowdflt, j - 1),
-            ]
-            cal = call_samefunc_with_inverted_bundles!(
-                B,
-                gutils,
-                orig,
-                newops,
-                newvals,
-                false,
-            ) #=lookup=#
-            callconv!(cal, callconv(orig))
-            emit_apply_generic!(
-                B,
-                LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, cal)],
-            )
-            shadow = insert_value!(B, shadow, cal, j - 1)
-        end
-        shadow
     end
+
+    newops = LLVM.Value[
+        shadowh,
+        new_from_original(gutils, origkey),
+        shadowdflt,
+    ]
+    shadowres = batch_call_same_with_inverted_arg_if_active!(
+        B,
+        gutils,
+        orig,
+        newops,
+        newvals,
+        false,
+    )
 
     unsafe_store!(shadowR, shadowres.ref)
     return false
@@ -1458,9 +1347,7 @@ end
             shadowval,
             LLVM.null(value_type(originserted)),
         ]
-        cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, newops, newvals, false) #=lookup=#
-        callconv!(cal, callconv(orig))
-        cal
+        cal = call_same_with_inverted_arg_if_active!(B, gutils, orig, newops, newvals, false) #=lookup=#
     else
         ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
         shadow = LLVM.UndefValue(ST)
@@ -1476,7 +1363,7 @@ end
                 sval2,
                 LLVM.null(value_type(originserted)),
             ]
-            cal = call_samefunc_with_inverted_bundles!(
+            cal = call_same_with_inverted_arg_if_active!(
                 B,
                 gutils,
                 orig,
@@ -1484,7 +1371,6 @@ end
                 newvals,
                 false,
             ) #=lookup=#
-            callconv!(cal, callconv(orig))
             shadow = insert_value!(B, shadow, cal, j - 1)
         end
         shadow
@@ -1570,35 +1456,18 @@ end
     width = get_width(gutils)
 
     shadowin = invert_pointer(gutils, origops[1], B)
-    if width == 1
-        args = LLVM.Value[
-            shadowin
-            new_from_original(gutils, origops[2])
-        ]
-        call_samefunc_with_inverted_bundles!(
-            B,
-            gutils,
-            orig,
-            args,
-            [API.VT_Shadow, API.VT_Primal],
-            false,
-        ) #=lookup=#
-    else
-        for idx = 1:width
-            args = LLVM.Value[
-                extract_value!(B, shadowin, idx - 1)
-                new_from_original(gutils, origops[2])
-            ]
-            call_samefunc_with_inverted_bundles!(
-                B,
-                gutils,
-                orig,
-                args,
-                [API.VT_Shadow, API.VT_Primal],
-                false,
-            ) #=lookup=#
-        end
-    end
+    args = LLVM.Value[
+        shadowin
+        new_from_original(gutils, origops[2])
+    ]
+    batch_call_same_with_inverted_arg_if_active!(
+        B,
+        gutils,
+        orig,
+        args,
+        [API.VT_Shadow, API.VT_Primal],
+        false,
+    ) #=lookup=#
     return false
 end
 
@@ -1615,55 +1484,31 @@ end
     ctx = LLVM.context(orig)
     i8 = LLVM.IntType(8)
 
-    inc = new_from_original(gutils, origops[2])
-
-    al = 0
-
-    if width == 1
-        anti = shadowin
+    function zero!(B, _, args)
+        anti, inc = args
 
         idx = get_array_nrows(B, anti)
         elsz = zext!(B, get_array_elsz(B, anti), value_type(idx))
         off = mul!(B, idx, elsz)
         tot = mul!(B, inc, elsz)
 
-        args = LLVM.Value[anti, inc]
-        call_samefunc_with_inverted_bundles!(
-            B,
-            gutils,
-            orig,
-            args,
-            [API.VT_Shadow, API.VT_Primal],
-            false,
-        ) #=lookup=#
-
         toset = get_array_data(B, anti)
         toset = gep!(B, i8, toset, LLVM.Value[off])
         mcall = LLVM.memset!(B, toset, LLVM.ConstantInt(i8, 0, false), tot, al)
-    else
-        for idx = 1:width
-            anti = extract_value!(B, shadowin, idx - 1)
-
-            idx = get_array_nrows(B, anti)
-            elsz = zext!(B, get_array_elsz(B, anti), value_type(idx))
-            off = mul!(B, idx, elsz)
-            tot = mul!(B, inc, elsz)
-
-            args = LLVM.Value[anti, inc]
-            call_samefunc_with_inverted_bundles!(
-                B,
-                gutils,
-                orig,
-                args,
-                [API.VT_Shadow, API.VT_Primal],
-                false,
-            ) #=lookup=#
-
-            toset = get_array_data(B, anti)
-            toset = gep!(B, i8, toset, LLVM.Value[off])
-            mcall = LLVM.memset!(B, toset, LLVM.ConstantInt(i8, 0, false), tot, al)
-        end
     end
+
+    inc = new_from_original(gutils, origops[2])
+
+    args = LLVM.Value[shadowin, inc]
+    batch_call_same_with_inverted_arg_if_active!(
+        B,
+        gutils,
+        orig,
+        args,
+        [API.VT_Shadow, API.VT_Primal],
+        false;
+        postprocess=zero!
+    ) #=lookup=#
 
     return false
 end
@@ -1685,21 +1530,45 @@ end
         offset = new_from_original(gutils, origops[2])
         offset = lookup_value(gutils, offset, B)
 
-        if width == 1
+        currentBlock = Base.position(B)
+        ogname = LLVM.name(currentBlock)
+
+        fval = if get_runtime_activity(gutils)
+            lookup_value(gutils, new_from_original(gutils, origops[1]), B)
+        else
+            nothing
+        end
+
+        endB = nothing
+
+        for idx = 1:width
             args = LLVM.Value[
                 shadowin
                 offset
             ]
+            if width > 1
+                extract_value!(B, shadowin, idx - 1)
+            end
+
+            if get_runtime_activity(gutils)
+                cond = icmp!(B, LLVM.API.LLVMIntNE, fval, args[1])
+
+                nextB = add_reverse_block!(gutils, currentBlock, ogname*"_active")
+
+                endB = add_reverse_block!(gutils, nextB, ogname*"_end", true, false)
+
+                br!(B, cond, nextB, endB)
+
+                position!(B, nextB)
+            end
+
             LLVM.call!(B, fty, delF, args)
-        else
-            shadowres =
-                UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-            for idx = 1:width
-                args = LLVM.Value[
-                    extract_value!(B, shadowin, idx - 1)
-                    offset
-                ]
-                LLVM.call!(B, fty, delF, args)
+
+            if get_runtime_activity(gutils)
+                br!(B, endB)
+                set_reverse_block!(gutils, endB)
+                position!(B, endB)
+                currentBlock = endB
             end
         end
     end
@@ -1830,26 +1699,7 @@ end
         API.VT_Primal,
     ]
 
-    if width == 1
-        vargs = args
-        cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, vargs, valTys, false) #=lookup=#
-        debug_from_orig!(gutils, cal, orig)
-        callconv!(cal, callconv(orig))
-    else
-        shadowres =
-            UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-        for idx = 1:width
-            vargs = LLVM.Value[]
-            for a in args[1:end-1]
-                push!(vargs, extract_value!(B, a, idx - 1))
-            end
-            push!(vargs, args[end])
-            cal =
-                call_samefunc_with_inverted_bundles!(B, gutils, orig, vargs, valTys, false) #=lookup=#
-            debug_from_orig!(gutils, cal, orig)
-            callconv!(cal, callconv(orig))
-        end
-    end
+    batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false) #=lookup=#
 
     return false
 end
@@ -1875,35 +1725,20 @@ end
         API.VT_Primal,
     ]
 
-    shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-    for idx = 1:width
-        ev = if width == 1
-            shadowin
-        else
-            extract_value!(B, shadowin, idx - 1)
-        end
-
 	args = LLVM.Value[
 	        new_from_original(gutils, origops[1]),
-	        ev, # data
+	        shadowin, # data
 	        new_from_original(gutils, origops[3]),
 	        new_from_original(gutils, origops[4]),
 	]
-	# TODO do runtime activity relevant errors and checks
 
-        cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, valTys, false) #=lookup=#
-        debug_from_orig!(gutils, cal, orig)
-        callconv!(cal, callconv(orig))
-	if width == 1
-	    shadowres = cal
-	else
-            shadowres = insert_value!(B, shadowres, call, idx - 1)
-	end
-    end
+    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false; cmpidx=2)::LLVM.Value
+
     unsafe_store!(shadowR, shadowres.ref)
 
     return false
 end
+
 @register_aug function jl_ptr_to_array_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     jl_ptr_to_array_fwd(B, orig, gutils, normalR, shadowR)
 end

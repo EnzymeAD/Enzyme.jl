@@ -97,3 +97,166 @@ end
 function set_reverse_block!(gutils::GradientUtils, block::LLVM.BasicBlock)
     return LLVM.BasicBlock(API.EnzymeGradientUtilsSetReverseBlock(gutils, block))
 end
+
+function get_or_insert_conditional_execute!(fn::LLVM.Function; postprocess=nothing, cmpidx::Int = 1)
+    FT0 = LLVM.function_type(fn)
+    ptys = LLVM.parameters(FT0)
+    insert!(ptys, 0, ptys[cmpidx])
+
+    void_rt = LLVM.return_type(FT0) == LLVM.VoidType()
+    if !void_rt
+        insert!(ptys, 0, LLVM.return_type(FT0))
+    end
+    FT = LLVM.FunctionType(LLVM.return_type(FT0), ptys, LLVM.isvararg(FT0))
+    mod = LLVM.parent(fn)
+    fn, _ = get_function!(mod, "julia.enzyme.conditionally_execute." * LLVM.name(FT), FT)
+    if isempty(blocks(fn))
+        let builder = IRBuilder()
+            entry = BasicBlock(fn, "entry")
+            good = BasicBlock(fn, "good")
+            bad = BasicBlock(fn, "bad")
+            position!(builder, entry)
+            parms = collect(parameters(fn))
+
+            cmp = icmp_eq!(builder, LLVM.API.LLVMIntEQ, parms[1 + !void_rt], parms[1 + cmpidx + !void_rt])
+
+            br!(builder, cmp, good, bad)
+
+            position!(builder, good)
+            rparms = parms[(2+!void_rt):end]
+            res = call!(builder, FT0, fn, rparms)            
+            callconv!(res, callconv(fn))
+            if postprocess !== nothing
+                postprocess(builder, res, rparms)
+            end
+            if void_rt
+                ret!(builder)
+            else
+                ret!(builder, res)
+            end
+
+            position!(builder, bad)
+            if void_rt
+                ret!(builder)
+            else
+                ret!(builder, parms[1])
+            end
+        end
+        push!(function_attributes(fn), EnumAttribute("alwaysinline"))
+    end
+    return fn
+end
+
+"""
+Helper function for llvm-level rule generation. Will call the same function with inverted bundles,
+if arg1 isn't active
+"""
+function call_same_with_inverted_arg_if_active!(
+    B::LLVM.IRBuilder,
+    gutils::GradientUtils,
+    orig::LLVM.CallInst,
+    args::Vector{<:LLVM.Value},
+    valTys::Vector{API.CValueType},
+    lookup::Bool;
+    postprocess=nothing,
+    cmpidx::Int = 1
+)
+    @assert length(args) == length(valTys)
+
+    origops = collect(operands(orig))
+    if is_constant_value(gutils, origops[cmpidx])
+        return nothing
+    end
+
+    if !get_runtime_activity(gutils)
+        res = call_samefunc_with_inverted_bundles!(
+            B,
+            gutils,
+            orig,
+            args,
+            valTys,
+            lookup
+        )
+        callconv!(res, callconv(orig))
+        debug_from_orig!(gutils, res, orig)
+        if postprocess !== nothing
+            postprocess(B, res, args)
+        end
+
+        return res
+    end
+
+    valTys = copy(valTys)
+    @assert valTys[cmpidx] == API.VT_Shadow
+    valTys[cmpidx] = API.VT_Both
+    args = copy(args)
+    insert!(args, 1, new_from_original(gutils, origops[cmpidx]))
+    if value_type(orig) != LLVM.VoidType()
+        insert!(args, 1, new_from_original(gutils, orig))
+    end
+    condfn = get_or_insert_conditional_execute(LLVM.called_operand(orig)::LLVM.Function; postprocess, cmpidx)
+
+    res = LLVM.Value(
+        API.EnzymeGradientUtilsCallWithInvertedBundles(
+            gutils,
+            LLVM.called_operand(condfn),
+            LLVM.function_type(condfn),
+            args,
+            length(args),
+            orig,
+            valTys,
+            length(valTys),
+            B,
+            false,
+        ),
+    ) #=lookup=#
+    callconv!(res, callconv(orig))
+    debug_from_orig!(gutils, res, orig)
+    return res
+end
+
+
+"""
+Helper function for llvm-level rule generation. Will call the same function with inverted bundles,
+if arg1 isn't active
+"""
+function batch_call_same_with_inverted_arg_if_active!(
+    B::LLVM.IRBuilder,
+    gutils::GradientUtils,
+    orig::LLVM.CallInst,
+    args::Vector{<:LLVM.Value},
+    valTys::Vector{API.CValueType},
+    lookup::Bool;
+    kwargs...
+)
+
+    void_rt = value_type(orig) ==LLVM.VoidType()
+    shadow = if !void_rt
+        ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+        LLVM.UndefValue(ST)
+    end
+
+    width = get_width(gutils)
+
+    for idx in 1:width
+        args2 = args
+        if width > 1
+            args2 = copy(args)
+            for i in 1:length(valTys)
+                if valTys[i] == API.VT_Shadow
+                    args2[i] = extract_value!(B, args2[i], idx - 1)
+                end
+            end
+        end
+        res = call_same_with_inverted_arg_if_active!(B, gutils, orig, args2, valTys, lookup; kwargs...)
+        if width == 1
+            shadow = res
+        elseif res === nothing || shadow == nothing
+            shadow = nothing
+        else            
+            shadow = insert_value!(B, shadow, res, idx - 1)
+        end
+    end
+
+    return shadow
+end
