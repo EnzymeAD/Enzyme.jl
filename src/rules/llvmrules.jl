@@ -440,10 +440,10 @@ end
 
     found, arty, byref = abs_typeof(origops[1])
 
-    function post_memset(B, ev, _)
-        elSize = get_array_elsz(B, ev)
+    function post_memset(B, callv, _)
+        elSize = get_array_elsz(B, callv)
         elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
-        len = get_array_len(B, ev)
+        len = get_array_len(B, callv)
         length = LLVM.mul!(B, len, elSize)
 
         if !found && !(eltype(arty) <: Base.IEEEFloat)
@@ -1485,6 +1485,7 @@ end
     i8 = LLVM.IntType(8)
 
     function zero!(B, _, args)
+        al = 0
         anti, inc = args
 
         idx = get_array_nrows(B, anti)
