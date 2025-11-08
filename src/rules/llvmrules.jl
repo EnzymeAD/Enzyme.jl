@@ -404,22 +404,25 @@ end
     newg = new_from_original(gutils, orig)
 
     real_ops = collect(operands(orig))[1:end-1]
-    ops = [lookup_value(gutils, new_from_original(gutils, o), B) for o in real_ops]
+    ops = [new_from_original(gutils, o) for o in real_ops]
 
-    c = call_samefunc_with_inverted_bundles!(
+    batch_call_same_with_inverted_arg_if_active!(
         B,
         gutils,
         orig,
-        ops,
-        [API.VT_Primal for _ in ops],
-        false,
-    ) #=lookup=#
-    callconv!(c, callconv(orig))
+        [shadowin],
+        [API.VT_Primal for o in real_ops],
+        true;
+        need_result=false
+    )
 
     return nothing
 end
 
 function post_arraycopy_memset(B, callv, _)
+    i8 = LLVM.IntType(8)
+    algn = 0
+
     elSize = get_array_elsz(B, callv)
     elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
     len = get_array_len(B, callv)
@@ -446,9 +449,6 @@ end
     width = get_width(gutils)
 
     shadowin = invert_pointer(gutils, origops[1], B)
-
-    i8 = LLVM.IntType(8)
-    algn = 0
 
     shadowres =
         UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
