@@ -471,8 +471,8 @@ end
         [shadowin],
         [API.VT_Shadow],
         false;
-        postprocess=is_constant_value(gutils, origops[1]) ? post_memset : nothing
-    ) #=lookup=#
+        postprocess_const=post_memset
+    )::LLVM.Value #=lookup=#
 
     unsafe_store!(shadowR, shadowres.ref)
     return false
@@ -768,7 +768,7 @@ end
         [shadowin, shadowdata, len],
         [API.VT_Shadow, API.VT_Shadow, API.VT_Primal],
         false;
-        postprocess=is_constant_value(gutils, origops[1]) ? zero_mem : nothing
+        postprocess_const=zero_mem
     ) #=lookup=#
 
     unsafe_store!(shadowR, shadowres.ref)

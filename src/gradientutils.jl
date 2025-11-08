@@ -98,7 +98,7 @@ function set_reverse_block!(gutils::GradientUtils, block::LLVM.BasicBlock)
     return LLVM.BasicBlock(API.EnzymeGradientUtilsSetReverseBlock(gutils, block))
 end
 
-function get_or_insert_conditional_execute!(fn::LLVM.Function; postprocess=nothing, cmpidx::Int = 1)
+function get_or_insert_conditional_execute!(fn::LLVM.Function; postprocess=nothing, postprocess_const=nothing, cmpidx::Int = 1)
     FT0 = LLVM.function_type(fn)
     ptys = LLVM.parameters(FT0)
     insert!(ptys, 0, ptys[cmpidx])
@@ -136,6 +136,9 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function; postprocess=nothi
             end
 
             position!(builder, bad)
+            if postprocess_const !== nothing
+                postprocess_const(builder, res, rparms)
+            end
             if void_rt
                 ret!(builder)
             else
@@ -148,8 +151,18 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function; postprocess=nothi
 end
 
 """
-Helper function for llvm-level rule generation. Will call the same function with inverted bundles,
-if arg1 isn't active
+
+Helper function for llvm-level rule generation. Will call the same function (and optional postprocessing),
+if the argument at index `cmpidx` isn't active. This takes into account runtime activity as a reason
+the value may not be active. 
+
+If postprocess_const is set, the original function will always be called, but the postprocessing will be
+conditionally gated as follows.
+
+If the relevant input is active (and verified by runtime activity), 
+    postprocess(B, result, args) will run as normal
+Otherwise
+    postprocess_const(B, result, args) will run
 """
 function call_same_with_inverted_arg_if_active!(
     B::LLVM.IRBuilder,
@@ -159,16 +172,17 @@ function call_same_with_inverted_arg_if_active!(
     valTys::Vector{API.CValueType},
     lookup::Bool;
     postprocess=nothing,
-    cmpidx::Int = 1
+    postprocess_const = nothing,
+    cmpidx::Int = 1,
 )
     @assert length(args) == length(valTys)
 
     origops = collect(operands(orig))
-    if is_constant_value(gutils, origops[cmpidx])
+    if postprocess_const === nothing && is_constant_value(gutils, origops[cmpidx])
         return nothing
     end
 
-    if !get_runtime_activity(gutils)
+    if !get_runtime_activity(gutils) || (postprocess_const !== nothing && is_constant_value(gutils, origops[cmpidx]))
         res = call_samefunc_with_inverted_bundles!(
             B,
             gutils,
@@ -179,27 +193,37 @@ function call_same_with_inverted_arg_if_active!(
         )
         callconv!(res, callconv(orig))
         debug_from_orig!(gutils, res, orig)
-        if postprocess !== nothing
+
+        if postprocess_const === nothing
+            if postprocess !== nothing
+                postprocess(B, res, args)
+            end
+        elseif is_constant_value(gutils, origops[cmpidx])
+            postprocess_const(B, res, args)
+        else
             postprocess(B, res, args)
         end
 
         return res
     end
 
-    valTys = copy(valTys)
-    @assert valTys[cmpidx] == API.VT_Shadow
-    valTys[cmpidx] = API.VT_Both
+    if cmpidx isa Int
+        valTys = copy(valTys)
+        @assert valTys[cmpidx] == API.VT_Shadow
+        valTys[cmpidx] = API.VT_Both
+    end
     args = copy(args)
     insert!(args, 1, new_from_original(gutils, origops[cmpidx]))
     if value_type(orig) != LLVM.VoidType()
         insert!(args, 1, new_from_original(gutils, orig))
     end
-    condfn = get_or_insert_conditional_execute(LLVM.called_operand(orig)::LLVM.Function; postprocess, cmpidx)
+    prefn = LLVM.called_operand(orig)::LLVM.Function
+    condfn = get_or_insert_conditional_execute(prefn; postprocess, postprocess_const, cmpidx)
 
     res = LLVM.Value(
         API.EnzymeGradientUtilsCallWithInvertedBundles(
             gutils,
-            LLVM.called_operand(condfn),
+            condfn,
             LLVM.function_type(condfn),
             args,
             length(args),
@@ -217,8 +241,8 @@ end
 
 
 """
-Helper function for llvm-level rule generation. Will call the same function with inverted bundles,
-if arg1 isn't active
+Helper function for llvm-level rule generation. Will call call_same_with_inverted_arg_if_active with
+corresponding extracted batches if width > 1, otherwise it will call it once.
 """
 function batch_call_same_with_inverted_arg_if_active!(
     B::LLVM.IRBuilder,
@@ -230,18 +254,19 @@ function batch_call_same_with_inverted_arg_if_active!(
     kwargs...
 )
 
+    width = get_width(gutils)
+
     void_rt = value_type(orig) ==LLVM.VoidType()
     shadow = if !void_rt
         ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
-        LLVM.UndefValue(ST)
+        LLVM.UndefValue(ST)::LLVM.Value
     end
 
-    width = get_width(gutils)
 
     for idx in 1:width
         args2 = args
         if width > 1
-            args2 = copy(args)
+            args2 = collect(LLVM.Value, args)
             for i in 1:length(valTys)
                 if valTys[i] == API.VT_Shadow
                     args2[i] = extract_value!(B, args2[i], idx - 1)
