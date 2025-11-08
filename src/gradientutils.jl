@@ -109,7 +109,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function; postprocess=nothi
     end
     FT = LLVM.FunctionType(LLVM.return_type(FT0), ptys; vararg=LLVM.isvararg(FT0))
     mod = LLVM.parent(fn)
-    fn, _ = get_function!(mod, "julia.enzyme.conditionally_execute." * LLVM.name(FT), FT)
+    fn, _ = get_function!(mod, "julia.enzyme.conditionally_execute." * LLVM.name(fn), FT)
     if isempty(blocks(fn))
         let builder = IRBuilder()
             entry = BasicBlock(fn, "entry")
