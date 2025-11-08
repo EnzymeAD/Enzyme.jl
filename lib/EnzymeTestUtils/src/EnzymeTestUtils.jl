@@ -15,6 +15,7 @@ include("test_approx.jl")
 include("compatible_activities.jl")
 include("finite_difference_calls.jl")
 include("generate_tangent.jl")
+include("test_utils.jl")
 include("test_forward.jl")
 include("test_reverse.jl")
 
