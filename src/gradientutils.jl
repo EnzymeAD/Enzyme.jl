@@ -218,7 +218,7 @@ function call_same_with_inverted_arg_if_active!(
         insert!(args, 1, new_from_original(gutils, orig))
     end
     prefn = LLVM.called_operand(orig)::LLVM.Function
-    condfn = get_or_insert_conditional_execute(prefn; postprocess, postprocess_const, cmpidx)
+    condfn = get_or_insert_conditional_execute!(prefn; postprocess, postprocess_const, cmpidx)
 
     res = LLVM.Value(
         API.EnzymeGradientUtilsCallWithInvertedBundles(
