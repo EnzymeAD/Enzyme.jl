@@ -1866,7 +1866,8 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
             args,
             valTys,
             false;
-            cmpidx = 4 + (offset - 1)
+            cmpidx = 4 + (offset - 1),
+            need_result = false
         ) #=lookup=#
     end
     return false

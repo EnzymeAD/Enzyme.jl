@@ -98,34 +98,55 @@ function set_reverse_block!(gutils::GradientUtils, block::LLVM.BasicBlock)
     return LLVM.BasicBlock(API.EnzymeGradientUtilsSetReverseBlock(gutils, block))
 end
 
-function get_or_insert_conditional_execute!(fn::LLVM.Function; postprocess=nothing, postprocess_const=nothing, cmpidx::Int = 1)
+function get_or_insert_conditional_execute!(fn::LLVM.Function; need_result=true, postprocess=nothing, postprocess_const=nothing, cmpidx::Int = 1)
     FT0 = LLVM.function_type(fn)
     ptys = LLVM.parameters(FT0)
     insert!(ptys, 1, ptys[cmpidx])
 
-    void_rt = LLVM.return_type(FT0) == LLVM.VoidType()
-    if !void_rt
+    void_rt = LLVM.return_type(FT0) == LLVM.VoidType() && need_result
+    extra_rt = !void_rt && postprocess_const === nothing
+    if extra_rt
         insert!(ptys, 1, LLVM.return_type(FT0))
     end
-    FT = LLVM.FunctionType(LLVM.return_type(FT0), ptys; vararg=LLVM.isvararg(FT0))
+    FT = LLVM.FunctionType(need_result ? LLVM.return_type(FT0) : LLVM.VoidType(), ptys; vararg=LLVM.isvararg(FT0))
     mod = LLVM.parent(fn)
-    fn, _ = get_function!(mod, "julia.enzyme.conditionally_execute." * LLVM.name(fn), FT)
-    if isempty(blocks(fn))
+    newname = "julia.enzyme.conditionally_execute."
+    if !need_result
+        newname = newname * "noresult."
+    end
+    if postprocess !== nothing
+        newname = newname * ".pp_$(postprocess)"
+    end
+    if postprocess_const !== nothing
+        newname = newname * ".ppc_$(postprocess_const)"
+    end
+    newname = newname * LLVM.name(fn)
+    cfn, _ = get_function!(mod, newname, FT)
+    if isempty(blocks(cfn))
+        linkage!(cfn, LLVM.API.LLVMInternalLinkage)
         let builder = IRBuilder()
-            entry = BasicBlock(fn, "entry")
-            good = BasicBlock(fn, "good")
-            bad = BasicBlock(fn, "bad")
+            entry = BasicBlock(cfn, "entry")
+            good = BasicBlock(cfn, "good")
+            bad = BasicBlock(cfn, "bad")
             position!(builder, entry)
-            parms = collect(parameters(fn))
+            parms = collect(parameters(cfn))
 
-            cmp = icmp!(builder, LLVM.API.LLVMIntEQ, parms[1 + !void_rt], parms[1 + cmpidx + !void_rt])
+            rparms = parms[(2+extra_rt):end]
+
+            if postprocess_const !== nothing
+                res = call!(builder, FT0, fn, rparms)
+                callconv!(res, callconv(fn))
+            end
+
+            cmp = icmp!(builder, LLVM.API.LLVMIntEQ, parms[1 + extra_rt], parms[1 + cmpidx + extra_rt])
 
             br!(builder, cmp, good, bad)
-
             position!(builder, good)
-            rparms = parms[(2+!void_rt):end]
-            res = call!(builder, FT0, fn, rparms)            
-            callconv!(res, callconv(fn))
+
+            if postprocess_const === nothing
+                res = call!(builder, FT0, fn, rparms)
+                callconv!(res, callconv(fn))
+            end
             if postprocess !== nothing
                 postprocess(builder, res, rparms)
             end
@@ -138,8 +159,12 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function; postprocess=nothi
             position!(builder, bad)
             if postprocess_const !== nothing
                 postprocess_const(builder, res, rparms)
-            end
-            if void_rt
+                if void_rt
+                    ret!(builder)
+                else
+                    ret!(builder, res)
+                end
+            elseif void_rt
                 ret!(builder)
             else
                 ret!(builder, parms[1])
@@ -147,7 +172,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function; postprocess=nothi
         end
         push!(function_attributes(fn), EnumAttribute("alwaysinline"))
     end
-    return fn
+    return cfn
 end
 
 """
@@ -174,12 +199,18 @@ function call_same_with_inverted_arg_if_active!(
     postprocess=nothing,
     postprocess_const = nothing,
     cmpidx::Int = 1,
+    movebefore = true,
+    need_result = true
 )::LLVM.Value
     @assert length(args) == length(valTys)
 
     origops = collect(operands(orig))
     if postprocess_const === nothing && is_constant_value(gutils, origops[cmpidx])
-        return new_from_original(gutils, orig)
+        if !need_result
+            return nothing
+        else
+            return new_from_original(gutils, orig)
+        end
     end
 
     if !get_runtime_activity(gutils) || (postprocess_const !== nothing && is_constant_value(gutils, origops[cmpidx]))
@@ -204,7 +235,11 @@ function call_same_with_inverted_arg_if_active!(
             postprocess(B, res, args)
         end
 
-        return res
+        if !need_result
+            return nothing
+        else
+            return res
+        end
     end
 
     if cmpidx isa Int
@@ -214,11 +249,13 @@ function call_same_with_inverted_arg_if_active!(
     end
     args = collect(LLVM.Value, args)
     insert!(args, 1, new_from_original(gutils, origops[cmpidx]))
-    if value_type(orig) != LLVM.VoidType()
-        insert!(args, 1, new_from_original(gutils, orig))
+    newval = nothing
+    if value_type(orig) != LLVM.VoidType() && postprocess_const === nothing && need_result
+        newval = new_from_original(gutils, orig)
+        insert!(args, 1, newval)
     end
     prefn = LLVM.called_operand(orig)::LLVM.Function
-    condfn = get_or_insert_conditional_execute!(prefn; postprocess, postprocess_const, cmpidx)
+    condfn = get_or_insert_conditional_execute!(prefn; postprocess, postprocess_const, need_result, cmpidx)
 
     res = LLVM.Value(
         API.EnzymeGradientUtilsCallWithInvertedBundles(
@@ -235,8 +272,19 @@ function call_same_with_inverted_arg_if_active!(
         ),
     ) #=lookup=#
     callconv!(res, callconv(orig))
+
+    @show string(condfn), string(res)
+
     debug_from_orig!(gutils, res, orig)
-    return res
+    if movebefore && newval !== nothing
+        API.moveBefore(newval, res, B)
+    end
+
+    if !need_result
+        return nothing
+    else
+        return res
+    end
 end
 
 
@@ -273,7 +321,7 @@ function batch_call_same_with_inverted_arg_if_active!(
                 end
             end
         end
-        res = call_same_with_inverted_arg_if_active!(B, gutils, orig, args2, valTys, lookup; kwargs...)
+        res = call_same_with_inverted_arg_if_active!(B, gutils, orig, args2, valTys, lookup; kwargs..., movebefore=idx == 1)
         if shadow === nothing
             continue
         end

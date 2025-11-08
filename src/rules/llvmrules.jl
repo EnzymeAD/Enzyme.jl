@@ -419,6 +419,21 @@ end
     return nothing
 end
 
+function post_arraycopy_memset(B, callv, _)
+    elSize = get_array_elsz(B, callv)
+    elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
+    len = get_array_len(B, callv)
+    length = LLVM.mul!(B, len, elSize)
+
+    LLVM.memset!(
+        B,
+        get_array_data(B, callv),
+        LLVM.ConstantInt(i8, 0, false),
+        length,
+        algn,
+    )
+end
+
 @register_fwd function arraycopy_fwd(B, orig, gutils, normalR, shadowR)
     ctx = LLVM.context(orig)
 
@@ -440,28 +455,13 @@ end
 
     found, arty, byref = abs_typeof(origops[1])
 
-    function post_memset(B, callv, _)
-        elSize = get_array_elsz(B, callv)
-        elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
-        len = get_array_len(B, callv)
-        length = LLVM.mul!(B, len, elSize)
-
-        if !found && !(eltype(arty) <: Base.IEEEFloat)
-            bt = GPUCompiler.backtrace(orig)
-            btstr = sprint() do io
-                print(io, "\nCaused by:")
-                Base.show_backtrace(io, bt)
-            end
-            GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type $btstr"
+    if !found && !(eltype(arty) <: Base.IEEEFloat)
+        bt = GPUCompiler.backtrace(orig)
+        btstr = sprint() do io
+            print(io, "\nCaused by:")
+            Base.show_backtrace(io, bt)
         end
-
-        LLVM.memset!(
-            B,
-            get_array_data(B, callv),
-            LLVM.ConstantInt(i8, 0, false),
-            length,
-            algn,
-        )
+        GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type $btstr"
     end
 
     shadowres = batch_call_same_with_inverted_arg_if_active!(
@@ -471,7 +471,7 @@ end
         [shadowin],
         [API.VT_Shadow],
         false;
-        postprocess_const=post_memset
+        postprocess_const=post_arraycopy_memset
     )::LLVM.Value #=lookup=#
 
     unsafe_store!(shadowR, shadowres.ref)
@@ -718,6 +718,20 @@ end
     return nothing
 end
 
+function post_genericmemcpy_memset(B, callv, _)
+    elSize = get_memory_elsz(B, ev)
+    elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
+    length = LLVM.mul!(B, len, elSize)
+
+    LLVM.memset!(
+        B,
+        get_memory_data(B, callv),
+        LLVM.ConstantInt(i8, 0, false),
+        length,
+        algn,
+    )
+end
+
 @register_fwd function genericmemory_copy_slice_fwd(B, orig, gutils, normalR, shadowR)
     ctx = LLVM.context(orig)
 
@@ -738,27 +752,13 @@ end
 
     found, arty, byref = abs_typeof(origops[1])
 
-    function zero_mem(B, callv, _)
-        elSize = get_memory_elsz(B, ev)
-        elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
-        length = LLVM.mul!(B, len, elSize)
-
-        if !found && !(eltype(arty) <: Base.IEEEFloat)
-            bt = GPUCompiler.backtrace(orig)
-            btstr = sprint() do io
-                print(io, "\nCaused by:")
-                Base.show_backtrace(io, bt)
-            end
-            GPUCompiler.@safe_warn "TODO forward zero-set of memorycopy used memset rather than runtime type $btstr"
+    if !found && !(eltype(arty) <: Base.IEEEFloat)
+        bt = GPUCompiler.backtrace(orig)
+        btstr = sprint() do io
+            print(io, "\nCaused by:")
+            Base.show_backtrace(io, bt)
         end
-
-        LLVM.memset!(
-            B,
-            get_memory_data(B, callv),
-            LLVM.ConstantInt(i8, 0, false),
-            length,
-            algn,
-        )
+        GPUCompiler.@safe_warn "TODO forward zero-set of memorycopy used memset rather than runtime type $btstr"
     end
 
     shadowres = batch_call_same_with_inverted_arg_if_active!(
@@ -768,7 +768,7 @@ end
         [shadowin, shadowdata, len],
         [API.VT_Shadow, API.VT_Shadow, API.VT_Primal],
         false;
-        postprocess_const=zero_mem
+        postprocess_const=post_genericmemcpy_memset
     ) #=lookup=#
 
     unsafe_store!(shadowR, shadowres.ref)
@@ -1466,11 +1466,26 @@ end
         orig,
         args,
         [API.VT_Shadow, API.VT_Primal],
-        false,
+        false;
+        need_result = false
     ) #=lookup=#
     return false
 end
 
+
+function zero_array_grow!(B, _, args)
+    al = 0
+    anti, inc = args
+
+    idx = get_array_nrows(B, anti)
+    elsz = zext!(B, get_array_elsz(B, anti), value_type(idx))
+    off = mul!(B, idx, elsz)
+    tot = mul!(B, inc, elsz)
+
+    toset = get_array_data(B, anti)
+    toset = gep!(B, i8, toset, LLVM.Value[off])
+    mcall = LLVM.memset!(B, toset, LLVM.ConstantInt(i8, 0, false), tot, al)
+end
 
 @register_aug function jl_array_grow_end_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     origops = collect(operands(orig))
@@ -1484,19 +1499,6 @@ end
     ctx = LLVM.context(orig)
     i8 = LLVM.IntType(8)
 
-    function zero!(B, _, args)
-        al = 0
-        anti, inc = args
-
-        idx = get_array_nrows(B, anti)
-        elsz = zext!(B, get_array_elsz(B, anti), value_type(idx))
-        off = mul!(B, idx, elsz)
-        tot = mul!(B, inc, elsz)
-
-        toset = get_array_data(B, anti)
-        toset = gep!(B, i8, toset, LLVM.Value[off])
-        mcall = LLVM.memset!(B, toset, LLVM.ConstantInt(i8, 0, false), tot, al)
-    end
 
     inc = new_from_original(gutils, origops[2])
 
@@ -1508,7 +1510,8 @@ end
         args,
         [API.VT_Shadow, API.VT_Primal],
         false;
-        postprocess=zero!
+        postprocess=zero_array_grow!,
+        need_result = false
     ) #=lookup=#
 
     return false
@@ -1700,7 +1703,8 @@ end
         API.VT_Primal,
     ]
 
-    batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false) #=lookup=#
+    batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false;
+            need_result = false) #=lookup=#
 
     return false
 end
