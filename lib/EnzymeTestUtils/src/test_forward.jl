@@ -149,7 +149,7 @@ function test_forward(
             end
         else
             test_approx(
-                dy_ad, dy_fdm, "derivative should agree with finite differences ($activities)"; atol, rtol
+                dy_ad, dy_fdm, "derivative should agree with finite differences"; atol, rtol
             )
         end
     end
