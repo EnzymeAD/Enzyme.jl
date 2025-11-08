@@ -212,7 +212,7 @@ function call_same_with_inverted_arg_if_active!(
         @assert valTys[cmpidx] == API.VT_Shadow
         valTys[cmpidx] = API.VT_Both
     end
-    args = copy(args)
+    args = collect(LLVM.Value, args)
     insert!(args, 1, new_from_original(gutils, origops[cmpidx]))
     if value_type(orig) != LLVM.VoidType()
         insert!(args, 1, new_from_original(gutils, orig))

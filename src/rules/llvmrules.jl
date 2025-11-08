@@ -440,7 +440,7 @@ end
 
     found, arty, byref = abs_typeof(origops[1])
 
-    function post_memset(B, callv, _)
+    function post_memset(B, ev, _)
         elSize = get_array_elsz(B, ev)
         elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
         len = get_array_len(B, ev)
