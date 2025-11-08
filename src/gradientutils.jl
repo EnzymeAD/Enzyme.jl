@@ -174,12 +174,12 @@ function call_same_with_inverted_arg_if_active!(
     postprocess=nothing,
     postprocess_const = nothing,
     cmpidx::Int = 1,
-)
+)::LLVM.Value
     @assert length(args) == length(valTys)
 
     origops = collect(operands(orig))
     if postprocess_const === nothing && is_constant_value(gutils, origops[cmpidx])
-        return nothing
+        return new_from_original(gutils, orig)
     end
 
     if !get_runtime_activity(gutils) || (postprocess_const !== nothing && is_constant_value(gutils, origops[cmpidx]))
@@ -274,10 +274,11 @@ function batch_call_same_with_inverted_arg_if_active!(
             end
         end
         res = call_same_with_inverted_arg_if_active!(B, gutils, orig, args2, valTys, lookup; kwargs...)
+        if shadow === nothing
+            continue
+        end
         if width == 1
             shadow = res
-        elseif res === nothing || shadow == nothing
-            shadow = nothing
         else            
             shadow = insert_value!(B, shadow, res, idx - 1)
         end

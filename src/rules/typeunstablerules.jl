@@ -1834,6 +1834,8 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
     if !is_constant_value(gutils, origops[4])
         width = get_width(gutils)
 
+        shadowout = invert_pointer(gutils, origops[4], B)
+
         shadowin = if !is_constant_value(gutils, origops[2])
             invert_pointer(gutils, origops[2], B)
         else
