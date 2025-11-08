@@ -273,8 +273,6 @@ function call_same_with_inverted_arg_if_active!(
     ) #=lookup=#
     callconv!(res, callconv(orig))
 
-    @show string(condfn), string(res)
-
     debug_from_orig!(gutils, res, orig)
     if movebefore && newval !== nothing
         API.moveBefore(newval, res, B)
