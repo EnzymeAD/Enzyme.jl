@@ -118,7 +118,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function; postprocess=nothi
             position!(builder, entry)
             parms = collect(parameters(fn))
 
-            cmp = icmp_eq!(builder, LLVM.API.LLVMIntEQ, parms[1 + !void_rt], parms[1 + cmpidx + !void_rt])
+            cmp = icmp!(builder, LLVM.API.LLVMIntEQ, parms[1 + !void_rt], parms[1 + cmpidx + !void_rt])
 
             br!(builder, cmp, good, bad)
 
