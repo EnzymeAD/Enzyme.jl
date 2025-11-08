@@ -200,7 +200,7 @@ function call_same_with_inverted_arg_if_active!(
             end
         elseif is_constant_value(gutils, origops[cmpidx])
             postprocess_const(B, res, args)
-        else
+        elseif postprocess !== nothing
             postprocess(B, res, args)
         end
 
