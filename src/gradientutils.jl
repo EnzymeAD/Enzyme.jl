@@ -101,11 +101,11 @@ end
 function get_or_insert_conditional_execute!(fn::LLVM.Function; postprocess=nothing, postprocess_const=nothing, cmpidx::Int = 1)
     FT0 = LLVM.function_type(fn)
     ptys = LLVM.parameters(FT0)
-    insert!(ptys, 0, ptys[cmpidx])
+    insert!(ptys, 1, ptys[cmpidx])
 
     void_rt = LLVM.return_type(FT0) == LLVM.VoidType()
     if !void_rt
-        insert!(ptys, 0, LLVM.return_type(FT0))
+        insert!(ptys, 1, LLVM.return_type(FT0))
     end
     FT = LLVM.FunctionType(LLVM.return_type(FT0), ptys, LLVM.isvararg(FT0))
     mod = LLVM.parent(fn)
