@@ -29,6 +29,15 @@ function mul_caller(A, B)
     return
 end
 
+function mul_caller_static(A, B)
+    backend = get_backend(A)
+    C = max(64 ÷ prod(size(A)), 1)
+    kernel = mul!(backend, C)
+    kernel(A, B, ndrange = size(A))
+    KernelAbstractions.synchronize(backend)
+    return
+end
+
 @testset "kernels" begin
     A = Array{Float64}(undef, 64)
     dA = Array{Float64}(undef, 64)
@@ -46,6 +55,8 @@ end
 
     @test all(dA .≈ 1.2)
     @test dB ≈ sum(1:1:64)
+
+    Enzyme.autodiff(Forward, mul_caller_static, Duplicated(A, dA), Duplicated(1.2, 1.0))
 
     A .= (1:1:64)
     dA .= 1
