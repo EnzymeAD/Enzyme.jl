@@ -923,11 +923,11 @@ function EnzymeRules.reverse(
 end
 
 function cofactor(A)
-    cofA     = zeros(eltype(A), size(A))
+    cofA     = similar(A)
     minorAij = similar(A, size(A, 1) - 1, size(A, 2) - 1)
     for i in 1:size(A, 1), j in 1:size(A, 2)
         fill!(minorAij, zero(eltype(A)))
-        
+
         # build minor matrix
         for k in 1:size(A, 1), l in 1:size(A, 2)
             if !(k == i || l == j)
