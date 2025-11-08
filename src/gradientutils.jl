@@ -107,7 +107,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function; postprocess=nothi
     if !void_rt
         insert!(ptys, 1, LLVM.return_type(FT0))
     end
-    FT = LLVM.FunctionType(LLVM.return_type(FT0), ptys, LLVM.isvararg(FT0))
+    FT = LLVM.FunctionType(LLVM.return_type(FT0), ptys; vararg=LLVM.isvararg(FT0))
     mod = LLVM.parent(fn)
     fn, _ = get_function!(mod, "julia.enzyme.conditionally_execute." * LLVM.name(FT), FT)
     if isempty(blocks(fn))
