@@ -719,7 +719,7 @@ end
 end
 
 function post_genericmemcpy_memset(B, callv, _)
-    elSize = get_memory_elsz(B, ev)
+    elSize = get_memory_elsz(B, callv)
     elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
     length = LLVM.mul!(B, len, elSize)
 
@@ -1476,6 +1476,7 @@ end
 function zero_array_grow!(B, _, args)
     al = 0
     anti, inc = args
+    i8 = LLVM.IntType(8)
 
     idx = get_array_nrows(B, anti)
     elsz = zext!(B, get_array_elsz(B, anti), value_type(idx))
@@ -1497,7 +1498,6 @@ end
 
     shadowin = invert_pointer(gutils, origops[1], B)
     ctx = LLVM.context(orig)
-    i8 = LLVM.IntType(8)
 
 
     inc = new_from_original(gutils, origops[2])
