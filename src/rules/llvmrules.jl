@@ -719,7 +719,7 @@ end
 end
 
 function post_genericmemcpy_memset(B, callv, args)
-    _, _, len = len
+    _, _, len = args
     
     elSize = get_memory_elsz(B, callv)
     elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))

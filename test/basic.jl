@@ -829,7 +829,9 @@ end
     autodiff(Reverse, sh, Duplicated([1.0], [0.0]))
 end
 
-@testset "Array push" begin
+
+for RTA in (false, true)
+@testset "Array push runtime activity=$RTA" begin
 
     function pusher(x, y)
         push!(x, y)
@@ -843,13 +845,14 @@ end
     else
         dx.ref.mem
     end
-    @test 1.0 ≈ first(Enzyme.autodiff(Reverse, pusher, Duplicated(x, dx), Active(2.0)))[2]
+    @test 1.0 ≈ first(Enzyme.autodiff(set_runtime_activity(Reverse, RTA), pusher, Duplicated(x, dx), Active(2.0)))[2]
     @static if VERSION < v"1.11-"
         @test dx ≈ [1.0]
     else
         @test dx ≈ [0.0, 0.0]
         @test rf ≈ [1.0]
     end
+    @test x ≈ [2.3, 0]
 
     function double_push(x)
         a = [0.5]
@@ -857,7 +860,7 @@ end
         push!(a, 1.0)
         return x
     end
-    y, = Enzyme.autodiff(Reverse, double_push, Active(1.0))[1]
+    y, = Enzyme.autodiff(set_runtime_activity(Reverse, RTA), double_push, Active(1.0))[1]
     @test y == 1.0
 
     function aloss(a, arr)
@@ -870,11 +873,39 @@ end
     darr = Float64[]
 
     y = autodiff(
-        Reverse,
+        set_runtime_activity(Reverse, RTA),
         aloss,
         Active,
         Active(1.0),
         Duplicated(arr, darr)
     )[1][1]
     @test y == 1.0
+    @test arr ≈ ones(2500)
+
+    arr = Float64[]
+
+    y = autodiff(
+        set_runtime_activity(Reverse, RTA),
+        aloss,
+        Active,
+        Active(1.0),
+        Const(arr)
+    )[1][1]
+    @test y == 0.0
+    @test arr ≈ ones(2500)
+
+    if RTA
+        arr = Float64[]
+        y = autodiff(
+            set_runtime_activity(Reverse, RTA),
+            aloss,
+            Active,
+            Active(1.0),
+            Duplicated(arr, arr)
+        )[1][1]
+        @test y == 0.0
+        @test arr ≈ ones(2500)
+    end
+
+end
 end
