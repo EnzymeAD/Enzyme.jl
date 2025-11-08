@@ -201,7 +201,7 @@ function call_same_with_inverted_arg_if_active!(
     cmpidx::Int = 1,
     movebefore = true,
     need_result = true
-)::LLVM.Value
+)::Union{LLVM.Value, Nothing}
     @assert length(args) == length(valTys)
 
     origops = collect(operands(orig))
