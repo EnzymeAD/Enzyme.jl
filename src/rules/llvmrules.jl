@@ -718,10 +718,15 @@ end
     return nothing
 end
 
-function post_genericmemcpy_memset(B, callv, _)
+function post_genericmemcpy_memset(B, callv, args)
+    _, _, len = len
+    
     elSize = get_memory_elsz(B, callv)
     elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
     length = LLVM.mul!(B, len, elSize)
+
+    i8 = LLVM.IntType(8)
+    algn = 0
 
     LLVM.memset!(
         B,
@@ -747,8 +752,6 @@ end
     shadowdata = invert_pointer(gutils, origops[2], B)
     len = new_from_original(gutils, origops[3])
 
-    i8 = LLVM.IntType(8)
-    algn = 0
 
     found, arty, byref = abs_typeof(origops[1])
 
