@@ -1622,26 +1622,19 @@ end
                 invert_pointer(gutils, origops[1], B)
             end
         end
-        if width == 1
-            args = LLVM.Value[
-                shadowin
-                new_from_original(gutils, origops[2])
-            ]
-            shadowres = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), args)
-            callconv!(shadowres, callconv(orig))
-        else
-            shadowres =
-                UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-            for idx = 1:width
-                args = LLVM.Value[
-                    extract_value!(B, shadowin, idx - 1)
-                    new_from_original(gutils, origops[2])
-                ]
-                tmp = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), args)
-                callconv!(tmp, callconv(orig))
-                shadowres = insert_value!(B, shadowres, tmp, idx - 1)
-            end
-        end
+
+        args = LLVM.Value[
+            shadowin
+            new_from_original(gutils, origops[2])
+        ]
+
+        valTys = API.CValueType[
+            API.VT_Shadow,
+            API.VT_Primal,
+        ]
+
+        shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false; force_run=is_constant_value(gutils, origops[1]))::LLVM.Value
+
         unsafe_store!(shadowR, shadowres.ref)
     else
         normal = new_from_original(gutils, orig)
@@ -1697,6 +1690,7 @@ end
     sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym])
     push!(vals, sym)
 
+    # TODO properly handle runtime activity here
     push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, ops[1]))))
 
     for v in inps[2:end]
@@ -1840,61 +1834,41 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
     if !is_constant_value(gutils, origops[4])
         width = get_width(gutils)
 
+        shadowout = invert_pointer(gutils, origops[4], B)
+
         shadowin = if !is_constant_value(gutils, origops[2])
             invert_pointer(gutils, origops[2], B)
         else
             new_from_original(gutils, origops[2])
         end
 
-        shadowout = invert_pointer(gutils, origops[4], B)
-        if width == 1
-            args = LLVM.Value[
-                new_from_original(gutils, origops[1])
-                shadowin
-                new_from_original(gutils, origops[3])
-                shadowout
-            ]
-            valTys =
-                API.CValueType[API.VT_Primal, API.VT_Shadow, API.VT_Primal, API.VT_Shadow]
-            if offset != 1
-                pushfirst!(args, first(operands(orig)))
-                pushfirst!(valTys, API.VT_Primal)
-            end
-
-            shadowres =
-                call_samefunc_with_inverted_bundles!(B, gutils, orig, args, valTys, false) #=lookup=#
-            callconv!(shadowres, callconv(orig))
-        else
-            for idx = 1:width
-                args = LLVM.Value[
-                    new_from_original(gutils, origops[1])
-                    extract_value!(B, shadowin, idx - 1)
-                    new_from_original(gutils, origops[3])
-                    extract_value!(B, shadowout, idx - 1)
-                ]
-                valTys = API.CValueType[
-                    API.VT_Primal,
-                    API.VT_Shadow,
-                    API.VT_Primal,
-                    API.VT_Shadow,
-                ]
-                if offset != 1
-                    pushfirst!(args, first(operands(orig)))
-                    pushfirst!(valTys, API.VT_Primal)
-                end
-
-                tmp = call_samefunc_with_inverted_bundles!(
-                    B,
-                    gutils,
-                    orig,
-                    args,
-                    valTys,
-                    false,
-                ) #=lookup=#
-
-                callconv!(tmp, callconv(orig))
-            end
+        args = LLVM.Value[
+            new_from_original(gutils, origops[1]),
+            shadowin,
+            new_from_original(gutils, origops[3]),
+            shadowout,
+        ]
+        valTys = API.CValueType[
+            API.VT_Primal,
+            API.VT_Shadow,
+            API.VT_Primal,
+            API.VT_Shadow,
+        ]
+        if offset != 1
+            pushfirst!(args, first(operands(orig)))
+            pushfirst!(valTys, API.VT_Primal)
         end
+
+        batch_call_same_with_inverted_arg_if_active!(
+            B,
+            gutils,
+            orig,
+            args,
+            valTys,
+            false;
+            cmpidx = 4 + (offset - 1),
+            need_result = false
+        ) #=lookup=#
     end
     return false
 end
@@ -1966,6 +1940,7 @@ function common_setfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR
                 ((width == 1) ? shadowval : extract_value!(B, shadowval, idx - 1)),
             ]
 
+            # TODO handle runtime activity
             pushfirst!(vals, unsafe_to_llvm(B, rt_jl_setfield_aug))
 
             cal = emit_apply_generic!(B, vals)
@@ -1992,6 +1967,7 @@ function common_setfield_rev(offset, B, orig, gutils, tape)
 
         mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
+        # TODO handle runtime activity
         for idx = 1:width
             vals = LLVM.Value[
                 lookup_value(
