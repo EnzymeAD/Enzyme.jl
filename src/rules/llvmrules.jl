@@ -1348,6 +1348,13 @@ end
 
     newvals = API.CValueType[API.VT_Shadow, API.VT_Primal, API.VT_Shadow, API.VT_None]
 
+    newops = LLVM.Value[
+      shadowh,
+      new_from_original(gutils, origkey),
+      shadowval,
+      LLVM.null(value_type(originserted)),
+    ]
+
     shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, newops, newvals, false;
         preprocess=eqtable_shadow_active) #=lookup=#
 
