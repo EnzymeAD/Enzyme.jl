@@ -189,9 +189,7 @@ end
                 return Bijectors.logpdf(flow.dist, x) - Bijectors.logabsdetjac(flow.transform, x)
             end,
             randn(rng, 7);
-            name="PlanarLayer7",
-            # https://github.com/TuringLang/Bijectors.jl/issues/415
-            broken = (VERSION >= v"1.11" ? Forward : Neither),
+            name="PlanarLayer7"
         ),
 
         TestCase(
@@ -202,8 +200,7 @@ end
                 return sum(Bijectors.logpdf(flow.dist, x) - Bijectors.logabsdetjac(flow.transform, x))
             end,
             randn(rng, 11);
-            name="PlanarLayer11",
-            broken = (VERSION >= v"1.11" ? Forward : Neither),
+            name="PlanarLayer11"
         ),
     ]
 
