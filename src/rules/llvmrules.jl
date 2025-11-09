@@ -255,7 +255,7 @@ end
     API.moveBefore(newo, err, B)
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL
+    if unsafe_load(shadowR) != C_NULL
         t_shadow1 = if normal !== nothing
             normal
         else
