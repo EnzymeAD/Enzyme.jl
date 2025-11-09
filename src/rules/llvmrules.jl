@@ -419,7 +419,7 @@ end
     return nothing
 end
 
-function post_arraycopy_memset(B, callv, _)
+function post_arraycopy_memset(B, callv, _, _)
     i8 = LLVM.IntType(8)
     algn = 0
 
@@ -718,9 +718,9 @@ end
     return nothing
 end
 
-function post_genericmemcpy_memset(B, callv, args)
+function post_genericmemcpy_memset(B, callv, args, _)
     _, _, len = args
-    
+
     elSize = get_memory_elsz(B, callv)
     elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
     length = LLVM.mul!(B, len, elSize)
@@ -1287,6 +1287,15 @@ end
     return false
 end
 
+function eqtable_shadow_active(B, args)
+    _, _, shadowval, _ = args
+    emit_apply_generic!(
+        B,
+        LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, shadowval)],
+    )
+    return nothing
+end
+
 @register_aug function eqtableput_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
@@ -1339,45 +1348,8 @@ end
 
     newvals = API.CValueType[API.VT_Shadow, API.VT_Primal, API.VT_Shadow, API.VT_None]
 
-    shadowres = if width == 1
-        emit_apply_generic!(
-            B,
-            LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, shadowval)],
-        )
-        newops = LLVM.Value[
-            shadowh,
-            new_from_original(gutils, origkey),
-            shadowval,
-            LLVM.null(value_type(originserted)),
-        ]
-        cal = call_same_with_inverted_arg_if_active!(B, gutils, orig, newops, newvals, false) #=lookup=#
-    else
-        ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
-        shadow = LLVM.UndefValue(ST)
-        for j = 1:width
-            sval2 = extract_value!(B, shadowval, j - 1)
-            emit_apply_generic!(
-                B,
-                LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, sval2)],
-            )
-            newops = LLVM.Value[
-                extract_value!(B, shadowh, j - 1),
-                new_from_original(gutils, origkey),
-                sval2,
-                LLVM.null(value_type(originserted)),
-            ]
-            cal = call_same_with_inverted_arg_if_active!(
-                B,
-                gutils,
-                orig,
-                newops,
-                newvals,
-                false,
-            ) #=lookup=#
-            shadow = insert_value!(B, shadow, cal, j - 1)
-        end
-        shadow
-    end
+    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, newops, newvals, false;
+        preprocess=eqtable_shadow_active) #=lookup=#
 
     unsafe_store!(shadowR, shadowres.ref)
     return false
@@ -1475,13 +1447,22 @@ end
     return false
 end
 
-
-function zero_array_grow!(B, _, args)
-    al = 0
+function pre_shadow_array_grow!(B, args)
     anti, inc = args
-    i8 = LLVM.IntType(8)
 
     idx = get_array_nrows(B, anti)
+
+    return idx
+end
+
+function post_shadow_array_grow!(B, _, args, pre)
+    al = 0
+    anti, inc = args
+
+    idx = pre
+
+    i8 = LLVM.IntType(8)
+
     elsz = zext!(B, get_array_elsz(B, anti), value_type(idx))
     off = mul!(B, idx, elsz)
     tot = mul!(B, inc, elsz)
@@ -1489,6 +1470,7 @@ function zero_array_grow!(B, _, args)
     toset = get_array_data(B, anti)
     toset = gep!(B, i8, toset, LLVM.Value[off])
     mcall = LLVM.memset!(B, toset, LLVM.ConstantInt(i8, 0, false), tot, al)
+
 end
 
 @register_aug function jl_array_grow_end_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
@@ -1505,6 +1487,8 @@ end
 
     inc = new_from_original(gutils, origops[2])
 
+    emit_jl!(B, shadowin)
+
     args = LLVM.Value[shadowin, inc]
     batch_call_same_with_inverted_arg_if_active!(
         B,
@@ -1513,9 +1497,11 @@ end
         args,
         [API.VT_Shadow, API.VT_Primal],
         false;
-        postprocess=zero_array_grow!,
+        preprocess=pre_shadow_array_grow!,
+        postprocess=post_shadow_array_grow!,
         need_result = false
     ) #=lookup=#
+
 
     return false
 end
