@@ -1487,8 +1487,6 @@ end
 
     inc = new_from_original(gutils, origops[2])
 
-    emit_jl!(B, shadowin)
-
     args = LLVM.Value[shadowin, inc]
     batch_call_same_with_inverted_arg_if_active!(
         B,
