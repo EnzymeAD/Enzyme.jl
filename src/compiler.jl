@@ -146,6 +146,9 @@ GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) 
 # GPUCompiler.isintrinsic(::CompilerJob{EnzymeTarget}, fn::String) = true
 # GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
 
+# Avoid blow-up of higer-order AD
+GPUCompiler.can_safepoint(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) = false
+
 # TODO: encode debug build or not in the compiler job
 #       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
 GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
