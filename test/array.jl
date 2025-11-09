@@ -251,9 +251,8 @@ for RTA in (false, true)
             Active(1.0),
             Duplicated(arr, arr)
         )[1][1]
-        # Pending fix via https://github.com/EnzymeAD/Enzyme/pull/2540
-        @test_broken y == 0.0
-        @test_broken arr ≈ ones(2500)
+        @test y == 0.0
+        @test arr ≈ ones(2500)
     end
 
 end
