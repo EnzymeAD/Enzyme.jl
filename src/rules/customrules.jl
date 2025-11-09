@@ -48,8 +48,10 @@ import LinearAlgebra
             :(LinearAlgebra.dot(partial,dx))
         elseif dx <: AbstractFloat || dx <: AbstractArray{<:AbstractFloat}
             :(LinearAlgebra.dot(dx, partial))
-        else
+        elseif partial <: AbstractVector
             :(LinearAlgebra.dot(adjoint(partial),dx))
+        else
+            :(LinearAlgebra.dot(conj(partial),dx))
         end
         return quote
             Base.@_inline_meta
@@ -106,8 +108,50 @@ import LinearAlgebra
     end
 end
 
-@inline function EnzymeCore.EnzymeRules.multiply_rev_into(prev, partial, dx)
+@inline function EnzymeCore.EnzymeRules.multiply_rev_into(prev, partial::Real, dx)
+    EnzymeCore.EnzymeRules.multiply_fwd_into(prev, partial, dx)
+end
+
+@inline function EnzymeCore.EnzymeRules.multiply_rev_into(prev, partial::Complex, dx)
+    EnzymeCore.EnzymeRules.multiply_fwd_into(prev, conj(partial), dx)
+end
+
+@inline function EnzymeCore.EnzymeRules.multiply_rev_into(prev, partial::AbstractArray{<:Real}, dx::Number)
+    EnzymeCore.EnzymeRules.multiply_fwd_into(prev, partial, dx)
+end
+
+@inline function EnzymeCore.EnzymeRules.multiply_rev_into(prev, partial::AbstractArray{<:Complex}, dx::Number)
+    EnzymeCore.EnzymeRules.multiply_fwd_into(prev, conj(partial), dx)
+end
+
+@inline function EnzymeCore.EnzymeRules.multiply_rev_into(prev, partial::AbstractArray{<:Real, N}, dx::AbstractArray{<:Any, N}) where N
+    EnzymeCore.EnzymeRules.multiply_fwd_into(prev, partial, dx)
+end
+
+@inline function EnzymeCore.EnzymeRules.multiply_rev_into(prev, partial::AbstractArray{<:Complex, N}, dx::AbstractArray{<:Any, N}) where N
+    EnzymeCore.EnzymeRules.multiply_fwd_into(prev, conj(partial), dx)
+end
+
+@inline function EnzymeCore.EnzymeRules.multiply_rev_into(prev, partial::AbstractVector{<:Complex}, dx::AbstractVector{<:Any})
     EnzymeCore.EnzymeRules.multiply_fwd_into(prev, adjoint(partial), dx)
+end
+
+@inline function EnzymeCore.EnzymeRules.multiply_rev_into(prev, partial::AbstractMatrix{<:Real}, dx::AbstractVector)
+    EnzymeCore.EnzymeRules.multiply_fwd_into(prev, transpose(partial), dx)
+end
+
+@inline function EnzymeCore.EnzymeRules.multiply_rev_into(prev, partial::AbstractMatrix{<:Complex}, dx::AbstractVector)
+    EnzymeCore.EnzymeRules.multiply_fwd_into(prev, adjoint(partial), dx)
+end
+
+@inline function EnzymeCore.EnzymeRules.multiply_rev_into(prev, partial::AbstractArray{<:Real}, dx::AbstractArray)
+    EnzymeCore.EnzymeRules.multiply_fwd_into(prev, Base.permutedims(partial, (((ndims(dx)+1):ndims(partial))..., Base.OneTo(ndims(dx))...)), dx)
+end
+
+@inline function EnzymeCore.EnzymeRules.multiply_rev_into(prev, partial::AbstractArray{<:Complex}, dx::AbstractArray)
+    pd = Base.permutedims(partial, (((ndims(dx)+1):ndims(partial))..., Base.OneTo(ndims(dx))...))
+    Base.conj!(pd)
+    EnzymeCore.EnzymeRules.multiply_fwd_into(prev, pd, dx)
 end
 
 function enzyme_custom_setup_args(
