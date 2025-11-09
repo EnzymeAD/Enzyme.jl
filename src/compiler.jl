@@ -6309,11 +6309,11 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
         add_edge!(edges, rev_sig)
     end
     
-    ina_sig = Tuple{typeof(EnzymeRules.inactive), Vararg{Any}}
-    add_edge!(edges, ina_sig)
-    
     for gen_sig in (
+        Tuple{typeof(EnzymeRules.inactive), Vararg{Any}},
         Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{Any}},
+        Tuple{typeof(EnzymeRules.inactive_arg), Vararg{Any}},
+        Tuple{typeof(EnzymeRules.inactive_kwarg), Vararg{Any}},
         Tuple{typeof(EnzymeRules.noalias), Vararg{Any}},
         Tuple{typeof(EnzymeRules.inactive_type), Type},
     )

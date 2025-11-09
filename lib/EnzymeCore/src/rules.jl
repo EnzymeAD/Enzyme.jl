@@ -317,6 +317,39 @@ function is_inactive_noinl_from_sig(@nospecialize(TT);
 end
 
 """
+    inactive_kwarg(func::typeof(f), args...; kwargs...)
+
+Mark a particular function as always having inactive keyword arguments. The return does not matter, merely its declaration.
+
+This function is currently considered internal/experimental and may not respect semver.
+"""
+function inactive_kwarg end
+
+function is_inactive_kwarg_from_sig(@nospecialize(TT);
+                              world::UInt=Base.get_world_counter(),
+                              method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
+                              caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
+    return isapplicable(inactive_kwarg, TT; world, method_table, caller)
+end
+
+"""
+    inactive_arg(func::typeof(f), args...; kwargs...)
+
+Mark a particular function as always having inactive non-keyword arguments. The return type must be a tuple of Val's whose
+value is the argument marked inactive.
+
+This function is currently considered internal/experimental and may not respect semver.
+"""
+function inactive_arg end
+
+function is_inactive_arg_from_sig(@nospecialize(TT);
+                              world::UInt=Base.get_world_counter(),
+                              method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
+                              caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
+    return isapplicable(inactive_arg, TT; world, method_table, caller)
+end
+
+"""
     noalias(func::typeof(f), args...)
 
 Mark a particular function as always being a fresh allocation which does not alias any other

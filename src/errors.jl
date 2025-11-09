@@ -24,6 +24,65 @@ function Base.showerror(io::IO, ece::EnzymeRuntimeException)
     print(io, msg, '\n')
 end
 
+struct NonConstantKeywordArgException <: EnzymeError
+    backtrace::Cstring
+    mi::Core.MethodInstance
+    world::UInt
+end
+
+function pretty_print_mi(mi, io=stdout; digit_align_width = 1)
+    spec = mi.specTypes.parameters
+    ft = spec[1]
+    arg_types_param = spec[2:end]
+    f_is_function = false
+    kwargs = []
+    if ft === typeof(Core.kwcall) && length(arg_types_param) >= 2 && arg_types_param[1] <: NamedTuple
+        ft = arg_types_param[2]
+        kwt = arg_types_param[1]
+        arg_types_param = arg_types_param[3:end]
+        keys = kwt.parameters[1]::Tuple
+        kwargs = Any[(keys[i], fieldtype(kwt, i)) for i in eachindex(keys)]
+    end
+
+    Base.show_signature_function(io, ft)
+    Base.show_tuple_as_call(io, :function, Tuple{arg_types_param...}; hasfirst=false, kwargs = isempty(kwargs) ? nothing : kwargs)
+
+    m = mi.def
+
+    modulecolor = :light_black
+    tv, decls, file, line = Base.arg_decl_parts(m)
+    #if m.sig <: Tuple{Core.Builtin, Vararg}
+    #    file = "none"
+    #    line = 0
+    #end
+
+    if !(get(io, :compact, false)::Bool) # single-line mode
+        println(io)
+        digit_align_width += 4
+    end
+
+    # module & file, re-using function from errorshow.jl
+    Base.print_module_path_file(io, Base.parentmodule(m), string(file), line; modulecolor, digit_align_width)
+end
+
+function Base.showerror(io::IO, ece::NonConstantKeywordArgException)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
+    print(io, "Custom Rule for method was passed a differentiable keyword argument. Differentiable kwargs cannot currently be specified from within the rule system.\n")
+    printstyled(io, "Hint"; bold = true, color = :cyan)
+    printstyled(
+        io,
+        ": Experimental utility Enzyme.EnzymeRules.inactive_kwarg will enable you to mark the keyword arguments as non-differentiable, if that is correct.";
+        color = :cyan,
+    )
+    println(io)
+    println(io)
+    pretty_print_mi(ece.mi, io)
+    println(io)
+    Base.println(io, Base.unsafe_string(ece.backtrace))
+end
+
 struct NoDerivativeException <: CompilationException
     msg::String
     ir::Union{Nothing,String}

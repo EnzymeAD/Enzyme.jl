@@ -616,13 +616,20 @@ end
         )
     end
 
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    world = enzyme_extract_world(fn)
+
     # TODO: don't inject the code multiple times for multiple calls
 
     fmi, (args, TT, fwd_RT, kwtup, RT, needsPrimal, RealRt, origNeedsPrimal, activity, C) = fwd_mi(orig, gutils, B)
 
     if kwtup !== nothing && kwtup <: Duplicated
-        @safe_debug "Non-constant keyword argument found for " TT
-        emit_error(B, orig, "Enzyme: Non-constant keyword argument found for " * string(TT))
+        mi, _ = enzyme_custom_extract_mi(orig)
+
+        bt = GPUCompiler.backtrace(orig)
+        msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
+        emit_error(B, orig, (msg2, mi, world), NonConstantKeywordArgException)
         return false
     end
     
@@ -632,9 +639,6 @@ end
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     width = get_width(gutils)
 
-    curent_bb = position(B)
-    fn = LLVM.parent(curent_bb)
-    world = enzyme_extract_world(fn)
 
     llvmf = nested_codegen!(mode, mod, fmi, world)
 
