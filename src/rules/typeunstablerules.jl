@@ -2018,7 +2018,7 @@ function error_if_differentiable(::Type{T}) where {T}
 end
 
 function common_f_svec_ref_fwd(offset, B, orig, gutils, normalR, shadowR)
-    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
 
@@ -2097,7 +2097,7 @@ function common_f_svec_ref_fwd(offset, B, orig, gutils, normalR, shadowR)
 end
 
 function common_f_svec_ref_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
-    if is_constant_value(gutils, orig)
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
 
