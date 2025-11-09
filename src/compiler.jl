@@ -720,7 +720,6 @@ end
                     EnumAttribute("willreturn"),
                     EnumAttribute("nosync"),
                     EnumAttribute("nofree"),
-                    EnumAttribute("inaccessiblememonly", 0),
                     EnumAttribute("speculatable", 0),
                     StringAttribute("enzyme_shouldrecompute"),
                     StringAttribute("enzyme_inactive"),
