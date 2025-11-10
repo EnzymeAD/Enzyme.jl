@@ -984,7 +984,8 @@ function julia_error(
         if occursin("No create nofree of empty function", msg) ||
            occursin("No forward mode derivative found for", msg) ||
            occursin("No augmented forward pass", msg) ||
-           occursin("No reverse pass found", msg)
+           occursin("No reverse pass found", msg) ||
+           occursin("Runtime Activity not yet implemented for Forward-Mode BLAS", msg)
             ir = nothing
         end
         if B != C_NULL
@@ -1028,9 +1029,9 @@ function julia_error(
                 world = enzyme_extract_world(f)
             end
             if mi !== nothing
-                emit_error(B, nothing, (msg2, mi, world), EnzymeNoDerivativeError{Core.MethodInstance, UInt})
+                emit_error(B, nothing, (msg2, mi, world), EnzymeNoDerivativeError{Core.MethodInstance, UInt}, data2)
             else
-                emit_error(B, nothing, msg2, EnzymeNoDerivativeError{Nothing, Nothing})
+                emit_error(B, nothing, msg2, EnzymeNoDerivativeError{Nothing, Nothing}, data2)
             end
 
             return C_NULL
