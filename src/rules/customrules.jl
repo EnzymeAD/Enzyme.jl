@@ -3,12 +3,11 @@ import LinearAlgebra
 @inline add_fwd(prev, post) = recursive_add(prev, post)
 
 @generated function EnzymeCore.EnzymeRules.multiply_fwd_into(prev, partial::Union{AbstractArray,Number}, dx::Union{AbstractArray,Number})
-
     if partial <: Number || dx isa Number
         if !(prev <: Type)
             return quote
                 Base.@_inline_meta
-                add_fwd(prev, EnzymeCore.EnzymeRules.multiply_fwd_into(nothing, partial, dx))
+                add_fwd(prev, EnzymeCore.EnzymeRules.multiply_fwd_into(Core.Typeof(prev), partial, dx))
             end
         end
         return quote
@@ -93,7 +92,7 @@ import LinearAlgebra
         matp = Expr(:call, Base.reshape, matp, Expr(:call, Base.length, outp), Expr(:call, Base.length, inp))
     end
 
-    outexpr = if prev === Nothing
+    outexpr = if prev <: Type
         Expr(:call, LinearAlgebra.mul!, outp, matp, inp)
     else
         Expr(:call, LinearAlgebra.mul!, outp, matp, inp, true, true)
