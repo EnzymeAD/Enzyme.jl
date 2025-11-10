@@ -213,29 +213,130 @@ struct AugmentedRuleReturnError{C, RT, aug_RT} <: CustomRuleError
     world::UInt
 end
 
-function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, aug_RT}) where {C, RT, aug_RT}
-    ExpRT = EnzymeRules.forward_rule_return_type(C, RT)
+function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) where {C, RT, fwd_RT}
+    ExpRT = EnzymeRules.augmented_rule_return_type(C, RT, Any)
     @assert ExpRT != fwd_RT
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
 
+    RealRt = eltype(RT)
+
+    primal_found = nothing
+    shadow_found = nothing
+
+    hint = nothing
+
     desc = if EnzymeRules.needs_primal(C) && EnzymeRules.needs_shadow(C)
+        if !(fwd_RT <: EnzymeRules.AugmentedReturn)
+            hint = "Return should be a struct of type EnzymeRules.AugmentedReturn"        
+        elseif EnzymeRules.primal_type(fwd_RT) == Nothing
+            hint = "Missing primal return"
+        elseif EnzymeRules.shadow_type(fwd_RT) == Nothing
+            hint = "Missing shadow return"      
+        elseif EnzymeRules.primal_type(fwd_RT) != RealRt
+            if EnzymeRules.primal_type(fwd_RT) <= RealRt
+                hint = "Expected the abstract type $RealRt for primal, you returned $(EnzymeRules.primal_type(fwd_RT)). Even though $(EnzymeRules.primal_type(fwd_RT)) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
+            else
+                hint = "Mismatched primal type $(EnzymeRules.sprimal_type(fwd_RT)), expected $RealRt"
+            end
+        elseif EnzymeRules.shadow_type(fwd_RT) != RealRt
+            if width == 1
+                if EnzymeRules.shadow_type(fwd_RT) <= RealRt
+                    hint = "Expected the abstract type $RealRt for shadow, you returned $(EnzymeRules.shadow_type(fwd_RT)). Even though $(EnzymeRules.shadow_type(fwd_RT)) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
+                elseif shadow_type(fwd_RT) <: (NTuple{N, <:RealRt} where N)
+                    hint = "Batch size was 1, expected a single shadow, not a tuple of shadows."
+                else
+                    hint = "Mismatched shadow type $(EnzymeRules.shadow_type(fwd_RT)), expected $(EnzymeRules.shadow_type(ExpRT))."
+                end
+            else
+                if EnzymeRules.shadow_type(fwd_RT) <= RealRt
+                    hint = "Batch size was $width, expected a tuple of shadows, not a single shadow."
+                elseif EnzymeRules.shadow_type(fwd_RT) <: (NTuple{N, <:RealRt} where N)
+                    hint = "Expected the abstract type $RealRt for the element shadow type (for a batched shadow type $(EnzymeRules.shadow_type(ExpRT))), you returned $(eltype(EnzymeRules.shadow_type(fwd_RT))) as the element shadow type (batched to become $(EnzymeRules.shadow_type(fwd_RT)). Even though $(eltype(EnzymeRules.shadow_type(fwd_RT))) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
+                else
+                    hint = "Mismatched shadow type $(EnzymeRules.shadow_type(fwd_RT)), expected $(EnzymeRules.shadow_type(ExpRT))."
+                end
+            end
+        else
+            @assert false
+        end
+
         "primal and shadow configuration"
     elseif EnzymeRules.needs_primal(C) && !EnzymeRules.needs_shadow(C)
+        if !(fwd_RT <: EnzymeRules.AugmentedReturn)
+            hint = "Return should be a struct of type EnzymeRules.AugmentedReturn"        
+        elseif EnzymeRules.primal_type(fwd_RT) == Nothing
+            hint = "Missing primal return"
+        elseif EnzymeRules.shadow_type(fwd_RT) != Nothing
+            hint = "Shadow return was not requested"      
+        elseif EnzymeRules.primal_type(fwd_RT) != RealRt
+            if EnzymeRules.primal_type(fwd_RT) <= RealRt
+                hint = "Expected the abstract type $RealRt for primal, you returned $(EnzymeRules.primal_type(fwd_RT)). Even though $(EnzymeRules.primal_type(fwd_RT)) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
+            else
+                hint = "Mismatched primal type $(EnzymeRules.primal_type(fwd_RT)), expected $RealRt"
+            end
+        else
+            @assert false
+        end
+
         "primal-only configuration"
     elseif !EnzymeRules.needs_primal(C) && EnzymeRules.needs_shadow(C)
+
+        if !(fwd_RT <: EnzymeRules.AugmentedReturn)
+            hint = "Return should be a struct of type EnzymeRules.AugmentedReturn"        
+        elseif EnzymeRules.primal_type(fwd_RT) != Nothing
+            hint = "Primal was not requested"
+        elseif EnzymeRules.shadow_type(fwd_RT) != RealRt
+            if width == 1
+                if EnzymeRules.shadow_type(fwd_RT) <= RealRt
+                    hint = "Expected the abstract type $RealRt for shadow, you returned $(EnzymeRules.shadow_type(fwd_RT)). Even though $(EnzymeRules.shadow_type(fwd_RT)) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
+                elseif EnzymeRules.shadow_type(fwd_RT) <: (NTuple{N, <:RealRt} where N)
+                    hint = "Batch size was 1, expected a single shadow, not a tuple of shadows."
+                else
+                    hint = "Mismatched shadow type $(EnzymeRules.shadow_type(fwd_RT)), expected $(EnzymeRules.shadow_type(ExpRT))."
+                end
+            else
+                if EnzymeRules.shadow_type(fwd_RT) <= RealRt
+                    hint = "Batch size was $width, expected a tuple of shadows, not a single shadow."
+                elseif EnzymeRules.shadow_type(fwd_RT) <: (NTuple{N, <:RealRt} where N)
+                    hint = "Expected the abstract type $RealRt for the element shadow type (for a batched shadow type $(EnzymeRules.shadow_type(ExpRT))), you returned $(eltype(EnzymeRules.shadow_type(fwd_RT))) as the element shadow type (batched to become $(EnzymeRules.shadow_type(fwd_RT)). Even though $(eltype(EnzymeRules.shadow_type(fwd_RT))) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
+                else
+                    hint = "Mismatched shadow type $(EnzymeRules.shadow_type(fwd_RT)), expected $(EnzymeRules.shadow_type(ExpRT))."
+                end
+            end
+        else
+            @assert false
+        end
+
         "shadow-only configuration"
     else
+        if !(fwd_RT <: EnzymeRules.AugmentedReturn)
+            hint = "Return should be a struct of type EnzymeRules.AugmentedReturn"        
+        elseif EnzymeRules.primal_type(fwd_RT) != Nothing
+            hint = "Primal was not requested"
+        elseif EnzymeRules.shadow_type(fwd_RT) != Nothing
+            hint = "Shadow return was not requested"
+        else
+            @assert false
+        end
+
         @assert !EnzymeRules.needs_primal(C) && !EnzymeRules.needs_shadow(C)
         "neither primal nor shadow configuration"
     end
 
-    print(io, "Enzyme: Incorrect return type for $desc of forward custom rule with width $(EnzymeRules.width(C)):\n")
+    print(io, "Enzyme: Incorrect return type for $desc of augmented_primal custom rule with width $(EnzymeRules.width(C)) of a function which returned $(eltype(RealRt)):\n")
     print(io, "  found : ", fwd_RT, "\n")
     print(io, "  expected : ", ExpRT, "\n")
     println(io)
-    print(io, "For more information see `EnzymeRules.forward_rule_return_type`\n")
+    print(io, "For more information see `EnzymeRules.augmented_rule_return_type`\n")
+    printstyled(io, "Hint"; bold = true, color = :cyan)
+    printstyled(
+        io,
+        ": ", hint;
+        color = :cyan,
+    )
+    println(io)
     println(io)
     pretty_print_mi(ece.mi, io)
     println(io)

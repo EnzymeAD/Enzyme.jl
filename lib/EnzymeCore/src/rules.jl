@@ -7,7 +7,7 @@ export FwdConfig, FwdConfigWidth
 export AugmentedReturn
 import ..EnzymeCore: needs_primal
 export needs_primal, needs_shadow, width, overwritten, runtime_activity
-export primal_type, shadow_type, tape_type, easy_scalar_rule, forward_rule_return_type
+export primal_type, shadow_type, tape_type, easy_scalar_rule, forward_rule_return_type, augmented_rule_return_type
 
 import Base: unwrapva, isvarargtype, unwrap_unionall, rewrap_unionall
 
@@ -217,12 +217,12 @@ struct AugmentedReturn{PrimalType,ShadowType,TapeType}
     shadow::ShadowType
     tape::TapeType
 end
-@inline primal_type(::Type{AugmentedReturn{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = PrimalType
-@inline primal_type(::AugmentedReturn{PrimalType,ShadowType,TapeType}) where {PrimalType,ShadowType,TapeType} = PrimalType
-@inline shadow_type(::Type{AugmentedReturn{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = ShadowType
-@inline shadow_type(::AugmentedReturn{PrimalType,ShadowType,TapeType}) where {PrimalType,ShadowType,TapeType} = ShadowType
-@inline tape_type(::Type{AugmentedReturn{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = TapeType
-@inline tape_type(::AugmentedReturn{PrimalType,ShadowType,TapeType}) where {PrimalType,ShadowType,TapeType} = TapeType
+@inline primal_type(::Type{<:AugmentedReturn{PrimalType}}) where {PrimalType} = PrimalType
+@inline primal_type(::AugmentedReturn{PrimalType}) where {PrimalType} = PrimalType
+@inline shadow_type(::Type{<:AugmentedReturn{<:Any,ShadowType}}) where {ShadowType} = ShadowType
+@inline shadow_type(::AugmentedReturn{<:Any,ShadowType}) where {ShadowType} = ShadowType
+@inline tape_type(::Type{<:AugmentedReturn{<:Any,<:Any,TapeType}}) where {TapeType} = TapeType
+@inline tape_type(::AugmentedReturn{<:Any,<:Any,TapeType}) where {TapeType} = TapeType
 struct AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}
     primal::PrimalType
     shadow::ShadowType
@@ -237,6 +237,13 @@ end
 """
     augmented_primal(::RevConfig, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
 
+Code to run during the original forward pass through the code. Any additional data can be saved from forward to
+reverse pass. This may be required as arguments might be overwritten before the reverse pass is run.
+
+This should compute and mutate the same values as the original function (if requested).
+
+It should also return a shadow data structure to hold derivatives (if requested).
+
 Must return an [`AugmentedReturn`](@ref) type.
 * The primal must be the same type of the original return if [`needs_primal(config)`](@ref needs_primal),
   otherwise nothing.
@@ -244,6 +251,8 @@ Must return an [`AugmentedReturn`](@ref) type.
   If width is 1, the shadow should be the same type of the original return.
   If the width is greater than 1, the shadow should be `NTuple{original return, width}`.
 * The tape can be any type (including `Nothing`), and is preserved for the reverse call.
+
+See [`augmented_rule_return_type`](@ref) for more information.
 """
 function augmented_primal end
 
@@ -298,7 +307,7 @@ will be determined by `cache`, or `CacheType`.
         Nothing
     end
 
-    return AugmentedPrimal{PrimalType, ShadowType, CacheType}
+    return AugmentedReturn{PrimalType, ShadowType, CacheType}
 end
 @inline augmented_rule_return_type(::RCT, RT::Type{<:Annotation}, cache) where {RCT <: RevConfig} = augmented_rule_return_type(RCT, RT, typeof(cache))
 

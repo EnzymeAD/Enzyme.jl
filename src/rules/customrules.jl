@@ -1456,26 +1456,14 @@ function enzyme_custom_common_rev(
             needsShadowJL ? ShadT : Nothing,
             TapeT,
         }
-        @assert ST == EnzymeCore.augmented_rule_return_type(C, RT, TapeT)
-        if !(aug_RT <: EnzymeRules.AugmentedReturnFlexShadow) && aug_RT <: EnzymeRules.AugmentedReturn{
+        @assert ST == EnzymeRules.augmented_rule_return_type(C, RT, TapeT)
+        if !(aug_RT <: EnzymeRules.AugmentedReturnFlexShadow) && !(aug_RT <: EnzymeRules.AugmentedReturn{
             needsPrimal ? RealRt : Nothing,
-            needsShadowJL ? ShadT : Nothing}
+            needsShadowJL ? ShadT : Nothing})
 
             bt = GPUCompiler.backtrace(orig)
             msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
-            emit_error(B, orig, (msg2, ami, world), UnionSretReturnException{miRT})
-
-
-            emit_error(
-                B,
-                orig,
-                "Enzyme: Augmented forward pass custom rule " *
-                string(augprimal_TT) *
-                " return type mismatch, expected " *
-                string(ST) *
-                " found " *
-                string(aug_RT),
-            )
+            emit_error(B, orig, (msg2, ami, world), AugmentedRuleReturnError{C, RT, aug_RT})
             return tapeV
         end
 
@@ -1515,28 +1503,7 @@ function enzyme_custom_common_rev(
             if aug_RT <: abs
                 abstract = true
             else
-                ST = EnzymeRules.AugmentedReturn{
-                    needsPrimal ? RealRt : Nothing,
-                    needsShadowJL ? ShadT : Nothing,
-                    Any,
-                }
-
-                bt = GPUCompiler.backtrace(orig)
-                msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
-                emit_error(B, orig, (msg2, ami, world), UnionSretReturnException{miRT})
-
-
-                emit_error(
-                    B,
-                    orig,
-                    "Enzyme: Augmented forward pass custom rule " *
-                    string(augprimal_TT) *
-                    " return type mismatch, expected " *
-                    string(ST) *
-                    " found " *
-                    string(aug_RT),
-                )
-                return tapeV
+                @assert false
             end
         end
 
