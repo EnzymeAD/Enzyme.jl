@@ -159,11 +159,13 @@ function Enzyme._import_rrule(fn, tys...)
     #        ) : nothing
     # end)
     
+    ptys = []
     for (i, ty) in enumerate(tys)
         push!(nothings, :(nothing))
         val = Symbol("arg_$i")
         TA = Symbol("AN_$i")
         e = :($val::$TA)
+        push!(ptys, :(::$(esc(ty))))
         push!(anns, :($TA <: Annotation{<:$(esc(ty))}))
         push!(vals, val)
         push!(exprs, e)
@@ -184,16 +186,14 @@ function Enzyme._import_rrule(fn, tys...)
         end)
     end
 
-
     quote
+        EnzymeRules.has_easy_rule(::$(esc(fn)), $(ptys...)) = true
+
         function EnzymeRules.augmented_primal(config, fn::FA, ::Type{RetAnnotation}, $(exprs...); kwargs...) where {RetAnnotation, FA<:Annotation{<:$(esc(fn))}, $(anns...)}
             $(valtys...)
-            
-            res, pullback = if RetAnnotation <: Const
-                (fn.val($(primals...); kwargs...), nothing)
-            else
-                $ChainRulesCore.rrule(fn.val, $(primals...); kwargs...)
-            end
+
+            @assert !(RetAnnotation <: Const)
+            res, pullback = $ChainRulesCore.rrule(fn.val, $(primals...); kwargs...)
 
             primal = if EnzymeRules.needs_primal(config)
                 res
@@ -201,29 +201,44 @@ function Enzyme._import_rrule(fn, tys...)
                 nothing
             end
 
-            shadow = if !EnzymeRules.needs_shadow(config)
-                nothing
+            shadow, byref = if !EnzymeRules.needs_shadow(config)
+                nothing, Val(false)
             else
-                if EnzymeRules.width(config) == 1
-                    Enzyme.make_zero(res)
+                any_active = res isa Base.IEEEFloat # || !Enzyme.Compiler.guaranteed_nonactive(Core.Typeof(res))
+                (if EnzymeRules.width(config) == 1
+                    mz = Enzyme.make_zero(res)
+                    if any_active
+                        Ref(mz)
+                    else
+                        mz
+                    end
                 else
                     ntuple(Val(EnzymeRules.width(config))) do j
                         Base.@_inline_meta
                         Enzyme.make_zero(res)
+                        if any_active
+                            Ref(mz)
+                        else
+                            mz
+                        end
                     end
-                end
+                end, Val(any_active))
             end
 
-            return EnzymeRules.AugmentedReturn(primal, shadow, (shadow, pullback))
+            cache = (shadow, pullback, byref)
+            return EnzymeRules.augmented_rule_return_type(config, RetAnnotation){typeof(cache)}(primal, shadow, cache)
         end
 
         function EnzymeRules.reverse(config, fn::FA, ::Type{RetAnnotation}, tape::TapeTy, $(exprs...); kwargs...) where {RetAnnotation, TapeTy, FA<:Annotation{<:$(esc(fn))}, $(anns...)}
             if !(RetAnnotation <: Const)
-                shadow, pullback = tape
+                shadow, pullback, byref = tape
 
                 tcomb = ntuple(Val(EnzymeRules.width(config))) do batch_i
                     Base.@_inline_meta
                     shad = EnzymeRules.width(config)  == 1 ? shadow : shadow[batch_i]
+                    if byref === Val(true)
+                        shad = shad[]
+                    end
                     res = pullback(shad)
 
                     for (cr, en) in zip(res, (fn, $(vals...),))

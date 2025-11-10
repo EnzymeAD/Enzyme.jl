@@ -676,16 +676,24 @@ end
     end
 
     if length(args) != length(parameters(llvmf))
-        GPUCompiler.@safe_error "Calling convention mismatch",
-        args,
-        llvmf,
-        string(value_type(llvmf)),
-        orig,
-        isKWCall,
-        kwtup,
-        TT,
-        sret,
-        returnRoots
+        bt = GPUCompiler.backtrace(orig)
+        msg2 = sprint() do io
+            if startswith(LLVM.name(llvmf), "japi3") || startswith(LLVM.name(llvmf), "japi1")
+                Base.println(io, "Function uses the japi convention, which is not supported yet: ", LLVM.name(llvmf))
+            else
+                Base.println(io, "args = ", args)
+                Base.println(io, "llvmf = ", string(llvmf))
+                Base.println(io, "value_type(llvmf) = ", string(value_type(llvmf)))
+                Base.println(io, "orig = ", string(orig))
+                Base.println(io, "isKWCall = ", string(isKWCall))
+                Base.println(io, "kwtup = ", string(kwtup))
+                Base.println(io, "TT = ", string(TT))
+                Base.println(io, "sret = ", string(sret))
+                Base.println(io, "returnRoots = ", string(returnRoots))
+            end
+            Base.show_backtrace(io, bt)
+        end
+        emit_error(B, orig, (msg2, fmi, world), CallingConventionMismatchError)
         return false
     end
 
@@ -1349,17 +1357,26 @@ function enzyme_custom_common_rev(
     end
 
     if length(args) != length(parameters(llvmf))
-        GPUCompiler.@safe_error "Calling convention mismatch",
-        args,
-        llvmf,
-        orig,
-        isKWCall,
-        kwtup,
-        augprimal_TT,
-        rev_TT,
-        fn,
-        sret,
-        returnRoots
+        bt = GPUCompiler.backtrace(orig)
+        msg2 = sprint() do io
+            if startswith(LLVM.name(llvmf), "japi3") || startswith(LLVM.name(llvmf), "japi1")
+                Base.println(io, "Function uses the japi convention, which is not supported yet: ", LLVM.name(llvmf))
+            else
+                Base.println(io, "args = ", args)
+                Base.println(io, "llvmf = ", string(llvmf))
+                Base.println(io, "value_type(llvmf) = ", string(value_type(llvmf)))
+                Base.println(io, "orig = ", string(orig))
+                Base.println(io, "isKWCall = ", string(isKWCall))
+                Base.println(io, "kwtup = ", string(kwtup))
+                Base.println(io, "augprimal_TT = ", string(augprimal_TT))
+                Base.println(io, "rev_TT = ", string(rev_TT))
+                Base.println(io, "fn = ", string(fn))
+                Base.println(io, "sret = ", string(sret))
+                Base.println(io, "returnRoots = ", string(returnRoots))
+            end
+            Base.show_backtrace(io, bt)
+        end
+        emit_error(B, orig, (msg2, final_mi, world), CallingConventionMismatchError)
         return tapeV
     end
 
@@ -1455,7 +1472,9 @@ function enzyme_custom_common_rev(
             needsShadowJL ? ShadT : Nothing,
             TapeT,
         }
-        @assert ST == EnzymeRules.augmented_rule_return_type(C, RT, TapeT)
+        if ST != EnzymeRules.augmented_rule_return_type(C, RT, TapeT)
+            throw(AssertionError("Unexpected augmented rule return computation\nST = $ST\nER = $(EnzymeRules.augmented_rule_return_type(C, RT, TapeT))\nC = $C\nRT = $RT\nTapeT = $TapeT"))
+        end
         if !(aug_RT <: EnzymeRules.AugmentedReturnFlexShadow) && !(aug_RT <: EnzymeRules.AugmentedReturn{
             needsPrimal ? RealRt : Nothing,
             needsShadowJL ? ShadT : Nothing})

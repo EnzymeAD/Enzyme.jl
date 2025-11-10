@@ -59,6 +59,42 @@ function pretty_print_mi(mi, io=stdout; digit_align_width = 1)
     Base.print_module_path_file(io, Base.parentmodule(m), string(file), line; modulecolor, digit_align_width)
 end
 
+using InteractiveUtils
+
+function code_typed_helper(mi::Core.MethodInstance, world::UInt, mode::Enzyme.API.CDerivativeMode = Enzyme.API.DEM_ReverseModeCombined; interactive::Bool=false, kwargs...)
+    CT = @static if VERSION >= v"1.11.0-DEV.1552"
+        EnzymeCacheToken(
+            typeof(DefaultCompilerTarget()),
+            false,
+            GPUCompiler.GLOBAL_METHOD_TABLE, #=job.config.always_inline=#
+            EnzymeCompilerParams,
+            world,
+            mode == API.DEM_ForwardMode,
+            mode != API.DEM_ForwardMode,
+            true
+        )
+    else
+        if mode == API.DEM_ForwardMode
+            GLOBAL_FWD_CACHE
+        else
+            GLOBAL_REV_CACHE
+        end
+    end
+
+    interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true)
+
+    sig = mi.specTypes  # XXX: can we just use the method instance?
+    if interactive
+        # call Cthulhu without introducing a dependency on Cthulhu
+        mod = get(Base.loaded_modules, Cthulhu, nothing)
+        mod===nothing && error("Interactive code reflection requires Cthulhu; please install and load this package first.")
+        descend_code_typed = getfield(mod, :descend_code_typed)
+        descend_code_typed(sig; interp, kwargs...)
+    else
+        Base.code_typed_by_type(sig; interp, kwargs...)
+    end
+end
+
 abstract type CustomRuleError <: Base.Exception end
 
 struct NonConstantKeywordArgException <: CustomRuleError
@@ -66,6 +102,8 @@ struct NonConstantKeywordArgException <: CustomRuleError
     mi::Core.MethodInstance
     world::UInt
 end
+
+InteractiveUtils.code_typed(ece::NonConstantKeywordArgException; kwargs...) = code_typed_helper(ece.mi, ece.world; kwargs...)
 
 function Base.showerror(io::IO, ece::NonConstantKeywordArgException)
     if isdefined(Base.Experimental, :show_error_hints)
@@ -85,11 +123,41 @@ function Base.showerror(io::IO, ece::NonConstantKeywordArgException)
     Base.println(io, Base.unsafe_string(ece.backtrace))
 end
 
+struct CallingConventionMismatchError <: CustomRuleError
+    backtrace::Cstring
+    mi::Core.MethodInstance
+    world::UInt
+end
+
+function Base.showerror(io::IO, ece::CallingConventionMismatchError)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
+    print(io, "Enzyme hit an internal error trying to parse the julia calling convention from a custom rule definition:\n")
+    println(io)
+    pretty_print_mi(ece.mi, io)
+    println(io)
+    println(io)
+    printstyled(io, "Hint"; bold = true, color = :cyan)
+    printstyled(
+        io,
+        ": catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\n";
+        color = :cyan,
+    )
+    println(io)
+
+    Base.println(io, Base.unsafe_string(ece.backtrace))
+end
+
+InteractiveUtils.code_typed(ece::CallingConventionMismatchError; kwargs...) = code_typed_helper(ece.mi, ece.world; kwargs...)
+
 struct ForwardRuleReturnError{C, RT, fwd_RT} <: CustomRuleError
     backtrace::Cstring
     mi::Core.MethodInstance
     world::UInt
 end
+
+InteractiveUtils.code_typed(ece::ForwardRuleReturnError; kwargs...) = code_typed_helper(ece.mi, ece.world, Enzyme.API.DEM_ForwardMode; kwargs...)
 
 function Base.showerror(io::IO, ece::ForwardRuleReturnError{C, RT, fwd_RT}) where {C, RT, fwd_RT}
     ExpRT = EnzymeRules.forward_rule_return_type(C, RT)
@@ -191,14 +259,23 @@ function Base.showerror(io::IO, ece::ForwardRuleReturnError{C, RT, fwd_RT}) wher
     end
 
     print(io, "Enzyme: Incorrect return type for $desc of forward custom rule with width $width of a function which returned $(eltype(RealRt)):\n")
-    print(io, "  found : ", fwd_RT, "\n")
+    print(io, "  found    : ", fwd_RT, "\n")
     print(io, "  expected : ", ExpRT, "\n")
     println(io)
     print(io, "For more information see `EnzymeRules.forward_rule_return_type`\n")
+    println(io)
     printstyled(io, "Hint"; bold = true, color = :cyan)
     printstyled(
         io,
         ": ", hint;
+        color = :cyan,
+    )
+    println(io)
+    println(io)
+    printstyled(io, "Hint"; bold = true, color = :cyan)
+    printstyled(
+        io,
+        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\n";
         color = :cyan,
     )
     println(io)
@@ -214,6 +291,8 @@ struct AugmentedRuleReturnError{C, RT, aug_RT} <: CustomRuleError
     mi::Core.MethodInstance
     world::UInt
 end
+
+InteractiveUtils.code_typed(ece::AugmentedRuleReturnError; kwargs...) = code_typed_helper(ece.mi, ece.world; kwargs...)
 
 function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) where {C, RT, fwd_RT}
     ExpRT = EnzymeRules.augmented_rule_return_type(C, RT, Any)
@@ -241,14 +320,14 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
         elseif EnzymeRules.shadow_type(fwd_RT) == Nothing
             hint = "Missing shadow return"      
         elseif EnzymeRules.primal_type(fwd_RT) != RealRt
-            if EnzymeRules.primal_type(fwd_RT) <= RealRt
+            if EnzymeRules.primal_type(fwd_RT) <: RealRt
                 hint = "Expected the abstract type $RealRt for primal, you returned $(EnzymeRules.primal_type(fwd_RT)). Even though $(EnzymeRules.primal_type(fwd_RT)) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
             else
                 hint = "Mismatched primal type $(EnzymeRules.sprimal_type(fwd_RT)), expected $RealRt"
             end
         elseif EnzymeRules.shadow_type(fwd_RT) != RealRt
             if width == 1
-                if EnzymeRules.shadow_type(fwd_RT) <= RealRt
+                if EnzymeRules.shadow_type(fwd_RT) <: RealRt
                     hint = "Expected the abstract type $RealRt for shadow, you returned $(EnzymeRules.shadow_type(fwd_RT)). Even though $(EnzymeRules.shadow_type(fwd_RT)) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
                 elseif shadow_type(fwd_RT) <: (NTuple{N, <:RealRt} where N)
                     hint = "Batch size was 1, expected a single shadow, not a tuple of shadows."
@@ -256,7 +335,7 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
                     hint = "Mismatched shadow type $(EnzymeRules.shadow_type(fwd_RT)), expected $(EnzymeRules.shadow_type(ExpRT))."
                 end
             else
-                if EnzymeRules.shadow_type(fwd_RT) <= RealRt
+                if EnzymeRules.shadow_type(fwd_RT) <: RealRt
                     hint = "Batch size was $width, expected a tuple of shadows, not a single shadow."
                 elseif EnzymeRules.shadow_type(fwd_RT) <: (NTuple{N, <:RealRt} where N)
                     hint = "Expected the abstract type $RealRt for the element shadow type (for a batched shadow type $(EnzymeRules.shadow_type(ExpRT))), you returned $(eltype(EnzymeRules.shadow_type(fwd_RT))) as the element shadow type (batched to become $(EnzymeRules.shadow_type(fwd_RT)). Even though $(eltype(EnzymeRules.shadow_type(fwd_RT))) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
@@ -275,7 +354,7 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
         elseif EnzymeRules.shadow_type(fwd_RT) != Nothing
             hint = "Shadow return was not requested"      
         elseif EnzymeRules.primal_type(fwd_RT) != RealRt
-            if EnzymeRules.primal_type(fwd_RT) <= RealRt
+            if EnzymeRules.primal_type(fwd_RT) <: RealRt
                 hint = "Expected the abstract type $RealRt for primal, you returned $(EnzymeRules.primal_type(fwd_RT)). Even though $(EnzymeRules.primal_type(fwd_RT)) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
             else
                 hint = "Mismatched primal type $(EnzymeRules.primal_type(fwd_RT)), expected $RealRt"
@@ -291,7 +370,7 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
             hint = "Primal was not requested"
         elseif EnzymeRules.shadow_type(fwd_RT) != RealRt
             if width == 1
-                if EnzymeRules.shadow_type(fwd_RT) <= RealRt
+                if EnzymeRules.shadow_type(fwd_RT) <: RealRt
                     hint = "Expected the abstract type $RealRt for shadow, you returned $(EnzymeRules.shadow_type(fwd_RT)). Even though $(EnzymeRules.shadow_type(fwd_RT)) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
                 elseif EnzymeRules.shadow_type(fwd_RT) <: (NTuple{N, <:RealRt} where N)
                     hint = "Batch size was 1, expected a single shadow, not a tuple of shadows."
@@ -299,7 +378,7 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
                     hint = "Mismatched shadow type $(EnzymeRules.shadow_type(fwd_RT)), expected $(EnzymeRules.shadow_type(ExpRT))."
                 end
             else
-                if EnzymeRules.shadow_type(fwd_RT) <= RealRt
+                if EnzymeRules.shadow_type(fwd_RT) <: RealRt
                     hint = "Batch size was $width, expected a tuple of shadows, not a single shadow."
                 elseif EnzymeRules.shadow_type(fwd_RT) <: (NTuple{N, <:RealRt} where N)
                     hint = "Expected the abstract type $RealRt for the element shadow type (for a batched shadow type $(EnzymeRules.shadow_type(ExpRT))), you returned $(eltype(EnzymeRules.shadow_type(fwd_RT))) as the element shadow type (batched to become $(EnzymeRules.shadow_type(fwd_RT)). Even though $(eltype(EnzymeRules.shadow_type(fwd_RT))) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
@@ -324,10 +403,11 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
     end
 
     print(io, "Enzyme: Incorrect return type for $desc of augmented_primal custom rule with width $width of a function which returned $(eltype(RealRt)):\n")
-    print(io, "  found : ", fwd_RT, "\n")
+    print(io, "  found    : ", fwd_RT, "\n")
     print(io, "  expected : ", ExpRT, "\n")
     println(io)
     print(io, "For more information see `EnzymeRules.augmented_rule_return_type`\n")
+    println(io)
     if hint !== nothing
         printstyled(io, "Hint"; bold = true, color = :cyan)
         printstyled(
@@ -337,6 +417,13 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
         )
         println(io)
     end
+    println(io)
+    printstyled(io, "Hint"; bold = true, color = :cyan)
+    printstyled(
+        io,
+        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\n";
+        color = :cyan,
+    )
     println(io)
     pretty_print_mi(ece.mi, io)
     println(io)
@@ -349,6 +436,8 @@ struct ReverseRuleReturnError{C, ArgAct, rev_RT} <: CustomRuleError
     mi::Core.MethodInstance
     world::UInt
 end
+
+InteractiveUtils.code_typed(ece::ReverseRuleReturnError; kwargs...) = code_typed_helper(ece.mi, ece.world; kwargs...)
 
 function Base.showerror(io::IO, ece::ReverseRuleReturnError{C, ArgAct, rev_RT}) where {C, ArgAct, rev_RT}
     width = EnzymeRules.width(C)
@@ -414,7 +503,7 @@ function Base.showerror(io::IO, ece::ReverseRuleReturnError{C, ArgAct, rev_RT}) 
     @assert hint !== nothing
 
     print(io, "Enzyme: Incorrect return type for reverse custom rule with width $(EnzymeRules.width(C)):\n")
-    print(io, "  found : ", rev_RT, "\n")
+    print(io, "  found    : ", rev_RT, "\n")
     print(io, "  expected : ", ExpRT, "\n")
     println(io)
     printstyled(io, "Hint"; bold = true, color = :cyan)
@@ -424,6 +513,13 @@ function Base.showerror(io::IO, ece::ReverseRuleReturnError{C, ArgAct, rev_RT}) 
         color = :cyan,
     )
     println(io)
+    println(io)
+    printstyled(io, "Hint"; bold = true, color = :cyan)
+    printstyled(
+        io,
+        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\n\n";
+        color = :cyan,
+    )
     println(io)
     pretty_print_mi(ece.mi, io)
     println(io)
@@ -436,6 +532,8 @@ struct MixedReturnException{RT} <: CustomRuleError
     world::UInt
 end
 
+InteractiveUtils.code_typed(ece::MixedReturnException; kwargs...) = code_typed_helper(ece.mi, ece.world; kwargs...)
+
 function Base.showerror(io::IO, ece::MixedReturnException{RT}) where RT
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
@@ -443,6 +541,12 @@ function Base.showerror(io::IO, ece::MixedReturnException{RT}) where RT
     print(io, "Custom Rule for method returns type $(RT), which has mixed internal activity types. This is not presently supported.\n")
     print(io, "See https://enzyme.mit.edu/julia/stable/faq/#Mixed-activity for more information.\n")
     println(io)
+    printstyled(io, "Hint"; bold = true, color = :cyan)
+    printstyled(
+        io,
+        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\n";
+        color = :cyan,
+    )
     println(io)
     pretty_print_mi(ece.mi, io)
     println(io)
@@ -456,12 +560,21 @@ struct UnionSretReturnException{RT} <: CustomRuleError
     world::UInt
 end
 
+InteractiveUtils.code_typed(ece::UnionSretReturnException; kwargs...) = code_typed_helper(ece.mi, ece.world; kwargs...)
+
 function Base.showerror(io::IO, ece::UnionSretReturnException{RT}) where RT
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
     print(io, "Custom Rule for method returns type $(RT), which is a union has an sret layout calling convention. This is not presently supported.\n")
     print(io, "Please open an issue if you hit this.")
+    println(io)
+    printstyled(io, "Hint"; bold = true, color = :cyan)
+    printstyled(
+        io,
+        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\n";
+        color = :cyan,
+    )
     println(io)
     println(io)
     pretty_print_mi(ece.mi, io)
@@ -547,43 +660,14 @@ function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
     end
 end
 
-using InteractiveUtils
-
-function InteractiveUtils.code_typed(ece::IllegalTypeAnalysisException; interactive::Bool=false, kwargs...)
+function InteractiveUtils.code_typed(ece::IllegalTypeAnalysisException; kwargs...)
     mi = ece.mi
     if mi === nothing
         throw(AssertionError("code_typed(::IllegalTypeAnalysisException; interactive::Bool=false, kwargs...) not supported for error without mi"))
     end
     world = ece.world::UInt
     mode = Enzyme.API.DEM_ReverseModeCombined
-
-    CT = @static if VERSION >= v"1.11.0-DEV.1552"
-        EnzymeCacheToken(
-            typeof(DefaultCompilerTarget()),
-            false,
-            GPUCompiler.GLOBAL_METHOD_TABLE, #=job.config.always_inline=#
-            EnzymeCompilerParams,
-            world,
-            false,
-            true,
-            true
-        )
-    else
-        Enzyme.Compiler.GLOBAL_REV_CACHE
-    end
-
-    interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true)
-
-    sig = mi.specTypes  # XXX: can we just use the method instance?
-    if interactive
-        # call Cthulhu without introducing a dependency on Cthulhu
-        mod = get(Base.loaded_modules, Cthulhu, nothing)
-        mod===nothing && error("Interactive code reflection requires Cthulhu; please install and load this package first.")
-        descend_code_typed = getfield(mod, :descend_code_typed)
-        descend_code_typed(sig; interp, kwargs...)
-    else
-        Base.code_typed_by_type(sig; interp, kwargs...)
-    end
+    code_typed_helper(ece.mi, ece.world; kwargs...)
 end
 
 struct IllegalFirstPointerException <: CompilationException
@@ -706,36 +790,7 @@ function InteractiveUtils.code_typed(ece::EnzymeRuntimeActivityError; interactiv
     if mi === nothing
         throw(AssertionError("code_typed(::EnzymeRuntimeActivityError; interactive::Bool=false, kwargs...) not supported for error without mi"))
     end
-    world = ece.world::UInt
-    mode = Enzyme.API.DEM_ReverseModeCombined
-
-    CT = @static if VERSION >= v"1.11.0-DEV.1552"
-        EnzymeCacheToken(
-            typeof(DefaultCompilerTarget()),
-            false,
-            GPUCompiler.GLOBAL_METHOD_TABLE, #=job.config.always_inline=#
-            EnzymeCompilerParams,
-            world,
-            false,
-            true,
-            true
-        )
-    else
-        Enzyme.Compiler.GLOBAL_REV_CACHE
-    end
-
-    interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true)
-
-    sig = mi.specTypes  # XXX: can we just use the method instance?
-    if interactive
-        # call Cthulhu without introducing a dependency on Cthulhu
-        mod = get(Base.loaded_modules, Cthulhu, nothing)
-        mod===nothing && error("Interactive code reflection requires Cthulhu; please install and load this package first.")
-        descend_code_typed = getfield(mod, :descend_code_typed)
-        descend_code_typed(sig; interp, kwargs...)
-    else
-        Base.code_typed_by_type(sig; interp, kwargs...)
-    end
+    code_typed_helper(ece.mi, ece.world; kwargs...)
 end
 
 struct EnzymeNoTypeError{MT,WT} <: EnzymeError
@@ -776,36 +831,7 @@ function InteractiveUtils.code_typed(ece::EnzymeNoTypeError; interactive::Bool=f
     if mi === nothing
         throw(AssertionError("code_typed(::EnzymeNoTypeError; interactive::Bool=false, kwargs...) not supported for error without mi"))
     end
-    world = ece.world::UInt
-    mode = Enzyme.API.DEM_ReverseModeCombined
-
-    CT = @static if VERSION >= v"1.11.0-DEV.1552"
-        EnzymeCacheToken(
-            typeof(DefaultCompilerTarget()),
-            false,
-            GPUCompiler.GLOBAL_METHOD_TABLE, #=job.config.always_inline=#
-            EnzymeCompilerParams,
-            world,
-            false,
-            true,
-            true
-        )
-    else
-        Enzyme.Compiler.GLOBAL_REV_CACHE
-    end
-
-    interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true)
-
-    sig = mi.specTypes  # XXX: can we just use the method instance?
-    if interactive
-        # call Cthulhu without introducing a dependency on Cthulhu
-        mod = get(Base.loaded_modules, Cthulhu, nothing)
-        mod===nothing && error("Interactive code reflection requires Cthulhu; please install and load this package first.")
-        descend_code_typed = getfield(mod, :descend_code_typed)
-        descend_code_typed(sig; interp, kwargs...)
-    else
-        Base.code_typed_by_type(sig; interp, kwargs...)
-    end
+    code_typed_helper(ece.mi, ece.world; kwargs...)
 end
 
 struct EnzymeNoShadowError <: EnzymeError

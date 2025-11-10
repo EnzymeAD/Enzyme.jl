@@ -217,6 +217,12 @@ struct AugmentedReturn{PrimalType,ShadowType,TapeType}
     shadow::ShadowType
     tape::TapeType
 end
+
+@inline function AugmentedReturn{PrimalType,ShadowType}(primal, shadow, cache) where {PrimalType, ShadowType}
+    AT = AugmentedReturn{PrimalType,ShadowType, typeof(cache)}
+    return AT(primal, shadow, cache)
+end
+
 @inline primal_type(::Type{<:AugmentedReturn{PrimalType}}) where {PrimalType} = PrimalType
 @inline primal_type(::AugmentedReturn{PrimalType}) where {PrimalType} = PrimalType
 @inline shadow_type(::Type{<:AugmentedReturn{<:Any,ShadowType}}) where {ShadowType} = ShadowType
@@ -270,6 +276,8 @@ function reverse end
 """
     augmented_rule_return_type(C::RevConfig, RT::Type{<:Annotation}, cache::Any)
     augmented_rule_return_type(::Type{<:RevConfig}, RT::Type{<:Annotation}, CacheType::Type)
+    augmented_rule_return_type(C::RevConfig, RT::Type{<:Annotation})
+    augmented_rule_return_type(::Type{<:RevConfig}, RT::Type{<:Annotation})
 
 Compute the expected result type of a custom augmented forward pass rule, given the configuration `C` return activity and type `RT`, and cache `cache`.
 Alternatively, this can be called with the configuration type, return activity, and cache type.
@@ -287,8 +295,10 @@ The second element is the shadow type, if requested by the config ([`needs_shado
 The third element is user defined, whatever type the cache is you want to save from forward to reverse pass. In this case, it
 will be determined by `cache`, or `CacheType`.
 
+If a cache type is not provided a unionall will be returned
+
 """
-@inline function augmented_rule_return_type(C::Type{<:RevConfig}, RT::Type{<:Annotation}, CacheType::Type)
+@inline function augmented_rule_return_type(C::Type{<:RevConfig}, RT::Type{<:Annotation})
     RealRt = eltype(RT)
 
     PrimalType = if EnzymeRules.needs_primal(C)
@@ -307,9 +317,20 @@ will be determined by `cache`, or `CacheType`.
         Nothing
     end
 
-    return AugmentedReturn{PrimalType, ShadowType, CacheType}
+    return AugmentedReturn{PrimalType, ShadowType}
 end
-@inline augmented_rule_return_type(::RCT, RT::Type{<:Annotation}, cache) where {RCT <: RevConfig} = augmented_rule_return_type(RCT, RT, typeof(cache))
+
+@inline function augmented_rule_return_type(C::Type{<:RevConfig}, RT::Type{<:Annotation}, CacheType::Type)
+    return augmented_rule_return_type(C, RT){CacheType}
+end
+
+@generated function augmented_rule_return_type(rct::RevConfig, RT::Type{<:Annotation}, cache)
+    return augmented_rule_return_type(rct, RT.parameters[1], cache)
+end
+
+@generated function augmented_rule_return_type(rct::RevConfig, RT::Type{<:Annotation})
+    return augmented_rule_return_type(rct, RT.parameters[1])
+end
 
 function _annotate(@nospecialize(T))
     if isvarargtype(T)
