@@ -339,21 +339,25 @@ function enzyme_custom_setup_args(
                 )
                 if value_type(val) != eltype(value_type(ptr))
                     if overwritten[end]
+                        bt = GPUCompiler.backtrace(orig)
+                        msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
                         emit_error(
                             B,
                             orig,
                             "Enzyme: active by ref type $Ty is overwritten in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr)). " *
-                            "As a workaround until support for this is added, try passing values as separate arguments rather than as an aggregate of type $Ty.",
+                            "As a workaround until support for this is added, try passing values as separate arguments rather than as an aggregate of type $Ty.\n"*msg2,
                         )
                     end
                     if arty == eltype(value_type(val))
                         val = load!(B, arty, val)
                     else
+                        bt = GPUCompiler.backtrace(orig)
+                        msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
                         val = LLVM.UndefValue(arty)
                         emit_error(
                             B,
                             orig,
-                            "Enzyme: active by ref type $Ty is wrong type in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))",
+                            "Enzyme: active by ref type $Ty is wrong type in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))\n"*msg2,
                         )
                     end
                 end
@@ -364,10 +368,12 @@ function enzyme_custom_setup_args(
                         emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
                     end
                 else
+                    bt = GPUCompiler.backtrace(orig)
+                    msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
                     emit_error(
                         B,
                         orig,
-                        "Enzyme: active by ref type $Ty is wrong store type in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))",
+                        "Enzyme: active by ref type $Ty is wrong store type in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))\n"*msg2,
                     )
                 end
 
@@ -574,11 +580,15 @@ function enzyme_custom_setup_ret(
         mode != API.DEM_ForwardMode &&
         !guaranteed_nonactive(RealRt, world)
     )
-        if active_reg(RealRt, world) == MixedState && B !== nothing
+        if active_reg(RealRt, world) == MixedState && B !== nothing        
+            bt = GPUCompiler.backtrace(orig)
+            msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))            
+            mi, _ = enzyme_custom_extract_mi(orig)
             emit_error(
                 B,
                 orig,
-                "Enzyme: Return type $RealRt has mixed internal activity types in evaluation of custom rule for $mi. See https://enzyme.mit.edu/julia/stable/faq/#Mixed-activity for more information",
+                (msg2, mi, world),
+                MixedReturnException{RealRt}
             )
         end
         RT = Active{RealRt}
@@ -1320,6 +1330,7 @@ function enzyme_custom_common_rev(
             else
                 llety = convert(LLVMType, eltype(RT); allow_boxed = true)
                 ptr_val = invert_pointer(gutils, operands(orig)[1+!isghostty(funcTy)], B)
+                ptr_val = lookup_value(gutils, ptr_val, B)
                 val = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llety)))
                 for idx = 1:width
                     ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)

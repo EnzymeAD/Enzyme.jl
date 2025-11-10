@@ -24,12 +24,6 @@ function Base.showerror(io::IO, ece::EnzymeRuntimeException)
     print(io, msg, '\n')
 end
 
-struct NonConstantKeywordArgException <: EnzymeError
-    backtrace::Cstring
-    mi::Core.MethodInstance
-    world::UInt
-end
-
 function pretty_print_mi(mi, io=stdout; digit_align_width = 1)
     spec = mi.specTypes.parameters
     ft = spec[1]
@@ -65,6 +59,14 @@ function pretty_print_mi(mi, io=stdout; digit_align_width = 1)
     Base.print_module_path_file(io, Base.parentmodule(m), string(file), line; modulecolor, digit_align_width)
 end
 
+abstract type CustomRuleError <: Base.Exception end
+
+struct NonConstantKeywordArgException <: CustomRuleError
+    backtrace::Cstring
+    mi::Core.MethodInstance
+    world::UInt
+end
+
 function Base.showerror(io::IO, ece::NonConstantKeywordArgException)
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
@@ -76,6 +78,25 @@ function Base.showerror(io::IO, ece::NonConstantKeywordArgException)
         ": Experimental utility Enzyme.EnzymeRules.inactive_kwarg will enable you to mark the keyword arguments as non-differentiable, if that is correct.";
         color = :cyan,
     )
+    println(io)
+    println(io)
+    pretty_print_mi(ece.mi, io)
+    println(io)
+    Base.println(io, Base.unsafe_string(ece.backtrace))
+end
+
+struct MixedReturnException{RT} <: CustomRuleError
+    backtrace::Cstring
+    mi::Core.MethodInstance
+    world::UInt
+end
+
+function Base.showerror(io::IO, ece::MixedReturnException{RT}) where RT
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
+    print(io, "Custom Rule for method returns type $(RT), which has mixed internal activity types. This is not presently supported.\n")
+    print(io, "See https://enzyme.mit.edu/julia/stable/faq/#Mixed-activity for more information.\n")
     println(io)
     println(io)
     pretty_print_mi(ece.mi, io)
