@@ -1587,10 +1587,10 @@ end
                 offset
             ]
             if width > 1
-                extract_value!(B, shadowin, idx - 1)
+                args[1] = extract_value!(B, args[1], idx - 1)
             end
 
-            if get_runtime_activity(gutils) && endB == nothing
+            if get_runtime_activity(gutils) && endB === nothing
                 cond = icmp!(B, LLVM.API.LLVMIntNE, fval, args[1])
 
                 nextB = add_reverse_block!(gutils, currentBlock, ogname*"_active")
@@ -1604,7 +1604,7 @@ end
 
             LLVM.call!(B, fty, delF, args)
         end
-        
+
         if endB !== nothing
             br!(B, endB)
             set_reverse_block!(gutils, endB)
