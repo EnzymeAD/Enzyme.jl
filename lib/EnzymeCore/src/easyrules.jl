@@ -236,7 +236,11 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
                             end
 
                             if !seen
-                                push!(gensetup, Expr(:(=), outexpr, $(esc(:RT))))
+                                ST = $(esc(:RT))
+                                if ST <: Tuple
+                                    ST = ST.parameters[o]
+                                end
+                                push!(gensetup, Expr(:(=), outexpr, ST))
                                 seen = true
                             end
 
@@ -473,8 +477,8 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
             end
             push!(gensetup, Expr(:(=), :cache, Expr(:tuple, caches...)))
 
-            PT = EnzymeRules.primal_type(config, $(esc(:RTA)))
-            ST = EnzymeRules.shadow_type(config, $(esc(:RTA)))
+            PT = EnzymeRules.primal_type(config, ($(esc(:RTA))).parameters[1])
+            ST = EnzymeRules.shadow_type(config, ($(esc(:RTA))).parameters[1])
             AugmentedReturnType = :(EnzymeRules.AugmentedReturn{$PT,$ST,typeof(cache)})
 
             genres = if needs_primal(config)
