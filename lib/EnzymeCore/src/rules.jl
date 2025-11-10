@@ -301,7 +301,7 @@ will be determined by `cache`, or `CacheType`.
         if EnzymeRules.width(C) == 1
             RealRt
         else
-            NTuple{width, RealRt}
+            NTuple{EnzymeRules.width(C), RealRt}
         end
     else
         Nothing
