@@ -203,7 +203,7 @@ function Enzyme._import_rrule(fn, tys...)
 
             shadow, byref = if !EnzymeRules.needs_shadow(config)
                 nothing, Val(false)
-            elseif res isa Base.IEEEFloat # || !Enzyme.Compiler.guaranteed_nonactive(Core.Typeof(res))
+            elseif !Enzyme.Compiler.guaranteed_nonactive(Core.Typeof(res))
                 (if EnzymeRules.width(config) == 1
                     Ref(Enzyme.make_zero(res))
                 else
