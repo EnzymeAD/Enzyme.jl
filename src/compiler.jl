@@ -3879,7 +3879,9 @@ function lower_convention(
             res = call!(builder, LLVM.function_type(wrapper_f), wrapper_f, nops)
             callconv!(res, callconv(wrapper_f))
             if sret
-                @assert value_type(res) == eltype(value_type(ops[1]))
+                if !LLVM.is_opaque(value_type(ops[1]))
+                    @assert value_type(res) == eltype(value_type(ops[1]))
+                end
                 store!(builder, res, ops[1])
             else
                 LLVM.replace_uses!(ci, res)
