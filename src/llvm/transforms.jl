@@ -634,7 +634,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                     push!(todo, inst)
                     nb = IRBuilder()
                     position!(nb, inst)
-                    el_ty = if addr == 11
+                    el_ty = if addr == 11 && !LLVM.is_opaque(ty)
                         eltype(ty)
                     else
                         LLVM.StructType(LLVM.LLVMType[])
@@ -656,7 +656,7 @@ function nodecayed_phis!(mod::LLVM.Module)
 
                 for inst in todo
                     ty = value_type(inst)
-                    el_ty = if addr == 11
+                    el_ty = if addr == 11 && !LLVM.is_opaque(ty)
                         eltype(ty)
                     else
                         LLVM.StructType(LLVM.LLVMType[])
@@ -893,15 +893,17 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     offset,
                                     API.EnzymeComputeByteOffsetOfGEP(b, v, offty),
                                 )
-                                v2 = bitcast!(
-                                    b,
-                                    v2,
-                                    LLVM.PointerType(
-                                        eltype(value_type(v)),
-                                        addrspace(value_type(v2)),
-                                    ),
-                                )
-                                @assert eltype(value_type(v2)) == eltype(value_type(v))
+                                if !LLVM.is_opaque(value_type(v2))
+                                    v2 = bitcast!(
+                                        b,
+                                        v2,
+                                        LLVM.PointerType(
+                                            eltype(value_type(v)),
+                                            addrspace(value_type(v2)),
+                                        ),
+                                    )
+                                    @assert eltype(value_type(v2)) == eltype(value_type(v))
+                                end
                                 return v2, offset, skipload
                             end
 
@@ -1024,7 +1026,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                             @assert hadload
                         end
 
-                        if eltype(value_type(v)) != el_ty
+                        if !LLVM.is_opaque(value_type(v)) && eltype(value_type(v)) != el_ty
                             v = bitcast!(
                                 b,
                                 v,
@@ -1772,14 +1774,23 @@ function propagate_returned!(mod::LLVM.Module)
                             eraseInst(LLVM.parent(c), c)
                         end
                         B = IRBuilder()
+
                         position!(B, first(instructions(first(blocks(fn)))))
 
-                        argeltype = sret_ty(fn, i)
-                        al = alloca!(B, argeltype)
-                        if value_type(al) != value_type(arg)
-                            al = addrspacecast!(B, al, value_type(arg))
+                        has_use = false
+                        for _ in LLVM.uses(arg)
+                            has_use = true
+                            break
                         end
-                        LLVM.replace_uses!(arg, al)
+
+                        if has_use
+                            argeltype = sret_ty(fn, i)
+                            al = alloca!(B, argeltype)
+                            if value_type(al) != value_type(arg)
+                                al = addrspacecast!(B, al, value_type(arg))
+                            end
+                            LLVM.replace_uses!(arg, al)
+                        end
                     end
                 end
 

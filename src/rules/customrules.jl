@@ -301,7 +301,12 @@ function enzyme_custom_setup_args(
                         LLVM.ConstantInt(LLVM.IntType(32), 0),
                     ],
                 )
-                if value_type(val) != eltype(value_type(ptr))
+                
+                if !is_opaque(value_type(ptr))
+                    @assert eltype(value_type(ptr)) == arty
+                end
+
+                if value_type(val) != arty
                     val = load!(B, arty, val)
                 end
                 store!(B, val, ptr)
@@ -353,33 +358,20 @@ function enzyme_custom_setup_args(
                         )
                     end
 
-                    msg = sprint() do io
-                        print(io, "custom rule lower failure fwd\n")
-                        print(io, "Ty = $Ty\n")
-                        print(io, "llty = $llty\n")
-                        print(io, "arty = $arty\n")
-                        print(io, "al0 = $al0\n")
-                        print(io, "ptr = $ptr\n")
-                        print(io, "val = $val\n")
-                        print(io, "arg = $arg\n")
-                    end
-                    throw(OpaquePointerError(msg))
+                    if !LLVM.is_opaque(value_type(val))
+                        if arty != eltype(value_type(val))
+                            msg = sprint() do io
+                                println(io, "Enzyme: active by ref type $Ty is wrong type in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr)) arty=$arty")
+                            end
 
-                    if arty == eltype(value_type(val))
-                        val = load!(B, arty, val)
-                    else
-                        bt = GPUCompiler.backtrace(orig)
-                        msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
-                        val = LLVM.UndefValue(arty)
-                        emit_error(
-                            B,
-                            orig,
-                            "Enzyme: active by ref type $Ty is wrong type in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))\n"*msg2,
-                        )
+                            EnzymeInternalError(msg, ir, bt)
+                        end
                     end
+
+                    val = load!(B, arty, val)
                 end
 
-                if eltype(value_type(ptr)) == value_type(val)
+                if arty == value_type(val)
                     store!(B, val, ptr)
                     if any_jltypes(llty)
                         emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
