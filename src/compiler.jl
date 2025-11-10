@@ -32,6 +32,8 @@ import Enzyme:
     add_edge!
 using Enzyme
 
+import Enzyme: OpaquePointerError
+
 import EnzymeCore
 import EnzymeCore: EnzymeRules, ABI, FFIABI, DefaultABI
 
@@ -3779,7 +3781,13 @@ function lower_convention(
                 push!(wrapper_types, typ)
                 push!(wrapper_attrs, LLVM.Attribute[EnumAttribute("noalias")])
             else
-                push!(wrapper_types, eltype(typ))
+
+                elty = convert(LLVMType, arg.typ)
+                if !LLVM.is_opaque(typ)
+                    @assert elty == eltype(typ)
+                end
+
+                push!(wrapper_types, elty)
                 push!(wrapper_attrs, LLVM.Attribute[])
                 push!(loweredArgs, arg.arg_i)
             end
@@ -3941,7 +3949,13 @@ function lower_convention(
                         ),
                     )
                 end
-                ptr = alloca!(builder, eltype(ty), LLVM.name(parm) * ".innerparm")
+
+                elty = convert(LLVMType, arg.typ)
+                if !LLVM.is_opaque(ty)
+                    @assert elty == eltype(ty)
+                end
+
+                ptr = alloca!(builder, elty, LLVM.name(parm) * ".innerparm")
                 if TT !== nothing && TT.parameters[arg.arg_i] <: Const
                     metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
                 end

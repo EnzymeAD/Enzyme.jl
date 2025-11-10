@@ -500,7 +500,33 @@ export typed_fieldoffset
 
 # returns the inner type of an sret/enzyme_sret/enzyme_sret_v
 function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
-    return eltype(LLVM.value_type(LLVM.parameters(fn)[idx]))
+
+    vt = LLVM.value_type(LLVM.parameters(fn)[idx])
+
+
+    for attr in collect(parameter_attributes(fn, idx))
+        ekind = LLVM.kind(attr)
+        
+        if ekind == "sret"
+            return value(attr)
+        end
+
+        if ekind == "enzyme_sret" || ekind == "enzyme_sret_v"
+            if LLVM.is_opaque(vt)
+                msg = sprint() do io
+                    println(io, "Failed to get sret type of function\n")
+                    println(io, "idx = ", string(idx))
+                    println(io, "vt = ", string(vt))
+                    println(io, "fn = ", string(fn))
+                end
+                throw(OpaquePointerError(msg))
+            end
+        
+            return eltype(vt)
+        end
+    end
+
+    throw(AssertionError("Function requesting sret type was not an sret"))
 end
 
 export sret_ty

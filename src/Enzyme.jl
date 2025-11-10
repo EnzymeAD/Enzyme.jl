@@ -135,6 +135,19 @@ function guess_activity end
 mutable struct EnzymeContext
 end
 
+struct OpaquePointerError
+    msg::String
+end
+
+function Base.showerror(io::IO, ece::OpaquePointerError)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
+    print(io, "OpaquePointerError: Enzyme execution failed to handle opaque pointers, with the following information:\n")
+    print(io, ece.msg, '\n')
+end
+
+
 include("logic.jl")
 include("analyses/type.jl")
 include("typetree.jl")
