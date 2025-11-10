@@ -1590,7 +1590,7 @@ end
                 extract_value!(B, shadowin, idx - 1)
             end
 
-            if get_runtime_activity(gutils)
+            if get_runtime_activity(gutils) && endB == nothing
                 cond = icmp!(B, LLVM.API.LLVMIntNE, fval, args[1])
 
                 nextB = add_reverse_block!(gutils, currentBlock, ogname*"_active")
@@ -1603,13 +1603,13 @@ end
             end
 
             LLVM.call!(B, fty, delF, args)
-
-            if get_runtime_activity(gutils)
-                br!(B, endB)
-                set_reverse_block!(gutils, endB)
-                position!(B, endB)
-                currentBlock = endB
-            end
+        end
+        
+        if endB !== nothing
+            br!(B, endB)
+            set_reverse_block!(gutils, endB)
+            position!(B, endB)
+            currentBlock = endB
         end
     end
     return nothing
