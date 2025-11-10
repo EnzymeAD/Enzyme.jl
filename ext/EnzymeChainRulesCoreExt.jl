@@ -203,26 +203,24 @@ function Enzyme._import_rrule(fn, tys...)
 
             shadow, byref = if !EnzymeRules.needs_shadow(config)
                 nothing, Val(false)
-            else
-                any_active = res isa Base.IEEEFloat # || !Enzyme.Compiler.guaranteed_nonactive(Core.Typeof(res))
+            elseif res isa Base.IEEEFloat # || !Enzyme.Compiler.guaranteed_nonactive(Core.Typeof(res))
                 (if EnzymeRules.width(config) == 1
-                    mz = Enzyme.make_zero(res)
-                    if any_active
-                        Ref(mz)
-                    else
-                        mz
+                    Ref(Enzyme.make_zero(res))
+                else
+                    ntuple(Val(EnzymeRules.width(config))) do j
+                        Base.@_inline_meta
+                        Ref(Enzyme.make_zero(res))
                     end
+                end, Val(true))
+            else 
+                (if EnzymeRules.width(config) == 1
+                    Enzyme.make_zero(res)
                 else
                     ntuple(Val(EnzymeRules.width(config))) do j
                         Base.@_inline_meta
                         Enzyme.make_zero(res)
-                        if any_active
-                            Ref(mz)
-                        else
-                            mz
-                        end
                     end
-                end, Val(any_active))
+                end, Val(false))
             end
 
             cache = (shadow, pullback, byref)
