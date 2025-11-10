@@ -109,18 +109,20 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
    
     mi = my_methodinstance(mode, ft, tt, world, min_world, max_world)
 
-    slotnames = Core.svec(Symbol("#self#"), :mode, :ft, :tt)
-    stub = Core.GeneratedFunctionStub(
-        primal_return_type,
-        slotnames,
-        Core.svec(),
-    )
-    mi === nothing && return stub(world, source, :(throw(MethodError(ft, tt, $world))))
-
-    result = primal_return_type_world(mode, world, mi)
-    code = Any[Core.Compiler.ReturnNode(result)]
-    # create an empty CodeInfo to return the result
-    ci = create_fresh_codeinfo(primal_return_type, source, world, slotnames, code)
+    if mi === nothing
+        result = Union{}
+        code = Any[Expr(:call, Base.throw, :(MethodError(ft, tt))),
+        Core.Compiler.ReturnNode(result)]
+        # create an empty CodeInfo to return the result
+        slotnames = Core.svec(Symbol("#self#"), :ft, :tt)
+        ci = create_fresh_codeinfo(primal_return_type, source, world, slotnames, code)
+    else
+        result = primal_return_type_world(mode, world, mi)
+        code = Any[Core.Compiler.ReturnNode(result)]
+        # create an empty CodeInfo to return the result
+        slotnames = Core.svec(Symbol("#self#"), :mode, :ft, :tt)
+        ci = create_fresh_codeinfo(primal_return_type, source, world, slotnames, code)
+    end
     ci.max_world = max_world[]
 
     ci.edges = Any[]
@@ -128,8 +130,9 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
     #      JuliaLang/julia#34962 which demonstrates we also need to "call" the kernel.
     #      invoking `code_llvm` also does the necessary codegen, as does calling the
     #      underlying C methods -- which GPUCompiler does, so everything Just Works.
-    add_edge!(ci.edges, mi)
-
+    if mi !== nothing
+        add_edge!(ci.edges, mi)
+    end
     return ci
 end
 
