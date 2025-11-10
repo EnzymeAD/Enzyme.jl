@@ -503,12 +503,34 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
 
     vt = LLVM.value_type(LLVM.parameters(fn)[idx])
 
+    sretkind = LLVM.kind(if LLVM.version().major >= 12
+        LLVM.TypeAttribute("sret", LLVM.Int32Type())
+    else
+        LLVM.EnumAttribute("sret")
+    end)
 
-    for attr in collect(parameter_attributes(fn, idx))
+    for attr in collect(LLVM.parameter_attributes(fn, idx))
         ekind = LLVM.kind(attr)
-        
-        if ekind == "sret"
-            return value(attr)
+
+        if ekind == sretkind
+            res = LLVM.value(attr)
+            if !LLVM.is_opaque(vt)
+                @assert eltype(vt) == res
+            end
+            return res
+        end
+
+        if ekind == "enzymejl_returnRoots"
+            nroots = parse(Int, LLVM.value(attr))
+    
+            T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+            T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+
+            res = LLVM.ArrayType(T_prjlvalue, nroots)
+            if !LLVM.is_opaque(vt)
+                @assert eltype(vt) == res
+            end
+            return res
         end
 
         if ekind == "enzyme_sret" || ekind == "enzyme_sret_v"
@@ -526,7 +548,7 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
         end
     end
 
-    throw(AssertionError("Function requesting sret type was not an sret"))
+    throw(AssertionError("Function requesting sret type was not an sret\nidx=$idx\nfn=$(string(fn))"))
 end
 
 export sret_ty

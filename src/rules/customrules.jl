@@ -336,7 +336,12 @@ function enzyme_custom_setup_args(
                         LLVM.ConstantInt(LLVM.IntType(32), 0),
                     ],
                 )
-                if value_type(val) != eltype(value_type(ptr))
+
+                if !is_opaque(value_type(ptr))
+                    @assert eltype(value_type(ptr)) == arty
+                end
+
+                if value_type(val) != arty
                     if overwritten[end]
                         bt = GPUCompiler.backtrace(orig)
                         msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
@@ -347,6 +352,19 @@ function enzyme_custom_setup_args(
                             "As a workaround until support for this is added, try passing values as separate arguments rather than as an aggregate of type $Ty.\n"*msg2,
                         )
                     end
+
+                    msg = sprint() do io
+                        print(io, "custom rule lower failure fwd\n")
+                        print(io, "Ty = $Ty\n")
+                        print(io, "llty = $llty\n")
+                        print(io, "arty = $arty\n")
+                        print(io, "al0 = $al0\n")
+                        print(io, "ptr = $ptr\n")
+                        print(io, "val = $val\n")
+                        print(io, "arg = $arg\n")
+                    end
+                    throw(OpaquePointerError(msg))
+
                     if arty == eltype(value_type(val))
                         val = load!(B, arty, val)
                     else
@@ -441,7 +459,12 @@ function enzyme_custom_setup_args(
                     ],
                 )
                 needsload = false
-                if value_type(val) != eltype(value_type(ptr))
+
+                if !is_opaque(value_type(ptr))
+                    @assert eltype(value_type(ptr)) == arty
+                end
+
+                if value_type(val) != arty
                     val = load!(B, arty, val)
                     if !mixed
                         ptr_val = ival
@@ -719,13 +742,14 @@ end
     end
 
     if sret !== nothing
+        sty = sret_ty(llvmf, 1)
         if LLVM.version().major >= 12
-            attr = TypeAttribute("sret", eltype(value_type(parameters(llvmf)[1])))
+            attr = TypeAttribute("sret", sty)
         else
             attr = EnumAttribute("sret")
         end
         LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1), attr)
-        res = load!(B, eltype(value_type(parameters(llvmf)[1])), sret)
+        res = load!(B, sty, sret)
     end
     if swiftself
         attr = EnumAttribute("swiftself")
@@ -1436,8 +1460,9 @@ function enzyme_custom_common_rev(
     end
 
     if sret !== nothing
+        sty = sret_ty(llvmf, 1+swiftself)
         if LLVM.version().major >= 12
-            attr = TypeAttribute("sret", eltype(value_type(parameters(llvmf)[1+swiftself])))
+            attr = TypeAttribute("sret", sty)
         else
             attr = EnumAttribute("sret")
         end
@@ -1446,7 +1471,7 @@ function enzyme_custom_common_rev(
             LLVM.API.LLVMAttributeIndex(1 + swiftself),
             attr,
         )
-        res = load!(B, eltype(value_type(parameters(llvmf)[1+swiftself])), sret)
+        res = load!(B, sty, sret)
         API.SetMustCache!(res)
     end
     if swiftself

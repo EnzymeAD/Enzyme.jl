@@ -455,7 +455,7 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
                         LLVM.VoidType(),
                         [LLVM.IntType(64), value_type(dst0)],
                     )
-                    lifetimestart, _ = get_function!(mod, "llvm.lifetime.start.p0i8", FT)
+                    lifetimestart, _ = get_function!(mod, LLVM.name(LLVM.Intrinsic("llvm.lifetime.start"), [value_type(dst0)]), FT)
                     call!(
                         B,
                         FT,
@@ -835,7 +835,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 end
                                 nv, noffset, nhasload =
                                     getparent(b, operands(v)[1], offset, hasload, phicache)
-                                if eltype(value_type(nv)) != eltype(value_type(v))
+                                if !is_opaque(value_type(nv)) && eltype(value_type(nv)) != eltype(value_type(v))
                                     nv = bitcast!(
                                         b,
                                         nv,
@@ -1774,23 +1774,7 @@ function propagate_returned!(mod::LLVM.Module)
                         B = IRBuilder()
                         position!(B, first(instructions(first(blocks(fn)))))
 
-                        # TODO try to get sret element type if possible
-                        # note currently opaque pointers has this break [and we need to doa check if opaque
-                        # and if so get inner piece]
-
-                        if LLVM.is_opaque(value_type(arg))
-                            msg = sprint() do io
-                                println(io, "Needed element type of pointer to replace with intervening alloca\n")
-                                println(io, "arg = ", string(arg))
-                                println(io, "i = ", string(i))
-                                println(io, "argn = ", string(argn))
-                                println(io, "fn = ", string(fn))
-                            end
-                            throw(OpaquePointerError(msg))
-                        end
-
-                        argeltype = eltype(value_type(arg))
-
+                        argeltype = sret_ty(fn, i)
                         al = alloca!(B, argeltype)
                         if value_type(al) != value_type(arg)
                             al = addrspacecast!(B, al, value_type(arg))

@@ -513,8 +513,8 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
 
         RT = return_type(interp, mi)
 
-        _, _, returnRoots = get_return_info(RT)
-        returnRoots = returnRoots !== nothing
+        _, _, returnRoots0 = get_return_info(RT)
+        returnRoots = returnRoots0 !== nothing
 
         attributes = function_attributes(llvmfn)
         push!(
@@ -529,7 +529,7 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
             push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
         end
         if returnRoots
-            attr = StringAttribute("enzymejl_returnRoots", "")
+            attr = StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1])))
             push!(parameter_attributes(llvmfn, 2), attr)
             for u in LLVM.uses(llvmfn)
                 u = LLVM.user(u)
@@ -3907,7 +3907,7 @@ function lower_convention(
             if !in(0, parmsRemoved)
                 sretPtr = alloca!(
                     builder,
-                    eltype(value_type(parameters(entry_f)[1])),
+                    sret_ty(entry_f, 1),
                     "innersret",
                 )
                 ctx = LLVM.context(entry_f)
@@ -3924,7 +3924,7 @@ function lower_convention(
             if returnRoots && !in(1, parmsRemoved)
                 retRootPtr = alloca!(
                     builder,
-                    eltype(value_type(parameters(entry_f)[1+sret])),
+                    sret_ty(entry_f, 1+sret),
                     "innerreturnroots",
                 )
                 # retRootPtr = alloca!(builder, parameters(wrapper_f)[1])
@@ -3968,7 +3968,7 @@ function lower_convention(
                 if LLVM.addrspace(ty) != 0
                     ptr = addrspacecast!(builder, ptr, ty)
                 end
-                @assert eltype(ty) == value_type(wrapparm)
+                @assert elty == value_type(wrapparm)
                 store!(builder, wrapparm, ptr)
                 push!(wrapper_args, ptr)
                 push!(
@@ -4707,10 +4707,10 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
                 end
             end
 
-            _, _, returnRoots = get_return_info(rt)
-            returnRoots = returnRoots !== nothing
+            _, _, returnRoots0 = get_return_info(rt)
+            returnRoots = returnRoots0 !== nothing
             if returnRoots
-                attr = StringAttribute("enzymejl_returnRoots", "")
+                attr = StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1])))
                 push!(parameter_attributes(wrapper_f, 2), attr)
                 LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(2), attr)
             end
@@ -5880,7 +5880,10 @@ end
                 EnumAttribute("sret")
             end
             LLVM.API.LLVMAddCallSiteAttribute(r, LLVM.API.LLVMAttributeIndex(1), attr)
-            r = load!(builder, eltype(value_type(callparams[1])), callparams[1])
+            if !LLVM.is_opaque(value_type(callparams[1]))
+                @assert eltype(value_type(callparams[1])) == jltype
+            end
+            r = load!(builder, jltype, callparams[1])
         end
 
         if T_ret != T_void
