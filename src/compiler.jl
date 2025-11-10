@@ -4566,10 +4566,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     found = String[]
     if bitcode_replacement() &&
        API.EnzymeBitcodeReplacement(mod, disableFallback, found) != 0
-        ModulePassManager() do pm
-            instruction_combining!(pm)
-            LLVM.run!(pm, mod)
-        end
+        run!(InstCombinePass(), mod)
         toremove = String[]
         for f in functions(mod)
             if !has_fn_attr(f, EnumAttribute("alwaysinline"))

@@ -1682,6 +1682,7 @@ function propagate_returned!(mod::LLVM.Module)
                     illegalUse = false
                     torem = LLVM.Instruction[]
                     argeltype = if LLVM.version().major >= 12
+                        ccall(:jl_, Cvoid, (Any, ), string(arg)*" i=$i  argn=$argn\n"*string(fn))
                         # TODO try to get sret element type if possible
                         # note currently opaque pointers has this break [and we need to doa check if opaque
                         # and if so get inner piece]
