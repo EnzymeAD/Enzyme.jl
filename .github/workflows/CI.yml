@@ -47,6 +47,8 @@ jobs:
           - ubuntu-24.04
           - macOS-latest
           - windows-latest
+        llvm_args:
+          - ''
         arch:
           - default
         assertions:
@@ -72,6 +74,21 @@ jobs:
             libEnzyme: packaged
             version: '1.11'
             assertions: true
+
+          - os: ubuntu-24.04
+            arch: default
+            libEnzyme: packaged
+            version: '1.10'
+            assertions: true
+            llvm_args: '--opaque-pointers'
+
+          - os: ubuntu-24.04
+            arch: default
+            libEnzyme: packaged
+            version: '1.11'
+            assertions: false
+            llvm_args: '--opaque-pointers'
+
           - os: ubuntu-24.04
             arch: default
             libEnzyme: packaged
@@ -148,6 +165,7 @@ jobs:
           test_args: ${{ env.runtest_test_args }}
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+          JULIA_LLVM_ARGS: ${{ matrix.llvm_args }}
       - uses: julia-actions/julia-processcoverage@v1
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
       - uses: codecov/codecov-action@v5
