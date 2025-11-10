@@ -267,6 +267,10 @@ function enzyme_custom_setup_args(
         if isKWCall && arg.arg_i == 2
             Ty = arg.typ
 
+            if EnzymeRules.is_inactive_kwarg_from_sig(Interpreter.simplify_kw(mi.specTypes); world)
+                activep = API.DFT_CONSTANT
+            end
+
             push!(args, val)
 
             # Only constant kw arg tuple's are currently supported
@@ -1108,12 +1112,10 @@ function enzyme_custom_common_rev(
     )
     aug_RT = return_type(interp, ami)
     if kwtup !== nothing && kwtup <: Duplicated
-        @safe_debug "Non-constant keyword argument found for " augprimal_TT
-        emit_error(
-            B,
-            orig,
-            "Enzyme: Non-constant keyword argument found for " * string(augprimal_TT),
-        )
+        mi, _ = enzyme_custom_extract_mi(orig)
+        bt = GPUCompiler.backtrace(orig)
+        msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
+        emit_error(B, orig, (msg2, mi, world), NonConstantKeywordArgException)
         return C_NULL
     end
 
