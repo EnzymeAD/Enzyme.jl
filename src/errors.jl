@@ -1631,9 +1631,14 @@ function Base.showerror(io::IO, ece::EnzymeNonScalarReturnException)
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
-    println(io, "EnzymeNonScalarReturnException: Return type of differentiated function was not a scalar as required, found ", ece.object)
-    println(io, "If calling Enzyme.autodiff(Reverse, f, Active, ...), try Enzyme.autodiff_thunk(Reverse, f, Duplicated, ....)")
-    println(io, "If calling Enzyme.gradient, try Enzyme.jacobian")
+    if Enzyme.Compiler.guaranteed_const(Core.Typeof(ece.object))
+        println(io, "EnzymeNonScalarReturnException: Return type of active-returning differentiated function was not differentiable, found ", ece.object, " of type ", Core.Typeof(ece.object))
+        println(io, "Either rewrite the autodiff call to return Const, or the function being differentiated to return an active type")
+    else
+        println(io, "EnzymeNonScalarReturnException: Return type of differentiated function was not a scalar as required, found ", ece.object, " of type ", Core.Typeof(ece.object))
+        println(io, "If calling Enzyme.autodiff(Reverse, f, Active, ...), try Enzyme.autodiff_thunk(Reverse, f, Duplicated, ....)")
+        println(io, "If calling Enzyme.gradient, try Enzyme.jacobian")
+    end
     if length(ece.extra) != 0
         print(io, ece.extra)
     end
