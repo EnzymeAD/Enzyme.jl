@@ -528,6 +528,12 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
         if EnzymeRules.has_easy_rule_from_sig(Interpreter.simplify_kw(mi.specTypes); job.world)
             push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
         end
+
+        if is_sret_union(RT)
+            attr = StringAttribute("enzymejl_sret_union_bytes", string(union_alloca_type(RT)))
+            push!(parameter_attributes(llvmfn, 1), attr)
+        end
+
         if returnRoots
             attr = StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1])))
             push!(parameter_attributes(llvmfn, 2), attr)

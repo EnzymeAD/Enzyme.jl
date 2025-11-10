@@ -509,11 +509,24 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
         LLVM.EnumAttribute("sret")
     end)
 
+
+
     for attr in collect(LLVM.parameter_attributes(fn, idx))
         ekind = LLVM.kind(attr)
 
         if ekind == sretkind
             res = LLVM.value(attr)
+            if !LLVM.is_opaque(vt)
+                @assert eltype(vt) == res
+            end
+            return res
+        end
+
+        if ekind == "enzymejl_sret_union_bytes"
+            nbytes = parse(Int, LLVM.value(attr))
+            i8 = LLVM.IntType(8)
+
+            res = LLVM.ArrayType(i8, nbytes)
             if !LLVM.is_opaque(vt)
                 @assert eltype(vt) == res
             end
