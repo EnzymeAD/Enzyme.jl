@@ -564,18 +564,18 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
 
 
         if ekind == "enzymejl_parmtype_ref"
-            enzymejl_parmtype_ref = GPUCompiler.ArgumentCC(parse(UInt, LLVM.value(fattr)))
+            enzymejl_parmtype_ref = GPUCompiler.ArgumentCC(parse(UInt, LLVM.value(attr)))
             continue
         end
 
         if ekind == "enzymejl_parmtype"
-            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
+            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(attr)))
             enzymejl_parmtype = Base.unsafe_pointer_to_objref(ptr)::Type
         end
     end
 
     if enzymejl_parmtype_ref == GPUCompiler.BITS_REF && enzymejl_parmtype !== nothing
-        res = convert(LLVMType, enzymejl_parmtype)
+        res = convert(LLVM.LLVMType, enzymejl_parmtype)
         if !LLVM.is_opaque(vt)
             @assert eltype(vt) == res
         end
