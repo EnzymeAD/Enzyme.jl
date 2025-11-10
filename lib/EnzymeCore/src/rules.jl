@@ -284,7 +284,7 @@ Alternatively, this can be called with the configuration type, return activity, 
 
 Consider `RealRt` as the original return type of the rule, accessible as `eltype(RT)`. The return type can be computed as follows:
 
-We must return a struct of type [`AugmentedPrimal`](@ref), which has three elements (and corresponding type parameter).
+We must return a struct of type [`EnzymeCore.EnzymeRules.AugmentedPrimal`](@ref), which has three elements (and corresponding type parameter).
 
 The first element is the primal type, which is the original result (of type `RealRt`) if requested by the config ([`needs_primal`](@ref)), otherwise nothing.
 

@@ -11,19 +11,6 @@ abstract type EnzymeError <: Base.Exception end
 
 abstract type CompilationException <: EnzymeError end
 
-struct EnzymeRuntimeException <: EnzymeError
-    msg::Cstring
-end
-
-function Base.showerror(io::IO, ece::EnzymeRuntimeException)
-    if isdefined(Base.Experimental, :show_error_hints)
-        Base.Experimental.show_error_hints(io, ece)
-    end
-    print(io, "Enzyme execution failed.\n")
-    msg = Base.unsafe_string(ece.msg)
-    print(io, msg, '\n')
-end
-
 function pretty_print_mi(mi, io=stdout; digit_align_width = 1)
     spec = mi.specTypes.parameters
     ft = spec[1]
@@ -95,6 +82,47 @@ function code_typed_helper(mi::Core.MethodInstance, world::UInt, mode::Enzyme.AP
     end
 end
 
+struct EnzymeRuntimeException <: EnzymeError
+    msg::Cstring
+end
+
+function Base.showerror(io::IO, ece::EnzymeRuntimeException)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
+    print(io, "EnzymeRuntimeException: Enzyme execution failed.\n")
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
+struct EnzymeRuntimeExceptionMI <: EnzymeError
+    backtrace::Cstring
+    mi::Core.MethodInstance
+    world::UInt
+end
+
+InteractiveUtils.code_typed(ece::EnzymeRuntimeExceptionMI; kwargs...) = code_typed_helper(ece.mi, ece.world; kwargs...)
+
+function Base.showerror(io::IO, ece::EnzymeRuntimeExceptionMI)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
+    print(io, "EnzymeRuntimeException: Enzyme execution failed within\n")
+    println(io)
+    pretty_print_mi(ece.mi, io)
+    println(io)
+    println(io)
+    printstyled(io, "Hint"; bold = true, color = :cyan)
+    printstyled(
+        io,
+        ": catch this exception as `err` and call `code_typed(err)` to inspect the surrounding code.\n";
+        color = :cyan,
+    )
+    println(io)
+    msg = Base.unsafe_string(ece.msg)
+    print(io, msg, '\n')
+end
+
 abstract type CustomRuleError <: Base.Exception end
 
 struct NonConstantKeywordArgException <: CustomRuleError
@@ -109,7 +137,7 @@ function Base.showerror(io::IO, ece::NonConstantKeywordArgException)
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
-    print(io, "Custom Rule for method was passed a differentiable keyword argument. Differentiable kwargs cannot currently be specified from within the rule system.\n")
+    print(io, "NonConstantKeywordArgException: Custom Rule for method was passed a differentiable keyword argument. Differentiable kwargs cannot currently be specified from within the rule system.\n")
     printstyled(io, "Hint"; bold = true, color = :cyan)
     printstyled(
         io,
@@ -133,7 +161,7 @@ function Base.showerror(io::IO, ece::CallingConventionMismatchError)
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
-    print(io, "Enzyme hit an internal error trying to parse the julia calling convention from a custom rule definition:\n")
+    print(io, "CallingConventionMismatchError: Enzyme hit an internal error trying to parse the julia calling convention from a custom rule definition:\n")
     println(io)
     pretty_print_mi(ece.mi, io)
     println(io)
@@ -258,7 +286,7 @@ function Base.showerror(io::IO, ece::ForwardRuleReturnError{C, RT, fwd_RT}) wher
         "neither primal nor shadow configuration"
     end
 
-    print(io, "Enzyme: Incorrect return type for $desc of forward custom rule with width $width of a function which returned $(eltype(RealRt)):\n")
+    print(io, "ForwardRuleReturnError: Incorrect return type for $desc of forward custom rule with width $width of a function which returned $(eltype(RealRt)):\n")
     print(io, "  found    : ", fwd_RT, "\n")
     print(io, "  expected : ", ExpRT, "\n")
     println(io)
@@ -314,7 +342,7 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
         if !(fwd_RT <: EnzymeRules.AugmentedReturn)
             hint = "Return should be a struct of type EnzymeRules.AugmentedReturn"
         elseif fwd_RT isa UnionAll && (fwd_RT.body isa UnionAll || fwd_RT.body.parameters[1] isa TypeVar || fwd_RT.body.parameters[2] isa TypeVar)
-            hint = "Return is a UnionAll, not a concrete type, try explicitly returning a single value of type EnzymeRules.AugmentedReturn{PrimalType, ShadowType, CacheType}"
+            hint = "Return is a UnionAll, not a concrete type, try explicitly returning a single value of type EnzymeRules.AugmentedReturn{PrimalType, ShadowType, CacheType} as follows\n  return EnzymeRules.augmented_rule_return_type(config, RA)(primal, shadow, cache)"
         elseif EnzymeRules.primal_type(fwd_RT) == Nothing
             hint = "Missing primal return"
         elseif EnzymeRules.shadow_type(fwd_RT) == Nothing
@@ -402,7 +430,7 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
         "neither primal nor shadow configuration"
     end
 
-    print(io, "Enzyme: Incorrect return type for $desc of augmented_primal custom rule with width $width of a function which returned $(eltype(RealRt)):\n")
+    print(io, "AugmentedRuleReturnError: Incorrect return type for $desc of augmented_primal custom rule with width $width of a function which returned $(eltype(RealRt)):\n")
     print(io, "  found    : ", fwd_RT, "\n")
     print(io, "  expected : ", ExpRT, "\n")
     println(io)
@@ -502,7 +530,7 @@ function Base.showerror(io::IO, ece::ReverseRuleReturnError{C, ArgAct, rev_RT}) 
     end
     @assert hint !== nothing
 
-    print(io, "Enzyme: Incorrect return type for reverse custom rule with width $(EnzymeRules.width(C)):\n")
+    print(io, "ReverseRuleReturnError: Incorrect return type for reverse custom rule with width $(EnzymeRules.width(C)):\n")
     print(io, "  found    : ", rev_RT, "\n")
     print(io, "  expected : ", ExpRT, "\n")
     println(io)
@@ -538,7 +566,7 @@ function Base.showerror(io::IO, ece::MixedReturnException{RT}) where RT
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
-    print(io, "Custom Rule for method returns type $(RT), which has mixed internal activity types. This is not presently supported.\n")
+    print(io, "MixedReturnException: Custom Rule for method returns type $(RT), which has mixed internal activity types. This is not presently supported.\n")
     print(io, "See https://enzyme.mit.edu/julia/stable/faq/#Mixed-activity for more information.\n")
     println(io)
     printstyled(io, "Hint"; bold = true, color = :cyan)
@@ -566,7 +594,7 @@ function Base.showerror(io::IO, ece::UnionSretReturnException{RT}) where RT
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
-    print(io, "Custom Rule for method returns type $(RT), which is a union has an sret layout calling convention. This is not presently supported.\n")
+    print(io, "UnionSretReturnException: Custom Rule for method returns type $(RT), which is a union has an sret layout calling convention. This is not presently supported.\n")
     print(io, "Please open an issue if you hit this.")
     println(io)
     printstyled(io, "Hint"; bold = true, color = :cyan)
@@ -594,7 +622,7 @@ function Base.showerror(io::IO, ece::NoDerivativeException)
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
-    print(io, "Enzyme compilation failed.\n")
+    print(io, "NoDerivativeException: Enzyme compilation failed.\n")
     if ece.ir !== nothing
     	if VERBOSE_ERRORS[]
             print(io, "Current scope: \n")
@@ -631,7 +659,7 @@ function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
-    print(io, "Enzyme compilation failed due to illegal type analysis.\n")
+    print(io, "IllegalTypeAnalysisException: Enzyme compilation failed due to illegal type analysis.\n")
     print(io, " This usually indicates the use of a Union type, which is not fully supported with Enzyme.API.strictAliasing set to true [the default].\n")
     print(io, " Ideally, remove the union (which will also make your code faster), or try setting Enzyme.API.strictAliasing!(false) before any autodiff call.\n")
     print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
@@ -680,7 +708,7 @@ function Base.showerror(io::IO, ece::IllegalFirstPointerException)
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
-    print(io, "Enzyme compilation failed due to an internal error (first pointer exception).\n")
+    print(io, "IllegalFirstPointerException: Enzyme compilation failed due to an internal error (first pointer exception).\n")
     print(io, " Please open an issue with the code to reproduce and full error log on github.com/EnzymeAD/Enzyme.jl\n")
     print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
     if VERBOSE_ERRORS[]
@@ -706,7 +734,7 @@ function Base.showerror(io::IO, ece::EnzymeInternalError)
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
-    print(io, "Enzyme compilation failed due to an internal error.\n")
+    print(io, "EnzymeInternalError: Enzyme compilation failed due to an internal error.\n")
     print(io, " Please open an issue with the code to reproduce and full error log on github.com/EnzymeAD/Enzyme.jl\n")
     print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
     if VERBOSE_ERRORS[]
@@ -737,7 +765,7 @@ function Base.showerror(io::IO, ece::EnzymeMutabilityException)
         Base.Experimental.show_error_hints(io, ece)
     end
     msg = Base.unsafe_string(ece.msg)
-    print(io, msg, '\n')
+    print(io, "EnzymeMutabilityException: ", msg, '\n')
 end
 
 struct EnzymeRuntimeActivityError{MT,WT} <: EnzymeError
@@ -750,11 +778,8 @@ function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
-    println(io, "Constant memory is stored (or returned) to a differentiable variable.")
-    println(
-        io,
-        "As a result, Enzyme cannot provably ensure correctness and throws this error.",
-    )
+    println(io, "EnzymeRuntimeActivityError: Detected potential need for runtime activity.\n")
+    println(io, "Constant memory is stored (or returned) to a differentiable variable and correctness cannot be guaranteed with static activity analysis.")
     println(
         io,
         "This might be due to the use of a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/faq/#Runtime-Activity).",
@@ -763,24 +788,32 @@ function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)
         io,
         "If Enzyme should be able to prove this use non-differentable, open an issue!",
     )
+    println(io)
     println(io, "To work around this issue, either:")
     println(
         io,
-        " a) rewrite this variable to not be conditionally active (fastest, but requires a code change), or",
+        "   a) rewrite this variable to not be conditionally active (fastest performance, slower to setup), or",
     )
     println(
         io,
-        " b) set the Enzyme mode to turn on runtime activity (e.g. autodiff(set_runtime_activity(Reverse), ...) ). This will maintain correctness, but may slightly reduce performance.",
+        "   b) set the Enzyme mode to turn on runtime activity (e.g. autodiff(set_runtime_activity(Reverse), ...) ). This will maintain correctness, but may slightly reduce performance.",
     )
+    println(io)
     if ece.mi !== nothing
-        print(io, " Failure within method: ", ece.mi, "\n")
+        print(io, "Failure within method:\n")
+        println(io)
+        pretty_print_mi(ece.mi, io)
+        println(io)
+        println(io)
+
         printstyled(io, "Hint"; bold = true, color = :cyan)
         printstyled(
             io,
-            ": catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\nIf you have Cthulu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.\n";
+            ": catch this exception as `err` and call `code_typed(err)` to inspect the surrounding code.\n";
             color = :cyan,
         )
     end
+    println(io)
     msg = Base.unsafe_string(ece.msg)
     print(io, msg, '\n')
 end
@@ -803,7 +836,7 @@ function Base.showerror(io::IO, ece::EnzymeNoTypeError)
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
-    print(io, "Enzyme cannot statically prove the type of a value being differentiated and risks a correctness error if it gets it wrong.\n")
+    print(io, "EnzymeNoTypeError: Enzyme cannot statically prove the type of a value being differentiated and risks a correctness error if it gets it wrong.\n")
     print(io, " Generally this shouldn't occur as Enzyme records type information from julia, but may be expected if you, for example copy untyped data.\n")
     print(io, " or alternatively emit very large sized registers that exceed the maximum size of Enzyme's type analysis. If it seems reasonable to differentiate\n")
     print(io, " this code, open an issue! If the cause of the error is too large of a register, you can request Enzyme increase the size (https://enzyme.mit.edu/julia/dev/api/#Enzyme.API.maxtypeoffset!-Tuple{Any})\n")
@@ -820,7 +853,7 @@ function Base.showerror(io::IO, ece::EnzymeNoTypeError)
         printstyled(io, "Hint"; bold = true, color = :cyan)
         printstyled(
             io,
-            ": catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\nIf you have Cthulu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.\n";
+            ": catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\n";
             color = :cyan,
         )
     end
@@ -842,13 +875,23 @@ function Base.showerror(io::IO, ece::EnzymeNoShadowError)
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
-    print(io, "Enzyme could not find shadow for value\n")
+    print(io, "EnzymeNoShadowError: Enzyme could not find shadow for value\n")
     msg = Base.unsafe_string(ece.msg)
     print(io, msg, '\n')
 end
 
-struct EnzymeNoDerivativeError <: EnzymeError
+struct EnzymeNoDerivativeError{MT,WT} <: EnzymeError
     msg::Cstring
+    mi::MT
+    world::WT
+end
+
+function InteractiveUtils.code_typed(ece::EnzymeNoDerivativeError; interactive::Bool=false, kwargs...)
+    mi = ece.mi
+    if mi === nothing
+        throw(AssertionError("code_typed(::EnzymeNoDerivativeError; interactive::Bool=false, kwargs...) not supported for error without mi"))
+    end
+    code_typed_helper(ece.mi, ece.world; kwargs...)
 end
 
 function Base.showerror(io::IO, ece::EnzymeNoDerivativeError)
@@ -856,7 +899,22 @@ function Base.showerror(io::IO, ece::EnzymeNoDerivativeError)
         Base.Experimental.show_error_hints(io, ece)
     end
     msg = Base.unsafe_string(ece.msg)
-    print(io, msg, '\n')
+    print(io, "EnzymeNoDerivativeError: ", msg, '\n')
+
+    if ece.mi !== nothing
+        print(io, "Failure within method:\n")
+        println(io)
+        pretty_print_mi(ece.mi, io)
+        println(io)
+        println(io)
+
+        printstyled(io, "Hint"; bold = true, color = :cyan)
+        printstyled(
+            io,
+            ": catch this exception as `err` and call `code_typed(err)` to inspect the surrounding code.\n";
+            color = :cyan,
+        )
+    end
 end
 
 parent_scope(val::LLVM.Function, depth = 0) = depth == 0 ? LLVM.parent(val) : val
@@ -950,7 +1008,31 @@ function julia_error(
             else
                 data2 = nothing
             end
-            emit_error(B, nothing, msg2, EnzymeNoDerivativeError, data2)
+
+            mi = nothing
+            world = nothing
+
+            if isa(val, LLVM.Instruction)
+                f = LLVM.parent(LLVM.parent(val))::LLVM.Function
+                mi, rt = enzyme_custom_extract_mi(
+                    f,
+                    false,
+                ) #=error=#
+                world = enzyme_extract_world(f)
+            elseif isa(val, LLVM.Argument)
+                f = parent_scope(val)::LLVM.Function
+                mi, rt = enzyme_custom_extract_mi(
+                    f,
+                    false,
+                ) #=error=#
+                world = enzyme_extract_world(f)
+            end
+            if mi !== nothing
+                emit_error(B, nothing, (msg2, mi, world), EnzymeNoDerivativeError{Core.MethodInstance, UInt})
+            else
+                emit_error(B, nothing, msg2, EnzymeNoDerivativeError{Nothing, Nothing})
+            end
+
             return C_NULL
         end
         throw(NoDerivativeException(msg, ir, bt))
@@ -1476,7 +1558,7 @@ end
             print(io, msg)
             println(io)
             if badval !== nothing
-                println(io, " value=" * badval)
+                println(io, " Julia value causing error:  " * badval)
             else
                 ttval = val
                 if isa(ttval, LLVM.StoreInst)
@@ -1489,7 +1571,7 @@ end
                 API.EnzymeStringFree(st)
             end
             if illegalVal !== nothing
-                println(io, " llvalue=" * string(illegalVal))
+                println(io, " LLVM view of erring value:   " * string(illegalVal))
             end
             if bt !== nothing
                 Base.show_backtrace(io, bt)
@@ -1549,7 +1631,7 @@ function Base.showerror(io::IO, ece::EnzymeNonScalarReturnException)
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
-    println(io, "Return type of differentiated function was not a scalar as required, found ", ece.object)
+    println(io, "EnzymeNonScalarReturnException: Return type of differentiated function was not a scalar as required, found ", ece.object)
     println(io, "If calling Enzyme.autodiff(Reverse, f, Active, ...), try Enzyme.autodiff_thunk(Reverse, f, Duplicated, ....)")
     println(io, "If calling Enzyme.gradient, try Enzyme.jacobian")
     if length(ece.extra) != 0
