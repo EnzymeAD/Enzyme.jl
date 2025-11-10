@@ -510,6 +510,8 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
     end)
 
 
+    enzymejl_parmtype_ref = nothing
+    enzymejl_parmtype = nothing
 
     for attr in collect(LLVM.parameter_attributes(fn, idx))
         ekind = LLVM.kind(attr)
@@ -559,9 +561,28 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
         
             return eltype(vt)
         end
+
+
+        if ekind == "enzymejl_parmtype_ref"
+            enzymejl_parmtype_ref = GPUCompiler.ArgumentCC(parse(UInt, LLVM.value(fattr)))
+            continue
+        end
+
+        if ekind == "enzymejl_parmtype"
+            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
+            enzymejl_parmtype = Base.unsafe_pointer_to_objref(ptr)::Type
+        end
     end
 
-    throw(AssertionError("Function requesting sret type was not an sret\nidx=$idx\nfn=$(string(fn))"))
+    if enzymejl_parmtype_ref == GPUCompiler.BITS_REF && enzymejl_parmtype !== nothing
+        res = convert(LLVMType, enzymejl_parmtype)
+        if !LLVM.is_opaque(vt)
+            @assert eltype(vt) == res
+        end
+        return res
+    end
+
+    throw(AssertionError("Function requesting sret type was not an sret\nidx=$idx\nfn=$(string(fn)) enzymejl_parmtype=$enzymejl_parmtype enzymejl_parmtype_ref=$enzymejl_parmtype_ref"))
 end
 
 export sret_ty
