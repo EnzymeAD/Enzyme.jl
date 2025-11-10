@@ -82,9 +82,11 @@ function EnzymeRules.reverse(
     return ((f isa Active) ? f : nothing, (xs isa Active) ? xs : nothing)
 end
 
+F_good(x) = outer(y -> [cos(x * y)], 0.0, 1.0)[1][1]
 F_bad(x) = outer(y -> [cos(y)], 0.0, x)[1][1]
 
 @testset "Mixed Return Rule Error" begin
+    @test_throws Enzyme.Compiler.MixedReturnException autodiff(Reverse, F_good, Active(0.3))
     @test_throws Enzyme.Compiler.MixedReturnException autodiff(Reverse, F_bad, Active(0.3))
 end
 

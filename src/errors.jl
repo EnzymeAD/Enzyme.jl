@@ -85,6 +85,163 @@ function Base.showerror(io::IO, ece::NonConstantKeywordArgException)
     Base.println(io, Base.unsafe_string(ece.backtrace))
 end
 
+struct ForwardRuleReturnError{C, RT, fwd_RT} <: CustomRuleError
+    backtrace::Cstring
+    mi::Core.MethodInstance
+    world::UInt
+end
+
+function Base.showerror(io::IO, ece::ForwardRuleReturnError{C, RT, fwd_RT}) where {C, RT, fwd_RT}
+    ExpRT = EnzymeRules.forward_rule_return_type(C, RT)
+    @assert ExpRT != fwd_RT
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
+
+    RealRt = eltype(RT)
+
+    hint = nothing
+
+    desc = if EnzymeRules.needs_primal(C) && EnzymeRules.needs_shadow(C)
+        if width == 1
+            if !(fwd_RT <: Duplicated)
+                if fwd_RT <: BatchDuplicated
+                    hint = "For width 1, the return type should be a Duplicated, not BatchDuplicated"
+                elseif fwd_RT <: RealRt
+                    hint = "Both primal and shadow need to be returned"
+                else
+                    hint = "Return type should be a Duplicated"
+                end
+            elseif eltype(fwd_RT) <: RealRt
+                hint = "Expected the abstract type $RealRt for primal/shadow, you returned $(eltype(fwd_RT)). Even though $(eltype(fwd_RT)) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
+            else
+                hint = "The type within your Duplicated $(eltype(fwd_RT)) does not match the primal type $RealRt"
+            end
+        else
+            if !(fwd_RT <: BatchDuplicated)
+                if fwd_RT <: BatchDuplicated && EnzymeCore.batch_size(fwd_RT) != width
+                    hint = "Mismatched batch size, expected batch size $width, found a BatchDuplicated of width $(EnzymeCore.batch_size(fwd_RT))"
+                elseif fwd_RT <: Duplicated
+                    hint = "For width $width, the return type should be a BatchDuplicated, not a Duplicated"
+                elseif fwd_RT <: RealRt
+                    hint = "Both primal and shadow need to be returned"
+                else
+                    hint = "Return type should be a BatchDuplicated"
+                end
+            elseif eltype(fwd_RT) <: RealRt
+                hint = "Expected the abstract type $RealRt for primal/shadow, you returned $(eltype(fwd_RT)). Even though $(eltype(fwd_RT)) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
+            else
+                hint = "The type within your BatchDuplicated $(eltype(fwd_RT)) does not match the primal type $RealRt"
+            end
+        end
+        "primal and shadow configuration"
+    elseif EnzymeRules.needs_primal(C) && !EnzymeRules.needs_shadow(C)
+        if fwd_RT <: BatchDuplicated || fwd_RT <: Duplicated
+            hint = "Shadow was not requested, you should only return the primal"
+        elseif fwd_RT <: (NTuple{N, <:RealRt} where N)
+            hint = "You appear to be returning a tuple of shadows, but only the primal was requested"
+        elseif fwd_RT <: RealRt
+            hint = "Expected the abstract type $RealRt for primal, you returned $(fwd_RT). Even though $(fwd_RT) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
+        else
+            hint = "Your return type does not match the primal type $RealRt"
+        end
+
+        "primal-only configuration"
+    elseif !EnzymeRules.needs_primal(C) && EnzymeRules.needs_shadow(C)
+        if fwd_RT <: BatchDuplicated || fwd_RT <: Duplicated
+            hint = "Primal was not requested, you should only return the shadow"
+        elseif width == 1
+            if fwd_RT <: (NTuple{N, <:RealRt} where N)
+                hint = "You look to be returning a tuple of shadows, when the batch size is 1"
+            elseif fwd_RT <: RealRt
+                hint = "Expected the abstract type $RealRt for shadow, you returned $(fwd_RT). Even though $(fwd_RT) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
+            else
+                hint = "Your return type does not match the shadow type $RealRt"
+            end
+        else
+            if !(fwd_RT <: NTuple)
+                hint = "Configuration required batch size $width, which requires returning a tuple of shadows"
+            elseif !(fwd_RT <: NTuple{width, <:Any})
+                hint = "Did not return a tuple of shadows of the right size, expected a tuple of size $width"
+            elseif eltype(fwd_RT) <: RealRt
+                hint = "Expected the abstract type $RealRt for each shadow in the tuple to create $ExpRT, you returned $(eltype(fwd_RT)) as the eltype of your tuple ($fwd_RT). Even though $(eltype(fwd_RT)) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
+            else
+                hint = "Your return type does not match the batched shadow type $ExpRT"
+            end
+        end
+        "shadow-only configuration"
+    else
+        @assert !EnzymeRules.needs_primal(C) && !EnzymeRules.needs_shadow(C)
+
+        if fwd_RT <: BatchDuplicated || fwd_RT <: Duplicated
+            hint = "Neither primal nor shadow were requested, you should return nothing, not both the primal and shadow"
+        elseif fwd_RT <: (NTuple{N, <:RealRt} where N)
+            hint = "You appear to be returning a tuple of shadows, but neither primal nor shadow were requested"
+        elseif fwd_RT <: RealRt && width == 1
+            hint = "You appear to be returning a primal or shadow, but neither were requested"
+        elseif fwd_RT <: RealRt 
+            hint = "You appear to be returning a primal, but it was not requested"
+        else
+            hint = "You should return nothing"
+        end
+
+        "neither primal nor shadow configuration"
+    end
+
+    print(io, "Enzyme: Incorrect return type for $desc of forward custom rule with width $(EnzymeRules.width(C)) of a function which returned $(eltype(RealRt)):\n")
+    print(io, "  found : ", fwd_RT, "\n")
+    print(io, "  expected : ", ExpRT, "\n")
+    println(io)
+    print(io, "For more information see `EnzymeRules.forward_rule_return_type`\n")
+    printstyled(io, "Hint"; bold = true, color = :cyan)
+    printstyled(
+        io,
+        ": ", hint;
+        color = :cyan,
+    )
+    println(io)
+    println(io)
+    pretty_print_mi(ece.mi, io)
+    println(io)
+    Base.println(io, Base.unsafe_string(ece.backtrace))
+end
+
+
+struct AugmentedRuleReturnError{C, RT, aug_RT} <: CustomRuleError
+    backtrace::Cstring
+    mi::Core.MethodInstance
+    world::UInt
+end
+
+function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, aug_RT}) where {C, RT, aug_RT}
+    ExpRT = EnzymeRules.forward_rule_return_type(C, RT)
+    @assert ExpRT != fwd_RT
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
+
+    desc = if EnzymeRules.needs_primal(C) && EnzymeRules.needs_shadow(C)
+        "primal and shadow configuration"
+    elseif EnzymeRules.needs_primal(C) && !EnzymeRules.needs_shadow(C)
+        "primal-only configuration"
+    elseif !EnzymeRules.needs_primal(C) && EnzymeRules.needs_shadow(C)
+        "shadow-only configuration"
+    else
+        @assert !EnzymeRules.needs_primal(C) && !EnzymeRules.needs_shadow(C)
+        "neither primal nor shadow configuration"
+    end
+
+    print(io, "Enzyme: Incorrect return type for $desc of forward custom rule with width $(EnzymeRules.width(C)):\n")
+    print(io, "  found : ", fwd_RT, "\n")
+    print(io, "  expected : ", ExpRT, "\n")
+    println(io)
+    print(io, "For more information see `EnzymeRules.forward_rule_return_type`\n")
+    println(io)
+    pretty_print_mi(ece.mi, io)
+    println(io)
+    Base.println(io, Base.unsafe_string(ece.backtrace))
+end
+
 struct MixedReturnException{RT} <: CustomRuleError
     backtrace::Cstring
     mi::Core.MethodInstance
@@ -103,6 +260,28 @@ function Base.showerror(io::IO, ece::MixedReturnException{RT}) where RT
     println(io)
     Base.println(io, Base.unsafe_string(ece.backtrace))
 end
+
+
+struct UnionSretReturnException{RT} <: CustomRuleError
+    backtrace::Cstring
+    mi::Core.MethodInstance
+    world::UInt
+end
+
+function Base.showerror(io::IO, ece::UnionSretReturnException{RT}) where RT
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
+    print(io, "Custom Rule for method returns type $(RT), which is a union has an sret layout calling convention. This is not presently supported.\n")
+    print(io, "Please open an issue if you hit this.")
+    println(io)
+    println(io)
+    pretty_print_mi(ece.mi, io)
+    println(io)
+    Base.println(io, Base.unsafe_string(ece.backtrace))
+end
+
+
 
 struct NoDerivativeException <: CompilationException
     msg::String

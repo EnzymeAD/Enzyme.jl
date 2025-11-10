@@ -7,7 +7,7 @@ export FwdConfig, FwdConfigWidth
 export AugmentedReturn
 import ..EnzymeCore: needs_primal
 export needs_primal, needs_shadow, width, overwritten, runtime_activity
-export primal_type, shadow_type, tape_type, easy_scalar_rule
+export primal_type, shadow_type, tape_type, easy_scalar_rule, forward_rule_return_type
 
 import Base: unwrapva, isvarargtype, unwrap_unionall, rewrap_unionall
 
@@ -25,6 +25,8 @@ Valid types for `RT` are:
   - [`EnzymeCore.Duplicated`](@ref)
   - [`EnzymeCore.DuplicatedNoNeed`](@ref)
   - [`EnzymeCore.Const`](@ref)
+
+The return from this function must be a type matching [`forward_rule_return_type`](@ref) when given the `fwdconfig` and `RT`.
 """
 function forward end
 
@@ -124,20 +126,79 @@ between).
 """
     primal_type(::FwdConfig, ::Type{<:Annotation{RT}})
     primal_type(::RevConfig, ::Type{<:Annotation{RT}})
+    primal_type(::Type{<:FwdConfig}, ::Type{<:Annotation{RT}})
+    primal_type(::Type{<:RevConfig}, ::Type{<:Annotation{RT}})
 
 Compute the expected primal return type given a reverse mode config and return activity
 """
 @inline primal_type(config::FwdConfig, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
 @inline primal_type(config::RevConfig, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
+@inline primal_type(config::Type{<:FwdConfig}, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
+@inline primal_type(config::Type{<:RevConfig}, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
 
 """
     shadow_type(::FwdConfig, ::Type{<:Annotation{RT}})
     shadow_type(::RevConfig, ::Type{<:Annotation{RT}})
+    shadow_type(::Type{<:FwdConfig}, ::Type{<:Annotation{RT}})
+    shadow_type(::Type{<:RevConfig}, ::Type{<:Annotation{RT}})
 
 Compute the expected shadow return type given a reverse mode config and return activity
 """
 @inline shadow_type(config::FwdConfig, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
 @inline shadow_type(config::RevConfig, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
+@inline shadow_type(config::Type{<:FwdConfig}, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
+@inline shadow_type(config::Type{<:RevConfig}, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
+
+
+"""
+    forward_rule_return_type(C::FwdConfig, RT::Type{<:Annotation})
+    forward_rule_return_type(::Type{<:FwdConfig}, RT::Type{<:Annotation})
+
+Compute the expected result type of a custom forward rule, given the configuration `C` and return activity and type `RT`.
+
+Consider `RealRt` as the original return type of the rule, accessible as `eltype(RT)`. The return type can be computed as follows:
+
+If the shadow isn't needed, return the original result (of type `RealRt`) if requested by the config ([`needs_primal`](@ref)), otherwise nothing.
+
+Otherwise, first construct a shadow return.
+    If the [`width`](@ref) is one, the shadow is the same type as the primal (`RealRt`).
+    If the [`width`](@ref) is not one, the shadow is a tuple containing `width` of the original return types (`NTuple{width,RealRt}`).
+
+Finally, if both the primal and shadow are requested, return a [`EnzymeCore.Duplicated`](@ref) or [`EnzymeCore.BatchDuplicated`](@ref) of primal and shadows.
+Otherwise, just return the shadows.
+
+"""
+@inline function forward_rule_return_type(C::Type{<:FwdConfig}, RT::Type{<:Annotation})
+    RealRt = eltype(RT)
+    needsPrimal = EnzymeRules.needs_primal(C)
+    needsShadow = EnzymeRules.needs_shadow(C)
+    width = EnzymeRules.width(C)
+    if !needsShadow
+        if needsPrimal
+            return RealRt
+        else
+            return Nothing
+        end
+    else
+        @assert !(RT <: Const)
+        if !needsPrimal
+            ST = RealRt
+            if width != 1
+                ST = NTuple{Int(width),ST}
+            end
+            return ST
+        else
+            ST = if width == 1
+                Duplicated{RealRt}
+            else
+                BatchDuplicated{RealRt,Int(width)}
+            end
+            return ST
+        end
+    end
+end
+@inline forward_rule_return_type(::FCT, RT::Type{<:Annotation}) where {FCT <: FwdConfig} = forward_rule_return_type(FCT, RT)
+
 
 """
     AugmentedReturn(primal, shadow, tape)
@@ -195,6 +256,51 @@ as `Active{T}` with the derivative of the active return value. Otherwise, `dret`
 as `Type{Duplicated{T}}`, etc.
 """
 function reverse end
+
+
+"""
+    augmented_rule_return_type(C::RevConfig, RT::Type{<:Annotation}, cache::Any)
+    augmented_rule_return_type(::Type{<:RevConfig}, RT::Type{<:Annotation}, CacheType::Type)
+
+Compute the expected result type of a custom augmented forward pass rule, given the configuration `C` return activity and type `RT`, and cache `cache`.
+Alternatively, this can be called with the configuration type, return activity, and cache type.
+
+Consider `RealRt` as the original return type of the rule, accessible as `eltype(RT)`. The return type can be computed as follows:
+
+We must return a struct of type [`AugmentedPrimal`](@ref), which has three elements (and corresponding type parameter).
+
+The first element is the primal type, which is the original result (of type `RealRt`) if requested by the config ([`needs_primal`](@ref)), otherwise nothing.
+
+The second element is the shadow type, if requested by the config ([`needs_shadow`](@ref), otherwise nothing. If requested, the shadow is of type:
+    If the [`width`](@ref) is one, the shadow is the same type as the primal (`RealRt`).
+    If the [`width`](@ref) is not one, the shadow is a tuple containing `width` of the original return types (`NTuple{width,RealRt}`).
+
+The third element is user defined, whatever type the cache is you want to save from forward to reverse pass. In this case, it
+will be determined by `cache`, or `CacheType`.
+
+"""
+@inline function augmented_rule_return_type(C::Type{<:RevConfig}, RT::Type{<:Annotation}, CacheType::Type)
+    RealRt = eltype(RT)
+
+    PrimalType = if EnzymeRules.needs_primal(C)
+        RealRt
+    else
+        Nothing
+    end
+
+    ShadowType = if EnzymeRules.needs_shadow(C)
+        if EnzymeRules.width(C) == 1
+            RealRt
+        else
+            NTuple{width, RealRt}
+        end
+    else
+        Nothing
+    end
+
+    return AugmentedPrimal{PrimalType, ShadowType, CacheType}
+end
+@inline augmented_rule_return_type(::RCT, RT::Type{<:Annotation}, cache) where {RCT <: RevConfig} = augmented_rule_return_type(RCT, RT, typeof(cache))
 
 function _annotate(@nospecialize(T))
     if isvarargtype(T)
