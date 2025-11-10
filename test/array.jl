@@ -244,7 +244,7 @@ for RTA in (false, true)
         @test dx ≈ [0.0, 0.0]
         @test dx2 ≈ [0.0, 0.0]
         @test rf ≈ [1.0]
-        @test rf ≈ [2.7]
+        @test rf2 ≈ [2.7]
     end
     @test x ≈ [2.3, 2.0]
 
