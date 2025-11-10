@@ -233,7 +233,9 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
 
     desc = if EnzymeRules.needs_primal(C) && EnzymeRules.needs_shadow(C)
         if !(fwd_RT <: EnzymeRules.AugmentedReturn)
-            hint = "Return should be a struct of type EnzymeRules.AugmentedReturn"        
+            hint = "Return should be a struct of type EnzymeRules.AugmentedReturn"
+        elseif !(fwd_RT <: EnzymeRules.AugmentedReturn{<:Any, <:Any})
+            hint = "Return should be a struct of type EnzymeRules.AugmentedReturn{<:Any, <:Any}"
         elseif EnzymeRules.primal_type(fwd_RT) == Nothing
             hint = "Missing primal return"
         elseif EnzymeRules.shadow_type(fwd_RT) == Nothing
