@@ -1583,16 +1583,9 @@ function enzyme_custom_common_rev(
         )
         ST = Tuple{Tys...}
         if rev_RT != ST
-            emit_error(
-                B,
-                orig,
-                "Enzyme: Reverse pass custom rule " *
-                string(rev_TT) *
-                " return type mismatch, expected " *
-                string(ST) *
-                " found " *
-                string(rev_RT),
-            )
+            bt = GPUCompiler.backtrace(orig)
+            msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
+            emit_error(B, orig, (msg2, rmi, world), ReverseRuleReturnError{C, Tuple{activity[2+isKWCall:end]...,}, rev_RT})
             return tapeV
         end
         if length(actives) >= 1 &&

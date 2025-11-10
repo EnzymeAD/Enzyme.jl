@@ -102,6 +102,8 @@ function Base.showerror(io::IO, ece::ForwardRuleReturnError{C, RT, fwd_RT}) wher
 
     hint = nothing
 
+    width = EnzymeRules.width(C)
+
     desc = if EnzymeRules.needs_primal(C) && EnzymeRules.needs_shadow(C)
         if width == 1
             if !(fwd_RT <: Duplicated)
@@ -188,7 +190,7 @@ function Base.showerror(io::IO, ece::ForwardRuleReturnError{C, RT, fwd_RT}) wher
         "neither primal nor shadow configuration"
     end
 
-    print(io, "Enzyme: Incorrect return type for $desc of forward custom rule with width $(EnzymeRules.width(C)) of a function which returned $(eltype(RealRt)):\n")
+    print(io, "Enzyme: Incorrect return type for $desc of forward custom rule with width $width of a function which returned $(eltype(RealRt)):\n")
     print(io, "  found : ", fwd_RT, "\n")
     print(io, "  expected : ", ExpRT, "\n")
     println(io)
@@ -219,6 +221,8 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
+
+    width = EnzymeRules.width(C)
 
     RealRt = eltype(RT)
 
@@ -258,8 +262,6 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
                     hint = "Mismatched shadow type $(EnzymeRules.shadow_type(fwd_RT)), expected $(EnzymeRules.shadow_type(ExpRT))."
                 end
             end
-        else
-            @assert false
         end
 
         "primal and shadow configuration"
@@ -276,8 +278,6 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
             else
                 hint = "Mismatched primal type $(EnzymeRules.primal_type(fwd_RT)), expected $RealRt"
             end
-        else
-            @assert false
         end
 
         "primal-only configuration"
@@ -305,8 +305,6 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
                     hint = "Mismatched shadow type $(EnzymeRules.shadow_type(fwd_RT)), expected $(EnzymeRules.shadow_type(ExpRT))."
                 end
             end
-        else
-            @assert false
         end
 
         "shadow-only configuration"
@@ -317,19 +315,106 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
             hint = "Primal was not requested"
         elseif EnzymeRules.shadow_type(fwd_RT) != Nothing
             hint = "Shadow return was not requested"
-        else
-            @assert false
         end
 
         @assert !EnzymeRules.needs_primal(C) && !EnzymeRules.needs_shadow(C)
         "neither primal nor shadow configuration"
     end
 
-    print(io, "Enzyme: Incorrect return type for $desc of augmented_primal custom rule with width $(EnzymeRules.width(C)) of a function which returned $(eltype(RealRt)):\n")
+    print(io, "Enzyme: Incorrect return type for $desc of augmented_primal custom rule with width $width of a function which returned $(eltype(RealRt)):\n")
     print(io, "  found : ", fwd_RT, "\n")
     print(io, "  expected : ", ExpRT, "\n")
     println(io)
     print(io, "For more information see `EnzymeRules.augmented_rule_return_type`\n")
+    if hint !== nothing
+        printstyled(io, "Hint"; bold = true, color = :cyan)
+        printstyled(
+            io,
+            ": ", hint;
+            color = :cyan,
+        )
+        println(io)
+    end
+    println(io)
+    pretty_print_mi(ece.mi, io)
+    println(io)
+    Base.println(io, Base.unsafe_string(ece.backtrace))
+end
+
+
+struct ReverseRuleReturnError{C, ArgAct, rev_RT} <: CustomRuleError
+    backtrace::Cstring
+    mi::Core.MethodInstance
+    world::UInt
+end
+
+function Base.showerror(io::IO, ece::ReverseRuleReturnError{C, ArgAct, rev_RT}) where {C, ArgAct, rev_RT}
+    width = EnzymeRules.width(C)
+    Tys = (
+        A <: Active ? (width == 1 ? eltype(A) : NTuple{Int(width),eltype(A)}) : Nothing for A in ArgAct.parameters
+    )
+    ExpRT = Tuple{Tys...}
+    @assert ExpRT != rev_RT
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
+
+    hint = nothing
+
+    if !(rev_RT <: Tuple)
+        hint = "Return type should be a tuple with one element for each argument"
+    elseif length(rev_RT.parameters) != length(ExpRT.parameters)
+        hint = "Returned tuple should have one result for each argument, had $(length(rev_RT.parameters)) elements, expected $(length(ExpRT.parameters))"
+    else
+        for i in 1:length(ArgAct.parameters)
+            if ExpRT.parameters[i] == rev_RT.parameters[i]
+                continue
+            end
+            if ExpRT.parameters[i] === Nothing
+                hint = "Tuple return mismatch at index $i, argument of type $(ArgAct.parameters[i]) corresponds to return of nothing (only Active inputs have returns)"
+                break
+            end
+
+            if rev_RT.parameters[i] === Nothing
+                hint = "Tuple return mismatch at index $i, argument of type $(ArgAct.parameters[i]) corresponds to return of $(ExpRT.parameters[i]), found nothing (Active inputs have returns)"
+                break
+            end
+
+            if width == 1
+
+                if rev_RT.parameters[i] <: (NTuple{N, ExpRT.parameters[i]} where N)
+                    hint = "Tuple return mismatch at index $i, returned a tuple of results when expected just one of type $(ExpRT.parameters[i])."
+                    break
+                end
+
+                if rev_RT.parameters[i] <: ExpRT.parameters[i]
+                    hint = "Tuple return mismatch at index $i, expected the abstract type $(ExpRT.parameters[i]), you returned $(rev_RT.parameters[i]). Even though $(rev_RT.parameters[i]) <: $(ExpRT.parameters[i]), rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
+                    break
+                end
+
+            else
+
+                if !(rev_RT.parameters[i] <: NTuple)
+                    hint = "Tuple return mismatch at index $i, returned a single result of type $(rev_RT.parameters[i]) for a batched configuration of width $width, expected an inner tuple for each batch element."
+                    break
+                end
+
+                if eltype(rev_RT.parameters[i]) <: eltype(ExpRT.parameters[i])
+                    hint = "Tuple return mismatch at index $i, expected the abstract type $(eltype(ExpRT.parameters[i])) (here batched to form $(ExpRT.parameters[i])), you returned $(eltype(rev_RT.parameters[i])) (batched to form $(eltype(rev_RT.parameters[i]))). Even though $(eltype(rev_RT.parameters[i])) <: $(eltype(ExpRT.parameters[i])), rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
+                    break
+                end
+            end
+
+            hint = "Tuple return mismatch at index $i, argument of type $(ArgAct.parameters[i]) corresponds to returning type $(ExpRT.parameters[i]), you returned $(rev_RT.parameters[i])."
+            break
+        end
+    end
+    @assert hint !== nothing
+
+    print(io, "Enzyme: Incorrect return type for reverse custom rule with width $(EnzymeRules.width(C)):\n")
+    print(io, "  found : ", rev_RT, "\n")
+    print(io, "  expected : ", ExpRT, "\n")
+    println(io)
     printstyled(io, "Hint"; bold = true, color = :cyan)
     printstyled(
         io,
