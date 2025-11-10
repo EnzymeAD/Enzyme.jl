@@ -234,8 +234,10 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
     desc = if EnzymeRules.needs_primal(C) && EnzymeRules.needs_shadow(C)
         if !(fwd_RT <: EnzymeRules.AugmentedReturn)
             hint = "Return should be a struct of type EnzymeRules.AugmentedReturn"
-        elseif !(fwd_RT <: EnzymeRules.AugmentedReturn{<:Any, <:Any})
-            hint = "Return should be a struct of type EnzymeRules.AugmentedReturn{<:Any, <:Any}"
+        elseif fwd_RT isa UnionAll && (fwd_RT.body isa UnionAll || fwd_RT.body.parameters[1] isa TypeVar || fwd_RT.body.parameters[2] isa TypeVar)
+            hint = "Return is a UnionAll, not a concrete type, try explicitly setting your return type as EnzymeRules.AugmentedReturn{PrimalType, ShadowType, CacheType}"
+        elseif fwd_RT isa UnionAll && fwd_RT.body isa UnionAll
+            hint = "Return is a UnionAll, not a concrete type, try explicitly setting your return type as EnzymeRules.AugmentedReturn{PrimalType, ShadowType, CacheType}"
         elseif EnzymeRules.primal_type(fwd_RT) == Nothing
             hint = "Missing primal return"
         elseif EnzymeRules.shadow_type(fwd_RT) == Nothing
