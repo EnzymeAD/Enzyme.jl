@@ -3,44 +3,43 @@ import LinearAlgebra
 @inline add_fwd(prev, post) = recursive_add(prev, post)
 
 @generated function EnzymeCore.EnzymeRules.multiply_fwd_into(prev, partial::Union{AbstractArray,Number}, dx::Union{AbstractArray,Number})
-
     if partial <: Number || dx isa Number
-        if prev !== Nothing
+        if !(prev <: Type)
             return quote
                 Base.@_inline_meta
-                add_fwd(prev, EnzymeCore.EnzymeRules.multiply_fwd_into(nothing, partial, dx))
+                add_fwd(prev, EnzymeCore.EnzymeRules.multiply_fwd_into(Core.Typeof(prev), partial, dx))
             end
         end
         return quote
             Base.@_inline_meta
-            partial * dx
+            prev(partial * dx)
         end
     end
 
     @assert partial <: AbstractArray
     if dx <: Number
-        if prev !== Nothing
-	   return quote
-		Base.@_inline_meta
-		LinearAlgebra.axpy!(dx, partial, prev)
-		prev
-	   end
-	else
-	   return quote
-		Base.@_inline_meta
-		partial * dx
-	   end
-	end
+        if !(prev <: Type)
+    	    return quote
+    		    Base.@_inline_meta
+    		    LinearAlgebra.axpy!(dx, partial, prev)
+    		    prev
+    	    end
+    	else
+    	    return quote
+    		    Base.@_inline_meta
+    		    prev(partial * dx)
+    	    end
+    	end
     end
     @assert dx <: AbstractArray
     N = ndims(partial)
     M = ndims(dx)
 
     if N == M
-        if prev !== Nothing
+        if !(prev <: Type)
             return quote
                 Base.@_inline_meta
-                add_fwd(prev, EnzymeCore.EnzymeRules.multiply_fwd_into(nothing, partial, dx))
+                add_fwd(prev, EnzymeCore.EnzymeRules.multiply_fwd_into(typeof(prev), partial, dx))
             end
         end
 
@@ -55,7 +54,7 @@ import LinearAlgebra
         end
         return quote
             Base.@_inline_meta
-            $res
+            prev($res)
         end
     end
 
@@ -66,8 +65,8 @@ import LinearAlgebra
         end
     end
 
-    init = if prev === Nothing
-        :(prev = similar(partial, size(partial)[1:$(N-M)]...))
+    init = if prev <: Type
+        :(prev = similar(prev, size(partial)[1:$(N-M)]...))
     end
 
     idxs = Symbol[]
@@ -93,7 +92,7 @@ import LinearAlgebra
         matp = Expr(:call, Base.reshape, matp, Expr(:call, Base.length, outp), Expr(:call, Base.length, inp))
     end
 
-    outexpr = if prev === Nothing
+    outexpr = if prev <: Type
         Expr(:call, LinearAlgebra.mul!, outp, matp, inp)
     else
         Expr(:call, LinearAlgebra.mul!, outp, matp, inp, true, true)
@@ -267,6 +266,10 @@ function enzyme_custom_setup_args(
         if isKWCall && arg.arg_i == 2
             Ty = arg.typ
 
+            if EnzymeRules.is_inactive_kwarg_from_sig(Interpreter.simplify_kw(mi.specTypes); world)
+                activep = API.DFT_CONSTANT
+            end
+
             push!(args, val)
 
             # Only constant kw arg tuple's are currently supported
@@ -335,21 +338,25 @@ function enzyme_custom_setup_args(
                 )
                 if value_type(val) != eltype(value_type(ptr))
                     if overwritten[end]
+                        bt = GPUCompiler.backtrace(orig)
+                        msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
                         emit_error(
                             B,
                             orig,
                             "Enzyme: active by ref type $Ty is overwritten in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr)). " *
-                            "As a workaround until support for this is added, try passing values as separate arguments rather than as an aggregate of type $Ty.",
+                            "As a workaround until support for this is added, try passing values as separate arguments rather than as an aggregate of type $Ty.\n"*msg2,
                         )
                     end
                     if arty == eltype(value_type(val))
                         val = load!(B, arty, val)
                     else
+                        bt = GPUCompiler.backtrace(orig)
+                        msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
                         val = LLVM.UndefValue(arty)
                         emit_error(
                             B,
                             orig,
-                            "Enzyme: active by ref type $Ty is wrong type in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))",
+                            "Enzyme: active by ref type $Ty is wrong type in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))\n"*msg2,
                         )
                     end
                 end
@@ -360,10 +367,12 @@ function enzyme_custom_setup_args(
                         emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
                     end
                 else
+                    bt = GPUCompiler.backtrace(orig)
+                    msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
                     emit_error(
                         B,
                         orig,
-                        "Enzyme: active by ref type $Ty is wrong store type in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))",
+                        "Enzyme: active by ref type $Ty is wrong store type in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))\n"*msg2,
                     )
                 end
 
@@ -570,11 +579,15 @@ function enzyme_custom_setup_ret(
         mode != API.DEM_ForwardMode &&
         !guaranteed_nonactive(RealRt, world)
     )
-        if active_reg(RealRt, world) == MixedState && B !== nothing
+        if active_reg(RealRt, world) == MixedState && B !== nothing        
+            bt = GPUCompiler.backtrace(orig)
+            msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))            
+            mi, _ = enzyme_custom_extract_mi(orig)
             emit_error(
                 B,
                 orig,
-                "Enzyme: Return type $RealRt has mixed internal activity types in evaluation of custom rule for $mi. See https://enzyme.mit.edu/julia/stable/faq/#Mixed-activity for more information",
+                (msg2, mi, world),
+                MixedReturnException{RealRt}
             )
         end
         RT = Active{RealRt}
@@ -616,13 +629,20 @@ end
         )
     end
 
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    world = enzyme_extract_world(fn)
+
     # TODO: don't inject the code multiple times for multiple calls
 
     fmi, (args, TT, fwd_RT, kwtup, RT, needsPrimal, RealRt, origNeedsPrimal, activity, C) = fwd_mi(orig, gutils, B)
 
     if kwtup !== nothing && kwtup <: Duplicated
-        @safe_debug "Non-constant keyword argument found for " TT
-        emit_error(B, orig, "Enzyme: Non-constant keyword argument found for " * string(TT))
+        mi, _ = enzyme_custom_extract_mi(orig)
+
+        bt = GPUCompiler.backtrace(orig)
+        msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
+        emit_error(B, orig, (msg2, mi, world), NonConstantKeywordArgException)
         return false
     end
     
@@ -632,9 +652,6 @@ end
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     width = get_width(gutils)
 
-    curent_bb = position(B)
-    fn = LLVM.parent(curent_bb)
-    world = enzyme_extract_world(fn)
 
     llvmf = nested_codegen!(mode, mod, fmi, world)
 
@@ -659,16 +676,24 @@ end
     end
 
     if length(args) != length(parameters(llvmf))
-        GPUCompiler.@safe_error "Calling convention mismatch",
-        args,
-        llvmf,
-        string(value_type(llvmf)),
-        orig,
-        isKWCall,
-        kwtup,
-        TT,
-        sret,
-        returnRoots
+        bt = GPUCompiler.backtrace(orig)
+        msg2 = sprint() do io
+            if startswith(LLVM.name(llvmf), "japi3") || startswith(LLVM.name(llvmf), "japi1")
+                Base.println(io, "Function uses the japi convention, which is not supported yet: ", LLVM.name(llvmf))
+            else
+                Base.println(io, "args = ", args)
+                Base.println(io, "llvmf = ", string(llvmf))
+                Base.println(io, "value_type(llvmf) = ", string(value_type(llvmf)))
+                Base.println(io, "orig = ", string(orig))
+                Base.println(io, "isKWCall = ", string(isKWCall))
+                Base.println(io, "kwtup = ", string(kwtup))
+                Base.println(io, "TT = ", string(TT))
+                Base.println(io, "sret = ", string(sret))
+                Base.println(io, "returnRoots = ", string(returnRoots))
+            end
+            Base.show_backtrace(io, bt)
+        end
+        emit_error(B, orig, (msg2, fmi, world), CallingConventionMismatchError)
         return false
     end
 
@@ -714,23 +739,22 @@ end
     shadowV = C_NULL
     normalV = C_NULL
 
+    ExpRT = EnzymeRules.forward_rule_return_type(C, RT)
+    if ExpRT != fwd_RT
+        bt = GPUCompiler.backtrace(orig)
+        msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))            
+        emit_error(
+            B,
+            orig,
+            (msg2, fmi, world),
+            ForwardRuleReturnError{C, RT, fwd_RT}
+        )
+        return false
+    end
+
     if RT <: Const
         if needsPrimal
-            if RealRt != fwd_RT
-                emit_error(
-                    B,
-                    orig,
-                    "Enzyme: incorrect return type of const primal-only forward custom rule - $C " *
-                    (string(RT)) *
-                    " " *
-                    string(activity) *
-                    " want just return type " *
-                    string(RealRt) *
-                    " found " *
-                    string(fwd_RT),
-                )
-                return false
-            end
+            @assert RealRt == fwd_RT
             if get_return_info(RealRt)[2] !== nothing
                 val = new_from_original(gutils, operands(orig)[1])
                 store!(B, res, val)
@@ -738,19 +762,7 @@ end
                 normalV = res.ref
             end
         else
-            if Nothing != fwd_RT
-                emit_error(
-                    B,
-                    orig,
-                    "Enzyme: incorrect return type of const no-primal forward custom rule - $C " *
-                    (string(RT)) *
-                    " " *
-                    string(activity) *
-                    " want just return type Nothing found " *
-                    string(fwd_RT),
-                )
-                return false
-            end
+            @assert Nothing == fwd_RT
         end
     else
         if !needsPrimal
@@ -758,21 +770,7 @@ end
             if width != 1
                 ST = NTuple{Int(width),ST}
             end
-            if ST != fwd_RT
-                emit_error(
-                    B,
-                    orig,
-                    "Enzyme: incorrect return type of shadow-only forward custom rule - $C " *
-                    (string(RT)) *
-                    " " *
-                    string(activity) *
-                    " want just shadow type " *
-                    string(ST) *
-                    " found " *
-                    string(fwd_RT),
-                )
-                return false
-            end
+            @assert ST == fwd_RT
             if get_return_info(RealRt)[2] !== nothing
                 dval_ptr = invert_pointer(gutils, operands(orig)[1], B)
                 for idx = 1:width
@@ -789,21 +787,7 @@ end
             else
                 BatchDuplicated{RealRt,Int(width)}
             end
-            if ST != fwd_RT
-                emit_error(
-                    B,
-                    orig,
-                    "Enzyme: incorrect return type of prima/shadow forward custom rule - $C " *
-                    (string(RT)) *
-                    " " *
-                    string(activity) *
-                    " want just shadow type " *
-                    string(ST) *
-                    " found " *
-                    string(fwd_RT),
-                )
-                return false
-            end
+            @assert ST == fwd_RT
             if get_return_info(RealRt)[2] !== nothing
                 val = new_from_original(gutils, operands(orig)[1])
                 store!(B, extract_value!(B, res, 0), val)
@@ -1104,12 +1088,10 @@ function enzyme_custom_common_rev(
     )
     aug_RT = return_type(interp, ami)
     if kwtup !== nothing && kwtup <: Duplicated
-        @safe_debug "Non-constant keyword argument found for " augprimal_TT
-        emit_error(
-            B,
-            orig,
-            "Enzyme: Non-constant keyword argument found for " * string(augprimal_TT),
-        )
+        mi, _ = enzyme_custom_extract_mi(orig)
+        bt = GPUCompiler.backtrace(orig)
+        msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
+        emit_error(B, orig, (msg2, mi, world), NonConstantKeywordArgException)
         return C_NULL
     end
 
@@ -1152,10 +1134,13 @@ function enzyme_custom_common_rev(
     llvmf = nothing
     applicablefn = true
 
+    final_mi = nothing
+
     if forward
         llvmf = nested_codegen!(mode, mod, ami, world)
         @assert llvmf !== nothing
         rev_RT = nothing
+        final_mi = ami
     else
         tt = copy(activity)
         if isKWCall
@@ -1196,6 +1181,7 @@ function enzyme_custom_common_rev(
         rmi = rmi::Core.MethodInstance
         rev_RT = rev_RT::Type
         llvmf = nested_codegen!(mode, mod, rmi, world)
+        final_mi = rmi
     end
 
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
@@ -1227,15 +1213,9 @@ function enzyme_custom_common_rev(
     sret_union = is_sret_union(miRT)
 
     if sret_union
-        emit_error(
-            B,
-            orig,
-            "Enzyme: Augmented forward pass custom rule " *
-            string(augprimal_TT) *
-            " had a union sret of type " *
-            string(miRT) *
-            " which is not currently supported",
-        )
+        bt = GPUCompiler.backtrace(orig)
+        msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
+        emit_error(B, orig, (msg2, final_mi, world), UnionSretReturnException{miRT})
         return tapeV
     end
 
@@ -1314,6 +1294,7 @@ function enzyme_custom_common_rev(
             else
                 llety = convert(LLVMType, eltype(RT); allow_boxed = true)
                 ptr_val = invert_pointer(gutils, operands(orig)[1+!isghostty(funcTy)], B)
+                ptr_val = lookup_value(gutils, ptr_val, B)
                 val = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llety)))
                 for idx = 1:width
                     ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
@@ -1376,17 +1357,26 @@ function enzyme_custom_common_rev(
     end
 
     if length(args) != length(parameters(llvmf))
-        GPUCompiler.@safe_error "Calling convention mismatch",
-        args,
-        llvmf,
-        orig,
-        isKWCall,
-        kwtup,
-        augprimal_TT,
-        rev_TT,
-        fn,
-        sret,
-        returnRoots
+        bt = GPUCompiler.backtrace(orig)
+        msg2 = sprint() do io
+            if startswith(LLVM.name(llvmf), "japi3") || startswith(LLVM.name(llvmf), "japi1")
+                Base.println(io, "Function uses the japi convention, which is not supported yet: ", LLVM.name(llvmf))
+            else
+                Base.println(io, "args = ", args)
+                Base.println(io, "llvmf = ", string(llvmf))
+                Base.println(io, "value_type(llvmf) = ", string(value_type(llvmf)))
+                Base.println(io, "orig = ", string(orig))
+                Base.println(io, "isKWCall = ", string(isKWCall))
+                Base.println(io, "kwtup = ", string(kwtup))
+                Base.println(io, "augprimal_TT = ", string(augprimal_TT))
+                Base.println(io, "rev_TT = ", string(rev_TT))
+                Base.println(io, "fn = ", string(fn))
+                Base.println(io, "sret = ", string(sret))
+                Base.println(io, "returnRoots = ", string(returnRoots))
+            end
+            Base.show_backtrace(io, bt)
+        end
+        emit_error(B, orig, (msg2, final_mi, world), CallingConventionMismatchError)
         return tapeV
     end
 
@@ -1482,6 +1472,20 @@ function enzyme_custom_common_rev(
             needsShadowJL ? ShadT : Nothing,
             TapeT,
         }
+        if ST != EnzymeRules.augmented_rule_return_type(C, RT, TapeT)
+            throw(AssertionError("Unexpected augmented rule return computation\nST = $ST\nER = $(EnzymeRules.augmented_rule_return_type(C, RT, TapeT))\nC = $C\nRT = $RT\nTapeT = $TapeT"))
+        end
+        if !(aug_RT <: EnzymeRules.AugmentedReturnFlexShadow) && !(aug_RT <: EnzymeRules.AugmentedReturn{
+            needsPrimal ? RealRt : Nothing,
+            needsShadowJL ? ShadT : Nothing})
+
+            bt = GPUCompiler.backtrace(orig)
+            msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
+            emit_error(B, orig, (msg2, ami, world), AugmentedRuleReturnError{C, RT, aug_RT})
+            return tapeV
+        end
+
+
         if aug_RT != ST
             if aug_RT <: EnzymeRules.AugmentedReturnFlexShadow
                 if convert(LLVMType, EnzymeRules.shadow_type(aug_RT); allow_boxed = true) !=
@@ -1517,22 +1521,7 @@ function enzyme_custom_common_rev(
             if aug_RT <: abs
                 abstract = true
             else
-                ST = EnzymeRules.AugmentedReturn{
-                    needsPrimal ? RealRt : Nothing,
-                    needsShadowJL ? ShadT : Nothing,
-                    Any,
-                }
-                emit_error(
-                    B,
-                    orig,
-                    "Enzyme: Augmented forward pass custom rule " *
-                    string(augprimal_TT) *
-                    " return type mismatch, expected " *
-                    string(ST) *
-                    " found " *
-                    string(aug_RT),
-                )
-                return tapeV
+                @assert false
             end
         end
 
@@ -1612,16 +1601,9 @@ function enzyme_custom_common_rev(
         )
         ST = Tuple{Tys...}
         if rev_RT != ST
-            emit_error(
-                B,
-                orig,
-                "Enzyme: Reverse pass custom rule " *
-                string(rev_TT) *
-                " return type mismatch, expected " *
-                string(ST) *
-                " found " *
-                string(rev_RT),
-            )
+            bt = GPUCompiler.backtrace(orig)
+            msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
+            emit_error(B, orig, (msg2, rmi, world), ReverseRuleReturnError{C, Tuple{activity[2+isKWCall:end]...,}, rev_RT})
             return tapeV
         end
         if length(actives) >= 1 &&

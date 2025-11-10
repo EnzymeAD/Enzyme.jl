@@ -165,11 +165,25 @@ include("parallelrules.jl")
         end
     end
 
-    err = emit_error(
-        B,
-        orig,
-        "Enzyme: jl_call calling convention not implemented in forward for " * string(orig),
-    )
+    pf = LLVM.parent(LLVM.parent(orig))::LLVM.Function
+    mi, _ = enzyme_custom_extract_mi(pf, false) #=error=#
+    world = enzyme_extract_world(pf)
+
+    if mi !== nothing
+        err = emit_error(
+            B,
+            orig,
+            ("Enzyme: jl_call calling convention not implemented in forward for " * string(orig), mi, world),
+            EnzymeRuntimeExceptionMI
+        )
+    else
+        err = emit_error(
+            B,
+            orig,
+            "Enzyme: jl_call calling convention not implemented in forward for " * string(orig),
+            EnzymeRuntimeException
+        )
+    end
 
     newo = new_from_original(gutils, orig)
 
@@ -244,12 +258,26 @@ end
         end
     end
 
-    err = emit_error(
-        B,
-        orig,
-        "Enzyme: jl_call calling convention not implemented in aug_forward for " *
-        string(orig),
-    )
+    pf = LLVM.parent(LLVM.parent(orig))::LLVM.Function
+    mi, _ = enzyme_custom_extract_mi(pf, false) #=error=#
+    world = enzyme_extract_world(pf)
+
+    if mi !== nothing
+        err = emit_error(
+            B,
+            orig,
+            ("Enzyme: jl_call calling convention not implemented in aug_forward for " * string(orig), mi, world),
+            EnzymeRuntimeExceptionMI
+        )
+    else
+        err = emit_error(
+            B,
+            orig,
+            "Enzyme: jl_call calling convention not implemented in aug_forward for " * string(orig),
+            EnzymeRuntimeException
+        )
+    end
+
     newo = new_from_original(gutils, orig)
 
     API.moveBefore(newo, err, B)
@@ -330,11 +358,25 @@ end
         end
     end
 
-    emit_error(
-        B,
-        orig,
-        "Enzyme: jl_call calling convention not implemented in reverse for " * string(orig),
-    )
+    pf = LLVM.parent(LLVM.parent(orig))::LLVM.Function
+    mi, _ = enzyme_custom_extract_mi(pf, false) #=error=#
+    world = enzyme_extract_world(pf)
+
+    if mi !== nothing
+        err = emit_error(
+            B,
+            orig,
+            ("Enzyme: jl_call calling convention not implemented in reverse for " * string(orig), mi, world),
+            EnzymeRuntimeExceptionMI
+        )
+    else
+        err = emit_error(
+            B,
+            orig,
+            "Enzyme: jl_call calling convention not implemented in reverse for " * string(orig),
+            EnzymeRuntimeException
+        )
+    end
 
     return nothing
 end

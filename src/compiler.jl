@@ -400,11 +400,21 @@ const JuliaEnzymeNameMap = Dict{String,Any}(
     "enz_any_array_2" => AnyArray(2),
     "enz_any_array_3" => AnyArray(3),
     "enz_runtime_exc" => EnzymeRuntimeException,
+    "enz_runtime_mi_exc" => EnzymeRuntimeExceptionMI,
     "enz_mut_exc" => EnzymeMutabilityException,
-    "enz_runtime_activity_exc" => EnzymeRuntimeActivityError,
-    "enz_no_type_exc" => EnzymeNoTypeError,
+    "enz_runtime_activity_exc" => EnzymeRuntimeActivityError{Nothing, Nothing},
+    "enz_runtime_activity_mi_exc" => EnzymeRuntimeActivityError{Core.MethodInstance, UInt},
+    "enz_no_type_exc" => EnzymeNoTypeError{Nothing, Nothing},
+    "enz_no_type_mi_exc" => EnzymeNoTypeError{Core.MethodInstance, UInt},
     "enz_no_shadow_exc" => EnzymeNoShadowError,
-    "enz_no_derivative_exc" => EnzymeNoDerivativeError,
+    "enz_no_derivative_exc" => EnzymeNoDerivativeError{Nothing, Nothing},
+    "enz_no_derivative_mi_exc" => EnzymeNoDerivativeError{Core.MethodInstance, UInt},
+    "enz_non_const_kwarg_exc" => NonConstantKeywordArgException,
+    "enz_callconv_mismatch_exc"=> CallingConventionMismatchError,
+    "enz_illegal_ta_exc" => IllegalTypeAnalysisException,
+    "enz_illegal_first_pointer_exc" => IllegalFirstPointerException,
+    "enz_internal_exc" => EnzymeInternalError,
+    "enz_non_scalar_return_exc" => EnzymeNonScalarReturnException,
 )
 
 const JuliaGlobalNameMap = Dict{String,Any}(
@@ -625,7 +635,7 @@ end
     name = meth.name
     jlmod = meth.module
 
-    julia_activity_rule(llvmfn)
+    julia_activity_rule(llvmfn, method_table)
     if has_custom_rule
         handleCustom(
             state,
@@ -1379,7 +1389,7 @@ function julia_sanitize(
 
                 position!(builder, bad)
 
-                emit_error(builder, nothing, sval, EnzymeNoDerivativeError)
+                emit_error(builder, nothing, sval, EnzymeNoDerivativeError{Nothing, Nothing})
                 unreachable!(builder)
                 dispose(builder)
             end
@@ -6309,11 +6319,11 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
         add_edge!(edges, rev_sig)
     end
     
-    ina_sig = Tuple{typeof(EnzymeRules.inactive), Vararg{Any}}
-    add_edge!(edges, ina_sig)
-    
     for gen_sig in (
+        Tuple{typeof(EnzymeRules.inactive), Vararg{Any}},
         Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{Any}},
+        Tuple{typeof(EnzymeRules.inactive_arg), Vararg{Any}},
+        Tuple{typeof(EnzymeRules.inactive_kwarg), Vararg{Any}},
         Tuple{typeof(EnzymeRules.noalias), Vararg{Any}},
         Tuple{typeof(EnzymeRules.inactive_type), Type},
     )

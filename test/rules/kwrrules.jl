@@ -108,7 +108,7 @@ end
 # Test that this errors due to missing kwargs in rule definition
 g4(x, y) = f_kw4(x; y)
 @test autodiff(Reverse, g4, Active(2.0), Const(42.0))[1][1] ≈ 42004.0
-@test_throws Enzyme.Compiler.EnzymeRuntimeException autodiff(Reverse, g4, Active(2.0), Active(42.0))[1]
+@test_throws Enzyme.Compiler.NonConstantKeywordArgException autodiff(Reverse, g4, Active(2.0), Active(42.0))[1]
 
 struct Closure2
     v::Vector{Float64}
