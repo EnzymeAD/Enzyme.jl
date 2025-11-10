@@ -1681,15 +1681,7 @@ function propagate_returned!(mod::LLVM.Module)
                     val = nothing
                     illegalUse = false
                     torem = LLVM.Instruction[]
-                    argeltype = if LLVM.version().major >= 12
-                        ccall(:jl_, Cvoid, (Any, ), string(arg)*" i=$i  argn=$argn\n"*string(fn))
-                        # TODO try to get sret element type if possible
-                        # note currently opaque pointers has this break [and we need to doa check if opaque
-                        # and if so get inner piece]
-                        eltype(value_type(arg))
-                    else
-                        eltype(value_type(arg))
-                    end
+
                     for u in LLVM.uses(fn)
                         un = LLVM.user(u)
                         if !isa(un, LLVM.CallInst)
@@ -1781,6 +1773,24 @@ function propagate_returned!(mod::LLVM.Module)
                         end
                         B = IRBuilder()
                         position!(B, first(instructions(first(blocks(fn)))))
+
+                        # TODO try to get sret element type if possible
+                        # note currently opaque pointers has this break [and we need to doa check if opaque
+                        # and if so get inner piece]
+
+                        if LLVM.is_opaque(value_type(arg))
+                            msg = sprint() do io
+                                println(io, "Needed element type of pointer to replace with intervening alloca\n")
+                                println(io, "arg = ", string(arg))
+                                println(io, "i = ", string(i))
+                                println(io, "argn = ", string(argn))
+                                println(io, "fn = ", string(fn))
+                            end
+                            throw(OpaquePointerError(msg))
+                        end
+
+                        argeltype = eltype(value_type(arg))
+
                         al = alloca!(B, argeltype)
                         if value_type(al) != value_type(arg)
                             al = addrspacecast!(B, al, value_type(arg))
