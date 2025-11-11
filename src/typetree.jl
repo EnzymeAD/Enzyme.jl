@@ -196,6 +196,16 @@ end
 const TypeTreeTable = IdDict{Any,Union{Nothing,TypeTree}}
 
 """
+    typetree_total(job, T, ctx, dl, seen=TypeTreeTable())
+
+A wrapper around `typetree` that ensures the call happens in the correct world for GPUCompiler.
+Useful when using typetree from a generated function since typetree is user-extendable.
+"""
+function typetree_total(@nospecialize(job::GPUCompiler.CompilerJob), @nospecialize(T), ctx, dl, seen=TypeTreeTable())
+    return Core._call_in_world_total(job.world, typetree, T, ctx, dl)
+end
+
+"""
     function typetree(T, ctx, dl, seen=TypeTreeTable())
 
 Construct a Enzyme typetree from a Julia type.
