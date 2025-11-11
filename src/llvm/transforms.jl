@@ -1235,6 +1235,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                 mayread = false
                 maywrite = false
                 sret = true
+		sret_elty = nothing
                 sretkind = kind(if LLVM.version().major >= 12
                     TypeAttribute("sret", LLVM.Int32Type())
                 else
@@ -1248,9 +1249,11 @@ function fix_decayaddr!(mod::LLVM.Module)
                         t_sret = false
                         for a in collect(parameter_attributes(fop, i))
                             if kind(a) == sretkind
+				sret_elty = sret_ty(fop, i)
                                 t_sret = true
                             end
                             if kind(a) == kind(StringAttribute("enzyme_sret"))
+				sret_elty = sret_ty(fop, i)
                                 t_sret = true
                             end
                             # if kind(a) == kind(StringAttribute("enzyme_sret_v"))
@@ -1291,22 +1294,22 @@ function fix_decayaddr!(mod::LLVM.Module)
                     throw(AssertionError(msg))
                 end
 
-                elt = eltype(value_type(inst))
+		@assert sret_elty !== nothing
                 if temp === nothing
                     nb = IRBuilder()
                     position!(nb, first(instructions(first(blocks(f)))))
-                    temp = alloca!(nb, elt)
+                    temp = alloca!(nb, sret_elty)
                 end
                 if mayread
                     nb = IRBuilder()
                     position!(nb, st)
-                    ld = load!(nb, elt, operands(inst)[1])
+                    ld = load!(nb, sret_elty, operands(inst)[1])
                     store!(nb, ld, temp)
                 end
                 if maywrite
                     nb = IRBuilder()
                     position!(nb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
-                    ld = load!(nb, elt, temp)
+                    ld = load!(nb, sret_elty, temp)
                     si = store!(nb, ld, operands(inst)[1])
                     julia_post_cache_store(si.ref, nb.ref, reinterpret(Ptr{UInt64}, C_NULL))
                 end
@@ -1657,6 +1660,11 @@ function propagate_returned!(mod::LLVM.Module)
             if remove_readonly_unused_calls!(fn, next)
                 changed = true
             end
+            has_user = false
+	    for u in LLVM.uses(fn)
+		has_user = true
+		break
+	    end
             attrs = collect(function_attributes(fn))
             prevent = any(
                 kind(attr) == kind(StringAttribute("enzyme_preserve_primal")) for
@@ -1667,6 +1675,8 @@ function propagate_returned!(mod::LLVM.Module)
             # end
             argn = nothing
             toremove = Int64[]
+	    # Don't bother with functions we're about to delete anyways
+	    if has_user
             for (i, arg) in enumerate(parameters(fn))
                 if any(
                     kind(attr) == kind(EnumAttribute("returned")) for
@@ -1891,6 +1901,7 @@ function propagate_returned!(mod::LLVM.Module)
 			end
 		end
             end
+	    end
             illegalUse = !(
                 linkage(fn) == LLVM.API.LLVMInternalLinkage ||
                 linkage(fn) == LLVM.API.LLVMPrivateLinkage
