@@ -202,6 +202,52 @@ for RTA in (false, true)
     end
     @test x ≈ [2.3, 2.0]
 
+
+    function pusher_ref(x, y, z)
+        push!(x, y[])
+        z[] = x[1] + x[2]
+        nothing
+    end
+
+    yr = Ref(2.0)
+    dyr = Ref(0.0)
+    dyr2 = Ref(0.0)
+
+    zr = Ref(2.0)
+    dzr = Ref(1.0)
+    dzr2 = Ref(2.7)
+
+    x = [2.3]
+    dx = [0.0]
+    dx2 = [0.0]
+    rf = @static if VERSION < v"1.11-"
+        nothing
+    else
+        dx.ref.mem
+    end
+
+    rf2 = @static if VERSION < v"1.11-"
+        nothing
+    else
+        dx2.ref.mem
+    end
+
+    Enzyme.autodiff(set_runtime_activity(Reverse, RTA), pusher_ref, BatchDuplicated(x, (dx, dx2)), BatchDuplicated(yr, (dyr, dyr2)), BatchDuplicated(zr, (dzr, dzr2)))
+
+    @test 1.0 ≈ dyr[]
+    @test 2.7 ≈ dyr2[]
+    
+    @static if VERSION < v"1.11-"
+        @test dx ≈ [1.0]
+        @test dx2 ≈ [2.7]
+    else
+        @test dx ≈ [0.0, 0.0]
+        @test dx2 ≈ [0.0, 0.0]
+        @test rf ≈ [1.0]
+        @test rf2 ≈ [2.7]
+    end
+    @test x ≈ [2.3, 2.0]
+
     function double_push(x)
         a = [0.5]
         push!(a, 1.0)
