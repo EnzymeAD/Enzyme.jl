@@ -131,7 +131,7 @@ end
     @test Enzyme.autodiff(Forward, h, Duplicated(3.0, 1.0)) == (6000.0,)
     @test Enzyme.autodiff(ForwardWithPrimal, h, Duplicated(3.0, 1.0))  == (60.0, 9.0)
     @test Enzyme.autodiff(Forward, h2, Duplicated(3.0, 1.0))  == (1080.0,)
-    @test_throws Enzyme.Compiler.EnzymeRuntimeException Enzyme.autodiff(Forward, h3, Duplicated(3.0, 1.0)) 
+    @test_throws Enzyme.Compiler.ForwardRuleReturnError Enzyme.autodiff(Forward, h3, Duplicated(3.0, 1.0)) 
 end
 
 foo(x) = 2x;

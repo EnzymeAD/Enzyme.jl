@@ -793,7 +793,7 @@ function EnzymeRules.augmented_primal(
     return EnzymeRules.AugmentedReturn(primal, shadow, cache)
 end
 
-# This is required to handle arugments that mix real and complex numbers
+# This is required to handle arguments that mix real and complex numbers
 _project(::Type{<:Real}, x) = x
 _project(::Type{<:Real}, x::Complex) = real(x)
 _project(::Type{<:Complex}, x) = x
@@ -922,11 +922,27 @@ function EnzymeRules.reverse(
     return (nothing, nothing, nothing, dα, dβ)
 end
 
+function cofactor(A)
+    cofA     = similar(A)
+    minorAij = similar(A, size(A, 1) - 1, size(A, 2) - 1)
+    for i in 1:size(A, 1), j in 1:size(A, 2)
+        fill!(minorAij, zero(eltype(A)))
 
+        # build minor matrix
+        for k in 1:size(A, 1), l in 1:size(A, 2)
+            if !(k == i || l == j)
+                ki = k < i ? k : k - 1
+                li = l < j ? l : l - 1
+                @inbounds minorAij[ki, li] = A[k, l]
+            end
+        end
+        @inbounds cofA[i, j] = (-1)^(i - 1 + j - 1) * det(minorAij)
+    end
+    return cofA
+end
 
-
-
-
+# partial derivative of the determinant is the matrix of cofactors
+EnzymeRules.@easy_rule(LinearAlgebra.det(A::AbstractMatrix), (cofactor(A),))
 
 function EnzymeRules.forward(
     config::EnzymeRules.FwdConfig,
@@ -1796,4 +1812,45 @@ function EnzymeRules.reverse(
     dz = _hypotreverse(z, w, dret, n)
     dxs = map(x -> _hypotreverse(x, w, dret, n), xs)
     return (dx, dy, dz, dxs...)
+end
+
+function EnzymeRules.forward(config, ::Const{typeof(Base.finalizer)}, _, f::Const, o)
+    f = f.val
+    Base.finalizer(f, o.val)
+    if EnzymeRules.width(config) == 1
+        Base.finalizer(f, o.dval)
+    else
+        foreach(o.dval) do dv
+            Base.finalizer(f, dv)
+        end
+    end
+
+    if EnzymeRules.needs_primal(config)
+        return o
+    else
+        return nothing
+    end
+end
+
+function EnzymeRules.augmented_primal(config, ::Const{typeof(Base.finalizer)}, _, f::Const, o)
+    @assert !(o isa Active)
+    f = f.val
+    Base.finalizer(f, o.val)
+    if EnzymeRules.width(config) == 1
+        Base.finalizer(f, o.dval)
+    else
+        foreach(o.dval) do dv
+            Base.finalizer(f, dv)
+        end
+    end
+
+    primal = EnzymeRules.needs_primal(config) ? o.val : nothing
+    shadow = EnzymeRules.needs_shadow(config) ? o.dval : nothing
+
+    return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
+end
+
+function EnzymeRules.reverse(config, ::Const{typeof(Base.finalizer)}, dret, tape, f::Const, o)
+    # No-op
+    return (nothing, nothing)
 end

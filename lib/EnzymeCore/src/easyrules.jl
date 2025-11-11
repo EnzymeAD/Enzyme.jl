@@ -236,7 +236,11 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
                             end
 
                             if !seen
-                                push!(gensetup, Expr(:(=), outexpr, nothing))
+                                ST = $(esc(:RT))
+                                if ST <: Tuple
+                                    ST = ST.parameters[o]
+                                end
+                                push!(gensetup, Expr(:(=), outexpr, ST))
                                 seen = true
                             end
 
@@ -473,21 +477,25 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
             end
             push!(gensetup, Expr(:(=), :cache, Expr(:tuple, caches...)))
 
+            PT = EnzymeRules.primal_type(config, ($(esc(:RTA))).parameters[1])
+            ST = EnzymeRules.shadow_type(config, ($(esc(:RTA))).parameters[1])
+            AugmentedReturnType = :(EnzymeRules.AugmentedReturn{$PT,$ST,typeof(cache)})
+
             genres = if needs_primal(config)
                 if needs_shadow(config)
                     if width(config) == 1
-                        Expr(:call, EnzymeRules.AugmentedReturn, :Ω, :dΩ, :cache)
+                        Expr(:call, AugmentedReturnType, :Ω, :dΩ, :cache)
                     else
-                        Expr(:call, EnzymeRules.AugmentedReturn, :Ω, :dΩ, :cache)
+                        Expr(:call, AugmentedReturnType, :Ω, :dΩ, :cache)
                     end
                 else
-                    Expr(:call, EnzymeRules.AugmentedReturn, :Ω, nothing, :cache)
+                    Expr(:call, AugmentedReturnType, :Ω, nothing, :cache)
                 end
             else
                 if needs_shadow(config)
-                    Expr(:call, EnzymeRules.AugmentedReturn, nothing, :dΩ, :cache)
+                    Expr(:call, AugmentedReturnType, nothing, :dΩ, :cache)
                 else
-                    Expr(:call, EnzymeRules.AugmentedReturn, nothing, nothing, :cache)
+                    Expr(:call, AugmentedReturnType, nothing, nothing, :cache)
                 end
             end
 
@@ -613,7 +621,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
 
                             if !seen
                                 if inp_types[inum] <: Active
-                                    push!(gensetup, Expr(:(=), inexpr, nothing))
+                                    push!(gensetup, Expr(:(=), inexpr, eltype(inp_types[inum])))
                                 else
                                     dexpr = Expr(:call, getfield, Symbol(inp_names[inum]), 2)
                                     if W != 1

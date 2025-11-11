@@ -97,3 +97,264 @@ end
 function set_reverse_block!(gutils::GradientUtils, block::LLVM.BasicBlock)
     return LLVM.BasicBlock(API.EnzymeGradientUtilsSetReverseBlock(gutils, block))
 end
+
+function get_or_insert_conditional_execute!(fn::LLVM.Function; force_run=false, need_result=true, preprocess=nothing, postprocess=nothing, postprocess_const=nothing, cmpidx::Int = 1)
+    FT0 = LLVM.function_type(fn)
+    ptys = LLVM.parameters(FT0)
+    insert!(ptys, 1, ptys[cmpidx])
+
+    void_rt = LLVM.return_type(FT0) == LLVM.VoidType() || !need_result
+    extra_rt = !void_rt && postprocess_const === nothing
+    if extra_rt
+        insert!(ptys, 1, LLVM.return_type(FT0))
+    end
+    FT = LLVM.FunctionType(need_result ? LLVM.return_type(FT0) : LLVM.VoidType(), ptys; vararg=LLVM.isvararg(FT0))
+    mod = LLVM.parent(fn)
+    newname = "julia.enzyme.conditionally_execute."
+    if !need_result
+        newname = newname * "noresult."
+    end
+    if force_run
+        newname = newname * "forcerun."
+    end
+    if preprocess !== nothing
+        newname = newname * ".po_$(preprocess)"
+    end
+    if postprocess !== nothing
+        newname = newname * ".po_$(postprocess)"
+    end
+    if postprocess_const !== nothing
+        newname = newname * ".poc_$(postprocess_const)"
+    end
+    newname = newname * LLVM.name(fn)
+    cfn, _ = get_function!(mod, newname, FT)
+    if isempty(blocks(cfn))
+        linkage!(cfn, LLVM.API.LLVMInternalLinkage)
+        let builder = IRBuilder()
+            entry = BasicBlock(cfn, "entry")
+            good = BasicBlock(cfn, "good")
+            bad = BasicBlock(cfn, "bad")
+            position!(builder, entry)
+            parms = collect(parameters(cfn))
+
+            rparms = parms[(2+extra_rt):end]
+
+            ppr = nothing
+
+            if force_run
+                if preprocess !== nothing
+                    ppr = preprocess(builder, args)
+                end
+                res = call!(builder, FT0, fn, rparms)
+                callconv!(res, callconv(fn))
+            end
+
+            cmp = icmp!(builder, LLVM.API.LLVMIntNE, parms[1 + extra_rt], parms[1 + cmpidx + extra_rt])
+
+            br!(builder, cmp, good, bad)
+            position!(builder, good)
+
+            if !force_run
+                if preprocess !== nothing
+                    ppr = preprocess(builder, rparms)
+                end
+                res = call!(builder, FT0, fn, rparms)
+                callconv!(res, callconv(fn))
+            end
+            if postprocess !== nothing
+                postprocess(builder, res, rparms, ppr)
+            end
+            if void_rt
+                ret!(builder)
+            else
+                ret!(builder, res)
+            end
+
+            position!(builder, bad)
+            if postprocess_const !== nothing
+                postprocess_const(builder, res, rparms, ppr)
+                if void_rt
+                    ret!(builder)
+                else
+                    ret!(builder, res)
+                end
+            elseif void_rt
+                ret!(builder)
+            else
+                ret!(builder, parms[1])
+            end
+        end
+        push!(function_attributes(fn), EnumAttribute("alwaysinline"))
+    end
+    return cfn
+end
+
+"""
+
+Helper function for llvm-level rule generation. Will call the same function (and optional postprocessing),
+if the argument at index `cmpidx` isn't active. This takes into account runtime activity as a reason
+the value may not be active. 
+
+If postprocess_const is set, the original function will always be called, but the postprocessing will be
+conditionally gated as follows.
+
+If the relevant input is active (and verified by runtime activity), 
+    postprocess(B, result, args) will run as normal
+Otherwise
+    postprocess_const(B, result, args) will run
+"""
+function call_same_with_inverted_arg_if_active!(
+    B::LLVM.IRBuilder,
+    gutils::GradientUtils,
+    orig::LLVM.CallInst,
+    args::Vector{<:LLVM.Value},
+    valTys::Vector{API.CValueType},
+    lookup::Bool;
+    preprocess=nothing,
+    postprocess=nothing,
+    postprocess_const = nothing,
+    force_run = postprocess_const !== nothing,
+    cmpidx::Int = 1,
+    movebefore = true,
+    need_result = true
+)::Union{LLVM.Value, Nothing}
+    @assert length(args) == length(valTys)
+
+    origops = collect(operands(orig))
+    if !force_run && is_constant_value(gutils, origops[cmpidx])
+        if !need_result
+            return nothing
+        else
+            return new_from_original(gutils, orig)
+        end
+    end
+
+    if !get_runtime_activity(gutils) || (!force_run && is_constant_value(gutils, origops[cmpidx]))
+        ppr = nothing
+        if preprocess !== nothing
+            ppr = preprocess(B, args)
+        end
+        res = call_samefunc_with_inverted_bundles!(
+            B,
+            gutils,
+            orig,
+            args,
+            valTys,
+            lookup
+        )
+        callconv!(res, callconv(orig))
+        debug_from_orig!(gutils, res, orig)
+
+        if postprocess_const === nothing
+            if postprocess !== nothing
+                postprocess(B, res, args, ppr)
+            end
+        elseif is_constant_value(gutils, origops[cmpidx])
+            postprocess_const(B, res, args, ppr)
+        elseif postprocess !== nothing
+            postprocess(B, res, args, ppr)
+        end
+
+        if !need_result
+            return nothing
+        else
+            return res
+        end
+    end
+
+    if cmpidx isa Int
+        valTys = copy(valTys)
+        @assert valTys[cmpidx] == API.VT_Shadow
+        valTys[cmpidx] = API.VT_Both
+    end
+    args = collect(LLVM.Value, args)
+    insert!(args, 1, new_from_original(gutils, origops[cmpidx]))
+    newval = nothing
+    if value_type(orig) != LLVM.VoidType() && postprocess_const === nothing && need_result
+        newval = new_from_original(gutils, orig)
+        insert!(args, 1, newval)
+    end
+    prefn = LLVM.called_operand(orig)::LLVM.Function
+    condfn = get_or_insert_conditional_execute!(prefn; force_run, preprocess, postprocess, postprocess_const, need_result, cmpidx)
+
+    res = LLVM.Value(
+        API.EnzymeGradientUtilsCallWithInvertedBundles(
+            gutils,
+            condfn,
+            LLVM.function_type(condfn),
+            args,
+            length(args),
+            orig,
+            valTys,
+            length(valTys),
+            B,
+            false,
+        ),
+    ) #=lookup=#
+    callconv!(res, callconv(orig))
+
+    debug_from_orig!(gutils, res, orig)
+    if movebefore && newval !== nothing
+        API.moveBefore(newval, res, B)
+    end
+
+    if !need_result
+        return nothing
+    else
+        return res
+    end
+end
+
+
+"""
+Helper function for llvm-level rule generation. Will call call_same_with_inverted_arg_if_active with
+corresponding extracted batches if width > 1, otherwise it will call it once.
+"""
+function batch_call_same_with_inverted_arg_if_active!(
+    B::LLVM.IRBuilder,
+    gutils::GradientUtils,
+    orig::LLVM.CallInst,
+    args::Vector{<:LLVM.Value},
+    valTys::Vector{API.CValueType},
+    lookup::Bool;
+    kwargs...
+)
+
+    width = get_width(gutils)
+
+    void_rt = value_type(orig) ==LLVM.VoidType()
+    shadow = if !void_rt
+        ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+        LLVM.UndefValue(ST)::LLVM.Value
+    end
+
+
+    for idx in 1:width
+        args2 = args
+        if width > 1
+            args2 = collect(LLVM.Value, args)
+            for i in 1:length(valTys)
+                if valTys[i] == API.VT_Shadow
+                    args2[i] = extract_value!(B, args2[i], idx - 1)
+                end
+            end
+        end
+        res = call_same_with_inverted_arg_if_active!(B, gutils, orig, args2, valTys, lookup; kwargs..., movebefore=idx == 1)
+        if shadow === nothing
+            continue
+        end
+        if width == 1
+            shadow = res
+        else            
+            shadow = insert_value!(B, shadow, res, idx - 1)
+            if idx == 1
+                norm = new_from_original(gutils, orig)
+                if norm == res
+                    API.moveBefore(norm, shadow, B)
+                end
+            end
+        end
+    end
+
+    return shadow
+end

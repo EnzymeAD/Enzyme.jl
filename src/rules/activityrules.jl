@@ -1,5 +1,5 @@
 
-function julia_activity_rule(f::LLVM.Function)
+function julia_activity_rule(f::LLVM.Function, method_table)
     if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1")
         return
     end
@@ -57,6 +57,16 @@ function julia_activity_rule(f::LLVM.Function)
         parmsRemoved,
     )
 
+    kwarg_inactive = false
+
+    if isKWCallSignature(mi.specTypes)
+        if EnzymeRules.is_inactive_kwarg_from_sig(Interpreter.simplify_kw(mi.specTypes); world, method_table)
+            kwarg_inactive = true
+        end
+    end
+
+
+
     if !Enzyme.Compiler.no_type_setting(mi.specTypes; world)[1]
         any_active = false
         for arg in jlargs
@@ -69,13 +79,13 @@ function julia_activity_rule(f::LLVM.Function)
             typ, _ = enzyme_extract_parm_type(f, arg.codegen.i)
             @assert typ == arg.typ
 
-            if guaranteed_const_nongen(arg.typ, world)
+            if (kwarg_inactive && arg.arg_i == 2) || guaranteed_const_nongen(arg.typ, world)
                 push!(
                     parameter_attributes(f, arg.codegen.i),
                     StringAttribute("enzyme_inactive"),
                 )
-	    else
-		any_active = true
+    	    else
+        		any_active = true
             end
         end
         if sret !== nothing
