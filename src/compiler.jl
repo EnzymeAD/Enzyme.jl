@@ -532,6 +532,11 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
         if is_sret_union(RT)
             attr = StringAttribute("enzymejl_sret_union_bytes", string(union_alloca_type(RT)))
             push!(parameter_attributes(llvmfn, 1), attr)
+            for u in LLVM.uses(llvmfn)
+                u = LLVM.user(u)
+                @assert isa(u, LLVM.CallInst)
+                LLVM.API.LLVMAddCallSiteAttribute(u, LLVM.API.LLVMAttributeIndex(1), attr)
+            end
         end
 
         if returnRoots

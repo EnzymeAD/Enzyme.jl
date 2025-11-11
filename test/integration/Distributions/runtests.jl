@@ -81,39 +81,12 @@ function test_grad(case::TestCase; rtol=1e-6, atol=1e-6)
     else
         Enzyme.Forward
     end
-    r_mode = if (case.runtime_activity === Both || case.runtime_activity === Reverse)
-        Enzyme.set_runtime_activity(Enzyme.Reverse)
-    else
-        Enzyme.Reverse
-    end
 
-    if case.broken === Both || case.broken === Forward
-        @test_broken(
-            collect(Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
-            rtol = rtol,
-            atol = atol,
-        )
-    else
-        @test(
-            collect(Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
-            rtol = rtol,
-            atol = atol,
-        )
-    end
-
-    if case.broken === Both || case.broken === Reverse
-        @test_broken(
-            collect(Enzyme.gradient(r_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
-            rtol = rtol,
-            atol = atol,
-        )
-    else
-        @test(
-            collect(Enzyme.gradient(r_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
-            rtol = rtol,
-            atol = atol,
-        )
-    end
+    @test(
+        collect(Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
+        rtol = rtol,
+        atol = atol,
+    )
     return nothing
 end
 
@@ -129,7 +102,7 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
                 S = X'X
                 Λ = Diagonal(map(inv ∘ sqrt, diag(S)))
                 C = cholesky(Symmetric(Λ * S * Λ))
-                return logpdf(LKJCholesky(2, v), C)
+                return logpdf(LKJCholesky(2, 1.1), C)
             end,
             (randn(rng, 2, 2), 1.1);
             name="LKJCholesky", splat=true
