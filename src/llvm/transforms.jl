@@ -1438,6 +1438,11 @@ function prop_global!(g::LLVM.GlobalVariable)
                     end
                 end
             end
+	    if value_type(var) != value_type(res)
+		al = alloca!(B, value_type(res))
+		store!(B, res, al)
+		res = load!(B, value_type(var), al)
+	    end
             replace_uses!(var, res)
             eraseInst(LLVM.parent(var), var)
             continue
