@@ -548,20 +548,16 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
             return res
         end
 
-        if ekind == "enzyme_sret" || ekind == "enzyme_sret_v"
-            if LLVM.is_opaque(vt)
-                msg = sprint() do io
-                    println(io, "Failed to get sret type of function\n")
-                    println(io, "idx = ", string(idx))
-                    println(io, "vt = ", string(vt))
-                    println(io, "fn = ", string(fn))
-                end
-                throw(OpaquePointerError(msg))
+        if ekind == "enzyme_sret"
+	    ety = parse(UInt, LLVM.value(attr))
+	    ety = Base.reinterpret(LLVM.API.LLVMTypeRef, ety)
+	    ety = LLVM.LLVMType(ety)
+            if !LLVM.is_opaque(vt)
+		@assert ety == eltype(vt)
             end
         
-            return eltype(vt)
+            return ety
         end
-
 
         if ekind == "enzymejl_parmtype_ref"
             enzymejl_parmtype_ref = GPUCompiler.ArgumentCC(parse(UInt, LLVM.value(attr)))

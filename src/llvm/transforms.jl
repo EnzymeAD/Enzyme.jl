@@ -1706,11 +1706,6 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
-                        eltype = if isa(ops[i], LLVM.AllocaInst)
-                            LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(ops[i]))
-                        else
-                            LLVM.eltype(value_type(ops[i]))
-                        end
                         seenfn = false
                         todo = LLVM.Instruction[]
                         if isa(ops[i], LLVM.AllocaInst)
