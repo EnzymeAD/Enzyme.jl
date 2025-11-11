@@ -275,7 +275,7 @@ function Base.showerror(io::IO, e::LookupError)
     Base.show_signature_function(io, e.ft)
     Base.show_tuple_as_call(io, :function, e.tt; hasfirst=false, kwargs=nothing)
     if Core._hasmethod(GPUCompiler.signature_type_by_tt(e.ft, e.tt))
-        print(io, "\n (method exists but is not available in world age $(e.world))")
+        print(io, "\n(method exists but is not available in world age $(e.world))")
     end
 end
 
