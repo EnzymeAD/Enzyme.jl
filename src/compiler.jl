@@ -6397,7 +6397,7 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
     
     target = EnzymeTarget()
     rt2 = if A isa UnionAll
-        rrt = primal_return_type_world(Mode == API.DEM_ForwardMode ? Forward : Reverse, world, mi)
+        rrt = primal_return_type_world(Mode, world, mi)
 
         # Don't error here but default to nothing return since in cuda context we don't use the device overrides
         if rrt == Union{}
