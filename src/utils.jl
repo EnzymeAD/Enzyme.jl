@@ -372,7 +372,7 @@ function methodinstance_generator(world::UInt, source, self, @nospecialize(mode:
     tt = tt.parameters[1]
 
     slotnames = Core.svec(Symbol("#self#"), :mode, :ft, :tt)
-    stub = Core.GeneratedFunctionStub(prevmethodinstance, slotnames, Core.svec())
+    stub = Core.GeneratedFunctionStub(identity, slotnames, Core.svec())
 
     # look up the method match
     min_world = Ref{UInt}(typemin(UInt))
