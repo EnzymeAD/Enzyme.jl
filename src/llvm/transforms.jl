@@ -753,9 +753,14 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     v2 = operands(v)[1]
                                     if addrspace(value_type(v2)) == 0
                                         if addr == 13 && isa(v, LLVM.ConstantExpr)
+					    PT = if LLVM.is_opaque(value_type(v))
+						LLVM.PointerType(10)
+					    else
+						LLVM.PointerType(eltype(value_type(v)), 10)
+					    end
                                             v2 = const_addrspacecast(
                                                 operands(v)[1],
-                                                LLVM.PointerType(eltype(value_type(v)), 10),
+                                                PT
                                             )
                                             return v2, offset, hasload
                                         end
@@ -912,11 +917,12 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 undeforpoison |= isa(v, LLVM.PoisonValue)
                             end
                             if undeforpoison
-                                return LLVM.UndefValue(
-                                    LLVM.PointerType(eltype(value_type(v)), 10),
-                                ),
-                                offset,
-                                addr == 13
+				PT = if LLVM.is_opaque(value_type(v))
+				   LLVM.PointerType(10)
+				else
+				   LLVM.PointerType(eltype(value_type(v)), 10)
+				end
+				return LLVM.UndefValue(PT), offset, addr == 13
                             end
 
                             if isa(v, LLVM.PHIInst) && !hasload && haskey(goffsets, v)
