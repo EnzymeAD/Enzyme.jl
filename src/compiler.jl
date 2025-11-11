@@ -6259,7 +6259,7 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
                     :fakeworld, :fa, :a, :tt, :mode, :width,
                     :modifiedbetween, :returnprimal, :shadowinit,
                     :abi, :erriffuncwritten, :runtimeactivity, :strongzero)
-    stub = Core.GeneratedFunctionStub(thunk, slotnames, Core.svec())
+    stub = Core.GeneratedFunctionStub(identity, slotnames, Core.svec())
 
     ft = eltype(FA)
     primal_tt = Tuple{map(eltype, TT.parameters)...}
@@ -6378,7 +6378,7 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
                           :returnprimal, :shadowinit, :expectedtapetype,
                           :erriffuncwritten, :runtimeactivity, :strongzero)
 
-    stub = Core.GeneratedFunctionStub(deferred_id_generator, slotnames, Core.svec())
+    stub = Core.GeneratedFunctionStub(identity, slotnames, Core.svec())
 
     ft = eltype(FA)
     primal_tt = Tuple{map(eltype, TT.parameters)...}
