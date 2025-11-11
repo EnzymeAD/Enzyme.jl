@@ -124,6 +124,8 @@ function EnzymeInterpreter(
     cache_or_token,
     mt::Union{Nothing,Core.MethodTable},
     world::UInt,
+    inf_params::InferenceParams,
+    opt_params::OptimizationParams,
     forward_rules::Bool,
     reverse_rules::Bool,
     inactive_rules::Bool,
@@ -133,11 +135,11 @@ function EnzymeInterpreter(
 )
     @assert world <= Base.get_world_counter()
 
-    parms = @static if VERSION >= v"1.12.0-DEV.1017"
-        InferenceParams()
-    else
-        InferenceParams(; unoptimize_throw_blocks=false)
-    end
+    # parms = @static if VERSION >= v"1.12.0-DEV.1017"
+    #     InferenceParams()
+    # else
+    #     InferenceParams(; unoptimize_throw_blocks=false)
+    # end
     
     @static if HAS_INTEGRATED_CACHE
 
@@ -171,10 +173,11 @@ function EnzymeInterpreter(
             Base.empty!(cache_or_token)
         end
     end
+	method_table = mt == nothing ? Core.Compiler.InternalMethodTable(world) : Core.Compiler.OverlayMethodTable(world, mt),
 
     return EnzymeInterpreter(
         cache_or_token,
-	mt == nothing ? Core.Compiler.InternalMethodTable(world) : Core.Compiler.OverlayMethodTable(world, mt),
+        method_table,
 
         # Initially empty cache
         Vector{InferenceResult}(),
@@ -183,8 +186,8 @@ function EnzymeInterpreter(
         world,
 
         # parameters for inference and optimization
-        parms,
-        OptimizationParams(),
+        inf_params,
+        opt_params,
         forward_rules::Bool,
         reverse_rules::Bool,
         inactive_rules::Bool,

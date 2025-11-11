@@ -185,6 +185,8 @@ if VERSION >= v"1.11.0-DEV.1552"
         Interpreter.EnzymeInterpreter(
             GPUCompiler.ci_cache_token(job),
             GPUCompiler.method_table(job),
+            GPUCompiler.inference_params(job),
+            GPUCompiler.optimization_params(job),
             job.world,
             job.config.params.mode,
             true
@@ -211,6 +213,8 @@ else
         Interpreter.EnzymeInterpreter(
             enzyme_ci_cache(job),
             GPUCompiler.method_table(job),
+            GPUCompiler.inference_params(job),
+            GPUCompiler.optimization_params(job),
             job.world,
             job.config.params.mode,
             true
