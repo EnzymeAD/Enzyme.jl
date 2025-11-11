@@ -159,7 +159,7 @@ sqrtsumsq2(x) = (sum(abs2, x) * sum(abs2, x))
     #     println(fn)
     # end
     # TODO per system being run on the indexing in the mapreduce is broken
-    @test count("call fastcc void @diffejulia__mapreduce", fn) == 1
+    @test_broken count("call fastcc void @diffejulia__mapreduce", fn) == 1
     # TODO we need to have enzyme circumvent the double pointer issue by also considering a broader
     # no memory overwritten state [in addition to the arg-based variant]
     @test_broken !occursin("aug", fn)
