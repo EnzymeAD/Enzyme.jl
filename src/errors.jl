@@ -96,7 +96,7 @@ function Base.showerror(io::IO, ece::EnzymeRuntimeException)
 end
 
 struct EnzymeRuntimeExceptionMI <: EnzymeError
-    backtrace::Cstring
+    msg::Cstring
     mi::Core.MethodInstance
     world::UInt
 end
