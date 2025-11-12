@@ -1,0 +1,5 @@
+[deps]
+Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
+GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
+Oceananigans = "9e8cae18-63c1-5223-a75c-80ca9d6e9a09"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
