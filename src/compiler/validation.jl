@@ -616,6 +616,10 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     method_table = Core.Compiler.method_table(interp)
     bt = backtrace(inst)
     dest = called_operand(inst)
+    
+    if isa(dest, LLVM.PHIInst) && all(Base.Fix1(==, operands(dest)[1]), operands(dest))
+       dest = operands(dest)[1]
+    end
     if isa(dest, LLVM.ConstantExpr) && opcode(dest) == LLVM.API.LLVMIntToPtr && isa(operands(dest)[1], LLVM.ConstantExpr) && opcode(operands(dest)[1]) == LLVM.API.LLVMPtrToInt
        dest = operands(operands(dest)[1])[1] 
     end
@@ -1144,7 +1148,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 		    else
 			false, nothing
 		    end
-
+	
                     lfn = nothing
                     if found 
                         lfn = replaceWith

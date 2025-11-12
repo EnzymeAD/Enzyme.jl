@@ -301,7 +301,12 @@ function enzyme_custom_setup_args(
                         LLVM.ConstantInt(LLVM.IntType(32), 0),
                     ],
                 )
-                if value_type(val) != eltype(value_type(ptr))
+                
+                if !is_opaque(value_type(ptr))
+                    @assert eltype(value_type(ptr)) == arty
+                end
+
+                if value_type(val) != arty
                     val = load!(B, arty, val)
                 end
                 store!(B, val, ptr)
@@ -336,7 +341,12 @@ function enzyme_custom_setup_args(
                         LLVM.ConstantInt(LLVM.IntType(32), 0),
                     ],
                 )
-                if value_type(val) != eltype(value_type(ptr))
+
+                if !is_opaque(value_type(ptr))
+                    @assert eltype(value_type(ptr)) == arty
+                end
+
+                if value_type(val) != arty
                     if overwritten[end]
                         bt = GPUCompiler.backtrace(orig)
                         msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
@@ -347,21 +357,21 @@ function enzyme_custom_setup_args(
                             "As a workaround until support for this is added, try passing values as separate arguments rather than as an aggregate of type $Ty.\n"*msg2,
                         )
                     end
-                    if arty == eltype(value_type(val))
-                        val = load!(B, arty, val)
-                    else
-                        bt = GPUCompiler.backtrace(orig)
-                        msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
-                        val = LLVM.UndefValue(arty)
-                        emit_error(
-                            B,
-                            orig,
-                            "Enzyme: active by ref type $Ty is wrong type in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr))\n"*msg2,
-                        )
+
+                    if !LLVM.is_opaque(value_type(val))
+                        if arty != eltype(value_type(val))
+                            msg = sprint() do io
+                                println(io, "Enzyme: active by ref type $Ty is wrong type in application of custom rule for $mi val=$(string(val)) ptr=$(string(ptr)) arty=$arty")
+                            end
+
+                            EnzymeInternalError(msg, ir, bt)
+                        end
                     end
+
+                    val = load!(B, arty, val)
                 end
 
-                if eltype(value_type(ptr)) == value_type(val)
+                if arty == value_type(val)
                     store!(B, val, ptr)
                     if any_jltypes(llty)
                         emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
@@ -441,7 +451,12 @@ function enzyme_custom_setup_args(
                     ],
                 )
                 needsload = false
-                if value_type(val) != eltype(value_type(ptr))
+
+                if !is_opaque(value_type(ptr))
+                    @assert eltype(value_type(ptr)) == arty
+                end
+
+                if value_type(val) != arty
                     val = load!(B, arty, val)
                     if !mixed
                         ptr_val = ival
@@ -719,13 +734,14 @@ end
     end
 
     if sret !== nothing
+        sty = sret_ty(llvmf, 1)
         if LLVM.version().major >= 12
-            attr = TypeAttribute("sret", eltype(value_type(parameters(llvmf)[1])))
+            attr = TypeAttribute("sret", sty)
         else
             attr = EnumAttribute("sret")
         end
         LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1), attr)
-        res = load!(B, eltype(value_type(parameters(llvmf)[1])), sret)
+        res = load!(B, sty, sret)
     end
     if swiftself
         attr = EnumAttribute("swiftself")
@@ -1436,8 +1452,9 @@ function enzyme_custom_common_rev(
     end
 
     if sret !== nothing
+        sty = sret_ty(llvmf, 1+swiftself)
         if LLVM.version().major >= 12
-            attr = TypeAttribute("sret", eltype(value_type(parameters(llvmf)[1+swiftself])))
+            attr = TypeAttribute("sret", sty)
         else
             attr = EnumAttribute("sret")
         end
@@ -1446,7 +1463,7 @@ function enzyme_custom_common_rev(
             LLVM.API.LLVMAttributeIndex(1 + swiftself),
             attr,
         )
-        res = load!(B, eltype(value_type(parameters(llvmf)[1+swiftself])), sret)
+        res = load!(B, sty, sret)
         API.SetMustCache!(res)
     end
     if swiftself

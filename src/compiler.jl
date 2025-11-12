@@ -32,6 +32,8 @@ import Enzyme:
     add_edge!
 using Enzyme
 
+import Enzyme: OpaquePointerError
+
 import EnzymeCore
 import EnzymeCore: EnzymeRules, ABI, FFIABI, DefaultABI
 
@@ -511,8 +513,8 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
 
         RT = return_type(interp, mi)
 
-        _, _, returnRoots = get_return_info(RT)
-        returnRoots = returnRoots !== nothing
+        _, _, returnRoots0 = get_return_info(RT)
+        returnRoots = returnRoots0 !== nothing
 
         attributes = function_attributes(llvmfn)
         push!(
@@ -526,8 +528,19 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
         if EnzymeRules.has_easy_rule_from_sig(Interpreter.simplify_kw(mi.specTypes); job.world)
             push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
         end
+
+        if is_sret_union(RT)
+            attr = StringAttribute("enzymejl_sret_union_bytes", string(union_alloca_type(RT)))
+            push!(parameter_attributes(llvmfn, 1), attr)
+            for u in LLVM.uses(llvmfn)
+                u = LLVM.user(u)
+                @assert isa(u, LLVM.CallInst)
+                LLVM.API.LLVMAddCallSiteAttribute(u, LLVM.API.LLVMAttributeIndex(1), attr)
+            end
+        end
+
         if returnRoots
-            attr = StringAttribute("enzymejl_returnRoots", "")
+            attr = StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1])))
             push!(parameter_attributes(llvmfn, 2), attr)
             for u in LLVM.uses(llvmfn)
                 u = LLVM.user(u)
@@ -3779,7 +3792,13 @@ function lower_convention(
                 push!(wrapper_types, typ)
                 push!(wrapper_attrs, LLVM.Attribute[EnumAttribute("noalias")])
             else
-                push!(wrapper_types, eltype(typ))
+
+                elty = convert(LLVMType, arg.typ)
+                if !LLVM.is_opaque(typ)
+                    @assert elty == eltype(typ)
+                end
+
+                push!(wrapper_types, elty)
                 push!(wrapper_attrs, LLVM.Attribute[])
                 push!(loweredArgs, arg.arg_i)
             end
@@ -3865,7 +3884,9 @@ function lower_convention(
             res = call!(builder, LLVM.function_type(wrapper_f), wrapper_f, nops)
             callconv!(res, callconv(wrapper_f))
             if sret
-                @assert value_type(res) == eltype(value_type(ops[1]))
+                if !LLVM.is_opaque(value_type(ops[1]))
+                    @assert value_type(res) == eltype(value_type(ops[1]))
+                end
                 store!(builder, res, ops[1])
             else
                 LLVM.replace_uses!(ci, res)
@@ -3899,7 +3920,7 @@ function lower_convention(
             if !in(0, parmsRemoved)
                 sretPtr = alloca!(
                     builder,
-                    eltype(value_type(parameters(entry_f)[1])),
+                    sret_ty(entry_f, 1),
                     "innersret",
                 )
                 ctx = LLVM.context(entry_f)
@@ -3916,7 +3937,7 @@ function lower_convention(
             if returnRoots && !in(1, parmsRemoved)
                 retRootPtr = alloca!(
                     builder,
-                    eltype(value_type(parameters(entry_f)[1+sret])),
+                    sret_ty(entry_f, 1+sret),
                     "innerreturnroots",
                 )
                 # retRootPtr = alloca!(builder, parameters(wrapper_f)[1])
@@ -3941,7 +3962,13 @@ function lower_convention(
                         ),
                     )
                 end
-                ptr = alloca!(builder, eltype(ty), LLVM.name(parm) * ".innerparm")
+
+                elty = convert(LLVMType, arg.typ)
+                if !LLVM.is_opaque(ty)
+                    @assert elty == eltype(ty)
+                end
+
+                ptr = alloca!(builder, elty, LLVM.name(parm) * ".innerparm")
                 if TT !== nothing && TT.parameters[arg.arg_i] <: Const
                     metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
                 end
@@ -3954,7 +3981,7 @@ function lower_convention(
                 if LLVM.addrspace(ty) != 0
                     ptr = addrspacecast!(builder, ptr, ty)
                 end
-                @assert eltype(ty) == value_type(wrapparm)
+                @assert elty == value_type(wrapparm)
                 store!(builder, wrapparm, ptr)
                 push!(wrapper_args, ptr)
                 push!(
@@ -4566,10 +4593,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     found = String[]
     if bitcode_replacement() &&
        API.EnzymeBitcodeReplacement(mod, disableFallback, found) != 0
-        ModulePassManager() do pm
-            instruction_combining!(pm)
-            LLVM.run!(pm, mod)
-        end
+        run!(InstCombinePass(), mod)
         toremove = String[]
         for f in functions(mod)
             if !has_fn_attr(f, EnumAttribute("alwaysinline"))
@@ -4696,10 +4720,10 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
                 end
             end
 
-            _, _, returnRoots = get_return_info(rt)
-            returnRoots = returnRoots !== nothing
+            _, _, returnRoots0 = get_return_info(rt)
+            returnRoots = returnRoots0 !== nothing
             if returnRoots
-                attr = StringAttribute("enzymejl_returnRoots", "")
+                attr = StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1])))
                 push!(parameter_attributes(wrapper_f, 2), attr)
                 LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(2), attr)
             end
@@ -5869,7 +5893,10 @@ end
                 EnumAttribute("sret")
             end
             LLVM.API.LLVMAddCallSiteAttribute(r, LLVM.API.LLVMAttributeIndex(1), attr)
-            r = load!(builder, eltype(value_type(callparams[1])), callparams[1])
+            if !LLVM.is_opaque(value_type(callparams[1]))
+                @assert eltype(value_type(callparams[1])) == jltype
+            end
+            r = load!(builder, jltype, callparams[1])
         end
 
         if T_ret != T_void
