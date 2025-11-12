@@ -53,6 +53,7 @@ jobs:
           - DynamicExpressions
           - SymbolicRegression
           - Lux
+          - Oceananigans
           - SciML
           - KernelAbstractions
           - MatrixAlgebraKit
