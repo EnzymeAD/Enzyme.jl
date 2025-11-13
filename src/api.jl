@@ -884,7 +884,7 @@ EnzymeGradientUtilsSetReverseBlock(
     block,
 ) = ccall(
     (:EnzymeGradientUtilsSetReverseBlock, libEnzyme),
-    LLVM.API.LLVMBasicBlockRef,
+    Cvoid,
     (
         EnzymeGradientUtilsRef,
         LLVM.API.LLVMBasicBlockRef,

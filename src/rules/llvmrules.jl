@@ -1570,9 +1570,6 @@ end
         offset = new_from_original(gutils, origops[2])
         offset = lookup_value(gutils, offset, B)
 
-        currentBlock = Base.position(B)
-        ogname = LLVM.name(currentBlock)
-
         fval = if get_runtime_activity(gutils)
             lookup_value(gutils, new_from_original(gutils, origops[1]), B)
         else
@@ -1592,6 +1589,9 @@ end
 
             if get_runtime_activity(gutils) && endB === nothing
                 cond = icmp!(B, LLVM.API.LLVMIntNE, fval, args[1])
+
+	        currentBlock = Base.position(B)
+        	ogname = LLVM.name(currentBlock)
 
                 nextB = add_reverse_block!(gutils, currentBlock, ogname*"_active")
 
@@ -1644,9 +1644,6 @@ end
 
         i8 = LLVM.IntType(8)
 
-        currentBlock = Base.position(B)
-        ogname = LLVM.name(currentBlock)
-
         fval = if get_runtime_activity(gutils)
             lookup_value(gutils, new_from_original(gutils, origops[1]), B)
         else
@@ -1664,6 +1661,9 @@ end
 
             if get_runtime_activity(gutils)
                 cond = icmp!(B, LLVM.API.LLVMIntNE, fval, anti)
+        
+		currentBlock = Base.position(B)
+		ogname = LLVM.name(currentBlock)
 
                 nextB = add_reverse_block!(gutils, currentBlock, ogname*"_active")
 
