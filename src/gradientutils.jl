@@ -95,7 +95,7 @@ function add_reverse_block!(gutils::GradientUtils, block::LLVM.BasicBlock, name:
 end
 
 function set_reverse_block!(gutils::GradientUtils, block::LLVM.BasicBlock)
-    return LLVM.BasicBlock(API.EnzymeGradientUtilsSetReverseBlock(gutils, block))
+    return API.EnzymeGradientUtilsSetReverseBlock(gutils, block)
 end
 
 function get_or_insert_conditional_execute!(fn::LLVM.Function; force_run=false, need_result=true, preprocess=nothing, postprocess=nothing, postprocess_const=nothing, cmpidx::Int = 1)
