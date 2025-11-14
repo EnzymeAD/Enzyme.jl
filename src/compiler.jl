@@ -4342,7 +4342,9 @@ function lower_convention(
                 )
 		res = load!(builder, RT, sretPtr)
 		@static if VERSION >= v"1.12"
-		   res = recombine_value!(builder, res, retRootPtr)
+            	   if returnRoots
+		     res = recombine_value!(builder, res, retRootPtr)
+		   end
 		end
 		ret!(builder, res)
             end
@@ -4821,10 +4823,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             end
         end
         GPUCompiler.@safe_warn "Using fallback BLAS replacements for ($found), performance may be degraded"
-        ModulePassManager() do pm
-            global_optimizer!(pm)
-            LLVM.run!(pm, mod)
-        end
+	run!(GlobalOptPass(), mod)
     end
 
     custom, state = set_module_types!(interp, mod, primalf, job, edges, params.run_enzyme, mode)
@@ -6059,6 +6058,12 @@ end
             tape = callparams[end]
             if TapeType <: EnzymeTapeToLoad
                 llty = Compiler.from_tape_type(eltype(TapeType))
+	        
+		arg_roots = inline_roots_type(llty)
+	        if arg_roots != 0
+		   throw(AssertionError("Should check about rooted tape calling conv"))
+	        end
+
                 tape = bitcast!(
                     builder,
                     tape,
@@ -6067,9 +6072,16 @@ end
                 tape = load!(builder, llty, tape)
                 API.SetMustCache!(tape)
                 callparams[end] = tape
+
             else
                 llty = Compiler.from_tape_type(TapeType)
-                @assert value_type(tape) == llty
+	        arg_roots = inline_roots_type(llty)
+	        if arg_roots != 0
+		   tape = callparams[end-1]
+	        end
+		if value_type(tape) != llty
+		   throw(AssertionError("MisMatched Tape type, expected $(string(value_type(tape))) found $(string(llty)) from $TapeType"))
+		end
             end
         end
 
