@@ -708,7 +708,7 @@ end
             end
             Base.show_backtrace(io, bt)
         end
-        emit_error(B, orig, (msg2, fmi, world), CallingConventionMismatchError)
+        emit_error(B, orig, (msg2, fmi, world), CallingConventionMismatchError{Cstring})
         return false
     end
 
@@ -1392,7 +1392,7 @@ function enzyme_custom_common_rev(
             end
             Base.show_backtrace(io, bt)
         end
-        emit_error(B, orig, (msg2, final_mi, world), CallingConventionMismatchError)
+        emit_error(B, orig, (msg2, final_mi, world), CallingConventionMismatchError{Cstring})
         return tapeV
     end
 

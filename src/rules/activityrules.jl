@@ -35,7 +35,7 @@ function julia_activity_rule(f::LLVM.Function, method_table)
     # TODO fix the attributor inlining such that this can assert always true
     if expectLen != length(parameters(f))
         msg = sprint() do io::IO
-            println(io, "Enzyme Internal Error (expectLen != length(parameters(f)))")
+            println(io, "expectLen != length(parameters(f))")
             println(io, string(f))
             println(io, "expectLen=", string(expectLen))
             println(io, "swiftself=", string(swiftself))
@@ -45,7 +45,7 @@ function julia_activity_rule(f::LLVM.Function, method_table)
             println(io, "retRemoved=", string(retRemoved))
             println(io, "parmsRemoved=", string(parmsRemoved))
         end
-        throw(AssertionError(msg))
+        throw(CallingConventionMismatchError{String}(msg, mi, world))
     end
 
     jlargs = classify_arguments(

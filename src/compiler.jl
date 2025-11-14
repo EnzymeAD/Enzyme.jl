@@ -32,8 +32,6 @@ import Enzyme:
     add_edge!
 using Enzyme
 
-import Enzyme: OpaquePointerError
-
 import EnzymeCore
 import EnzymeCore: EnzymeRules, ABI, FFIABI, DefaultABI
 
@@ -412,7 +410,7 @@ const JuliaEnzymeNameMap = Dict{String,Any}(
     "enz_no_derivative_exc" => EnzymeNoDerivativeError{Nothing, Nothing},
     "enz_no_derivative_mi_exc" => EnzymeNoDerivativeError{Core.MethodInstance, UInt},
     "enz_non_const_kwarg_exc" => NonConstantKeywordArgException,
-    "enz_callconv_mismatch_exc"=> CallingConventionMismatchError,
+    "enz_callconv_mismatch_exc"=> CallingConventionMismatchError{Cstring},
     "enz_illegal_ta_exc" => IllegalTypeAnalysisException,
     "enz_illegal_first_pointer_exc" => IllegalFirstPointerException,
     "enz_internal_exc" => EnzymeInternalError,
