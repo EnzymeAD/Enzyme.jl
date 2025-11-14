@@ -944,7 +944,11 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 B = LLVM.IRBuilder()
                                 position!(B, v)
 
-                                sPT = LLVM.PointerType(eltype(value_type(v)), 10)
+                                sPT = if !LLVM.is_opaque(value_type(v))
+                                    LLVM.PointerType(eltype(value_type(v)), 10)
+                                else
+                                    LLVM.PointerType(10)
+                                end
                                 vphi = phi!(B, sPT, "nondecay.vphi."*LLVM.name(v))
                                 ophi = phi!(B, value_type(offset), "nondecay.ophi"*LLVM.name(v))
 				phicache[v] = (vphi, ophi)

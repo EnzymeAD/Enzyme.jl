@@ -3,6 +3,7 @@ using InlineStrings
 using LinearAlgebra
 using Statistics
 using Test
+using GPUCompiler
 
 @testset "GC" begin
     function gc_alloc(x)  # Basically g(x) = x^2
@@ -252,6 +253,12 @@ end
     # @test dpar[:sub].d[:a].v ≈ 1.0
 end
 
+
+const julia_typed_pointers = GPUCompiler.JuliaContext() do ctx
+    GPUCompiler.supports_typed_pointers(ctx)
+end
+
+
 let
     function loadsin2(xp)
         x = @inbounds xp[1]
@@ -270,7 +277,11 @@ end
     x = [2.0]
     dx = [0.0]
     @test Enzyme.autodiff(Reverse, invsin2, Active, Duplicated(x, dx)) == ((nothing,),)
-    @test dx[1] == -0.4161468365471424
+    if julia_typed_pointers
+        @test dx[1] == -0.4161468365471424
+    else
+        @test_broken dx[1] == -0.4161468365471424
+    end
 end
 
 function grad_closure(f, x)

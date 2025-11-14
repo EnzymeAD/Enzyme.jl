@@ -151,8 +151,8 @@ function Base.showerror(io::IO, ece::NonConstantKeywordArgException)
     Base.println(io, Base.unsafe_string(ece.backtrace))
 end
 
-struct CallingConventionMismatchError <: CustomRuleError
-    backtrace::Cstring
+struct CallingConventionMismatchError{ST} <: CustomRuleError
+    backtrace::ST
     mi::Core.MethodInstance
     world::UInt
 end
@@ -161,20 +161,34 @@ function Base.showerror(io::IO, ece::CallingConventionMismatchError)
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
-    print(io, "CallingConventionMismatchError: Enzyme hit an internal error trying to parse the julia calling convention from a custom rule definition:\n")
+    print(io, "CallingConventionMismatchError: Enzyme hit an internal error trying to parse the julia calling convention definition:\n")
     println(io)
     pretty_print_mi(ece.mi, io)
     println(io)
     println(io)
-    printstyled(io, "Hint"; bold = true, color = :cyan)
-    printstyled(
-        io,
-        ": catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\n";
-        color = :cyan,
-    )
+    if VERSION >= v"1.12"
+        printstyled(io, "Hint"; bold = true, color = :cyan)
+        printstyled(
+            io,
+            ": You are currently on Julia 1.12, which changed its calling convention. Tracking issue for Enzyme adapting to this new calling convention is https://github.com/EnzymeAD/Enzyme.jl/issues/2707.\n"; 
+            color = :cyan,
+        )
+    else
+        printstyled(io, "Hint"; bold = true, color = :cyan)
+        printstyled(
+            io,
+            ": catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\n";
+            color = :cyan,
+        )
+    end
     println(io)
 
-    Base.println(io, Base.unsafe_string(ece.backtrace))
+
+    if ece.backtrace isa Cstring
+        Base.println(io, Base.unsafe_string(ece.backtrace))
+    else
+        Base.println(io, ece.backtrace)
+    end
 end
 
 InteractiveUtils.code_typed(ece::CallingConventionMismatchError; kwargs...) = code_typed_helper(ece.mi, ece.world; kwargs...)
