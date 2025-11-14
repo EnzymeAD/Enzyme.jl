@@ -28,7 +28,7 @@ function array_shadow_handler(
 
     nm = LLVM.name(LLVM.called_operand(orig)::LLVM.Function)
 
-    memory = nm == "jl_alloc_genericmemory" || nm == "ijl_alloc_genericmemory"
+    memory = nm == "jl_alloc_genericmemory" || nm == "ijl_alloc_genericmemory" || nm == "jl_alloc_genericmemory_unchecked" || nm == "ijl_alloc_genericmemory_unchecked"
 
     vals = LLVM.Value[]
     valTys = API.CValueType[]
@@ -95,6 +95,7 @@ end
          "jl_alloc_array_3d", "ijl_alloc_array_3d",
          "jl_new_array", "ijl_new_array",
          "jl_alloc_genericmemory", "ijl_alloc_genericmemory",
+	 "jl_alloc_genericmemory_unchecked", "ijl_alloc_genericmemory_unchecked"
         ),
         @cfunction(
             array_shadow_handler,

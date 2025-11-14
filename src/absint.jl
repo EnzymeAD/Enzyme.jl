@@ -437,9 +437,15 @@ function abs_typeof(
         # Type tag is arg 3
         if nm == "julia.gc_alloc_obj" ||
                 nm == "jl_gc_alloc_typed" ||
-                nm == "ijl_gc_alloc_typed"
+                nm == "ijl_gc_alloc_typed" ||
             vals = absint(operands(arg)[3], partial)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.BITS_REF : nothing)
+        end
+        # Type tag is arg 3
+        if nm == "jl_alloc_genericmemory_unchecked" ||
+		nm == "ijl_alloc_genericmemory_unchecked"
+            vals = absint(operands(arg)[1], partial)
+            return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
         end
         # Type tag is arg 1
         if nm == "jl_alloc_array_1d" ||

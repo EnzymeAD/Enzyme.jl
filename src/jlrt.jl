@@ -966,6 +966,17 @@ function get_memory_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
                 return res
             end
         end
+        for (fname, num) in (
+	     ("jl_alloc_genericmemory_unchecked", 2),
+	     ("ijl_alloc_genericmemory_unchecked", 2),
+        )
+            if nm == fname
+	        # This is number of bytes not number of elements
+                res = operands(array)[3]
+		es = get_memory_elsz(B, array)
+		return udiv!(B, res, es)
+            end
+        end
     end
     ST = get_memory_struct()
     array = LLVM.pointercast!(

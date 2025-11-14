@@ -3927,14 +3927,14 @@ function lower_convention(
 
     for arg in args
         typ = arg.codegen.typ
-	if arg.rooted_typ !== nothing && !GPUCompiler.deserves_argbox(arg.rooted_typ) && arg.rooted_cc == GPUCompiler.BITS_REF && !is_mixed(arg.rooted_arg_i)
+	if arg.rooted_typ !== nothing && !GPUCompiler.deserves_argbox(arg.rooted_typ) && arg.rooted_cc == GPUCompiler.BITS_REF && !is_mixed(arg.arg_jl_i)
 	    push!(removedRoots, arg.arg_i)
 	elseif GPUCompiler.deserves_argbox(arg.typ)
             push!(boxedArgs, arg.arg_i)
             push!(wrapper_types, typ)
             push!(wrapper_attrs, LLVM.Attribute[])
         elseif arg.cc != GPUCompiler.BITS_REF
-	    if is_mixed(arg.arg_i)
+	    if is_mixed(arg.arg_jl_i)
                 push!(boxedArgs, arg.arg_i)
                 push!(raisedArgs, arg.arg_i)
                 push!(wrapper_types, LLVM.PointerType(typ, Derived))
@@ -3945,7 +3945,7 @@ function lower_convention(
             end
         else
             # bits ref, and not boxed
-	    if is_mixed(arg.arg_i)
+	    if is_mixed(arg.arg_jl_i)
                 push!(boxedArgs, arg.arg_i)
                 push!(wrapper_types, typ)
                 push!(wrapper_attrs, LLVM.Attribute[EnumAttribute("noalias")])
@@ -4134,7 +4134,7 @@ function lower_convention(
                 end
 
                 ptr = alloca!(builder, elty, LLVM.name(parm) * ".innerparm")
-                if TT !== nothing && TT.parameters[arg.arg_i] <: Const
+                if TT !== nothing && TT.parameters[arg.arg_jl_i] <: Const
                     metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
                 end
                 ctx = LLVM.context(entry_f)
@@ -5246,7 +5246,9 @@ end
                                nm == "ijl_new_array" ||
                                nm == "jl_new_array" ||
                                nm == "jl_alloc_genericmemory" ||
-                               nm == "ijl_alloc_genericmemory"
+                               nm == "ijl_alloc_genericmemory" ||
+			       nm == "jl_alloc_genericmemory_unchecked" ||
+			       nm == "ijl_alloc_genericmemory_unchecked"
                                 continue
                             end
                             if is_readonly(called)

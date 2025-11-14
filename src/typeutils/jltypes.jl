@@ -105,15 +105,16 @@ function classify_arguments(
     end
 
     last_cc = nothing
-
+    arg_jl_i = 1
     for (source_i, (source_typ, rooted_typ)) in enumerate(rooted_argument_list(source_sig.parameters))
         if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
             push!(args, (cc = GPUCompiler.GHOST, typ = source_typ, arg_i = source_i,
 			rooted_typ = rooted_typ,
 			rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
 		        rooted_cc = rooted_typ === nothing ? nothing : last_cc,
-		
+			arg_jl_i = arg_jl_i,
 			 ))
+	    arg_jl_i += 1
 	    last_cc = GPUCompiler.GHOST
             continue
         end
@@ -122,7 +123,9 @@ function classify_arguments(
 			rooted_typ = rooted_typ,
 			rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
 		        rooted_cc = rooted_typ === nothing ? nothing : last_cc,
+			arg_jl_i = arg_jl_i,
 			 ))
+	    arg_jl_i += 1
             orig_i += 1
 	    last_cc = RemovedParam
             continue
@@ -145,11 +148,13 @@ function classify_arguments(
 			rooted_typ = rooted_typ,
 			rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
 		        rooted_cc = rooted_typ === nothing ? nothing : last_cc,
+			arg_jl_i = arg_jl_i,
                     ),
                 )
                 # - boxed values
                 #   XXX: use `deserves_retbox` instead?
 		last_cc = GPUCompiler.BITS_VALUE
+	        arg_jl_i += 1
             elseif llvm_source_typ isa LLVM.PointerType
                 if llvm_source_typ != codegen_typ
                     throw(AssertionError("Mismatch codegen type llvm_source_typ=$(string(llvm_source_typ)) codegen_typ=$(string(codegen_typ)) source_i=$source_i source_sig=$source_sig, source_typ=$source_typ, codegen_i=$codegen_i, codegen_types=$(string(codegen_ft))"))
@@ -164,10 +169,12 @@ function classify_arguments(
 			rooted_typ = rooted_typ,
 			rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
 		        rooted_cc = rooted_typ === nothing ? nothing : last_cc,
+			arg_jl_i = arg_jl_i,
                     ),
                 )
                 # - references to aggregates
 		last_cc = GPUCompiler.MUT_REF
+	        arg_jl_i += 1
             else
                 @assert llvm_source_typ != codegen_typ
                 push!(
@@ -180,9 +187,11 @@ function classify_arguments(
 			rooted_typ = rooted_typ,
 			rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
 		        rooted_cc = rooted_typ === nothing ? nothing : last_cc,
+			arg_jl_i = arg_jl_i,
                     ),
                 )
 		last_cc = GPUCompiler.BITS_REF
+	        arg_jl_i += 1
             end
         else
             push!(
@@ -195,9 +204,11 @@ function classify_arguments(
 		    rooted_typ = rooted_typ,
 		    rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
 		    rooted_cc = rooted_typ === nothing ? nothing : last_cc,
+		    arg_jl_i = arg_jl_i,
                 ),
             )
 	    last_cc = GPUCompiler.BITS_VALUE
+	    arg_jl_i += 1
         end
 
         codegen_i += 1
