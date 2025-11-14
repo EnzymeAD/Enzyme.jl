@@ -437,7 +437,7 @@ function abs_typeof(
         # Type tag is arg 3
         if nm == "julia.gc_alloc_obj" ||
                 nm == "jl_gc_alloc_typed" ||
-                nm == "ijl_gc_alloc_typed" ||
+                nm == "ijl_gc_alloc_typed"
             vals = absint(operands(arg)[3], partial)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.BITS_REF : nothing)
         end
