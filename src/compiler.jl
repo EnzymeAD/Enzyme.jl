@@ -4339,7 +4339,11 @@ function lower_convention(
                         string(UInt(GPUCompiler.BITS_REF)),
                     ),
                 )
-                ret!(builder, load!(builder, RT, sretPtr))
+		res = load!(builder, RT, sretPtr)
+		@static if VERSION >= v"1.12"
+		   res = recombine_value!(builder, res, retRootPtr)
+		end
+		ret!(builder, res)
             end
         elseif LLVM.return_type(entry_ft) == LLVM.VoidType()
             ret!(builder)
