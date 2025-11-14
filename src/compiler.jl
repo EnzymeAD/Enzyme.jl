@@ -570,6 +570,7 @@ mutable struct HandlerState
     lowerConvention::Bool
     loweredArgs::Set{Int}
     boxedArgs::Set{Int}
+    removedRoots::Set{Int}
     fnsToInject::Vector{Tuple{Symbol,Type}}
 end
 
@@ -1029,7 +1030,7 @@ end
     sret = get_return_info(rettype)[2] !== nothing
     if sret
         cur = llvmfn == state.primalf
-        llvmfn, _, state.boxedArgs, state.loweredArgs = lower_convention(
+        llvmfn, _, state.boxedArgs, state.loweredArgs, state.removedRoots = lower_convention(
             mi.specTypes,
             mod,
             llvmfn,
@@ -1073,6 +1074,9 @@ end
 function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLVM.Function}, job, edges, run_enzyme, mode::API.CDerivativeMode)
 
     for f in functions(mod)
+        if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1")
+           return
+        end
         mi, RT = enzyme_custom_extract_mi(f, false)
         if mi === nothing
             continue
@@ -1107,12 +1111,18 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
         world = enzyme_extract_world(f)
 
         if expectLen != length(parameters(f))
-            continue
-            throw(
-                AssertionError(
-                    "Wrong number of parameters $(string(f)) expectLen=$expectLen swiftself=$swiftself sret=$sret returnRoots=$returnRoots spec=$(mi.specTypes.parameters) retRem=$retRemoved parmsRem=$parmsRemoved",
-                ),
-            )
+		msg = sprint() do io::IO
+		    println(io, "expectLen != length(parameters(f))")
+		    println(io, string(f))
+		    println(io, "expectLen=", string(expectLen))
+		    println(io, "swiftself=", string(swiftself))
+		    println(io, "sret=", string(sret))
+		    println(io, "returnRoots=", string(returnRoots))
+		    println(io, "mi.specTypes.parameters=", string(mi.specTypes.parameters))
+		    println(io, "retRemoved=", string(retRemoved))
+		    println(io, "parmsRemoved=", string(parmsRemoved))
+		end
+		throw(CallingConventionMismatchError{String}(msg, mi, world))
         end
 
         jlargs = classify_arguments(
@@ -1219,6 +1229,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
         #=lowerConvention=#true,
         #=loweredArgs=#Set{Int}(),
         #=boxedArgs=#Set{Int}(),
+	#=removedRoots=#Set{Int}(),
         #=fnsToInject=#Tuple{Symbol,Type}[],
     )
 
@@ -2433,6 +2444,7 @@ function enzyme!(
     @nospecialize(expectedTapeType::Type),
     loweredArgs::Set{Int},
     boxedArgs::Set{Int},
+    removedRoots::Set{Int},
 )
     if DumpPreEnzyme[]
         API.EnzymeDumpModuleRef(mod.ref)
@@ -2466,6 +2478,9 @@ function enzyme!(
     end
 
     seen = TypeTreeTable()
+    
+    seen_roots = 0
+
     for (i, T) in enumerate(TT.parameters)
         source_typ = eltype(T)
         if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
@@ -2478,15 +2493,29 @@ function enzyme!(
             end
             continue
         end
+	i += seen_roots
         isboxed = i in boxedArgs
+	
+	inline_root = false
+	if inline_roots_type(eltype(T)) != 0
+	   seen_roots += 1
+	   inline_root = true
+	end
 
         if T <: Const
             push!(args_activity, API.DFT_CONSTANT)
+	    if inline_root
+               push!(args_activity, API.DFT_CONSTANT)
+	    end
         elseif T <: Active
             if isboxed
+	    	@assert !inline_root
                 push!(args_activity, API.DFT_DUP_ARG)
             else
                 push!(args_activity, API.DFT_OUT_DIFF)
+	        if inline_root
+                   push!(args_activity, API.DFT_CONSTANT)
+	        end
             end
         elseif T <: Duplicated ||
                T <: BatchDuplicated ||
@@ -2494,8 +2523,14 @@ function enzyme!(
                T <: MixedDuplicated ||
                T <: BatchMixedDuplicated
             push!(args_activity, API.DFT_DUP_ARG)
+	    if inline_root
+               push!(args_activity, API.DFT_DUP_ARG)
+	    end
         elseif T <: DuplicatedNoNeed || T <: BatchDuplicatedNoNeed
             push!(args_activity, API.DFT_DUP_NONEED)
+	    if inline_root
+               push!(args_activity, API.DFT_DUP_ARG)
+	    end
         else
             error("illegal annotation type $T")
         end
@@ -2508,6 +2543,12 @@ function enzyme!(
         push!(args_typeInfo, typeTree)
         push!(uncacheable_args, modifiedBetween[i])
         push!(args_known_values, API.IntList())
+	if inline_root
+           typeTree = typetree(Any, ctx, dl, seen)
+           push!(args_typeInfo, typeTree)
+           push!(uncacheable_args, modifiedBetween[i])
+           push!(args_known_values, API.IntList())
+	end
     end
     if length(uncacheable_args) != length(collect(parameters(primalf)))
                 msg = sprint() do io
@@ -2832,6 +2873,9 @@ function create_abi_wrapper(
     mod = LLVM.parent(enzymefn)
     ctx = LLVM.context(mod)
 
+    # TODO
+    arg_rooting = true
+
     push!(function_attributes(enzymefn), EnumAttribute("alwaysinline"))
     hasNoInline = has_fn_attr(enzymefn, EnumAttribute("noinline"))
     if hasNoInline
@@ -2876,6 +2920,10 @@ function create_abi_wrapper(
         isboxed = GPUCompiler.deserves_argbox(source_typ)
         llvmT = isboxed ? T_prjlvalue : convert(LLVMType, source_typ)
         push!(T_wrapperargs, llvmT)
+	arg_roots = inline_roots_type(source_typ)
+	if arg_rooting && arg_roots != 0
+	   push!(T_wrapperargs, convert(LLVMType, AnyArray(arg_roots)))
+	end
 
         if T <: Const || T <: BatchDuplicatedFunc
             if is_adjoint && i != 1
@@ -2892,19 +2940,22 @@ function create_abi_wrapper(
                     push!(ActiveRetTypes, NTuple{width,source_typ})
                 end
             end
-        elseif T <: Duplicated || T <: DuplicatedNoNeed
+        elseif T <: Duplicated || T <: DuplicatedNoNeed || T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
             @assert width == 1
             push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
-            if is_adjoint && i != 1
-                push!(ActiveRetTypes, Nothing)
-            end
-        elseif T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
-            push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
+	    arg_roots = inline_roots_type(source_typ)
+	    if arg_rooting && arg_roots != 0
+	       push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
+	    end
             if is_adjoint && i != 1
                 push!(ActiveRetTypes, Nothing)
             end
         elseif T <: MixedDuplicated || T <: BatchMixedDuplicated
             push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, T_prjlvalue)))
+	    arg_roots = inline_roots_type(source_typ)
+	    if arg_rooting && arg_roots != 0
+	       push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
+	    end
             if is_adjoint && i != 1
                 push!(ActiveRetTypes, Nothing)
             end
@@ -2956,6 +3007,10 @@ function create_abi_wrapper(
                 ),
             )
             push!(T_wrapperargs, dretTy)
+	    arg_roots = inline_roots_type(actualRetType)
+	    if arg_rooting && arg_roots != 0
+	       push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
+	    end
         end
     end
 
@@ -3087,6 +3142,10 @@ function create_abi_wrapper(
             tape = LLVM.LLVMType(tape)
             jltape = convert(LLVM.LLVMType, Compiler.tape_type(tape); allow_boxed = true)
             push!(T_wrapperargs, jltape)
+	    arg_roots = inline_roots_type(tape)
+	    if arg_rooting && arg_roots != 0
+	       push!(T_wrapperargs, convert(LLVMType, AnyArray(arg_roots)))
+	    end
         else
             needs_tape = false
         end
@@ -3149,12 +3208,19 @@ function create_abi_wrapper(
 
         convty = convert(LLVMType, T′; allow_boxed = true)
 
+	arg_roots = inline_roots_type(T′)
+
         if (T <: MixedDuplicated || T <: BatchMixedDuplicated) && !isboxed # && (isa(llty, LLVM.ArrayType) || isa(llty, LLVM.StructType))
             @assert Base.isconcretetype(T′)
             al0 = al = emit_allocobj!(builder, Base.RefValue{T′}, "mixedparameter")
+	    parm = params[i]
+	    if arg_roots != 0
+		parm = recombine_value!(builder, parm, params[i+1])
+		i += 1
+	    end
             al = bitcast!(builder, al, LLVM.PointerType(llty, addrspace(value_type(al))))
-            store!(builder, params[i], al)
-            emit_writebarrier!(builder, get_julia_inner_types(builder, al0, params[i]))
+            store!(builder, parm, al)
+            emit_writebarrier!(builder, get_julia_inner_types(builder, al0, parm))
             al = addrspacecast!(builder, al, LLVM.PointerType(llty, Derived))
             push!(realparms, al)
         else
@@ -3163,9 +3229,14 @@ function create_abi_wrapper(
 
         i += 1
         if T <: Const
+	    if arg_roots != 0
+		 push(realparms, params[i])
+		 i += 1
+	    end
         elseif T <: Active
             isboxed = GPUCompiler.deserves_argbox(T′)
             if isboxed
+		@assert arg_roots == 0
                 if is_split
                     msg = sprint() do io
                         println(
@@ -3202,12 +3273,55 @@ function create_abi_wrapper(
                     0,
                 )                                            #=align=#
             end
+	    if arg_roots != 0
+		 push(realparms, params[i])
+		 i += 1
+	    end
             activeNum += 1
-        elseif T <: Duplicated || T <: DuplicatedNoNeed
-            push!(realparms, params[i])
-            i += 1
+        elseif T <: Duplicated || T <: DuplicatedNoNeed || T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
+	    # Enzyme expects, arg, darg, root, droot
+	    # Julia expects   arg, root, darg, droot
+	    # We already pushed arg
+	    # now params[i] refers to root
+	    isboxed = (T <: BatchDuplicated || T <: BatchDuplicatedNoNeed) && GPUCompiler.deserves_argbox(NTuple{width,T′})
+	    darg = nothing
+	    root = nothing
+	    droot = nothing
+	    if arg_roots != 0
+		 root = params[i]
+		 darg = params[i+1]
+		 droot = params[i+2]
+		 i += 3
+	    else
+		 darg = params[i]
+		 i += 1
+	    end
+
+	    if isboxed
+	        darg = load!(builder, convert(LLVMType, NTuple{width,T′}), darg)
+	    end
+	    push!(realparms, darg)
+	    if arg_roots != 0
+		push!(realparms, root)
+		push!(realparms, droot)
+	    end
         elseif T <: MixedDuplicated || T <: BatchMixedDuplicated
-            parmsi = params[i]
+	    # Enzyme expects, arg, [w x darg], root, droot
+	    # Julia expects   arg, root, darg, droot
+	    # We already pushed arg
+	    # now params[i] referrs to root
+	    darg = nothing
+	    root = nothing
+	    droot = nothing
+	    if arg_roots != 0
+		 root = params[i]
+		 darg = params[i+1]
+		 droot = params[i+2]
+		 i += 3
+	    else
+		 darg = params[i]
+		 i += 1
+	    end
 
             if T <: BatchMixedDuplicated
                 @assert Base.isconcretetype(T′)
@@ -3215,10 +3329,10 @@ function create_abi_wrapper(
                     njlvalue = LLVM.ArrayType(Int(width), T_prjlvalue)
                     parmsi = bitcast!(
                         builder,
-                        parmsi,
-                        LLVM.PointerType(njlvalue, addrspace(value_type(parmsi))),
+                        darg,
+                        LLVM.PointerType(njlvalue, addrspace(value_type(darg))),
                     )
-                    parmsi = load!(builder, njlvalue, parmsi)
+                    darg = load!(builder, njlvalue, darg)
                 end
             end
 
@@ -3228,7 +3342,7 @@ function create_abi_wrapper(
 
             ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, resty)))
             for idx = 1:width
-                pv = (width == 1) ? parmsi : extract_value!(builder, parmsi, idx - 1)
+                pv = (width == 1) ? darg : extract_value!(builder, darg, idx - 1)
                 pv =
                     bitcast!(builder, pv, LLVM.PointerType(llty, addrspace(value_type(pv))))
                 pv = addrspacecast!(builder, pv, LLVM.PointerType(llty, Derived))
@@ -3239,16 +3353,14 @@ function create_abi_wrapper(
             end
 
             push!(realparms, ival)
-            i += 1
-        elseif T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
-            isboxed = GPUCompiler.deserves_argbox(NTuple{width,T′})
-            val = params[i]
-            if isboxed
-                val = load!(builder, val)
-            end
-            i += 1
-            push!(realparms, val)
+	    
+	    if arg_roots != 0
+		push!(realparms, root)
+		push!(realparms, droot)
+	    end
         elseif T <: BatchDuplicatedFunc
+	    # TODO handle this
+	    @assert arg_roots == 0
             Func = get_func(T)
             funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, Func, Tuple{}, world)
             llvmf = nested_codegen!(Mode, mod, funcspec, world)
@@ -3586,60 +3698,7 @@ function create_abi_wrapper(
     end
 
     if returnRoots
-        count = 0
-        todo = Tuple{Vector{LLVM.Value},LLVM.LLVMType}[(
-            [LLVM.ConstantInt(LLVM.IntType(64), 0)],
-            jltype,
-        )]
-        while length(todo) != 0
-            path, ty = popfirst!(todo)
-            if isa(ty, LLVM.PointerType)
-                loc = inbounds_gep!(
-                    builder,
-                    root_ty,
-                    rootRet,
-                    [
-                        LLVM.ConstantInt(LLVM.IntType(64), 0),
-                        LLVM.ConstantInt(LLVM.IntType(32), count),
-                    ],
-                )
-                count += 1
-                outloc = inbounds_gep!(builder, jltype, sret, path)
-                store!(builder, load!(builder, ty, outloc), loc)
-                continue
-            end
-            if isa(ty, LLVM.ArrayType)
-                if any_jltypes(ty)
-                    for i = 1:length(ty)
-                        npath = copy(path)
-                        push!(npath, LLVM.ConstantInt(LLVM.IntType(32), i - 1))
-                        push!(todo, (npath, eltype(ty)))
-                    end
-                end
-                continue
-            end
-            if isa(ty, LLVM.VectorType)
-                if any_jltypes(ty)
-                    for i = 1:size(ty)
-                        npath = copy(path)
-                        push!(npath, LLVM.ConstantInt(LLVM.IntType(32), i - 1))
-                        push!(todo, (npath, eltype(ty)))
-                    end
-                end
-                continue
-            end
-            if isa(ty, LLVM.StructType)
-                for (i, t) in enumerate(LLVM.elements(ty))
-                    if any_jltypes(t)
-                        npath = copy(path)
-                        push!(npath, LLVM.ConstantInt(LLVM.IntType(32), i - 1))
-                        push!(todo, (npath, t))
-                    end
-                end
-                continue
-            end
-        end
-        @assert count == tracked.count
+       move_sret_tofrom_roots!(builder, jltype, sret, root_ty, rootRet, SRetPointerToRootPointer)
     end
     if T_ret != T_void
         ret!(builder, load!(builder, T_ret, sret))
@@ -3682,6 +3741,100 @@ function fixup_metadata!(f::LLVM.Function)
             end
         end
     end
+end
+
+@enum(SRetRootMovement,
+    SRetPointerToRootPointer = 0,
+    SRetValueToRootPointer = 1,
+    InsertRootToValue = 2
+   )
+
+function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value, root_ty::LLVM.LLVMType, rootRet::LLVM.Value, direction::SRetRootMovement)
+        count = 0
+        todo = Tuple{Vector{Int},LLVM.LLVMType}[(
+	    [0],
+            jltype,
+        )]
+	function to_llvm(lst::Vector{Int})
+	    vals = LLVM.Value[]
+	    push!(vals, LLVM.ConstantInt(LLVM.IntType(64), lst))
+	    for i in @view(lst[2:end])
+	       push!(vals, LLVM.ConstantInt(LLVM.IntType(32), lst))
+	    end
+	    return vals
+	end
+	val = sret
+        while length(todo) != 0
+            path, ty = popfirst!(todo)
+            if isa(ty, LLVM.PointerType)
+		if direction == SRetPointerToRootPointer || direction == SRetValueToRootPointer
+                  loc = inbounds_gep!(
+                      builder,
+                      root_ty,
+                      rootRet,
+		      to_llvm([0, count]),
+		     )
+		elseif direction == InsertRootToValue
+		  loc = extract_value!(builder, rootRet, count)
+		end
+                
+		if direction == SRetPointerToRootPointer
+		    outloc = inbounds_gep!(builder, jltype, sret, to_llvm(path))
+		    outloc = load!(builder, ty, outloc)
+                    store!(builder, outloc, loc)
+		elseif direction == SRetValueToRootPointer
+		    outloc = extract_value!(builder, sret, path)
+                    store!(builder, outloc, loc)
+		elseif direction == InsertRootToValue
+		    sret = insert_value!(builder, sret, loc, path)
+		end
+                
+		count += 1
+                continue
+            end
+            if isa(ty, LLVM.ArrayType)
+                if any_jltypes(ty)
+                    for i = 1:length(ty)
+                        npath = copy(path)
+			push!(npath, i - 1)
+                        push!(todo, (npath, eltype(ty)))
+                    end
+                end
+                continue
+            end
+            if isa(ty, LLVM.VectorType)
+                if any_jltypes(ty)
+                    for i = 1:size(ty)
+                        npath = copy(path)
+			push!(npath, i - 1)
+                        push!(todo, (npath, eltype(ty)))
+                    end
+                end
+                continue
+            end
+            if isa(ty, LLVM.StructType)
+                for (i, t) in enumerate(LLVM.elements(ty))
+                    if any_jltypes(t)
+                        npath = copy(path)
+			push!(npath, i - 1)
+                        push!(todo, (npath, t))
+                    end
+                end
+                continue
+            end
+        end
+        tracked = CountTrackedPointers(jltype)
+        @assert count == tracked.count
+	return val
+end
+
+function recombine_value!(builder::LLVM.IRBuilder, sret::LLVM.LLVMType, roots::LLVM.Value)
+   jltype = value_type(sret)
+   tracked = CountTrackedPointers(jltype)
+   @assert tracked.count > 0
+   @assert !tracked.all
+   root_ty = convert(LLVMType, AnyArray(tracked.count))
+   move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, InsertRootToValue)
 end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
@@ -3762,20 +3915,26 @@ function lower_convention(
     boxedArgs = Set{Int}()
     loweredArgs = Set{Int}()
     raisedArgs = Set{Int}()
+    removedRoots = Set{Int}()
+
+    function is_mixed(idx::Int)
+	return TT != nothing && (
+                   TT.parameters[idx] <: MixedDuplicated ||
+                   TT.parameters[idx] <: BatchMixedDuplicated
+               ) &&
+               run_enzyme
+    end
 
     for arg in args
         typ = arg.codegen.typ
-        if GPUCompiler.deserves_argbox(arg.typ)
+	if arg.rooted_typ !== nothing && !GPUCompiler.deserves_argbox(arg.rooted_typ) && arg.rooted_cc == GPUCompiler.BITS_REF && !is_mixed(arg.rooted_arg_i)
+	    push!(removedRoots, arg.arg_i)
+	elseif GPUCompiler.deserves_argbox(arg.typ)
             push!(boxedArgs, arg.arg_i)
             push!(wrapper_types, typ)
             push!(wrapper_attrs, LLVM.Attribute[])
         elseif arg.cc != GPUCompiler.BITS_REF
-            if TT != nothing &&
-               (
-                   TT.parameters[arg.arg_i] <: MixedDuplicated ||
-                   TT.parameters[arg.arg_i] <: BatchMixedDuplicated
-               ) &&
-               run_enzyme
+	    if is_mixed(arg.arg_i)
                 push!(boxedArgs, arg.arg_i)
                 push!(raisedArgs, arg.arg_i)
                 push!(wrapper_types, LLVM.PointerType(typ, Derived))
@@ -3786,12 +3945,7 @@ function lower_convention(
             end
         else
             # bits ref, and not boxed
-            if TT != nothing &&
-               (
-                   TT.parameters[arg.arg_i] <: MixedDuplicated ||
-                   TT.parameters[arg.arg_i] <: BatchMixedDuplicated
-               ) &&
-               run_enzyme
+	    if is_mixed(arg.arg_i)
                 push!(boxedArgs, arg.arg_i)
                 push!(wrapper_types, typ)
                 push!(wrapper_attrs, LLVM.Attribute[EnumAttribute("noalias")])
@@ -3810,7 +3964,8 @@ function lower_convention(
     end
 
     if length(loweredArgs) == 0 && length(raisedArgs) == 0 && !sret && !sret_union && !loweredReturn
-        return entry_f, returnRoots, boxedArgs, loweredArgs, actualRetType
+	@assert length(removedRoots) == 0
+        return entry_f, returnRoots, boxedArgs, loweredArgs, removedRoots, actualRetType
     end
 
     wrapper_fn = LLVM.name(entry_f)
@@ -3864,7 +4019,11 @@ function lower_convention(
             end
             for arg in args
                 parm = ops[arg.codegen.i]
-                if arg.arg_i in loweredArgs
+		if arg.arg_i in loweredArgs && (arg.arg_i + 1) in removedRoots
+		    push!(nops, recombine_value!(builder, load!(builder, convert(LLVMType, arg.typ), parm), ops[arg.codegen.i+1]))
+		elseif (arg.arg_i) in removedRoots && (arg.rooted_arg_i in loweredArgs)
+		    continue
+		elseif arg.arg_i in loweredArgs &&
                     push!(nops, load!(builder, convert(LLVMType, arg.typ), parm))
                 elseif arg.arg_i in raisedArgs
                     obj = emit_allocobj!(builder, arg.typ, "raisedArg")
@@ -3956,7 +4115,9 @@ function lower_convention(
         for arg in args
             parm = parameters(entry_f)[arg.codegen.i]
             wrapparm = parameters(wrapper_f)[arg.codegen.i-sret-returnRoots]
-            if arg.arg_i in loweredArgs
+	    if arg.arg_i in removedRoots
+		continue
+	    elseif arg.arg_i in loweredArgs
                 # copy the argument value to a stack slot, and reference it.
                 ty = value_type(parm)
                 if !isa(ty, LLVM.PointerType)
@@ -4457,7 +4618,7 @@ function lower_convention(
         end
         throw(LLVM.LLVMException(msg))
     end
-    return wrapper_f, returnRoots, boxedArgs, loweredArgs, loweredReturn ? expected_RT : actualRetType
+    return wrapper_f, returnRoots, boxedArgs, loweredArgs, removedRoots, loweredReturn ? expected_RT : actualRetType
 end
 
 using Random
@@ -4668,6 +4829,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     actualRetType = state.actualRetType
     loweredArgs = state.loweredArgs
     boxedArgs = state.boxedArgs
+    removedRoots = state.removedRoots
 
     @assert actualRetType !== nothing
     if params.run_enzyme
@@ -4759,7 +4921,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     returnRoots = false
 
     if state.lowerConvention
-        primalf, returnRoots, boxedArgs, loweredArgs, actualRetType = lower_convention(
+        primalf, returnRoots, boxedArgs, loweredArgs, removedRoots, actualRetType = lower_convention(
             source_sig,
             mod,
             primalf,
@@ -5155,6 +5317,7 @@ end
             expectedTapeType,
             loweredArgs,
             boxedArgs,
+	    removedRoots,
         )
         toremove = String[]
         # Inline the wrapper
@@ -5819,7 +5982,14 @@ end
         end
 
         # calls fptr
-        llvmtys = LLVMType[convert(LLVMType, x; allow_boxed = true) for x in types]
+	llvmtys = LLVMType[]
+	for x in types
+	   push!(llvmtys, convert(LLVMType, x; allow_boxed = true))
+	   arg_roots = inline_roots_type(x)
+	   if arg_roots != 0
+	       push!(llvmtys, convert(LLVMType, AnyArray(3)))
+	   end
+	end
 
         T_void = convert(LLVMType, Nothing)
 

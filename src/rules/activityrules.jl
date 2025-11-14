@@ -11,7 +11,7 @@ function julia_activity_rule(f::LLVM.Function, method_table)
     dl = string(LLVM.datalayout(LLVM.parent(f)))
 
     expectLen = (sret !== nothing) + (returnRoots !== nothing)
-    for source_typ in mi.specTypes.parameters
+    for (source_typ, _) in rooted_argument_list(mi.specTypes.parameters)
         if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
             continue
         end
@@ -79,7 +79,7 @@ function julia_activity_rule(f::LLVM.Function, method_table)
             typ, _ = enzyme_extract_parm_type(f, arg.codegen.i)
             @assert typ == arg.typ
 
-            if (kwarg_inactive && arg.arg_i == 2) || guaranteed_const_nongen(arg.typ, world)
+	    if (kwarg_inactive && arg.arg_i == 2) || guaranteed_const_nongen(arg.typ, world) || (arg.rooted_typ !== nothing && guaranteed_const_nongen(arg.rooted_typ, world))
                 push!(
                     parameter_attributes(f, arg.codegen.i),
                     StringAttribute("enzyme_inactive"),
