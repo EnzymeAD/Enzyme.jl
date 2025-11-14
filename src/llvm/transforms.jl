@@ -2587,6 +2587,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
             call!(B, funcT, func, LLVM.Value[p for p in parameters(fn)])
         end
     end
+    run!(GCInvariantVerifierPass(strong=false), mod)
     propagate_returned!(mod)
     LLVM.@dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
@@ -2601,8 +2602,11 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         end
         LLVM.run!(pb, mod)
     end
+    run!(GCInvariantVerifierPass(strong=false), mod)
     propagate_returned!(mod)
+    run!(GCInvariantVerifierPass(strong=false), mod)
     pre_attr!(mod, RunAttributor[])
+    run!(GCInvariantVerifierPass(strong=false), mod)
     if RunAttributor[]
         LLVM.@dispose pb = NewPMPassBuilder() begin
             register!(pb, EnzymeAttributorPass())
@@ -2612,6 +2616,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
             LLVM.run!(pb, mod)
         end
     end
+    run!(GCInvariantVerifierPass(strong=false), mod)
     propagate_returned!(mod)
     LLVM.@dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
@@ -2623,16 +2628,21 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 add!(fpm, AllocOptPass())
                 add!(fpm, SROAPass())
             end
-            add!(mpm, EnzymeAttributorPass())
+    	    if RunAttributor[]
+                add!(mpm, EnzymeAttributorPass())
+	    end
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, EarlyCSEPass())
             end
         end
         LLVM.run!(pb, mod)
     end
+    run!(GCInvariantVerifierPass(strong=false), mod)
     post_attr!(mod, RunAttributor[])
+    run!(GCInvariantVerifierPass(strong=false), mod)
     propagate_returned!(mod)
     
+    run!(GCInvariantVerifierPass(strong=false), mod)
 
     for u in LLVM.uses(rfunc)
         u = LLVM.user(u)
@@ -2656,6 +2666,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         end
     end
     eraseInst(mod, func)
+    run!(GCInvariantVerifierPass(strong=false), mod)
 end
 
 function safe_atomic_to_regular_store!(f::LLVM.Function)
