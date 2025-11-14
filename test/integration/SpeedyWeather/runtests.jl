@@ -51,7 +51,7 @@ autodiff(Enzyme.Reverse, checkpointed_timesteps!, Const, Duplicated(progn, d_pro
 vor_grid = transform(d_progn.vor[:, :, 2], model.spectral_transform)
 
 # nonzero
-@test sum(abs.(vor_grid)) > 0
+@test sum(abs, vor_grid) > 0
 
 # localized around the seed point
 # sensitivty has to be high around the seed point and low far away
