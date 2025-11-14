@@ -2,3 +2,10 @@
 Checkpointing = "eb46d486-4f9c-4c3d-b445-a617f2a2f1ca"
 Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 SpeedyWeather = "9e226e20-d153-4fed-8a5b-493def4f21a9"
+
+[sources]
+Enzyme = { path = "../../.." }
+
+[compat]
+Checkpointing = "0.11"
+SpeedyWeather = "=0.17.4"
