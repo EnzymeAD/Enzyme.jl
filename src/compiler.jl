@@ -1088,7 +1088,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
         dl = string(LLVM.datalayout(LLVM.parent(f)))
 
         expectLen = (sret !== nothing) + (returnRoots !== nothing)
-	for source_typ in rooted_argument_list(mi.specTypes.parameters)
+	for (source_typ, _) in rooted_argument_list(mi.specTypes.parameters)
             if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
                 continue
             end
@@ -1121,6 +1121,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
 		    println(io, "mi.specTypes.parameters=", string(mi.specTypes.parameters))
 		    println(io, "retRemoved=", string(retRemoved))
 		    println(io, "parmsRemoved=", string(parmsRemoved))
+		    println(io, "rooted_argument_list=", string(rooted_argument_list(mi.specTypes.parameters)))
 		end
 		throw(CallingConventionMismatchError{String}(msg, mi, world))
         end
