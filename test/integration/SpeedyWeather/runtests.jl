@@ -6,13 +6,14 @@
 #
 # For the test itself, we test that Enzyme doesn't error and gradients are nonzero
 
-using SpeedyWeather, Enzyme, Checkpointing
+using SpeedyWeather, Enzyme, Checkpointing, Test
 
 # Parse command line argument for N (number of timesteps)
 const N = length(ARGS) >= 1 ? parse(Int, ARGS[1]) : 5
 
-spectral_grid = SpectralGrid(trunc = 32, nlayers = 8)          # define resolution
-model = PrimitiveWetModel(; spectral_grid)                 # construct model
+spectral_grid = SpectralGrid(trunc = 32, nlayers = 8)             # define resolution
+model = PrimitiveWetModel(; spectral_grid, physics=false)         # construct model
+# physics = false to accelate the test
 simulation = initialize!(model)
 initialize!(simulation)
 run!(simulation, period = Day(20))
