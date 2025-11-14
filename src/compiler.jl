@@ -2941,7 +2941,6 @@ function create_abi_wrapper(
                 end
             end
         elseif T <: Duplicated || T <: DuplicatedNoNeed || T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
-            @assert width == 1
             push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
 	    arg_roots = inline_roots_type(source_typ)
 	    if arg_rooting && arg_roots != 0
@@ -3757,9 +3756,9 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
         )]
 	function to_llvm(lst::Vector{Int})
 	    vals = LLVM.Value[]
-	    push!(vals, LLVM.ConstantInt(LLVM.IntType(64), lst))
+	    push!(vals, LLVM.ConstantInt(LLVM.IntType(64), lst[1]))
 	    for i in @view(lst[2:end])
-	       push!(vals, LLVM.ConstantInt(LLVM.IntType(32), lst))
+	       push!(vals, LLVM.ConstantInt(LLVM.IntType(32), i))
 	    end
 	    return vals
 	end
