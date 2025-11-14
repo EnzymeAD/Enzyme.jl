@@ -1643,3 +1643,32 @@ function Base.showerror(io::IO, ece::EnzymeNonScalarReturnException)
         print(io, ece.extra)
     end
 end
+
+struct ThunkCallError <: Exception
+    thunk::Type
+    fn::Type
+    args::(NTuple{N, Type} where N)
+    correct::Type
+    hint::String
+end
+
+function Base.showerror(io::IO, e::ThunkCallError)
+    print(io, "ThunkCallError:\n")
+    print(io, "  No method matching:\n    ")
+    Base.show_signature_function(io, e.thunk)
+    Base.show_tuple_as_call(io, :var"", Tuple{e.fn, e.args...}, hasfirst=false)
+    println(io)
+    println(io)
+    print(io, "  Expected:\n    ")
+    Base.show_signature_function(io, e.thunk)
+    Base.show_tuple_as_call(io, :function, e.correct; hasfirst=false, kwargs=nothing)
+    println(io)
+    println(io)
+
+    printstyled(io, "Hint"; bold = true, color = :cyan)
+    printstyled(
+        io,
+        ": " * e.hint * "\n",
+        color = :cyan,
+    )
+end
