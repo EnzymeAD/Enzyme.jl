@@ -1088,7 +1088,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
         dl = string(LLVM.datalayout(LLVM.parent(f)))
 
         expectLen = (sret !== nothing) + (returnRoots !== nothing)
-        for source_typ in mi.specTypes.parameters
+	for source_typ in rooted_argument_list(mi.specTypes.parameters)
             if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
                 continue
             end
@@ -4022,7 +4022,7 @@ function lower_convention(
 		    push!(nops, recombine_value!(builder, load!(builder, convert(LLVMType, arg.typ), parm), ops[arg.codegen.i+1]))
 		elseif (arg.arg_i) in removedRoots && (arg.rooted_arg_i in loweredArgs)
 		    continue
-		elseif arg.arg_i in loweredArgs &&
+		elseif arg.arg_i in loweredArgs
                     push!(nops, load!(builder, convert(LLVMType, arg.typ), parm))
                 elseif arg.arg_i in raisedArgs
                     obj = emit_allocobj!(builder, arg.typ, "raisedArg")
