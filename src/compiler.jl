@@ -4078,6 +4078,7 @@ function lower_convention(
         wrapper_args = Vector{LLVM.Value}()
 
         sretPtr = nothing
+	retRootPtr = nothing
         dl = string(LLVM.datalayout(LLVM.parent(entry_f)))
         if sret
             if !in(0, parmsRemoved)
@@ -4805,10 +4806,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             end
         end
 
-        ModulePassManager() do pm
-            always_inliner!(pm)
-            LLVM.run!(pm, mod)
-        end
+        run!(AlwaysInlinerPass(), mod)
         for fname in toremove
             if haskey(functions(mod), fname)
                 f = functions(mod)[fname]
