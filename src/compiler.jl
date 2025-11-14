@@ -4505,10 +4505,7 @@ function lower_convention(
         throw(LLVM.LLVMException(msg))
     end
 
-    ModulePassManager() do pm
-        always_inliner!(pm)
-        LLVM.run!(pm, mod)
-    end
+    run!(AlwaysInlinerPass(), mod)
     if !hasReturnsTwice
         LLVM.API.LLVMRemoveEnumAttributeAtIndex(
             wrapper_f,
