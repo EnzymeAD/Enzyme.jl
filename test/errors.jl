@@ -14,10 +14,9 @@ end
 @testset "Incorrect thunk arguments" begin
 	fwd, rev = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(sumsin)}, Active, Duplicated{Vector{Float64}})
 
-	fwd(Duplicated([1.0], [2.0]))
+	@test_throws Enzyme.Compiler.ThunkCallError fwd(Duplicated([1.0], [2.0]))
 	
-	fwd(Const(sumsin), Duplicated([1.0], [2.0]), Active(3.14))
-
+	@test_throws Enzyme.Compiler.ThunkCallError fwd(Const(sumsin), Duplicated([1.0], [2.0]), Active(3.14))
 end
 
 
