@@ -383,6 +383,12 @@ end
     ::AdjointThunk{PT,FA,RT,TT,Width,TapeType},
 ) where {PT,FA,RT,TT,Width,TapeType} = TapeType
 
+@inline fn_type(::Type{<:CombinedAdjointThunk{<:Any,FA}}) where FA = FA
+@inline fn_type(::Type{<:ForwardModeThunk{<:Any,FA}}) where FA = FA
+@inline fn_type(::Type{<:AugmentedForwardThunk{<:Any,FA}}) where FA = FA
+@inline fn_type(::Type{<:AdjointThunk{<:Any,FA}}) where FA = FA
+@inline fn_type(::Type{<:PrimalErrorThunk{<:Any,FA}}) where FA = FA
+
 using .JIT
 
 include("jlrt.jl")
@@ -5320,7 +5326,7 @@ struct CompileResult{AT,PT}
 end
 
 @inline (thunk::PrimalErrorThunk{PT,FA,RT,TT,Width,ReturnPrimal})(
-    fn::FA,
+    fn,
     args...,
 ) where {PT,FA,RT,TT,Width,ReturnPrimal} = enzyme_call(
     Val(false),
@@ -5336,7 +5342,7 @@ end
 )
 
 @inline (thunk::CombinedAdjointThunk{PT,FA,RT,TT,Width,ReturnPrimal})(
-    fn::FA,
+    fn,
     args...,
 ) where {PT,FA,Width,RT,TT,ReturnPrimal} = enzyme_call(
     Val(false),
@@ -5352,7 +5358,7 @@ end
 )
 
 @inline (thunk::ForwardModeThunk{PT,FA,RT,TT,Width,ReturnPrimal})(
-    fn::FA,
+    fn,
     args...,
 ) where {PT,FA,Width,RT,TT,ReturnPrimal} = enzyme_call(
     Val(false),
@@ -5368,7 +5374,7 @@ end
 )
 
 @inline (thunk::AdjointThunk{PT,FA,RT,TT,Width,TapeT})(
-    fn::FA,
+    fn,
     args...,
 ) where {PT,FA,Width,RT,TT,TapeT} = enzyme_call(
     Val(false),
@@ -5389,7 +5395,7 @@ end
 ) where {PT,FA,Width,RT,TT,TapeT} = enzyme_call(
     Val(true),
     thunk.adjoint,
-    AdjointThunk,
+    AdjointThunk{PT,FA,RT,TT,Width,TapeT},
     Val(Width),
     Val(false),
     TT,
@@ -5400,12 +5406,12 @@ end
 ) #=ReturnPrimal=#
 
 @inline (thunk::AugmentedForwardThunk{PT,FA,RT,TT,Width,ReturnPrimal,TapeT})(
-    fn::FA,
+    fn,
     args...,
 ) where {PT,FA,Width,RT,TT,ReturnPrimal,TapeT} = enzyme_call(
     Val(false),
     thunk.primal,
-    AugmentedForwardThunk,
+    AugmentedForwardThunk{PT,FA,RT,TT,Width,ReturnPrimal,TapeT},
     Val(Width),
     Val(ReturnPrimal),
     TT,
@@ -5421,7 +5427,7 @@ end
 ) where {PT,FA,Width,RT,TT,ReturnPrimal,TapeT} = enzyme_call(
     Val(true),
     thunk.primal,
-    AugmentedForwardThunk,
+    AugmentedForwardThunk{PT,FA,RT,TT,Width,ReturnPrimal,TapeT},
     Val(Width),
     Val(ReturnPrimal),
     TT,
@@ -5457,10 +5463,11 @@ end
     ::Val{returnPrimal},
     tt::Type{T},
     rt::Type{RT},
-    fn::FA,
+    fn,
     ::Type{TapeType},
     args::Vararg{Any,N},
-) where {RawCall,PT,FA,T,RT,TapeType,N,CC,width,returnPrimal}
+) where {RawCall,PT,T,RT,TapeType,N,CC,width,returnPrimal}
+        FA = fn_type(CC)
         F = eltype(FA)
         is_forward =
             CC <: AugmentedForwardThunk || CC <: ForwardModeThunk || CC <: PrimalErrorThunk
@@ -5488,24 +5495,48 @@ end
         end
 
         if !RawCall && !(CC <: PrimalErrorThunk)
-            if rettype <: Active ||
-               rettype <: MixedDuplicated ||
-               rettype <: BatchMixedDuplicated
-                if length(argtypes) + is_adjoint + needs_tape != length(argexprs)
-                    return quote
-                        throw(MethodError($CC(fptr), (fn, args...)))
+            argtys = copy(argtypes)
+
+            pushfirst!(argtys, FA)
+
+            hint = "Arguments to the thunk should be the activities of the function and arguments"
+
+            if is_adjoint
+                if rettype <: Active ||
+                   rettype <: MixedDuplicated ||
+                   rettype <: BatchMixedDuplicated
+
+                    push!(argtys,
+                        if width == 1
+                            eltype(rettype)
+                        else
+                            NTuple{width,eltype(rettype)}
+                        end)
+                    if width == 1
+                        hint *=", then the seed of the active return"
+                    else
+                        hint *=", then an NTuple of width $width for the seeds of the batched active return"
                     end
                 end
-            elseif rettype <: Const
-                if length(argtypes) + needs_tape != length(argexprs)
-                    return quote
-                        throw(MethodError($CC(fptr), (fn, args...)))
-                    end
+
+            end
+
+            if needs_tape
+                push!(argtys, TapeType)
+                hint *=", then the tape from the forward pass"
+            end
+
+            truety = Tuple{argtys...}
+            if length(argtys) != length(args) + 1
+                return quote
+                    throw(ThunkCallError($CC, $fn, $args, $truety, $hint))
                 end
-            else
-                if length(argtypes) + needs_tape != length(argexprs)
+            end
+
+            for (expected, found) in zip(argtys, (fn, args...))
+                if !(found <: expected)
                     return quote
-                        throw(MethodError($CC(fptr), (fn, args...)))
+                        throw(ThunkCallError($CC, $fn, $args, $truety, $hint))
                     end
                 end
             end
