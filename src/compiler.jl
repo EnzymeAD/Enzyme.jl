@@ -4586,10 +4586,16 @@ function lower_convention(
         LLVM.API.LLVMInstructionEraseFromParent(p)
     end
 
+    LLVM.@dispose pb = NewPMPassBuilder() begin
+        add!(pb, NewPMModulePassManager()) do mpm
+            # Kill the temporary staging function
+	    add!(mpm, GlobalDCEPass())
+	    add!(mpm, GlobalOptPass())
+        end
+        LLVM.run!(pb, mod)
+    end
+
     ModulePassManager() do pm
-        # Kill the temporary staging function
-        global_dce!(pm)
-        global_optimizer!(pm)
         LLVM.run!(pm, mod)
     end
     if haskey(globals(mod), "llvm.used")
