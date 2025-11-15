@@ -184,10 +184,14 @@ function Base.showerror(io::IO, ece::CallingConventionMismatchError)
     println(io)
 
 
-    if ece.backtrace isa Cstring
-        Base.println(io, Base.unsafe_string(ece.backtrace))
+    if VERBOSE_ERRORS[]
+        if ece.backtrace isa Cstring
+	   Base.println(io, Base.unsafe_string(ece.backtrace))
+        else
+	   Base.println(io, ece.backtrace)
+        end
     else
-        Base.println(io, ece.backtrace)
+        print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
     end
 end
 
@@ -1248,6 +1252,41 @@ else
 		    end
                 end
 end
+                
+		if isa(cur, LLVM.LoadInst)
+                    larg, off = get_base_and_offset(operands(cur)[1])
+		    if off == 0 && isa(larg, LLVM.AllocaInst)
+			 legal = true
+			 for u in LLVM.uses(larg)
+			    u = LLVM.user(u)
+			    if isa(u, LLVM.LoadInst)
+				continue
+			    end
+			    if isa(u, LLVM.CallInst) && isa(called_operand(u), LLVM.Function)
+			       intr = LLVM.API.LLVMGetIntrinsicID(LLVM.called_operand(u))
+			       if intr == LLVM.Intrinsic("llvm.lifetime.start").id || intr == LLVM.Intrinsic("llvm.lifetime.end").id || LLVM.name(called_operand(u)) == "llvm.enzyme.lifetime_end" || LLVM.name(called_operand(u)) ==
+ "llvm.enzyme.lifetime_start"
+				    continue
+			       end
+			    end
+			    if isa(u, LLVM.StoreInst)
+				 v = operands(u)[1]
+				 if v == larg
+				    legal = false;
+				    break
+				 end
+				 if v isa ConstantInt && convert(Int, v) == -1
+				    continue
+				 end
+			    end
+			    legal = false
+			    break
+			 end
+			 if legal
+			    return make_batched(ncur, prevbb)
+			 end
+		    end
+		end
 
             legal, TT, byref = abs_typeof(cur, true)
 

@@ -7,7 +7,7 @@ LLVM.@function_pass "jl-inst-simplify" JLInstSimplifyPass
 LLVM.@module_pass "preserve-nvvm" PreserveNVVMPass
 LLVM.@module_pass "preserve-nvvm-end" PreserveNVVMEndPass
 
-const RunAttributor = Ref(true)
+const RunAttributor = Ref(VERSION < v"1.12")
 
 function enzyme_attributor_pass!(mod::LLVM.Module)
     ccall(
@@ -158,9 +158,16 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         run!(pb, mod, tm)
     end
     end # middle_optimize!
+    
+    run!(GCInvariantVerifierPass(strong=false), mod)
 
     middle_optimize!()
+    
+    run!(GCInvariantVerifierPass(strong=false), mod)
+    
     middle_optimize!(true)
+    
+    run!(GCInvariantVerifierPass(strong=false), mod)
 
     # Globalopt is separated as it can delete functions, which invalidates the Julia hardcoded pointers to
     # known functions
@@ -178,9 +185,20 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         end
         run!(pb, mod, tm)
     end
+    
+    run!(GCInvariantVerifierPass(strong=false), mod)
+    
     removeDeadArgs!(mod, tm)
+    
+    run!(GCInvariantVerifierPass(strong=false), mod)
+
     detect_writeonly!(mod)
+    
+    run!(GCInvariantVerifierPass(strong=false), mod)
+    
     nodecayed_phis!(mod)
+                
+    run!(GCInvariantVerifierPass(strong=false), mod)
 end
 
 function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)

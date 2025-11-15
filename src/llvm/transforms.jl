@@ -2623,7 +2623,9 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 add!(fpm, AllocOptPass())
                 add!(fpm, SROAPass())
             end
-            add!(mpm, EnzymeAttributorPass())
+	    if RunAttributor[]
+                add!(mpm, EnzymeAttributorPass())
+	    end
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, EarlyCSEPass())
             end
