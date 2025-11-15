@@ -5,7 +5,7 @@ iszeroinit(Base.@nospecialize t) = (Base.@_total_meta; isa(t, DataType) && (t.fl
 const datatype_layoutsize = Base.datatype_layoutsize
 else
 function datatype_layoutsize(dt::Base.DataType)
-    @_foldable_meta
+    Base.@_foldable_meta
     dt.layout == C_NULL && throw(Base.UndefRefError())
     size = unsafe_load(convert(Ptr{Base.DataTypeLayout}, dt.layout)).size
     return size % Int
