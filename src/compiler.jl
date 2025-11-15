@@ -3818,6 +3818,7 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
 		    outloc = Enzyme.API.e_extract_value!(builder, sret, path)
                     store!(builder, outloc, loc)
 		elseif direction == RootPointerToSRetValue
+		    loc = load!(builder, ty, loc)
 		    sret = Enzyme.API.e_insert_value!(builder, sret, loc, path)
 		elseif direction == RootPointerToSRetPointer
 		    outloc = inbounds_gep!(builder, jltype, sret, to_llvm(path))
@@ -4645,7 +4646,7 @@ function lower_convention(
 		"\nloweredReturn=",
 		loweredReturn
             )
-            println(io, "Broken function")
+            println(io, "Broken lower convention")
         end
         throw(LLVM.LLVMException(msg))
     end
