@@ -961,9 +961,6 @@ function get_memory_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
             "ijl_alloc_genericmemory",
         )
                 res = operands(array)[2]
-                for i = 2:num
-                    res = mul!(B, res, operands(array)[1+i])
-                end
                 return res
         end
         if nm in (
@@ -1004,11 +1001,11 @@ function get_memory_nbytes(B::LLVM.IRBuilder, memty::Type{<:Memory}, nel::LLVM.V
     if isboxed
         elsz = LLVM.ConstantInt(sizeof(Ptr{Cvoid}))
     end
-    nbytes = LLVM.mul!(b, nel, elsz)
+    nbytes = LLVM.mul!(B, nel, elsz)
 
     if isunion
         # an extra byte for each isbits union memory element, stored at m->ptr + m->length
-	nbytes = LLVM.add!(b, nbytes, nel)
+	nbytes = LLVM.add!(B, nbytes, nel)
     end
     return nbytes
 end
@@ -1031,7 +1028,7 @@ function get_memory_nbytes(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
         end
     end
     nel = get_memory_len(B, array)
-    legal, JTy = abs_typeof(ty)
+    legal, memty = abs_typeof(array)
     @assert legal
     return get_memory_nbytes(B, memty, nel)
 end

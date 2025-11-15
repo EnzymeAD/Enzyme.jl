@@ -1071,11 +1071,11 @@ end
     return
 end
 
-function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLVM.Function}, job, edges, run_enzyme, mode::API.CDerivativeMode)
+function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLVM.Function}, job, edges, run_enzyme, mode::API.CDerivativeMode)::Tuple{Dict{String,LLVM.API.LLVMLinkage}, HandlerState}
 
     for f in functions(mod)
         if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1")
-           return
+            continue
         end
         mi, RT = enzyme_custom_extract_mi(f, false)
         if mi === nothing
