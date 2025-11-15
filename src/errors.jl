@@ -184,10 +184,14 @@ function Base.showerror(io::IO, ece::CallingConventionMismatchError)
     println(io)
 
 
-    if ece.backtrace isa Cstring
-        Base.println(io, Base.unsafe_string(ece.backtrace))
+    if VERBOSE_ERRORS[]
+        if ece.backtrace isa Cstring
+	   Base.println(io, Base.unsafe_string(ece.backtrace))
+        else
+	   Base.println(io, ece.backtrace)
+        end
     else
-        Base.println(io, ece.backtrace)
+        print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
     end
 end
 
