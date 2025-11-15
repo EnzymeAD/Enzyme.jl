@@ -20,13 +20,29 @@ function array_shadow_handler(
             ),
         )
     end
-
-    typ = eltype(typ)
+    
 
     b = LLVM.IRBuilder(B)
     orig = LLVM.Value(OrigCI)::LLVM.CallInst
 
     nm = LLVM.name(LLVM.called_operand(orig)::LLVM.Function)
+    
+    if iszeroinit(typ)
+	# If already zero init we should not need to perform the initial memset.
+	# However as I have yet to actually see such a type exist in the wild, I want to see
+	# what triggers it.
+        throw(
+            AssertionError(
+	        "THERE IS A TYPE WHICH IS ZERO INIT ($typ)",
+            ),
+        )
+	# Only the regular, checked version does the zero.
+    	if nm == "jl_alloc_genericmemory" || nm == "ijl_alloc_genericmemory"
+	   return C_NULL
+	end
+    end
+
+    typ = eltype(typ)
 
     memory = nm == "jl_alloc_genericmemory" || nm == "ijl_alloc_genericmemory" || nm == "jl_alloc_genericmemory_unchecked" || nm == "ijl_alloc_genericmemory_unchecked"
 
@@ -38,13 +54,7 @@ function array_shadow_handler(
     end
 
     anti = call_samefunc_with_inverted_bundles!(b, gutils, orig, vals, valTys, false) #=lookup=#
-
-    prod = if memory
-        get_memory_len(b, anti)
-    else
-        get_array_len(b, anti)
-    end
-
+    
     isunboxed, elsz, al = Base.uniontype_layout(typ)
 
     isunion = typ isa Union
@@ -56,17 +66,26 @@ function array_shadow_handler(
         elsz = LLT_ALIGN(elsz, al)
     end
 
-    tot = prod
-    tot = LLVM.mul!(b, tot, LLVM.ConstantInt(LLVM.value_type(tot), elsz, false))
 
-    if elsz == 1 && !isunion
-        # extra byte for all julia allocated byte arrays
-        tot = LLVM.add!(b, tot, LLVM.ConstantInt(LLVM.value_type(tot), 1, false))
+    arlen = nothing
+
+    nbytes = if memory
+        get_memory_nbytes(b, anti)
+    else
+        arlen = get_array_len(b, anti)
+    	tot = LLVM.mul!(b, arlen, LLVM.ConstantInt(LLVM.value_type(arlen), elsz, false))
+    
+	if elsz == 1 && !isunion
+	   # extra byte for all julia allocated byte arrays
+	   tot = LLVM.add!(b, tot, LLVM.ConstantInt(LLVM.value_type(tot), 1, false))
+	end
+	if isunion
+	    # an extra byte for each isbits union array element, stored after a->maxsize
+	    tot = LLVM.add!(b, tot, prod)
+	end
+	tot
     end
-    if (isunion)
-        # an extra byte for each isbits union array element, stored after a->maxsize
-        tot = LLVM.add!(b, tot, prod)
-    end
+
 
     i8 = LLVM.IntType(8)
     toset = if memory
@@ -75,7 +94,7 @@ function array_shadow_handler(
         get_array_data(b, anti)
     end
 
-    mcall = LLVM.memset!(b, toset, LLVM.ConstantInt(i8, 0, false), tot, al)
+    mcall = LLVM.memset!(b, toset, LLVM.ConstantInt(i8, 0, false), nbytes, al)
 
     ref::LLVM.API.LLVMValueRef = Base.unsafe_convert(LLVM.API.LLVMValueRef, anti)
     return ref

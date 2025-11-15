@@ -1,8 +1,8 @@
 # Abstractly interpret julia from LLVM
 
 # Return (bool if could interpret, julia object interpreted to)
-function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false)::Tuple{Bool, Any}
-    if (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)) || (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Derived))
+function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked::Bool=false)::Tuple{Bool, Any}
+    if (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)) || (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Derived)) || istracked
         ce, _ = get_base_and_offset(arg; offsetAllowed = false, inttoptr = true)
         if isa(ce, GlobalVariable)
             gname = LLVM.name(ce)
@@ -444,7 +444,7 @@ function abs_typeof(
         # Type tag is arg 3
         if nm == "jl_alloc_genericmemory_unchecked" ||
 		nm == "ijl_alloc_genericmemory_unchecked"
-            vals = absint(operands(arg)[1], partial)
+	    vals = absint(operands(arg)[3], partial, true)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
         end
         # Type tag is arg 1

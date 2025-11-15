@@ -1,10 +1,15 @@
 
+iszeroinit(Base.@nospecialize t) = (Base.@_total_meta; isa(t, DataType) && (t.flags & 0x0004) == 0x0004)
+
 
 # On 1.12+, there was a change to the calling convention where
 # an additional argument would be added for the roots, this will
 # return the number of roots in the corresponding convention, or
 # 0 if it does not apply https://github.com/JuliaLang/julia/pull/55767/files#diff-62cfb2606c6a323a7f26a3eddfa0bf2b819fa33e094561fee09daeb328e3a1e7
 function inline_roots_type(@nospecialize(LT::LLVM.LLVMType))::Int
+   @static if VERSION <= v"1.12-"
+	return 0
+   else
 	   if !(LT isa LLVM.ArrayType || LT isa LLVM.StructType)
 		return 0
 	   end
@@ -13,6 +18,7 @@ function inline_roots_type(@nospecialize(LT::LLVM.LLVMType))::Int
 		return tracked.count
 	   end
 	   return 0
+   end
 end
 
 function inline_roots_type(@nospecialize(T::Type))::Int

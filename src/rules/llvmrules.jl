@@ -1813,11 +1813,11 @@ end
     end
 
     args = LLVM.Value[]
-    for a in origops[1:end-2]
+    for a in origops[1:4]
         v = invert_pointer(gutils, a, B)
         push!(args, v)
     end
-    push!(args, new_from_original(gutils, origops[end-1]))
+    push!(args, new_from_original(gutils, origops[5]))
     valTys = API.CValueType[
         API.VT_Shadow,
         API.VT_Shadow,

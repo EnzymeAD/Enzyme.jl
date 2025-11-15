@@ -1712,6 +1712,12 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
     if Base.datatype_pointerfree(Ty)
 	return
     end
+    @static if VERSION >= v"1.11"
+	if Ty <: GenericMemory
+	    # TODO throw(AssertionError("What the heck is happening, why are we gc.alloca'ing memory, $(string(V)) $Ty"))
+	    return
+	end
+    end
 
     if mode == API.DEM_ForwardMode && (used || idx != 0)
         # Zero any jlvalue_t inner elements of preceeding allocation.
@@ -5114,6 +5120,7 @@ end
                     else
                         operands(inst)[3]
                     end
+
                 if legal && Base.isconcretetype(jTy)
                     if !(
                         jTy isa UnionAll ||
@@ -5130,6 +5137,10 @@ end
                             md = to_fullmd(jTy, offset, lim)
                             @assert byref == GPUCompiler.BITS_REF ||
                                     byref == GPUCompiler.MUT_REF
+                            metadata(inst)["enzyme_truetype"] = md
+			elseif byref == GPUCompiler.BITS_VALUE && jTy <: Ptr && eltype(jTy) == Any
+			    # Todo generalize this
+			    md = to_fullmd(jTy, 0, sizeof(Ptr{Cvoid}))
                             metadata(inst)["enzyme_truetype"] = md
                         end
                     end
@@ -6080,7 +6091,7 @@ end
 		   tape = callparams[end-1]
 	        end
 		if value_type(tape) != llty
-		   throw(AssertionError("MisMatched Tape type, expected $(string(value_type(tape))) found $(string(llty)) from $TapeType"))
+		   throw(AssertionError("MisMatched Tape type, expected $(string(value_type(tape))) found $(string(llty)) from $TapeType arg_roots=$arg_roots"))
 		end
             end
         end
