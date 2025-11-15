@@ -995,6 +995,7 @@ end
 
 # nel - number of elements
 #
+@static if VERSION >= v"1.11" 
 function get_memory_nbytes(B::LLVM.IRBuilder, memty::Type{<:Memory}, nel::LLVM.Value)
     elsz = LLVM.ConstantInt(Base.datatype_layoutsize(memty))
     isboxed = Base.datatype_arrayelem(memty) == 1
@@ -1010,6 +1011,7 @@ function get_memory_nbytes(B::LLVM.IRBuilder, memty::Type{<:Memory}, nel::LLVM.V
 	nbytes = LLVM.add!(b, nbytes, nel)
     end
     return nbytes
+end
 end
 
 function get_memory_nbytes(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
