@@ -65,8 +65,8 @@ Internal function.
 Turn both `a` and `::constraint` into `a::Annotation{<:constraint}` etc
 """
 function _constrain_and_name(arg::Expr)
-    Meta.isexpr(arg, :(::), 2) && return Expr(:(::), Symbol("ann_", arg.args[1]), :(Annotation{<:$(arg.args[2])})) # it is already fine.
-    Meta.isexpr(arg, :(::), 1) && return Expr(:(::), Symbol("ann_", gensym()), :(Annotation{<:$(arg.args[1])})) # add name
+    Meta.isexpr(arg, :(::), 2) && return Expr(:(::), Symbol("ann_", arg.args[1]), :($(Annotation){<:$(arg.args[2])})) # it is already fine.
+    Meta.isexpr(arg, :(::), 1) && return Expr(:(::), Symbol("ann_", gensym()), :($(Annotation){<:$(arg.args[1])})) # add name
     # Meta.isexpr(arg, :(...), 1) &&
     #     return Expr(:(...), _constrain_and_name(arg.args[1], :Annotation))
     return error("malformed arguments: $arg")
@@ -479,7 +479,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
 
             PT = EnzymeRules.primal_type(config, ($(esc(:RTA))).parameters[1])
             ST = EnzymeRules.shadow_type(config, ($(esc(:RTA))).parameters[1])
-            AugmentedReturnType = :(EnzymeRules.AugmentedReturn{$PT,$ST,typeof(cache)})
+            AugmentedReturnType = :($(EnzymeRules.AugmentedReturn){$PT,$ST,typeof(cache)})
 
             genres = if needs_primal(config)
                 if needs_shadow(config)
