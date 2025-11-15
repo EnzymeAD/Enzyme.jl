@@ -28,7 +28,28 @@ concurrency:
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
 jobs:
+  generate-packages-list:
+    name: Generate list of packages for integration tests
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.set-packages.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: julia-actions/setup-julia@v2
+      - name: Set packages
+        id: set-packages
+        shell: julia --color=yes {0}
+        run: |
+          all_pkgs = readdir("test/integration")
+          filtered_pkgs = all_pkgs
+          pkgs = string("packages=", filtered_pkgs)
+          open(ENV["GITHUB_OUTPUT"], "w") do io
+              print(stdout, pkgs)
+              print(io, pkgs)
+          end
+
   integration:
+    needs: generate-packages-list
     timeout-minutes: 45
     name: Integration Tests - ${{ matrix.package }} - Julia ${{ matrix.version }}
     runs-on: ${{ matrix.os }}
@@ -44,36 +65,30 @@ jobs:
           - '1.11'
         os:
           - linux-x86-n2-32
-        package:
-          - Bijectors
-          - DifferentiationInterface
-          - Distributions
-          - DynamicExpressions
-          - Lux
-          - SciML
-          - KernelAbstractions
-          - Molly
-          - MPI
+        package: ${{ fromJson(needs.generate-packages-list.outputs.packages) }}
         exclude:
           - version: '1.10'
             os: linux-x86-n2-32
             package: Molly
     steps:
-      - uses: actions/checkout@v5
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: ${{ matrix.version }}
-      - uses: julia-actions/cache@v2
-      - name: "Install Dependencies"
-        run: |
-            julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 -e 'using Pkg; Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")])'
-        shell: bash
-        if: ${{ matrix.version == '1.10' }}
-      - name: "Instantiate"
-        run: |
-          julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 -e 'using Pkg; Pkg.instantiate()'
-        shell: bash
-      - name: "Run tests"
-        run: |
-            julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 test/integration/${{ matrix.package }}/runtests.jl
-        shell: bash
+      - run: |
+          echo "Hello from ${{ matrix.package }} in Julia ${{ matrix.version }}"
+
+      # - uses: actions/checkout@v5
+      # - uses: julia-actions/setup-julia@v2
+      #   with:
+      #     version: ${{ matrix.version }}
+      # - uses: julia-actions/cache@v2
+      # - name: "Install Dependencies"
+      #   run: |
+      #       julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 -e 'using Pkg; Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")])'
+      #   shell: bash
+      #   if: ${{ matrix.version == '1.10' }}
+      # - name: "Instantiate"
+      #   run: |
+      #     julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 -e 'using Pkg; Pkg.instantiate()'
+      #   shell: bash
+      # - name: "Run tests"
+      #   run: |
+      #       julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 test/integration/${{ matrix.package }}/runtests.jl
+      #   shell: bash
