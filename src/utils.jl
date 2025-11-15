@@ -468,7 +468,7 @@ function is_memory_ref_field2_an_offset(@nospecialize(T::Type{<:GenericMemoryRef
     # 0 = inlinealloc
     # 1 = isboxed
     # 2 = isbitsunion
-    return (Base.datatype_arrayelem(T.types[2]) == 2) || datatype_layoutsize(T.types[2]) == 0
+    return (Base.datatype_arrayelem(T.types[2]) == 2) || Compiler.datatype_layoutsize(T.types[2]) == 0
 end
 
 @inline function typed_fieldtype(@nospecialize(T::Type), i::Int)::Type
