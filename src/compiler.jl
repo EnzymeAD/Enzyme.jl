@@ -2500,15 +2500,16 @@ function enzyme!(
             end
             continue
         end
-	i += seen_roots
-        isboxed = i in boxedArgs
-	
+	isboxed = (i + seen_roots) in boxedArgs
 	inline_root = false
+	
 
-	# This is already after lower_convention
-	if false && inline_roots_type(eltype(T)) != 0
+	if inline_roots_type(eltype(T)) != 0
+	   # This is already after lower_convention
 	   seen_roots += 1
-	   inline_root = true
+	   if false
+	       inline_root = true
+	   end
 	end
 
         if T <: Const
