@@ -479,7 +479,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
 
             PT = EnzymeRules.primal_type(config, ($(esc(:RTA))).parameters[1])
             ST = EnzymeRules.shadow_type(config, ($(esc(:RTA))).parameters[1])
-            AugmentedReturnType = :($(EnzymeRules.AugmentedReturn){$PT,$ST,typeof(cache)})
+            AugmentedReturnType = :($(EnzymeRules.AugmentedReturn){$PT, $ST, typeof(cache)})
 
             genres = if needs_primal(config)
                 if needs_shadow(config)
