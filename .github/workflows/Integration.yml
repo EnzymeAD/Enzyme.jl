@@ -50,6 +50,7 @@ jobs:
           - Distributions
           - DynamicExpressions
           - Lux
+          - Oceananigans
           - SciML
           - KernelAbstractions
           - Molly
