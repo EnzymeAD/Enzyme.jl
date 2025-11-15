@@ -890,7 +890,7 @@ function emit_type_layout_elsz!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value)
 	legal, JTy = absint(ty)
 	if legal
 	    @assert JTy isa Type
-	    res = Base.datatype_layoutsize(JTy)
+	    res = datatype_layoutsize(JTy)
 	    return LLVM.ConstantInt(res)
 	end
 
@@ -994,7 +994,7 @@ end
 #
 @static if VERSION >= v"1.11" 
 function get_memory_nbytes(B::LLVM.IRBuilder, memty::Type{<:Memory}, nel::LLVM.Value)
-    elsz = LLVM.ConstantInt(Base.datatype_layoutsize(memty))
+    elsz = LLVM.ConstantInt(datatype_layoutsize(memty))
     isboxed = Base.datatype_arrayelem(memty) == 1
     isunion = Base.datatype_arrayelem(memty) == 2
 

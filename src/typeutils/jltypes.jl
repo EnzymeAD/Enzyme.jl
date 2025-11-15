@@ -1,6 +1,16 @@
 
 iszeroinit(Base.@nospecialize t) = (Base.@_total_meta; isa(t, DataType) && (t.flags & 0x0004) == 0x0004)
 
+@static if VERSION >= v"1.11"
+const datatype_layoutsize = Base.datatype_layoutsize
+else
+function datatype_layoutsize(dt::Base.DataType)
+    @_foldable_meta
+    dt.layout == C_NULL && throw(Base.UndefRefError())
+    size = unsafe_load(convert(Ptr{Base.DataTypeLayout}, dt.layout)).size
+    return size % Int
+end
+end
 
 # On 1.12+, there was a change to the calling convention where
 # an additional argument would be added for the roots, this will
