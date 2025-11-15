@@ -317,13 +317,14 @@ function batch_call_same_with_inverted_arg_if_active!(
     args::Vector{<:LLVM.Value},
     valTys::Vector{API.CValueType},
     lookup::Bool;
+    need_result = true,
     kwargs...
 )
 
     width = get_width(gutils)
 
     void_rt = value_type(orig) ==LLVM.VoidType()
-    shadow = if !void_rt
+    shadow = if !void_rt && need_result
         ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
         LLVM.UndefValue(ST)::LLVM.Value
     end
@@ -339,7 +340,7 @@ function batch_call_same_with_inverted_arg_if_active!(
                 end
             end
         end
-        res = call_same_with_inverted_arg_if_active!(B, gutils, orig, args2, valTys, lookup; kwargs..., movebefore=idx == 1)
+        res = call_same_with_inverted_arg_if_active!(B, gutils, orig, args2, valTys, lookup; need_result, kwargs..., movebefore=idx == 1)
         if shadow === nothing
             continue
         end
