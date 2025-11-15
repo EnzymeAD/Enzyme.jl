@@ -5265,7 +5265,9 @@ end
                             any(T2 isa Core.TypeofVararg for T2 in jTy.parameters)
                         )
                     )
-                        if offset < sizeof(jTy) && isa(sz, LLVM.ConstantInt) && sizeof(jTy) - offset >= convert(Int, sz)
+
+			 size = Base.datatype_layoutsize(jTy)
+                        if offset < size && isa(sz, LLVM.ConstantInt) && size - offset >= convert(Int, sz)
                             lim = convert(Int, sz)
                             md = to_fullmd(jTy, offset, lim)
                             @assert byref == GPUCompiler.BITS_REF ||
