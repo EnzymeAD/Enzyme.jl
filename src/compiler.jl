@@ -3774,7 +3774,7 @@ end
 @enum(SRetRootMovement,
     SRetPointerToRootPointer = 0,
     SRetValueToRootPointer = 1,
-    InsertRootToValue = 2,
+    RootPointerToSRetValue = 2,
     RootPointerToSRetPointer = 3
    )
 
@@ -3801,15 +3801,13 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
         while length(todo) != 0
             path, ty = popfirst!(todo)
             if isa(ty, LLVM.PointerType)
-		if direction == SRetPointerToRootPointer || direction == SRetValueToRootPointer || RootPointerToSRetPointer
+		if direction == SRetPointerToRootPointer || direction == SRetValueToRootPointer || direction == RootPointerToSRetPointer || direction == RootPointerToSRetValue
                   loc = inbounds_gep!(
                       builder,
                       root_ty,
                       rootRet,
 		      to_llvm(Cuint[count]),
 		     )
-		elseif direction == InsertRootToValue
-		  loc = extract_value!(builder, rootRet, count)
 		end
                 
 		if direction == SRetPointerToRootPointer
@@ -3819,7 +3817,7 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
 		elseif direction == SRetValueToRootPointer
 		    outloc = Enzyme.API.e_extract_value!(builder, sret, path)
                     store!(builder, outloc, loc)
-		elseif direction == InsertRootToValue
+		elseif direction == RootPointerToSRetValue
 		    sret = Enzyme.API.e_insert_value!(builder, sret, loc, path)
 		elseif direction == RootPointerToSRetPointer
 		    outloc = inbounds_gep!(builder, jltype, sret, to_llvm(path))
@@ -3881,7 +3879,7 @@ function recombine_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM
    @assert tracked.count > 0
    @assert !tracked.all
    root_ty = convert(LLVMType, AnyArray(Int(tracked.count)))
-   move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, InsertRootToValue)
+   move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, RootPointerToSRetValue)
 end
 
 function extract_roots_from_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM.Value)
