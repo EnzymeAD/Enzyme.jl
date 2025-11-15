@@ -3784,7 +3784,7 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
                       builder,
                       root_ty,
                       rootRet,
-		      to_llvm([count]),
+		      to_llvm(Cuint[count]),
 		     )
 		elseif direction == InsertRootToValue
 		  loc = extract_value!(builder, rootRet, count)
