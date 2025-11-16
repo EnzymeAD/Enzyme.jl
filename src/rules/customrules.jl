@@ -1622,6 +1622,8 @@ function enzyme_custom_common_rev(
                 end
             end
 
+            active_roots = inline_roots_type(RT)
+            
             ral = if active_roots != 0
                 roots_ty = convert(LLVMType, AnyArray(active_roots))
                 ral = alloca!(B, roots_ty)
@@ -1649,8 +1651,6 @@ function enzyme_custom_common_rev(
                 ptr = bitcast!(B, al, LLVM.PointerType(pty, Derived))
             end
             store!(B, val, ptr)
-
-            active_roots = inline_roots_type(RT)
 
             if active_roots == 0 && any_jltypes(llty)
                 emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
