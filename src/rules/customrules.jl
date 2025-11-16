@@ -246,7 +246,7 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
 
     llty = convert(LLVMType, Ty; allow_boxed = true)
 
-    al0 = al = emit_allocobj!(B, Ty, "$Ty")
+    al0 = al = emit_allocobj!(B, Ty, "arg.$Ty")
     al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
     al = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
 
@@ -384,7 +384,9 @@ function enzyme_custom_setup_args(
         if inline_roots_type(arg.typ) != 0
             roots_op = ops[arg.codegen.i + 1]
             roots_activep = API.EnzymeGradientUtilsGetDiffeType(gutils, roots_op, false)
-            @assert roots_activep == activep
+            if roots_activep != activep
+                throw("roots_activep ($roots_activep) != activep ($activep)")
+            end
         end
 
         # Don't push the keyword args to uncacheable
@@ -493,6 +495,9 @@ function enzyme_custom_setup_args(
             end
         else
             @assert value_type(val) == arty
+            if reverse && B !== nothing
+                val = lookup_value(gutils, val, B)
+            end
         end
 
         if isKWCall && arg.arg_jl_i == 2

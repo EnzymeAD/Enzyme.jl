@@ -1,5 +1,7 @@
 # Imported from https://github.com/JuliaDiff/DiffTests.jl
 
+include("common.jl")
+
 module DiffTests
     using LinearAlgebra: det, norm, dot, tr
     using Statistics: mean

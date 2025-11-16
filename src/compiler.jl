@@ -3296,7 +3296,7 @@ function create_abi_wrapper(
 	    darg = nothing
 	    root = nothing
 	    droot = nothing
-	    if arg_rooting &&arg_roots != 0
+	    if arg_rooting && arg_roots != 0
 		 root = params[i]
 		 darg = params[i+1]
 		 droot = params[i+2]
@@ -3310,7 +3310,7 @@ function create_abi_wrapper(
 	        darg = load!(builder, convert(LLVMType, NTuple{width,T′}), darg)
 	    end
 	    push!(realparms, darg)
-	    if arg_roots != 0
+	    if arg_rooting && arg_roots != 0
 		push!(realparms, root)
 		push!(realparms, droot)
 	    end
@@ -3821,10 +3821,10 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
                     store!(builder, outloc, loc)
 		elseif direction == RootPointerToSRetValue
 		    loc = load!(builder, ty, loc)
-		    sret = Enzyme.API.e_insert_value!(builder, sret, loc, path)
+		    val = Enzyme.API.e_insert_value!(builder, val, loc, path)
         elseif direction == NullifySRetValue
             loc = unsafe_to_llvm(builder, nothing)
-            sret = Enzyme.API.e_insert_value!(builder, sret, loc, path)
+            val = Enzyme.API.e_insert_value!(builder, val, loc, path)
 		elseif direction == RootPointerToSRetPointer
 		    outloc = inbounds_gep!(builder, jltype, sret, to_llvm(path))
 		    loc = load!(builder, ty, loc)
@@ -3888,7 +3888,7 @@ function nullify_rooted_values!(builder::LLVM.IRBuilder, sret::LLVM.Value)
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, nothing, NullifySRetValue)
 end
 
-function recombine_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM.Value)
+function recombine_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM.Value)::LLVM.Value
    jltype = value_type(sret)
    tracked = CountTrackedPointers(jltype)
    @assert tracked.count > 0
