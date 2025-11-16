@@ -337,7 +337,7 @@ end
         # `Ref{Any}` container only to be able to catch and test the warnings emitted during
         # compilation in the body of the function.
         test_mat2num = Ref{Any}(test_matrix_to_number)
-        warn_msg = f === DiffTests.vec2num_3 ? r"Using fallback BLAS replacements for" : ""
+        warn_msg = (f === DiffTests.vec2num_3 && VERSION < v"1.12") ? r"Using fallback BLAS replacements for" : ""
         @test_warn warn_msg test_mat2num[](f, y; rtol = 1.0e-6, atol = 1.0e-6)
     end
 
