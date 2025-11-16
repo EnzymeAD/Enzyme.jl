@@ -1,3 +1,5 @@
+using Enzyme, Test
+
 @testset "jl_typeof" begin
     # https://github.com/EnzymeAD/Enzyme.jl/issues/2405
     function foo(x)

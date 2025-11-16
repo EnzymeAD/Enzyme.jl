@@ -1,5 +1,4 @@
-using LogExpFunctions
-
+using Enzyme, Test, LogExpFunctions
 
 xlogydiff(x) = xlogy(x[1], 23.0)
 @testset "LogExpFunctions" begin

@@ -25,7 +25,7 @@ function inline_roots_type(@nospecialize(LT::LLVM.LLVMType))::Int
 	   end
 	   tracked = CountTrackedPointers(LT)
 	   if tracked.count > 0 && !tracked.all
-		return tracked.count
+	       return Int(tracked.count)
 	   end
 	   return 0
    end

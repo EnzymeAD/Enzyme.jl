@@ -1,5 +1,9 @@
 using SpecialFunctions
 
+include("../common.jl")
+
+Enzyme.Compiler.VERBOSE_ERRORS[] = true
+
 @testset "SpecialFunctions ext" begin
     lgabsg(x) = SpecialFunctions.logabsgamma(x)[1]
     test_scalar(lgabsg, 1.0; rtol = 1.0e-5, atol = 1.0e-5)

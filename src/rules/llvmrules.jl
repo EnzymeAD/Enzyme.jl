@@ -133,8 +133,10 @@ include("parallelrules.jl")
             (
                 "ijl_f__apply_latest",
                 "ijl_f__call_latest",
+                "ijl_f_invokelatest",
                 "jl_f__apply_latest",
                 "jl_f__call_latest",
+                "jl_f_invokelatest",
             ),
         )
             return common_apply_latest_fwd(2, B, orig, gutils, normalR, shadowR)
@@ -226,8 +228,10 @@ end
             (
                 "ijl_f__apply_latest",
                 "ijl_f__call_latest",
+                "ijl_f_invokelatest",
                 "jl_f__apply_latest",
                 "jl_f__call_latest",
+                "jl_f_invokelatest",
             ),
         )
             return common_apply_latest_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
@@ -318,8 +322,10 @@ end
             (
                 "ijl_f__apply_latest",
                 "ijl_f__call_latest",
+                "ijl_f_invokelatest",
                 "jl_f__apply_latest",
                 "jl_f__call_latest",
+                "jl_f_invokelatest",
             ),
         )
             common_apply_latest_rev(2, B, orig, gutils, tape)
@@ -2247,7 +2253,7 @@ end
         @fwdfunc(invoke_fwd),
     )
     register_handler!(
-        ("jl_f__apply_latest", "jl_f__call_latest"),
+        ("jl_f__apply_latest", "jl_f__call_latest", "jl_f_invokelatest"),
         @augfunc(apply_latest_augfwd),
         @revfunc(apply_latest_rev),
         @fwdfunc(apply_latest_fwd),

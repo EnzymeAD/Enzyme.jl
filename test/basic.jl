@@ -2,6 +2,8 @@ using Enzyme
 using Statistics
 using Test
 
+include("common.jl")
+
 make3() = (1.0, 2.0, 3.0)
 
 @testset "Simple tests" begin

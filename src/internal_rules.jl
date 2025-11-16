@@ -1,5 +1,10 @@
 using Random
 
+@static if VERSION >= v"1.12"
+function EnzymeRules.inactive(::typeof(Base.CoreLogging.handle_message_nothrow), args...)
+    return nothing
+end
+end
 function EnzymeRules.inactive(::typeof(Base.CoreLogging.logmsg_code), args...)
     return nothing
 end
