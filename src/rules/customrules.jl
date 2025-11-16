@@ -159,7 +159,7 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
                           @nospecialize(roots_val::Union{Nothing, LLVM.Value}),
                           arg,
                           args::Vector{LLVM.Value},
-                          overwritten::Vector{Bool},
+                          overwritten::Vector{UInt8},
                           activity_wrap::Bool,
                           ogval::LLVM.Value,
                           @nospecialize(roots_cache::Union{LLVM.Value, Nothing}), 
@@ -370,7 +370,6 @@ function enzyme_custom_setup_args(
 
         @assert !(isghostty(arg.typ) || Core.Compiler.isconstType(arg.typ))
 
-
         op = ops[arg.codegen.i]
         roots_op = nothing
 
@@ -579,16 +578,16 @@ function enzyme_custom_setup_args(
         else
 
             ival = nothing
-            root_ival = nothing
+            roots_ival = nothing
             if B !== nothing
                 ival = invert_pointer(gutils, op, B)
                 if reverse
                     ival = lookup_value(gutils, ival, B)
                 end
-                if root_op !== nothing
-                    root_ival = invert_pointer(gutils, root_op, B)
+                if roots_op !== nothing
+                    roots_ival = invert_pointer(gutils, roots_op, B)
                     if reverse
-                        root_ival = lookup_value(gutils, root_ival, B)
+                        root_sival = lookup_value(gutils, roots_ival, B)
                     end
                 end
             end
@@ -647,17 +646,6 @@ function enzyme_custom_setup_args(
                     alloca!(B, sroot_ty)
                 end
 
-                al0, al = push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache, shadow_roots)
-
-                iptr = inbounds_gep!(
-                    B,
-                    llty,
-                    al,
-                    [
-                        LLVM.ConstantInt(LLVM.IntType(64), 0),
-                        LLVM.ConstantInt(LLVM.IntType(32), 1),
-                    ],
-                )
 
                 T_jlvalue = LLVM.StructType(LLVMType[])
                 T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
@@ -675,7 +663,9 @@ function enzyme_custom_setup_args(
                         ld = load!(B, iarty, ev)
                         ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
 
-                        local_shadow_root = (width == 1) ? root_ival : extract_value!(B, root_ival, idx - 1)
+                        local_shadow_root = if roots_ival !== nothing
+                            (width == 1) ? roots_ival : extract_value!(B, roots_ival, idx - 1)
+                        end
 
                         if shadow_roots !== nothing
 
@@ -726,7 +716,7 @@ function enzyme_custom_setup_args(
                         ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
                         ld = load!(B, llrty, ev)
                         if n_primal_roots > 0
-                            sroots = (width == 1) ? root_ival : extract_value!(B, root_ival, idx - 1)
+                            sroots = (width == 1) ? roots_ival : extract_value!(B, roots_ival, idx - 1)
                             ld = recombine_value!(B, ld, sroots)
                         end
                         ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
@@ -754,13 +744,25 @@ function enzyme_custom_setup_args(
                     push!(mixeds, (ptr_val, arg.typ, refal))
                 end
 
+                al0, al = push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache, shadow_roots)
+
+                iptr = inbounds_gep!(
+                    B,
+                    llty,
+                    al,
+                    [
+                        LLVM.ConstantInt(LLVM.IntType(64), 0),
+                        LLVM.ConstantInt(LLVM.IntType(32), 1),
+                    ],
+                )
+
                 store!(B, ival, iptr)
 
-                if any_jltypes(llty)
-                    emit_writebarrier!(B, get_julia_inner_types(B, al0, val, ival))
+                if n_shadow_roots == 0 && any_jltypes(llty)
+                    emit_writebarrier!(B, get_julia_inner_types(B, al0, ival))
                 end
 
-                push!(args, al)
+
             end
             push!(activity, Ty)
         end
@@ -944,7 +946,6 @@ end
                 Base.println(io, "llvmf = ", string(llvmf))
                 Base.println(io, "value_type(llvmf) = ", string(value_type(llvmf)))
                 Base.println(io, "orig = ", string(orig))
-                Base.println(io, "isKWCall = ", string(isKWCall))
                 Base.println(io, "kwtup = ", string(kwtup))
                 Base.println(io, "TT = ", string(TT))
                 Base.println(io, "sret = ", string(sret))
