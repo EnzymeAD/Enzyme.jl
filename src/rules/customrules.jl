@@ -230,9 +230,10 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
             root_ptr = shadow_roots
         end
     elseif roots_val !== nothing
-        if push_roots
+        if shadow_roots === nothing
             root_ptr = roots_val
         else
+            root_ty = convert(LLVMType, AnyArray(num_inline_roots))
             ld = load!(B, root_ty, roots_val)
             sr2 = bitcast!(B, shadow_roots, LLVM.PointerType(root_ty))
             store!(B, ld, sr2)
@@ -493,38 +494,6 @@ function enzyme_custom_setup_args(
         else
             @assert value_type(val) == arty
         end
- 
-        roots_ty = nothing
-
-        if roots_op !== nothing
-            roots_ty = convert(LLVMType, AnyArray(inline_roots_type(arg.typ)))
-            @assert value_type(roots_op) == LLVM.PointerType(roots_ty, 0)
-
-            if uncacheable[arg.codegen.i + 1] != 0
-                # Roots are is overwritten
-                if !reverse
-                    if B !== nothing
-                        root_cache = load!(B, roots_ty, roots_op)
-                        push!(byval_tapes, root_cache)
-                    end
-                else
-                    if B !== nothing
-                        @assert tape isa LLVM.Value
-                        root_cache = extract_value!(B, tape, length(byval_tapes))
-                        @assert value_type(root_cache) == roots_ty
-                        push!(byval_tapes, root_cache)
-
-                        al = alloca!(B, roots_ty)
-                        store!(B, root_cache, al)
-                        roots_op = al
-                    end
-                end
-            else
-                if reverse && B !== nothing
-                    val = lookup_value(gutils, val, B)
-                end
-            end
-        end
 
         if isKWCall && arg.arg_jl_i == 2
 
@@ -580,13 +549,24 @@ function enzyme_custom_setup_args(
             roots_ival = nothing
             if B !== nothing
                 ival = invert_pointer(gutils, op, B)
+
+                uncache_arg = uncacheable[arg.codegen.i] != 0
+                if roots_op !== nothing
+                    uncache_arg |= uncacheable[arg.codegen.i + 1] != 0
+                end
+                if uncache_arg
+                    # TODO we will are not restoring the bits_ref data of the
+                    # shadow value (though now we are at least doing so properly for primal)
+                    # x/ref https://github.com/EnzymeAD/Enzyme.jl/issues/2304
+                end
+
                 if reverse
                     ival = lookup_value(gutils, ival, B)
                 end
                 if roots_op !== nothing
                     roots_ival = invert_pointer(gutils, roots_op, B)
                     if reverse
-                        root_sival = lookup_value(gutils, roots_ival, B)
+                        roots_ival = lookup_value(gutils, roots_ival, B)
                     end
                 end
             end
