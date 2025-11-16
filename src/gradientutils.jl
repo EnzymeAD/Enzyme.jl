@@ -49,13 +49,17 @@ function get_shadow_type(gutils::GradientUtils, T::LLVM.LLVMType)
 end
 function get_uncacheable(gutils::GradientUtils, orig::LLVM.CallInst)
     uncacheable = Vector{UInt8}(undef, length(collect(LLVM.operands(orig))) - 1)
+    if get_mode(gutils) == API.DEM_ForwardMode
+        fill!(uncacheable, 0)
+        return uncacheable
+    end
     if API.EnzymeGradientUtilsGetUncacheableArgs(
         gutils,
         orig,
         uncacheable,
         length(uncacheable),
     ) != 1
-        uncacheable .= 1
+        fill!(uncacheable, 1)
     end
     return uncacheable
 end

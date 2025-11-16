@@ -161,7 +161,7 @@ function Base.showerror(io::IO, ece::CallingConventionMismatchError)
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
-    print(io, "CallingConventionMismatchError: Enzyme hit an internal error trying to parse the julia calling convention definition:\n")
+    print(io, "CallingConventionMismatchError: Enzyme hit an internal error trying to parse the julia calling convention definition for:\n")
     println(io)
     pretty_print_mi(ece.mi, io)
     println(io)
@@ -184,7 +184,7 @@ function Base.showerror(io::IO, ece::CallingConventionMismatchError)
     println(io)
 
 
-    if VERBOSE_ERRORS[]
+    if true || VERBOSE_ERRORS[]
         if ece.backtrace isa Cstring
 	   Base.println(io, Base.unsafe_string(ece.backtrace))
         else

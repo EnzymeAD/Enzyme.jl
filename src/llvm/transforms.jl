@@ -1476,7 +1476,7 @@ function prop_global!(g::LLVM.GlobalVariable)
         end
         if isa(var, LLVM.GetElementPtrInst)
             if all(isa(v, LLVM.ConstantInt) for v in operands(var)[2:end])
-                if convert(Cuint, operands(var)[2]) == 0
+                if LLVM.API.LLVMConstIntGetZExtValue(operands(var)[2]) == 0
                     for u in LLVM.uses(var)
                         u = LLVM.user(u)
                         push!(
