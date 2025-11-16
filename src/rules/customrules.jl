@@ -182,9 +182,11 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
     end
 
     if shadow_roots !== nothing
-        @assert inline_roots_type(Ty) == inline_roots_type(arg.typ)
+        if inline_roots_type(Ty) < inline_roots_type(arg.typ)
+            throw(AssertionError("inline_roots_type(Ty = $Ty) [ $(inline_roots_type(Ty)) ] < inline_roots_type(arg.typ = $(arg.typ))  [ $(inline_roots_type(arg.typ)) ]"))
+        end
     else
-        @assert inline_roots_type(Ty) >= inline_roots_type(arg.typ)
+        @assert inline_roots_type(Ty) == inline_roots_type(arg.typ)
     end
 
     arty = convert(LLVMType, arg.typ; allow_boxed = true)
@@ -243,7 +245,7 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
 
     llty = convert(LLVMType, Ty; allow_boxed = true)
 
-    al0 = al = emit_allocobj!(B, Ty)
+    al0 = al = emit_allocobj!(B, Ty, "$Ty")
     al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
     al = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
 
@@ -492,27 +494,27 @@ function enzyme_custom_setup_args(
             @assert value_type(val) == arty
         end
  
-        root_ty = nothing
+        roots_ty = nothing
 
         if roots_op !== nothing
-            root_ty = convert(LLVMType, AnyArray(inline_roots_type(arg.typ)))
+            roots_ty = convert(LLVMType, AnyArray(inline_roots_type(arg.typ)))
             @assert value_type(roots_op) == LLVM.PointerType(roots_ty, 0)
 
             if uncacheable[arg.codegen.i + 1] != 0
                 # Roots are is overwritten
                 if !reverse
                     if B !== nothing
-                        root_cache = load!(B, root_ty, roots_op)
+                        root_cache = load!(B, roots_ty, roots_op)
                         push!(byval_tapes, root_cache)
                     end
                 else
                     if B !== nothing
                         @assert tape isa LLVM.Value
                         root_cache = extract_value!(B, tape, length(byval_tapes))
-                        @assert value_type(root_cache) == root_ty
+                        @assert value_type(root_cache) == roots_ty
                         push!(byval_tapes, root_cache)
 
-                        al = alloca!(B, root_ty)
+                        al = alloca!(B, roots_ty)
                         store!(B, root_cache, al)
                         roots_op = al
                     end
@@ -637,10 +639,10 @@ function enzyme_custom_setup_args(
                 n_shadow_roots = inline_roots_type(Ty)
                 n_primal_roots = inline_roots_type(arg.typ)
 
-                sroot_ty = nothing
+                sroots_ty = nothing
                 shadow_roots = if n_shadow_roots != 0
-                    sroot_ty = convert(LLVMType, AnyArray(n_shadow_roots))
-                    alloca!(B, sroot_ty)
+                    sroots_ty = convert(LLVMType, AnyArray(n_shadow_roots))
+                    alloca!(B, sroots_ty)
                 end
 
 
@@ -669,7 +671,7 @@ function enzyme_custom_setup_args(
                             for r = 1:n_primal_roots
                                 rptr = inbounds_gep!(
                                     B,
-                                    sroot_ty,
+                                    sroots_ty,
                                     shadow_roots,
                                     [
                                         LLVM.ConstantInt(LLVM.IntType(64), 0),
@@ -679,7 +681,7 @@ function enzyme_custom_setup_args(
 
                                 ld = load!(B, T_prjlvalue, inbounds_gep!(
                                     B,
-                                    LLVM.ArrayType(n_primal_roots, T_prjlvalue),
+                                    LLVM.ArrayType(T_prjlvalue, n_primal_roots),
                                     local_shadow_root,
                                     [
                                         LLVM.ConstantInt(LLVM.IntType(64), 0),
@@ -700,7 +702,7 @@ function enzyme_custom_setup_args(
                     end
                     llrty = convert(LLVMType, RefTy)
                     RefTy = Base.RefValue{RefTy}
-                    refal0 = refal = emit_allocobj!(B, RefTy)
+                    refal0 = refal = emit_allocobj!(B, RefTy, "mixed.$RefTy")
                     refal = bitcast!(
                         B,
                         refal,
@@ -727,7 +729,7 @@ function enzyme_custom_setup_args(
 
                         rptr = inbounds_gep!(
                             B,
-                            LLVM.ArrayType(n_primal_roots, T_prjlvalue),
+                            LLVM.ArrayType(T_prjlvalue, n_primal_roots),
                             shadow_roots,
                             [
                                 LLVM.ConstantInt(LLVM.IntType(64), 0),
@@ -1469,10 +1471,12 @@ function enzyme_custom_common_rev(
             end
             tapeV = LLVM.UndefValue(LLVM.StructType(tapetys))
             for (i, v) in enumerate(byval_tapes)
-                tapeV = LLVM.insert_value(tapeV, v, i - 1)
+                tapeV = LLVM.insert_value!(B, tapeV, v, i - 1)
             end
             tapeV = tapeV.ref
         end
+    elseif tape isa LLVM.Value && length(byval_tapes) != 0
+        tape = extract_value!(B, tape, length(byval_tapes))
     end
 
     # if !forward
@@ -1581,7 +1585,7 @@ function enzyme_custom_common_rev(
                     extract_roots_from_value!(B, tape, ral)
                 end
 
-                al0 = al = emit_allocobj!(B, TapeT)
+                al0 = al = emit_allocobj!(B, TapeT, "tape.$TapeT")
                 al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
                 store!(B, tape, al)
                 if tape_roots == 0 && any_jltypes(llty)
@@ -1628,7 +1632,7 @@ function enzyme_custom_common_rev(
                 ral
             end
 
-            al0 = al = emit_allocobj!(B, nRT)
+            al0 = al = emit_allocobj!(B, nRT, "activeRT.$RT")
             al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             al = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
 
@@ -1940,7 +1944,7 @@ function enzyme_custom_common_rev(
             if length(byval_tapes) == 0
                 tapeV = tapeV0.ref
             else
-                tapeV = insert_value!(LLVM.Value(tapeV), tapeV0, length(byval_tapes))
+                tapeV = insert_value!(B, LLVM.Value(tapeV), tapeV0, length(byval_tapes)).ref
             end
             idx += 1
         end
