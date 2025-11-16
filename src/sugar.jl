@@ -405,7 +405,7 @@ gradient!(ReverseWithPrimal, dx, f, [2.0, 3.0])
     dx::X,
     f::F,
     x::X,
-) where {X<:Array,F,ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}
+) where {X<:AbstractArray,F,ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}
     make_zero!(dx)
     res = autodiff(rm, f, Active, Duplicated(x, dx))
     return if ReturnPrimal
