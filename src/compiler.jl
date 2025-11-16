@@ -3776,10 +3776,11 @@ end
     SRetPointerToRootPointer = 0,
     SRetValueToRootPointer = 1,
     RootPointerToSRetValue = 2,
-    RootPointerToSRetPointer = 3
+    RootPointerToSRetPointer = 3,
+    NullifySRetValue = 4
    )
 
-function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value, root_ty::LLVM.LLVMType, rootRet::LLVM.Value, direction::SRetRootMovement)
+function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value, root_ty::LLVM.LLVMType, rootRet::Union{LLVM.Value, Nothing}, direction::SRetRootMovement)
         count = 0
         todo = Tuple{Vector{Cuint},LLVM.LLVMType}[(
 	    Cuint[],
@@ -3821,6 +3822,9 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
 		elseif direction == RootPointerToSRetValue
 		    loc = load!(builder, ty, loc)
 		    sret = Enzyme.API.e_insert_value!(builder, sret, loc, path)
+        elseif direction == NullifySRetValue
+            loc = unsafe_to_llvm(builder, nothing)
+            sret = Enzyme.API.e_insert_value!(builder, sret, loc, path)
 		elseif direction == RootPointerToSRetPointer
 		    outloc = inbounds_gep!(builder, jltype, sret, to_llvm(path))
 		    loc = load!(builder, ty, loc)
@@ -3873,6 +3877,15 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
         tracked = CountTrackedPointers(jltype)
         @assert count == tracked.count
 	return val
+end
+
+function nullify_rooted_values!(builder::LLVM.IRBuilder, sret::LLVM.Value)
+   jltype = value_type(sret)
+   tracked = CountTrackedPointers(jltype)
+   @assert tracked.count > 0
+   @assert !tracked.all
+   root_ty = convert(LLVMType, AnyArray(Int(tracked.count)))
+   move_sret_tofrom_roots!(builder, jltype, sret, root_ty, nothing, NullifySRetValue)
 end
 
 function recombine_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM.Value)
