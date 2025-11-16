@@ -361,7 +361,7 @@ function enzyme_custom_setup_args(
                    !Core.Compiler.isconstType(Const{arg.typ})
                     val = unsafe_to_llvm(B, arg.typ.parameters[1])
                     roots_val = nothing
-                    push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true)
+                    push_box_for_argument!(B, Const{arg.typ}, val, roots_val, arg, args, uncacheable, true)
                 else
                     @assert isghostty(Const{arg.typ}) ||
                             Core.Compiler.isconstType(Const{arg.typ})
