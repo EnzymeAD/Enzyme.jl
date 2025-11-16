@@ -207,9 +207,8 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
                     push!(args, roots_val)
                 end
             end
-            @assert push_roots
+            @assert shadow_roots === nothing
             return nothing
-
         else
             val = load!(B, arty, ogval)
         end
@@ -533,15 +532,15 @@ function enzyme_custom_setup_args(
 
             # Only constant kw arg tuple's are currently supported
             if activep == API.DFT_CONSTANT
-                kwtup0 = Ty
+                kwtup0 = arg.typ
                 if B !== nothing
-                    push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, false, ogval, roots_cache)
+                    push_box_for_argument!(B, kwtup0, val, roots_val, arg, args, uncacheable, false, ogval, roots_cache)
                 end
             else
                 @assert activep == API.DFT_DUP_ARG
-                kwtup0 = Duplicated{Ty}
+                kwtup0 = Duplicated{arg.typ}
                 if B !== nothing
-                    push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache)
+                    push_box_for_argument!(B, kwtup0, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache)
                 end
             end
 
@@ -559,9 +558,7 @@ function enzyme_custom_setup_args(
                 push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache)
             end
 
-            if !arg.rooted_typ
-                push!(activity, Ty)
-            end
+            push!(activity, Ty)
 
         elseif activep == API.DFT_OUT_DIFF || (
             mode != API.DEM_ForwardMode &&
@@ -1524,7 +1521,7 @@ function enzyme_custom_common_rev(
                 end
             end
 
-            if !isapplicablefn
+            if !applicablefn
                 tape_idx += 1
             end
 
@@ -1623,7 +1620,7 @@ function enzyme_custom_common_rev(
             end
 
             active_roots = inline_roots_type(RT)
-            
+
             ral = if active_roots != 0
                 roots_ty = convert(LLVMType, AnyArray(active_roots))
                 ral = alloca!(B, roots_ty)
@@ -1672,7 +1669,7 @@ function enzyme_custom_common_rev(
                 end
             end
 
-            if !isapplicablefn
+            if !applicablefn
                 active_idx += 1
             end
 
