@@ -163,7 +163,7 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
                           activity_wrap::Bool,
                           ogval::LLVM.Value,
                           @nospecialize(roots_cache::Union{LLVM.Value, Nothing}), 
-                          @nospecialiez(shadow_roots::Union{Nothing, LLVM.Value}) = nothing
+                          @nospecialize(shadow_roots::Union{Nothing, LLVM.Value}) = nothing
                           )::Union{Nothing, Tuple{LLVM.Value, LLVM.Value}}
 
     if !activity_wrap
@@ -700,6 +700,7 @@ function enzyme_custom_setup_args(
                                     ]
                                 ))
                                 store!(B, ld, rptr)
+                            end
                         end
 
                     end
@@ -745,7 +746,7 @@ function enzyme_custom_setup_args(
                                 LLVM.ConstantInt(LLVM.IntType(64), 0),
                                 LLVM.ConstantInt(LLVM.IntType(32), n_shadow_roots - 1),
                             ]
-                        ))
+                        )
                         store!(B, refal0, rptr)
                     end
 
@@ -1674,11 +1675,7 @@ function enzyme_custom_common_rev(
                 active_idx += 1
             end
 
-            insert!(
-                args,
-                active_idx
-                al,
-            )
+            insert!(args, active_idx, al)
 
             if ral !== nothing
                 insert!(args, active_idx + 1, ral)
