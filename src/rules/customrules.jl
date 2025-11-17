@@ -2051,7 +2051,7 @@ end
     fop = called_operand(orig)::LLVM.Function
     for (i, v) in enumerate(operands(orig)[1:end-1])
         if v == val
-            if !has_arg_attr(fop, i, StringAttribute("enzymejl_returnRoots"))
+            if true || !has_arg_attr(fop, i, StringAttribute("enzymejl_returnRoots"))
                 non_rooting_use = true
                 break
             end
