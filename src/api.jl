@@ -1324,7 +1324,9 @@ end
     ET_TypeDepthExceeded = 6,
     ET_MixedActivityError = 7,
     ET_IllegalReplaceFicticiousPHIs = 8,
-    ET_GetIndexError = 9
+    ET_GetIndexError = 9,
+    ET_NoTruncate = 10,
+    ET_GCRewrite = 11
 )
 
 function EnzymeTypeAnalyzerToString(typeanalyzer)

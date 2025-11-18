@@ -1164,6 +1164,20 @@ function julia_error(
         throw(IllegalFirstPointerException(msg, ir, bt))
     elseif errtype == API.ET_InternalError
         throw(EnzymeInternalError(msg, ir, bt))
+    elseif errtype == API.ET_GCRewrite
+        msgN = sprint() do io::IO
+            print(io, msg)
+            println(io)
+            data2 = LLVM.Value(data2)
+            println(io, "Fn = ", string(LLVM.parent(data2::LLVM.Argument)))
+            println(io, "argFn = ", string(data2::LLVM.Argument))
+            if data !== C_NULL
+                data = LLVM.Value(LLVM.API.LLVMValueRef(data))
+                println(io, "cur = ", string(data))
+            end
+        end
+        GPUCompiler.@safe_warn msgN
+        return C_NULL
     elseif errtype == API.ET_TypeDepthExceeded
         msg2 = sprint() do io
             print(io, msg)
