@@ -1169,8 +1169,9 @@ function julia_error(
             print(io, msg)
             println(io)
             data2 = LLVM.Value(data2)
-            println(io, "Fn = ", string(LLVM.parent(data2::LLVM.Argument)))
-            println(io, "argFn = ", string(data2::LLVM.Argument))
+            fn = LLVM.Function(LLVM.API.LLVMGetParamParent(data2::LLVM.Argument))
+            println(io, "Fn = ", string(fn))
+            println(io, "arg = ", string(data2::LLVM.Argument))
             if data !== C_NULL
                 data = LLVM.Value(LLVM.API.LLVMValueRef(data))
                 println(io, "cur = ", string(data))
