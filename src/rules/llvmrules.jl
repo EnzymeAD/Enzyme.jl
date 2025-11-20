@@ -1953,11 +1953,12 @@ end
     API.moveBefore(newo, err, B)
 
     if unsafe_load(shadowR) != C_NULL
-        valTys = API.CValueType[API.VT_Primal, API.VT_Primal]
-        args = [
-            new_from_original(gutils, operands(orig)[1]),
-            new_from_original(gutils, operands(orig)[2]),
-        ]
+	valTys = API.CValueType[]
+	args = LLVM.Value[]
+	for i in 1:(length(operands(orig))-1)    
+	    push!(valTys, API.VT_Primal)
+	    push!(args, new_from_original(gutils, operands(orig)[i]))
+	end
         normal = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, valTys, false) #=lookup=#
         width = get_width(gutils)
         if width == 1
@@ -1987,12 +1988,13 @@ end
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
     if unsafe_load(shadowR) != C_NULL
-        valTys = API.CValueType[API.VT_Primal, API.VT_Primal]
-        args = [
-            new_from_original(gutils, operands(orig)[1]),
-            new_from_original(gutils, operands(orig)[2]),
-        ]
-        normal = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, valTys, false) #=lookup=#
+	valTys = API.CValueType[]
+	args = LLVM.Value[]
+	for i in 1:(length(operands(orig))-1)    
+	    push!(valTys, API.VT_Primal)
+	    push!(args, new_from_original(gutils, operands(orig)[i]))
+	end
+	normal = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, valTys, false) #=lookup=#
         width = get_width(gutils)
         if width == 1
             shadowres = normal
@@ -2391,7 +2393,9 @@ end
         @fwdfunc(new_structt_fwd),
     )
     register_handler!(
-        ("jl_get_binding_or_error", "ijl_get_binding_or_error"),
+        ("jl_get_binding_or_error", "ijl_get_binding_or_error",
+	 "jl_get_binding_value_seqcst", "ijl_get_binding_value_seqcst",
+	 ),
         @augfunc(get_binding_or_error_augfwd),
         @revfunc(get_binding_or_error_rev),
         @fwdfunc(get_binding_or_error_fwd),

@@ -776,17 +776,27 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     end
                                     if addrspace(value_type(v2)) == 0
                                         if addr == 11
+					    PT = if LLVM.is_opaque(value_type(v))
+						LLVM.PointerType(10)
+					    else
+						LLVM.PointerType(eltype(value_type(v)), 10)
+					    end
                                             v2 = const_addrspacecast(
                                                 v2,
-                                                LLVM.PointerType(eltype(value_type(v)), 10),
+                                                PT
                                             )
                                             return v2, offset, hasload
                                         end
                                     end
                                     if LLVM.isnull(v2)
+					PT = if LLVM.is_opaque(value_type(v))
+					   LLVM.PointerType(10)
+				        else
+					   LLVM.PointerType(eltype(value_type(v)), 10)
+				        end
                                         v2 = const_addrspacecast(
                                             v2,
-                                            LLVM.PointerType(eltype(value_type(v)), 10),
+                                            PT
                                         )
                                         return v2, offset, hasload
                                     end
@@ -816,6 +826,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                         offset,
                                         API.EnzymeComputeByteOffsetOfGEP(b, v, offty),
                                     )
+				    if !LLVM.is_opaque(value_type(v))
                                     v2 = const_bitcast(
                                         v2,
                                         LLVM.PointerType(
@@ -824,6 +835,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                         ),
                                     )
                                     @assert eltype(value_type(v2)) == eltype(value_type(v))
+				    end
                                     return v2, offset, skipload
                                 end
 
@@ -831,10 +843,15 @@ function nodecayed_phis!(mod::LLVM.Module)
 
                             if isa(v, LLVM.AddrSpaceCastInst)
                                 if addrspace(value_type(operands(v)[1])) == 0
+					PT = if LLVM.is_opaque(value_type(v))
+					   LLVM.PointerType(10)
+				        else
+					   LLVM.PointerType(eltype(value_type(v)), 10)
+				        end
                                     v2 = addrspacecast!(
                                         b,
                                         operands(v)[1],
-                                        LLVM.PointerType(eltype(value_type(v)), 10),
+                                        PT
                                     )
                                     return v2, offset, hasload
                                 end
@@ -878,14 +895,16 @@ function nodecayed_phis!(mod::LLVM.Module)
                             )
                                 v2, offset, skipload =
                                     getparent(b, operands(v)[1], offset, hasload, phicache)
-                                v2 = bitcast!(
-                                    b,
-                                    v2,
-                                    LLVM.PointerType(
-                                        eltype(value_type(v)),
-                                        addrspace(value_type(v2)),
-                                    ),
-                                )
+				    if !LLVM.is_opaque(value_type(v))
+					    v2 = bitcast!(
+					    b,
+					    v2,
+					    LLVM.PointerType(
+						eltype(value_type(v)),
+						addrspace(value_type(v2)),
+					    ),
+					)
+				    end
                                 @assert eltype(value_type(v2)) == eltype(value_type(v))
                                 return v2, offset, skipload
                             end
