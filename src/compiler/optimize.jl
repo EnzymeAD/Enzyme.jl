@@ -188,11 +188,11 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     
     run!(GCInvariantVerifierPass(strong=false), mod)
     
-    removeDeadArgs!(mod, tm)
+    removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
     
     run!(GCInvariantVerifierPass(strong=false), mod)
 
-    detect_writeonly!(mod)
+    API.EnzymeDetectReadonlyOrThrow(mod)
     
     run!(GCInvariantVerifierPass(strong=false), mod)
     
@@ -361,7 +361,7 @@ end
 
 function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool = true)
     addr13NoAlias(mod)
-    removeDeadArgs!(mod, tm)
+    removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
     for f in collect(functions(mod))
         API.EnzymeFixupJuliaCallingConvention(f)
     end

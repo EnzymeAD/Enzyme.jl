@@ -559,7 +559,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
             elseif RTA <: Type{<:Union{EnzymeCore.DuplicatedNoNeed,EnzymeCore.Duplicated, EnzymeCore.BatchDuplicated, EnzymeCore.BatchDuplicatedNoNeed}}
                 push!(genexprs, Expr(:(=), :dΩ, :(cache[end])))
             else
-                throw(AssertionError("Easy Rule should never be provided a constant reverse seed"))
+                push!(genexprs, Expr(Base.throw, AssertionError("Easy Rule should never be provided a constant reverse seed")))
             end
 
             actives = Union{Nothing, Expr}[$(actives...)]
