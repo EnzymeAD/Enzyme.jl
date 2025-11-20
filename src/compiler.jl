@@ -3130,6 +3130,7 @@ function create_abi_wrapper(
 
     returnRoots = false
     root_ty = nothing
+    tracked = nothing
     if uses_sret
         returnRoots = deserves_rooting(jltype)
         if returnRoots
@@ -3192,6 +3193,7 @@ function create_abi_wrapper(
         end
         push!(parameter_attributes(llvm_f, 1), attr)
         push!(parameter_attributes(llvm_f, 1), EnumAttribute("noalias"))
+        push!(parameter_attributes(llvm_f, 2), StringAttribute("enzymejl_returnRoots", string(Int(tracked.count))))
         push!(parameter_attributes(llvm_f, 2), EnumAttribute("noalias"))
     elseif jltype != T_void
         sret = alloca!(builder, jltype)

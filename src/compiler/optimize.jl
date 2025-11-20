@@ -359,14 +359,23 @@ function addJuliaLegalizationPasses!(mpm::LLVM.NewPMPassManager, lower_intrinsic
     end
 end
 
+const DumpPreCallConv = Ref(false)
+const DumpPostCallConv = Ref(false)
+
 function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool = true)
     addr13NoAlias(mod)
     removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
+    if DumpPreCallConv[]
+	    API.EnzymeDumpModuleRef(mod.ref)
+    end
     for f in collect(functions(mod))
         API.EnzymeFixupJuliaCallingConvention(f)
     end
     for f in collect(functions(mod))
         API.EnzymeFixupBatchedJuliaCallingConvention(f)
+    end
+    if DumpPostCallConv[]
+	    API.EnzymeDumpModuleRef(mod.ref)
     end
     for g in collect(globals(mod))
         if startswith(LLVM.name(g), "ccall")
