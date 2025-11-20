@@ -3130,6 +3130,7 @@ function create_abi_wrapper(
 
     returnRoots = false
     root_ty = nothing
+    tracked = nothing
     if uses_sret
         returnRoots = deserves_rooting(jltype)
         if returnRoots
@@ -3192,6 +3193,7 @@ function create_abi_wrapper(
         end
         push!(parameter_attributes(llvm_f, 1), attr)
         push!(parameter_attributes(llvm_f, 1), EnumAttribute("noalias"))
+        push!(parameter_attributes(llvm_f, 2), StringAttribute("enzymejl_returnRoots", string(Int(tracked.count))))
         push!(parameter_attributes(llvm_f, 2), EnumAttribute("noalias"))
     elseif jltype != T_void
         sret = alloca!(builder, jltype)
@@ -3802,58 +3804,59 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
 	# aka bfs/etc
         while length(todo) != 0
             path, ty = popfirst!(todo)
+            if !any_jltypes(ty)
+                continue
+            end
+
             if isa(ty, LLVM.PointerType)
-		if direction == SRetPointerToRootPointer || direction == SRetValueToRootPointer || direction == RootPointerToSRetPointer || direction == RootPointerToSRetValue
-                  loc = inbounds_gep!(
-                      builder,
-                      root_ty,
-                      rootRet,
-		      to_llvm(Cuint[count]),
-		     )
-		end
-                
-		if direction == SRetPointerToRootPointer
-		    outloc = inbounds_gep!(builder, jltype, sret, to_llvm(path))
-		    outloc = load!(builder, ty, outloc)
-                    store!(builder, outloc, loc)
-		elseif direction == SRetValueToRootPointer
-		    outloc = Enzyme.API.e_extract_value!(builder, sret, path)
-                    store!(builder, outloc, loc)
-		elseif direction == RootPointerToSRetValue
-		    loc = load!(builder, ty, loc)
-		    val = Enzyme.API.e_insert_value!(builder, val, loc, path)
-        elseif direction == NullifySRetValue
-            loc = unsafe_to_llvm(builder, nothing)
-            val = Enzyme.API.e_insert_value!(builder, val, loc, path)
-		elseif direction == RootPointerToSRetPointer
-		    outloc = inbounds_gep!(builder, jltype, sret, to_llvm(path))
-		    loc = load!(builder, ty, loc)
-		    push!(extracted, loc)
-                    store!(builder, loc, outloc)
-		else
-		    @assert false "Unhandled direction"
-		end
-                
-		count += 1
+
+        		if direction == SRetPointerToRootPointer || direction == SRetValueToRootPointer || direction == RootPointerToSRetPointer || direction == RootPointerToSRetValue
+                          loc = inbounds_gep!(
+                              builder,
+                              root_ty,
+                              rootRet,
+        		      to_llvm(Cuint[count]),
+        		     )
+        		end
+                        
+        		if direction == SRetPointerToRootPointer
+        		    outloc = inbounds_gep!(builder, jltype, sret, to_llvm(path))
+        		    outloc = load!(builder, ty, outloc)
+                            store!(builder, outloc, loc)
+        		elseif direction == SRetValueToRootPointer
+        		    outloc = Enzyme.API.e_extract_value!(builder, sret, path)
+                            store!(builder, outloc, loc)
+        		elseif direction == RootPointerToSRetValue
+        		    loc = load!(builder, ty, loc)
+        		    val = Enzyme.API.e_insert_value!(builder, val, loc, path)
+                elseif direction == NullifySRetValue
+                    loc = unsafe_to_llvm(builder, nothing)
+                    val = Enzyme.API.e_insert_value!(builder, val, loc, path)
+        		elseif direction == RootPointerToSRetPointer
+        		    outloc = inbounds_gep!(builder, jltype, sret, to_llvm(path))
+        		    loc = load!(builder, ty, loc)
+        		    push!(extracted, loc)
+                            store!(builder, loc, outloc)
+        		else
+        		    @assert false "Unhandled direction"
+        		end
+                        
+        		count += 1
                 continue
             end
             if isa(ty, LLVM.ArrayType)
-                if any_jltypes(ty)
-                    for i = 1:length(ty)
-                        npath = copy(path)
-			push!(npath, i - 1)
-                        push!(todo, (npath, eltype(ty)))
-                    end
+                for i = 1:length(ty)
+                    npath = copy(path)
+		push!(npath, i - 1)
+                    push!(todo, (npath, eltype(ty)))
                 end
                 continue
             end
             if isa(ty, LLVM.VectorType)
-                if any_jltypes(ty)
-                    for i = 1:size(ty)
-                        npath = copy(path)
-			push!(npath, i - 1)
-                        push!(todo, (npath, eltype(ty)))
-                    end
+                for i = 1:size(ty)
+                    npath = copy(path)
+		push!(npath, i - 1)
+                    push!(todo, (npath, eltype(ty)))
                 end
                 continue
             end
@@ -6849,7 +6852,7 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
     id = Base.reinterpret(Int, pointer(addr))
     deferred_codegen_jobs[id] = job
 
-    code = Any[Core.Compiler.ReturnNode(reinterpret(Ptr{Cvoid}, id))]
+    code = Any[Core.Compiler.ReturnNode(reinterpret(UInt, id))]
     ci = create_fresh_codeinfo(deferred_id_codegen, source, world, slotnames, code)
 
     ci.edges = Any[mi]
@@ -6903,7 +6906,7 @@ end
     @nospecialize(strongzero::Val)
 )
     id = deferred_id_codegen(fa, a, tt, mode, width, modifiedbetween, returnprimal, shadowinit, expectedtapetype, erriffuncwritten, runtimeactivity, strongzero)
-    ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), id)
+    ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (UInt,), id)
 end
 
 include("compiler/reflection.jl")
