@@ -6852,7 +6852,7 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
     id = Base.reinterpret(Int, pointer(addr))
     deferred_codegen_jobs[id] = job
 
-    code = Any[Core.Compiler.ReturnNode(reinterpret(Ptr{Cvoid}, id))]
+    code = Any[Core.Compiler.ReturnNode(reinterpret(UInt, id))]
     ci = create_fresh_codeinfo(deferred_id_codegen, source, world, slotnames, code)
 
     ci.edges = Any[mi]
@@ -6906,7 +6906,7 @@ end
     @nospecialize(strongzero::Val)
 )
     id = deferred_id_codegen(fa, a, tt, mode, width, modifiedbetween, returnprimal, shadowinit, expectedtapetype, erriffuncwritten, runtimeactivity, strongzero)
-    ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (Ptr{Cvoid},), id)
+    ccall("extern deferred_codegen", llvmcall, Ptr{Cvoid}, (UInt,), id)
 end
 
 include("compiler/reflection.jl")

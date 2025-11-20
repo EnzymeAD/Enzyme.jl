@@ -1266,6 +1266,10 @@ function fix_decayaddr!(mod::LLVM.Module)
 				sret_elty = sret_ty(fop, i)
                                 t_sret = true
                             end
+                            if kind(a) == kind(StringAttribute("enzymejl_returnRoots"))
+				sret_elty = sret_ty(fop, i)
+                                t_sret = true
+                            end
                             # if kind(a) == kind(StringAttribute("enzyme_sret_v"))
                             #     t_sret = true
                             # end
