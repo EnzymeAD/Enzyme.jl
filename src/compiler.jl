@@ -4804,6 +4804,7 @@ function no_type_setting(@nospecialize(specTypes::Type{<:Tuple}); world = nothin
 end
 
 const DumpPreCheck = Ref(false)
+const DumpPostCheck = Ref(false)
 const DumpPreOpt = Ref(false)
 
 function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeTarget})
@@ -4883,6 +4884,9 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     end
     interp = GPUCompiler.get_interpreter(job)
     check_ir(interp, job, mod)
+    if DumpPostCheck[]
+        API.EnzymeDumpModuleRef(mod.ref)
+    end
 
     disableFallback = String[]
 
