@@ -12,6 +12,7 @@ end
 @inline element(::Val{T}) where {T} = T
 
 @inline ptreltype(::Type{Ptr{T}}) where {T} = T
+@inline ptreltype(::Type{Core.SimpleVector}) = Any
 @inline ptreltype(::Type{Core.LLVMPtr{T,N}}) where {T,N} = T
 @inline ptreltype(::Type{Core.LLVMPtr{T} where N}) where {T} = T
 @inline ptreltype(::Type{Base.RefValue{T}}) where {T} = T
@@ -29,6 +30,7 @@ end
 
 @inline is_arrayorvararg_ty(::Type) = false
 @inline is_arrayorvararg_ty(::Type{Tuple{Vararg{T2}}}) where {T2} = true
+@inline is_arrayorvararg_ty(::Type{Core.SimpleVector}) = true
 @inline is_arrayorvararg_ty(::Type{Ptr{T}}) where {T} = true
 @inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{T,N}}) where {T,N} = true
 @inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{T,N} where N}) where {T} = true
