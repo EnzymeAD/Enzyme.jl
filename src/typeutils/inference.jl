@@ -111,7 +111,7 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
 
     slotnames = Core.svec(Symbol("#self#"), :mode, :ft, :tt)
     stub = Core.GeneratedFunctionStub(
-        primal_return_type,
+        identity,
         slotnames,
         Core.svec(),
     )

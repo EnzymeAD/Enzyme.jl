@@ -58,8 +58,6 @@ end
 
 Here we test a rule for a function of an array in batch reverse-mode:
 
-
-
 ```julia
 x = randn(3)
 for Tret in (Const, Active), Tx in (Const, BatchDuplicated)
@@ -79,14 +77,14 @@ function test_reverse(
     testset_name=nothing,
     runtime_activity::Bool=false,
     output_tangent=nothing)
-    call_with_captured_kwargs(f, xs...) = f(xs...; fkwargs...)
+    call_with_captured_kwargs = CallWithKWargs(fkwargs)
     if testset_name === nothing
         testset_name = "test_reverse: $f with return activity $ret_activity on $(_string_activity(args))"
     end
     @testset "$testset_name" begin
         # format arguments for autodiff and FiniteDifferences
         activities = map(Base.Fix1(auto_activity, rng), (f, args...))
-        primals = map(x -> x.val, activities)
+        primals = map(get_primal, activities)
         # call primal, avoid mutating original arguments
         fcopy = deepcopy(first(primals))
         args_copy = deepcopy(Base.tail(primals))

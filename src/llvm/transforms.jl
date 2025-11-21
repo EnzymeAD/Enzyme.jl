@@ -455,7 +455,7 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
                         LLVM.VoidType(),
                         [LLVM.IntType(64), value_type(dst0)],
                     )
-                    lifetimestart, _ = get_function!(mod, "llvm.lifetime.start.p0i8", FT)
+                    lifetimestart, _ = get_function!(mod, LLVM.name(LLVM.Intrinsic("llvm.lifetime.start"), [value_type(dst0)]), FT)
                     call!(
                         B,
                         FT,
@@ -634,7 +634,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                     push!(todo, inst)
                     nb = IRBuilder()
                     position!(nb, inst)
-                    el_ty = if addr == 11
+                    el_ty = if addr == 11 && !LLVM.is_opaque(ty)
                         eltype(ty)
                     else
                         LLVM.StructType(LLVM.LLVMType[])
@@ -656,7 +656,7 @@ function nodecayed_phis!(mod::LLVM.Module)
 
                 for inst in todo
                     ty = value_type(inst)
-                    el_ty = if addr == 11
+                    el_ty = if addr == 11 && !LLVM.is_opaque(ty)
                         eltype(ty)
                     else
                         LLVM.StructType(LLVM.LLVMType[])
@@ -753,9 +753,14 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     v2 = operands(v)[1]
                                     if addrspace(value_type(v2)) == 0
                                         if addr == 13 && isa(v, LLVM.ConstantExpr)
+					    PT = if LLVM.is_opaque(value_type(v))
+						LLVM.PointerType(10)
+					    else
+						LLVM.PointerType(eltype(value_type(v)), 10)
+					    end
                                             v2 = const_addrspacecast(
                                                 operands(v)[1],
-                                                LLVM.PointerType(eltype(value_type(v)), 10),
+                                                PT
                                             )
                                             return v2, offset, hasload
                                         end
@@ -771,17 +776,27 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     end
                                     if addrspace(value_type(v2)) == 0
                                         if addr == 11
+					    PT = if LLVM.is_opaque(value_type(v))
+						LLVM.PointerType(10)
+					    else
+						LLVM.PointerType(eltype(value_type(v)), 10)
+					    end
                                             v2 = const_addrspacecast(
                                                 v2,
-                                                LLVM.PointerType(eltype(value_type(v)), 10),
+                                                PT
                                             )
                                             return v2, offset, hasload
                                         end
                                     end
                                     if LLVM.isnull(v2)
+					PT = if LLVM.is_opaque(value_type(v))
+					   LLVM.PointerType(10)
+				        else
+					   LLVM.PointerType(eltype(value_type(v)), 10)
+				        end
                                         v2 = const_addrspacecast(
                                             v2,
-                                            LLVM.PointerType(eltype(value_type(v)), 10),
+                                            PT
                                         )
                                         return v2, offset, hasload
                                     end
@@ -811,6 +826,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                         offset,
                                         API.EnzymeComputeByteOffsetOfGEP(b, v, offty),
                                     )
+				    if !LLVM.is_opaque(value_type(v))
                                     v2 = const_bitcast(
                                         v2,
                                         LLVM.PointerType(
@@ -819,6 +835,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                         ),
                                     )
                                     @assert eltype(value_type(v2)) == eltype(value_type(v))
+				    end
                                     return v2, offset, skipload
                                 end
 
@@ -826,16 +843,21 @@ function nodecayed_phis!(mod::LLVM.Module)
 
                             if isa(v, LLVM.AddrSpaceCastInst)
                                 if addrspace(value_type(operands(v)[1])) == 0
+					PT = if LLVM.is_opaque(value_type(v))
+					   LLVM.PointerType(10)
+				        else
+					   LLVM.PointerType(eltype(value_type(v)), 10)
+				        end
                                     v2 = addrspacecast!(
                                         b,
                                         operands(v)[1],
-                                        LLVM.PointerType(eltype(value_type(v)), 10),
+                                        PT
                                     )
                                     return v2, offset, hasload
                                 end
                                 nv, noffset, nhasload =
                                     getparent(b, operands(v)[1], offset, hasload, phicache)
-                                if eltype(value_type(nv)) != eltype(value_type(v))
+                                if !is_opaque(value_type(nv)) && eltype(value_type(nv)) != eltype(value_type(v))
                                     nv = bitcast!(
                                         b,
                                         nv,
@@ -873,14 +895,16 @@ function nodecayed_phis!(mod::LLVM.Module)
                             )
                                 v2, offset, skipload =
                                     getparent(b, operands(v)[1], offset, hasload, phicache)
-                                v2 = bitcast!(
-                                    b,
-                                    v2,
-                                    LLVM.PointerType(
-                                        eltype(value_type(v)),
-                                        addrspace(value_type(v2)),
-                                    ),
-                                )
+				    if !LLVM.is_opaque(value_type(v))
+					    v2 = bitcast!(
+					    b,
+					    v2,
+					    LLVM.PointerType(
+						eltype(value_type(v)),
+						addrspace(value_type(v2)),
+					    ),
+					)
+				    end
                                 @assert eltype(value_type(v2)) == eltype(value_type(v))
                                 return v2, offset, skipload
                             end
@@ -893,15 +917,17 @@ function nodecayed_phis!(mod::LLVM.Module)
                                     offset,
                                     API.EnzymeComputeByteOffsetOfGEP(b, v, offty),
                                 )
-                                v2 = bitcast!(
-                                    b,
-                                    v2,
-                                    LLVM.PointerType(
-                                        eltype(value_type(v)),
-                                        addrspace(value_type(v2)),
-                                    ),
-                                )
-                                @assert eltype(value_type(v2)) == eltype(value_type(v))
+                                if !LLVM.is_opaque(value_type(v2))
+                                    v2 = bitcast!(
+                                        b,
+                                        v2,
+                                        LLVM.PointerType(
+                                            eltype(value_type(v)),
+                                            addrspace(value_type(v2)),
+                                        ),
+                                    )
+                                    @assert eltype(value_type(v2)) == eltype(value_type(v))
+                                end
                                 return v2, offset, skipload
                             end
 
@@ -910,11 +936,12 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 undeforpoison |= isa(v, LLVM.PoisonValue)
                             end
                             if undeforpoison
-                                return LLVM.UndefValue(
-                                    LLVM.PointerType(eltype(value_type(v)), 10),
-                                ),
-                                offset,
-                                addr == 13
+				PT = if LLVM.is_opaque(value_type(v))
+				   LLVM.PointerType(10)
+				else
+				   LLVM.PointerType(eltype(value_type(v)), 10)
+				end
+				return LLVM.UndefValue(PT), offset, addr == 13
                             end
 
                             if isa(v, LLVM.PHIInst) && !hasload && haskey(goffsets, v)
@@ -936,7 +963,11 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 B = LLVM.IRBuilder()
                                 position!(B, v)
 
-                                sPT = LLVM.PointerType(eltype(value_type(v)), 10)
+                                sPT = if !LLVM.is_opaque(value_type(v))
+                                    LLVM.PointerType(eltype(value_type(v)), 10)
+                                else
+                                    LLVM.PointerType(10)
+                                end
                                 vphi = phi!(B, sPT, "nondecay.vphi."*LLVM.name(v))
                                 ophi = phi!(B, value_type(offset), "nondecay.ophi"*LLVM.name(v))
 				phicache[v] = (vphi, ophi)
@@ -1024,7 +1055,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                             @assert hadload
                         end
 
-                        if eltype(value_type(v)) != el_ty
+                        if !LLVM.is_opaque(value_type(v)) && eltype(value_type(v)) != el_ty
                             v = bitcast!(
                                 b,
                                 v,
@@ -1233,6 +1264,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                 mayread = false
                 maywrite = false
                 sret = true
+		sret_elty = nothing
                 sretkind = kind(if LLVM.version().major >= 12
                     TypeAttribute("sret", LLVM.Int32Type())
                 else
@@ -1246,9 +1278,15 @@ function fix_decayaddr!(mod::LLVM.Module)
                         t_sret = false
                         for a in collect(parameter_attributes(fop, i))
                             if kind(a) == sretkind
+				sret_elty = sret_ty(fop, i)
                                 t_sret = true
                             end
                             if kind(a) == kind(StringAttribute("enzyme_sret"))
+				sret_elty = sret_ty(fop, i)
+                                t_sret = true
+                            end
+                            if kind(a) == kind(StringAttribute("enzymejl_returnRoots"))
+				sret_elty = sret_ty(fop, i)
                                 t_sret = true
                             end
                             # if kind(a) == kind(StringAttribute("enzyme_sret_v"))
@@ -1289,22 +1327,22 @@ function fix_decayaddr!(mod::LLVM.Module)
                     throw(AssertionError(msg))
                 end
 
-                elt = eltype(value_type(inst))
+		@assert sret_elty !== nothing
                 if temp === nothing
                     nb = IRBuilder()
                     position!(nb, first(instructions(first(blocks(f)))))
-                    temp = alloca!(nb, elt)
+                    temp = alloca!(nb, sret_elty)
                 end
                 if mayread
                     nb = IRBuilder()
                     position!(nb, st)
-                    ld = load!(nb, elt, operands(inst)[1])
+                    ld = load!(nb, sret_elty, operands(inst)[1])
                     store!(nb, ld, temp)
                 end
                 if maywrite
                     nb = IRBuilder()
                     position!(nb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
-                    ld = load!(nb, elt, temp)
+                    ld = load!(nb, sret_elty, temp)
                     si = store!(nb, ld, operands(inst)[1])
                     julia_post_cache_store(si.ref, nb.ref, reinterpret(Ptr{UInt64}, C_NULL))
                 end
@@ -1436,6 +1474,11 @@ function prop_global!(g::LLVM.GlobalVariable)
                     end
                 end
             end
+	    if value_type(var) != value_type(res)
+		al = alloca!(B, value_type(res))
+		store!(B, res, al)
+		res = load!(B, value_type(var), al)
+	    end
             replace_uses!(var, res)
             eraseInst(LLVM.parent(var), var)
             continue
@@ -1456,7 +1499,7 @@ function prop_global!(g::LLVM.GlobalVariable)
         end
         if isa(var, LLVM.GetElementPtrInst)
             if all(isa(v, LLVM.ConstantInt) for v in operands(var)[2:end])
-                if convert(Cuint, operands(var)[2]) == 0
+                if LLVM.API.LLVMConstIntGetZExtValue(operands(var)[2]) == 0
                     for u in LLVM.uses(var)
                         u = LLVM.user(u)
                         push!(
@@ -1650,6 +1693,11 @@ function propagate_returned!(mod::LLVM.Module)
             if remove_readonly_unused_calls!(fn, next)
                 changed = true
             end
+            has_user = false
+	    for u in LLVM.uses(fn)
+		has_user = true
+		break
+	    end
             attrs = collect(function_attributes(fn))
             prevent = any(
                 kind(attr) == kind(StringAttribute("enzyme_preserve_primal")) for
@@ -1660,6 +1708,8 @@ function propagate_returned!(mod::LLVM.Module)
             # end
             argn = nothing
             toremove = Int64[]
+	    # Don't bother with functions we're about to delete anyways
+	    if has_user
             for (i, arg) in enumerate(parameters(fn))
                 if any(
                     kind(attr) == kind(EnumAttribute("returned")) for
@@ -1681,14 +1731,7 @@ function propagate_returned!(mod::LLVM.Module)
                     val = nothing
                     illegalUse = false
                     torem = LLVM.Instruction[]
-                    argeltype = if LLVM.version().major >= 12
-                        # TODO try to get sret element type if possible
-                        # note currently opaque pointers has this break [and we need to doa check if opaque
-                        # and if so get inner piece]
-                        eltype(value_type(arg))
-                    else
-                        eltype(value_type(arg))
-                    end
+
                     for u in LLVM.uses(fn)
                         un = LLVM.user(u)
                         if !isa(un, LLVM.CallInst)
@@ -1710,11 +1753,6 @@ function propagate_returned!(mod::LLVM.Module)
                         if !isa(ops[i], LLVM.AllocaInst) && !isa(ops[i], LLVM.UndefValue) && !isa(ops[i], LLVM.PoisonValue)
                             illegalUse = true
                             break
-                        end
-                        eltype = if isa(ops[i], LLVM.AllocaInst)
-                            LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(ops[i]))
-                        else
-                            LLVM.eltype(value_type(ops[i]))
                         end
                         seenfn = false
                         todo = LLVM.Instruction[]
@@ -1779,12 +1817,23 @@ function propagate_returned!(mod::LLVM.Module)
                             eraseInst(LLVM.parent(c), c)
                         end
                         B = IRBuilder()
+
                         position!(B, first(instructions(first(blocks(fn)))))
-                        al = alloca!(B, argeltype)
-                        if value_type(al) != value_type(arg)
-                            al = addrspacecast!(B, al, value_type(arg))
+
+                        has_use = false
+                        for _ in LLVM.uses(arg)
+                            has_use = true
+                            break
                         end
-                        LLVM.replace_uses!(arg, al)
+
+                        if has_use
+                            argeltype = sret_ty(fn, i)
+                            al = alloca!(B, argeltype)
+                            if value_type(al) != value_type(arg)
+                                al = addrspacecast!(B, al, value_type(arg))
+                            end
+                            LLVM.replace_uses!(arg, al)
+                        end
                     end
                 end
 
@@ -1885,6 +1934,7 @@ function propagate_returned!(mod::LLVM.Module)
 			end
 		end
             end
+	    end
             illegalUse = !(
                 linkage(fn) == LLVM.API.LLVMInternalLinkage ||
                 linkage(fn) == LLVM.API.LLVMPrivateLinkage
@@ -2055,107 +2105,6 @@ function delete_writes_into_removed_args(fn::LLVM.Function, toremove::Vector{Int
             throw(AssertionError("Deleting argument with an unknown dependency, $(string(cur)) uses $(string(cval))"))
         end
     end
-end
-
-function detect_writeonly!(mod::LLVM.Module)
-    for f in functions(mod)
-        if isempty(LLVM.blocks(f))
-            continue
-        end
-        for (i, a) in enumerate(parameters(f))
-            if isa(value_type(a), LLVM.PointerType)
-                todo = Tuple{LLVM.Value,LLVM.Instruction}[]
-                for u in LLVM.uses(a)
-                    push!(todo, (a, LLVM.user(u)))
-                end
-                seen = Set{Tuple{LLVM.Value,LLVM.Instruction}}()
-                mayread = false
-                maywrite = false
-                while length(todo) > 0
-                    cur = pop!(todo)
-                    if in(cur, seen)
-                        continue
-                    end
-                    push!(seen, cur)
-                    curv, curi = cur
-
-                    if isa(curi, LLVM.StoreInst)
-                        if operands(curi)[1] != curv
-                            maywrite = true
-                            continue
-                        end
-                    end
-
-                    if isa(curi, LLVM.LoadInst)
-                        mayread = true
-                        continue
-                    end
-
-                    if isa(curi, LLVM.GetElementPtrInst) ||
-                       isa(curi, LLVM.BitCastInst) ||
-                       isa(curi, LLVM.AddrSpaceCastInst)
-                        for u in LLVM.uses(curi)
-                            push!(todo, (curi, LLVM.user(u)))
-                        end
-                        continue
-                    end
-                    mayread = true
-                    maywrite = true
-                end
-                if any(
-                    map(
-                        k -> kind(k) == kind(EnumAttribute("readnone")),
-                        collect(parameter_attributes(f, i)),
-                    ),
-                )
-                    mayread = false
-                    maywrite = false
-                end
-                if any(
-                    map(
-                        k -> kind(k) == kind(EnumAttribute("readonly")),
-                        collect(parameter_attributes(f, i)),
-                    ),
-                )
-                    maywrite = false
-                end
-                if any(
-                    map(
-                        k -> kind(k) == kind(EnumAttribute("writeonly")),
-                        collect(parameter_attributes(f, i)),
-                    ),
-                )
-                    mayread = false
-                end
-
-                LLVM.API.LLVMRemoveEnumAttributeAtIndex(
-                    f,
-                    LLVM.API.LLVMAttributeIndex(i),
-                    kind(EnumAttribute("readnone")),
-                )
-                LLVM.API.LLVMRemoveEnumAttributeAtIndex(
-                    f,
-                    LLVM.API.LLVMAttributeIndex(i),
-                    kind(EnumAttribute("readonly")),
-                )
-                LLVM.API.LLVMRemoveEnumAttributeAtIndex(
-                    f,
-                    LLVM.API.LLVMAttributeIndex(i),
-                    kind(EnumAttribute("writeonly")),
-                )
-
-                if !mayread && !maywrite
-                    push!(parameter_attributes(f, i), LLVM.EnumAttribute("readnone", 0))
-                elseif !mayread
-                    push!(parameter_attributes(f, i), LLVM.EnumAttribute("writeonly", 0))
-                elseif !maywrite
-                    push!(parameter_attributes(f, i), LLVM.EnumAttribute("readonly", 0))
-                end
-
-            end
-        end
-    end
-    return nothing
 end
 
 function validate_return_roots!(mod::LLVM.Module)
@@ -2398,7 +2347,7 @@ function rewrite_generic_memory!(mod::LLVM.Module)
     end
 end
 
-function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
+function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup::Bool)
     # We need to run globalopt first. This is because remove dead args will otherwise
     # take internal functions and replace their args with undef. Then on LLVM up to 
     # and including 12 (but fixed 13+), Attributor will incorrectly change functions that
@@ -2483,6 +2432,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         # if inactive sret, this will only occur on 2. If active sret, inactive retRoot, can on 3, and
         # active both can occur on 4. If the original sret is removed (at index 1) we no longer need
         # to preserve this.
+        if post_gc_fixup
         for idx in (2, 3, 4)
             if length(collect(parameters(fn))) >= idx && any(
                 (
@@ -2507,6 +2457,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                     end
                 end
             end
+        end
         end
         sretkind = kind(if LLVM.version().major >= 12
             TypeAttribute("sret", LLVM.Int32Type())
@@ -2596,7 +2547,9 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 add!(fpm, AllocOptPass())
                 add!(fpm, SROAPass())
             end
-            add!(mpm, EnzymeAttributorPass())
+	    if RunAttributor[]
+                add!(mpm, EnzymeAttributorPass())
+	    end
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, EarlyCSEPass())
             end

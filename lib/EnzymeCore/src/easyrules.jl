@@ -65,8 +65,8 @@ Internal function.
 Turn both `a` and `::constraint` into `a::Annotation{<:constraint}` etc
 """
 function _constrain_and_name(arg::Expr)
-    Meta.isexpr(arg, :(::), 2) && return Expr(:(::), Symbol("ann_", arg.args[1]), :(Annotation{<:$(arg.args[2])})) # it is already fine.
-    Meta.isexpr(arg, :(::), 1) && return Expr(:(::), Symbol("ann_", gensym()), :(Annotation{<:$(arg.args[1])})) # add name
+    Meta.isexpr(arg, :(::), 2) && return Expr(:(::), Symbol("ann_", arg.args[1]), :($(Annotation){<:$(arg.args[2])})) # it is already fine.
+    Meta.isexpr(arg, :(::), 1) && return Expr(:(::), Symbol("ann_", gensym()), :($(Annotation){<:$(arg.args[1])})) # add name
     # Meta.isexpr(arg, :(...), 1) &&
     #     return Expr(:(...), _constrain_and_name(arg.args[1], :Annotation))
     return error("malformed arguments: $arg")
@@ -236,7 +236,11 @@ function scalar_frule_expr(__source__, f, call, setup_stmts, inputs, input_names
                             end
 
                             if !seen
-                                push!(gensetup, Expr(:(=), outexpr, nothing))
+                                ST = $(esc(:RT))
+                                if ST <: Tuple
+                                    ST = ST.parameters[o]
+                                end
+                                push!(gensetup, Expr(:(=), outexpr, ST))
                                 seen = true
                             end
 
@@ -473,21 +477,25 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
             end
             push!(gensetup, Expr(:(=), :cache, Expr(:tuple, caches...)))
 
+            PT = EnzymeRules.primal_type(config, ($(esc(:RTA))).parameters[1])
+            ST = EnzymeRules.shadow_type(config, ($(esc(:RTA))).parameters[1])
+            AugmentedReturnType = :($(EnzymeRules.AugmentedReturn){$PT, $ST, typeof(cache)})
+
             genres = if needs_primal(config)
                 if needs_shadow(config)
                     if width(config) == 1
-                        Expr(:call, EnzymeRules.AugmentedReturn, :Ω, :dΩ, :cache)
+                        Expr(:call, AugmentedReturnType, :Ω, :dΩ, :cache)
                     else
-                        Expr(:call, EnzymeRules.AugmentedReturn, :Ω, :dΩ, :cache)
+                        Expr(:call, AugmentedReturnType, :Ω, :dΩ, :cache)
                     end
                 else
-                    Expr(:call, EnzymeRules.AugmentedReturn, :Ω, nothing, :cache)
+                    Expr(:call, AugmentedReturnType, :Ω, nothing, :cache)
                 end
             else
                 if needs_shadow(config)
-                    Expr(:call, EnzymeRules.AugmentedReturn, nothing, :dΩ, :cache)
+                    Expr(:call, AugmentedReturnType, nothing, :dΩ, :cache)
                 else
-                    Expr(:call, EnzymeRules.AugmentedReturn, nothing, nothing, :cache)
+                    Expr(:call, AugmentedReturnType, nothing, nothing, :cache)
                 end
             end
 
@@ -551,7 +559,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
             elseif RTA <: Type{<:Union{EnzymeCore.DuplicatedNoNeed,EnzymeCore.Duplicated, EnzymeCore.BatchDuplicated, EnzymeCore.BatchDuplicatedNoNeed}}
                 push!(genexprs, Expr(:(=), :dΩ, :(cache[end])))
             else
-                throw(AssertionError("Easy Rule should never be provided a constant reverse seed"))
+                push!(genexprs, Expr(Base.throw, AssertionError("Easy Rule should never be provided a constant reverse seed")))
             end
 
             actives = Union{Nothing, Expr}[$(actives...)]
@@ -613,7 +621,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
 
                             if !seen
                                 if inp_types[inum] <: Active
-                                    push!(gensetup, Expr(:(=), inexpr, nothing))
+                                    push!(gensetup, Expr(:(=), inexpr, eltype(inp_types[inum])))
                                 else
                                     dexpr = Expr(:call, getfield, Symbol(inp_names[inum]), 2)
                                     if W != 1

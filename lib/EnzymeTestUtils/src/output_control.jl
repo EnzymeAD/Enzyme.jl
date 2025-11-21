@@ -12,12 +12,12 @@ struct ExprAndMsg
 end
 
 """
-    @test_msg msg condion kws...
+    @test_msg msg condition kws...
 
-This is per `Test.@test condion kws...` except that if it fails it also prints the `msg`.
-If `msg==""` then this is just like `@test`, nothing is printed
+This is per `Test.@test condition kws...`, except that if it fails it also prints the `msg`.
+If `msg==""` then this is just like `@test`, nothing is printed.
 
-### Examles
+### Examples
 ```julia
 julia> @test_msg "It is required that the total is under 10" sum(1:1000) < 10;
 Test Failed at REPL[1]:1

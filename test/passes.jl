@@ -34,7 +34,7 @@ using Enzyme, LLVM, Test
         attributes #5 = { inaccessiblememonly mustprogress nofree nounwind willreturn allockind("alloc,uninitialized") allocsize(1) "enzyme_no_escaping_allocation" "enzymejl_world"="31504" }
         """)
 
-        Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm())
+        Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), false)
         
         callfn = LLVM.functions(mod)["inner"]
         @test length(collect(filter(Base.Fix2(isa, LLVM.StoreInst), collect(instructions(first(blocks(callfn))))))) == 2
@@ -73,7 +73,7 @@ end
         attributes #5 = { inaccessiblememonly mustprogress nofree nounwind willreturn allockind("alloc,uninitialized") allocsize(1) "enzyme_no_escaping_allocation" "enzymejl_world"="31504" }
         """)
 
-        Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm())
+        Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), false)
         callfn = LLVM.functions(mod)["caller"]
         @test length(collect(instructions(first(blocks(callfn))))) == 1
     end

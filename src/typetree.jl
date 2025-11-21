@@ -305,7 +305,7 @@ else
         dl,
         seen::TypeTreeTable,
     ) where {kind,T}
-        tt = copy(typetree(Ptr{T}, ctx, dl, seen))
+        tt = copy(typetree(typed_fieldtype(AT, 1), ctx, dl, seen))
         shift!(tt, dl, 0, sizeof(Int), 0)
 
         for f = 2:fieldcount(AT)

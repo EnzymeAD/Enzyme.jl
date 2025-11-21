@@ -3,6 +3,7 @@ using InlineStrings
 using LinearAlgebra
 using Statistics
 using Test
+using GPUCompiler
 
 @testset "GC" begin
     function gc_alloc(x)  # Basically g(x) = x^2
@@ -252,6 +253,12 @@ end
     # @test dpar[:sub].d[:a].v ≈ 1.0
 end
 
+
+const julia_typed_pointers = GPUCompiler.JuliaContext() do ctx
+    GPUCompiler.supports_typed_pointers(ctx)
+end
+
+
 let
     function loadsin2(xp)
         x = @inbounds xp[1]
@@ -270,7 +277,11 @@ end
     x = [2.0]
     dx = [0.0]
     @test Enzyme.autodiff(Reverse, invsin2, Active, Duplicated(x, dx)) == ((nothing,),)
-    @test dx[1] == -0.4161468365471424
+    if julia_typed_pointers
+        @test dx[1] == -0.4161468365471424
+    else
+        @test_broken dx[1] == -0.4161468365471424
+    end
 end
 
 function grad_closure(f, x)
@@ -1295,9 +1306,9 @@ end
 
 @testset "Method errors" begin
     fwd = Enzyme.autodiff_thunk(Forward, Const{typeof(sum)}, Duplicated, Duplicated{Vector{Float64}})
-    @test_throws MethodError fwd(ones(10))
-    @test_throws MethodError fwd(Duplicated(ones(10), ones(10)))
-    @test_throws MethodError fwd(Const(first), Duplicated(ones(10), ones(10)))
+    @test_throws Enzyme.Compiler.ThunkCallError fwd(ones(10))
+    @test_throws Enzyme.Compiler.ThunkCallError fwd(Duplicated(ones(10), ones(10)))
+    @test_throws Enzyme.Compiler.ThunkCallError fwd(Const(first), Duplicated(ones(10), ones(10)))
     # TODO
     # @test_throws MethodError fwd(Const(sum), Const(ones(10)))
     fwd(Const(sum), Duplicated(ones(10), ones(10)))

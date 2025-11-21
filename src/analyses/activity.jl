@@ -474,13 +474,13 @@ end
     $(Expr(:meta, :generated, active_reg_nothrow_generator))
 end
 
-Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_const(::Type{T})::Bool where {T}
+Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_const(@nospecialize(T::Type))::Bool
     rt = active_reg_nothrow(T)
     res = rt == AnyState
     return res
 end
 
-Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_const_nongen(::Type{T}, world::UInt)::Bool where {T}
+Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_const_nongen(@nospecialize(T::Type), world::UInt)::Bool
     rt = active_reg(T, world)
     res = rt == AnyState
     return res
@@ -488,7 +488,7 @@ end
 
 # check if a value is guaranteed to be not contain active[register] data
 # (aka not either mixed or active)
-Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_nonactive(::Type{T})::Bool where {T}
+Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_nonactive(@nospecialize(T::Type))::Bool
     rt = active_reg_nothrow(T)
     return rt == Enzyme.Compiler.AnyState || rt == Enzyme.Compiler.DupState
 end

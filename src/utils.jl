@@ -372,7 +372,7 @@ function methodinstance_generator(world::UInt, source, self, @nospecialize(mode:
     tt = tt.parameters[1]
 
     slotnames = Core.svec(Symbol("#self#"), :mode, :ft, :tt)
-    stub = Core.GeneratedFunctionStub(prevmethodinstance, slotnames, Core.svec())
+    stub = Core.GeneratedFunctionStub(identity, slotnames, Core.svec())
 
     # look up the method match
     min_world = Ref{UInt}(typemin(UInt))
@@ -462,10 +462,23 @@ end
 
 else
 
+function is_memory_ref_field2_an_offset(@nospecialize(T::Type{<:GenericMemoryRef}))
+    ET = eltype(T)
+
+    # 0 = inlinealloc
+    # 1 = isboxed
+    # 2 = isbitsunion
+    return (Base.datatype_arrayelem(T.types[2]) == 2) || Compiler.datatype_layoutsize(T.types[2]) == 0
+end
+
 @inline function typed_fieldtype(@nospecialize(T::Type), i::Int)::Type
     if T <: GenericMemoryRef && i == 1 || T <: GenericMemory && i == 2
-        eT = eltype(T)
-        Ptr{eT}
+        if T <: GenericMemoryRef && i == 1 && is_memory_ref_field2_an_offset(T)
+            Int
+        else
+            eT = eltype(T)
+            Ptr{eT}
+        end
     else
         fieldtype(T, i)
     end
@@ -487,7 +500,85 @@ export typed_fieldoffset
 
 # returns the inner type of an sret/enzyme_sret/enzyme_sret_v
 function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
-    return eltype(LLVM.value_type(LLVM.parameters(fn)[idx]))
+
+    vt = LLVM.value_type(LLVM.parameters(fn)[idx])
+
+    sretkind = LLVM.kind(if LLVM.version().major >= 12
+        LLVM.TypeAttribute("sret", LLVM.Int32Type())
+    else
+        LLVM.EnumAttribute("sret")
+    end)
+
+
+    enzymejl_parmtype_ref = nothing
+    enzymejl_parmtype = nothing
+
+    for attr in collect(LLVM.parameter_attributes(fn, idx))
+        ekind = LLVM.kind(attr)
+
+        if ekind == sretkind
+            res = LLVM.value(attr)
+            if !LLVM.is_opaque(vt)
+                @assert eltype(vt) == res
+            end
+            return res
+        end
+
+        if ekind == "enzymejl_sret_union_bytes"
+            nbytes = parse(Int, LLVM.value(attr))
+            i8 = LLVM.IntType(8)
+
+            res = LLVM.ArrayType(i8, nbytes)
+            if !LLVM.is_opaque(vt)
+                @assert eltype(vt) == res
+            end
+            return res
+        end
+
+        if ekind == "enzymejl_returnRoots"
+            nroots = parse(Int, LLVM.value(attr))
+    
+            T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+            T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+
+            res = LLVM.ArrayType(T_prjlvalue, nroots)
+            if !LLVM.is_opaque(vt)
+                @assert eltype(vt) == res
+            end
+            return res
+        end
+
+        if ekind == "enzyme_sret"
+	    ety = parse(UInt, LLVM.value(attr))
+	    ety = Base.reinterpret(LLVM.API.LLVMTypeRef, ety)
+	    ety = LLVM.LLVMType(ety)
+            if !LLVM.is_opaque(vt)
+		@assert ety == eltype(vt)
+            end
+        
+            return ety
+        end
+
+        if ekind == "enzymejl_parmtype_ref"
+            enzymejl_parmtype_ref = GPUCompiler.ArgumentCC(parse(UInt, LLVM.value(attr)))
+            continue
+        end
+
+        if ekind == "enzymejl_parmtype"
+            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(attr)))
+            enzymejl_parmtype = Base.unsafe_pointer_to_objref(ptr)::Type
+        end
+    end
+
+    if enzymejl_parmtype_ref == GPUCompiler.BITS_REF && enzymejl_parmtype !== nothing
+        res = convert(LLVM.LLVMType, enzymejl_parmtype)
+        if !LLVM.is_opaque(vt)
+            @assert eltype(vt) == res
+        end
+        return res
+    end
+
+    throw(AssertionError("Function requesting sret type was not an sret\nidx=$idx\nfn=$(string(fn)) enzymejl_parmtype=$enzymejl_parmtype enzymejl_parmtype_ref=$enzymejl_parmtype_ref"))
 end
 
 export sret_ty

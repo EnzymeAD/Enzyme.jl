@@ -1,3 +1,5 @@
+using Enzyme, Test
+
 @testset "deferred" begin
 
     @testset "Deferred and deferred thunk" begin

@@ -1,4 +1,90 @@
 
+iszeroinit(Base.@nospecialize t) = (Base.@_total_meta; isa(t, DataType) && (t.flags & 0x0004) == 0x0004)
+
+@static if VERSION >= v"1.11"
+const datatype_layoutsize = Base.datatype_layoutsize
+else
+function datatype_layoutsize(dt::Base.DataType)
+    Base.@_foldable_meta
+    dt.layout == C_NULL && throw(Base.UndefRefError())
+    size = unsafe_load(convert(Ptr{Base.DataTypeLayout}, dt.layout)).size
+    return size % Int
+end
+end
+
+# On 1.12+, there was a change to the calling convention where
+# an additional argument would be added for the roots, this will
+# return the number of roots in the corresponding convention, or
+# 0 if it does not apply https://github.com/JuliaLang/julia/pull/55767/files#diff-62cfb2606c6a323a7f26a3eddfa0bf2b819fa33e094561fee09daeb328e3a1e7
+function inline_roots_type(@nospecialize(LT::LLVM.LLVMType))::Int
+   @static if VERSION <= v"1.12-"
+	return 0
+   else
+	   if !(LT isa LLVM.ArrayType || LT isa LLVM.StructType)
+		return 0
+	   end
+	   tracked = CountTrackedPointers(LT)
+	   if tracked.count > 0 && !tracked.all
+	       return Int(tracked.count)
+	   end
+	   return 0
+   end
+end
+
+function inline_roots_type(@nospecialize(T::Type))::Int
+   @static if VERSION <= v"1.12-"
+	return 0
+   else
+	   if T === Union{}
+		return 0
+	   end
+	   if GPUCompiler.deserves_argbox(T)
+		return 0
+	   end
+	   if Base.isabstracttype(T)
+		return 0
+	   end
+	   if isghostty(T) || Core.Compiler.isconstType(T)
+		return 0
+	   end
+	   LT = convert(LLVM.LLVMType, T)
+	   return inline_roots_type(LT)
+    end
+end
+
+# Given a list of julia types, return a list of julia types, now augmented
+# with the AnyArray's as requisite for the new roots for the calling convention
+# on 1.12
+function rooted_argument_list(iterable)
+	results = Tuple{Type, Union{Nothing, Type}}[]
+	for T in iterable
+	    roots = inline_roots_type(T)
+	    push!(results, (T, nothing))
+	    if roots != 0
+	        push!(results, (AnyArray(roots), T))
+	    end
+	end
+	return results
+end
+
+function split_value_into(B::LLVM.IRBuilder, val::LLVM.Value)
+   LT = value_type(val)
+   tracked = CountTrackedPointers(LT)
+   @assert tracked.count > 0
+   @assert !tracked.all
+   RT = convert(LLVM.LLVMType, AnyArray(tracked.count))
+   al = alloca!(B, RT)
+   fdsafdsa 
+   return (val, al)
+end
+
+function recombine_value(B::LLVM.IRBuilder, val::LLVM.Value, roots::LLVM.Value)
+	TODO
+    return val
+end
+
+
+
 struct RemovedParam end
 
 # Modified from GPUCompiler classify_arguments
@@ -33,14 +119,34 @@ function classify_arguments(
         end
         orig_i += 1
     end
-    for (source_i, source_typ) in enumerate(source_sig.parameters)
+
+    last_cc = nothing
+    arg_jl_i = 1
+    for (source_i, (source_typ, rooted_typ)) in enumerate(rooted_argument_list(source_sig.parameters))
+	if rooted_typ !== nothing
+	   arg_jl_i -= 1
+	end
         if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
-            push!(args, (cc = GPUCompiler.GHOST, typ = source_typ, arg_i = source_i))
+            push!(args, (cc = GPUCompiler.GHOST, typ = source_typ, arg_i = source_i,
+			rooted_typ = rooted_typ,
+			rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
+		        rooted_cc = rooted_typ === nothing ? nothing : last_cc,
+			arg_jl_i = arg_jl_i,
+			 ))
+	    arg_jl_i += 1
+	    last_cc = GPUCompiler.GHOST
             continue
         end
         if in(orig_i - 1, parmsRemoved)
-            push!(args, (cc = RemovedParam, typ = source_typ))
+            push!(args, (cc = RemovedParam, typ = source_typ, arg_i = source_i,
+			rooted_typ = rooted_typ,
+			rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
+		        rooted_cc = rooted_typ === nothing ? nothing : last_cc,
+			arg_jl_i = arg_jl_i,
+			 ))
+		    arg_jl_i += 1
             orig_i += 1
+	    last_cc = RemovedParam
             continue
         end
         codegen_typ = codegen_types[codegen_i]
@@ -58,10 +164,16 @@ function classify_arguments(
                         typ = source_typ,
                         arg_i = source_i,
                         codegen = (typ = codegen_typ, i = codegen_i),
+			rooted_typ = rooted_typ,
+			rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
+		        rooted_cc = rooted_typ === nothing ? nothing : last_cc,
+			arg_jl_i = arg_jl_i,
                     ),
                 )
                 # - boxed values
                 #   XXX: use `deserves_retbox` instead?
+		last_cc = GPUCompiler.BITS_VALUE
+		    arg_jl_i += 1
             elseif llvm_source_typ isa LLVM.PointerType
                 if llvm_source_typ != codegen_typ
                     throw(AssertionError("Mismatch codegen type llvm_source_typ=$(string(llvm_source_typ)) codegen_typ=$(string(codegen_typ)) source_i=$source_i source_sig=$source_sig, source_typ=$source_typ, codegen_i=$codegen_i, codegen_types=$(string(codegen_ft))"))
@@ -73,9 +185,15 @@ function classify_arguments(
                         typ = source_typ,
                         arg_i = source_i,
                         codegen = (typ = codegen_typ, i = codegen_i),
+			rooted_typ = rooted_typ,
+			rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
+		        rooted_cc = rooted_typ === nothing ? nothing : last_cc,
+			arg_jl_i = arg_jl_i,
                     ),
                 )
                 # - references to aggregates
+		last_cc = GPUCompiler.MUT_REF
+		    arg_jl_i += 1
             else
                 @assert llvm_source_typ != codegen_typ
                 push!(
@@ -85,8 +203,14 @@ function classify_arguments(
                         typ = source_typ,
                         arg_i = source_i,
                         codegen = (typ = codegen_typ, i = codegen_i),
+			rooted_typ = rooted_typ,
+			rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
+		        rooted_cc = rooted_typ === nothing ? nothing : last_cc,
+			arg_jl_i = arg_jl_i,
                     ),
                 )
+		last_cc = GPUCompiler.BITS_REF
+		    arg_jl_i += 1
             end
         else
             push!(
@@ -96,8 +220,14 @@ function classify_arguments(
                     typ = source_typ,
                     arg_i = source_i,
                     codegen = (typ = codegen_typ, i = codegen_i),
+		    rooted_typ = rooted_typ,
+		    rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
+		    rooted_cc = rooted_typ === nothing ? nothing : last_cc,
+		    arg_jl_i = arg_jl_i,
                 ),
             )
+	    last_cc = GPUCompiler.BITS_VALUE
+		    arg_jl_i += 1
         end
 
         codegen_i += 1
@@ -138,6 +268,7 @@ function union_alloca_type(@nospecialize(UT::Type))
     for_each_uniontype_small(inner, UT)
     return nbytes
 end
+
 
 # From https://github.com/JuliaLang/julia/blob/e6bf81f39a202eedc7bd4f310c1ab60b5b86c251/src/codegen.cpp#L6447
 function is_sret(@nospecialize(jlrettype::Type))

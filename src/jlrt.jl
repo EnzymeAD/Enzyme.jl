@@ -886,12 +886,14 @@ function emit_layout_of_type!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value))
 	return layout
 end
 
-function emit_memorytype_elsz!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value))
+function emit_type_layout_elsz!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value))
 	legal, JTy = absint(ty)
 	if legal
-		res = unsafe_load(reinterpret(Ptr{UInt32}, JTy.layout))
-		return LLVM.ConstantInt(res)
+	    @assert JTy isa Type
+	    res = Compiler.datatype_layoutsize(JTy)
+	    return LLVM.ConstantInt(res)
 	end
+
 	ty = emit_layout_of_type!(B, ty)
 	@assert !isa(ty, LLVM.ConstantExpr)
 	@assert !isa(ty, LLVM.Constant)
@@ -902,7 +904,7 @@ end
 
 function get_memory_elsz(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
     ty = emit_jltypeof!(B, array)
-	return emit_memorytype_elsz!(B, ty)
+    return emit_type_layout_elsz!(B, ty)
 end
 
 function get_array_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
@@ -954,17 +956,21 @@ function get_memory_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
             nm = LLVM.name(fn)
         end
 
-        for (fname, num) in (
-            ("jl_alloc_genericmemory", 1),
-            ("ijl_alloc_genericmemory", 1),
+        if nm in (
+            "jl_alloc_genericmemory",
+            "ijl_alloc_genericmemory",
         )
-            if nm == fname
                 res = operands(array)[2]
-                for i = 2:num
-                    res = mul!(B, res, operands(array)[1+i])
-                end
                 return res
-            end
+        end
+        if nm in (
+	     "jl_alloc_genericmemory_unchecked",
+	     "ijl_alloc_genericmemory_unchecked",
+	    )
+	        # This is number of bytes not number of elements
+		res = get_memory_size(B, array)
+		es = get_memory_elsz(B, array)
+		return udiv!(B, res, es)
         end
     end
     ST = get_memory_struct()
@@ -981,6 +987,50 @@ function get_memory_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
     )
     sizeT = LLVM.IntType(8 * sizeof(Csize_t))
     return LLVM.load!(B, sizeT, v)
+end
+
+
+# nel - number of elements
+#
+@static if VERSION >= v"1.11" 
+function get_memory_nbytes(B::LLVM.IRBuilder, memty::Type{<:Memory}, nel::LLVM.Value)
+    elsz = LLVM.ConstantInt(Compiler.datatype_layoutsize(memty))
+    isboxed = Base.datatype_arrayelem(memty) == 1
+    isunion = Base.datatype_arrayelem(memty) == 2
+
+    if isboxed
+        elsz = LLVM.ConstantInt(sizeof(Ptr{Cvoid}))
+    end
+    nbytes = LLVM.mul!(B, nel, elsz)
+
+    if isunion
+        # an extra byte for each isbits union memory element, stored at m->ptr + m->length
+	nbytes = LLVM.add!(B, nbytes, nel)
+    end
+    return nbytes
+end
+end
+
+function get_memory_nbytes(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
+    if isa(array, LLVM.CallInst)
+        fn = LLVM.called_operand(array)
+        nm = ""
+        if isa(fn, LLVM.Function)
+            nm = LLVM.name(fn)
+        end
+        if nm in (
+	     "jl_alloc_genericmemory_unchecked",
+	     "ijl_alloc_genericmemory_unchecked",
+	    )
+	        # This is number of bytes not number of elements
+                res = operands(array)[2]
+		return res
+        end
+    end
+    nel = get_memory_len(B, array)
+    legal, memty = abs_typeof(array)
+    @assert legal
+    return get_memory_nbytes(B, memty, nel)
 end
 
 function get_array_nrows(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))

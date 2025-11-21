@@ -480,6 +480,8 @@ const generic_method_offsets = Dict{String,Tuple{Int,Int}}((
     "ijl_f__apply_latest" => (2, 3),
     "jl_f__call_latest" => (2, 3),
     "ijl_f__call_latest" => (2, 3),
+    "jl_f_invokelatest" => (2, 3),
+    "ijl_f_invokelatest" => (2, 3),
     "jl_f_invoke" => (2, 3),
     "jl_invoke" => (1, 3),
     "jl_apply_generic" => (1, 2),
@@ -616,6 +618,10 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     method_table = Core.Compiler.method_table(interp)
     bt = backtrace(inst)
     dest = called_operand(inst)
+    
+    if isa(dest, LLVM.PHIInst) && all(Base.Fix1(==, operands(dest)[1]), operands(dest))
+       dest = operands(dest)[1]
+    end
     if isa(dest, LLVM.ConstantExpr) && opcode(dest) == LLVM.API.LLVMIntToPtr && isa(operands(dest)[1], LLVM.ConstantExpr) && opcode(operands(dest)[1]) == LLVM.API.LLVMPtrToInt
        dest = operands(operands(dest)[1])[1] 
     end
@@ -1144,7 +1150,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 		    else
 			false, nothing
 		    end
-
+	
                     lfn = nothing
                     if found 
                         lfn = replaceWith

@@ -7,7 +7,7 @@ LLVM.@function_pass "jl-inst-simplify" JLInstSimplifyPass
 LLVM.@module_pass "preserve-nvvm" PreserveNVVMPass
 LLVM.@module_pass "preserve-nvvm-end" PreserveNVVMEndPass
 
-const RunAttributor = Ref(true)
+const RunAttributor = Ref(VERSION < v"1.12")
 
 function enzyme_attributor_pass!(mod::LLVM.Module)
     ccall(
@@ -158,9 +158,16 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         run!(pb, mod, tm)
     end
     end # middle_optimize!
+    
+    run!(GCInvariantVerifierPass(strong=false), mod)
 
     middle_optimize!()
+    
+    run!(GCInvariantVerifierPass(strong=false), mod)
+    
     middle_optimize!(true)
+    
+    run!(GCInvariantVerifierPass(strong=false), mod)
 
     # Globalopt is separated as it can delete functions, which invalidates the Julia hardcoded pointers to
     # known functions
@@ -178,9 +185,20 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         end
         run!(pb, mod, tm)
     end
-    removeDeadArgs!(mod, tm)
-    detect_writeonly!(mod)
+    
+    run!(GCInvariantVerifierPass(strong=false), mod)
+    
+    removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
+    
+    run!(GCInvariantVerifierPass(strong=false), mod)
+
+    API.EnzymeDetectReadonlyOrThrow(mod)
+    
+    run!(GCInvariantVerifierPass(strong=false), mod)
+    
     nodecayed_phis!(mod)
+                
+    run!(GCInvariantVerifierPass(strong=false), mod)
 end
 
 function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
@@ -341,14 +359,23 @@ function addJuliaLegalizationPasses!(mpm::LLVM.NewPMPassManager, lower_intrinsic
     end
 end
 
+const DumpPreCallConv = Ref(false)
+const DumpPostCallConv = Ref(false)
+
 function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool = true)
     addr13NoAlias(mod)
-    removeDeadArgs!(mod, tm)
+    removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
+    if DumpPreCallConv[]
+	    API.EnzymeDumpModuleRef(mod.ref)
+    end
     for f in collect(functions(mod))
         API.EnzymeFixupJuliaCallingConvention(f)
     end
     for f in collect(functions(mod))
         API.EnzymeFixupBatchedJuliaCallingConvention(f)
+    end
+    if DumpPostCallConv[]
+	    API.EnzymeDumpModuleRef(mod.ref)
     end
     for g in collect(globals(mod))
         if startswith(LLVM.name(g), "ccall")

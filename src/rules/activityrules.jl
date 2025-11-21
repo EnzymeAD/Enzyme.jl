@@ -1,5 +1,5 @@
 
-function julia_activity_rule(f::LLVM.Function)
+function julia_activity_rule(f::LLVM.Function, method_table)
     if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1")
         return
     end
@@ -11,7 +11,7 @@ function julia_activity_rule(f::LLVM.Function)
     dl = string(LLVM.datalayout(LLVM.parent(f)))
 
     expectLen = (sret !== nothing) + (returnRoots !== nothing)
-    for source_typ in mi.specTypes.parameters
+    for (source_typ, _) in rooted_argument_list(mi.specTypes.parameters)
         if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
             continue
         end
@@ -35,7 +35,7 @@ function julia_activity_rule(f::LLVM.Function)
     # TODO fix the attributor inlining such that this can assert always true
     if expectLen != length(parameters(f))
         msg = sprint() do io::IO
-            println(io, "Enzyme Internal Error (expectLen != length(parameters(f)))")
+            println(io, "expectLen != length(parameters(f))")
             println(io, string(f))
             println(io, "expectLen=", string(expectLen))
             println(io, "swiftself=", string(swiftself))
@@ -45,7 +45,7 @@ function julia_activity_rule(f::LLVM.Function)
             println(io, "retRemoved=", string(retRemoved))
             println(io, "parmsRemoved=", string(parmsRemoved))
         end
-        throw(AssertionError(msg))
+        throw(CallingConventionMismatchError{String}(msg, mi, world))
     end
 
     jlargs = classify_arguments(
@@ -56,6 +56,16 @@ function julia_activity_rule(f::LLVM.Function)
         swiftself,
         parmsRemoved,
     )
+
+    kwarg_inactive = false
+
+    if isKWCallSignature(mi.specTypes)
+        if EnzymeRules.is_inactive_kwarg_from_sig(Interpreter.simplify_kw(mi.specTypes); world, method_table)
+            kwarg_inactive = true
+        end
+    end
+
+
 
     if !Enzyme.Compiler.no_type_setting(mi.specTypes; world)[1]
         any_active = false
@@ -69,13 +79,13 @@ function julia_activity_rule(f::LLVM.Function)
             typ, _ = enzyme_extract_parm_type(f, arg.codegen.i)
             @assert typ == arg.typ
 
-            if guaranteed_const_nongen(arg.typ, world)
+	    if (kwarg_inactive && arg.arg_i == 2) || guaranteed_const_nongen(arg.typ, world) || (arg.rooted_typ !== nothing && guaranteed_const_nongen(arg.rooted_typ, world))
                 push!(
                     parameter_attributes(f, arg.codegen.i),
                     StringAttribute("enzyme_inactive"),
                 )
-	    else
-		any_active = true
+    	    else
+        		any_active = true
             end
         end
         if sret !== nothing

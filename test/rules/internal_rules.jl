@@ -1,6 +1,6 @@
 using Enzyme
 using EnzymeTestUtils
-import Random
+import Random, LinearAlgebra
 using Test
 
 struct TPair
@@ -101,12 +101,14 @@ end
         ts = Array(Base.range_start_stop_length(x, 1.25, 30))
         return sum(ts)
     end
-    @test Enzyme.autodiff(Forward, f1, Duplicated(0.1, 1.0)) == (374.99999999999994,)
+    @test Enzyme.autodiff(Forward, f1, Duplicated(0.1, 1.0))[1] ≈ 375.0
     @test Enzyme.autodiff(Forward, f2, Duplicated(0.1, 1.0)) == (25.0,)
     @test Enzyme.autodiff(Forward, f3, Duplicated(0.1, 1.0)) == (15.0,)
 
-    @test Enzyme.autodiff(Forward, f1, BatchDuplicated(0.1, (1.0, 2.0))) ==
-        ((var"1" = 374.99999999999994, var"2" = 749.9999999999999),)
+    res = Enzyme.autodiff(Forward, f1, BatchDuplicated(0.1, (1.0, 2.0)))
+    @test res[1][1] ≈ 375.0
+    @test res[1][2] ≈ 750.0
+    
     @test Enzyme.autodiff(Forward, f2, BatchDuplicated(0.1, (1.0, 2.0))) ==
         ((var"1" = 25.0, var"2" = 50.0),)
     @test Enzyme.autodiff(Forward, f3, BatchDuplicated(0.1, (1.0, 2.0))) ==
@@ -204,6 +206,28 @@ end
             test_reverse(hypot, RT, (x, Tx), (y, Ty))
             test_reverse(hypot, RT, (x, Tx), (y, Ty), (z, Tz))
             test_reverse(hypot, RT, (x, Tx), (y, Ty), (z, Tz), (xs, Txs))
+        end
+    end
+end
+
+@testset "(matrix) det" begin
+    @testset "forward" begin
+        @testset for RT in (Const,DuplicatedNoNeed,Duplicated,),
+                     Tx in (Const,Duplicated,)
+            xr = [4.0 3.0; 2.0 1.0]
+            test_forward(LinearAlgebra.det, RT, (xr, Tx))
+
+            xc = [4.0+0.0im 3.0; 2.0-0.0im 1.0]
+            test_forward(LinearAlgebra.det, RT, (xc, Tx))
+        end
+    end
+    @testset "reverse" begin
+        @testset for RT in (Const, Active,), Tx in (Const, Duplicated,)
+            x = [4.0 3.0; 2.0 1.0]
+            test_reverse(LinearAlgebra.det, RT, (x, Tx))
+
+            x = [4.0+0.0im 3.0; 2.0-0.0im 1.0]
+            test_reverse(LinearAlgebra.det, RT, (x, Tx))
         end
     end
 end

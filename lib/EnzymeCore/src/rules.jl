@@ -7,18 +7,26 @@ export FwdConfig, FwdConfigWidth
 export AugmentedReturn
 import ..EnzymeCore: needs_primal
 export needs_primal, needs_shadow, width, overwritten, runtime_activity
-export primal_type, shadow_type, tape_type, easy_scalar_rule
+export primal_type, shadow_type, tape_type, easy_scalar_rule, forward_rule_return_type, augmented_rule_return_type
 
 import Base: unwrapva, isvarargtype, unwrap_unionall, rewrap_unionall
 
 """
     forward(fwdconfig, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
 
-Calculate the forward derivative. The first argument is a [`FwdConfig](@ref) object
+Calculate the forward derivative. The first argument is a [`FwdConfig`](@ref) object
 describing parameters of the differentiation.
-The second argument `func` is the callable for which the rule applies to.
-Either wrapped in a [`Const`](@ref)), or a [`Duplicated`](@ref) if it is a closure.
-The third argument is the return type annotation, and all other arguments are the annotated function arguments.
+The second argument `func` is the callable to which the rule applies,
+either wrapped in a [`Const`](@ref)), or a [`Duplicated`](@ref) if it is a closure.
+The third argument is the return type annotation, and all other arguments are the annotated arguments
+to the function `f`.
+
+Valid types for `RT` are:
+  - [`EnzymeCore.Duplicated`](@ref)
+  - [`EnzymeCore.DuplicatedNoNeed`](@ref)
+  - [`EnzymeCore.Const`](@ref)
+
+The return from this function must be a type matching [`forward_rule_return_type`](@ref) when given the `fwdconfig` and `RT`.
 """
 function forward end
 
@@ -32,7 +40,8 @@ Configuration type to dispatch on in custom forward rules (see [`forward`](@ref)
 * `RuntimeActivity`: whether runtime activity is enabled. See the [FAQ](@ref faq-runtime-activity) for more information.
 * `StrongZero`: whether strong zero is enabled. See the [FAQ](@ref faq-strong-zero) for more information.
 
-Getters for the type parameters are provided by `needs_primal`, `needs_shadow`, `width` `runtime_activity`, and `strong_zero`.
+Getters for the type parameters are provided by [`needs_primal`](@ref), [`needs_shadow`](@ref),
+[`width`](@ref), `runtime_activity`, and `strong_zero`.
 """
 struct FwdConfig{NeedsPrimal, NeedsShadow, Width, RuntimeActivity, StrongZero} end
 const FwdConfigWidth{Width} = FwdConfig{<:Any,<:Any,Width}
@@ -66,7 +75,7 @@ Whether a custom rule should return the shadow (derivative) of the function resu
     width(::Type{<:FwdConfig})
     width(::Type{<:RevConfig})
 
-Get the size of a batch
+Get the size of a batch.
 """
 @inline width(::FwdConfig{<:Any, <:Any, Width}) where Width = Width
 @inline width(::Type{<:FwdConfig{<:Any, <:Any, Width}}) where Width = Width
@@ -83,11 +92,12 @@ Configuration type to dispatch on in custom reverse rules (see [`augmented_prima
 * `NeedsPrimal` and `NeedsShadow`: boolean values specifying whether the primal and shadow (resp.) should be returned.
 * `Width`: an integer that specifies the number of adjoints/shadows simultaneously being propagated.
 * `Overwritten`: a tuple of booleans of whether each argument (including the function itself) is modified between the
-   forward and reverse pass (true if potentially modified between).
+   forward and reverse pass (`true` if potentially modified between).
 * `RuntimeActivity`: whether runtime activity is enabled. See the [FAQ](@ref faq-runtime-activity) for more information.
 * `StrongZero`: whether strong zero is enabled. See the [FAQ](@ref faq-strong-zero) for more information.
 
-Getters for the type parameters are provided by `needs_primal`, `needs_shadow`, `width`, `overwritten`, `runtime_activity`, and `strong_zero`.
+Getters for the type parameters are provided by [`needs_primal`](@ref), [`needs_shadow`](@ref), [`width`](@ref),
+[`overwritten`](@ref), `runtime_activity`, and `strong_zero`.
 """
 struct RevConfig{NeedsPrimal, NeedsShadow, Width, Overwritten, RuntimeActivity, StrongZero} end
 const RevConfigWidth{Width} = RevConfig{<:Any,<:Any, Width}
@@ -116,20 +126,79 @@ between).
 """
     primal_type(::FwdConfig, ::Type{<:Annotation{RT}})
     primal_type(::RevConfig, ::Type{<:Annotation{RT}})
+    primal_type(::Type{<:FwdConfig}, ::Type{<:Annotation{RT}})
+    primal_type(::Type{<:RevConfig}, ::Type{<:Annotation{RT}})
 
-Compute the exepcted primal return type given a reverse mode config and return activity
+Compute the expected primal return type given a reverse mode config and return activity
 """
 @inline primal_type(config::FwdConfig, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
 @inline primal_type(config::RevConfig, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
+@inline primal_type(config::Type{<:FwdConfig}, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
+@inline primal_type(config::Type{<:RevConfig}, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
 
 """
     shadow_type(::FwdConfig, ::Type{<:Annotation{RT}})
     shadow_type(::RevConfig, ::Type{<:Annotation{RT}})
+    shadow_type(::Type{<:FwdConfig}, ::Type{<:Annotation{RT}})
+    shadow_type(::Type{<:RevConfig}, ::Type{<:Annotation{RT}})
 
-Compute the exepcted shadow return type given a reverse mode config and return activity
+Compute the expected shadow return type given a reverse mode config and return activity
 """
 @inline shadow_type(config::FwdConfig, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
 @inline shadow_type(config::RevConfig, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
+@inline shadow_type(config::Type{<:FwdConfig}, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
+@inline shadow_type(config::Type{<:RevConfig}, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
+
+
+"""
+    forward_rule_return_type(C::FwdConfig, RT::Type{<:Annotation})
+    forward_rule_return_type(::Type{<:FwdConfig}, RT::Type{<:Annotation})
+
+Compute the expected result type of a custom forward rule, given the configuration `C` and return activity and type `RT`.
+
+Consider `RealRt` as the original return type of the rule, accessible as `eltype(RT)`. The return type can be computed as follows:
+
+If the shadow isn't needed, return the original result (of type `RealRt`) if requested by the config ([`needs_primal`](@ref)), otherwise nothing.
+
+Otherwise, first construct a shadow return.
+    If the [`width`](@ref) is one, the shadow is the same type as the primal (`RealRt`).
+    If the [`width`](@ref) is not one, the shadow is a tuple containing `width` of the original return types (`NTuple{width,RealRt}`).
+
+Finally, if both the primal and shadow are requested, return a [`EnzymeCore.Duplicated`](@ref) or [`EnzymeCore.BatchDuplicated`](@ref) of primal and shadows.
+Otherwise, just return the shadows.
+
+"""
+@inline function forward_rule_return_type(C::Type{<:FwdConfig}, RT::Type{<:Annotation})
+    RealRt = eltype(RT)
+    needsPrimal = EnzymeRules.needs_primal(C)
+    needsShadow = EnzymeRules.needs_shadow(C)
+    width = EnzymeRules.width(C)
+    if !needsShadow
+        if needsPrimal
+            return RealRt
+        else
+            return Nothing
+        end
+    else
+        @assert !(RT <: Const)
+        if !needsPrimal
+            ST = RealRt
+            if width != 1
+                ST = NTuple{Int(width),ST}
+            end
+            return ST
+        else
+            ST = if width == 1
+                Duplicated{RealRt}
+            else
+                BatchDuplicated{RealRt,Int(width)}
+            end
+            return ST
+        end
+    end
+end
+@inline forward_rule_return_type(::FCT, RT::Type{<:Annotation}) where {FCT <: FwdConfig} = forward_rule_return_type(FCT, RT)
+
 
 """
     AugmentedReturn(primal, shadow, tape)
@@ -148,12 +217,18 @@ struct AugmentedReturn{PrimalType,ShadowType,TapeType}
     shadow::ShadowType
     tape::TapeType
 end
-@inline primal_type(::Type{AugmentedReturn{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = PrimalType
-@inline primal_type(::AugmentedReturn{PrimalType,ShadowType,TapeType}) where {PrimalType,ShadowType,TapeType} = PrimalType
-@inline shadow_type(::Type{AugmentedReturn{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = ShadowType
-@inline shadow_type(::AugmentedReturn{PrimalType,ShadowType,TapeType}) where {PrimalType,ShadowType,TapeType} = ShadowType
-@inline tape_type(::Type{AugmentedReturn{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = TapeType
-@inline tape_type(::AugmentedReturn{PrimalType,ShadowType,TapeType}) where {PrimalType,ShadowType,TapeType} = TapeType
+
+@inline function AugmentedReturn{PrimalType,ShadowType}(primal, shadow, cache) where {PrimalType, ShadowType}
+    AT = AugmentedReturn{PrimalType,ShadowType, typeof(cache)}
+    return AT(primal, shadow, cache)
+end
+
+@inline primal_type(::Type{<:AugmentedReturn{PrimalType}}) where {PrimalType} = PrimalType
+@inline primal_type(::AugmentedReturn{PrimalType}) where {PrimalType} = PrimalType
+@inline shadow_type(::Type{<:AugmentedReturn{<:Any,ShadowType}}) where {ShadowType} = ShadowType
+@inline shadow_type(::AugmentedReturn{<:Any,ShadowType}) where {ShadowType} = ShadowType
+@inline tape_type(::Type{<:AugmentedReturn{<:Any,<:Any,TapeType}}) where {TapeType} = TapeType
+@inline tape_type(::AugmentedReturn{<:Any,<:Any,TapeType}) where {TapeType} = TapeType
 struct AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}
     primal::PrimalType
     shadow::ShadowType
@@ -168,11 +243,22 @@ end
 """
     augmented_primal(::RevConfig, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
 
+Code to run during the original forward pass through the code. Any additional data can be saved from forward to
+reverse pass. This may be required as arguments might be overwritten before the reverse pass is run.
+
+This should compute and mutate the same values as the original function (if requested).
+
+It should also return a shadow data structure to hold derivatives (if requested).
+
 Must return an [`AugmentedReturn`](@ref) type.
-* The primal must be the same type of the original return if `needs_primal(config)`, otherwise nothing.
-* The shadow must be nothing if needs_shadow(config) is false. If width is 1, the shadow should be the same
-  type of the original return. If the width is greater than 1, the shadow should be NTuple{original return, width}.
-* The tape can be any type (including Nothing) and is preserved for the reverse call.
+* The primal must be the same type of the original return if [`needs_primal(config)`](@ref needs_primal),
+  otherwise nothing.
+* The shadow must be nothing if [`needs_shadow(config)`](@ref needs_shadow) is `false`.
+  If width is 1, the shadow should be the same type of the original return.
+  If the width is greater than 1, the shadow should be `NTuple{original return, width}`.
+* The tape can be any type (including `Nothing`), and is preserved for the reverse call.
+
+See [`augmented_rule_return_type`](@ref) for more information.
 """
 function augmented_primal end
 
@@ -180,10 +266,71 @@ function augmented_primal end
     reverse(::RevConfig, func::Annotation{typeof(f)}, dret::Active, tape, args::Annotation...)
     reverse(::RevConfig, func::Annotation{typeof(f)}, ::Type{<:Annotation), tape, args::Annotation...)
 
-Takes gradient of derivative, activity annotation, and tape. If there is an active return dret is passed
-as Active{T} with the derivative of the active return val. Otherwise dret is passed as Type{Duplicated{T}}, etc.
+Takes gradient of derivative, activity annotation, and tape. If there is an active return, `dret` is passed
+as `Active{T}` with the derivative of the active return value. Otherwise, `dret` is passed
+as `Type{Duplicated{T}}`, etc.
 """
 function reverse end
+
+
+"""
+    augmented_rule_return_type(C::RevConfig, RT::Type{<:Annotation}, cache::Any)
+    augmented_rule_return_type(::Type{<:RevConfig}, RT::Type{<:Annotation}, CacheType::Type)
+    augmented_rule_return_type(C::RevConfig, RT::Type{<:Annotation})
+    augmented_rule_return_type(::Type{<:RevConfig}, RT::Type{<:Annotation})
+
+Compute the expected result type of a custom augmented forward pass rule, given the configuration `C` return activity and type `RT`, and cache `cache`.
+Alternatively, this can be called with the configuration type, return activity, and cache type.
+
+Consider `RealRt` as the original return type of the rule, accessible as `eltype(RT)`. The return type can be computed as follows:
+
+We must return a struct of type [`AugmentedReturn`](@ref), which has three elements (and corresponding type parameter).
+
+The first element is the primal type, which is the original result (of type `RealRt`) if requested by the config ([`needs_primal`](@ref)), otherwise nothing.
+
+The second element is the shadow type, if requested by the config ([`needs_shadow`](@ref), otherwise nothing. If requested, the shadow is of type:
+    If the [`width`](@ref) is one, the shadow is the same type as the primal (`RealRt`).
+    If the [`width`](@ref) is not one, the shadow is a tuple containing `width` of the original return types (`NTuple{width,RealRt}`).
+
+The third element is user defined, whatever type the cache is you want to save from forward to reverse pass. In this case, it
+will be determined by `cache`, or `CacheType`.
+
+If a cache type is not provided a unionall will be returned
+
+"""
+@inline function augmented_rule_return_type(C::Type{<:RevConfig}, RT::Type{<:Annotation})
+    RealRt = eltype(RT)
+
+    PrimalType = if EnzymeRules.needs_primal(C)
+        RealRt
+    else
+        Nothing
+    end
+
+    ShadowType = if EnzymeRules.needs_shadow(C)
+        if EnzymeRules.width(C) == 1
+            RealRt
+        else
+            NTuple{EnzymeRules.width(C), RealRt}
+        end
+    else
+        Nothing
+    end
+
+    return AugmentedReturn{PrimalType, ShadowType}
+end
+
+@inline function augmented_rule_return_type(C::Type{<:RevConfig}, RT::Type{<:Annotation}, CacheType::Type)
+    return augmented_rule_return_type(C, RT){CacheType}
+end
+
+@generated function augmented_rule_return_type(rct::RevConfig, RT::Type{<:Annotation}, cache)
+    return augmented_rule_return_type(rct, RT.parameters[1], cache)
+end
+
+@generated function augmented_rule_return_type(rct::RevConfig, RT::Type{<:Annotation})
+    return augmented_rule_return_type(rct, RT.parameters[1])
+end
 
 function _annotate(@nospecialize(T))
     if isvarargtype(T)
@@ -303,6 +450,39 @@ function is_inactive_noinl_from_sig(@nospecialize(TT);
                               method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
                               caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
     return isapplicable(inactive_noinl, TT; world, method_table, caller)
+end
+
+"""
+    inactive_kwarg(func::typeof(f), args...; kwargs...)
+
+Mark a particular function as always having inactive keyword arguments. The return does not matter, merely its declaration.
+
+This function is currently considered internal/experimental and may not respect semver.
+"""
+function inactive_kwarg end
+
+function is_inactive_kwarg_from_sig(@nospecialize(TT);
+                              world::UInt=Base.get_world_counter(),
+                              method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
+                              caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
+    return isapplicable(inactive_kwarg, TT; world, method_table, caller)
+end
+
+"""
+    inactive_arg(func::typeof(f), args...; kwargs...)
+
+Mark a particular function as always having inactive non-keyword arguments. The return type must be a tuple of Val's whose
+value is the argument marked inactive.
+
+This function is currently considered internal/experimental and may not respect semver.
+"""
+function inactive_arg end
+
+function is_inactive_arg_from_sig(@nospecialize(TT);
+                              world::UInt=Base.get_world_counter(),
+                              method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
+                              caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
+    return isapplicable(inactive_arg, TT; world, method_table, caller)
 end
 
 """
