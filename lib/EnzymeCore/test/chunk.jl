@@ -1,13 +1,6 @@
 using Test
 using EnzymeCore
 
-@testset "SmallestChunk" begin
-    @test pick_chunksize(SmallestChunk(), 10) == Val(1)
-    @test pick_chunksize(SmallestChunk(), ones(10)) == Val(1)
-    @test pick_chunksize(SmallestChunk(), 100) == Val(1)
-    @test pick_chunksize(SmallestChunk(), ones(100)) == Val(1)
-end
-
 @testset "LargestChunk" begin
     @test pick_chunksize(LargestChunk(), 10) == Val(10)
     @test pick_chunksize(LargestChunk(), ones(10)) == Val(10)

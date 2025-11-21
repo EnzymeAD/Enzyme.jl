@@ -422,10 +422,10 @@ get_strategy(chunk::Type{CS}) where {CS<:ChunkStrategy} = chunk
 
 function get_strategy(::Type{Nothing})
     Base.depwarn(
-        "The `chunk=nothing` configuration will be deprecated in a future release. Please use `chunk=SmallestChunk()` instead.",
+        "The `chunk=nothing` configuration will be deprecated in a future release. Please use `chunk=LargestChunk()` instead.",
         :get_strategy,
     )
-    return SmallestChunk
+    return LargestChunk()
 end
 
 function get_strategy(::Type{Val{C}}) where {C}
@@ -472,7 +472,7 @@ end
             push!(exprs, :(nothing))
         elseif ty <: AbstractFloat
             push!(exprs, :(nothing))
-        elseif chunk_strategy == SmallestChunk || chunk_strategy == FixedChunk{1}
+        elseif chunk_strategy == LargestChunk || chunk_strategy == FixedChunk{1}
             push!(exprs, :(onehot($arg)))
         else
             push!(exprs, :(chunkedonehot($arg, chunk)))
@@ -528,7 +528,7 @@ end
 @inline specialize_output(output, input) = output
 
 """
-    gradient(::ForwardMode, f, x, args...; chunk=SmallestChunk(), shadows=create_shadows(chunk, x, args...))
+    gradient(::ForwardMode, f, x, args...; chunk=LargestChunk(), shadows=create_shadows(chunk, x, args...))
 
 Compute the gradient of an array-input function `f` using forward mode.
 The optional keyword argument `chunk` denotes the chunk size to use: it can be any instance of [`EnzymeCore.ChunkStrategy`](@ref EnzymeCore.ChunkStrategy).
@@ -614,7 +614,7 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
     f::F,
     x::ty_0,
     args::Vararg{Any,N};
-    chunk::ExtendedChunkStrategy = SmallestChunk(),
+    chunk::ExtendedChunkStrategy = LargestChunk(),
     shadows::ST = create_shadows(chunk, x, args...),
 ) where {F, ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero,ST, ty_0, N}
 
@@ -688,7 +688,7 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
             :($resp[1])
         elseif argnum == 0
             vals[i]
-        elseif chunk_strategy == SmallestChunk
+        elseif chunk_strategy == LargestChunk
             dargs = Union{Symbol,Expr}[]
             for (j, arg2) in enumerate(syms)
                 if i == j
@@ -968,7 +968,7 @@ end
         else
             push!(exprs, Expr(:(=), mdi, :(Compiler.active_reg_nothrow($xti) == Compiler.ActiveState || Compiler.active_reg_nothrow($xti) == Compiler.MixedState)))
 
-            if chunk_strategy == SmallestChunk || chunk_strategy == FixedChunk{1}
+            if chunk_strategy == FixedChunk{1}
                 push!(MDTys, :($mdi ? MixedDuplicated{$xti} : Duplicated{$xti}))
             else
                 push!(MDTys, :($mdi ? BatchMixedDuplicated{$xti, $chunksize} : BatchDuplicated{$xti, $chunksize}))
@@ -1197,7 +1197,7 @@ end
 end
 
 """
-    jacobian(::ReverseMode, f, x; n_outs=nothing, chunk=SmallestChunk())
+    jacobian(::ReverseMode, f, x; n_outs=nothing, chunk=LargestChunk())
     jacobian(::ReverseMode, f, x)
 
 Compute the jacobian of a array-output function `f` using (potentially vector) reverse mode.
@@ -1255,7 +1255,7 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
     f::F,
     xs::Vararg{Any, Nargs};
     n_outs::OutType = nothing,
-    chunk::ExtendedChunkStrategy = SmallestChunk(),
+    chunk::ExtendedChunkStrategy = LargestChunk(),
 ) where {F,Nargs, OutType}
 
     fty = if f <: Enzyme.Annotation

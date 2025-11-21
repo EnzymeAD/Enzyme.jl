@@ -672,10 +672,10 @@ fchunk2(x) = map(sin, x) + map(cos, reverse(x))
 
 @testset "Chunking strategies" begin
     @testset "ChunkedOneHot" begin
-        @test Enzyme.chunkedonehot(ones(3), Enzyme.SmallestChunk()) isa Tuple{NTuple{1},NTuple{1},NTuple{1}}
         @test Enzyme.chunkedonehot(ones(30), Enzyme.LargestChunk()) isa Tuple{NTuple{30}}
         @test Enzyme.chunkedonehot(ones(10), Enzyme.LargestChunk()) isa Tuple{NTuple{10}}
         @test Enzyme.chunkedonehot(ones(30), Enzyme.LargestChunk()) isa Tuple{NTuple{30}}
+        @test Enzyme.chunkedonehot(ones(3), Enzyme.FixedChunk{1}()) isa Tuple{NTuple{1},NTuple{1},NTuple{1}}
         @test Enzyme.chunkedonehot(ones(10), Enzyme.FixedChunk{4}()) isa Tuple{NTuple{4},NTuple{4},NTuple{2}}
         @test Enzyme.chunkedonehot(ones(10), Enzyme.FixedChunk{5}()) isa Tuple{NTuple{5},NTuple{5}}
         @test Enzyme.chunkedonehot(ones(10), Enzyme.AutoChunk()) isa Tuple{NTuple{10}}
@@ -684,18 +684,14 @@ fchunk2(x) = map(sin, x) + map(cos, reverse(x))
         @test Enzyme.chunkedonehot(ones(40), Enzyme.AutoChunk()) isa Tuple{NTuple{16}, NTuple{16}, NTuple{8}}
     end
 
-    strategies = [Enzyme.SmallestChunk(), Enzyme.LargestChunk(), Enzyme.FixedChunk{3}(), Enzyme.AutoChunk()]
+    strategies = [Enzyme.LargestChunk(), Enzyme.FixedChunk{1}(), Enzyme.FixedChunk{3}(), Enzyme.AutoChunk()]
 
     @testset "Forward gradient" begin
         @testset for chunk in strategies
             for n in (2, 10)
                 x = ones(n)
                 g = Enzyme.gradient(Enzyme.Forward, fchunk1, x)
-                if chunk isa Enzyme.FixedChunk{3} && n == 2
-                    @test_throws ErrorException Enzyme.gradient(Enzyme.Forward, fchunk1, x; chunk)
-                else
-                    @test g == Enzyme.gradient(Enzyme.Forward, fchunk1, x; chunk)
-                end
+                @test g == Enzyme.gradient(Enzyme.Forward, fchunk1, x; chunk)
             end
         end
     end
@@ -704,11 +700,7 @@ fchunk2(x) = map(sin, x) + map(cos, reverse(x))
             for n in (2, 10)
                 x = ones(n)
                 J = Enzyme.jacobian(Enzyme.Forward, fchunk2, x)
-                if chunk isa Enzyme.FixedChunk{3} && n == 2
-                    @test_throws ErrorException Enzyme.jacobian(Enzyme.Forward, fchunk2, x; chunk)
-                else
-                    @test J == Enzyme.jacobian(Enzyme.Forward, fchunk2, x; chunk)
-                end
+                @test J == Enzyme.jacobian(Enzyme.Forward, fchunk2, x; chunk)
             end
         end
     end
@@ -717,11 +709,7 @@ fchunk2(x) = map(sin, x) + map(cos, reverse(x))
             for n in (2, 10)
                 x = ones(n)
                 J = Enzyme.jacobian(Enzyme.Forward, fchunk2, x)
-                if chunk isa Enzyme.FixedChunk{3} && n == 2
-                    @test_throws ErrorException Enzyme.jacobian(Enzyme.Reverse, fchunk2, x; chunk)
-                else
-                    @test J == Enzyme.jacobian(Enzyme.Reverse, fchunk2, x; chunk)
-                end
+                @test J == Enzyme.jacobian(Enzyme.Reverse, fchunk2, x; chunk)
             end
         end
     end

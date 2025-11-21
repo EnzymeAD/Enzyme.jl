@@ -8,7 +8,7 @@ export DefaultABI, FFIABI, InlineABI, NonGenABI
 export BatchDuplicatedFunc
 export within_autodiff, ignore_derivatives
 export needs_primal
-export ChunkStrategy, SmallestChunk, LargestChunk, FixedChunk, AutoChunk, pick_chunksize
+export ChunkStrategy, LargestChunk, FixedChunk, AutoChunk, pick_chunksize
 
 function batch_size end
 
@@ -805,7 +805,6 @@ Abstract type gathering strategies for chunk size selection.
 
 # Subtypes
 
-- [`SmallestChunk`](@ref)
 - [`LargestChunk`](@ref)
 - [`FixedChunk`](@ref)
 - [`AutoChunk`](@ref)
@@ -813,19 +812,12 @@ Abstract type gathering strategies for chunk size selection.
 abstract type ChunkStrategy end
 
 """
-    SmallestChunk()
-
-Select chunk size equal to 1, so that the corresponding array is processed in as many chunks as it has elements.
-
-!!! tip
-    In the current Enzyme interface, this strategy is equivalent to setting `chunk = nothing`.
-"""
-struct SmallestChunk <: ChunkStrategy end
-
-"""
     LargestChunk()
 
 Select chunk size equal to the number of elements, so that the corresponding array is processed in a single chunk.
+
+!!! tip
+    In the current Enzyme interface, this strategy is equivalent to setting `chunk = nothing`.
 """
 struct LargestChunk <: ChunkStrategy end
 
@@ -836,9 +828,6 @@ Select chunk size equal to a fixed integer `C`.
 
 !!! tip
     In the current Enzyme interface, this chunk strategy is equivalent to setting `chunk = Val(C)`.
-
-!!! warning
-    This chunk strategy will error if the corresponding array has length `< C`.
 """
 struct FixedChunk{C} <: ChunkStrategy end
 
@@ -855,10 +844,10 @@ const DEFAULT_CHUNK_SIZE = 16
     pick_chunksize(s::ChunkStrategy, n::Integer)
     pick_chunksize(s::ChunkStrategy, a::AbstractArray)
 
-Compute tLargestChunkze chosen by strategy `s` based on the integer `n` or the array `a` (`n` corresponds to the array's length)
+Compute the chunk size chosen by strategy `s` based on the integer `n` or the array `a` (`n` corresponds to the array's length)
 Return a `Val{C}` object.
-LargestChunk
-- In forward-modeLargestChunkand Jacobians, `a` would be the input array.
+
+- In forward-mode Jacobians, `a` would be the input array.
 - In reverse-mode Jacobians, `a` would be the output array.
 
 !!! warning
@@ -866,24 +855,11 @@ LargestChunk
 """
 function pick_chunksize end
 
-pick_chunksize(::SmallestChunk, a_or_n::Union{Integer,AbstractArray}) = Val(1)
-
 pick_chunksize(::LargestChunk, n::Integer) = Val(n)
 pick_chunksize(::LargestChunk, a::AbstractArray) = Val(length(a))  # allows inference on static arrays
 
 pick_chunksize(::AutoChunk, n::Integer) = Val(min(DEFAULT_CHUNK_SIZE, n))  # TODO: improve
 pick_chunksize(s::AutoChunk, a::AbstractArray) = pick_chunksize(s, length(a))
-
-function pick_chunksize(s::FixedChunk{C}, a_or_n::Union{Integer,AbstractArray}) where {C}
-    check_length(s, a_or_n)
-    return Val{C}()
-end
-
-function check_length(::FixedChunk{C}, n::Integer) where {C}
-    if n < C
-        error("Chunk size $C is larger than length $n")
-    end
-end
-check_length(s::FixedChunk{C}, a::AbstractArray) where {C} = check_length(s, length(a))
+pick_chunksize(::FixedChunk{C}, ::Union{Integer,AbstractArray}) where {C} = Val{C}()
 
 end # module EnzymeCore
