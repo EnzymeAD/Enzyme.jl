@@ -786,8 +786,8 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             fname = ops[2]
 
             if isa(flib, LLVM.LoadInst)
-                op, _ = get_base_and_offset(operands(flib)[1]; offsetAllowed=false, inttoptr=true)
-                
+                op, off = get_base_and_offset(operands(flib)[1]; inttoptr=true)
+            
                 if isa(op, LLVM.LoadInst)
                     pop, _ = get_base_and_offset(operands(op)[1]; offsetAllowed=false, inttoptr=true)
 
@@ -796,7 +796,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 
                         rep = zop
                         PT = value_type(rep)
-                        if isa(PT, LLVM.PointerType)
+                        if isa(PT, LLVM.PointerType) 
                             rep = LLVM.const_inttoptr(rep, LLVM.PointerType(eltype(PT)))
                             rep = LLVM.const_addrspacecast(rep, PT)
                             replace_uses!(pop, rep)
@@ -808,7 +808,10 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 end
                         
                 if isa(op, ConstantInt)
-                    rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, op) + 8)
+	    	    @static if VERSION < v"1.12"
+			off += 8
+		    end
+                    rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, op) + off)
                     ld = unsafe_load(convert(Ptr{Ptr{Cvoid}}, rep))
                     flib = Base.unsafe_pointer_to_objref(ld)
                 end
@@ -830,8 +833,8 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                fname = String(map(Base.Fix1(convert, UInt8), collect(fname)[1:(end-1)]))
             end
 
-            if !isa(fname, String) || !isa(flib, String)
-                return
+	    if !isa(fname, String) || !isa(flib, String)
+		return
             end
 
             found, replaceWith = try_import_llvmbc(mod, flib, fname, imported)
@@ -882,7 +885,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                             fname,
                         )
                     end
-                catch
+                catch e
                     nothing
                 end
 
