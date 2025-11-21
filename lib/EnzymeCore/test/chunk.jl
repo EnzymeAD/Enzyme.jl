@@ -9,6 +9,7 @@ using EnzymeCore
 end
 
 @testset "FixedChunk" begin
+    @test FixedChunk(3) == FixedChunk{3}()
     @test_throws ErrorException pick_chunksize(FixedChunk{3}(), 2)
     @test_throws ErrorException pick_chunksize(FixedChunk{3}(), ones(2))
     @test pick_chunksize(FixedChunk{3}(), 10) == Val(3)

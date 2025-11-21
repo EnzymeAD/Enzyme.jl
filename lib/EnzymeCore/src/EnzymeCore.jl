@@ -823,6 +823,7 @@ struct LargestChunk <: ChunkStrategy end
 
 """
     FixedChunk{C}()
+    FixedChunk(C)  # type-unstable
 
 Select chunk size equal to a fixed integer `C`.
 
@@ -830,6 +831,8 @@ Select chunk size equal to a fixed integer `C`.
     In the current Enzyme interface, this chunk strategy is equivalent to setting `chunk = Val(C)`.
 """
 struct FixedChunk{C} <: ChunkStrategy end
+
+FixedChunk(C::Int) = FixedChunk{C}()
 
 """
     AutoChunk()
