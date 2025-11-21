@@ -833,21 +833,11 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                fname = String(map(Base.Fix1(convert, UInt8), collect(fname)[1:(end-1)]))
             end
 
-	    flibty = @static if VERSION >= v"1.12"
-		Union{Core.BindingPartition, String}
-            else
-		String
-	    end
-
-	    if !isa(fname, String) || !isa(flib, flibty)
+	    if !isa(fname, String) || !isa(flib, String)
 		return
             end
 
-            found, replaceWith = if flib isa String
-		 try_import_llvmbc(mod, flib, fname, imported)
-	    else
-		 false, nothing
-	    end
+            found, replaceWith = try_import_llvmbc(mod, flib, fname, imported)
 
             if found
 
