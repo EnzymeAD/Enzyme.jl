@@ -466,9 +466,6 @@ end
 
             if mode == API.DEM_ReverseModeGradient
                 v = lookup_value(gutils, v, B)
-		if !(pv isa Nothing)
-		   pv = lookup_value(gutils, pv, B)
-		end
             end
 
         else
@@ -528,8 +525,8 @@ end
 	        end
 
                 if value_type(dv) != spllty
+                    pv = dv
                     if width == 1
-                        pv = dv
                         dv = load!(fwdbuilder, spllty, dv)
 			if dv2 !== nothing
 			   dv = recombine_value!(fwdbuilder, dv, dv2)
@@ -745,6 +742,7 @@ end
 
     for (pv, val, pllty) in copies
         ld = load!(B, pllty, val)
+	pv = lookup_value(gutils, pv, B)
         store!(B, ld, pv)
     end
     return nothing
