@@ -5,23 +5,6 @@
 
 const JL_MAX_TAGS = 64 # see `enum jl_small_typeof_tags` in julia.h
 
-"""
-Returns `nothing` if the value could not be resolved statically.
-"""
-function resolve_static_type_tag(val::LLVM.Value)
-    type_tag = resolve_static_uint(val)
-    type_tag === nothing && return nothing
-    type_addr = if type_tag < (JL_MAX_TAGS << 4)
-        # "small" type tags are indices into a special array
-        jl_small_typeof = Ptr{Ptr{Cvoid}}(cglobal(:jl_small_typeof))
-        type_idx = type_tag ÷ Core.sizeof(Ptr{Cvoid})
-	unsafe_load(jl_small_typeof, type_idx + 1)
-    else
-        Ptr{Cvoid}(type_tag)
-    end
-    return Base.unsafe_pointer_to_objref(type_addr)
-end
-
 function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked::Bool=false, typetag::Bool=false)::Tuple{Bool, Any}
     if (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)) || (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Derived)) || istracked
         ce, _ = get_base_and_offset(arg; offsetAllowed = false, inttoptr = true)
