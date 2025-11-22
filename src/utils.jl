@@ -583,6 +583,21 @@ end
 
 export sret_ty
 
+function get_rooted_typ(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
+    for attr in collect(LLVM.parameter_attributes(fn, idx))
+        ekind = LLVM.kind(attr)
+
+        if ekind == "enzymejl_rooted_typ"
+            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(attr)))
+            return Base.unsafe_pointer_to_objref(ptr)
+        end
+    end
+
+    throw(AssertionError("Function requesting rooted type was not an sret\nidx=$idx\nfn=$(string(fn))"))
+end
+
+export get_rooted_typ
+
 function remove_nothing_from_union_type(@nospecialize(T::Type))::Type
     if T isa Union
         if T.a === Nothing

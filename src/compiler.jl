@@ -1155,6 +1155,12 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
                     parameter_attributes(f, arg.codegen.i),
                     StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))),
                 )
+		if arg.rooted_typ !== nothing
+			push!(
+			    parameter_attributes(f, arg.codegen.i),
+			    StringAttribute("enzymejl_rooted_typ", string(convert(UInt, unsafe_to_pointer(arg.rooted_typ))))
+			)
+		end
 
                 byref = arg.cc
 
@@ -3912,7 +3918,7 @@ function recombine_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM
    jltype = value_type(sret)
    tracked = CountTrackedPointers(jltype)
    @assert tracked.count > 0
-   @assert !tracked.all
+   @assert !tracked.all "Not tracked.all, jltype ($(string(jltype)))"
    root_ty = convert(LLVMType, AnyArray(Int(tracked.count)))
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, RootPointerToSRetValue)
 end
@@ -3921,7 +3927,7 @@ function extract_roots_from_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, ro
    jltype = value_type(sret)
    tracked = CountTrackedPointers(jltype)
    @assert tracked.count > 0
-   @assert !tracked.all
+   @assert !tracked.all "Not tracked.all, jltype ($(string(jltype)))"
    root_ty = convert(LLVMType, AnyArray(Int(tracked.count)))
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, SRetValueToRootPointer)
 end
@@ -4331,6 +4337,15 @@ function lower_convention(
                         string(UInt(GPUCompiler.BITS_VALUE)),
                     ),
                 )
+		if arg.rooted_typ !== nothing
+                push!(
+		    parameter_attributes(wrapper_f, wrapper_idx - 1),
+                    StringAttribute(
+                        "enzymejl_rooted_typ",
+                        string(convert(UInt, unsafe_to_pointer(arg.rooted_typ))),
+                    ),
+                )
+	end
             elseif arg.arg_i in raisedArgs
                 wrapparm = load!(builder, convert(LLVMType, arg.typ), wrapparm)
                 ctx = LLVM.context(wrapparm)
@@ -4359,6 +4374,15 @@ function lower_convention(
                         string(UInt(GPUCompiler.BITS_REF)),
                     ),
                 )
+		if arg.rooted_typ !== nothing
+                push!(
+                    parameter_attributes(wrapper_f, wrapper_idx - 1),
+                    StringAttribute(
+                        "enzymejl_rooted_typ",
+			string(convert(UInt, unsafe_to_pointer(arg.rooted_typ)))
+                    ),
+                )
+	end
             else
                 push!(wrapper_args, wrapparm)
                 for attr in collect(parameter_attributes(entry_f, arg.codegen.i))
