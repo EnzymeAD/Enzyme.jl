@@ -1559,6 +1559,23 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
 	    nothing
 	end
     else
+	if Ty == Core.SimpleVector
+	   @assert count === nothing
+	   @assert isa(prev, LLVM.CallInst)
+	   @assert LLVM.name(LLVM.called_operand(prev)::LLVM.Function) == "julia.gc_alloc_obj"
+	   sz = operands(prev)[2]
+	   sz = sub!(B, sz, LLVM.ConstantInt(Int(sizeof(Ptr{Cvoid}))))
+           T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+           T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+	   prev = addrspacecast!(B, prev, LLVM.PointerType(T_jlvalue, Derived))
+	   prev = bitcast!(B, prev, LLVM.PointerType(T_prjlvalue, Derived))
+	   gep = LLVM.gep!(B, T_prjlvalue, prev, LLVM.Value[LLVM.ConstantInt(Int64(1))])
+	   zeroAll = false
+	   atomic = true
+	   zero_allocation(B, Any, T_prjlvalue, prev, LLVM.ConstantInt(sizeof(Ptr{Cvoid})), sz, zeroAll, atomic)
+	   return
+        end
+
         if fieldcount(Ty) == 0
             error("Error handling recursive stores for $Ty which has a fieldcount of 0")
         end
