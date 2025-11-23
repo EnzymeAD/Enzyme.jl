@@ -594,6 +594,14 @@ EnzymeGradientUtilsErase(gutils, a) = ccall(
     gutils,
     a,
 )
+EnzymeReplaceOriginalToNew(gutils, orig, rep) = ccall(
+    (:EnzymeReplaceOriginalToNew, libEnzyme),
+    Cvoid,
+    (EnzymeGradientUtilsRef, LLVMValueRef, LLVMValueRef),
+    gutils,
+    orig,
+    rep
+)
 EnzymeGradientUtilsEraseWithPlaceholder(gutils, a, orig, erase) = ccall(
     (:EnzymeGradientUtilsEraseWithPlaceholder, libEnzyme),
     Cvoid,

@@ -1155,6 +1155,12 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
                     parameter_attributes(f, arg.codegen.i),
                     StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))),
                 )
+		if arg.rooted_typ !== nothing
+			push!(
+			    parameter_attributes(f, arg.codegen.i),
+			    StringAttribute("enzymejl_rooted_typ", string(convert(UInt, unsafe_to_pointer(arg.rooted_typ))))
+			)
+		end
 
                 byref = arg.cc
 
@@ -1559,6 +1565,23 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
 	    nothing
 	end
     else
+	if Ty == Core.SimpleVector
+	   @assert count === nothing
+	   @assert isa(prev, LLVM.CallInst)
+	   @assert LLVM.name(LLVM.called_operand(prev)::LLVM.Function) == "julia.gc_alloc_obj"
+	   sz = operands(prev)[2]
+	   sz = sub!(B, sz, LLVM.ConstantInt(Int(sizeof(Ptr{Cvoid}))))
+           T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+           T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+	   prev = addrspacecast!(B, prev, LLVM.PointerType(T_jlvalue, Derived))
+	   prev = bitcast!(B, prev, LLVM.PointerType(T_prjlvalue, Derived))
+	   gep = LLVM.gep!(B, T_prjlvalue, prev, LLVM.Value[LLVM.ConstantInt(Int64(1))])
+	   zeroAll = false
+	   atomic = true
+	   zero_allocation(B, Any, T_prjlvalue, prev, LLVM.ConstantInt(sizeof(Ptr{Cvoid})), sz, zeroAll, atomic)
+	   return
+        end
+
         if fieldcount(Ty) == 0
             error("Error handling recursive stores for $Ty which has a fieldcount of 0")
         end
@@ -3895,7 +3918,7 @@ function recombine_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM
    jltype = value_type(sret)
    tracked = CountTrackedPointers(jltype)
    @assert tracked.count > 0
-   @assert !tracked.all
+   @assert !tracked.all "Not tracked.all, jltype ($(string(jltype)))"
    root_ty = convert(LLVMType, AnyArray(Int(tracked.count)))
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, RootPointerToSRetValue)
 end
@@ -3904,9 +3927,72 @@ function extract_roots_from_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, ro
    jltype = value_type(sret)
    tracked = CountTrackedPointers(jltype)
    @assert tracked.count > 0
-   @assert !tracked.all
+   @assert !tracked.all "Not tracked.all, jltype ($(string(jltype)))"
    root_ty = convert(LLVMType, AnyArray(Int(tracked.count)))
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, SRetValueToRootPointer)
+end
+
+function copy_floats_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, dst::LLVM.Value, src::LLVM.Value)
+    count = 0
+    todo = Tuple{Vector{Cuint},LLVM.LLVMType}[(
+	    Cuint[],
+        jltype,
+    )]
+	function to_llvm(lst::Vector{Cuint})
+	    vals = LLVM.Value[]
+	    push!(vals, LLVM.ConstantInt(LLVM.IntType(64), 0))
+	    for i in lst
+	       push!(vals, LLVM.ConstantInt(LLVM.IntType(32), i))
+	    end
+	    return vals
+	end
+
+	extracted = LLVM.Value[]
+
+    while length(todo) != 0
+            path, ty = popfirst!(todo)
+
+            if isa(ty, LLVM.PointerType) || isa(ty, LLVM.IntegerType)
+                continue
+            end
+
+            if isa(ty, LLVM.FloatingPointType)
+        		dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstloc")
+        		srcloc = inbounds_gep!(builder, jltype, src, to_llvm(path), "srcloc")
+                val = load!(builder, ty, srcloc)
+                st = store!(builder, val, dstloc)
+                continue
+            end
+
+            if isa(ty, LLVM.ArrayType)
+                for i = 1:length(ty)
+                    npath = copy(path)
+                    push!(npath, i - 1)
+                    push!(todo, (npath, eltype(ty)))
+                end
+                continue
+            end
+
+            if isa(ty, LLVM.VectorType)
+                for i = 1:size(ty)
+                    npath = copy(path)
+                    push!(npath, i - 1)
+                    push!(todo, (npath, eltype(ty)))
+                end
+                continue
+            end
+
+            if isa(ty, LLVM.StructType)
+                for (i, t) in enumerate(LLVM.elements(ty))
+                    npath = copy(path)
+                    push!(npath, i - 1)
+                    push!(todo, (npath, t))
+                end
+                continue
+            end
+        end
+
+	return nothing
 end
 
 
@@ -4314,6 +4400,15 @@ function lower_convention(
                         string(UInt(GPUCompiler.BITS_VALUE)),
                     ),
                 )
+		if arg.rooted_typ !== nothing
+                push!(
+		    parameter_attributes(wrapper_f, wrapper_idx - 1),
+                    StringAttribute(
+                        "enzymejl_rooted_typ",
+                        string(convert(UInt, unsafe_to_pointer(arg.rooted_typ))),
+                    ),
+                )
+	end
             elseif arg.arg_i in raisedArgs
                 wrapparm = load!(builder, convert(LLVMType, arg.typ), wrapparm)
                 ctx = LLVM.context(wrapparm)
@@ -4342,6 +4437,15 @@ function lower_convention(
                         string(UInt(GPUCompiler.BITS_REF)),
                     ),
                 )
+		if arg.rooted_typ !== nothing
+                push!(
+                    parameter_attributes(wrapper_f, wrapper_idx - 1),
+                    StringAttribute(
+                        "enzymejl_rooted_typ",
+			string(convert(UInt, unsafe_to_pointer(arg.rooted_typ)))
+                    ),
+                )
+	end
             else
                 push!(wrapper_args, wrapparm)
                 for attr in collect(parameter_attributes(entry_f, arg.codegen.i))

@@ -1,7 +1,11 @@
 # Abstractly interpret julia from LLVM
 
 # Return (bool if could interpret, julia object interpreted to)
-function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked::Bool=false)::Tuple{Bool, Any}
+
+
+const JL_MAX_TAGS = 64 # see `enum jl_small_typeof_tags` in julia.h
+
+function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked::Bool=false, typetag::Bool=false)::Tuple{Bool, Any}
     if (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)) || (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Derived)) || istracked
         ce, _ = get_base_and_offset(arg; offsetAllowed = false, inttoptr = true)
         if isa(ce, GlobalVariable)
@@ -37,18 +41,26 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
             end
         end
         if isa(ce, LLVM.ConstantInt)
-            ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
+          ce = convert(UInt, ce)
+          # "small" type tags are indices into a special array
+	  ptr = if typetag && ce < (JL_MAX_TAGS << 4)
+            jl_small_typeof = Ptr{Ptr{Cvoid}}(cglobal(:jl_small_typeof))
+            type_idx = ce ÷ Core.sizeof(Ptr{Cvoid})
+	    unsafe_load(jl_small_typeof, type_idx + 1)
+          else
+	    reinterpret(Ptr{Cvoid}, ce)
+	  end
             val = Base.unsafe_pointer_to_objref(ptr)
             return (true, val)
         end
     end
     if isa(arg, ConstantExpr)
         if opcode(arg) == LLVM.API.LLVMAddrSpaceCast || opcode(arg) == LLVM.API.LLVMBitCast
-            return absint(operands(arg)[1], partial)
+            return absint(operands(arg)[1], partial, false, typetag)
         end
     end
     if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst) || isa(arg, LLVM.IntToPtrInst)
-        return absint(operands(arg)[1], partial)
+        return absint(operands(arg)[1], partial, false, typetag)
     end
     if isa(arg, LLVM.CallInst)
         fn = LLVM.called_operand(arg)
@@ -334,6 +346,7 @@ function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Boo
     return larg, offset
 end
 
+
 function abs_typeof(
         @nospecialize(arg::LLVM.Value),
         partial::Bool = false, seenphis = Set{LLVM.PHIInst}()
@@ -438,13 +451,13 @@ function abs_typeof(
         if nm == "julia.gc_alloc_obj" ||
                 nm == "jl_gc_alloc_typed" ||
                 nm == "ijl_gc_alloc_typed"
-            vals = absint(operands(arg)[3], partial)
+            vals = absint(operands(arg)[3], partial, false, #=typetag=#true)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.BITS_REF : nothing)
         end
         # Type tag is arg 3
         if nm == "jl_alloc_genericmemory_unchecked" ||
 		nm == "ijl_alloc_genericmemory_unchecked"
-	    vals = absint(operands(arg)[3], partial, true)
+	    vals = absint(operands(arg)[3], partial, true, #=typetag=#true)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
         end
         # Type tag is arg 1
@@ -458,12 +471,12 @@ function abs_typeof(
                 nm == "ijl_new_array" ||
                 nm == "jl_alloc_genericmemory" ||
                 nm == "ijl_alloc_genericmemory"
-            vals = absint(operands(arg)[1], partial)
+            vals = absint(operands(arg)[1], partial, false, #=typetag=#true)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
         end
 
         if nm == "jl_new_structt" || nm == "ijl_new_structt"
-            vals = absint(operands(arg)[1], partial)
+            vals = absint(operands(arg)[1], partial, false, #=typetag=#true)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
         end
 
@@ -481,7 +494,7 @@ function abs_typeof(
 
             if nm == "jl_new_structv" || nm == "ijl_new_structv"
                 @assert index == 2
-                vals = absint(operands(arg)[index], partial)
+                vals = absint(operands(arg)[index], partial, false, #=typetag=#true)
                 return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
             end
 

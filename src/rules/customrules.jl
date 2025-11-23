@@ -1567,7 +1567,7 @@ function enzyme_custom_common_rev(
                 if tape_roots != 0
                     roots_ty = convert(LLVMType, AnyArray(tape_roots))
                     tape_al = alloca!(B, roots_ty)
-                    extract_roots_from_value!(B, tape, ral)
+                    extract_roots_from_value!(B, tape, tape_al)
                 end
 
                 al0 = al = emit_allocobj!(B, TapeT, "tape.$TapeT")
