@@ -155,13 +155,12 @@ struct ReversePFor{ThunkTy, FT, AnyJL, byRef, TT}
 end
 
 function (st::ReversePFor{ThunkTy, FT, AnyJL, byRef, TT})(tid) where {ThunkTy, FT, AnyJL, byRef, TT}
-
     tres = if !AnyJL
         unsafe_load(st.tapes, tid)
     else
         @inbounds st.tapes[tid]
     end
-
+    
     if byRef
         st.thunk(Const(referenceCaller), st.ft, Const(tid), tres)
     else
@@ -477,9 +476,11 @@ end
             val = bitcast!(B, val, LLVM.PointerType(pllty, addrspace(value_type(val))))
             val = addrspacecast!(B, val, LLVM.PointerType(pllty, Derived)) 
 
-	    if !(pv isa Nothing)
+	        if !(pv isa Nothing)
                 push!(copies, (pv, val, pllty))
             end
+
+            store!(B, v, val)
 
             if any_jltypes(pllty)
                 emit_writebarrier!(B, get_julia_inner_types(B, val0, v))
@@ -495,14 +496,14 @@ end
             [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), 0)],
         )
 	    
-	if al2 !== nothing
-	   extract_roots_from_value!(B, val0, al2)
-	   T_jlvalue = LLVM.StructType(LLVMType[])
-	   T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-	   al3 = gep!(B, T_prjlvalue, al2, LLVM.Value[ConstantInt(CountTrackedPointers(value_type(val0)).count)])
-	end
-        
-	store!(B, val0, ptr)
+        if al2 !== nothing
+           extract_roots_from_value!(B, val0, al2)
+           T_jlvalue = LLVM.StructType(LLVMType[])
+           T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+           al3 = gep!(B, T_prjlvalue, al2, LLVM.Value[ConstantInt(CountTrackedPointers(value_type(val0)).count)])
+        end
+            
+        store!(B, val0, ptr)
 
         if pdupClosure
 
@@ -520,33 +521,33 @@ end
                 spllty = LLVM.LLVMType(API.EnzymeGetShadowType(width, pllty))
                 pv = nothing
 	        
-		dv2 = if inline_roots_type(ppfuncT) != 0
-		   invert_pointer(gutils, ops[2], B)
-	        end
+                dv2 = if inline_roots_type(ppfuncT) != 0
+                   invert_pointer(gutils, ops[2], B)
+                end
 
                 if value_type(dv) != spllty
                     pv = dv
                     if width == 1
                         dv = load!(fwdbuilder, spllty, dv)
-			if dv2 !== nothing
-			   dv = recombine_value!(fwdbuilder, dv, dv2)
-			end
+			            if dv2 !== nothing
+                           dv = recombine_value!(fwdbuilder, dv, dv2)
+                        end
                     else
                         shadowres = UndefValue(spllty)
                         for idx = 1:width
                             arg = extract_value!(fwdbuilder, dv, idx - 1)
                             arg = load!(fwdbuilder, pllty, arg)
-			    if dv2 !== nothing
+                            if dv2 !== nothing
                               arg2 = extract_value!(fwdbuilder, dv2, idx - 1)
-			      arg = recombine_value!(fwdbuilder, arg, arg2)
-			    end
+                              arg = recombine_value!(fwdbuilder, arg, arg2)
+                            end
                             shadowres = insert_value!(fwdbuilder, shadowres, arg, idx - 1)
                         end
                         dv = shadowres
                     end
                 end
                 
-		if mode == API.DEM_ReverseModeGradient
+                if mode == API.DEM_ReverseModeGradient
                     dv = lookup_value(gutils, dv, B)
                 end
             else
@@ -559,11 +560,23 @@ end
                     bitcast!(B, dval, LLVM.PointerType(spllty, addrspace(value_type(dval))))
                 dval = addrspacecast!(B, dval, LLVM.PointerType(spllty, Derived))
                 store!(B, dv, dval)
-                if pv !== nothing
-                    push!(copies, (pv, dval, spllty))
-                end
                 if any_jltypes(spllty)
                     emit_writebarrier!(B, get_julia_inner_types(B, dval0, dv))
+                end
+                pvl = lookup_value(gutils, pv, B)
+                if mode == API.DEM_ReverseModeGradient
+                    if width == 1
+                       copy_floats_into!(B, spllty, dval, pvl)
+                    else
+                       for idx = 1:width
+                           arg = extract_value!(B, pvl, idx - 1)
+                           g0 = inbounds_gep!(B, spllty, dval, LLVM.Value[LLVM.ConstantInt(Int64(0)), LLVM.ConstantInt(Int32(idx-1))])
+                           copy_floats_into!(B, pllty, g0, arg)
+                        end
+                    end
+                end
+                if pv !== nothing
+                    push!(copies, (pv, dval, spllty))
                 end
             else
                 dval0 = dv

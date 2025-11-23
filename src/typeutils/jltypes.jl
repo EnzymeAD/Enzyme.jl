@@ -67,24 +67,6 @@ function rooted_argument_list(iterable)
 	return results
 end
 
-function split_value_into(B::LLVM.IRBuilder, val::LLVM.Value)
-   LT = value_type(val)
-   tracked = CountTrackedPointers(LT)
-   @assert tracked.count > 0
-   @assert !tracked.all
-   RT = convert(LLVM.LLVMType, AnyArray(tracked.count))
-   al = alloca!(B, RT)
-   fdsafdsa 
-   return (val, al)
-end
-
-function recombine_value(B::LLVM.IRBuilder, val::LLVM.Value, roots::LLVM.Value)
-	TODO
-    return val
-end
-
-
-
 struct RemovedParam end
 
 # Modified from GPUCompiler classify_arguments

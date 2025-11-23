@@ -3932,6 +3932,69 @@ function extract_roots_from_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, ro
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, SRetValueToRootPointer)
 end
 
+function copy_floats_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, dst::LLVM.Value, src::LLVM.Value)
+    count = 0
+    todo = Tuple{Vector{Cuint},LLVM.LLVMType}[(
+	    Cuint[],
+        jltype,
+    )]
+	function to_llvm(lst::Vector{Cuint})
+	    vals = LLVM.Value[]
+	    push!(vals, LLVM.ConstantInt(LLVM.IntType(64), 0))
+	    for i in lst
+	       push!(vals, LLVM.ConstantInt(LLVM.IntType(32), i))
+	    end
+	    return vals
+	end
+
+	extracted = LLVM.Value[]
+
+    while length(todo) != 0
+            path, ty = popfirst!(todo)
+
+            if isa(ty, LLVM.PointerType) || isa(ty, LLVM.IntegerType)
+                continue
+            end
+
+            if isa(ty, LLVM.FloatingPointType)
+        		dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstloc")
+        		srcloc = inbounds_gep!(builder, jltype, src, to_llvm(path), "srcloc")
+                val = load!(builder, ty, srcloc)
+                st = store!(builder, val, dstloc)
+                continue
+            end
+
+            if isa(ty, LLVM.ArrayType)
+                for i = 1:length(ty)
+                    npath = copy(path)
+                    push!(npath, i - 1)
+                    push!(todo, (npath, eltype(ty)))
+                end
+                continue
+            end
+
+            if isa(ty, LLVM.VectorType)
+                for i = 1:size(ty)
+                    npath = copy(path)
+                    push!(npath, i - 1)
+                    push!(todo, (npath, eltype(ty)))
+                end
+                continue
+            end
+
+            if isa(ty, LLVM.StructType)
+                for (i, t) in enumerate(LLVM.elements(ty))
+                    npath = copy(path)
+                    push!(npath, i - 1)
+                    push!(todo, (npath, t))
+                end
+                continue
+            end
+        end
+
+	return nothing
+end
+
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(
