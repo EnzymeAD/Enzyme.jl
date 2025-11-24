@@ -182,7 +182,7 @@ end
     return (one(x),)
 end
 
-@inline function onehot(x::Tuple{Vararg{<:AbstractFloat}})
+@inline function onehot(x::Tuple{Vararg{AbstractFloat}})
     ntuple(Val(length(x))) do i
         Base.@_inline_meta
         ntuple(Val(length(x))) do idx
