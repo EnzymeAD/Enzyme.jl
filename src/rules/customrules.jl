@@ -1049,7 +1049,7 @@ end
 
 		        extract_roots_from_value!(B, ev, rval)
 		    else
-                        store!(B, res, pev)
+                        store!(B, ev, pev)
 		    end
                 end
             else
@@ -1096,7 +1096,7 @@ end
 
 		        extract_roots_from_value!(B, ev, rval)
 		    else
-                        store!(B, res, pev)
+                        store!(B, ev, pev)
 		    end
                 end
             else
