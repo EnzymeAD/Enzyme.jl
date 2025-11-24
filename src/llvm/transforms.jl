@@ -1632,7 +1632,7 @@ function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
             return false
         end
 
-        err_is_readonly = !is_noreturn(cur)
+        err_is_readonly = true
 
         for bb in blocks(cur)
             for inst in instructions(bb)
@@ -1654,7 +1654,7 @@ function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
 
     changed = set_readonly!(fn)
 
-    if length(calls) == 0 || hasUser
+    if length(calls) == 0 || hasUser || !is_nounwind(fn)
         return changed
     end
 
