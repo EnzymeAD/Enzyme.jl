@@ -1,15 +1,9 @@
 # SpeedyWeather.jl integration example
-# Sensitivity Analysis of Temperature at a single grid point (one-hot seed)
-# over the full integration of the PrimitiveWetModel over N timesteps
-# Note: reducing N, or reducing trunc will not reduce compile time of the gradient
-# we could reduce model complexity a bit by excluding some parameterizations
+# Sensitivity Analysis of a single time step of the PrimitiveWetModel
 #
-# For the test itself, we test that Enzyme doesn't error and gradients are nonzero
+# For the test itself, we test that Enzyme doesn't error and gradients are nonzero and make some physical sense
 
-using SpeedyWeather, Enzyme, Checkpointing, Test
-
-# Parse command line argument for N (number of timesteps)
-const N = length(ARGS) >= 1 ? parse(Int, ARGS[1]) : 5
+using SpeedyWeather, Enzyme, Test
 
 spectral_grid = SpectralGrid(trunc = 32, nlayers = 8)             # define resolution
 model = PrimitiveWetModel(; spectral_grid, physics=false)         # construct model
@@ -28,28 +22,18 @@ diagn = diagnostic_variables
 # do the scaling again because we need it for the timestepping when calling it manually
 SpeedyWeather.scale!(progn, diagn, model.planet.radius)
 
-function checkpointed_timesteps!(progn::PrognosticVariables, diagn, model, N_steps, checkpoint_scheme::Scheme, lf1 = 2, lf2 = 2)
-
-    @ad_checkpoint checkpoint_scheme for _ in 1:N_steps
-        SpeedyWeather.timestep!(progn, diagn, 2 * model.time_stepping.Δt, model, lf1, lf2)
-    end
-
-    return nothing
-end
-
-checkpoint_scheme = Revolve(N)
+dprogn = zero(progn)
+ddiag = make_zero(diagn)
+dmodel = make_zero(model)
 
 # Temperature One-Hot
-d_progn = zero(progn)
-d_model = make_zero(model)
-d_diag = make_zero(diagn)
 seed_point = 443    # seed point
-d_diag.grid.temp_grid[seed_point, 8] = 1
+ddiag.grid.temp_grid[seed_point, 8] = 1
 
-# Sensitivity Analysis of Temperature at a single grid point (one-hot seed)
-autodiff(Enzyme.Reverse, checkpointed_timesteps!, Const, Duplicated(progn, d_progn), Duplicated(diagn, d_diag), Duplicated(model, d_model), Const(N), Const(checkpoint_scheme))
+# Sensitivity Analysis of Temperature at a single grid point (one-hot seed) for a single timestep
+autodiff(Enzyme.Reverse, SpeedyWeather.timestep!, Const, Duplicated(progn, dprogn), Duplicated(diagn, ddiag), Const(dt), Duplicated(model, dmodel))
 
-vor_grid = transform(d_progn.vor[:, :, 2], model.spectral_transform)
+vor_grid = transform(dprogn.vor[:, :, 2], model.spectral_transform)
 
 # nonzero
 @test sum(abs, vor_grid) > 0
