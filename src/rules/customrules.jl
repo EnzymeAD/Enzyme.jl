@@ -971,6 +971,9 @@ end
         end
         LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1), attr)
         res = load!(B, sty, sret)
+	if returnRoots !== nothing && VERSION >= v"1.12"
+	   res = recombine_value!(B, res, returnRoots; must_cache=true)
+	end
     end
     if swiftself
         attr = EnumAttribute("swiftself")
@@ -1000,9 +1003,19 @@ end
     if RT <: Const
         if needsPrimal
             @assert RealRt == fwd_RT
-            if get_return_info(RealRt)[2] !== nothing
+	    _, prim_sret, prim_roots = get_return_info(RealRt)
+            if prim_sret !== nothing
                 val = new_from_original(gutils, operands(orig)[1])
-                store!(B, res, val)
+		
+		if prim_roots !== nothing && VERSION >= v"1.12"
+                    extract_nonjlvalues_into!(B, value_type(res), val, res)
+
+                    rval = new_from_original(gutils, operands(orig)[2])
+
+		    extract_roots_from_value!(B, res, rval)
+		else
+                    store!(B, res, val)
+		end
             else
                 normalV = res.ref
             end
@@ -1016,12 +1029,28 @@ end
                 ST = NTuple{Int(width),ST}
             end
             @assert ST == fwd_RT
-            if get_return_info(RealRt)[2] !== nothing
+	    _, prim_sret, prim_roots = get_return_info(RealRt)
+            if prim_sret !== nothing
                 dval_ptr = invert_pointer(gutils, operands(orig)[1], B)
-                for idx = 1:width
+		
+		droots = if prim_roots !== nothing && VERSION >= v"1.12"
+		    @assert !is_constant_value(gutils, operands(orig)[2])
+		    invert_pointer(gutils, operands(orig)[2], B)
+	        end
+                
+		for idx = 1:width
                     ev = (width == 1) ? dval : extract_value!(B, dval, idx - 1)
                     pev = (width == 1) ? dval_ptr : extract_value!(B, dval_ptr, idx - 1)
-                    store!(B, res, pev)
+			
+		    if prim_roots !== nothing && VERSION >= v"1.12"
+		        extract_nonjlvalues_into!(B, value_type(ev), pev, ev)
+
+		        rval = (width == 1) ? droots : extract_value!(B, droots, idx - 1)
+
+		        extract_roots_from_value!(B, ev, rval)
+		    else
+                        store!(B, ev, pev)
+		    end
                 end
             else
                 shadowV = res.ref
@@ -1033,16 +1062,42 @@ end
                 BatchDuplicated{RealRt,Int(width)}
             end
             @assert ST == fwd_RT
-            if get_return_info(RealRt)[2] !== nothing
+	    
+	    _, prim_sret, prim_roots = get_return_info(RealRt)
+            if prim_sret !== nothing
                 val = new_from_original(gutils, operands(orig)[1])
-                store!(B, extract_value!(B, res, 0), val)
+                
+		res0 = extract_value!(B, res, 0)
+		if prim_roots !== nothing && VERSION >= v"1.12"
+                    extract_nonjlvalues_into!(B, value_type(res0), val, res0)
+
+                    rval = new_from_original(gutils, operands(orig)[2])
+
+		    extract_roots_from_value!(B, res0, rval)
+		else
+                    store!(B, res0, val)
+		end
 
                 dval_ptr = invert_pointer(gutils, operands(orig)[1], B)
                 dval = extract_value!(B, res, 1)
-                for idx = 1:width
+		
+		droots = if prim_roots !== nothing && VERSION >= v"1.12"
+		    @assert !is_constant_value(gutils, operands(orig)[2])
+		    invert_pointer(gutils, operands(orig)[2], B)
+	        end
+                
+		for idx = 1:width
                     ev = (width == 1) ? dval : extract_value!(B, dval, idx - 1)
                     pev = (width == 1) ? dval_ptr : extract_value!(B, dval_ptr, idx - 1)
-                    store!(B, ev, pev)
+		    if prim_roots !== nothing && VERSION >= v"1.12"
+		        extract_nonjlvalues_into!(B, value_type(ev), pev, ev)
+
+		        rval = (width == 1) ? droots : extract_value!(B, droots, idx - 1)
+
+		        extract_roots_from_value!(B, ev, rval)
+		    else
+                        store!(B, ev, pev)
+		    end
                 end
             else
                 normalV = extract_value!(B, res, 0).ref
@@ -1781,6 +1836,9 @@ function enzyme_custom_common_rev(
         )
         res = load!(B, sty, sret)
         API.SetMustCache!(res)
+	if returnRoots !== nothing && VERSION >= v"1.12"
+	   res = recombine_value!(B, res, returnRoots; must_cache=true)
+	end
     end
     if swiftself
         attr = EnumAttribute("swiftself")
@@ -1888,9 +1946,19 @@ function enzyme_custom_common_rev(
         if needsPrimal
             @assert !isghostty(RealRt)
             normalV = extract_value!(B, resV, idx)
-            if get_return_info(RealRt)[2] !== nothing
+	    _, prim_sret, prim_roots = get_return_info(RealRt)
+            if prim_sret !== nothing
                 val = new_from_original(gutils, operands(orig)[1])
-                store!(B, normalV, val)
+		
+		if prim_roots !== nothing && VERSION >= v"1.12"
+                    extract_nonjlvalues_into!(B, value_type(normalV), val, normalV)
+
+                    rval = new_from_original(gutils, operands(orig)[2])
+
+		    extract_roots_from_value!(B, normalV, rval)
+		else
+                    store!(B, normalV, val)
+		end
             else
                 @assert value_type(normalV) == value_type(orig)
                 normalV = normalV.ref
@@ -1901,16 +1969,30 @@ function enzyme_custom_common_rev(
             if needsShadowJL
                 @assert !isghostty(RealRt)
                 shadowV = extract_value!(B, resV, idx)
-                if get_return_info(RealRt)[2] !== nothing
+	        _, prim_sret, prim_roots = get_return_info(RealRt)
+                if prim_sret !== nothing
                     dval = invert_pointer(gutils, operands(orig)[1], B)
 
-                    for idx = 1:width
+		    droots = if prim_roots !== nothing && VERSION >= v"1.12"
+			@assert !is_constant_value(gutils, operands(orig)[2])
+                    	invert_pointer(gutils, operands(orig)[2], B)
+		    end
+
+		    for idx = 1:width
                         to_store =
                             (width == 1) ? shadowV : extract_value!(B, shadowV, idx - 1)
 
                         store_ptr = (width == 1) ? dval : extract_value!(B, dval, idx - 1)
 
-                        store!(B, to_store, store_ptr)
+			if prim_roots !== nothing && VERSION >= v"1.12"
+			    extract_nonjlvalues_into!(B, value_type(to_store), store_ptr, to_store)
+
+                            rval = (width == 1) ? droots : extract_value!(B, droots, idx - 1)
+
+			    extract_roots_from_value!(B, to_store, rval)
+			else
+                            store!(B, to_store, store_ptr)
+			end
                     end
                     shadowV = C_NULL
                 else
