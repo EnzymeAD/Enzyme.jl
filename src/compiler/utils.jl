@@ -146,6 +146,15 @@ Base.@assume_effects :removable :foldable :nothrow function is_noreturn(f::LLVM.
     return false
 end
 
+Base.@assume_effects :removable :foldable :nothrow function is_nounwind(f::LLVM.Function)::Bool
+    for attr in collect(function_attributes(f))
+        if kind(attr) == kind(EnumAttribute("nounwind"))
+            return true
+        end
+    end
+    return false
+end
+
 Base.@assume_effects :removable :foldable :nothrow function is_readonly(f::LLVM.Function)::Bool
     intr = LLVM.API.LLVMGetIntrinsicID(f)
     if intr == LLVM.Intrinsic("llvm.lifetime.start").id
