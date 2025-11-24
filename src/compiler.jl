@@ -1057,14 +1057,12 @@ end
         LLVM.Attribute[LLVM.EnumAttribute("readnone"), StringAttribute("enzyme_shouldrecompute"),
                     EnumAttribute("willreturn"),
                     EnumAttribute("nosync"),
-                    EnumAttribute("nounwind"),
                     EnumAttribute("nofree"),
 		      ]
     else
         LLVM.Attribute[EnumAttribute("memory", NoEffects.data), StringAttribute("enzyme_shouldrecompute"),
                     EnumAttribute("willreturn"),
                     EnumAttribute("nosync"),
-                    EnumAttribute("nounwind"),
 		    EnumAttribute("nofree")]
     end
     handleCustom(state, custom, k_name, llvmfn, name, attrs)
