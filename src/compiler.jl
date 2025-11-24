@@ -3805,7 +3805,7 @@ end
     NullifySRetValue = 4
    )
 
-function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value, root_ty::LLVM.LLVMType, rootRet::Union{LLVM.Value, Nothing}, direction::SRetRootMovement)
+function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value, root_ty::LLVM.LLVMType, rootRet::Union{LLVM.Value, Nothing}, direction::SRetRootMovement; must_cache::Bool = false)
         count = 0
         todo = Tuple{Vector{Cuint},LLVM.LLVMType}[(
 	    Cuint[],
@@ -3845,12 +3845,18 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
         		if direction == SRetPointerToRootPointer
         		    outloc = inbounds_gep!(builder, jltype, sret, to_llvm(path))
         		    outloc = load!(builder, ty, outloc)
+			    if must_cache
+		                API.SetMustCache!(outloc)
+			    end
                             store!(builder, outloc, loc)
         		elseif direction == SRetValueToRootPointer
         		    outloc = Enzyme.API.e_extract_value!(builder, sret, path)
                             store!(builder, outloc, loc)
         		elseif direction == RootPointerToSRetValue
         		    loc = load!(builder, ty, loc)
+			    if must_cache
+		                API.SetMustCache!(loc)
+			    end
         		    val = Enzyme.API.e_insert_value!(builder, val, loc, path)
                 elseif direction == NullifySRetValue
                     loc = unsafe_to_llvm(builder, nothing)
@@ -3914,13 +3920,13 @@ function nullify_rooted_values!(builder::LLVM.IRBuilder, sret::LLVM.Value)
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, nothing, NullifySRetValue)
 end
 
-function recombine_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM.Value)::LLVM.Value
+function recombine_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM.Value; must_cache::Bool=false)::LLVM.Value
    jltype = value_type(sret)
    tracked = CountTrackedPointers(jltype)
    @assert tracked.count > 0
    @assert !tracked.all "Not tracked.all, jltype ($(string(jltype)))"
    root_ty = convert(LLVMType, AnyArray(Int(tracked.count)))
-   move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, RootPointerToSRetValue)
+   move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, RootPointerToSRetValue; must_cache)
 end
 
 function extract_roots_from_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM.Value)
@@ -3957,8 +3963,8 @@ function copy_floats_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, dst::
             end
 
             if isa(ty, LLVM.FloatingPointType)
-        		dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstloc")
-        		srcloc = inbounds_gep!(builder, jltype, src, to_llvm(path), "srcloc")
+		dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstloc")
+		srcloc = inbounds_gep!(builder, jltype, src, to_llvm(path), "srcloc")
                 val = load!(builder, ty, srcloc)
                 st = store!(builder, val, dstloc)
                 continue
@@ -3990,6 +3996,67 @@ function copy_floats_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, dst::
                 end
                 continue
             end
+        end
+
+	return nothing
+end
+
+function extract_nonjlvalues_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, dst::LLVM.Value, src::LLVM.Value)
+    count = 0
+    todo = Tuple{Vector{Cuint},LLVM.LLVMType}[(
+	    Cuint[],
+        jltype,
+    )]
+	function to_llvm(lst::Vector{Cuint})
+	    vals = LLVM.Value[]
+	    push!(vals, LLVM.ConstantInt(LLVM.IntType(64), 0))
+	    for i in lst
+	       push!(vals, LLVM.ConstantInt(LLVM.IntType(32), i))
+	    end
+	    return vals
+	end
+
+	extracted = LLVM.Value[]
+
+    while length(todo) != 0
+            path, ty = popfirst!(todo)
+
+            if isa(ty, LLVM.PointerType)
+                if any_jltypes(ty)
+			continue
+		end
+            end
+
+            if isa(ty, LLVM.ArrayType) && any_jltypes(ty)
+                for i = 1:length(ty)
+                    npath = copy(path)
+                    push!(npath, i - 1)
+                    push!(todo, (npath, eltype(ty)))
+                end
+                continue
+            end
+
+            if isa(ty, LLVM.VectorType) && any_jltypes(ty)
+                for i = 1:size(ty)
+                    npath = copy(path)
+                    push!(npath, i - 1)
+                    push!(todo, (npath, eltype(ty)))
+                end
+                continue
+            end
+
+            if isa(ty, LLVM.StructType) && any_jltypes(ty)
+                for (i, t) in enumerate(LLVM.elements(ty))
+                    npath = copy(path)
+                    push!(npath, i - 1)
+                    push!(todo, (npath, t))
+                end
+                continue
+            end
+		
+	    dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstloc")
+            val = Enzyme.API.e_extract_value!(builder, src, path)
+	    st = store!(builder, val, dstloc)
         end
 
 	return nothing
