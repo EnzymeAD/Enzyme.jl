@@ -105,10 +105,11 @@ end
 
         T_int32 = LLVM.Int32Type()
 
-        Compiler.reinsert_gcmarker!(llvm_f)
-
         LLVM.position!(builder, exit)
         LLVM.ret!(builder, obj)
+	
+        Compiler.reinsert_gcmarker!(llvm_f)
+	Compiler.JIT.prepare!(mod)
 
         string(mod)
     end
