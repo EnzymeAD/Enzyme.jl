@@ -1258,7 +1258,7 @@ function julia_error(
             if cur in keys(seen)
                 return seen[cur]
             end
-                
+
 		if isa(cur, LLVM.LoadInst)
                     larg, off = get_base_and_offset(operands(cur)[1])
 		    if off == 0 && isa(larg, LLVM.AllocaInst)
@@ -1310,7 +1310,7 @@ function julia_error(
 			return make_batched(ncur, prevbb)
 		   end
                    if active_reg(TT, world) == ActiveState &&
-                   isa(cur, LLVM.ConstantExpr) &&
+		     ( isa(cur, LLVM.ConstantExpr) || isa(cur, LLVM.GlobalVariable)) &&
                    cur == data2
                     if width == 1
                         if mode == API.DEM_ForwardMode
@@ -1364,6 +1364,7 @@ end
 		    if obj0 isa Core.Binding
 			sv = sv *" binded at "*string(obj0)
 		    end
+		    sv
                 else
                     "Unknown object of type" * " " * string(TT)
                 end

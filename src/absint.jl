@@ -28,6 +28,7 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
                     return (true, v)
                 end
             end
+	    @assert !startswith(gname, "ejl_inserted")
         end
         if isa(ce, LLVM.LoadInst)
             gv = operands(ce)[1]

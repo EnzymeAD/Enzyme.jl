@@ -107,7 +107,7 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
         end
     end
     
-    function setup_global(k, v)
+    function setup_global(k, v, force_inactive=false)
             mod = LLVM.parent(LLVM.parent(LLVM.position(B)))
             globs = LLVM.globals(mod)
             if Base.haskey(globs, "ejl_" * k)
@@ -116,7 +116,7 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
             gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
 
             API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
-            inactive = Enzyme.Compiler.is_memory_instance(v)
+            inactive = force_inactive && Enzyme.Compiler.is_memory_instance(v)
 	    if !inactive && v isa Core.SimpleVector && length(v) == 0
 		inactive = true
 	    end
@@ -150,7 +150,9 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
     if insert_name_if_not_exists !== nothing
         insert_name_if_not_exists = "inserted\$"*string(Base.reinterpret(UInt, Compiler.unsafe_to_ptr(val)))*"\$"*insert_name_if_not_exists
         Compiler.JuliaEnzymeNameMap[insert_name_if_not_exists] = val
-	return setup_global(insert_name_if_not_exists, val)
+	# Since the legacy behavior was to force inactive for global constants, we retain that here (for now)
+	force_inactive = true
+	return setup_global(insert_name_if_not_exists, val, force_inactive)
     end
 
     # XXX: This prevents code from being runtime relocatable
