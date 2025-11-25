@@ -5402,8 +5402,6 @@ else
                     legal2, obj = absint(inst)
 		    if legal2 && is_memory_instance(obj)
                         metadata(inst)["nonnull"] = MDNode(LLVM.Metadata[])
-		    else
-			    @show legal2, string(inst), obj
                     end
 end
 
