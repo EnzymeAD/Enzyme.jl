@@ -122,7 +122,8 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
                 if legal
                     curent_bb = position(B)
                     fn = LLVM.parent(curent_bb)
-                    inactive = Compiler.guaranteed_const_nongen(jTy, world)
+		    state = active_reg(jTy, world)
+		    inactive = state == ConstState ||state == ActiveState
                 end
             end
 	    if inactive
