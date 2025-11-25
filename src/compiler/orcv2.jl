@@ -30,11 +30,9 @@ end
 
 const jit = Ref{CompilerInstance}()
 const tm = Ref{TargetMachine}() # for opt pipeline
-const dylib = Ref{JITDylib}()
 
 get_tm() = tm[]
 get_jit() = jit[].jit
-get_dylib() = dylib[]
 
 function absolute_symbol_materialization(name, ptr)
     address = LLVM.API.LLVMOrcJITTargetAddress(reinterpret(UInt, ptr))
@@ -96,7 +94,6 @@ function setup_globals()
     tm[] = tempTM
 
     jd_main = JITDylib(lljit)
-    dylib[] = jd_main
 
     prefix = LLVM.get_prefix(lljit)
     dg = LLVM.CreateDynamicLibrarySearchGeneratorForProcess(prefix)
@@ -256,13 +253,11 @@ function add!(mod)
         Compiler.eraseInst(mod, f)
     end
     for g in collect(globals(mod))
-	if !startswith(LLVM.name(g), "ejl_")
+	if !startswith(LLVM.name(g), "ejl_inserted\$")
            continue
         end
-	if !haskey(Compiler.JuliaEnzymeNameMap, LLVM.name(g)[5:end])
-	    continue
-	end
-	ptr = Compiler.unsafe_to_ptr(Compiler.JuliaEnzymeNameMap[LLVM.name(g)[5:end]])
+	_, uval, _ = split(LLVM.name(g), "\$")
+        ptr =  parse(UInt, uval)
         ptr = reinterpret(UInt, ptr)
         ptr = LLVM.ConstantInt(ptr)
 	ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[])))

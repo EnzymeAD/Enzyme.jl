@@ -144,6 +144,7 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
     end
 
     if insert_name_if_not_exists !== nothing
+        insert_name_if_not_exists = "inserted\$"*string(Base.reinterpret(UInt, Compiler.unsafe_to_ptr(val)))*"\$"*insert_name_if_not_exists
         Compiler.JuliaEnzymeNameMap[insert_name_if_not_exists] = val
 	return setup_global(insert_name_if_not_exists, val)
     end
