@@ -268,6 +268,8 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 			end
 			obj = Base.unsafe_pointer_to_objref(ptr)
 	    
+			obj0 = obj
+
 			# TODO we can use this to make it properly relocatable
 			if isa(obj, Core.Binding)
 			   obj = obj.value
@@ -275,6 +277,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
 			b = IRBuilder()
 			position!(b, inst)
+			ccall(:jl_, Cvoid, (Any,), (gname, obj, obj0, ptr, string(addr)))
 			newf = unsafe_to_llvm(b, obj; insert_name_if_not_exists=gname) 
 			replace_uses!(inst, newf)
 			LLVM.API.LLVMInstructionEraseFromParent(inst)
