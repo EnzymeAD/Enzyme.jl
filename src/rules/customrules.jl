@@ -1516,7 +1516,12 @@ function enzyme_custom_common_rev(
             tapeV = tapeV.ref
         end
     elseif tape isa LLVM.Value && length(byval_tapes) != 0
-        tape = extract_value!(B, tape, length(byval_tapes))
+        if needsTape
+            @assert length(value_type(tape)) ==  length(byval_tapes) + 1
+            tape = extract_value!(B, tape, length(byval_tapes))
+        else
+            tape = nothing
+        end
     end
 
     # if !forward
