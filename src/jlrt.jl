@@ -20,12 +20,17 @@ function emit_allocobj!(
     T_pint8 = LLVM.PointerType(T_int8)
 
     pgcstack = reinsert_gcmarker!(fn, B)
+    bc = bitcast!(B, pgcstack, T_ppjlvalue)
+    if isa(pgcstack, LLVM.Instruction)
+	    @assert dominates(DomTree(fn), pgcstack, bc)
+    end
     ct = inbounds_gep!(
         B,
         T_pjlvalue,
-        bitcast!(B, pgcstack, T_ppjlvalue),
+	bc,
         [LLVM.ConstantInt(current_task_offset())],
     )
+
 
     @static if VERSION < v"1.11.0-"    
         ptls_field = inbounds_gep!(B, T_pjlvalue, ct, [LLVM.ConstantInt(current_ptls_offset())])

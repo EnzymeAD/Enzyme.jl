@@ -349,6 +349,7 @@ function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing
     end
 
     pgs = get_pgcstack(func)
+    ccall(:jl_, Cvoid, (Any,), ("emitted pgs", string(pgs), PB))
     if pgs isa Nothing
         context(LLVM.parent(func))
         B = IRBuilder()
