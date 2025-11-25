@@ -5,6 +5,14 @@
 
 const JL_MAX_TAGS = 64 # see `enum jl_small_typeof_tags` in julia.h
 
+function unbind(@nospecialize(val))
+   if val isa Core.Binding
+       return val.value
+   else
+       return val
+   end
+end
+
 function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked::Bool=false, typetag::Bool=false)::Tuple{Bool, Any}
     if (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)) || (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Derived)) || istracked
         ce, _ = get_base_and_offset(arg; offsetAllowed = false, inttoptr = true)
@@ -455,12 +463,14 @@ function abs_typeof(
                 nm == "jl_gc_alloc_typed" ||
                 nm == "ijl_gc_alloc_typed"
             vals = absint(operands(arg)[3], partial, false, #=typetag=#true)
+	    @assert !(vals[2] isa Core.Binding)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.BITS_REF : nothing)
         end
         # Type tag is arg 3
         if nm == "jl_alloc_genericmemory_unchecked" ||
 		nm == "ijl_alloc_genericmemory_unchecked"
 	    vals = absint(operands(arg)[3], partial, true, #=typetag=#true)
+	    @assert !(vals[2] isa Core.Binding)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
         end
         # Type tag is arg 1
@@ -475,11 +485,13 @@ function abs_typeof(
                 nm == "jl_alloc_genericmemory" ||
                 nm == "ijl_alloc_genericmemory"
             vals = absint(operands(arg)[1], partial, false, #=typetag=#true)
+	    @assert !(vals[2] isa Core.Binding)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
         end
 
         if nm == "jl_new_structt" || nm == "ijl_new_structt"
             vals = absint(operands(arg)[1], partial, false, #=typetag=#true)
+	    @assert !(vals[2] isa Core.Binding)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
         end
 
@@ -498,6 +510,7 @@ function abs_typeof(
             if nm == "jl_new_structv" || nm == "ijl_new_structv"
                 @assert index == 2
                 vals = absint(operands(arg)[index], partial, false, #=typetag=#true)
+	    	@assert !(vals[2] isa Core.Binding)
                 return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
             end
 
@@ -531,9 +544,11 @@ function abs_typeof(
             if nm == "jl_f__apply_iterate" || nm == "ijl_f__apply_iterate"
                 index += 1
                 legal, iterfn = absint(operands(arg)[index])
+	    	iterfn = unbind(iterfn)
                 index += 1
                 if legal && iterfn == Base.iterate
                     legal0, combfn = absint(operands(arg)[index])
+		    combfn = unbind(combfn)
                     index += 1
                     if legal0 && combfn == Core.apply_type && partial
                         return (true, Type, GPUCompiler.BITS_REF)
@@ -871,6 +886,7 @@ function abs_typeof(
 
     legal, val = absint(arg, partial)
     if legal
+	val = unbind(val)
         return (true, Core.Typeof(val), GPUCompiler.BITS_REF)
     end
     return (false, nothing, nothing)

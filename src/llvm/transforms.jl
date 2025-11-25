@@ -442,7 +442,7 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
 	@static if VERSION < v"1.11-"
 	else    
 			    legal2, obj = absint(src)
-			    if legal2 && is_memory_instance(obj) 
+			    if legal2 && is_memory_instance(unbind(obj)) 
 				metadata(src)["nonnull"] = MDNode(LLVM.Metadata[])
 			    end
 	end

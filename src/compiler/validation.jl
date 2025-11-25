@@ -278,7 +278,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 			b = IRBuilder()
 			position!(b, inst)
 			ccall(:jl_, Cvoid, (Any,), (gname, obj, obj0, ptr, string(addr)))
-			newf = unsafe_to_llvm(b, obj; insert_name_if_not_exists=gname) 
+			newf = unsafe_to_llvm(b, obj0; insert_name_if_not_exists=gname) 
 			replace_uses!(inst, newf)
 			LLVM.API.LLVMInstructionEraseFromParent(inst)
 			continue
@@ -835,7 +835,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 	    if isa(flib, LLVM.ConstantExpr)
 		legal, flib2 = absint(flib)
 		if legal
-		   flib = flib2
+		    flib = unbind(flib2)
 		end
             end
             if isa(flib, GlobalRef) && isdefined(flib.mod, flib.name)
@@ -986,6 +986,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 iteroff = 2
 
                 legal, iterlib = absint(operands(inst)[iteroff+1])
+		iterlib = unbind(iterlib)
                 if legal && iterlib == Base.iterate
                     legal, GT, byref = abs_typeof(operands(inst)[4+1], true)
                     funcoff = 3
@@ -1075,6 +1076,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         push!(tys, typ)
                     end
                     legal, flib = absint(operands(inst)[offset+1])
+		    flib = unbind(flib)
                     if legal && isa(flib, Core.MethodInstance)
                         if !Base.isvarargtype(flib.specTypes.parameters[end])
                             @assert length(tys) == length(flib.specTypes.parameters)
@@ -1229,6 +1231,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                     push!(tys, typ)
                 end
                 legal, flib = absint(operands(inst)[offset+1])
+		flib = unbind(flib)
                 if legal && isa(flib, Core.MethodInstance)
                     if !Base.isvarargtype(flib.specTypes.parameters[end])
                         if length(tys) != length(flib.specTypes.parameters)

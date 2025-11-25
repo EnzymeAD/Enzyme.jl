@@ -1070,8 +1070,13 @@ function julia_error(
             end
 	    legal, obj = absint(val)
 	    if legal
-	        println(io, "\nValue of type: ", Core.Typeof(val))
-		println(io ,  " of value    : ", val)
+		obj0 = obj
+		obj = unbind(obj)
+	        println(io, "\nValue of type: ", Core.Typeof(obj))
+		println(io ,  " of value    : ", obj)
+		if obj0 isa Core.Binding
+		println(io ,  " binding     : ", obj0)	    
+		end
 		println(io)
 	    end
 	    if !isa(val, LLVM.Argument) && !isa(val, LLVM.GlobalVariable) 
@@ -1297,9 +1302,10 @@ function julia_error(
                 end
 
                 legal2, obj = absint(cur)
-
+		obj0 = obj
                 # Only do so for the immediate operand/etc to a phi, since otherwise we will make multiple
                 if legal2
+		   obj = unbind(obj)
 		   if is_memory_instance(obj)
 			return make_batched(ncur, prevbb)
 		   end
@@ -1337,9 +1343,6 @@ function julia_error(
                     end
                     end
 
-		    if is_memory_instance(obj)
-                        return make_batched(ncur, prevbb)
-                    end
                 end
 
 @static if VERSION < v"1.11-"
@@ -1348,6 +1351,7 @@ else
                     larg, off = get_base_and_offset(operands(cur)[1])
                     if isa(larg, LLVM.LoadInst)
                         legal2, obj = absint(larg)
+			obj = unbind(obj)
 			if legal2 && is_memory_instance(obj)
                             return make_batched(ncur, prevbb)
                         end
@@ -1356,7 +1360,10 @@ else
 end
 
                 badval = if legal2
-                    string(obj) * " of type" * " " * string(TT)
+                    sv = string(obj) * " of type" * " " * string(TT)
+		    if obj0 isa Core.Binding
+			sv = sv *" binded at "*string(obj0)
+		    end
                 else
                     "Unknown object of type" * " " * string(TT)
                 end
