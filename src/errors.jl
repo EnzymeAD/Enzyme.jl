@@ -990,6 +990,10 @@ function julia_error(
             # Need to convert function to string, since when the error is going to be printed
             # the module might have been destroyed
             ir = string(val)
+        elseif val isa LLVM.GlobalVariable
+            # Need to convert global to string, since when the error is going to be printed
+            # the module might have been destroyed
+            ir = string(val)
         else
             # Need to convert function to string, since when the error is going to be printed
             # the module might have been destroyed
@@ -1243,30 +1247,6 @@ function julia_error(
             if cur in keys(seen)
                 return seen[cur]
             end
-
-@static if VERSION < v"1.11-"
-else   
-	if isa(cur, LLVM.LoadInst) && isa(value_type(cur), LLVM.PointerType) && LLVM.addrspace(value_type(operands(cur)[1])) == Derived
-                    larg, off = get_base_and_offset(operands(cur)[1]; inst=ncur, inttoptr=true)
-		    if isa(larg, LLVM.ConstantInt) && off == sizeof(Int)
-			ptr = reinterpret(Ptr{Cvoid}, convert(UInt, larg))
-			obj = Base.unsafe_pointer_to_objref(ptr)
-                        if obj isa Memory && obj == typeof(obj).instance
-                            return make_batched(ncur, prevbb)
-                        end
-		    end
-                end
-	if isa(cur, LLVM.ConstantExpr) && isa(value_type(cur), LLVM.PointerType) && LLVM.addrspace(value_type(cur)) == Derived
-		larg, off = get_base_and_offset(cur; inst=first(instructions(position(prevbb))), inttoptr=true)
-		if isa(larg, LLVM.ConstantInt) && (off == sizeof(Int) || off == 0)
-			ptr = reinterpret(Ptr{Cvoid}, convert(UInt, larg))
-			obj = Base.unsafe_pointer_to_objref(ptr)
-                        if obj isa Memory && obj == typeof(obj).instance
-                            return make_batched(ncur, prevbb)
-                        end
-		    end
-                end
-end
                 
 		if isa(cur, LLVM.LoadInst)
                     larg, off = get_base_and_offset(operands(cur)[1])
@@ -1314,6 +1294,9 @@ end
 
                 # Only do so for the immediate operand/etc to a phi, since otherwise we will make multiple
                 if legal2
+		   if is_memory_instance(obj)
+			return make_batched(ncur, prevbb)
+		   end
                    if active_reg(TT, world) == ActiveState &&
                    isa(cur, LLVM.ConstantExpr) &&
                    cur == data2
@@ -1348,12 +1331,9 @@ end
                     end
                     end
 
-@static if VERSION < v"1.11-"
-else    
-                    if obj isa Memory && obj == typeof(obj).instance
+		    if is_memory_instance(obj)
                         return make_batched(ncur, prevbb)
                     end
-end
                 end
 
 @static if VERSION < v"1.11-"
@@ -1362,7 +1342,7 @@ else
                     larg, off = get_base_and_offset(operands(cur)[1])
                     if isa(larg, LLVM.LoadInst)
                         legal2, obj = absint(larg)
-                        if legal2 && obj isa Memory && obj == typeof(obj).instance
+			if legal2 && is_memory_instance(obj)
                             return make_batched(ncur, prevbb)
                         end
                     end
@@ -1531,7 +1511,7 @@ end
                 end
             end
            
-            if isa(cur, LLVM.LoadInst) || isa(cur, LLVM.BitCastInst) || isa(cur, LLVM.AddrSpaceCastInst) || (isa(cur, LLVM.GetElementPtrInst) && all(Base.Fix2(isa, LLVM.ConstantInt), operands(cur)[2:end]))
+	    if isa(cur, LLVM.LoadInst) || isa(cur, LLVM.BitCastInst) || isa(cur, LLVM.AddrSpaceCastInst) || (isa(cur, LLVM.GetElementPtrInst) && all(Base.Fix2(isa, LLVM.ConstantInt), operands(cur)[2:end])) || (isa(cur,LLVM.ConstantExpr) &&  opcode(cur) in (LLVM.API.LLVMBitCast, LLVM.API.LLVMAddrSpaceCast, LLVM.API.LLVMGetElementPtr))
                 lhs = make_replacement(operands(cur)[1], prevbb)
                 if illegal
                     return ncur

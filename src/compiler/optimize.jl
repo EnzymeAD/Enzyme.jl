@@ -23,7 +23,6 @@ EnzymeAttributorPass() = NewPMModulePass("enzyme_attributor", enzyme_attributor_
 ReinsertGCMarkerPass() = NewPMFunctionPass("reinsert_gcmarker", reinsert_gcmarker_pass!)
 SafeAtomicToRegularStorePass() = NewPMFunctionPass("safe_atomic_to_regular_store", safe_atomic_to_regular_store!)
 Addr13NoAliasPass() = NewPMModulePass("addr13_noalias", addr13NoAlias)
-RewriteGenericMemoryPass() = NewPMModulePass("rewrite_generic_memory", rewrite_generic_memory!)
 
 function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     @dispose pb = NewPMPassBuilder() begin
@@ -76,14 +75,12 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     function middle_optimize!(second_stage=false)
     @dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
-        register!(pb, RewriteGenericMemoryPass())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
             add!(aam, BasicAA())
         end
         add!(pb, NewPMModulePassManager()) do mpm
-            add!(mpm, RewriteGenericMemoryPass())
             add!(mpm, CPUFeaturesPass()) # why is this duplicated?
 
             add!(mpm, NewPMFunctionPassManager()) do fpm

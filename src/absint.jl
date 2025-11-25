@@ -54,6 +54,7 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
             return (true, val)
         end
     end
+
     if isa(arg, ConstantExpr)
         if opcode(arg) == LLVM.API.LLVMAddrSpaceCast || opcode(arg) == LLVM.API.LLVMBitCast
             return absint(operands(arg)[1], partial, false, typetag)
@@ -197,6 +198,7 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
         typ = Base.unsafe_pointer_to_objref(ptr)
         return (true, typ)
     end
+
     return (false, nothing)
 end
 
@@ -391,6 +393,7 @@ function abs_typeof(
             return (true, Core.Typeof(val), GPUCompiler.BITS_REF)
         end
     end
+
     if isa(arg, ConstantExpr)
         if opcode(arg) == LLVM.API.LLVMAddrSpaceCast || opcode(arg) == LLVM.API.LLVMBitCast
             return abs_typeof(operands(arg)[1], partial, seenphis)

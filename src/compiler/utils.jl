@@ -354,9 +354,17 @@ function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing
         B = IRBuilder()
         entry_bb = first(blocks(func))
         if !isempty(instructions(entry_bb))
-            position!(B, first(instructions(entry_bb)))
+	    if PB === nothing || Base.position(PB) != entry_bb 
+		    position!(B, first(instructions(entry_bb)))
+	    else
+		    B = PB
+	    end
         else
-            position!(B, entry_bb)
+	    if PB === nothing || Base.position(PB) != entry_bb 
+               position!(B, entry_bb)
+	    else
+	       B = PB
+	    end
         end
         emit_pgcstack(B)
     else

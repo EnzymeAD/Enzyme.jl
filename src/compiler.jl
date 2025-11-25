@@ -5400,8 +5400,10 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
 @static if VERSION < v"1.11-"
 else    
                     legal2, obj = absint(inst)
-                    if legal2 obj isa Memory && obj == typeof(obj).instance
+		    if legal2 && is_memory_instance(obj)
                         metadata(inst)["nonnull"] = MDNode(LLVM.Metadata[])
+		    else
+			    @show legal2, string(inst), obj
                     end
 end
 

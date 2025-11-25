@@ -238,11 +238,49 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     while iter != C_NULL
         inst = LLVM.Instruction(iter)
         iter = LLVM.API.LLVMGetNextInstruction(iter)
+
+	if isa(value_type(inst), LLVM.PointerType) && addrspace(value_type(inst)) == Tracked
+	    	inst0, _ = get_base_and_offset(inst; offsetAllowed=false, inttoptr=true)
+		if isa(inst0, LLVM.LoadInst) && addrspace(value_type(operands(inst0)[1])) == 0
+		   addr = operands(inst0)[1]
+	    	   addr, off = get_base_and_offset(addr; offsetAllowed=true, inttoptr=true)
+			gname = nothing
+			load1 = false
+			if isa(addr, LLVM.GlobalVariable) && haskey(metadata(addr), "julia.constgv")
+				paddr = addr
+				addr = LLVM.initializer(paddr)
+				gname = LLVM.name(paddr)
+				addr, _ = get_base_and_offset(addr; offsetAllowed=false, inttoptr=true)
+			elseif isa(addr, LLVM.LoadInst)
+			   paddr = operands(addr)[1]
+			   if isa(paddr, LLVM.GlobalVariable) && haskey(metadata(paddr), "julia.constgv")
+				addr = LLVM.initializer(paddr)
+				gname = LLVM.name(paddr)
+				addr, _ = get_base_and_offset(addr; offsetAllowed=false, inttoptr=true)
+				load1 = true
+			   end
+			end
+			if isa(addr, LLVM.ConstantInt)
+			ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, addr) + off)
+			if load1
+			ptr = Base.unsafe_load(ptr)
+			end
+			obj = Base.unsafe_pointer_to_objref(ptr)
+
+			b = IRBuilder()
+			position!(b, inst)
+			newf = unsafe_to_llvm(b, obj; insert_name_if_not_exists=gname) 
+			replace_uses!(inst, newf)
+			LLVM.API.LLVMInstructionEraseFromParent(inst)
+			continue
+		end
+		end
+	    end
         if isa(inst, LLVM.CallInst)
             push!(calls, inst)
             # remove illegal invariant.load and jtbaa_const invariants
         elseif isa(inst, LLVM.LoadInst) 
-            fn_got, _ = get_base_and_offset(operands(inst)[1]; offsetAllowed=false, inttoptr=false)
+	    fn_got, _ = get_base_and_offset(operands(inst)[1]; offsetAllowed=false, inttoptr=false)
             fname = String(name(fn_got))
             match_ = match(r"^jlplt_(.*)_\d+_got$", fname)
 
