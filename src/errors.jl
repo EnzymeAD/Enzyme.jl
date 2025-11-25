@@ -1070,8 +1070,8 @@ function julia_error(
             end
 	    legal, obj = absint(val)
 	    if legal
-	        println(io "\nValue of type: ", Core.Typeof(val))
-		println(io,  " of value    : ", val)
+	        println(io, "\nValue of type: ", Core.Typeof(val))
+		println(io ,  " of value    : ", val)
 		println(io)
 	    end
 	    if !isa(val, LLVM.Argument) && !isa(val, LLVM.GlobalVariable) 
