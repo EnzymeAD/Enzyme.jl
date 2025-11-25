@@ -94,6 +94,12 @@ jobs:
             libEnzyme: packaged
             version: '1.12'
             assertions: true
+
+          - os: ubuntu-24.04
+            arch: default
+            libEnzyme: packaged
+            version: '1.13'
+            assertions: true
     steps:
       - uses: actions/checkout@v6
       - uses: julia-actions/setup-julia@v2
