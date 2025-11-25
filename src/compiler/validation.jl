@@ -261,6 +261,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 			   end
 			end
 			if isa(addr, LLVM.ConstantInt)
+			
 			ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, addr) + off)
 			if load1
 			ptr = Base.unsafe_load(ptr)
@@ -823,39 +824,16 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             flib = ops[1]
             fname = ops[2]
 
-            if isa(flib, LLVM.LoadInst)
-                op, off = get_base_and_offset(operands(flib)[1]; inttoptr=true)
-            
-                if isa(op, LLVM.LoadInst)
-                    pop, _ = get_base_and_offset(operands(op)[1]; offsetAllowed=false, inttoptr=true)
-
-                    if isa(pop, LLVM.GlobalVariable)
-                        zop, _ = get_base_and_offset(LLVM.initializer(pop); offsetAllowed=false, inttoptr=true)
-                
-                        rep = zop
-                        PT = value_type(rep)
-                        if isa(PT, LLVM.PointerType) 
-                            rep = LLVM.const_inttoptr(rep, LLVM.PointerType(eltype(PT)))
-                            rep = LLVM.const_addrspacecast(rep, PT)
-                            replace_uses!(pop, rep)
-                            LLVM.API.LLVMInstructionEraseFromParent(pop)
-                        end
-
-                        op = zop
-                    end
-                end
-                        
-                if isa(op, ConstantInt)
-	    	    @static if VERSION < v"1.12"
-			off += 8
-		    end
-                    rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, op) + off)
-                    ld = unsafe_load(convert(Ptr{Ptr{Cvoid}}, rep))
-                    flib = Base.unsafe_pointer_to_objref(ld)
-                end
+	    if isa(flib, LLVM.ConstantExpr)
+		legal, flib2 = absint(flib)
+		if legal
+		   flib = flib2
+		end
             end
             if isa(flib, GlobalRef) && isdefined(flib.mod, flib.name)
                 flib = getfield(flib.mod, flib.name)
+	    elseif isa(flib, Core.Binding)
+                flib = flib.value
             end
 
             fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
