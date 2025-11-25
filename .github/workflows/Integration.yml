@@ -46,6 +46,7 @@ jobs:
           - linux-x86-n2-32
         package:
           - Bijectors
+          - Checkpointing
           - DifferentiationInterface
           - Distributions
           - DynamicExpressions
