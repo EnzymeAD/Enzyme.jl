@@ -116,7 +116,7 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
             gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
 
             API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
-            inactive = force_inactive && Enzyme.Compiler.is_memory_instance(v)
+            inactive = force_inactive || Enzyme.Compiler.is_memory_instance(v)
 	    if !inactive && v isa Core.SimpleVector && length(v) == 0
 		inactive = true
 	    end
