@@ -267,6 +267,11 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 			ptr = Base.unsafe_load(ptr)
 			end
 			obj = Base.unsafe_pointer_to_objref(ptr)
+	    
+			# TODO we can use this to make it properly relocatable
+			if isa(obj, Core.Binding)
+			   obj = obj.value
+			end
 
 			b = IRBuilder()
 			position!(b, inst)
@@ -832,8 +837,6 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             end
             if isa(flib, GlobalRef) && isdefined(flib.mod, flib.name)
                 flib = getfield(flib.mod, flib.name)
-	    elseif isa(flib, Core.Binding)
-                flib = flib.value
             end
 
             fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
