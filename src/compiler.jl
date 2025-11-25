@@ -5074,7 +5074,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         "trmv",
         "syrk",
         "trmm",
-        "trsm",
+        # "trsm", Not actually implemented yet
         "potrf",
     )
     ForwardModeTypes = ("s", "d", "c", "z")
