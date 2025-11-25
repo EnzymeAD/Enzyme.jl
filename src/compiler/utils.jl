@@ -317,12 +317,12 @@ function declare_pgcstack!(mod::LLVM.Module)
     )
 end
 
-function emit_pgcstack(B::LLVM.IRBuilder)
+function emit_pgcstack(B::LLVM.IRBuilder, name::String="")
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
     func, fty = declare_pgcstack!(mod)
-    return call!(B, fty, func)
+    return call!(B, fty, func, LLVM.Value[], name)
 end
 
 function get_pgcstack(func::LLVM.Function)
@@ -349,12 +349,13 @@ function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing
     end
 
     pgs = get_pgcstack(func)
-    ccall(:jl_, Cvoid, (Any,), ("emitted pgs", string(pgs), PB))
     if pgs isa Nothing
         context(LLVM.parent(func))
         B = IRBuilder()
         entry_bb = first(blocks(func))
-        if !isempty(instructions(entry_bb))
+	if PB !== nothing && LLVM.name(Base.position(PB)) == "allocsForInversion"
+	    B = PB
+	elseif !isempty(instructions(entry_bb))
 	    if PB === nothing || Base.position(PB) != entry_bb 
 		    position!(B, first(instructions(entry_bb)))
 	    else
@@ -367,7 +368,7 @@ function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing
 	       B = PB
 	    end
         end
-        emit_pgcstack(B)
+        emit_pgcstack(B, "newly_emitted_pgc_stack")
     else
         entry_bb = first(blocks(func))
         fst = first(instructions(entry_bb))

@@ -20,10 +20,8 @@ function emit_allocobj!(
     T_pint8 = LLVM.PointerType(T_int8)
 
     pgcstack = reinsert_gcmarker!(fn, B)
-    bc = bitcast!(B, pgcstack, T_ppjlvalue)
-    if isa(pgcstack, LLVM.Instruction)
-	    @assert dominates(DomTree(fn), pgcstack, bc)
-    end
+    bc = bitcast!(B, pgcstack, T_ppjlvalue, LLVM.name(pgcstack)*"_bc")
+    
     ct = inbounds_gep!(
         B,
         T_pjlvalue,
