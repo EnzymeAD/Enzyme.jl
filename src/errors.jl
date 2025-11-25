@@ -1306,7 +1306,7 @@ function julia_error(
                 # Only do so for the immediate operand/etc to a phi, since otherwise we will make multiple
                 if legal2
 		   obj = unbind(obj)
-		   if is_memory_instance(obj)
+		   if is_memory_instance(obj) || (obj isa Core.SimpleVector && length(obj) == 0)
 			return make_batched(ncur, prevbb)
 		   end
                    if active_reg(TT, world) == ActiveState &&
