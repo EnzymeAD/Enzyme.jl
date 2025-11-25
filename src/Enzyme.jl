@@ -1565,9 +1565,7 @@ macro import_rrule(args...)
     return _import_rrule(args...)
 end
 
-if VERSION < v"1.12.0"
-    include("precompile.jl")
-end
+include("precompile.jl")
 
 function __init__()
     @static if VERSION ≥ v"1.12-"
