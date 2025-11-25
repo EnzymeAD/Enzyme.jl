@@ -249,20 +249,20 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 			if isa(addr, LLVM.GlobalVariable) && haskey(metadata(addr), "julia.constgv")
 				paddr = addr
 				addr = LLVM.initializer(paddr)
-				gname = LLVM.name(paddr)
+				gname = LLVM.name(paddr)*"\$false"
 				addr, _ = get_base_and_offset(addr; offsetAllowed=false, inttoptr=true)
 			elseif isa(addr, LLVM.LoadInst)
 			   paddr = operands(addr)[1]
 			   if isa(paddr, LLVM.GlobalVariable) && haskey(metadata(paddr), "julia.constgv")
 				addr = LLVM.initializer(paddr)
-				gname = LLVM.name(paddr)
+				gname = LLVM.name(paddr)*"\$true"
 				addr, _ = get_base_and_offset(addr; offsetAllowed=false, inttoptr=true)
 				load1 = true
 			   end
 			end
 			if isa(addr, LLVM.ConstantInt)
 			
-			ccall(:jl_, Cvoid, (Any,), ("pre", gname, off, string(addr), string(inst), string(inst0)))
+			ccall(:jl_, Cvoid, (Any,), ("pre", load1, gname, off, string(addr), string(inst), string(inst0)))
 			
 			ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, addr) + off)
 			if load1

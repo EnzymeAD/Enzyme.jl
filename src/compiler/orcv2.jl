@@ -189,7 +189,7 @@ function prepare!(mod)
 	if !startswith(LLVM.name(g), "ejl_inserted\$")
            continue
         end
-	_, uval, _ = split(LLVM.name(g), "\$")
+	_, uval, ogname, load1 = split(LLVM.name(g), "\$")
         ptr =  parse(UInt, uval)
         ptr = reinterpret(UInt, ptr)
         ptr = LLVM.ConstantInt(ptr)
