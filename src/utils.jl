@@ -122,8 +122,8 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
                 if legal
                     curent_bb = position(B)
                     fn = LLVM.parent(curent_bb)
-		    state = active_reg(jTy, world)
-		    inactive = state == ConstState ||state == ActiveState
+		    state = Enzyme.Compiler.active_reg(jTy, world)
+		    inactive = state == Enzyme.Compiler.AnyState ||state == Enzyme.Compiler.ActiveState
                 end
             end
 	    if inactive
