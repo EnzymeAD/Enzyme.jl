@@ -173,6 +173,33 @@ function add_trampoline!(jd, (lljit, lctm, ism), entry, target)
     LLVM.lookup(lljit, entry)
 end
 
+function prepare!(mod)
+    for f in collect(functions(mod))
+        ptr = fix_ptr_lookup(LLVM.name(f))
+        if ptr === nothing
+            continue
+        end
+        ptr = reinterpret(UInt, ptr)
+        ptr = LLVM.ConstantInt(ptr)
+        ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.function_type(f)))
+        replace_uses!(f, ptr)
+        Compiler.eraseInst(mod, f)
+    end
+    for g in collect(globals(mod))
+	if !startswith(LLVM.name(g), "ejl_inserted\$")
+           continue
+        end
+	_, uval, _ = split(LLVM.name(g), "\$")
+        ptr =  parse(UInt, uval)
+        ptr = reinterpret(UInt, ptr)
+        ptr = LLVM.ConstantInt(ptr)
+	ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[])))
+	ptr = LLVM.const_addrspacecast(ptr, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10))
+        replace_uses!(g, ptr)
+        Compiler.eraseInst(mod, g)
+    end
+end
+
 function get_trampoline(job)
     compiler = jit[]
     lljit = compiler.jit
@@ -217,6 +244,7 @@ function get_trampoline(job)
                 Compiler.eraseInst(mod, other_func)
             end
 
+	    prepare!(mod)
             tsm = move_to_threadsafe(mod)
 
             il = LLVM.IRCompileLayer(lljit)
@@ -241,30 +269,7 @@ function get_trampoline(job)
 end
 
 function add!(mod)
-    for f in collect(functions(mod))
-        ptr = fix_ptr_lookup(LLVM.name(f))
-        if ptr === nothing
-            continue
-        end
-        ptr = reinterpret(UInt, ptr)
-        ptr = LLVM.ConstantInt(ptr)
-        ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.function_type(f)))
-        replace_uses!(f, ptr)
-        Compiler.eraseInst(mod, f)
-    end
-    for g in collect(globals(mod))
-	if !startswith(LLVM.name(g), "ejl_inserted\$")
-           continue
-        end
-	_, uval, _ = split(LLVM.name(g), "\$")
-        ptr =  parse(UInt, uval)
-        ptr = reinterpret(UInt, ptr)
-        ptr = LLVM.ConstantInt(ptr)
-	ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[])))
-	ptr = LLVM.const_addrspacecast(ptr, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10))
-        replace_uses!(g, ptr)
-        Compiler.eraseInst(mod, g)
-    end
+    prepare!(mod)
     lljit = jit[].jit
     jd = LLVM.JITDylib(lljit)
     tsm = move_to_threadsafe(mod)
