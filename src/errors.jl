@@ -1068,7 +1068,13 @@ function julia_error(
                 print(io, "Current scope: \n")
                 print(io, ir)
             end
-            if !isa(val, LLVM.Argument)
+	    legal, obj = absint(val)
+	    if legal
+	        println(io "\nValue of type: ", Core.Typeof(val))
+		println(io,  " of value    : ", val)
+		println(io)
+	    end
+	    if !isa(val, LLVM.Argument) && !isa(val, LLVM.GlobalVariable) 
                 print(io, "\n Inverted pointers: \n")
                 ip = API.EnzymeGradientUtilsInvertedPointersToString(gutils)
                 sval = Base.unsafe_string(ip)

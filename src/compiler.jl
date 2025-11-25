@@ -6589,6 +6589,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
             end
         else
             propagate_returned!(mod)
+	    Compiler.JIT.prepare!(mod)
         end
         mstr
     else
