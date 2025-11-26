@@ -1,6 +1,6 @@
 
 
-@generated function create_shadow_ret(::Val{atup}, ::Val{aref}, primarg::PT, batchshadowarg::BSA) where {atup, aref, PT, BSA}
+@generated function create_shadow_ret(::Val{atup}, ::Val{aref}, primarg::PT, batchshadowarg::BSA, ::Val{RuntimeActivity}) where {atup, aref, PT, BSA, RuntimeActivity}
     if aref == AnyState
         return quote
             Base.@_inline_meta
@@ -9,13 +9,23 @@
     else
         if !atup
             if (aref == DupState || aref == MixedState) &&
-               batchshadowarg == Nothing
+               if RuntimeActivity
+                return quote
+                    Base.@_inline_meta
+                    primarg
+                end
+                else
                 return quote
                     Base.@_inline_meta
                     throw(
+                        EnzymeRuntimeActivityError{String, Nothing, Nothing}(
                         "Error cannot store inactive but differentiable variable "*string(primarg)*" into active tuple",
+                        nothing,
+                        nothing
+                       )
                     )
                 end
+              end
             end
         end
         if aref == DupState
@@ -33,7 +43,7 @@
 
     if atup && aref != AnyState
         @assert PT !== DataType
-        if Aref == ActiveState
+        if aref == ActiveState
             return quote
                 Base.@_inline_meta
                 Active(primarg)
@@ -73,6 +83,7 @@ end
 
 function body_construct_augfwd(
     N,
+    RuntimeActivity,
     Width,
     primtypes,
     active_refs,
@@ -94,8 +105,8 @@ function body_construct_augfwd(
         aref = Symbol("active_ref_$i")
         for w = 1:Width
             sref = Symbol("sub_shadow_" * string(i) * "_" * string(w))
-            push!(
-                shadow_rets_i, Expr(:call, create_shadow_ret, :(Val(ActivityTup[$i])), :(Val($aref)), primargs[i], batchshadowargs[i][w]))
+            expr = Expr(:call, create_shadow_ret, :(Val(ActivityTup[$i])), :(Val($aref)), primargs[i], batchshadowargs[i][w], Val(RuntimeActivity))
+            push!(shadow_rets_i, expr)
         end
         push!(shadow_rets, shadow_rets_i)
     end
@@ -213,52 +224,30 @@ end
 
 function body_runtime_tuple_augfwd(
     N,
+    RuntimeActivity::Bool,
     Width,
     primtypes,
     active_refs,
     primargs,
     batchshadowargs,
 )
-    body_construct_augfwd(N, Width, primtypes, active_refs, primargs, batchshadowargs, true)
-end
-
-function func_runtime_tuple_augfwd(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
-        setup_macro_wraps(false, N, Width; func = false, mixed_or_active = true)
-    body = body_runtime_tuple_augfwd(
-        N,
-        Width,
-        primtypes,
-        active_refs,
-        primargs,
-        batchshadowargs,
-    )
-
-    quote
-        function runtime_tuple_augfwd(
-            activity::Type{Val{ActivityTup}},
-            width::Val{$Width},
-            ModifiedBetween::Val{MB},
-            RT::Val{ReturnType},
-            $(allargs...),
-        )::ReturnType where {ActivityTup,MB,ReturnType,$(typeargs...)}
-            $body
-        end
-    end
+    body_construct_augfwd(N, RuntimeActivity, Width, primtypes, active_refs, primargs, batchshadowargs, true)
 end
 
 @generated function runtime_tuple_augfwd(
     activity::Type{Val{ActivityTup}},
+    rta::Val{RuntimeActivity},
     width::Val{Width},
     ModifiedBetween::Val{MB},
     RT::Val{ReturnType},
     allargs...,
-)::ReturnType where {ActivityTup,MB,Width,ReturnType}
+)::ReturnType where {ActivityTup,MB,RuntimeActivity,Width,ReturnType}
     N = div(length(allargs), Width + 1)
     primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs; func = false, mixed_or_active = true)
     return body_runtime_tuple_augfwd(
         N,
+        RuntimeActivity,
         Width,
         primtypes,
         active_refs,
@@ -311,6 +300,7 @@ end
 
 function body_runtime_newstruct_augfwd(
     N,
+    RuntimeActivity,
     Width,
     primtypes,
     active_refs,
@@ -319,6 +309,7 @@ function body_runtime_newstruct_augfwd(
 )
     body_construct_augfwd(
         N,
+        RuntimeActivity,
         Width,
         primtypes,
         active_refs,
@@ -328,45 +319,21 @@ function body_runtime_newstruct_augfwd(
     )
 end
 
-function func_runtime_newstruct_augfwd(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
-        setup_macro_wraps(false, N, Width; mixed_or_active = true)
-    body = body_runtime_newstruct_augfwd(
-        N,
-        Width,
-        primtypes,
-        active_refs,
-        primargs,
-        batchshadowargs,
-    )
-
-    quote
-        function runtime_newstruct_augfwd(
-            activity::Type{Val{ActivityTup}},
-            width::Val{$Width},
-            ModifiedBetween::Val{MB},
-            ::Type{NewType},
-            RT::Val{ReturnType},
-            $(allargs...),
-        )::ReturnType where {ActivityTup,MB,ReturnType,NewType,$(typeargs...)}
-            $body
-        end
-    end
-end
-
 @generated function runtime_newstruct_augfwd(
     activity::Type{Val{ActivityTup}},
+    rta::Val{RuntimeActivity},
     width::Val{Width},
     ModifiedBetween::Val{MB},
     ::Type{NewType},
     RT::Val{ReturnType},
     allargs...,
-)::ReturnType where {ActivityTup,MB,Width,ReturnType,NewType}
+)::ReturnType where {ActivityTup,MB,RuntimeActivity,Width,ReturnType,NewType}
     N = div(length(allargs), Width + 1)
     primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs; mixed_or_active = true)
     return body_runtime_newstruct_augfwd(
         N,
+        RuntimeActivity,
         Width,
         primtypes,
         active_refs,
@@ -428,12 +395,6 @@ set_fn_max_args(runtime_newstruct_augfwd)
 set_fn_max_args(runtime_newstruct_rev)
 set_fn_max_args(runtime_tuple_augfwd)
 set_fn_max_args(runtime_tuple_rev)
-# for (N, Width) in Iterators.product(0:30, 1:10)
-#     eval(func_runtime_newstruct_augfwd(N, Width))
-#     eval(func_runtime_newstruct_rev(N, Width))
-#     eval(func_runtime_tuple_augfwd(N, Width))
-#     eval(func_runtime_tuple_rev(N, Width))
-# end
 
 
 # returns if legal and completed
@@ -697,7 +658,7 @@ function common_f_tuple_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
             B,
             false;
             endcast = false,
-            runtime_activity = false,
+            runtime_activity = true,
             strong_zero = false
         ) #=start=#
 
