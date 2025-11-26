@@ -277,7 +277,9 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 			end
 			end
 			obj = Base.unsafe_pointer_to_objref(ptr)
-	    
+	    		if obj === nothing
+				continue
+			end
 			obj0 = obj
 
 			# TODO we can use this to make it properly relocatable
@@ -285,17 +287,9 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 			   obj = obj.value
 			end
 
-			# Weird thread relocation stuff for locks
-			if obj isa Base.ReentrantLock
-			    continue
-			end
-			if obj === Base.Workqueue || obj ===Base.Workqueues || obj isa Base.Threads.SpinLock
-			    continue
-			end
-
 			b = IRBuilder()
 			position!(b, inst)
-			ccall(:jl_, Cvoid, (Any,), (gname, obj, obj0, ptr, string(addr)))
+			ccall(:jl_, Cvoid, (Any,), (gname, obj, obj0, ptr, string(addr), sprint(Base.Fix2(Base.show_backtrace, GPUCompiler.backtrace(inst))),  sprint(Base.Fix2(Base.show_backtrace, GPUCompiler.backtrace(inst0)))))
 			newf = unsafe_to_llvm(b, obj0; insert_name_if_not_exists=gname) 
 			replace_uses!(inst, newf)
 			LLVM.API.LLVMInstructionEraseFromParent(inst)
