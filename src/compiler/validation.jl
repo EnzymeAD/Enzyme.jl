@@ -272,6 +272,9 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 			if load1
 			ptr = Base.unsafe_load(ptr)
 			ccall(:jl_, Cvoid, (Any,), ("pre2", ptr))
+			if ptr == C_NULL
+				continue
+			end
 			end
 			obj = Base.unsafe_pointer_to_objref(ptr)
 	    
