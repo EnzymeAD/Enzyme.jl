@@ -285,6 +285,11 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 			   obj = obj.value
 			end
 
+			# Weird thread relocation stuff for locks
+			if obj isa Base.ReentrantLock
+			    continue
+			end
+
 			b = IRBuilder()
 			position!(b, inst)
 			ccall(:jl_, Cvoid, (Any,), (gname, obj, obj0, ptr, string(addr)))
