@@ -201,7 +201,7 @@ function prepare!(mod)
 	obj = Base.unsafe_pointer_to_objref(ptr)
 	# Let's try a de-bind for 1.10 lux
 	if isa(obj, Core.Binding)
-	   ptr = Compiler.unsafe_to_ptr(obj)
+	   ptr = Compiler.unsafe_to_ptr(obj.value)
 	end
 
         ptr = reinterpret(UInt, ptr)
