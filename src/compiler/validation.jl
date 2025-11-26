@@ -834,7 +834,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             flib = ops[1]
             fname = ops[2]
 
-	    if isa(flib, LLVM.ConstantExpr)
+	    if isa(flib, LLVM.ConstantExpr) || isa(flib, LLVM.GlobalVariable)
 		legal, flib2 = absint(flib)
 		if legal
 		    flib = unbind(flib2)
