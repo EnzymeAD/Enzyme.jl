@@ -262,8 +262,6 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 			end
 			if isa(addr, LLVM.ConstantInt)
 			
-			ccall(:jl_, Cvoid, (Any,), ("pre", load1, gname, off, string(addr), string(inst), string(inst0)))
-				
 			initaddr = convert(UInt, addr) + off
 			if gname isa String
 			    gname = gname *"\$$initaddr"
@@ -271,7 +269,6 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 			ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
 			if load1
 			ptr = Base.unsafe_load(ptr)
-			ccall(:jl_, Cvoid, (Any,), ("pre2", ptr))
 			if ptr == C_NULL
 				continue
 			end
@@ -297,7 +294,6 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
 			b = IRBuilder()
 			position!(b, inst)
-			ccall(:jl_, Cvoid, (Any,), (gname, obj, obj0, ptr, string(addr), sprint(Base.Fix2(Base.show_backtrace, GPUCompiler.backtrace(inst))),  sprint(Base.Fix2(Base.show_backtrace, GPUCompiler.backtrace(inst0)))))
 			newf = unsafe_to_llvm(b, obj0; insert_name_if_not_exists=gname) 
 			replace_uses!(inst, newf)
 			LLVM.API.LLVMInstructionEraseFromParent(inst)

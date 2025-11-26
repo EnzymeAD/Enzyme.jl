@@ -148,7 +148,6 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
 	    if inactive
 		API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
 	    end
-	    ccall(:jl_, Cvoid, (Any,), (k0, k, string(gv), typeof(v), inactive, force_inactive))
             return gv
     end
 
