@@ -785,8 +785,8 @@ function Base.showerror(io::IO, ece::EnzymeMutabilityException)
     print(io, "EnzymeMutabilityException: ", msg, '\n')
 end
 
-struct EnzymeRuntimeActivityError{MT,WT} <: EnzymeError
-    msg::Cstring
+struct EnzymeRuntimeActivityError{ST, MT,WT} <: EnzymeError
+    msg::ST
     mi::MT
     world::WT
 end
@@ -831,7 +831,11 @@ function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)
         )
     end
     println(io)
-    msg = Base.unsafe_string(ece.msg)
+    msg = if ece.msg isa Cstring
+        Base.unsafe_string(ece.msg)
+    else
+        ece.msg
+    end
     print(io, msg, '\n')
 end
 
@@ -1667,9 +1671,9 @@ end
         mode = Enzyme.API.DEM_ReverseModeCombined
 
         if mi !== nothing
-            emit_error(b, nothing, (msg2, mi, world), EnzymeRuntimeActivityError{Core.MethodInstance, UInt})
+            emit_error(b, nothing, (msg2, mi, world), EnzymeRuntimeActivityError{Cstring, Core.MethodInstance, UInt})
         else
-            emit_error(b, nothing, msg2, EnzymeRuntimeActivityError{Nothing, Nothing})
+            emit_error(b, nothing, msg2, EnzymeRuntimeActivityError{Cstring, Nothing, Nothing})
         end
         return C_NULL
     elseif errtype == API.ET_GetIndexError
