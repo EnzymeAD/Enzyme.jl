@@ -540,7 +540,7 @@ function common_newstructv_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
             firstconst = true,
             endcast = false,
             firstconst_after_tape = true,
-            runtime_activity = false,
+            runtime_activity = true,
             strong_zero = false
         ) #=start=#
 
