@@ -285,7 +285,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 			# TODO we can use this to make it properly relocatable
 			if isa(obj, Core.Binding)
 			   obj = obj.value
-			   if gstate === nothing
+			   if gname === nothing
 				obj0 = obj
 			   end
 			end
