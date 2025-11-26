@@ -107,12 +107,28 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
         end
     end
     
-    function setup_global(k, v, force_inactive=false)
+    function setup_global(k, v)
+	    k0 = k
             mod = LLVM.parent(LLVM.parent(LLVM.position(B)))
             globs = LLVM.globals(mod)
             if Base.haskey(globs, "ejl_" * k)
                 return globs["ejl_"*k]
             end
+        
+	force_inactive = false
+	if insert_name_if_not_exists isa String
+	    k = "inserted\$"*insert_name_if_not_exists
+            if !haskey(Compiler.JuliaEnzymeNameMap, k)
+		 Compiler.JuliaEnzymeNameMap[k] = val
+	    end
+	    # Since the legacy behavior was to force inactive for global constants, we retain that here (for now)
+	    force_inactive = true
+	end
+
+            if Base.haskey(globs, "ejl_" * k)
+                return globs["ejl_"*k]
+            end
+
             gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
 
             API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
@@ -132,6 +148,7 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
 	    if inactive
 		API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
 	    end
+	    ccall(:jl_, Cvoid, (Any,), (k0, k, string(gv), typeof(v), inactive, force_inactive))
             return gv
     end
 
@@ -148,11 +165,7 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
     end
 
     if insert_name_if_not_exists !== nothing
-        insert_name_if_not_exists = "inserted\$"*string(Base.reinterpret(UInt, Compiler.unsafe_to_ptr(val)))*"\$"*insert_name_if_not_exists
-        Compiler.JuliaEnzymeNameMap[insert_name_if_not_exists] = val
-	# Since the legacy behavior was to force inactive for global constants, we retain that here (for now)
-	force_inactive = true
-	return setup_global(insert_name_if_not_exists, val, force_inactive)
+	return setup_global(insert_name_if_not_exists, val)
     end
 
     # XXX: This prevents code from being runtime relocatable

@@ -263,8 +263,11 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 			if isa(addr, LLVM.ConstantInt)
 			
 			ccall(:jl_, Cvoid, (Any,), ("pre", load1, gname, off, string(addr), string(inst), string(inst0)))
-			
-			ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, addr) + off)
+				
+			initaddr = convert(UInt, addr) + off
+			gname = gname *"\$$initaddr"
+
+			ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
 			if load1
 			ptr = Base.unsafe_load(ptr)
 			end

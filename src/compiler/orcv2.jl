@@ -189,8 +189,15 @@ function prepare!(mod)
 	if !startswith(LLVM.name(g), "ejl_inserted\$")
            continue
         end
-	_, uval, ogname, load1 = split(LLVM.name(g), "\$")
-        ptr =  parse(UInt, uval)
+	_, ogname, load1, initaddr = split(LLVM.name(g), "\$")
+
+	load1 = load1 == "true"
+        initaddr = parse(UInt, initaddr)
+	ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
+        if load1
+	   ptr = Base.unsafe_load(ptr)
+	end
+
         ptr = reinterpret(UInt, ptr)
         ptr = LLVM.ConstantInt(ptr)
 	ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[])))
