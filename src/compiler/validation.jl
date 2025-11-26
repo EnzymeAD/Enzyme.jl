@@ -287,6 +287,11 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 			   obj = obj.value
 			end
 
+			# We really don't want to mess with the atomic baked in loads here
+			if obj isa Base.ReentrantLock
+			   continue
+			end
+
 			b = IRBuilder()
 			position!(b, inst)
 			ccall(:jl_, Cvoid, (Any,), (gname, obj, obj0, ptr, string(addr), sprint(Base.Fix2(Base.show_backtrace, GPUCompiler.backtrace(inst))),  sprint(Base.Fix2(Base.show_backtrace, GPUCompiler.backtrace(inst0)))))

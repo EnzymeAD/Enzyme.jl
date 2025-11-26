@@ -373,7 +373,7 @@ function abs_typeof(
             end
             for (k, v) in JuliaEnzymeNameMap
                 if gname == "ejl_" * k
-                    return (true, Core.Typeof(v), GPUCompiler.BITS_REF)
+		    return (true, Core.Typeof(unbind(v)), GPUCompiler.BITS_REF)
                 end
             end
         end
