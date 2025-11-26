@@ -289,6 +289,9 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 			if obj isa Base.ReentrantLock
 			    continue
 			end
+			if obj === Base.Workqueue || obj ===Base.Workqueues || obj isa Base.Threads.SpinLock
+			    continue
+			end
 
 			b = IRBuilder()
 			position!(b, inst)
