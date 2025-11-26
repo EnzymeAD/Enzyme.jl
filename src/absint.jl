@@ -25,6 +25,13 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
             end
             for (k, v) in JuliaEnzymeNameMap
                 if gname == "ejl_" * k
+		    if v isa Core.Binding
+		      try
+			   error("some error")
+		       catch e
+			   Base.show_backtrace(stdout, Base.catch_backtrace())
+		       end 
+		    end
                     return (true, v)
                 end
             end
