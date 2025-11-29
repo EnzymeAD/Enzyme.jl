@@ -356,9 +356,9 @@ weakdeps = ["Adapt"]
 
 [[deps.Enzyme_jll]]
 deps = ["Artifacts", "JLLWrappers", "LazyArtifacts", "Libdl", "TOML"]
-git-tree-sha1 = "6096df88a1bc09afb9a1c85d4e54ed085a95e799"
+git-tree-sha1 = "24825e0438d1e4ce91d31590b37c0109424bec91"
 uuid = "7cc45869-7501-5eee-bdea-0790c847d4ef"
-version = "0.0.221+0"
+version = "0.0.223+0"
 
 [[deps.ExactPredicates]]
 deps = ["IntervalArithmetic", "Random", "StaticArrays"]
