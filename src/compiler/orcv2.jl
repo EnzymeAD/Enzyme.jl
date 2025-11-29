@@ -186,28 +186,24 @@ function prepare!(mod)
         Compiler.eraseInst(mod, f)
     end
     for g in collect(globals(mod))
-	if !startswith(LLVM.name(g), "ejl_inserted\$")
+        if !startswith(LLVM.name(g), "ejl_inserted\$")
            continue
         end
-	_, ogname, load1, initaddr = split(LLVM.name(g), "\$")
+        _, ogname, load1, initaddr = split(LLVM.name(g), "\$")
 
-	load1 = load1 == "true"
-        initaddr = parse(UInt, initaddr)
-	ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
+        load1 = load1 == "true"
+            initaddr = parse(UInt, initaddr)
+        ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
         if load1
-	   ptr = Base.unsafe_load(ptr)
-	end
-			
-	obj = Base.unsafe_pointer_to_objref(ptr)
-	# Let's try a de-bind for 1.10 lux
-	if isa(obj, Core.Binding)
-	   ptr = Compiler.unsafe_to_ptr(obj.value)
-	end
+           ptr = Base.unsafe_load(ptr, :unordered)
+        end
+                
+        obj = Base.unsafe_pointer_to_objref(ptr)
 
         ptr = reinterpret(UInt, ptr)
         ptr = LLVM.ConstantInt(ptr)
-	ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[])))
-	ptr = LLVM.const_addrspacecast(ptr, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10))
+        ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[])))
+        ptr = LLVM.const_addrspacecast(ptr, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10))
         replace_uses!(g, ptr)
         Compiler.eraseInst(mod, g)
     end
