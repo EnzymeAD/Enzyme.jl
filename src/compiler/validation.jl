@@ -270,7 +270,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 			end
 			ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
 			if load1
-			ptr = Base.unsafe_load(ptr)
+			ptr = Base.unsafe_load(ptr, :unordered)
 			if ptr == C_NULL
 				continue
 			end
