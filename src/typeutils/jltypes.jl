@@ -52,6 +52,54 @@ function inline_roots_type(@nospecialize(T::Type))::Int
     end
 end
 
+function equivalent_rooted_type(@nospecialize(typ::DataType))    
+    lRT = convert(LLVMType, typ)
+    tracked = CountTrackedPointers(lRT)
+    @assert !tracked.derived
+    @assert !tracked.all
+    @assert tracked.count != 0
+
+    inners = Type[]
+
+    todo = DataType[typ]
+    while length(todo) != 0
+        cur = popfirst!(todo)
+    
+        desc = Base.DataTypeFieldDesc(cur)
+                
+        next = DataType[]
+        for i in 1:fieldcount(cur)
+            styp = typed_fieldtype(cur, i)
+            if isghostty(styp)
+                continue
+            end
+            if desc[i].isptr
+                push!(inners, styp)
+                continue
+            end
+            if styp isa Union
+                continue
+            end
+            if !(styp isa DataType)
+                throw(AssertionError("Non inner datatype: styp=$styp cur=$cur, typ=$typ lRT=$(string(lRT))"))
+            end
+            push!(next, styp)
+        end
+
+        for styp in reverse(next)
+            pushfirst!(todo, styp)
+        end
+    end
+
+    @assert length(inners) == tracked.count
+
+    res  = NamedTuple{ntuple(Symbol, Val(Int(tracked.count))),Tuple{inners...}}
+    res2 = AnyArray(Int(tracked.count))
+
+    @assert convert(LLVMType, res2) == convert(LLVMType, res)
+    return res
+end
+
 # Given a list of julia types, return a list of julia types, now augmented
 # with the AnyArray's as requisite for the new roots for the calling convention
 # on 1.12
@@ -61,7 +109,7 @@ function rooted_argument_list(iterable)
 	    roots = inline_roots_type(T)
 	    push!(results, (T, nothing))
 	    if roots != 0
-	        push!(results, (AnyArray(roots), T))
+            push!(results, (equivalent_rooted_type(T), T))
 	    end
 	end
 	return results

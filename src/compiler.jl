@@ -1152,6 +1152,13 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
                 )
                 push!(
                     parameter_attributes(f, arg.codegen.i),
+                    StringAttribute(
+                        "enzymejl_parmtype_str",
+                        string(arg.typ),
+                    ),
+                )
+                push!(
+                    parameter_attributes(f, arg.codegen.i),
                     StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))),
                 )
 		if arg.rooted_typ !== nothing
@@ -2954,10 +2961,10 @@ function create_abi_wrapper(
         isboxed = GPUCompiler.deserves_argbox(source_typ)
         llvmT = isboxed ? T_prjlvalue : convert(LLVMType, source_typ)
         push!(T_wrapperargs, llvmT)
-	arg_roots = inline_roots_type(source_typ)
-	if arg_rooting && arg_roots != 0
-	   push!(T_wrapperargs, convert(LLVMType, AnyArray(arg_roots)))
-	end
+        arg_roots = inline_roots_type(source_typ)
+        if arg_rooting && arg_roots != 0
+           push!(T_wrapperargs, convert(LLVMType, AnyArray(arg_roots)))
+        end
 
         if T <: Const || T <: BatchDuplicatedFunc
             if is_adjoint && i != 1
@@ -2976,19 +2983,19 @@ function create_abi_wrapper(
             end
         elseif T <: Duplicated || T <: DuplicatedNoNeed || T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
             push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
-	    arg_roots = inline_roots_type(source_typ)
-	    if arg_rooting && arg_roots != 0
-	       push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
-	    end
+            arg_roots = inline_roots_type(source_typ)
+            if arg_rooting && arg_roots != 0
+               push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
+            end
             if is_adjoint && i != 1
                 push!(ActiveRetTypes, Nothing)
             end
         elseif T <: MixedDuplicated || T <: BatchMixedDuplicated
             push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, T_prjlvalue)))
-	    arg_roots = inline_roots_type(source_typ)
-	    if arg_rooting && arg_roots != 0
-	       push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
-	    end
+            arg_roots = inline_roots_type(source_typ)
+            if arg_rooting && arg_roots != 0
+               push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
+            end
             if is_adjoint && i != 1
                 push!(ActiveRetTypes, Nothing)
             end
@@ -3040,10 +3047,10 @@ function create_abi_wrapper(
                 ),
             )
             push!(T_wrapperargs, dretTy)
-	    arg_roots = inline_roots_type(actualRetType)
-	    if arg_rooting && arg_roots != 0
-	       push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
-	    end
+            arg_roots = inline_roots_type(actualRetType)
+            if arg_rooting && arg_roots != 0
+               push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
+            end
         end
     end
 
@@ -3176,10 +3183,10 @@ function create_abi_wrapper(
             tape = LLVM.LLVMType(tape)
             jltape = convert(LLVM.LLVMType, Compiler.tape_type(tape); allow_boxed = true)
             push!(T_wrapperargs, jltape)
-	    arg_roots = inline_roots_type(tape)
-	    if arg_rooting && arg_roots != 0
-	       push!(T_wrapperargs, convert(LLVMType, AnyArray(arg_roots)))
-	    end
+            arg_roots = inline_roots_type(tape)
+            if arg_rooting && arg_roots != 0
+               push!(T_wrapperargs, convert(LLVMType, AnyArray(arg_roots)))
+            end
         else
             needs_tape = false
         end
@@ -4280,14 +4287,14 @@ function lower_convention(
 		    if arg.rooted_arg_i in loweredArgs
 		        nops[end] = recombine_value!(builder, nops[end], parm)
 		    elseif arg.rooted_arg_i in raisedArgs
-			jltype = convert(LLVMType, arg.rooted_typ)
-			tracked = CountTrackedPointers(jltype)
-			@assert tracked.count > 0
-			@assert !tracked.all
-			root_ty = convert(LLVMType, AnyArray(Int(tracked.count)))
-			move_sret_tofrom_roots!(builder, jltype, nops[end], root_ty, parm, RootPointerToSRetPointer)
-		    else
-			@assert false
+                jltype = convert(LLVMType, arg.rooted_typ)
+                tracked = CountTrackedPointers(jltype)
+                @assert tracked.count > 0
+                @assert !tracked.all
+                root_ty = convert(LLVMType, AnyArray(Int(tracked.count)))
+                move_sret_tofrom_roots!(builder, jltype, nops[end], root_ty, parm, RootPointerToSRetPointer)
+            else
+                @assert false
 		    end
 		elseif (arg.arg_i) in removedRoots && (arg.rooted_arg_i in loweredArgs || arg)
 		    continue
@@ -5326,33 +5333,45 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     dl = string(LLVM.datalayout(mod))
     ctx = LLVM.context(mod)
+                        
+    sretkind = kind(if LLVM.version().major >= 12
+        TypeAttribute("sret", LLVM.Int32Type())
+    else
+        EnumAttribute("sret")
+    end)
+
     for f in functions(mod), bb in blocks(f), inst in instructions(bb)
         fn = isa(inst, LLVM.CallInst) ? LLVM.called_operand(inst) : nothing
        
         if !API.HasFromStack(inst) && isa(inst, LLVM.AllocaInst)
 
             calluse = nothing
+            is_returnroots = false
             for u in LLVM.uses(inst)
                 u = LLVM.user(u)
-                if isa(u, LLVM.CallInst) && operands(u)[1] == inst
-
-                    sretkind = kind(if LLVM.version().major >= 12
-                        TypeAttribute("sret", LLVM.Int32Type())
-                    else
-                        EnumAttribute("sret")
-                    end)
-                    hassret = false
-                    llvmfn = LLVM.called_operand(u)
-                    if llvmfn isa LLVM.Function
-                        for attr in collect(parameter_attributes(llvmfn, 1))
-                            if kind(attr) == sretkind
-                                hassret = true
-                                break
+                if isa(u, LLVM.CallInst)
+                    for i in 1:2
+                        if i >= length(operands(u)) || operands(u)[i] != inst
+                            continue
+                        end
+                        hassret = false
+                        llvmfn = LLVM.called_operand(u)
+                        if llvmfn isa LLVM.Function
+                            for attr in collect(parameter_attributes(llvmfn, i))
+                                if kind(attr) == sretkind
+                                    hassret = true
+                                    break
+                                end
+                                if kind(attr) == "enzymejl_returnRoots"
+                                    hassret = true
+                                    is_returnroots = true
+                                    break
+                                end
                             end
                         end
-                    end
-                    if hassret
-                        calluse = u
+                        if hassret
+                            calluse = u
+                        end
                     end
                 end
             end
@@ -5361,6 +5380,10 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
                 if RT !== nothing
                     llrt, sret, returnRoots = get_return_info(RT)
                     if !(sret isa Nothing) && !is_sret_union(RT)
+                        if is_returnroots
+                            @assert returnRoots !== nothing
+                            RT = equivalent_rooted_type(RT)
+                        end
                         metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
                         metadata(inst)["enzymejl_allocart_name"] = MDNode(LLVM.Metadata[MDString(string(RT))])
                     end

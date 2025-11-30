@@ -2503,6 +2503,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
     propagate_returned!(mod)
     pre_attr!(mod, RunAttributor[])
     if RunAttributor[]
+        API.EnzymeDetectReadonlyOrThrow(mod)
         LLVM.@dispose pb = NewPMPassBuilder() begin
             register!(pb, EnzymeAttributorPass())
             add!(pb, NewPMModulePassManager()) do mpm
@@ -2522,15 +2523,16 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
                 add!(fpm, AllocOptPass())
                 add!(fpm, SROAPass())
             end
-	    if RunAttributor[]
+            if RunAttributor[]
                 add!(mpm, EnzymeAttributorPass())
-	    end
+            end
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, EarlyCSEPass())
             end
         end
         LLVM.run!(pb, mod)
     end
+    API.EnzymeDetectReadonlyOrThrow(mod)
     post_attr!(mod, RunAttributor[])
     propagate_returned!(mod)
     
