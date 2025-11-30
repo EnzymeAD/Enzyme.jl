@@ -259,9 +259,11 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 				addr, _ = get_base_and_offset(addr; offsetAllowed=false, inttoptr=true)
 				load1 = true
 			   end
-            elseif isa(addr, LLVM.ConstantInt)
-               gname = string(convert(UInt, addr))*"\$false"
+			elseif isa(addr, LLVM.ConstantInt)
+			    gname = string(convert(UInt, addr))*"\$true"
+			    load1 = true
 			end
+
 			if isa(addr, LLVM.ConstantInt)
 			
 			initaddr = convert(UInt, addr) + off
