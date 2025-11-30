@@ -292,9 +292,9 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 			end
 
 			# We really don't want to mess with the atomic baked in loads here
-			if obj isa Base.ReentrantLock
-			   continue
-			end
+			#if obj isa Base.ReentrantLock
+			#   continue
+			#end
 
 			b = IRBuilder()
 			position!(b, inst)
