@@ -410,3 +410,15 @@ end
 @inline remove_innerty(::Type{<:BatchDuplicatedNoNeed}) = DuplicatedNoNeed
 @inline remove_innerty(::Type{<:MixedDuplicated}) = MixedDuplicated
 @inline remove_innerty(::Type{<:BatchMixedDuplicated}) = MixedDuplicated
+
+@inline function is_memory_instance(@nospecialize(obj))
+   @static if VERSION < v"1.11"
+	return false
+   else
+	if obj isa Memory
+	   return obj == typeof(obj).instance
+        end
+	return false
+   end
+end
+

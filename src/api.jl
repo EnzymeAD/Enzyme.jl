@@ -1501,6 +1501,14 @@ function EnzymeDumpModuleRef(mod)
     ccall((:EnzymeDumpModuleRef, libEnzyme), Cvoid, (LLVM.API.LLVMModuleRef,), mod)
 end
 
+function EnzymeDumpValueRef(mod)
+    ccall((:EnzymeDumpValueRef, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef,), mod)
+end
+
+function EnzymeDumpTypeRef(mod)
+    ccall((:EnzymeDumpTypeRef, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef,), mod)
+end
+
 EnzymeComputeByteOffsetOfGEP(B, V, T) = LLVM.Value(
     ccall(
         (:EnzymeComputeByteOffsetOfGEP, libEnzyme),

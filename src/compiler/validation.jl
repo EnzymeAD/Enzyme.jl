@@ -238,11 +238,78 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     while iter != C_NULL
         inst = LLVM.Instruction(iter)
         iter = LLVM.API.LLVMGetNextInstruction(iter)
+
+	if isa(value_type(inst), LLVM.PointerType) && addrspace(value_type(inst)) == Tracked
+	    	inst0, _ = get_base_and_offset(inst; offsetAllowed=false, inttoptr=true)
+		if isa(inst0, LLVM.LoadInst) && addrspace(value_type(operands(inst0)[1])) == 0
+		   addr = operands(inst0)[1]
+	    	   addr, off = get_base_and_offset(addr; offsetAllowed=true, inttoptr=true)
+			gname = nothing
+			load1 = false
+			if isa(addr, LLVM.GlobalVariable) && haskey(metadata(addr), "julia.constgv")
+				paddr = addr
+				addr = LLVM.initializer(paddr)
+				gname = LLVM.name(paddr)*"\$false"
+				addr, _ = get_base_and_offset(addr; offsetAllowed=false, inttoptr=true)
+			elseif isa(addr, LLVM.LoadInst)
+			   paddr = operands(addr)[1]
+			   if isa(paddr, LLVM.GlobalVariable) && haskey(metadata(paddr), "julia.constgv")
+				addr = LLVM.initializer(paddr)
+				gname = LLVM.name(paddr)*"\$true"
+				addr, _ = get_base_and_offset(addr; offsetAllowed=false, inttoptr=true)
+				load1 = true
+			   end
+			elseif isa(addr, LLVM.ConstantInt)
+			    gname = string(convert(UInt, addr))*"\$true"
+			    load1 = true
+			end
+
+			if isa(addr, LLVM.ConstantInt)
+			
+			initaddr = convert(UInt, addr) + off
+			if gname isa String
+			    gname = gname *"\$$initaddr"
+			end
+			ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
+			if load1
+			ptr = Base.unsafe_load(ptr, :unordered)
+			if ptr == C_NULL
+				continue
+			end
+			end
+			obj = Base.unsafe_pointer_to_objref(ptr)
+	    		if obj === nothing
+				continue
+			end
+			obj0 = obj
+
+			# TODO we can use this to make it properly relocatable
+			if isa(obj, Core.Binding)
+			   obj = obj.value
+			   if gname === nothing
+				obj0 = obj
+			   end
+			end
+
+			# We really don't want to mess with the atomic baked in loads here
+			#if obj isa Base.ReentrantLock
+			#   continue
+			#end
+
+			b = IRBuilder()
+			position!(b, inst)
+			newf = unsafe_to_llvm(b, obj0; insert_name_if_not_exists=gname) 
+			replace_uses!(inst, newf)
+			LLVM.API.LLVMInstructionEraseFromParent(inst)
+			continue
+		end
+		end
+	    end
         if isa(inst, LLVM.CallInst)
             push!(calls, inst)
             # remove illegal invariant.load and jtbaa_const invariants
         elseif isa(inst, LLVM.LoadInst) 
-            fn_got, _ = get_base_and_offset(operands(inst)[1]; offsetAllowed=false, inttoptr=false)
+	    fn_got, _ = get_base_and_offset(operands(inst)[1]; offsetAllowed=false, inttoptr=false)
             fname = String(name(fn_got))
             match_ = match(r"^jlplt_(.*)_\d+_got$", fname)
 
@@ -785,36 +852,11 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             flib = ops[1]
             fname = ops[2]
 
-            if isa(flib, LLVM.LoadInst)
-                op, off = get_base_and_offset(operands(flib)[1]; inttoptr=true)
-            
-                if isa(op, LLVM.LoadInst)
-                    pop, _ = get_base_and_offset(operands(op)[1]; offsetAllowed=false, inttoptr=true)
-
-                    if isa(pop, LLVM.GlobalVariable)
-                        zop, _ = get_base_and_offset(LLVM.initializer(pop); offsetAllowed=false, inttoptr=true)
-                
-                        rep = zop
-                        PT = value_type(rep)
-                        if isa(PT, LLVM.PointerType) 
-                            rep = LLVM.const_inttoptr(rep, LLVM.PointerType(eltype(PT)))
-                            rep = LLVM.const_addrspacecast(rep, PT)
-                            replace_uses!(pop, rep)
-                            LLVM.API.LLVMInstructionEraseFromParent(pop)
-                        end
-
-                        op = zop
-                    end
-                end
-                        
-                if isa(op, ConstantInt)
-	    	    @static if VERSION < v"1.12"
-			off += 8
-		    end
-                    rep = reinterpret(Ptr{Cvoid}, convert(Csize_t, op) + off)
-                    ld = unsafe_load(convert(Ptr{Ptr{Cvoid}}, rep))
-                    flib = Base.unsafe_pointer_to_objref(ld)
-                end
+	    if isa(flib, LLVM.ConstantExpr) || isa(flib, LLVM.GlobalVariable)
+		legal, flib2 = absint(flib)
+		if legal
+		    flib = unbind(flib2)
+		end
             end
             if isa(flib, GlobalRef) && isdefined(flib.mod, flib.name)
                 flib = getfield(flib.mod, flib.name)
@@ -964,6 +1006,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 iteroff = 2
 
                 legal, iterlib = absint(operands(inst)[iteroff+1])
+		iterlib = unbind(iterlib)
                 if legal && iterlib == Base.iterate
                     legal, GT, byref = abs_typeof(operands(inst)[4+1], true)
                     funcoff = 3
@@ -1053,6 +1096,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         push!(tys, typ)
                     end
                     legal, flib = absint(operands(inst)[offset+1])
+		    flib = unbind(flib)
                     if legal && isa(flib, Core.MethodInstance)
                         if !Base.isvarargtype(flib.specTypes.parameters[end])
                             @assert length(tys) == length(flib.specTypes.parameters)
@@ -1207,6 +1251,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                     push!(tys, typ)
                 end
                 legal, flib = absint(operands(inst)[offset+1])
+		flib = unbind(flib)
                 if legal && isa(flib, Core.MethodInstance)
                     if !Base.isvarargtype(flib.specTypes.parameters[end])
                         if length(tys) != length(flib.specTypes.parameters)
