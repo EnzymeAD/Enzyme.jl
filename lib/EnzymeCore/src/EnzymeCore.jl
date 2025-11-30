@@ -8,6 +8,7 @@ export DefaultABI, FFIABI, InlineABI, NonGenABI
 export BatchDuplicatedFunc
 export within_autodiff, ignore_derivatives
 export needs_primal
+export ChunkStrategy, LargestChunk, FixedChunk, AutoChunk, pick_chunksize
 
 function batch_size end
 
@@ -796,5 +797,72 @@ function Combined(
 end
 
 Combined(mode::ReverseMode) = mode
+
+"""
+    ChunkStrategy
+
+Abstract type gathering strategies for chunk size selection.
+
+# Subtypes
+
+- [`LargestChunk`](@ref)
+- [`FixedChunk`](@ref)
+- [`AutoChunk`](@ref)
+"""
+abstract type ChunkStrategy end
+
+"""
+    LargestChunk()
+
+Select chunk size equal to the number of elements, so that the corresponding array is processed in a single chunk.
+
+!!! tip
+    In the current Enzyme interface, this strategy is equivalent to setting `chunk = nothing`.
+"""
+struct LargestChunk <: ChunkStrategy end
+
+"""
+    FixedChunk{C}()
+    FixedChunk(C)  # type-unstable
+
+Select chunk size equal to a fixed integer `C`.
+
+!!! tip
+    In the current Enzyme interface, this chunk strategy is equivalent to setting `chunk = Val(C)`.
+"""
+struct FixedChunk{C} <: ChunkStrategy end
+
+FixedChunk(C::Int) = FixedChunk{C}()
+
+"""
+    AutoChunk()
+
+Select chunk size automatically based on internal Enzyme-specific heuristics, which are subject to change.
+"""
+struct AutoChunk <: ChunkStrategy end
+
+const DEFAULT_CHUNK_SIZE = 16
+
+"""
+    pick_chunksize(s::ChunkStrategy, n::Integer)
+    pick_chunksize(s::ChunkStrategy, a::AbstractArray)
+
+Compute the chunk size chosen by strategy `s` based on the integer `n` or the array `a` (`n` corresponds to the array's length)
+Return a `Val{C}` object.
+
+- In forward-mode Jacobians, `a` would be the input array.
+- In reverse-mode Jacobians, `a` would be the output array.
+
+!!! warning
+    For `LargestChunk` and `AutoChunk` strategies, this function is type-unstable.
+"""
+function pick_chunksize end
+
+pick_chunksize(::LargestChunk, n::Integer) = Val(n)
+pick_chunksize(::LargestChunk, a::AbstractArray) = Val(length(a))  # allows inference on static arrays
+
+pick_chunksize(::AutoChunk, n::Integer) = Val(min(DEFAULT_CHUNK_SIZE, n))  # TODO: improve
+pick_chunksize(s::AutoChunk, a::AbstractArray) = pick_chunksize(s, length(a))
+pick_chunksize(::FixedChunk{C}, ::Union{Integer,AbstractArray}) where {C} = Val{C}()
 
 end # module EnzymeCore
