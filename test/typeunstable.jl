@@ -122,3 +122,31 @@ end
     res = Enzyme.gradient(Enzyme.Forward, insfwdfunc, [0.5, 0.7])[1]
     @test res ≈ [0.0, 0.0]
 end
+
+function use(x)
+    use(x[1]) * use(x[2])
+end
+function use(x::Vector{Float64})
+    @inbounds x[1]
+end
+function tupq(x, y)
+    res = (Base.inferencebarrier(x), y)
+    use(res)::Float64
+end
+
+@testset "Runtime Activity Tuple Construction" begin
+    x = [2.0]
+    y = [3.0]
+    dy = [0.0]
+
+    @test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.autodiff(Reverse, tupq, Const(x), Duplicated(y, dy))
+
+    x = [2.0]
+    y = [3.0]
+    dy = [0.0]
+    Enzyme.autodiff(set_runtime_activity(Reverse), tupq, Const(x), Duplicated(y, dy))
+    
+    @test x ≈ [2.0]
+    @test y ≈ [3.0]
+    @test dy ≈ [2.0]
+end

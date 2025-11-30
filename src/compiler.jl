@@ -408,8 +408,9 @@ const JuliaEnzymeNameMap = Dict{String,Any}(
     "enz_runtime_exc" => EnzymeRuntimeException,
     "enz_runtime_mi_exc" => EnzymeRuntimeExceptionMI,
     "enz_mut_exc" => EnzymeMutabilityException,
-    "enz_runtime_activity_exc" => EnzymeRuntimeActivityError{Nothing, Nothing},
-    "enz_runtime_activity_mi_exc" => EnzymeRuntimeActivityError{Core.MethodInstance, UInt},
+    "enz_runtime_activity_exc" => EnzymeRuntimeActivityError{Cstring, Nothing, Nothing},
+    "enz_runtime_activity_str_exc" => EnzymeRuntimeActivityError{String, Nothing, Nothing},
+    "enz_runtime_activity_mi_exc" => EnzymeRuntimeActivityError{Cstring, Core.MethodInstance, UInt},
     "enz_no_type_exc" => EnzymeNoTypeError{Nothing, Nothing},
     "enz_no_type_mi_exc" => EnzymeNoTypeError{Core.MethodInstance, UInt},
     "enz_no_shadow_exc" => EnzymeNoShadowError,
@@ -1694,8 +1695,10 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
 				index += 1
 				found = Any[]
 				legal, Ty = absint(operands(arg)[index], partial)
+				Ty = unbind(Ty)
 				if legal && Ty == NTuple
 				   legal, Ty = absint(operands(arg)[index+2])
+				   Ty = unbind(Ty)
 				   if legal
 					# count should represent {the total size in bytes, the aligned size of each element}
 					B = LLVM.IRBuilder()
@@ -5074,7 +5077,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         "trmv",
         "syrk",
         "trmm",
-        "trsm",
+        # "trsm", Not actually implemented yet
         "potrf",
     )
     ForwardModeTypes = ("s", "d", "c", "z")
@@ -5400,7 +5403,8 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
 @static if VERSION < v"1.11-"
 else    
                     legal2, obj = absint(inst)
-                    if legal2 obj isa Memory && obj == typeof(obj).instance
+		    obj = unbind(obj)
+		    if legal2 && is_memory_instance(obj)
                         metadata(inst)["nonnull"] = MDNode(LLVM.Metadata[])
                     end
 end
@@ -5629,6 +5633,7 @@ end
                         string(cur)
                     slegal, foundv = absint(cur)
                     if slegal
+		    	foundv = unbind(foundv)
                         resstr *= "of type " * string(foundv)
                     end
                     emit_error(builder, user, resstr, EnzymeMutabilityException)
@@ -6464,6 +6469,7 @@ const DumpLLVMCall = Ref(false)
         end
         reinsert_gcmarker!(llvm_f)
 
+	Enzyme.Compiler.JIT.prepare!(mod)
 	if DumpLLVMCall[]
 	   API.EnzymeDumpModuleRef(mod.ref)
 	end
@@ -6589,6 +6595,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
             end
         else
             propagate_returned!(mod)
+	    Compiler.JIT.prepare!(mod)
         end
         mstr
     else

@@ -2361,7 +2361,9 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
     end
 
     v, isiter = absint(operands(orig)[offset+1])
+    isiter = unbind(isiter)
     v2, istup = absint(operands(orig)[offset+2])
+    istup = unbind(istup)
 
     width = get_width(gutils)
 
@@ -2513,6 +2515,8 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
 
     v, isiter = absint(operands(orig)[offset+1])
     v2, istup = absint(operands(orig)[offset+2])
+    isiter = unbind(isiter)
+    istup = unbind(istup)
 
     width = get_width(gutils)
 

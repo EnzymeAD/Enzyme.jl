@@ -92,7 +92,7 @@ end
 export unsafe_to_ptr
 
 # This mimicks literal_pointer_val / literal_pointer_val_slot
-function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))::LLVM.Value
+function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_not_exists::Union{String, Nothing}=nothing)::LLVM.Value
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
@@ -106,52 +106,65 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))::LLVM.Value
             end
         end
     end
-
-    for (k, v) in Compiler.JuliaGlobalNameMap
-        if v === val
+    
+    function setup_global(k, v)
+	    k0 = k
             mod = LLVM.parent(LLVM.parent(LLVM.position(B)))
             globs = LLVM.globals(mod)
             if Base.haskey(globs, "ejl_" * k)
                 return globs["ejl_"*k]
             end
+        
+	force_inactive = false
+	if insert_name_if_not_exists isa String
+	    k = "inserted\$"*insert_name_if_not_exists
+            if !haskey(Compiler.JuliaEnzymeNameMap, k)
+		 Compiler.JuliaEnzymeNameMap[k] = val
+	    end
+	    # Since the legacy behavior was to force inactive for global constants, we retain that here (for now)
+	    force_inactive = true
+	end
+
+            if Base.haskey(globs, "ejl_" * k)
+                return globs["ejl_"*k]
+            end
+
             gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
 
             API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
-            if world isa UInt
+            inactive = force_inactive || Enzyme.Compiler.is_memory_instance(v)
+	    if !inactive && v isa Core.SimpleVector && length(v) == 0
+		inactive = true
+	    end
+	    if !inactive && world isa UInt
                 legal, jTy, byref = Compiler.abs_typeof(gv, true)
                 if legal
                     curent_bb = position(B)
                     fn = LLVM.parent(curent_bb)
-                    if Compiler.guaranteed_const_nongen(jTy, world)
-                        API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
-                    end
+		    state = Enzyme.Compiler.active_reg(jTy, world)
+		    inactive = state == Enzyme.Compiler.AnyState ||state == Enzyme.Compiler.ActiveState
                 end
             end
+	    if inactive
+		API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+	    end
             return gv
+    end
+
+    for (k, v) in Compiler.JuliaGlobalNameMap
+        if v === val
+	    return setup_global(k, v)
         end
     end
 
     for (k, v) in Compiler.JuliaEnzymeNameMap
         if v === val
-            mod = LLVM.parent(LLVM.parent(LLVM.position(B)))
-            globs = LLVM.globals(mod)
-            if Base.haskey(globs, "ejl_" * k)
-                return globs["ejl_"*k]
-            end
-            gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
-            API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
-            if world isa UInt
-                legal, jTy, byref = Compiler.abs_typeof(gv, true)
-                if legal
-                    curent_bb = position(B)
-                    fn = LLVM.parent(curent_bb)
-                    if Compiler.guaranteed_const_nongen(jTy, world)
-                        API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
-                    end
-                end
-            end
-            return gv
+	    return setup_global(k, v)
         end
+    end
+
+    if insert_name_if_not_exists !== nothing
+	return setup_global(insert_name_if_not_exists, val)
     end
 
     # XXX: This prevents code from being runtime relocatable
