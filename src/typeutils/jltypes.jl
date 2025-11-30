@@ -77,7 +77,7 @@ function equivalent_rooted_type(@nospecialize(typ::DataType))
                 push!(inners, styp)
                 continue
             end
-            push!(next, typ)
+            push!(next, styp)
         end
 
         for styp in reverse(next)
@@ -87,8 +87,8 @@ function equivalent_rooted_type(@nospecialize(typ::DataType))
 
     @assert length(inners) == tracked.count
 
-    res  = NamedTuple{ntuple(Symbol, Val(tracked.count)),Tuple{inner...}}
-    res2 = AnyArray(tracked.count)
+    res  = NamedTuple{ntuple(Symbol, Val(Int(tracked.count))),Tuple{inners...}}
+    res2 = AnyArray(Int(tracked.count))
 
     @assert convert(LLVMType, res2) == convert(LLVMType, res)
     return res
