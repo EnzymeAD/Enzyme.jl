@@ -2954,10 +2954,10 @@ function create_abi_wrapper(
         isboxed = GPUCompiler.deserves_argbox(source_typ)
         llvmT = isboxed ? T_prjlvalue : convert(LLVMType, source_typ)
         push!(T_wrapperargs, llvmT)
-	arg_roots = inline_roots_type(source_typ)
-	if arg_rooting && arg_roots != 0
-	   push!(T_wrapperargs, convert(LLVMType, AnyArray(arg_roots)))
-	end
+        arg_roots = inline_roots_type(source_typ)
+        if arg_rooting && arg_roots != 0
+           push!(T_wrapperargs, convert(LLVMType, AnyArray(arg_roots)))
+        end
 
         if T <: Const || T <: BatchDuplicatedFunc
             if is_adjoint && i != 1
@@ -2976,19 +2976,19 @@ function create_abi_wrapper(
             end
         elseif T <: Duplicated || T <: DuplicatedNoNeed || T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
             push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
-	    arg_roots = inline_roots_type(source_typ)
-	    if arg_rooting && arg_roots != 0
-	       push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
-	    end
+            arg_roots = inline_roots_type(source_typ)
+            if arg_rooting && arg_roots != 0
+               push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
+            end
             if is_adjoint && i != 1
                 push!(ActiveRetTypes, Nothing)
             end
         elseif T <: MixedDuplicated || T <: BatchMixedDuplicated
             push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, T_prjlvalue)))
-	    arg_roots = inline_roots_type(source_typ)
-	    if arg_rooting && arg_roots != 0
-	       push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
-	    end
+            arg_roots = inline_roots_type(source_typ)
+            if arg_rooting && arg_roots != 0
+               push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
+            end
             if is_adjoint && i != 1
                 push!(ActiveRetTypes, Nothing)
             end
@@ -3040,10 +3040,10 @@ function create_abi_wrapper(
                 ),
             )
             push!(T_wrapperargs, dretTy)
-	    arg_roots = inline_roots_type(actualRetType)
-	    if arg_rooting && arg_roots != 0
-	       push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
-	    end
+            arg_roots = inline_roots_type(actualRetType)
+            if arg_rooting && arg_roots != 0
+               push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
+            end
         end
     end
 
@@ -3176,10 +3176,10 @@ function create_abi_wrapper(
             tape = LLVM.LLVMType(tape)
             jltape = convert(LLVM.LLVMType, Compiler.tape_type(tape); allow_boxed = true)
             push!(T_wrapperargs, jltape)
-	    arg_roots = inline_roots_type(tape)
-	    if arg_rooting && arg_roots != 0
-	       push!(T_wrapperargs, convert(LLVMType, AnyArray(arg_roots)))
-	    end
+            arg_roots = inline_roots_type(tape)
+            if arg_rooting && arg_roots != 0
+               push!(T_wrapperargs, convert(LLVMType, AnyArray(arg_roots)))
+            end
         else
             needs_tape = false
         end
@@ -4280,14 +4280,14 @@ function lower_convention(
 		    if arg.rooted_arg_i in loweredArgs
 		        nops[end] = recombine_value!(builder, nops[end], parm)
 		    elseif arg.rooted_arg_i in raisedArgs
-			jltype = convert(LLVMType, arg.rooted_typ)
-			tracked = CountTrackedPointers(jltype)
-			@assert tracked.count > 0
-			@assert !tracked.all
-			root_ty = convert(LLVMType, AnyArray(Int(tracked.count)))
-			move_sret_tofrom_roots!(builder, jltype, nops[end], root_ty, parm, RootPointerToSRetPointer)
-		    else
-			@assert false
+                jltype = convert(LLVMType, arg.rooted_typ)
+                tracked = CountTrackedPointers(jltype)
+                @assert tracked.count > 0
+                @assert !tracked.all
+                root_ty = convert(LLVMType, AnyArray(Int(tracked.count)))
+                move_sret_tofrom_roots!(builder, jltype, nops[end], root_ty, parm, RootPointerToSRetPointer)
+            else
+                @assert false
 		    end
 		elseif (arg.arg_i) in removedRoots && (arg.rooted_arg_i in loweredArgs || arg)
 		    continue
