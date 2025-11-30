@@ -77,6 +77,12 @@ function equivalent_rooted_type(@nospecialize(typ::DataType))
                 push!(inners, styp)
                 continue
             end
+            if styp isa Union
+                continue
+            end
+            if !(styp isa DataType)
+                throw(AssertionError("Non inner datatype: styp=$styp cur=$cur, typ=$typ lRT=$(string(lRT))"))
+            end
             push!(next, styp)
         end
 
