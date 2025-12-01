@@ -366,10 +366,10 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
 	    API.EnzymeDumpModuleRef(mod.ref)
     end
     for f in collect(functions(mod))
-        API.EnzymeFixupJuliaCallingConvention(f)
+        API.EnzymeFixupBatchedJuliaCallingConvention(f)
     end
     for f in collect(functions(mod))
-        API.EnzymeFixupBatchedJuliaCallingConvention(f)
+        API.EnzymeFixupJuliaCallingConvention(f)
     end
     if DumpPostCallConv[]
 	    API.EnzymeDumpModuleRef(mod.ref)
