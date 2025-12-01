@@ -911,7 +911,7 @@ end
     returnRoots = returnRoots0
     if sret !== nothing
 	sret_lty = convert(LLVMType, eltype(sret))
-	if VERSION >= v"1.12"
+	if VERSION >= v"1.12" && returnRoots !== nothing
 	     dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(orig))))
 	     sret_lty = LLVM.ArrayType(LLVM.Int8Type(), LLVM.sizeof(dl, sret_lty))
 	end
@@ -1750,7 +1750,7 @@ function enzyme_custom_common_rev(
 
     if sret !== nothing
 	sret_lty = convert(LLVMType, eltype(sret))
-	if VERSION >= v"1.12"
+	if VERSION >= v"1.12" && returnRoots !== nothing
 	     dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(orig))))
 	     sret_lty = LLVM.ArrayType(LLVM.Int8Type(), LLVM.sizeof(dl, sret_lty))
 	end
