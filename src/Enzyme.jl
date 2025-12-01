@@ -1566,6 +1566,7 @@ macro import_rrule(args...)
 end
 
 include("precompile.jl")
+include("init.jl")
 
 function __init__()
     @static if VERSION ≥ v"1.12-"
