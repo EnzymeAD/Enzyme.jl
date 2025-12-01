@@ -20,12 +20,15 @@ function emit_allocobj!(
     T_pint8 = LLVM.PointerType(T_int8)
 
     pgcstack = reinsert_gcmarker!(fn, B)
+    bc = bitcast!(B, pgcstack, T_ppjlvalue, LLVM.name(pgcstack)*"_bc")
+    
     ct = inbounds_gep!(
         B,
         T_pjlvalue,
-        bitcast!(B, pgcstack, T_ppjlvalue),
+	bc,
         [LLVM.ConstantInt(current_task_offset())],
     )
+
 
     @static if VERSION < v"1.11.0-"    
         ptls_field = inbounds_gep!(B, T_pjlvalue, ct, [LLVM.ConstantInt(current_ptls_offset())])
@@ -454,7 +457,7 @@ function emit_apply_type!(B::LLVM.IRBuilder, @nospecialize(Ty::Type), args::Vect
     for arg in args
         slegal, foundv = absint(arg)
         if slegal
-            push!(found, foundv)
+	    push!(found, unbind(foundv))
         else
             legal = false
             break
@@ -509,7 +512,7 @@ function emit_tuple!(B::LLVM.IRBuilder, args::Vector{LLVM.Value})::LLVM.Value
     for arg in args
         slegal, foundv = absint(arg)
         if slegal
-            push!(found, foundv)
+	    push!(found, unbind(foundv))
         else
             legal = false
             break
@@ -871,6 +874,7 @@ function emit_layout_of_type!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value))
 	ls = get_layout_struct()
 	lptr = LLVM.PointerType(ls, 10)
 	if legal
+		JTy = unbind(JTy)
 		return LLVM.const_inttoptr(LLVM.ConstantInt(Base.reinterpret(UInt, JTy.layout)), lptr)
 	end
 	@assert !isa(ty, LLVM.ConstantExpr)
@@ -889,6 +893,7 @@ end
 function emit_type_layout_elsz!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value))
 	legal, JTy = absint(ty)
 	if legal
+	    JTy = unbind(JTy)
 	    @assert JTy isa Type
 	    res = Compiler.datatype_layoutsize(JTy)
 	    return LLVM.ConstantInt(res)
