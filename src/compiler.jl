@@ -6762,6 +6762,9 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
             for f in functions(mod)
                 for i in 1:length(parameters(f))
                     for a in collect(parameter_attributes(f, i))
+                       if kind(a) == "enzyme_sret"
+                           API.EnzymeDumpValueRef(f)
+                       end
                        @assert kind(a) != "enzyme_sret"
                        @assert kind(a) != "enzyme_sret_v"
                     end
