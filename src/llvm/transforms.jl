@@ -1168,6 +1168,9 @@ function fix_decayaddr!(mod::LLVM.Module)
                 if isa(st, LLVM.StoreInst)
                     if operands(st)[2] == inst
                         LLVM.API.LLVMSetOperand(st, 2 - 1, operands(inst)[1])
+                    	nb = IRBuilder()
+			position!(nb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
+                    	julia_post_cache_store(st.ref, nb.ref, reinterpret(Ptr{UInt64}, C_NULL))
                         continue
                     end
                 end
@@ -1175,6 +1178,51 @@ function fix_decayaddr!(mod::LLVM.Module)
                     LLVM.API.LLVMSetOperand(st, 1 - 1, operands(inst)[1])
                     continue
                 end
+
+		if isa(st, LLVM.GetElementPtrInst)
+		    legal = true
+		    torem = LLVM.Instruction[]
+		    for u in LLVM.uses(st)
+			st2 = LLVM.user(u)
+			# Storing _into_ the decay addr is okay
+			# we just cannot store the decayed addr into
+			# somewhere
+			if isa(st2, LLVM.StoreInst)
+			    if operands(st2)[2] == st
+				push!(torem, st2)
+				continue
+			    end
+			end
+			if isa(st2, LLVM.LoadInst)
+			     push!(torem, st2)
+			    continue
+			end
+			legal = false
+		    end
+		    if legal
+			B = IRBuilder()
+			position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
+		       cst = addrspacecast!(B, operands(inst)[1], LLVM.PointerType(Derived))
+		       gep2 = gep!(B, LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(st)), cst, operands(inst)[2:end])
+		       for st2 in torem
+                	    if isa(st2, LLVM.StoreInst)
+			        LLVM.API.LLVMSetOperand(st2, 2 - 1, gep2)
+				nb = IRBuilder()
+				position!(nb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st2)))
+				julia_post_cache_store(st2.ref, nb.ref, reinterpret(Ptr{UInt64}, C_NULL))
+				continue
+			    end
+			    if isa(st2, LLVM.LoadInst)
+				    LLVM.API.LLVMSetOperand(st2, 1 - 1, gep2)
+				    continue
+			    end
+
+		       end
+                       LLVM.API.LLVMInstructionEraseFromParent(st)
+		       continue
+		    end
+		end
+
                 # if isa(st, LLVM.InsertValueInst)
                 #    if operands(st)[1] == inst
                 #        push!(invalid, st)
@@ -1328,7 +1376,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                         println(io, "st=", string(st))
                         println(io, "fop=", string(fop))
                     end
-                    throw(AssertionError(msg))
+    		    throw(AssertionError(msg))
                 end
 
 		@assert sret_elty !== nothing
