@@ -902,13 +902,20 @@ end
 
     push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
 
+
     swiftself = has_swiftself(llvmf)
     if swiftself
         pushfirst!(reinsert_gcmarker!(fn, B))
     end
-    _, sret, returnRoots = get_return_info(enzyme_custom_extract_mi(llvmf)[2])
+    _, sret, returnRoots0 = get_return_info(enzyme_custom_extract_mi(llvmf)[2])
+    returnRoots = returnRoots0
     if sret !== nothing
-        sret = alloca!(alloctx, convert(LLVMType, eltype(sret)))
+	sret_lty = convert(LLVMType, eltype(sret))
+	if VERSION >= v"1.12"
+	     dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(orig))))
+	     sret_lty = LLVM.ArrayType(LLVM.Int8Type(), LLVM.sizeof(dl, sret_lty))
+	end
+        sret = alloca!(alloctx, sret_lty)
         pushfirst!(args, sret)
         if returnRoots !== nothing
             returnRoots = alloca!(alloctx, convert(LLVMType, eltype(returnRoots)))
@@ -969,10 +976,15 @@ end
         else
             attr = EnumAttribute("sret")
         end
-        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1), attr)
-        res = load!(B, sty, sret)
+        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1 + swiftself), attr)
+	if returnRoots !== nothing
+	    LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(2 + swiftself), StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1]))))
+	end
+
 	if returnRoots !== nothing && VERSION >= v"1.12"
-	   res = recombine_value!(B, res, returnRoots; must_cache=true)
+	   res = recombine_value_ptr!(B, sty, sret, returnRoots)
+	else
+	   res = load!(B, sty, sret)
 	end
     end
     if swiftself
@@ -1540,7 +1552,8 @@ function enzyme_custom_common_rev(
     swiftself = has_swiftself(llvmf)
 
     miRT = enzyme_custom_extract_mi(llvmf)[2]
-    _, sret, returnRoots = get_return_info(miRT)
+    _, sret, returnRoots0 = get_return_info(miRT)
+    returnRoots = returnRoots0
     sret_union = is_sret_union(miRT)
 
     if sret_union
@@ -1736,7 +1749,12 @@ function enzyme_custom_common_rev(
     end
 
     if sret !== nothing
-        sret = alloca!(alloctx, convert(LLVMType, eltype(sret)))
+	sret_lty = convert(LLVMType, eltype(sret))
+	if VERSION >= v"1.12"
+	     dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(orig))))
+	     sret_lty = LLVM.ArrayType(LLVM.Int8Type(), LLVM.sizeof(dl, sret_lty))
+	end
+        sret = alloca!(alloctx, sret_lty)
         pushfirst!(args, sret)
         if returnRoots !== nothing
             returnRoots = alloca!(alloctx, convert(LLVMType, eltype(returnRoots)))
@@ -1839,10 +1857,14 @@ function enzyme_custom_common_rev(
             LLVM.API.LLVMAttributeIndex(1 + swiftself),
             attr,
         )
-        res = load!(B, sty, sret)
-        API.SetMustCache!(res)
+	if returnRoots !== nothing
+	    LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(2 + swiftself), StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1]))))
+	end
 	if returnRoots !== nothing && VERSION >= v"1.12"
-	   res = recombine_value!(B, res, returnRoots; must_cache=true)
+	   res = recombine_value_ptr!(B, sty, sret, returnRoots; must_cache=true)
+	else
+	   res = load!(B, sty, sret)
+           API.SetMustCache!(res)
 	end
     end
     if swiftself

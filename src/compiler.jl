@@ -2859,7 +2859,7 @@ function enzyme!(
     API.EnzymeLogicErasePreprocessedFunctions(logic)
     adjointfname = adjointf == nothing ? nothing : LLVM.name(adjointf)
     augmented_primalfname =
-        augmented_primalf == nothing ? nothing : LLVM.name(augmented_primalf)
+    augmented_primalf == nothing ? nothing : LLVM.name(augmented_primalf)
     for f in collect(functions(mod))
         API.EnzymeFixupBatchedJuliaCallingConvention(f)
     end
@@ -3810,7 +3810,8 @@ end
     SRetValueToRootPointer = 1,
     RootPointerToSRetValue = 2,
     RootPointerToSRetPointer = 3,
-    NullifySRetValue = 4
+    NullifySRetValue = 4,
+    RootAndSRetPointerToValue = 5,
    )
 
 function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value, root_ty::LLVM.LLVMType, rootRet::Union{LLVM.Value, Nothing}, direction::SRetRootMovement; must_cache::Bool = false)
@@ -3831,17 +3832,21 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
 	extracted = LLVM.Value[]
 
 	val = sret
+	if direction == RootAndSRetPointerToValue
+	    val = LLVM.UndefValue(jltype)
+	end
+
 	# TODO check that we perform this in the same order that extraction happens within julia
 	# aka bfs/etc
         while length(todo) != 0
             path, ty = popfirst!(todo)
-            if !any_jltypes(ty)
+            if !any_jltypes(ty) && direction != RootAndSRetPointerToValue
                 continue
             end
 
-            if isa(ty, LLVM.PointerType)
+            if isa(ty, LLVM.PointerType) && any_jltypes(ty)
 
-        		if direction == SRetPointerToRootPointer || direction == SRetValueToRootPointer || direction == RootPointerToSRetPointer || direction == RootPointerToSRetValue
+        		if direction == SRetPointerToRootPointer || direction == SRetValueToRootPointer || direction == RootPointerToSRetPointer || direction == RootPointerToSRetValue || direction == RootAndSRetPointerToValue
                           loc = inbounds_gep!(
                               builder,
                               root_ty,
@@ -3860,15 +3865,15 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
         		elseif direction == SRetValueToRootPointer
         		    outloc = Enzyme.API.e_extract_value!(builder, sret, path)
                             store!(builder, outloc, loc)
-        		elseif direction == RootPointerToSRetValue
+        		elseif direction == RootPointerToSRetValue || direction == RootAndSRetPointerToValue
         		    loc = load!(builder, ty, loc)
 			    if must_cache
 		                API.SetMustCache!(loc)
 			    end
         		    val = Enzyme.API.e_insert_value!(builder, val, loc, path)
-                elseif direction == NullifySRetValue
-                    loc = unsafe_to_llvm(builder, nothing)
-                    val = Enzyme.API.e_insert_value!(builder, val, loc, path)
+			elseif direction == NullifySRetValue
+			    loc = unsafe_to_llvm(builder, nothing)
+			    val = Enzyme.API.e_insert_value!(builder, val, loc, path)
         		elseif direction == RootPointerToSRetPointer
         		    outloc = inbounds_gep!(builder, jltype, sret, to_llvm(path))
         		    loc = load!(builder, ty, loc)
@@ -3884,7 +3889,7 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
             if isa(ty, LLVM.ArrayType)
                 for i = 1:length(ty)
                     npath = copy(path)
-		push!(npath, i - 1)
+		    push!(npath, i - 1)
                     push!(todo, (npath, eltype(ty)))
                 end
                 continue
@@ -3892,21 +3897,28 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
             if isa(ty, LLVM.VectorType)
                 for i = 1:size(ty)
                     npath = copy(path)
-		push!(npath, i - 1)
+		    push!(npath, i - 1)
                     push!(todo, (npath, eltype(ty)))
                 end
                 continue
             end
             if isa(ty, LLVM.StructType)
                 for (i, t) in enumerate(LLVM.elements(ty))
-                    if any_jltypes(t)
                         npath = copy(path)
 			push!(npath, i - 1)
                         push!(todo, (npath, t))
-                    end
                 end
                 continue
             end
+        
+	    if direction == RootAndSRetPointerToValue
+		    outloc = inbounds_gep!(builder, jltype, sret, to_llvm(path))
+		    outloc = load!(builder, ty, outloc)
+		    if must_cache
+			API.SetMustCache!(outloc)
+		    end
+        	    val = Enzyme.API.e_insert_value!(builder, val, outloc, path)
+	    end
         end
 
 	if direction == RootPointerToSRetPointer	        
@@ -3935,6 +3947,14 @@ function recombine_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM
    @assert !tracked.all "Not tracked.all, jltype ($(string(jltype)))"
    root_ty = convert(LLVMType, AnyArray(Int(tracked.count)))
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, RootPointerToSRetValue; must_cache)
+end
+
+function recombine_value_ptr!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value, roots::LLVM.Value; must_cache::Bool=false)::LLVM.Value
+   tracked = CountTrackedPointers(jltype)
+   @assert tracked.count > 0
+   @assert !tracked.all "Not tracked.all, jltype ($(string(jltype)))"
+   root_ty = convert(LLVMType, AnyArray(Int(tracked.count)))
+   move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, RootAndSRetPointerToValue; must_cache)
 end
 
 function extract_roots_from_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM.Value)
