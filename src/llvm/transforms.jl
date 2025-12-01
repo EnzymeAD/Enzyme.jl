@@ -1376,9 +1376,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                         println(io, "st=", string(st))
                         println(io, "fop=", string(fop))
                     end
-    		    API.EnzymeDumpModuleRef(inst.ref)
-    		    API.EnzymeDumpModuleRef(st.ref)
-		    exit(1)
+    		    throw(AssertionError(msg))
                 end
 
 		@assert sret_elty !== nothing
