@@ -385,7 +385,7 @@ function enzyme_custom_setup_args(
             roots_op = ops[arg.codegen.i + 1]
             roots_activep = API.EnzymeGradientUtilsGetDiffeType(gutils, roots_op, false)
             if roots_activep != activep
-                throw("roots_activep ($roots_activep) != activep ($activep)")
+                throw("roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ))")
             end
         end
 
