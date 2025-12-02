@@ -298,12 +298,29 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
     end
 end
 
+if VERSION < v"1.14.0-DEV.61"
+    import Libdl
+    const RUN_ASAN_PASS = any(contains("libclang_rt.asan"), Libdl.dllist())
+end
+
 function addMachinePasses!(mpm::LLVM.NewPMPassManager)
     add!(mpm, NewPMFunctionPassManager()) do fpm
         if VERSION < v"1.12.0-DEV.1390"
             add!(fpm, CombineMulAddPass())
         end
         add!(fpm, DivRemPairsPass())
+        add!(fpm, AnnotationRemarksPass())
+    end
+    @static if VERSION >= v"1.14.0-DEV.61"
+        if Base.JLOptions().target_asan
+            add!(mpm, AddressSanitizerPass())
+        end
+    else
+        if RUN_ASAN_PASS
+            add!(mpm, AddressSanitizerPass())
+        end
+    end
+    add!(mpm, NewPMFunctionPassManager()) do fpm
         add!(fpm, DemoteFloat16Pass())
         add!(fpm, GVNPass())              
     end
