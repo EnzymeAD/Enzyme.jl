@@ -1,4 +1,5 @@
 const nofreefns = Set{String}((
+    "utf8proc_toupper",
     "ClientGetAddressableDevices",
     "ClientNumAddressableDevices",
     "BufferToDevice",
@@ -167,6 +168,7 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "utf8proc_toupper",
     "ClientGetAddressableDevices",
     "ClientNumAddressableDevices",
     "BufferToDevice",
