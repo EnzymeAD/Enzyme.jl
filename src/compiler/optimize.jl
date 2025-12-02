@@ -312,7 +312,7 @@ function addMachinePasses!(mpm::LLVM.NewPMPassManager)
         add!(fpm, AnnotationRemarksPass())
     end
     @static if VERSION >= v"1.14.0-DEV.61"
-        if Base.JLOptions().target_asan
+        if Base.JLOptions().target_sanitize_address
             add!(mpm, AddressSanitizerPass())
         end
     else
