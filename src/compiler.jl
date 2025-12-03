@@ -3750,7 +3750,13 @@ function create_abi_wrapper(
         ret!(builder)
     end
 
-    # make sure that arguments are rooted if necessary
+    # if we did the move_sret_tofrom_roots, we will have loaded out of the sret, then stored into the rooted.
+    # we should forward the value we actually stored [fixing the sret to therefore be writeonly and also ensuring
+    # we can find the root store from the jlvaluet]
+    # Instcombine breaks apart struct stores into individual components
+    run!(InstCombinePass(), llvm_f)
+    # GVN actually forwards
+    run!(GVNPass(), llvm_f)
     reinsert_gcmarker!(llvm_f)
     if LLVM.API.LLVMVerifyFunction(llvm_f, LLVM.API.LLVMReturnStatusAction) != 0
         msg = sprint() do io
