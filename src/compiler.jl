@@ -3813,20 +3813,21 @@ end
     RootAndSRetPointerToValue = 5,
    )
 
+function to_llvm(lst::Vector{Cuint})
+    vals = LLVM.Value[]
+    push!(vals, LLVM.ConstantInt(LLVM.IntType(64), 0))
+    for i in lst
+       push!(vals, LLVM.ConstantInt(LLVM.IntType(32), i))
+    end
+    return vals
+end
+    
 function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value, root_ty::LLVM.LLVMType, rootRet::Union{LLVM.Value, Nothing}, direction::SRetRootMovement; must_cache::Bool = false)
         count = 0
         todo = Tuple{Vector{Cuint},LLVM.LLVMType}[(
 	    Cuint[],
             jltype,
         )]
-	function to_llvm(lst::Vector{Cuint})
-	    vals = LLVM.Value[]
-	    push!(vals, LLVM.ConstantInt(LLVM.IntType(64), 0))
-	    for i in lst
-	       push!(vals, LLVM.ConstantInt(LLVM.IntType(32), i))
-	    end
-	    return vals
-	end
 
 	extracted = LLVM.Value[]
 
@@ -3971,14 +3972,6 @@ function copy_floats_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, dst::
 	    Cuint[],
         jltype,
     )]
-	function to_llvm(lst::Vector{Cuint})
-	    vals = LLVM.Value[]
-	    push!(vals, LLVM.ConstantInt(LLVM.IntType(64), 0))
-	    for i in lst
-	       push!(vals, LLVM.ConstantInt(LLVM.IntType(32), i))
-	    end
-	    return vals
-	end
 
 	extracted = LLVM.Value[]
 
@@ -4034,14 +4027,6 @@ function extract_nonjlvalues_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMTyp
 	    Cuint[],
         jltype,
     )]
-	function to_llvm(lst::Vector{Cuint})
-	    vals = LLVM.Value[]
-	    push!(vals, LLVM.ConstantInt(LLVM.IntType(64), 0))
-	    for i in lst
-	       push!(vals, LLVM.ConstantInt(LLVM.IntType(32), i))
-	    end
-	    return vals
-	end
 
 	extracted = LLVM.Value[]
 
@@ -4145,6 +4130,53 @@ function extract_struct_into!(builder::LLVM.IRBuilder, dst::LLVM.Value, src::LLV
 	return nothing
 end
 
+function copy_struct_into!(builder::LLVM.IRBuilder, dst::LLVM.Value, src::LLVM.Value)
+    count = 0
+    jltype = value_type(src)
+    todo = Tuple{Vector{Cuint},LLVM.LLVMType}[(
+        Cuint[],
+        jltype,
+    )]
+
+    extracted = LLVM.Value[]
+
+    while length(todo) != 0
+            path, ty = popfirst!(todo)
+
+            if isa(ty, LLVM.ArrayType) && any_jltypes(ty)
+                for i = 1:length(ty)
+                    npath = copy(path)
+                    push!(npath, i - 1)
+                    push!(todo, (npath, eltype(ty)))
+                end
+                continue
+            end
+
+            if isa(ty, LLVM.VectorType) && any_jltypes(ty)
+                for i = 1:size(ty)
+                    npath = copy(path)
+                    push!(npath, i - 1)
+                    push!(todo, (npath, eltype(ty)))
+                end
+                continue
+            end
+
+            if isa(ty, LLVM.StructType) && any_jltypes(ty)
+                for (i, t) in enumerate(LLVM.elements(ty))
+                    npath = copy(path)
+                    push!(npath, i - 1)
+                    push!(todo, (npath, t))
+                end
+                continue
+            end
+        
+        dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstloc")
+        srcloc = inbounds_gep!(builder, jltype, src, to_llvm(path), "srcloc")
+        val = load!(builder, ty, srcloc)
+        st = store!(builder, val, dstloc)
+        end
+    return nothing
+end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(
