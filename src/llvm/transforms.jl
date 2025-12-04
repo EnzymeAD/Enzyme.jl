@@ -530,7 +530,7 @@ function memcpy_sret_split!(mod::LLVM.Module)
 	      dst, _ = get_base_and_offset(operands(cur)[1]; offsetAllowed = false)
 	      src, _ = get_base_and_offset(operands(cur)[2]; offsetAllowed = false)
 	      if value_type(dst) != value_type(src)
-		  src = pointercast!(B, value_type(dst), src)
+		  src = pointercast!(B, src, value_type(dst))
 	      end
 	      copy_struct_into!(B, sty, dst, src)
 	      LLVM.API.LLVMInstructionEraseFromParent(cur)
