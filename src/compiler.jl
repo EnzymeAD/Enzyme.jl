@@ -4130,9 +4130,8 @@ function extract_struct_into!(builder::LLVM.IRBuilder, dst::LLVM.Value, src::LLV
 	return nothing
 end
 
-function copy_struct_into!(builder::LLVM.IRBuilder, dst::LLVM.Value, src::LLVM.Value)
+function copy_struct_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, dst::LLVM.Value, src::LLVM.Value)
     count = 0
-    jltype = value_type(src)
     todo = Tuple{Vector{Cuint},LLVM.LLVMType}[(
         Cuint[],
         jltype,

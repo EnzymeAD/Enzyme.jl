@@ -361,7 +361,11 @@ const DumpPostCallConv = Ref(false)
 
 function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool = true)
     addr13NoAlias(mod)
+    
     removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
+    
+
+    memcpy_sret_split!(mod)
     # if we did the move_sret_tofrom_roots, we will have loaded out of the sret, then stored into the rooted.
     # we should forward the value we actually stored [fixing the sret to therefore be writeonly and also ensuring
     # we can find the root store from the jlvaluet]
