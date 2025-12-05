@@ -562,11 +562,11 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
         end
 
         if ekind == "enzyme_sret"
-	    ety = parse(UInt, LLVM.value(attr))
-	    ety = Base.reinterpret(LLVM.API.LLVMTypeRef, ety)
-	    ety = LLVM.LLVMType(ety)
+            ety = parse(UInt, LLVM.value(attr))
+            ety = Base.reinterpret(LLVM.API.LLVMTypeRef, ety)
+            ety = LLVM.LLVMType(ety)
             if !LLVM.is_opaque(vt)
-		@assert ety == eltype(vt)
+                @assert ety == eltype(vt) "Mismatched sret type $(string(fn))\nidx=$idx\nety ($(string(ety))) != eltype(vt) (vt = $(string(vt)))"
             end
         
             return ety
