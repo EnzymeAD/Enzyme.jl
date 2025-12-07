@@ -4028,7 +4028,16 @@ function extract_nonjlvalues_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMTyp
         jltype,
     )]
 
-	extracted = LLVM.Value[]
+    extracted = LLVM.Value[]
+	
+    if addrspace(value_type(dst)) == 10
+       PT2 = if LLVM.is_opaque(value_type(dst))
+	   LLVM.PointerType(11)
+       else
+	   LLVM.PointerType(eltype(value_type(dst)), 11)
+       end
+       dst = addrspacecast!(builder, PT2, dst)
+    end
 
     while length(todo) != 0
             path, ty = popfirst!(todo)
@@ -4081,16 +4090,17 @@ function extract_struct_into!(builder::LLVM.IRBuilder, dst::LLVM.Value, src::LLV
 	    Cuint[],
         jltype,
     )]
-	function to_llvm(lst::Vector{Cuint})
-	    vals = LLVM.Value[]
-	    push!(vals, LLVM.ConstantInt(LLVM.IntType(64), 0))
-	    for i in lst
-	       push!(vals, LLVM.ConstantInt(LLVM.IntType(32), i))
-	    end
-	    return vals
-	end
 
-	extracted = LLVM.Value[]
+    extracted = LLVM.Value[]
+	
+    if addrspace(value_type(dst)) == 10
+       PT2 = if LLVM.is_opaque(value_type(dst))
+	   LLVM.PointerType(11)
+       else
+	   LLVM.PointerType(eltype(value_type(dst)), 11)
+       end
+       dst = addrspacecast!(builder, PT2, dst)
+    end
 
     while length(todo) != 0
             path, ty = popfirst!(todo)
@@ -4138,6 +4148,24 @@ function copy_struct_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, dst::
     )]
 
     extracted = LLVM.Value[]
+	
+    if addrspace(value_type(dst)) == 10
+       PT2 = if LLVM.is_opaque(value_type(dst))
+	   LLVM.PointerType(11)
+       else
+	   LLVM.PointerType(eltype(value_type(dst)), 11)
+       end
+       dst = addrspacecast!(builder, PT2, dst)
+    end
+    
+    if addrspace(value_type(src)) == 10
+       PT2 = if LLVM.is_opaque(value_type(src))
+	   LLVM.PointerType(11)
+       else
+	   LLVM.PointerType(eltype(value_type(src)), 11)
+       end
+       src = addrspacecast!(builder, PT2, src)
+    end
 
     while length(todo) != 0
             path, ty = popfirst!(todo)
