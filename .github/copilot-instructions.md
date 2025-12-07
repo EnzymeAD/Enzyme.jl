@@ -147,13 +147,10 @@ julia --project=. test/runtests.jl <test_pattern>
 ### Common Test Commands
 ```bash
 # Run basic tests
-julia --project=. test/basic.jl
+julia --project=. -e 'using Pkg; Pkg.test("Enzyme"; test_args=`basic`)'
 
 # Run with verbose output
 julia --project=. test/runtests.jl --verbose
-
-# Run specific test file
-julia --project=. -e 'include("test/basic.jl")'
 ```
 
 ## Building and CI
@@ -174,9 +171,6 @@ julia --project=. -e 'include("test/basic.jl")'
 ```bash
 # Instantiate dependencies
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
-
-# Build the package
-julia --project=. -e 'using Pkg; Pkg.build()'
 
 # Run with LLVM arguments
 JULIA_LLVM_ARGS='--opaque-pointers' julia --project=.
