@@ -3983,8 +3983,8 @@ function copy_floats_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, dst::
             end
 
             if isa(ty, LLVM.FloatingPointType)
-		dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstloc")
-		srcloc = inbounds_gep!(builder, jltype, src, to_llvm(path), "srcloc")
+		dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstloccf")
+		srcloc = inbounds_gep!(builder, jltype, src, to_llvm(path), "srcloccf")
                 val = load!(builder, ty, srcloc)
                 st = store!(builder, val, dstloc)
                 continue
@@ -4066,7 +4066,7 @@ function extract_nonjlvalues_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMTyp
                 continue
             end
 		
-	    dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstloc")
+	    dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstlocnjl")
             val = Enzyme.API.e_extract_value!(builder, src, path)
 	    st = store!(builder, val, dstloc)
         end
@@ -4122,7 +4122,7 @@ function extract_struct_into!(builder::LLVM.IRBuilder, dst::LLVM.Value, src::LLV
                 continue
             end
 		
-	    dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstloc")
+	    dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstlocsi")
 	    val = length(path) == 0 ? src : Enzyme.API.e_extract_value!(builder, src, path)
 	    st = store!(builder, val, dstloc)
         end
@@ -4169,8 +4169,8 @@ function copy_struct_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, dst::
                 continue
             end
         
-        dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstloc")
-        srcloc = inbounds_gep!(builder, jltype, src, to_llvm(path), "srcloc")
+        dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstloccs")
+        srcloc = inbounds_gep!(builder, jltype, src, to_llvm(path), "srcloccs")
         val = load!(builder, ty, srcloc)
         st = store!(builder, val, dstloc)
         end
