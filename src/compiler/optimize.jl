@@ -6,6 +6,7 @@ end
 LLVM.@function_pass "jl-inst-simplify" JLInstSimplifyPass
 LLVM.@module_pass "preserve-nvvm" PreserveNVVMPass
 LLVM.@module_pass "preserve-nvvm-end" PreserveNVVMEndPass
+LLVM.@module_pass "simple-gvn" SimpleGVNPass
 
 const RunAttributor = Ref(VERSION < v"1.12")
 
@@ -372,7 +373,11 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
     # Instcombine breaks apart struct stores into individual components
     run!(InstCombinePass(), mod)
     # GVN actually forwards
-    run!(GVNPass(), mod)
+    @dispose pb = NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+    	add!(pb, SimpleGVNPass())
+        run!(pb, mod, tm)
+    end
     if DumpPreCallConv[]
 	    API.EnzymeDumpModuleRef(mod.ref)
     end
