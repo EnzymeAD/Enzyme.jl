@@ -393,6 +393,8 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
     @dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
     	add!(pb, SimpleGVNPass())
+    	# We still use gvn load for load-load forwarding on alloca's
+	add!(pb, GVNPass())
         run!(pb, mod, tm)
     end
     if DumpPreCallConv[]
