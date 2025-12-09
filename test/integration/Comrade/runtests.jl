@@ -4,6 +4,7 @@ using Enzyme
 using Distributions
 using FiniteDifferences
 using VLBISkyModels
+using LinearAlgebra
 
 using Test
 
@@ -139,19 +140,20 @@ end
         @testset "Sum" begin
             foo(x, g) = sum(
                 abs2,
-                VLBISkyModels.intensitymap_analytic(
+                VLBISkyModels.visibilitymap_analytic(
                     x[1] *
                         stretched(
                         Gaussian(), x[2],
                         x[3]
                     ) +
                         shifted(
-                        GaussianRing(x[4]), x[5],
+                        MRing(x[4], x[4]), x[5],
                         x[6]
                     ), g
                 )
             )
             x = rand(6)
+            foo(x, g)
             testgrad(foo, x, g)
         end
 
@@ -180,7 +182,7 @@ end
         @testset "Polarized Model" begin
             foo(x, g) = sum(
                 norm,
-                VLBISkyModels.intensitymap_analytic(
+                VLBISkyModels.visibilitymap_analytic(
                     rotated(
                         PolarizedModel(
                             Gaussian(),
@@ -227,13 +229,15 @@ end
         end
 
         foo(θ, g) = sum(abs2, VLBISkyModels.visibilitymap_analytic(model(θ), g))
+        x = [40.0, 5.0, 0.7, 0.5, 0.3, 10.0, 1.2, pi / 4, 5.0, -3.0]
+        foo(x, g)
         testgrad(foo, [40.0, 5.0, 0.7, 0.5, 0.3, 10.0, 1.2, pi / 4, 5.0, -3.0], g)
     end
 
     @testset "ContinuousImage" begin
-        gim = imagepixels(24.0, 24.0, 12, 12)
-        gfour = FourierDualDomain(g, guv, NFFTAlg())
-        foos(x, gfour) = sum(
+        gim = imagepixels(5.0, 5.0, 32, 32)
+        gfour = FourierDualDomain(gim, g, NFFTAlg())
+        foo(x, gfour) = sum(
             abs2,
             VLBISkyModels.visibilitymap(
                 modify(
@@ -241,9 +245,9 @@ end
                         IntensityMap(
                             reshape(
                                 @view(x[1:(end - 1)]),
-                                size(imgdomain(g))
+                                size(VLBISkyModels.imgdomain(gfour))
                             ),
-                            imgdomain(g)
+                            VLBISkyModels.imgdomain(gfour)
                         ),
                         BSplinePulse{3}()
                     ),
@@ -251,8 +255,9 @@ end
                 ), gfour
             )
         )
-
-        testgrad(x, gfour)
+        x = rand(prod(size(VLBISkyModels.imgdomain(gfour))) + 1)
+        foo(x, gfour)
+        testgrad(foo, x, gfour)
     end
 end
 
@@ -299,7 +304,7 @@ end
         )
 
         skym = SkyModel(closuregeom, prior, g)
-        post = VLBIPosterior(skym, dlcamp, dcphase)
+        post = VLBIPosterior(skym, lcamp, cphase)
         tpost = asflat(post)
         x = prior_sample(tpost)
         dx = Enzyme.make_zero(x)
