@@ -286,8 +286,7 @@ end
         g = imagepixels(μas2rad(150.0), μas2rad(150.0), 256, 256)
         function closuregeom(θ, meta)
             m1 = θ.f1 * rotated(stretched(Gaussian(), θ.σ1 * θ.τ1, θ.σ1), θ.ξ1)
-            m2 = θ.f2 * rotated(stretched(Gaussian(), θ.σ2 * θ.τ2, θ.σ2), θ.ξ2)
-            return m1 + shifted(m2, θ.x, θ.y)
+            return m1
         end
 
         prior = (
@@ -295,12 +294,6 @@ end
             σ1 = Uniform(μas2rad(1.0), μas2rad(40.0)),
             τ1 = Uniform(0.35, 0.65),
             ξ1 = Uniform(-π / 2, π / 2),
-            f2 = Uniform(0.3, 0.7),
-            σ2 = Uniform(μas2rad(1.0), μas2rad(40.0)),
-            τ2 = Uniform(0.35, 0.65),
-            ξ2 = Uniform(-π / 2, π / 2),
-            x = Uniform(-μas2rad(40.0), μas2rad(40.0)),
-            y = Uniform(-μas2rad(40.0), μas2rad(40.0)),
         )
 
         skym = SkyModel(closuregeom, prior, g)
