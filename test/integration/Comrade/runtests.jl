@@ -116,7 +116,7 @@ end
         end
 
         @testset "All mods" begin
-            foo(x) = sum(
+            foo(x, g) = sum(
                 abs2,
                 VLBISkyModels.visibilitymap_analytic(
                     modify(
