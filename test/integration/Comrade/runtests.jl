@@ -151,7 +151,7 @@ end
                     ), g
                 )
             )
-            x = rand(4)
+            x = rand(6)
             testgrad(foo, x, g)
         end
 
