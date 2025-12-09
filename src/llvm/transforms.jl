@@ -532,7 +532,7 @@ function memcpy_sret_split!(mod::LLVM.Module)
 	      if !LLVM.is_opaque(value_type(dst)) && eltype(value_type(dst)) != eltype(value_type(src))
 	          src = pointercast!(B, src, LLVM.PointerType(eltype(value_type(dst)), addrspace(value_type(src))), "memcpy_sret_split_pointercast")
 	      end
-	      copy_struct_into!(B, sty, dst, src)
+	      copy_struct_into!(B, sty, dst, src, VERSION < v"1.12")
 	      LLVM.API.LLVMInstructionEraseFromParent(cur)
         end
     end
