@@ -8,7 +8,6 @@ using VLBISkyModels
 using Test
 
 
-
 const ComradePATH = joinpath(dirname(pathof(Comrade)), "..", "examples", "Data")
 const dataurl = "https://de.cyverse.org/anon-files/iplant/home/shared/commons_repo/curated/EHTC_M87pol2017_Nov2023/hops_data/April11/SR2_M87_2017_101_lo_hops_ALMArot.uvfits"
 const arrayf = joinpath(ComradePATH, "array.txt")
@@ -26,7 +25,7 @@ function FiniteDifferences.to_vec(k::UnstructuredMap)
     return v, back
 end
 
-function testgrad(f, x, g; atol=1.0e-8, rtol=1.0e-5)
+function testgrad(f, x, g; atol = 1.0e-8, rtol = 1.0e-5)
     dx = Enzyme.make_zero(x)
     autodiff(set_runtime_activity(Enzyme.Reverse), Const(f), Active, Duplicated(x, dx), Const(g))
     fdm = central_fdm(5, 1)
@@ -42,7 +41,7 @@ end
     v = randn(10) * 0.5
     t = sort(rand(10) * 0.5)
     f = fill(230.0e9, 10)
-    g = UnstructuredDomain((U=u, V=v, Ti=t, Fr=f))
+    g = UnstructuredDomain((U = u, V = v, Ti = t, Fr = f))
 
 
     @testset "Gaussian" begin
@@ -142,11 +141,11 @@ end
                 abs2,
                 VLBISkyModels.intensitymap_analytic(
                     x[1] *
-                    stretched(
+                        stretched(
                         Gaussian(), x[2],
                         x[3]
                     ) +
-                    shifted(
+                        shifted(
                         GaussianRing(x[4]), x[5],
                         x[6]
                     ), g
@@ -162,7 +161,7 @@ end
                 VLBISkyModels.visibilitymap_analytic(
                     convolved(
                         x[1] *
-                        stretched(
+                            stretched(
                             Disk(), x[2],
                             x[3]
                         ),
@@ -186,11 +185,11 @@ end
                         PolarizedModel(
                             Gaussian(),
                             x[1] *
-                            Gaussian(),
+                                Gaussian(),
                             x[2] *
-                            Gaussian(),
+                                Gaussian(),
                             x[3] *
-                            Gaussian()
+                                Gaussian()
                         ),
                         x[4]
                     ), g
@@ -241,7 +240,7 @@ end
                     ContinuousImage(
                         IntensityMap(
                             reshape(
-                                @view(x[1:(end-1)]),
+                                @view(x[1:(end - 1)]),
                                 size(imgdomain(g))
                             ),
                             imgdomain(g)
@@ -258,8 +257,6 @@ end
 end
 
 
-
-
 @testset "Inference Tests" begin
 
     obs = ehtim.obsdata.load_uvfits(dataf)
@@ -268,7 +265,7 @@ end
     obspol = Pyehtim.load_uvfits_and_array(
         dataf,
         arrayf;
-        polrep="circ"
+        polrep = "circ"
     )
     obsavgpol = scan_average(obspol)
 
@@ -289,16 +286,16 @@ end
         end
 
         prior = (
-            f1=Uniform(0.8, 1.2),
-            σ1=Uniform(μas2rad(1.0), μas2rad(40.0)),
-            τ1=Uniform(0.35, 0.65),
-            ξ1=Uniform(-π / 2, π / 2),
-            f2=Uniform(0.3, 0.7),
-            σ2=Uniform(μas2rad(1.0), μas2rad(40.0)),
-            τ2=Uniform(0.35, 0.65),
-            ξ2=Uniform(-π / 2, π / 2),
-            x=Uniform(-μas2rad(40.0), μas2rad(40.0)),
-            y=Uniform(-μas2rad(40.0), μas2rad(40.0)),
+            f1 = Uniform(0.8, 1.2),
+            σ1 = Uniform(μas2rad(1.0), μas2rad(40.0)),
+            τ1 = Uniform(0.35, 0.65),
+            ξ1 = Uniform(-π / 2, π / 2),
+            f2 = Uniform(0.3, 0.7),
+            σ2 = Uniform(μas2rad(1.0), μas2rad(40.0)),
+            τ2 = Uniform(0.35, 0.65),
+            ξ2 = Uniform(-π / 2, π / 2),
+            x = Uniform(-μas2rad(40.0), μas2rad(40.0)),
+            y = Uniform(-μas2rad(40.0), μas2rad(40.0)),
         )
 
         skym = SkyModel(closuregeom, prior, g)
@@ -311,7 +308,7 @@ end
 
         fdm = central_fdm(5, 1)
         gf = grad(fdm, tpost, x)
-        @test isapprox(dx, gf; atol=1.0e-8, rtol=1.0e-5)
+        @test isapprox(dx, gf; atol = 1.0e-8, rtol = 1.0e-5)
     end
 
 end
