@@ -304,7 +304,7 @@ end
         x = prior_sample(tpost)
         dx = Enzyme.make_zero(x)
 
-        autodiff(set_runtime_activity(ReverseWPrimal), logdensityof, Const(tpost), Duplicated(x, dx))
+        autodiff(set_runtime_activity(ReverseWithPrimal), logdensityof, Const(tpost), Duplicated(x, dx))
 
         fdm = central_fdm(5, 1)
         gf = grad(fdm, tpost, x)
