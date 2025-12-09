@@ -6,6 +6,7 @@ end
 LLVM.@function_pass "jl-inst-simplify" JLInstSimplifyPass
 LLVM.@module_pass "preserve-nvvm" PreserveNVVMPass
 LLVM.@module_pass "preserve-nvvm-end" PreserveNVVMEndPass
+LLVM.@module_pass "simple-gvn" SimpleGVNPass
 
 const RunAttributor = Ref(VERSION < v"1.12")
 
@@ -378,7 +379,22 @@ const DumpPostCallConv = Ref(false)
 
 function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool = true)
     addr13NoAlias(mod)
+    
     removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
+    
+
+    memcpy_sret_split!(mod)
+    # if we did the move_sret_tofrom_roots, we will have loaded out of the sret, then stored into the rooted.
+    # we should forward the value we actually stored [fixing the sret to therefore be writeonly and also ensuring
+    # we can find the root store from the jlvaluet]
+    # Instcombine breaks apart struct stores into individual components
+    run!(InstCombinePass(), mod)
+    # GVN actually forwards
+    @dispose pb = NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+    	add!(pb, SimpleGVNPass())
+        run!(pb, mod, tm)
+    end
     if DumpPreCallConv[]
 	    API.EnzymeDumpModuleRef(mod.ref)
     end

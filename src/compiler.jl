@@ -3534,7 +3534,7 @@ function create_abi_wrapper(
                     ],
                 )
                 ptr = pointercast!(builder, ptr, LLVM.PointerType(value_type(eval)))
-                si = store!(builder, eval, ptr)
+		extract_struct_into!(builder, ptr, eval)
                 returnNum += 1
                 if i == 3 && shadow_init
                     shadows = LLVM.Value[]
@@ -3576,7 +3576,7 @@ function create_abi_wrapper(
                     ],
                 )
                 ptr = pointercast!(builder, ptr, LLVM.PointerType(value_type(eval)))
-                si = store!(builder, eval, ptr)
+		extract_struct_into!(builder, ptr, eval)
                 returnNum += 1
             end
         end
@@ -3676,7 +3676,7 @@ function create_abi_wrapper(
                 ],
             )
             ptr = pointercast!(builder, ptr, LLVM.PointerType(value_type(eval)))
-            si = store!(builder, eval, ptr)
+	    extract_struct_into!(builder, ptr, eval)
         end
         @assert count_Sret == numLLVMReturns
     else
@@ -3693,9 +3693,8 @@ function create_abi_wrapper(
                             makeInstanceOf(builder, sret_types[returnNum+1])
                         end,
                     )
-                    store!(
+	    	    extract_struct_into!(
                         builder,
-                        eval,
                         inbounds_gep!(
                             builder,
                             jltype,
@@ -3708,6 +3707,7 @@ function create_abi_wrapper(
                                 ),
                             ],
                         ),
+                        eval,
                     )
                     returnNum += 1
                 end
@@ -3719,9 +3719,8 @@ function create_abi_wrapper(
                 isboxed = GPUCompiler.deserves_argbox(T′)
                 if !isboxed
                     eval = extract_value!(builder, val, returnNum)
-                    store!(
+	    	    extract_struct_into!(
                         builder,
-                        eval,
                         inbounds_gep!(
                             builder,
                             jltype,
@@ -3732,6 +3731,7 @@ function create_abi_wrapper(
                                 LLVM.ConstantInt(LLVM.IntType(32), activeNum),
                             ],
                         ),
+                        eval,
                     )
                     returnNum += 1
                 end
@@ -3750,7 +3750,6 @@ function create_abi_wrapper(
         ret!(builder)
     end
 
-    # make sure that arguments are rooted if necessary
     reinsert_gcmarker!(llvm_f)
     if LLVM.API.LLVMVerifyFunction(llvm_f, LLVM.API.LLVMReturnStatusAction) != 0
         msg = sprint() do io
@@ -3814,20 +3813,21 @@ end
     RootAndSRetPointerToValue = 5,
    )
 
+function to_llvm(lst::Vector{Cuint})
+    vals = LLVM.Value[]
+    push!(vals, LLVM.ConstantInt(LLVM.IntType(64), 0))
+    for i in lst
+       push!(vals, LLVM.ConstantInt(LLVM.IntType(32), i))
+    end
+    return vals
+end
+    
 function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value, root_ty::LLVM.LLVMType, rootRet::Union{LLVM.Value, Nothing}, direction::SRetRootMovement; must_cache::Bool = false)
         count = 0
         todo = Tuple{Vector{Cuint},LLVM.LLVMType}[(
 	    Cuint[],
             jltype,
         )]
-	function to_llvm(lst::Vector{Cuint})
-	    vals = LLVM.Value[]
-	    push!(vals, LLVM.ConstantInt(LLVM.IntType(64), 0))
-	    for i in lst
-	       push!(vals, LLVM.ConstantInt(LLVM.IntType(32), i))
-	    end
-	    return vals
-	end
 
 	extracted = LLVM.Value[]
 
@@ -3972,14 +3972,6 @@ function copy_floats_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, dst::
 	    Cuint[],
         jltype,
     )]
-	function to_llvm(lst::Vector{Cuint})
-	    vals = LLVM.Value[]
-	    push!(vals, LLVM.ConstantInt(LLVM.IntType(64), 0))
-	    for i in lst
-	       push!(vals, LLVM.ConstantInt(LLVM.IntType(32), i))
-	    end
-	    return vals
-	end
 
 	extracted = LLVM.Value[]
 
@@ -3991,8 +3983,8 @@ function copy_floats_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, dst::
             end
 
             if isa(ty, LLVM.FloatingPointType)
-		dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstloc")
-		srcloc = inbounds_gep!(builder, jltype, src, to_llvm(path), "srcloc")
+		dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstloccf")
+		srcloc = inbounds_gep!(builder, jltype, src, to_llvm(path), "srcloccf")
                 val = load!(builder, ty, srcloc)
                 st = store!(builder, val, dstloc)
                 continue
@@ -4035,16 +4027,17 @@ function extract_nonjlvalues_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMTyp
 	    Cuint[],
         jltype,
     )]
-	function to_llvm(lst::Vector{Cuint})
-	    vals = LLVM.Value[]
-	    push!(vals, LLVM.ConstantInt(LLVM.IntType(64), 0))
-	    for i in lst
-	       push!(vals, LLVM.ConstantInt(LLVM.IntType(32), i))
-	    end
-	    return vals
-	end
 
-	extracted = LLVM.Value[]
+    extracted = LLVM.Value[]
+	
+    if addrspace(value_type(dst)) == 10
+       PT2 = if LLVM.is_opaque(value_type(dst))
+	   LLVM.PointerType(11)
+       else
+	   LLVM.PointerType(eltype(value_type(dst)), 11)
+       end
+       dst = addrspacecast!(builder, PT2, dst)
+    end
 
     while length(todo) != 0
             path, ty = popfirst!(todo)
@@ -4082,7 +4075,7 @@ function extract_nonjlvalues_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMTyp
                 continue
             end
 		
-	    dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstloc")
+	    dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstlocnjl")
             val = Enzyme.API.e_extract_value!(builder, src, path)
 	    st = store!(builder, val, dstloc)
         end
@@ -4090,6 +4083,127 @@ function extract_nonjlvalues_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMTyp
 	return nothing
 end
 
+function extract_struct_into!(builder::LLVM.IRBuilder, dst::LLVM.Value, src::LLVM.Value)
+    count = 0
+    jltype = value_type(src)
+    todo = Tuple{Vector{Cuint},LLVM.LLVMType}[(
+	    Cuint[],
+        jltype,
+    )]
+
+    extracted = LLVM.Value[]
+	
+    if addrspace(value_type(dst)) == 10
+       PT2 = if LLVM.is_opaque(value_type(dst))
+	   LLVM.PointerType(11)
+       else
+	   LLVM.PointerType(eltype(value_type(dst)), 11)
+       end
+       dst = addrspacecast!(builder, PT2, dst)
+    end
+
+    while length(todo) != 0
+            path, ty = popfirst!(todo)
+
+            if isa(ty, LLVM.ArrayType) && any_jltypes(ty)
+                for i = 1:length(ty)
+                    npath = copy(path)
+                    push!(npath, i - 1)
+                    push!(todo, (npath, eltype(ty)))
+                end
+                continue
+            end
+
+            if isa(ty, LLVM.VectorType) && any_jltypes(ty)
+                for i = 1:size(ty)
+                    npath = copy(path)
+                    push!(npath, i - 1)
+                    push!(todo, (npath, eltype(ty)))
+                end
+                continue
+            end
+
+            if isa(ty, LLVM.StructType) && any_jltypes(ty)
+                for (i, t) in enumerate(LLVM.elements(ty))
+                    npath = copy(path)
+                    push!(npath, i - 1)
+                    push!(todo, (npath, t))
+                end
+                continue
+            end
+		
+	    dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstlocsi")
+	    val = length(path) == 0 ? src : Enzyme.API.e_extract_value!(builder, src, path)
+	    st = store!(builder, val, dstloc)
+        end
+
+	return nothing
+end
+
+function copy_struct_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, dst::LLVM.Value, src::LLVM.Value)
+    count = 0
+    todo = Tuple{Vector{Cuint},LLVM.LLVMType}[(
+        Cuint[],
+        jltype,
+    )]
+
+    extracted = LLVM.Value[]
+	
+    if addrspace(value_type(dst)) == 10
+       PT2 = if LLVM.is_opaque(value_type(dst))
+	   LLVM.PointerType(11)
+       else
+	   LLVM.PointerType(eltype(value_type(dst)), 11)
+       end
+       dst = addrspacecast!(builder, PT2, dst)
+    end
+    
+    if addrspace(value_type(src)) == 10
+       PT2 = if LLVM.is_opaque(value_type(src))
+	   LLVM.PointerType(11)
+       else
+	   LLVM.PointerType(eltype(value_type(src)), 11)
+       end
+       src = addrspacecast!(builder, src, PT2)
+    end
+
+    while length(todo) != 0
+            path, ty = popfirst!(todo)
+
+            if isa(ty, LLVM.ArrayType) && any_jltypes(ty)
+                for i = 1:length(ty)
+                    npath = copy(path)
+                    push!(npath, i - 1)
+                    push!(todo, (npath, eltype(ty)))
+                end
+                continue
+            end
+
+            if isa(ty, LLVM.VectorType) && any_jltypes(ty)
+                for i = 1:size(ty)
+                    npath = copy(path)
+                    push!(npath, i - 1)
+                    push!(todo, (npath, eltype(ty)))
+                end
+                continue
+            end
+
+            if isa(ty, LLVM.StructType) && any_jltypes(ty)
+                for (i, t) in enumerate(LLVM.elements(ty))
+                    npath = copy(path)
+                    push!(npath, i - 1)
+                    push!(todo, (npath, t))
+                end
+                continue
+            end
+        
+        dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstloccs")
+        srcloc = inbounds_gep!(builder, jltype, src, to_llvm(path), "srcloccs")
+        val = load!(builder, ty, srcloc)
+        st = store!(builder, val, dstloc)
+        end
+    return nothing
+end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(

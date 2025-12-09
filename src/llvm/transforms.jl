@@ -476,6 +476,68 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
     end
 end
 
+# Split a memcpy into an sret with jlvaluet into individual load/stores
+function memcpy_sret_split!(mod::LLVM.Module)
+    dl = datalayout(mod)
+    ctx = context(mod)
+	    sretkind = LLVM.kind(if LLVM.version().major >= 12
+                LLVM.TypeAttribute("sret", LLVM.Int32Type())
+            else
+                LLVM.EnumAttribute("sret")
+            end)
+    for f in functions(mod)
+
+        if length(blocks(f)) == 0
+	    continue
+	end
+	if length(parameters(f)) == 0
+	    continue
+	end
+	sty = nothing
+	for attr in collect(LLVM.parameter_attributes(f, 1))
+	    if LLVM.kind(attr) == sretkind
+		 sty = LLVM.value(attr)
+		 break
+	    end
+	end
+	if sty === nothing
+	    continue
+	end
+	tracked = CountTrackedPointers(sty)
+	if tracked.all || tracked.count == 0
+	    continue
+	end
+	todo = LLVM.CallInst[]
+	for bb in blocks(f)
+            for cur in instructions(bb)
+                    if isa(cur, LLVM.CallInst) &&
+                       isa(LLVM.called_operand(cur), LLVM.Function)
+                        intr = LLVM.API.LLVMGetIntrinsicID(LLVM.called_operand(cur))
+			if intr == LLVM.Intrinsic("llvm.memcpy").id
+			    dst, _ = get_base_and_offset(operands(cur)[1]; offsetAllowed = false)
+			    if isa(dst, LLVM.Argument) && parameters(f)[1] == dst
+			    if isa(operands(cur)[3], LLVM.ConstantInt) && LLVM.sizeof(dl, sty) == convert(Int, operands(cur)[3])
+				push!(todo, cur)
+			    end
+			    end
+                        end
+                    end
+	    end
+	end
+	for cur in todo
+	      B = IRBuilder()
+	      position!(B, cur)
+	      dst, _ = get_base_and_offset(operands(cur)[1]; offsetAllowed = false)
+	      src, _ = get_base_and_offset(operands(cur)[2]; offsetAllowed = false)
+	      if !LLVM.is_opaque(value_type(dst)) && eltype(value_type(dst)) != eltype(value_type(src))
+	          src = pointercast!(B, src, LLVM.PointerType(eltype(value_type(dst)), addrspace(value_type(src))), "memcpy_sret_split_pointercast")
+	      end
+	      copy_struct_into!(B, sty, dst, src)
+	      LLVM.API.LLVMInstructionEraseFromParent(cur)
+        end
+    end
+end
+
 # If there is a phi node of a decayed value, Enzyme may need to cache it
 # Here we force all decayed pointer phis to first addrspace from 10
 function nodecayed_phis!(mod::LLVM.Module)
