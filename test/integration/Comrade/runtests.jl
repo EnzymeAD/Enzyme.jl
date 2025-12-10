@@ -27,12 +27,43 @@ function FiniteDifferences.to_vec(k::UnstructuredMap)
 end
 
 function testgrad(f, x, g; atol = 1.0e-8, rtol = 1.0e-5)
+
+    @inferred f(x, g)
+
     dx = Enzyme.make_zero(x)
     autodiff(set_runtime_activity(Enzyme.Reverse), Const(f), Active, Duplicated(x, dx), Const(g))
     fdm = central_fdm(5, 1)
 
     gf = grad(fdm, Base.Fix2(f, g), x)[begin]
     return @test isapprox(dx, gf; atol, rtol)
+end
+
+
+# If this function is defined in `@testset` some weird scoping issue arises
+function model(θ)
+    rad = θ[1]
+    wid = θ[2]
+    a = θ[3]
+    b = θ[4]
+    f = θ[5]
+    sig = θ[6]
+    asy = θ[7]
+    pa = θ[8]
+    x = θ[9]
+    y = θ[10]
+    ring = f * smoothed(
+        stretched(MRing((a,), (b,)), rad, rad),
+        wid
+    )
+    # Why can't this be g?
+    g = (1 - f) *
+        shifted(
+        rotated(
+            stretched(Gaussian(), sig * asy, sig),
+            pa
+        ), x, y
+    )
+    return ring + g
 end
 
 
@@ -203,36 +234,10 @@ end
     end
 
     @testset "M87 model test" begin
-        function model(θ)
-            rad = θ[1]
-            wid = θ[2]
-            a = θ[3]
-            b = θ[4]
-            f = θ[5]
-            sig = θ[6]
-            asy = θ[7]
-            pa = θ[8]
-            x = θ[9]
-            y = θ[10]
-            ring = f * smoothed(
-                stretched(MRing((a,), (b,)), μas2rad(rad), μas2rad(rad)),
-                μas2rad(wid)
-            )
-            # Why can't this be g?
-            ga = (1 - f) *
-                shifted(
-                rotated(
-                    stretched(Gaussian(), μas2rad(sig) * asy, μas2rad(sig)),
-                    pa
-                ), μas2rad(x), μas2rad(y)
-            )
-            return ring + ga
-        end
-
-        foo(θ, g) = sum(abs2, VLBISkyModels.visibilitymap_analytic(model(θ), g))
+        foo1(θ, g) = sum(abs2, VLBISkyModels.visibilitymap_analytic(model(θ), g))
         x = [40.0, 5.0, 0.7, 0.5, 0.3, 10.0, 1.2, pi / 4, 5.0, -3.0]
-        foo(x, g)
-        testgrad(foo, [40.0, 5.0, 0.7, 0.5, 0.3, 10.0, 1.2, pi / 4, 5.0, -3.0], g)
+        @inferred foo1(x, g)
+        testgrad(foo1, x, g)
     end
 
     @testset "ContinuousImage" begin
@@ -300,7 +305,7 @@ end
         x = prior_sample(tpost)
         dx = Enzyme.make_zero(x)
 
-        autodiff(set_runtime_activity(ReverseWithPrimal), logdensityof, Const(tpost), Duplicated(x, dx))
+        autodiff(set_runtime_activity(Reverse), logdensityof, Const(tpost), Duplicated(x, dx))
 
         fdm = central_fdm(5, 1)
         gf = first(grad(fdm, tpost, x))
