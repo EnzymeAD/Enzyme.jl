@@ -476,6 +476,68 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
     end
 end
 
+# Split a memcpy into an sret with jlvaluet into individual load/stores
+function memcpy_sret_split!(mod::LLVM.Module)
+    dl = datalayout(mod)
+    ctx = context(mod)
+	    sretkind = LLVM.kind(if LLVM.version().major >= 12
+                LLVM.TypeAttribute("sret", LLVM.Int32Type())
+            else
+                LLVM.EnumAttribute("sret")
+            end)
+    for f in functions(mod)
+
+        if length(blocks(f)) == 0
+	    continue
+	end
+	if length(parameters(f)) == 0
+	    continue
+	end
+	sty = nothing
+	for attr in collect(LLVM.parameter_attributes(f, 1))
+	    if LLVM.kind(attr) == sretkind
+		 sty = LLVM.value(attr)
+		 break
+	    end
+	end
+	if sty === nothing
+	    continue
+	end
+	tracked = CountTrackedPointers(sty)
+	if tracked.all || tracked.count == 0
+	    continue
+	end
+	todo = LLVM.CallInst[]
+	for bb in blocks(f)
+            for cur in instructions(bb)
+                    if isa(cur, LLVM.CallInst) &&
+                       isa(LLVM.called_operand(cur), LLVM.Function)
+                        intr = LLVM.API.LLVMGetIntrinsicID(LLVM.called_operand(cur))
+			if intr == LLVM.Intrinsic("llvm.memcpy").id
+			    dst, _ = get_base_and_offset(operands(cur)[1]; offsetAllowed = false)
+			    if isa(dst, LLVM.Argument) && parameters(f)[1] == dst
+			    if isa(operands(cur)[3], LLVM.ConstantInt) && LLVM.sizeof(dl, sty) == convert(Int, operands(cur)[3])
+				push!(todo, cur)
+			    end
+			    end
+                        end
+                    end
+	    end
+	end
+	for cur in todo
+	      B = IRBuilder()
+	      position!(B, cur)
+	      dst, _ = get_base_and_offset(operands(cur)[1]; offsetAllowed = false)
+	      src, _ = get_base_and_offset(operands(cur)[2]; offsetAllowed = false)
+	      if !LLVM.is_opaque(value_type(dst)) && eltype(value_type(dst)) != eltype(value_type(src))
+	          src = pointercast!(B, src, LLVM.PointerType(eltype(value_type(dst)), addrspace(value_type(src))), "memcpy_sret_split_pointercast")
+	      end
+	      copy_struct_into!(B, sty, dst, src, VERSION < v"1.12")
+	      LLVM.API.LLVMInstructionEraseFromParent(cur)
+        end
+    end
+end
+
 # If there is a phi node of a decayed value, Enzyme may need to cache it
 # Here we force all decayed pointer phis to first addrspace from 10
 function nodecayed_phis!(mod::LLVM.Module)
@@ -1168,6 +1230,9 @@ function fix_decayaddr!(mod::LLVM.Module)
                 if isa(st, LLVM.StoreInst)
                     if operands(st)[2] == inst
                         LLVM.API.LLVMSetOperand(st, 2 - 1, operands(inst)[1])
+                    	nb = IRBuilder()
+			position!(nb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
+                    	julia_post_cache_store(st.ref, nb.ref, reinterpret(Ptr{UInt64}, C_NULL))
                         continue
                     end
                 end
@@ -1175,6 +1240,51 @@ function fix_decayaddr!(mod::LLVM.Module)
                     LLVM.API.LLVMSetOperand(st, 1 - 1, operands(inst)[1])
                     continue
                 end
+
+		if isa(st, LLVM.GetElementPtrInst)
+		    legal = true
+		    torem = LLVM.Instruction[]
+		    for u in LLVM.uses(st)
+			st2 = LLVM.user(u)
+			# Storing _into_ the decay addr is okay
+			# we just cannot store the decayed addr into
+			# somewhere
+			if isa(st2, LLVM.StoreInst)
+			    if operands(st2)[2] == st
+				push!(torem, st2)
+				continue
+			    end
+			end
+			if isa(st2, LLVM.LoadInst)
+			     push!(torem, st2)
+			    continue
+			end
+			legal = false
+		    end
+		    if legal
+			B = IRBuilder()
+			position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
+		       cst = addrspacecast!(B, operands(inst)[1], LLVM.PointerType(Derived))
+		       gep2 = gep!(B, LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(st)), cst, operands(inst)[2:end])
+		       for st2 in torem
+                	    if isa(st2, LLVM.StoreInst)
+			        LLVM.API.LLVMSetOperand(st2, 2 - 1, gep2)
+				nb = IRBuilder()
+				position!(nb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st2)))
+				julia_post_cache_store(st2.ref, nb.ref, reinterpret(Ptr{UInt64}, C_NULL))
+				continue
+			    end
+			    if isa(st2, LLVM.LoadInst)
+				    LLVM.API.LLVMSetOperand(st2, 1 - 1, gep2)
+				    continue
+			    end
+
+		       end
+                       LLVM.API.LLVMInstructionEraseFromParent(st)
+		       continue
+		    end
+		end
+
                 # if isa(st, LLVM.InsertValueInst)
                 #    if operands(st)[1] == inst
                 #        push!(invalid, st)
@@ -1328,7 +1438,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                         println(io, "st=", string(st))
                         println(io, "fop=", string(fop))
                     end
-                    throw(AssertionError(msg))
+    		    throw(AssertionError(msg))
                 end
 
 		@assert sret_elty !== nothing

@@ -1184,11 +1184,21 @@ function julia_error(
     elseif errtype == API.ET_InternalError
         throw(EnzymeInternalError(msg, ir, bt))
     elseif errtype == API.ET_GCRewrite
-        msgN = sprint() do io::IO
+        data2 = LLVM.Value(data2)
+        fn = LLVM.Function(LLVM.API.LLVMGetParamParent(data2::LLVM.Argument))
+        @static if VERSION < v"1.11"
+	    sretkind = LLVM.kind(if LLVM.version().major >= 12
+		LLVM.TypeAttribute("sret", LLVM.Int32Type())
+	    else
+		LLVM.EnumAttribute("sret")
+	    end)
+	    if occursin("Could not find use of stored value", msg) && length(parameters(fn)) >= 1 && any(LLVM.kind(attr) == sretkind for attr in collect(LLVM.parameter_attributes(fn, 1)))
+		return C_NULL
+	    end
+        end
+	msgN = sprint() do io::IO
             print(io, msg)
             println(io)
-            data2 = LLVM.Value(data2)
-            fn = LLVM.Function(LLVM.API.LLVMGetParamParent(data2::LLVM.Argument))
             println(io, "Fn = ", string(fn))
             println(io, "arg = ", string(data2::LLVM.Argument))
             if data !== C_NULL

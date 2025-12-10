@@ -6,6 +6,7 @@ end
 LLVM.@function_pass "jl-inst-simplify" JLInstSimplifyPass
 LLVM.@module_pass "preserve-nvvm" PreserveNVVMPass
 LLVM.@module_pass "preserve-nvvm-end" PreserveNVVMEndPass
+LLVM.@module_pass "simple-gvn" SimpleGVNPass
 
 const RunAttributor = Ref(VERSION < v"1.12")
 
@@ -298,12 +299,29 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
     end
 end
 
+if VERSION < v"1.14.0-DEV.61"
+    import Libdl
+    const RUN_ASAN_PASS = any(contains("libclang_rt.asan"), Libdl.dllist())
+end
+
 function addMachinePasses!(mpm::LLVM.NewPMPassManager)
     add!(mpm, NewPMFunctionPassManager()) do fpm
         if VERSION < v"1.12.0-DEV.1390"
             add!(fpm, CombineMulAddPass())
         end
         add!(fpm, DivRemPairsPass())
+        add!(fpm, AnnotationRemarksPass())
+    end
+    @static if VERSION >= v"1.14.0-DEV.61"
+        if Base.JLOptions().target_sanitize_address
+            add!(mpm, AddressSanitizerPass())
+        end
+    else
+        if RUN_ASAN_PASS
+            add!(mpm, AddressSanitizerPass())
+        end
+    end
+    add!(mpm, NewPMFunctionPassManager()) do fpm
         add!(fpm, DemoteFloat16Pass())
         add!(fpm, GVNPass())              
     end
@@ -361,15 +379,30 @@ const DumpPostCallConv = Ref(false)
 
 function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool = true)
     addr13NoAlias(mod)
+    
     removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
+    
+
+    memcpy_sret_split!(mod)
+    # if we did the move_sret_tofrom_roots, we will have loaded out of the sret, then stored into the rooted.
+    # we should forward the value we actually stored [fixing the sret to therefore be writeonly and also ensuring
+    # we can find the root store from the jlvaluet]
+    # Instcombine breaks apart struct stores into individual components
+    run!(InstCombinePass(), mod)
+    # GVN actually forwards
+    @dispose pb = NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+    	add!(pb, SimpleGVNPass())
+        run!(pb, mod, tm)
+    end
     if DumpPreCallConv[]
 	    API.EnzymeDumpModuleRef(mod.ref)
     end
     for f in collect(functions(mod))
-        API.EnzymeFixupJuliaCallingConvention(f)
+        API.EnzymeFixupBatchedJuliaCallingConvention(f)
     end
     for f in collect(functions(mod))
-        API.EnzymeFixupBatchedJuliaCallingConvention(f)
+        API.EnzymeFixupJuliaCallingConvention(f)
     end
     if DumpPostCallConv[]
 	    API.EnzymeDumpModuleRef(mod.ref)
