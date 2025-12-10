@@ -218,14 +218,15 @@ end
                 stretched(MRing((a,), (b,)), μas2rad(rad), μas2rad(rad)),
                 μas2rad(wid)
             )
-            g = (1 - f) *
+            # Why can't this be g?
+            ga = (1 - f) *
                 shifted(
                 rotated(
                     stretched(Gaussian(), μas2rad(sig) * asy, μas2rad(sig)),
                     pa
                 ), μas2rad(x), μas2rad(y)
             )
-            return ring + g
+            return ring + ga
         end
 
         foo(θ, g) = sum(abs2, VLBISkyModels.visibilitymap_analytic(model(θ), g))
@@ -285,15 +286,12 @@ end
     @testset "Geometric Closures" begin
         g = imagepixels(μas2rad(150.0), μas2rad(150.0), 256, 256)
         function closuregeom(θ, meta)
-            m1 = θ.f1 * stretched(Gaussian(), μas2rad(20.0), μas2rad(10.0))
+            m1 = θ.f1 * stretched(Gaussian(), μas2rad(20.0), μas2rad(20.0))
             return m1
         end
 
         prior = (
             f1 = Uniform(0.8, 1.2),
-            # σ1 = Uniform(μas2rad(1.0), μas2rad(40.0)),
-            # τ1 = Uniform(0.35, 0.65),
-            # ξ1 = Uniform(-π / 2, π / 2),
         )
 
         skym = SkyModel(closuregeom, prior, g)
