@@ -297,7 +297,7 @@ end
         )
 
         skym = SkyModel(closuregeom, prior, g)
-        post = VLBIPosterior(skym, lcamp, cphase)
+        post = VLBIPosterior(skym, lcamp)
         tpost = asflat(post)
         x = prior_sample(tpost)
         dx = Enzyme.make_zero(x)
@@ -305,7 +305,7 @@ end
         autodiff(set_runtime_activity(ReverseWithPrimal), logdensityof, Const(tpost), Duplicated(x, dx))
 
         fdm = central_fdm(5, 1)
-        gf = grad(fdm, tpost, x)
+        gf = first(grad(fdm, tpost, x))
         @test isapprox(dx, gf; atol = 1.0e-8, rtol = 1.0e-5)
     end
 
