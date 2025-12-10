@@ -265,6 +265,30 @@ end
         foo(x, gfour)
         testgrad(foo, x, gfour)
     end
+
+
+    @testset "multidomain" begin
+        fov = 1.0
+        x = range(-fov/2, fov; length=8)
+        y = range(-fov, fov; length=8)
+        Ti = [1.0, 2.0]
+        Fr = [86e9, 230e9]
+        g = RectiGrid((;X=x, Y=y, Ti, Fr))
+        function foo4D(x, p)
+            cimg = ContinuousImage(IntensityMap(x, VLBISkyModels.imgdomain(p)), DeltaPulse())
+            vis = VLBISkyModels.visibilitymap(cimg, p)
+            return sum(abs2, vis)
+        end
+
+        x = rand(size(g)...)
+        U = randn(20) * 0.5
+        V = randn(20) * 0.5
+        uT = vcat(fill(Ti[1], 10), fill(Ti[2], 10))
+        uFr = vcat(fill(Fr[1], 5), fill(Fr[2], 5), fill(Fr[1], 5), fill(Fr[2], 5))
+        guv = UnstructuredDomain((U = U, V = V, Ti = uT, Fr = uFr))
+        gfour = FourierDualDomain(g, guv, NFFTAlg())
+        testgrad(foo4D, x, gfour)
+    end
 end
 
 
@@ -291,16 +315,26 @@ end
     @testset "Geometric Closures" begin
         g = imagepixels(μas2rad(150.0), μas2rad(150.0), 256, 256)
         function closuregeom(θ, meta)
-            m1 = θ.f1 * stretched(Gaussian(), μas2rad(20.0), μas2rad(20.0))
-            return m1
+            m1 = θ.f1 * rotated(stretched(Gaussian(), θ.σ1 * θ.τ1, θ.σ1), θ.ξ1)
+            m2 = θ.f2 * rotated(stretched(Gaussian(), θ.σ2 * θ.τ2, θ.σ2), θ.ξ2)
+            return m1 + shifted(m2, θ.x, θ.y)
         end
 
         prior = (
             f1 = Uniform(0.8, 1.2),
+            σ1 = Uniform(μas2rad(1.0), μas2rad(40.0)),
+            τ1 = Uniform(0.35, 0.65),
+            ξ1 = Uniform(-π / 2, π / 2),
+            f2 = Uniform(0.3, 0.7),
+            σ2 = Uniform(μas2rad(1.0), μas2rad(40.0)),
+            τ2 = Uniform(0.35, 0.65),
+            ξ2 = Uniform(-π / 2, π / 2),
+            x = Uniform(-μas2rad(40.0), μas2rad(40.0)),
+            y = Uniform(-μas2rad(40.0), μas2rad(40.0)),
         )
 
         skym = SkyModel(closuregeom, prior, g)
-        post = VLBIPosterior(skym, lcamp)
+        post = VLBIPosterior(skym, lcamp, cphase)
         tpost = asflat(post)
         x = prior_sample(tpost)
         dx = Enzyme.make_zero(x)
@@ -310,6 +344,94 @@ end
         fdm = central_fdm(5, 1)
         gf = first(grad(fdm, tpost, x))
         @test isapprox(dx, gf; atol = 1.0e-8, rtol = 1.0e-5)
+    end
+
+
+    @testset "Polarized Imaging" begin
+        function polarizedsky(θ, metadata)
+            (; σs, as, ain, aout, r) = θ
+            (; grid, ftot) = metadata
+            δs = ntuple(Val(4)) do i
+                σs[i] * as[i].params
+            end
+        
+            pmap = VLBISkyModels.PolExp2Map!(δs..., grid)
+
+            mmodel = modify(RingTemplate(RadialDblPower(ain, aout), AzimuthalUniform()), Stretch(r))
+            mimg = intensitymap(mmodel, grid)
+        
+            ft = zero(eltype(mimg))
+            for i in eachindex(pmap, mimg)
+                pmap[i] *= mimg[i]
+                ft += pmap[i].I
+            end
+        
+            pmap .= ftot .* pmap ./ ft
+            x0, y0 = centroid(pmap)
+            m = ContinuousImage(pmap, BSplinePulse{3}())
+            return shifted(m, -x0, -y0)
+        end
+
+        fovx = μas2rad(60.0)
+        fovy = μas2rad(60.0)
+        nx = ny = 8
+        grid = imagepixels(fovx, fovy, nx, ny)
+        skymeta = (; grid, ftot = 0.6);
+
+        cprior = corr_image_prior(grid, dcoh; order = 2)
+        skyprior = (
+            σs = ntuple(Returns(truncated(Normal(0.0, 0.5); lower = 0.0)), 4),
+            as = ntuple(Returns(cprior), 4),
+            ain = Uniform(0.0, 5.0),
+            aout = Uniform(0.0, 5.0),
+            r = Uniform(μas2rad(1.0), μas2rad(30.0)),
+        )   
+        skym = SkyModel(polarizedsky, skyprior, grid; metadata = skymeta)
+
+        function fgain(x)
+            gR = exp(x.lgR + 1im * x.gpR)
+            gL = gR * exp(x.lgrat + 1im * x.gprat)
+            return gR, gL
+        end
+        G = JonesG(fgain)
+
+        function fdterms(x)
+            dR = complex(x.dRx, x.dRy)
+            dL = complex(x.dLx, x.dLy)
+            return dR, dL
+        end
+        D = JonesD(fdterms)
+        R = JonesR(; add_fr = true)
+
+        js(g, d, r) = adjoint(r) * g * d * r
+        J = JonesSandwich(js, G, D, R)
+
+        intprior = (
+            lgR = ArrayPrior(IIDSitePrior(ScanSeg(), Normal(0.0, 0.2)); LM = IIDSitePrior(ScanSeg(), Normal(0.0, 1.0))),
+            lgrat = ArrayPrior(IIDSitePrior(ScanSeg(), Normal(0.0, 0.1))),
+            gpR = ArrayPrior(IIDSitePrior(ScanSeg(), DiagonalVonMises(0.0, inv(π^2))); refant = SEFDReference(0.0), phase = true),
+            gprat = ArrayPrior(IIDSitePrior(ScanSeg(), DiagonalVonMises(0.0, inv(0.1^2))); refant = SingleReference(:AA, 0.0), phase = true),
+            dRx = ArrayPrior(IIDSitePrior(TrackSeg(), Normal(0.0, 0.2))),
+            dRy = ArrayPrior(IIDSitePrior(TrackSeg(), Normal(0.0, 0.2))),
+            dLx = ArrayPrior(IIDSitePrior(TrackSeg(), Normal(0.0, 0.2))),
+            dLy = ArrayPrior(IIDSitePrior(TrackSeg(), Normal(0.0, 0.2))),
+        )
+        intmodel = InstrumentModel(J, intprior)
+        # Only do this for a small chunk to keep test time reasonable
+        post = VLBIPosterior(skym, intmodel, filter(x-> 1.0 < x.baseline.Ti < 3.0, dcoh))
+        tpost = asflat(post)
+
+        x = prior_sample(tpost)
+        logdensityof(tpost, x)
+        dx = Enzyme.make_zero(x)
+        autodiff(set_runtime_activity(Reverse), logdensityof, Const(tpost), Duplicated(x, dx))
+
+
+        fdm = central_fdm(5, 1)
+        gf = first(grad(fdm, tpost, x))
+        @test isapprox(dx, gf; atol = 1.0e-8, rtol = 1.0e-5)
+
+
     end
 
 end

@@ -9,12 +9,14 @@ Pyehtim = "3d61700d-6e5b-419a-8e22-9c066cf00468"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+TransformVariables = "84d833dd-6860-57f9-a1a7-6da5db126cff"
 VLBISkyModels = "d6343c73-7174-4e0f-bb64-562643efbeca"
 
 [compat]
 Comrade = "0.11"
 FiniteDifferences = "0.12"
 Pyehtim = "0.2"
+TransformVariables = "0.8 - 0.8.17"
 VLBISkyModels = "0.6"
 
 [sources.Enzyme]
