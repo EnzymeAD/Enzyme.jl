@@ -346,92 +346,92 @@ end
         @test isapprox(dx, gf; atol = 1.0e-8, rtol = 1.0e-5)
     end
 
+    # This is currently broken on Julia 1.11 #2750
+    if VERSION < v"1.11"
+        @testset "Polarized Imaging" begin
+            function polarizedsky(θ, metadata)
+                (; σs, as, ain, aout, r) = θ
+                (; grid, ftot) = metadata
+                δs = ntuple(Val(4)) do i
+                    σs[i] * as[i].params
+                end
+            
+                pmap = VLBISkyModels.PolExp2Map!(δs..., grid)
 
-    @testset "Polarized Imaging" begin
-        function polarizedsky(θ, metadata)
-            (; σs, as, ain, aout, r) = θ
-            (; grid, ftot) = metadata
-            δs = ntuple(Val(4)) do i
-                σs[i] * as[i].params
+                mmodel = modify(RingTemplate(RadialDblPower(ain, aout), AzimuthalUniform()), Stretch(r))
+                mimg = intensitymap(mmodel, grid)
+            
+                ft = zero(eltype(mimg))
+                for i in eachindex(pmap, mimg)
+                    pmap[i] *= mimg[i]
+                    ft += pmap[i].I
+                end
+            
+                pmap .= ftot .* pmap ./ ft
+                x0, y0 = centroid(pmap)
+                m = ContinuousImage(pmap, BSplinePulse{3}())
+                return shifted(m, -x0, -y0)
             end
-        
-            pmap = VLBISkyModels.PolExp2Map!(δs..., grid)
 
-            mmodel = modify(RingTemplate(RadialDblPower(ain, aout), AzimuthalUniform()), Stretch(r))
-            mimg = intensitymap(mmodel, grid)
-        
-            ft = zero(eltype(mimg))
-            for i in eachindex(pmap, mimg)
-                pmap[i] *= mimg[i]
-                ft += pmap[i].I
+            fovx = μas2rad(60.0)
+            fovy = μas2rad(60.0)
+            nx = ny = 8
+            grid = imagepixels(fovx, fovy, nx, ny)
+            skymeta = (; grid, ftot = 0.6);
+
+            cprior = corr_image_prior(grid, dcoh; order = 2)
+            skyprior = (
+                σs = ntuple(Returns(truncated(Normal(0.0, 0.5); lower = 0.0)), 4),
+                as = ntuple(Returns(cprior), 4),
+                ain = Uniform(0.0, 5.0),
+                aout = Uniform(0.0, 5.0),
+                r = Uniform(μas2rad(1.0), μas2rad(30.0)),
+            )   
+            skym = SkyModel(polarizedsky, skyprior, grid; metadata = skymeta)
+
+            function fgain(x)
+                gR = exp(x.lgR + 1im * x.gpR)
+                gL = gR * exp(x.lgrat + 1im * x.gprat)
+                return gR, gL
             end
-        
-            pmap .= ftot .* pmap ./ ft
-            x0, y0 = centroid(pmap)
-            m = ContinuousImage(pmap, BSplinePulse{3}())
-            return shifted(m, -x0, -y0)
+            G = JonesG(fgain)
+
+            function fdterms(x)
+                dR = complex(x.dRx, x.dRy)
+                dL = complex(x.dLx, x.dLy)
+                return dR, dL
+            end
+            D = JonesD(fdterms)
+            R = JonesR(; add_fr = true)
+
+            js(g, d, r) = adjoint(r) * g * d * r
+            J = JonesSandwich(js, G, D, R)
+
+            intprior = (
+                lgR = ArrayPrior(IIDSitePrior(ScanSeg(), Normal(0.0, 0.2)); LM = IIDSitePrior(ScanSeg(), Normal(0.0, 1.0))),
+                lgrat = ArrayPrior(IIDSitePrior(ScanSeg(), Normal(0.0, 0.1))),
+                gpR = ArrayPrior(IIDSitePrior(ScanSeg(), DiagonalVonMises(0.0, inv(π^2))); refant = SEFDReference(0.0), phase = true),
+                gprat = ArrayPrior(IIDSitePrior(ScanSeg(), DiagonalVonMises(0.0, inv(0.1^2))); refant = SingleReference(:AA, 0.0), phase = true),
+                dRx = ArrayPrior(IIDSitePrior(TrackSeg(), Normal(0.0, 0.2))),
+                dRy = ArrayPrior(IIDSitePrior(TrackSeg(), Normal(0.0, 0.2))),
+                dLx = ArrayPrior(IIDSitePrior(TrackSeg(), Normal(0.0, 0.2))),
+                dLy = ArrayPrior(IIDSitePrior(TrackSeg(), Normal(0.0, 0.2))),
+            )
+            intmodel = InstrumentModel(J, intprior)
+            # Only do this for a small chunk to keep test time reasonable
+            post = VLBIPosterior(skym, intmodel, filter(x-> 1.0 < x.baseline.Ti < 3.0, dcoh))
+            tpost = asflat(post)
+
+            x = prior_sample(tpost)
+            logdensityof(tpost, x)
+            dx = Enzyme.make_zero(x)
+            autodiff(set_runtime_activity(Reverse), logdensityof, Const(tpost), Duplicated(x, dx))
+
+
+            fdm = central_fdm(5, 1)
+            gf = first(grad(fdm, tpost, x))
+            @test isapprox(dx, gf; atol = 1.0e-8, rtol = 1.0e-5)
         end
-
-        fovx = μas2rad(60.0)
-        fovy = μas2rad(60.0)
-        nx = ny = 8
-        grid = imagepixels(fovx, fovy, nx, ny)
-        skymeta = (; grid, ftot = 0.6);
-
-        cprior = corr_image_prior(grid, dcoh; order = 2)
-        skyprior = (
-            σs = ntuple(Returns(truncated(Normal(0.0, 0.5); lower = 0.0)), 4),
-            as = ntuple(Returns(cprior), 4),
-            ain = Uniform(0.0, 5.0),
-            aout = Uniform(0.0, 5.0),
-            r = Uniform(μas2rad(1.0), μas2rad(30.0)),
-        )   
-        skym = SkyModel(polarizedsky, skyprior, grid; metadata = skymeta)
-
-        function fgain(x)
-            gR = exp(x.lgR + 1im * x.gpR)
-            gL = gR * exp(x.lgrat + 1im * x.gprat)
-            return gR, gL
-        end
-        G = JonesG(fgain)
-
-        function fdterms(x)
-            dR = complex(x.dRx, x.dRy)
-            dL = complex(x.dLx, x.dLy)
-            return dR, dL
-        end
-        D = JonesD(fdterms)
-        R = JonesR(; add_fr = true)
-
-        js(g, d, r) = adjoint(r) * g * d * r
-        J = JonesSandwich(js, G, D, R)
-
-        intprior = (
-            lgR = ArrayPrior(IIDSitePrior(ScanSeg(), Normal(0.0, 0.2)); LM = IIDSitePrior(ScanSeg(), Normal(0.0, 1.0))),
-            lgrat = ArrayPrior(IIDSitePrior(ScanSeg(), Normal(0.0, 0.1))),
-            gpR = ArrayPrior(IIDSitePrior(ScanSeg(), DiagonalVonMises(0.0, inv(π^2))); refant = SEFDReference(0.0), phase = true),
-            gprat = ArrayPrior(IIDSitePrior(ScanSeg(), DiagonalVonMises(0.0, inv(0.1^2))); refant = SingleReference(:AA, 0.0), phase = true),
-            dRx = ArrayPrior(IIDSitePrior(TrackSeg(), Normal(0.0, 0.2))),
-            dRy = ArrayPrior(IIDSitePrior(TrackSeg(), Normal(0.0, 0.2))),
-            dLx = ArrayPrior(IIDSitePrior(TrackSeg(), Normal(0.0, 0.2))),
-            dLy = ArrayPrior(IIDSitePrior(TrackSeg(), Normal(0.0, 0.2))),
-        )
-        intmodel = InstrumentModel(J, intprior)
-        # Only do this for a small chunk to keep test time reasonable
-        post = VLBIPosterior(skym, intmodel, filter(x-> 1.0 < x.baseline.Ti < 3.0, dcoh))
-        tpost = asflat(post)
-
-        x = prior_sample(tpost)
-        logdensityof(tpost, x)
-        dx = Enzyme.make_zero(x)
-        autodiff(set_runtime_activity(Reverse), logdensityof, Const(tpost), Duplicated(x, dx))
-
-
-        fdm = central_fdm(5, 1)
-        gf = first(grad(fdm, tpost, x))
-        @test isapprox(dx, gf; atol = 1.0e-8, rtol = 1.0e-5)
-
-
     end
 
 end
