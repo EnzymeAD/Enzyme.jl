@@ -799,7 +799,7 @@ function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)
     println(io, "Constant memory is stored (or returned) to a differentiable variable and correctness cannot be guaranteed with static activity analysis.")
     println(
         io,
-        "This might be due to the use of a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/faq/#Runtime-Activity).",
+        "This might be due to the use of a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/faq/#faq-runtime-activity).",
     )
     println(
         io,
