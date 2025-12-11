@@ -10,3 +10,6 @@ lib/EnzymeCore/Manifest.toml
 /docs/src/generated/
 test/integration/**/Manifest.toml
 .vscode
+.CondaPkg
+array.txt
+
