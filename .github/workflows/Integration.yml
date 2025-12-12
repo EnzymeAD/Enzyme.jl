@@ -56,6 +56,7 @@ jobs:
           - Molly
           - MPI
           - SpeedyWeather
+          - Comrade
         exclude:
           - version: '1.10'
             os: linux-x86-n2-32
