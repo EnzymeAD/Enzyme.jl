@@ -393,7 +393,6 @@ function fixup_callconv!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     addr13NoAlias(mod)
     
     removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
-    
 
     memcpy_sret_split!(mod)
     # if we did the move_sret_tofrom_roots, we will have loaded out of the sret, then stored into the rooted.
@@ -449,6 +448,18 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
     if callconv
         fixup_callconv!(mod, tm)
     end
+    
+    for f in functions(mod)
+	if isempty(blocks(f))
+		continue
+	end
+	if has_fn_attr(f, StringAttribute("enzyme_preserve_primal"))
+	     delete!(LLVM.function_attributes(f), StringAttribute("enzyme_preserve_primal"))
+	end
+    end
+
+    removeDeadArgs!(mod, tm, #=post_gc_fixup=#true)
+
     @dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, ReinsertGCMarkerPass())
