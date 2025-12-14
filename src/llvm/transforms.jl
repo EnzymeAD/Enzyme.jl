@@ -2619,7 +2619,14 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
             )
                 for u in LLVM.uses(fn)
                     u = LLVM.user(u)
-                    @assert isa(u, LLVM.CallInst)
+		    if !isa(u, LLVM.CallInst)
+                    	msg = sprint() do io
+			   println("Unknown user of fn: ", string(u))
+			   println("fn: ", string(fn))
+			   println("mod: ", string(parent(fn)))
+			end
+			throw(AssertionError(msg))
+		    end
                     B = IRBuilder()
                     nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
                     position!(B, nextInst)
