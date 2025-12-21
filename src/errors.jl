@@ -374,7 +374,7 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
             if width == 1
                 if EnzymeRules.shadow_type(fwd_RT) <: RealRt
                     hint = "Expected the abstract type $RealRt for shadow, you returned $(EnzymeRules.shadow_type(fwd_RT)). Even though $(EnzymeRules.shadow_type(fwd_RT)) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
-                elseif shadow_type(fwd_RT) <: (NTuple{N, <:RealRt} where N)
+                elseif EnzymeRules.shadow_type(fwd_RT) <: (NTuple{N, <:RealRt} where N)
                     hint = "Batch size was 1, expected a single shadow, not a tuple of shadows."
                 else
                     hint = "Mismatched shadow type $(EnzymeRules.shadow_type(fwd_RT)), expected $(EnzymeRules.shadow_type(ExpRT))."
