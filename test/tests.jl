@@ -129,14 +129,14 @@ sqrtsumsq2(x) = (sum(abs2, x) * sum(abs2, x))
     end
     @test occursin("diffe", fn)
     # TODO we need to fix julia to remove unused bounds checks
-    # @test !occursin("aug",fn)
+    @test !occursin("aug",fn)
 
     fn = sprint() do io
         Enzyme.Compiler.enzyme_code_llvm(io, sumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module = true)
     end
     @test occursin("diffe", fn)
     # TODO we need to fix julia to remove unused bounds checks
-    # @test !occursin("aug",fn)
+    @test !occursin("aug",fn)
 
     fn = sprint() do io
         Enzyme.Compiler.enzyme_code_llvm(io, sumsin, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module = true)
@@ -159,10 +159,10 @@ sqrtsumsq2(x) = (sum(abs2, x) * sum(abs2, x))
     #     println(fn)
     # end
     # TODO per system being run on the indexing in the mapreduce is broken
-    @test_broken count("call fastcc void @diffejulia__mapreduce", fn) == 1
+    @test count("call fastcc void @diffejulia__mapreduce", fn) <= 1
     # TODO we need to have enzyme circumvent the double pointer issue by also considering a broader
     # no memory overwritten state [in addition to the arg-based variant]
-    @test_broken !occursin("aug", fn)
+    @test !occursin("aug", fn)
 
     x = ones(100)
     dx = zeros(100)
