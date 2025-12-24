@@ -919,6 +919,10 @@ end
 
 Base.@propagate_inbounds @inline overload_broadcast_getindex(A, I) = @inbounds A[I]
 
+macro simdloop()
+    Expr(:loopinfo, Symbol("julia.simdloop"), nothing)
+end
+
 struct OverrideBCMaterialize{ElType}
 end
 
@@ -929,9 +933,10 @@ end
     dest = @inline similar(bc, ElType)
     if same_sized(bc.args)
         # dest = @inline similar(first_array(bc.args), ElType)
-	@inbounds @simd for I in 1:length(bc)
+	@inbounds for I in 1:length(bc)
 	    val = overload_broadcast_getindex(bc, I)
             dest[I] = val
+	    @simdloop
         end
 	return dest
     else
@@ -951,9 +956,10 @@ end
     v = op(init, y[1])
    
     if same_sized(itr.args)
-	@inbounds @simd for I in 2:length(itr)
+	@inbounds for I in 2:length(itr)
 	    val = overload_broadcast_getindex(itr, I)
             v = op(v, val)
+	    @simdloop
         end
     else
 	while true
@@ -974,9 +980,10 @@ end
         # sequential portion
         @inbounds a1 = A[ifirst]
         v = f(a1)
-        @simd for i = ifirst + 1 : ilast
+        for i = ifirst + 1 : ilast
             @inbounds ai = A[i]
             v = op(v, f(ai))
+	    @simdloop
         end
         return v 
     end
@@ -997,6 +1004,7 @@ end
         while i < last(inds) 
             @inbounds Ai = A[i+=1]
             s = op(s, f(Ai))
+	    @simdloop
         end
         return s
     end
