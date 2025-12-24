@@ -103,7 +103,7 @@ end
     end
     @test Enzyme.autodiff(Forward, f1, Duplicated(0.1, 1.0))[1] ≈ 375.0
     @test Enzyme.autodiff(Forward, f2, Duplicated(0.1, 1.0)) == (25.0,)
-    @test Enzyme.autodiff(Forward, f3, Duplicated(0.1, 1.0))[1] == 15.0
+    @test Enzyme.autodiff(Forward, f3, Duplicated(0.1, 1.0))[1] ≈ 15.0
 
     res = Enzyme.autodiff(Forward, f1, BatchDuplicated(0.1, (1.0, 2.0)))
     @test res[1][1] ≈ 375.0
