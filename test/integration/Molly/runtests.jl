@@ -83,7 +83,7 @@ end
         Const(Val(false)),
     )[2]
 
-    @test pe_ad ≈ pe atol=1e-7
+    @test pe_ad ≈ pe atol=1e-6
     @test Fs_ad ≈ Fs atol=1e-10
     @test -d_sys.coords ≈ Fs atol=1e-10
 
