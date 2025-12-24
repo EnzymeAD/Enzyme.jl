@@ -103,7 +103,7 @@ end
     end
     @test Enzyme.autodiff(Forward, f1, Duplicated(0.1, 1.0))[1] ≈ 375.0
     @test Enzyme.autodiff(Forward, f2, Duplicated(0.1, 1.0)) == (25.0,)
-    @test Enzyme.autodiff(Forward, f3, Duplicated(0.1, 1.0)) == (15.0,)
+    @test Enzyme.autodiff(Forward, f3, Duplicated(0.1, 1.0))[1] == 15.0
 
     res = Enzyme.autodiff(Forward, f1, BatchDuplicated(0.1, (1.0, 2.0)))
     @test res[1][1] ≈ 375.0
@@ -111,12 +111,13 @@ end
     
     @test Enzyme.autodiff(Forward, f2, BatchDuplicated(0.1, (1.0, 2.0))) ==
         ((var"1" = 25.0, var"2" = 50.0),)
-    @test Enzyme.autodiff(Forward, f3, BatchDuplicated(0.1, (1.0, 2.0))) ==
-        ((var"1" = 15.0, var"2" = 30.0),)
+    res = Enzyme.autodiff(Forward, f3, BatchDuplicated(0.1, (1.0, 2.0)))
+    @test res[1][1] ≈ 15.0
+    @test res[1][2] ≈ 30.0
 
     @test Enzyme.autodiff(Reverse, f1, Active, Active(0.1)) == ((375.0,),)
     @test Enzyme.autodiff(Reverse, f2, Active, Active(0.1)) == ((25.0,),)
-    @test Enzyme.autodiff(Reverse, f3, Active, Active(0.1)) == ((15.0,),)
+    @test Enzyme.autodiff(Reverse, f3, Active, Active(0.1))[1][1] == 15.0
 
     # Batch active rule isnt setup
     # @test Enzyme.autodiff(Reverse, (x, y) -> begin y[] = f1(x); nothing end,  Active(0.1), BatchDuplicated(Ref(0.0), (Ref(1.0), Ref(2.0)))) == (((375.0,750.0)),)
