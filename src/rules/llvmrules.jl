@@ -509,7 +509,7 @@ end
             print(io, "\nCaused by:")
             Base.show_backtrace(io, bt)
         end
-        GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy used memset rather than runtime type $btstr"
+        GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy of found ($found) eltype ($arty) used memset rather than runtime type $btstr"
     end
 
     shadowres = batch_call_same_with_inverted_arg_if_active!(
