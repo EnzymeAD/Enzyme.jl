@@ -114,7 +114,8 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                     add!(lpm, IndVarSimplifyPass())
                     add!(lpm, LoopDeletionPass())
                 end
-                add!(fpm, LoopUnrollPass(opt_level=2, partial=false, peeling=false)) # what opt level?
+		# todo peeling=false?
+                add!(fpm, LoopUnrollPass(opt_level=2, partial=false)) # what opt level?
                 add!(fpm, AllocOptPass())
                 add!(fpm, SROAPass())
                 add!(fpm, GVNPass())
