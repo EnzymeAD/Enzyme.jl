@@ -919,6 +919,10 @@ end
 
 Base.@propagate_inbounds @inline overload_broadcast_getindex(A, I) = @inbounds A[I]
 
+macro simdloop()
+    Expr(:loopinfo, Symbol("julia.simdloop"), nothing)
+end
+
 struct OverrideBCMaterialize{ElType}
 end
 
@@ -929,9 +933,10 @@ end
     dest = @inline similar(bc, ElType)
     if same_sized(bc.args)
         # dest = @inline similar(first_array(bc.args), ElType)
-	@inbounds @simd for I in 1:length(bc)
+	@inbounds for I in 1:length(bc)
 	    val = overload_broadcast_getindex(bc, I)
             dest[I] = val
+	    @simdloop
         end
 	return dest
     else
@@ -951,9 +956,10 @@ end
     v = op(init, y[1])
    
     if same_sized(itr.args)
-	@inbounds @simd for I in 2:length(itr)
+	@inbounds for I in 2:length(itr)
 	    val = overload_broadcast_getindex(itr, I)
             v = op(v, val)
+	    @simdloop
         end
     else
 	while true
@@ -964,6 +970,46 @@ end
     end
     return v
 end
+
+@inline function override_bc_mapreduceimpl(f, op, A::Base.AbstractArrayOrBroadcasted,
+                                  ifirst::Integer, ilast::Integer, blksize::Int)
+    if ifirst == ilast
+        @inbounds a1 = A[ifirst]
+        return Base.mapreduce_first(f, op, a1)
+    else
+        # sequential portion
+        @inbounds a1 = A[ifirst]
+        v = f(a1)
+        for i = ifirst + 1 : ilast
+            @inbounds ai = A[i]
+            v = op(v, f(ai))
+	    @simdloop
+        end
+        return v 
+    end
+end
+
+@inline function override_bc_mapreduce(f, op, ::Base.IndexLinear, A::Base.AbstractArrayOrBroadcasted)
+    inds = Base.LinearIndices(A)
+    n = length(inds)
+    if n == 0
+        return Base.mapreduce_empty_iter(f, op, A, Base.IteratorEltype(A))
+    elseif n == 1
+        @inbounds a1 = A[first(inds)]
+        return Base.mapreduce_first(f, op, a1)
+    else
+        @inbounds i = first(inds)
+        @inbounds a1 = A[i]
+        s = f(a1)
+        while i < last(inds) 
+            @inbounds Ai = A[i+=1]
+            s = op(s, f(Ai))
+	    @simdloop
+        end
+        return s
+    end
+end
+
 
 struct MultiOp{Position, NumUsed, F1, F2}
     f1::F1
@@ -1128,6 +1174,48 @@ function abstract_call_known(
                 return Base.@invoke abstract_call_known(
                     interp::AbstractInterpreter,
                     Enzyme.Compiler.Interpreter.override_bc_copyto!::Any,
+                    arginfo2::ArgInfo,
+                    si::StmtInfo,
+                    sv::AbsIntState,
+                    max_methods::Int,
+                )
+            end
+        end
+	
+	if f === Base.mapreduce_impl &&  length(argtypes) == 7
+            if widenconst(argtypes[4]) <: Array && 
+	       widenconst(argtypes[5]) <: Integer &&
+	       widenconst(argtypes[6]) <: Integer &&
+	       widenconst(argtypes[7]) <: Int 
+                arginfo2 = ArgInfo(
+                    fargs isa Nothing ? nothing :
+                    [:(Enzyme.Compiler.Interpreter.override_bc_mapreduceimpl), fargs[2:end]...],
+                    [Core.Const(Enzyme.Compiler.Interpreter.override_bc_mapreduceimpl), argtypes[2:end]...],
+                )
+
+                return Base.@invoke abstract_call_known(
+                    interp::AbstractInterpreter,
+                    Enzyme.Compiler.Interpreter.override_bc_mapreduceimpl::Any,
+                    arginfo2::ArgInfo,
+                    si::StmtInfo,
+                    sv::AbsIntState,
+                    max_methods::Int,
+                )
+            end
+        end
+	
+	if f === Base._mapreduce &&  length(argtypes) == 5
+            if widenconst(argtypes[4]) <: Base.IndexLinear &&
+	       widenconst(argtypes[5]) <: Array
+                arginfo2 = ArgInfo(
+                    fargs isa Nothing ? nothing :
+                    [:(Enzyme.Compiler.Interpreter.override_bc_mapreduce), fargs[2:end]...],
+                    [Core.Const(Enzyme.Compiler.Interpreter.override_bc_mapreduce), argtypes[2:end]...],
+                )
+
+                return Base.@invoke abstract_call_known(
+                    interp::AbstractInterpreter,
+                    Enzyme.Compiler.Interpreter.override_bc_mapreduce::Any,
                     arginfo2::ArgInfo,
                     si::StmtInfo,
                     sv::AbsIntState,
