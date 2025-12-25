@@ -55,6 +55,7 @@ jobs:
           - KernelAbstractions
           - Molly
           - MPI
+          - SpeedyWeather
           - Comrade
         exclude:
           - version: '1.10'
