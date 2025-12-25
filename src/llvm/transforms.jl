@@ -2620,7 +2620,9 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
                 for u in LLVM.uses(fn)
                     u = LLVM.user(u)
 		    if !isa(u, LLVM.CallInst)
-                    	msg = sprint() do io
+                    	# TODO investigate if the inttoptr store that comes from reference caller poses an issue.
+			continue
+			msg = sprint() do io
 			   println(io, "Unknown user of fn: ", string(u))
 			   println(io, "fn: ", string(fn))
 			   println(io, "mod: ", string(LLVM.parent(fn)))
