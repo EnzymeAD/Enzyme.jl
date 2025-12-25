@@ -2623,7 +2623,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
                     	msg = sprint() do io
 			   println(io, "Unknown user of fn: ", string(u))
 			   println(io, "fn: ", string(fn))
-			   println(io, "mod: ", string(parent(fn)))
+			   println(io, "mod: ", string(LLVM.parent(fn)))
 			end
 			throw(AssertionError(msg))
 		    end
