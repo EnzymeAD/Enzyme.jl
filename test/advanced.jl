@@ -546,6 +546,16 @@ end
     sqr(x) = x * x
     power(x, n) = x^n
 
+
+    function objective1(x)
+        objvar = power(x, 2)
+        return objvar
+    end
+
+    x0 = 2.1
+    res = Enzyme.jacobian(Forward, Const(Enzyme.gradient), Const(Reverse), Const(objective1), x0)
+    @test res[3][1] ≈ 2.0
+
     function objective(x)
         (x1, x2, x3, x4) = x
         objvar = -4 - -(((((((((((((sqr(x1) + sqr(x2)) + sqr(x3 + x4)) + x3) + sqr(sin(x3))) + sqr(x1) * sqr(x2)) + x4) + sqr(sin(x3))) + sqr(-1 + x4)) + sqr(sqr(x2))) + sqr(sqr(x3) + sqr(x1 + x4))) + sqr(((-4 + sqr(sin(x4))) + sqr(x2) * sqr(x3)) + x1)) + power(sin(x4), 4)))
