@@ -187,6 +187,15 @@ const nofreefns = Set{String}((
     "ijl_process_events",
     "utf8proc_category",
     "jl_clock_now",
+    "ijl_new_task",
+    "cuMemPoolGetAttribute",
+    "ijl_hrtime",
+    "ijl_gc_collect",
+    "uv_thread_detach",
+    "uv_thread_create",
+    "cuDeviceCanAccessPeer",
+    "cuMemPoolSetAccess",
+    "cuMemcpyHtoDAsync_v2",
 ))
 
 const inactivefns = Set{String}((
