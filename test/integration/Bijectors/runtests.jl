@@ -153,7 +153,7 @@ end
         ),
         # NOTE(penelopeysm) This requires runtime activity, but forward-mode fails as this
         # calls gemm! and runtime activity is not yet supported for BLAS calls.
-        sum_b_binv_test_case(Bijectors.PlanarLayer(3), (3, 3); runtime_activity = Reverse, broken = Forward),
+        sum_b_binv_test_case(Bijectors.PlanarLayer(3), (3, 3); runtime_activity = Reverse, broken = ((v"1.10" <= VERSION < v"1.11") ? Neither : Forward)),
         sum_b_binv_test_case(Bijectors.RadialLayer(3), 3),
         sum_b_binv_test_case(Bijectors.Reshape((2, 3), (3, 2)), (2, 3)),
         sum_b_binv_test_case(Bijectors.Scale(0.2), 3),
@@ -186,7 +186,6 @@ end
             Bijectors.PDVecBijector()((x -> x * x' + I)(randn(rng, 4, 4))),
             name = "PDVecBijector inverse only + upper Cholesky",
         ),
-
         TestCase(
             function (x)
                 b = Bijectors.RationalQuadraticSpline([-0.2, 0.1, 0.5], [-0.3, 0.3, 0.9], [1.0, 0.2, 1.0])
@@ -196,7 +195,6 @@ end
             randn(rng);
             name = "RationalQuadraticSpline on scalar",
         ),
-
         TestCase(
             function (x)
                 b = Bijectors.OrderedBijector()
@@ -206,7 +204,6 @@ end
             randn(rng, 7);
             name = "OrderedBijector",
         ),
-
         TestCase(
             function (x)
                 layer = Bijectors.PlanarLayer(x[1:2], x[3:4], x[5:5])
@@ -217,7 +214,6 @@ end
             randn(rng, 7);
             name = "PlanarLayer7 forward"
         ),
-
         TestCase(
             function (x)
                 layer = Bijectors.PlanarLayer(x[1:2], x[3:4], x[5:5])
@@ -228,7 +224,6 @@ end
             randn(rng, 11);
             name = "PlanarLayer11 forward"
         ),
-
         TestCase(
             function (x)
                 layer = Bijectors.PlanarLayer(x[1:2], x[3:4], x[5:5])
@@ -239,7 +234,6 @@ end
             randn(rng, 7);
             name = "PlanarLayer7 inverse"
         ),
-
         TestCase(
             function (x)
                 layer = Bijectors.PlanarLayer(x[1:2], x[3:4], x[5:5])
