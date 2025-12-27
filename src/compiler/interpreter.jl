@@ -998,8 +998,9 @@ end
 	ET = eltype(A)
 	    if (op === Base.:+ || op === Base.add_sum) && Base.isconcretetype(ET) && (ET <: Base.IEEEFloat || ET <: Complex{<:Base.IEEEFloat})
 		@inbounds i = first(inds)
+		@inbounds l = last(inds)
 		s = zero(ET)
-		while i < last(inds) 
+		while i <= l
 		    @inbounds Ai = A[i]
 		    i+=1
 		    s = op(s, f(Ai))
