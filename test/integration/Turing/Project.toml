@@ -14,4 +14,4 @@ EnzymeCore = {path = "../../../lib/EnzymeCore"}
 
 [compat]
 Turing = "=0.42.1"
-DynamicPPL = "=0.39.6"
+DynamicPPL = "=0.39.7"
