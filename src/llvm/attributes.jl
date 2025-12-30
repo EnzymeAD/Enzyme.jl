@@ -1,4 +1,4 @@
-nofreefns = Set{String}((
+const nofreefns = Set{String}((
     "utf8proc_toupper",
     "ClientGetAddressableDevices",
     "ClientNumAddressableDevices",
