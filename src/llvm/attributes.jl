@@ -1,4 +1,4 @@
-const nofreefns = Set{String}((
+nofreefns = Set{String}((
     "utf8proc_toupper",
     "ClientGetAddressableDevices",
     "ClientNumAddressableDevices",
@@ -196,6 +196,15 @@ const nofreefns = Set{String}((
     "cuDeviceCanAccessPeer",
     "cuMemPoolSetAccess",
     "cuMemcpyHtoDAsync_v2",
+    "cuDeviceGet",
+    "cuDeviceGetCount",
+    "cuDeviceGetAttribute",
+    "cuDevicePrimaryCtxRetain",
+    "cuCtxGetId",
+    "cuDeviceGetName",
+    "ijl_eqtable_get",
+    "cuCtxGetApiVersion",
+    "cuCtxSetCurrent",
 ))
 
 const inactivefns = Set{String}((
