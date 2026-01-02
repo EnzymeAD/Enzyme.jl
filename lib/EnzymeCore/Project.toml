@@ -5,6 +5,7 @@ version = "0.8.17"
 
 [compat]
 Adapt = "3, 4"
+ChainRulesCore = "1"
 julia = "1.10"
 
 [deps]
@@ -12,10 +13,13 @@ Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
 
 [extensions]
 AdaptExt = "Adapt"
+EnzymeCoreChainRulesCoreExt = "ChainRulesCore"
 
 [extras]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 
 [weakdeps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
