@@ -1891,8 +1891,6 @@ function enzyme_custom_common_rev(
             throw(AssertionError("Unexpected augmented rule return computation\nST = $ST\nER = $(EnzymeRules.augmented_rule_return_type(C, RT, TapeT))\nC = $C\nRT = $RT\nTapeT = $TapeT"))
         end
 
-        @show TapeT, ST
-
         cur = nothing
         cur_size = nothing
         cur_offset = nothing
