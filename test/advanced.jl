@@ -740,7 +740,7 @@ end
         @inbounds w[1] * x[1]
     end
 
-    @static if VERSION < v"1.11-"
+    @static if VERSION < v"1.11-" || VERSION >= v"1.12"
         Enzyme.autodiff(Reverse, inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
 
         @test x ≈ [3.0]
@@ -762,7 +762,7 @@ end
         res
     end
 
-    @static if VERSION < v"1.11-"
+    @static if VERSION < v"1.11-" || VERSION >= v"1.12"
         dw = Enzyme.autodiff(Reverse, loss, Active, Active(1.0), Const(x), Const(false))[1]
 
     else
