@@ -454,6 +454,8 @@ end
     real_ops = collect(operands(orig))[1:end-1]
     ops = [new_from_original(gutils, o) for o in real_ops]
 
+    shadowin = invert_pointer(gutils, real_ops[1], B)
+    
     batch_call_same_with_inverted_arg_if_active!(
         B,
         gutils,

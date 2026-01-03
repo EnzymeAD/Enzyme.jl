@@ -88,7 +88,7 @@ isdir(scratch_dir) && rm(scratch_dir; recursive=true)
 
 # Build!
 @info "Building" source_dir scratch_dir LLVM_DIR BUILD_TYPE
-run(`cmake -DLLVM_DIR=$(LLVM_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DENZYME_EXTERNAL_SHARED_LIB=ON -B$(scratch_dir) -S$(source_dir)`)
+run(`cmake -DLLVM_DIR=$(LLVM_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DENZYME_EXTERNAL_SHARED_LIB=ON -DENZYME_ENABLE_PLUGINS=OFF -B$(scratch_dir) -S$(source_dir)`)
 
 if BCLoad
   run(`cmake --build $(scratch_dir) --parallel $(Sys.CPU_THREADS) -t Enzyme-$(LLVM_VER_MAJOR) EnzymeBCLoad-$(LLVM_VER_MAJOR)`)
