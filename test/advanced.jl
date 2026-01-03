@@ -1321,11 +1321,16 @@ end
 
     f_union(cond, x) = cond ? x : 0
     g_union(cond, x) = f_union(cond, x) * x
-    if sizeof(Int) == sizeof(Int64)
-        @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, Const(true), Active(1.0))
-    else
-        @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, Const(true), Active(1.0f0))
+
+    # This only works as a test in < 1.12 as we actually optimize away the issue in later LLVM's
+    if VERSION < v"1.12"
+        if sizeof(Int) == sizeof(Int64)
+            @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, Const(true), Active(1.0))
+        else
+            @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, Const(true), Active(1.0f0))
+        end
     end
+
     # TODO: Add test for NoShadowException
 end
 

@@ -1948,9 +1948,19 @@ end
     if is_constant_value(gutils, orig)
         return true
     end
-    err = emit_error(B, orig, "Enzyme: unhandled forward for jl_get_binding_or_error")
+
     newo = new_from_original(gutils, orig)
-    API.moveBefore(newo, err, B)
+    cmp = icmp!(B, LLVM.API.LLVMIntNE, newo, LLVM.null(value_type(newo)))
+
+    err = emit_error(
+        B,
+        orig,
+        "Enzyme: unhandled forward for jl_get_binding_or_error",
+        EnzymeRuntimeException,
+        cmp
+    )
+
+    API.moveBefore(newo, cmp, B)
 
     if unsafe_load(shadowR) != C_NULL
 	valTys = API.CValueType[]
@@ -1980,13 +1990,20 @@ end
     if is_constant_value(gutils, orig)
         return true
     end
+
+    newo = new_from_original(gutils, orig)
+
+    cmp = icmp!(B, LLVM.API.LLVMIntNE, newo, LLVM.null(value_type(newo)))
+
     err = emit_error(
         B,
         orig,
         "Enzyme: unhandled augmented forward for jl_get_binding_or_error",
+        EnzymeRuntimeException,
+        cmp
     )
-    newo = new_from_original(gutils, orig)
-    API.moveBefore(newo, err, B)
+    API.moveBefore(newo, cmp, B)
+
     if unsafe_load(shadowR) != C_NULL
 	valTys = API.CValueType[]
 	args = LLVM.Value[]
