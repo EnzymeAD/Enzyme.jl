@@ -536,18 +536,6 @@ function annotate!(mod::LLVM.Module)
         end
     end
 
-    for fname in (
-        "__libc_free",
-    )
-        if haskey(funcs, fname)
-            for fn in funcs[fname]
-                if LLVM.version().major <= 15
-                    push!(function_attributes(fn), LLVM.StringAttribute("enzyme_math", "free"))
-                end
-            end
-        end
-    end
-
 
     for fname in (
         "jl_f_getfield",

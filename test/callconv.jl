@@ -22,7 +22,6 @@ function f_exc(x)
 
     ld = unsafe_load(y)
 
-    Libc.free(y)
     return ld * ld
 end
 
