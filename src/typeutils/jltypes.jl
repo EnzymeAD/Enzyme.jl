@@ -52,6 +52,48 @@ function inline_roots_type(@nospecialize(T::Type))::Int
     end
 end
 
+function non_rooted_types(@nospecialize(typ::DataType))    
+    lRT = convert(LLVMType, typ)
+    tracked = CountTrackedPointers(lRT)
+    @assert !tracked.derived
+    @assert !tracked.all
+    @assert tracked.count != 0
+
+    inners = Type[]
+
+    todo = DataType[typ]
+    while length(todo) != 0
+        cur = popfirst!(todo)
+    
+        desc = Base.DataTypeFieldDesc(cur)
+                
+        next = DataType[]
+        for i in 1:fieldcount(cur)
+            styp = typed_fieldtype(cur, i)
+            if isghostty(styp)
+                push!(inners, styp)
+                continue
+            end
+            if desc[i].isptr
+                continue
+            end
+            if styp isa Union
+                push!(inners, styp)
+                continue
+            end
+            if !(styp isa DataType)
+                throw(AssertionError("Non inner datatype: styp=$styp cur=$cur, typ=$typ lRT=$(string(lRT))"))
+            end
+            push!(next, styp)
+        end
+
+        for styp in reverse(next)
+            pushfirst!(todo, styp)
+        end
+    end
+    return inners
+end
+
 function equivalent_rooted_type(@nospecialize(typ::DataType))    
     lRT = convert(LLVMType, typ)
     tracked = CountTrackedPointers(lRT)
