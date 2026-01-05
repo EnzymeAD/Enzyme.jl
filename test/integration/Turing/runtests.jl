@@ -9,8 +9,8 @@ using Test
 using Turing
 
 adtypes = (
-    AutoEnzyme(; mode=Enzyme.set_runtime_activity(Enzyme.Forward)),
-    AutoEnzyme(; mode=Enzyme.set_runtime_activity(Enzyme.Reverse))
+    AutoEnzyme(; mode = Enzyme.set_runtime_activity(Enzyme.Forward)),
+    AutoEnzyme(; mode = Enzyme.set_runtime_activity(Enzyme.Reverse)),
 )
 
 # Some supplements to DynamicPPL.TestUtils.ALL_MODELS.
@@ -30,11 +30,11 @@ dppl_lda = begin
     w = Vector{Int}(undef, n)
     doc = Vector{Int}(undef, n)
     for i in 1:m
-        local idx = sum(doc_lengths[1:(i-1)]) # starting index for inner loop
+        local idx = sum(doc_lengths[1:(i - 1)]) # starting index for inner loop
         for j in 1:doc_lengths[i]
             z = rand(Categorical(theta[:, i]))
-            w[idx+j] = rand(Categorical(phi[:, z]))
-            doc[idx+j] = i
+            w[idx + j] = rand(Categorical(phi[:, z]))
+            doc[idx + j] = i
         end
     end
     @model function dppl_lda(k, m, w, doc, alpha, beta)
@@ -55,7 +55,7 @@ MODELS = [
     # This code is essentially what Turing's HMC/NUTS samplers use internally
     @testset "$(model.f)" for model in MODELS
         @testset "AD type: $(adtype)" for adtype in adtypes
-            @test DynamicPPL.TestUtils.AD.run_ad(model, adtype; rng=StableRNG(468), test=true, benchmark=false) isa Any
+            @test DynamicPPL.TestUtils.AD.run_ad(model, adtype; rng = StableRNG(468), test = true, benchmark = false) isa Any
         end
     end
 end
@@ -66,12 +66,12 @@ end
     # have to test it separately.
     @testset "AD type: $(adtype)" for adtype in adtypes
         spl = Gibbs(
-            @varname(s) => HMC(0.1, 10; adtype=adtype),
-            @varname(m) => HMC(0.1, 10; adtype=adtype),
+            @varname(s) => HMC(0.1, 10; adtype = adtype),
+            @varname(m) => HMC(0.1, 10; adtype = adtype),
         )
         @testset "model=$(model.f)" for model in DynamicPPL.TestUtils.DEMO_MODELS
             @info "Sampling model=$(model.f) with AD type=$(adtype)"
-            @test sample(StableRNG(468), model, spl, 2; progress=false) isa Any
+            @test sample(StableRNG(468), model, spl, 2; progress = false) isa Any
         end
     end
 end
