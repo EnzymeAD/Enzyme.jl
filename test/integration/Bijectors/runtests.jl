@@ -6,7 +6,7 @@ using FiniteDifferences: FiniteDifferences
 using LinearAlgebra: I, cholesky, Hermitian
 using Random: randn
 using StableRNGs: StableRNG
-using Test: @test, @test_broken, @testset
+using Test: @test, @test_broken, @testset, @test_throws
 
 rng = StableRNG(23)
 
@@ -14,6 +14,8 @@ rng = StableRNG(23)
 Enum type for choosing Enzyme autodiff modes.
 """
 @enum ModeSelector Neither Forward Reverse Both
+includes_forward(mode::ModeSelector) = mode === Forward || mode === Both
+includes_reverse(mode::ModeSelector) = mode === Reverse || mode === Both
 
 """
 Type for specifying a test case for `Enzyme.gradient`.
@@ -33,7 +35,7 @@ Default values are `name=nothing`, `runtime_activity=Neither`, `broken=Neither`,
 struct TestCase
     func::Function
     value
-    name::Union{String, Nothing}
+    name::Union{String,Nothing}
     runtime_activity::ModeSelector
     broken::ModeSelector
     skip::ModeSelector
@@ -42,41 +44,49 @@ end
 
 # Default values for most arguments.
 function TestCase(
-        f, value;
-        name = nothing, runtime_activity = Neither, broken = Neither, skip = Neither, splat = false
-    )
+    f, value;
+    name=nothing, runtime_activity=Neither, broken=Neither, skip=Neither, splat=false
+)
     return TestCase(f, value, name, runtime_activity, broken, skip, splat)
 end
 
 """
 Test Enzyme.gradient, both Forward and Reverse mode, against FiniteDifferences.grad.
 """
-function test_grad(case::TestCase; rtol = 1.0e-6, atol = 1.0e-6)
+function test_grad(case::TestCase; rtol=1.0e-6, atol=1.0e-6)
     @nospecialize
     f = case.func
     # We'll call the function as f(x...), so wrap in a singleton tuple if need be.
     x = case.splat ? case.value : (case.value,)
     finitediff = FiniteDifferences.grad(FiniteDifferences.central_fdm(4, 1), f, x...)[1]
 
-    f_mode = if (case.runtime_activity === Both || case.runtime_activity === Forward)
+    f_mode = if includes_forward(case.runtime_activity)
         Enzyme.set_runtime_activity(Enzyme.Forward)
     else
         Enzyme.Forward
     end
-    r_mode = if (case.runtime_activity === Both || case.runtime_activity === Reverse)
+    r_mode = if includes_reverse(case.runtime_activity)
         Enzyme.set_runtime_activity(Enzyme.Reverse)
     else
         Enzyme.Reverse
     end
 
-    if !(case.skip === Forward) && !(case.skip === Both)
-        if case.broken === Both || case.broken === Forward
+    if !includes_forward(case.skip)
+        if includes_forward(case.broken)
             @test_broken(
                 Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1] ≈ finitediff,
                 rtol = rtol,
                 atol = atol,
             )
         else
+            # If runtime activity was requested, check that it actually was needed.
+            if includes_forward(case.runtime_activity)
+                @test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.gradient(
+                    Enzyme.Forward,
+                    Enzyme.Const(f),
+                    x...,
+                )
+            end
             @test(
                 Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1] ≈ finitediff,
                 rtol = rtol,
@@ -85,14 +95,22 @@ function test_grad(case::TestCase; rtol = 1.0e-6, atol = 1.0e-6)
         end
     end
 
-    if !(case.skip === Reverse) && !(case.skip === Both)
-        if case.broken === Both || case.broken === Reverse
+    if !includes_reverse(case.skip)
+        if includes_reverse(case.broken)
             @test_broken(
                 Enzyme.gradient(r_mode, Enzyme.Const(f), x...)[1] ≈ finitediff,
                 rtol = rtol,
                 atol = atol,
             )
         else
+            # If runtime activity was requested, check that it actually was needed.
+            if includes_reverse(case.runtime_activity)
+                @test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.gradient(
+                    Enzyme.Reverse,
+                    Enzyme.Const(f),
+                    x...,
+                )
+            end
             @test(
                 Enzyme.gradient(r_mode, Enzyme.Const(f), x...)[1] ≈ finitediff,
                 rtol = rtol,
@@ -107,8 +125,8 @@ end
 A helper function that returns a TestCase that evaluates sum(bijector(inverse(bijector)(x)))
 """
 function sum_b_binv_test_case(
-        bijector, dim; runtime_activity = Neither, name = nothing, broken = Neither, skip = Neither
-    )
+    bijector, dim; runtime_activity=Neither, name=nothing, broken=Neither, skip=Neither
+)
     if name === nothing
         name = string(bijector)
     end
@@ -116,7 +134,7 @@ function sum_b_binv_test_case(
     return TestCase(
         x -> sum(bijector(b_inv(x))),
         randn(rng, dim);
-        runtime_activity = runtime_activity, name = name, broken = broken, skip = skip
+        runtime_activity=runtime_activity, name=name, broken=broken, skip=skip
     )
 end
 
@@ -135,7 +153,7 @@ end
         sum_b_binv_test_case(
             Bijectors.InvertibleBatchNorm(3),
             (3, 3);
-            runtime_activity = (VERSION >= v"1.11" ? Both : Neither)
+            runtime_activity=(VERSION >= v"1.11" ? Both : Neither)
         ),
         sum_b_binv_test_case(Bijectors.LeakyReLU(0.2), 3),
         sum_b_binv_test_case(Bijectors.Logit(0.1, 0.3), 3),
@@ -153,7 +171,7 @@ end
         ),
         # NOTE(penelopeysm) This requires runtime activity, but forward-mode fails as this
         # calls gemm! and runtime activity is not yet supported for BLAS calls.
-        sum_b_binv_test_case(Bijectors.PlanarLayer(3), (3, 3); runtime_activity = Reverse, broken = ((v"1.10" <= VERSION < v"1.11") ? Neither : Forward)),
+        sum_b_binv_test_case(Bijectors.PlanarLayer(3), (3, 3); runtime_activity=Reverse, broken=((v"1.10" <= VERSION < v"1.11") ? Neither : Forward)),
         sum_b_binv_test_case(Bijectors.RadialLayer(3), 3),
         sum_b_binv_test_case(Bijectors.Reshape((2, 3), (3, 2)), (2, 3)),
         sum_b_binv_test_case(Bijectors.Scale(0.2), 3),
@@ -168,7 +186,7 @@ end
                 return sum(Bijectors.PDVecBijector()(x * x' + I))
             end,
             randn(rng, 4, 4),
-            name = "PDVecBijector forward only",
+            name="PDVecBijector forward only",
         ),
         TestCase(
             function (x)
@@ -176,7 +194,7 @@ end
                 return sum(cholesky(Hermitian(binv(x), :L)).L)
             end,
             Bijectors.PDVecBijector()((x -> x * x' + I)(randn(rng, 4, 4))),
-            name = "PDVecBijector inverse only + lower Cholesky",
+            name="PDVecBijector inverse only + lower Cholesky",
         ),
         TestCase(
             function (x)
@@ -184,7 +202,7 @@ end
                 return sum(cholesky(Hermitian(binv(x), :U)).U)
             end,
             Bijectors.PDVecBijector()((x -> x * x' + I)(randn(rng, 4, 4))),
-            name = "PDVecBijector inverse only + upper Cholesky",
+            name="PDVecBijector inverse only + upper Cholesky",
         ),
         TestCase(
             function (x)
@@ -193,7 +211,7 @@ end
                 return sum(binv(b(x)))
             end,
             randn(rng);
-            name = "RationalQuadraticSpline on scalar",
+            name="RationalQuadraticSpline on scalar",
         ),
         TestCase(
             function (x)
@@ -202,7 +220,7 @@ end
                 return sum(binv(b(x)))
             end,
             randn(rng, 7);
-            name = "OrderedBijector",
+            name="OrderedBijector",
         ),
         TestCase(
             function (x)
@@ -212,7 +230,7 @@ end
                 return Bijectors.logpdf(flow.dist, x) - Bijectors.logabsdetjac(flow.transform, x)
             end,
             randn(rng, 7);
-            name = "PlanarLayer7 forward"
+            name="PlanarLayer7 forward"
         ),
         TestCase(
             function (x)
@@ -222,7 +240,7 @@ end
                 return sum(Bijectors.logpdf(flow.dist, x) - Bijectors.logabsdetjac(flow.transform, x))
             end,
             randn(rng, 11);
-            name = "PlanarLayer11 forward"
+            name="PlanarLayer11 forward"
         ),
         TestCase(
             function (x)
@@ -232,7 +250,7 @@ end
                 return Bijectors.logpdf(flow.dist, x) - Bijectors.logabsdetjac(flow.transform, x)
             end,
             randn(rng, 7);
-            name = "PlanarLayer7 inverse"
+            name="PlanarLayer7 inverse"
         ),
         TestCase(
             function (x)
@@ -242,7 +260,7 @@ end
                 return sum(Bijectors.logpdf(flow.dist, x) - Bijectors.logabsdetjac(flow.transform, x))
             end,
             randn(rng, 11);
-            name = "PlanarLayer11 inverse"
+            name="PlanarLayer11 inverse"
         ),
     ]
 
