@@ -1200,6 +1200,7 @@ function julia_error(
             print(io, msg)
             println(io)
             println(io, "Fn = ", string(fn))
+	    println(io, "val = ", string(val))
             println(io, "arg = ", string(data2::LLVM.Argument))
             if data !== C_NULL
                 data = LLVM.Value(LLVM.API.LLVMValueRef(data))

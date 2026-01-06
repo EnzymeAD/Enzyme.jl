@@ -1400,7 +1400,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                                 t_sret = true
                             end
                             if kind(a) == kind(StringAttribute("enzymejl_rooted_typ"))
-				sret_elty = get_rooted_typ(fop, i)
+			        sret_elty = convert(LLVMType, AnyArray(Int(CountTrackedPointers(get_rooted_typ(fop, i)).count)))
                                 t_sret = true
                             end
                             # if kind(a) == kind(StringAttribute("enzyme_sret_v"))
