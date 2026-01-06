@@ -169,9 +169,14 @@ end
             ),
             (3, 3),
         ),
-        # NOTE(penelopeysm) This requires runtime activity, but forward-mode fails as this
-        # calls gemm! and runtime activity is not yet supported for BLAS calls.
-        sum_b_binv_test_case(Bijectors.PlanarLayer(3), (3, 3); runtime_activity = Reverse, broken = ((v"1.10" <= VERSION < v"1.11") ? Neither : Forward)),
+        # NOTE(penelopeysm) This requires runtime activity on 1.11 reverse-mode, and 1.11
+        # forward-mode fails as this calls gemm! and runtime activity is not yet supported
+        # for BLAS calls. 1.10 works fine without runtime activity.
+        sum_b_binv_test_case(
+            Bijectors.PlanarLayer(3), (3, 3);
+            runtime_activity = ((v"1.10" <= VERSION < v"1.11" ? Neither : Reverse)),
+            broken = ((v"1.10" <= VERSION < v"1.11") ? Neither : Forward)
+        ),
         sum_b_binv_test_case(Bijectors.RadialLayer(3), 3),
         sum_b_binv_test_case(Bijectors.Reshape((2, 3), (3, 2)), (2, 3)),
         sum_b_binv_test_case(Bijectors.Scale(0.2), 3),
