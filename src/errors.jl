@@ -1331,7 +1331,8 @@ function julia_error(
                             instance = make_zero(obj)
                             return unsafe_to_llvm(prevbb, instance)
                         else
-                            res = emit_allocobj!(prevbb, Base.RefValue{TT})
+                            res = emit_allocobj!(prevbb, Base.RefValue{TT}) 
+			    LLVM.memset!(prevbb, bitcast!(prevbb, res, LLVM.PointerType(T_int8, 10)),  LLVM.ConstantInt(T_int8, 0), LLVM.ConstantInt(T_size_t, sizeof(TT)), 0)
                             push!(created, res)
                             return res
                         end
@@ -1345,6 +1346,9 @@ function julia_error(
                                 unsafe_to_llvm(prevbb, instance)
                             else
                                 sres = emit_allocobj!(prevbb, Base.RefValue{TT})
+			        T_int8 = LLVM.Int8Type() 
+			        T_size_t = convert(LLVM.LLVMType, UInt)
+			        LLVM.memset!(prevbb, bitcast!(prevbb, sres, LLVM.PointerType(T_int8, 10)),  LLVM.ConstantInt(T_int8, 0), LLVM.ConstantInt(T_size_t, sizeof(TT)), 0)
                                 push!(created, sres)
                                 sres
                             end

@@ -486,7 +486,7 @@ end
 
 @inline function typed_fieldtype(@nospecialize(T::Type), i::Int)::Type
     if T <: GenericMemoryRef && i == 1 || T <: GenericMemory && i == 2
-        if T <: GenericMemoryRef && i == 1 && is_memory_ref_field2_an_offset(T)
+        if T <: GenericMemoryRef && i == 1 && T isa DataType && is_memory_ref_field2_an_offset(T)
             Int
         else
             eT = eltype(T)
