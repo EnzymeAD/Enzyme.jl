@@ -163,6 +163,8 @@ function typeunstable_constant_shadow()
 end
 
 @testset "Zero type unstable shadow" begin
-  @test autodiff(Reverse, typeunstable_constant_shadow, Active)[1] == 0.0
+   fwd, _ = autodiff_thunk(ReverseNoPrimal, Const{typeof(typeunstable_constant_shadow)}, Active)
+   _, _, shad = fwd(Const(typeunstable_constant_shadow))
+   @test shad == 0.0
 end
 
