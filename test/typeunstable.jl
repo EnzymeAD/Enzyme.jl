@@ -163,6 +163,6 @@ function typeunstable_constant_shadow()
 end
 
 @testset "Zero type unstable shadow" begin
-  @test autodiff(Reverse, typeunstable_constant_shadow)[1] == 0.0
+  @test autodiff(Reverse, typeunstable_constant_shadow, Active)[1] == 0.0
 end
 
