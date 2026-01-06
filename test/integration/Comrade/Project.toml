@@ -16,7 +16,7 @@ VLBISkyModels = "d6343c73-7174-4e0f-bb64-562643efbeca"
 Comrade = "0.11"
 FiniteDifferences = "0.12"
 Pyehtim = "0.2"
-TransformVariables = "0.8 - 0.8.17"
+TransformVariables = "0.8"
 VLBISkyModels = "0.6"
 
 [sources.Enzyme]
