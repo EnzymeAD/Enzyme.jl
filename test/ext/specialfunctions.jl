@@ -26,9 +26,9 @@ end
     # test_scalar(SpecialFunctions.airyaiprime, x)
     # test_scalar(SpecialFunctions.airybi, x)
     # test_scalar(SpecialFunctions.airybiprime, x)
-    test_scalar(SpecialFunctions.besseli, x)
     test_scalar(SpecialFunctions.besselj0, x)
     test_scalar(SpecialFunctions.besselj1, x)
+    test_scalar((y) -> SpecialFunctions.besseli(2, y), x)
     test_scalar((y) -> SpecialFunctions.besselj(2, y), x)
 
     # test_scalar((y) -> SpecialFunctions.sphericalbessely(y, 0.5), 0.3)
