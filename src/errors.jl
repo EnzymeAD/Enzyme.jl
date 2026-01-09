@@ -321,7 +321,7 @@ function Base.showerror(io::IO, ece::ForwardRuleReturnError{C, RT, fwd_RT}) wher
     printstyled(io, "Hint"; bold = true, color = :cyan)
     printstyled(
         io,
-        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\n";
+        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the erroneous code.\n";
         color = :cyan,
     )
     println(io)
