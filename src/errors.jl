@@ -49,27 +49,10 @@ end
 using InteractiveUtils
 
 function code_typed_helper(mi::Core.MethodInstance, world::UInt, mode::Enzyme.API.CDerivativeMode = Enzyme.API.DEM_ReverseModeCombined; interactive::Bool=false, kwargs...)
-    CT = @static if VERSION >= v"1.11.0-DEV.1552"
-        EnzymeCacheToken(
-            typeof(DefaultCompilerTarget()),
-            false,
-            GPUCompiler.GLOBAL_METHOD_TABLE, #=job.config.always_inline=#
-            EnzymeCompilerParams,
-            world,
-            mode == API.DEM_ForwardMode,
-            mode != API.DEM_ForwardMode,
-            true
-        )
-    else
-        if mode == API.DEM_ForwardMode
-            GLOBAL_FWD_CACHE
-        else
-            GLOBAL_REV_CACHE
-        end
-    end
-
-    interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true)
-
+    target = Compiler.DefaultCompilerTarget()
+    params = PrimalCompilerParams(mode)
+    job = GPUCompiler.CompilerJob(mi, GPUCompiler.CompilerConfig(target, params))
+    interp = GPUCompiler.get_interpreter(job)
     sig = mi.specTypes  # XXX: can we just use the method instance?
     if interactive
         # call Cthulhu without introducing a dependency on Cthulhu

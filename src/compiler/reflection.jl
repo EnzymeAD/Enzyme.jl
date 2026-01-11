@@ -28,7 +28,7 @@ function get_job(
     end
 
     primal = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, Core.Typeof(func), tt, world)
-    rt = Compiler.primal_return_type_world(mode == API.DEM_ForwardMode ? Forward : Reverse, world, Core.Typeof(func), tt)
+    rt = Compiler.primal_return_type_world(mode, world, primal)
 
     @assert primal !== nothing
     rt = A{rt}
