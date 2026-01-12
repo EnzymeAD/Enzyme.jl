@@ -191,7 +191,6 @@ function fixup_1p12_sret!(f::LLVM.Function)
     if VERSION < v"1.12"
         return
     end
-    dl = datalayout(mod)
     mi, RT = enzyme_custom_extract_mi(f, false)
     if mi === nothing
         return
@@ -203,9 +202,11 @@ function fixup_1p12_sret!(f::LLVM.Function)
         return
     end
 
-    lltype = convert(LLVMType, sret)
+    dl = datalayout(LLVM.parent(f))
+    lltype = convert(LLVMType, RT)
     sz = LLVM.sizeof(dl, lltype)
 
+    @assert VERSION < v"1.13"
     #TODO for 1.13 fixup this
     torep = LLVM.Instruction[]
     for u in LLVM.uses(parameters(f)[1])
@@ -213,7 +214,7 @@ function fixup_1p12_sret!(f::LLVM.Function)
         if isa(ci, LLVM.CallInst)
             intr = LLVM.API.LLVMGetIntrinsicID(LLVM.called_operand(ci))
             if intr == LLVM.Intrinsic("llvm.memcpy").id
-                cst = operands(ci)[2]
+                cst = operands(ci)[3]
                 if cst isa LLVM.ConstantInt && convert(UInt, cst) == sz
                     push!(torep, ci)
                 end
