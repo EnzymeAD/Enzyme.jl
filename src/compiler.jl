@@ -554,7 +554,7 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
             end
         end
 
-        fixup_1p12_sret(llvmfn)
+        fixup_1p12_sret!(llvmfn)
     end
 end
 
