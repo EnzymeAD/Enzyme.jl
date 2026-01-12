@@ -187,6 +187,49 @@ function rewrite_ccalls!(mod::LLVM.Module)
     end
 end
 
+function fixup_1p12_sret!(f::LLVM.Function)
+    if VERSION < v"1.12"
+        return
+    end
+    dl = datalayout(mod)
+    mi, RT = enzyme_custom_extract_mi(f, false)
+    if mi === nothing
+        return
+    end
+
+    _, sret, returnRoots = get_return_info(RT)
+
+    if sret === nothing || returnRoots == nothing
+        return
+    end
+
+    lltype = convert(LLVMType, sret)
+    sz = LLVM.sizeof(dl, lltype)
+
+    #TODO for 1.13 fixup this
+    torep = LLVM.Instruction[]
+    for u in LLVM.uses(parameters(f)[1])
+        ci = LLVM.user(u)
+        if isa(ci, LLVM.CallInst)
+            intr = LLVM.API.LLVMGetIntrinsicID(LLVM.called_operand(ci))
+            if intr == LLVM.Intrinsic("llvm.memcpy").id
+                cst = operands(ci)[2]
+                if cst isa LLVM.ConstantInt && convert(UInt, cst) == sz
+                    push!(torep, ci)
+                end
+            end
+        end
+    end
+
+    for ci in torep
+        B = LLVM.IRBuilder()
+        position!(B, ci)
+        copy_struct_into!(B, lltype, operands(ci)[1], operands(ci)[2], false)
+        LLVM.erase!(ci)
+    end
+    return
+end
+
 function force_recompute!(mod::LLVM.Module)
     for f in functions(mod), bb in blocks(f)
     iter = LLVM.API.LLVMGetFirstInstruction(bb)
