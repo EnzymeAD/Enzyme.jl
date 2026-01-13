@@ -553,6 +553,8 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
                 LLVM.API.LLVMAddCallSiteAttribute(u, LLVM.API.LLVMAttributeIndex(2), attr)
             end
         end
+
+        fixup_1p12_sret!(llvmfn)
     end
 end
 
