@@ -1,3 +1,51 @@
+function restore_alloca_type!(f::LLVM.Function)
+    replaceAndErase = Tuple{LLVM.AllocaInst,Type, LLVMType}[]
+    dl = datalayout(LLVM.parent(f))
+    lltype = convert(LLVMType, RT)
+
+    for bb in blocks(f), inst in instructions(bb)
+        if isa(inst, LLVM.AllocaInst)
+            if haskey(metadata(inst), "enzymejl_allocrt") || haskey(metadata(inst), "enzymejl_gc_alloc_rt")
+                mds = operands(metadata(arg)["enzymejl_allocart"])[1]::MDString
+                mds = Base.convert(String, mds)
+                ptr = reinterpret(Ptr{Cvoid}, parse(UInt, mds))
+                RT = Base.unsafe_pointer_to_objref(ptr)
+                lrt = convert(LLVMType, RT)
+                at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(inst))
+                if at == lrt
+                    continue
+                end
+                cnt = operands(inst)[1]
+                if !isa(cnt, LLVM.ConstantInt) || convert(UInt, cnt) != 1
+                    continue
+                end
+                if LLVM.sizeof(dl, at) == LLVM.sizeof(dl, lrt) && CountTrackedPointers(at).count == 0
+                    push!(replaceAndErase, (inst, RT, lrt))
+                end
+            end
+        end
+    end
+
+    for (al, RT, lrt)        
+        if CountTrackedPointers(lrt).count != 0
+            lrt2 = strip_tracked_pointers(lrt)
+            @assert LLVM.sizeof(dl, lrt2) == LLVM.sizeof(dl, lrt)
+            lrt = lrt2
+        end
+        b = IRBuilder()
+        position!(b, al)
+        pname = LLVM.name(al)
+        LLVM.name!(al, "")
+        al2 = alloca!(b, lrt, pname)
+        cst = al2
+        if value_type(cst) != value_type(al)
+            cst = bitcast!(b, cst, value_type(al))
+        end        
+        LLVM.replace_uses!(al, cst)
+        LLVM.API.LLVMInstructionEraseFromParent(al)
+        metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
+    end
+end
 
 # Rewrite calls with "jl_roots" to only have the jl_value_t attached and not  { { {} addrspace(10)*, [1 x [2 x i64]], i64, i64 }, [2 x i64] } %unbox110183_replacementA
 function rewrite_ccalls!(mod::LLVM.Module)
@@ -2648,6 +2696,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
                 add!(fpm, InstCombinePass())
                 add!(fpm, JLInstSimplifyPass())
                 add!(fpm, AllocOptPass())
+                add!(fpm, RestoreAllocaType())
                 add!(fpm, SROAPass())
                 add!(fpm, EarlyCSEPass())
             end
@@ -2675,6 +2724,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
                 add!(fpm, InstCombinePass())
                 add!(fpm, JLInstSimplifyPass())
                 add!(fpm, AllocOptPass())
+                add!(fpm, RestoreAllocaType())
                 add!(fpm, SROAPass())
             end
             if RunAttributor[]
