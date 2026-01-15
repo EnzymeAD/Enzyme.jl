@@ -563,7 +563,7 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
             if !isa(inst, LLVM.CallInst)
                 continue
             end
-            fn = LLVM.called_operand(arg)
+            fn = LLVM.called_operand(inst)
             if !isa(fn, LLVM.Function)
                 continue
             end
