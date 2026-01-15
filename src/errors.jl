@@ -627,7 +627,37 @@ function Base.showerror(io::IO, ece::UnionSretReturnException{RT}) where RT
     Base.println(io, Base.unsafe_string(ece.backtrace))
 end
 
+struct NonInferredActiveReturn <: CompilationException
+    actualRetType::Type
+    rettype::Type
+end
 
+function Base.showerror(io::IO, ece::NonInferredActiveReturn)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
+    print(io, "NonInferredActiveReturn: Enzyme compilation failed.\n")
+    println(io, " Called reverse-mode autodiff with return activity $(ece.rettype), which had a different setting of Base.allocatedinline from the actual return type $(ece.actualRetType). This is not presently supported (but open an issue).")
+
+    if ece.actualRetType <: eltype(ece.rettype)
+        newRT = if ece.rettype <: Active
+            Active{ece.actualRetType}
+        elseif ece.rettype <: MixedDuplicated
+            MixedDuplicated{ece.actualRetType}
+        elseif ece.rettype <: BatchMixedDuplicated
+            BatchMixedDuplicated{ece.actualRetType, batch_size(ece.rettype)}
+        else
+            throw(AssertionError("Unexpected Activity $(ece.rettype)"))
+        end
+
+        printstyled(io, "Hint"; bold = true, color = :cyan)
+        printstyled(
+            io,
+            ": You can avoid this error by explicitly setting the return activity as $newRT";
+            color = :cyan,
+        )
+    end
+end
 
 struct NoDerivativeException <: CompilationException
     msg::String
