@@ -314,7 +314,7 @@ function addMachinePasses!(mpm::LLVM.NewPMPassManager)
         add!(fpm, AnnotationRemarksPass())
     end
     @static if VERSION >= v"1.14.0-DEV.61"
-        if Base.JLOptions().target_sanitize_address
+        if Base.JLOptions().target_sanitize_address != 0
             add!(mpm, AddressSanitizerPass())
         end
     else
