@@ -44,6 +44,7 @@ function restore_alloca_type!(f::LLVM.Function)
         LLVM.API.LLVMInstructionEraseFromParent(al)
         metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
     end
+	return length(replaceAndErase) != 0
 end
 
 # Rewrite calls with "jl_roots" to only have the jl_value_t attached and not  { { {} addrspace(10)*, [1 x [2 x i64]], i64, i64 }, [2 x i64] } %unbox110183_replacementA
