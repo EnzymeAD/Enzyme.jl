@@ -1,7 +1,6 @@
 function restore_alloca_type!(f::LLVM.Function)
     replaceAndErase = Tuple{LLVM.AllocaInst,Type, LLVMType}[]
     dl = datalayout(LLVM.parent(f))
-    lltype = convert(LLVMType, RT)
 
     for bb in blocks(f), inst in instructions(bb)
         if isa(inst, LLVM.AllocaInst)
