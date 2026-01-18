@@ -708,10 +708,10 @@ function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
     end
     print(io, "IllegalTypeAnalysisException: Enzyme compilation failed due to illegal type analysis.\n")
     if VERSION <= v"1.12" && VERSION <= v"1.12.5"
-        printstyled(io, "Hint:"; bold = true, color = :cyan)
+        printstyled(io, "Hintg:"; bold = true, color = :cyan)
         printstyled(
             io,
-            ": You are using Julia $(VERSION) which is known as a source of this error. This will be fixed in Julia 1.12.5. To track the release progress, see https://github.com/JuliaLang/julia/pull/60612.";
+            ": You are using Julia $(VERSION) which is known as a source of this error. This will be fixed in Julia 1.12.5. Either use Julia 1.10, 1.11, or wait for Julia 1.12.5.\nTo track the release progress, see https://github.com/JuliaLang/julia/pull/60612.";
             color = :cyan,
         )
         print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
