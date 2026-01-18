@@ -208,6 +208,12 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    
+    # The binding lookup is asserted as inactive [e.g. globals are considered constant wrt differentiation]
+    # If and when this changes, we need to change that here
+    "jl_get_binding_value_seqcst",
+    "ijl_get_binding_value_seqcst",
+
     "utf8proc_toupper",
     "ClientGetAddressableDevices",
     "ClientNumAddressableDevices",
