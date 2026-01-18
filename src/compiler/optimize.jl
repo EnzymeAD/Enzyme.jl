@@ -446,12 +446,13 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, ReinsertGCMarkerPass())
         register!(pb, SafeAtomicToRegularStorePass())
+		register!(pb, RestoreAllocaType())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
             add!(aam, BasicAA())
         end
-        add!(pb, NewPMModulePassManager()) do mpm
+        add!(pb, NewPMModulePassManager()) do mpm		
             addOptimizationPasses!(mpm)
             if machine
                 # TODO enable validate_return_roots
