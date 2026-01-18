@@ -707,18 +707,29 @@ function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
         Base.Experimental.show_error_hints(io, ece)
     end
     print(io, "IllegalTypeAnalysisException: Enzyme compilation failed due to illegal type analysis.\n")
-    print(io, " This usually indicates the use of a Union type, which is not fully supported with Enzyme.API.strictAliasing set to true [the default].\n")
-    print(io, " Ideally, remove the union (which will also make your code faster), or try setting Enzyme.API.strictAliasing!(false) before any autodiff call.\n")
-    print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
-        if ece.mi !== nothing
-        print(io, " Failure within method: ", ece.mi, "\n")
-        printstyled(io, "Hint"; bold = true, color = :cyan)
+    if VERSION <= v"1.12" && VERSION <= v"1.12.5"
+        printstyled(io, "Hint:"; bold = true, color = :cyan)
         printstyled(
             io,
-            ": catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\nIf you have Cthulu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.";
+            ": You are using Julia $(VERSION) which is known as a source of this error. This will be fixed in Julia 1.12.5. To track the release progress, see https://github.com/JuliaLang/julia/pull/60612.";
             color = :cyan,
         )
+        print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
+    else
+        print(io, " This usually indicates the use of a Union type, which is not fully supported with Enzyme.API.strictAliasing set to true [the default].\n")
+        print(io, " Ideally, remove the union (which will also make your code faster), or try setting Enzyme.API.strictAliasing!(false) before any autodiff call.\n")
+        print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
+            if ece.mi !== nothing
+            print(io, " Failure within method: ", ece.mi, "\n")
+            printstyled(io, "Hint"; bold = true, color = :cyan)
+            printstyled(
+                io,
+                ": catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\nIf you have Cthulu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.";
+                color = :cyan,
+            )
+        end
     end
+
     if VERBOSE_ERRORS[]
         if ece.ir !== nothing
             print(io, "Current scope: \n")
