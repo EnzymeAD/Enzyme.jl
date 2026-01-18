@@ -2691,6 +2691,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
     propagate_returned!(mod)
     LLVM.@dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
+		register!(pb, RestoreAllocaType())
         add!(pb, NewPMModulePassManager()) do mpm
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, InstCombinePass())
@@ -2719,6 +2720,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
     LLVM.@dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, EnzymeAttributorPass())
+		register!(pb, RestoreAllocaType())
         add!(pb, NewPMModulePassManager()) do mpm
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, InstCombinePass())
