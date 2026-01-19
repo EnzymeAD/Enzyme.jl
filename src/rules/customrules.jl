@@ -163,7 +163,8 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
                           activity_wrap::Bool,
                           ogval::LLVM.Value,
                           @nospecialize(roots_cache::Union{LLVM.Value, Nothing}), 
-                          @nospecialize(shadow_roots::Union{Nothing, LLVM.Value}) = nothing
+                          @nospecialize(shadow_roots::Union{Nothing, LLVM.Value}) = nothing,
+			  just_primal_rooting::Bool = false
                           )::Union{Nothing, Tuple{LLVM.Value, LLVM.Value}}
 
     if !activity_wrap
@@ -218,6 +219,7 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
     end
 
     root_ptr = nothing
+
     if roots_cache !== nothing
         root_ty = convert(LLVMType, AnyArray(num_inline_roots))
         if shadow_roots === nothing
@@ -233,10 +235,19 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
         if shadow_roots === nothing
             root_ptr = roots_val
         else
-            root_ty = convert(LLVMType, AnyArray(num_inline_roots))
-            ld = load!(B, root_ty, roots_val)
-            sr2 = bitcast!(B, shadow_roots, LLVM.PointerType(root_ty))
-            store!(B, ld, sr2)
+	    cur_inline_roots, eTy = if just_primal_rooting
+		@assert activity_wrap
+		inline_roots_type(eltype(Ty)), "primal.$Ty"
+	    else
+	        num_inline_roots, string(Ty)
+	    end
+	    
+	    if cur_inline_roots != 0
+		    root_ty = convert(LLVMType, AnyArray(cur_inline_roots))
+		    ld = load!(B, root_ty, roots_val, "loaded.roots.$eTy")
+		    sr2 = bitcast!(B, shadow_roots, LLVM.PointerType(root_ty))
+		    store!(B, ld, sr2)
+	    end
             root_ptr = shadow_roots
         end
     end
@@ -627,15 +638,15 @@ function enzyme_custom_setup_args(
                 sroots_ty = nothing
                 shadow_roots = if n_shadow_roots != 0
                     sroots_ty = convert(LLVMType, AnyArray(n_shadow_roots))
-                    alloca!(B, sroots_ty)
+                    alloca!(B, sroots_ty, "roots.arg.$Ty")
                 end
 
 
                 T_jlvalue = LLVM.StructType(LLVMType[])
                 T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
-                if arg.cc == GPUCompiler.BITS_REF && !mixed
-
+                if n_primal_roots != 0 && !mixed
+		    @assert arg.cc == GPUCompiler.BITS_REF
                     @assert n_shadow_roots == (width + 1) * n_primal_roots
 
                     ptr_val = ival
@@ -673,7 +684,7 @@ function enzyme_custom_setup_args(
                                         LLVM.ConstantInt(LLVM.IntType(32), r - 1),
                                     ]
                                 ))
-                                store!(B, ld, rptr)
+                                stv = store!(B, ld, rptr)
                             end
                         end
 
@@ -681,6 +692,7 @@ function enzyme_custom_setup_args(
                 end
 
                 if mixed
+		    @assert arg.cc == GPUCompiler.BITS_REF
                     RefTy = arg.typ
                     if width != 1
                         RefTy = NTuple{Int(width),RefTy}
@@ -728,7 +740,8 @@ function enzyme_custom_setup_args(
                     push!(mixeds, (ptr_val, arg.typ, refal))
                 end
 
-                al0, al = push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache, shadow_roots)
+		just_primal_rooting = true
+                al0, al = push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache, shadow_roots, just_primal_rooting)
 
                 iptr = inbounds_gep!(
                     B,
@@ -2197,7 +2210,7 @@ function enzyme_custom_common_rev(
             end
         end
     end
-
+            
     if forward
         if shadowR != C_NULL && shadowV != C_NULL
             unsafe_store!(shadowR, shadowV)
