@@ -645,8 +645,7 @@ function enzyme_custom_setup_args(
                 T_jlvalue = LLVM.StructType(LLVMType[])
                 T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
-                if n_primal_roots != 0 && !mixed
-		    @assert arg.cc == GPUCompiler.BITS_REF
+                if arg.cc == GPUCompiler.BITS_REF && !mixed
                     @assert n_shadow_roots == (width + 1) * n_primal_roots
 
                     ptr_val = ival
