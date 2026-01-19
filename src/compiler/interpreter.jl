@@ -1071,7 +1071,7 @@ end
     end
 end
 
-
+if VERSION < v"1.12"
 ## Computation of inferred result type, for empty and concretely inferred cases only
 ty_broadcast_getindex_eltype(state::NamedTuple, bc::Type{<:Base.Broadcast.Broadcasted}) = ty_combine_eltypes(state, bc.parameters[3], (bc.parameters[4].parameters...,))
 ty_broadcast_getindex_eltype(state::NamedTuple, A) = eltype(A)  # Tuple, Array, etc.
@@ -1080,7 +1080,6 @@ ty_eltypes(state::NamedTuple, ::Tuple{}) = Tuple{}
 ty_eltypes(state::NamedTuple, t::Tuple{Any}) = Iterators.TupleOrBottom(ty_broadcast_getindex_eltype(state, t[1]))
 ty_eltypes(state::NamedTuple, t::Tuple{Any,Any}) = Iterators.TupleOrBottom(ty_broadcast_getindex_eltype(state, t[1]), ty_broadcast_getindex_eltype(state, t[2]))
 ty_eltypes(state::NamedTuple, t::Tuple) = (TT = ty_eltypes(state, Base.tail(t)); TT === Union{} ? Union{} : Iterators.TupleOrBottom(ty_broadcast_getindex_eltype(state, t[1]), TT.parameters...))
-# eltypes(t::Tuple) = Iterators.TupleOrBottom(ntuple(i -> _broadcast_getindex_eltype(t[i]), Val(length(t)))...)
 
 # Inferred eltype of result of broadcast(f, args...)
 function ty_combine_eltypes(state::NamedTuple, f, args::Tuple)
@@ -1093,8 +1092,100 @@ function ty_combine_eltypes(state::NamedTuple, f, args::Tuple)
         StmtInfo(true),
         sv,
         max_methods,
-    ).rt
-    return Base.promote_typejoin_union(preprom)
+    )
+    return Base.promote_typejoin_union(widenconst(preprom.rt))
+end
+else
+## Computation of inferred result type, for empty and concretely inferred cases only
+ty_broadcast_getindex_eltype(state::NamedTuple, bc::Type{<:Base.Broadcast.Broadcasted})::Core.Compiler.Future{Type} = ty_combine_eltypes(state, bc.parameters[3], (bc.parameters[4].parameters...,))
+ty_broadcast_getindex_eltype(state::NamedTuple, A)::Core.Compiler.Future{Type} = Core.Compiler.Future{Type}(eltype(A))  # Tuple, Array, etc.
+
+ty_eltypes(state::NamedTuple, ::Tuple{})::Core.Compiler.Future{Type} = Tuple{}
+function ty_eltypes(state::NamedTuple, t::Tuple{Any})::Core.Compiler.Future{Type}
+    retT = ty_broadcast_getindex_eltype(state, t[1])
+    (; interp, sv) = state
+    Core.Compiler.Future{Type}(retT, interp, sv) do retT, interp, sv
+        Iterators.TupleOrBottom(retT)
+    end
+end
+function ty_eltypes(state::NamedTuple, t::Tuple{Any,Any})::Core.Compiler.Future{Type}
+    retT1 = ty_broadcast_getindex_eltype(state, t[1])
+    retT2 = ty_broadcast_getindex_eltype(state, t[2])
+    (; interp, sv) = state
+    Core.Compiler.Future{Type}(isready(retT1) && isready(retT2), interp, sv) do interp, sv
+            Iterators.TupleOrBottom(retT1[], retT2[])
+    end
+end
+function ty_eltypes(state::NamedTuple, t::Tuple)::Core.Compiler.Future{Type}
+    TT = ty_eltypes(state, Base.tail(t))
+    (; interp, sv) = state
+    if TT === Union{}
+        Core.Compiler.Future{Type}{Union{}}
+    else
+        retT = ty_broadcast_getindex_eltype(state, t[1])
+        Core.Compiler.Future{Type}(retT, interp, sv) do retT, interp, sv
+            Iterators.TupleOrBottom(retT, TT.parameters...)
+        end
+    end
+end
+
+# Inferred eltype of result of broadcast(f, args...)
+function ty_combine_eltypes(state::NamedTuple, f, args::Tuple)::Core.Compiler.Future{Type}
+    (; interp, sv, max_methods) = state
+    argT = ty_eltypes(state, args)
+    return Core.Compiler.Future{Type}(isready(argT) && isready(rtfuture), argT, interp, sv) do argT, interp, sv
+        argT === Union{} && Union{}
+        preprom = abstract_call(
+            interp,
+            ArgInfo(nothing, Any[f, argT.parameters...]),
+            StmtInfo(true, false),
+            sv,
+            max_methods,
+        )[]
+        Base.promote_typejoin_union(widenconst(preprom.rt))
+    end
+end
+
+struct broadcast_rewriter
+    fargs::Tuple
+    argtypes
+    si::StmtInfo
+    max_methods::Int
+    f::Any
+    arginfo::ArgInfo
+end
+function (bcr::broadcast_rewriter)(ElType, interp, sv)
+    (; fargs, argtypes, si, max_methods, f, arginfo) = bcr
+    if ElType !== Union{} && Base.isconcretetype(ElType)
+        fn2 = Enzyme.Compiler.Interpreter.OverrideBCMaterialize{ElType}()
+        arginfo2 = ArgInfo(
+            fargs isa Nothing ? nothing : [:(fn2), fargs[2:end]...],
+           [Core.Const(fn2), argtypes[2:end]...],
+        )
+
+        return Base.@invoke abstract_call_known(
+            interp::AbstractInterpreter,
+            fn2::Any,
+            arginfo2::ArgInfo,
+            si::StmtInfo,
+            sv::AbsIntState,
+            max_methods::Int,
+        )
+    else 
+        if interp.handler != nothing
+            return interp.handler(interp, f, arginfo, si, sv, max_methods)
+        end
+        
+        return Base.@invoke abstract_call_known(
+            interp::AbstractInterpreter,
+            f::Any,
+            arginfo::ArgInfo,
+            si::StmtInfo,
+            sv::AbsIntState,
+            max_methods::Int,
+        )
+    end
+end
 end
 
 function abstract_call_known(
@@ -1142,29 +1233,6 @@ function abstract_call_known(
     end
     
     if interp.broadcast_rewrite
-        if f === Base.materialize && length(argtypes) == 2
-            bcty = widenconst(argtypes[2])
-            if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && bc_or_array_or_number_ty(bcty) && has_array(bcty)
-                ElType = ty_broadcast_getindex_eltype((; interp, sv, max_methods), bcty)
-                if ElType !== Union{} && Base.isconcretetype(ElType)
-                    fn2 = Enzyme.Compiler.Interpreter.OverrideBCMaterialize{ElType}()
-                    arginfo2 = ArgInfo(
-                        fargs isa Nothing ? nothing : [:(fn2), fargs[2:end]...],
-                       [Core.Const(fn2), argtypes[2:end]...],
-                    )
-
-                    return Base.@invoke abstract_call_known(
-                        interp::AbstractInterpreter,
-                        fn2::Any,
-                        arginfo2::ArgInfo,
-                        si::StmtInfo,
-                        sv::AbsIntState,
-                        max_methods::Int,
-                    )
-                end
-            end
-        end
-
         if f === Base.copyto! && length(argtypes) == 3
             # Ideally we just override uses of the AbstractArray base class, but
             # I don't know how to override the method in base, without accidentally overridding
@@ -1280,10 +1348,43 @@ function abstract_call_known(
             )
         end
     end
+    if interp.broadcast_rewrite && f === Base.materialize && length(argtypes) == 2
+            bcty = widenconst(argtypes[2])
+            if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && bc_or_array_or_number_ty(bcty) && has_array(bcty)
+                ElType = ty_broadcast_getindex_eltype((; interp, sv, max_methods), bcty)
+                if VERSION < v"1.12"
+                    if ElType !== Union{} && Base.isconcretetype(ElType)
+                        fn2 = Enzyme.Compiler.Interpreter.OverrideBCMaterialize{ElType}()
+                        arginfo2 = ArgInfo(
+                            fargs isa Nothing ? nothing : [:(fn2), fargs[2:end]...],
+                           [Core.Const(fn2), argtypes[2:end]...],
+                        )
 
+                        return Base.@invoke abstract_call_known(
+                            interp::AbstractInterpreter,
+                            fn2::Any,
+                            arginfo2::ArgInfo,
+                            si::StmtInfo,
+                            sv::AbsIntState,
+                            max_methods::Int,
+                        )
+                    end
+                else
+                    return Core.Compiler.Future(broadcast_rewriter(
+                                fargs,
+                                argtypes,
+                                si,
+                                max_methods,
+                                f,
+                                arginfo),
+                            ElType, interp, sv)
+                end
+            end
+        end
     if interp.handler != nothing
         return interp.handler(interp, f, arginfo, si, sv, max_methods)
     end
+    
     return Base.@invoke abstract_call_known(
         interp::AbstractInterpreter,
         f::Any,
