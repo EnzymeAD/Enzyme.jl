@@ -1859,3 +1859,6 @@ function EnzymeRules.reverse(config, ::Const{typeof(Base.finalizer)}, dret, tape
     # No-op
     return (nothing, nothing)
 end
+
+EnzymeRules.@easy_rule(+(a::BigFloat, b::BigFloat), (1,1))
+EnzymeRules.@easy_rule(-(a::BigFloat, b::BigFloat), (1,-1))
