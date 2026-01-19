@@ -73,6 +73,37 @@ nfields(Type::LLVM.VectorType) = size(Type)
 nfields(Type::LLVM.ArrayType) = length(Type)
 nfields(Type::LLVM.PointerType) = 1
 
+function strip_tracked_pointers(@nospecialize(T::LLVM.LLVMType))
+    if !any_jltypes(T)
+        return T
+    end
+    if isa(T, LLVM.PointerType)
+        @assert isSpecialPtr(T)
+        if LLVM.is_opaque(T)
+            return LLVM.PointerType()
+        else
+            return LLVM.PointerType(eltype(T))
+        end
+    end
+    if isa(T, LLVM.ArrayType)
+        return LLVM.ArrayType(eltype(T), length(T))
+    end
+
+    if isa(T, LLVM.VectorType)
+        return LLVM.VectorType(eltype(T), length(T))
+    end
+
+    if isa(T, LLVM.StructType)
+        subtypes = LLVM.LLVMTypes[]
+        for (i, t) in enumerate(LLVM.elements(ty))
+            push!(subtypes, strip_tracked_pointers(t))
+        end
+        return LLVM.StructType(subtypes; packed=LLVM.ispacked(T))
+    end
+
+    throw(AssertionError("Unknown composite type"))
+end
+
 function store_nonjl_types!(B::LLVM.IRBuilder, @nospecialize(startval::LLVM.Value), @nospecialize(p::LLVM.Value))
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
