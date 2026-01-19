@@ -5,7 +5,7 @@ function restore_alloca_type!(f::LLVM.Function)
     for bb in blocks(f), inst in instructions(bb)
         if isa(inst, LLVM.AllocaInst)
             if haskey(metadata(inst), "enzymejl_allocrt") || haskey(metadata(inst), "enzymejl_gc_alloc_rt")
-                mds = operands(metadata(arg)["enzymejl_allocart"])[1]::MDString
+                mds = operands(metadata(inst)[haskey(metadata(inst), "enzymejl_allocrt") ? "enzymejl_allocart" : "enzymejl_gc_alloc_rt"])[1]::MDString
                 mds = Base.convert(String, mds)
                 ptr = reinterpret(Ptr{Cvoid}, parse(UInt, mds))
                 RT = Base.unsafe_pointer_to_objref(ptr)
