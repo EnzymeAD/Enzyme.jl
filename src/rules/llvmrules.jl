@@ -454,6 +454,8 @@ end
     real_ops = collect(operands(orig))[1:end-1]
     ops = [new_from_original(gutils, o) for o in real_ops]
 
+    shadowin = invert_pointer(gutils, real_ops[1], B)
+    
     batch_call_same_with_inverted_arg_if_active!(
         B,
         gutils,
@@ -1945,12 +1947,32 @@ end
 end
 
 @register_fwd function get_binding_or_error_fwd(B, orig, gutils, normalR, shadowR)
-    if is_constant_value(gutils, orig)
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(
+        gutils,
+        orig,
+        needsPrimalP,
+        needsShadowP,
+        get_mode(gutils),
+    )
+
+    if is_constant_value(gutils, orig) || needsShadowP[] == 0
         return true
     end
-    err = emit_error(B, orig, "Enzyme: unhandled forward for jl_get_binding_or_error")
+
     newo = new_from_original(gutils, orig)
-    API.moveBefore(newo, err, B)
+    cmp = icmp!(B, LLVM.API.LLVMIntNE, newo, LLVM.null(value_type(newo)))
+
+    err = emit_error(
+        B,
+        orig,
+        "Enzyme: unhandled forward for jl_get_binding_or_error",
+        EnzymeRuntimeException,
+        cmp
+    )
+
+    API.moveBefore(newo, cmp, B)
 
     if unsafe_load(shadowR) != C_NULL
 	valTys = API.CValueType[]
@@ -1977,41 +1999,24 @@ end
 end
 
 @register_aug function get_binding_or_error_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
-    if is_constant_value(gutils, orig)
-        return true
-    end
-    err = emit_error(
-        B,
-        orig,
-        "Enzyme: unhandled augmented forward for jl_get_binding_or_error",
-    )
-    newo = new_from_original(gutils, orig)
-    API.moveBefore(newo, err, B)
-    if unsafe_load(shadowR) != C_NULL
-	valTys = API.CValueType[]
-	args = LLVM.Value[]
-	for i in 1:(length(operands(orig))-1)    
-	    push!(valTys, API.VT_Primal)
-	    push!(args, new_from_original(gutils, operands(orig)[i]))
-	end
-	normal = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, valTys, false) #=lookup=#
-        width = get_width(gutils)
-        if width == 1
-            shadowres = normal
-        else
-            shadowres = UndefValue(
-                LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
-            )
-            for idx = 1:width
-                shadowres = insert_value!(B, shadowres, normal, idx - 1)
-            end
-        end
-        unsafe_store!(shadowR, shadowres.ref)
-    end
-    return false
+    return get_binding_or_error_fwd(B, orig, gutils, normalR, shadowR)
 end
 
 @register_rev function get_binding_or_error_rev(B, orig, gutils, tape)
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(
+        gutils,
+        orig,
+        needsPrimalP,
+        needsShadowP,
+        API.DEM_ReverseModePrimal,
+    )
+
+    if is_constant_value(gutils, orig) || needsShadowP[] == 0
+        return nothing
+    end
+
     emit_error(B, orig, "Enzyme: unhandled reverse for jl_get_binding_or_error")
     return nothing
 end

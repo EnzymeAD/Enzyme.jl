@@ -163,7 +163,8 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
                           activity_wrap::Bool,
                           ogval::LLVM.Value,
                           @nospecialize(roots_cache::Union{LLVM.Value, Nothing}), 
-                          @nospecialize(shadow_roots::Union{Nothing, LLVM.Value}) = nothing
+                          @nospecialize(shadow_roots::Union{Nothing, LLVM.Value}) = nothing,
+			  just_primal_rooting::Bool = false
                           )::Union{Nothing, Tuple{LLVM.Value, LLVM.Value}}
 
     if !activity_wrap
@@ -218,6 +219,7 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
     end
 
     root_ptr = nothing
+
     if roots_cache !== nothing
         root_ty = convert(LLVMType, AnyArray(num_inline_roots))
         if shadow_roots === nothing
@@ -233,10 +235,19 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
         if shadow_roots === nothing
             root_ptr = roots_val
         else
-            root_ty = convert(LLVMType, AnyArray(num_inline_roots))
-            ld = load!(B, root_ty, roots_val)
-            sr2 = bitcast!(B, shadow_roots, LLVM.PointerType(root_ty))
-            store!(B, ld, sr2)
+	    cur_inline_roots, eTy = if just_primal_rooting
+		@assert activity_wrap
+		inline_roots_type(eltype(Ty)), "primal.$Ty"
+	    else
+	        num_inline_roots, string(Ty)
+	    end
+	    
+	    if cur_inline_roots != 0
+		    root_ty = convert(LLVMType, AnyArray(cur_inline_roots))
+		    ld = load!(B, root_ty, roots_val, "loaded.roots.$eTy")
+		    sr2 = bitcast!(B, shadow_roots, LLVM.PointerType(root_ty))
+		    store!(B, ld, sr2)
+	    end
             root_ptr = shadow_roots
         end
     end
@@ -627,7 +638,7 @@ function enzyme_custom_setup_args(
                 sroots_ty = nothing
                 shadow_roots = if n_shadow_roots != 0
                     sroots_ty = convert(LLVMType, AnyArray(n_shadow_roots))
-                    alloca!(B, sroots_ty)
+                    alloca!(B, sroots_ty, "roots.arg.$Ty")
                 end
 
 
@@ -635,7 +646,6 @@ function enzyme_custom_setup_args(
                 T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
                 if arg.cc == GPUCompiler.BITS_REF && !mixed
-
                     @assert n_shadow_roots == (width + 1) * n_primal_roots
 
                     ptr_val = ival
@@ -673,7 +683,7 @@ function enzyme_custom_setup_args(
                                         LLVM.ConstantInt(LLVM.IntType(32), r - 1),
                                     ]
                                 ))
-                                store!(B, ld, rptr)
+                                stv = store!(B, ld, rptr)
                             end
                         end
 
@@ -681,6 +691,7 @@ function enzyme_custom_setup_args(
                 end
 
                 if mixed
+		    @assert arg.cc == GPUCompiler.BITS_REF
                     RefTy = arg.typ
                     if width != 1
                         RefTy = NTuple{Int(width),RefTy}
@@ -728,7 +739,8 @@ function enzyme_custom_setup_args(
                     push!(mixeds, (ptr_val, arg.typ, refal))
                 end
 
-                al0, al = push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache, shadow_roots)
+		just_primal_rooting = true
+                al0, al = push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache, shadow_roots, just_primal_rooting)
 
                 iptr = inbounds_gep!(
                     B,
@@ -1333,6 +1345,15 @@ end
     return true
 end
 
+function sret_union_tape_type(@nospecialize(aug_RT))
+    InnerTypes = Type[]
+    for_each_uniontype_small(aug_RT) do T
+        TapeT = EnzymeRules.tape_type(T)
+        push!(InnerTypes, TapeT)
+    end
+    return Union{InnerTypes...}
+end
+
 function enzyme_custom_common_rev(
     forward::Bool,
     B::LLVM.IRBuilder,
@@ -1424,6 +1445,11 @@ function enzyme_custom_common_rev(
        !(aug_RT isa Union) &&
        !(aug_RT === Union{})
         TapeT = EnzymeRules.tape_type(aug_RT)
+    elseif (
+           aug_RT <: EnzymeRules.AugmentedReturn ||
+           aug_RT <: EnzymeRules.AugmentedReturnFlexShadow
+       ) && is_sret_union(aug_RT)
+        TapeT = sret_union_tape_type(aug_RT)
     elseif (aug_RT isa UnionAll) &&
            (aug_RT <: EnzymeRules.AugmentedReturn) && hasfield(typeof(aug_RT.body), :name) &&
            aug_RT.body.name == EnzymeCore.EnzymeRules.AugmentedReturn.body.body.body.name
@@ -1557,10 +1583,8 @@ function enzyme_custom_common_rev(
     sret_union = is_sret_union(miRT)
 
     if sret_union
-        bt = GPUCompiler.backtrace(orig)
-        msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
-        emit_error(B, orig, (msg2, final_mi, world), UnionSretReturnException{miRT})
-        return tapeV
+        @assert sret !== nothing
+        @assert returnRoots === nothing
     end
 
     if !forward
@@ -1749,11 +1773,15 @@ function enzyme_custom_common_rev(
     end
 
     if sret !== nothing
-	sret_lty = convert(LLVMType, eltype(sret))
-	if VERSION >= v"1.12" && returnRoots !== nothing
-	     dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(orig))))
-	     sret_lty = LLVM.ArrayType(LLVM.Int8Type(), LLVM.sizeof(dl, sret_lty))
-	end
+    	sret_lty = if sret_union
+            LLVM.ArrayType(LLVM.Int8Type(), union_alloca_type(miRT))
+        else
+            convert(LLVMType, eltype(sret))
+        end
+    	if VERSION >= v"1.12" && returnRoots !== nothing
+    	     dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(orig))))
+    	     sret_lty = LLVM.ArrayType(LLVM.Int8Type(), LLVM.sizeof(dl, sret_lty))
+    	end
         sret = alloca!(alloctx, sret_lty)
         pushfirst!(args, sret)
         if returnRoots !== nothing
@@ -1845,7 +1873,75 @@ function enzyme_custom_common_rev(
         return tapeV
     end
 
-    if sret !== nothing
+    sret_union_tape = nothing
+    
+    if sret_union && forward
+
+        ShadT = RealRt
+        if width != 1
+            ShadT = NTuple{Int(width),RealRt}
+        end
+        ST = EnzymeRules.AugmentedReturn{
+            needsPrimal ? RealRt : Nothing,
+            needsShadowJL ? ShadT : Nothing,
+            TapeT,
+        }
+        if ST != EnzymeRules.augmented_rule_return_type(C, RT, TapeT)
+            throw(AssertionError("Unexpected augmented rule return computation\nST = $ST\nER = $(EnzymeRules.augmented_rule_return_type(C, RT, TapeT))\nC = $C\nRT = $RT\nTapeT = $TapeT"))
+        end
+        if !(aug_RT <: EnzymeRules.AugmentedReturnFlexShadow) && !(aug_RT <: EnzymeRules.AugmentedReturn{
+            needsPrimal ? RealRt : Nothing,
+            needsShadowJL ? ShadT : Nothing})
+
+            bt = GPUCompiler.backtrace(orig)
+            msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
+            emit_error(B, orig, (msg2, ami, world), AugmentedRuleReturnError{C, RT, aug_RT})
+            return tapeV
+        end
+
+        if ST != EnzymeRules.augmented_rule_return_type(C, RT, TapeT)
+            throw(AssertionError("Unexpected augmented rule return computation\nST = $ST\nER = $(EnzymeRules.augmented_rule_return_type(C, RT, TapeT))\nC = $C\nRT = $RT\nTapeT = $TapeT"))
+        end
+
+        cur = nothing
+        cur_size = nothing
+        cur_offset = nothing
+
+        counter = 1
+
+        idxv = extract_value!(B, res, 1)
+
+        function inner(@nospecialize(aug_RT::Type))
+            jlrettype = EnzymeRules.tape_type(aug_RT)
+            if cur_size == nothing
+                cur_size = sizeof(jlrettype)
+            elseif cur_size != sizeof(jlrettype)
+                same_size = false
+            end
+
+            if cur === nothing
+                cur = unsafe_to_llvm(B, jlrettype)
+                cur_size = LLVM.ConstantInt(sizeof(jlrettype))
+                cur_offset = LLVM.ConstantInt(fieldoffset(aug_RT, 3))
+            else
+                cmpv = icmp!(B, LLVM.API.LLVMIntEQ, idxv, LLVM.ConstantInt(value_type(idxv), counter))
+                cur = select!(B, cmpv, unsafe_to_llvm(B, jlrettype), cur)
+                cur_size = select!(B, cmpv, LLVM.ConstantInt(sizeof(jlrettype)), cur_size)
+                cur_offset = select!(B, cmpv, LLVM.ConstantInt(fieldoffset(aug_RT, 3)), cur_offset)
+            end
+
+            counter += 1
+            return
+        end
+        for_each_uniontype_small(inner, miRT)
+
+        sret_union_tape = emit_allocobj!(B, cur, cur_size, false)
+        T_int8 = LLVM.Int8Type()
+        memcpy!(B, bitcast!(B, sret_union_tape, LLVM.PointerType(T_int8, Tracked)), 0, gep!(B, T_int8, bitcast!(B, sret, LLVM.PointerType(T_int8)), LLVM.Value[cur_offset]), 0, cur_size)
+
+        res = sret
+
+    elseif sret !== nothing
         sty = sret_ty(llvmf, 1+swiftself)
         if LLVM.version().major >= 12
             attr = TypeAttribute("sret", sty)
@@ -1857,16 +1953,17 @@ function enzyme_custom_common_rev(
             LLVM.API.LLVMAttributeIndex(1 + swiftself),
             attr,
         )
-	if returnRoots !== nothing
-	    LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(2 + swiftself), StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1]))))
-	end
-	if returnRoots !== nothing && VERSION >= v"1.12"
-	   res = recombine_value_ptr!(B, sty, sret, returnRoots; must_cache=true)
-	else
-	   res = load!(B, sty, sret)
-           API.SetMustCache!(res)
-	end
+    	if returnRoots !== nothing
+    	    LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(2 + swiftself), StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1]))))
+    	end
+    	if returnRoots !== nothing && VERSION >= v"1.12"
+    	    res = recombine_value_ptr!(B, sty, sret, returnRoots; must_cache=true)
+    	else
+            res = load!(B, sty, sret)
+            API.SetMustCache!(res)
+    	end
     end
+
     if swiftself
         attr = EnumAttribute("swiftself")
         LLVM.API.LLVMAddCallSiteAttribute(
@@ -1953,7 +2050,7 @@ function enzyme_custom_common_rev(
                 },
             )
             if StructTy != LLVM.VoidType()
-                load!(
+                lresV = load!(
                     B,
                     StructTy,
                     bitcast!(
@@ -1962,6 +2059,8 @@ function enzyme_custom_common_rev(
                         LLVM.PointerType(StructTy, addrspace(value_type(res))),
                     ),
                 )
+                API.SetMustCache!(lresV)
+                lresV
             else
                 res
             end
@@ -1973,19 +2072,19 @@ function enzyme_custom_common_rev(
         if needsPrimal
             @assert !isghostty(RealRt)
             normalV = extract_value!(B, resV, idx)
-	    _, prim_sret, prim_roots = get_return_info(RealRt)
+	        _, prim_sret, prim_roots = get_return_info(RealRt)
             if prim_sret !== nothing
                 val = new_from_original(gutils, operands(orig)[1])
 		
-		if prim_roots !== nothing && VERSION >= v"1.12"
+    		    if prim_roots !== nothing && VERSION >= v"1.12"
                     extract_nonjlvalues_into!(B, value_type(normalV), val, normalV)
 
                     rval = new_from_original(gutils, operands(orig)[2])
 
-		    extract_roots_from_value!(B, normalV, rval)
-		else
+        		    extract_roots_from_value!(B, normalV, rval)
+        		else
                     store!(B, normalV, val)
-		end
+        		end
             else
                 @assert value_type(normalV) == value_type(orig)
                 normalV = normalV.ref
@@ -2030,7 +2129,10 @@ function enzyme_custom_common_rev(
             end
         end
         if needsTape
-            tapeV0 = if abstract
+
+            tapeV0 = if sret_union
+                sret_union_tape
+            elseif abstract
                 emit_nthfield!(B, res, LLVM.ConstantInt(2))
             else
                 extract_value!(B, res, idx)
@@ -2107,7 +2209,7 @@ function enzyme_custom_common_rev(
             end
         end
     end
-
+            
     if forward
         if shadowR != C_NULL && shadowV != C_NULL
             unsafe_store!(shadowR, shadowV)

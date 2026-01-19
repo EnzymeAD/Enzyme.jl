@@ -309,7 +309,7 @@ const known_ops = Dict{DataType,Tuple{Symbol,Int,Union{Nothing,Tuple{Symbol,Data
         name, arity, toinject = cmplx_known_ops[func]
         Tys = (Complex{Float32}, Complex{Float64})
         if length(sparam_vals) == arity
-            if name == :cmplx_jn || name == :cmplx_yn
+            if name == :cmplx_in || name == :cmplx_jn || name == :cmplx_yn
                 if (sparam_vals[2] ∈ Tys) && sparam_vals[2].parameters[1] == sparam_vals[1]
                     return name, toinject, sparam_vals[2]
                 end
@@ -551,6 +551,27 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
                 u = LLVM.user(u)
                 @assert isa(u, LLVM.CallInst)
                 LLVM.API.LLVMAddCallSiteAttribute(u, LLVM.API.LLVMAttributeIndex(2), attr)
+            end
+        end
+
+        fixup_1p12_sret!(llvmfn)
+    end
+
+    # We explicitly save the type of alloca's before they get lowered
+    for f in functions(mod)
+        for bb in blocks(f), inst in instructions(bb)
+            if !isa(inst, LLVM.CallInst)
+                continue
+            end
+            fn = LLVM.called_operand(inst)
+            if !isa(fn, LLVM.Function)
+                continue
+            end
+            if LLVM.name(fn) == "julia.gc_alloc_obj"
+                legal, RT, _ = abs_typeof(inst)
+                if legal
+                    metadata(inst)["enzymejl_gc_alloc_rt"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
+                end
             end
         end
     end
@@ -3022,14 +3043,7 @@ function create_abi_wrapper(
            rettype <: BatchMixedDuplicated
             @assert !sret_union
             if allocatedinline(actualRetType) != allocatedinline(literal_rt)
-                msg = sprint() do io
-                    println(io, string(enzymefn))
-                    println(
-                        io,
-                        "Base.allocatedinline(actualRetType) != Base.allocatedinline(literal_rt): actualRetType = $(actualRetType), literal_rt = $(literal_rt), rettype = $(rettype), sret_union=$(sret_union), pactualRetType=$(pactualRetType)",
-                    )
-                end
-                throw(AssertionError(msg))
+                throw(NonInferredActiveReturn(actualRetType, rettype))
             end
             if rettype <: Active
                 if !allocatedinline(actualRetType)
