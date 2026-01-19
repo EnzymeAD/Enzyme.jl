@@ -22,6 +22,7 @@ end
 
 EnzymeAttributorPass() = NewPMModulePass("enzyme_attributor", enzyme_attributor_pass!)
 ReinsertGCMarkerPass() = NewPMFunctionPass("reinsert_gcmarker", reinsert_gcmarker_pass!)
+RestoreAllocaType() = NewPMFunctionPass("restore_alloca_type", restore_alloca_type!)
 SafeAtomicToRegularStorePass() = NewPMFunctionPass("safe_atomic_to_regular_store", safe_atomic_to_regular_store!)
 Addr13NoAliasPass() = NewPMModulePass("addr13_noalias", addr13NoAlias)
 
@@ -29,6 +30,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     @dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, Addr13NoAliasPass())
+        register!(pb, RestoreAllocaType())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
@@ -50,6 +52,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
             add!(mpm, AlwaysInlinerPass())
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, AllocOptPass())
+                add!(fpm, RestoreAllocaType())
             end
         end
         run!(pb, mod, tm)
@@ -76,6 +79,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     function middle_optimize!(second_stage=false)
     @dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
+        register!(pb, RestoreAllocaType())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
@@ -98,6 +102,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 add!(fpm, ReassociatePass())
                 add!(fpm, EarlyCSEPass())
                 add!(fpm, AllocOptPass())
+                add!(fpm, RestoreAllocaType())
 
                 add!(fpm, NewPMLoopPassManager(use_memory_ssa=true)) do lpm
                     add!(lpm, LoopIdiomRecognizePass())
@@ -117,6 +122,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
 		# todo peeling=false?
                 add!(fpm, LoopUnrollPass(opt_level=2, partial=false)) # what opt level?
                 add!(fpm, AllocOptPass())
+                add!(fpm, RestoreAllocaType())
                 add!(fpm, SROAPass())
                 add!(fpm, GVNPass())
 
@@ -131,6 +137,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 add!(fpm, JumpThreadingPass())
                 add!(fpm, DSEPass())
                 add!(fpm, AllocOptPass())
+                add!(fpm, RestoreAllocaType())
                 add!(fpm, SimplifyCFGPass())
 
 
@@ -222,7 +229,8 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         # merging the `alloca` for the unboxed data and the `alloca` created by the `alloc_opt`
         # pass.
 
-        add!(fpm, AllocOptPass())
+        add!(fpm, AllocOptPass())        
+        add!(fpm, RestoreAllocaType())
         # consider AggressiveInstCombinePass at optlevel > 2
 
         add!(fpm, InstCombinePass())
@@ -240,6 +248,7 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         # Load forwarding above can expose allocations that aren't actually used
         # remove those before optimizing loops.
         add!(fpm, AllocOptPass())
+        add!(fpm, RestoreAllocaType())
 
         add!(fpm, NewPMLoopPassManager(use_memory_ssa=true)) do lpm
             add!(lpm, LoopRotatePass())
@@ -261,6 +270,7 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
 
         # Run our own SROA on heap objects before LLVM's
         add!(fpm, AllocOptPass())
+        add!(fpm, RestoreAllocaType())
         # Re-run SROA after loop-unrolling (useful for small loops that operate,
         # over the structure of an aggregate)
         add!(fpm, SROAPass())
@@ -282,7 +292,8 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
 
         # More dead allocation (store) deletion before loop optimization
         # consider removing this:
-        add!(fpm, AllocOptPass())
+        add!(fpm, AllocOptPass())        
+        add!(fpm, RestoreAllocaType())
 
         # see if all of the constant folding has exposed more loops
         # to simplification and deletion
@@ -435,12 +446,13 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, ReinsertGCMarkerPass())
         register!(pb, SafeAtomicToRegularStorePass())
+		register!(pb, RestoreAllocaType())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
             add!(aam, BasicAA())
         end
-        add!(pb, NewPMModulePassManager()) do mpm
+        add!(pb, NewPMModulePassManager()) do mpm		
             addOptimizationPasses!(mpm)
             if machine
                 # TODO enable validate_return_roots

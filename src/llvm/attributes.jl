@@ -1,4 +1,5 @@
 const nofreefns = Set{String}((
+    "jl_genericmemory_copyto",
     "utf8proc_toupper",
     "ClientGetAddressableDevices",
     "ClientNumAddressableDevices",
