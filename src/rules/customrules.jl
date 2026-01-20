@@ -647,6 +647,7 @@ function enzyme_custom_setup_args(
 
             if mixed
                 @assert arg.cc == GPUCompiler.BITS_REF
+                @assert ival !== nothing
             end
 
             if B !== nothing
@@ -715,6 +716,7 @@ function enzyme_custom_setup_args(
                         end
 
                     end
+                    @assert ival !== nothing
                 elseif !mixed && is_constant_value(gutils, op)
                     @assert n_shadow_roots == (width + 1) * n_primal_roots
 
@@ -724,9 +726,10 @@ function enzyme_custom_setup_args(
                     for idx = 1:width
                         ival = (width == 1) ? ptr_val : insert_value!(B, ptr_val, ld, idx - 1)
                     end
+                    @assert ival !== nothing
                 end
-                
                 @assert ival !== nothing
+                
 
                 if mixed
                     @assert !is_constant_value(gutils, op)
