@@ -389,12 +389,28 @@ function enzyme_custom_setup_args(
         activity_state = active_reg(arg.typ, world)
 
         activep = API.EnzymeGradientUtilsGetDiffeType(gutils, op, false) #=isforeign=#
+	orig_activep = activep
+	any_active_data = mode != API.DEM_ForwardMode && (activity_state == ActiveState || activity_state == MixedState)
 
         roots_activep = nothing
 
         if inline_roots_type(arg.typ) != 0
             roots_op = ops[arg.codegen.i + 1]
             roots_activep = API.EnzymeGradientUtilsGetDiffeType(gutils, roots_op, false)
+	    any_active = false
+	    for ty in non_rooted_types(arg.typ)
+	        if active_reg(ty, world) != Compiler.AnyState
+		   any_active = true
+		   break
+		end
+	    end
+
+	    if activep == API.DFT_CONSTANT && !any_active
+	        @assert roots_activep == API.DFT_DUP_ARG
+		activep = roots_activep
+		any_active_data = false
+	    end
+
             if roots_activep != activep
 		    throw("roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ)) non_rooted_types=$(non_rooted_types(arg.typ))")
             end
@@ -547,10 +563,7 @@ function enzyme_custom_setup_args(
 
             push!(activity, Ty)
 
-        elseif activep == API.DFT_OUT_DIFF || (
-            mode != API.DEM_ForwardMode &&
-            activity_state == ActiveState
-        )
+	elseif activep == API.DFT_OUT_DIFF || (any_active_data && activity_state == ActiveState)
             Ty = Active{arg.typ}
 
             if B !== nothing
@@ -564,7 +577,13 @@ function enzyme_custom_setup_args(
             ival = nothing
             roots_ival = nothing
             if B !== nothing
-                ival = invert_pointer(gutils, op, B)
+	        ival = if is_constant_value(gutils, op)
+		    @assert orig_activep != activep
+		    @assert orig_activep == API.DFT_CONSTANT
+		    val
+		else
+		    invert_pointer(gutils, op, B)
+		end
 
                 uncache_arg = uncacheable[arg.codegen.i] != 0
                 if roots_op !== nothing
@@ -576,7 +595,7 @@ function enzyme_custom_setup_args(
                     # x/ref https://github.com/EnzymeAD/Enzyme.jl/issues/2304
                 end
 
-                if reverse
+                if reverse && !is_constant_value(gutils, op)
                     ival = lookup_value(gutils, ival, B)
                 end
                 if roots_op !== nothing
@@ -591,7 +610,7 @@ function enzyme_custom_setup_args(
             shadowty = arg.typ
             mixed = false
             if width == 1
-                if activity_state == MixedState
+                if any_active_data && activity_state == MixedState
                     # TODO mixedupnoneed
                     shadowty = Base.RefValue{shadowty}
                     Ty = MixedDuplicated{arg.typ}
@@ -605,7 +624,7 @@ function enzyme_custom_setup_args(
                     end
                 end
             else
-                if activity_state == MixedState
+                if any_active_data && activity_state == MixedState
                     # TODO batchmixedupnoneed
                     shadowty = Base.RefValue{shadowty}
                     Ty = BatchMixedDuplicated{arg.typ,Int(width)}
@@ -652,10 +671,12 @@ function enzyme_custom_setup_args(
                     ival = UndefValue(siarty)
 
                     for idx = 1:width
-                        ev =
-                            (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
-                        ld = load!(B, iarty, ev)
-                        ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
+			if !is_constant_value(gutils, op)
+				ev =
+				    (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
+				ld = load!(B, iarty, ev)
+				ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
+			end
 
                         local_shadow_root = if roots_ival !== nothing
                             (width == 1) ? roots_ival : extract_value!(B, roots_ival, idx - 1)
@@ -691,6 +712,7 @@ function enzyme_custom_setup_args(
                 end
 
                 if mixed
+		    @assert !is_constant_value(gutils, op)
 		    @assert arg.cc == GPUCompiler.BITS_REF
                     RefTy = arg.typ
                     if width != 1

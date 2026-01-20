@@ -27,11 +27,15 @@ function restore_alloca_type!(f::LLVM.Function)
 
     for (al, RT, lrt, mdname) in replaceAndErase
         at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(al))
-        if CountTrackedPointers(lrt).count != 0 && CountTrackedPointers(at).count == 0
+	tracked_lrt = CountTrackedPointers(lrt).count
+	tracked_at  = CountTrackedPointers(at).count 
+        if tracked_lrt != 0 && tracked_at == 0
             lrt2 = strip_tracked_pointers(lrt)
             @assert LLVM.sizeof(dl, lrt2) == LLVM.sizeof(dl, lrt)
             lrt = lrt2
+	    tracked_lrt = CountTrackedPointers(lrt).count
         end
+	@assert tracked_lrt == tracked_at
         b = IRBuilder()
         position!(b, al)
         pname = LLVM.name(al)
