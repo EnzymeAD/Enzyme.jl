@@ -671,14 +671,14 @@ function enzyme_custom_setup_args(
                     ival = UndefValue(siarty)
 
                     for idx = 1:width
-			if !is_constant_value(gutils, op)
-				ev =
-				    (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
-				ld = load!(B, iarty, ev)
-				ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
-			else
-				ival = (width == 1) ? ptr_val : insert_value!(B, ptr_val, ld, idx - 1)
-			end
+                        if !is_constant_value(gutils, op)
+                            ev =
+                                (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
+                            ld = load!(B, iarty, ev)
+                            ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
+                        else
+                            ival = (width == 1) ? ptr_val : insert_value!(B, ptr_val, ptr_val, idx - 1)
+                        end
 
                         local_shadow_root = if roots_ival !== nothing
                             (width == 1) ? roots_ival : extract_value!(B, roots_ival, idx - 1)
@@ -710,6 +710,15 @@ function enzyme_custom_setup_args(
                             end
                         end
 
+                    end
+                elseif !mixed && is_constant_value(gutils, op)
+                    @assert n_shadow_roots == (width + 1) * n_primal_roots
+
+                    ptr_val = ival
+                    ival = UndefValue(siarty)
+
+                    for idx = 1:width
+                        ival = (width == 1) ? ptr_val : insert_value!(B, ptr_val, ld, idx - 1)
                     end
                 end
 
