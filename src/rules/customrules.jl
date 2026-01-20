@@ -667,7 +667,11 @@ function enzyme_custom_setup_args(
                 if arg.cc == GPUCompiler.BITS_REF && !mixed
                     @assert n_shadow_roots == (width + 1) * n_primal_roots
 
-                    ptr_val = ival
+                    ptr_val = if !is_constant_value(gutils, op)
+                         ival
+                    else
+                        val
+                    end
                     ival = UndefValue(siarty)
 
                     for idx = 1:width
@@ -714,17 +718,19 @@ function enzyme_custom_setup_args(
                 elseif !mixed && is_constant_value(gutils, op)
                     @assert n_shadow_roots == (width + 1) * n_primal_roots
 
-                    ptr_val = ival
+                    ptr_val = val
                     ival = UndefValue(siarty)
 
                     for idx = 1:width
                         ival = (width == 1) ? ptr_val : insert_value!(B, ptr_val, ld, idx - 1)
                     end
                 end
+                
+                @assert ival !== nothing
 
                 if mixed
-		    @assert !is_constant_value(gutils, op)
-		    @assert arg.cc == GPUCompiler.BITS_REF
+                    @assert !is_constant_value(gutils, op)
+                    @assert arg.cc == GPUCompiler.BITS_REF
                     RefTy = arg.typ
                     if width != 1
                         RefTy = NTuple{Int(width),RefTy}
@@ -772,7 +778,8 @@ function enzyme_custom_setup_args(
                     push!(mixeds, (ptr_val, arg.typ, refal))
                 end
 
-		just_primal_rooting = true
+                @assert ival !== nothing
+                just_primal_rooting = true
                 al0, al = push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache, shadow_roots, just_primal_rooting)
 
                 iptr = inbounds_gep!(
