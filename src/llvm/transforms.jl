@@ -26,7 +26,8 @@ function restore_alloca_type!(f::LLVM.Function)
     end
 
     for (al, RT, lrt, mdname) in replaceAndErase
-        if CountTrackedPointers(lrt).count != 0
+        at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(al))
+        if CountTrackedPointers(lrt).count != 0 && CountTrackedPointers(at).count == 0
             lrt2 = strip_tracked_pointers(lrt)
             @assert LLVM.sizeof(dl, lrt2) == LLVM.sizeof(dl, lrt)
             lrt = lrt2
