@@ -1361,8 +1361,9 @@ function fix_decayaddr!(mod::LLVM.Module)
 		    if legal
 			B = IRBuilder()
 			position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
-            cst = addrspacecast!(B, operands(inst)[1], LLVM.is_opaque(value_type(operands(inst)[1])) ? LLVM.PointerType(Derived) : LLVM.PointerType(eltype(value_type(operands(inst)[1]))))
-		       gep2 = gep!(B, LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(st)), cst, operands(inst)[2:end])
+            op1 = operands(inst)[1]
+            cst = addrspacecast!(B, op1, LLVM.is_opaque(value_type(op1)) ? LLVM.PointerType(Derived) : LLVM.PointerType(eltype(value_type(op1))))
+		       gep2 = gep!(B, LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(st)), cst, operands(st)[2:end])
 		       for st2 in torem
                 	    if isa(st2, LLVM.StoreInst)
 			        LLVM.API.LLVMSetOperand(st2, 2 - 1, gep2)
