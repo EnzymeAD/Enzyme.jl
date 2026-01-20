@@ -676,6 +676,8 @@ function enzyme_custom_setup_args(
 				    (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
 				ld = load!(B, iarty, ev)
 				ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
+			else
+				ival = (width == 1) ? ptr_val : insert_value!(B, ptr_val, ld, idx - 1)
 			end
 
                         local_shadow_root = if roots_ival !== nothing
