@@ -413,13 +413,15 @@ function abs_typeof(
     end
 
     if isa(arg, LLVM.AllocaInst) || isa(arg, LLVM.CallInst)
-        if haskey(metadata(arg), "enzymejl_allocart")
-            mds = operands(metadata(arg)["enzymejl_allocart"])[1]::MDString
+	for mdname in ("enzymejl_gc_alloc_rt", "enzymejl_allocart")
+        if haskey(metadata(arg), mdname)
+            mds = operands(metadata(arg)[mdname])[1]::MDString
             mds = Base.convert(String, mds)
             ptr = reinterpret(Ptr{Cvoid}, parse(UInt, mds))
             RT = Base.unsafe_pointer_to_objref(ptr)
             return (true, RT, GPUCompiler.MUT_REF)
         end
+	end
     end
 
     if isa(arg, LLVM.CallInst)

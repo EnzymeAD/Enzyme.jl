@@ -1,16 +1,16 @@
 function restore_alloca_type!(f::LLVM.Function)
-    replaceAndErase = Tuple{LLVM.AllocaInst,Type, LLVMType}[]
+    replaceAndErase = Tuple{LLVM.AllocaInst,Type, LLVMType, String}[]
     dl = datalayout(LLVM.parent(f))
 
     for bb in blocks(f), inst in instructions(bb)
         if isa(inst, LLVM.AllocaInst)
-            if haskey(metadata(inst), "enzymejl_allocrt") || haskey(metadata(inst), "enzymejl_gc_alloc_rt")
-                mds = operands(metadata(inst)[haskey(metadata(inst), "enzymejl_allocrt") ? "enzymejl_allocart" : "enzymejl_gc_alloc_rt"])[1]::MDString
+            if haskey(metadata(inst), "enzymejl_allocart") || haskey(metadata(inst), "enzymejl_gc_alloc_rt")
+                mds = operands(metadata(inst)[haskey(metadata(inst), "enzymejl_allocart") ? "enzymejl_allocart" : "enzymejl_gc_alloc_rt"])[1]::MDString
                 mds = Base.convert(String, mds)
                 ptr = reinterpret(Ptr{Cvoid}, parse(UInt, mds))
                 RT = Base.unsafe_pointer_to_objref(ptr)
-                lrt = convert(LLVMType, RT)
                 at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(inst))
+		lrt = struct_to_llvm(RT)
                 if at == lrt
                     continue
                 end
@@ -19,13 +19,13 @@ function restore_alloca_type!(f::LLVM.Function)
                     continue
                 end
                 if LLVM.sizeof(dl, at) == LLVM.sizeof(dl, lrt) && CountTrackedPointers(at).count == 0
-                    push!(replaceAndErase, (inst, RT, lrt))
+                    push!(replaceAndErase, (inst, RT, lrt, haskey(metadata(inst), "enzymejl_allocart") ? "enzymejl_allocart" : "enzymejl_gc_alloc_rt"))
                 end
             end
         end
     end
 
-    for (al, RT, lrt) in replaceAndErase
+    for (al, RT, lrt, mdname) in replaceAndErase
         if CountTrackedPointers(lrt).count != 0
             lrt2 = strip_tracked_pointers(lrt)
             @assert LLVM.sizeof(dl, lrt2) == LLVM.sizeof(dl, lrt)
@@ -42,7 +42,7 @@ function restore_alloca_type!(f::LLVM.Function)
         end        
         LLVM.replace_uses!(al, cst)
         LLVM.API.LLVMInstructionEraseFromParent(al)
-        metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
+        metadata(al2)[mdname] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
     end
 	return length(replaceAndErase) != 0
 end
