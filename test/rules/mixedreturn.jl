@@ -54,6 +54,10 @@ F_good(x) = inner(() -> [x])[1][1]
 @testset "Simple Mixed Return" begin
 	@test autodiff(Forward, F_good, Duplicated(0.3, 3.1))[1] ≈ 2.7
 
+	if VERSION < v"1.12"
+    	@test_throws Enzyme.Compiler.MixedReturnException autodiff(Reverse, F_good, Active(0.3))
+	else
 	@test autodiff(Reverse, F_good, Active(0.3))[1][1] ≈ 102.7 
+	end
 end
 
