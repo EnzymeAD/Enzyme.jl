@@ -185,6 +185,8 @@ if VERSION >= v"1.11.0-DEV.1552"
         Interpreter.EnzymeInterpreter(
             GPUCompiler.ci_cache_token(job),
             GPUCompiler.method_table(job),
+            GPUCompiler.inference_params(job),
+            GPUCompiler.optimization_params(job),
             job.world,
             job.config.params.mode,
             true
@@ -211,6 +213,8 @@ else
         Interpreter.EnzymeInterpreter(
             enzyme_ci_cache(job),
             GPUCompiler.method_table(job),
+            GPUCompiler.inference_params(job),
+            GPUCompiler.optimization_params(job),
             job.world,
             job.config.params.mode,
             true
@@ -7164,7 +7168,7 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
     
     target = EnzymeTarget()
     rt2 = if A isa UnionAll
-        rrt = primal_return_type_world(Mode == API.DEM_ForwardMode ? Forward : Reverse, world, mi)
+        rrt = primal_return_type_world(Mode, world, mi)
 
         # Don't error here but default to nothing return since in cuda context we don't use the device overrides
         if rrt == Union{}
