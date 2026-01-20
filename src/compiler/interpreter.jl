@@ -1123,8 +1123,8 @@ function ty_eltypes(state::NamedTuple, t::Tuple)::Core.Compiler.Future{Type}
         Core.Compiler.Future{Type}{Union{}}
     else
         retT = ty_broadcast_getindex_eltype(state, t[1])
-        Core.Compiler.Future{Type}(retT, interp, sv) do retT, interp, sv
-            Iterators.TupleOrBottom(retT, TT.parameters...)
+        Core.Compiler.Future{Type}(isready(TT) && isready(retT), interp, sv) do interp, sv
+            Iterators.TupleOrBottom(retT[], TT[].parameters...)
         end
     end
 end
@@ -1133,17 +1133,22 @@ end
 function ty_combine_eltypes(state::NamedTuple, f, args::Tuple)::Core.Compiler.Future{Type}
     (; interp, sv, max_methods) = state
     argT = ty_eltypes(state, args)
-    return Core.Compiler.Future{Type}(isready(argT) && isready(rtfuture), argT, interp, sv) do argT, interp, sv
+    ret = Core.Compiler.Future{Type}()
+    
+    return (argT, argT, interp, sv) do argT, interp, sv
         argT === Union{} && Union{}
-        preprom = abstract_call(
-            interp,
-            ArgInfo(nothing, Any[f, argT.parameters...]),
-            StmtInfo(true, false),
-            sv,
-            max_methods,
-        )[]
-        Base.promote_typejoin_union(widenconst(preprom.rt))
     end
+    preprom = abstract_call(
+        interp,
+        ArgInfo(nothing, Any[f, argT.parameters...]),
+        StmtInfo(true, false),
+        sv,
+        max_methods,
+    )
+    
+    
+    infercalls(interp, sv) || push!(sv.tasks, infercalls)
+    ret[] = Base.promote_typejoin_union(widenconst(preprom.rt))
 end
 
 struct broadcast_rewriter
