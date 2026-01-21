@@ -1134,38 +1134,31 @@ function ty_combine_eltypes(state::NamedTuple, f, args::Tuple)::Core.Compiler.Fu
     (; interp, sv, max_methods) = state
     argT = ty_eltypes(state, args)
     ret = Core.Compiler.Future{Type}()
-    while true
-        function finish_abstract_call(interp, sv)
-            isready(argT) || return false
-            if argT[] == Union{}
-                ret[] = Union{}
-                return true
-            end
-            preprom = abstract_call(
-                interp,
-                ArgInfo(nothing, Any[f, argT[].parameters...]),
-                StmtInfo(true, false),
-                sv,
-                max_methods,
-            )
-            if isready(preprom)
-                ret[] = Base.promote_typejoin_union(widenconst(preprom.rt))
-                return true
-            else
-                return false
-            end
+    ccall(:jl_safe_printf, Cvoid, (Cstring, Cstring), "f=%s\n", string(f))
+    ccall(:jl_safe_printf, Cvoid, (Cstring, Cstring), "args=%s\n", string(args))
+    function finish_abstract_call(interp, sv)
+        isready(argT) || return false
+        if argT[] == Union{}
+            ret[] = Union{}
+            return true
         end
-        
-        if finish_abstract_call(interp, sv)
-            return ret
-        else
-            push!(sv.tasks, finish_abstract_call)
-        end
+        preprom = abstract_call(
+            interp,
+            ArgInfo(nothing, Any[f, argT[].parameters...]),
+            StmtInfo(true, false),
+            sv,
+            max_methods,
+        )
+        isready(preprom) || return false
+        ret[] = Base.promote_typejoin_union(widenconst(preprom.rt))
+        return true
     end
+    finish_abstract_call(interp, sv) || push!(sv.tasks, finish_abstract_call)
+    return ret
 end
 
 struct broadcast_rewriter
-    fargs::Tuple
+    fargs::Vector{Any}
     argtypes
     si::StmtInfo
     max_methods::Int
@@ -1388,7 +1381,7 @@ function abstract_call_known(
                         )
                     end
                 else
-                    return Core.Compiler.Future(broadcast_rewriter(
+                    return Core.Compiler.Future{Core.Compiler.CallMeta}(broadcast_rewriter(
                                 fargs,
                                 argtypes,
                                 si,
