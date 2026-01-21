@@ -1134,8 +1134,6 @@ function ty_combine_eltypes(state::NamedTuple, f, args::Tuple)::Core.Compiler.Fu
     (; interp, sv, max_methods) = state
     argT = ty_eltypes(state, args)
     ret = Core.Compiler.Future{Type}()
-    ccall(:jl_safe_printf, Cvoid, (Cstring, Cstring), "f=%s\n", string(f))
-    ccall(:jl_safe_printf, Cvoid, (Cstring, Cstring), "args=%s\n", string(args))
     function finish_abstract_call(interp, sv)
         isready(argT) || return false
         if argT[] == Union{}
@@ -1149,8 +1147,13 @@ function ty_combine_eltypes(state::NamedTuple, f, args::Tuple)::Core.Compiler.Fu
             sv,
             max_methods,
         )
-        isready(preprom) || return false
-        ret[] = Base.promote_typejoin_union(widenconst(preprom.rt))
+        function continuation(interp, sv)
+            isready(preprom) || return false
+            retty = widenconst(preprom[].rt)
+            ret[] = Base.promote_typejoin_union(retty)
+            return true
+        end
+        continuation(interp, sv) || push!(sv.tasks, continuation)
         return true
     end
     finish_abstract_call(interp, sv) || push!(sv.tasks, finish_abstract_call)
@@ -1158,6 +1161,8 @@ function ty_combine_eltypes(state::NamedTuple, f, args::Tuple)::Core.Compiler.Fu
 end
 
 struct broadcast_rewriter
+    ret::Core.Compiler.Future{CallMeta}
+    ElType::Core.Compiler.Future{Type}
     fargs::Vector{Any}
     argtypes
     si::StmtInfo
@@ -1165,16 +1170,18 @@ struct broadcast_rewriter
     f::Any
     arginfo::ArgInfo
 end
-function (bcr::broadcast_rewriter)(ElType, interp, sv)
-    (; fargs, argtypes, si, max_methods, f, arginfo) = bcr
+function (bcr::broadcast_rewriter)(interp, sv)
+    (; ret, ElType, fargs, argtypes, si, max_methods, f, arginfo) = bcr
+    isready(ElType) || return false
+    ElType = ElType[]
+    local retFuture
     if ElType !== Union{} && Base.isconcretetype(ElType)
         fn2 = Enzyme.Compiler.Interpreter.OverrideBCMaterialize{ElType}()
         arginfo2 = ArgInfo(
             fargs isa Nothing ? nothing : [:(fn2), fargs[2:end]...],
            [Core.Const(fn2), argtypes[2:end]...],
         )
-
-        return Base.@invoke abstract_call_known(
+        retFuture = Base.@invoke abstract_call_known(
             interp::AbstractInterpreter,
             fn2::Any,
             arginfo2::ArgInfo,
@@ -1186,8 +1193,7 @@ function (bcr::broadcast_rewriter)(ElType, interp, sv)
         if interp.handler != nothing
             return interp.handler(interp, f, arginfo, si, sv, max_methods)
         end
-        
-        return Base.@invoke abstract_call_known(
+        retFuture = Base.@invoke abstract_call_known(
             interp::AbstractInterpreter,
             f::Any,
             arginfo::ArgInfo,
@@ -1196,6 +1202,14 @@ function (bcr::broadcast_rewriter)(ElType, interp, sv)
             max_methods::Int,
         )
     end
+    
+    function continuation(interp, sv)
+        isready(retFuture) || return false
+        ret[] = retFuture[]
+        return true
+    end
+    continuation(interp, sv) || push!(sv.tasks, continuation)
+    return true
 end
 end
 
@@ -1381,14 +1395,18 @@ function abstract_call_known(
                         )
                     end
                 else
-                    return Core.Compiler.Future{Core.Compiler.CallMeta}(broadcast_rewriter(
+                    ret = Core.Compiler.Future{Core.Compiler.CallMeta}()
+                    bcr = broadcast_rewriter(
+                                ret,
+                                ElType,
                                 fargs,
                                 argtypes,
                                 si,
                                 max_methods,
                                 f,
-                                arginfo),
-                            ElType, interp, sv)
+                                arginfo)
+                    bcr = bcr(interp, sv) || push!(sv.tasks, bcr)
+                    return ret
                 end
             end
         end
