@@ -577,13 +577,15 @@ function enzyme_custom_setup_args(
             ival = nothing
             roots_ival = nothing
             if B !== nothing
-	        ival = if is_constant_value(gutils, op)
-		    @assert orig_activep != activep
-		    @assert orig_activep == API.DFT_CONSTANT
-		    val
-		else
-		    invert_pointer(gutils, op, B)
-		end
+                ival = if is_constant_value(gutils, op)
+                    @assert orig_activep != activep
+                    @assert orig_activep == API.DFT_CONSTANT
+                    @assert val !== nothing
+                    val
+                else
+                    invert_pointer(gutils, op, B)
+                end
+                @assert ival !== nothing
 
                 uncache_arg = uncacheable[arg.codegen.i] != 0
                 if roots_op !== nothing
@@ -604,6 +606,7 @@ function enzyme_custom_setup_args(
                         roots_ival = lookup_value(gutils, roots_ival, B)
                     end
                 end
+                @assert ival !== nothing
             end
 
 
@@ -647,10 +650,10 @@ function enzyme_custom_setup_args(
 
             if mixed
                 @assert arg.cc == GPUCompiler.BITS_REF
-                @assert ival !== nothing
             end
 
             if B !== nothing
+                @assert ival !== nothing
 
                 n_shadow_roots = inline_roots_type(Ty)
                 n_primal_roots = inline_roots_type(arg.typ)
@@ -672,7 +675,11 @@ function enzyme_custom_setup_args(
                         @assert ival !== nothing
                          ival
                     else
-                        val
+                        if val == nothing
+                            load!(B, iarty, ogval)
+                        else
+                            val
+                        end
                     end
                     @assert ptr_val !== nothing
                     ival = UndefValue(siarty)
