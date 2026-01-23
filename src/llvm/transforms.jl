@@ -34,8 +34,13 @@ function restore_alloca_type!(f::LLVM.Function)
             @assert LLVM.sizeof(dl, lrt2) == LLVM.sizeof(dl, lrt)
             lrt = lrt2
 	    tracked_lrt = CountTrackedPointers(lrt).count
+	    if tracked_lrt != 0
+		    throw(AssertionError("tracked_lrt ($tracked_lrt) != 0, $(string(lrt))"))
+	    end
         end
-	@assert tracked_lrt == tracked_at
+	if tracked_lrt != tracked_at
+	    throw(AssertionError("tracked_lrt ($tracked_lrt) != tracked_at ($tracked_at), at=$(string(at)), lrt=$(string(lrt)) al=$(string(al))"))
+	end
         b = IRBuilder()
         position!(b, al)
         pname = LLVM.name(al)

@@ -102,11 +102,11 @@ function strip_tracked_pointers(@nospecialize(T::LLVM.LLVMType))
         end
     end
     if isa(T, LLVM.ArrayType)
-        return LLVM.ArrayType(eltype(T), length(T))
+    	return LLVM.ArrayType(strip_tracked_pointers(eltype(T)), length(T))
     end
 
     if isa(T, LLVM.VectorType)
-        return LLVM.VectorType(eltype(T), length(T))
+        return LLVM.VectorType(strip_tracked_pointers(eltype(T)), length(T))
     end
 
     if isa(T, LLVM.StructType)

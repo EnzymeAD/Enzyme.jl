@@ -5555,7 +5555,9 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             if legal
                 if codegen_typ isa LLVM.PointerType || codegen_typ isa LLVM.IntegerType
                 else
-                    @assert byref == GPUCompiler.BITS_VALUE
+                    if byref != GPUCompiler.BITS_VALUE
+		       throw(AssertionError("Expected cc to be bits_value, found $byref, ty=$source_typ, cg_typ=$codegen_typ, inst=$(string(inst))"))
+		    end
                     source_typ
                 end
 
