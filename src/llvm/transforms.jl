@@ -1,16 +1,16 @@
 function restore_alloca_type!(f::LLVM.Function)
-    replaceAndErase = Tuple{LLVM.AllocaInst,Type, LLVMType}[]
+    replaceAndErase = Tuple{LLVM.AllocaInst,Type, LLVMType, String}[]
     dl = datalayout(LLVM.parent(f))
 
     for bb in blocks(f), inst in instructions(bb)
         if isa(inst, LLVM.AllocaInst)
-            if haskey(metadata(inst), "enzymejl_allocrt") || haskey(metadata(inst), "enzymejl_gc_alloc_rt")
-                mds = operands(metadata(arg)["enzymejl_allocart"])[1]::MDString
+            if haskey(metadata(inst), "enzymejl_allocart") || haskey(metadata(inst), "enzymejl_gc_alloc_rt")
+                mds = operands(metadata(inst)[haskey(metadata(inst), "enzymejl_allocart") ? "enzymejl_allocart" : "enzymejl_gc_alloc_rt"])[1]::MDString
                 mds = Base.convert(String, mds)
                 ptr = reinterpret(Ptr{Cvoid}, parse(UInt, mds))
                 RT = Base.unsafe_pointer_to_objref(ptr)
-                lrt = convert(LLVMType, RT)
                 at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(inst))
+		lrt = struct_to_llvm(RT)
                 if at == lrt
                     continue
                 end
@@ -19,18 +19,23 @@ function restore_alloca_type!(f::LLVM.Function)
                     continue
                 end
                 if LLVM.sizeof(dl, at) == LLVM.sizeof(dl, lrt) && CountTrackedPointers(at).count == 0
-                    push!(replaceAndErase, (inst, RT, lrt))
+                    push!(replaceAndErase, (inst, RT, lrt, haskey(metadata(inst), "enzymejl_allocart") ? "enzymejl_allocart" : "enzymejl_gc_alloc_rt"))
                 end
             end
         end
     end
 
-    for (al, RT, lrt) in replaceAndErase
-        if CountTrackedPointers(lrt).count != 0
+    for (al, RT, lrt, mdname) in replaceAndErase
+        at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(al))
+	tracked_lrt = CountTrackedPointers(lrt).count
+	tracked_at  = CountTrackedPointers(at).count 
+        if tracked_lrt != 0 && tracked_at == 0
             lrt2 = strip_tracked_pointers(lrt)
             @assert LLVM.sizeof(dl, lrt2) == LLVM.sizeof(dl, lrt)
             lrt = lrt2
+	    tracked_lrt = CountTrackedPointers(lrt).count
         end
+	@assert tracked_lrt == tracked_at
         b = IRBuilder()
         position!(b, al)
         pname = LLVM.name(al)
@@ -42,7 +47,7 @@ function restore_alloca_type!(f::LLVM.Function)
         end        
         LLVM.replace_uses!(al, cst)
         LLVM.API.LLVMInstructionEraseFromParent(al)
-        metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
+        metadata(al2)[mdname] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
     end
 	return length(replaceAndErase) != 0
 end
@@ -1356,8 +1361,9 @@ function fix_decayaddr!(mod::LLVM.Module)
 		    if legal
 			B = IRBuilder()
 			position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
-		       cst = addrspacecast!(B, operands(inst)[1], LLVM.PointerType(Derived))
-		       gep2 = gep!(B, LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(st)), cst, operands(inst)[2:end])
+            op1 = operands(inst)[1]
+            cst = addrspacecast!(B, op1, LLVM.is_opaque(value_type(op1)) ? LLVM.PointerType(Derived) : LLVM.PointerType(eltype(value_type(op1))))
+		       gep2 = gep!(B, LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(st)), cst, operands(st)[2:end])
 		       for st2 in torem
                 	    if isa(st2, LLVM.StoreInst)
 			        LLVM.API.LLVMSetOperand(st2, 2 - 1, gep2)

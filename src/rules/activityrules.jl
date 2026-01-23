@@ -100,11 +100,13 @@ function julia_activity_rule(f::LLVM.Function, method_table)
                 idx += 1
             end
             if returnRoots !== nothing
-                if !in(idx, parmsRemoved)
+	        if !in(idx, parmsRemoved)
+		    if (VERSION < v"1.12" || guaranteed_const_nongen(RT, world))
                     push!(
                         parameter_attributes(f, idx + 1),
                         StringAttribute("enzyme_inactive"),
                     )
+		    end
                 end
             end
         end
