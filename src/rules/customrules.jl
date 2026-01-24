@@ -580,8 +580,11 @@ function enzyme_custom_setup_args(
                 ival = if is_constant_value(gutils, op)
                     @assert orig_activep != activep
                     @assert orig_activep == API.DFT_CONSTANT
-                    @assert val !== nothing
-                    val
+                    if val == nothing
+                        load!(B, iarty, ogval)
+                    else
+                        val
+                    end
                 else
                     invert_pointer(gutils, op, B)
                 end
