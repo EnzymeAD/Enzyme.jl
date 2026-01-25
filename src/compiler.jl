@@ -2491,6 +2491,8 @@ const DumpPreEnzyme = Ref(false)
 const DumpPostEnzyme = Ref(false)
 const DumpPostWrap = Ref(false)
 
+using Tracy
+
 function enzyme!(
     job::CompilerJob,
     interp,
@@ -2664,7 +2666,7 @@ function enzyme!(
 
     TapeType = Cvoid
 
-    if mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
+    @tracepoint "Enzyme: Create IR" if mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
         returnUsed = !(isghostty(actualRetType) || Core.Compiler.isconstType(actualRetType))
         shadowReturnUsed =
             returnUsed && (
