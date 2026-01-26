@@ -1,7 +1,6 @@
 function restore_alloca_type!(f::LLVM.Function)
-    replaceAndErase = Tuple{LLVM.AllocaInst,Type, LLVMType, String}[]
+    replaceAndErase = Tuple{LLVM.AllocaInst,LLVMType}[]
     dl = datalayout(LLVM.parent(f))
-
     for bb in blocks(f), inst in instructions(bb)
         if isa(inst, LLVM.AllocaInst)
             if haskey(metadata(inst), "enzymejl_allocart") || haskey(metadata(inst), "enzymejl_gc_alloc_rt")
@@ -19,13 +18,17 @@ function restore_alloca_type!(f::LLVM.Function)
                     continue
                 end
                 if LLVM.sizeof(dl, at) == LLVM.sizeof(dl, lrt) && CountTrackedPointers(at).count == 0
-                    push!(replaceAndErase, (inst, RT, lrt, haskey(metadata(inst), "enzymejl_allocart") ? "enzymejl_allocart" : "enzymejl_gc_alloc_rt"))
+                    push!(replaceAndErase, (inst, lrt))
                 end
             end
         end
     end
+   
+    if length(replaceAndErase) == 0
+	    return false
+  end
 
-    for (al, RT, lrt, mdname) in replaceAndErase
+    for (al, lrt) in replaceAndErase
         at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(al))
 	tracked_lrt = CountTrackedPointers(lrt).count
 	tracked_at  = CountTrackedPointers(at).count 
@@ -35,26 +38,28 @@ function restore_alloca_type!(f::LLVM.Function)
             lrt = lrt2
 	    tracked_lrt = CountTrackedPointers(lrt).count
 	    if tracked_lrt != 0
+	    ccall(:jl_, Cvoid, (Any,), ("BAD1", string(al), string(lrt), tracked_lrt))
 		    throw(AssertionError("tracked_lrt ($tracked_lrt) != 0, $(string(lrt))"))
 	    end
         end
 	if tracked_lrt != tracked_at
+	    ccall(:jl_, Cvoid, (Any,), ("BAD2", string(al), string(lrt), tracked_lrt))
 	    throw(AssertionError("tracked_lrt ($tracked_lrt) != tracked_at ($tracked_at), at=$(string(at)), lrt=$(string(lrt)) al=$(string(al))"))
 	end
         b = IRBuilder()
         position!(b, al)
-        pname = LLVM.name(al)
-        LLVM.name!(al, "")
-        al2 = alloca!(b, lrt, pname)
+        al2 = alloca!(b, lrt)
         cst = al2
         if value_type(cst) != value_type(al)
             cst = bitcast!(b, cst, value_type(al))
         end        
+	API.EnzymeCopyMetadata(al2, al)
+	API.EnzymeCopyAlignment(al2, al)
+	API.EnzymeTakeName(al2, al)
         LLVM.replace_uses!(al, cst)
         LLVM.API.LLVMInstructionEraseFromParent(al)
-        metadata(al2)[mdname] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
     end
-	return length(replaceAndErase) != 0
+	return true
 end
 
 # Rewrite calls with "jl_roots" to only have the jl_value_t attached and not  { { {} addrspace(10)*, [1 x [2 x i64]], i64, i64 }, [2 x i64] } %unbox110183_replacementA
