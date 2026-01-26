@@ -405,7 +405,7 @@ function enzyme_custom_setup_args(
 		end
 	    end
 
-	    if activep == API.DFT_CONSTANT && !any_active
+	    if roots_activep != activep && activep == API.DFT_CONSTANT && !any_active
 	        if roots_activep != API.DFT_DUP_ARG
 		    throw(AssertionError("v1 roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ)) non_rooted_types=$(non_rooted_types(arg.typ))"))
 		end
