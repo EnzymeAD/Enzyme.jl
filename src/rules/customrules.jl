@@ -574,45 +574,6 @@ function enzyme_custom_setup_args(
             push!(actives, op)
         else
 
-            ival = nothing
-            roots_ival = nothing
-            if B !== nothing
-                ival = if is_constant_value(gutils, op)
-                    @assert orig_activep != activep
-                    @assert orig_activep == API.DFT_CONSTANT
-                    if val == nothing
-                        load!(B, iarty, ogval)
-                    else
-                        val
-                    end
-                else
-                    invert_pointer(gutils, op, B)
-                end
-                @assert ival !== nothing
-
-                uncache_arg = uncacheable[arg.codegen.i] != 0
-                if roots_op !== nothing
-                    uncache_arg |= uncacheable[arg.codegen.i + 1] != 0
-                end
-                if uncache_arg
-                    # TODO we will are not restoring the bits_ref data of the
-                    # shadow value (though now we are at least doing so properly for primal)
-                    # x/ref https://github.com/EnzymeAD/Enzyme.jl/issues/2304
-                end
-
-                if reverse && !is_constant_value(gutils, op)
-                    ival = lookup_value(gutils, ival, B)
-                end
-                if roots_op !== nothing
-                    roots_ival = invert_pointer(gutils, roots_op, B)
-                    if reverse
-                        roots_ival = lookup_value(gutils, roots_ival, B)
-                    end
-                end
-                @assert ival !== nothing
-            end
-
-
             shadowty = arg.typ
             mixed = false
             if width == 1
@@ -653,6 +614,44 @@ function enzyme_custom_setup_args(
 
             if mixed
                 @assert arg.cc == GPUCompiler.BITS_REF
+            end
+            
+            ival = nothing
+            roots_ival = nothing
+            if B !== nothing
+                ival = if is_constant_value(gutils, op)
+                    @assert orig_activep != activep
+                    @assert orig_activep == API.DFT_CONSTANT
+                    if val == nothing
+                        load!(B, iarty, ogval)
+                    else
+                        val
+                    end
+                else
+                    invert_pointer(gutils, op, B)
+                end
+                @assert ival !== nothing
+
+                uncache_arg = uncacheable[arg.codegen.i] != 0
+                if roots_op !== nothing
+                    uncache_arg |= uncacheable[arg.codegen.i + 1] != 0
+                end
+                if uncache_arg
+                    # TODO we will are not restoring the bits_ref data of the
+                    # shadow value (though now we are at least doing so properly for primal)
+                    # x/ref https://github.com/EnzymeAD/Enzyme.jl/issues/2304
+                end
+
+                if reverse && !is_constant_value(gutils, op)
+                    ival = lookup_value(gutils, ival, B)
+                end
+                if roots_op !== nothing
+                    roots_ival = invert_pointer(gutils, roots_op, B)
+                    if reverse
+                        roots_ival = lookup_value(gutils, roots_ival, B)
+                    end
+                end
+                @assert ival !== nothing
             end
 
             if B !== nothing
