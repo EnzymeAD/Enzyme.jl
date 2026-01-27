@@ -1084,12 +1084,15 @@ end
                     EnumAttribute("willreturn"),
                     EnumAttribute("nosync"),
                     EnumAttribute("nofree"),
+           	    StringAttribute("enzyme_preserve_primal", "*"),
 		      ]
     else
         LLVM.Attribute[EnumAttribute("memory", NoEffects.data), StringAttribute("enzyme_shouldrecompute"),
                     EnumAttribute("willreturn"),
                     EnumAttribute("nosync"),
-		    EnumAttribute("nofree")]
+		    EnumAttribute("nofree"),
+           	    StringAttribute("enzyme_preserve_primal", "*"),
+		    ]
     end
     handleCustom(state, custom, k_name, llvmfn, name, attrs)
     return
@@ -6764,19 +6767,31 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         mstr = if job.config.params.ABI <: InlineABI
             ""
         else
+            fixup_callconv!(mod, JIT.get_tm())
+            for f in functions(mod)
+                for i in 1:length(parameters(f))
+                    for a in collect(parameter_attributes(f, i))
+                       if kind(a) == "enzyme_sret"
+                           API.EnzymeDumpValueRef(f)
+                       end
+                       @assert kind(a) != "enzyme_sret"
+                       @assert kind(a) != "enzyme_sret_v"
+                    end
+                end
+            end
             string(mod)
         end
         if job.config.params.ABI <: FFIABI || job.config.params.ABI <: NonGenABI
             if DumpPrePostOpt[]
                 API.EnzymeDumpModuleRef(mod.ref)
             end
-            post_optimize!(mod, JIT.get_tm())
+            post_optimize!(mod, JIT.get_tm(); callconv=false)
             if DumpPostOpt[]
                 API.EnzymeDumpModuleRef(mod.ref)
             end
         else
             propagate_returned!(mod)
-	    Compiler.JIT.prepare!(mod)
+            Compiler.JIT.prepare!(mod)
         end
         mstr
     else
