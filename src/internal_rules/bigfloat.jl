@@ -69,4 +69,4 @@ end
 
 EnzymeRules.@easy_rule(+(a::BigFloat, b::BigFloat), (1,1))
 EnzymeRules.@easy_rule(-(a::BigFloat, b::BigFloat), (1,-1))
-EnzymeRules.@easy_rule(/(a::BigFloat, b::Number), (1/b,-Ω/b))
+EnzymeRules.@easy_rule(/(a::BigFloat, b::Number), (one(a)/b, -a/(b^2)))
