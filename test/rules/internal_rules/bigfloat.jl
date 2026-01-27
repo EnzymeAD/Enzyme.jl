@@ -3,9 +3,10 @@ using EnzymeTestUtils
 using FiniteDifferences
 using Test
 
-@testset "BigFloat +/-" begin
+@testset "BigFloat arithmetic" begin
     a = rand(BigFloat)
     b = rand(BigFloat)
+    b_int = rand(Int)
 
     # doesn't work because of https://github.com/EnzymeAD/Enzyme.jl/issues/2888
     #test_reverse(+, Const, (a, Const), (b, Const))
@@ -17,4 +18,7 @@ using Test
     test_forward(+, Duplicated, (a, Duplicated), (b, Duplicated))
     test_forward(-, Const, (a, Const), (b, Const))
     test_forward(-, Duplicated, (a, Duplicated), (b, Duplicated))
+    test_forward(/, Const, (a, Const), (b, Const))
+    test_forward(/, Duplicated, (a, Duplicated), (b, Duplicated))
+    test_forward(/, Const, (a, Const), (b_int, Const))
 end
