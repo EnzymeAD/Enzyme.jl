@@ -19,6 +19,9 @@ using Test
     test_forward(-, Const, (a, Const), (b, Const))
     test_forward(-, Duplicated, (a, Duplicated), (b, Duplicated))
     test_forward(/, Const, (a, Const), (b, Const))
+    test_forward(/, Duplicated, (a, Duplicated), (b, Const))
+    test_forward(/, Duplicated, (a, Const), (b, Duplicated))
     test_forward(/, Duplicated, (a, Duplicated), (b, Duplicated))
     test_forward(/, Const, (a, Const), (b_int, Const))
+    test_forward(/, Duplicated, (a, Duplicated), (b_int, Const))
 end
