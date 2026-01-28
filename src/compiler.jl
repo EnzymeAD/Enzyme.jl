@@ -3905,26 +3905,26 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
                 continue
             end
             if isa(ty, LLVM.ArrayType)
-                for i = 1:length(ty)
+	        for i = reverse(1:length(ty))
                     npath = copy(path)
 		    push!(npath, i - 1)
-                    push!(todo, (npath, eltype(ty)))
+                    pushfirst!(todo, (npath, eltype(ty)))
                 end
                 continue
             end
             if isa(ty, LLVM.VectorType)
-                for i = 1:size(ty)
+	        for i = reverse(1:size(ty))
                     npath = copy(path)
 		    push!(npath, i - 1)
-                    push!(todo, (npath, eltype(ty)))
+                    pushfirst!(todo, (npath, eltype(ty)))
                 end
                 continue
             end
             if isa(ty, LLVM.StructType)
-                for (i, t) in enumerate(LLVM.elements(ty))
+	        for (i, t) in reverse(collect(enumerate(LLVM.elements(ty))))
                         npath = copy(path)
 			push!(npath, i - 1)
-                        push!(todo, (npath, t))
+                        pushfirst!(todo, (npath, t))
                 end
                 continue
             end
@@ -5556,7 +5556,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
                 if codegen_typ isa LLVM.PointerType || codegen_typ isa LLVM.IntegerType
                 else
                     if byref != GPUCompiler.BITS_VALUE
-		       throw(AssertionError("Expected cc to be bits_value, found $byref, ty=$source_typ, cg_typ=$codegen_typ, inst=$(string(inst))"))
+		        throw(AssertionError("Expected cc to be bits_value, found $byref, ty=$source_typ, cg_typ=$codegen_typ, inst=$(string(inst))\n\n$(string(fn))\n\n$fn\n\n$(string(LLVM.parent(LLVM.parent(inst))))"))
 		    end
                     source_typ
                 end
