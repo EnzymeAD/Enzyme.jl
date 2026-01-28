@@ -14,14 +14,10 @@ using Test
     #test_reverse(-, Const, (a, Const), (b, Const))
     #test_reverse(-, Active, (a, Active), (b, Active))
 
-    test_forward(+, Const, (a, Const), (b, Const))
-    test_forward(+, Duplicated, (a, Duplicated), (b, Duplicated))
-    test_forward(-, Const, (a, Const), (b, Const))
-    test_forward(-, Duplicated, (a, Duplicated), (b, Duplicated))
-    test_forward(/, Const, (a, Const), (b, Const))
-    test_forward(/, Duplicated, (a, Duplicated), (b, Const))
-    test_forward(/, Duplicated, (a, Const), (b, Duplicated))
-    test_forward(/, Duplicated, (a, Duplicated), (b, Duplicated))
-    test_forward(/, Const, (a, Const), (b_int, Const))
-    test_forward(/, Duplicated, (a, Duplicated), (b_int, Const))
+    for TR in (Const, Duplicated), TA in (Const, Duplicated), TB in (Const, Duplicated)
+        test_forward(+, TR, (a, TA), (b, TB))
+        test_forward(-, TR, (a, TA), (b, TB))
+        test_forward(*, TR, (a, TA), (b, TB))
+        test_forward(/, TR, (a, TA), (b, TB))
+    end
 end
