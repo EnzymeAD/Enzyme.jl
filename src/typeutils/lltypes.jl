@@ -1,3 +1,19 @@
+const HAS_STRUCT_TO_LLVM = Libdl.dlsym(
+                   unsafe_load(cglobal(:jl_libjulia_handle, Ptr{Cvoid})), :jl_struct_to_llvm, throw_error = false
+               ) !== nothing
+
+function struct_to_llvm(@nospecialize(Ty::Type))
+	if HAS_STRUCT_TO_LLVM
+	    isboxed_ref = Ref{Bool}()
+	    llvmtyp =
+        LLVM.LLVMType(ccall(:jl_struct_to_llvm, LLVM.API.LLVMTypeRef,
+                        (Any, LLVM.Context, Ptr{Bool}), Ty, LLVM.context(), isboxed_ref))
+	    return llvmtyp
+	 else
+	    return convert(LLVMType, Ty)
+	 end
+end
+
 function isSpecialPtr(@nospecialize(Ty::LLVM.LLVMType))
     if !isa(Ty, LLVM.PointerType)
         return false
@@ -86,16 +102,16 @@ function strip_tracked_pointers(@nospecialize(T::LLVM.LLVMType))
         end
     end
     if isa(T, LLVM.ArrayType)
-        return LLVM.ArrayType(eltype(T), length(T))
+    	return LLVM.ArrayType(strip_tracked_pointers(eltype(T)), length(T))
     end
 
     if isa(T, LLVM.VectorType)
-        return LLVM.VectorType(eltype(T), length(T))
+        return LLVM.VectorType(strip_tracked_pointers(eltype(T)), length(T))
     end
 
     if isa(T, LLVM.StructType)
-        subtypes = LLVM.LLVMTypes[]
-        for (i, t) in enumerate(LLVM.elements(ty))
+        subtypes = LLVM.LLVMType[]
+        for (i, t) in enumerate(LLVM.elements(T))
             push!(subtypes, strip_tracked_pointers(t))
         end
         return LLVM.StructType(subtypes; packed=LLVM.ispacked(T))

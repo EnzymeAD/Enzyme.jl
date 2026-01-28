@@ -17,7 +17,13 @@ adtypes = (
 @model function assume_normal()
     a ~ Normal()
 end
-dppl_lda = begin
+@model function dppl_lda(k, m, w, doc, alpha, beta)
+    theta ~ product_distribution(fill(Dirichlet(alpha), m))
+    phi ~ product_distribution(fill(Dirichlet(beta), k))
+    log_phi_dot_theta = log.(phi * theta)
+    @addlogprob! sum(log_phi_dot_theta[CartesianIndex.(w, doc)])
+end
+dppl_lda_model = begin
     v = 100      # words
     k = 5        # topics
     m = 10       # number of docs
@@ -37,18 +43,12 @@ dppl_lda = begin
             doc[idx + j] = i
         end
     end
-    @model function dppl_lda(k, m, w, doc, alpha, beta)
-        theta ~ product_distribution(fill(Dirichlet(alpha), m))
-        phi ~ product_distribution(fill(Dirichlet(beta), k))
-        log_phi_dot_theta = log.(phi * theta)
-        @addlogprob! sum(log_phi_dot_theta[CartesianIndex.(w, doc)])
-    end
-    dppl_lda
+    dppl_lda(k, m, w, doc, alpha, beta)
 end
 MODELS = [
     DynamicPPL.TestUtils.ALL_MODELS...,
     assume_normal(),
-    dppl_lda(k, m, w, doc, alpha, beta),
+    dppl_lda_model,
 ]
 
 @testset "AD on logdensity" begin
