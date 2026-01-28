@@ -6,7 +6,7 @@ using Test
 @testset "BigFloat arithmetic" begin
     a = rand(BigFloat)
     b = rand(BigFloat)
-    b_int = rand(Int)
+    bf64 = rand(Float64) # for testing mixed methods
 
     # doesn't work because of https://github.com/EnzymeAD/Enzyme.jl/issues/2888
     #test_reverse(+, Const, (a, Const), (b, Const))
@@ -19,5 +19,9 @@ using Test
         test_forward(-, TR, (a, TA), (b, TB))
         test_forward(*, TR, (a, TA), (b, TB))
         test_forward(/, TR, (a, TA), (b, TB))
+        test_forward(+, TR, (a, TA), (bf64, TB))
+        test_forward(-, TR, (a, TA), (bf64, TB))
+        test_forward(*, TR, (a, TA), (bf64, TB))
+        test_forward(/, TR, (a, TA), (bf64, TB))
     end
 end
