@@ -26,5 +26,8 @@ using Test
     end
     for TR in (Const, Duplicated), TA in (Const, Duplicated)
         test_forward(inv, TR, (a, TA))
+        test_forward(sin, TR, (a, TA))
+        test_forward(cos, TR, (a, TA))
+        test_forward(tan, TR, (a, TA))
     end
 end
