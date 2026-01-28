@@ -24,4 +24,7 @@ using Test
         test_forward(*, TR, (a, TA), (bf64, TB))
         test_forward(/, TR, (a, TA), (bf64, TB))
     end
+    for TR in (Const, Duplicated), TA in (Const, Duplicated)
+        test_forward(inv, TR, (a, TA))
+    end
 end
