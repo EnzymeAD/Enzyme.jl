@@ -722,3 +722,26 @@ end
 
 	Enzyme.autodiff(Forward, Duplicated(loss!, deepcopy(loss!)))
 end
+
+struct Outer{B}
+    M::Int
+    inner::Tuple{Vector{Float64}}
+    y::B
+end
+
+function work!(u, cache)
+    y_ = [cache.y[] for _ in 1:cache.M]
+    copyto!(y_[1], u)
+    nothing
+end
+
+function (o::Outer)(u)
+    work!(u, o)
+    nothing
+end
+
+@testset "Nested Struct Ordering 2" begin
+    cache = Outer(1, (rand(0),), Ref(zeros(2)))
+    Enzyme.autodiff(Forward, Duplicated(cache, cache) , Duplicated(zeros(2), zeros(2)))
+end
+

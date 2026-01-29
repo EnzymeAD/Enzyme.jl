@@ -108,20 +108,24 @@ function equivalent_rooted_type(@nospecialize(typ::DataType))
 
     inners = Type[]
 
-    todo = DataType[typ]
+    todo = Tuple{DataType, Bool}[(typ, false)]
     while length(todo) != 0
-        cur = popfirst!(todo)
+        cur, final = popfirst!(todo)
+        if final
+            push!(inners, cur)
+            continue
+        end
     
         desc = Base.DataTypeFieldDesc(cur)
                 
-        next = DataType[]
+        next = Tuple{DataType,Bool}[]
         for i in 1:fieldcount(cur)
             styp = typed_fieldtype(cur, i)
             if isghostty(styp)
                 continue
             end
             if desc[i].isptr
-                push!(inners, styp)
+                push!(next, (styp, true))
                 continue
             end
             if styp isa Union
@@ -130,7 +134,7 @@ function equivalent_rooted_type(@nospecialize(typ::DataType))
             if !(styp isa DataType)
                 throw(AssertionError("Non inner datatype: styp=$styp cur=$cur, typ=$typ lRT=$(string(lRT))"))
             end
-            push!(next, styp)
+            push!(next, (styp, false))
         end
 
         for styp in reverse(next)
