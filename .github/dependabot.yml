@@ -13,3 +13,6 @@ updates:
       - "lib/EnzymeTestUtils"
     schedule:
       interval: "weekly"
+    ignore:
+      # Ignore package itself
+      - dependency-name: "Enzyme"
