@@ -1,4 +1,4 @@
-# https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
+# https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -6,6 +6,10 @@ updates:
     schedule:
       interval: "weekly"
   - package-ecosystem: "julia"
-    directory: "/" # Location of package manifests
+    # Location of Julia projects
+    directories:
+      - "/"
+      - "lib/EnzymeCore"
+      - "lib/EnzymeTestUtils"
     schedule:
       interval: "weekly"
