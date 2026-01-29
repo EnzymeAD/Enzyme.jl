@@ -321,7 +321,7 @@ function Base.showerror(io::IO, ece::ForwardRuleReturnError{C, RT, fwd_RT}) wher
     printstyled(io, "Hint"; bold = true, color = :cyan)
     printstyled(
         io,
-        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\n";
+        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the erroneous code.\n";
         color = :cyan,
     )
     println(io)
@@ -627,7 +627,37 @@ function Base.showerror(io::IO, ece::UnionSretReturnException{RT}) where RT
     Base.println(io, Base.unsafe_string(ece.backtrace))
 end
 
+struct NonInferredActiveReturn <: CompilationException
+    actualRetType::Type
+    rettype::Type
+end
 
+function Base.showerror(io::IO, ece::NonInferredActiveReturn)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
+    print(io, "NonInferredActiveReturn: Enzyme compilation failed.\n")
+    println(io, " Called reverse-mode autodiff with return activity $(ece.rettype), which had a different setting of Base.allocatedinline from the actual return type $(ece.actualRetType). This is not presently supported (but open an issue).")
+
+    if ece.actualRetType <: eltype(ece.rettype)
+        newRT = if ece.rettype <: Active
+            Active{ece.actualRetType}
+        elseif ece.rettype <: MixedDuplicated
+            MixedDuplicated{ece.actualRetType}
+        elseif ece.rettype <: BatchMixedDuplicated
+            BatchMixedDuplicated{ece.actualRetType, batch_size(ece.rettype)}
+        else
+            throw(AssertionError("Unexpected Activity $(ece.rettype)"))
+        end
+
+        printstyled(io, "Hint"; bold = true, color = :cyan)
+        printstyled(
+            io,
+            ": You can avoid this error by explicitly setting the return activity as $newRT";
+            color = :cyan,
+        )
+    end
+end
 
 struct NoDerivativeException <: CompilationException
     msg::String
@@ -677,18 +707,29 @@ function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
         Base.Experimental.show_error_hints(io, ece)
     end
     print(io, "IllegalTypeAnalysisException: Enzyme compilation failed due to illegal type analysis.\n")
-    print(io, " This usually indicates the use of a Union type, which is not fully supported with Enzyme.API.strictAliasing set to true [the default].\n")
-    print(io, " Ideally, remove the union (which will also make your code faster), or try setting Enzyme.API.strictAliasing!(false) before any autodiff call.\n")
-    print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
-        if ece.mi !== nothing
-        print(io, " Failure within method: ", ece.mi, "\n")
-        printstyled(io, "Hint"; bold = true, color = :cyan)
+    if VERSION <= v"1.12" && VERSION <= v"1.12.5"
+        printstyled(io, "Hintg:"; bold = true, color = :cyan)
         printstyled(
             io,
-            ": catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\nIf you have Cthulu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.";
+            ": You are using Julia $(VERSION) which is known as a source of this error. This will be fixed in Julia 1.12.5. Either use Julia 1.10, 1.11, or wait for Julia 1.12.5.\nTo track the release progress, see https://github.com/JuliaLang/julia/pull/60612.";
             color = :cyan,
         )
+        print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
+    else
+        print(io, " This usually indicates the use of a Union type, which is not fully supported with Enzyme.API.strictAliasing set to true [the default].\n")
+        print(io, " Ideally, remove the union (which will also make your code faster), or try setting Enzyme.API.strictAliasing!(false) before any autodiff call.\n")
+        print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
+            if ece.mi !== nothing
+            print(io, " Failure within method: ", ece.mi, "\n")
+            printstyled(io, "Hint"; bold = true, color = :cyan)
+            printstyled(
+                io,
+                ": catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\nIf you have Cthulu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.";
+                color = :cyan,
+            )
+        end
     end
+
     if VERBOSE_ERRORS[]
         if ece.ir !== nothing
             print(io, "Current scope: \n")
@@ -858,12 +899,12 @@ function Base.showerror(io::IO, ece::EnzymeNoTypeError)
         Base.Experimental.show_error_hints(io, ece)
     end
     print(io, "EnzymeNoTypeError: Enzyme cannot statically prove the type of a value being differentiated and risks a correctness error if it gets it wrong.\n")
-    print(io, " Generally this shouldn't occur as Enzyme records type information from julia, but may be expected if you, for example copy untyped data.\n")
+    print(io, " Generally this shouldn't occur as Enzyme records type information from julia, but may be expected if you, for example, copy untyped data.\n")
     print(io, " or alternatively emit very large sized registers that exceed the maximum size of Enzyme's type analysis. If it seems reasonable to differentiate\n")
     print(io, " this code, open an issue! If the cause of the error is too large of a register, you can request Enzyme increase the size (https://enzyme.mit.edu/julia/dev/api/#Enzyme.API.maxtypeoffset!-Tuple{Any})\n")
     print(io, " or depth (https://enzyme.mit.edu/julia/dev/api/#Enzyme.API.maxtypedepth!-Tuple{Any}) of its type analysis.\n");
     print(io, " Alternatively, you can tell Enzyme to take its best guess from context with (https://enzyme.mit.edu/julia/dev/api/#Enzyme.API.looseTypeAnalysis!-Tuple{Any})\n")
-    print(io, " All of these settings are global configurations that need to be set immeidately after loading Enzyme, before any differentiation occurs\n")
+    print(io, " All of these settings are global configurations that need to be set immediately after loading Enzyme, before any differentiation occurs.\n")
     print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
     if VERBOSE_ERRORS[]
         msg = Base.unsafe_string(ece.msg)
@@ -1200,6 +1241,7 @@ function julia_error(
             print(io, msg)
             println(io)
             println(io, "Fn = ", string(fn))
+	    println(io, "val = ", string(val))
             println(io, "arg = ", string(data2::LLVM.Argument))
             if data !== C_NULL
                 data = LLVM.Value(LLVM.API.LLVMValueRef(data))
@@ -1331,7 +1373,10 @@ function julia_error(
                             instance = make_zero(obj)
                             return unsafe_to_llvm(prevbb, instance)
                         else
-                            res = emit_allocobj!(prevbb, Base.RefValue{TT})
+                            res = emit_allocobj!(prevbb, Base.RefValue{TT}) 
+			    T_int8 = LLVM.Int8Type() 
+			    T_size_t = convert(LLVM.LLVMType, UInt)
+			    LLVM.memset!(prevbb, bitcast!(prevbb, res, LLVM.PointerType(T_int8, 10)),  LLVM.ConstantInt(T_int8, 0), LLVM.ConstantInt(T_size_t, sizeof(TT)), 0)
                             push!(created, res)
                             return res
                         end
@@ -1345,6 +1390,9 @@ function julia_error(
                                 unsafe_to_llvm(prevbb, instance)
                             else
                                 sres = emit_allocobj!(prevbb, Base.RefValue{TT})
+			        T_int8 = LLVM.Int8Type() 
+			        T_size_t = convert(LLVM.LLVMType, UInt)
+			        LLVM.memset!(prevbb, bitcast!(prevbb, sres, LLVM.PointerType(T_int8, 10)),  LLVM.ConstantInt(T_int8, 0), LLVM.ConstantInt(T_size_t, sizeof(TT)), 0)
                                 push!(created, sres)
                                 sres
                             end

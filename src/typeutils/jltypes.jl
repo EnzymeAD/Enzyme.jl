@@ -66,7 +66,7 @@ function non_rooted_types(@nospecialize(typ::DataType))
         cur = popfirst!(todo)
     
         desc = Base.DataTypeFieldDesc(cur)
-                
+         
         next = DataType[]
         for i in 1:fieldcount(cur)
             styp = typed_fieldtype(cur, i)
@@ -84,7 +84,12 @@ function non_rooted_types(@nospecialize(typ::DataType))
             if !(styp isa DataType)
                 throw(AssertionError("Non inner datatype: styp=$styp cur=$cur, typ=$typ lRT=$(string(lRT))"))
             end
-            push!(next, styp)
+
+	    if fieldcount(styp) == 0
+		push!(inners, styp)
+	    else
+		push!(next, styp)
+	    end
         end
 
         for styp in reverse(next)

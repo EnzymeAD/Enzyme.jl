@@ -1735,7 +1735,7 @@ mutable struct CuMemoryPool2
     handle::CUmemoryPool2
 end
 
-function ccall_macro_lower(func, rettype, types, args, nreq)
+function ccall_macro_lower(func, rettype, types, args, gcsafe_or_nreq...)
     # instead of re-using ccall or Expr(:foreigncall) to perform argument conversion,
     # we need to do so ourselves in order to insert a jl_gc_safe_enter|leave
     # just around the inner ccall

@@ -1,3 +1,66 @@
+function restore_alloca_type!(f::LLVM.Function)
+    replaceAndErase = Tuple{LLVM.AllocaInst,LLVMType}[]
+    dl = datalayout(LLVM.parent(f))
+    for bb in blocks(f), inst in instructions(bb)
+        if isa(inst, LLVM.AllocaInst)
+            if haskey(metadata(inst), "enzymejl_allocart") || haskey(metadata(inst), "enzymejl_gc_alloc_rt")
+                mds = operands(metadata(inst)[haskey(metadata(inst), "enzymejl_allocart") ? "enzymejl_allocart" : "enzymejl_gc_alloc_rt"])[1]::MDString
+                mds = Base.convert(String, mds)
+                ptr = reinterpret(Ptr{Cvoid}, parse(UInt, mds))
+                RT = Base.unsafe_pointer_to_objref(ptr)
+                at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(inst))
+		lrt = struct_to_llvm(RT)
+                if at == lrt
+                    continue
+                end
+                cnt = operands(inst)[1]
+                if !isa(cnt, LLVM.ConstantInt) || convert(UInt, cnt) != 1
+                    continue
+                end
+                if LLVM.sizeof(dl, at) == LLVM.sizeof(dl, lrt) && CountTrackedPointers(at).count == 0
+                    push!(replaceAndErase, (inst, lrt))
+                end
+            end
+        end
+    end
+   
+    if length(replaceAndErase) == 0
+	    return false
+  end
+
+    for (al, lrt) in replaceAndErase
+        at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(al))
+	tracked_lrt = CountTrackedPointers(lrt).count
+	tracked_at  = CountTrackedPointers(at).count 
+        if tracked_lrt != 0 && tracked_at == 0
+            lrt2 = strip_tracked_pointers(lrt)
+            @assert LLVM.sizeof(dl, lrt2) == LLVM.sizeof(dl, lrt)
+            lrt = lrt2
+	    tracked_lrt = CountTrackedPointers(lrt).count
+	    if tracked_lrt != 0
+	    ccall(:jl_, Cvoid, (Any,), ("BAD1", string(al), string(lrt), tracked_lrt))
+		    throw(AssertionError("tracked_lrt ($tracked_lrt) != 0, $(string(lrt))"))
+	    end
+        end
+	if tracked_lrt != tracked_at
+	    ccall(:jl_, Cvoid, (Any,), ("BAD2", string(al), string(lrt), tracked_lrt))
+	    throw(AssertionError("tracked_lrt ($tracked_lrt) != tracked_at ($tracked_at), at=$(string(at)), lrt=$(string(lrt)) al=$(string(al))"))
+	end
+        b = IRBuilder()
+        position!(b, al)
+        al2 = alloca!(b, lrt)
+        cst = al2
+        if value_type(cst) != value_type(al)
+            cst = bitcast!(b, cst, value_type(al))
+        end        
+	API.EnzymeCopyMetadata(al2, al)
+	API.EnzymeCopyAlignment(al2, al)
+	API.EnzymeTakeName(al2, al)
+        LLVM.replace_uses!(al, cst)
+        LLVM.API.LLVMInstructionEraseFromParent(al)
+    end
+	return true
+end
 
 # Rewrite calls with "jl_roots" to only have the jl_value_t attached and not  { { {} addrspace(10)*, [1 x [2 x i64]], i64, i64 }, [2 x i64] } %unbox110183_replacementA
 function rewrite_ccalls!(mod::LLVM.Module)
@@ -185,6 +248,50 @@ function rewrite_ccalls!(mod::LLVM.Module)
             LLVM.API.LLVMInstructionEraseFromParent(inst)
         end
     end
+end
+
+function fixup_1p12_sret!(f::LLVM.Function)
+    if VERSION < v"1.12"
+        return
+    end
+    mi, RT = enzyme_custom_extract_mi(f, false)
+    if mi === nothing
+        return
+    end
+
+    _, sret, returnRoots = get_return_info(RT)
+
+    if sret === nothing || returnRoots == nothing
+        return
+    end
+
+    dl = datalayout(LLVM.parent(f))
+    lltype = convert(LLVMType, RT)
+    sz = LLVM.sizeof(dl, lltype)
+
+    @assert VERSION < v"1.13"
+    #TODO for 1.13 fixup this
+    torep = LLVM.Instruction[]
+    for u in LLVM.uses(parameters(f)[1])
+        ci = LLVM.user(u)
+        if isa(ci, LLVM.CallInst)
+            intr = LLVM.API.LLVMGetIntrinsicID(LLVM.called_operand(ci))
+            if intr == LLVM.Intrinsic("llvm.memcpy").id
+                cst = operands(ci)[3]
+                if cst isa LLVM.ConstantInt && convert(UInt, cst) == sz
+                    push!(torep, ci)
+                end
+            end
+        end
+    end
+
+    for ci in torep
+        B = LLVM.IRBuilder()
+        position!(B, ci)
+        copy_struct_into!(B, lltype, operands(ci)[1], operands(ci)[2], false)
+        LLVM.erase!(ci)
+    end
+    return
 end
 
 function force_recompute!(mod::LLVM.Module)
@@ -1264,8 +1371,9 @@ function fix_decayaddr!(mod::LLVM.Module)
 		    if legal
 			B = IRBuilder()
 			position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
-		       cst = addrspacecast!(B, operands(inst)[1], LLVM.PointerType(Derived))
-		       gep2 = gep!(B, LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(st)), cst, operands(inst)[2:end])
+            op1 = operands(inst)[1]
+            cst = addrspacecast!(B, op1, LLVM.is_opaque(value_type(op1)) ? LLVM.PointerType(Derived) : LLVM.PointerType(eltype(value_type(op1))))
+		       gep2 = gep!(B, LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(st)), cst, operands(st)[2:end])
 		       for st2 in torem
                 	    if isa(st2, LLVM.StoreInst)
 			        LLVM.API.LLVMSetOperand(st2, 2 - 1, gep2)
@@ -1400,7 +1508,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                                 t_sret = true
                             end
                             if kind(a) == kind(StringAttribute("enzymejl_rooted_typ"))
-				sret_elty = get_rooted_typ(fop, i)
+			        sret_elty = convert(LLVMType, AnyArray(Int(CountTrackedPointers(get_rooted_typ(fop, i)).count)))
                                 t_sret = true
                             end
                             # if kind(a) == kind(StringAttribute("enzyme_sret_v"))
@@ -2599,11 +2707,13 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
     propagate_returned!(mod)
     LLVM.@dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
+		register!(pb, RestoreAllocaType())
         add!(pb, NewPMModulePassManager()) do mpm
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, InstCombinePass())
                 add!(fpm, JLInstSimplifyPass())
                 add!(fpm, AllocOptPass())
+                add!(fpm, RestoreAllocaType())
                 add!(fpm, SROAPass())
                 add!(fpm, EarlyCSEPass())
             end
@@ -2626,11 +2736,13 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
     LLVM.@dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, EnzymeAttributorPass())
+		register!(pb, RestoreAllocaType())
         add!(pb, NewPMModulePassManager()) do mpm
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, InstCombinePass())
                 add!(fpm, JLInstSimplifyPass())
                 add!(fpm, AllocOptPass())
+                add!(fpm, RestoreAllocaType())
                 add!(fpm, SROAPass())
             end
             if RunAttributor[]

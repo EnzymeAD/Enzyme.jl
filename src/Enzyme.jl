@@ -141,7 +141,14 @@ include("typetree.jl")
 include("gradientutils.jl")
 include("utils.jl")
 include("compiler.jl")
-include("internal_rules.jl")
+include("internal_rules/core.jl")
+include("internal_rules/inactive.jl")
+include("internal_rules/linalg.jl")
+include("internal_rules/ranges.jl")
+include("internal_rules/sorting.jl")
+include("internal_rules/bigfloat.jl")
+include("internal_rules/rand.jl")
+include("internal_rules/math.jl")
 
 import .Compiler: CompilationException
 
@@ -958,11 +965,11 @@ result, ∂v, ∂A
         ShadowInit
     },
     ::Type{FA},
-    ::Type{A},
+    ::Type{A0},
     args::Vararg{Type{<:Annotation},Nargs},
 ) where {
     FA<:Annotation,
-    A<:Annotation,
+    A0<:Annotation,
     ReturnPrimal,
     ReturnShadow,
     Width,
@@ -991,6 +998,13 @@ result, ∂v, ∂A
     end
 
     tt = Tuple{map(eltype, args)...}
+
+    A = if A0 isa UnionAll
+        rt0 = Compiler.primal_return_type(Reverse, eltype(FA), tt)
+        A0{rt0}
+    else
+        A0
+    end
 
     tt′ = Tuple{args...}
     opt_mi = if RABI <: NonGenABI

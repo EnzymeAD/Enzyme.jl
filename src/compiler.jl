@@ -309,7 +309,7 @@ const known_ops = Dict{DataType,Tuple{Symbol,Int,Union{Nothing,Tuple{Symbol,Data
         name, arity, toinject = cmplx_known_ops[func]
         Tys = (Complex{Float32}, Complex{Float64})
         if length(sparam_vals) == arity
-            if name == :cmplx_jn || name == :cmplx_yn
+            if name == :cmplx_in || name == :cmplx_jn || name == :cmplx_yn
                 if (sparam_vals[2] ∈ Tys) && sparam_vals[2].parameters[1] == sparam_vals[1]
                     return name, toinject, sparam_vals[2]
                 end
@@ -534,6 +534,10 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
             push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
         end
 
+	if startswith(LLVM.name(llvmfn), "japi3") || startswith(LLVM.name(llvmfn), "japi1")
+	   continue
+	end
+
         if is_sret_union(RT)
             attr = StringAttribute("enzymejl_sret_union_bytes", string(union_alloca_type(RT)))
             push!(parameter_attributes(llvmfn, 1), attr)
@@ -551,6 +555,27 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
                 u = LLVM.user(u)
                 @assert isa(u, LLVM.CallInst)
                 LLVM.API.LLVMAddCallSiteAttribute(u, LLVM.API.LLVMAttributeIndex(2), attr)
+            end
+        end
+
+        fixup_1p12_sret!(llvmfn)
+    end
+
+    # We explicitly save the type of alloca's before they get lowered
+    for f in functions(mod)
+        for bb in blocks(f), inst in instructions(bb)
+            if !isa(inst, LLVM.CallInst)
+                continue
+            end
+            fn = LLVM.called_operand(inst)
+            if !isa(fn, LLVM.Function)
+                continue
+            end
+            if LLVM.name(fn) == "julia.gc_alloc_obj"
+                legal, RT, _ = abs_typeof(inst)
+                if legal
+                    metadata(inst)["enzymejl_gc_alloc_rt"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
+                end
             end
         end
     end
@@ -3022,14 +3047,7 @@ function create_abi_wrapper(
            rettype <: BatchMixedDuplicated
             @assert !sret_union
             if allocatedinline(actualRetType) != allocatedinline(literal_rt)
-                msg = sprint() do io
-                    println(io, string(enzymefn))
-                    println(
-                        io,
-                        "Base.allocatedinline(actualRetType) != Base.allocatedinline(literal_rt): actualRetType = $(actualRetType), literal_rt = $(literal_rt), rettype = $(rettype), sret_union=$(sret_union), pactualRetType=$(pactualRetType)",
-                    )
-                end
-                throw(AssertionError(msg))
+                throw(NonInferredActiveReturn(actualRetType, rettype))
             end
             if rettype <: Active
                 if !allocatedinline(actualRetType)
@@ -3887,26 +3905,26 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
                 continue
             end
             if isa(ty, LLVM.ArrayType)
-                for i = 1:length(ty)
+	        for i = reverse(1:length(ty))
                     npath = copy(path)
 		    push!(npath, i - 1)
-                    push!(todo, (npath, eltype(ty)))
+                    pushfirst!(todo, (npath, eltype(ty)))
                 end
                 continue
             end
             if isa(ty, LLVM.VectorType)
-                for i = 1:size(ty)
+	        for i = reverse(1:size(ty))
                     npath = copy(path)
 		    push!(npath, i - 1)
-                    push!(todo, (npath, eltype(ty)))
+                    pushfirst!(todo, (npath, eltype(ty)))
                 end
                 continue
             end
             if isa(ty, LLVM.StructType)
-                for (i, t) in enumerate(LLVM.elements(ty))
+	        for (i, t) in reverse(collect(enumerate(LLVM.elements(ty))))
                         npath = copy(path)
 			push!(npath, i - 1)
-                        push!(todo, (npath, t))
+                        pushfirst!(todo, (npath, t))
                 end
                 continue
             end
@@ -5537,7 +5555,9 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             if legal
                 if codegen_typ isa LLVM.PointerType || codegen_typ isa LLVM.IntegerType
                 else
-                    @assert byref == GPUCompiler.BITS_VALUE
+                    if byref != GPUCompiler.BITS_VALUE
+		        throw(AssertionError("Expected cc to be bits_value, found $byref, ty=$source_typ, cg_typ=$codegen_typ, inst=$(string(inst))\n\n$(string(fn))\n\n$fn\n\n$(string(LLVM.parent(LLVM.parent(inst))))"))
+		    end
                     source_typ
                 end
 

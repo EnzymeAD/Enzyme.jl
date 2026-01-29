@@ -1457,6 +1457,26 @@ function EnzymeCopyMetadata(i1, i2)
     )
 end
 
+function EnzymeCopyAlignment(i1::LLVM.AllocaInst, i2::LLVM.AllocaInst)
+    ccall(
+        (:EnzymeCopyAlignment, libEnzyme),
+        Cvoid,
+        (LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef),
+        i1,
+        i2,
+    )
+end
+
+function EnzymeTakeName(i1, i2)
+    ccall(
+        (:EnzymeTakeName, libEnzyme),
+        Cvoid,
+        (LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef),
+        i1,
+        i2,
+    )
+end
+
 function SetMustCache!(i1)
     ccall((:EnzymeSetMustCache, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef,), i1)
 end

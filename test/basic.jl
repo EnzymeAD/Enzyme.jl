@@ -687,3 +687,38 @@ end
     hv = make_zero(v)
     nested_hvp!(hv, v, x)
 end
+
+const CONST_VAL = 2.0
+f_const_global(x) = x^2 * CONST_VAL
+
+MUTABLE_VAL = 2.0
+f_mutable_global(x) = x^2 * MUTABLE_VAL
+
+TYPED_VAL::Float64 = 2.0
+f_typed_global(x) = x^2 * TYPED_VAL
+
+@testset "Globals" begin
+    @test Enzyme.autodiff(Reverse, f_const_global, Active, Active(3.0))[1][1] ≈ 12.0
+    @test Enzyme.autodiff(Reverse, f_mutable_global, Active, Active(3.0))[1][1] ≈ 12.0
+    @test Enzyme.autodiff(Reverse, f_typed_global, Active, Active(3.0))[1][1] ≈ 12.0
+end
+
+struct T{A,B,C}
+	eval_sol::A
+	a::B
+	stage::C
+end
+
+function (c::T)()
+	@inbounds c.eval_sol[1][1][1] = 2.1
+        return nothing
+end
+@testset "Nested Struct Ordering" begin
+	stage = 1
+	a = zeros(2)
+	eval_sol = ([zeros(2)],)
+
+	loss! = T(eval_sol, a, stage)
+
+	Enzyme.autodiff(Forward, Duplicated(loss!, deepcopy(loss!)))
+end
