@@ -3245,7 +3245,7 @@ function create_abi_wrapper(
         push!(parameter_attributes(llvm_f, 2), StringAttribute("enzymejl_returnRoots", string(Int(tracked.count))))
         push!(parameter_attributes(llvm_f, 2), EnumAttribute("noalias"))
     elseif jltype != T_void
-        sret = alloca!(builder, jltype)
+        sret = alloca!(builder, jltype, "abi_wrapper_sret")
     end
     rootRet = nothing
     if returnRoots
@@ -3432,7 +3432,7 @@ function create_abi_wrapper(
             _, psret, _ = get_return_info(Func_RT)
             args = LLVM.Value[]
             if psret !== nothing
-                psret = alloca!(builder, convert(LLVMType, Func_RT))
+                psret = alloca!(builder, convert(LLVMType, Func_RT), "psret")
                 push!(args, psret)
             end
             res = LLVM.call!(builder, LLVM.function_type(llvmf), llvmf, args)
@@ -6575,9 +6575,9 @@ const DumpLLVMCall = Ref(false)
             tracked = CountTrackedPointers(jltype)
             pushfirst!(
                 callparams,
-                alloca!(builder, LLVM.ArrayType(T_prjlvalue, tracked.count)),
+                alloca!(builder, LLVM.ArrayType(T_prjlvalue, tracked.count), "enzyme_call.return_roots"),
             )
-            pushfirst!(callparams, alloca!(builder, jltype))
+            pushfirst!(callparams, alloca!(builder, jltype, "enzyme_call.sret"))
         end
 
         if needs_tape && !(isghostty(TapeType) || Core.Compiler.isconstType(TapeType))
