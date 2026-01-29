@@ -326,7 +326,7 @@ version = "1.0.6"
 deps = ["CEnum", "EnzymeCore", "Enzyme_jll", "GPUCompiler", "InteractiveUtils", "LLVM", "Libdl", "LinearAlgebra", "ObjectFile", "PrecompileTools", "Preferences", "Printf", "Random", "SparseArrays"]
 path = "../../.."
 uuid = "7da242da-08ed-463a-9acd-ee780be4f1d9"
-version = "0.13.123"
+version = "0.13.124"
 
     [deps.Enzyme.extensions]
     EnzymeBFloat16sExt = "BFloat16s"
@@ -357,9 +357,9 @@ weakdeps = ["Adapt", "ChainRulesCore"]
 
 [[deps.Enzyme_jll]]
 deps = ["Artifacts", "JLLWrappers", "LazyArtifacts", "Libdl", "TOML"]
-git-tree-sha1 = "29f0ca1c4cbd2c983007c960966b82df18b048f0"
+git-tree-sha1 = "a4e779ad287d10a200b1b3c2af8e2da26930a9dc"
 uuid = "7cc45869-7501-5eee-bdea-0790c847d4ef"
-version = "0.0.243+0"
+version = "0.0.244+0"
 
 [[deps.ExactPredicates]]
 deps = ["IntervalArithmetic", "Random", "StaticArrays"]
