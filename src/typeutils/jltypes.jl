@@ -108,7 +108,7 @@ function equivalent_rooted_type(@nospecialize(typ::DataType))
 
     inners = Type[]
 
-    todo = Tuple{DataType, Bool}[(typ, false)]
+    todo = Tuple{Type, Bool}[(typ, false)]
     while length(todo) != 0
         cur, final = popfirst!(todo)
         if final
@@ -118,7 +118,7 @@ function equivalent_rooted_type(@nospecialize(typ::DataType))
     
         desc = Base.DataTypeFieldDesc(cur)
                 
-        next = Tuple{DataType,Bool}[]
+        next = Tuple{Type,Bool}[]
         for i in 1:fieldcount(cur)
             styp = typed_fieldtype(cur, i)
             if isghostty(styp)
