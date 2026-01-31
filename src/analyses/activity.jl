@@ -100,6 +100,9 @@ Base.@nospecializeinfer @inline function is_mutable_array(@nospecialize(T::Type)
             if string(mod) == "Reactant" && (T.name.name == :ConcretePJRTArray || T.name.name == :ConcreteIFRTArray || T.name.name == :TracedRArray)
                 return true
             end
+            if string(mod) == "CUDA" && (T.name.name == :CuRefValue || T.name.name == :CuPtr)
+                return true
+            end
         end
     end
     return false
@@ -215,14 +218,14 @@ Base.@nospecializeinfer @inline function active_reg_inner(
 
     if T <: Ptr ||
        T <: Core.LLVMPtr ||
-       T <: Base.RefValue || Core._call_in_world_total(world, is_arrayorvararg_ty, T)
+       T <: Base.RefValue || is_arrayorvararg_ty(T)
         if justActive && !AbstractIsMixed
             return AnyState
         end
 
-        if Core._call_in_world_total(world, is_arrayorvararg_ty, T)
+        if is_arrayorvararg_ty(T) &&
            active_reg_inner(
-            Core._call_in_world_total(world, ptreltype, T),
+            ptreltype(T),
             seen,
             world,
             justActive,
@@ -416,19 +419,15 @@ function check_activity_cache_invalidations(world::UInt)
 
     tt = Tuple{typeof(EnzymeRules.inactive_type), Type}
 
+    matches = Base._methods_by_ftype(tt, -1, world)
+    if matches === nothing
+        @assert ActivityCache.size() == 0
+        return
+    end
+
     methods = Core.MethodMatch[]
-    for tt in (
-	Tuple{typeof(EnzymeRules.inactive_type), Type},
-	Tuple{typeof(Enzyme.Compiler.is_arrayorvararg_ty), Type},
-	Tuple{typeof(Enzyme.Compiler.ptreltype), Type}
-    )
-      matches = Base._methods_by_ftype(tt, -1, world)
-      if matches === nothing
-	continue
-      end
-      for match in matches::Vector
+    for match in matches::Vector
         push!(methods, match::Core.MethodMatch)
-      end
     end
 
     if methods == ActivityMethodCache
