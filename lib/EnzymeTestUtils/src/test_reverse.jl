@@ -2,15 +2,7 @@
 
 # Force evaluation to avoid problem of a tuple being created but not being SROA'd
 # Can cause some tests to unnecessarily fail without runtime activity
-for N in 1:30
-    argexprs = [Symbol(:arg, Symbol(i)) for i in 1:N]
-    eval(quote
-        function call_with_kwargs(fkwargs::NT, f::FT, $(argexprs...)) where {NT, FT}
-            Base.@_inline_meta
-	    @inline f($(argexprs...); fkwargs...)
-        end
-    end)
-end
+Enzyme.Compiler.set_fn_max_args(call_with_kwargs)
 
 """
     test_reverse(f, Activity, args...; kwargs...)
