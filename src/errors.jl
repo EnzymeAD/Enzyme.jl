@@ -73,6 +73,7 @@ function code_typed_helper(mi::Core.MethodInstance, world::UInt, mode::Enzyme.AP
     sig = mi.specTypes  # XXX: can we just use the method instance?
     if interactive
         # call Cthulhu without introducing a dependency on Cthulhu
+        Cthulhu = Base.PkgId(Base.UUID("f68482b8-f384-11e8-15f7-abe071a5a75f"), "Cthulhu")
         mod = get(Base.loaded_modules, Cthulhu, nothing)
         mod===nothing && error("Interactive code reflection requires Cthulhu; please install and load this package first.")
         descend_code_typed = getfield(mod, :descend_code_typed)
