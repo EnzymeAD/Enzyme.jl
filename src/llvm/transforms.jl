@@ -8,7 +8,10 @@ function restore_alloca_type!(f::LLVM.Function)
                 mds = Base.convert(String, mds)
                 ptr = reinterpret(Ptr{Cvoid}, parse(UInt, mds))
                 RT = Base.unsafe_pointer_to_objref(ptr)
-                at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(inst))
+                if RT isa Union
+		   continue
+		end
+		at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(inst))
 		lrt = struct_to_llvm(RT)
                 if at == lrt
                     continue
