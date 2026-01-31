@@ -205,13 +205,15 @@ end
     RetTypeMod.main()
 end
 
+const LBT =  LinearAlgebra.BLAS.libblastrampoline
+
 @noinline function blasdot(x, y)
     n = length(x)
     s = GC.@preserve x y begin
 	   DX, incx = LinearAlgebra.BLAS.vec_pointer_stride(x)
 	   DY, incy = LinearAlgebra.BLAS.vec_pointer_stride(y)
 	    result = Ref{ComplexF64}()
-            ccall((LinearAlgebra.BLAS.@blasfunc(cblas_zdotc_sub), LinearAlgebra.BLAS.libblastrampoline), Cvoid,
+            ccall((LinearAlgebra.BLAS.@blasfunc(cblas_zdotc_sub), LBT), Cvoid,
                 (LinearAlgebra.BLAS.BlasInt, Ptr{ComplexF64}, LinearAlgebra.BLAS.BlasInt, Ptr{ComplexF64}, LinearAlgebra.BLAS.BlasInt, Ptr{ComplexF64}),
                  n, DX, incx, DY, incy, result)
             result[]
