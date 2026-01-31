@@ -1446,7 +1446,21 @@ function julia_sanitize(
                 bad = BasicBlock(fn, "bad")
                 position!(builder, entry)
                 inp, sval = collect(parameters(fn))
-                cmp = fcmp!(builder, LLVM.API.LLVMRealUNO, inp, inp)
+		cmp = nothing
+		if isa(value_type(inp), LLVM.ArrayType)
+		   nelem = length(value_type(inp))
+		   for i in 1:nelem
+			   e0 = extract_value!(builder, inp, i - 1)
+			cmp0 = fcmp!(builder, LLVM.API.LLVMRealUNO, e0, e0)
+			if cmp == nothing
+				cmp = cmp0
+			else
+				cmp = or!(builder, cmp, cmp0)
+			end
+		   end
+		else
+                  cmp = fcmp!(builder, LLVM.API.LLVMRealUNO, inp, inp)
+		end
 
                 br!(builder, cmp, bad, good)
 
