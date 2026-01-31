@@ -1447,6 +1447,8 @@ function julia_sanitize(
                 position!(builder, entry)
                 inp, sval = collect(parameters(fn))
 		cmp = nothing
+		@show value_type(inp), isa(value_type(inp), LLVM.ArrayType)
+
 		if isa(value_type(inp), LLVM.ArrayType)
 		   nelem = length(value_type(inp))
 		   for i in 1:nelem
@@ -1473,6 +1475,17 @@ function julia_sanitize(
                 unreachable!(builder)
                 dispose(builder)
             end
+    if LLVM.API.LLVMVerifyFunction(fn, LLVM.API.LLVMReturnStatusAction) != 0
+        msg = sprint() do io
+            println(
+                io,
+                LLVM.API.LLVMVerifyFunction(fn, LLVM.API.LLVMPrintMessageAction),
+            )
+            println(io, string(fn))
+            println(io, "Broken julia.sanitize")
+        end
+        throw(LLVM.LLVMException(msg))
+    end
         end
         # val = 
         call!(B, FT, fn, LLVM.Value[val, globalstring_ptr!(B, stringv)])
