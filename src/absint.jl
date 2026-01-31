@@ -357,6 +357,7 @@ function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Boo
     return larg, offset
 end
 
+const TypesNotToDisect = Set{Type}([BigFloat])
 
 function abs_typeof(
         @nospecialize(arg::LLVM.Value),
@@ -673,11 +674,14 @@ function abs_typeof(
                 @assert Base.isconcretetype(typ)
                 seen = false
                 lasti = 1
-		
+
                 for i in 1:typed_fieldcount(typ)
                     fo = typed_fieldoffset(typ, i)
                     if fo == offset && (i == typed_fieldcount(typ) || typed_fieldoffset(typ, i + 1) != offset)
                         offset = 0
+			if in(typ, TypesNotToDisect)
+			  legal = false
+			end
                         typ = typed_fieldtype(typ, i)
                         if !Base.allocatedinline(typ)
                             if byref != GPUCompiler.BITS_VALUE
@@ -689,6 +693,9 @@ function abs_typeof(
                         break
                     elseif fo > offset
                         offset = offset - typed_fieldoffset(typ, lasti)
+			if in(typ, TypesNotToDisect)
+			  legal = false
+			end
                         typ = typed_fieldtype(typ, lasti)
                         if offset == 0
                             if !Base.allocatedinline(typ)
@@ -713,6 +720,9 @@ function abs_typeof(
                 end
                 if !seen && typed_fieldcount(typ) > 0
                     offset = offset - typed_fieldoffset(typ, lasti)
+			if in(typ, TypesNotToDisect)
+			  legal = false
+			end
                     typ = typed_fieldtype(typ, lasti)
                     if offset == 0
                         if !Base.allocatedinline(typ)
@@ -741,6 +751,9 @@ function abs_typeof(
                 end
                 idx, _ = first_non_ghost(typ2)
                 if idx != -1
+			if in(typ2, TypesNotToDisect)
+			  legal = false
+			end
                     typ2 = typed_fieldtype(typ2, idx)
                     if Base.allocatedinline(typ2)
                         if byref == GPUCompiler.BITS_VALUE
@@ -783,6 +796,9 @@ function abs_typeof(
                 end
                 cnt = 0
                 desc = Base.DataTypeFieldDesc(typ)
+		if in(typ, TypesNotToDisect)
+		   return (false, nothing, nothing)
+		end
                 for i in 1:fieldcount(typ)
                     styp = typed_fieldtype(typ, i)
                     if isghostty(styp)
