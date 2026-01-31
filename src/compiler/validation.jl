@@ -87,6 +87,8 @@ function __init__()
         "ijl_ptr_to_array_1d",
         "jl_eqtable_get",
         "ijl_eqtable_get",
+        "jl_eqtable_put",
+        "ijl_eqtable_put",
         "memcmp",
         "memchr",
         "jl_get_nth_field_checked",
