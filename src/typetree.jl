@@ -291,11 +291,18 @@ else
         seen::TypeTreeTable,
     ) where {kind,T}
         tt = copy(typetree(Ptr{T}, ctx, dl, seen))
-        shift!(tt, dl, 0, sizeof(Int), sizeof(Csize_t))
 
+        if !allocatedinline(T)
+            st0 = TypeTree(API.DT_Pointer, -1, ctx)
+            only!(st0, -1)
+            merge!(tt, st0)
+        end 
+
+        shift!(tt, dl, 0, sizeof(Int), sizeof(Csize_t))
         for i = 0:(sizeof(Csize_t)-1)
             merge!(tt, TypeTree(API.DT_Integer, i, ctx))
         end
+
         return tt
     end
 
