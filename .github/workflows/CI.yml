@@ -42,6 +42,7 @@ jobs:
         version:
           - '1.10'
           - '1.11'
+          - '1.12'
           - 'nightly'
         os:
           - ubuntu-24.04
@@ -74,6 +75,11 @@ jobs:
             libEnzyme: packaged
             version: '1.11'
             assertions: true
+          - os: ubuntu-24.04
+            arch: default
+            libEnzyme: packaged
+            version: '1.12'
+            assertions: true
 
           - os: ubuntu-24.04
             arch: default
@@ -88,12 +94,6 @@ jobs:
             version: '1.11'
             assertions: false
             llvm_args: '--opaque-pointers'
-
-          - os: ubuntu-24.04
-            arch: default
-            libEnzyme: packaged
-            version: '1.12'
-            assertions: true
     steps:
       - uses: actions/checkout@v6
       - uses: julia-actions/setup-julia@v2
@@ -188,6 +188,7 @@ jobs:
         version:
           - '1.10'
           - '1.11'
+          - '1.12'
           - 'nightly'
         os:
           - ubuntu-latest
@@ -243,6 +244,7 @@ jobs:
         version:
           - '1.10'
           - '1.11'
+          - '1.12'
           - 'nightly'
         os:
           - ubuntu-latest

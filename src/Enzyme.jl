@@ -1581,20 +1581,4 @@ end
 
 include("precompile.jl")
 
-function __init__()
-    @static if VERSION ≥ v"1.12-"
-        if ccall(:jl_generating_output, Cint, ()) == 1
-            @warn """
-            Enzyme.jl support for Julia 1.12 is presently in progress.
-			For the time being we recommend using 1.11 or LTS (1.10).
-
-            For latest updates, check the status of support for Julia 1.12+ at
-            https://github.com/EnzymeAD/Enzyme.jl/issues/2699.
-            """ maxlog = 1
-        end
-    end
-
-    return nothing
-end
-
 end # module
