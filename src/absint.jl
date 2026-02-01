@@ -221,7 +221,7 @@ function actual_size(@nospecialize(typ2))::Int
             return sum(map(sizeof, fieldtypes(typ2)))
         end
     end
-    if typ2 <: AbstractString || typ2 <: Symbol || typ2 <: Core.SimpleVector
+    if typ2 <: String || typ2 <: Symbol || typ2 <: Core.SimpleVector
         return sizeof(Int)
     elseif Base.isconcretetype(typ2)
         return sizeof(typ2)
@@ -745,7 +745,7 @@ function abs_typeof(
 
             typ2 = typ
             while legal && should_recurse(typ2, value_type(arg), byref, dl)
-                if !Base.isconcretetype(typ2)
+		if !Base.isconcretetype(typ2)
                     legal = false
                     break
                 end
