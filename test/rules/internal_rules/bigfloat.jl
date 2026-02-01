@@ -5,29 +5,25 @@ using Test
 
 @testset "BigFloat arithmetic" begin
     a = rand(BigFloat)
+    da = rand(BigFloat)
     b = rand(BigFloat)
-    bf64 = rand(Float64) # for testing mixed methods
+    db = rand(BigFloat)
+    af64 = Float64(a) # for testing mixed methods
+    daf64 = Float64(da) # for testing mixed methods
+    bf64 = Float64(b) # for testing mixed methods
+    dbf64 = Float64(db) # for testing mixed methods
 
-    # doesn't work because of https://github.com/EnzymeAD/Enzyme.jl/issues/2888
-    #test_reverse(+, Const, (a, Const), (b, Const))
-    #test_reverse(+, Active, (a, Active), (b, Active))
-    #test_reverse(-, Const, (a, Const), (b, Const))
-    #test_reverse(-, Active, (a, Active), (b, Active))
-
-    for TR in (Const, Duplicated), TA in (Const, Duplicated), TB in (Const, Duplicated)
-        test_forward(+, TR, (a, TA), (b, TB))
-        test_forward(-, TR, (a, TA), (b, TB))
-        test_forward(*, TR, (a, TA), (b, TB))
-        test_forward(/, TR, (a, TA), (b, TB))
-        test_forward(+, TR, (a, TA), (bf64, TB))
-        test_forward(-, TR, (a, TA), (bf64, TB))
-        test_forward(*, TR, (a, TA), (bf64, TB))
-        test_forward(/, TR, (a, TA), (bf64, TB))
-    end
-    for TR in (Const, Duplicated), TA in (Const, Duplicated)
-        test_forward(inv, TR, (a, TA))
-        test_forward(sin, TR, (a, TA))
-        test_forward(cos, TR, (a, TA))
-        test_forward(tan, TR, (a, TA))
-    end
+    @test autodiff(Enzyme.Forward, +, Duplicated, Duplicated(a, da), Duplicated(b, db))[:1] ≈ autodiff(Enzyme.Forward, +, Duplicated, Duplicated(af64, daf64), Duplicated(bf64, dbf64))[1]
+    @test autodiff(Enzyme.Forward, +, Duplicated, Duplicated(a, da), Duplicated(bf64, dbf64))[:1] ≈ autodiff(Enzyme.Forward, +, Duplicated, Duplicated(af64, daf64), Duplicated(bf64, dbf64))[1]
+    @test autodiff(Enzyme.Forward, -, Duplicated, Duplicated(a, da), Duplicated(b, db))[:1] ≈ autodiff(Enzyme.Forward, -, Duplicated, Duplicated(af64, daf64), Duplicated(bf64, dbf64))[1]
+    @test autodiff(Enzyme.Forward, -, Duplicated, Duplicated(a, da), Duplicated(bf64, dbf64))[:1] ≈ autodiff(Enzyme.Forward, -, Duplicated, Duplicated(af64, daf64), Duplicated(bf64, dbf64))[1]
+    @test autodiff(Enzyme.Forward, *, Duplicated, Duplicated(a, da), Duplicated(b, db))[:1] ≈ autodiff(Enzyme.Forward, *, Duplicated, Duplicated(af64, daf64), Duplicated(bf64, dbf64))[1]
+    @test autodiff(Enzyme.Forward, *, Duplicated, Duplicated(a, da), Duplicated(bf64, dbf64))[:1] ≈ autodiff(Enzyme.Forward, *, Duplicated, Duplicated(af64, daf64), Duplicated(bf64, dbf64))[1]
+    @test autodiff(Enzyme.Forward, /, Duplicated, Duplicated(a, da), Duplicated(b, db))[:1] ≈ autodiff(Enzyme.Forward, /, Duplicated, Duplicated(af64, daf64), Duplicated(bf64, dbf64))[1]
+    @test autodiff(Enzyme.Forward, /, Duplicated, Duplicated(a, da), Duplicated(bf64, dbf64))[:1] ≈ autodiff(Enzyme.Forward, /, Duplicated, Duplicated(af64, daf64), Duplicated(bf64, dbf64))[1]
+    
+    @test autodiff(Enzyme.Forward, inv, Duplicated, Duplicated(a, da))[:1] ≈ autodiff(Enzyme.Forward, inv, Duplicated, Duplicated(af64, daf64))[1]
+    @test autodiff(Enzyme.Forward, sin, Duplicated, Duplicated(a, da))[:1] ≈ autodiff(Enzyme.Forward, sin, Duplicated, Duplicated(af64, daf64))[1]
+    @test autodiff(Enzyme.Forward, cos, Duplicated, Duplicated(a, da))[:1] ≈ autodiff(Enzyme.Forward, cos, Duplicated, Duplicated(af64, daf64))[1]
+    @test autodiff(Enzyme.Forward, tan, Duplicated, Duplicated(a, da))[:1] ≈ autodiff(Enzyme.Forward, tan, Duplicated, Duplicated(af64, daf64))[1]
 end
