@@ -12,7 +12,7 @@ Enzyme = {path = "../../.."}
 EnzymeCore = {path = "../../../lib/EnzymeCore"}
 
 [compat]
-DifferentiationInterface = "=0.7.16"
-DynamicExpressions = "=1.10.3"
-ForwardDiff = "=1.3.2"
-SymbolicRegression = "=1.12.0"
+DifferentiationInterface = "0.7.16"
+DynamicExpressions = "1.10.3"
+ForwardDiff = "1.3.2"
+SymbolicRegression = "1.12.0"
