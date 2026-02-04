@@ -5,7 +5,9 @@ using Enzyme
 
 rng = MersenneTwister(0)
 X = rand(rng, 2, 16)
-y = @. X[1, :] * X[1, :] + 2.0 * X[2, :] + 1.0
+# Choose a constant target so constant-optimization is guaranteed to run,
+# exercising `autodiff_backend=:Enzyme` deterministically.
+y = fill(1.0, size(X, 2))
 
 dataset = Dataset(
     X,
@@ -22,6 +24,7 @@ options = Options(
     ncycles_per_iteration=5,
     maxsize=8,
     autodiff_backend=:Enzyme,
+    optimizer_probability=1.0,
     seed=0,
     deterministic=true,
     verbosity=0,
@@ -35,7 +38,6 @@ hall_of_fame = equation_search(
     parallelism=:serial,
     runtests=false,
     progress=false,
-    guesses=["x1 * x1 + 2 * x2 + 1"],
 )
 
 best_loss = minimum(
