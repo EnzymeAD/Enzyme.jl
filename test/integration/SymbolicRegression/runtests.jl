@@ -13,7 +13,6 @@ dataset = Dataset(
     X,
     y;
     variable_names=["x1", "x2"],
-    extra=(class=fill(1, size(X, 2)),),
 )
 
 options = Options(
