@@ -50,6 +50,7 @@ jobs:
           - DifferentiationInterface
           - Distributions
           - DynamicExpressions
+          - SymbolicRegression
           - Lux
           - SciML
           - KernelAbstractions
