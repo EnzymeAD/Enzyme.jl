@@ -12,13 +12,13 @@ generic_loss_function(model, x, ps, st) = sum(abs2, first(model(x, ps, st)))
 # compute gradients using Enzyme
 function compute_enzyme_gradient(model, x, ps, st)
     return Enzyme.gradient(
-        Enzyme.set_runtime_activity(Reverse),  
+        Enzyme.set_runtime_activity(Reverse),
         generic_loss_function,
-        Const(model),  
+        Const(model),
         x,
         ps,
-        Const(st),     
-    )[2:3]  
+        Const(st),
+    )[2:3]
 end
 
 # compute gradients using Zygote
@@ -45,7 +45,7 @@ const MODELS_LIST = [
     (Chain(Dense(2, 4, relu), Dense(4, 2)), randn(Float32, 2, 3)),
 
     # simple Conv layer
-    (Conv((3, 3), 2 => 2), randn(Float32, 5, 5, 2, 1))
+    (Conv((3, 3), 2 => 2), randn(Float32, 5, 5, 2, 1)),
 ]
 
 
