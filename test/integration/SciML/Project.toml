@@ -17,7 +17,7 @@ Enzyme = {path = "../../.."}
 EnzymeCore = {path = "../../../lib/EnzymeCore"}
 
 [compat]
-DiffEqBase = "6.190"
+DiffEqBase = "=6.199"
 ForwardDiff = "0.10.36, 1"
 LinearSolve = "3.12"
 OrdinaryDiffEq = "6.89"
