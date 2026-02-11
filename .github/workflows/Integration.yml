@@ -42,7 +42,7 @@ jobs:
         version:
           - '1.10'
           - '1.11'
-          - '1.12-nightly'
+          - '1.12'
         os:
           - linux-x86-n2-32
         package:
