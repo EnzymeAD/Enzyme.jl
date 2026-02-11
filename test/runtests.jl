@@ -1,4 +1,4 @@
-#=import Enzyme
+import Enzyme
 import Enzyme_jll
 using ParallelTestRunner: addworker, filter_tests!, find_tests, parse_args, runtests
 
@@ -39,5 +39,4 @@ end
 const init_code = quote end
 
 @info "Testing against" Enzyme_jll.libEnzyme
-runtests(Enzyme, args; testsuite, init_code, test_worker)=#
-include("rules/internal_rules/bigfloat.jl")
+runtests(Enzyme, args; testsuite, init_code, test_worker)
