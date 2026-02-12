@@ -120,6 +120,15 @@ end
 function EnzymeRules.inactive(::typeof(Base.GC.enable), args...)
     return nothing
 end
+function EnzymeRules.inactive_noinl(::typeof(Base.mightalias), args...)
+    return nothing
+end
+function EnzymeRules.inactive_noinl(::typeof(Base._parentsmatch), args...)
+    return nothing
+end
+function EnzymeRules.inactive_noinl(::typeof(Base.dataids), args...)
+    return nothing
+end
 
 @inline EnzymeRules.inactive_type(v::Type{Nothing}) = true
 @inline EnzymeRules.inactive_type(v::Type{Union{}}) = true
