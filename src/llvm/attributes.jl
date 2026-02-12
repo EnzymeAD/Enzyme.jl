@@ -193,8 +193,6 @@ const nofreefns = Set{String}((
     "ijl_switch",
     "ijl_process_events",
     "utf8proc_category",
-    "utf8proc_isupper",
-    "utf8proc_islower",
     "jl_clock_now",
     "ijl_new_task",
     "cuMemPoolGetAttribute",
