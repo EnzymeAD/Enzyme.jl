@@ -107,6 +107,19 @@ function EnzymeRules.inactive(::typeof(Base.startswith), ::AbstractString, args.
 end
 
 Enzyme.EnzymeRules.inactive_noinl(::typeof(Core._compute_sparams), args...) = nothing
+function EnzymeRules.inactive(::typeof(Base.time_ns), args...)
+    return nothing
+end
+function EnzymeRules.inactive(::typeof(Base.time), args...)
+    return nothing
+end
+import Printf as _EnzymePrintf
+function EnzymeRules.inactive(::typeof(_EnzymePrintf.format), args...)
+    return nothing
+end
+function EnzymeRules.inactive(::typeof(Base.GC.enable), args...)
+    return nothing
+end
 
 @inline EnzymeRules.inactive_type(v::Type{Nothing}) = true
 @inline EnzymeRules.inactive_type(v::Type{Union{}}) = true
