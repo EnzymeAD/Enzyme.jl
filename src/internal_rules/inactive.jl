@@ -114,7 +114,7 @@ function EnzymeRules.inactive_noinl(::typeof(Base.time), args...)
     return nothing
 end
 import Printf as _EnzymePrintf
-function EnzymeRules.inactive(::typeof(_EnzymePrintf.format), args...)
+function EnzymeRules.inactive_noinl(::typeof(_EnzymePrintf.format), args...)
     return nothing
 end
 function EnzymeRules.inactive_noinl(::typeof(Base.GC.enable), args...)
@@ -127,9 +127,6 @@ function EnzymeRules.inactive_noinl(::typeof(Base._parentsmatch), args...)
     return nothing
 end
 function EnzymeRules.inactive_noinl(::typeof(Base.dataids), args...)
-    return nothing
-end
-function EnzymeRules.inactive_noinl(::typeof(Base.Broadcast.broadcast_unalias), args...)
     return nothing
 end
 
