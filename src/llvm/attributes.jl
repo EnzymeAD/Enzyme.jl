@@ -5,6 +5,8 @@ const nofreefns = Set{String}((
     "jl_lazy_load_and_lookup",
     "ijl_lazy_load_and_lookup",
     "utf8proc_toupper",
+        "utf8proc_isupper",
+        "utf8proc_islower",
     "ClientGetAddressableDevices",
     "ClientNumAddressableDevices",
     "BufferToDevice",
@@ -220,6 +222,8 @@ const inactivefns = Set{String}((
     "ijl_get_binding_value_seqcst",
 
     "utf8proc_toupper",
+        "utf8proc_isupper",
+        "utf8proc_islower",
     "ClientGetAddressableDevices",
     "ClientNumAddressableDevices",
     "BufferToDevice",
