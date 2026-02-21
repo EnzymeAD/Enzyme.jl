@@ -1810,7 +1810,7 @@ function generic_setup(
     mode = get_mode(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
-    ops = collect(operands(orig))[start+firstconst:end-1]
+    ops = collect(operands(orig))[start+firstconst:LLVM.API.LLVMGetNumArgOperands(orig)]
 
     T_int8 = LLVM.Int8Type()
     T_jlvalue = LLVM.StructType(LLVMType[])
@@ -2372,7 +2372,7 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
        isiter == Base.iterate &&
        istup == Base.tuple &&
        length(operands(orig)) >= offset + 4
-        origops = collect(operands(orig)[1:end-1])
+        origops = collect(operands(orig)[1:LLVM.API.LLVMGetNumArgOperands(orig)])
         shadowins =
             [invert_pointer(gutils, origops[i], B) for i = (offset+3):length(origops)]
         shadowres = if width == 1

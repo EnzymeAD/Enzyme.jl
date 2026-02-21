@@ -849,7 +849,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
 
-            ops = collect(operands(inst))[1:end-1]
+	    ops = collect(operands(inst))[1:LLVM.API.LLVMGetNumArgOperands(inst)]
             @assert length(ops) == 2
             flib = ops[1]
             fname = ops[2]
@@ -1090,7 +1090,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 legal, flibty, byref = abs_typeof(operands(inst)[offset+1])
                 if legal
                     tys = Union{Type, Core.TypeofVararg}[flibty]
-                    for op in collect(operands(inst))[start+1:end-1]
+		    for op in collect(operands(inst))[start+1:LLVM.API.LLVMGetNumArgOperands(inst)]
                         legal, typ, byref2 = abs_typeof(op, true)
                         if !legal
                             typ = Any
@@ -1245,7 +1245,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             legal, flibty, byref = abs_typeof(operands(inst)[offset])
             if legal
                 tys = Union{Type, Core.TypeofVararg}[flibty]
-                for op in collect(operands(inst))[start:end-1]
+		for op in collect(operands(inst))[start:LLVM.API.LLVMGetNumArgOperands(inst)]
                     legal, typ, byref2 = abs_typeof(op, true)
                     if !legal
                         typ = Any

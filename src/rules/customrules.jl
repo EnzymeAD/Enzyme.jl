@@ -305,7 +305,7 @@ function enzyme_custom_setup_args(
 )
     ops = collect(operands(orig))
     called = ops[end]
-    ops = ops[1:end-1]
+    ops = ops[1:LLVM.API.LLVMGetNumArgOperands(orig)]
     width = get_width(gutils)
     kwtup = nothing
 
@@ -2392,7 +2392,7 @@ end
     end
     non_rooting_use = false
     fop = called_operand(orig)::LLVM.Function
-    for (i, v) in enumerate(operands(orig)[1:end-1])
+    for (i, v) in enumerate(operands(orig)[1:LLVM.API.LLVMGetNumArgOperands(orig)])
         if v == val
             if true || !has_arg_attr(fop, i, StringAttribute("enzymejl_returnRoots"))
                 non_rooting_use = true
