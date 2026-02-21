@@ -1937,10 +1937,10 @@ function generic_setup(
     pushfirst!(vals, unsafe_to_llvm(B, func))
 
     T_jlvalue = LLVM.StructType(LLVMType[])
-    T_pjlvalue = LLVM.PointerType(T_jlvalue)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
     for v in vals
-       if value_type(v) != T_pjlvalue
+       if value_type(v) != T_prjlvalue
           throw(AssertionError("Illegal generic_setup, expected all arguments to by jlvaluet, found $(string(v)), within $(vals), orig=$(string(orig))"))
        end
     end
