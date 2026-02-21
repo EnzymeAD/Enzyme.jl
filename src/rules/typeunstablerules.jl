@@ -1029,7 +1029,7 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
         shadowin = invert_pointer(gutils, origops[2], B)
         if width == 1
             args = LLVM.Value[new_from_original(gutils, origops[1]), shadowin]
-            for a in origops[3:LLVM.API.LLVMGetNumArgOperands(orig)]
+	    for a in origops[3:(LLVM.API.LLVMGetNumArgOperands(orig)-(offset-1))]
                 push!(args, new_from_original(gutils, a))
             end
             if offset != 1
@@ -1052,7 +1052,7 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
                     new_from_original(gutils, origops[1]),
                     shadowin_idx,
                 ]
-                for a in origops[3:LLVM.API.LLVMGetNumArgOperands(orig)]
+		for a in origops[3:(LLVM.API.LLVMGetNumArgOperands(orig)-(offset-1))]
                     push!(args, new_from_original(gutils, a))
                 end
                 if offset != 1

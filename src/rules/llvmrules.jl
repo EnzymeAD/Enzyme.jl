@@ -1730,8 +1730,6 @@ end
     end
     origops = collect(operands(orig))
     width = get_width(gutils)
-    origops = collect(operands(orig))
-    width = get_width(gutils)
 
     args = LLVM.Value[]
     for a in origops[1:LLVM.API.LLVMGetNumArgOperands(orig)-1]
@@ -1844,7 +1842,7 @@ end
             UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
         for idx = 1:width
             vargs = LLVM.Value[]
-	    for a in args[1:LLVM.API.LLVMGetNumArgOperands(orig)]
+	    for a in args[1:end-1]
                 push!(vargs, extract_value!(B, a, idx - 1))
             end
             push!(vargs, args[end])
