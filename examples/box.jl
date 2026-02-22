@@ -364,8 +364,8 @@ autodiff(Reverse,
 # `state_now`, and acted with this gradient on what we gave as `dout_now` (in our case,
 # all ones). Using AD notation for reverse mode, this is
 
-# ```math 
-# \overline{\text{state\_now}} = \frac{\partial \text{out\_now}}{\partial \text{state\_now}}\right|_\text{state\_now} \overline{\text{out\_now} + \frac{\partial \text{out\_old}}{\partial \text{state\_now}}\right|_\text{state\_now} \overline{\text{out\_old}
+# ```math
+# \overline{\text{state_now}} = \left.\frac{\partial \text{out_now}}{\partial \text{state_now}}\right|_\text{state_now} \overline{\text{out_now}} + \left.\frac{\partial \text{out_old}}{\partial \text{state_now}}\right|_\text{state_now} \overline{\text{out_old}}
 # ```
 
 # We note here that had we initialized `dstate_now` and `dstate_old` as something else, our results 
