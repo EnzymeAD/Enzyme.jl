@@ -104,6 +104,8 @@ struct ModelParameters
 
 end
 
+#-
+
 function setup()
 
     blength = [5000.0e5; 1000.0e5; 5000.0e5]   
@@ -183,6 +185,8 @@ function compute_transport(rho, params)
 
 end
 
+#-
+
 ## function to compute density
 ##       Input: state = [T1; T2; T3; S1; S2; S3]
 ##       Output: rho 
@@ -193,6 +197,8 @@ function compute_density(state, params)
     return rho
 
 end
+
+#-
 
 ## lastly, a function that takes one step forward 
 ##       Input: state_now = [T1(t), T2(t), ..., S3(t)]
