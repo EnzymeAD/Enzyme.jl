@@ -789,7 +789,7 @@ end
 """
     jacobian(::ForwardMode, args...; kwargs...)
 
-Equivalent to gradient(::ForwardMode, args...; kwargs...)
+Equivalent to `gradient(::ForwardMode, args...; kwargs...)`
 """
 @inline function jacobian(fm::ForwardMode, args...; kwargs...)
     gradient(fm, args...; kwargs...)
@@ -1258,7 +1258,7 @@ end
 
 Compute the Hessian-vector product of an array-input scalar-output function `f`, as evaluated at `x` times the vector `v`.
 
-In other words, compute hessian(f)(x) * v
+In other words, compute `hessian(f)(x) * v`.
 
 See [`hvp!`](@ref) for a version which stores the result in an existing buffer and also [`hvp_and_gradient!`](@ref) for a function to compute both the hvp and the gradient in a single call.
 
@@ -1332,7 +1332,7 @@ than computing them separately.
 
 The result will be stored into `res`. The gradient will be stored into `grad`.
 
-In other words, compute res .= hessian(f)(x) * v  and grad .= gradient(Reverse, f)(x)
+In other words, compute `res .= hessian(f)(x) * v` and `grad .= gradient(Reverse, f)(x)`
 
 Example:
 
