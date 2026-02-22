@@ -437,8 +437,6 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
         return true
     end
 
-    batch_call_same_with_inverted_arg_if_active
-    
     valTys = API.CValueType[API.VT_Shadow for o in origops[offset:LLVM.API.LLVMGetNumArgOperands(orig)]]
     shadowsin = LLVM.Value[invert_pointer(gutils, o, B) for o in origops[offset:LLVM.API.LLVMGetNumArgOperands(orig)]]
     if offset != 1
