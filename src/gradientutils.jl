@@ -203,9 +203,9 @@ If postprocess_const is set, the original function will always be called, but th
 conditionally gated as follows.
 
 If the relevant input is active (and verified by runtime activity), 
-    postprocess(B, result, args) will run as normal
+    `postprocess(B, result, args)` will run as normal
 Otherwise
-    postprocess_const(B, result, args) will run
+    `postprocess_const(B, result, args)` will run
 """
 function call_same_with_inverted_arg_if_active!(
     B::LLVM.IRBuilder,
@@ -311,7 +311,7 @@ end
 
 
 """
-Helper function for llvm-level rule generation. Will call call_same_with_inverted_arg_if_active with
+Helper function for llvm-level rule generation. Will call `call_same_with_inverted_arg_if_active` with
 corresponding extracted batches if width > 1, otherwise it will call it once.
 """
 function batch_call_same_with_inverted_arg_if_active!(
