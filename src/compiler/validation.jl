@@ -3,141 +3,142 @@ using ObjectFile
 using Libdl
 
 module FFI
-using LLVM
-module BLASSupport
-# TODO: LAPACK handling
-using LinearAlgebra
-using ObjectFile
-using Libdl
-function __init__()
-    global blas_handle = Libdl.dlopen(BLAS.libblastrampoline)
-end
-function get_blas_symbols()
-    symbols = BLAS.get_config().exported_symbols
-    if BLAS.USE_BLAS64
-        return map(Base.Fix2(*, "64_"), symbols)
-    end
-    return symbols
-end
-
-function lookup_blas_symbol(name::String)
-    Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error = false)
-end
-end
-
-const ptr_map = Dict{Ptr{Cvoid},String}()
-
-function __init__()
-    known_names = (
-        "jl_alloc_array_1d",
-        "jl_alloc_array_2d",
-        "jl_alloc_array_3d",
-        "ijl_alloc_array_1d",
-        "ijl_alloc_array_2d",
-        "ijl_alloc_array_3d",
-        "jl_new_array",
-        "ijl_new_array",
-        "jl_array_copy",
-        "ijl_array_copy",
-        "jl_alloc_string",
-        "jl_in_threaded_region",
-        "jl_enter_threaded_region",
-        "jl_exit_threaded_region",
-        "jl_set_task_tid",
-        "jl_new_task",
-        "malloc",
-        "memmove",
-        "memcpy",
-        "memset",
-        "jl_array_grow_beg",
-        "ijl_array_grow_beg",
-        "jl_array_grow_end",
-        "ijl_array_grow_end",
-        "jl_array_grow_at",
-        "ijl_array_grow_at",
-        "jl_array_del_beg",
-        "ijl_array_del_beg",
-        "jl_array_del_end",
-        "ijl_array_del_end",
-        "jl_array_del_at",
-        "ijl_array_del_at",
-        "jl_array_ptr",
-        "ijl_array_ptr",
-        "jl_value_ptr",
-        "jl_get_ptls_states",
-        "jl_gc_add_finalizer_th",
-        "jl_symbol_n",
-        "jl_",
-        "jl_object_id",
-        "jl_reshape_array",
-        "ijl_reshape_array",
-        "jl_matching_methods",
-        "ijl_matching_methods",
-        "jl_array_sizehint",
-        "ijl_array_sizehint",
-        "jl_get_keyword_sorter",
-        "ijl_get_keyword_sorter",
-        "jl_ptr_to_array",
-        "ijl_ptr_to_array",
-        "jl_box_float32",
-        "ijl_box_float32",
-        "jl_box_float64",
-        "ijl_box_float64",
-        "jl_ptr_to_array_1d",
-        "ijl_ptr_to_array_1d",
-        "jl_eqtable_get",
-        "ijl_eqtable_get",
-        "jl_eqtable_put",
-        "ijl_eqtable_put",
-        "memcmp",
-        "memchr",
-        "jl_get_nth_field_checked",
-        "ijl_get_nth_field_checked",
-        "jl_stored_inline",
-        "ijl_stored_inline",
-        "jl_array_isassigned",
-        "ijl_array_isassigned",
-        "jl_array_ptr_copy",
-        "ijl_array_ptr_copy",
-        "jl_array_typetagdata",
-        "ijl_array_typetagdata",
-        "jl_idtable_rehash",
-    )
-    for name in known_names
-        sym = LLVM.find_symbol(name)
-        if sym == C_NULL
-            continue
+    using LLVM
+    module BLASSupport
+        # TODO: LAPACK handling
+        using LinearAlgebra
+        using ObjectFile
+        using Libdl
+        function __init__()
+            return global blas_handle = Libdl.dlopen(BLAS.libblastrampoline)
         end
-        if haskey(ptr_map, sym)
-            # On MacOS memcpy and memmove seem to collide?
-            if name == "memcpy"
+        function get_blas_symbols()
+            symbols = BLAS.get_config().exported_symbols
+            if BLAS.USE_BLAS64
+                return map(Base.Fix2(*, "64_"), symbols)
+            end
+            return symbols
+        end
+
+        function lookup_blas_symbol(name::String)
+            return Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error = false)
+        end
+    end
+
+    const ptr_map = Dict{Ptr{Cvoid}, String}()
+
+    function __init__()
+        known_names = (
+            "jl_alloc_array_1d",
+            "jl_alloc_array_2d",
+            "jl_alloc_array_3d",
+            "ijl_alloc_array_1d",
+            "ijl_alloc_array_2d",
+            "ijl_alloc_array_3d",
+            "jl_new_array",
+            "ijl_new_array",
+            "jl_array_copy",
+            "ijl_array_copy",
+            "jl_alloc_string",
+            "jl_in_threaded_region",
+            "jl_enter_threaded_region",
+            "jl_exit_threaded_region",
+            "jl_set_task_tid",
+            "jl_new_task",
+            "malloc",
+            "memmove",
+            "memcpy",
+            "memset",
+            "jl_array_grow_beg",
+            "ijl_array_grow_beg",
+            "jl_array_grow_end",
+            "ijl_array_grow_end",
+            "jl_array_grow_at",
+            "ijl_array_grow_at",
+            "jl_array_del_beg",
+            "ijl_array_del_beg",
+            "jl_array_del_end",
+            "ijl_array_del_end",
+            "jl_array_del_at",
+            "ijl_array_del_at",
+            "jl_array_ptr",
+            "ijl_array_ptr",
+            "jl_value_ptr",
+            "jl_get_ptls_states",
+            "jl_gc_add_finalizer_th",
+            "jl_symbol_n",
+            "jl_",
+            "jl_object_id",
+            "jl_reshape_array",
+            "ijl_reshape_array",
+            "jl_matching_methods",
+            "ijl_matching_methods",
+            "jl_array_sizehint",
+            "ijl_array_sizehint",
+            "jl_get_keyword_sorter",
+            "ijl_get_keyword_sorter",
+            "jl_ptr_to_array",
+            "ijl_ptr_to_array",
+            "jl_box_float32",
+            "ijl_box_float32",
+            "jl_box_float64",
+            "ijl_box_float64",
+            "jl_ptr_to_array_1d",
+            "ijl_ptr_to_array_1d",
+            "jl_eqtable_get",
+            "ijl_eqtable_get",
+            "jl_eqtable_put",
+            "ijl_eqtable_put",
+            "memcmp",
+            "memchr",
+            "jl_get_nth_field_checked",
+            "ijl_get_nth_field_checked",
+            "jl_stored_inline",
+            "ijl_stored_inline",
+            "jl_array_isassigned",
+            "ijl_array_isassigned",
+            "jl_array_ptr_copy",
+            "ijl_array_ptr_copy",
+            "jl_array_typetagdata",
+            "ijl_array_typetagdata",
+            "jl_idtable_rehash",
+        )
+        for name in known_names
+            sym = LLVM.find_symbol(name)
+            if sym == C_NULL
                 continue
             end
-        end
-        @assert !haskey(ptr_map, sym)
-        ptr_map[sym] = name
-    end
-    for sym in BLASSupport.get_blas_symbols()
-        ptr = BLASSupport.lookup_blas_symbol(sym)
-        if ptr !== nothing
-            if haskey(ptr_map, ptr)
-                if ptr_map[ptr] != sym
-                    @warn "Duplicated symbol in ptr_map" ptr, sym, ptr_map[ptr]
+            if haskey(ptr_map, sym)
+                # On MacOS memcpy and memmove seem to collide?
+                if name == "memcpy"
+                    continue
                 end
-                continue
             end
-            ptr_map[ptr] = sym
+            @assert !haskey(ptr_map, sym)
+            ptr_map[sym] = name
         end
+        for sym in BLASSupport.get_blas_symbols()
+            ptr = BLASSupport.lookup_blas_symbol(sym)
+            if ptr !== nothing
+                if haskey(ptr_map, ptr)
+                    if ptr_map[ptr] != sym
+                        @warn "Duplicated symbol in ptr_map" ptr, sym, ptr_map[ptr]
+                    end
+                    continue
+                end
+                ptr_map[ptr] = sym
+            end
+        end
+        return
     end
-end
 
-function memoize!(ptr::Ptr{Cvoid}, fn::String)::String
-    fn = get(ptr_map, ptr, fn)
-    if haskey(ptr_map, ptr)
-        @assert ptr_map[ptr] == fn
+    function memoize!(ptr::Ptr{Cvoid}, fn::String)::String
+        fn = get(ptr_map, ptr, fn)
+        if haskey(ptr_map, ptr)
+            @assert ptr_map[ptr] == fn
+        end
+        return fn
     end
-    return fn
-end
 end
 
 import GPUCompiler: IRError, InvalidIRError
@@ -145,7 +146,7 @@ import GPUCompiler: IRError, InvalidIRError
 function restore_lookups(mod::LLVM.Module)::Nothing
     T_size_t = convert(LLVM.LLVMType, Int)
     for f in functions(mod)
-        for fattr in collect(function_attributes(f))        
+        for fattr in collect(function_attributes(f))
             if isa(fattr, LLVM.StringAttribute)
                 if kind(fattr) == "enzymejl_needs_restoration"
                     v = parse(UInt, LLVM.value(fattr))
@@ -177,12 +178,13 @@ function restore_lookups(mod::LLVM.Module)::Nothing
             eraseInst(mod, f)
         end
     end
+    return
 end
 
 function check_ir(interp, @nospecialize(job::CompilerJob), mod::LLVM.Module)
     errors = check_ir!(interp, job, IRError[], mod)
     unique!(errors)
-    if !isempty(errors)
+    return if !isempty(errors)
         throw(InvalidIRError(job, errors))
     end
 end
@@ -205,7 +207,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
         eraseInst(mod, f)
     end
     Compiler.rewrite_ccalls!(mod)
-        
+
     del = LLVM.Function[]
     for f in collect(functions(mod))
         if in(f, del)
@@ -216,7 +218,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     for d in del
         LLVM.API.LLVMDeleteFunction(d)
     end
-    
+
     del = LLVM.Function[]
     for f in collect(functions(mod))
         if in(f, del)
@@ -236,301 +238,301 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     isInline = API.EnzymeGetCLBool(cglobal((:EnzymeInline, API.libEnzyme))) != 0
     mod = LLVM.parent(f)
     for bb in blocks(f)
-    iter = LLVM.API.LLVMGetFirstInstruction(bb)
-    while iter != C_NULL
-        inst = LLVM.Instruction(iter)
-        iter = LLVM.API.LLVMGetNextInstruction(iter)
+        iter = LLVM.API.LLVMGetFirstInstruction(bb)
+        while iter != C_NULL
+            inst = LLVM.Instruction(iter)
+            iter = LLVM.API.LLVMGetNextInstruction(iter)
 
-	if isa(value_type(inst), LLVM.PointerType) && addrspace(value_type(inst)) == Tracked
-	    	inst0, _ = get_base_and_offset(inst; offsetAllowed=false, inttoptr=true)
-		if isa(inst0, LLVM.LoadInst) && addrspace(value_type(operands(inst0)[1])) == 0
-		   addr = operands(inst0)[1]
-	    	   addr, off = get_base_and_offset(addr; offsetAllowed=true, inttoptr=true)
-			gname = nothing
-			load1 = false
-			if isa(addr, LLVM.GlobalVariable) && haskey(metadata(addr), "julia.constgv")
-				paddr = addr
-				addr = LLVM.initializer(paddr)
-				gname = LLVM.name(paddr)*"\$false"
-				addr, _ = get_base_and_offset(addr; offsetAllowed=false, inttoptr=true)
-			elseif isa(addr, LLVM.LoadInst)
-			   paddr = operands(addr)[1]
-			   if isa(paddr, LLVM.GlobalVariable) && haskey(metadata(paddr), "julia.constgv")
-				addr = LLVM.initializer(paddr)
-				gname = LLVM.name(paddr)*"\$true"
-				addr, _ = get_base_and_offset(addr; offsetAllowed=false, inttoptr=true)
-				load1 = true
-			   end
-			elseif isa(addr, LLVM.ConstantInt)
-			    gname = string(convert(UInt, addr))*"\$true"
-			    load1 = true
-			end
-
-			if isa(addr, LLVM.ConstantInt)
-			
-			initaddr = convert(UInt, addr) + off
-			if gname isa String
-			    gname = gname *"\$$initaddr"
-			end
-			ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
-			if load1
-			ptr = Base.unsafe_load(ptr, :unordered)
-			if ptr == C_NULL
-				continue
-			end
-			end
-			obj = Base.unsafe_pointer_to_objref(ptr)
-	    		if obj === nothing
-				continue
-			end
-			obj0 = obj
-
-			# TODO we can use this to make it properly relocatable
-			if isa(obj, Core.Binding)
-			   obj = obj.value
-			   if gname === nothing
-				obj0 = obj
-			   end
-			end
-
-			# We really don't want to mess with the atomic baked in loads here
-			#if obj isa Base.ReentrantLock
-			#   continue
-			#end
-
-			b = IRBuilder()
-			position!(b, inst)
-			newf = unsafe_to_llvm(b, obj0; insert_name_if_not_exists=gname) 
-			replace_uses!(inst, newf)
-			LLVM.API.LLVMInstructionEraseFromParent(inst)
-			continue
-		end
-		end
-	    end
-        if isa(inst, LLVM.CallInst)
-            push!(calls, inst)
-            # remove illegal invariant.load and jtbaa_const invariants
-        elseif isa(inst, LLVM.LoadInst) 
-	    fn_got, _ = get_base_and_offset(operands(inst)[1]; offsetAllowed=false, inttoptr=false)
-            fname = String(name(fn_got))
-            match_ = match(r"^jlplt_(.*)_\d+_got$", fname)
-
-            if match_ !== nothing
-                fname = String(match_[1])
-                FT = nothing
-                todo = LLVM.Instruction[inst]
-                while length(todo) != 0
-                    v = pop!(todo)
-                    for u in LLVM.uses(v)
-                        u = LLVM.user(u)
-                        if isa(u, LLVM.CallInst)
-                            FT = called_type(u)
-                            break
+            if isa(value_type(inst), LLVM.PointerType) && addrspace(value_type(inst)) == Tracked
+                inst0, _ = get_base_and_offset(inst; offsetAllowed = false, inttoptr = true)
+                if isa(inst0, LLVM.LoadInst) && addrspace(value_type(operands(inst0)[1])) == 0
+                    addr = operands(inst0)[1]
+                    addr, off = get_base_and_offset(addr; offsetAllowed = true, inttoptr = true)
+                    gname = nothing
+                    load1 = false
+                    if isa(addr, LLVM.GlobalVariable) && haskey(metadata(addr), "julia.constgv")
+                        paddr = addr
+                        addr = LLVM.initializer(paddr)
+                        gname = LLVM.name(paddr) * "\$false"
+                        addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
+                    elseif isa(addr, LLVM.LoadInst)
+                        paddr = operands(addr)[1]
+                        if isa(paddr, LLVM.GlobalVariable) && haskey(metadata(paddr), "julia.constgv")
+                            addr = LLVM.initializer(paddr)
+                            gname = LLVM.name(paddr) * "\$true"
+                            addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
+                            load1 = true
                         end
-                        if isa(u, LLVM.BitCastInst)
-                            push!(todo, u)
+                    elseif isa(addr, LLVM.ConstantInt)
+                        gname = string(convert(UInt, addr)) * "\$true"
+                        load1 = true
+                    end
+
+                    if isa(addr, LLVM.ConstantInt)
+
+                        initaddr = convert(UInt, addr) + off
+                        if gname isa String
+                            gname = gname * "\$$initaddr"
+                        end
+                        ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
+                        if load1
+                            ptr = Base.unsafe_load(ptr, :unordered)
+                            if ptr == C_NULL
+                                continue
+                            end
+                        end
+                        obj = Base.unsafe_pointer_to_objref(ptr)
+                        if obj === nothing
                             continue
                         end
-                    end
-                    if FT !== nothing
-                        break
+                        obj0 = obj
+
+                        # TODO we can use this to make it properly relocatable
+                        if isa(obj, Core.Binding)
+                            obj = obj.value
+                            if gname === nothing
+                                obj0 = obj
+                            end
+                        end
+
+                        # We really don't want to mess with the atomic baked in loads here
+                        #if obj isa Base.ReentrantLock
+                        #   continue
+                        #end
+
+                        b = IRBuilder()
+                        position!(b, inst)
+                        newf = unsafe_to_llvm(b, obj0; insert_name_if_not_exists = gname)
+                        replace_uses!(inst, newf)
+                        LLVM.API.LLVMInstructionEraseFromParent(inst)
+                        continue
                     end
                 end
-                @assert FT !== nothing
-                init = LLVM.initializer(fn_got)
-                if init !== nothing
-                initfn, _ = get_base_and_offset(init; offsetAllowed=false, inttoptr=false)
-                loadfn = first(instructions(first(blocks(initfn))))::LLVM.LoadInst
-                opv = operands(loadfn)[1]
-                if !isa(opv, LLVM.GlobalVariable)
-                    for iv in instructions(last(blocks(initfn)))
-                        if !(iv isa LLVM.StoreInst)
-                            continue
-                        end
-                        gv = operands(iv)[2]
-                        if !(gv isa LLVM.GlobalVariable)
-                            continue
-                        end
-                        opv = gv
-                        break
-                    end
-                end
-                if !isa(opv, LLVM.GlobalVariable)
-                    msg = sprint() do io::IO
-                        println(
-                            io,
-                            "Enzyme internal error unsupported got(load)",
-                        )
-                        println(io, "mod=", string(mod))
-                        println(io, "initfn=", string(initfn))
-                        println(io, "loadfn=", string(loadfn))
-                        println(io, "opv=", string(opv))
-                    end
-                    throw(AssertionError(msg))
-                end
-                opv = opv::LLVM.GlobalVariable
+            end
+            if isa(inst, LLVM.CallInst)
+                push!(calls, inst)
+                # remove illegal invariant.load and jtbaa_const invariants
+            elseif isa(inst, LLVM.LoadInst)
+                fn_got, _ = get_base_and_offset(operands(inst)[1]; offsetAllowed = false, inttoptr = false)
+                fname = String(name(fn_got))
+                match_ = match(r"^jlplt_(.*)_\d+_got$", fname)
 
-                if startswith(fname, "jl_") || startswith(fname, "ijl_") || startswith(fname, "_j_")
-                    newf, _ = get_function!(mod, fname, FT)
-                else
-                    found = nothing
-                    for lbb in blocks(initfn)
-                    liter = LLVM.API.LLVMGetFirstInstruction(lbb)
-                    while liter != C_NULL
-                        linst = LLVM.Instruction(liter)
-                        liter = LLVM.API.LLVMGetNextInstruction(liter)
-                        if !isa(linst, LLVM.CallInst)
-                            continue
+                if match_ !== nothing
+                    fname = String(match_[1])
+                    FT = nothing
+                    todo = LLVM.Instruction[inst]
+                    while length(todo) != 0
+                        v = pop!(todo)
+                        for u in LLVM.uses(v)
+                            u = LLVM.user(u)
+                            if isa(u, LLVM.CallInst)
+                                FT = called_type(u)
+                                break
+                            end
+                            if isa(u, LLVM.BitCastInst)
+                                push!(todo, u)
+                                continue
+                            end
                         end
-                        cv = LLVM.called_operand(linst)
-                        if !isa(cv, LLVM.Function)
-                            continue
-                        end
-                        if LLVM.name(cv) == "ijl_load_and_lookup"
-                            found = linst
+                        if FT !== nothing
                             break
                         end
                     end
-                    end
-                    if found == nothing
-                        msg = sprint() do io::IO
-                            println(
-                                io,
-                                "Enzyme internal error unsupported got",
-                            )
-                            println(io, "inst=", inst)
-                            println(io, "fname=", fname)
-                            println(io, "FT=", FT)
-                            println(io, "fn_got=", fn_got)
-                            println(io, "init=", string(initfn))
-                            println(io, "opv=", string(opv))
+                    @assert FT !== nothing
+                    init = LLVM.initializer(fn_got)
+                    if init !== nothing
+                        initfn, _ = get_base_and_offset(init; offsetAllowed = false, inttoptr = false)
+                        loadfn = first(instructions(first(blocks(initfn))))::LLVM.LoadInst
+                        opv = operands(loadfn)[1]
+                        if !isa(opv, LLVM.GlobalVariable)
+                            for iv in instructions(last(blocks(initfn)))
+                                if !(iv isa LLVM.StoreInst)
+                                    continue
+                                end
+                                gv = operands(iv)[2]
+                                if !(gv isa LLVM.GlobalVariable)
+                                    continue
+                                end
+                                opv = gv
+                                break
+                            end
                         end
-                        throw(AssertionError(msg))
-                    end
-
-                    legal1, arg1 = abs_cstring(operands(found)[1])
-                    if legal1
-                    else
-                        arg1, _ = get_base_and_offset(operands(found)[1]; offsetAllowed=false, inttoptr=true)
-                        if isa(arg1, LLVM.PointerNull)
-                            arg1 = LLVM.ConstantInt(0)
-                        elseif !isa(arg1, LLVM.ConstantInt)
+                        if !isa(opv, LLVM.GlobalVariable)
                             msg = sprint() do io::IO
                                 println(
                                     io,
-                                    "Enzyme internal error unsupported got(arg1)",
+                                    "Enzyme internal error unsupported got(load)",
                                 )
-                                println(io, "inst=", inst)
-                                println(io, "fname=", fname)
-                                println(io, "FT=", FT)
-                                println(io, "fn_got=", fn_got)
-                                println(io, "init=", string(initfn))
+                                println(io, "mod=", string(mod))
+                                println(io, "initfn=", string(initfn))
+                                println(io, "loadfn=", string(loadfn))
                                 println(io, "opv=", string(opv))
-                                println(io, "found=", string(found))
-                                println(io, "arg1=", string(arg1))
                             end
                             throw(AssertionError(msg))
                         end
-        
-                        arg1 = reinterpret(Ptr{Cvoid}, convert(UInt, arg1))
-                    end
+                        opv = opv::LLVM.GlobalVariable
 
-                    legal2, fname = abs_cstring(operands(found)[2])
-                    if !legal2
-                        msg = sprint() do io::IO
-                            println(
-                                io,
-                                "Enzyme internal error unsupported got(fname)",
-                            )
-                            println(io, "inst=", inst)
-                            println(io, "fname=", fname)
-                            println(io, "FT=", FT)
-                            println(io, "fn_got=", fn_got)
-                            println(io, "init=", string(initfn))
-                            println(io, "opv=", string(opv))
-                            println(io, "found=", string(found))
-                            println(io, "fname=", string(operands(found)[2]))
+                        if startswith(fname, "jl_") || startswith(fname, "ijl_") || startswith(fname, "_j_")
+                            newf, _ = get_function!(mod, fname, FT)
+                        else
+                            found = nothing
+                            for lbb in blocks(initfn)
+                                liter = LLVM.API.LLVMGetFirstInstruction(lbb)
+                                while liter != C_NULL
+                                    linst = LLVM.Instruction(liter)
+                                    liter = LLVM.API.LLVMGetNextInstruction(liter)
+                                    if !isa(linst, LLVM.CallInst)
+                                        continue
+                                    end
+                                    cv = LLVM.called_operand(linst)
+                                    if !isa(cv, LLVM.Function)
+                                        continue
+                                    end
+                                    if LLVM.name(cv) == "ijl_load_and_lookup"
+                                        found = linst
+                                        break
+                                    end
+                                end
+                            end
+                            if found == nothing
+                                msg = sprint() do io::IO
+                                    println(
+                                        io,
+                                        "Enzyme internal error unsupported got",
+                                    )
+                                    println(io, "inst=", inst)
+                                    println(io, "fname=", fname)
+                                    println(io, "FT=", FT)
+                                    println(io, "fn_got=", fn_got)
+                                    println(io, "init=", string(initfn))
+                                    println(io, "opv=", string(opv))
+                                end
+                                throw(AssertionError(msg))
+                            end
+
+                            legal1, arg1 = abs_cstring(operands(found)[1])
+                            if legal1
+                            else
+                                arg1, _ = get_base_and_offset(operands(found)[1]; offsetAllowed = false, inttoptr = true)
+                                if isa(arg1, LLVM.PointerNull)
+                                    arg1 = LLVM.ConstantInt(0)
+                                elseif !isa(arg1, LLVM.ConstantInt)
+                                    msg = sprint() do io::IO
+                                        println(
+                                            io,
+                                            "Enzyme internal error unsupported got(arg1)",
+                                        )
+                                        println(io, "inst=", inst)
+                                        println(io, "fname=", fname)
+                                        println(io, "FT=", FT)
+                                        println(io, "fn_got=", fn_got)
+                                        println(io, "init=", string(initfn))
+                                        println(io, "opv=", string(opv))
+                                        println(io, "found=", string(found))
+                                        println(io, "arg1=", string(arg1))
+                                    end
+                                    throw(AssertionError(msg))
+                                end
+
+                                arg1 = reinterpret(Ptr{Cvoid}, convert(UInt, arg1))
+                            end
+
+                            legal2, fname = abs_cstring(operands(found)[2])
+                            if !legal2
+                                msg = sprint() do io::IO
+                                    println(
+                                        io,
+                                        "Enzyme internal error unsupported got(fname)",
+                                    )
+                                    println(io, "inst=", inst)
+                                    println(io, "fname=", fname)
+                                    println(io, "FT=", FT)
+                                    println(io, "fn_got=", fn_got)
+                                    println(io, "init=", string(initfn))
+                                    println(io, "opv=", string(opv))
+                                    println(io, "found=", string(found))
+                                    println(io, "fname=", string(operands(found)[2]))
+                                end
+                                throw(AssertionError(msg))
+                            end
+
+                            newf = nothing
+                            if arg1 isa AbstractString
+                                found, newf = try_import_llvmbc(mod, arg1, fname, imported)
+                            end
+                            if newf isa Nothing
+                                fused_name = if arg1 isa AbstractString
+                                    "ejlstr\$$fname\$$arg1"
+                                else
+                                    if arg1 == reinterpret(Ptr{Nothing}, UInt(0x03))
+                                        fname
+                                    else
+                                        arg1 = reinterpret(UInt, arg1)
+                                        "ejlptr\$$fname\$$arg1"
+                                    end
+                                end
+
+                                newf, _ = get_function!(mod, fused_name, FT)
+
+                                while isa(newf, LLVM.ConstantExpr)
+                                    newf = operands(newf)[1]
+                                end
+                                push!(function_attributes(newf), StringAttribute("enzyme_math", fname))
+                                push!(function_attributes(newf), StringAttribute("enzyme_preserve_primal", "*"))
+                                # TODO we can make this relocatable if desired by having restore lookups re-create this got initializer/etc
+                                # metadata(newf)["enzymejl_flib"] = flib
+                                # metadata(newf)["enzymejl_flib"] = flib
+                            end
                         end
-                        throw(AssertionError(msg))
+
+                        if value_type(newf) != value_type(inst)
+                            newf = const_pointercast(newf, value_type(inst))
+                        end
+                        replace_uses!(inst, newf)
+                        LLVM.API.LLVMInstructionEraseFromParent(inst)
+
+                        baduse = false
+                        for u in LLVM.uses(fn_got)
+                            u = LLVM.user(u)
+                            if isa(u, LLVM.StoreInst)
+                                continue
+                            end
+                            baduse = true
+                        end
+
+                        if !baduse
+                            opv_is_got = opv == fn_got
+
+                            push!(deletedfns, initfn)
+                            LLVM.initializer!(fn_got, LLVM.null(value_type(LLVM.initializer(fn_got))))
+                            replace_uses!(opv, LLVM.null(value_type(opv)))
+                            LLVM.API.LLVMDeleteGlobal(opv)
+                            if !opv_is_got
+                                replace_uses!(fn_got, LLVM.null(value_type(fn_got)))
+                                LLVM.API.LLVMDeleteGlobal(fn_got)
+                            end
+                        end
                     end
 
-		    newf = nothing
-		    if arg1 isa AbstractString
-			found, newf = try_import_llvmbc(mod, arg1, fname, imported)
-		    end
-		    if newf isa Nothing
-			    fused_name = if arg1 isa AbstractString
-				"ejlstr\$$fname\$$arg1"
-			    else
-				if arg1 == reinterpret(Ptr{Nothing}, UInt(0x3))
-				    fname
-				else
-				    arg1 = reinterpret(UInt, arg1)
-				    "ejlptr\$$fname\$$arg1"
-				end
-			    end
-
-			    newf, _ = get_function!(mod, fused_name, FT)
-			    
-			    while isa(newf, LLVM.ConstantExpr)
-				newf = operands(newf)[1]
-			    end
-			    push!(function_attributes(newf), StringAttribute("enzyme_math", fname))
-			    push!(function_attributes(newf), StringAttribute("enzyme_preserve_primal", "*"))
-			    # TODO we can make this relocatable if desired by having restore lookups re-create this got initializer/etc
-			    # metadata(newf)["enzymejl_flib"] = flib
-			    # metadata(newf)["enzymejl_flib"] = flib
-		     end
-                end
-
-                if value_type(newf) != value_type(inst)
-                    newf = const_pointercast(newf, value_type(inst))
-                end
-                replace_uses!(inst, newf)
-                LLVM.API.LLVMInstructionEraseFromParent(inst)
-               
-                baduse = false
-                for u in LLVM.uses(fn_got)
-                    u = LLVM.user(u)
-                    if isa(u, LLVM.StoreInst)
-                        continue
+                elseif isInline
+                    md = metadata(inst)
+                    if haskey(md, LLVM.MD_tbaa)
+                        modified = LLVM.Metadata(
+                            ccall(
+                                (:EnzymeMakeNonConstTBAA, API.libEnzyme),
+                                LLVM.API.LLVMMetadataRef,
+                                (LLVM.API.LLVMMetadataRef,),
+                                md[LLVM.MD_tbaa],
+                            ),
+                        )
+                        setindex!(md, modified, LLVM.MD_tbaa)
                     end
-                    baduse = true
-                end
-                
-                if !baduse
-                    opv_is_got = opv == fn_got
-
-                    push!(deletedfns, initfn)
-                    LLVM.initializer!(fn_got, LLVM.null(value_type(LLVM.initializer(fn_got))))
-                    replace_uses!(opv, LLVM.null(value_type(opv)))
-                    LLVM.API.LLVMDeleteGlobal(opv)
-                    if !opv_is_got
-                        replace_uses!(fn_got, LLVM.null(value_type(fn_got)))
-                        LLVM.API.LLVMDeleteGlobal(fn_got)
+                    if haskey(md, LLVM.MD_invariant_load)
+                        delete!(md, LLVM.MD_invariant_load)
                     end
-                end
-                    end
-
-            elseif isInline
-                md = metadata(inst)
-                if haskey(md, LLVM.MD_tbaa)
-                    modified = LLVM.Metadata(
-                        ccall(
-                            (:EnzymeMakeNonConstTBAA, API.libEnzyme),
-                            LLVM.API.LLVMMetadataRef,
-                            (LLVM.API.LLVMMetadataRef,),
-                            md[LLVM.MD_tbaa],
-                        ),
-                    )
-                    setindex!(md, modified, LLVM.MD_tbaa)
-                end
-                if haskey(md, LLVM.MD_invariant_load)
-                    delete!(md, LLVM.MD_invariant_load)
                 end
             end
         end
-    end
     end
 
     while length(calls) > 0
@@ -544,40 +546,42 @@ end
 const libjulia = Ref{Ptr{Cvoid}}(C_NULL)
 
 # List of methods to location of arg which is the mi/function, then start of args
-const generic_method_offsets = Dict{String,Tuple{Int,Int}}((
-    "jl_f__apply_latest" => (2, 3),
-    "ijl_f__apply_latest" => (2, 3),
-    "jl_f__call_latest" => (2, 3),
-    "ijl_f__call_latest" => (2, 3),
-    "jl_f_invokelatest" => (2, 3),
-    "ijl_f_invokelatest" => (2, 3),
-    "jl_f_invoke" => (2, 3),
-    "jl_invoke" => (1, 3),
-    "jl_apply_generic" => (1, 2),
-    "ijl_f_invoke" => (2, 3),
-    "ijl_invoke" => (1, 3),
-    "ijl_apply_generic" => (1, 2),
-))
+const generic_method_offsets = Dict{String, Tuple{Int, Int}}(
+    (
+        "jl_f__apply_latest" => (2, 3),
+        "ijl_f__apply_latest" => (2, 3),
+        "jl_f__call_latest" => (2, 3),
+        "ijl_f__call_latest" => (2, 3),
+        "jl_f_invokelatest" => (2, 3),
+        "ijl_f_invokelatest" => (2, 3),
+        "jl_f_invoke" => (2, 3),
+        "jl_invoke" => (1, 3),
+        "jl_apply_generic" => (1, 2),
+        "ijl_f_invoke" => (2, 3),
+        "ijl_invoke" => (1, 3),
+        "ijl_apply_generic" => (1, 2),
+    )
+)
 
-@inline function is_inactive(@nospecialize(tys::Union{Vector{Union{Type,Core.TypeofVararg}}, Core.SimpleVector}), world::UInt, @nospecialize(mt))
+@inline function is_inactive(@nospecialize(tys::Union{Vector{Union{Type, Core.TypeofVararg}}, Core.SimpleVector}), world::UInt, @nospecialize(mt))
     specTypes = Interpreter.simplify_kw(Tuple{tys...})
-    if Enzyme.has_method(Tuple{typeof(EnzymeRules.inactive),tys...}, world, mt)
+    if Enzyme.has_method(Tuple{typeof(EnzymeRules.inactive), tys...}, world, mt)
         return true
     end
-    if Enzyme.has_method(Tuple{typeof(EnzymeRules.inactive_noinl),tys...}, world, mt)
+    if Enzyme.has_method(Tuple{typeof(EnzymeRules.inactive_noinl), tys...}, world, mt)
         return true
     end
     # TODO if we can deduce the return type is inactive, and arg types inactive, we can mark inactive in total
     @static if false
-    if !Enzyme.Compiler.no_type_setting(specTypes; world)
-      any_active = false
-      for ty in tys
-        if !guaranteed_const_nongen(ty, world)
-	  any_active = true
-	  break
+        if !Enzyme.Compiler.no_type_setting(specTypes; world)
+            any_active = false
+            for ty in tys
+                if !guaranteed_const_nongen(ty, world)
+                    any_active = true
+                    break
+                end
+            end
         end
-      end
-    end
     end
 
     return false
@@ -595,9 +599,9 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
             sections = Sections(lib)
             llvmbc = nothing
             for s in sections
-		if DebugLTO[]
-		   ccall(:jl_, Cvoid, (Any,), s)
-		end
+                if DebugLTO[]
+                    ccall(:jl_, Cvoid, (Any,), s)
+                end
                 sn = section_name(s)
                 if sn == ".llvmbc" || sn == "__LLVM,__bundle"
                     llvmbc = read(s)
@@ -608,48 +612,48 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
         end
 
         if data !== nothing
-	    if LLVM.API.LLVMContextGetDiagnosticHandler(LLVM.context()) == C_NULL
-	        LLVM._install_handlers(LLVM.context())
-	    end
+            if LLVM.API.LLVMContextGetDiagnosticHandler(LLVM.context()) == C_NULL
+                LLVM._install_handlers(LLVM.context())
+            end
             try
                 inmod = parse(LLVM.Module, data)
                 found = haskey(functions(inmod), fname)
             catch e2
-		if DebugLTO[]
-		   ccall(:jl_, Cvoid, (Any,), e2)
-		end
+                if DebugLTO[]
+                    ccall(:jl_, Cvoid, (Any,), e2)
+                end
                 cmd = `$(LLVMDowngrader_jll.llvm_as()) --bitcode-version=7.0 -o -`
-		# TODO MethodError: no method matching redir_out(::Cmd, ::ObjectFile.ELF.ELFSectionRef{ObjectFile.ELF.ELFHandle{IOStream}})
-		@static if false
-			data2 = open(flib, "r") do io
-			    lib = only(readmeta(io))
-			    sections = Sections(lib)
-			    llvmbc = nothing
-			    for s in sections
-				sn = section_name(s)
-				if sn == ".llvmbc" || sn == "__LLVM,__bundle"
-				    read(run(pipeline(cmd, s)))
-				    break
-				end
-			    end
-			    return nothing
-			end
+                # TODO MethodError: no method matching redir_out(::Cmd, ::ObjectFile.ELF.ELFSectionRef{ObjectFile.ELF.ELFHandle{IOStream}})
+                @static if false
+                    data2 = open(flib, "r") do io
+                        lib = only(readmeta(io))
+                        sections = Sections(lib)
+                        llvmbc = nothing
+                        for s in sections
+                            sn = section_name(s)
+                            if sn == ".llvmbc" || sn == "__LLVM,__bundle"
+                                read(run(pipeline(cmd, s)))
+                                break
+                            end
+                        end
+                        return nothing
+                    end
 
-			try
-				inmod = parse(LLVM.Module, data2)
-				found = haskey(functions(inmod), fname)
-			catch e3
-				if DebugLTO[]
-				   ccall(:jl_, Cvoid, (Any,), e2)
-				end
-			end
-		end
+                    try
+                        inmod = parse(LLVM.Module, data2)
+                        found = haskey(functions(inmod), fname)
+                    catch e3
+                        if DebugLTO[]
+                            ccall(:jl_, Cvoid, (Any,), e2)
+                        end
+                    end
+                end
             end
         end
     catch e
-				if DebugLTO[]
-				   ccall(:jl_, Cvoid, (Any,), e)
-				end
+        if DebugLTO[]
+            ccall(:jl_, Cvoid, (Any,), e)
+        end
     end
 
     if !found
@@ -687,12 +691,12 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     method_table = Core.Compiler.method_table(interp)
     bt = backtrace(inst)
     dest = called_operand(inst)
-    
+
     if isa(dest, LLVM.PHIInst) && all(Base.Fix1(==, operands(dest)[1]), operands(dest))
-       dest = operands(dest)[1]
+        dest = operands(dest)[1]
     end
     if isa(dest, LLVM.ConstantExpr) && opcode(dest) == LLVM.API.LLVMIntToPtr && isa(operands(dest)[1], LLVM.ConstantExpr) && opcode(operands(dest)[1]) == LLVM.API.LLVMPtrToInt
-       dest = operands(operands(dest)[1])[1] 
+        dest = operands(operands(dest)[1])[1]
     end
 
     if isa(dest, LLVM.Function)
@@ -737,7 +741,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
 
-            arg1, _ = get_base_and_offset(operands(inst)[1]; offsetAllowed=false, inttoptr=true)
+            arg1, _ = get_base_and_offset(operands(inst)[1]; offsetAllowed = false, inttoptr = true)
             if isa(arg1, LLVM.ConstantInt)
                 arg1 = reinterpret(Ptr{Cvoid}, convert(UInt, arg1))
                 legal2, fname = abs_cstring(operands(inst)[2])
@@ -771,7 +775,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         for u in LLVM.uses(inst)
                             st = LLVM.user(u)
                             if isa(st, LLVM.StoreInst) &&
-                               LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
+                                    LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
                                 ptr = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 1))
                                 for u in LLVM.uses(ptr)
                                     ld = LLVM.user(u)
@@ -807,9 +811,9 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                             end
                             if isa(u, LLVM.PHIInst)
                                 if all(
-                                    x -> first(x) == inst || first(x) == replacement,
-                                    LLVM.incoming(u),
-                                )
+                                        x -> first(x) == inst || first(x) == replacement,
+                                        LLVM.incoming(u),
+                                    )
 
                                     for u in LLVM.uses(u)
                                         u = LLVM.user(u)
@@ -843,22 +847,20 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             end
 
 
-
-
         elseif fn == "jl_lazy_load_and_lookup" || fn == "ijl_lazy_load_and_lookup"
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
 
-            ops = collect(operands(inst))[1:end-1]
+            ops = collect(operands(inst))[1:(end - 1)]
             @assert length(ops) == 2
             flib = ops[1]
             fname = ops[2]
 
-	    if isa(flib, LLVM.ConstantExpr) || isa(flib, LLVM.GlobalVariable)
-		legal, flib2 = absint(flib)
-		if legal
-		    flib = unbind(flib2)
-		end
+            if isa(flib, LLVM.ConstantExpr) || isa(flib, LLVM.GlobalVariable)
+                legal, flib2 = absint(flib)
+                if legal
+                    flib = unbind(flib2)
+                end
             end
             if isa(flib, GlobalRef) && isdefined(flib.mod, flib.name)
                 flib = getfield(flib.mod, flib.name)
@@ -873,12 +875,12 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             end
 
             if (isa(fname, LLVM.ConstantArray) || isa(fname, LLVM.ConstantDataArray)) &&
-               eltype(value_type(fname)) == LLVM.IntType(8)
-               fname = String(map(Base.Fix1(convert, UInt8), collect(fname)[1:(end-1)]))
+                    eltype(value_type(fname)) == LLVM.IntType(8)
+                fname = String(map(Base.Fix1(convert, UInt8), collect(fname)[1:(end - 1)]))
             end
 
-	    if !isa(fname, String) || !isa(flib, String)
-		return
+            if !isa(fname, String) || !isa(flib, String)
+                return
             end
 
             found, replaceWith = try_import_llvmbc(mod, flib, fname, imported)
@@ -888,7 +890,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 for u in LLVM.uses(inst)
                     st = LLVM.user(u)
                     if isa(st, LLVM.StoreInst) &&
-                       LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
+                            LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
                         ptr = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 1))
                         for u in LLVM.uses(ptr)
                             ld = LLVM.user(u)
@@ -939,7 +941,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                     for u in LLVM.uses(inst)
                         st = LLVM.user(u)
                         if isa(st, LLVM.StoreInst) &&
-                           LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
+                                LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 0)) == inst
                             ptr = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(st, 1))
                             for u in LLVM.uses(ptr)
                                 ld = LLVM.user(u)
@@ -960,7 +962,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                             end
                         end
                     end
-    
+
                     b = IRBuilder()
                     position!(b, inst)
                     replacement = LLVM.inttoptr!(b, replaceWith, value_type(inst))
@@ -971,10 +973,10 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         end
                         if isa(u, LLVM.PHIInst)
                             if all(
-                                x -> first(x) == inst || first(x) == replacement,
-                                LLVM.incoming(u),
-                            )
-    
+                                    x -> first(x) == inst || first(x) == replacement,
+                                    LLVM.incoming(u),
+                                )
+
                                 for u in LLVM.uses(u)
                                     u = LLVM.user(u)
                                     if isa(u, LLVM.CallInst)
@@ -1007,17 +1009,17 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 # Add 1 to account for function being first arg
                 iteroff = 2
 
-                legal, iterlib = absint(operands(inst)[iteroff+1])
-		iterlib = unbind(iterlib)
+                legal, iterlib = absint(operands(inst)[iteroff + 1])
+                iterlib = unbind(iterlib)
                 if legal && iterlib == Base.iterate
-                    legal, GT, byref = abs_typeof(operands(inst)[4+1], true)
+                    legal, GT, byref = abs_typeof(operands(inst)[4 + 1], true)
                     funcoff = 3
-                    legal2, funclib, byref2 = abs_typeof(operands(inst)[funcoff+1])
+                    legal2, funclib, byref2 = abs_typeof(operands(inst)[funcoff + 1])
                     if legal && (GT <: Vector || GT <: Tuple)
                         if legal2
                             tys = Union{Type, Core.TypeofVararg}[funclib, Vararg{Any}]
                             if funclib == typeof(Core.apply_type) ||
-                               is_inactive(tys, world, method_table)
+                                    is_inactive(tys, world, method_table)
                                 inactive = LLVM.StringAttribute("enzyme_inactive", "")
                                 LLVM.API.LLVMAddCallSiteAttribute(
                                     inst,
@@ -1047,9 +1049,9 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                     no_escaping_alloc,
                                 )
                             elseif funclib == typeof(Base.tuple) &&
-                                   length(operands(inst)) == 4 + 1 + 1 &&
-                                   Base.isconcretetype(GT) &&
-                                   Enzyme.Compiler.guaranteed_const_nongen(GT, world)
+                                    length(operands(inst)) == 4 + 1 + 1 &&
+                                    Base.isconcretetype(GT) &&
+                                    Enzyme.Compiler.guaranteed_const_nongen(GT, world)
                                 inactive = LLVM.StringAttribute("enzyme_inactive", "")
                                 LLVM.API.LLVMAddCallSiteAttribute(
                                     inst,
@@ -1087,18 +1089,18 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             if isa(dest, LLVM.Function) && in(LLVM.name(dest), keys(generic_method_offsets))
                 offset, start = generic_method_offsets[LLVM.name(dest)]
                 # Add 1 to account for function being first arg
-                legal, flibty, byref = abs_typeof(operands(inst)[offset+1])
+                legal, flibty, byref = abs_typeof(operands(inst)[offset + 1])
                 if legal
                     tys = Union{Type, Core.TypeofVararg}[flibty]
-                    for op in collect(operands(inst))[start+1:end-1]
+                    for op in collect(operands(inst))[(start + 1):(end - 1)]
                         legal, typ, byref2 = abs_typeof(op, true)
                         if !legal
                             typ = Any
                         end
                         push!(tys, typ)
                     end
-                    legal, flib = absint(operands(inst)[offset+1])
-		    flib = unbind(flib)
+                    legal, flib = absint(operands(inst)[offset + 1])
+                    flib = unbind(flib)
                     if legal && isa(flib, Core.MethodInstance)
                         if !Base.isvarargtype(flib.specTypes.parameters[end])
                             @assert length(tys) == length(flib.specTypes.parameters)
@@ -1168,7 +1170,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         linkage!(fn, LLVM.name(fn) != pname ? LLVM.API.LLVMInternalLinkage : LLVM.API.LLVMExternalLinkage)
                     end
                 end
-                
+
                 for glob in globals(pmod)
                     if LLVM.linkage(glob) == LLVM.API.LLVMExternalLinkage
                         LLVM.initializer!(glob, nothing)
@@ -1194,47 +1196,47 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
                 if fromC
 
-		    found, replaceWith = if length(fn) > 0
-			try_import_llvmbc(mod, string(file), fn, imported)
-		    else
-			false, nothing
-		    end
-	
+                    found, replaceWith = if length(fn) > 0
+                        try_import_llvmbc(mod, string(file), fn, imported)
+                    else
+                        false, nothing
+                    end
+
                     lfn = nothing
-                    if found 
+                    if found
                         lfn = replaceWith
                     else
                         fn = FFI.memoize!(ptr, fn)
 
-			if length(fn) > 0
-				mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
-				lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
-				if lfn == C_NULL
-				    lfn = LLVM.API.LLVMAddFunction(
-					mod,
-					fn,
-					LLVM.API.LLVMGetCalledFunctionType(inst),
-				    )
-				    # Remember pointer for subsequent restoration
-				    push!(function_attributes(LLVM.Function(lfn)), StringAttribute("enzymejl_needs_restoration", string(reinterpret(UInt, ptr))))
-				else
-				    lfn = LLVM.API.LLVMConstBitCast(
-					lfn,
-					LLVM.PointerType(
-					    LLVM.FunctionType(LLVM.API.LLVMGetCalledFunctionType(inst)),
-					),
-				    )
-				end
-			end
+                        if length(fn) > 0
+                            mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
+                            lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
+                            if lfn == C_NULL
+                                lfn = LLVM.API.LLVMAddFunction(
+                                    mod,
+                                    fn,
+                                    LLVM.API.LLVMGetCalledFunctionType(inst),
+                                )
+                                # Remember pointer for subsequent restoration
+                                push!(function_attributes(LLVM.Function(lfn)), StringAttribute("enzymejl_needs_restoration", string(reinterpret(UInt, ptr))))
+                            else
+                                lfn = LLVM.API.LLVMConstBitCast(
+                                    lfn,
+                                    LLVM.PointerType(
+                                        LLVM.FunctionType(LLVM.API.LLVMGetCalledFunctionType(inst)),
+                                    ),
+                                )
+                            end
+                        end
                     end
 
-		    if lfn !== nothing
-			    LLVM.API.LLVMSetOperand(
-				inst,
-				LLVM.API.LLVMGetNumOperands(inst) - 1,
-				lfn,
-			    )
-		    end
+                    if lfn !== nothing
+                        LLVM.API.LLVMSetOperand(
+                            inst,
+                            LLVM.API.LLVMGetNumOperands(inst) - 1,
+                            lfn,
+                        )
+                    end
                 end
             end
         end
@@ -1245,15 +1247,15 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             legal, flibty, byref = abs_typeof(operands(inst)[offset])
             if legal
                 tys = Union{Type, Core.TypeofVararg}[flibty]
-                for op in collect(operands(inst))[start:end-1]
+                for op in collect(operands(inst))[start:(end - 1)]
                     legal, typ, byref2 = abs_typeof(op, true)
                     if !legal
                         typ = Any
                     end
                     push!(tys, typ)
                 end
-                legal, flib = absint(operands(inst)[offset+1])
-		flib = unbind(flib)
+                legal, flib = absint(operands(inst)[offset + 1])
+                flib = unbind(flib)
                 if legal && isa(flib, Core.MethodInstance)
                     if !Base.isvarargtype(flib.specTypes.parameters[end])
                         if length(tys) != length(flib.specTypes.parameters)
@@ -1314,21 +1316,21 @@ end
 
 
 function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world::UInt, width::Int)
-    todo = Tuple{LLVM.Value,Tuple}[]
+    todo = Tuple{LLVM.Value, Tuple}[]
     for b in blocks(enzymefn)
         term = terminator(b)
         if LLVM.API.LLVMIsAReturnInst(term) != C_NULL
             if width == 1
                 push!(todo, (operands(term)[1], off == -1 ? () : (off,)))
             else
-                for i = 1:width
+                for i in 1:width
                     push!(todo, (operands(term)[1], off == -1 ? (i,) : (off, i)))
                 end
             end
         end
     end
 
-    seen = Set{Tuple{LLVM.Value,Tuple}}()
+    seen = Set{Tuple{LLVM.Value, Tuple}}()
     while length(todo) != 0
         cur, off = pop!(todo)
 
@@ -1350,7 +1352,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world
 
         if isa(cur, LLVM.ExtractValueInst)
             noff = off
-            for i = 1:LLVM.API.LLVMGetNumIndices(cur)
+            for i in 1:LLVM.API.LLVMGetNumIndices(cur)
                 noff = (noff..., convert(Int, unsafe_load(LLVM.API.LLVMGetIndices(cur), i)))
             end
             push!(todo, (operands(cur)[1], noff))
@@ -1407,7 +1409,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world
         if isa(cur, LLVM.LoadInst)
             al = operands(cur)[1]
             if isa(al, LLVM.AllocaInst)
-                atodo = Tuple{LLVM.Value,Tuple,LLVM.Value}[]
+                atodo = Tuple{LLVM.Value, Tuple, LLVM.Value}[]
                 for u in LLVM.uses(al)
                     push!(atodo, (LLVM.user(u), off, al))
                 end
@@ -1457,7 +1459,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world
         end
 
         if length(off) == 0 &&
-           value_type(cur) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
+                value_type(cur) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
             legal, typ, byref = abs_typeof(cur)
             if legal
                 if guaranteed_nonactive(typ, world)
@@ -1489,4 +1491,5 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world
         end
         throw(AssertionError(msg))
     end
+    return
 end

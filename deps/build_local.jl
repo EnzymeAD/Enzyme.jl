@@ -61,7 +61,7 @@ if source_dir === nothing
 end
 
 # 2. Ensure that an appropriate LLVM_full_jll is installed
-Pkg.activate(; temp=true)
+Pkg.activate(; temp = true)
 llvm_assertions = try
     cglobal((:_ZN4llvm24DisableABIBreakingChecksE, Base.libllvm_path()), Cvoid)
     false
@@ -70,11 +70,11 @@ catch
 end
 llvm_pkg_version = "$(Base.libllvm_version.major).$(Base.libllvm_version.minor)"
 LLVM = if llvm_assertions
-    Pkg.add(name="LLVM_full_assert_jll", version=llvm_pkg_version)
+    Pkg.add(name = "LLVM_full_assert_jll", version = llvm_pkg_version)
     using LLVM_full_assert_jll
     LLVM_full_assert_jll
 else
-    Pkg.add(name="LLVM_full_jll", version=llvm_pkg_version)
+    Pkg.add(name = "LLVM_full_jll", version = llvm_pkg_version)
     using LLVM_full_jll
     LLVM_full_jll
 end
@@ -83,7 +83,7 @@ LLVM_VER_MAJOR = Base.libllvm_version.major
 
 # 1. Get a scratch directory
 scratch_dir = get_scratch!(Enzyme_jll, "build_$(LLVM_VER_MAJOR)_$(llvm_assertions)")
-isdir(scratch_dir) && rm(scratch_dir; recursive=true)
+isdir(scratch_dir) && rm(scratch_dir; recursive = true)
 
 
 # Build!
@@ -91,9 +91,9 @@ isdir(scratch_dir) && rm(scratch_dir; recursive=true)
 run(`cmake -DLLVM_DIR=$(LLVM_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DENZYME_EXTERNAL_SHARED_LIB=ON -DENZYME_ENABLE_BENCHMARKS=OFF -B$(scratch_dir) -S$(source_dir)`)
 
 if BCLoad
-  run(`cmake --build $(scratch_dir) --parallel $(Sys.CPU_THREADS) -t Enzyme-$(LLVM_VER_MAJOR) EnzymeBCLoad-$(LLVM_VER_MAJOR)`)
+    run(`cmake --build $(scratch_dir) --parallel $(Sys.CPU_THREADS) -t Enzyme-$(LLVM_VER_MAJOR) EnzymeBCLoad-$(LLVM_VER_MAJOR)`)
 else
-  run(`cmake --build $(scratch_dir) --parallel $(Sys.CPU_THREADS) -t Enzyme-$(LLVM_VER_MAJOR)`)
+    run(`cmake --build $(scratch_dir) --parallel $(Sys.CPU_THREADS) -t Enzyme-$(LLVM_VER_MAJOR)`)
 end
 
 # Discover built libraries
@@ -109,21 +109,21 @@ set_preferences!(
     joinpath(dirname(@__DIR__), "LocalPreferences.toml"),
     "Enzyme_jll",
     "libEnzyme_path" => lib_path,
-    force=true,
+    force = true,
 )
 
 if BCLoad
-built_libs = filter(readdir(joinpath(scratch_dir, "BCLoad"))) do file
-    endswith(file, ".$(Libdl.dlext)") && startswith(file, "lib")
-end
+    built_libs = filter(readdir(joinpath(scratch_dir, "BCLoad"))) do file
+        endswith(file, ".$(Libdl.dlext)") && startswith(file, "lib")
+    end
 
-libBC_path = joinpath(scratch_dir, "BCLoad", only(built_libs))
-isfile(libBC_path) || error("Could not find library $libBC_path in build directory")
-# Tell Enzyme_jll to load our library instead of the default artifact one
-set_preferences!(
-    joinpath(dirname(@__DIR__), "LocalPreferences.toml"),
-    "Enzyme_jll",
-    "libEnzymeBCLoad_path" => libBC_path;
-    force=true,
-)
+    libBC_path = joinpath(scratch_dir, "BCLoad", only(built_libs))
+    isfile(libBC_path) || error("Could not find library $libBC_path in build directory")
+    # Tell Enzyme_jll to load our library instead of the default artifact one
+    set_preferences!(
+        joinpath(dirname(@__DIR__), "LocalPreferences.toml"),
+        "Enzyme_jll",
+        "libEnzymeBCLoad_path" => libBC_path;
+        force = true,
+    )
 end

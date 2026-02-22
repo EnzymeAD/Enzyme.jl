@@ -1,15 +1,14 @@
-
 iszeroinit(Base.@nospecialize t) = (Base.@_total_meta; isa(t, DataType) && (t.flags & 0x0004) == 0x0004)
 
 @static if VERSION >= v"1.11"
-const datatype_layoutsize = Base.datatype_layoutsize
+    const datatype_layoutsize = Base.datatype_layoutsize
 else
-function datatype_layoutsize(dt::Base.DataType)
-    Base.@_foldable_meta
-    dt.layout == C_NULL && throw(Base.UndefRefError())
-    size = unsafe_load(convert(Ptr{Base.DataTypeLayout}, dt.layout)).size
-    return size % Int
-end
+    function datatype_layoutsize(dt::Base.DataType)
+        Base.@_foldable_meta
+        dt.layout == C_NULL && throw(Base.UndefRefError())
+        size = unsafe_load(convert(Ptr{Base.DataTypeLayout}, dt.layout)).size
+        return size % Int
+    end
 end
 
 # On 1.12+, there was a change to the calling convention where
@@ -17,42 +16,42 @@ end
 # return the number of roots in the corresponding convention, or
 # 0 if it does not apply https://github.com/JuliaLang/julia/pull/55767/files#diff-62cfb2606c6a323a7f26a3eddfa0bf2b819fa33e094561fee09daeb328e3a1e7
 function inline_roots_type(@nospecialize(LT::LLVM.LLVMType))::Int
-   @static if VERSION <= v"1.12-"
-	return 0
-   else
-	   if !(LT isa LLVM.ArrayType || LT isa LLVM.StructType)
-		return 0
-	   end
-	   tracked = CountTrackedPointers(LT)
-	   if tracked.count > 0 && !tracked.all
-	       return Int(tracked.count)
-	   end
-	   return 0
-   end
-end
-
-function inline_roots_type(@nospecialize(T::Type))::Int
-   @static if VERSION <= v"1.12-"
-	return 0
-   else
-	   if T === Union{}
-		return 0
-	   end
-	   if GPUCompiler.deserves_argbox(T)
-		return 0
-	   end
-	   if Base.isabstracttype(T)
-		return 0
-	   end
-	   if isghostty(T) || Core.Compiler.isconstType(T)
-		return 0
-	   end
-	   LT = convert(LLVM.LLVMType, T)
-	   return inline_roots_type(LT)
+    @static if VERSION <= v"1.12-"
+        return 0
+    else
+        if !(LT isa LLVM.ArrayType || LT isa LLVM.StructType)
+            return 0
+        end
+        tracked = CountTrackedPointers(LT)
+        if tracked.count > 0 && !tracked.all
+            return Int(tracked.count)
+        end
+        return 0
     end
 end
 
-function non_rooted_types(@nospecialize(typ::DataType))    
+function inline_roots_type(@nospecialize(T::Type))::Int
+    @static if VERSION <= v"1.12-"
+        return 0
+    else
+        if T === Union{}
+            return 0
+        end
+        if GPUCompiler.deserves_argbox(T)
+            return 0
+        end
+        if Base.isabstracttype(T)
+            return 0
+        end
+        if isghostty(T) || Core.Compiler.isconstType(T)
+            return 0
+        end
+        LT = convert(LLVM.LLVMType, T)
+        return inline_roots_type(LT)
+    end
+end
+
+function non_rooted_types(@nospecialize(typ::DataType))
     lRT = convert(LLVMType, typ)
     tracked = CountTrackedPointers(lRT)
     @assert !tracked.derived
@@ -64,9 +63,9 @@ function non_rooted_types(@nospecialize(typ::DataType))
     todo = DataType[typ]
     while length(todo) != 0
         cur = popfirst!(todo)
-    
+
         desc = Base.DataTypeFieldDesc(cur)
-         
+
         next = DataType[]
         for i in 1:fieldcount(cur)
             styp = typed_fieldtype(cur, i)
@@ -85,11 +84,11 @@ function non_rooted_types(@nospecialize(typ::DataType))
                 throw(AssertionError("Non inner datatype: styp=$styp cur=$cur, typ=$typ lRT=$(string(lRT))"))
             end
 
-	    if fieldcount(styp) == 0
-		push!(inners, styp)
-	    else
-		push!(next, styp)
-	    end
+            if fieldcount(styp) == 0
+                push!(inners, styp)
+            else
+                push!(next, styp)
+            end
         end
 
         for styp in reverse(next)
@@ -99,7 +98,7 @@ function non_rooted_types(@nospecialize(typ::DataType))
     return inners
 end
 
-function equivalent_rooted_type(@nospecialize(typ::DataType))    
+function equivalent_rooted_type(@nospecialize(typ::DataType))
     lRT = convert(LLVMType, typ)
     tracked = CountTrackedPointers(lRT)
     @assert !tracked.derived
@@ -115,10 +114,10 @@ function equivalent_rooted_type(@nospecialize(typ::DataType))
             push!(inners, cur)
             continue
         end
-    
+
         desc = Base.DataTypeFieldDesc(cur)
-                
-        next = Tuple{Type,Bool}[]
+
+        next = Tuple{Type, Bool}[]
         for i in 1:fieldcount(cur)
             styp = typed_fieldtype(cur, i)
             if isghostty(styp)
@@ -144,7 +143,7 @@ function equivalent_rooted_type(@nospecialize(typ::DataType))
 
     @assert length(inners) == tracked.count
 
-    res  = NamedTuple{ntuple(Symbol, Val(Int(tracked.count))),Tuple{inners...}}
+    res = NamedTuple{ntuple(Symbol, Val(Int(tracked.count))), Tuple{inners...}}
     res2 = AnyArray(Int(tracked.count))
 
     @assert convert(LLVMType, res2) == convert(LLVMType, res)
@@ -155,28 +154,28 @@ end
 # with the AnyArray's as requisite for the new roots for the calling convention
 # on 1.12
 function rooted_argument_list(iterable)
-	results = Tuple{Type, Union{Nothing, Type}}[]
-	for T in iterable
-	    roots = inline_roots_type(T)
-	    push!(results, (T, nothing))
-	    if roots != 0
+    results = Tuple{Type, Union{Nothing, Type}}[]
+    for T in iterable
+        roots = inline_roots_type(T)
+        push!(results, (T, nothing))
+        if roots != 0
             push!(results, (equivalent_rooted_type(T), T))
-	    end
-	end
-	return results
+        end
+    end
+    return results
 end
 
 struct RemovedParam end
 
 # Modified from GPUCompiler classify_arguments
 function classify_arguments(
-    @nospecialize(source_sig::Type),
-    codegen_ft::LLVM.FunctionType,
-    has_sret::Bool,
-    has_returnroots::Bool,
-    has_swiftself::Bool,
-    parmsRemoved::Vector{UInt64},
-)
+        @nospecialize(source_sig::Type),
+        codegen_ft::LLVM.FunctionType,
+        has_sret::Bool,
+        has_returnroots::Bool,
+        has_swiftself::Bool,
+        parmsRemoved::Vector{UInt64},
+    )
     codegen_types = parameters(codegen_ft)
 
     args = []
@@ -204,30 +203,36 @@ function classify_arguments(
     last_cc = nothing
     arg_jl_i = 1
     for (source_i, (source_typ, rooted_typ)) in enumerate(rooted_argument_list(source_sig.parameters))
-	if rooted_typ !== nothing
-	   arg_jl_i -= 1
-	end
+        if rooted_typ !== nothing
+            arg_jl_i -= 1
+        end
         if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
-            push!(args, (cc = GPUCompiler.GHOST, typ = source_typ, arg_i = source_i,
-			rooted_typ = rooted_typ,
-			rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
-		        rooted_cc = rooted_typ === nothing ? nothing : last_cc,
-			arg_jl_i = arg_jl_i,
-			 ))
-	    arg_jl_i += 1
-	    last_cc = GPUCompiler.GHOST
+            push!(
+                args, (
+                    cc = GPUCompiler.GHOST, typ = source_typ, arg_i = source_i,
+                    rooted_typ = rooted_typ,
+                    rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
+                    rooted_cc = rooted_typ === nothing ? nothing : last_cc,
+                    arg_jl_i = arg_jl_i,
+                )
+            )
+            arg_jl_i += 1
+            last_cc = GPUCompiler.GHOST
             continue
         end
         if in(orig_i - 1, parmsRemoved)
-            push!(args, (cc = RemovedParam, typ = source_typ, arg_i = source_i,
-			rooted_typ = rooted_typ,
-			rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
-		        rooted_cc = rooted_typ === nothing ? nothing : last_cc,
-			arg_jl_i = arg_jl_i,
-			 ))
-		    arg_jl_i += 1
+            push!(
+                args, (
+                    cc = RemovedParam, typ = source_typ, arg_i = source_i,
+                    rooted_typ = rooted_typ,
+                    rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
+                    rooted_cc = rooted_typ === nothing ? nothing : last_cc,
+                    arg_jl_i = arg_jl_i,
+                )
+            )
+            arg_jl_i += 1
             orig_i += 1
-	    last_cc = RemovedParam
+            last_cc = RemovedParam
             continue
         end
         codegen_typ = codegen_types[codegen_i]
@@ -245,16 +250,16 @@ function classify_arguments(
                         typ = source_typ,
                         arg_i = source_i,
                         codegen = (typ = codegen_typ, i = codegen_i),
-			rooted_typ = rooted_typ,
-			rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
-		        rooted_cc = rooted_typ === nothing ? nothing : last_cc,
-			arg_jl_i = arg_jl_i,
+                        rooted_typ = rooted_typ,
+                        rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
+                        rooted_cc = rooted_typ === nothing ? nothing : last_cc,
+                        arg_jl_i = arg_jl_i,
                     ),
                 )
                 # - boxed values
                 #   XXX: use `deserves_retbox` instead?
-		last_cc = GPUCompiler.BITS_VALUE
-		    arg_jl_i += 1
+                last_cc = GPUCompiler.BITS_VALUE
+                arg_jl_i += 1
             elseif llvm_source_typ isa LLVM.PointerType
                 if llvm_source_typ != codegen_typ
                     throw(AssertionError("Mismatch codegen type llvm_source_typ=$(string(llvm_source_typ)) codegen_typ=$(string(codegen_typ)) source_i=$source_i source_sig=$source_sig, source_typ=$source_typ, codegen_i=$codegen_i, codegen_types=$(string(codegen_ft))"))
@@ -266,15 +271,15 @@ function classify_arguments(
                         typ = source_typ,
                         arg_i = source_i,
                         codegen = (typ = codegen_typ, i = codegen_i),
-			rooted_typ = rooted_typ,
-			rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
-		        rooted_cc = rooted_typ === nothing ? nothing : last_cc,
-			arg_jl_i = arg_jl_i,
+                        rooted_typ = rooted_typ,
+                        rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
+                        rooted_cc = rooted_typ === nothing ? nothing : last_cc,
+                        arg_jl_i = arg_jl_i,
                     ),
                 )
                 # - references to aggregates
-		last_cc = GPUCompiler.MUT_REF
-		    arg_jl_i += 1
+                last_cc = GPUCompiler.MUT_REF
+                arg_jl_i += 1
             else
                 @assert llvm_source_typ != codegen_typ
                 push!(
@@ -284,14 +289,14 @@ function classify_arguments(
                         typ = source_typ,
                         arg_i = source_i,
                         codegen = (typ = codegen_typ, i = codegen_i),
-			rooted_typ = rooted_typ,
-			rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
-		        rooted_cc = rooted_typ === nothing ? nothing : last_cc,
-			arg_jl_i = arg_jl_i,
+                        rooted_typ = rooted_typ,
+                        rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
+                        rooted_cc = rooted_typ === nothing ? nothing : last_cc,
+                        arg_jl_i = arg_jl_i,
                     ),
                 )
-		last_cc = GPUCompiler.BITS_REF
-		    arg_jl_i += 1
+                last_cc = GPUCompiler.BITS_REF
+                arg_jl_i += 1
             end
         else
             push!(
@@ -301,14 +306,14 @@ function classify_arguments(
                     typ = source_typ,
                     arg_i = source_i,
                     codegen = (typ = codegen_typ, i = codegen_i),
-		    rooted_typ = rooted_typ,
-		    rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
-		    rooted_cc = rooted_typ === nothing ? nothing : last_cc,
-		    arg_jl_i = arg_jl_i,
+                    rooted_typ = rooted_typ,
+                    rooted_arg_i = rooted_typ === nothing ? nothing : (source_i - 1),
+                    rooted_cc = rooted_typ === nothing ? nothing : last_cc,
+                    arg_jl_i = arg_jl_i,
                 ),
             )
-	    last_cc = GPUCompiler.BITS_VALUE
-		    arg_jl_i += 1
+            last_cc = GPUCompiler.BITS_VALUE
+            arg_jl_i += 1
         end
 
         codegen_i += 1
@@ -342,7 +347,7 @@ end
 function union_alloca_type(@nospecialize(UT::Type))
     nbytes = 0
     function inner(@nospecialize(jlrettype::Type))
-        if !(Base.issingletontype(jlrettype) && isa(jlrettype, DataType))
+        return if !(Base.issingletontype(jlrettype) && isa(jlrettype, DataType))
             nbytes = max(nbytes, sizeof(jlrettype))
         end
     end
@@ -357,8 +362,8 @@ function is_sret(@nospecialize(jlrettype::Type))
         # jlrettype == (jl_value_t*)jl_bottom_type
         return false
     elseif Base.isstructtype(jlrettype) &&
-           Base.issingletontype(jlrettype) &&
-           isa(jlrettype, DataType)
+            Base.issingletontype(jlrettype) &&
+            isa(jlrettype, DataType)
         # jl_is_structtype(jlrettype) && jl_is_datatype_singleton((jl_datatype_t*)jlrettype)
         return false
     elseif jlrettype isa Union # jl_is_uniontype(jlrettype)
@@ -380,8 +385,8 @@ function is_sret_union(@nospecialize(jlrettype::Type))
         # jlrettype == (jl_value_t*)jl_bottom_type
         return false
     elseif Base.isstructtype(jlrettype) &&
-           Base.issingletontype(jlrettype) &&
-           isa(jlrettype, DataType)
+            Base.issingletontype(jlrettype) &&
+            isa(jlrettype, DataType)
         # jl_is_structtype(jlrettype) && jl_is_datatype_singleton((jl_datatype_t*)jlrettype)
         return false
     elseif jlrettype isa Union # jl_is_uniontype(jlrettype)
@@ -395,16 +400,16 @@ end
 
 # https://github.com/JuliaLang/julia/blob/0a696a3842750fcedca8832bc0aabe9096c7658f/src/codegen.cpp#L6812
 function get_return_info(
-    @nospecialize(jlrettype::Type),
-)::Tuple{Union{Nothing,Type},Union{Nothing,Type},Union{Nothing,Type}}
+        @nospecialize(jlrettype::Type),
+    )::Tuple{Union{Nothing, Type}, Union{Nothing, Type}, Union{Nothing, Type}}
     sret = nothing
     returnRoots = nothing
     rt = nothing
     if jlrettype === Union{}
         rt = Nothing
     elseif Base.isstructtype(jlrettype) &&
-           Base.issingletontype(jlrettype) &&
-           isa(jlrettype, DataType)
+            Base.issingletontype(jlrettype) &&
+            isa(jlrettype, DataType)
         rt = Nothing
     elseif jlrettype isa Union
         nbytes = 0
@@ -414,7 +419,7 @@ function get_return_info(
             end
         end
         if nbytes != 0
-            rt = NamedTuple{(Symbol("1"), Symbol("2")),Tuple{Any,UInt8}}
+            rt = NamedTuple{(Symbol("1"), Symbol("2")), Tuple{Any, UInt8}}
             # Pointer to?, Ptr{NTuple{UInt8, allunbox}
             sret = Ptr{jlrettype}
         elseif allunbox
@@ -458,32 +463,34 @@ end
     return false
 end
 
-struct Tape{TapeTy,ShadowTy,ResT}
+struct Tape{TapeTy, ShadowTy, ResT}
     internal_tape::TapeTy
     shadow_return::ShadowTy
 end
 
 
 @inline any_jltypes(::Type{Nothing}) = false
-@inline any_jltypes(::Type{T}) where {T<:AbstractFloat} = false
-@inline any_jltypes(::Type{T}) where {T<:Integer} = false
+@inline any_jltypes(::Type{T}) where {T <: AbstractFloat} = false
+@inline any_jltypes(::Type{T}) where {T <: Integer} = false
 @inline any_jltypes(::Type{Complex{T}}) where {T} = any_jltypes(T)
 @inline any_jltypes(::Type{Tuple{}}) = false
-@inline any_jltypes(::Type{NTuple{Size,T}}) where {Size,T} = any_jltypes(T)
-@inline any_jltypes(::Type{Core.LLVMPtr{T,Addr}}) where {T,Addr} = 10 <= Addr <= 12
+@inline any_jltypes(::Type{NTuple{Size, T}}) where {Size, T} = any_jltypes(T)
+@inline any_jltypes(::Type{Core.LLVMPtr{T, Addr}}) where {T, Addr} = 10 <= Addr <= 12
 @inline any_jltypes(::Type{Any}) = true
-@inline any_jltypes(::Type{NamedTuple{A,B}}) where {A,B} =
+@inline any_jltypes(::Type{NamedTuple{A, B}}) where {A, B} =
     any(any_jltypes(b) for b in B.parameters)
-@inline any_jltypes(::Type{T}) where {T<:Tuple} = any(any_jltypes(b) for b in T.parameters)
+@inline any_jltypes(::Type{T}) where {T <: Tuple} = any(any_jltypes(b) for b in T.parameters)
 
 const WideIntWidths = [256, 512, 1024, 2048]
 
 let
-    for n ∈ WideIntWidths
+    for n in WideIntWidths
         let T = Symbol(:UInt, n)
-            eval(quote
-                primitive type $T <: Unsigned $n end
-            end)
+            eval(
+                quote
+                    primitive type $T <: Unsigned $n end
+                end
+            )
         end
     end
 end
@@ -494,7 +501,7 @@ function jl_set_typeof(v::Ptr{Cvoid}, @nospecialize(T::Type))
     return nothing
 end
 
-@generated function splatnew(::Type{T}, args::TT) where {T,TT<:Tuple}
+@generated function splatnew(::Type{T}, args::TT) where {T, TT <: Tuple}
     return quote
         Base.@_inline_meta
         $(Expr(:splatnew, :T, :args))
@@ -511,13 +518,12 @@ end
 @inline remove_innerty(::Type{<:BatchMixedDuplicated}) = MixedDuplicated
 
 @inline function is_memory_instance(@nospecialize(obj))
-   @static if VERSION < v"1.11"
-	return false
-   else
-	if obj isa Memory
-	   return obj == typeof(obj).instance
+    @static if VERSION < v"1.11"
+        return false
+    else
+        if obj isa Memory
+            return obj == typeof(obj).instance
         end
-	return false
-   end
+        return false
+    end
 end
-

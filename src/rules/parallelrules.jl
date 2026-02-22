@@ -1,13 +1,12 @@
-
 function runtime_newtask_fwd(
-    fn::FT1,
-    dfn::FT2,
-    post::Any,
-    ssize::Int,
-    runtimeActivity::Val{RuntimeActivity},
-    strongZero::Val{StrongZero},
-    ::Val{width},
-) where {FT1,FT2,width,RuntimeActivity, StrongZero}
+        fn::FT1,
+        dfn::FT2,
+        post::Any,
+        ssize::Int,
+        runtimeActivity::Val{RuntimeActivity},
+        strongZero::Val{StrongZero},
+        ::Val{width},
+    ) where {FT1, FT2, width, RuntimeActivity, StrongZero}
     FT = Core.Typeof(fn)
     ghos = guaranteed_const(FT)
     forward = thunk(
@@ -40,15 +39,15 @@ struct Return2
 end
 
 function runtime_newtask_augfwd(
-    fn::FT1,
-    dfn::FT2,
-    post::Any,
-    ssize::Int,
-    runtimeActivity::Val{RuntimeActivity},
-    strongZero::Val{StrongZero},
-    ::Val{width},
-    ::Val{ModifiedBetween},
-) where {FT1,FT2,width,ModifiedBetween,RuntimeActivity,StrongZero}
+        fn::FT1,
+        dfn::FT2,
+        post::Any,
+        ssize::Int,
+        runtimeActivity::Val{RuntimeActivity},
+        strongZero::Val{StrongZero},
+        ::Val{width},
+        ::Val{ModifiedBetween},
+    ) where {FT1, FT2, width, ModifiedBetween, RuntimeActivity, StrongZero}
     # TODO make this AD subcall type stable
     FT = Core.Typeof(fn)
     ghos = guaranteed_const(FT)
@@ -92,16 +91,16 @@ end
 function referenceCaller(fn::Ref{Clos}, args...) where {Clos}
     fval = fn[]
     fval = fval::Clos
-    fval(args...)
+    return fval(args...)
 end
 
 function runtime_pfor_fwd(
-    thunk::ThunkTy,
-    ft::FT,
-    threading_args...,
-)::Cvoid where {ThunkTy,FT}
+        thunk::ThunkTy,
+        ft::FT,
+        threading_args...,
+    )::Cvoid where {ThunkTy, FT}
     function fwd(tid_args...)
-        if length(tid_args) == 0
+        return if length(tid_args) == 0
             thunk(ft)
         else
             thunk(ft, Const(tid_args[1]))
@@ -112,12 +111,12 @@ function runtime_pfor_fwd(
 end
 
 function runtime_pfor_augfwd(
-    thunk::ThunkTy,
-    ft::FT,
-    ::Val{AnyJL},
-    ::Val{byRef},
-    threading_args...,
-) where {ThunkTy,FT,AnyJL,byRef}
+        thunk::ThunkTy,
+        ft::FT,
+        ::Val{AnyJL},
+        ::Val{byRef},
+        threading_args...,
+    ) where {ThunkTy, FT, AnyJL, byRef}
     TapeType = EnzymeRules.tape_type(ThunkTy)
 
     n = Base.Threads.threadpoolsize()
@@ -138,7 +137,7 @@ function runtime_pfor_augfwd(
             tres = thunk(ft, Const(tid))
         end
 
-        if !AnyJL
+        return if !AnyJL
             unsafe_store!(tapes, tres[1], tid)
         else
             @inbounds tapes[tid] = tres[1]
@@ -160,24 +159,24 @@ function (st::ReversePFor{ThunkTy, FT, AnyJL, byRef, TT})(tid) where {ThunkTy, F
     else
         @inbounds st.tapes[tid]
     end
-    
+
     if byRef
         st.thunk(Const(referenceCaller), st.ft, Const(tid), tres)
     else
         st.thunk(st.ft, Const(tid), tres)
     end
 
-    nothing
+    return nothing
 end
 
 function runtime_pfor_rev(
-    thunk::ThunkTy,
-    ft::FT,
-    ::Val{AnyJL},
-    ::Val{byRef},
-    tapes,
-    threading_args...,
-) where {ThunkTy,FT,AnyJL,byRef}
+        thunk::ThunkTy,
+        ft::FT,
+        ::Val{AnyJL},
+        ::Val{byRef},
+        tapes,
+        threading_args...,
+    ) where {ThunkTy, FT, AnyJL, byRef}
     Base.Threads.threading_run(ReversePFor{ThunkTy, FT, AnyJL, byRef, typeof(tapes)}(thunk, ft, tapes), threading_args...)
     if !AnyJL
         Libc.free(tapes)
@@ -237,30 +236,30 @@ end
     # TODO: Clean this up and add to `nested_codegen!` asa feature
     width = Int(get_width(gutils))
 
-    ops = collect(operands(orig))[1:end-1]
+    ops = collect(operands(orig))[1:(end - 1)]
     dupClosure = !guaranteed_const_nongen(funcT, world)
     if dupClosure
-	if is_constant_value(gutils, ops[1])
-	    dupClosure = false
-	    if inline_roots_type(funcT) != 0
-	        if !is_constant_value(gutils, ops[2])
-		    dupClosure = true
-		end
-	    end
-	end
+        if is_constant_value(gutils, ops[1])
+            dupClosure = false
+            if inline_roots_type(funcT) != 0
+                if !is_constant_value(gutils, ops[2])
+                    dupClosure = true
+                end
+            end
+        end
     end
-  
+
     pdupClosure = dupClosure
 
     subfunc = nothing
 
-    dFT = (dupClosure ? (width == 1 ? Duplicated : (BatchDuplicated{T, Int(width)} where T)) : Const){funcT}
+    dFT = (dupClosure ? (width == 1 ? Duplicated : (BatchDuplicated{T, Int(width)} where {T})) : Const){funcT}
 
     if mode == API.DEM_ForwardMode
         if fwdmodenm === nothing
             etarget = Compiler.EnzymeTarget()
             eparams = Compiler.EnzymeCompilerParams(
-                Tuple{dFT,e_tt.parameters...},
+                Tuple{dFT, e_tt.parameters...},
                 API.DEM_ForwardMode,
                 width,
                 Const{Nothing},
@@ -306,13 +305,13 @@ end
         if dupClosure
             if !guaranteed_nonactive(funcT, world)
                 refed = true
-		e_tt = Tuple{width == 1 ? Duplicated{Base.RefValue{funcT}} : BatchDuplicated{Base.RefValue{funcT}, Int(width)},e_tt.parameters...}
+                e_tt = Tuple{width == 1 ? Duplicated{Base.RefValue{funcT}} : BatchDuplicated{Base.RefValue{funcT}, Int(width)}, e_tt.parameters...}
                 funcT = Core.Typeof(referenceCaller)
                 dupClosure = false
                 modifiedBetween = (false, modifiedBetween...)
                 mi2 = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, funcT, Tuple{map(eltype, e_tt.parameters)...}, world)
                 @assert mi2 !== nothing
-    		dFT = (dupClosure ? (width == 1 ? Duplicated : (BatchDuplicated{T, Int(width)} where T)) : Const){funcT}
+                dFT = (dupClosure ? (width == 1 ? Duplicated : (BatchDuplicated{T, Int(width)} where {T})) : Const){funcT}
             end
         end
 
@@ -320,7 +319,7 @@ end
             etarget = Compiler.EnzymeTarget()
             # TODO modifiedBetween
             eparams = Compiler.EnzymeCompilerParams(
-                Tuple{dFT,e_tt.parameters...},
+                Tuple{dFT, e_tt.parameters...},
                 API.DEM_ReverseModePrimal,
                 width,
                 Const{Nothing},
@@ -396,7 +395,7 @@ end
     end
 
     ppfuncT = pfuncT
-    dpfuncT = width == 1 ? pfuncT : NTuple{Int(width),pfuncT}
+    dpfuncT = width == 1 ? pfuncT : NTuple{Int(width), pfuncT}
 
     if refed
         dpfuncT = Base.RefValue{dpfuncT}
@@ -408,7 +407,7 @@ end
         if width == 1
             dfuncT = Duplicated{dfuncT}
         else
-            dfuncT = BatchDuplicated{dfuncT,Int(width)}
+            dfuncT = BatchDuplicated{dfuncT, Int(width)}
         end
     else
         dfuncT = Const{dfuncT}
@@ -430,38 +429,38 @@ end
 
         llty = convert(LLVMType, dfuncT)
 
-	num_arg_roots = inline_roots_type(llty)
-        
-	alloctx = LLVM.IRBuilder()
+        num_arg_roots = inline_roots_type(llty)
+
+        alloctx = LLVM.IRBuilder()
         position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
         al = alloca!(alloctx, llty)
-	al2 = if num_arg_roots != 0
-	   alloca!(alloctx, convert(LLVMType, AnyArray(num_arg_roots)))
-	end
+        al2 = if num_arg_roots != 0
+            alloca!(alloctx, convert(LLVMType, AnyArray(num_arg_roots)))
+        end
 
         if !isghostty(ppfuncT)
             v = new_from_original(gutils, ops[1])
             pllty = convert(LLVMType, ppfuncT)
-	    
+
             pv = nothing
-                
-	    fwdbuilder = if mode == API.DEM_ReverseModeGradient
-	       B2 = LLVM.IRBuilder()
-	       position!(B2, new_from_original(gutils, orig))
-	       B2
-	    else
-	       B
-	    end
-	    
+
+            fwdbuilder = if mode == API.DEM_ReverseModeGradient
+                B2 = LLVM.IRBuilder()
+                position!(B2, new_from_original(gutils, orig))
+                B2
+            else
+                B
+            end
+
             if value_type(v) != pllty
                 pv = v
                 v = load!(fwdbuilder, pllty, v)
             end
-	    
-	    if inline_roots_type(ppfuncT) != 0
-		v2 = new_from_original(gutils, ops[2])
-		v = recombine_value!(fwdbuilder, v, v2)
-	    end
+
+            if inline_roots_type(ppfuncT) != 0
+                v2 = new_from_original(gutils, ops[2])
+                v = recombine_value!(fwdbuilder, v, v2)
+            end
 
             if mode == API.DEM_ReverseModeGradient
                 v = lookup_value(gutils, v, B)
@@ -474,9 +473,9 @@ end
         if refed
             val0 = val = emit_allocobj!(B, pfuncT)
             val = bitcast!(B, val, LLVM.PointerType(pllty, addrspace(value_type(val))))
-            val = addrspacecast!(B, val, LLVM.PointerType(pllty, Derived)) 
+            val = addrspacecast!(B, val, LLVM.PointerType(pllty, Derived))
 
-	        if !(pv isa Nothing)
+            if !(pv isa Nothing)
                 push!(copies, (pv, val, pllty))
             end
 
@@ -495,58 +494,58 @@ end
             al,
             [LLVM.ConstantInt(LLVM.IntType(64), 0), LLVM.ConstantInt(LLVM.IntType(32), 0)],
         )
-	    
+
         if al2 !== nothing
-           extract_roots_from_value!(B, val0, al2)
-           T_jlvalue = LLVM.StructType(LLVMType[])
-           T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-           al3 = gep!(B, T_prjlvalue, al2, LLVM.Value[ConstantInt(CountTrackedPointers(value_type(val0)).count)])
+            extract_roots_from_value!(B, val0, al2)
+            T_jlvalue = LLVM.StructType(LLVMType[])
+            T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+            al3 = gep!(B, T_prjlvalue, al2, LLVM.Value[ConstantInt(CountTrackedPointers(value_type(val0)).count)])
         end
-            
+
         store!(B, val0, ptr)
 
         if pdupClosure
 
             if !isghostty(ppfuncT)
                 dv = invert_pointer(gutils, ops[1], B)
-                   
-		fwdbuilder = if mode == API.DEM_ReverseModeGradient
-		     B2 = LLVM.IRBuilder()
-		     position!(B2, new_from_original(gutils, orig))
-		     B2
-		   else
-		     B
-		   end
-	        
+
+                fwdbuilder = if mode == API.DEM_ReverseModeGradient
+                    B2 = LLVM.IRBuilder()
+                    position!(B2, new_from_original(gutils, orig))
+                    B2
+                else
+                    B
+                end
+
                 spllty = LLVM.LLVMType(API.EnzymeGetShadowType(width, pllty))
                 pv = nothing
-	        
+
                 dv2 = if inline_roots_type(ppfuncT) != 0
-                   invert_pointer(gutils, ops[2], B)
+                    invert_pointer(gutils, ops[2], B)
                 end
 
                 if value_type(dv) != spllty
                     pv = dv
                     if width == 1
                         dv = load!(fwdbuilder, spllty, dv)
-			            if dv2 !== nothing
-                           dv = recombine_value!(fwdbuilder, dv, dv2)
+                        if dv2 !== nothing
+                            dv = recombine_value!(fwdbuilder, dv, dv2)
                         end
                     else
                         shadowres = UndefValue(spllty)
-                        for idx = 1:width
+                        for idx in 1:width
                             arg = extract_value!(fwdbuilder, dv, idx - 1)
                             arg = load!(fwdbuilder, pllty, arg)
                             if dv2 !== nothing
-                              arg2 = extract_value!(fwdbuilder, dv2, idx - 1)
-                              arg = recombine_value!(fwdbuilder, arg, arg2)
+                                arg2 = extract_value!(fwdbuilder, dv2, idx - 1)
+                                arg = recombine_value!(fwdbuilder, arg, arg2)
                             end
                             shadowres = insert_value!(fwdbuilder, shadowres, arg, idx - 1)
                         end
                         dv = shadowres
                     end
                 end
-                
+
                 if mode == API.DEM_ReverseModeGradient
                     dv = lookup_value(gutils, dv, B)
                 end
@@ -566,12 +565,12 @@ end
                 pvl = lookup_value(gutils, pv, B)
                 if mode == API.DEM_ReverseModeGradient
                     if width == 1
-                       copy_floats_into!(B, spllty, dval, pvl)
+                        copy_floats_into!(B, spllty, dval, pvl)
                     else
-                       for idx = 1:width
-                           arg = extract_value!(B, pvl, idx - 1)
-                           g0 = inbounds_gep!(B, spllty, dval, LLVM.Value[LLVM.ConstantInt(Int64(0)), LLVM.ConstantInt(Int32(idx-1))])
-                           copy_floats_into!(B, pllty, g0, arg)
+                        for idx in 1:width
+                            arg = extract_value!(B, pvl, idx - 1)
+                            g0 = inbounds_gep!(B, spllty, dval, LLVM.Value[LLVM.ConstantInt(Int64(0)), LLVM.ConstantInt(Int32(idx - 1))])
+                            copy_floats_into!(B, pllty, g0, arg)
                         end
                     end
                 end
@@ -591,28 +590,28 @@ end
                     LLVM.ConstantInt(LLVM.IntType(32), 1),
                 ],
             )
-	
-	    if al2 !== nothing
-	       extract_roots_from_value!(B, dval0, al3)
-	    end
+
+            if al2 !== nothing
+                extract_roots_from_value!(B, dval0, al3)
+            end
             store!(B, dval0, dptr)
         end
 
         al = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
 
         push!(vals, al)
-        
-	if num_arg_roots != 0
-	  push!(vals, al2)
 
-	end
+        if num_arg_roots != 0
+            push!(vals, al2)
+
+        end
     end
 
     if tape !== nothing
         push!(vals, tape)
     end
 
-    push!(vals, new_from_original(gutils, operands(orig)[end-1]))
+    push!(vals, new_from_original(gutils, operands(orig)[end - 1]))
     return refed, LLVM.name(subfunc), dfuncT, vals, thunkTy, TapeType, copies
 end
 
@@ -630,7 +629,7 @@ end
     _, sname, dfuncT, vals, thunkTy, _, _ =
         threadsfor_common(orig, gutils, B, API.DEM_ForwardMode)
 
-    tt = Tuple{thunkTy,dfuncT,Bool}
+    tt = Tuple{thunkTy, dfuncT, Bool}
     mode = get_mode(gutils)
     world = enzyme_extract_world(LLVM.parent(position(B)))
     entry = nested_codegen!(mode, mod, runtime_pfor_fwd, tt, world)
@@ -651,7 +650,7 @@ end
         unsafe_store!(normalR, C_NULL)
     else
         ni = new_from_original(gutils, orig)
-	API.EnzymeReplaceOriginalToNew(gutils, orig, cal)
+        API.EnzymeReplaceOriginalToNew(gutils, orig, cal)
         API.EnzymeGradientUtilsErase(gutils, ni)
     end
     return false
@@ -686,7 +685,7 @@ end
 
     pval = functions(mod)[sname]
     if VERSION < v"1.12"
-       pval = const_ptrtoint(pval, convert(LLVMType, Ptr{Cvoid}))
+        pval = const_ptrtoint(pval, convert(LLVMType, Ptr{Cvoid}))
     end
     pval = LLVM.ConstantArray(value_type(pval), [pval])
     store!(B, pval, vals[1])
@@ -706,7 +705,7 @@ end
         unsafe_store!(normalR, C_NULL)
     else
         ni = new_from_original(gutils, orig)
-	API.EnzymeReplaceOriginalToNew(gutils, orig, tape)
+        API.EnzymeReplaceOriginalToNew(gutils, orig, tape)
         API.EnzymeGradientUtilsErase(gutils, ni)
     end
 
@@ -745,7 +744,7 @@ end
 
     pval = functions(mod)[sname]
     if VERSION < v"1.12"
-	pval = const_ptrtoint(pval, convert(LLVMType, Ptr{Cvoid}))
+        pval = const_ptrtoint(pval, convert(LLVMType, Ptr{Cvoid}))
     end
     pval = LLVM.ConstantArray(value_type(pval), [pval])
     store!(B, pval, vals[1])
@@ -755,7 +754,7 @@ end
 
     for (pv, val, pllty) in copies
         ld = load!(B, pllty, val)
-	pv = lookup_value(gutils, pv, B)
+        pv = lookup_value(gutils, pv, B)
         store!(B, ld, pv)
     end
     return nothing
@@ -878,7 +877,7 @@ end
 end
 
 @register_fwd function set_task_tid_fwd(B, orig, gutils, normalR, shadowR)
-    ops = collect(operands(orig))[1:end-1]
+    ops = collect(operands(orig))[1:(end - 1)]
     if is_constant_value(gutils, ops[1])
         return true
     end
@@ -892,7 +891,7 @@ end
         debug_from_orig!(gutils, cal, orig)
         callconv!(cal, callconv(orig))
     else
-        for idx = 1:width
+        for idx in 1:width
             nops = LLVM.Value[
                 extract_value(B, inv, idx - 1),
                 new_from_original(gutils, ops[2]),
@@ -925,7 +924,7 @@ end
     if shadowR != C_NULL && normal !== nothing
         width = get_width(gutils)
         shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-        for idx = 1:width
+        for idx in 1:width
             if width == 1
                 shadowres = normal
             else
@@ -991,7 +990,7 @@ end
     if shadowR != C_NULL && normal !== nothing
         width = get_width(gutils)
         shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-        for idx = 1:width
+        for idx in 1:width
             if width == 1
                 shadowres = normal
             else
@@ -1012,7 +1011,7 @@ end
     if shadowR != C_NULL && normal !== nothing
         width = get_width(gutils)
         shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-        for idx = 1:width
+        for idx in 1:width
             if width == 1
                 shadowres = normal
             else

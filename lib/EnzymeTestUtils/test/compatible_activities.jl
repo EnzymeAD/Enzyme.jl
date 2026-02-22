@@ -17,22 +17,22 @@ using Enzyme
     end
     @testset "incompatible activities" begin
         @testset for Tret in batch_ret, Tx in not_batch, Ty in not_batch
-            if Tret <: Union{Const,Active} ||
-                (Tx <: Union{Const,Active} && Ty <: Union{Const,Active})
+            if Tret <: Union{Const, Active} ||
+                    (Tx <: Union{Const, Active} && Ty <: Union{Const, Active})
                 continue
             end
             @test !are_activities_compatible(Tret, Tx, Ty)
         end
         @testset for Tret in not_batch_ret, Tx in batch, Ty in not_batch
-            if Tx <: Union{Const,Active} ||
-                (Tret <: Union{Const,Active} && Ty <: Union{Const,Active})
+            if Tx <: Union{Const, Active} ||
+                    (Tret <: Union{Const, Active} && Ty <: Union{Const, Active})
                 continue
             end
             @test !are_activities_compatible(Tret, Tx, Ty)
         end
         @testset for Tret in not_batch_ret, Tx in not_batch, Ty in batch
-            if Ty <: Union{Const,Active} ||
-                (Tret <: Union{Const,Active} && Tx <: Union{Const,Active})
+            if Ty <: Union{Const, Active} ||
+                    (Tret <: Union{Const, Active} && Tx <: Union{Const, Active})
                 continue
             end
             @test !are_activities_compatible(Tret, Tx, Ty)

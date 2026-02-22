@@ -16,12 +16,12 @@ function grad_mul_kernel(A, dA)
 end
 
 @testset "mul_kernel" begin
-    A = CUDA.ones(64,)
-    @cuda threads=length(A) mul_kernel(A)
-    A = CUDA.ones(64,)
+    A = CUDA.ones(64)
+    @cuda threads = length(A) mul_kernel(A)
+    A = CUDA.ones(64)
     dA = similar(A)
     dA .= 1
-    @cuda threads=length(A) grad_mul_kernel(A, dA)
+    @cuda threads = length(A) grad_mul_kernel(A, dA)
     @test all(dA .== 2)
 end
 
@@ -39,13 +39,13 @@ function grad_exp_kernel(A, dA)
 end
 
 @testset "exp_kernel" begin
-    A = CUDA.ones(64,)
-    @cuda threads=length(A) exp_kernel(A)
-    A = CUDA.ones(64,)
+    A = CUDA.ones(64)
+    @cuda threads = length(A) exp_kernel(A)
+    A = CUDA.ones(64)
     dA = similar(A)
     dA .= 1
-    @cuda threads=length(A) grad_exp_kernel(A, dA)
-    @test all(dA .== exp(1.f0))
+    @cuda threads = length(A) grad_exp_kernel(A, dA)
+    @test all(dA .== exp(1.0f0))
 end
 
 function cos_kernel(A)
@@ -62,16 +62,16 @@ function grad_cos_kernel(A, dA)
 end
 
 @testset "cos_kernel" begin
-    A = CUDA.ones(64,)
-    @cuda threads=length(A) cos_kernel(A)
-    A = CUDA.ones(64,)
+    A = CUDA.ones(64)
+    @cuda threads = length(A) cos_kernel(A)
+    A = CUDA.ones(64)
     dA = similar(A)
     dA .= 1
-    @cuda threads=length(A) grad_cos_kernel(A, dA)
-    @test all(dA .≈ -sin(1.f0))
+    @cuda threads = length(A) grad_cos_kernel(A, dA)
+    @test all(dA .≈ -sin(1.0f0))
 end
 
-function val_kernel!(_, ::Val{N}) where N
+function val_kernel!(_, ::Val{N}) where {N}
     return nothing
 end
 
@@ -85,76 +85,76 @@ end
     n = 10
     u = CUDA.rand(n)
     dzdu = CUDA.rand(n)
-    @cuda threads=4 dval_kernel!(Duplicated(u, dzdu), Val(n))
+    @cuda threads = 4 dval_kernel!(Duplicated(u, dzdu), Val(n))
 end
 
 # https://github.com/EnzymeAD/Enzyme.jl/issues/367
 
-relu(x) = ifelse(x<0, zero(x), x)
+relu(x) = ifelse(x < 0, zero(x), x)
 ## Define CUDA kernel for dense layer
 function dense!(
-  feats_out, feats_in, W, b,
-  ::Val{nfeat_out}, ::Val{nfeat_in}, ::Val{ndof}
-) where {nfeat_out, nfeat_in, ndof}
+        feats_out, feats_in, W, b,
+        ::Val{nfeat_out}, ::Val{nfeat_in}, ::Val{ndof}
+    ) where {nfeat_out, nfeat_in, ndof}
 
-  ## Each thread will update features for a single sample
-  idof = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    ## Each thread will update features for a single sample
+    idof = (blockIdx().x - 1) * blockDim().x + threadIdx().x
 
-  ## Prevent out-of-bounds array access
-  (idof > ndof) && return nothing
+    ## Prevent out-of-bounds array access
+    (idof > ndof) && return nothing
 
-  ## Compute `feats_out`
-  for i = 1:nfeat_out
-    for k = 1:nfeat_in
-      feats_out[i, idof] += W[i, k] * feats_in[k, idof]
+    ## Compute `feats_out`
+    for i in 1:nfeat_out
+        for k in 1:nfeat_in
+            feats_out[i, idof] += W[i, k] * feats_in[k, idof]
+        end
+
+        feats_out[i, idof] = relu(feats_out[i, idof] + b[i])
     end
 
-    feats_out[i, idof] = relu(feats_out[i, idof] + b[i])
-  end
-
-  return nothing
+    return nothing
 end # dense!
 
 ## Wrapper for Enzyme to differentiate `dense!`
 function ddense!(
-  dfeats_out, dfeats_in, dW, db,
-  ::Val{nfeat_out}, ::Val{nfeat_in}, ::Val{ndof}
-) where {nfeat_out, nfeat_in, ndof}
+        dfeats_out, dfeats_in, dW, db,
+        ::Val{nfeat_out}, ::Val{nfeat_in}, ::Val{ndof}
+    ) where {nfeat_out, nfeat_in, ndof}
 
-  autodiff_deferred(
-    Reverse,
-    Const(dense!),
-    Const,
-    dfeats_out, dfeats_in, dW, db,
-    Const(Val(nfeat_out)), Const(Val(nfeat_in)), Const(Val(ndof))
-  )
-  return nothing
+    autodiff_deferred(
+        Reverse,
+        Const(dense!),
+        Const,
+        dfeats_out, dfeats_in, dW, db,
+        Const(Val(nfeat_out)), Const(Val(nfeat_in)), Const(Val(ndof))
+    )
+    return nothing
 
 end # ddense!
 
 function call_ddense()
-  nthread      = 32
-  ndof         = 32
-  nblock       = ceil(Int, ndof / nthread)
-  nfeat_out    = 32
-  nfeat_in     = 16
-  feats_out    = zeros(nfeat_out, ndof)    |> cu
-  feats_in     = rand(nfeat_in, ndof)      |> cu
-  W            = rand(nfeat_out, nfeat_in) |> cu
-  b            = rand(nfeat_out)           |> cu
-  dzdfeats_out = rand(nfeat_out, ndof)     |> cu
-  dfeats_out   = Duplicated(feats_out, dzdfeats_out)
-  dzdfeats_in  = zero(feats_in)
-  dfeats_in    = Duplicated(feats_in, dzdfeats_in)
-  dzdW         = zero(W)
-  dW           = Duplicated(W, dzdW)
-  dzdb         = zero(b)
-  db           = Duplicated(b, dzdb)
+    nthread = 32
+    ndof = 32
+    nblock = ceil(Int, ndof / nthread)
+    nfeat_out = 32
+    nfeat_in = 16
+    feats_out = zeros(nfeat_out, ndof) |> cu
+    feats_in = rand(nfeat_in, ndof) |> cu
+    W = rand(nfeat_out, nfeat_in) |> cu
+    b = rand(nfeat_out) |> cu
+    dzdfeats_out = rand(nfeat_out, ndof) |> cu
+    dfeats_out = Duplicated(feats_out, dzdfeats_out)
+    dzdfeats_in = zero(feats_in)
+    dfeats_in = Duplicated(feats_in, dzdfeats_in)
+    dzdW = zero(W)
+    dW = Duplicated(W, dzdW)
+    dzdb = zero(b)
+    db = Duplicated(b, dzdb)
 
-  @cuda threads=nthread blocks=nblock ddense!(
-    dfeats_out, dfeats_in, dW, db,
-    Val(nfeat_out), Val(nfeat_in), Val(ndof)
-  )
+    return @cuda threads = nthread blocks = nblock ddense!(
+        dfeats_out, dfeats_in, dW, db,
+        Val(nfeat_out), Val(nfeat_in), Val(ndof)
+    )
 
 end # call_ddense
 
@@ -191,5 +191,5 @@ end
     dA2 .= 3
     Enzyme.autodiff(Reverse, square!, BatchDuplicated(A, (dA, dA2)))
     @test all(dA .≈ (2:2:64))
-    @test all(dA2 .≈ 3*(2:2:64))
+    @test all(dA2 .≈ 3 * (2:2:64))
 end

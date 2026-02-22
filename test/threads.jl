@@ -12,8 +12,8 @@ using Test
         nothing
     end
 
-    R = Float64[0., 0.]
-    dR = Float64[2., 3.]
+    R = Float64[0.0, 0.0]
+    dR = Float64[2.0, 3.0]
 
     # We define the local variable `autodiff` as a `Ref` wrapper only to be able to capture
     # and test the warning emitted by the `@generated` function `Enzyme.autodiff`.
@@ -21,13 +21,13 @@ using Test
     @test 5.0 ≈ @test_warn r"active variables passed by value to jl_new_task are not yet supported" autodiff[](Reverse, tasktest, Duplicated(R, dR), Active(2.0))[1][2]
     @test Float64[2.0, 2.0] ≈ R
     @test Float64[0.0, 0.0] ≈ dR
-    
+
     Enzyme.autodiff(Forward, tasktest, Duplicated(R, dR), Duplicated(2.0, 1.0))
     @test Float64[1.0, 1.0] ≈ dR
 
     function tasktest2(M, x)
         task = Threads.@spawn begin
-           return
+            return
         end
         Base.wait(task)
         nothing
@@ -82,43 +82,43 @@ end
 
 @testset "Closure-less threads $(Threads.nthreads())" begin
     function bf(i, x)
-      x[i] *= x[i]
-      nothing
+        x[i] *= x[i]
+        nothing
     end
 
     function psquare0(x)
-      Enzyme.pmap(bf, 10, x)
+        Enzyme.pmap(bf, 10, x)
     end
 
     xs = Float64[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     dxs = ones(10)
 
     Enzyme.autodiff(Reverse, psquare0, Duplicated(xs, dxs))
-    @test Float64[2, 4, 6, 8, 10, 12, 14, 16, 18, 20] ≈ dxs 
+    @test Float64[2, 4, 6, 8, 10, 12, 14, 16, 18, 20] ≈ dxs
 
     function psquare1(x)
-      Enzyme.@parallel x for i = 1:10
-        @inbounds x[i] *= x[i]
-      end
+        Enzyme.@parallel x for i in 1:10
+            @inbounds x[i] *= x[i]
+        end
     end
-    
+
     xs = Float64[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     dxs = ones(10)
 
     Enzyme.autodiff(Reverse, psquare1, Duplicated(xs, dxs))
-    @test Float64[2, 4, 6, 8, 10, 12, 14, 16, 18, 20] ≈ dxs 
+    @test Float64[2, 4, 6, 8, 10, 12, 14, 16, 18, 20] ≈ dxs
 
     function psquare2(x, y)
-      Enzyme.@parallel x y for i = 1:10
-        @inbounds x[i] *= y[i]
-      end
+        Enzyme.@parallel x y for i in 1:10
+            @inbounds x[i] *= y[i]
+        end
     end
-    
+
     xs = Float64[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     dxs = ones(10)
-    
+
     Enzyme.autodiff(Reverse, psquare2, Duplicated(xs, dxs), Duplicated(xs, dxs))
-    @test Float64[2, 4, 6, 8, 10, 12, 14, 16, 18, 20] ≈ dxs 
+    @test Float64[2, 4, 6, 8, 10, 12, 14, 16, 18, 20] ≈ dxs
 end
 
 # TODO on 1.8 having `Inactive threads` after `UndefVar` in the main `runtest.jl` leads to a GC verification bug
@@ -133,7 +133,7 @@ end
     end
     @test 1.0 ≈ autodiff(Reverse, thr_inactive, Const(false), Active(2.14))[1][2]
     @test 1.0 ≈ autodiff(Forward, thr_inactive, Const(false), Duplicated(2.14, 1.0))[1]
-    
+
     @test 1.0 ≈ autodiff(Reverse, thr_inactive, Const(true), Active(2.14))[1][2]
     @test 1.0 ≈ autodiff(Forward, thr_inactive, Const(true), Duplicated(2.14, 1.0))[1]
 end

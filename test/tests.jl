@@ -129,14 +129,14 @@ sqrtsumsq2(x) = (sum(abs2, x) * sum(abs2, x))
     end
     @test occursin("diffe", fn)
     # TODO we need to fix julia to remove unused bounds checks
-    @test !occursin("aug",fn)
+    @test !occursin("aug", fn)
 
     fn = sprint() do io
         Enzyme.Compiler.enzyme_code_llvm(io, sumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module = true)
     end
     @test occursin("diffe", fn)
     # TODO we need to fix julia to remove unused bounds checks
-    @test !occursin("aug",fn)
+    @test !occursin("aug", fn)
 
     fn = sprint() do io
         Enzyme.Compiler.enzyme_code_llvm(io, sumsin, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module = true)
@@ -1007,7 +1007,7 @@ end
 end
 
 function multisum(M)
-  return sum(i -> sum(j -> M[j, i], 1:size(M, 1)), 1:size(M, 2))
+    return sum(i -> sum(j -> M[j, i], 1:size(M, 1)), 1:size(M, 2))
 end
 
 @testset "Switch decay" begin

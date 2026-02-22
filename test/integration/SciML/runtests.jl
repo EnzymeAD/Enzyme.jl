@@ -9,47 +9,49 @@ using LinearSolve, LinearAlgebra
         du[3] = u[1] * u[2] - (8 / 3) * u[3]
     end
 
-    _saveat =  SA[0.0,0.25,0.5,0.75,1.0,1.25,1.5,1.75,2.0,2.25,2.5,2.75,3.0]
+    _saveat = SA[0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0]
 
     function f_dt(y::Array{Float64}, u0::Array{Float64})
         tspan = (0.0, 3.0)
         prob = ODEProblem{true, SciMLBase.FullSpecialize}(lorenz!, u0, tspan)
-        sol = DiffEqBase.solve(prob, Tsit5(), saveat = _saveat, sensealg = DiffEqBase.SensitivityADPassThrough(), abstol=1e-12, reltol=1e-12)
-        y .= sol[1,:]
+        sol = DiffEqBase.solve(prob, Tsit5(), saveat = _saveat, sensealg = DiffEqBase.SensitivityADPassThrough(), abstol = 1.0e-12, reltol = 1.0e-12)
+        y .= sol[1, :]
         return nothing
-    end;
+    end
 
     function f_dt(u0)
         tspan = (0.0, 3.0)
         prob = ODEProblem{true, SciMLBase.FullSpecialize}(lorenz!, u0, tspan)
-        sol = DiffEqBase.solve(prob, Tsit5(), saveat = _saveat, sensealg = DiffEqBase.SensitivityADPassThrough(), abstol=1e-12, reltol=1e-12)
-        sol[1,:]
-    end;
+        sol = DiffEqBase.solve(prob, Tsit5(), saveat = _saveat, sensealg = DiffEqBase.SensitivityADPassThrough(), abstol = 1.0e-12, reltol = 1.0e-12)
+        sol[1, :]
+    end
 
     u0 = [1.0; 0.0; 0.0]
     fdj = ForwardDiff.jacobian(f_dt, u0)
 
-    ezj = stack(map(1:3) do i
-        d_u0 = zeros(3)
-        dy = zeros(13)
-        y  = zeros(13)
-        d_u0[i] = 1.0
-        Enzyme.autodiff(Forward, f_dt,  Duplicated(y, dy), Duplicated(u0, d_u0));
-        dy
-    end)
+    ezj = stack(
+        map(1:3) do i
+            d_u0 = zeros(3)
+            dy = zeros(13)
+            y = zeros(13)
+            d_u0[i] = 1.0
+            Enzyme.autodiff(Forward, f_dt, Duplicated(y, dy), Duplicated(u0, d_u0))
+            dy
+        end
+    )
 
     @test ezj ≈ fdj
 
     function f_dt2(u0)
         tspan = (0.0, 3.0)
         prob = ODEProblem{true, SciMLBase.FullSpecialize}(lorenz!, u0, tspan)
-        sol = DiffEqBase.solve(prob, Tsit5(), dt=0.1, saveat = _saveat, sensealg = DiffEqBase.SensitivityADPassThrough(), abstol=1e-12, reltol=1e-12)
-        sum(sol[1,:])
+        sol = DiffEqBase.solve(prob, Tsit5(), dt = 0.1, saveat = _saveat, sensealg = DiffEqBase.SensitivityADPassThrough(), abstol = 1.0e-12, reltol = 1.0e-12)
+        sum(sol[1, :])
     end
 
     fdg = ForwardDiff.gradient(f_dt2, u0)
     d_u0 = zeros(3)
-    Enzyme.autodiff(Reverse, f_dt2,  Active, Duplicated(u0, d_u0));
+    Enzyme.autodiff(Reverse, f_dt2, Active, Duplicated(u0, d_u0))
 
     @test d_u0 ≈ fdg
 end
@@ -61,7 +63,7 @@ struct senseloss0{T}
 end
 function (f::senseloss0)(u0p)
     prob = ODEProblem{true}(odef, u0p[1:1], (0.0, 1.0), u0p[2:2])
-    sum(solve(prob, Tsit5(), abstol = 1e-12, reltol = 1e-12, saveat = 0.1))
+    return sum(solve(prob, Tsit5(), abstol = 1.0e-12, reltol = 1.0e-12, saveat = 0.1))
 end
 
 @testset "SciMLSensitivity Adjoint Interface" begin
@@ -73,12 +75,12 @@ end
     @test du0p ≈ dup
 end
 
-  @testset "LinearSolve Adjoints" begin
+@testset "LinearSolve Adjoints" begin
     n = 4
-    A = rand(n, n);
-    dA = zeros(n, n);
-    b1 = rand(n);
-    db1 = zeros(n);
+    A = rand(n, n)
+    dA = zeros(n, n)
+    b1 = rand(n)
+    db1 = zeros(n)
 
     function f(A, b1; alg = LUFactorization())
         prob = LinearProblem(A, b1)

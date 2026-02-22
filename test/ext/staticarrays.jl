@@ -30,9 +30,9 @@ using StaticArrays
     @test dx isa SArray
     @test dx ≈ [0 30 0]
 
-    f0 = x -> sum(2*x)
-    f1 = x -> @SVector Float64[x[2], 2*x[2]]
-    f2 = x -> @SMatrix Float64[x[2] x[1]; 2*x[2] 2*x[1]]
+    f0 = x -> sum(2 * x)
+    f1 = x -> @SVector Float64[x[2], 2 * x[2]]
+    f2 = x -> @SMatrix Float64[x[2] x[1]; 2 * x[2] 2 * x[1]]
 
     x = @SVector Float64[1, 2]
 
@@ -43,19 +43,19 @@ using StaticArrays
     @test gradient(Forward, f1, x)[1] isa SMatrix
     @test gradient(Forward, f1, x)[1] == [0 1.0; 0 2.0]
     @test Enzyme.jacobian(Forward, f2, x)[1] isa SArray
-    @test Enzyme.jacobian(Forward, f2, x)[1] == reshape(Float64[0,0,1,2,1,2,0,0], (2,2,2))
+    @test Enzyme.jacobian(Forward, f2, x)[1] == reshape(Float64[0, 0, 1, 2, 1, 2, 0, 0], (2, 2, 2))
 
     x = @SMatrix Float64[1 2; 3 4]
 
     @inferred gradient(Forward, f0, x)
     dx = gradient(Forward, f0, x)[1]
     @test dx isa SMatrix
-    @test dx == fill(2.0, (2,2))
+    @test dx == fill(2.0, (2, 2))
     @test gradient(Forward, f1, x)[1] isa SArray
-    @test gradient(Forward, f1, x)[1] == reshape(Float64[0,0,1,2,0,0,0,0], (2,2,2))
+    @test gradient(Forward, f1, x)[1] == reshape(Float64[0, 0, 1, 2, 0, 0, 0, 0], (2, 2, 2))
     @test Enzyme.jacobian(Forward, f2, x)[1] isa SArray
     @test Enzyme.jacobian(Forward, f2, x)[1] == reshape(
-        Float64[0,0,1,2,1,2,0,0,0,0,0,0,0,0,0,0], (2,2,2,2),
+        Float64[0, 0, 1, 2, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], (2, 2, 2, 2),
     )
 
     x = @SVector Float64[1, 2]
@@ -67,21 +67,21 @@ using StaticArrays
     @test_broken gradient(Reverse, f1, x)[1] isa SMatrix
     @test_broken gradient(Reverse, f1, x)[1] == [0 1.0; 0 2.0]
     @test_broken Enzyme.jacobian(Reverse, f2, x)[1] isa SArray
-    @test_broken Enzyme.jacobian(Reverse, f2, x)[1] == reshape(Float64[0,0,1,2,1,2,0,0], (2,2,2))
+    @test_broken Enzyme.jacobian(Reverse, f2, x)[1] == reshape(Float64[0, 0, 1, 2, 1, 2, 0, 0], (2, 2, 2))
 
     x = @SMatrix Float64[1 2; 3 4]
 
     @test_broken gradient(Reverse, f1, x)[1] isa SArray
-    @test_broken gradient(Reverse, f1, x)[1] == reshape(Float64[0,0,1,2,0,0,0,0], (2,2,2))
+    @test_broken gradient(Reverse, f1, x)[1] == reshape(Float64[0, 0, 1, 2, 0, 0, 0, 0], (2, 2, 2))
     @test_broken Enzyme.jacobian(Reverse, f2, x)[1] isa SArray
     @test_broken Enzyme.jacobian(Reverse, f2, x)[1] == reshape(
-        Float64[0,0,1,2,1,2,0,0,0,0,0,0,0,0,0,0], (2,2,2,2),
+        Float64[0, 0, 1, 2, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], (2, 2, 2, 2),
     )
 end
 
 function unstable_fun(A0)
     A = 'N' in ('H', 'h', 'S', 's') ? wrap(A0) : A0
-    (@inbounds A[1])::eltype(A0)
+    return (@inbounds A[1])::eltype(A0)
 end
 @testset "Type unstable static array index" begin
     inp = ones(SVector{2, Float64})

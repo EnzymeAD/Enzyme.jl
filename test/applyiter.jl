@@ -13,85 +13,85 @@ midconcat(x, y) = (x, concat(y...)...)
 
 metaconcat3(x, y, z) = concat(x..., y..., z...)
 
-function metasumsq(f, args...) 
-	res = 0.0
-	x = f(args...)
-	for v in x
-		v = v::Float64
-		res += v*v
-	end
-	return res
+function metasumsq(f, args...)
+    res = 0.0
+    x = f(args...)
+    for v in x
+        v = v::Float64
+        res += v * v
+    end
+    return res
 end
 
-function metasumsq2(f, args...) 
-	res = 0.0
-	x = f(args...)
-	for v in x
-		for v2 in v
-			v2 = v2::Float64
-			res += v*v
-		end
-	end
-	return res
+function metasumsq2(f, args...)
+    res = 0.0
+    x = f(args...)
+    for v in x
+        for v2 in v
+            v2 = v2::Float64
+            res += v * v
+        end
+    end
+    return res
 end
 
 
-function metasumsq3(f, args...) 
-	res = 0.0
-	x = f(args...)
-	for v in x
-		v = v
-		res += v*v
-	end
-	return res
+function metasumsq3(f, args...)
+    res = 0.0
+    x = f(args...)
+    for v in x
+        v = v
+        res += v * v
+    end
+    return res
 end
 
-function metasumsq4(f, args...) 
-	res = 0.0
-	x = f(args...)
-	for v in x
-		for v2 in v
-			v2 = v2
-			res += v*v
-		end
-	end
-	return res
+function metasumsq4(f, args...)
+    res = 0.0
+    x = f(args...)
+    for v in x
+        for v2 in v
+            v2 = v2
+            res += v * v
+        end
+    end
+    return res
 end
 
 function make_byref(out, fn, args...)
-	out[] = fn(args...)
-	nothing
+    out[] = fn(args...)
+    return nothing
 end
 
 function tupapprox(a, b)
-	if a isa Tuple && b isa Tuple
-		if length(a) != length(b)
-			return false
-		end
-		for (aa, bb) in zip(a, b)
-			if !tupapprox(aa, bb)
-				return false
-			end
-		end
-		return true
-	end
-	if a isa Array && b isa Array
-		if size(a) != size(b)
-			return false
-		end
-		for i in length(a)
-			if !tupapprox(a[i], b[i])
-				return false
-			end
-		end
-		return true
-	end
-	return a ≈ b
+    if a isa Tuple && b isa Tuple
+        if length(a) != length(b)
+            return false
+        end
+        for (aa, bb) in zip(a, b)
+            if !tupapprox(aa, bb)
+                return false
+            end
+        end
+        return true
+    end
+    if a isa Array && b isa Array
+        if size(a) != size(b)
+            return false
+        end
+        for i in length(a)
+            if !tupapprox(a[i], b[i])
+                return false
+            end
+        end
+        return true
+    end
+    return a ≈ b
 end
 
 @testset "Const Apply iterate" begin
-    function extiter() 
-        vals = Any[3,]
+    function extiter()
+        vals = Any[3]
         extracted = Tuple(vals)
         return extracted
     end
@@ -109,9 +109,9 @@ end
     dy_const = [(0, 0), (0, 0)]
     primal = 200.84999999999997
     @testset "tuple $label" for (label, dx_pre, dx_post) in [
-        ("dx == 0", [(0.0, 0.0), (0.0, 0.0)], [(4.0, 6.0), (15.8, 22.4)]),
-        ("dx != 0", [(1.0, -2.0), (-3.0, 4.0)], [(5.0, 4.0), (12.8, 26.4)]),
-    ]
+            ("dx == 0", [(0.0, 0.0), (0.0, 0.0)], [(4.0, 6.0), (15.8, 22.4)]),
+            ("dx != 0", [(1.0, -2.0), (-3.0, 4.0)], [(5.0, 4.0), (12.8, 26.4)]),
+        ]
         dx = deepcopy(dx_pre)
         Enzyme.autodiff(Reverse, metasumsq, Active, Const(metaconcat), Duplicated(x, dx))
         @test tupapprox(dx, dx_post)
@@ -137,9 +137,9 @@ end
     dy_const = [[0, 0], [0, 0]]
     primal = 200.84999999999997
     @testset "list $label" for (label, dx_pre, dx_post) in [
-        ("dx == 0", [[0.0, 0.0], [0.0, 0.0]], [[4.0, 6.0], [15.8, 22.4]]),
-        ("dx != 0", [[1.0, -2.0], [-3.0, 4.0]], [[5.0, 4.0], [12.8, 26.4]]),
-    ]
+            ("dx == 0", [[0.0, 0.0], [0.0, 0.0]], [[4.0, 6.0], [15.8, 22.4]]),
+            ("dx != 0", [[1.0, -2.0], [-3.0, 4.0]], [[5.0, 4.0], [12.8, 26.4]]),
+        ]
         dx = deepcopy(dx_pre)
         Enzyme.autodiff(Reverse, metasumsq2, Active, Const(metaconcat), Duplicated(x, dx))
         @test dx ≈ dx_post
@@ -168,19 +168,19 @@ end
     primal = 200.84999999999997
     out_pre, dout_pre, dout2_pre = 0.0, 1.0, 3.0
     @testset "tuple $label" for (label, dx_pre, dx_post, dx2_post) in [
-        (
-            "dx == 0",
-            [(0.0, 0.0), (0.0, 0.0)],
-            [(4.0, 6.0), (15.8, 22.4)],
-            [(3 * 4.0, 3 * 6.0), (3 * 15.8, 3 * 22.4)],
-        ),
-        (
-            "dx != 0",
-            [(1.0, -2.0), (-3.0, 4.0)],
-            [(5.0, 4.0), (12.8, 26.4)],
-            [(1.0 + 3 * 4.0, -2.0 + 3 * 6.0), (-3.0 + 3 * 15.8, 4.0 + 3 * 22.4)],
-        ),
-    ]
+            (
+                "dx == 0",
+                [(0.0, 0.0), (0.0, 0.0)],
+                [(4.0, 6.0), (15.8, 22.4)],
+                [(3 * 4.0, 3 * 6.0), (3 * 15.8, 3 * 22.4)],
+            ),
+            (
+                "dx != 0",
+                [(1.0, -2.0), (-3.0, 4.0)],
+                [(5.0, 4.0), (12.8, 26.4)],
+                [(1.0 + 3 * 4.0, -2.0 + 3 * 6.0), (-3.0 + 3 * 15.8, 4.0 + 3 * 22.4)],
+            ),
+        ]
         dx, dx2 = deepcopy.((dx_pre, dx_pre))
         out, dout, dout2 = Ref.((out_pre, dout_pre, dout2_pre))
         Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicatedNoNeed(out, (dout, dout2)), Const(metasumsq), Const(metaconcat), BatchDuplicated(x, (dx, dx2)))
@@ -224,19 +224,19 @@ end
     primal = 200.84999999999997
     out_pre, dout_pre, dout2_pre = 0.0, 1.0, 3.0
     @testset "tuple $label" for (label, dx_pre, dx_post, dx2_post) in [
-        (
-            "dx == 0",
-            [[0.0, 0.0], [0.0, 0.0]],
-            [[4.0, 6.0], [15.8, 22.4]],
-            [[3 * 4.0, 3 * 6.0], [3 * 15.8, 3 * 22.4]],
-        ),
-        (
-            "dx != 0",
-            [[1.0, -2.0], [-3.0, 4.0]],
-            [[5.0, 4.0], [12.8, 26.4]],
-            [[1.0 + 3 * 4.0, -2.0 + 3 * 6.0], [-3.0 + 3 * 15.8, 4.0 + 3 * 22.4]],
-        ),
-    ]
+            (
+                "dx == 0",
+                [[0.0, 0.0], [0.0, 0.0]],
+                [[4.0, 6.0], [15.8, 22.4]],
+                [[3 * 4.0, 3 * 6.0], [3 * 15.8, 3 * 22.4]],
+            ),
+            (
+                "dx != 0",
+                [[1.0, -2.0], [-3.0, 4.0]],
+                [[5.0, 4.0], [12.8, 26.4]],
+                [[1.0 + 3 * 4.0, -2.0 + 3 * 6.0], [-3.0 + 3 * 15.8, 4.0 + 3 * 22.4]],
+            ),
+        ]
         dx, dx2 = deepcopy.((dx_pre, dx_pre))
         out, dout, dout2 = Ref.((out_pre, dout_pre, dout2_pre))
         Enzyme.autodiff(Reverse, make_byref, Const, BatchDuplicatedNoNeed(out, (dout, dout2)), Const(metasumsq2), Const(metaconcat), BatchDuplicated(x, (dx, dx2)))

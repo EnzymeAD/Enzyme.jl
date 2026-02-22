@@ -17,7 +17,7 @@ end
 @inline function Enzyme.onehot(x::AbstractGPUArray)
     # Enzyme.onehot_internal(Enzyme.zerosetfn, x, 0, length(x))
     N = length(x)
-    ntuple(Val(N)) do i
+    return ntuple(Val(N)) do i
         Base.@_inline_meta
         res = zero(x)
         @allowscalar @inbounds res[i] = 1
@@ -27,7 +27,7 @@ end
 
 @inline function onehot(x::AbstractArray, start::Int, endl::Int)
     # Enzyme.onehot_internal(Enzyme.zerosetfn, x, start-1, endl-start+1)
-    ntuple(Val(endl - start + 1)) do i
+    return ntuple(Val(endl - start + 1)) do i
         Base.@_inline_meta
         res = zero(x)
         @allowscalar @inbounds res[i + start - 1] = 1

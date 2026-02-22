@@ -6,14 +6,14 @@ using Quaternions
 
 @testset "tangent generation" begin
     @testset "map_fields_recursive" begin
-        x = (x=3.0, y=(a=4, b=:foo, c=[5.2]), z=:bar)
+        x = (x = 3.0, y = (a = 4, b = :foo, c = [5.2]), z = :bar)
         y = EnzymeTestUtils.map_fields_recursive(x -> x .+ 1, x)
-        @test y == (x=4.0, y=(a=4, b=:foo, c=[6.2]), z=:bar)
-        z = (x=1.5, y=(a=4, b=:foo, c=[5.0]), z=:bar)
+        @test y == (x = 4.0, y = (a = 4, b = :foo, c = [6.2]), z = :bar)
+        z = (x = 1.5, y = (a = 4, b = :foo, c = [5.0]), z = :bar)
         w = EnzymeTestUtils.map_fields_recursive(x, z) do xi, zi
             return xi .* zi
         end
-        @test w == (x=4.5, y=(a=4, b=:foo, c=[26.0]), z=:bar)
+        @test w == (x = 4.5, y = (a = 4, b = :foo, c = [26.0]), z = :bar)
     end
 
     @testset "rand_tangent" begin
@@ -23,8 +23,8 @@ using Quaternions
         @test rand_tangent(:foo) === :foo
         @test rand_tangent("bar") === "bar"
         @testset for T in (
-            Float32, Float64, ComplexF32, ComplexF64, QuaternionF32, QuaternionF64
-        )
+                Float32, Float64, ComplexF32, ComplexF64, QuaternionF32, QuaternionF64,
+            )
             x = randn(T)
             @test rand_tangent(x) != x
             @test rand_tangent(x) isa T
@@ -49,8 +49,8 @@ using Quaternions
         @test zero_tangent(:foo) === :foo
         @test zero_tangent("bar") === "bar"
         @testset for T in (
-            Float32, Float64, ComplexF32, ComplexF64, QuaternionF32, QuaternionF64
-        )
+                Float32, Float64, ComplexF32, ComplexF64, QuaternionF32, QuaternionF64,
+            )
             x = randn(T)
             @test zero_tangent(x) === zero(T)
             y = randn(T, 5)

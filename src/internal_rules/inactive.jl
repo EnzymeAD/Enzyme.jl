@@ -1,7 +1,7 @@
 @static if VERSION >= v"1.12"
-function EnzymeRules.inactive(::typeof(Base.CoreLogging.handle_message_nothrow), args...)
-    return nothing
-end
+    function EnzymeRules.inactive(::typeof(Base.CoreLogging.handle_message_nothrow), args...)
+        return nothing
+    end
 end
 function EnzymeRules.inactive(::typeof(Base.CoreLogging.logmsg_code), args...)
     return nothing
@@ -91,11 +91,11 @@ function EnzymeRules.inactive_noinl(::typeof(Base.hash), args...)
     return nothing
 end
 function EnzymeRules.inactive_noinl(
-    ::typeof(Base.setindex!),
-    ::IdDict{K,V},
-    ::K,
-    ::V,
-) where {K,V<:Integer}
+        ::typeof(Base.setindex!),
+        ::IdDict{K, V},
+        ::K,
+        ::V,
+    ) where {K, V <: Integer}
     return nothing
 end
 
@@ -133,12 +133,11 @@ end
 @inline EnzymeRules.inactive_type(v::Type{Nothing}) = true
 @inline EnzymeRules.inactive_type(v::Type{Union{}}) = true
 @inline EnzymeRules.inactive_type(v::Type{Char}) = true
-@inline EnzymeRules.inactive_type(v::Type{T}) where {T<:Integer} = true
-@inline EnzymeRules.inactive_type(v::Type{T}) where {T<:DataType} = true
-@inline EnzymeRules.inactive_type(v::Type{T}) where {T<:Module} = true
-@inline EnzymeRules.inactive_type(v::Type{T}) where {T<:AbstractString} = true
+@inline EnzymeRules.inactive_type(v::Type{T}) where {T <: Integer} = true
+@inline EnzymeRules.inactive_type(v::Type{T}) where {T <: DataType} = true
+@inline EnzymeRules.inactive_type(v::Type{T}) where {T <: Module} = true
+@inline EnzymeRules.inactive_type(v::Type{T}) where {T <: AbstractString} = true
 @inline EnzymeRules.inactive_type(v::Type{Core.MethodMatch}) = true
 @inline EnzymeRules.inactive_type(v::Type{Core.Compiler.WorldRange}) = true
 @inline EnzymeRules.inactive_type(v::Type{Core.MethodInstance}) = true
-@inline EnzymeRules.inactive_type(v::Type{T}) where {T<:IO} = true
-
+@inline EnzymeRules.inactive_type(v::Type{T}) where {T <: IO} = true

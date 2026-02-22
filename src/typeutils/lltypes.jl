@@ -1,17 +1,21 @@
 const HAS_STRUCT_TO_LLVM = Libdl.dlsym(
-                   unsafe_load(cglobal(:jl_libjulia_handle, Ptr{Cvoid})), :jl_struct_to_llvm, throw_error = false
-               ) !== nothing
+    unsafe_load(cglobal(:jl_libjulia_handle, Ptr{Cvoid})), :jl_struct_to_llvm, throw_error = false
+) !== nothing
 
 function struct_to_llvm(@nospecialize(Ty::Type))
-	if HAS_STRUCT_TO_LLVM
-	    isboxed_ref = Ref{Bool}()
-	    llvmtyp =
-        LLVM.LLVMType(ccall(:jl_struct_to_llvm, LLVM.API.LLVMTypeRef,
-                        (Any, LLVM.Context, Ptr{Bool}), Ty, LLVM.context(), isboxed_ref))
-	    return llvmtyp
-	 else
-	    return convert(LLVMType, Ty)
-	 end
+    if HAS_STRUCT_TO_LLVM
+        isboxed_ref = Ref{Bool}()
+        llvmtyp =
+            LLVM.LLVMType(
+            ccall(
+                :jl_struct_to_llvm, LLVM.API.LLVMTypeRef,
+                (Any, LLVM.Context, Ptr{Bool}), Ty, LLVM.context(), isboxed_ref
+            )
+        )
+        return llvmtyp
+    else
+        return convert(LLVMType, Ty)
+    end
 end
 
 function isSpecialPtr(@nospecialize(Ty::LLVM.LLVMType))
@@ -79,7 +83,7 @@ function any_jltypes(Type::LLVM.PointerType)
 end
 
 any_jltypes(Type::LLVM.StructType) = any(any_jltypes, LLVM.elements(Type))
-any_jltypes(Type::Union{LLVM.VectorType,LLVM.ArrayType}) = any_jltypes(eltype(Type))
+any_jltypes(Type::Union{LLVM.VectorType, LLVM.ArrayType}) = any_jltypes(eltype(Type))
 any_jltypes(::LLVM.IntegerType) = false
 any_jltypes(::LLVM.FloatingPointType) = false
 any_jltypes(::LLVM.VoidType) = false
@@ -102,7 +106,7 @@ function strip_tracked_pointers(@nospecialize(T::LLVM.LLVMType))
         end
     end
     if isa(T, LLVM.ArrayType)
-    	return LLVM.ArrayType(strip_tracked_pointers(eltype(T)), length(T))
+        return LLVM.ArrayType(strip_tracked_pointers(eltype(T)), length(T))
     end
 
     if isa(T, LLVM.VectorType)
@@ -114,7 +118,7 @@ function strip_tracked_pointers(@nospecialize(T::LLVM.LLVMType))
         for (i, t) in enumerate(LLVM.elements(T))
             push!(subtypes, strip_tracked_pointers(t))
         end
-        return LLVM.StructType(subtypes; packed=LLVM.ispacked(T))
+        return LLVM.StructType(subtypes; packed = LLVM.ispacked(T))
     end
 
     throw(AssertionError("Unknown composite type"))
@@ -127,7 +131,7 @@ function store_nonjl_types!(B::LLVM.IRBuilder, @nospecialize(startval::LLVM.Valu
     if p != nothing
         push!(vals, p)
     end
-    todo = Tuple{Tuple,LLVM.Value}[((), startval)]
+    todo = Tuple{Tuple, LLVM.Value}[((), startval)]
     while length(todo) != 0
         path, cur = popfirst!(todo)
         ty = value_type(cur)
@@ -138,7 +142,7 @@ function store_nonjl_types!(B::LLVM.IRBuilder, @nospecialize(startval::LLVM.Valu
         end
         if isa(ty, LLVM.ArrayType)
             if any_jltypes(ty)
-                for i = 1:length(ty)
+                for i in 1:length(ty)
                     ev = extract_value!(B, cur, i - 1)
                     push!(todo, ((path..., i - 1), ev))
                 end
@@ -200,7 +204,7 @@ function get_julia_inner_types(B::LLVM.IRBuilder, @nospecialize(p::Union{Nothing
         end
         if isa(ty, LLVM.ArrayType)
             if any_jltypes(ty)
-                for i = 1:length(ty)
+                for i in 1:length(ty)
                     ev = extract_value!(B, cur, i - 1)
                     if isa(ev, LLVM.Instruction)
                         push!(added, ev.ref)

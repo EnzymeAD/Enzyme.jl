@@ -44,7 +44,7 @@ Getters for the type parameters are provided by [`needs_primal`](@ref), [`needs_
 [`width`](@ref), `runtime_activity`, and `strong_zero`.
 """
 struct FwdConfig{NeedsPrimal, NeedsShadow, Width, RuntimeActivity, StrongZero} end
-const FwdConfigWidth{Width} = FwdConfig{<:Any,<:Any,Width}
+const FwdConfigWidth{Width} = FwdConfig{<:Any, <:Any, Width}
 
 """
     needs_primal(::FwdConfig)
@@ -54,8 +54,8 @@ const FwdConfigWidth{Width} = FwdConfig{<:Any,<:Any,Width}
 
 Whether a custom rule should return the original result of the function.
 """
-@inline needs_primal(::FwdConfig{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
-@inline needs_primal(::Type{<:FwdConfig{NeedsPrimal}}) where NeedsPrimal = NeedsPrimal
+@inline needs_primal(::FwdConfig{NeedsPrimal}) where {NeedsPrimal} = NeedsPrimal
+@inline needs_primal(::Type{<:FwdConfig{NeedsPrimal}}) where {NeedsPrimal} = NeedsPrimal
 
 """
     needs_shadow(::FwdConfig)
@@ -65,8 +65,8 @@ Whether a custom rule should return the original result of the function.
 
 Whether a custom rule should return the shadow (derivative) of the function result.
 """
-@inline needs_shadow(::FwdConfig{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
-@inline needs_shadow(::Type{<:FwdConfig{<:Any, NeedsShadow}}) where NeedsShadow = NeedsShadow
+@inline needs_shadow(::FwdConfig{<:Any, NeedsShadow}) where {NeedsShadow} = NeedsShadow
+@inline needs_shadow(::Type{<:FwdConfig{<:Any, NeedsShadow}}) where {NeedsShadow} = NeedsShadow
 
 
 """
@@ -77,11 +77,11 @@ Whether a custom rule should return the shadow (derivative) of the function resu
 
 Get the size of a batch.
 """
-@inline width(::FwdConfig{<:Any, <:Any, Width}) where Width = Width
-@inline width(::Type{<:FwdConfig{<:Any, <:Any, Width}}) where Width = Width
+@inline width(::FwdConfig{<:Any, <:Any, Width}) where {Width} = Width
+@inline width(::Type{<:FwdConfig{<:Any, <:Any, Width}}) where {Width} = Width
 
-@inline runtime_activity(::FwdConfig{<:Any, <:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
-@inline strong_zero(::FwdConfig{<:Any, <:Any, <:Any, <:Any, StrongZero}) where StrongZero = StrongZero
+@inline runtime_activity(::FwdConfig{<:Any, <:Any, <:Any, RuntimeActivity}) where {RuntimeActivity} = RuntimeActivity
+@inline strong_zero(::FwdConfig{<:Any, <:Any, <:Any, <:Any, StrongZero}) where {StrongZero} = StrongZero
 
 
 """
@@ -100,14 +100,14 @@ Getters for the type parameters are provided by [`needs_primal`](@ref), [`needs_
 [`overwritten`](@ref), `runtime_activity`, and `strong_zero`.
 """
 struct RevConfig{NeedsPrimal, NeedsShadow, Width, Overwritten, RuntimeActivity, StrongZero} end
-const RevConfigWidth{Width} = RevConfig{<:Any,<:Any, Width}
+const RevConfigWidth{Width} = RevConfig{<:Any, <:Any, Width}
 
-@inline needs_primal(::RevConfig{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
-@inline needs_primal(::Type{<:RevConfig{NeedsPrimal}}) where NeedsPrimal = NeedsPrimal
-@inline needs_shadow(::RevConfig{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
-@inline needs_shadow(::Type{<:RevConfig{<:Any, NeedsShadow}}) where NeedsShadow = NeedsShadow
-@inline width(::RevConfig{<:Any, <:Any, Width}) where Width = Width
-@inline width(::Type{<:RevConfig{<:Any, <:Any, Width}}) where Width = Width
+@inline needs_primal(::RevConfig{NeedsPrimal}) where {NeedsPrimal} = NeedsPrimal
+@inline needs_primal(::Type{<:RevConfig{NeedsPrimal}}) where {NeedsPrimal} = NeedsPrimal
+@inline needs_shadow(::RevConfig{<:Any, NeedsShadow}) where {NeedsShadow} = NeedsShadow
+@inline needs_shadow(::Type{<:RevConfig{<:Any, NeedsShadow}}) where {NeedsShadow} = NeedsShadow
+@inline width(::RevConfig{<:Any, <:Any, Width}) where {Width} = Width
+@inline width(::Type{<:RevConfig{<:Any, <:Any, Width}}) where {Width} = Width
 
 """
     overwritten(::RevConfig)
@@ -117,11 +117,11 @@ A tuple of booleans for each argument (including the function itself), indicatin
 is modified between the forward and reverse pass (`true` if potentially modified
 between).
 """
-@inline overwritten(::RevConfig{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
-@inline overwritten(::Type{<:RevConfig{<:Any, <:Any, <:Any, Overwritten}}) where Overwritten = Overwritten
+@inline overwritten(::RevConfig{<:Any, <:Any, <:Any, Overwritten}) where {Overwritten} = Overwritten
+@inline overwritten(::Type{<:RevConfig{<:Any, <:Any, <:Any, Overwritten}}) where {Overwritten} = Overwritten
 
-@inline runtime_activity(::RevConfig{<:Any, <:Any, <:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
-@inline strong_zero(::RevConfig{<:Any, <:Any, <:Any, <:Any, <:Any, StrongZero}) where StrongZero = StrongZero
+@inline runtime_activity(::RevConfig{<:Any, <:Any, <:Any, <:Any, RuntimeActivity}) where {RuntimeActivity} = RuntimeActivity
+@inline strong_zero(::RevConfig{<:Any, <:Any, <:Any, <:Any, <:Any, StrongZero}) where {StrongZero} = StrongZero
 
 """
     primal_type(::FwdConfig, ::Type{<:Annotation{RT}})
@@ -131,10 +131,10 @@ between).
 
 Compute the expected primal return type given a reverse mode config and return activity
 """
-@inline primal_type(config::FwdConfig, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
-@inline primal_type(config::RevConfig, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
-@inline primal_type(config::Type{<:FwdConfig}, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
-@inline primal_type(config::Type{<:RevConfig}, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
+@inline primal_type(config::FwdConfig, ::Type{<:Annotation{RT}}) where {RT} = needs_primal(config) ? RT : Nothing
+@inline primal_type(config::RevConfig, ::Type{<:Annotation{RT}}) where {RT} = needs_primal(config) ? RT : Nothing
+@inline primal_type(config::Type{<:FwdConfig}, ::Type{<:Annotation{RT}}) where {RT} = needs_primal(config) ? RT : Nothing
+@inline primal_type(config::Type{<:RevConfig}, ::Type{<:Annotation{RT}}) where {RT} = needs_primal(config) ? RT : Nothing
 
 """
     shadow_type(::FwdConfig, ::Type{<:Annotation{RT}})
@@ -144,10 +144,10 @@ Compute the expected primal return type given a reverse mode config and return a
 
 Compute the expected shadow return type given a reverse mode config and return activity
 """
-@inline shadow_type(config::FwdConfig, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
-@inline shadow_type(config::RevConfig, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
-@inline shadow_type(config::Type{<:FwdConfig}, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
-@inline shadow_type(config::Type{<:RevConfig}, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
+@inline shadow_type(config::FwdConfig, ::Type{<:Annotation{RT}}) where {RT} = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
+@inline shadow_type(config::RevConfig, ::Type{<:Annotation{RT}}) where {RT} = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
+@inline shadow_type(config::Type{<:FwdConfig}, ::Type{<:Annotation{RT}}) where {RT} = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
+@inline shadow_type(config::Type{<:RevConfig}, ::Type{<:Annotation{RT}}) where {RT} = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
 
 
 """
@@ -173,7 +173,7 @@ Otherwise, just return the shadows.
     needsPrimal = EnzymeRules.needs_primal(C)
     needsShadow = EnzymeRules.needs_shadow(C)
     width = EnzymeRules.width(C)
-    if !needsShadow
+    return if !needsShadow
         if needsPrimal
             return RealRt
         else
@@ -184,14 +184,14 @@ Otherwise, just return the shadows.
         if !needsPrimal
             ST = RealRt
             if width != 1
-                ST = NTuple{Int(width),ST}
+                ST = NTuple{Int(width), ST}
             end
             return ST
         else
             ST = if width == 1
                 Duplicated{RealRt}
             else
-                BatchDuplicated{RealRt,Int(width)}
+                BatchDuplicated{RealRt, Int(width)}
             end
             return ST
         end
@@ -212,34 +212,34 @@ overwritten between the forward and the reverse pass. Any floats or variables pa
 
 See also [`augmented_primal`](@ref).
 """
-struct AugmentedReturn{PrimalType,ShadowType,TapeType}
+struct AugmentedReturn{PrimalType, ShadowType, TapeType}
     primal::PrimalType
     shadow::ShadowType
     tape::TapeType
 end
 
-@inline function AugmentedReturn{PrimalType,ShadowType}(primal, shadow, cache) where {PrimalType, ShadowType}
-    AT = AugmentedReturn{PrimalType,ShadowType, typeof(cache)}
+@inline function AugmentedReturn{PrimalType, ShadowType}(primal, shadow, cache) where {PrimalType, ShadowType}
+    AT = AugmentedReturn{PrimalType, ShadowType, typeof(cache)}
     return AT(primal, shadow, cache)
 end
 
 @inline primal_type(::Type{<:AugmentedReturn{PrimalType}}) where {PrimalType} = PrimalType
 @inline primal_type(::AugmentedReturn{PrimalType}) where {PrimalType} = PrimalType
-@inline shadow_type(::Type{<:AugmentedReturn{<:Any,ShadowType}}) where {ShadowType} = ShadowType
-@inline shadow_type(::AugmentedReturn{<:Any,ShadowType}) where {ShadowType} = ShadowType
-@inline tape_type(::Type{<:AugmentedReturn{<:Any,<:Any,TapeType}}) where {TapeType} = TapeType
-@inline tape_type(::AugmentedReturn{<:Any,<:Any,TapeType}) where {TapeType} = TapeType
-struct AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}
+@inline shadow_type(::Type{<:AugmentedReturn{<:Any, ShadowType}}) where {ShadowType} = ShadowType
+@inline shadow_type(::AugmentedReturn{<:Any, ShadowType}) where {ShadowType} = ShadowType
+@inline tape_type(::Type{<:AugmentedReturn{<:Any, <:Any, TapeType}}) where {TapeType} = TapeType
+@inline tape_type(::AugmentedReturn{<:Any, <:Any, TapeType}) where {TapeType} = TapeType
+struct AugmentedReturnFlexShadow{PrimalType, ShadowType, TapeType}
     primal::PrimalType
     shadow::ShadowType
     tape::TapeType
 end
-@inline primal_type(::Type{AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = PrimalType
-@inline primal_type(::AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}) where {PrimalType,ShadowType,TapeType} = PrimalType
-@inline shadow_type(::Type{AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = ShadowType
-@inline shadow_type(::AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}) where {PrimalType,ShadowType,TapeType} = ShadowType
-@inline tape_type(::Type{AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}}) where {PrimalType,ShadowType,TapeType} = TapeType
-@inline tape_type(::AugmentedReturnFlexShadow{PrimalType,ShadowType,TapeType}) where {PrimalType,ShadowType,TapeType} = TapeType
+@inline primal_type(::Type{AugmentedReturnFlexShadow{PrimalType, ShadowType, TapeType}}) where {PrimalType, ShadowType, TapeType} = PrimalType
+@inline primal_type(::AugmentedReturnFlexShadow{PrimalType, ShadowType, TapeType}) where {PrimalType, ShadowType, TapeType} = PrimalType
+@inline shadow_type(::Type{AugmentedReturnFlexShadow{PrimalType, ShadowType, TapeType}}) where {PrimalType, ShadowType, TapeType} = ShadowType
+@inline shadow_type(::AugmentedReturnFlexShadow{PrimalType, ShadowType, TapeType}) where {PrimalType, ShadowType, TapeType} = ShadowType
+@inline tape_type(::Type{AugmentedReturnFlexShadow{PrimalType, ShadowType, TapeType}}) where {PrimalType, ShadowType, TapeType} = TapeType
+@inline tape_type(::AugmentedReturnFlexShadow{PrimalType, ShadowType, TapeType}) where {PrimalType, ShadowType, TapeType} = TapeType
 """
     augmented_primal(::RevConfig, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
 
@@ -348,23 +348,27 @@ end
 function _annotate_tt(@nospecialize(TT0))
     TT = Base.unwrap_unionall(TT0)
     ft = TT.parameters[1]
-    tt = map(T->_annotate(Base.rewrap_unionall(T, TT0)), TT.parameters[2:end])
+    tt = map(T -> _annotate(Base.rewrap_unionall(T, TT0)), TT.parameters[2:end])
     return ft, tt
 end
 
-function has_frule_from_sig(@nospecialize(TT);
-                            world::UInt=Base.get_world_counter(),
-                            method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                            caller::Union{Nothing,Core.MethodInstance}=nothing)::Bool
+function has_frule_from_sig(
+        @nospecialize(TT);
+        world::UInt = Base.get_world_counter(),
+        method_table::Union{Nothing, Core.Compiler.MethodTableView} = nothing,
+        caller::Union{Nothing, Core.MethodInstance} = nothing
+    )::Bool
     ft, tt = _annotate_tt(TT)
     TT = Tuple{<:FwdConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
     return isapplicable(forward, TT; world, method_table, caller)
 end
 
-function has_rrule_from_sig(@nospecialize(TT);
-                            world::UInt=Base.get_world_counter(),
-                            method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                            caller::Union{Nothing,Core.MethodInstance}=nothing)::Bool
+function has_rrule_from_sig(
+        @nospecialize(TT);
+        world::UInt = Base.get_world_counter(),
+        method_table::Union{Nothing, Core.Compiler.MethodTableView} = nothing,
+        caller::Union{Nothing, Core.MethodInstance} = nothing
+    )::Bool
     ft, tt = _annotate_tt(TT)
     TT = Tuple{<:RevConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
     return isapplicable(augmented_primal, TT; world, method_table, caller)
@@ -373,10 +377,12 @@ end
 # `hasmethod` is a precise match using `Core.Compiler.findsup`,
 # but here we want the broader query using `Core.Compiler.findall`.
 # Also add appropriate backedges to the caller `MethodInstance` if given.
-function isapplicable(@nospecialize(f), @nospecialize(TT);
-                      world::UInt=Base.get_world_counter(),
-                      method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                      caller::Union{Nothing,Core.MethodInstance}=nothing)::Bool
+function isapplicable(
+        @nospecialize(f), @nospecialize(TT);
+        world::UInt = Base.get_world_counter(),
+        method_table::Union{Nothing, Core.Compiler.MethodTableView} = nothing,
+        caller::Union{Nothing, Core.MethodInstance} = nothing
+    )::Bool
     tt = Base.to_tuple_type(TT)
     sig = Base.signature_type(f, tt)
     mt = ccall(:jl_method_table_for, Any, (Any,), sig)
@@ -384,7 +390,7 @@ function isapplicable(@nospecialize(f), @nospecialize(TT);
     if method_table === nothing
         method_table = Core.Compiler.InternalMethodTable(world)
     end
-    result = Core.Compiler.findall(sig, method_table; limit=-1)
+    result = Core.Compiler.findall(sig, method_table; limit = -1)
     (result === nothing || result === missing) && return false
     @static if isdefined(Core.Compiler, :MethodMatchResult)
         (; matches) = result
@@ -393,7 +399,7 @@ function isapplicable(@nospecialize(f), @nospecialize(TT);
     end
     # merged with Base.any on 1.12
     _any = isdefined(Core.Compiler, :_any) ? Core.Compiler._any : any
-    fullmatch = _any(match::Core.MethodMatch->match.fully_covers, matches)
+    fullmatch = _any(match::Core.MethodMatch -> match.fully_covers, matches)
     if !fullmatch
         if caller isa Core.MethodInstance
             add_mt_backedge!(caller, mt, sig)
@@ -403,7 +409,7 @@ function isapplicable(@nospecialize(f), @nospecialize(TT);
         return false
     else
         if caller isa Core.MethodInstance
-            for i = 1:Core.Compiler.length(matches)
+            for i in 1:Core.Compiler.length(matches)
                 match = Core.Compiler.getindex(matches, i)::Core.MethodMatch
                 edge = Core.Compiler.specialize_method(match)::Core.MethodInstance
                 add_backedge!(caller, edge, sig)
@@ -430,10 +436,12 @@ Mark a particular function as always being inactive in both its return result an
 """
 function inactive end
 
-function is_inactive_from_sig(@nospecialize(TT);
-                              world::UInt=Base.get_world_counter(),
-                              method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                              caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
+function is_inactive_from_sig(
+        @nospecialize(TT);
+        world::UInt = Base.get_world_counter(),
+        method_table::Union{Nothing, Core.Compiler.MethodTableView} = nothing,
+        caller::Union{Nothing, Core.MethodInstance, Core.Compiler.MethodLookupResult} = nothing
+    )
     return isapplicable(inactive, TT; world, method_table, caller)
 end
 
@@ -445,10 +453,12 @@ but do not prevent inlining of the function.
 """
 function inactive_noinl end
 
-function is_inactive_noinl_from_sig(@nospecialize(TT);
-                              world::UInt=Base.get_world_counter(),
-                              method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                              caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
+function is_inactive_noinl_from_sig(
+        @nospecialize(TT);
+        world::UInt = Base.get_world_counter(),
+        method_table::Union{Nothing, Core.Compiler.MethodTableView} = nothing,
+        caller::Union{Nothing, Core.MethodInstance, Core.Compiler.MethodLookupResult} = nothing
+    )
     return isapplicable(inactive_noinl, TT; world, method_table, caller)
 end
 
@@ -461,10 +471,12 @@ This function is currently considered internal/experimental and may not respect 
 """
 function inactive_kwarg end
 
-function is_inactive_kwarg_from_sig(@nospecialize(TT);
-                              world::UInt=Base.get_world_counter(),
-                              method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                              caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
+function is_inactive_kwarg_from_sig(
+        @nospecialize(TT);
+        world::UInt = Base.get_world_counter(),
+        method_table::Union{Nothing, Core.Compiler.MethodTableView} = nothing,
+        caller::Union{Nothing, Core.MethodInstance, Core.Compiler.MethodLookupResult} = nothing
+    )
     return isapplicable(inactive_kwarg, TT; world, method_table, caller)
 end
 
@@ -478,10 +490,12 @@ This function is currently considered internal/experimental and may not respect 
 """
 function inactive_arg end
 
-function is_inactive_arg_from_sig(@nospecialize(TT);
-                              world::UInt=Base.get_world_counter(),
-                              method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                              caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
+function is_inactive_arg_from_sig(
+        @nospecialize(TT);
+        world::UInt = Base.get_world_counter(),
+        method_table::Union{Nothing, Core.Compiler.MethodTableView} = nothing,
+        caller::Union{Nothing, Core.MethodInstance, Core.Compiler.MethodLookupResult} = nothing
+    )
     return isapplicable(inactive_arg, TT; world, method_table, caller)
 end
 
@@ -493,10 +507,12 @@ accessible memory.
 """
 function noalias end
 
-function noalias_from_sig(@nospecialize(TT);
-                              world::UInt=Base.get_world_counter(),
-                              method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
-                              caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
+function noalias_from_sig(
+        @nospecialize(TT);
+        world::UInt = Base.get_world_counter(),
+        method_table::Union{Nothing, Core.Compiler.MethodTableView} = nothing,
+        caller::Union{Nothing, Core.MethodInstance, Core.Compiler.MethodLookupResult} = nothing
+    )
     return isapplicable(noalias, TT; world, method_table, caller)
 end
 
@@ -507,9 +523,9 @@ Mark a particular type `Ty` as always being inactive.
 """
 inactive_type(::Type) = false
 
-@inline EnzymeCore.set_runtime_activity(mode::M, config::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_runtime_activity(mode, runtime_activity(config))
+@inline EnzymeCore.set_runtime_activity(mode::M, config::Config) where {M <: Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_runtime_activity(mode, runtime_activity(config))
 
-@inline EnzymeCore.set_strong_zero(mode::M, config::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_strong_zero(mode, runtime_activity(config))
+@inline EnzymeCore.set_strong_zero(mode::M, config::Config) where {M <: Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_strong_zero(mode, runtime_activity(config))
 
 include("easyrules.jl")
 

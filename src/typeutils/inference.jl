@@ -1,5 +1,5 @@
 function return_type(interp::Core.Compiler.AbstractInterpreter, mi::Core.MethodInstance)::Type
-    @static if VERSION < v"1.11.0"
+    return @static if VERSION < v"1.11.0"
         code = Core.Compiler.get(Core.Compiler.code_cache(interp), mi, nothing)
         if code isa Core.Compiler.CodeInstance
             return code.rettype
@@ -14,9 +14,9 @@ function return_type(interp::Core.Compiler.AbstractInterpreter, mi::Core.MethodI
 end
 
 function primal_interp_world(
-    @nospecialize(::ReverseMode),
-    world::UInt
-)
+        @nospecialize(::ReverseMode),
+        world::UInt
+    )
     mode = Enzyme.API.DEM_ReverseModeCombined
 
     CT = @static if VERSION >= v"1.11.0-DEV.1552"
@@ -34,13 +34,13 @@ function primal_interp_world(
         Enzyme.Compiler.GLOBAL_REV_CACHE
     end
 
-    Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true)
+    return Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true)
 end
 
 function primal_interp_world(
-    @nospecialize(::ForwardMode),
-    world::UInt
-)
+        @nospecialize(::ForwardMode),
+        world::UInt
+    )
     mode = Enzyme.API.DEM_ForwardMode
 
     CT = @static if VERSION >= v"1.11.0-DEV.1552"
@@ -58,28 +58,29 @@ function primal_interp_world(
         Enzyme.Compiler.GLOBAL_FWD_CACHE
     end
 
-    Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true)
+    return Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true)
 end
 
 @inline primal_interp_world(
     @nospecialize(::ReverseModeSplit),
-    world::UInt) = primal_interp_world(Reverse, world)
+    world::UInt
+) = primal_interp_world(Reverse, world)
 
 function primal_return_type_world(
-    @nospecialize(mode::Mode),
-    world::UInt,
-    @nospecialize(TT::Type),
-)
-    Core.Compiler._return_type(primal_interp_world(mode, world), TT)
+        @nospecialize(mode::Mode),
+        world::UInt,
+        @nospecialize(TT::Type),
+    )
+    return Core.Compiler._return_type(primal_interp_world(mode, world), TT)
 end
 
 function primal_return_type_world(
-    @nospecialize(mode::Mode),
-    world::UInt,
-    mi::Core.MethodInstance,
-)
+        @nospecialize(mode::Mode),
+        world::UInt,
+        mi::Core.MethodInstance,
+    )
     interp = primal_interp_world(mode, world)
-    return_type(interp, mi)
+    return return_type(interp, mi)
 end
 
 primal_return_type_world(
@@ -87,7 +88,7 @@ primal_return_type_world(
     world::UInt,
     @nospecialize(FT::Type),
     @nospecialize(TT::Type),
-   ) = primal_return_type_world(mode, world, Tuple{FT, TT.parameters...})
+) = primal_return_type_world(mode, world, Tuple{FT, TT.parameters...})
 
 function primal_return_type end
 
@@ -103,10 +104,10 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
     ft <: Core.Builtin &&
         error("$(GPUCompiler.unsafe_function_from_type(ft)) is not a generic function")
 
-    # look up the method    
+    # look up the method
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
-   
+
     mi = my_methodinstance(mode, ft, tt, world, min_world, max_world)
 
     slotnames = Core.svec(Symbol("#self#"), :mode, :ft, :tt)
@@ -137,4 +138,3 @@ end
     $(Expr(:meta, :generated_only))
     $(Expr(:meta, :generated, primal_return_type_generator))
 end
-

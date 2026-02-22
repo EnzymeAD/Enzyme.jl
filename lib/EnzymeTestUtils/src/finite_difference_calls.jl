@@ -28,18 +28,22 @@ function _fd_forward(fdm, f, rettype, y, activities)
     sig_arg_val_vec, from_vec_in = to_vec(xs[.!ignores])
     # vectorize inputs and outputs of function
     f_vec = first ∘ to_vec ∘ Base.splat(f_sig_args) ∘ from_vec_in
-    if rettype <: Union{Duplicated,DuplicatedNoNeed}
+    if rettype <: Union{Duplicated, DuplicatedNoNeed}
         all(ignores) && return zero_tangent(y)
         sig_arg_dval_vec, _ = to_vec(ẋs[.!ignores])
-        ret_deval_vec = FiniteDifferences._jvp(fdm, f_vec,
-                                               sig_arg_val_vec, sig_arg_dval_vec)
+        ret_deval_vec = FiniteDifferences._jvp(
+            fdm, f_vec,
+            sig_arg_val_vec, sig_arg_dval_vec
+        )
         return from_vec_out(ret_deval_vec)
-    elseif rettype <: Union{BatchDuplicated,BatchDuplicatedNoNeed}
-        all(ignores) && return (var"1"=zero_tangent(y),)
+    elseif rettype <: Union{BatchDuplicated, BatchDuplicatedNoNeed}
+        all(ignores) && return (var"1" = zero_tangent(y),)
         ret_dvals = map(ẋs[.!ignores]...) do sig_args_dvals...
             sig_args_dvals_vec, _ = to_vec(sig_args_dvals)
-            ret_dval_vec = FiniteDifferences._jvp(fdm, f_vec,
-                                                  sig_arg_val_vec, sig_args_dvals_vec)
+            ret_dval_vec = FiniteDifferences._jvp(
+                fdm, f_vec,
+                sig_arg_val_vec, sig_args_dvals_vec
+            )
             return from_vec_out(ret_dval_vec)
         end
         return NamedTuple{ntuple(Symbol, length(ret_dvals))}(ret_dvals)
@@ -60,26 +64,26 @@ function multi_tovec(active_return, vals)
 end
 
 function j′vp(fdm, f_vec, ȳ, x)
-  ẏs = map(eachindex(x)) do n
-    return fdm(zero(eltype(x))) do ε
-        xn = x[n]
-        try
-            x[n] = xn + ε
-            return copy(f_vec(x))  # copy required incase `f(x)` returns something that aliases `x`
-        finally
-            x[n] = xn  # Can't do `x[n] -= ϵ` as floating-point math is not associative
+    ẏs = map(eachindex(x)) do n
+        return fdm(zero(eltype(x))) do ε
+            xn = x[n]
+            try
+                x[n] = xn + ε
+                return copy(f_vec(x))  # copy required incase `f(x)` returns something that aliases `x`
+            finally
+                x[n] = xn  # Can't do `x[n] -= ϵ` as floating-point math is not associative
+            end
         end
     end
-  end
-  mat = transpose(reduce(hcat, ẏs))
-  result = zero(x)
-  for i in 1:length(ȳ)
-    tp = @inbounds ȳ[i] 
-    if isfinite(tp) && !iszero(tp)
-      result .+= mat[:, i] .* tp
+    mat = transpose(reduce(hcat, ẏs))
+    result = zero(x)
+    for i in 1:length(ȳ)
+        tp = @inbounds ȳ[i]
+        if isfinite(tp) && !iszero(tp)
+            result .+= mat[:, i] .* tp
+        end
     end
-  end
-  return result
+    return result
 end
 
 #=
@@ -105,7 +109,7 @@ function _fd_reverse(fdm, f, ȳ, activities, active_return)
     is_batch = _any_batch_duplicated(map(typeof, activities)...)
     batch_size = is_batch ? _batch_size(map(typeof, activities)...) : 1
     x̄s = map(collect(activities)) do a
-        if a isa Union{Const,Active}
+        if a isa Union{Const, Active}
             dval = ntuple(_ -> zero_tangent(a.val), batch_size)
             return is_batch ? dval : dval[1]
         else
@@ -124,11 +128,15 @@ function _fd_reverse(fdm, f, ȳ, activities, active_return)
         fd_vec = j′vp(fdm, f_vec, ȳ_extended_vec, sigargs_vec)
         fd = from_vec_in(fd_vec)
     else
-        fd = Tuple(zip(map(ȳ, s̄igargs...) do ȳ_extended...
-                           ȳ_extended_vec = multi_tovec(active_return, ȳ_extended)
-                           fd_vec = j′vp(fdm, f_vec, ȳ_extended_vec, sigargs_vec)
-                           return from_vec_in(fd_vec)
-                       end...))
+        fd = Tuple(
+            zip(
+                map(ȳ, s̄igargs...) do ȳ_extended...
+                    ȳ_extended_vec = multi_tovec(active_return, ȳ_extended)
+                    fd_vec = j′vp(fdm, f_vec, ȳ_extended_vec, sigargs_vec)
+                    return from_vec_in(fd_vec)
+                end...
+            )
+        )
     end
     @assert length(fd) == length(sigarginds)
     x̄s[sigarginds] = collect(fd)

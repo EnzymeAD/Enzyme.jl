@@ -16,7 +16,7 @@ setx!(w, x) = (w[begin] = x)
 sety!(w, y) = (w[end] = y)
 
 # non-isbits MArray doesn't support setindex!, so requires a little hack
-function setx!(w::MArray{S,T}, x) where {S,T}
+function setx!(w::MArray{S, T}, x) where {S, T}
     if isbitstype(T)
         w[begin] = x
     else
@@ -25,7 +25,7 @@ function setx!(w::MArray{S,T}, x) where {S,T}
     return x
 end
 
-function sety!(w::MArray{S,T}, y) where {S,T}
+function sety!(w::MArray{S, T}, y) where {S, T}
     if isbitstype(T)
         w[end] = y
     else
@@ -56,12 +56,12 @@ Base.:(==)(a::MutableWrapper, b::MutableWrapper) = (a === b) || (a.x == b.x)
 getx(a::MutableWrapper) = a.x
 setx!(a::MutableWrapper, x) = (a.x = x)
 
-struct DualWrapper{Tx,Ty}
+struct DualWrapper{Tx, Ty}
     x::Tx
     y::Ty
 end
 
-DualWrapper{T}(x::T, y) where {T} = DualWrapper{T,typeof(y)}(x, y)
+DualWrapper{T}(x::T, y) where {T} = DualWrapper{T, typeof(y)}(x, y)
 
 function Base.:(==)(a::DualWrapper, b::DualWrapper)
     return (a === b) || ((a.x == b.x) && (a.y == b.y))
@@ -70,12 +70,12 @@ end
 getx(a::DualWrapper) = a.x
 gety(a::DualWrapper) = a.y
 
-mutable struct MutableDualWrapper{Tx,Ty}
+mutable struct MutableDualWrapper{Tx, Ty}
     x::Tx
     y::Ty
 end
 
-MutableDualWrapper{T}(x::T, y) where {T} = MutableDualWrapper{T,typeof(y)}(x, y)
+MutableDualWrapper{T}(x::T, y) where {T} = MutableDualWrapper{T, typeof(y)}(x, y)
 
 function Base.:(==)(a::MutableDualWrapper, b::MutableDualWrapper)
     return (a === b) || ((a.x == b.x) && (a.y == b.y))
@@ -139,8 +139,8 @@ end
 Base.:(==)(a::CustomVector, b::CustomVector) = (a === b) || (a.data == b.data)
 
 function Enzyme.EnzymeCore.make_zero(
-    ::Type{CV}, seen::IdDict, prev::CV, ::Val{copy_if_inactive}
-) where {CV<:CustomVector{<:AbstractFloat},copy_if_inactive}
+        ::Type{CV}, seen::IdDict, prev::CV, ::Val{copy_if_inactive}
+    ) where {CV <: CustomVector{<:AbstractFloat}, copy_if_inactive}
     @info "make_zero(::CustomVector)"
     if haskey(seen, prev)
         return seen[prev]
@@ -255,14 +255,14 @@ const wrappers = [
 
 @static if VERSION < v"1.11-"
 else
-_memory(x::Vector) = Memory{eltype(x)}(x)
-push!(
-    wrappers,
-    (name="Memory{X}",                    f=(x -> _memory([x])),                             N=1, mutable=true,  typed=true),
-    (name="Memory{Any}",                  f=(x -> _memory(Any[x])),                          N=1, mutable=true,  typed=false),
-    (name="Memory{promote_type(X,Y)}",    f=((x, y) -> _memory([x, y])),                     N=2, mutable=true,  typed=:promoted),
-    (name="Memory{Any}",                  f=((x, y) -> _memory(Any[x, y])),                  N=2, mutable=true,  typed=false),
-)
+    _memory(x::Vector) = Memory{eltype(x)}(x)
+    push!(
+        wrappers,
+        (name = "Memory{X}",                 f = (x -> _memory([x])),            N = 1, mutable = true, typed = true),
+        (name = "Memory{Any}",               f = (x -> _memory(Any[x])),         N = 1, mutable = true, typed = false),
+        (name = "Memory{promote_type(X,Y)}", f = ((x, y) -> _memory([x, y])),    N = 2, mutable = true, typed = :promoted),
+        (name = "Memory{Any}",               f = ((x, y) -> _memory(Any[x, y])), N = 2, mutable = true, typed = false),
+    )
 end
 
 function test_make_zero()
@@ -277,7 +277,7 @@ function test_make_zero()
     end
     @testset "nested types" begin
         @testset "$T in $(wrapper.name)" for
-                T in scalartypes, wrapper in filter(w -> (w.N == 1), wrappers)
+            T in scalartypes, wrapper in filter(w -> (w.N == 1), wrappers)
             x = oneunit(T)
             w = wrapper.f(x)
             w_makez = make_zero(w)
@@ -287,7 +287,7 @@ function test_make_zero()
             @test getx(w) === x                  # no mutation of original
             @test x == oneunit(T)                # no mutation of original (relevant for BigFloat)
             @testset "doubly included in $(dualwrapper.name)" for
-                    dualwrapper in filter(w -> (w.N == 2), wrappers)
+                dualwrapper in filter(w -> (w.N == 2), wrappers)
                 w_inner = wrapper.f(x)
                 d_outer = dualwrapper.f(w_inner, w_inner)
                 d_outer_makez = make_zero(d_outer)
@@ -316,7 +316,7 @@ function test_make_zero()
                     # some code paths can only be hit with three layers of wrapping:
                     # mutable(immutable(mutable(scalar)))
                     @testset "all wrapped in $(outerwrapper.name)" for
-                            outerwrapper in filter(w -> ((w.N == 1) && w.mutable), wrappers)
+                        outerwrapper in filter(w -> ((w.N == 1) && w.mutable), wrappers)
                         w_inner = wrapper.f(x)
                         d_middle = dualwrapper.f(w_inner, w_inner)
                         w_outer = outerwrapper.f(d_middle)
@@ -393,10 +393,10 @@ function test_make_zero()
             end
         end
         @testset "copy_if_inactive $value" for (value, args) in [
-            ("unspecified", ()),
-            ("= false",     (Val(false),)),
-            ("= true",      (Val(true),)),
-        ]
+                ("unspecified", ()),
+                ("= false", (Val(false),)),
+                ("= true", (Val(true),)),
+            ]
             a = [1.0]
             w = Any[a, inactivearr, inactivearr]
             w_makez = make_zero(w, args...)
@@ -426,10 +426,10 @@ function test_make_zero()
         itemsz = (inactivetup..., scalarsz..., wrapsz..., mwrapsz...)
         labels = Symbol.("i" .* string.(1:length(items)))
         @testset "$name" for (name, c, cz) in [
-            ("Tuple",      Tuple(items),                 Tuple(itemsz)),
-            ("NamedTuple", NamedTuple(labels .=> items), NamedTuple(labels .=> itemsz)),
-            ("Array",      collect(items),               collect(itemsz)),
-        ]
+                ("Tuple", Tuple(items), Tuple(itemsz)),
+                ("NamedTuple", NamedTuple(labels .=> items), NamedTuple(labels .=> itemsz)),
+                ("Array", collect(items), collect(itemsz)),
+            ]
             c_makez = make_zero(c)
             @test typeof(c_makez) === typeof(c)                                     # correct type
             @test all(typeof(czj) === typeof(cj) for (czj, cj) in zip(c_makez, c))  # correct type
@@ -441,8 +441,8 @@ function test_make_zero()
     end
     @testset "circular references" begin
         @testset "$(wrapper.name)" for wrapper in (
-            filter(w -> (w.mutable && (w.typed in (:partial, false))), wrappers)
-        )
+                filter(w -> (w.mutable && (w.typed in (:partial, false))), wrappers)
+            )
             a = [1.0]
             if wrapper.N == 1
                 w = wrapper.f(nothing)
@@ -519,7 +519,7 @@ function test_make_zero()
         end
         @testset "mutable struct w inactive/const active/active/mutable/undefined" begin
             a = [1.0]
-            incomplete = MutableIncomplete("a", #=const=#1.0, 1.0, a)
+            incomplete = MutableIncomplete("a", #=const=# 1.0, 1.0, a)
             incomplete_makez = make_zero(incomplete)
             @test typeof(incomplete_makez) === typeof(incomplete)              # correct type
             @test typeof(incomplete_makez.w) === typeof(a)                     # correct type
@@ -541,7 +541,7 @@ end
 function test_make_zero!(make_zero! = Enzyme.make_zero!)
     @testset "nested types" begin
         @testset "$T in $(wrapper.name)" for
-                T in scalartypes, wrapper in filter(w -> (w.N == 1), wrappers)
+            T in scalartypes, wrapper in filter(w -> (w.N == 1), wrappers)
             x = oneunit(T)
             if wrapper.mutable
                 w = wrapper.f(x)
@@ -551,8 +551,8 @@ function test_make_zero!(make_zero! = Enzyme.make_zero!)
                 @test x == oneunit(T)        # no mutation of scalar (relevant for BigFloat)
             end
             @testset "doubly included in $(dualwrapper.name)" for dualwrapper in (
-                filter(w -> ((w.N == 2) && (w.mutable || wrapper.mutable)), wrappers)
-            )
+                    filter(w -> ((w.N == 2) && (w.mutable || wrapper.mutable)), wrappers)
+                )
                 w_inner = wrapper.f(x)
                 d_outer = dualwrapper.f(w_inner, w_inner)
                 make_zero!(d_outer)
@@ -580,7 +580,7 @@ function test_make_zero!(make_zero! = Enzyme.make_zero!)
                     # mutable(immutable(mutable(scalar)))
                     @assert !dualwrapper.mutable  # sanity check
                     @testset "all wrapped in $(outerwrapper.name)" for
-                            outerwrapper in filter(w -> ((w.N == 1) && w.mutable), wrappers)
+                        outerwrapper in filter(w -> ((w.N == 1) && w.mutable), wrappers)
                         w_inner = wrapper.f(x)
                         d_middle = dualwrapper.f(w_inner, w_inner)
                         w_outer = outerwrapper.f(d_middle)
@@ -643,8 +643,8 @@ function test_make_zero!(make_zero! = Enzyme.make_zero!)
     end
     @testset "circular references" begin
         @testset "$(wrapper.name)" for wrapper in (
-            filter(w -> (w.mutable && (w.typed in (:partial, false))), wrappers)
-        )
+                filter(w -> (w.mutable && (w.typed in (:partial, false))), wrappers)
+            )
             a = [1.0]
             if wrapper.N == 1
                 w = wrapper.f(nothing)
@@ -703,7 +703,7 @@ function test_make_zero!(make_zero! = Enzyme.make_zero!)
         end
         @testset "mutable struct w inactive/const active/active/mutable/undefined" begin
             a = [1.0]
-            incomplete = MutableIncomplete("a", #=const=#1.0, 1.0, a)
+            incomplete = MutableIncomplete("a", #=const=# 1.0, 1.0, a)
             make_zero!(incomplete)
             @test incomplete == MutableIncomplete("a", 0.0, 0.0, [0.0])  # correct value, preserved undefined
             @test incomplete.w === a                                     # preserved identity
@@ -740,7 +740,7 @@ end
 function test_remake_zero!()
     test_make_zero!(Enzyme.remake_zero!)
 
-    @testset "Immutable" begin
+    return @testset "Immutable" begin
         x = (0.0, [4.5])
         Enzyme.remake_zero!(x)
         @test x[1] == 0.0

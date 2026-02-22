@@ -1,5 +1,5 @@
 # From LinearAlgebra ~/.julia/juliaup/julia-1.10.0-beta3+0.x64.apple.darwin14/share/julia/stdlib/v1.10/LinearAlgebra/src/generic.jl:1110
-@inline function compute_lu_cache(cache_A::AT, b::BT) where {AT,BT}
+@inline function compute_lu_cache(cache_A::AT, b::BT) where {AT, BT}
     LinearAlgebra.require_one_based_indexing(cache_A, b)
     m, n = size(cache_A)
 
@@ -19,18 +19,18 @@
     return LinearAlgebra.qr(cache_A, ColumnNorm())
 end
 
-@inline onedimensionalize(::Type{T}) where {T<:Array} = Vector{eltype(T)}
+@inline onedimensionalize(::Type{T}) where {T <: Array} = Vector{eltype(T)}
 
 # y=inv(A) B
 #   dA −= z y^T
 #   dB += z, where  z = inv(A^T) dy
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.RevConfig,
-    func::Const{typeof(\)},
-    ::Type{RT},
-    A::Annotation{AT},
-    b::Annotation{BT},
-) where {RT,AT<:Array,BT<:Array}
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(\)},
+        ::Type{RT},
+        A::Annotation{AT},
+        b::Annotation{BT},
+    ) where {RT, AT <: Array, BT <: Array}
 
     cache_A = if EnzymeRules.overwritten(config)[2]
         copy(A.val)
@@ -70,11 +70,11 @@ function EnzymeRules.augmented_primal(
     end
 
     UT = Union{
-        LinearAlgebra.Diagonal{eltype(AT),onedimensionalize(BT)},
-        LinearAlgebra.LowerTriangular{eltype(AT),AT},
-        LinearAlgebra.UpperTriangular{eltype(AT),AT},
-        LinearAlgebra.LU{eltype(AT),AT,Vector{Int}},
-        LinearAlgebra.QRPivoted{eltype(AT),AT,onedimensionalize(BT),Vector{Int}},
+        LinearAlgebra.Diagonal{eltype(AT), onedimensionalize(BT)},
+        LinearAlgebra.LowerTriangular{eltype(AT), AT},
+        LinearAlgebra.UpperTriangular{eltype(AT), AT},
+        LinearAlgebra.LU{eltype(AT), AT, Vector{Int}},
+        LinearAlgebra.QRPivoted{eltype(AT), AT, onedimensionalize(BT), Vector{Int}},
     }
 
     cache = NamedTuple{
@@ -82,10 +82,10 @@ function EnzymeRules.augmented_primal(
         Tuple{
             eltype(RT),
             EnzymeRules.needs_shadow(config) ?
-            (
-                EnzymeRules.width(config) == 1 ? eltype(RT) :
-                NTuple{EnzymeRules.width(config),eltype(RT)}
-            ) : Nothing,
+                (
+                    EnzymeRules.width(config) == 1 ? eltype(RT) :
+                    NTuple{EnzymeRules.width(config), eltype(RT)}
+                ) : Nothing,
             UT,
             typeof(cache_b),
         },
@@ -103,13 +103,13 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfig,
-    func::Const{typeof(\)},
-    ::Type{RT},
-    cache,
-    A::Annotation{<:Array},
-    b::Annotation{<:Array},
-) where {RT}
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(\)},
+        ::Type{RT},
+        cache,
+        A::Annotation{<:Array},
+        b::Annotation{<:Array},
+    ) where {RT}
 
     y, dys, cache_A, cache_b = cache
 
@@ -171,13 +171,13 @@ const EnzymeTriangulars = Union{
 }
 
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.RevConfig,
-    func::Const{typeof(ldiv!)},
-    ::Type{RT},
-    Y::Annotation{YT},
-    A::Annotation{AT},
-    B::Annotation{BT},
-) where {RT,YT<:Array,AT<:EnzymeTriangulars,BT<:Array}
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(ldiv!)},
+        ::Type{RT},
+        Y::Annotation{YT},
+        A::Annotation{AT},
+        B::Annotation{BT},
+    ) where {RT, YT <: Array, AT <: EnzymeTriangulars, BT <: Array}
     cache_Y = EnzymeRules.overwritten(config)[1] ? copy(Y.val) : Y.val
     cache_A = EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
     cache_A = compute_lu_cache(cache_A, B.val)
@@ -188,7 +188,7 @@ function EnzymeRules.augmented_primal(
     return EnzymeRules.AugmentedReturn{
         EnzymeRules.primal_type(config, RT),
         EnzymeRules.shadow_type(config, RT),
-        Tuple{typeof(cache_Y),typeof(cache_A),typeof(cache_B)},
+        Tuple{typeof(cache_Y), typeof(cache_A), typeof(cache_B)},
     }(
         primal,
         shadow,
@@ -197,17 +197,17 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfig,
-    func::Const{typeof(ldiv!)},
-    ::Type{RT},
-    cache,
-    Y::Annotation{YT},
-    A::Annotation{AT},
-    B::Annotation{BT},
-) where {YT<:Array,RT,AT<:EnzymeTriangulars,BT<:Array}
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(ldiv!)},
+        ::Type{RT},
+        cache,
+        Y::Annotation{YT},
+        A::Annotation{AT},
+        B::Annotation{BT},
+    ) where {YT <: Array, RT, AT <: EnzymeTriangulars, BT <: Array}
     if !isa(Y, Const)
         (cache_Yout, cache_A, cache_B) = cache
-        for b = 1:EnzymeRules.width(config)
+        for b in 1:EnzymeRules.width(config)
             dY = EnzymeRules.width(config) == 1 ? Y.dval : Y.dval[b]
             z = adjoint(cache_A) \ dY
             if !isa(B, Const)
@@ -230,14 +230,14 @@ end
 # B(out) = inv(A) B(in)
 # dB(out) = inv(A) [ dB(in) - dA B(out) ]
 function EnzymeRules.forward(
-    config::EnzymeRules.FwdConfig,
-    func::Const{typeof(ldiv!)},
-    RT::Type{<:Union{Const,Duplicated,BatchDuplicated}},
-    fact::Annotation{<:Cholesky},
-    B::Annotation{<:AbstractVecOrMat};
-    kwargs...,
-)
-    if B isa Const
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(ldiv!)},
+        RT::Type{<:Union{Const, Duplicated, BatchDuplicated}},
+        fact::Annotation{<:Cholesky},
+        B::Annotation{<:AbstractVecOrMat};
+        kwargs...,
+    )
+    return if B isa Const
         retval = func.val(fact.val, B.val; kwargs...)
         if EnzymeRules.needs_primal(config)
             retval
@@ -478,12 +478,12 @@ function EnzymeRules.reverse(
             nothing
         end
     end
-    
+
     return (nothing, nothing, nothing, dα, dβ)
 end
 
 function cofactor(A)
-    cofA     = similar(A)
+    cofA = similar(A)
     minorAij = similar(A, size(A, 1) - 1, size(A, 2) - 1)
     for i in 1:size(A, 1), j in 1:size(A, 2)
         fill!(minorAij, zero(eltype(A)))
@@ -503,4 +503,3 @@ end
 
 # partial derivative of the determinant is the matrix of cofactors
 EnzymeRules.@easy_rule(LinearAlgebra.det(A::AbstractMatrix), (cofactor(A),))
-

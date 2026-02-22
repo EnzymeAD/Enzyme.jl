@@ -1,6 +1,6 @@
 function registerEnzymeAndPassPipeline!(pb::NewPMPassBuilder)
     enzyme_callback = cglobal((:registerEnzymeAndPassPipeline, API.libEnzyme))
-    LLVM.API.LLVMPassBuilderExtensionsPushRegistrationCallbacks(pb.exts, enzyme_callback)
+    return LLVM.API.LLVMPassBuilderExtensionsPushRegistrationCallbacks(pb.exts, enzyme_callback)
 end
 
 LLVM.@function_pass "jl-inst-simplify" JLInstSimplifyPass
@@ -76,104 +76,104 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         run!(pb, mod, tm)
     end
 
-    function middle_optimize!(second_stage=false)
-    @dispose pb = NewPMPassBuilder() begin
-        registerEnzymeAndPassPipeline!(pb)
-        register!(pb, RestoreAllocaType())
-        add!(pb, NewPMAAManager()) do aam
-            add!(aam, ScopedNoAliasAA())
-            add!(aam, TypeBasedAA())
-            add!(aam, BasicAA())
-        end
-        add!(pb, NewPMModulePassManager()) do mpm
-            add!(mpm, CPUFeaturesPass()) # why is this duplicated?
-
-            add!(mpm, NewPMFunctionPassManager()) do fpm
-                add!(fpm, InstCombinePass())
-                add!(fpm, JLInstSimplifyPass())
-                add!(fpm, SimplifyCFGPass())
-                add!(fpm, SROAPass())
-                add!(fpm, InstCombinePass())
-                add!(fpm, JLInstSimplifyPass())
-                add!(fpm, JumpThreadingPass())
-                add!(fpm, CorrelatedValuePropagationPass())
-                add!(fpm, InstCombinePass())
-                add!(fpm, JLInstSimplifyPass())
-                add!(fpm, ReassociatePass())
-                add!(fpm, EarlyCSEPass())
-                add!(fpm, AllocOptPass())
-                add!(fpm, RestoreAllocaType())
-
-                add!(fpm, NewPMLoopPassManager(use_memory_ssa=true)) do lpm
-                    add!(lpm, LoopIdiomRecognizePass())
-                    add!(lpm, LoopRotatePass())
-                    add!(lpm, LowerSIMDLoopPass())
-                    add!(lpm, LICMPass())
-                    add!(lpm, JuliaLICMPass())
-                    add!(lpm, SimpleLoopUnswitchPass())
-                end
-
-                add!(fpm, InstCombinePass())
-                add!(fpm, JLInstSimplifyPass())
-                add!(fpm, NewPMLoopPassManager()) do lpm
-                    add!(lpm, IndVarSimplifyPass())
-                    add!(lpm, LoopDeletionPass())
-                end
-		# todo peeling=false?
-                add!(fpm, LoopUnrollPass(opt_level=2, partial=false)) # what opt level?
-                add!(fpm, AllocOptPass())
-                add!(fpm, RestoreAllocaType())
-                add!(fpm, SROAPass())
-                add!(fpm, GVNPass())
-
-                # This InstCombine needs to be after GVN
-                # Otherwise it will generate load chains in GPU code...
-                add!(fpm, InstCombinePass())
-                add!(fpm, JLInstSimplifyPass())
-                add!(fpm, MemCpyOptPass())
-                add!(fpm, SCCPPass())
-                add!(fpm, InstCombinePass())
-                add!(fpm, JLInstSimplifyPass())
-                add!(fpm, JumpThreadingPass())
-                add!(fpm, DSEPass())
-                add!(fpm, AllocOptPass())
-                add!(fpm, RestoreAllocaType())
-                add!(fpm, SimplifyCFGPass())
-
-
-                add!(fpm, NewPMLoopPassManager()) do lpm
-                    add!(lpm, LoopIdiomRecognizePass())
-                    add!(lpm, LoopDeletionPass())
-                end
-                add!(fpm, JumpThreadingPass())
-                add!(fpm, CorrelatedValuePropagationPass())
-                if second_stage
-
-                add!(fpm, ADCEPass())
-                add!(fpm, InstCombinePass())
-                add!(fpm, JLInstSimplifyPass())
-
-                # GC passes
-                add!(fpm, GCInvariantVerifierPass(strong=false))
-                add!(fpm, SimplifyCFGPass())
-                add!(fpm, InstCombinePass())
-                add!(fpm, JLInstSimplifyPass())
-                end # second_stage
+    function middle_optimize!(second_stage = false)
+        return @dispose pb = NewPMPassBuilder() begin
+            registerEnzymeAndPassPipeline!(pb)
+            register!(pb, RestoreAllocaType())
+            add!(pb, NewPMAAManager()) do aam
+                add!(aam, ScopedNoAliasAA())
+                add!(aam, TypeBasedAA())
+                add!(aam, BasicAA())
             end
+            add!(pb, NewPMModulePassManager()) do mpm
+                add!(mpm, CPUFeaturesPass()) # why is this duplicated?
+
+                add!(mpm, NewPMFunctionPassManager()) do fpm
+                    add!(fpm, InstCombinePass())
+                    add!(fpm, JLInstSimplifyPass())
+                    add!(fpm, SimplifyCFGPass())
+                    add!(fpm, SROAPass())
+                    add!(fpm, InstCombinePass())
+                    add!(fpm, JLInstSimplifyPass())
+                    add!(fpm, JumpThreadingPass())
+                    add!(fpm, CorrelatedValuePropagationPass())
+                    add!(fpm, InstCombinePass())
+                    add!(fpm, JLInstSimplifyPass())
+                    add!(fpm, ReassociatePass())
+                    add!(fpm, EarlyCSEPass())
+                    add!(fpm, AllocOptPass())
+                    add!(fpm, RestoreAllocaType())
+
+                    add!(fpm, NewPMLoopPassManager(use_memory_ssa = true)) do lpm
+                        add!(lpm, LoopIdiomRecognizePass())
+                        add!(lpm, LoopRotatePass())
+                        add!(lpm, LowerSIMDLoopPass())
+                        add!(lpm, LICMPass())
+                        add!(lpm, JuliaLICMPass())
+                        add!(lpm, SimpleLoopUnswitchPass())
+                    end
+
+                    add!(fpm, InstCombinePass())
+                    add!(fpm, JLInstSimplifyPass())
+                    add!(fpm, NewPMLoopPassManager()) do lpm
+                        add!(lpm, IndVarSimplifyPass())
+                        add!(lpm, LoopDeletionPass())
+                    end
+                    # todo peeling=false?
+                    add!(fpm, LoopUnrollPass(opt_level = 2, partial = false)) # what opt level?
+                    add!(fpm, AllocOptPass())
+                    add!(fpm, RestoreAllocaType())
+                    add!(fpm, SROAPass())
+                    add!(fpm, GVNPass())
+
+                    # This InstCombine needs to be after GVN
+                    # Otherwise it will generate load chains in GPU code...
+                    add!(fpm, InstCombinePass())
+                    add!(fpm, JLInstSimplifyPass())
+                    add!(fpm, MemCpyOptPass())
+                    add!(fpm, SCCPPass())
+                    add!(fpm, InstCombinePass())
+                    add!(fpm, JLInstSimplifyPass())
+                    add!(fpm, JumpThreadingPass())
+                    add!(fpm, DSEPass())
+                    add!(fpm, AllocOptPass())
+                    add!(fpm, RestoreAllocaType())
+                    add!(fpm, SimplifyCFGPass())
+
+
+                    add!(fpm, NewPMLoopPassManager()) do lpm
+                        add!(lpm, LoopIdiomRecognizePass())
+                        add!(lpm, LoopDeletionPass())
+                    end
+                    add!(fpm, JumpThreadingPass())
+                    add!(fpm, CorrelatedValuePropagationPass())
+                    if second_stage
+
+                        add!(fpm, ADCEPass())
+                        add!(fpm, InstCombinePass())
+                        add!(fpm, JLInstSimplifyPass())
+
+                        # GC passes
+                        add!(fpm, GCInvariantVerifierPass(strong = false))
+                        add!(fpm, SimplifyCFGPass())
+                        add!(fpm, InstCombinePass())
+                        add!(fpm, JLInstSimplifyPass())
+                    end # second_stage
+                end
+            end
+            run!(pb, mod, tm)
         end
-        run!(pb, mod, tm)
-    end
     end # middle_optimize!
-    
-    run!(GCInvariantVerifierPass(strong=false), mod)
+
+    run!(GCInvariantVerifierPass(strong = false), mod)
 
     middle_optimize!()
-    
-    run!(GCInvariantVerifierPass(strong=false), mod)
-    
+
+    run!(GCInvariantVerifierPass(strong = false), mod)
+
     middle_optimize!(true)
-    
-    run!(GCInvariantVerifierPass(strong=false), mod)
+
+    run!(GCInvariantVerifierPass(strong = false), mod)
 
     # Globalopt is separated as it can delete functions, which invalidates the Julia hardcoded pointers to
     # known functions
@@ -191,20 +191,20 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         end
         run!(pb, mod, tm)
     end
-    
-    run!(GCInvariantVerifierPass(strong=false), mod)
-    
-    removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
-    
-    run!(GCInvariantVerifierPass(strong=false), mod)
+
+    run!(GCInvariantVerifierPass(strong = false), mod)
+
+    removeDeadArgs!(mod, tm, #=post_gc_fixup=# false)
+
+    run!(GCInvariantVerifierPass(strong = false), mod)
 
     API.EnzymeDetectReadonlyOrThrow(mod)
-    
-    run!(GCInvariantVerifierPass(strong=false), mod)
-    
+
+    run!(GCInvariantVerifierPass(strong = false), mod)
+
     nodecayed_phis!(mod)
-                
-    run!(GCInvariantVerifierPass(strong=false), mod)
+
+    return run!(GCInvariantVerifierPass(strong = false), mod)
 end
 
 function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
@@ -224,12 +224,12 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
 
     add!(mpm, AlwaysInlinerPass())
 
-    add!(mpm, NewPMFunctionPassManager()) do fpm
+    return add!(mpm, NewPMFunctionPassManager()) do fpm
         # Running `memcpyopt` between this and `sroa` seems to give `sroa` a hard time
         # merging the `alloca` for the unboxed data and the `alloca` created by the `alloc_opt`
         # pass.
 
-        add!(fpm, AllocOptPass())        
+        add!(fpm, AllocOptPass())
         add!(fpm, RestoreAllocaType())
         # consider AggressiveInstCombinePass at optlevel > 2
 
@@ -250,7 +250,7 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         add!(fpm, AllocOptPass())
         add!(fpm, RestoreAllocaType())
 
-        add!(fpm, NewPMLoopPassManager(use_memory_ssa=true)) do lpm
+        add!(fpm, NewPMLoopPassManager(use_memory_ssa = true)) do lpm
             add!(lpm, LoopRotatePass())
             # moving IndVarSimplify here prevented removing the loop in perf_sumcartesian(10:-1:1)
             add!(lpm, LoopIdiomRecognizePass())
@@ -266,7 +266,7 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
             add!(lpm, IndVarSimplifyPass())
             add!(lpm, LoopDeletionPass())
         end
-        add!(fpm, LoopUnrollPass(opt_level=2))
+        add!(fpm, LoopUnrollPass(opt_level = 2))
 
         # Run our own SROA on heap objects before LLVM's
         add!(fpm, AllocOptPass())
@@ -292,7 +292,7 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
 
         # More dead allocation (store) deletion before loop optimization
         # consider removing this:
-        add!(fpm, AllocOptPass())        
+        add!(fpm, AllocOptPass())
         add!(fpm, RestoreAllocaType())
 
         # see if all of the constant folding has exposed more loops
@@ -333,14 +333,14 @@ function addMachinePasses!(mpm::LLVM.NewPMPassManager)
             add!(mpm, AddressSanitizerPass())
         end
     end
-    add!(mpm, NewPMFunctionPassManager()) do fpm
+    return add!(mpm, NewPMFunctionPassManager()) do fpm
         add!(fpm, DemoteFloat16Pass())
-        add!(fpm, GVNPass())              
+        add!(fpm, GVNPass())
     end
 end
 
 function addJuliaLegalizationPasses!(mpm::LLVM.NewPMPassManager, lower_intrinsics::Bool = true)
-    if lower_intrinsics
+    return if lower_intrinsics
         add!(mpm, NewPMFunctionPassManager()) do fpm
             add!(fpm, ReinsertGCMarkerPass())
             if VERSION < v"1.13.0-DEV.36"
@@ -362,7 +362,7 @@ function addJuliaLegalizationPasses!(mpm::LLVM.NewPMPassManager, lower_intrinsic
         end
         # We need these two passes and the instcombine below
         # after GC lowering to let LLVM do some constant propagation on the tags.
-        # and remove some unnecessary write barrier checks.        
+        # and remove some unnecessary write barrier checks.
         add!(mpm, NewPMFunctionPassManager()) do fpm
             add!(fpm, GVNPass())
             add!(fpm, SCCPPass())
@@ -375,10 +375,12 @@ function addJuliaLegalizationPasses!(mpm::LLVM.NewPMPassManager, lower_intrinsic
             add!(fpm, InstCombinePass())
             add!(fpm, JLInstSimplifyPass())
             aggressiveSimplifyCFGOptions =
-                (forward_switch_cond=true,
-                   switch_range_to_icmp=true,
-                   switch_to_lookup=true,
-                   hoist_common_insts=true)
+                (
+                forward_switch_cond = true,
+                switch_range_to_icmp = true,
+                switch_to_lookup = true,
+                hoist_common_insts = true,
+            )
             add!(fpm, SimplifyCFGPass(; aggressiveSimplifyCFGOptions...))
         end
     else
@@ -391,9 +393,9 @@ const DumpPostCallConv = Ref(false)
 
 function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool = true)
     addr13NoAlias(mod)
-    
-    removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
-    
+
+    removeDeadArgs!(mod, tm, #=post_gc_fixup=# false)
+
 
     memcpy_sret_split!(mod)
     # if we did the move_sret_tofrom_roots, we will have loaded out of the sret, then stored into the rooted.
@@ -404,11 +406,11 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
     # GVN actually forwards
     @dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
-    	add!(pb, SimpleGVNPass())
+        add!(pb, SimpleGVNPass())
         run!(pb, mod, tm)
     end
     if DumpPreCallConv[]
-	    API.EnzymeDumpModuleRef(mod.ref)
+        API.EnzymeDumpModuleRef(mod.ref)
     end
     for f in collect(functions(mod))
         API.EnzymeFixupBatchedJuliaCallingConvention(f)
@@ -417,7 +419,7 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
         API.EnzymeFixupJuliaCallingConvention(f)
     end
     if DumpPostCallConv[]
-	    API.EnzymeDumpModuleRef(mod.ref)
+        API.EnzymeDumpModuleRef(mod.ref)
     end
     for g in collect(globals(mod))
         if startswith(LLVM.name(g), "ccall")
@@ -436,9 +438,9 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
         throw(
             LLVM.LLVMException(
                 "broken gc calling conv fix\n" *
-                string(unsafe_string(out_error[])) *
-                "\n" *
-                string(mod),
+                    string(unsafe_string(out_error[])) *
+                    "\n" *
+                    string(mod),
             ),
         )
     end
@@ -446,13 +448,13 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, ReinsertGCMarkerPass())
         register!(pb, SafeAtomicToRegularStorePass())
-		register!(pb, RestoreAllocaType())
+        register!(pb, RestoreAllocaType())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
             add!(aam, BasicAA())
         end
-        add!(pb, NewPMModulePassManager()) do mpm		
+        add!(pb, NewPMModulePassManager()) do mpm
             addOptimizationPasses!(mpm)
             if machine
                 # TODO enable validate_return_roots
@@ -464,14 +466,15 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
         run!(pb, mod, tm)
     end
     for f in functions(mod)
-	if isempty(blocks(f))
-		continue
-	end
-	if !has_fn_attr(f, StringAttribute("frame-pointer"))
-		push!(function_attributes(f), StringAttribute("frame-pointer", "all"))
-	end
+        if isempty(blocks(f))
+            continue
+        end
+        if !has_fn_attr(f, StringAttribute("frame-pointer"))
+            push!(function_attributes(f), StringAttribute("frame-pointer", "all"))
+        end
     end
     # @safe_show "post_mod", mod
     # flush(stdout)
     # flush(stderr)
+    return
 end

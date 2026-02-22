@@ -144,8 +144,8 @@ end
     res = autodiff(Reverse, user_mixfnc_byref, Const, BatchDuplicated(out, dout), BatchMixedDuplicated(tup, dtup))
     @test dtup[1][][1] ≈ 3.14
     @test dtup[1][][2] ≈ [2.7]
-    @test dtup[2][][1] ≈ 3*3.14
-    @test dtup[2][][2] ≈ [3*2.7]
+    @test dtup[2][][1] ≈ 3 * 3.14
+    @test dtup[2][][2] ≈ [3 * 2.7]
 end
 
 function mix_square(x)
@@ -172,7 +172,7 @@ end
     out = Ref(0.0)
     dout = (Ref(1.0), Ref(3.0))
     res = autodiff(Reverse, mix_square_byref, Const, BatchDuplicated(out, dout), BatchMixedDuplicated(tup, dtup))
-    @test res[1] == (nothing,nothing)
+    @test res[1] == (nothing, nothing)
     @test dtup[1][] ≈ 2 * 2.7
     @test dtup[2][] ≈ 3 * 2 * 2.7
 end
@@ -201,7 +201,7 @@ end
     out = Ref(0.0)
     dout = (Ref(1.0), Ref(3.0))
     res = autodiff(Reverse, mix_ar_byref, Const, BatchDuplicated(out, dout), BatchMixedDuplicated(tup, dtup))
-    @test res[1] == (nothing,nothing)
+    @test res[1] == (nothing, nothing)
     @test dtup[1][] ≈ [3.14, 2.7]
-    @test dtup[2][] ≈ [3*3.14, 3*2.7]
+    @test dtup[2][] ≈ [3 * 3.14, 3 * 2.7]
 end

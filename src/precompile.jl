@@ -2,9 +2,9 @@ using PrecompileTools: @setup_workload, @compile_workload
 
 @setup_workload begin
     precompile_module = @eval module $(gensym())
-        f(x) = x^2
+    f(x) = x^2
     end
-   
+
     Compiler.JIT.setup_globals()
 
     @compile_workload begin

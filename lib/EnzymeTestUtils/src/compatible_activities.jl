@@ -16,7 +16,7 @@ _any_batch_duplicated(activities...) = _any_are_type(BatchDuplicated, activities
 
 _any_duplicated(activities...) = _any_are_type(Duplicated, activities...)
 
-_batch_size(::Type{BatchDuplicated{T,N}}) where {T,N} = N
+_batch_size(::Type{BatchDuplicated{T, N}}) where {T, N} = N
 _batch_size(::Type{<:Annotation}) = nothing
 function _batch_size(activities...)
     sizes = filter(!isnothing, map(_batch_size, activities))

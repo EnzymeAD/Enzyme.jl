@@ -1,4 +1,3 @@
-
 module JIT
 
 using LLVM
@@ -13,8 +12,8 @@ export get_trampoline
 
 struct CompilerInstance
     jit::LLVM.JuliaOJIT
-    lctm::Union{LLVM.LazyCallThroughManager,Nothing}
-    ism::Union{LLVM.IndirectStubsManager,Nothing}
+    lctm::Union{LLVM.LazyCallThroughManager, Nothing}
+    ism::Union{LLVM.IndirectStubsManager, Nothing}
 end
 
 function LLVM.dispose(ci::CompilerInstance)
@@ -57,7 +56,7 @@ function fix_ptr_lookup(name)
                 Ref{Ptr{Cvoid}}(C_NULL)
             end
         else
-            arg1 =  parse(Int, arg1)
+            arg1 = parse(Int, arg1)
             hnd_cache = get!(hnd_int_map, arg1) do
                 Ref{Ptr{Cvoid}}(C_NULL)
             end
@@ -109,7 +108,7 @@ function setup_globals()
         jit[] = CompilerInstance(lljit, nothing, nothing)
     end
 
-    jd_main, lljit
+    return jd_main, lljit
 end
 
 function __init__()
@@ -137,7 +136,7 @@ function __init__()
         )
     end
 
-    atexit() do
+    return atexit() do
         dispose(tm[])
     end
 end
@@ -158,7 +157,7 @@ end
 function add_trampoline!(jd, (lljit, lctm, ism), entry, target)
     flags = LLVM.API.LLVMJITSymbolFlags(
         LLVM.API.LLVMJITSymbolGenericFlagsCallable |
-        LLVM.API.LLVMJITSymbolGenericFlagsExported,
+            LLVM.API.LLVMJITSymbolGenericFlagsExported,
         0,
     )
 
@@ -170,7 +169,7 @@ function add_trampoline!(jd, (lljit, lctm, ism), entry, target)
     mu = LLVM.reexports(lctm, ism, jd, [alias])
     LLVM.define(jd, mu)
 
-    LLVM.lookup(lljit, entry)
+    return LLVM.lookup(lljit, entry)
 end
 
 function prepare!(mod)
@@ -187,22 +186,22 @@ function prepare!(mod)
     end
     for g in collect(globals(mod))
         if !startswith(LLVM.name(g), "ejl_inserted\$")
-           continue
+            continue
         end
         _, ogname, load1, initaddr = split(LLVM.name(g), "\$")
 
         load1 = load1 == "true"
-            initaddr = parse(UInt, initaddr)
+        initaddr = parse(UInt, initaddr)
         ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
         if load1
-           ptr = Base.unsafe_load(ptr, :unordered)
+            ptr = Base.unsafe_load(ptr, :unordered)
         end
-                
+
         obj = Base.unsafe_pointer_to_objref(ptr)
-	
+
         # Let's try a de-bind for 1.10 lux
         if isa(obj, Core.Binding)
-           ptr = Compiler.unsafe_to_ptr(obj.value)
+            ptr = Compiler.unsafe_to_ptr(obj.value)
         end
 
         ptr = reinterpret(UInt, ptr)
@@ -212,6 +211,7 @@ function prepare!(mod)
         replace_uses!(g, ptr)
         Compiler.eraseInst(mod, g)
     end
+    return
 end
 
 function get_trampoline(job)
@@ -258,7 +258,7 @@ function get_trampoline(job)
                 Compiler.eraseInst(mod, other_func)
             end
 
-	    prepare!(mod)
+            prepare!(mod)
             tsm = move_to_threadsafe(mod)
 
             il = LLVM.IRCompileLayer(lljit)
@@ -271,7 +271,7 @@ function get_trampoline(job)
 
     flags = LLVM.API.LLVMJITSymbolFlags(
         LLVM.API.LLVMJITSymbolGenericFlagsCallable |
-        LLVM.API.LLVMJITSymbolGenericFlagsExported,
+            LLVM.API.LLVMJITSymbolGenericFlagsExported,
         0,
     )
 
@@ -292,7 +292,7 @@ function add!(mod)
 end
 
 function lookup(name)
-    LLVM.lookup(jit[].jit, name)
+    return LLVM.lookup(jit[].jit, name)
 end
 
 end # module

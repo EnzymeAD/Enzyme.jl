@@ -60,7 +60,7 @@ end
 # SpecialFunctions 0.7->0.8 changes:
 @testset "log gamma and co" begin
     #It is important that we have negative numbers with both odd and even integer parts
-    for x in (1.5, 2.5, 10.5, -0.6, -2.6, -3.3, 1.6+1.6im, 1.6-1.6im, -4.6+1.6im)
+    for x in (1.5, 2.5, 10.5, -0.6, -2.6, -3.3, 1.6 + 1.6im, 1.6 - 1.6im, -4.6 + 1.6im)
         if isdefined(SpecialFunctions, :lgamma)
             # test_scalar(SpecialFunctions.lgamma, x)
         end
@@ -82,10 +82,10 @@ end
     #   in the large-parameter regime (key for choosing symmetric asymptotics when min(a,b) > 100).
     # - Add a few more around 0.6–0.8 to exercise continued fraction vs. asymptotics for large (a,b).
     test_points = (
-        0.05, 0.08, 0.10, 0.12, 0.14, 0.18, 0.20, 0.22, 0.26,
-        0.28, 0.30, 0.32, 0.35, 0.38, 0.40, 0.42, 0.45,
-        0.49, 0.50, 0.51, 0.55, 0.58, 0.60, 0.62, 0.65,
-        0.68, 0.70, 0.72, 0.76, 0.80, 0.85, 0.90
+        0.05, 0.08, 0.1, 0.12, 0.14, 0.18, 0.2, 0.22, 0.26,
+        0.28, 0.3, 0.32, 0.35, 0.38, 0.4, 0.42, 0.45,
+        0.49, 0.5, 0.51, 0.55, 0.58, 0.6, 0.62, 0.65,
+        0.68, 0.7, 0.72, 0.76, 0.8, 0.85, 0.9,
     )
     # Rationale for a,b values:
     # - <1: 0.4, 0.6 to stress small-parameter power series branches.

@@ -7,14 +7,14 @@ using EnzymeCore
         @test EnzymeCore.NoPrimal(Reverse) === Reverse
         @test EnzymeCore.WithPrimal(ReverseWithPrimal) === ReverseWithPrimal
         @test EnzymeCore.NoPrimal(ReverseWithPrimal) === Reverse
-    
+
         @test EnzymeCore.WithPrimal(EnzymeCore.set_runtime_activity(Reverse)) === EnzymeCore.set_runtime_activity(ReverseWithPrimal)
-    
+
         @test EnzymeCore.WithPrimal(Forward) === ForwardWithPrimal
         @test EnzymeCore.NoPrimal(Forward) === Forward
         @test EnzymeCore.WithPrimal(ForwardWithPrimal) === ForwardWithPrimal
         @test EnzymeCore.NoPrimal(ForwardWithPrimal) === Forward
-    
+
         @test EnzymeCore.WithPrimal(ReverseSplitNoPrimal) === ReverseSplitWithPrimal
         @test EnzymeCore.NoPrimal(ReverseSplitNoPrimal) === ReverseSplitNoPrimal
         @test EnzymeCore.WithPrimal(ReverseSplitWithPrimal) === ReverseSplitWithPrimal

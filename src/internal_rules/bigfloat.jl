@@ -1,9 +1,9 @@
 function EnzymeRules.forward(
-    config::EnzymeRules.FwdConfig,
-    Ty::Const{Type{BigFloat}},
-    RT::Type{<:Union{DuplicatedNoNeed,Duplicated,BatchDuplicated,BatchDuplicatedNoNeed}};
-    kwargs...,
-)
+        config::EnzymeRules.FwdConfig,
+        Ty::Const{Type{BigFloat}},
+        RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}};
+        kwargs...,
+    )
 
     if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
         if EnzymeRules.width(config) == 1
@@ -32,11 +32,11 @@ function EnzymeRules.forward(
 end
 
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.RevConfig,
-    Ty::Const{Type{BigFloat}},
-    RT::Type{<:Union{DuplicatedNoNeed,Duplicated,BatchDuplicated,BatchDuplicatedNoNeed}},
-    kwargs...,
-)
+        config::EnzymeRules.RevConfig,
+        Ty::Const{Type{BigFloat}},
+        RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}},
+        kwargs...,
+    )
     primal = if EnzymeRules.needs_primal(config)
         Ty.val(; kwargs...)
     else
@@ -58,28 +58,28 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfig,
-    Ty::Const{Type{BigFloat}},
-    RT::Type{<:Union{DuplicatedNoNeed,Duplicated,BatchDuplicated,BatchDuplicatedNoNeed}},
-    tape,
-    kwargs...,
-)
+        config::EnzymeRules.RevConfig,
+        Ty::Const{Type{BigFloat}},
+        RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}},
+        tape,
+        kwargs...,
+    )
     return ()
 end
 
-EnzymeRules.@easy_rule(+(a::BigFloat, b::Number), (1,1))
-EnzymeRules.@easy_rule(+(a::Number, b::BigFloat), (1,1))
-EnzymeRules.@easy_rule(+(a::BigFloat, b::BigFloat), (1,1))
-EnzymeRules.@easy_rule(-(a::BigFloat, b::Number), (1,-1))
-EnzymeRules.@easy_rule(-(a::Number, b::BigFloat), (1,-1))
-EnzymeRules.@easy_rule(-(a::BigFloat, b::BigFloat), (1,-1))
+EnzymeRules.@easy_rule(+(a::BigFloat, b::Number), (1, 1))
+EnzymeRules.@easy_rule(+(a::Number, b::BigFloat), (1, 1))
+EnzymeRules.@easy_rule(+(a::BigFloat, b::BigFloat), (1, 1))
+EnzymeRules.@easy_rule(-(a::BigFloat, b::Number), (1, -1))
+EnzymeRules.@easy_rule(-(a::Number, b::BigFloat), (1, -1))
+EnzymeRules.@easy_rule(-(a::BigFloat, b::BigFloat), (1, -1))
 EnzymeRules.@easy_rule(*(a::BigFloat, b::BigFloat), (b, a))
 EnzymeRules.@easy_rule(*(a::BigFloat, b::Number), (b, a))
 EnzymeRules.@easy_rule(*(a::Number, b::BigFloat), (b, a))
-EnzymeRules.@easy_rule(/(a::BigFloat, b::Number), (one(a)/b, -(a/b^2)))
-EnzymeRules.@easy_rule(/(a::Number, b::BigFloat), (one(a)/b, -(a/b^2)))
-EnzymeRules.@easy_rule(/(a::BigFloat, b::BigFloat), (one(a)/b, -(a/b^2)))
-EnzymeRules.@easy_rule(Base.inv(a::BigFloat), (-(one(a)/a^2),))
+EnzymeRules.@easy_rule(/(a::BigFloat, b::Number), (one(a) / b, -(a / b^2)))
+EnzymeRules.@easy_rule(/(a::Number, b::BigFloat), (one(a) / b, -(a / b^2)))
+EnzymeRules.@easy_rule(/(a::BigFloat, b::BigFloat), (one(a) / b, -(a / b^2)))
+EnzymeRules.@easy_rule(Base.inv(a::BigFloat), (-(one(a) / a^2),))
 EnzymeRules.@easy_rule(Base.sin(a::BigFloat), (cos(a),))
 EnzymeRules.@easy_rule(Base.cos(a::BigFloat), (-sin(a),))
 EnzymeRules.@easy_rule(Base.tan(a::BigFloat), (one(a) + Ω^2,))

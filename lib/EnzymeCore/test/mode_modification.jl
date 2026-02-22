@@ -12,7 +12,7 @@ using Test
     @test Split(set_err_if_func_written(Reverse)) == set_err_if_func_written(ReverseSplitNoPrimal)
     @test Split(set_abi(Reverse, InlineABI)) == set_abi(ReverseSplitNoPrimal, InlineABI)
 
-    @test Split(Reverse, Val(:ReturnShadow), Val(:Width), Val(:ModifiedBetween), Val(:ShadowInit)) == ReverseModeSplit{false,:ReturnShadow,false,false,:Width,:ModifiedBetween,EnzymeCore.DefaultABI,false,false,:ShadowInit}()
+    @test Split(Reverse, Val(:ReturnShadow), Val(:Width), Val(:ModifiedBetween), Val(:ShadowInit)) == ReverseModeSplit{false, :ReturnShadow, false, false, :Width, :ModifiedBetween, EnzymeCore.DefaultABI, false, false, :ShadowInit}()
 
     @test Combined(Reverse) == Reverse
     @test Combined(ReverseWithPrimal) == ReverseWithPrimal

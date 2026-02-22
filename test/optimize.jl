@@ -23,11 +23,11 @@ function gcloaded_fixup(dest, src)
         j = 1
         while true
             ld = @inbounds if i <= j
-                dat[(i-1) * 2 + j]
+                dat[(i - 1) * 2 + j]
             else
-                dat[(j-1) * 2 + i]
+                dat[(j - 1) * 2 + i]
             end
-            @inbounds dest[(i-1) * 2 + j] = ld
+            @inbounds dest[(i - 1) * 2 + j] = ld
             if j == len
                 break
             end
@@ -42,16 +42,16 @@ function gcloaded_fixup(dest, src)
 end
 
 @testset "GCLoaded fixup" begin
-	H = Hermitian(Matrix([4.0 1.0; 2.0 5.0]))
-	dest = Matrix{Float64}(undef, 2, 2)
+    H = Hermitian(Matrix([4.0 1.0; 2.0 5.0]))
+    dest = Matrix{Float64}(undef, 2, 2)
 
-	Enzyme.autodiff(
-	    ForwardWithPrimal,
-	    gcloaded_fixup,
-	    Const,
-	    Const(dest),
-	    Const(H),
-	)[1]
+    Enzyme.autodiff(
+        ForwardWithPrimal,
+        gcloaded_fixup,
+        Const,
+        Const(dest),
+        Const(H),
+    )[1]
     @test dest ≈ [4.0 2.0; 2.0 5.0]
     dest = Matrix{Float64}(undef, 2, 2)
     gcloaded_fixup(dest, H)
@@ -64,11 +64,11 @@ struct MyNormal
 end
 
 struct MvLocationScale{
-    S, D, L
-}
-    location ::L
-    scale    ::S
-    dist     ::D
+        S, D, L,
+    }
+    location::L
+    scale::S
+    dist::D
 end
 
 @noinline function law(dist, flat::AbstractVector)
@@ -93,8 +93,8 @@ end
 
 function man(q::MvLocationScale)
     dist = MyNormal(1.0, 0.0)
-    
-    out = ones(2,3) # Array{Float64}(undef, (2,3))
+
+    out = ones(2, 3) # Array{Float64}(undef, (2,3))
     @inbounds myrand!(Random.default_rng(), dist, out)
 
     return q.scale[1] * out
@@ -103,19 +103,19 @@ end
 function estimate_repgradelbo_ad_forward(params, dist)
     q = law(dist, params)
     samples = man(q)
-    mean(samples)
+    return mean(samples)
 end
 
 @testset "Removed undef arguments" begin
     T = Float64
-	d = 2
+    d = 2
     dist = MyNormal(1.0, 0.0)
     q = MvLocationScale(zeros(T, d), Diagonal(ones(T, d)), dist)
     params = destructure(q)
-    
+
     ∇x = zero(params)
     fill!(∇x, zero(eltype(∇x)))
-    
+
     estimate_repgradelbo_ad_forward(params, dist)
 
     Enzyme.autodiff(
@@ -164,8 +164,8 @@ module RetTypeMod
 
     # This specialization improves AD performance of the sampling path
     @inline function myrand(
-        q::MvLocationScale, num_samples::Int
-    )
+            q::MvLocationScale, num_samples::Int
+        )
         return ones(5, num_samples)
     end
 
@@ -197,6 +197,7 @@ module RetTypeMod
                 Enzyme.Const(q),
             )
         end
+        return
     end
 
 end
@@ -205,24 +206,26 @@ end
     RetTypeMod.main()
 end
 
-const LBT =  LinearAlgebra.BLAS.libblastrampoline
+const LBT = LinearAlgebra.BLAS.libblastrampoline
 
 @noinline function blasdot(x, y)
     n = length(x)
     s = GC.@preserve x y begin
-	   DX, incx = LinearAlgebra.BLAS.vec_pointer_stride(x)
-	   DY, incy = LinearAlgebra.BLAS.vec_pointer_stride(y)
-	    result = Ref{ComplexF64}()
-            ccall((LinearAlgebra.BLAS.@blasfunc(cblas_zdotc_sub), LBT), Cvoid,
-                (LinearAlgebra.BLAS.BlasInt, Ptr{ComplexF64}, LinearAlgebra.BLAS.BlasInt, Ptr{ComplexF64}, LinearAlgebra.BLAS.BlasInt, Ptr{ComplexF64}),
-                 n, DX, incx, DY, incy, result)
-            result[]
+        DX, incx = LinearAlgebra.BLAS.vec_pointer_stride(x)
+        DY, incy = LinearAlgebra.BLAS.vec_pointer_stride(y)
+        result = Ref{ComplexF64}()
+        ccall(
+            (LinearAlgebra.BLAS.@blasfunc(cblas_zdotc_sub), LBT), Cvoid,
+            (LinearAlgebra.BLAS.BlasInt, Ptr{ComplexF64}, LinearAlgebra.BLAS.BlasInt, Ptr{ComplexF64}, LinearAlgebra.BLAS.BlasInt, Ptr{ComplexF64}),
+            n, DX, incx, DY, incy, result
+        )
+        result[]
     end
     return s
 end
 
 function fwd(x, y)
-	blasdot(x, y)
+    return blasdot(x, y)
 end
 
 @testset "Parameter removal" begin
