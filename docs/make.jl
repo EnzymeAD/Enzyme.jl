@@ -2,6 +2,7 @@ using Enzyme
 using EnzymeCore
 using EnzymeTestUtils
 using Documenter
+using Documenter.Remotes: GitHub
 
 DocMeta.setdocmeta!(Enzyme, :DocTestSetup, :(using Enzyme); recursive=true)
 DocMeta.setdocmeta!(EnzymeCore, :DocTestSetup, :(using EnzymeCore); recursive=true)
@@ -58,7 +59,7 @@ end
 makedocs(;
     modules=[Enzyme, EnzymeCore, EnzymeTestUtils],
     authors="William Moses <wmoses@mit.edu>, Valentin Churavy <vchuravy@mit.edu>",
-    repo="https://github.com/EnzymeAD/Enzyme.jl/blob/{commit}{path}#{line}",
+    repo=GitHub("EnzymeAD/Enzyme.jl"),
     sitename="Enzyme.jl",
     format=Documenter.HTML(;
         prettyurls=get(ENV, "CI", "false") == "true",
