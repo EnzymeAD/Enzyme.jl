@@ -1810,7 +1810,7 @@ function generic_setup(
     mode = get_mode(gutils)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
-    ops = collect(operands(orig))[start+firstconst:end-1]
+    ops = collect(operands(orig))[start+firstconst:LLVM.API.LLVMGetNumArgOperands(orig)]
 
     T_int8 = LLVM.Int8Type()
     T_jlvalue = LLVM.StructType(LLVMType[])
@@ -1936,6 +1936,15 @@ function generic_setup(
 
     pushfirst!(vals, unsafe_to_llvm(B, func))
 
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+
+    for v in vals
+       if value_type(v) != T_prjlvalue
+          throw(AssertionError("Illegal generic_setup, expected all arguments to by jlvaluet, found $(string(v)), within $(vals), orig=$(string(orig))"))
+       end
+    end
+    
     cal = emit_apply_generic!(B, vals)
 
     debug_from_orig!(gutils, cal, orig)
@@ -2372,7 +2381,7 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
        isiter == Base.iterate &&
        istup == Base.tuple &&
        length(operands(orig)) >= offset + 4
-        origops = collect(operands(orig)[1:end-1])
+        origops = collect(operands(orig)[1:LLVM.API.LLVMGetNumArgOperands(orig)])
         shadowins =
             [invert_pointer(gutils, origops[i], B) for i = (offset+3):length(origops)]
         shadowres = if width == 1

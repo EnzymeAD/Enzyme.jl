@@ -477,7 +477,7 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
                     if isa(cur, LLVM.CallInst) &&
                        isa(LLVM.called_operand(cur), LLVM.Function)
                         legalc = true
-                        for (i, ci) in enumerate(operands(cur)[1:end-1])
+			for (i, ci) in enumerate(operands(cur)[1:LLVM.API.LLVMGetNumArgOperands(cur)])
                             if ci == prev
                                 nocapture = false
                                 readonly = false
@@ -1432,7 +1432,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                    intr == LLVM.Intrinsic("llvm.memmove").id ||
                    intr == LLVM.Intrinsic("llvm.memset").id
                     newvs = LLVM.Value[]
-                    for (i, v) in enumerate(operands(st)[1:end-1])
+		    for (i, v) in enumerate(operands(st)[1:LLVM.API.LLVMGetNumArgOperands(st)])
                         if v == inst
                             LLVM.API.LLVMSetOperand(st, i - 1, operands(inst)[1])
                             push!(newvs, operands(inst)[1])
@@ -1491,7 +1491,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                 else
                     EnumAttribute("sret")
                 end)
-                for (i, v) in enumerate(operands(st)[1:end-1])
+		for (i, v) in enumerate(operands(st)[1:LLVM.API.LLVMGetNumArgOperands(st)])
                     if v == inst
                         readnone = false
                         readonly = false
@@ -1817,7 +1817,7 @@ function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
         un = un::LLVM.CallInst
 
         # Passing the fn as an argument is not permitted
-        for op in collect(operands(un))[1:end-1]
+	for op in collect(operands(un))[1:LLVM.API.LLVMGetNumArgOperands(un)]
             if op == fn
                 return false
             end
@@ -1963,7 +1963,7 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
-                        ops = collect(operands(un))[1:end-1]
+                        ops = collect(operands(un))[1:LLVM.API.LLVMGetNumArgOperands(un)]
                         bad = false
                         for op in ops
                             if op == fn
@@ -2075,7 +2075,7 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
-                        ops = collect(operands(un))[1:end-1]
+			ops = collect(operands(un))[1:LLVM.API.LLVMGetNumArgOperands(un)]
                         bad = false
                         for op in ops
                             if op == fn
@@ -2171,7 +2171,7 @@ function propagate_returned!(mod::LLVM.Module)
                     illegalUse = true
                     continue
                 end
-                ops = collect(operands(un))[1:end-1]
+		ops = collect(operands(un))[1:LLVM.API.LLVMGetNumArgOperands(un)]
                 bad = false
                 for op in ops
                     if op == fn
