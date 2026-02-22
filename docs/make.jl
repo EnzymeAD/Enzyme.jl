@@ -72,6 +72,7 @@ makedocs(;
             )
         ],
         mathengine = MathJax3(),
+        size_threshold_warn = 400 * 1024,   # 400 KiB
         size_threshold = 10_000_000
     ),
     pages = [
