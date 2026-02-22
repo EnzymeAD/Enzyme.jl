@@ -943,7 +943,7 @@ function abs_cstring(@nospecialize(arg::LLVM.Value))::Tuple{Bool, String}
 
         if larg !== nothing
             if (isa(larg, LLVM.ConstantArray) || isa(larg, LLVM.ConstantDataArray)) && eltype(value_type(larg)) == LLVM.IntType(8)
-                return (true, String(map(Base.Fix1(convert, UInt8), collect(larg)[1:LLVM.API.LLVMGetNumArgOperands(arg)])))
+	        return (true, String(map(Base.Fix1(convert, UInt8), collect(larg)[1:(end-1)])))
             end
 
         end
