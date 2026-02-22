@@ -444,7 +444,7 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
 	pushfirst!(valTys, API.VT_Primal)
     end
     
-    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, shadowsin, valTys, false)
+    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, shadowsin, valTys, false; force_run=true)
     unsafe_store!(shadowR, shadowres.ref)
     return true
 end
