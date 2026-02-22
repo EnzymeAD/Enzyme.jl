@@ -211,27 +211,29 @@ function compute_update(state_now, state_old, u, params, dt)
 
     dstate_now_dt = zeros(6)
     state_new = zeros(6)
+    (; boxvol, gamma, Tstar, FW) = params
 
     ## first computing the time derivatives of the various temperatures and salinities
     if u > 0 
 
-        dstate_now_dt[1] = u * (state_now[3] - state_now[1]) / params.boxvol[1] + params.gamma * (params.Tstar[1] - state_now[1]) 
-        dstate_now_dt[2] = u * (state_now[1] - state_now[2]) / params.boxvol[2] + params.gamma * (params.Tstar[2] - state_now[2])
-        dstate_now_dt[3] = u * (state_now[2] - state_now[3]) / params.boxvol[3] 
+        dstate_now_dt[1] = u * (state_now[3] - state_now[1]) / boxvol[1] + gamma * (Tstar[1] - state_now[1])
+        dstate_now_dt[2] = u * (state_now[1] - state_now[2]) / boxvol[2] + gamma * (Tstar[2] - state_now[2])
+        dstate_now_dt[3] = u * (state_now[2] - state_now[3]) / boxvol[3]
 
-        dstate_now_dt[4] = u * (state_now[6] - state_now[4]) / params.boxvol[1] + params.FW[1] / params.boxvol[1]
-        dstate_now_dt[5] = u * (state_now[4] - state_now[5]) / params.boxvol[2] + params.FW[2] / params.boxvol[2]
-        dstate_now_dt[6] = u * (state_now[5] - state_now[6]) / params.boxvol[3]
+        dstate_now_dt[4] = u * (state_now[6] - state_now[4]) / boxvol[1] + FW[1] / boxvol[1]
+        dstate_now_dt[5] = u * (state_now[4] - state_now[5]) / boxvol[2] + FW[2] / boxvol[2]
+        dstate_now_dt[6] = u * (state_now[5] - state_now[6]) / boxvol[3]
+
         
     elseif u <= 0
 
-        dstate_now_dt[1] = u * (state_now[2] - state_now[1]) / params.boxvol[1] + params.gamma * (params.Tstar[1] - state_now[1]) 
-        dstate_now_dt[2] = u * (state_now[3] - state_now[2]) / params.boxvol[2] + params.gamma * (params.Tstar[2] - state_now[2])
-        dstate_now_dt[3] = u * (state_now[1] - state_now[3]) / params.boxvol[3] 
+        dstate_now_dt[1] = u * (state_now[2] - state_now[1]) / boxvol[1] + gamma * (Tstar[1] - state_now[1])
+        dstate_now_dt[2] = u * (state_now[3] - state_now[2]) / boxvol[2] + gamma * (Tstar[2] - state_now[2])
+        dstate_now_dt[3] = u * (state_now[1] - state_now[3]) / boxvol[3]
 
-        dstate_now_dt[4] = u * (state_now[5] - state_now[4]) / params.boxvol[1] + params.FW[1] / params.boxvol[1]
-        dstate_now_dt[5] = u * (state_now[6] - state_now[5]) / params.boxvol[2] + params.FW[2] / params.boxvol[2]
-        dstate_now_dt[6] = u * (state_now[4] - state_now[6]) / params.boxvol[3]
+        dstate_now_dt[4] = u * (state_now[5] - state_now[4]) / boxvol[1] + FW[1] / boxvol[1]
+        dstate_now_dt[5] = u * (state_now[6] - state_now[5]) / boxvol[2] + FW[2] / boxvol[2]
+        dstate_now_dt[6] = u * (state_now[4] - state_now[6]) / boxvol[3]
 
     end
 
