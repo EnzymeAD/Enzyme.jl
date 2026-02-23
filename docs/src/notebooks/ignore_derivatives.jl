@@ -4,6 +4,13 @@
 using Markdown
 using InteractiveUtils
 
+# ╔═╡ df72e42f-7eec-476f-8ce5-72b09f620005
+md"""
+# Reproducing "Stabilizing backpropagation through time to learn complex physics"
+
+Fig 1 from <https://openreview.net/pdf?id=bozbTTWcaw>
+"""
+
 # ╔═╡ b72e9218-81ba-11f0-1eba-5bd949c7ade4
 begin
     import Pkg
@@ -33,13 +40,6 @@ end
 
 # ╔═╡ 23a8503f-3c68-4523-aebe-a4ce4575a02b
 import Enzyme: ignore_derivatives
-
-# ╔═╡ df72e42f-7eec-476f-8ce5-72b09f620005
-md"""
-# Reproducing "Stabilizing backpropagation through time to learn complex physics"
-
-Fig 1 from <https://openreview.net/pdf?id=bozbTTWcaw>
-"""
 
 # ╔═╡ fabba18a-b8d8-479d-babd-c18279273fb5
 begin
@@ -126,12 +126,12 @@ N_stop(xᵢ, θ) = θ[1] * ignore_derivatives(xᵢ^2) + θ[2] * ignore_derivativ
 plot_gradientfield(N_stop, S, x₀, y, θ₁, θ₂, n)
 
 # ╔═╡ Cell order:
+# ╟─df72e42f-7eec-476f-8ce5-72b09f620005
 # ╠═b72e9218-81ba-11f0-1eba-5bd949c7ade4
 # ╠═9f5c0822-a19a-4c63-95e7-d2f066a7440f
 # ╠═23a8503f-3c68-4523-aebe-a4ce4575a02b
 # ╠═a4453d23-6e31-451f-b2cd-97346accac82
 # ╠═bd0352c3-1b3c-42f5-ab93-7ca4cb67b9ad
-# ╟─df72e42f-7eec-476f-8ce5-72b09f620005
 # ╠═fabba18a-b8d8-479d-babd-c18279273fb5
 # ╠═5baa757c-c611-4d8b-ac37-4f97e585613e
 # ╠═adf9ae2c-92b6-4826-bb01-12e46f365610
