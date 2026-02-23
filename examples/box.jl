@@ -116,18 +116,10 @@ function setup()
     bwidth = 4000.0 * 1.0e5  ## box width, centimeters
 
     ## box areas
-    barea = [
-        blength[1] * bwidth;
-        blength[2] * bwidth;
-        blength[3] * bwidth
-    ]
+    barea = blength .* bwidth
 
     ## box volumes
-    bvolume = [
-        barea[1] * bdepth[1];
-        barea[2] * bdepth[2];
-        barea[3] * bdepth[3]
-    ]
+    bvolume = barea .* bdepth
 
     ## parameters that are used to ensure units are in CGS (cent-gram-sec)
 
