@@ -36,9 +36,9 @@ import Enzyme: ignore_derivatives
 
 # ╔═╡ df72e42f-7eec-476f-8ce5-72b09f620005
 md"""
-# Reproducing "Stabilizing backpropagation through time to learn complex physics" 
+# Reproducing "Stabilizing backpropagation through time to learn complex physics"
 
-Fig 1 from https://openreview.net/pdf?id=bozbTTWcaw
+Fig 1 from <https://openreview.net/pdf?id=bozbTTWcaw>
 """
 
 # ╔═╡ fabba18a-b8d8-479d-babd-c18279273fb5
