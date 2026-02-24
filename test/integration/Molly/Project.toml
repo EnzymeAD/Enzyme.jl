@@ -14,4 +14,4 @@ EnzymeCore = {path = "../../../lib/EnzymeCore"}
 
 [compat]
 FiniteDifferences = "0.12"
-Molly = "0.23.1"
+Molly = "0.23.3"
