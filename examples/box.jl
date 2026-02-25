@@ -565,5 +565,5 @@ end
 
 @show abs.(diffs .- dstate_old[5]) ./ dstate_old[5]
 
-# and we get down to a percent difference on the order of ``1e^{-5}``, showing Enzyme calculated
+# and we get down to a percent difference on the order of ``{10}^{-5}``, showing Enzyme calculated
 # the correct derivative. Success!
