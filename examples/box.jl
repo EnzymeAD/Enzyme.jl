@@ -171,39 +171,54 @@ end
 
 # Here we define functions that will calculate quantities used in the forward steps.
 
-## function to compute transport
-##       Input: rho - the density vector
-##       Output: U - transport value
+"""
+Function to compute transport.
 
+### Arguments
+- `rho`: the density vector
+
+### Returns
+- `U`: transport value
+"""
 function compute_transport(rho, params)
-
-    U = params.u0 * (rho[2] - (params.delta * rho[1] + (1 - params.delta) * rho[3]))
+    (; delta,  u0) = params
+    U = u0 * (rho[2] - (delta * rho[1] + (1 - delta) * rho[3]))
     return U
-
 end
 
 #-
 
-## function to compute density
-##       Input: state = [T1; T2; T3; S1; S2; S3]
-##       Output: rho
+"""
+Function to compute density.
 
+### Arguments
+- `state`: vector of `[T1; T2; T3; S1; S2; S3]`
+
+### Returns
+- `rho`
+"""
 function compute_density(state, params)
-
-    rho = -params.alpha * state[1:3] + params.beta * state[4:6]
+    (; alpha, beta) = params
+    rho = -alpha * state[1:3] + beta * state[4:6]
     return rho
-
 end
 
 #-
 
-## lastly, a function that takes one step forward
-##       Input: state_now = [T1(t), T2(t), ..., S3(t)]
-##              state_old = [T1(t-dt), ..., S3(t-dt)]
-##              u = transport(t)
-##              dt = time step
-##       Output: state_new = [T1(t+dt), ..., S3(t+dt)]
+# Lastly, we define a function that takes one step forward.
 
+"""
+Compute the state update.
+
+### Arguments
+- `state_now` = [T1(t), T2(t), ..., S3(t)]
+- `state_old` = [T1(t-dt), ..., S3(t-dt)]
+- `u` = transport(t)
+- `dt` = time step
+
+### Returns
+- `state_new`: [T1(t+dt), ..., S3(t+dt)]
+"""
 function compute_update(state_now, state_old, u, params, dt)
 
     dstate_now_dt = zeros(6)
