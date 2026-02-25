@@ -177,7 +177,7 @@ function Base.showerror(io::IO, ece::CallingConventionMismatchError)
         printstyled(io, "Hint"; bold = true, color = :cyan)
         printstyled(
             io,
-            ": catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\n";
+            ": catch this exception as `err` and call `code_typed(err)` to inspect the erroneous code.\n";
             color = :cyan,
         )
     end
@@ -466,7 +466,7 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
     printstyled(io, "Hint"; bold = true, color = :cyan)
     printstyled(
         io,
-        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\n";
+        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the erroneous code.\n";
         color = :cyan,
     )
     println(io)
@@ -562,7 +562,7 @@ function Base.showerror(io::IO, ece::ReverseRuleReturnError{C, ArgAct, rev_RT}) 
     printstyled(io, "Hint"; bold = true, color = :cyan)
     printstyled(
         io,
-        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\n";
+        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the erroneous code.\n";
         color = :cyan,
     )
     println(io)
@@ -589,7 +589,7 @@ function Base.showerror(io::IO, ece::MixedReturnException{RT}) where RT
     printstyled(io, "Hint"; bold = true, color = :cyan)
     printstyled(
         io,
-        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\n";
+        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the erroneous code.\n";
         color = :cyan,
     )
     println(io)
@@ -617,7 +617,7 @@ function Base.showerror(io::IO, ece::UnionSretReturnException{RT}) where RT
     printstyled(io, "Hint"; bold = true, color = :cyan)
     printstyled(
         io,
-        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\n";
+        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the erroneous code.\n";
         color = :cyan,
     )
     println(io)
@@ -724,7 +724,7 @@ function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
             printstyled(io, "Hint"; bold = true, color = :cyan)
             printstyled(
                 io,
-                ": catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\nIf you have Cthulu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.";
+                ": catch this exception as `err` and call `code_typed(err)` to inspect the erroneous code.\nIf you have Cthulu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.";
                 color = :cyan,
             )
         end
@@ -915,7 +915,7 @@ function Base.showerror(io::IO, ece::EnzymeNoTypeError)
         printstyled(io, "Hint"; bold = true, color = :cyan)
         printstyled(
             io,
-            ": catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\n";
+            ": catch this exception as `err` and call `code_typed(err)` to inspect the erroneous code.\n";
             color = :cyan,
         )
     end

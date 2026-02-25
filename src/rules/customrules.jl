@@ -843,7 +843,7 @@ function enzyme_custom_setup_ret(
 
     # Conditionally use the get return. This is done because EnzymeGradientUtilsGetReturnDiffeType
     # calls differential use analysis to determine needsprimal/shadow. However, since now this function
-    # is used as part of differential use analysis, we need to avoid an ininite recursion. Thus use
+    # is used as part of differential use analysis, we need to avoid an infinite recursion. Thus use
     # the version without differential use if actual unreachable results are not available anyways.
     uncacheable = Vector{UInt8}(undef, length(collect(LLVM.operands(orig))) - 1)
     cmode = mode
@@ -961,8 +961,8 @@ end
         )
     end
 
-    curent_bb = position(B)
-    fn = LLVM.parent(curent_bb)
+    current_bb = position(B)
+    fn = LLVM.parent(current_bb)
     world = enzyme_extract_world(fn)
 
     # TODO: don't inject the code multiple times for multiple calls
@@ -1510,8 +1510,8 @@ function enzyme_custom_common_rev(
     alloctx = LLVM.IRBuilder()
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
-    curent_bb = position(B)
-    fn = LLVM.parent(curent_bb)
+    current_bb = position(B)
+    fn = LLVM.parent(current_bb)
     world = enzyme_extract_world(fn)
 
     mode = get_mode(gutils)

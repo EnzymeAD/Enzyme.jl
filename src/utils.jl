@@ -91,7 +91,7 @@ function unsafe_to_ptr(@nospecialize(val))
 end
 export unsafe_to_ptr
 
-# This mimicks literal_pointer_val / literal_pointer_val_slot
+# This mimics literal_pointer_val / literal_pointer_val_slot
 function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_not_exists::Union{String, Nothing}=nothing)::LLVM.Value
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
@@ -139,8 +139,8 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
 	    if !inactive && world isa UInt
                 legal, jTy, byref = Compiler.abs_typeof(gv, true)
                 if legal
-                    curent_bb = position(B)
-                    fn = LLVM.parent(curent_bb)
+                    current_bb = position(B)
+                    fn = LLVM.parent(current_bb)
 		    state = Enzyme.Compiler.active_reg(jTy, world)
 		    inactive = state == Enzyme.Compiler.AnyState ||state == Enzyme.Compiler.ActiveState
                 end
