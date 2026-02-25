@@ -1,15 +1,8 @@
 ### A Pluto.jl notebook ###
-# v0.20.17
+# v0.20.21
 
 using Markdown
 using InteractiveUtils
-
-# ╔═╡ df72e42f-7eec-476f-8ce5-72b09f620005
-md"""
-# Reproducing "Stabilizing backpropagation through time to learn complex physics"
-
-Fig 1 from <https://openreview.net/pdf?id=bozbTTWcaw>
-"""
 
 # ╔═╡ b72e9218-81ba-11f0-1eba-5bd949c7ade4
 begin
@@ -27,6 +20,9 @@ end
 # ╔═╡ a4453d23-6e31-451f-b2cd-97346accac82
 @revise using EnzymeCore
 
+# ╔═╡ 3f8e0394-9b27-40a4-bc4c-3f4f773d35dc
+using LinearAlgebra: norm
+
 # ╔═╡ bd0352c3-1b3c-42f5-ab93-7ca4cb67b9ad
 begin
     using CairoMakie
@@ -37,6 +33,13 @@ begin
         markersize = 16
     )
 end
+
+# ╔═╡ df72e42f-7eec-476f-8ce5-72b09f620005
+md"""
+# Reproducing "Stabilizing backpropagation through time to learn complex physics"
+
+Fig 1 from <https://openreview.net/pdf?id=bozbTTWcaw>
+"""
 
 # ╔═╡ 23a8503f-3c68-4523-aebe-a4ce4575a02b
 import Enzyme: ignore_derivatives
@@ -100,7 +103,7 @@ function plot_gradientfield(N, S, x₀, y, θ₁, θ₂, n)
     gradient_field = ∇simulate.(N, S, x₀, y, θ_space, n)
 
     fig, ax, hm = heatmap(
-        θ₁, θ₂, map(x -> sqrt(x[1]^2 + x[2]^2), gradient_field),
+        θ₁, θ₂, map(norm, gradient_field),
         colorscale = log10,
         colormap = Makie.Reverse(:Blues),
         colorrange = (10^-3, 10^3)
@@ -131,6 +134,7 @@ plot_gradientfield(N_stop, S, x₀, y, θ₁, θ₂, n)
 # ╠═9f5c0822-a19a-4c63-95e7-d2f066a7440f
 # ╠═23a8503f-3c68-4523-aebe-a4ce4575a02b
 # ╠═a4453d23-6e31-451f-b2cd-97346accac82
+# ╠═3f8e0394-9b27-40a4-bc4c-3f4f773d35dc
 # ╠═bd0352c3-1b3c-42f5-ab93-7ca4cb67b9ad
 # ╠═fabba18a-b8d8-479d-babd-c18279273fb5
 # ╠═5baa757c-c611-4d8b-ac37-4f97e585613e
