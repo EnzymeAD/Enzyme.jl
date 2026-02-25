@@ -318,8 +318,8 @@ function declare_pgcstack!(mod::LLVM.Module)
 end
 
 function emit_pgcstack(B::LLVM.IRBuilder, name::String="")
-    curent_bb = position(B)
-    fn = LLVM.parent(curent_bb)
+    current_bb = position(B)
+    fn = LLVM.parent(current_bb)
     mod = LLVM.parent(fn)
     func, fty = declare_pgcstack!(mod)
     return call!(B, fty, func, LLVM.Value[], name)
