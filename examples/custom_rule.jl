@@ -3,7 +3,7 @@
 # !!! note "More Examples"
 #     The tutorial below focuses on a simple setting to illustrate the basic concepts of writing custom rules.
 #     For more complex custom rules beyond the scope of this tutorial, you may take inspiration from the following in-the-wild examples:
-#     - [Enzyme internal rules](https://github.com/EnzymeAD/Enzyme.jl/blob/main/src/internal_rules.jl)
+#     - [Enzyme internal rules](https://github.com/EnzymeAD/Enzyme.jl/tree/main/src/internal_rules)
 #     - [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl/blob/main/ext/EnzymeExt.jl)
 #     - [LinearSolve.jl](https://github.com/SciML/LinearSolve.jl/blob/main/ext/LinearSolveEnzymeExt.jl)
 #     - [NNlib.jl](https://github.com/FluxML/NNlib.jl/blob/master/ext/NNlibEnzymeCoreExt/NNlibEnzymeCoreExt.jl)
