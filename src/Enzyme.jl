@@ -723,7 +723,7 @@ code, as well as high-order differentiation.
         @assert A isa DataType
         rt = A
         if rt == Union{}
-	    throw(ErrorException("Return type inferred to be Union{}. Giving up."))
+            throw(ErrorException("Return type inferred to be Union{}. Giving up."))
         end
     end
 
@@ -871,10 +871,10 @@ code, as well as high-order differentiation.
 
     if RT isa UnionAll
         rt = Compiler.primal_return_type(Forward, FT, tt)
-	if rt == Union{}
-	   rt = Nothing
-	end
-	rt = RT{rt}
+        if rt == Union{}
+           rt = Nothing
+        end
+        rt = RT{rt}
     else
         @assert RT isa DataType
         rt = RT
@@ -1332,20 +1332,20 @@ import .Compiler: remove_innerty, UnknownTapeType
         # If the tape is not cached, compile it
         if obj === nothing
 
-	    ts_ctx = Compiler.JuliaContext()
-	    ctx = Compiler.context(ts_ctx)
-	    Compiler.activate(ctx)
+            ts_ctx = Compiler.JuliaContext()
+            ctx = Compiler.context(ts_ctx)
+            Compiler.activate(ctx)
             try
                 _, meta = GPUCompiler.compile(:llvm, job)
                 obj = meta.TapeType
                 tape_cache[key] = obj
-		obj
-    	    finally
+                obj
+            finally
                 Compiler.deactivate(ctx)
-		Compiler.dispose(ts_ctx)
+                Compiler.dispose(ts_ctx)
             end
-	else
-	    obj
+        else
+            obj
         end
     finally
         unlock(tape_cache_lock)
@@ -1449,10 +1449,10 @@ result, ∂v, ∂A
 
     rt = if A2 isa UnionAll
         primal_tt = Tuple{map(eltype, args)...}
-	rt0 = Compiler.primal_return_type(Reverse, eltype(FA), primal_tt)
-	A2{rt0}
+        rt0 = Compiler.primal_return_type(Reverse, eltype(FA), primal_tt)
+        A2{rt0}
     else
-	A2
+        A2
     end
 
     primal_ptr = Compiler.deferred_codegen(

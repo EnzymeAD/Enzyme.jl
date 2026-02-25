@@ -197,9 +197,9 @@ function prepare!(mod)
         if load1
            ptr = Base.unsafe_load(ptr, :unordered)
         end
-                
+
         obj = Base.unsafe_pointer_to_objref(ptr)
-	
+
         # Let's try a de-bind for 1.10 lux
         if isa(obj, Core.Binding)
            ptr = Compiler.unsafe_to_ptr(obj.value)
@@ -258,7 +258,7 @@ function get_trampoline(job)
                 Compiler.eraseInst(mod, other_func)
             end
 
-	    prepare!(mod)
+            prepare!(mod)
             tsm = move_to_threadsafe(mod)
 
             il = LLVM.IRCompileLayer(lljit)

@@ -23,7 +23,7 @@ end
 
         GPUCompiler.prepare_job!(job)
         mod, meta = GPUCompiler.emit_llvm(job)
-        
+
         copysetfn = meta.entry
         blk = first(LLVM.blocks(copysetfn))
         iter = LLVM.API.LLVMGetFirstInstruction(blk)
@@ -39,7 +39,7 @@ end
                     if LLVM.name(fn) == "julia.safepoint"
                         Compiler.eraseInst(blk, inst)
                     end
-                end     
+                end
             end
         end
         hasNoRet = Compiler.has_fn_attr(copysetfn, LLVM.EnumAttribute("noreturn"))
@@ -107,9 +107,9 @@ end
 
         LLVM.position!(builder, exit)
         LLVM.ret!(builder, obj)
-	
+
         Compiler.reinsert_gcmarker!(llvm_f)
-	Compiler.JIT.prepare!(mod)
+        Compiler.JIT.prepare!(mod)
 
         string(mod)
     end
@@ -492,12 +492,12 @@ function Base.getindex(a::TupleArray, args::Vararg{Int,N}) where {N}
 end
 
 @inline function tupstack(data::Tuple{Vararg{Array{T}}}, outshape::Tuple{Vararg{Int}}, inshape::Tuple{Vararg{Int}}) where {T}
-	num = prod(outshape)
-	res = Array{T}(undef, outshape..., inshape...)
-	for (i, val) in enumerate(data)
-		Base.unsafe_copyto!(res, num*(i-1)+1, val, 1, Base.reinterpret(UInt, num))
-	end
-	res
+        num = prod(outshape)
+        res = Array{T}(undef, outshape..., inshape...)
+        for (i, val) in enumerate(data)
+                Base.unsafe_copyto!(res, num*(i-1)+1, val, 1, Base.reinterpret(UInt, num))
+        end
+        res
 end
 
 @inline specialize_output(output, input) = output
@@ -551,7 +551,7 @@ about the type of the AbstractArray returned by this function (which may or may 
 as the input AbstractArray if provided).
 
 For functions who return other types, this function will return an AbstractArray
-of shape `size(input)` of values of the output type. 
+of shape `size(input)` of values of the output type.
 ```jldoctest
 f(x) = [ x[1] * x[2], x[2] + x[3] ]
 
@@ -1115,13 +1115,13 @@ end
         if num * chunksize == n_out_val
             quote
                 primal2, adjoint2 = primal, adjoint
-            end    
+            end
         else
             BNN2 = if last_size == 1
                 :(DuplicatedNoNeed{RT})
             else
                 :(BatchDuplicatedNoNeed{RT, $last_size})
-            end 
+            end
             quote
                 primal2, adjoint2 = autodiff_thunk(
                     EnzymeCore.Split(EnzymeCore.NoPrimal(mode),
@@ -1219,8 +1219,8 @@ This function will return an AbstractArray whose shape is `(size(output)..., siz
 No guarantees are presently made about the type of the AbstractArray returned by this function
 (which may or may not be the same as the input AbstractArray if provided).
 
-In the future, when this function is extended to handle non-array return types, 
-this function will return an AbstractArray of shape `size(output)` of values of the input type. 
+In the future, when this function is extended to handle non-array return types,
+this function will return an AbstractArray of shape `size(output)` of values of the input type.
 ```
 """
 @generated function jacobian(

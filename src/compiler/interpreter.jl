@@ -138,7 +138,7 @@ function EnzymeInterpreter(
     else
         InferenceParams(; unoptimize_throw_blocks=false)
     end
-    
+
     @static if HAS_INTEGRATED_CACHE
 
     else
@@ -166,7 +166,7 @@ function EnzymeInterpreter(
                 invalid = true
             end
         end
-        
+
         if invalid
             Base.empty!(cache_or_token)
         end
@@ -525,22 +525,22 @@ end
 
 # inp = rand(2,3,4,5);
 # src = Base.Broadcast.preprocess(inp, convert(Base.Broadcast.Broadcasted{Nothing}, Base.Broadcast.instantiate(Base.broadcasted(Main.sin, inp))));
-# 
+#
 # idx = Base.eachindex(src);
-# 
+#
 # src2 = sin.(inp);
-# 
+#
 # dst = zero(inp);
 # lindex_v1(idx, dst, src);
 # @assert dst == sin.(inp)
-# 
+#
 # dst = zero(inp);
 # lindex_v1(idx, dst, src2);
 # @assert dst == sin.(inp)
-# 
+#
 # @btime lindex_v1(idx, dst, src)
 # # 619.140 ns (0 allocations: 0 bytes)
-# 
+#
 # @btime lindex_v1(idx, dst, src2)
 # # 153.258 ns (0 allocations: 0 bytes)
 
@@ -606,22 +606,22 @@ end
 # inp = rand(2,3,4,5);
 # # inp = [2.0 3.0; 4.0 5.0; 7.0 9.0]
 # src = Base.Broadcast.preprocess(inp, convert(Base.Broadcast.Broadcasted{Nothing}, Base.Broadcast.instantiate(Base.broadcasted(Main.sin, inp))));
-# 
+#
 # idx = Base.eachindex(src);
-# 
+#
 # src2 = sin.(inp);
-# 
+#
 # dst = zero(inp);
 # lindex_v2(idx, dst, src);
 # @assert dst == sin.(inp)
-# 
+#
 # dst = zero(inp);
 # lindex_v2(idx, dst, src2);
 # @assert dst == sin.(inp)
-# 
+#
 # @btime lindex_v2(idx, dst, src)
 # # 1.634 μs (0 allocations: 0 bytes)
-# 
+#
 # @btime lindex_v2(idx, dst, src2)
 # # 1.617 μs (0 allocations: 0 bytes)
 @generated function lindex_v2(idx::BC2, dest, src, ::Val{Checked}=Val(true)) where {BC2, Checked}
@@ -697,19 +697,19 @@ end
 
 # inp = rand(2,3,4,5);
 # src = Base.Broadcast.preprocess(inp, convert(Base.Broadcast.Broadcasted{Nothing}, Base.Broadcast.instantiate(Base.broadcasted(Main.sin, inp))));
-# 
+#
 # idx = Base.eachindex(src);
-# 
+#
 # src2 = sin.(inp);
-# 
+#
 # dst = zero(inp);
 # lindex_v3(idx, dst, src);
 # @assert dst == sin.(inp)
-# 
+#
 # dst = zero(inp);
 # lindex_v3(idx, dst, src2);
 # @assert dst == sin.(inp)
-# 
+#
 # @btime lindex_v3(idx, dst, src)
 # # 568.065 ns (0 allocations: 0 bytes)
 
@@ -746,7 +746,7 @@ end
             if cur <: AbstractArray
                 if condition == :true
                     condition = quote idx.indices == axes($(index(:src, path))) end
-                else                
+                else
                     condition = quote $condition && idx.indices == axes($(index(:src, path))) end
                 end
                 continue
@@ -754,7 +754,7 @@ end
             if cur <: Base.Broadcast.Extruded
                 if condition == :true
                     condition = quote all(($(index(:src, path))).keeps) end
-                else                
+                else
                     condition = quote $condition && all(($(index(:src, path))).keeps) end
                 end
                 push!(todo, (cur.parameters[1], (:x, path...)))
@@ -954,7 +954,7 @@ end
     y = iterate(itr)
     y === nothing && return init
     v = op(init, y[1])
-   
+
     if same_sized(itr.args)
     @inbounds for I in 2:length(itr)
         val = overload_broadcast_getindex(itr, I)
@@ -985,7 +985,7 @@ end
             v = op(v, f(ai))
         @simdloop
         end
-        return v 
+        return v
     end
 end
 
@@ -1001,7 +1001,7 @@ end
         @inbounds i = first(inds)
         @inbounds a1 = A[i]
         s = f(a1)
-        while i < last(inds) 
+        while i < last(inds)
             @inbounds Ai = A[i+=1]
             s = op(s, f(Ai))
         @simdloop
@@ -1189,7 +1189,7 @@ function (bcr::broadcast_rewriter)(interp, sv)
             sv::AbsIntState,
             max_methods::Int,
         )
-    else 
+    else
         if interp.handler != nothing
             return interp.handler(interp, f, arginfo, si, sv, max_methods)
         end
@@ -1202,7 +1202,7 @@ function (bcr::broadcast_rewriter)(interp, sv)
             max_methods::Int,
         )
     end
-    
+
     function continuation(interp, sv)
         isready(retFuture) || return false
         ret[] = retFuture[]
@@ -1256,7 +1256,7 @@ function abstract_call_known(
             ))
         end
     end
-    
+
     if interp.broadcast_rewrite
         if f === Base.copyto! && length(argtypes) == 3
             # Ideally we just override uses of the AbstractArray base class, but
@@ -1264,7 +1264,7 @@ function abstract_call_known(
             # it for say CuArray or other users. For safety, we only override for Array
             if widenconst(argtypes[2]) <: Array &&
                widenconst(argtypes[3]) <: Base.Broadcast.Broadcasted{Nothing}
-            
+
                 arginfo2 = ArgInfo(
                     fargs isa Nothing ? nothing :
                     [:(Enzyme.Compiler.Interpreter.override_bc_copyto!), fargs[2:end]...],
@@ -1281,12 +1281,12 @@ function abstract_call_known(
                 )
             end
         end
-    
+
     if f === Base.mapreduce_impl &&  length(argtypes) == 7
-            if widenconst(argtypes[4]) <: Array && 
+            if widenconst(argtypes[4]) <: Array &&
            widenconst(argtypes[5]) <: Integer &&
            widenconst(argtypes[6]) <: Integer &&
-           widenconst(argtypes[7]) <: Int 
+           widenconst(argtypes[7]) <: Int
                 arginfo2 = ArgInfo(
                     fargs isa Nothing ? nothing :
                     [:(Enzyme.Compiler.Interpreter.override_bc_mapreduceimpl), fargs[2:end]...],
@@ -1303,7 +1303,7 @@ function abstract_call_known(
                 )
             end
         end
-    
+
     if f === Base._mapreduce &&  length(argtypes) == 5
             if widenconst(argtypes[4]) <: Base.IndexLinear &&
            widenconst(argtypes[5]) <: Array
@@ -1323,16 +1323,16 @@ function abstract_call_known(
                 )
             end
         end
-       
+
     if f === Base._foldl_impl &&  length(argtypes) == 4
-        
+
         bcty = widenconst(argtypes[4])
 
 
             if widenconst(argtypes[3]) <: Base._InitialValue &&
            bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle} && ndims(bcty) >= 2 &&
            bc_or_array_or_number_ty(bcty, false) && has_array(bcty, false)
-           
+
                 arginfo2 = ArgInfo(
                     fargs isa Nothing ? nothing :
                     [:(Enzyme.Compiler.Interpreter.override_bc_foldl), fargs[2:end]...],
@@ -1355,7 +1355,7 @@ function abstract_call_known(
     else
         if f === Base.unsafe_copyto! && length(argtypes) == 4 &&
             widenconst(argtypes[2]) <: Base.MemoryRef &&
-            widenconst(argtypes[3]) == widenconst(argtypes[2]) && 
+            widenconst(argtypes[3]) == widenconst(argtypes[2]) &&
             Base.allocatedinline(eltype(widenconst(argtypes[2]))) && Base.isbitstype(eltype(widenconst(argtypes[2])))
 
             arginfo2 = ArgInfo(
@@ -1413,7 +1413,7 @@ function abstract_call_known(
     if interp.handler != nothing
         return interp.handler(interp, f, arginfo, si, sv, max_methods)
     end
-    
+
     return Base.@invoke abstract_call_known(
         interp::AbstractInterpreter,
         f::Any,

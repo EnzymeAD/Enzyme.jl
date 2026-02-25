@@ -45,7 +45,7 @@ julia> Enzyme_jll.libEnzyme_path
 This should correspond to the path in the LocalPreferences.toml you just generated.
 
 Note that your system can have only one custom built Enzyme\_jll at a time. If you build one version for one version of Enzyme or Julia
-and later build a new version of Enzyme, it removes the old build. 
+and later build a new version of Enzyme, it removes the old build.
 
 Note that Julia versions are tightly coupled and you cannot use an Enzyme\_jll built for one version of Julia for another version of Julia.
 

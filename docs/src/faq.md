@@ -121,7 +121,7 @@ dptr = Base.reinterpret(Ptr{Float64}, Libc.calloc(sizeof(Float64), 1))
 # since julia one indexes we subtract 46 * sizeof(Float64) here
 autodiff(Reverse, f, Duplicated(ptr, dptr - 46 * sizeof(Float64)))
 
-# represents the derivative of the 47'th elem of ptr, 
+# represents the derivative of the 47'th elem of ptr,
 unsafe_load(dptr)
 
 # output
@@ -146,7 +146,7 @@ f(ptr - 46 * sizeof(Float64))
 
 [CUDA.jl](https://github.com/JuliaGPU/CUDA.jl) is only supported on Julia v1.7.0 and onwards. On v1.6, attempting to differentiate CUDA kernel functions will not use device overloads correctly and thus returns fundamentally wrong results.
 
-Specifically, differentiating within device kernels is supported. See our [cuda tests](https://github.com/EnzymeAD/Enzyme.jl/blob/main/test/cuda.jl) for some examples. 
+Specifically, differentiating within device kernels is supported. See our [cuda tests](https://github.com/EnzymeAD/Enzyme.jl/blob/main/test/cuda.jl) for some examples.
 
 Differentiating through a heterogeneous (e.g. combined host and device) code presently requires defining a custom derivative that tells Enzyme that differentiating an `@cuda` call is done by performing `@cuda` of its generated derivative. For an example of this in Enzyme-C++ see [here](https://enzyme.mit.edu/getting_started/CUDAGuide/). Automating this for a better experience for CUDA.jl requires an update to [CUDA.jl](https://github.com/JuliaGPU/CUDA.jl/pull/1869/files), and is now available for Kernel Abstractions.
 
@@ -229,7 +229,7 @@ Like mentioned above, a caveat here is that this correctly zero’d initializer 
 
 Internally, when differentiating a function this is the type of data structure that Enzyme builds and uses to represent variables. However, at the Julia level that there’s a bit of a sharp edge.
 
-Consider a function `f(A(x))` where `x` is a scalar or dense input, `A(x)` returns a sparse array, and `f(A(x))` returns a scalar loss. 
+Consider a function `f(A(x))` where `x` is a scalar or dense input, `A(x)` returns a sparse array, and `f(A(x))` returns a scalar loss.
 
 The derivative that Enzyme creates for `A(x)` would create both the backing/index arrays for the original result A, as well as the equal sized backing/index arrays for the derivative.
 
@@ -317,7 +317,7 @@ Enzyme.autodiff(Forward, h, Const(condition), Duplicated(x, dx), Const(y))
 catch err; showerror(stderr, err); end  #hide
 ```
 
-Enzyme provides a nice utility `Enzyme.make_zero` which takes a data structure and constructs a deepcopy of the data structure with all of the floats set to zero and non-differentiable types like Symbols set to their primal value. If Enzyme gets into such a "Mismatched activity" situation where it needs to return a differentiable data structure from a constant variable, it could try to resolve this situation by constructing a new shadow data structure, such as with `Enzyme.make_zero`. However, this still can lead to incorrect results. In the case of `h` above, suppose that `active_var` and `constant_var` are both arrays, which are mutable (aka in-place) data types. This means that the return of `h` is going to either be `result = [active_var, active_var]` or `result = [constant_var, constant_var]`.  Thus an update to `result[1][1]` would also change `result[2][1]` since `result[1]` and `result[2]` are the same array. 
+Enzyme provides a nice utility `Enzyme.make_zero` which takes a data structure and constructs a deepcopy of the data structure with all of the floats set to zero and non-differentiable types like Symbols set to their primal value. If Enzyme gets into such a "Mismatched activity" situation where it needs to return a differentiable data structure from a constant variable, it could try to resolve this situation by constructing a new shadow data structure, such as with `Enzyme.make_zero`. However, this still can lead to incorrect results. In the case of `h` above, suppose that `active_var` and `constant_var` are both arrays, which are mutable (aka in-place) data types. This means that the return of `h` is going to either be `result = [active_var, active_var]` or `result = [constant_var, constant_var]`.  Thus an update to `result[1][1]` would also change `result[2][1]` since `result[1]` and `result[2]` are the same array.
 
 If one created a new zero'd copy of each return from `g`, this would mean that the derivative `dresult` would have one copy made for the first element, and a second copy made for the second element. This could lead to incorrect results, and is unfortunately not a general resolution. However, for non-mutable variables (e.g. like floats) or non-differrentiable types (e.g. like Symbols) this problem can never arise.
 
@@ -336,7 +336,7 @@ dout, out = Enzyme.autodiff(Enzyme.set_runtime_activity(ForwardWithPrimal), g, C
 However, care must be taken to check derivative aliasing afterwards:
 
 ```@example runtime
-dout === out  # if true and pointer-like, the actual derivative is zero 
+dout === out  # if true and pointer-like, the actual derivative is zero
 ```
 
 ## Mixed activity
@@ -402,9 +402,9 @@ f(0.0)
 1.0
 ```
 
-When evaluated at `x=0.0`, `y=Inf`. However due to the `min` the result will be a finite value. 
+When evaluated at `x=0.0`, `y=Inf`. However due to the `min` the result will be a finite value.
 
-Let's consider what happens for the derivative by applying Enzyme. 
+Let's consider what happens for the derivative by applying Enzyme.
 
 ```jldoctest strongzero
 Enzyme.gradient(Reverse, f, 0.0)
@@ -432,7 +432,7 @@ function grad_f(x)
     dz = 0.0
 
     # derivative of 1.0 / x
-    dx += dy * - 1.0 / x^2 
+    dx += dy * - 1.0 / x^2
     dy = 0.0
 
     return dx
@@ -540,7 +540,7 @@ Enzyme.autodiff(Forward, f, BatchDuplicated(z, (1.0+0.0im, 0.0+1.0im)))[1]
 (var"1" = 6.2 + 5.4im, var"2" = -5.4 + 6.2im)
 ```
 
-Taking Jacobians with respect to the real and imaginary results is fine, but for a complex scalar function it would be really nice to have a single complex derivative. More concretely, in this case when differentiating `z*z`, it would be nice to simply return `2*z`. However, there are four independent variables in the 2x2 jacobian, but only two in a complex number. 
+Taking Jacobians with respect to the real and imaginary results is fine, but for a complex scalar function it would be really nice to have a single complex derivative. More concretely, in this case when differentiating `z*z`, it would be nice to simply return `2*z`. However, there are four independent variables in the 2x2 jacobian, but only two in a complex number.
 
 Complex differentiation is often viewed in the lens of directional derivatives. For example, what is the derivative of the function as the real input increases, or as the imaginary input increases. Consider the derivative along the real axis, $\texttt{lim}_{\Delta x \rightarrow 0} \frac{f(x+\Delta x, y)-f(x, y)}{\Delta x}$. This simplifies to $\texttt{lim}_{\Delta x \rightarrow 0} \frac{u(x+\Delta x, y)-u(x, y) + i \left[ v(x+\Delta x, y)-v(x, y)\right]}{\Delta x} = \frac{\partial}{\partial x} u(x,y) + i\frac{\partial}{\partial x} v(x,y)$. This is exactly what we computed by seeding forward mode with a shadow of `1.0 + 0.0im`.
 
@@ -556,13 +556,13 @@ d_im   = -im * Enzyme.autodiff(Forward, f, Duplicated(z, 0.0+1.0im))[1]
 (6.2 + 5.4im, 6.2 + 5.4im)
 ```
 
-Interestingly, the derivative of `z*z` is the same when computed in either axis. That is because this function is part of a special class of functions that are invariant to the input direction, called holomorphic. 
+Interestingly, the derivative of `z*z` is the same when computed in either axis. That is because this function is part of a special class of functions that are invariant to the input direction, called holomorphic.
 
 Thus, for holomorphic functions, we can simply seed Forward-mode AD with a shadow of one for whatever input we are differenitating. This is nice since seeding the shadow with an input of one is exactly what we'd do for real-valued functions as well.
 
 Reverse-mode AD, however, is more tricky. This is because holomorphic functions are invariant to the direction of differentiation (aka the derivative inputs), not the direction of the differential return.
 
-However, if a function is holomorphic, the two derivative functions we computed above must be the same. As a result, $\frac{\partial}{\partial x} u = \frac{\partial}{\partial y} v$ and $\frac{\partial}{\partial y} u = -\frac{\partial}{\partial x} v$. 
+However, if a function is holomorphic, the two derivative functions we computed above must be the same. As a result, $\frac{\partial}{\partial x} u = \frac{\partial}{\partial y} v$ and $\frac{\partial}{\partial y} u = -\frac{\partial}{\partial x} v$.
 
 We saw earlier, that performing reverse-mode AD with a return seed of `1.0 + 0.0im` yielded `[d/dx u, d/dy u]`. Thus, for a holomorphic function, a real-seeded Reverse-mode AD computes `[d/dx u, -d/dx v]`, which is the complex conjugate of the derivative.
 
@@ -746,7 +746,7 @@ ERROR: Type of ghost or constant type Duplicated{Val{1.0}} is marked as differen
 
 ## Finalizers
 
-Julia supports attaching finalizers to objects (see the listing below for an example) 
+Julia supports attaching finalizers to objects (see the listing below for an example)
 
 ```julia
 mutable struct Obj
@@ -777,5 +777,5 @@ Enzyme has to allocate a shadow object for `o` and in the process encounters the
 Now the question is what should Enzyme do with the finalizer for the shadow objects? One option would be to simply ignore it,
 but finalizers are often used for resource management (like manually allocating memory) and thus we would leak resources that are attached
 to the shadow object. Instead, we define finalizers to be inactive (contain no instructions that are relevant with respect to AD),
-yet we must attach them to the shadow object to release resources attached to them. 
+yet we must attach them to the shadow object to release resources attached to them.
 

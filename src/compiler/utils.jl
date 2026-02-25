@@ -353,20 +353,20 @@ function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing
         context(LLVM.parent(func))
         B = IRBuilder()
         entry_bb = first(blocks(func))
-	if PB !== nothing && LLVM.name(Base.position(PB)) == "allocsForInversion"
-	    B = PB
-	elseif !isempty(instructions(entry_bb))
-	    if PB === nothing || Base.position(PB) != entry_bb 
-		    position!(B, first(instructions(entry_bb)))
-	    else
-		    B = PB
-	    end
+        if PB !== nothing && LLVM.name(Base.position(PB)) == "allocsForInversion"
+            B = PB
+        elseif !isempty(instructions(entry_bb))
+            if PB === nothing || Base.position(PB) != entry_bb
+                    position!(B, first(instructions(entry_bb)))
+            else
+                    B = PB
+            end
         else
-	    if PB === nothing || Base.position(PB) != entry_bb 
+            if PB === nothing || Base.position(PB) != entry_bb
                position!(B, entry_bb)
-	    else
-	       B = PB
-	    end
+            else
+               B = PB
+            end
         end
         emit_pgcstack(B, "newly_emitted_pgc_stack")
     else

@@ -157,7 +157,7 @@ Like [`autodiff`](@ref), the mode (forward or reverse) is determined by the firs
 
 The functions [`gradient`](@ref) and [`gradient!`](@ref) compute the gradient of function with vector input and scalar return.
 
-Gradient functions take a mode as the first argument. If the mode is `Reverse` or `Forward`, the return type is a tuple of gradients of each argument. 
+Gradient functions take a mode as the first argument. If the mode is `Reverse` or `Forward`, the return type is a tuple of gradients of each argument.
 If the mode is `ReverseWithPrimal` or `ForwardWithPrimal`, the return type is a named tuple containing both the derivatives and the original return result.
 
 ```jldoctest rosenbrock
@@ -195,7 +195,7 @@ julia> # in forward mode, we can also optionally pass a chunk size
 The function [`jacobian`](@ref) computes the Jacobian of a function vector input and vector return.
 Like [`autodiff`](@ref) and [`gradient`](@ref), the mode (forward or reverse) is determined by the first argument.
 
-Again like [`gradient`](@ref), if the mode is `Reverse` or `Forward`, the return type is a tuple of jacobians of each argument. 
+Again like [`gradient`](@ref), if the mode is `Reverse` or `Forward`, the return type is a tuple of jacobians of each argument.
 If the mode is `ReverseWithPrimal` or `ForwardWithPrimal`, the return type is a named tuple containing both the derivatives and the original return result.
 
 Both forward and reverse modes take an optional chunk size to compute several derivatives simultaneously using vector mode, and reverse mode optionally takes `n_outs` which describes the shape of the output value.
@@ -203,13 +203,13 @@ Both forward and reverse modes take an optional chunk size to compute several de
 ```jldoctest rosenbrock
 julia> foo(x) = [rosenbrock_inp(x), prod(x)];
 
-julia> jacobian(Reverse, foo, [1.0, 2.0]) 
+julia> jacobian(Reverse, foo, [1.0, 2.0])
 ([-400.0 200.0; 2.0 1.0],)
 
-julia> jacobian(ReverseWithPrimal, foo, [1.0, 2.0]) 
+julia> jacobian(ReverseWithPrimal, foo, [1.0, 2.0])
 (derivs = ([-400.0 200.0; 2.0 1.0],), val = [100.0, 2.0])
 
-julia> jacobian(Reverse, foo, [1.0, 2.0]; chunk=Val(2)) 
+julia> jacobian(Reverse, foo, [1.0, 2.0]; chunk=Val(2))
 ([-400.0 200.0; 2.0 1.0],)
 
 julia> jacobian(Reverse, foo, [1.0, 2.0]; chunk=Val(2), n_outs=Val((2,)))
@@ -309,11 +309,11 @@ EnzymeRules.inactive_noinl(::typeof(det), ::UnitaryMatrix) = true
 
 ### [Easy Rules](@id man-easy-rule)
 
-The recommended way for writing rules for most use cases is through the [`EnzymeRules.@easy_rule`](@ref) macro. This macro enables users to write derivatives for any functions which only read from their arguments (e.g. do not overwrite memory), and has numbers, matrices of numbers, or tuples thereof as arguments/result types. 
+The recommended way for writing rules for most use cases is through the [`EnzymeRules.@easy_rule`](@ref) macro. This macro enables users to write derivatives for any functions which only read from their arguments (e.g. do not overwrite memory), and has numbers, matrices of numbers, or tuples thereof as arguments/result types.
 
 When writing an [`EnzymeRules.@easy_rule`](@ref) one first describes the function signature one wants the derivative rule to apply to. In each subsequent line, one should write a tuple, where each element of the tuple represents the derivative of the corresponding input argument. In that sense writing an [`EnzymeRules.@easy_rule`](@ref) is equivalent to specifying the Jacobian. Inside of this tuple, one can call arbitrary Julia code.
 
-One can also define certain arguments as not having a derivative via `@Constant`. 
+One can also define certain arguments as not having a derivative via `@Constant`.
 
 For more information see the [`EnzymeRules.@easy_rule`](@ref) documentation.
 

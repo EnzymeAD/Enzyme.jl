@@ -106,24 +106,24 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
             end
         end
     end
-    
+
     function setup_global(k, v)
-	    k0 = k
+            k0 = k
             mod = LLVM.parent(LLVM.parent(LLVM.position(B)))
             globs = LLVM.globals(mod)
             if Base.haskey(globs, "ejl_" * k)
                 return globs["ejl_"*k]
             end
-        
-	force_inactive = false
-	if insert_name_if_not_exists isa String
-	    k = "inserted\$"*insert_name_if_not_exists
+
+        force_inactive = false
+        if insert_name_if_not_exists isa String
+            k = "inserted\$"*insert_name_if_not_exists
             if !haskey(Compiler.JuliaEnzymeNameMap, k)
-		 Compiler.JuliaEnzymeNameMap[k] = val
-	    end
-	    # Since the legacy behavior was to force inactive for global constants, we retain that here (for now)
-	    force_inactive = true
-	end
+                 Compiler.JuliaEnzymeNameMap[k] = val
+            end
+            # Since the legacy behavior was to force inactive for global constants, we retain that here (for now)
+            force_inactive = true
+        end
 
             if Base.haskey(globs, "ejl_" * k)
                 return globs["ejl_"*k]
@@ -133,38 +133,38 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
 
             API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
             inactive = force_inactive || Enzyme.Compiler.is_memory_instance(v)
-	    if !inactive && v isa Core.SimpleVector && length(v) == 0
-		inactive = true
-	    end
-	    if !inactive && world isa UInt
+            if !inactive && v isa Core.SimpleVector && length(v) == 0
+                inactive = true
+            end
+            if !inactive && world isa UInt
                 legal, jTy, byref = Compiler.abs_typeof(gv, true)
                 if legal
                     current_bb = position(B)
                     fn = LLVM.parent(current_bb)
-		    state = Enzyme.Compiler.active_reg(jTy, world)
-		    inactive = state == Enzyme.Compiler.AnyState ||state == Enzyme.Compiler.ActiveState
+                    state = Enzyme.Compiler.active_reg(jTy, world)
+                    inactive = state == Enzyme.Compiler.AnyState ||state == Enzyme.Compiler.ActiveState
                 end
             end
-	    if inactive
-		API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
-	    end
+            if inactive
+                API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+            end
             return gv
     end
 
     for (k, v) in Compiler.JuliaGlobalNameMap
         if v === val
-	    return setup_global(k, v)
+            return setup_global(k, v)
         end
     end
 
     for (k, v) in Compiler.JuliaEnzymeNameMap
         if v === val
-	    return setup_global(k, v)
+            return setup_global(k, v)
         end
     end
 
     if insert_name_if_not_exists !== nothing
-	return setup_global(insert_name_if_not_exists, val)
+        return setup_global(insert_name_if_not_exists, val)
     end
 
     # XXX: This prevents code from being runtime relocatable
@@ -285,7 +285,7 @@ Callers are responsible for setting `ci.edges`
 """
 function create_fresh_codeinfo(fn, source, world, slotnames, code)
     ci = ccall(:jl_new_code_info_uninit, Ref{Core.CodeInfo}, ())
-    
+
     @static if isdefined(Core, :DebugInfo)
         # TODO: Add proper debug info
         ci.debuginfo = Core.DebugInfo(:none)
@@ -347,7 +347,7 @@ end
     end
 
     sig = Tuple{ft, tt.parameters...}
-    
+
     lookup_result = lookup_world(
         sig, world, method_table, min_world, max_world
     )
@@ -356,7 +356,7 @@ end
     end
 
     match = lookup_result::Core.MethodMatch
-    
+
     mi = ccall(:jl_specializations_get_linfo, Ref{MethodInstance},
                (Any, Any, Any), match.method, match.spec_types, match.sparams)
     return mi::Core.MethodInstance
@@ -391,9 +391,9 @@ function methodinstance_generator(world::UInt, source, self, @nospecialize(mode:
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
     mi = my_methodinstance(mode.instance, ft, tt, world, min_world, max_world)
-    
+
     mi === nothing && return stub(world, source, :(throw(MethodError(ft, tt, $world))))
-    
+
     code = Any[Core.Compiler.ReturnNode(mi)]
 
     ci = create_fresh_codeinfo(prevmethodinstance, source, world, slotnames, code)
@@ -424,7 +424,7 @@ export my_methodinstance
 #     JL_DATA_TYPE
 #     void *data;
 # #ifdef STORE_ARRAY_LEN (just true new newer versions)
-# 	size_t length;
+#       size_t length;
 # #endif
 #     jl_array_flags_t flags;
 #     uint16_t elsize;  // element size including alignment (dim 1 memory stride)
@@ -467,7 +467,7 @@ end
             sum += sizeof(tys[idx])
             idx+=1
         end
-        return sum 
+        return sum
     else
         fieldoffset(T, i)
     end
@@ -550,7 +550,7 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
 
         if ekind == "enzymejl_returnRoots"
             nroots = parse(Int, LLVM.value(attr))
-    
+
             T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
             T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
@@ -562,13 +562,13 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
         end
 
         if ekind == "enzyme_sret"
-	    ety = parse(UInt, LLVM.value(attr))
-	    ety = Base.reinterpret(LLVM.API.LLVMTypeRef, ety)
-	    ety = LLVM.LLVMType(ety)
+            ety = parse(UInt, LLVM.value(attr))
+            ety = Base.reinterpret(LLVM.API.LLVMTypeRef, ety)
+            ety = LLVM.LLVMType(ety)
             if !LLVM.is_opaque(vt)
-		@assert ety == eltype(vt)
+                @assert ety == eltype(vt)
             end
-        
+
             return ety
         end
 
