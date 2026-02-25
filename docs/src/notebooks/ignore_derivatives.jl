@@ -45,10 +45,10 @@ Fig 1 from <https://openreview.net/pdf?id=bozbTTWcaw>
 import Enzyme: ignore_derivatives
 
 # ╔═╡ fabba18a-b8d8-479d-babd-c18279273fb5
-begin
-    N(xᵢ, θ) = θ[1] * xᵢ^2 + θ[2] * xᵢ
-    S(xᵢ, cᵢ) = xᵢ + cᵢ
-end
+N(xᵢ, θ) = θ[1] * xᵢ^2 + θ[2] * xᵢ
+
+# ╔═╡ 9c773164-d4c4-404e-a1bd-abbb2bd9baa7
+S(xᵢ, cᵢ) = xᵢ + cᵢ
 
 # ╔═╡ 5baa757c-c611-4d8b-ac37-4f97e585613e
 function simulate(N, S, x₀, y, θ, n)
@@ -65,14 +65,16 @@ begin
     x₀ = -0.3
     y = 2.0
     n = 4
-end
+end;
 
 # ╔═╡ bdc31f7f-fa2d-45d5-bc7a-843340ad5426
 begin
     θ₁ = -4:0.01:4
     θ₂ = -4:0.01:4
-    θ_space = collect(Iterators.product(θ₁, θ₂))
 end;
+
+# ╔═╡ 074d5e04-5e6d-4c47-bfc6-e719756b0ef7
+θ_space = collect(Iterators.product(θ₁, θ₂));
 
 # ╔═╡ 3101e04b-7cbb-4a30-851d-c6183a65c8ae
 L_space = simulate.(N, S, x₀, y, θ_space, n);
@@ -137,9 +139,11 @@ plot_gradientfield(N_stop, S, x₀, y, θ₁, θ₂, n)
 # ╠═3f8e0394-9b27-40a4-bc4c-3f4f773d35dc
 # ╠═bd0352c3-1b3c-42f5-ab93-7ca4cb67b9ad
 # ╠═fabba18a-b8d8-479d-babd-c18279273fb5
+# ╠═9c773164-d4c4-404e-a1bd-abbb2bd9baa7
 # ╠═5baa757c-c611-4d8b-ac37-4f97e585613e
 # ╠═adf9ae2c-92b6-4826-bb01-12e46f365610
 # ╠═bdc31f7f-fa2d-45d5-bc7a-843340ad5426
+# ╠═074d5e04-5e6d-4c47-bfc6-e719756b0ef7
 # ╠═3101e04b-7cbb-4a30-851d-c6183a65c8ae
 # ╠═0c0ebb20-e794-4545-b94c-e026cb7fa3e2
 # ╠═45ee18f4-d6d3-40f4-bbc0-04cbd3b7b840
