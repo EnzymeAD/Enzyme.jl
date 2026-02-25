@@ -646,7 +646,7 @@ function abs_typeof(
             # julia code (for example pointer(x) ), or is a storage container for an array / memory
             # in the latter case, it may need an extra level of indirection because of boxing. It is semantically
             # consistent here to consider Ptr{T} to represent the ptr to the boxed value in that case [and we essentially
-            # add the extra poitner offset when loading here]. However for pointers constructed by ccall outside julia
+            # add the extra pointer offset when loading here]. However for pointers constructed by ccall outside julia
             # to a julia object, which are not inline by type but appear so, like SparseArrays, this is a problem
             # and merits further investigation. x/ref https://github.com/EnzymeAD/Enzyme.jl/issues/2085
             @static if Base.USE_GPL_LIBS

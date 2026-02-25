@@ -1189,7 +1189,7 @@ end
 
 Enzyme runs a type analysis to deduce the corresponding types of all values being
 differentiated. This is necessary to compute correct derivatives of various values.
-To ensure this analysis temrinates, it operates on a finite lattice of possible
+To ensure this analysis terminates, it operates on a finite lattice of possible
 states. This function sets the maximum offset into a type that Enzyme will consider.
 A smaller value will cause type analysis to run faster, but may result in some
 necessary types not being found and result in unknown type errors. A larger value
@@ -1206,7 +1206,7 @@ end
 
 Enzyme runs a type analysis to deduce the corresponding types of all values being
 differentiated. This is necessary to compute correct derivatives of various values.
-To ensure this analysis temrinates, it operates on a finite lattice of possible
+To ensure this analysis terminates, it operates on a finite lattice of possible
 states. This function sets the maximum depth into a type that Enzyme will consider.
 A smaller value will cause type analysis to run faster, but may result in some
 necessary types not being found and result in unknown type errors. A larger value
@@ -1270,7 +1270,7 @@ end
 """
     typeWarning!(val::Bool)
 
-Whether to print a warning when Type Analysis learns informatoin about a value's type
+Whether to print a warning when Type Analysis learns information about a value's type
 which cannot be represented in the current size of the lattice. See [`maxtypeoffset!`](@ref) for
 more information.
 Off by default.
