@@ -729,7 +729,7 @@ If a specific argument has no partial derivative, then all corresponding argumen
 
 # Examples
 
-Let's write an `@easy_rule` for a simple trigonometric function. Enzyme already has rules for `sin` and `cos`, but for the sake of illustration we can define a new pass-through function to oen of them to demostrate the `@easy_rule` interface.
+Let's write an `@easy_rule` for a simple trigonometric function. Enzyme already has rules for `sin` and `cos`, but for the sake of illustration we can define a new pass-through function to one of them to demonstrate the `@easy_rule` interface.
 
 ```julia
 mycos(x) = cos(x)

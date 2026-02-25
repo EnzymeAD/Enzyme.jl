@@ -928,7 +928,7 @@ or `Duplicated` (or its variants `DuplicatedNoNeed`, `BatchDuplicated`, and
 
 The forward function will return a tape, the primal (or nothing if not requested),
 and the shadow (or nothing if not a `Duplicated` variant), and tapes the corresponding
-type arguements provided.
+type arguments provided.
 
 The reverse function will return the derivative of `Active` arguments, updating the `Duplicated`
 arguments in place. The same arguments to the forward pass should be provided, followed by
@@ -1372,7 +1372,7 @@ or `Duplicated` (or its variants `DuplicatedNoNeed`, `BatchDuplicated`, and
 
 The forward function will return a tape, the primal (or nothing if not requested),
 and the shadow (or nothing if not a `Duplicated` variant), and tapes the corresponding
-type arguements provided.
+type arguments provided.
 
 The reverse function will return the derivative of `Active` arguments, updating the `Duplicated`
 arguments in place. The same arguments to the forward pass should be provided, followed by
