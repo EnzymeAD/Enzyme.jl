@@ -2,6 +2,7 @@
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Pluto = "c3e4b0f8-55cb-11ea-2926-15256bba5781"
 PlutoLinks = "0ff47ea0-7a50-410d-8455-4348d5de0420"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
