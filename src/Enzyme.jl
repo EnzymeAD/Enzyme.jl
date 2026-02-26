@@ -314,12 +314,12 @@ Limitations:
   value in one of the arguments, which must be wrapped in a
   [`Duplicated`](@ref).
 
-`args` may be numbers, arrays, structs of numbers, structs of arrays and so
-on. Enzyme will only differentiate in respect to arguments that are wrapped
-in an [`Active`](@ref) (for arguments whose derivative result must be returned
-rather than mutated in place, such as primitive types and structs thereof)
-or [`Duplicated`](@ref) (for mutable arguments like arrays, `Ref`s and structs
-thereof).
+* `args` may be numbers, arrays, structs of numbers, structs of arrays and so
+  on. Enzyme will only differentiate in respect to arguments that are wrapped
+  in an [`Active`](@ref) (for arguments whose derivative result must be returned
+  rather than mutated in place, such as primitive types and structs thereof)
+  or [`Duplicated`](@ref) (for mutable arguments like arrays, `Ref`s and structs
+  thereof).
 
 `Activity` is the Activity of the return value, it may be `Const` or `Active`.
 
