@@ -11,6 +11,7 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 [compat]
 ChainRulesCore = "1"
 Documenter = "1"
+EnzymeCore = "0.8"
 EnzymeTestUtils = "0.2"
 Literate = "2"
 PlutoStaticHTML = "7"
