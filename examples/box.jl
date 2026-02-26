@@ -361,16 +361,20 @@ autodiff(
 
 # First we can look at what happened to the zero vectors `out_now` and `out_old`:
 
-@show out_now, out_old
+out_now
+#-
+out_old
 
 # Comparing to the results of forward func:
 
-@show states_before_smoother[2], states_after_smoother[2]
+states_before_smoother[2]
+#-
+states_after_smoother[2]
 
 # we see that Enzyme has computed and stored exactly the output of the
 # forward step. Next, let's look at `dstate_now`:
 
-@show dstate_now
+dstate_now
 
 # Just a few numbers, but this is what makes AD so nice: Enzyme has exactly computed
 # the derivative of all outputs with respect to the input `state_now`, evaluated at
@@ -401,12 +405,12 @@ autodiff(
 
 # Now checking `dstate_now` and `dstate_old` we see
 
-@show dstate_now_new
+dstate_now_new
 
 # What happened? Enzyme is actually taking the computed gradient and acting on what we
 # give as input to `dout_now` and `dout_old`. Checking this, we see
 
-@show 2 * dstate_now
+2 * dstate_now
 
 # and they match the new results. This exactly matches what we'd expect to happen since
 # we scaled `dout_now` by two.
@@ -503,7 +507,7 @@ dstate_now, dstate_old = compute_adjoint_values(
 # And we're done! We were interested in sensitivity to the initial salinity of box
 # two, which will live in what we've called `dstate_old`. Checking this value we see
 
-@show dstate_old[5]
+dstate_old[5]
 
 # As it stands this is just a number, but a good check that Enzyme has computed what we want
 # is to approximate the derivative with a Taylor series. Specifically,
@@ -526,6 +530,9 @@ dstate_now, dstate_old = compute_adjoint_values(
 ## unperturbed final state
 use_to_check = states_after_smoother[M + 1]
 
+initial_temperature = [20.0; 1.0; 1.0]
+initial_salinity = [35.5; 34.5; 34.5]
+
 ## a loop to compute the perturbed final states
 diffs = []
 step_sizes = [1.0e-1, 1.0e-2, 1.0e-3, 1.0e-4, 1.0e-5, 1.0e-6, 1.0e-7, 1.0e-8, 1.0e-9, 1.0e-10]
@@ -533,8 +540,7 @@ for eps in step_sizes
 
     state_new_smoothed = zeros(6)
 
-    initial_temperature = [20.0; 1.0; 1.0]
-    perturbed_initial_salinity = [35.5; 34.5; 34.5] + [0.0; eps; 0.0]
+    perturbed_initial_salinity = initial_salinity + [0.0; eps; 0.0]
 
     state_old = [initial_temperature; perturbed_initial_salinity]
     state_now = [20.0; 1.0; 1.0; 35.5; 34.5; 34.5]
@@ -558,12 +564,12 @@ end
 
 # Then checking what we found the derivative to be analytically:
 
-@show diffs
+diffs
 
 # which comes very close to our calculated value. We can go further and check the
 # percent difference to see
 
-@show abs.(diffs .- dstate_old[5]) ./ dstate_old[5]
+abs.(diffs .- dstate_old[5]) ./ dstate_old[5]
 
 # and we get down to a percent difference on the order of ``{10}^{-5}``, showing Enzyme calculated
 # the correct derivative. Success!
