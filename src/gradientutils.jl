@@ -195,11 +195,11 @@ end
 
 """
 
-Helper function for llvm-level rule generation. Will call the same function (and optional postprocessing),
+Helper function for LLVM-level rule generation. Will call the same function (and optional postprocessing),
 if the argument at index `cmpidx` isn't active. This takes into account runtime activity as a reason
 the value may not be active. 
 
-If postprocess_const is set, the original function will always be called, but the postprocessing will be
+If `postprocess_const` is set, the original function will always be called, but the postprocessing will be
 conditionally gated as follows.
 
 If the relevant input is active (and verified by runtime activity), 
@@ -311,7 +311,7 @@ end
 
 
 """
-Helper function for llvm-level rule generation. Will call `call_same_with_inverted_arg_if_active` with
+Helper function for LLVM-level rule generation. Will call `call_same_with_inverted_arg_if_active` with
 corresponding extracted batches if width > 1, otherwise it will call it once.
 """
 function batch_call_same_with_inverted_arg_if_active!(
