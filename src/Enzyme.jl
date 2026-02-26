@@ -326,15 +326,13 @@ thereof).
 Example:
 
 ```jldoctest
-a = 4.2
-b = [2.2, 3.3]; ∂f_∂b = zero(b)
-c = 55; d = 9
+julia> a = 4.2; b = [2.2, 3.3]; c = 55; d = 9;
 
-f(a, b, c, d) = a * √(b[1]^2 + b[2]^2) + c^2 * d^2
-∂f_∂a, _, _, ∂f_∂d = autodiff(Reverse, f, Active, Active(a), Duplicated(b, ∂f_∂b), Const(c), Active(d))[1]
+julia> ∂f_∂b = zero(b);
 
-# output
+julia> f(a, b, c, d) = a * √(b[1]^2 + b[2]^2) + c^2 * d^2;
 
+julia> ∂f_∂a, _, _, ∂f_∂d = autodiff(Reverse, f, Active, Active(a), Duplicated(b, ∂f_∂b), Const(c), Active(d))[1]
 (3.966106403010388, nothing, nothing, 54450.0)
 ```
 
@@ -348,10 +346,7 @@ One can also request the original returned value of the computation.
 Example:
 
 ```jldoctest
-Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
-
-# output
-
+julia> Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
 ((6.0,), 9.0)
 ```
 
@@ -587,25 +582,16 @@ instead use [`Duplicated`](@ref) or variants like [`DuplicatedNoNeed`](@ref).
 * `BatchDuplicated`, like `Duplicated`, but computing multiple derivatives
   at once. All batch sizes must be the same for all arguments.
 
-Example returning both original return and derivative:
+Two examples: one returning both the original and the derivative, and one
+returning just the derivative.
 
 ```jldoctest
-f(x) = x*x
-res, ∂f_∂x = autodiff(ForwardWithPrimal, f, Duplicated, Duplicated(3.14, 1.0))
+julia> f(x) = x*x;
 
-# output
-
+julia> res, ∂f_∂x = autodiff(ForwardWithPrimal, f, Duplicated, Duplicated(3.14, 1.0))
 (6.28, 9.8596)
-```
 
-Example returning just the derivative:
-
-```jldoctest
-f(x) = x*x
-∂f_∂x = autodiff(Forward, f, Duplicated, Duplicated(3.14, 1.0))
-
-# output
-
+julia> ∂f_∂x = autodiff(Forward, f, Duplicated, Duplicated(3.14, 1.0))
 (6.28,)
 ```
 """
@@ -929,7 +915,6 @@ the adjoint of the return (if the return is active), and finally the tape from t
 Example:
 
 ```jldoctest
-
 A = [2.2]; ∂A = zero(A)
 v = 3.3
 
@@ -1035,12 +1020,9 @@ end
 Specialization of [`autodiff`](@ref) to handle do argument closures.
 
 ```jldoctest
-
-autodiff(Reverse, Active(3.1)) do x
-  return x*x
-end
-
-# output
+julia> autodiff(Reverse, Active(3.1)) do x
+         return x*x
+       end
 ((6.2,),)
 ```
 """
@@ -1074,33 +1056,21 @@ and the primal (if requested).
 
 Example returning both the return derivative and original return:
 
-```jldoctest
-a = 4.2
-b = [2.2, 3.3]; ∂f_∂b = zero(b)
-c = 55; d = 9
+```jldoctest autodiff-thunk
+julia> f(x) = x*x;
 
-f(x) = x*x
-forward = autodiff_thunk(ForwardWithPrimal, Const{typeof(f)}, Duplicated, Duplicated{Float64})
-∂f_∂x, res = forward(Const(f), Duplicated(3.14, 1.0))
+julia> forward = autodiff_thunk(ForwardWithPrimal, Const{typeof(f)}, Duplicated, Duplicated{Float64});
 
-# output
-
+julia> ∂f_∂x, res = forward(Const(f), Duplicated(3.14, 1.0))
 (6.28, 9.8596)
 ```
 
 Example returning just the derivative:
 
-```jldoctest
-a = 4.2
-b = [2.2, 3.3]; ∂f_∂b = zero(b)
-c = 55; d = 9
+```jldoctest autodiff-thunk
+julia> forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float64});
 
-f(x) = x*x
-forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float64})
-∂f_∂x, = forward(Const(f), Duplicated(3.14, 1.0))
-
-# output
-
+julia> ∂f_∂x, = forward(Const(f), Duplicated(3.14, 1.0))
 (6.28,)
 ```
 """
@@ -1528,23 +1498,22 @@ and may also be slower than not having a rule at all.
 
 Use with caution.
 
-```julia
-Enzyme.@import_frule(typeof(Base.sort), Any);
+```julia-repl
+julia> Enzyme.@import_frule(typeof(Base.sort), Any);
 
-x=[1.0, 2.0, 0.0]; dx=[0.1, 0.2, 0.3]; ddx = [0.01, 0.02, 0.03];
+julia> x=[1.0, 2.0, 0.0]; dx=[0.1, 0.2, 0.3]; ddx = [0.01, 0.02, 0.03];
 
-Enzyme.autodiff(Forward, sort, Duplicated, BatchDuplicated(x, (dx,ddx)))
-Enzyme.autodiff(Forward, sort, DuplicatedNoNeed, BatchDuplicated(x, (dx,ddx)))
-Enzyme.autodiff(Forward, sort, DuplicatedNoNeed, BatchDuplicated(x, (dx,)))
-Enzyme.autodiff(Forward, sort, Duplicated, BatchDuplicated(x, (dx,)))
-
-# output
-
+julia> Enzyme.autodiff(Forward, sort, Duplicated, BatchDuplicated(x, (dx,ddx)))
 (var"1" = [0.0, 1.0, 2.0], var"2" = (var"1" = [0.3, 0.1, 0.2], var"2" = [0.03, 0.01, 0.02]))
-(var"1" = (var"1" = [0.3, 0.1, 0.2], var"2" = [0.03, 0.01, 0.02]),)
-(var"1" = [0.3, 0.1, 0.2],)
-(var"1" = [0.0, 1.0, 2.0], var"2" = [0.3, 0.1, 0.2])
 
+julia> Enzyme.autodiff(Forward, sort, DuplicatedNoNeed, BatchDuplicated(x, (dx,ddx)))
+(var"1" = (var"1" = [0.3, 0.1, 0.2], var"2" = [0.03, 0.01, 0.02]),)
+
+julia> Enzyme.autodiff(Forward, sort, DuplicatedNoNeed, BatchDuplicated(x, (dx,)))
+(var"1" = [0.3, 0.1, 0.2],)
+
+julia> Enzyme.autodiff(Forward, sort, Duplicated, BatchDuplicated(x, (dx,)))
+(var"1" = [0.0, 1.0, 2.0], var"2" = [0.3, 0.1, 0.2])
 ```
 """
 macro import_frule(args...)
@@ -1572,7 +1541,7 @@ than not having a rule at all.
 Use with caution.
 
 ```julia
-Enzyme.@import_rrule(typeof(Base.sort), Any);
+Enzyme.@import_rrule(typeof(Base.sort), Any)
 ```
 """
 macro import_rrule(args...)
