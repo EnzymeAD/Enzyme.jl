@@ -337,7 +337,7 @@ states_after_smoother, states_before_smoother = integrate(
     parameters
 )
 
-## Run Enzyme one time on `one_step_forward``
+## Run Enzyme one time on `one_step_forward`
 dstate_now = zeros(6)
 dstate_old = zeros(6)
 out_now = zeros(6); dout_now = ones(6)
