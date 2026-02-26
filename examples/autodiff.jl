@@ -32,9 +32,9 @@ end;
 # ```
 # bar denotes an adjoint variable. Note that executing an AD in reverse mode
 # computes both ``y`` and the adjoint ``\bar{x}``.
-x  = [2.0, 2.0]
+x = [2.0, 2.0]
 bx = [0.0, 0.0]
-y  = [0.0]
+y = [0.0]
 by = [1.0];
 
 # Enzyme stores the value and adjoint of a variable in an object of type
@@ -56,9 +56,9 @@ g = copy(bx)
 # ```
 # To obtain the first element of the gradient using the forward model we have to
 # seed ``\dot{x}`` with ``\dot{x} = [1.0,0.0]``
-x  = [2.0, 2.0]
+x = [2.0, 2.0]
 dx = [1.0, 0.0]
-y  = [0.0]
+y = [0.0]
 dy = [0.0];
 # In the forward mode the second element of `Duplicated` stores the tangent.
 Enzyme.autodiff(Forward, f, Duplicated(x, dx), Duplicated(y, dy));
@@ -98,7 +98,7 @@ dby = [0.0]
 
 Enzyme.autodiff(
     Forward,
-    (x,y) -> Enzyme.autodiff(Reverse, f, x, y),
+    (x, y) -> Enzyme.autodiff(Reverse, f, x, y),
     Duplicated(Duplicated(x, bx), Duplicated(dx, dbx)),
     Duplicated(Duplicated(y, by), Duplicated(dy, dby)),
 )
@@ -113,7 +113,7 @@ dbx[2] == 1.0
 # The vector FoR allows us to propagate several tangents at once through the
 # second-order model by computing the derivative of the gradient at multiple points at once.
 # We begin by defining a helper function for the gradient. Since we will not need the original results
-# (stored in y), we can mark it DuplicatedNoNeed. Specifically, this will perform the following:
+# (stored in y), we can mark it `DuplicatedNoNeed`. Specifically, this will perform the following:
 # ```math
 # \begin{aligned}
 # \bar{x} &= \bar{x} + \bar{y} \cdot \nabla f(x) \\
@@ -121,12 +121,12 @@ dbx[2] == 1.0
 # \end{aligned}
 # ```
 function grad(x, dx, y, dy)
-  Enzyme.autodiff(Reverse, f, Duplicated(x, dx), DuplicatedNoNeed(y, dy))
-  nothing
+    Enzyme.autodiff(Reverse, f, Duplicated(x, dx), DuplicatedNoNeed(y, dy))
+    return nothing
 end
 
 # To compute the conventional gradient, we would call this function with our given inputs,
-# dy = [1.0], and dx = [0.0, 0.0]. Since y is not needed, we can just set it to an undef vector.
+# `dy = [1.0]`, and `dx = [0.0, 0.0]`. Since y is not needed, we can just set it to an `undef` vector.
 
 x = [2.0, 2.0]
 y = Vector{Float64}(undef, 1)
@@ -135,12 +135,13 @@ dy = [1.0]
 
 grad(x, dx, y, dy)
 
-# dx now contains the gradient
-@show dx 
+# `dx` now contains the gradient
+dx
 
 # To compute the hessian, we need to take the dervative of this gradient function at every input.
 # Following the same seeding strategy as before, we now seed both
-# in the `vx[1]=[1.0, 0.0]` and `vx[2]=[0.0, 1.0]` direction. These tuples have to be put into a `BatchDuplicated` type.
+# in the `vx[1] = [1.0, 0.0]` and `vx[2] = [0.0, 1.0]` direction.
+# These tuples have to be put into a `BatchDuplicated` type.
 # We then compute the forward mode derivative at all these points.
 
 vx = ([1.0, 0.0], [0.0, 1.0])
@@ -148,11 +149,13 @@ hess = ([0.0, 0.0], [0.0, 0.0])
 dx = [0.0, 0.0]
 dy = [1.0]
 
-Enzyme.autodiff(Enzyme.Forward, grad,
-                Enzyme.BatchDuplicated(x, vx),
-                Enzyme.BatchDuplicated(dx, hess),
-                Const(y),
-                Const(dy))
+Enzyme.autodiff(
+    Enzyme.Forward, grad,
+    Enzyme.BatchDuplicated(x, vx),
+    Enzyme.BatchDuplicated(dx, hess),
+    Const(y),
+    Const(dy)
+)
 
 
 # Again we obtain the first-order gradient.
@@ -161,11 +164,7 @@ Enzyme.autodiff(Enzyme.Forward, grad,
 g[1] == dx[1]
 
 # We have now the first row/column of the Hessian
-hess[1][1] == 2.0
-
-hess[1][2] == 1.0
+hess[1]
 
 # as well as the second row/column
-hess[2][1] == 1.0
-
-hess[2][2] == 0.0
+hess[2]
