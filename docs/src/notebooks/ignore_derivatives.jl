@@ -45,10 +45,10 @@ Fig 1 from <https://openreview.net/pdf?id=bozbTTWcaw>
 import Enzyme: ignore_derivatives
 
 # ╔═╡ fabba18a-b8d8-479d-babd-c18279273fb5
-N(xᵢ, θ) = θ[1] * xᵢ^2 + θ[2] * xᵢ
+N(xᵢ, θ) = θ[1] * xᵢ^2 + θ[2] * xᵢ;
 
 # ╔═╡ 9c773164-d4c4-404e-a1bd-abbb2bd9baa7
-S(xᵢ, cᵢ) = xᵢ + cᵢ
+S(xᵢ, cᵢ) = xᵢ + cᵢ;
 
 # ╔═╡ 5baa757c-c611-4d8b-ac37-4f97e585613e
 function simulate(N, S, x₀, y, θ, n)
@@ -125,7 +125,7 @@ end
 plot_gradientfield(N, S, x₀, y, θ₁, θ₂, n)
 
 # ╔═╡ 873e7792-99a1-4472-92c2-6fc32e2889fa
-N_stop(xᵢ, θ) = θ[1] * ignore_derivatives(xᵢ^2) + θ[2] * ignore_derivatives(xᵢ)
+N_stop(xᵢ, θ) = θ[1] * ignore_derivatives(xᵢ^2) + θ[2] * ignore_derivatives(xᵢ);
 
 # ╔═╡ d71a22cc-c1f3-4425-8a6f-442a0bc4f215
 plot_gradientfield(N_stop, S, x₀, y, θ₁, θ₂, n)
