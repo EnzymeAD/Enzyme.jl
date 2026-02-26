@@ -212,61 +212,34 @@ while `grad.c == x.c` for other types.
 Examples:
 
 ```jldoctest gradient
-f(x) = x[1]*x[2]
+julia> f(x) = x[1]*x[2];
 
-grad = gradient(Reverse, f, [2.0, 3.0])
-
-# output
+julia> grad = gradient(Reverse, f, [2.0, 3.0])
 ([3.0, 2.0],)
-```
 
-```jldoctest gradient
-grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
-
-# output
-
+julia> grad = gradient(Reverse, only ∘ f, (a = 2.0, b = [3.0], c = "str"))
 ((a = 3.0, b = [2.0], c = "str"),)
-```
 
-```jldoctest gradient
-mul(x, y) = x[1]*y[1]
+julia> mul(x, y) = x[1]*y[1];
 
-grad = gradient(Reverse, mul, [2.0], [3.0])
-
-# output
+julia> grad = gradient(Reverse, mul, [2.0], [3.0])
 ([3.0], [2.0])
-```
 
-```jldoctest gradient
-
-grad = gradient(Reverse, mul, [2.0], Const([3.0]))
-
-# output
+julia> grad = gradient(Reverse, mul, [2.0], Const([3.0]))
 ([3.0], nothing)
 ```
 
-If passing a mode that returns the primal (e.g. ReverseWithPrimal), the return type will instead be
+If passing a mode that returns the primal (e.g. `ReverseWithPrimal`), the return type will instead be
 a tuple where the first element contains the derivatives, and the second element contains the result of the original computation.
 
 ```jldoctest gradient
-
-grad = gradient(ReverseWithPrimal, f, [2.0, 3.0])
-
-# output
+julia> grad = gradient(ReverseWithPrimal, f, [2.0, 3.0])
 (derivs = ([3.0, 2.0],), val = 6.0)
-```
-```jldoctest gradient
 
-grad = gradient(ReverseWithPrimal, mul, [2.0], [3.0])
-
-# output
+julia> grad = gradient(ReverseWithPrimal, mul, [2.0], [3.0])
 (derivs = ([3.0], [2.0]), val = 6.0)
-```
 
-```jldoctest gradient
-grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
-
-# output
+julia> grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
 (derivs = ([3.0], nothing), val = 6.0)
 ```
 
@@ -384,20 +357,16 @@ Both `x` and `dx` must be `Array`s of the same type.
 Example:
 
 ```jldoctest gradip
-f(x) = x[1]*x[2]
+julia> f(x) = x[1]*x[2];
 
-dx = [0.0, 0.0]
-gradient!(Reverse, dx, f, [2.0, 3.0])
+julia> dx = [0.0, 0.0];
 
-# output
+julia> gradient!(Reverse, dx, f, [2.0, 3.0])
 ([3.0, 2.0],)
-```
 
-```jldoctest gradip
-dx = [0.0, 0.0]
-gradient!(ReverseWithPrimal, dx, f, [2.0, 3.0])
+julia> dx = [0.0, 0.0];
 
-# output
+julia> gradient!(ReverseWithPrimal, dx, f, [2.0, 3.0])
 (derivs = ([3.0, 2.0],), val = 6.0)
 ```
 """
@@ -514,34 +483,18 @@ within this call.
 Example:
 
 ```jldoctest gradfwd
-f(x) = x[1]*x[2]
+julia> f(x) = x[1]*x[2];
 
-gradient(Forward, f, [2.0, 3.0])
-
-# output
-
+julia> gradient(Forward, f, [2.0, 3.0])
 ([3.0, 2.0],)
-```
 
-```jldoctest gradfwd
-gradient(ForwardWithPrimal, f, [2.0, 3.0])
-
-# output
+julia> gradient(ForwardWithPrimal, f, [2.0, 3.0])
 (derivs = ([3.0, 2.0],), val = 6.0)
-```
 
-```jldoctest gradfwd
-gradient(Forward, f, [2.0, 3.0]; chunk=Val(1))
-
-# output
-
+julia> gradient(Forward, f, [2.0, 3.0]; chunk=Val(1))
 ([3.0, 2.0],)
-```
 
-```jldoctest gradfwd
-gradient(ForwardWithPrimal, f, [2.0, 3.0]; chunk=Val(1))
-
-# output
+julia> gradient(ForwardWithPrimal, f, [2.0, 3.0]; chunk=Val(1))
 (derivs = ([3.0, 2.0],), val = 6.0)
 ```
 
@@ -553,33 +506,25 @@ as the input AbstractArray if provided).
 For functions who return other types, this function will retun an AbstractArray
 of shape `size(input)` of values of the output type. 
 ```jldoctest
-f(x) = [ x[1] * x[2], x[2] + x[3] ]
+julia> f(x) = [ x[1] * x[2], x[2] + x[3] ];
 
-grad = gradient(Forward, f, [2.0, 3.0, 4.0])
-
-# output
+julia> grad = gradient(Forward, f, [2.0, 3.0, 4.0])
 ([3.0 2.0 0.0; 0.0 1.0 1.0],)
 ```
 
 This function supports multiple arguments and computes the gradient with respect to each
 
 ```jldoctest gradfwd2
-mul(x, y) = x[1]*y[2] + x[2]*y[1]
+julia> mul(x, y) = x[1]*y[2] + x[2]*y[1];
 
-gradient(Forward, mul, [2.0, 3.0], [2.7, 3.1])
-
-# output
-
+julia> gradient(Forward, mul, [2.0, 3.0], [2.7, 3.1])
 ([3.1, 2.7], [3.0, 2.0])
 ```
 
 This includes the ability to mark some arguments as `Const` if its derivative is not needed, returning nothing in the corresponding derivative map.
 
 ```jldoctest gradfwd2
-gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
-
-# output
-
+julia> gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
 ([3.1, 2.7], nothing)
 ```
 """
@@ -1180,44 +1125,24 @@ reverse mode. The `chunk` argument optionally denotes the chunk size to use and
 Example:
 
 ```jldoctest
-f(x) = [ x[1] * x[2], x[2] + x[3] ]
+julia> f(x) = [ x[1] * x[2], x[2] + x[3] ];
 
-jacobian(Reverse, f, [2.0, 3.0, 4.0])
-
-# output
+julia> jacobian(Reverse, f, [2.0, 3.0, 4.0])
 ([3.0 2.0 0.0; 0.0 1.0 1.0],)
-```
 
-```jldoctest
-f(x) = [ x[1] * x[2], x[2] + x[3] ]
-
-grad = jacobian(ReverseWithPrimal, f, [2.0, 3.0, 4.0])
-
-# output
+julia> grad = jacobian(ReverseWithPrimal, f, [2.0, 3.0, 4.0])
 (derivs = ([3.0 2.0 0.0; 0.0 1.0 1.0],), val = [6.0, 7.0])
-```
 
-```jldoctest
-f(x) = [ x[1] * x[2], x[2] + x[3] ]
-
-grad = jacobian(Reverse, f, [2.0, 3.0, 4.0], n_outs=Val((2,)))
-
-# output
+julia> grad = jacobian(Reverse, f, [2.0, 3.0, 4.0], n_outs=Val((2,)))
 ([3.0 2.0 0.0; 0.0 1.0 1.0],)
-```
 
-```jldoctest
-f(x) = [ x[1] * x[2], x[2] + x[3] ]
-
-grad = jacobian(ReverseWithPrimal, f, [2.0, 3.0, 4.0], n_outs=Val((2,)))
-
-# output
+julia> grad = jacobian(ReverseWithPrimal, f, [2.0, 3.0, 4.0], n_outs=Val((2,)))
 (derivs = ([3.0 2.0 0.0; 0.0 1.0 1.0],), val = [6.0, 7.0])
 ```
 
 This function will return an AbstractArray whose shape is `(size(output)..., size(input)...)`.
-No guarantees are presently made about the type of the AbstractArray returned by this function
-(which may or may not be the same as the input AbstractArray if provided).
+No guarantees are presently made about the type of the `AbstractArray` returned by this function
+(which may or may not be the same as the input `AbstractArray` if provided).
 
 In the future, when this function is extended to handle non-array return types, 
 this function will retun an AbstractArray of shape `size(output)` of values of the input type. 
@@ -1264,11 +1189,9 @@ See [`hvp!`](@ref) for a version which stores the result in an existing buffer a
 Example:
 
 ```jldoctest hvp; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
-f(x) = sin(x[1] * x[2])
+julia> f(x) = sin(x[1] * x[2]);
 
-hvp(f, [2.0, 3.0], [5.0, 2.7])
-
-# output
+julia> hvp(f, [2.0, 3.0], [5.0, 2.7])
 2-element Vector{Float64}:
  19.6926882637302
  16.201003759768003
@@ -1295,13 +1218,13 @@ See [`hvp_and_gradient!`](@ref) for a function to compute both the hvp and the g
 Example:
 
 ```jldoctest hvpip; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
-f(x) = sin(x[1] * x[2])
+julia> f(x) = sin(x[1] * x[2]);
 
-res = Vector{Float64}(undef, 2)
-hvp!(res, f, [2.0, 3.0], [5.0, 2.7])
+julia> res = Vector{Float64}(undef, 2);
 
-res
-# output
+julia> hvp!(res, f, [2.0, 3.0], [5.0, 2.7]);
+
+julia> res
 2-element Vector{Float64}:
  19.6926882637302
  16.201003759768003
@@ -1336,15 +1259,20 @@ In other words, compute `res .= hessian(f)(x) * v` and `grad .= gradient(Reverse
 Example:
 
 ```jldoctest hvp_and_gradient; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
-f(x) = sin(x[1] * x[2])
+julia> f(x) = sin(x[1] * x[2]);
 
-res = Vector{Float64}(undef, 2)
-grad = Vector{Float64}(undef, 2)
-hvp_and_gradient!(res, grad, f, [2.0, 3.0], [5.0, 2.7])
+julia> res = Vector{Float64}(undef, 2);
 
-res
-grad
-# output
+julia> grad = Vector{Float64}(undef, 2);
+
+julia> hvp_and_gradient!(res, grad, f, [2.0, 3.0], [5.0, 2.7]);
+
+julia> res
+2-element Vector{Float64}:
+ 19.69268826373025
+ 16.201003759768003
+
+julia> grad
 2-element Vector{Float64}:
  2.880510859951098
  1.920340573300732

@@ -165,24 +165,24 @@ Other libraries do not yet have derivatives (either fast or fallback) implemente
 Differentiating code using sparse arrays is supported, but care must be taken because backing arrays drop zeros in Julia (unless told not to).
 
 ```jldoctest sparse
-using SparseArrays
-a = sparse([2.0])
-da1 = sparse([0.0]) # Incorrect: SparseMatrixCSC drops explicit zeros
-Enzyme.autodiff(Reverse, sum, Active, Duplicated(a, da1))
-da1
+julia> using SparseArrays
 
-# output
+julia> a = sparse([2.0])
+1-element SparseVector{Float64, Int64} with 1 stored entry:
+  [1]  =  2.0
 
+julia> da1 = sparse([0.0]); # Incorrect: SparseMatrixCSC drops explicit zeros
+
+julia> Enzyme.autodiff(Reverse, sum, Active, Duplicated(a, da1));
+
+julia> da1
 1-element SparseVector{Float64, Int64} with 0 stored entries
-```
 
-```jldoctest sparse
-da2 = sparsevec([1], [0.0]) # Correct: Prevent SparseMatrixCSC from dropping zeros
-Enzyme.autodiff(Reverse, sum, Active, Duplicated(a, da2))
-da2
+julia> da2 = sparsevec([1], [0.0]); # Correct: Prevent SparseMatrixCSC from dropping zeros
 
-# output
+julia> Enzyme.autodiff(Reverse, sum, Active, Duplicated(a, da2));
 
+julia> da2
 1-element SparseVector{Float64, Int64} with 1 stored entry:
   [1]  =  1.0
 ```
@@ -191,11 +191,11 @@ Sometimes, determining how to perform this zeroing can be complicated.
 That is why Enzyme provides a helper function `Enzyme.make_zero` that does this automatically.
 
 ```jldoctest sparse
-Enzyme.make_zero(a)
-Enzyme.gradient(Reverse, sum, a)[1] # This calls make_zero(a)
+julia> Enzyme.make_zero(a)
+1-element SparseVector{Float64, Int64} with 1 stored entry:
+  [1]  =  0.0
 
-# output
-
+julia> Enzyme.gradient(Reverse, sum, a)[1] # This calls make_zero(a)
 1-element SparseVector{Float64, Int64} with 1 stored entry:
   [1]  =  1.0
 ```
@@ -245,35 +245,26 @@ The benefit of this representation is that : (1) all of our rules compose correc
 If you pass in any temporary storage which may be involved in an active computation to a function you want to differentiate, you must also pass in a duplicated temporary storage for use in computing the derivatives. For example, consider the following function which uses a temporary buffer to compute the result.
 
 ```jldoctest storage
-function f(x, tmp, k, n)
-    tmp[1] = 1.0
-    for i in 1:n
-        tmp[k] *= x
-    end
-    tmp[1]
-end
-
-# output
-
+julia> function f(x, tmp, k, n)
+           tmp[1] = 1.0
+           for i in 1:n
+               tmp[k] *= x
+           end
+           tmp[1]
+       end
 f (generic function with 1 method)
 ```
 
 Marking the argument for `tmp` as `Const` (aka non-differentiable) means that Enzyme believes that all variables loaded from or stored into `tmp` must also be non-differentiable, since all values inside a non-differentiable variable must also by definition be non-differentiable.
 ```jldoctest storage
-Enzyme.autodiff(Reverse, f, Active(1.2), Const(Vector{Float64}(undef, 1)), Const(1), Const(5))  # Incorrect
-
-# output
-
+julia> Enzyme.autodiff(Reverse, f, Active(1.2), Const(Vector{Float64}(undef, 1)), Const(1), Const(5))  # Incorrect
 ((0.0, nothing, nothing, nothing),)
 ```
 
 Passing in a duplicated (e.g. differentiable) variable for `tmp` now leads to the correct answer.
 
 ```jldoctest storage
-Enzyme.autodiff(Reverse, f, Active(1.2), Duplicated(Vector{Float64}(undef, 1), zeros(1)), Const(1), Const(5))  # Correct (returns 10.367999999999999 == 1.2^4 * 5)
-
-# output
-
+julia> Enzyme.autodiff(Reverse, f, Active(1.2), Duplicated(Vector{Float64}(undef, 1), zeros(1)), Const(1), Const(5))  # Correct (returns 10.367999999999999 == 1.2^4 * 5)
 ((10.367999999999999, nothing, nothing, nothing),)
 ```
 
@@ -390,14 +381,12 @@ By default, Enzyme (and essentially all other) AD tools may assume that intermed
 Consider the following code snippet:
 
 ```jldoctest strongzero
-function f(x)
-    y = 1.0 / x
-    return min(1.0, y)
-end
+julia> function f(x)
+           y = 1.0 / x
+           return min(1.0, y)
+       end;
 
-f(0.0)
-
-# output
+julia> f(0.0)
 1.0
 ```
 
@@ -406,9 +395,7 @@ When evaluated at `x=0.0`, `y=Inf`. However due to the `min` the result will be 
 Let's consider what happens for the derivative by applying Enzyme. 
 
 ```jldoctest strongzero
-Enzyme.gradient(Reverse, f, 0.0)
-
-# output
+julia> Enzyme.gradient(Reverse, f, 0.0)
 (NaN,)
 ```
 
@@ -443,16 +430,14 @@ grad_f(0.0)
 NaN
 ```
 
-The problematic point for us that creates the NaN is the derivative rule for `1.0 / x`. In particular it computes `dy * - 1.0 / x^2 `. The right hand side `-1.0 / x^2` is of course infinite (in this case `-Inf`). However, `dy = 0.0` since we computed that the term was not used in the final returned expression. Multiplying these together indeed produces a `NaN`. The problem here, is that in this case the fact that we didn't use the value of `y` in a differentiable way should bind more **tightly** -- in other words, if the partial derivative wrt y is zero (aka `dy == 0.0`), the partial derivative wrt all operands of y should be zero.
+The problematic point for us that creates the NaN is the derivative rule for `1.0 / x`. In particular it computes `dy * - 1.0 / x^2 `. The right hand side `-1.0 / x^2` is of course infinite (in this case `-Inf`). However, `dy = 0.0` since we computed that the term was not used in the final returned expression. Multiplying these together indeed produces a `NaN`. The problem here, is that in this case the fact that we didn't use the value of `y` in a differentiable way should bind more **tightly** -- in other words, if the partial derivative with respect to y is zero (aka `dy == 0.0`), the partial derivative with respect to all operands of y should be zero.
 
 This is exactly what the strong zero mode of Enzyme does. It tells the derivative rules to perform an additional runtime check that the derivative to propagate is non-zero. It comes with a nontrivial additional compute cost as a result, but ensures correctness in cases like this where intermediate values of a computation (even if unused) may be infinite or `NaN`.
 
 One can use this from Enzyme.jl as follows and get the intended result:
 
 ```jldoctest strongzero
-Enzyme.gradient(set_strong_zero(Reverse), f, 0.0)
-
-# output
+julia> Enzyme.gradient(set_strong_zero(Reverse), f, 0.0)
 (-0.0,)
 ```
 
@@ -473,33 +458,29 @@ grad v(x, y) = [d/dx v, d/dy v] = [d/dx 2*x*y, d/dy 2*x*y] = [2*y, 2*x];
 Reverse mode differentiation computes the derivative of all inputs with respect to a single output by propagating the derivative of the return to its inputs. Here, we can explicitly differentiate with respect to the real and imaginary results, respectively, to find this matrix.
 
 ```jldoctest complex
-f(z) = z * z
+julia> f(z) = z * z;
 
-# a fixed input to use for testing
-z = 3.1 + 2.7im
+julia> z = 3.1 + 2.7im; # a fixed input to use for testing
 
-grad_u = Enzyme.autodiff(Reverse, z->real(f(z)), Active, Active(z))[1][1]
-grad_v = Enzyme.autodiff(Reverse, z->imag(f(z)), Active, Active(z))[1][1]
+julia> grad_u = Enzyme.autodiff(Reverse, z->real(f(z)), Active, Active(z))[1][1]
+6.2 - 5.4im
 
-(grad_u, grad_v)
-# output
-(6.2 - 5.4im, 5.4 + 6.2im)
+julia> grad_v = Enzyme.autodiff(Reverse, z->imag(f(z)), Active, Active(z))[1][1]
+5.4 + 6.2im
 ```
 
 This is somewhat inefficient, since we need to call the forward pass twice, once for the real part, once for the imaginary. We can solve this using batched derivatives in Enzyme, which computes several derivatives for the same function all in one go. To make it work, we're going to need to use split mode, which allows us to provide a custom derivative return value.
 
 ```jldoctest complex
-fwd, rev = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(f)}, Active, Active{ComplexF64})
+julia> fwd, rev = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(f)}, Active, Active{ComplexF64});
 
-# Compute the reverse pass seeded with a differntial return of 1.0 + 0.0im
-grad_u = rev(Const(f), Active(z), 1.0 + 0.0im, fwd(Const(f), Active(z))[1])[1][1]
-# Compute the reverse pass seeded with a differntial return of 0.0 + 1.0im
-grad_v = rev(Const(f), Active(z), 0.0 + 1.0im, fwd(Const(f), Active(z))[1])[1][1]
+julia> # Compute the reverse pass seeded with a differential return of 1.0 + 0.0im
+       grad_u = rev(Const(f), Active(z), 1.0 + 0.0im, fwd(Const(f), Active(z))[1])[1][1]
+6.2 - 5.4im
 
-(grad_u, grad_v)
-
-# output
-(6.2 - 5.4im, 5.4 + 6.2im)
+julia> # Compute the reverse pass seeded with a differential return of 0.0 + 1.0im
+       grad_v = rev(Const(f), Active(z), 0.0 + 1.0im, fwd(Const(f), Active(z))[1])[1][1]
+5.4 + 6.2im
 ```
 
 Now let's make this batched
@@ -522,20 +503,16 @@ d/dy f(x, y) = d/dy [u(x,y), v(x,y)] = d/dy [x*x-y*y, 2*x*y] = [-2*y, 2*x];
 ```
 
 ```jldoctest complex
-d_dx = Enzyme.autodiff(Forward, f, Duplicated(z, 1.0+0.0im))[1]
-d_dy = Enzyme.autodiff(Forward, f, Duplicated(z, 0.0+1.0im))[1]
+julia> d_dx = Enzyme.autodiff(Forward, f, Duplicated(z, 1.0+0.0im))[1]
+6.2 + 5.4im
 
-(d_dx, d_dy)
-
-# output
-(6.2 + 5.4im, -5.4 + 6.2im)
+julia> d_dy = Enzyme.autodiff(Forward, f, Duplicated(z, 0.0+1.0im))[1]
+-5.4 + 6.2im
 ```
 
 Again, we can go ahead and batch this.
 ```jldoctest complex
-Enzyme.autodiff(Forward, f, BatchDuplicated(z, (1.0+0.0im, 0.0+1.0im)))[1]
-
-# output
+julia> Enzyme.autodiff(Forward, f, BatchDuplicated(z, (1.0+0.0im, 0.0+1.0im)))[1]
 (var"1" = 6.2 + 5.4im, var"2" = -5.4 + 6.2im)
 ```
 
@@ -546,13 +523,11 @@ Complex differentiation is often viewed in the lens of directional derivatives. 
 For completeness, we can also consider the derivative along the imaginary axis  $\texttt{lim}_{\Delta y \rightarrow 0} \frac{f(x, y+\Delta y)-f(x, y)}{i\Delta y}$. Here this simplifies to $\texttt{lim}_{u(x, y+\Delta y)-u(x, y) + i \left[ v(x, y+\Delta y)-v(x, y)\right]}{i\Delta y} = -i\frac{\partial}{\partial y} u(x,y) + \frac{\partial}{\partial y} v(x,y)$. Except for the $i$ in the denominator of the limit, this is the same as the result of Forward mode, when seeding x with a shadow of `0.0 + 1.0im`. We can thus compute the derivative along the real axis by multiplying our second Forward mode call by `-im`.
 
 ```jldoctest complex
-d_real = Enzyme.autodiff(Forward, f, Duplicated(z, 1.0+0.0im))[1]
-d_im   = -im * Enzyme.autodiff(Forward, f, Duplicated(z, 0.0+1.0im))[1]
+julia> d_real = Enzyme.autodiff(Forward, f, Duplicated(z, 1.0+0.0im))[1]
+6.2 + 5.4im
 
-(d_real, d_im)
-
-# output
-(6.2 + 5.4im, 6.2 + 5.4im)
+julia> d_im   = -im * Enzyme.autodiff(Forward, f, Duplicated(z, 0.0+1.0im))[1]
+6.2 + 5.4im
 ```
 
 Interestingly, the derivative of `z*z` is the same when computed in either axis. That is because this function is part of a special class of functions that are invariant to the input direction, called holomorphic. 
@@ -567,10 +542,7 @@ We saw earlier, that performing reverse-mode AD with a return seed of `1.0 + 0.0
 
 
 ```jldoctest complex
-conj(grad_u)
-
-# output
-
+julia> conj(grad_u)
 6.2 + 5.4im
 ```
 
@@ -579,58 +551,56 @@ In the case of a scalar-input scalar-output function, that's sufficient. However
 For simplicity, Enzyme provides a helper utlity `ReverseHolomorphic` which performs Reverse mode properly here, assuming that the function is indeed holomorphic and thus has a well-defined single derivative.
 
 ```jldoctest complex
-Enzyme.autodiff(ReverseHolomorphic, f, Active, Active(z))[1][1]
-
-# output
-
+julia> Enzyme.autodiff(ReverseHolomorphic, f, Active, Active(z))[1][1]
 6.2 + 5.4im
 ```
 
 For even non-holomorphic functions, complex analysis allows us to define $\frac{\partial}{\partial z} = \frac{1}{2}\left(\frac{\partial}{\partial x} - i \frac{\partial}{\partial y} \right)$. For non-holomorphic functions, this allows us to compute `d/dz`.  Let's consider `myabs2(z) = z * conj(z)`. We can compute the derivative wrt z of this in Forward mode as follows, which as one would expect results in a result of `conj(z)`:
 
 ```jldoctest complex
-myabs2(z) = z * conj(z)
+julia> myabs2(z) = z * conj(z);
 
-dabs2_dx, dabs2_dy = Enzyme.autodiff(Forward, myabs2, BatchDuplicated(z, (1.0 + 0.0im, 0.0 + 1.0im)))[1]
-(dabs2_dx - im * dabs2_dy) / 2
+julia> dabs2_dx, dabs2_dy = Enzyme.autodiff(Forward, myabs2, BatchDuplicated(z, (1.0 + 0.0im, 0.0 + 1.0im)))[1]
+(var"1" = 6.2 + 0.0im, var"2" = 5.4 + 0.0im)
 
-# output
-
+julia> (dabs2_dx - im * dabs2_dy) / 2
 3.1 - 2.7im
 ```
 
 Similarly, we can compute `d/d conj(z) = d/dx + i d/dy`.
 
 ```jldoctest complex
-(dabs2_dx + im * dabs2_dy) / 2
-
-# output
-
+julia> (dabs2_dx + im * dabs2_dy) / 2
 3.1 + 2.7im
 ```
 
 Computing this in Reverse mode is more tricky. Let's expand `f` in terms of `u` and `v`. $\frac{\partial}{\partial z} f = \frac12 \left( [u_x + i v_x] - i [u_y + i v_y] \right) = \frac12 \left( [u_x + v_y] + i [v_x - u_y] \right)$. Thus `d/dz = (conj(grad_u) + im * conj(grad_v))/2`.
 
 ```jldoctest complex
-abs2_fwd, abs2_rev = Enzyme.autodiff_thunk(ReverseSplitWidth(ReverseSplitNoPrimal, Val(2)), Const{typeof(myabs2)}, Active, Active{ComplexF64})
+julia> abs2_fwd, abs2_rev = Enzyme.autodiff_thunk(
+           ReverseSplitWidth(ReverseSplitNoPrimal, Val(2)),
+           Const{typeof(myabs2)},
+           Active,
+           Active{ComplexF64}
+       );
 
-# Compute the reverse pass seeded with a differential return of 1.0 + 0.0im and 0.0 + 1.0im in one go!
-gradabs2_u, gradabs2_v = abs2_rev(Const(myabs2), Active(z), (1.0 + 0.0im, 0.0 + 1.0im), abs2_fwd(Const(myabs2), Active(z))[1])[1][1]
+julia> # Compute the reverse pass seeded with a differential return of 1.0 + 0.0im and 0.0 + 1.0im in one go!
+       gradabs2_u, gradabs2_v = abs2_rev(
+           Const(myabs2),
+           Active(z),
+           (1.0 + 0.0im, 0.0 + 1.0im),
+           abs2_fwd(Const(myabs2), Active(z))[1]
+       )[1][1]
+(6.2 + 5.4im, 0.0 + 0.0im)
 
-(conj(gradabs2_u) + im * conj(gradabs2_v)) / 2
-
-# output
-
+julia> (conj(gradabs2_u) + im * conj(gradabs2_v)) / 2
 3.1 - 2.7im
 ```
 
 For `d/d conj(z)`, $\frac12 \left( [u_x + i v_x] + i [u_y + i v_y] \right) = \frac12 \left( [u_x - v_y] + i [v_x + u_y] \right)$. Thus `d/d conj(z) = (grad_u + im * grad_v)/2`.
 
 ```jldoctest complex
-(gradabs2_u + im * gradabs2_v) / 2
-
-# output
-
+julia> (gradabs2_u + im * gradabs2_v) / 2
 3.1 + 2.7im
 ```
 
@@ -643,35 +613,28 @@ Enzyme tracks differentiable dataflow through values. Specifically Enzyme tracks
 As a simple example:
 
 ```jldoctest types
-f(x) = x * x
-Enzyme.autodiff(Forward, f, Duplicated(3.0, 1.0))
+julia> f(x) = x * x;
 
-# output
-
+julia> Enzyme.autodiff(Forward, f, Duplicated(3.0, 1.0))
 (6.0,)
 ```
 
 Enzyme also tracks differentiable data in any types containing these base types (e.g. floats). For example, consider a struct or array containing floats.
 
 ```jldoctest types
-struct Pair
-    lhs::Float64
-    rhs::Float64
-end
-f_pair(x) = x.lhs * x.rhs
-Enzyme.autodiff(Forward, f_pair, Duplicated(Pair(3.0, 2.0), Pair(1.0, 0.0)))
+julia> struct Pair
+           lhs::Float64
+           rhs::Float64
+       end
 
-# output
+julia> f_pair(x) = x.lhs * x.rhs;
 
+julia> Enzyme.autodiff(Forward, f_pair, Duplicated(Pair(3.0, 2.0), Pair(1.0, 0.0)))
 (2.0,)
 ```
 
 ```jldoctest types
-Enzyme.autodiff(Forward, sum, Duplicated([1.0, 2.0, 3.0], [5.0, 0.0, 100.0]))
-
-
-# output
-
+julia> Enzyme.autodiff(Forward, sum, Duplicated([1.0, 2.0, 3.0], [5.0, 0.0, 100.0]))
 (105.0,)
 ```
 
@@ -715,31 +678,23 @@ Enzyme.autodiff(Forward, list_sum, Duplicated(list, dlist))
 Presently Enzyme only considers floats as base types. As a result, Enzyme does not support differentiating data contained in `Int`s, `String`s, or `Val`s. If it is desirable for Enzyme to add a base type, please open an issue.
 
 ```jldoctest types
-f_int(x) = x * x
-Enzyme.autodiff(Forward, f_int, Duplicated, Duplicated(3, 1))
+julia> f_int(x) = x * x;
 
-# output
-
+julia> Enzyme.autodiff(Forward, f_int, Duplicated, Duplicated(3, 1))
 ERROR: Return type `Int64` not marked Const, but type is guaranteed to be constant
 ```
 
 ```jldoctest types
-f_str(x) = parse(Float64, x) * parse(Float64, x)
+julia> f_str(x) = parse(Float64, x) * parse(Float64, x);
 
-autodiff(Forward, f_str, Duplicated("1.0", "1.0"))
-
-# output
-
+julia> autodiff(Forward, f_str, Duplicated("1.0", "1.0"))
 (0.0,)
 ```
 
 ```jldoctest types
-f_val(::Val{x}) where x = x * x
+julia> f_val(::Val{x}) where x = x * x;
 
-autodiff(Forward, f_val, Duplicated(Val(1.0), Val(1.0)))
-
-# output
-
+julia> autodiff(Forward, f_val, Duplicated(Val(1.0), Val(1.0)))
 ERROR: Type of ghost or constant type Duplicated{Val{1.0}} is marked as differentiable.
 ```
 
