@@ -29,8 +29,11 @@ dy = [0.0, 0.0]
 
 g(y, x) = f(y, x)^2 # function to differentiate
 
-@show autodiff(Forward, g, Duplicated(y, dy), Duplicated(x, dx)) # derivative of g w.r.t. x[1]
-@show dy; # derivative of y w.r.t. x[1] when g is run
+## derivative of g with respect to x[1]
+autodiff(Forward, g, Duplicated(y, dy), Duplicated(x, dx))
+#-
+## derivative of y with respect to x[1] when g is run
+dy
 
 # (See the [AutoDiff API tutorial](autodiff.md) for more information on using `autodiff`.)
 
@@ -82,10 +85,18 @@ dx = [1.0, 0.0]
 y = [0.0, 0.0]
 dy = [0.0, 0.0]
 
-g(y, x) = f(y, x)^2 # function to differentiate
+## function to differentiate
+g(y, x) = f(y, x)^2
 
-@show autodiff(Forward, g, Duplicated(y, dy), Duplicated(x, dx)) # derivative of g w.r.t. x[1]
-@show dy; # derivative of y w.r.t. x[1] when g is run
+#-
+
+## derivative of g with respect to x[1]
+autodiff(Forward, g, Duplicated(y, dy), Duplicated(x, dx))
+
+#-
+
+## derivative of y with respect to x[1] when g is run
+dy
 
 # We see that our custom forward rule has been triggered and gives the same answer as before.
 
@@ -111,8 +122,11 @@ dx = [1.0, 0.0]
 y = [0.0, 0.0]
 dy = [0.0, 0.0]
 
-@show autodiff(Forward, f, Duplicated(y, dy), Duplicated(x, dx)) # derivative of f w.r.t. x[1]
-@show dy; # derivative of y w.r.t. x[1] when f is run
+## derivative of f with respect to x[1]
+autodiff(Forward, f, Duplicated(y, dy), Duplicated(x, dx))
+#-
+## derivative of y with respect to x[1] when f is run
+dy
 
 # !!! note "Custom rule dispatch"
 #     When multiple custom rules for a function are defined, the correct rule is chosen using
@@ -161,9 +175,14 @@ dy = [0.0, 0.0]
 
 g(y, x) = f(y, x)^2 # function to differentiate
 
-@show autodiff(Forward, g, Duplicated(y, dy), Duplicated(x, dx)) # derivative of g w.r.t. x[1]
-@show autodiff(Forward, g, Const(y), Duplicated(x, dx)) # derivative of g w.r.t. x[1], with y annotated Const
-@show autodiff(Forward, g, Const(y), Const(x)); # derivative of g w.r.t. x[1], with x and y annotated Const
+## derivative of g with respect to x[1]
+autodiff(Forward, g, Duplicated(y, dy), Duplicated(x, dx))
+#-
+## derivative of g with respect to x[1], with y annotated Const
+autodiff(Forward, g, Const(y), Duplicated(x, dx))
+#-
+## derivative of g with respect to x[1], with x and y annotated Const
+autodiff(Forward, g, Const(y), Const(x));
 
 # Note that there are also exist batched duplicated annotations for forward mode, namely [`BatchDuplicated`](@ref)
 # and [`BatchDuplicatedNoNeed`](@ref), which are not covered in this tutorial.
@@ -247,8 +266,12 @@ dy = [0.0, 0.0]
 g(y, x) = f(y, x)^2
 
 autodiff(Reverse, g, Duplicated(y, dy), Duplicated(x, dx))
-@show dx # derivative of g w.r.t. x
-@show dy; # derivative of g w.r.t. y
+
+## derivative of g with respect to x
+dx
+#-
+## derivative of g with respect to y
+dy
 
 # Let's also try a function which mutates `x` after running `f`, and also uses `y` directly rather than only `ret` after running `f`
 # (but ultimately gives the same result as above):
@@ -265,8 +288,12 @@ make_zero!(dx)
 make_zero!(dy)
 
 autodiff(Reverse, h, Duplicated(y, dy), Duplicated(x, dx))
-@show dx # derivative of h w.r.t. x
-@show dy; # derivative of h w.r.t. y
+
+## derivative of h with respect to x
+dx
+#-
+## derivative of h with respect to y
+dy
 
 # ## Marking functions inactive
 
@@ -290,7 +317,8 @@ autodiff(Forward, k, Duplicated(2.0, 1.0))
 double(x) = 2 * x
 EnzymeRules.inactive(::typeof(double), args...) = nothing
 
-autodiff(Forward, x -> x + double(x), Duplicated(2.0, 1.0)) # mathematically should be 3.0, inactive rule causes it to be 1.0
+## mathematically should be 3.0, inactive rule causes it to be 1.0
+autodiff(Forward, x -> x + double(x), Duplicated(2.0, 1.0))
 
 # ## Testing our rules
 
