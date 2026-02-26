@@ -181,7 +181,7 @@ Function to compute transport.
 - `U`: transport value
 """
 function compute_transport(rho, params)
-    (; delta,  u0) = params
+    (; delta, u0) = params
     U = u0 * (rho[2] - (delta * rho[1] + (1 - delta) * rho[3]))
     return U
 end

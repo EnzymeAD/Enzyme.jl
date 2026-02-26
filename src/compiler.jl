@@ -5641,16 +5641,16 @@ end
                         )
                     )
 
-			 size = Compiler.datatype_layoutsize(jTy)
+                        size = Compiler.datatype_layoutsize(jTy)
                         if offset < size && isa(sz, LLVM.ConstantInt) && size - offset >= convert(Int, sz)
                             lim = convert(Int, sz)
                             md = to_fullmd(jTy, offset, lim)
                             @assert byref == GPUCompiler.BITS_REF ||
                                     byref == GPUCompiler.MUT_REF
                             metadata(inst)["enzyme_truetype"] = md
-			elseif byref == GPUCompiler.BITS_VALUE && jTy <: Ptr && eltype(jTy) == Any
-			    # TODO generalize this
-			    md = to_fullmd(jTy, 0, sizeof(Ptr{Cvoid}))
+                        elseif byref == GPUCompiler.BITS_VALUE && jTy <: Ptr && eltype(jTy) == Any
+                            # TODO generalize this
+                            md = to_fullmd(jTy, 0, sizeof(Ptr{Cvoid}))
                             metadata(inst)["enzyme_truetype"] = md
                         end
                     end
