@@ -1221,7 +1221,6 @@ No guarantees are presently made about the type of the AbstractArray returned by
 
 In the future, when this function is extended to handle non-array return types, 
 this function will retun an AbstractArray of shape `size(output)` of values of the input type. 
-```
 """
 @generated function jacobian(
     mode::ReverseMode,
@@ -1289,7 +1288,7 @@ Compute an in-place Hessian-vector product of an array-input scalar-output funct
 The result will be stored into `res`. The function still allocates and zero's a buffer to store the intermediate gradient, which is
 not returned to the user.
 
-In other words, compute res .= hessian(f)(x) * v
+In other words, compute `res .= hessian(f)(x) * v`
 
 See [`hvp_and_gradient!`](@ref) for a function to compute both the hvp and the gradient in a single call.
 
