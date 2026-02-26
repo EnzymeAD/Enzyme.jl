@@ -136,7 +136,7 @@ dy = [1.0]
 grad(x, dx, y, dy)
 
 # `dx` now contains the gradient
-@show dx
+dx
 
 # To compute the hessian, we need to take the dervative of this gradient function at every input.
 # Following the same seeding strategy as before, we now seed both
@@ -164,11 +164,7 @@ Enzyme.autodiff(
 g[1] == dx[1]
 
 # We have now the first row/column of the Hessian
-hess[1][1] == 2.0
-
-hess[1][2] == 1.0
+hess[1]
 
 # as well as the second row/column
-hess[2][1] == 1.0
-
-hess[2][2] == 0.0
+hess[2]
