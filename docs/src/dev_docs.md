@@ -100,7 +100,7 @@ Depending on how you installed Julia the LLVM Julia is using will be different.
 3. Uses a pre-built Julia from your system vendor (Not recommended)
 
 To check what LLVM Julia is using use:
-```
+```julia-repl
 julia> Base.libllvm_version_string
 "9.0.1jl"
 ```
