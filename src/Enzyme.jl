@@ -1323,7 +1323,13 @@ import .Compiler: remove_innerty, UnknownTapeType
 end
 
 """
-    autodiff_deferred_thunk(::ReverseModeSplit, TapeType::Type, ftype::Type{<:Annotation}, Activity::Type{<:Annotation}, argtypes::Type{<:Annotation}...)
+    autodiff_deferred_thunk(
+        ::ReverseModeSplit,
+        TapeType::Type,
+        ftype::Type{<:Annotation},
+        Activity::Type{<:Annotation},
+        argtypes::Type{<:Annotation}...
+    )
 
 Provide the split forward and reverse pass functions for annotated function type
 ftype when called with args of type `argtypes` when using reverse mode.
