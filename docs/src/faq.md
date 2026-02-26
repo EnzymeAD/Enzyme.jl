@@ -78,7 +78,7 @@ To make sure that `∂f_∂x` has the right data layout, create it with `∂f_�
 
 Advanced users may leverage Enzyme's memory semantics (only touching locations in the shadow that were touched in the primal) for additional performance/memory savings, at the obvious cost of potential safety if used incorrectly.
 
-Consider the following function that loads from offset 47 of a Ptr
+Consider the following function that loads from offset 47 of a `Ptr`
 
 ```jldoctest dup
 function f(ptr)
@@ -187,7 +187,6 @@ da2
   [1]  =  1.0
 ```
 
-
 Sometimes, determining how to perform this zeroing can be complicated.
 That is why Enzyme provides a helper function `Enzyme.make_zero` that does this automatically.
 
@@ -205,7 +204,7 @@ Some Julia libraries sparse linear algebra libraries call out to external C code
 
 ### Advanced Sparse arrays
 
-Essentially the way Enzyme represents all data structures, including sparse data structures, is to have the shadow (aka derivative) memory be the same memory layout as the primal. Suppose you have an input data structure `x`. The derivative of `x` at byte offset 12 will be stored in the shadow dx at byte offset 12, etc.
+Essentially the way Enzyme represents all data structures, including sparse data structures, is to have the shadow (aka derivative) memory be the same memory layout as the primal. Suppose you have an input data structure `x`. The derivative of `x` at byte offset 12 will be stored in the shadow `dx` at byte offset 12, etc.
 
 This has the nice property that the storage for the derivative, including all intermediate computations, is the same as that of the primal (ignoring caching requirements for reverse mode).
 
@@ -213,11 +212,11 @@ It also means that any arbitrary data structure can be differentiated with respe
 
 This representation does have some caveats (e.g. see Identical types in `Duplicated` above).
 
-Sparse data structures are often represented with say a Vector{Float64} that holds the actual elements, and a Vector{Int} that specifies the index n the backing array that corresponds to the true location in the overall vector.
+Sparse data structures are often represented with say a `Vector{Float64}` that holds the actual elements, and a `Vector{Int}` that specifies the index `n` the backing array that corresponds to the true location in the overall vector.
 
 We have no explicit special cases for sparse Data structures, so the layout semantics mentioned above is indeed what Enzyme uses.
 
-Thus the derivative of a sparse array is to have a second backing array of the same size, and another Vector{Int} (of the same offsets).
+Thus the derivative of a sparse array is to have a second backing array of the same size, and another `Vector{Int}` (of the same offsets).
 
 As a concrete example, suppose we have the following: `x = { 3 : 2.7, 10 : 3.14 }`. In other words, a sparse data structure with two elements, one at index 3, another at index 10. This could be represented with the backing array being `[2.7, 3.14]` and the index array being `[3, 10]`.
 
@@ -225,7 +224,7 @@ A correctly zero-initialized shadow data structure would be to have a backing ar
 
 In this form the second element of the derivative backing array is used to store/represent the derivative of the second element of the original backing array, in other words the derivative at index 10.
 
-Like mentioned above, a caveat here is that this correctly zero’d initializer is not the default produced by `sparse([0.0])` as this drops the zero elements from the backing array. Enzyme.make_zero recursively goes through your data structure to generate the shadows of the correct structure (and in this case would make a new backing array of appropriate size). The `make_zero` function is not special cased to sparsity, but just comes out as a result.
+Like mentioned above, a caveat here is that this correctly zero’d initializer is not the default produced by `sparse([0.0])` as this drops the zero elements from the backing array. `Enzyme.make_zero` recursively goes through your data structure to generate the shadows of the correct structure (and in this case would make a new backing array of appropriate size). The `make_zero` function is not special cased to sparsity, but just comes out as a result.
 
 Internally, when differentiating a function this is the type of data structure that Enzyme builds and uses to represent variables. However, at the Julia level that there’s a bit of a sharp edge.
 
@@ -259,7 +258,7 @@ end
 f (generic function with 1 method)
 ```
 
-Marking the argument for `tmp` as Const (aka non-differentiable) means that Enzyme believes that all variables loaded from or stored into `tmp` must also be non-differentiable, since all values inside a non-differentiable variable must also by definition be non-differentiable.
+Marking the argument for `tmp` as `Const` (aka non-differentiable) means that Enzyme believes that all variables loaded from or stored into `tmp` must also be non-differentiable, since all values inside a non-differentiable variable must also by definition be non-differentiable.
 ```jldoctest storage
 Enzyme.autodiff(Reverse, f, Active(1.2), Const(Vector{Float64}(undef, 1)), Const(1), Const(5))  # Incorrect
 
@@ -280,7 +279,7 @@ Enzyme.autodiff(Reverse, f, Active(1.2), Duplicated(Vector{Float64}(undef, 1), z
 
 ## [Runtime Activity](@id faq-runtime-activity)
 
-When computing the derivative of mutable variables, Enzyme also needs additional temporary storage space for the corresponding derivative variables. If an argument `tmp` is marked as Const, Enzyme does not have any temporary storage space for the derivatives!
+When computing the derivative of mutable variables, Enzyme also needs additional temporary storage space for the corresponding derivative variables. If an argument `tmp` is marked as `Const`, Enzyme does not have any temporary storage space for the derivatives!
 
 Enzyme will error when they detect these latter types of situations, which we will refer to as `activity unstable`. This term is chosen to mirror the Julia notion of type-unstable code (e.g. where a type is not known at compile time). If an expression is activity unstable, it could either be constant, or active, depending on data not known at compile time. For example, consider the following:
 
@@ -515,7 +514,7 @@ rev(Const(f), Active(z), (1.0 + 0.0im, 0.0 + 1.0im), fwd(Const(f), Active(z))[1]
 (6.2 - 5.4im, 5.4 + 6.2im)
 ```
 
-In contrast, Forward mode differentiation computes the derivative of all outputs with respect to a single input by providing a differential input. Thus we need to seed the shadow input with either 1.0 or 1.0im, respectively. This will compute the transpose of the matrix we found earlier.
+In contrast, Forward mode differentiation computes the derivative of all outputs with respect to a single input by providing a differential input. Thus we need to seed the shadow input with either `1.0` or `1.0im`, respectively. This will compute the transpose of the matrix we found earlier.
 
 ```
 d/dx f(x, y) = d/dx [u(x,y), v(x,y)] = d/dx [x*x-y*y, 2*x*y] = [ 2*x, 2*y];
@@ -639,7 +638,7 @@ Note: when writing rules for complex scalar functions, in reverse mode one needs
 
 ## What types are differentiable?
 
-Enzyme tracks differentiable dataflow through values. Specifically Enzyme tracks differentiable data in base types like Float32, Float64, Float16, BFloat16, etc.
+Enzyme tracks differentiable dataflow through values. Specifically Enzyme tracks differentiable data in base types like `Float32`, `Float64`, `Float16`, `BFloat16`, etc.
 
 As a simple example:
 
@@ -713,7 +712,7 @@ Enzyme.autodiff(Forward, list_sum, Duplicated(list, dlist))
 (105.0,)
 ```
 
-Presently Enzyme only considers floats as base types. As a result, Enzyme does not support differentiating data contained in Ints, Strings, or Vals. If it is desirable for Enzyme to add a base type, please open an issue.
+Presently Enzyme only considers floats as base types. As a result, Enzyme does not support differentiating data contained in `Int`s, `String`s, or `Val`s. If it is desirable for Enzyme to add a base type, please open an issue.
 
 ```jldoctest types
 f_int(x) = x * x
