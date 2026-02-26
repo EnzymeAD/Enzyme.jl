@@ -448,11 +448,13 @@ Differentiation of a function which returns a complex number is ambiguous, becau
 Consider the function `f(z) = z*z`. If we were to differentiate this and have real inputs and outputs, the derivative `f'(z)` would be unambiguously `2*z`. However, consider breaking down a complex number down into real and imaginary parts. Suppose now we were to call `f` with the explicit real and imaginary components, `z = x + i y`. This means that `f` is a function that takes an input of two values and returns two values `f(x, y) = u(x, y) + i v(x, y)`. In the case of `z*z` this means that `u(x,y) = x*x-y*y` and `v(x,y) = 2*x*y`.
 
 
-If we were to look at all first-order derivatives in total, we would end up with a 2x2 matrix (i.e. Jacobian), the derivative of each output wrt each input. Let's try to compute this, first by hand, then with Enzyme.
+If we were to look at all first-order derivatives in total, we would end up with a 2×2 matrix (i.e. Jacobian), the derivative of each output with respect to each input. Let's try to compute this, first by hand, then with Enzyme.
 
-```
-grad u(x, y) = [d/dx u, d/dy u] = [d/dx x*x-y*y, d/dy x*x-y*y] = [2*x, -2*y];
-grad v(x, y) = [d/dx v, d/dy v] = [d/dx 2*x*y, d/dy 2*x*y] = [2*y, 2*x];
+```math
+\begin{align*}
+\nabla u(x, y) &= \left[\frac{\partial u}{\partial x}, \frac{\partial u}{\partial y}\right] = \left[\frac{\partial}{\partial x} \left(x^2-y^2\right), \frac{\partial}{\partial y} \left(x^2-y^2\right)\right] = [2x, -2y]; \\
+\nabla v(x, y) &= \left[\frac{\partial v}{\partial x}, \frac{\partial v}{\partial y}\right] = \left[\frac{\partial}{\partial x} 2xy, \frac{\partial}{\partial y} 2xy\right] = [2y, 2x];
+\end{align*}
 ```
 
 Reverse mode differentiation computes the derivative of all inputs with respect to a single output by propagating the derivative of the return to its inputs. Here, we can explicitly differentiate with respect to the real and imaginary results, respectively, to find this matrix.
@@ -497,9 +499,11 @@ rev(Const(f), Active(z), (1.0 + 0.0im, 0.0 + 1.0im), fwd(Const(f), Active(z))[1]
 
 In contrast, Forward mode differentiation computes the derivative of all outputs with respect to a single input by providing a differential input. Thus we need to seed the shadow input with either `1.0` or `1.0im`, respectively. This will compute the transpose of the matrix we found earlier.
 
-```
-d/dx f(x, y) = d/dx [u(x,y), v(x,y)] = d/dx [x*x-y*y, 2*x*y] = [ 2*x, 2*y];
-d/dy f(x, y) = d/dy [u(x,y), v(x,y)] = d/dy [x*x-y*y, 2*x*y] = [-2*y, 2*x];
+```math
+\begin{align*}
+\frac{\partial}{\partial x} f(x, y) &= \frac{\partial}{\partial x} [u(x,y), v(x,y)] = \frac{\partial}{\partial x} [x^2-y^2, 2xy] = [ 2x, 2y]; \\
+\frac{\partial}{\partial y} f(x, y) &= \frac{\partial}{\partial y} [u(x,y), v(x,y)] = \frac{\partial}{\partial y} [x^2-y^2, 2xy] = [-2y, 2x];
+\end{align*}
 ```
 
 ```jldoctest complex
@@ -516,11 +520,11 @@ julia> Enzyme.autodiff(Forward, f, BatchDuplicated(z, (1.0+0.0im, 0.0+1.0im)))[1
 (var"1" = 6.2 + 5.4im, var"2" = -5.4 + 6.2im)
 ```
 
-Taking Jacobians with respect to the real and imaginary results is fine, but for a complex scalar function it would be really nice to have a single complex derivative. More concretely, in this case when differentiating `z*z`, it would be nice to simply return `2*z`. However, there are four independent variables in the 2x2 jacobian, but only two in a complex number. 
+Taking Jacobians with respect to the real and imaginary results is fine, but for a complex scalar function it would be really nice to have a single complex derivative. More concretely, in this case when differentiating `z*z`, it would be nice to simply return `2*z`. However, there are four independent variables in the 2×2 Jacobian, but only two in a complex number.
 
-Complex differentiation is often viewed in the lens of directional derivatives. For example, what is the derivative of the function as the real input increases, or as the imaginary input increases. Consider the derivative along the real axis, $\texttt{lim}_{\Delta x \rightarrow 0} \frac{f(x+\Delta x, y)-f(x, y)}{\Delta x}$. This simplifies to $\texttt{lim}_{\Delta x \rightarrow 0} \frac{u(x+\Delta x, y)-u(x, y) + i \left[ v(x+\Delta x, y)-v(x, y)\right]}{\Delta x} = \frac{\partial}{\partial x} u(x,y) + i\frac{\partial}{\partial x} v(x,y)$. This is exactly what we computed by seeding forward mode with a shadow of `1.0 + 0.0im`.
+Complex differentiation is often viewed in the lens of directional derivatives. For example, what is the derivative of the function as the real input increases, or as the imaginary input increases. Consider the derivative along the real axis, ``\lim_{\Delta x \to 0} \frac{f(x+\Delta x, y)-f(x, y)}{\Delta x}``. This simplifies to ``\lim_{\Delta x \to 0} \frac{u(x+\Delta x, y)-u(x, y) + i \left[ v(x+\Delta x, y)-v(x, y)\right]}{\Delta x} = \frac{\partial}{\partial x} u(x,y) + i\frac{\partial}{\partial x} v(x,y)``. This is exactly what we computed by seeding forward mode with a shadow of `1.0 + 0.0im`.
 
-For completeness, we can also consider the derivative along the imaginary axis  $\texttt{lim}_{\Delta y \rightarrow 0} \frac{f(x, y+\Delta y)-f(x, y)}{i\Delta y}$. Here this simplifies to $\texttt{lim}_{u(x, y+\Delta y)-u(x, y) + i \left[ v(x, y+\Delta y)-v(x, y)\right]}{i\Delta y} = -i\frac{\partial}{\partial y} u(x,y) + \frac{\partial}{\partial y} v(x,y)$. Except for the $i$ in the denominator of the limit, this is the same as the result of Forward mode, when seeding x with a shadow of `0.0 + 1.0im`. We can thus compute the derivative along the real axis by multiplying our second Forward mode call by `-im`.
+For completeness, we can also consider the derivative along the imaginary axis ``\lim_{\Delta y \to 0} \frac{f(x, y+\Delta y)-f(x, y)}{i\Delta y}``. Here this simplifies to ``\lim_{\Delta y \to 0} \frac{u(x, y+\Delta y)-u(x, y) + i \left[ v(x, y+\Delta y)-v(x, y)\right]}{i\Delta y} = -i\frac{\partial}{\partial y} u(x,y) + \frac{\partial}{\partial y} v(x,y)``. Except for the ``i`` in the denominator of the limit, this is the same as the result of Forward mode, when seeding x with a shadow of `0.0 + 1.0im`. We can thus compute the derivative along the real axis by multiplying our second Forward mode call by `-im`.
 
 ```jldoctest complex
 julia> d_real = Enzyme.autodiff(Forward, f, Duplicated(z, 1.0+0.0im))[1]
@@ -536,7 +540,7 @@ Thus, for holomorphic functions, we can simply seed Forward-mode AD with a shado
 
 Reverse-mode AD, however, is more tricky. This is because holomorphic functions are invariant to the direction of differentiation (aka the derivative inputs), not the direction of the differential return.
 
-However, if a function is holomorphic, the two derivative functions we computed above must be the same. As a result, $\frac{\partial}{\partial x} u = \frac{\partial}{\partial y} v$ and $\frac{\partial}{\partial y} u = -\frac{\partial}{\partial x} v$. 
+However, if a function is holomorphic, the two derivative functions we computed above must be the same. As a result, ``\frac{\partial}{\partial x} u = \frac{\partial}{\partial y} v`` and ``\frac{\partial}{\partial y} u = -\frac{\partial}{\partial x} v``.
 
 We saw earlier, that performing reverse-mode AD with a return seed of `1.0 + 0.0im` yielded `[d/dx u, d/dy u]`. Thus, for a holomorphic function, a real-seeded Reverse-mode AD computes `[d/dx u, -d/dx v]`, which is the complex conjugate of the derivative.
 
@@ -555,7 +559,7 @@ julia> Enzyme.autodiff(ReverseHolomorphic, f, Active, Active(z))[1][1]
 6.2 + 5.4im
 ```
 
-For even non-holomorphic functions, complex analysis allows us to define $\frac{\partial}{\partial z} = \frac{1}{2}\left(\frac{\partial}{\partial x} - i \frac{\partial}{\partial y} \right)$. For non-holomorphic functions, this allows us to compute `d/dz`.  Let's consider `myabs2(z) = z * conj(z)`. We can compute the derivative wrt z of this in Forward mode as follows, which as one would expect results in a result of `conj(z)`:
+For even non-holomorphic functions, complex analysis allows us to define ``\frac{\partial}{\partial z} = \frac{1}{2}\left(\frac{\partial}{\partial x} - i \frac{\partial}{\partial y} \right)``. For non-holomorphic functions, this allows us to compute `d/dz`.  Let's consider `myabs2(z) = z * conj(z)`. We can compute the derivative with respect to z of this in Forward mode as follows, which as one would expect results in a result of `conj(z)`:
 
 ```jldoctest complex
 julia> myabs2(z) = z * conj(z);
@@ -574,7 +578,7 @@ julia> (dabs2_dx + im * dabs2_dy) / 2
 3.1 + 2.7im
 ```
 
-Computing this in Reverse mode is more tricky. Let's expand `f` in terms of `u` and `v`. $\frac{\partial}{\partial z} f = \frac12 \left( [u_x + i v_x] - i [u_y + i v_y] \right) = \frac12 \left( [u_x + v_y] + i [v_x - u_y] \right)$. Thus `d/dz = (conj(grad_u) + im * conj(grad_v))/2`.
+Computing this in Reverse mode is more tricky. Let's expand `f` in terms of `u` and `v`. ``\frac{\partial}{\partial z} f = \frac12 \left( [u_x + i v_x] - i [u_y + i v_y] \right) = \frac12 \left( [u_x + v_y] + i [v_x - u_y] \right)``. Thus `d/dz = (conj(grad_u) + im * conj(grad_v))/2`.
 
 ```jldoctest complex
 julia> abs2_fwd, abs2_rev = Enzyme.autodiff_thunk(
@@ -597,7 +601,7 @@ julia> (conj(gradabs2_u) + im * conj(gradabs2_v)) / 2
 3.1 - 2.7im
 ```
 
-For `d/d conj(z)`, $\frac12 \left( [u_x + i v_x] + i [u_y + i v_y] \right) = \frac12 \left( [u_x - v_y] + i [v_x + u_y] \right)$. Thus `d/d conj(z) = (grad_u + im * grad_v)/2`.
+For `d/d conj(z)`, ``\frac{1}{2} \left( [u_x + i v_x] + i [u_y + i v_y] \right) = \frac{1}{2} \left( [u_x - v_y] + i [v_x + u_y] \right)``. Thus `d/d conj(z) = (grad_u + im * grad_v)/2`.
 
 ```jldoctest complex
 julia> (gradabs2_u + im * gradabs2_v) / 2
