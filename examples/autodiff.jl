@@ -113,7 +113,7 @@ dbx[2] == 1.0
 # The vector FoR allows us to propagate several tangents at once through the
 # second-order model by computing the derivative of the gradient at multiple points at once.
 # We begin by defining a helper function for the gradient. Since we will not need the original results
-# (stored in y), we can mark it DuplicatedNoNeed. Specifically, this will perform the following:
+# (stored in y), we can mark it `DuplicatedNoNeed`. Specifically, this will perform the following:
 # ```math
 # \begin{aligned}
 # \bar{x} &= \bar{x} + \bar{y} \cdot \nabla f(x) \\
@@ -126,7 +126,7 @@ function grad(x, dx, y, dy)
 end
 
 # To compute the conventional gradient, we would call this function with our given inputs,
-# dy = [1.0], and dx = [0.0, 0.0]. Since y is not needed, we can just set it to an undef vector.
+# `dy = [1.0]`, and `dx = [0.0, 0.0]`. Since y is not needed, we can just set it to an `undef` vector.
 
 x = [2.0, 2.0]
 y = Vector{Float64}(undef, 1)
@@ -135,12 +135,13 @@ dy = [1.0]
 
 grad(x, dx, y, dy)
 
-# dx now contains the gradient
+# `dx` now contains the gradient
 @show dx
 
 # To compute the hessian, we need to take the dervative of this gradient function at every input.
 # Following the same seeding strategy as before, we now seed both
-# in the `vx[1]=[1.0, 0.0]` and `vx[2]=[0.0, 1.0]` direction. These tuples have to be put into a `BatchDuplicated` type.
+# in the `vx[1] = [1.0, 0.0]` and `vx[2] = [0.0, 1.0]` direction.
+# These tuples have to be put into a `BatchDuplicated` type.
 # We then compute the forward mode derivative at all these points.
 
 vx = ([1.0, 0.0], [0.0, 1.0])
