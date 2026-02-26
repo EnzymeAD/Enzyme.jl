@@ -191,7 +191,7 @@ if VERSION >= v"1.11.0-DEV.1552"
         )
 else
 
-    # the codeinstance cache to use -- should only be used for the constructor
+    # the CodeInstance cache to use -- should only be used for the constructor
     # Note that the only way the interpreter modifies codegen is either not inlining a fwd mode
     # rule or not inlining a rev mode rule. Otherwise, all caches can be re-used.
     const GLOBAL_FWD_CACHE = GPUCompiler.CodeCache()
@@ -1199,7 +1199,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
 
                 if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
                     # adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
-                    # object passing this in by ref isnt a {[-1]:Pointer, [-1,-1]:Int}
+                    # object passing this in by ref isn't a {[-1]:Pointer, [-1,-1]:Int}
                     # aka the next field after this in the bigger object isn't guaranteed to also be the same.
                     if allocatedinline(arg.typ)
                         shift!(rest, dl, 0, sizeof(arg.typ), 0)
@@ -1356,7 +1356,7 @@ function nested_codegen!(
 	API.EnzymeDumpModuleRef(otherMod.ref)
     end
 
-    # Skipped inline of blas
+    # Skipped inline of BLAS
 
     run_enzyme = false
     set_module_types!(interp, otherMod, nothing, job, edges, run_enzyme, mode)
@@ -5649,7 +5649,7 @@ end
                                     byref == GPUCompiler.MUT_REF
                             metadata(inst)["enzyme_truetype"] = md
 			elseif byref == GPUCompiler.BITS_VALUE && jTy <: Ptr && eltype(jTy) == Any
-			    # Todo generalize this
+			    # TODO generalize this
 			    md = to_fullmd(jTy, 0, sizeof(Ptr{Cvoid}))
                             metadata(inst)["enzyme_truetype"] = md
                         end
@@ -7172,7 +7172,7 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
     rt2 = if A isa UnionAll
         rrt = primal_return_type_world(Mode == API.DEM_ForwardMode ? Forward : Reverse, world, mi)
 
-        # Don't error here but default to nothing return since in cuda context we don't use the device overrides
+        # Don't error here but default to nothing return since in CUDA context we don't use the device overrides
         if rrt == Union{}
             rrt = Nothing
         end

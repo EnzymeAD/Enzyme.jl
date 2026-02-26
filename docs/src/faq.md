@@ -154,7 +154,7 @@ Differentiating host-side code when accesses device memory (e.g. `sum(CuArray)`)
 
 ## Linear Algebra
 
-Enzyme supports presently some, but not all of Julia's linear algebra library. This is because some of Julia's linear algebra library is not pure Julia code and calls external functions such as BLAS, LaPACK, CuBLAS, SuiteSparse, etc.
+Enzyme supports presently some, but not all of Julia's linear algebra library. This is because some of Julia's linear algebra library is not pure Julia code and calls external functions such as BLAS, LAPACK, CuBLAS, SuiteSparse, etc.
 
 For all BLAS functions, Enzyme will generate a correct derivative function. If it is a `gemm` (matmul), `gemv` (matvec), `dot` (dot product), `axpy` (vector add and scale), and a few others, Enzyme will generate a fast derivative using another corresponding BLAS call.  For other BLAS functions, Enzyme will presently emit a warning `Fallback BLAS [functionname]` that indicates that Enzyme will differentiate this function by differentiating a serial implementation of BLAS. This will still work for all BLAS codes, but may be slower on a parallel platform.
 
