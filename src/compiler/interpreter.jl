@@ -992,8 +992,26 @@ end
 @inline function override_bc_mapreduce(f, op, ::Base.IndexLinear, A::Base.AbstractArrayOrBroadcasted)
     inds = Base.LinearIndices(A)
     n = length(inds)
+    
+    HET = Base.IteratorEltype(A)
+    if HET isa Base.HasEltype
+	ET = eltype(A)
+	    if (op === Base.:+ || op === Base.add_sum) && Base.isconcretetype(ET) && (ET <: Base.IEEEFloat || ET <: Complex{<:Base.IEEEFloat})
+		@inbounds i = first(inds)
+		@inbounds l = last(inds)
+		s = zero(ET)
+		while i <= l
+		    @inbounds Ai = A[i]
+		    i+=1
+		    s = op(s, f(Ai))
+		    @simdloop
+		end
+		return s
+	    end
+    end
+
     if n == 0
-        return Base.mapreduce_empty_iter(f, op, A, Base.IteratorEltype(A))
+        return Base.mapreduce_empty_iter(f, op, A, HET)
     elseif n == 1
         @inbounds a1 = A[first(inds)]
         return Base.mapreduce_first(f, op, a1)
