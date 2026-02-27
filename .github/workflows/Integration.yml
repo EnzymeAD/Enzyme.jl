@@ -54,6 +54,7 @@ jobs:
           - Lux
           - SciML
           - KernelAbstractions
+          - MatrixAlgebraKit
           - Molly
           - MPI
           - Comrade
