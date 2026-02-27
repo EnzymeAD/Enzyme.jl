@@ -123,7 +123,7 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
                 found = Any[]
                 legal, Ty = absint(operands(arg)[index], partial)
                 unionalls = TypeVar[]
-                for sarg in operands(arg)[(index + 1):(end - 1)]
+                for sarg in operands(arg)[(index + 1):LLVM.API.LLVMGetNumArgOperands(arg)]
                     slegal, foundv = absint(sarg, partial)
                     if slegal
                         push!(found, foundv)
@@ -149,7 +149,7 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
                 index += 1
                 found = Any[]
                 legal = true
-                for sarg in operands(arg)[index:(end - 1)]
+                for sarg in operands(arg)[index:LLVM.API.LLVMGetNumArgOperands(arg)]
                     slegal, foundv = absint(sarg, partial)
                     if slegal
                         push!(found, foundv)
@@ -523,7 +523,7 @@ function abs_typeof(
                 found = Union{Type, TypeVar}[]
                 unionalls = TypeVar[]
                 legal = true
-                for sarg in operands(arg)[index:(end - 1)]
+                for sarg in operands(arg)[index:LLVM.API.LLVMGetNumArgOperands(arg)]
                     slegal, foundv, _ = abs_typeof(sarg, partial, seenphis)
                     if slegal
                         push!(found, foundv)
@@ -943,7 +943,7 @@ function abs_cstring(@nospecialize(arg::LLVM.Value))::Tuple{Bool, String}
 
         if larg !== nothing
             if (isa(larg, LLVM.ConstantArray) || isa(larg, LLVM.ConstantDataArray)) && eltype(value_type(larg)) == LLVM.IntType(8)
-                return (true, String(map(Base.Fix1(convert, UInt8), collect(larg)[1:(end - 1)])))
+	        return (true, String(map(Base.Fix1(convert, UInt8), collect(larg)[1:(end-1)])))
             end
 
         end

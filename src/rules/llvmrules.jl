@@ -451,7 +451,7 @@ end
 @register_rev function duplicate_rev(B, orig, gutils, tape)
     newg = new_from_original(gutils, orig)
 
-    real_ops = collect(operands(orig))[1:end-1]
+    real_ops = collect(operands(orig))[1:LLVM.API.LLVMGetNumArgOperands(orig)]
     ops = [new_from_original(gutils, o) for o in real_ops]
 
     shadowin = invert_pointer(gutils, real_ops[1], B)
@@ -1215,7 +1215,7 @@ end
 
     width = get_width(gutils)
 
-    origh, origkey, origdflt = operands(orig)[1:end-1]
+    origh, origkey, origdflt = operands(orig)[1:LLVM.API.LLVMGetNumArgOperands(orig)]
 
     if is_constant_value(gutils, origh)
         emit_error(
@@ -1353,7 +1353,7 @@ end
 
     width = get_width(gutils)
 
-    origh, origkey, origval, originserted = operands(orig)[1:end-1]
+    origh, origkey, origval, originserted = operands(orig)[1:LLVM.API.LLVMGetNumArgOperands(orig)]
 
     @assert !is_constant_value(gutils, origh)
 
@@ -1730,15 +1730,13 @@ end
     end
     origops = collect(operands(orig))
     width = get_width(gutils)
-    origops = collect(operands(orig))
-    width = get_width(gutils)
 
     args = LLVM.Value[]
-    for a in origops[1:end-2]
+    for a in origops[1:LLVM.API.LLVMGetNumArgOperands(orig)-1]
         v = invert_pointer(gutils, a, B)
         push!(args, v)
     end
-    push!(args, new_from_original(gutils, origops[end-1]))
+    push!(args, new_from_original(gutils, origops[LLVM.API.LLVMGetNumArgOperands(orig)]))
     valTys = API.CValueType[
         API.VT_Shadow,
         API.VT_Shadow,
@@ -1844,7 +1842,7 @@ end
             UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
         for idx = 1:width
             vargs = LLVM.Value[]
-            for a in args[1:end-1]
+	    for a in args[1:end-1]
                 push!(vargs, extract_value!(B, a, idx - 1))
             end
             push!(vargs, args[end])

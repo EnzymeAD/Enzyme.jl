@@ -405,9 +405,9 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
     world = enzyme_extract_world(LLVM.parent(position(B)))
 
     @assert is_constant_value(gutils, origops[offset])
-    icvs = [is_constant_value(gutils, v) for v in origops[offset+1:end-1]]
-    abs_partial = [abs_typeof(v, true) for v in origops[offset+1:end-1]]
-    abs = [abs_typeof(v) for v in origops[offset+1:end-1]]
+    icvs = [is_constant_value(gutils, v) for v in origops[offset+1:LLVM.API.LLVMGetNumArgOperands(orig)]]
+    abs_partial = [abs_typeof(v, true) for v in origops[offset+1:LLVM.API.LLVMGetNumArgOperands(orig)]]
+    abs = [abs_typeof(v) for v in origops[offset+1:LLVM.API.LLVMGetNumArgOperands(orig)]]
 
     @assert length(icvs) == length(abs)
     for (icv, (found_partial, typ_partial, byref_partial), (found, typ, byref)) in
@@ -437,26 +437,14 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
         return true
     end
 
-    shadowsin = LLVM.Value[invert_pointer(gutils, o, B) for o in origops[offset:end-1]]
-    if width == 1
-        if offset != 1
-            pushfirst!(shadowsin, origops[1])
-        end
-        shadowres = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), shadowsin)
-        callconv!(shadowres, callconv(orig))
-    else
-        shadowres =
-            UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-        for idx = 1:width
-            args = LLVM.Value[extract_value!(B, s, idx - 1) for s in shadowsin]
-            if offset != 1
-                pushfirst!(args, origops[1])
-            end
-            tmp = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), args)
-            callconv!(tmp, callconv(orig))
-            shadowres = insert_value!(B, shadowres, tmp, idx - 1)
-        end
+    valTys = API.CValueType[API.VT_Shadow for o in origops[offset:LLVM.API.LLVMGetNumArgOperands(orig)]]
+    shadowsin = LLVM.Value[invert_pointer(gutils, o, B) for o in origops[offset:LLVM.API.LLVMGetNumArgOperands(orig)]]
+    if offset != 1
+        pushfirst!(shadowsin, origops[1])
+	pushfirst!(valTys, API.VT_Primal)
     end
+    
+    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, shadowsin, valTys, false; force_run=true)
     unsafe_store!(shadowR, shadowres.ref)
     return true
 end
@@ -480,8 +468,8 @@ function common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
 
     if !newstruct_common(true, true, offset, B, orig, gutils, normalR, shadowR) #=run=#
         origops = collect(operands(orig))
-        abs_partial = [abs_typeof(v, true) for v in origops[offset+1:end-1]]
-        icvs = [is_constant_value(gutils, v) for v in origops[offset+1:end-1]]
+        abs_partial = [abs_typeof(v, true) for v in origops[offset+1:LLVM.API.LLVMGetNumArgOperands(orig)]]
+        icvs = [is_constant_value(gutils, v) for v in origops[offset+1:LLVM.API.LLVMGetNumArgOperands(orig)]]
         emit_error(
             B,
             orig,
@@ -492,7 +480,7 @@ function common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
             " " *
             string(abs_partial) *
             " " *
-            string([v for v in origops[offset+1:end-1]]),
+            string([v for v in origops[offset+1:LLVM.API.LLVMGetNumArgOperands(orig)]]),
         )
     end
 
@@ -1039,7 +1027,7 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
         shadowin = invert_pointer(gutils, origops[2], B)
         if width == 1
             args = LLVM.Value[new_from_original(gutils, origops[1]), shadowin]
-            for a in origops[3:end-1]
+	    for a in origops[3:(LLVM.API.LLVMGetNumArgOperands(orig)-(offset-1))]
                 push!(args, new_from_original(gutils, a))
             end
             if offset != 1
@@ -1062,7 +1050,7 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
                     new_from_original(gutils, origops[1]),
                     shadowin_idx,
                 ]
-                for a in origops[3:end-1]
+		for a in origops[3:(LLVM.API.LLVMGetNumArgOperands(orig)-(offset-1))]
                     push!(args, new_from_original(gutils, a))
                 end
                 if offset != 1
@@ -1985,7 +1973,7 @@ function common_f_svec_ref_fwd(offset, B, orig, gutils, normalR, shadowR)
 
     width = get_width(gutils)
 
-    origmi, origh, origkey = operands(orig)[offset:end-1]
+    origmi, origh, origkey = operands(orig)[offset:LLVM.API.LLVMGetNumArgOperands(orig)]
 
     shadowh = invert_pointer(gutils, origh, B)
 
@@ -2064,7 +2052,7 @@ function common_f_svec_ref_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
 
     width = get_width(gutils)
 
-    origmi, origh, origkey = operands(orig)[offset:end-1]
+    origmi, origh, origkey = operands(orig)[offset:LLVM.API.LLVMGetNumArgOperands(orig)]
 
     shadowh = invert_pointer(gutils, origh, B)
 
