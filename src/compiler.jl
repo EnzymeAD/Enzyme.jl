@@ -1446,7 +1446,23 @@ function julia_sanitize(
                 bad = BasicBlock(fn, "bad")
                 position!(builder, entry)
                 inp, sval = collect(parameters(fn))
-                cmp = fcmp!(builder, LLVM.API.LLVMRealUNO, inp, inp)
+		cmp = nothing
+		@show value_type(inp), isa(value_type(inp), LLVM.ArrayType)
+
+		if isa(value_type(inp), LLVM.ArrayType)
+		   nelem = length(value_type(inp))
+		   for i in 1:nelem
+			   e0 = extract_value!(builder, inp, i - 1)
+			cmp0 = fcmp!(builder, LLVM.API.LLVMRealUNO, e0, e0)
+			if cmp == nothing
+				cmp = cmp0
+			else
+				cmp = or!(builder, cmp, cmp0)
+			end
+		   end
+		else
+                  cmp = fcmp!(builder, LLVM.API.LLVMRealUNO, inp, inp)
+		end
 
                 br!(builder, cmp, bad, good)
 
@@ -1459,6 +1475,17 @@ function julia_sanitize(
                 unreachable!(builder)
                 dispose(builder)
             end
+    if LLVM.API.LLVMVerifyFunction(fn, LLVM.API.LLVMReturnStatusAction) != 0
+        msg = sprint() do io
+            println(
+                io,
+                LLVM.API.LLVMVerifyFunction(fn, LLVM.API.LLVMPrintMessageAction),
+            )
+            println(io, string(fn))
+            println(io, "Broken julia.sanitize")
+        end
+        throw(LLVM.LLVMException(msg))
+    end
         end
         # val = 
         call!(B, FT, fn, LLVM.Value[val, globalstring_ptr!(B, stringv)])
