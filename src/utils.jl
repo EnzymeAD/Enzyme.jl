@@ -277,6 +277,22 @@ end
 end
 
 
+struct LookupError <: Exception
+    ft::Type
+    tt::Type
+    world::UInt
+end
+
+function Base.showerror(io::IO, e::LookupError)
+    print(io, "no method matching ")
+    Base.show_signature_function(io, e.ft)
+    Base.show_tuple_as_call(io, :function, e.tt; hasfirst=false, kwargs=nothing)
+    if Core._hasmethod(GPUCompiler.signature_type_by_tt(e.ft, e.tt))
+        print(io, "\n(method exists but is not available in world age $(e.world))")
+    end
+end
+
+
 """
     create_fresh_codeinfo(fn, source, world)
 
@@ -391,9 +407,9 @@ function methodinstance_generator(world::UInt, source, self, @nospecialize(mode:
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
     mi = my_methodinstance(mode.instance, ft, tt, world, min_world, max_world)
-    
-    mi === nothing && return stub(world, source, :(throw(MethodError(ft, tt, $world))))
-    
+
+    mi === nothing && return stub(world, source, :(throw(LookupError($ft, $tt, $world))))
+
     code = Any[Core.Compiler.ReturnNode(mi)]
 
     ci = create_fresh_codeinfo(prevmethodinstance, source, world, slotnames, code)
