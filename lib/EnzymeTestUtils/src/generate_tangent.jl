@@ -15,6 +15,11 @@ function map_fields_recursive(f, x::T...) where {T<:Union{Array,Tuple,NamedTuple
         map_fields_recursive(f, xi...)
     end
 end
+function map_fields_recursive(f::typeof(Base.copyto!), x::Base.RefValue{T}, y::T) where {T}
+    x[] = y
+    return x
+end
+
 function map_fields_recursive(f::typeof(Base.copyto!), y::T, x::T) where {T<:LinearAlgebra.HermOrSym{<:Number}}
     copyto!(x.uplo == 'U' ? UpperTriangular(parent(y)) : LowerTriangular(parent(y)), x.uplo == 'U' ? UpperTriangular(parent(x)) : LowerTriangular(parent(x)))
     return y
