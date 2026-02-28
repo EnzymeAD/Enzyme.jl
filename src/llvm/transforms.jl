@@ -2638,7 +2638,16 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
             )
                 for u in LLVM.uses(fn)
                     u = LLVM.user(u)
-                    @assert isa(u, LLVM.CallInst)
+		    if !isa(u, LLVM.CallInst)
+                    	# TODO investigate if the inttoptr store that comes from reference caller poses an issue.
+			continue
+			msg = sprint() do io
+			   println(io, "Unknown user of fn: ", string(u))
+			   println(io, "fn: ", string(fn))
+			   println(io, "mod: ", string(LLVM.parent(fn)))
+			end
+			throw(AssertionError(msg))
+		    end
                     B = IRBuilder()
                     nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
                     position!(B, nextInst)
@@ -2675,7 +2684,26 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
                 for u in LLVM.uses(fn)
                     u = LLVM.user(u)
                     if isa(u, LLVM.ConstantExpr)
-                        u = LLVM.user(only(LLVM.uses(u)))
+			for u in LLVM.uses(u)
+			   u = LLVM.user(u)
+			    if !isa(u, LLVM.CallInst)
+				continue
+			    end
+			    @assert isa(u, LLVM.CallInst)
+			    B = IRBuilder()
+			    nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
+			    position!(B, nextInst)
+			    inp = operands(u)[idx]
+			    cl = call!(B, funcT, sfunc, LLVM.Value[inp])
+			    if isa(value_type(inp), LLVM.PointerType)
+				LLVM.API.LLVMAddCallSiteAttribute(
+				    cl,
+				    LLVM.API.LLVMAttributeIndex(1),
+				    EnumAttribute("nocapture"),
+				)
+			    end
+			end
+			continue
                     end
                     if !isa(u, LLVM.CallInst)
                         continue
