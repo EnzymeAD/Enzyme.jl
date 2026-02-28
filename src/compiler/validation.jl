@@ -102,6 +102,8 @@ function __init__()
         "jl_array_typetagdata",
         "ijl_array_typetagdata",
         "jl_idtable_rehash",
+        "jl_f__compute_sparams",
+        "ijl_f__compute_sparams",
     )
     for name in known_names
         sym = LLVM.find_symbol(name)
