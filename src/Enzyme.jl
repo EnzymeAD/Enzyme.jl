@@ -1580,5 +1580,6 @@ macro import_rrule(args...)
 end
 
 include("precompile.jl")
+include("init.jl")
 
 end # module
