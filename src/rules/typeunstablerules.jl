@@ -437,14 +437,26 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
         return true
     end
 
-    valTys = API.CValueType[API.VT_Shadow for o in origops[offset:LLVM.API.LLVMGetNumArgOperands(orig)]]
     shadowsin = LLVM.Value[invert_pointer(gutils, o, B) for o in origops[offset:LLVM.API.LLVMGetNumArgOperands(orig)]]
-    if offset != 1
-        pushfirst!(shadowsin, origops[1])
-	pushfirst!(valTys, API.VT_Primal)
+    if width == 1
+        if offset != 1
+            pushfirst!(shadowsin, origops[1])
+        end
+        shadowres = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), shadowsin)
+        callconv!(shadowres, callconv(orig))
+    else
+        shadowres =
+            UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx = 1:width
+            args = LLVM.Value[extract_value!(B, s, idx - 1) for s in shadowsin]
+            if offset != 1
+                pushfirst!(args, origops[1])
+            end
+            tmp = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), args)
+            callconv!(tmp, callconv(orig))
+            shadowres = insert_value!(B, shadowres, tmp, idx - 1)
+        end
     end
-    
-    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, shadowsin, valTys, false; force_run=true)
     unsafe_store!(shadowR, shadowres.ref)
     return true
 end
