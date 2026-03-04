@@ -4431,7 +4431,7 @@ function lower_convention(
                 continue
             end
             @assert !sret_union
-            ops = collect(operands(ci))[1:end-1]
+            ops = collect(operands(ci))[1:LLVM.API.LLVMGetNumArgOperands(ci)]
             position!(builder, ci)
             nops = LLVM.Value[]
             if swiftself
@@ -5787,7 +5787,7 @@ end
                             if !isempty(blocks(called)) &&
                                length(collect(LLVM.uses(called))) == 1
                                 for (parm, op) in
-                                    zip(LLVM.parameters(called), operands(user)[1:end-1])
+                                    zip(LLVM.parameters(called), operands(user)[1:LLVM.API.LLVMGetNumArgOperands(user)])
                                     if op == cur
                                         push!(todo, parm)
                                     end
