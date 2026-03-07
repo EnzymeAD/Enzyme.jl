@@ -1,2 +1,6 @@
 [deps]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
+
+[sources]
+EnzymeCore = {path = ".."}
