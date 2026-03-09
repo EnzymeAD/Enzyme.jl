@@ -44,7 +44,7 @@ jobs:
       - uses: julia-actions/setup-julia@v2
         with:
           version: '1.11'
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - name: Instantiate docs environment
         shell: julia --color=yes --project=docs {0}
         run: |
