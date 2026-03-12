@@ -663,18 +663,42 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
     end
 
     dup = if Width == 1
-        :(Duplicated(f, df))
+        quote
+            if df isa Base.RefValue && !(f isa Base.RefValue)
+                MixedDuplicated(f, df)
+            else
+                Duplicated(f, df)
+            end
+        end
     else
         fargs = [:df]
         for i = 2:Width
             push!(fargs, Symbol("df_$i"))
         end
-        :(BatchDuplicated(f, ($(fargs...),)))
+        quote
+            if df isa Base.RefValue && !(f isa Base.RefValue)
+                BatchMixedDuplicated(f, ($(fargs...),))
+            else
+                BatchDuplicated(f, ($(fargs...),))
+            end
+        end
     end
     dupty = if Width == 1
-        :(Duplicated{FT})
+        quote
+            if df isa Base.RefValue && !(f isa Base.RefValue)
+                MixedDuplicated{FT}
+            else
+                Duplicated{FT}
+            end
+        end
     else
-        :(BatchDuplicated{FT,$Width})
+        quote
+            if df isa Base.RefValue && !(f isa Base.RefValue)
+                BatchMixedDuplicated{FT,$Width}
+            else
+                BatchDuplicated{FT,$Width}
+            end
+        end
     end
 
     quote
