@@ -702,3 +702,33 @@ f_typed_global(x) = x^2 * TYPED_VAL
     @test Enzyme.autodiff(Reverse, f_mutable_global, Active, Active(3.0))[1][1] ≈ 12.0
     @test Enzyme.autodiff(Reverse, f_typed_global, Active, Active(3.0))[1][1] ≈ 12.0
 end
+
+import Enzyme
+
+function wlj(x::Real, lower::Bool, upper::Real)
+    lbounded, ubounded = lower, isfinite(upper)
+    return if lbounded && ubounded
+        (log(x/upper) / one(x)), 0.0
+    elseif lbounded
+        log(x), 0.0
+    elseif ubounded
+        log(x), 0.0
+    else
+        x, 0.0
+    end
+end
+
+struct Foo
+    upper::Float64
+end
+function (f::Foo)(rx::AbstractArray)
+    return [first(wlj(rx[], true, f.upper))]
+end
+
+@testset "NoNeed result" begin
+
+   x = [0.5]
+   f = Foo(1.0)
+   @test Enzyme.jacobian(Enzyme.Reverse, f, x)[1] ≈ 2.0
+
+end
