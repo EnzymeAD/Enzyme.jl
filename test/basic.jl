@@ -726,9 +726,7 @@ function (f::Foo)(rx::AbstractArray)
 end
 
 @testset "NoNeed result" begin
-
    x = [0.5]
    f = Foo(1.0)
-   @test Enzyme.jacobian(Enzyme.Reverse, f, x)[1] ≈ 2.0
-
+   @test Enzyme.jacobian(Enzyme.Reverse, f, x)[1][1] ≈ 2.0
 end
