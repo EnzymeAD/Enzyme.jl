@@ -1570,20 +1570,7 @@ EnzymeAnonymousAliasScope(dom::LLVM.Metadata, str) = LLVM.Metadata(
         str,
     ),
 )
-EnzymeFixupJuliaCallingConvention(f) = ccall(
-    (:EnzymeFixupJuliaCallingConvention, libEnzyme),
-    Cvoid,
-    (LLVM.API.LLVMValueRef, UInt8),
-    f,
-    # only on julia before 1.12 did sret contain actual data
-    VERSION < v"1.12"
-)
-EnzymeFixupBatchedJuliaCallingConvention(f) = ccall(
-    (:EnzymeFixupBatchedJuliaCallingConvention, libEnzyme),
-    Cvoid,
-    (LLVM.API.LLVMValueRef,),
-    f,
-)
+
 
 e_extract_value!(builder, AggVal, Index, Name::String = "") = GC.@preserve Index begin
     LLVM.Value(

@@ -7,6 +7,9 @@ LLVM.@function_pass "jl-inst-simplify" JLInstSimplifyPass
 LLVM.@module_pass "preserve-nvvm" PreserveNVVMPass
 LLVM.@module_pass "preserve-nvvm-end" PreserveNVVMEndPass
 LLVM.@module_pass "simple-gvn" SimpleGVNPass
+LLVM.@module_pass "enzyme-fixup-julia" FixupJuliaCallingConventionPass
+LLVM.@module_pass "enzyme-fixup-julia-sret" FixupJuliaCallingConventionSRetPass
+LLVM.@module_pass "enzyme-fixup-batched-julia" FixupBatchedJuliaCallingConventionPass
 
 const RunAttributor = Ref(VERSION < v"1.12")
 
@@ -407,14 +410,20 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
     	add!(pb, SimpleGVNPass())
         run!(pb, mod, tm)
     end
+
     if DumpPreCallConv[]
 	    API.EnzymeDumpModuleRef(mod.ref)
     end
-    for f in collect(functions(mod))
-        API.EnzymeFixupBatchedJuliaCallingConvention(f)
-    end
-    for f in collect(functions(mod))
-        API.EnzymeFixupJuliaCallingConvention(f)
+
+    @dispose pb = NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+        add!(pb, "enzyme-fixup-batched-julia")
+        if VERSION < v"1.12"
+            add!(pb, "enzyme-fixup-julia-sret")
+        else
+            add!(pb, "enzyme-fixup-julia")
+        end
+        run!(pb, mod, tm)
     end
     if DumpPostCallConv[]
 	    API.EnzymeDumpModuleRef(mod.ref)
