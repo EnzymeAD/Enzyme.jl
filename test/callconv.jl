@@ -32,3 +32,33 @@ end
 
 	@test f_x[] ≈ 4.0
 end
+
+struct Inner
+    a::Float64
+    b::Float64
+end
+
+struct Outer
+    inner::Inner
+    c::Float64
+end
+
+@noinline function force_stup_multi(A)
+    return (A.inner, 0.0)
+end
+
+@noinline function process_multi(x)
+    Aelements = force_stup_multi(x)
+    val = Aelements[1].a
+    return val * val
+end
+
+function wrapper_multi(x)
+    return process_multi(x)
+end
+
+@testset "Multi-index ExtractValue" begin
+    x = Outer(Inner(2.0, 3.0), 4.0)
+    dx = Enzyme.gradient(Reverse, wrapper_multi, x)
+    @test dx[1].inner.a ≈ 4.0
+end

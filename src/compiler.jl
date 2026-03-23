@@ -2885,8 +2885,10 @@ function enzyme!(
     adjointfname = adjointf == nothing ? nothing : LLVM.name(adjointf)
     augmented_primalfname =
     augmented_primalf == nothing ? nothing : LLVM.name(augmented_primalf)
-    for f in collect(functions(mod))
-        API.EnzymeFixupBatchedJuliaCallingConvention(f)
+    @dispose pb = NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+        add!(pb, "enzyme-fixup-batched-julia")
+        run!(pb, mod)
     end
     run!(DCEPass(), mod)
     fix_decayaddr!(mod)
