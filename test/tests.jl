@@ -592,6 +592,29 @@ end
     f_x = zero.(y)
     Enzyme.autodiff(Reverse, f_exc, Duplicated(y, f_x))
     @test f_x ≈ [7.0 9.0; 11.0 13.0]
+
+    @testset "dsymm layout dimension verification" begin
+        function f_bug(x::Vector{Float64}, P::Matrix{Float64})
+            S = diagm(1.0 ./ x)
+            U = S * P
+            return tr(U' * U)
+        end
+        P_mat = [0.3 0.1; -0.2 0.4; 0.5 -0.3; 0.1 0.6; -0.4 0.2]
+        x_vec = [2.0, 2.0, 2.0, 2.0, 2.0]
+        dx1 = zeros(5)
+        Enzyme.autodiff(Reverse, f_bug, Active, Duplicated(copy(x_vec), dx1), Const(P_mat))
+        
+        # Finite difference for validation
+        h = 1e-7
+        f_val = f_bug(x_vec, P_mat)
+        fd = zeros(5)
+        for i in 1:5
+            x_plus = copy(x_vec)
+            x_plus[i] += h
+            fd[i] = (f_bug(x_plus, P_mat) - f_val) / h
+        end
+        @test dx1 ≈ fd rtol=1e-3
+    end
 end
 
 function indirectfltret(a)::DataType
