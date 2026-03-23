@@ -159,10 +159,36 @@ end
         return (into, from)
     end
     if !haskey(seen, into)
-        throw(AssertionError("Unknown type to accumulate into: $RT"))
+        seen[into] = (into, from)
+        if ismutable(into)
+            nf = fieldcount(RT)
+            for i in 1:nf
+                isdeffrom = isdefined(from, i)
+                isdefinto = isdefined(into, i)
+                if isdeffrom && isdefinto
+                    xi_into = getfield(into, i)
+                    xi_from = getfield(from, i)
+                    tup = accumulate_into(xi_into, seen, xi_from)
+                    if Base.isconst(RT, i)
+                        ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), into, i - 1, tup[1])
+                        ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), from, i - 1, tup[2])
+                    else
+                        setfield!(into, i, tup[1])
+                        setfield!(from, i, tup[2])
+                    end
+                elseif !isdeffrom && !isdefinto
+                    continue
+                else
+                    throw(AssertionError("Unimplemented accumulate_into for type $RT"))
+                end
+            end
+        else
+            throw(AssertionError("Unimplemented accumulate_into for type $RT"))
+        end
     end
     return seen[into]
 end
+
 
 function EnzymeRules.reverse(
     config::EnzymeRules.RevConfig,
