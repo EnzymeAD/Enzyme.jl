@@ -15,7 +15,7 @@ using Test
 
         p = [1.0, 2.0]
         grad = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), loss_fallback, p)
-        @test grad ≈ [2.0, 2.0]
+        @test only(grad) ≈ [2.0, 2.0]
     end
 
     @testset "circular reference" begin
@@ -37,7 +37,7 @@ using Test
 
         p = [1.0, 1.0]
         grad = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), loss_cyclic, p)
-        @test grad ≈ [8.0, 8.0]
+        @test only(grad) ≈ [8.0, 8.0]
     end
 
     @testset "multiple nested structs" begin
@@ -61,6 +61,6 @@ using Test
         p = [1.0, 2.0]
         grad = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), loss_tree, p)
         # sum(10p) * 3 = 30 * sum(p) -> gradient is [30.0, 30.0]
-        @test grad ≈ [30.0, 30.0]
+        @test only(grad) ≈ [30.0, 30.0]
     end
 end
