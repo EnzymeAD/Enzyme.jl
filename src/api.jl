@@ -228,7 +228,8 @@ end
     DEM_ForwardMode = 0,
     DEM_ReverseModePrimal = 1,
     DEM_ReverseModeGradient = 2,
-    DEM_ReverseModeCombined = 3
+    DEM_ReverseModeCombined = 3,
+    DEM_ForwardModeSplit = 4
 )
 
 # Create the derivative function itself.
@@ -335,10 +336,10 @@ function EnzymeCreateForwardDiff(
     additionalArg,
     typeInfo,
     uncacheable_args,
+    aug = C_NULL,
 )
     freeMemory = true
-    aug = C_NULL
-    subsequent_calls_may_write = false
+    subsequent_calls_may_write = mode == DEM_ForwardModeSplit
     ccall(
         (:EnzymeCreateForwardDiff, libEnzyme),
         LLVMValueRef,
