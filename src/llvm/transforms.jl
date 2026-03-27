@@ -477,20 +477,20 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
                     if isa(cur, LLVM.CallInst) &&
                        isa(LLVM.called_operand(cur), LLVM.Function)
                         legalc = true
-			for (i, ci) in enumerate(operands(cur)[1:LLVM.API.LLVMGetNumArgOperands(cur)])
+                        for (i, ci) in enumerate(Base.Iterators.take(operands(cur), LLVM.API.LLVMGetNumArgOperands(cur)))
                             if ci == prev
                                 nocapture = false
                                 readonly = false
                                 for a in collect(
                                     parameter_attributes(LLVM.called_operand(cur), i),
                                 )
-                                    if kind(a) == kind(EnumAttribute("readonly"))
+                                    if kind(a) == READONLY_ATTR_KIND
                                         readonly = true
                                     end
-                                    if kind(a) == kind(EnumAttribute("readnone"))
+                                    if kind(a) == READNONE_ATTR_KIND
                                         readonly = true
                                     end
-                                    if kind(a) == kind(EnumAttribute("nocapture"))
+                                    if kind(a) == NOCAPTURE_ATTR_KIND
                                         nocapture = true
                                     end
                                 end
@@ -1432,7 +1432,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                    intr == LLVM.Intrinsic("llvm.memmove").id ||
                    intr == LLVM.Intrinsic("llvm.memset").id
                     newvs = LLVM.Value[]
-		    for (i, v) in enumerate(operands(st)[1:LLVM.API.LLVMGetNumArgOperands(st)])
+		    for (i, v) in enumerate(Base.Iterators.take(operands(st), LLVM.API.LLVMGetNumArgOperands(st)))
                         if v == inst
                             LLVM.API.LLVMSetOperand(st, i - 1, operands(inst)[1])
                             push!(newvs, operands(inst)[1])
@@ -1491,7 +1491,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                 else
                     EnumAttribute("sret")
                 end)
-		for (i, v) in enumerate(operands(st)[1:LLVM.API.LLVMGetNumArgOperands(st)])
+		for (i, v) in enumerate(Base.Iterators.take(operands(st), LLVM.API.LLVMGetNumArgOperands(st)))
                     if v == inst
                         readnone = false
                         readonly = false
@@ -1590,7 +1590,7 @@ function pre_attr!(mod::LLVM.Module, run_attr)
 		end
 		attrs = collect(function_attributes(fn))
 		prevent = any(
-		    kind(attr) == kind(StringAttribute("enzyme_preserve_primal")) for attr in attrs
+		    kind(attr) == PRESERVEPRIMAL_ATTR_KIND for attr in attrs
 		)
 		if !prevent
 		    continue
@@ -1780,10 +1780,10 @@ function mayWriteToMemory(@nospecialize(inst::LLVM.Instruction); err_is_readonly
         LLVM.API.LLVMGetCallSiteAttributes(inst, idx, Attrs)
         for j = 1:count
             attr = LLVM.Attribute(unsafe_load(Attrs, j))
-            if kind(attr) == kind(EnumAttribute("readnone"))
+            if kind(attr) == READNONE_ATTR_KIND
                 return false
             end
-            if kind(attr) == kind(EnumAttribute("readonly"))
+            if kind(attr) == READONLY_ATTR_KIND
                 return false
             end
             # Note out of spec, and only legal in context of removing unused calls
@@ -1817,7 +1817,8 @@ function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
         un = un::LLVM.CallInst
 
         # Passing the fn as an argument is not permitted
-	for op in collect(operands(un))[1:LLVM.API.LLVMGetNumArgOperands(un)]
+        N_args = LLVM.API.LLVMGetNumArgOperands(un)
+        for op in Base.Iterators.take(operands(un), N_args)
             if op == fn
                 return false
             end
@@ -1925,7 +1926,7 @@ function propagate_returned!(mod::LLVM.Module)
 	    end
             attrs = collect(function_attributes(fn))
             prevent = any(
-                kind(attr) == kind(StringAttribute("enzyme_preserve_primal")) for
+                kind(attr) == PRESERVEPRIMAL_ATTR_KIND for
                 attr in attrs
             )
             # if any(kind(attr) == kind(EnumAttribute("noinline")) for attr in attrs) 
@@ -1937,7 +1938,7 @@ function propagate_returned!(mod::LLVM.Module)
 	    if has_user
             for (i, arg) in enumerate(parameters(fn))
                 if any(
-                    kind(attr) == kind(EnumAttribute("returned")) for
+                    kind(attr) == RETURNED_ATTR_KIND for
                     attr in collect(parameter_attributes(fn, i))
                 )
                     argn = i
@@ -1950,7 +1951,7 @@ function propagate_returned!(mod::LLVM.Module)
                        linkage(fn) == LLVM.API.LLVMPrivateLinkage
                    ) &&
                    any(
-                       kind(attr) == kind(EnumAttribute("nocapture")) for
+                       kind(attr) == NOCAPTURE_ATTR_KIND for
                        attr in collect(parameter_attributes(fn, i))
                    )
                     val = nothing
@@ -1963,9 +1964,9 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
-                        ops = collect(operands(un))[1:LLVM.API.LLVMGetNumArgOperands(un)]
+                        N_args = LLVM.API.LLVMGetNumArgOperands(un)
                         bad = false
-                        for op in ops
+                        for op in Base.Iterators.take(operands(un), N_args)
                             if op == fn
                                 bad = true
                                 break
@@ -1975,14 +1976,15 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
-                        if !isa(ops[i], LLVM.AllocaInst) && !isa(ops[i], LLVM.UndefValue) && !isa(ops[i], LLVM.PoisonValue)
+                        op_i = operands(un)[i]
+                        if !isa(op_i, LLVM.AllocaInst) && !isa(op_i, LLVM.UndefValue) && !isa(op_i, LLVM.PoisonValue)
                             illegalUse = true
                             break
                         end
                         seenfn = false
                         todo = LLVM.Instruction[]
-                        if isa(ops[i], LLVM.AllocaInst)
-			for u2 in LLVM.uses(ops[i])
+                        if isa(op_i, LLVM.AllocaInst)
+			for u2 in LLVM.uses(op_i)
                             un2 = LLVM.user(u2)
                             push!(todo, un2)
                         end
@@ -2075,9 +2077,9 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
-			ops = collect(operands(un))[1:LLVM.API.LLVMGetNumArgOperands(un)]
+                        N_args = LLVM.API.LLVMGetNumArgOperands(un)
                         bad = false
-                        for op in ops
+                        for op in Base.Iterators.take(operands(un), N_args)
                             if op == fn
                                 bad = true
                                 break
@@ -2087,17 +2089,18 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
-                        if isa(ops[i], LLVM.UndefValue) || isa(ops[i], LLVM.PoisonValue)
+                        op_i = operands(un)[i]
+                        if isa(op_i, LLVM.UndefValue) || isa(op_i, LLVM.PoisonValue)
                             continue
                         end
-                        if ops[i] == arg
+                        if op_i == arg
                             continue
                         end
-                        if isa(ops[i], LLVM.Constant)
+                        if isa(op_i, LLVM.Constant)
                             if val === nothing
-                                val = ops[i]
+                                val = op_i
                             else
-                                if val != ops[i]
+                                if val != op_i
                                     illegalUse = true
                                     break
                                 end
@@ -2171,29 +2174,29 @@ function propagate_returned!(mod::LLVM.Module)
                     illegalUse = true
                     continue
                 end
-		ops = collect(operands(un))[1:LLVM.API.LLVMGetNumArgOperands(un)]
-                bad = false
-                for op in ops
-                    if op == fn
-                        bad = true
-                        break
-                    end
-                end
-                if bad
-                    illegalUse = true
-                    continue
-                end
-                if argn !== nothing
-                    hasUse = false
-                    for u in LLVM.uses(un)
-                        hasUse = true
-                        break
-                    end
-                    if hasUse
-                        changed = true
-                        push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
-                        LLVM.replace_uses!(un, ops[argn])
-                    end
+                        N_args = LLVM.API.LLVMGetNumArgOperands(un)
+                        bad = false
+                        for op in Base.Iterators.take(operands(un), N_args)
+                            if op == fn
+                                bad = true
+                                break
+                            end
+                        end
+                        if bad
+                            illegalUse = true
+                            continue
+                        end
+                        if argn !== nothing
+                            hasUse = false
+                            for u2 in LLVM.uses(un)
+                                hasUse = true
+                                break
+                            end
+                            if hasUse
+                                changed = true
+                                push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
+                                LLVM.replace_uses!(un, operands(un)[argn])
+                            end
                 else
                     for u in LLVM.uses(un)
                         u = LLVM.user(u)
@@ -2698,7 +2701,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
         end
         attrs = collect(function_attributes(fn))
         prevent = any(
-            kind(attr) == kind(StringAttribute("enzyme_preserve_primal")) for attr in attrs
+            kind(attr) == PRESERVEPRIMAL_ATTR_KIND for attr in attrs
         )
         # && any(kind(attr) == kind(StringAttribute("enzyme_math")) for attr in attrs)
         if prevent
