@@ -4433,6 +4433,7 @@ function lower_convention(
             if !isa(ci, LLVM.CallInst) || called_operand(ci) != entry_f
                 continue
             end
+            @assert !sret_union
             N_args = LLVM.API.LLVMGetNumArgOperands(ci)
             ops = @view operands(ci)[1:N_args]
             position!(builder, ci)
