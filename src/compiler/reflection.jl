@@ -27,14 +27,14 @@ function get_job(
         world=Base.get_world_counter()
     end
 
-    primal = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, Core.Typeof(func), tt, world)
-    rt = Compiler.primal_return_type_world(mode == API.DEM_ForwardMode ? Forward : Reverse, world, Core.Typeof(func), tt)
+    primal = my_methodinstance((mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit) ? Forward : Reverse, Core.Typeof(func), tt, world)
+    rt = Compiler.primal_return_type_world((mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit) ? Forward : Reverse, world, Core.Typeof(func), tt)
 
     @assert primal !== nothing
     rt = A{rt}
     target = Compiler.EnzymeTarget()
     if modifiedBetween === nothing
-        defaultMod = mode != API.DEM_ReverseModeCombined && mode != API.DEM_ForwardMode
+        defaultMod = mode != API.DEM_ReverseModeCombined && mode != API.DEM_ForwardMode && mode != API.DEM_ForwardModeSplit
         modifiedBetween = (defaultMod, (defaultMod for _ in types.parameters)...)
     end
     params = Compiler.EnzymeCompilerParams(
@@ -100,7 +100,7 @@ function enzyme_code_llvm(
     dump_module::Bool = false,
     mode = API.DEM_ReverseModeCombined,
 )
-    if mode == API.DEM_ForwardMode
+    if mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit
         if A <: Active
             throw(AssertionError("Active not allowed in forward mode"))
         end

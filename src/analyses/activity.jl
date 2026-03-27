@@ -517,7 +517,7 @@ Base.@assume_effects :removable :foldable :nothrow @inline function Enzyme.guess
     if ActReg == AnyState
         return Const{T}
     end
-    if Mode == API.DEM_ForwardMode
+    if Mode == API.DEM_ForwardMode || Mode == API.DEM_ForwardModeSplit
         return Duplicated{T}
     else
         if ActReg == ActiveState
