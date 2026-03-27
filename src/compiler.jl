@@ -4433,8 +4433,8 @@ function lower_convention(
             if !isa(ci, LLVM.CallInst) || called_operand(ci) != entry_f
                 continue
             end
-            @assert !sret_union
-            ops = collect(operands(ci))[1:LLVM.API.LLVMGetNumArgOperands(ci)]
+            N_args = LLVM.API.LLVMGetNumArgOperands(ci)
+            ops = @view operands(ci)[1:N_args]
             position!(builder, ci)
             nops = LLVM.Value[]
             if swiftself
@@ -5286,7 +5286,8 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             for ci in todo
                 b = IRBuilder()
                 position!(b, ci)
-                args = collect(collect(operands(ci))[1:LLVM.API.LLVMGetNumArgOperands(ci)])
+                N_args = LLVM.API.LLVMGetNumArgOperands(ci)
+                args = collect(LLVM.Value, @view operands(ci)[1:N_args])
                 nc = call!(b, LLVM.function_type(f), f, args)
                 replace_uses!(ci, nc)
                 LLVM.API.LLVMInstructionEraseFromParent(ci)

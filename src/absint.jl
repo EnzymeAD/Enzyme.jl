@@ -849,7 +849,7 @@ function abs_typeof(
             for (v, _) in LLVM.incoming(cur)
                 v2, off = get_base_and_offset(v, inttoptr=false, addrcast=false)
                 if off != 0
-                    if isa(v, LLVM.Instruction) && arg in collect(operands(v))
+                    if isa(v, LLVM.Instruction) && any(Base.Fix2(==, arg), operands(v))
                         legal = false
                         break
                     end
@@ -857,7 +857,7 @@ function abs_typeof(
                 elseif v2 isa LLVM.PHIInst
                     push!(todo, v2)
                 else
-                    if isa(v2, LLVM.Instruction) && arg in collect(operands(v2))
+                    if isa(v2, LLVM.Instruction) && any(Base.Fix2(==, arg), operands(v2))
                         legal = false
                         break
                     end
