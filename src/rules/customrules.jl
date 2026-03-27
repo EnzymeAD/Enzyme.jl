@@ -303,9 +303,8 @@ function enzyme_custom_setup_args(
     isKWCall::Bool,
     @nospecialize(tape::Union{Nothing, LLVM.Value}),
 )
-    ops = collect(operands(orig))
-    called = ops[end]
-    ops = ops[1:LLVM.API.LLVMGetNumArgOperands(orig)]
+    called = operands(orig)[end]
+    ops = @view operands(orig)[1:LLVM.API.LLVMGetNumArgOperands(orig)]
     width = get_width(gutils)
     kwtup = nothing
 

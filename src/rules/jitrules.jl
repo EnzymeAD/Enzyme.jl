@@ -1832,9 +1832,8 @@ function generic_setup(
 )
     width = get_width(gutils)
     mode = get_mode(gutils)
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-
-    ops = collect(operands(orig))[start+firstconst:LLVM.API.LLVMGetNumArgOperands(orig)]
+    N_args = LLVM.API.LLVMGetNumArgOperands(orig)
+    ops = @view operands(orig)[start+firstconst:N_args]
 
     T_int8 = LLVM.Int8Type()
     T_jlvalue = LLVM.StructType(LLVMType[])
@@ -1842,7 +1841,7 @@ function generic_setup(
 
     ActivityList = LLVM.Value[]
 
-    @assert length(ops) != 0
+    @assert ops_count != 0
     fill_val = unsafe_to_llvm(B, nothing)
 
     vals = LLVM.Value[]
@@ -1909,7 +1908,7 @@ function generic_setup(
             push!(vals, ev)
         end
     end
-    @assert length(ActivityList) == length(ops)
+    @assert length(ActivityList) == ops_count
 
     if tape !== nothing
         if tape isa Vector
@@ -1938,7 +1937,7 @@ function generic_setup(
 
         ModifiedBetween = Bool[]
 
-        for idx = 1:(length(ops)+firstconst)
+        for idx = 1:(ops_count+firstconst)
             push!(ModifiedBetween, uncacheable[(start-1)+idx] != 0)
         end
         pushfirst!(vals, unsafe_to_llvm(B, Val((ModifiedBetween...,))))
@@ -2405,7 +2404,8 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
        isiter == Base.iterate &&
        istup == Base.tuple &&
        length(operands(orig)) >= offset + 4
-        origops = collect(operands(orig)[1:LLVM.API.LLVMGetNumArgOperands(orig)])
+        N_args = LLVM.API.LLVMGetNumArgOperands(orig)
+        origops = @view operands(orig)[1:N_args]
         shadowins =
             [invert_pointer(gutils, origops[i], B) for i = (offset+3):length(origops)]
         shadowres = if width == 1
@@ -2417,7 +2417,7 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
                     push!(newops, shadowin2)
                     push!(newvals, API.VT_Shadow)
                 else
-                    push!(newops, new_from_original(gutils, origops[i]))
+                    push!(newops, new_from_original(gutils, v))
                     push!(newvals, API.VT_Primal)
                 end
             end
@@ -2443,7 +2443,7 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
                         push!(newops, shadowin2)
                         push!(newvals, API.VT_Shadow)
                     else
-                        push!(newops, new_from_original(gutils, origops[i]))
+                        push!(newops, new_from_original(gutils, v))
                         push!(newvals, API.VT_Primal)
                     end
                 end
