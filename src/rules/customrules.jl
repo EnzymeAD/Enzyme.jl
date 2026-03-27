@@ -390,7 +390,7 @@ function enzyme_custom_setup_args(
 
         activep = API.EnzymeGradientUtilsGetDiffeType(gutils, op, false) #=isforeign=#
 	orig_activep = activep
-	any_active_data = mode != API.DEM_ForwardMode && (activity_state == ActiveState || activity_state == MixedState)
+	any_active_data = mode != API.DEM_ForwardMode && mode != API.DEM_ForwardModeSplit && (activity_state == ActiveState || activity_state == MixedState)
 
         roots_activep = nothing
 
@@ -851,7 +851,7 @@ function enzyme_custom_setup_ret(
         cmode = API.DEM_ReverseModePrimal
     end
     activep =
-        if mode == API.DEM_ForwardMode ||
+        if mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit ||
            API.EnzymeGradientUtilsGetUncacheableArgs(
             gutils,
             orig,
@@ -881,7 +881,7 @@ function enzyme_custom_setup_ret(
     cv = LLVM.called_operand(orig)
     swiftself = has_swiftself(cv)
 
-    may_have_active_reg = mode != API.DEM_ForwardMode && !guaranteed_nonactive(RealRt, world)
+    may_have_active_reg = mode != API.DEM_ForwardMode && mode != API.DEM_ForwardModeSplit && !guaranteed_nonactive(RealRt, world)
 
     if sret !== nothing
         activep = API.EnzymeGradientUtilsGetDiffeType(gutils, operands(orig)[1+swiftself], false) #=isforeign=#
@@ -1425,7 +1425,7 @@ end
 end
 
 @inline function has_rule(orig::LLVM.CallInst, gutils::GradientUtils)::Bool
-    if get_mode(gutils) == API.DEM_ForwardMode
+    if get_mode(gutils) == API.DEM_ForwardMode || get_mode(gutils) == API.DEM_ForwardModeSplit
        tup = fwd_mi(orig, gutils)
         if tup[1] === nothing
            return false

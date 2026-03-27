@@ -2,6 +2,7 @@ module EnzymeCore
 
 export Forward, ForwardWithPrimal, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
 export ReverseSplitModified, ReverseSplitWidth, ReverseHolomorphic, ReverseHolomorphicWithPrimal
+export ForwardSplitNoPrimal, ForwardSplitWithPrimal, ForwardSplitWidth, ForwardSplitModified
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, Annotation
 export MixedDuplicated, BatchMixedDuplicated
 export DefaultABI, FFIABI, InlineABI, NonGenABI
@@ -250,6 +251,7 @@ Abstract type for which differentiation mode will be used.
 # Subtypes
 
 - [`ForwardMode`](@ref)
+- [`ForwardModeSplit`](@ref)
 - [`ReverseMode`](@ref)
 - [`ReverseModeSplit`](@ref)
 
@@ -544,6 +546,95 @@ const ForwardWithPrimal = ForwardMode{true, DefaultABI, false, false, false}()
 
 @inline needs_primal(::ForwardMode{ReturnPrimal}) where {ReturnPrimal} = ReturnPrimal
 @inline needs_primal(::Type{<:ForwardMode{ReturnPrimal}}) where {ReturnPrimal} = ReturnPrimal
+
+"""
+    struct ForwardModeSplit{
+        ReturnPrimal,
+        ReturnShadow,
+        RuntimeActivity,
+        StrongZero,
+        Width,
+        ModifiedBetween,
+        ABI,
+        ErrIfFuncWritten
+    } <: Mode{ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}
+
+Subtype of [`Mode`](@ref) for split forward mode differentiation, to use in [`autodiff_thunk`](@ref) and variants.
+
+Returns a pair of thunks: an augmented forward pass that captures intermediate values in a tape,
+and a forward derivative pass that uses the tape to compute derivatives.
+
+# Type parameters
+
+- `ReturnShadow`: whether to return the shadow (derivative) from the derivative pass.
+- `Width`: batch size (pick `0` to derive it automatically)
+- `ModifiedBetween`: `Tuple` of each argument's "modified between" state (pick `true` to derive it automatically).
+- other parameters: see [`ForwardMode`](@ref)
+
+!!! warning
+    The type parameters of `ForwardModeSplit` are not part of the public API and can change without notice.
+    Please use one of the following concrete instantiations instead:
+    - [`ForwardSplitNoPrimal`](@ref)
+    - [`ForwardSplitWithPrimal`](@ref)
+    You can modify them with the following helper functions:
+    - [`WithPrimal`](@ref) / [`NoPrimal`](@ref)
+    - [`set_err_if_func_written`](@ref) / [`clear_err_if_func_written`](@ref)
+    - [`set_runtime_activity`](@ref) / [`clear_runtime_activity`](@ref)
+    - [`set_strong_zero`](@ref) / [`clear_strong_zero`](@ref)
+    - [`set_abi`](@ref)
+    - [`ForwardSplitModified`](@ref), [`ForwardSplitWidth`](@ref)
+"""
+struct ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten} <: Mode{ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} end
+
+"""
+    const ForwardSplitNoPrimal
+
+Default instance of [`ForwardModeSplit`](@ref) that doesn't return the primal
+"""
+const ForwardSplitNoPrimal = ForwardModeSplit{false, true, false, false, 0, true, DefaultABI, false}()
+
+"""
+    const ForwardSplitWithPrimal
+
+Default instance of [`ForwardModeSplit`](@ref) that also returns the primal
+"""
+const ForwardSplitWithPrimal = ForwardModeSplit{true, true, false, false, 0, true, DefaultABI, false}()
+
+"""
+    ForwardSplitModified(::ForwardModeSplit, ::Val{MB})
+
+Return a new instance of [`ForwardModeSplit`](@ref) mode where `ModifiedBetween` is set to `MB`.
+"""
+@inline ForwardSplitModified(::ForwardModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MBO, ABI, ErrIfFuncWritten}, ::Val{MB}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,MB,MBO,ABI,ErrIfFuncWritten} = ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,MB,ABI,ErrIfFuncWritten}()
+
+"""
+    ForwardSplitWidth(::ForwardModeSplit, ::Val{W})
+
+Return a new instance of [`ForwardModeSplit`](@ref) mode where `Width` is set to `W`.
+"""
+@inline ForwardSplitWidth(::ForwardModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, WidthO, MB, ABI, ErrIfFuncWritten}, ::Val{Width}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,MB,WidthO,ABI,ErrIfFuncWritten} = ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,MB,ABI,ErrIfFuncWritten}()
+
+@inline set_err_if_func_written(::ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten} = ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,true}()
+@inline clear_err_if_func_written(::ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten} = ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,false}()
+
+@inline set_abi(::Type{ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,OldABI,ErrIfFuncWritten}}, ::Type{NewABI}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,OldABI,ErrIfFuncWritten,NewABI<:ABI} = ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,NewABI,ErrIfFuncWritten}
+@inline set_abi(::ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,OldABI,ErrIfFuncWritten}, ::Type{NewABI}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,OldABI,ErrIfFuncWritten,NewABI<:ABI} = ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,NewABI,ErrIfFuncWritten}()
+
+@inline set_runtime_activity(::ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten} = ForwardModeSplit{ReturnPrimal,ReturnShadow,true,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten}()
+@inline set_runtime_activity(::ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten}, rt::Bool) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten} = ForwardModeSplit{ReturnPrimal,ReturnShadow,rt,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten}()
+@inline set_runtime_activity(::ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten}, ::Mode{<:Any, <:Any, RT2}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten,RT2} = ForwardModeSplit{ReturnPrimal,ReturnShadow,RT2,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten}()
+@inline clear_runtime_activity(::ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten} = ForwardModeSplit{ReturnPrimal,ReturnShadow,false,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten}()
+
+@inline set_strong_zero(::ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten} = ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,true,Width,ModifiedBetween,ABI,ErrIfFuncWritten}()
+@inline set_strong_zero(::ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten}, rt::Bool) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten} = ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,rt,Width,ModifiedBetween,ABI,ErrIfFuncWritten}()
+@inline set_strong_zero(::ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten}, ::Mode{<:Any, <:Any, <:Any, SZ2}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten,SZ2} = ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,SZ2,Width,ModifiedBetween,ABI,ErrIfFuncWritten}()
+@inline clear_strong_zero(::ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten} = ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,false,Width,ModifiedBetween,ABI,ErrIfFuncWritten}()
+
+@inline WithPrimal(::ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten} = ForwardModeSplit{true,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten}()
+@inline NoPrimal(::ForwardModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten} = ForwardModeSplit{false,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,ErrIfFuncWritten}()
+
+@inline needs_primal(::ForwardModeSplit{ReturnPrimal}) where {ReturnPrimal} = ReturnPrimal
+@inline needs_primal(::Type{<:ForwardModeSplit{ReturnPrimal}}) where {ReturnPrimal} = ReturnPrimal
 
 function autodiff end
 function autodiff_deferred end

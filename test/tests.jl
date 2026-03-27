@@ -66,6 +66,21 @@ import Enzyme: API
     @test d.dval[1] ≈ 5.0
     @test d.dval[2] ≈ 3.0
 
+    # ForwardModeSplit internal thunk tests
+    fwd_split, deriv_split = Enzyme.Compiler.thunk(Val(0), Const{typeof(f0)}, Duplicated, Tuple{Duplicated{Float64}}, Val(Enzyme.API.DEM_ForwardModeSplit), Val(1), Val((false, false)), Val(false), Val(false), DefaultABI, Val(false), Val(false), Val(false))
+
+    tape_fs, _, _ = fwd_split(Const(f0), Duplicated(2.0, 1.0))
+    @test tape_fs === nothing  # f0(x) = 1+x needs no tape
+    (shadow_fs,) = deriv_split(Const(f0), Duplicated(2.0, 1.0), tape_fs)
+    @test shadow_fs ≈ 1.0  # f0'(x) = 1
+
+    fwd_split2, deriv_split2 = Enzyme.Compiler.thunk(Val(0), Const{typeof(mul2)}, Duplicated, Tuple{Duplicated{Vector{Float64}}}, Val(Enzyme.API.DEM_ForwardModeSplit), Val(1), Val((false, true)), Val(false), Val(false), DefaultABI, Val(false), Val(false), Val(false))
+
+    d2 = Duplicated([3.0, 5.0], [1.0, 0.0])
+    tape_fs2, _, _ = fwd_split2(Const(mul2), d2)
+    (shadow_fs2,) = deriv_split2(Const(mul2), d2, tape_fs2)
+    @test shadow_fs2 ≈ 5.0  # d(x[1]*x[2])/dx[1] = x[2] = 5
+
     # @test thunk_split.primal !== C_NULL
     # @test thunk_split.primal !== thunk_split.adjoint
     # @test thunk_a.adjoint !== thunk_split.adjoint
