@@ -1627,6 +1627,8 @@ end
 @register_rev function jl_array_del_end_rev(B, orig, gutils, tape)
     if !is_constant_value(gutils, operands(orig)[1])
         width = get_width(gutils)
+        N_args = LLVM.API.LLVMGetNumArgOperands(orig)
+        origops = @view operands(orig)[1:N_args]
 
         called_value = LLVM.called_operand(orig)
         funcT = called_type(orig)
