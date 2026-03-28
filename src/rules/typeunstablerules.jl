@@ -437,11 +437,12 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
         return true
     end
 
-    shadowsin = LLVM.Value[invert_pointer(gutils, o, B) for o in @view operands(orig)[offset:N_args]]
+    shadowsin = LLVM.Value[invert_pointer(gutils, o, B) for o in @view arg_operands_view(orig)[offset:end]]
     if width == 1
         if offset != 1
-            pushfirst!(shadowsin, operands(orig)[1])
+            pushfirst!(shadowsin, LLVM.operands(orig)[1])
         end
+
         shadowres = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), shadowsin)
         callconv!(shadowres, callconv(orig))
     else

@@ -611,8 +611,8 @@ end
         push!(vals, tape)
     end
 
-    N_args = LLVM.API.LLVMGetNumArgOperands(orig)
-    push!(vals, new_from_original(gutils, operands(orig)[N_args]))
+    push!(vals, new_from_original(gutils, arg_operands_view(orig)[end]))
+
     return refed, LLVM.name(subfunc), dfuncT, vals, thunkTy, TapeType, copies
 end
 

@@ -29,7 +29,9 @@ import Enzyme:
     allocatedinline,
     ismutabletype,
     create_fresh_codeinfo,
-    add_edge!
+    add_edge!,
+    arg_operands_view
+
 using Enzyme
 
 import EnzymeCore
