@@ -393,7 +393,14 @@ function isapplicable(@nospecialize(f), @nospecialize(TT);
     end
     # merged with Base.any on 1.12
     _any = isdefined(Core.Compiler, :_any) ? Core.Compiler._any : any
-    fullmatch = _any(match::Core.MethodMatch->match.fully_covers, matches)
+    fullmatch = false
+    for match in matches
+	match = match::Core.MethodMatch
+	if match.fully_covers
+	    fullmatch = true
+	    break
+	end
+    end
     if !fullmatch
         if caller isa Core.MethodInstance
             add_mt_backedge!(caller, mt, sig)
