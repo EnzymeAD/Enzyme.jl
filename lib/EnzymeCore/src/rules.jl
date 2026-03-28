@@ -348,7 +348,7 @@ end
 function _annotate_tt(@nospecialize(TT0))
     TT = Base.unwrap_unionall(TT0)
     ft = TT.parameters[1]
-    tt = map(T->_annotate(Base.rewrap_unionall(T, TT0)), TT.parameters[2:end])
+    tt = map(Base.Fix1(Base.rewrap_unionall, T), TT.parameters[2:end])
     return ft, tt
 end
 
