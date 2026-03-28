@@ -304,7 +304,7 @@ function enzyme_custom_setup_args(
     @nospecialize(tape::Union{Nothing, LLVM.Value}),
 )
     called = operands(orig)[end]
-    ops = @view operands(orig)[1:LLVM.API.LLVMGetNumArgOperands(orig)]
+    ops = arg_operands_view(orig)
     width = get_width(gutils)
     kwtup = nothing
 

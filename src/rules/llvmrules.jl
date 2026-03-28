@@ -449,8 +449,7 @@ end
 end
 
 @register_rev function duplicate_rev(B, orig, gutils, tape)
-    N_args = LLVM.API.LLVMGetNumArgOperands(orig)
-    origops = @view operands(orig)[1:N_args]
+    origops = arg_operands_view(orig)
     ops = [new_from_original(gutils, o) for o in origops]
 
     shadowin = invert_pointer(gutils, origops[1], B)
@@ -460,7 +459,7 @@ end
         gutils,
         orig,
         [shadowin],
-        [API.VT_Primal for _ in 1:N_args],
+        [API.VT_Primal for _ in 1:length(origops)],
         true;
         need_result=false
     )
@@ -1211,7 +1210,7 @@ end
 
     width = get_width(gutils)
 
-    origh, origkey, origdflt = operands(orig)[1:LLVM.API.LLVMGetNumArgOperands(orig)]
+    origh, origkey, origdflt = arg_operands_view(orig)
 
     if is_constant_value(gutils, origh)
         emit_error(
@@ -1349,7 +1348,7 @@ end
 
     width = get_width(gutils)
 
-    origh, origkey, origval, originserted = operands(orig)[1:LLVM.API.LLVMGetNumArgOperands(orig)]
+    origh, origkey, origval, originserted = arg_operands_view(orig)
 
     @assert !is_constant_value(gutils, origh)
 
@@ -1627,8 +1626,7 @@ end
 @register_rev function jl_array_del_end_rev(B, orig, gutils, tape)
     if !is_constant_value(gutils, operands(orig)[1])
         width = get_width(gutils)
-        N_args = LLVM.API.LLVMGetNumArgOperands(orig)
-        origops = @view operands(orig)[1:N_args]
+        origops = arg_operands_view(orig)
 
         called_value = LLVM.called_operand(orig)
         funcT = called_type(orig)
@@ -1722,14 +1720,14 @@ end
     if is_constant_inst(gutils, orig)
         return true
     end
-    N_args = LLVM.API.LLVMGetNumArgOperands(orig)
+    ops = arg_operands_view(orig)
 
     args = LLVM.Value[]
-    for a in Base.Iterators.take(operands(orig), N_args - 1)
+    for a in ops[1:end-1]
         v = invert_pointer(gutils, a, B)
         push!(args, v)
     end
-    push!(args, new_from_original(gutils, operands(orig)[N_args]))
+    push!(args, new_from_original(gutils, ops[end]))
     valTys = API.CValueType[
         API.VT_Shadow,
         API.VT_Shadow,

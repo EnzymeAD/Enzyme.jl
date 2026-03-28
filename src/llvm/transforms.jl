@@ -1432,7 +1432,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                    intr == LLVM.Intrinsic("llvm.memmove").id ||
                    intr == LLVM.Intrinsic("llvm.memset").id
                     newvs = LLVM.Value[]
-		    for (i, v) in enumerate(Base.Iterators.take(operands(st), LLVM.API.LLVMGetNumArgOperands(st)))
+		    for (i, v) in enumerate(arg_operands_view(st))
                         if v == inst
                             LLVM.API.LLVMSetOperand(st, i - 1, operands(inst)[1])
                             push!(newvs, operands(inst)[1])
@@ -1491,7 +1491,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                 else
                     EnumAttribute("sret")
                 end)
-		for (i, v) in enumerate(Base.Iterators.take(operands(st), LLVM.API.LLVMGetNumArgOperands(st)))
+		for (i, v) in enumerate(arg_operands_view(st))
                     if v == inst
                         readnone = false
                         readonly = false
@@ -1964,9 +1964,8 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
-                        N_args = LLVM.API.LLVMGetNumArgOperands(un)
                         bad = false
-                        for op in Base.Iterators.take(operands(un), N_args)
+                        for op in arg_operands_view(un)
                             if op == fn
                                 bad = true
                                 break
@@ -2077,9 +2076,8 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
-                        N_args = LLVM.API.LLVMGetNumArgOperands(un)
                         bad = false
-                        for op in Base.Iterators.take(operands(un), N_args)
+                        for op in arg_operands_view(un)
                             if op == fn
                                 bad = true
                                 break
@@ -2174,9 +2172,8 @@ function propagate_returned!(mod::LLVM.Module)
                     illegalUse = true
                     continue
                 end
-                        N_args = LLVM.API.LLVMGetNumArgOperands(un)
                         bad = false
-                        for op in Base.Iterators.take(operands(un), N_args)
+                        for op in arg_operands_view(un)
                             if op == fn
                                 bad = true
                                 break

@@ -1832,8 +1832,7 @@ function generic_setup(
 )
     width = get_width(gutils)
     mode = get_mode(gutils)
-    N_args = LLVM.API.LLVMGetNumArgOperands(orig)
-    ops = @view operands(orig)[start+firstconst:N_args]
+    ops = @view arg_operands_view(orig)[start+firstconst:end]
     ops_count = length(ops)
 
     T_int8 = LLVM.Int8Type()
