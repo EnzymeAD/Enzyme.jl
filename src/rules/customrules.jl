@@ -303,9 +303,8 @@ function enzyme_custom_setup_args(
     isKWCall::Bool,
     @nospecialize(tape::Union{Nothing, LLVM.Value}),
 )
-    ops = collect(operands(orig))
-    called = ops[end]
-    ops = ops[1:LLVM.API.LLVMGetNumArgOperands(orig)]
+    called = operands(orig)[end]
+    ops = arg_operands_view(orig)
     width = get_width(gutils)
     kwtup = nothing
 
@@ -2392,7 +2391,7 @@ end
     end
     non_rooting_use = false
     fop = called_operand(orig)::LLVM.Function
-    for (i, v) in enumerate(operands(orig)[1:LLVM.API.LLVMGetNumArgOperands(orig)])
+    for (i, v) in enumerate(arg_operands_view(orig))
         if v == val
             if true || !has_arg_attr(fop, i, StringAttribute("enzymejl_returnRoots"))
                 non_rooting_use = true

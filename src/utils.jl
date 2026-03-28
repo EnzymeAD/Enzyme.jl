@@ -62,6 +62,12 @@ export Tracked, Derived
 
 const captured_constants = Base.IdSet{Any}()
 
+function arg_operands_view(inst::LLVM.CallInst)
+    N_args = LLVM.API.LLVMGetNumArgOperands(inst)
+    return @view LLVM.operands(inst)[1:N_args]
+end
+
+
 function unsafe_nothing_to_llvm(mod::LLVM.Module)
     globs = LLVM.globals(mod)
     k = "jl_nothing"

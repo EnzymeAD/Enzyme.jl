@@ -223,8 +223,7 @@ function call_same_with_inverted_arg_if_active!(
     need_result = true
 )::Union{LLVM.Value, Nothing}
     @assert length(args) == length(valTys)
-
-    origops = collect(operands(orig))
+    origops = arg_operands_view(orig)
     if !force_run && is_constant_value(gutils, origops[cmpidx])
         if !need_result
             return nothing

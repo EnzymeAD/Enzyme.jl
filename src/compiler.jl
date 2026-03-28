@@ -29,7 +29,9 @@ import Enzyme:
     allocatedinline,
     ismutabletype,
     create_fresh_codeinfo,
-    add_edge!
+    add_edge!,
+    arg_operands_view
+
 using Enzyme
 
 import EnzymeCore
@@ -333,6 +335,7 @@ const known_ops = Dict{DataType,Tuple{Symbol,Int,Union{Nothing,Tuple{Symbol,Data
     return nothing, nothing, nothing
 end
 
+include("llvm/attrkinds.jl")
 include("llvm/attributes.jl")
 
 include("typeutils/conversion.jl")
@@ -687,7 +690,7 @@ end
             k_name,
             llvmfn,
             "enzyme_custom",
-            LLVM.Attribute[StringAttribute("enzyme_preserve_primal", "*")],
+            LLVM.Attribute[StringAttribute(PRESERVEPRIMAL_ATTR_KIND, "*")],
         )
         return
     end
@@ -4433,7 +4436,7 @@ function lower_convention(
                 continue
             end
             @assert !sret_union
-            ops = collect(operands(ci))[1:LLVM.API.LLVMGetNumArgOperands(ci)]
+            ops = arg_operands_view(ci)
             position!(builder, ci)
             nops = LLVM.Value[]
             if swiftself
@@ -5285,7 +5288,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             for ci in todo
                 b = IRBuilder()
                 position!(b, ci)
-                args = collect(collect(operands(ci))[1:LLVM.API.LLVMGetNumArgOperands(ci)])
+                args = collect(LLVM.Value, arg_operands_view(ci))
                 nc = call!(b, LLVM.function_type(f), f, args)
                 replace_uses!(ci, nc)
                 LLVM.API.LLVMInstructionEraseFromParent(ci)
@@ -5789,7 +5792,7 @@ end
                             if !isempty(blocks(called)) &&
                                length(collect(LLVM.uses(called))) == 1
                                 for (parm, op) in
-                                    zip(LLVM.parameters(called), operands(user)[1:LLVM.API.LLVMGetNumArgOperands(user)])
+                                    zip(LLVM.parameters(called), arg_operands_view(user))
                                     if op == cur
                                         push!(todo, parm)
                                     end

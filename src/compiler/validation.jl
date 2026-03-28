@@ -476,7 +476,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 				newf = operands(newf)[1]
 			    end
 			    push!(function_attributes(newf), StringAttribute("enzyme_math", fname))
-			    push!(function_attributes(newf), StringAttribute("enzyme_preserve_primal", "*"))
+			    push!(function_attributes(newf), StringAttribute(PRESERVEPRIMAL_ATTR_KIND, "*"))
 			    # TODO we can make this relocatable if desired by having restore lookups re-create this got initializer/etc
 			    # metadata(newf)["enzymejl_flib"] = flib
 			    # metadata(newf)["enzymejl_flib"] = flib
@@ -849,7 +849,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
 
-	    ops = collect(operands(inst))[1:LLVM.API.LLVMGetNumArgOperands(inst)]
+	    ops = arg_operands_view(inst)
             @assert length(ops) == 2
             flib = ops[1]
             fname = ops[2]
@@ -1090,7 +1090,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 legal, flibty, byref = abs_typeof(operands(inst)[offset+1])
                 if legal
                     tys = Union{Type, Core.TypeofVararg}[flibty]
-		    for op in collect(operands(inst))[start+1:LLVM.API.LLVMGetNumArgOperands(inst)]
+                    for op in @view arg_operands_view(inst)[start+1:end]
                         legal, typ, byref2 = abs_typeof(op, true)
                         if !legal
                             typ = Any
@@ -1245,7 +1245,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             legal, flibty, byref = abs_typeof(operands(inst)[offset])
             if legal
                 tys = Union{Type, Core.TypeofVararg}[flibty]
-		for op in collect(operands(inst))[start:LLVM.API.LLVMGetNumArgOperands(inst)]
+                for op in @view arg_operands_view(inst)[start:end]
                     legal, typ, byref2 = abs_typeof(op, true)
                     if !legal
                         typ = Any
