@@ -2938,6 +2938,7 @@ function create_abi_wrapper(
     is_split = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModePrimal
     needs_tape = Mode == API.DEM_ReverseModeGradient
 
+
     mod = LLVM.parent(enzymefn)
     ctx = LLVM.context(mod)
 
@@ -2987,6 +2988,7 @@ function create_abi_wrapper(
 
         isboxed = GPUCompiler.deserves_argbox(source_typ)
         llvmT = isboxed ? T_prjlvalue : convert(LLVMType, source_typ)
+        
         push!(T_wrapperargs, llvmT)
         arg_roots = inline_roots_type(source_typ)
         if arg_rooting && arg_roots != 0
@@ -3270,6 +3272,10 @@ function create_abi_wrapper(
 
         convty = convert(LLVMType, T′; allow_boxed = true)
 
+
+
+
+
 	arg_roots = inline_roots_type(T′)
 
         if (T <: MixedDuplicated || T <: BatchMixedDuplicated) && !isboxed # && (isa(llty, LLVM.ArrayType) || isa(llty, LLVM.StructType))
@@ -3287,12 +3293,13 @@ function create_abi_wrapper(
             push!(realparms, al)
         else
             push!(realparms, params[i])
+
         end
 
         i += 1
         if T <: Const
 	    if arg_rooting && arg_roots != 0
-		 push(realparms, params[i])
+		 push!(realparms, params[i])
 		 i += 1
 	    end
         elseif T <: Active
@@ -3335,8 +3342,8 @@ function create_abi_wrapper(
                     0,
                 )                                            #=align=#
             end
-	    if arg_rooting &&arg_roots != 0
-		 push(realparms, params[i])
+	    if arg_rooting && arg_roots != 0
+		 push!(realparms, params[i])
 		 i += 1
 	    end
             activeNum += 1
@@ -3789,6 +3796,11 @@ function create_abi_wrapper(
         throw(LLVM.LLVMException(msg))
     end
 
+    if startswith(LLVM.name(llvm_f), "diffejulia_solve")
+        open("/usr/local/google/home/wmoses/git/Enzyme.jl6/scratch/wrapper_ir.ll", "w") do io
+            println(io, string(mod))
+        end
+    end
     return llvm_f
 end
 

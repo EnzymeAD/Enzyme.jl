@@ -29,7 +29,30 @@ RestoreAllocaType() = NewPMFunctionPass("restore_alloca_type", restore_alloca_ty
 SafeAtomicToRegularStorePass() = NewPMFunctionPass("safe_atomic_to_regular_store", safe_atomic_to_regular_store!)
 Addr13NoAliasPass() = NewPMModulePass("addr13_noalias", addr13NoAlias)
 
+function verify_no_gc_inttoptr_func_pass!(f::LLVM.Function)
+    verify_no_gc_inttoptr(LLVM.parent(f), "f_pipeline")
+    return false
+end
+VerifyNoGCIntToPtrFuncPass() = NewPMFunctionPass("verify_no_gc_inttoptr_f", verify_no_gc_inttoptr_func_pass!)
+
+function verify_no_gc_inttoptr(mod, tag)
+
+    for f in functions(mod)
+        for b in blocks(f)
+            for i in instructions(b)
+                if i isa LLVM.IntToPtrInst
+                    vty = LLVM.value_type(i)
+                    if addrspace(vty) == 10 || addrspace(vty) == 11
+                        @error "Illegal inttoptr to address space 10/11 found in module during $tag!" f i
+                    end
+                end
+            end
+        end
+    end
+end
+
 function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
+    verify_no_gc_inttoptr(mod, "start_optimize")
     @dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, Addr13NoAliasPass())
@@ -208,6 +231,8 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     nodecayed_phis!(mod)
                 
     run!(GCInvariantVerifierPass(strong=false), mod)
+
+    # verify_no_gc_inttoptr(mod, "end_optimize")
 end
 
 function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
@@ -223,6 +248,7 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         add!(fpm, SimplifyCFGPass())
         add!(fpm, DCEPass())
         add!(fpm, SROAPass())
+        add!(fpm, VerifyNoGCIntToPtrFuncPass())
     end
 
     add!(mpm, AlwaysInlinerPass())
@@ -240,6 +266,7 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         add!(fpm, JLInstSimplifyPass())
         add!(fpm, SimplifyCFGPass())
         add!(fpm, SROAPass())
+        add!(fpm, VerifyNoGCIntToPtrFuncPass())
         add!(fpm, InstSimplifyPass())
         add!(fpm, JLInstSimplifyPass())
         add!(fpm, JumpThreadingPass())
@@ -455,7 +482,8 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, ReinsertGCMarkerPass())
         register!(pb, SafeAtomicToRegularStorePass())
-		register!(pb, RestoreAllocaType())
+        register!(pb, RestoreAllocaType())
+        register!(pb, VerifyNoGCIntToPtrFuncPass())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
@@ -472,6 +500,9 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
         end
         run!(pb, mod, tm)
     end
+    
+
+
     for f in functions(mod)
 	if isempty(blocks(f))
 		continue
@@ -483,4 +514,5 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
     # @safe_show "post_mod", mod
     # flush(stdout)
     # flush(stderr)
+    verify_no_gc_inttoptr(mod, "end_optimize")
 end

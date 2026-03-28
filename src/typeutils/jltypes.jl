@@ -166,6 +166,16 @@ function rooted_argument_list(iterable)
 	return results
 end
 
+function count_flattened_fields(llvm_ty::LLVM.LLVMType)
+    if llvm_ty isa LLVM.StructType
+        return sum(count_flattened_fields(f) for f in LLVM.elements(llvm_ty))
+    elseif llvm_ty isa LLVM.ArrayType
+        return LLVM.length(llvm_ty) * count_flattened_fields(LLVM.eltype(llvm_ty))
+    else
+        return 1
+    end
+end
+
 struct RemovedParam end
 
 # Modified from GPUCompiler classify_arguments
@@ -311,7 +321,15 @@ function classify_arguments(
 		    arg_jl_i += 1
         end
 
-        codegen_i += 1
+        if !(codegen_typ isa LLVM.PointerType)
+            if codegen_typ isa LLVM.StructType || codegen_typ isa LLVM.ArrayType
+                codegen_i += 1
+            else
+                codegen_i += count_flattened_fields(convert(LLVMType, source_typ))
+            end
+        else
+            codegen_i += 1
+        end
         orig_i += 1
     end
 
