@@ -135,9 +135,17 @@ end
     if !haskey(seen, into)
         seen[into] = (into, from)
         for i in eachindex(from)
-            tup = accumulate_into(into[i], seen, from[i])
-            @inbounds into[i] = tup[1]
-            @inbounds from[i] = tup[2]
+            isdefinto = isassigned(into, i)
+            isdeffrom = isassigned(from, i)
+            if isdefinto && isdeffrom
+                tup = accumulate_into(into[i], seen, from[i])
+                @inbounds into[i] = tup[1]
+                @inbounds from[i] = tup[2]
+            elseif !isdefinto && !isdeffrom
+                continue
+            else
+                throw(AssertionError("Unimplemented accumulate_into for array elements at index $i of type $RT"))
+            end
         end
     end
     return seen[into]
