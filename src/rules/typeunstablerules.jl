@@ -404,7 +404,7 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
     world = enzyme_extract_world(LLVM.parent(position(B)))
 
     @assert is_constant_value(gutils, operands(orig)[offset])
-    ops = arg_operands_view(orig)[offset+1:end]
+    ops = @view arg_operands_view(orig)[offset+1:end]
     icvs = [is_constant_value(gutils, v) for v in ops]
     abs_partial = [abs_typeof(v, true) for v in ops]
     abs = [abs_typeof(v) for v in ops]
@@ -493,7 +493,7 @@ function common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
             " " *
             string(abs_partial) *
             " " *
-            string([v for v in origops[offset+1:LLVM.API.LLVMGetNumArgOperands(orig)]]),
+            string([v for v in origops[offset+1:end]]),
         )
     end
 
@@ -1037,7 +1037,7 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
         shadowin = invert_pointer(gutils, ops[2], B)
         if width == 1
             args = LLVM.Value[new_from_original(gutils, ops[1]), shadowin]
-            for a in arg_operands_view(orig)[offset+2:end]
+            for a in @view arg_operands_view(orig)[offset+2:end]
                 push!(args, new_from_original(gutils, a))
             end
             if offset != 1
@@ -1060,7 +1060,7 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
                     new_from_original(gutils, ops[1]),
                     shadowin_idx,
                 ]
-                for a in arg_operands_view(orig)[offset+2:end]
+                for a in @view arg_operands_view(orig)[offset+2:end]
                     push!(args, new_from_original(gutils, a))
                 end
                 if offset != 1
@@ -1980,7 +1980,7 @@ function common_f_svec_ref_fwd(offset, B, orig, gutils, normalR, shadowR)
 
     width = get_width(gutils)
 
-    origmi, origh, origkey = arg_operands_view(orig)[offset:end]
+    origmi, origh, origkey = @view arg_operands_view(orig)[offset:end]
 
     shadowh = invert_pointer(gutils, origh, B)
 
@@ -2059,7 +2059,7 @@ function common_f_svec_ref_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
 
     width = get_width(gutils)
 
-    origmi, origh, origkey = arg_operands_view(orig)[offset:end]
+    origmi, origh, origkey = @view arg_operands_view(orig)[offset:end]
 
     shadowh = invert_pointer(gutils, origh, B)
 

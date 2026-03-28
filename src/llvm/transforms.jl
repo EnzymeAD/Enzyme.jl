@@ -477,7 +477,7 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
                     if isa(cur, LLVM.CallInst) &&
                        isa(LLVM.called_operand(cur), LLVM.Function)
                         legalc = true
-                        for (i, ci) in enumerate(Base.Iterators.take(operands(cur), LLVM.API.LLVMGetNumArgOperands(cur)))
+                        for (i, ci) in enumerate(arg_operands_view(cur))
                             if ci == prev
                                 nocapture = false
                                 readonly = false
@@ -1817,8 +1817,7 @@ function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
         un = un::LLVM.CallInst
 
         # Passing the fn as an argument is not permitted
-        N_args = LLVM.API.LLVMGetNumArgOperands(un)
-        for op in Base.Iterators.take(operands(un), N_args)
+        for op in arg_operands_view(un)
             if op == fn
                 return false
             end
