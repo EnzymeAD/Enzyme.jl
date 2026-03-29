@@ -370,6 +370,11 @@ function has_rrule_from_sig(@nospecialize(TT);
     return isapplicable(augmented_primal, TT; world, method_table, caller)
 end
 
+@inline function match_fully_covers(match)
+   match = match::Core.MethodMatch
+   return match.fully_covers
+end
+
 # `hasmethod` is a precise match using `Core.Compiler.findsup`,
 # but here we want the broader query using `Core.Compiler.findall`.
 # Also add appropriate backedges to the caller `MethodInstance` if given.
@@ -393,14 +398,7 @@ function isapplicable(@nospecialize(f), @nospecialize(TT);
     end
     # merged with Base.any on 1.12
     _any = isdefined(Core.Compiler, :_any) ? Core.Compiler._any : any
-    fullmatch = false
-    for match in matches
-	match = match::Core.MethodMatch
-	if match.fully_covers
-	    fullmatch = true
-	    break
-	end
-    end
+    fullmatch = _any(match_fully_covers, matches)
     if !fullmatch
         if caller isa Core.MethodInstance
             add_mt_backedge!(caller, mt, sig)
