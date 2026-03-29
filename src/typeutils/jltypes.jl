@@ -153,7 +153,7 @@ end
 
 struct RemovedParam end
 
-function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nospecialize(rooted_typ::Union{Nothing, Type}), source_i::Int, orig_i::Int, arg_jl_i::Int, codegen_i::Int, last_cc)
+function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nospecialize(rooted_typ::Union{Nothing, Type}), source_i::Int, orig_i::Int, arg_jl_i::Int, codegen_i::Int, last_cc, parmsRemoved)
     if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
         push!(args, (cc = GPUCompiler.GHOST, typ = source_typ, arg_i = source_i,
             rooted_typ = rooted_typ,
@@ -305,7 +305,7 @@ function classify_arguments(
     for source_typ in source_sig.parameters
         source_i += 1
         rooted_typ = nothing
-        orig_i, arg_jl_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc)
+        orig_i, arg_jl_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc, parmsRemoved)
 
         roots = inline_roots_type(source_typ)
         if roots != 0
@@ -321,7 +321,7 @@ function classify_arguments(
                 source_i += 1
                 rooted_typ = source_typ
                 source_typ = equivalent_pointer_type(source_typ)
-                orig_i, arg_jl_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc)
+                orig_i, arg_jl_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc, parmsRemoved)
             end
         end
     end
@@ -329,11 +329,11 @@ function classify_arguments(
     if codegen_i != length(codegen_types)
 		msg = sprint() do io::IO
 		    println(io, "expectLen != length(parameters(f))")
-		    println(io, string(f))
+		    println(io, string(codegen_ft))
 		    println(io, "expectLen=", string(codegen_i))
-		    println(io, "swiftself=", string(swiftself))
-		    println(io, "sret=", string(sret))
-		    println(io, "returnRoots=", string(returnRoots))
+		    println(io, "has_swiftself=", string(has_swiftself))
+		    println(io, "has_sret=", string(has_sret))
+		    println(io, "has_returnroots=", string(has_returnroots))
 		    println(io, "specTypes=", string(specTypes))
 		    println(io, "parmsRemoved=", string(parmsRemoved))
 		end
