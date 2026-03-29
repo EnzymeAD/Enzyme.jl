@@ -328,7 +328,7 @@ function classify_arguments(
         end
     end
 
-    if codegen_i != length(codegen_types)
+    if codegen_i != length(codegen_types) + 1
 		msg = sprint() do io::IO
 		    println(io, "expectLen != length(parameters(f))")
 		    println(io, string(codegen_ft))
