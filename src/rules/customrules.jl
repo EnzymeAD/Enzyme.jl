@@ -183,11 +183,11 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
     end
 
     if shadow_roots !== nothing
-        if inline_roots_type(Ty) < inline_roots_type(arg.typ)
-            throw(AssertionError("inline_roots_type(Ty = $Ty) [ $(inline_roots_type(Ty)) ] < inline_roots_type(arg.typ = $(arg.typ))  [ $(inline_roots_type(arg.typ)) ]"))
+        if num_inline_roots < inline_roots_type(arg.typ)
+            throw(AssertionError("inline_roots_type(Ty = $Ty) [ $num_inline_roots ] < inline_roots_type(arg.typ = $(arg.typ))  [ $(inline_roots_type(arg.typ)) ]"))
         end
     else
-        @assert inline_roots_type(Ty) == inline_roots_type(arg.typ)
+        @assert num_inline_roots == inline_roots_type(arg.typ)
     end
 
     arty = convert(LLVMType, arg.typ; allow_boxed = true)
@@ -235,19 +235,19 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
         if shadow_roots === nothing
             root_ptr = roots_val
         else
-	    cur_inline_roots, eTy = if just_primal_rooting
-		@assert activity_wrap
-		inline_roots_type(eltype(Ty)), "primal.$Ty"
-	    else
-	        num_inline_roots, string(Ty)
-	    end
+	        cur_inline_roots, eTy = if just_primal_rooting
+                @assert activity_wrap
+                inline_roots_type(eltype(Ty)), "primal.$eTy"
+	        else
+	            num_inline_roots, string(Ty)
+	        end
 	    
-	    if cur_inline_roots != 0
-		    root_ty = convert(LLVMType, AnyArray(cur_inline_roots))
-		    ld = load!(B, root_ty, roots_val, "loaded.roots.$eTy")
-		    sr2 = bitcast!(B, shadow_roots, LLVM.PointerType(root_ty))
-		    store!(B, ld, sr2)
-	    end
+	        if cur_inline_roots != 0
+		        root_ty = convert(LLVMType, AnyArray(cur_inline_roots))
+		        ld = load!(B, root_ty, roots_val, "loaded.roots.$eTy")
+		        sr2 = bitcast!(B, shadow_roots, LLVM.PointerType(root_ty))
+		        store!(B, ld, sr2)
+	        end
             root_ptr = shadow_roots
         end
     end
@@ -328,6 +328,13 @@ function enzyme_custom_setup_args(
 
     cv = LLVM.called_operand(orig)
     swiftself = has_swiftself(cv)
+
+    alloctx = LLVM.IRBuilder()
+    position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
+
+    ofn = LLVM.parent(LLVM.parent(orig))
+    world = enzyme_extract_world(ofn)
+
     jlargs = classify_arguments(
         mi.specTypes,
         called_type(orig),
@@ -335,13 +342,9 @@ function enzyme_custom_setup_args(
         returnRoots,
         swiftself,
         parmsRemoved,
+        mi,
+        world,
     )
-
-    alloctx = LLVM.IRBuilder()
-    position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
-
-    ofn = LLVM.parent(LLVM.parent(orig))
-    world = enzyme_extract_world(ofn)
 
     byval_tapes = LLVM.Value[]
 
@@ -352,8 +355,15 @@ function enzyme_custom_setup_args(
             continue
         end
         
+        roots = inline_roots_type(arg.typ)
+        # TODO(wmoses,vchuravy) if a parameter is removed, it is not possible to know if it was byref or not, we will assume it is byref for now.
+        # Note that getting this wrong can result in segfaults, invalid IR, or worse.
+        if arg.cc == GPUCompiler.BITS_VALUE
+            roots = false
+        end
+
         if arg.cc == GPUCompiler.GHOST
-            @assert inline_roots_type(arg.typ) == 0
+            @assert roots == 0
             @assert guaranteed_const_nongen(arg.typ, world)
             if isKWCall && arg.arg_i == 2
                 Ty = arg.typ
@@ -393,27 +403,27 @@ function enzyme_custom_setup_args(
 
         roots_activep = nothing
 
-        if inline_roots_type(arg.typ) != 0
+        if roots != 0
             roots_op = ops[arg.codegen.i + 1]
             roots_activep = API.EnzymeGradientUtilsGetDiffeType(gutils, roots_op, false)
-	    any_active = false
-	    for ty in non_rooted_types(arg.typ)
-	        if active_reg(ty, world) != Compiler.AnyState
-		   any_active = true
-		   break
-		end
-	    end
+            any_active = false
+            for ty in non_rooted_types(arg.typ)
+                if active_reg(ty, world) != Compiler.AnyState
+                    any_active = true
+                    break
+                end
+            end
 
-	    if roots_activep != activep && activep == API.DFT_CONSTANT && !any_active
-	        if roots_activep != API.DFT_DUP_ARG
-		    throw(AssertionError("v1 roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ)) non_rooted_types=$(non_rooted_types(arg.typ))"))
-		end
-		activep = roots_activep
-		any_active_data = false
-	    end
+            if roots_activep != activep && activep == API.DFT_CONSTANT && !any_active
+                if roots_activep != API.DFT_DUP_ARG
+                    throw(AssertionError("v1 roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ)) non_rooted_types=$(non_rooted_types(arg.typ))"))
+                end
+                activep = roots_activep
+                any_active_data = false
+            end
 
             if roots_activep != activep
-		    throw(AssertionError("roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ)) non_rooted_types=$(non_rooted_types(arg.typ))"))
+                throw(AssertionError("roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ)) non_rooted_types=$(non_rooted_types(arg.typ))"))
             end
         end
 
@@ -430,7 +440,7 @@ function enzyme_custom_setup_args(
 
         root_ty = nothing
         roots_val = if roots_op !== nothing
-            root_ty = convert(LLVMType, AnyArray(inline_roots_type(arg.typ)))
+            root_ty = convert(LLVMType, AnyArray(roots))
             new_from_original(gutils, roots_op)
         end
 
@@ -660,6 +670,9 @@ function enzyme_custom_setup_args(
 
                 n_shadow_roots = inline_roots_type(Ty)
                 n_primal_roots = inline_roots_type(arg.typ)
+                if n_primal_roots != 0
+                    @assert !byval "Unimplemented: byval arguments with rooting on the type (but not call) not yet supported"
+                end
 
                 sroots_ty = nothing
                 shadow_roots = if n_shadow_roots != 0

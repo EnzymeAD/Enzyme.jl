@@ -1067,7 +1067,8 @@ end
             Duplicated,
             nothing,
             run_enzyme,
-            world
+            world,
+            mi,
         )
         if cur
             state.primalf = llvmfn
@@ -1114,20 +1115,9 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
 
         dl = string(LLVM.datalayout(LLVM.parent(f)))
 
-        expectLen = (sret !== nothing) + (returnRoots !== nothing)
-	for (source_typ, _) in rooted_argument_list(mi.specTypes.parameters)
-            if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
-                continue
-            end
-            expectLen += 1
-        end
-        expectLen -= length(parmsRemoved)
+        ftype = function_type(f)
 
         swiftself = has_swiftself(f)
-
-        if swiftself
-            expectLen += 1
-        end
 
         # Unsupported calling conv
         # also wouldn't have any type info for this [would for earlier args though]
@@ -1137,29 +1127,15 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
 
         world = enzyme_extract_world(f)
 
-        if expectLen != length(parameters(f))
-		msg = sprint() do io::IO
-		    println(io, "expectLen != length(parameters(f))")
-		    println(io, string(f))
-		    println(io, "expectLen=", string(expectLen))
-		    println(io, "swiftself=", string(swiftself))
-		    println(io, "sret=", string(sret))
-		    println(io, "returnRoots=", string(returnRoots))
-		    println(io, "mi.specTypes.parameters=", string(mi.specTypes.parameters))
-		    println(io, "retRemoved=", string(retRemoved))
-		    println(io, "parmsRemoved=", string(parmsRemoved))
-		    println(io, "rooted_argument_list=", string(rooted_argument_list(mi.specTypes.parameters)))
-		end
-		throw(CallingConventionMismatchError{String}(msg, mi, world))
-        end
-
         jlargs = classify_arguments(
             mi.specTypes,
-            function_type(f),
+            ftype,
             sret !== nothing,
             returnRoots !== nothing,
             swiftself,
             parmsRemoved,
+            mi,
+            world,
         )
 
         ctx = LLVM.context(f)
@@ -2559,17 +2535,21 @@ function enzyme!(
             end
             continue
         end
-	isboxed = (i + seen_roots) in boxedArgs
-	inline_root = false
-	
 
-	if inline_roots_type(eltype(T)) != 0
-	   # This is already after lower_convention
-	   seen_roots += 1
-	   if false
-	       inline_root = true
-	   end
-	end
+        isboxed = (i + seen_roots) in boxedArgs
+        inline_root = false
+        
+
+        if inline_roots_type(eltype(T)) != 0
+            # TODO(wmoses,vchuravy) if a parameter is removed, it is not possible to know if it was byref or not, we will assume it is byref for now.
+            # Note that getting this wrong can result in segfaults, invalid IR, or worse.
+
+            # This is already after lower_convention
+            seen_roots += 1
+            if false
+                inline_root = true
+            end
+        end
 
         if T <: Const
             push!(args_activity, API.DFT_CONSTANT)
@@ -2991,7 +2971,7 @@ function create_abi_wrapper(
         isboxed = GPUCompiler.deserves_argbox(source_typ)
         llvmT = isboxed ? T_prjlvalue : convert(LLVMType, source_typ)
         push!(T_wrapperargs, llvmT)
-        arg_roots = inline_roots_type(source_typ)
+        arg_roots = isboxed ? inline_roots_type(source_typ) : 0
         if arg_rooting && arg_roots != 0
            push!(T_wrapperargs, convert(LLVMType, AnyArray(arg_roots)))
         end
@@ -3013,7 +2993,9 @@ function create_abi_wrapper(
             end
         elseif T <: Duplicated || T <: DuplicatedNoNeed || T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
             push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
-            arg_roots = inline_roots_type(source_typ)
+            if inline_roots_type(source_typ) != 0
+                @assert isboxed == GPUCompiler.deserves_argbox(T)
+            end
             if arg_rooting && arg_roots != 0
                push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
             end
@@ -3022,7 +3004,9 @@ function create_abi_wrapper(
             end
         elseif T <: MixedDuplicated || T <: BatchMixedDuplicated
             push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, T_prjlvalue)))
-            arg_roots = inline_roots_type(source_typ)
+            if inline_roots_type(source_typ) != 0
+                @assert isboxed == GPUCompiler.deserves_argbox(T)
+            end
             if arg_rooting && arg_roots != 0
                push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
             end
@@ -3070,6 +3054,8 @@ function create_abi_wrapper(
                 ),
             )
             push!(T_wrapperargs, dretTy)
+            # TODO(wmoses,vchuravy) if a parameter is removed, it is not possible to know if it was byref or not, we will assume it is byref for now.
+            # Note that getting this wrong can result in segfaults, invalid IR, or worse.
             arg_roots = inline_roots_type(actualRetType)
             if arg_rooting && arg_roots != 0
                push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
@@ -3273,16 +3259,16 @@ function create_abi_wrapper(
 
         convty = convert(LLVMType, T′; allow_boxed = true)
 
-	arg_roots = inline_roots_type(T′)
+        arg_roots = isboxed ? inline_roots_type(T′) : 0
 
         if (T <: MixedDuplicated || T <: BatchMixedDuplicated) && !isboxed # && (isa(llty, LLVM.ArrayType) || isa(llty, LLVM.StructType))
             @assert Base.isconcretetype(T′)
             al0 = al = emit_allocobj!(builder, Base.RefValue{T′}, "mixedparameter")
-	    parm = params[i]
-	    if arg_rooting && arg_roots != 0
-		parm = recombine_value!(builder, parm, params[i+1])
-		i += 1
-	    end
+            parm = params[i]
+            if arg_rooting && arg_roots != 0
+                parm = recombine_value!(builder, parm, params[i+1])
+                i += 1
+            end
             al = bitcast!(builder, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             store!(builder, parm, al)
             emit_writebarrier!(builder, get_julia_inner_types(builder, al0, parm))
@@ -4241,7 +4227,8 @@ function lower_convention(
     @nospecialize(RetActivity::Type),
     @nospecialize(TT::Union{Type, Nothing}),
     run_enzyme::Bool,
-    world::UInt
+    world::UInt,
+    mi::Core.MethodInstance,
 )
     entry_ft = LLVM.function_type(entry_f)
 
@@ -4286,7 +4273,7 @@ function lower_convention(
     swiftself = has_swiftself(entry_f)
     @assert !swiftself "Swiftself attribute coming from differentiable context is not supported"
     prargs =
-        classify_arguments(functy, entry_ft, sret, returnRoots, swiftself, parmsRemoved)
+        classify_arguments(functy, entry_ft, sret, returnRoots, swiftself, parmsRemoved, mi, world)
     args = copy(prargs)
     filter!(args) do arg
         Base.@_inline_meta
@@ -5433,7 +5420,8 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             job.config.params.rt,
             TT,
             params.run_enzyme,
-            job.world
+            job.world,
+            job.source,
         )
     end
 
@@ -6519,14 +6507,14 @@ const DumpLLVMCall = Ref(false)
         end
 
         # calls fptr
-	llvmtys = LLVMType[]
-	for x in types
-	   push!(llvmtys, convert(LLVMType, x; allow_boxed = true))
-	   arg_roots = inline_roots_type(x)
-	   if needs_rooting && arg_roots != 0
-	       push!(llvmtys, convert(LLVMType, AnyArray(3)))
-	   end
-	end
+        llvmtys = LLVMType[]
+        for x in types
+            push!(llvmtys, convert(LLVMType, x; allow_boxed = true))
+            arg_roots = inline_roots_type(x)
+            if needs_rooting && arg_roots != 0
+                push!(llvmtys, convert(LLVMType, AnyArray(3)))
+            end
+        end
 
         T_void = convert(LLVMType, Nothing)
 
@@ -6590,10 +6578,10 @@ const DumpLLVMCall = Ref(false)
             if TapeType <: EnzymeTapeToLoad
                 llty = Compiler.from_tape_type(eltype(TapeType))
 	        
-		arg_roots = inline_roots_type(llty)
-	        if needs_rooting && arg_roots != 0
-		   throw(AssertionError("Should check about rooted tape calling conv"))
-	        end
+		        arg_roots = inline_roots_type(llty)
+                if needs_rooting && arg_roots != 0
+                    throw(AssertionError("Should check about rooted tape calling conv"))
+                end
 
                 tape = bitcast!(
                     builder,
@@ -6606,10 +6594,10 @@ const DumpLLVMCall = Ref(false)
 
             else
                 llty = Compiler.from_tape_type(TapeType)
-	        arg_roots = inline_roots_type(llty)
-	        if needs_rooting && arg_roots != 0
-		   tape = callparams[end-1]
-	        end
+                arg_roots = inline_roots_type(llty)
+                if needs_rooting && arg_roots != 0
+                    tape = callparams[end-1]
+                end
 		if value_type(tape) != llty
 		   throw(AssertionError("MisMatched Tape type, expected $(string(value_type(tape))) found $(string(llty)) from $TapeType arg_roots=$arg_roots"))
 		end
