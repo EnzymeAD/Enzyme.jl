@@ -62,3 +62,20 @@ end
     dx = Enzyme.gradient(Reverse, wrapper_multi, x)
     @test dx[1].inner.a ≈ 4.0
 end
+
+struct StructWithPtr
+    p::Vector{Float64}
+    x::Float64
+end
+
+@noinline function f_unboxed_rooted(x, y)
+    return x.p[1] * x.x * y
+end
+
+@testset "Unboxed aggregate with rooted param" begin
+    x = StructWithPtr([2.0], 3.0)
+    y = 4.0
+    dx, dy = Enzyme.gradient(Reverse, f_unboxed_rooted, x, y)
+    @test dx.x ≈ 8.0
+    @test dy ≈ 6.0
+end

@@ -161,9 +161,8 @@ function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nos
             rooted_cc = rooted_typ === nothing ? nothing : last_cc,
             arg_jl_i = arg_jl_i,
         ))
-        arg_jl_i += 1
         last_cc = GPUCompiler.GHOST
-        return (orig_i, arg_jl_i, codegen_i, last_cc)
+        return (orig_i, codegen_i, last_cc)
     end
 
     if in(orig_i - 1, parmsRemoved)
@@ -173,10 +172,9 @@ function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nos
             rooted_cc = rooted_typ === nothing ? nothing : last_cc,
 			arg_jl_i = arg_jl_i,
         ))
-        arg_jl_i += 1
         orig_i += 1
 	    last_cc = RemovedParam
-        return (orig_i, arg_jl_i, codegen_i, last_cc)
+        return (orig_i, codegen_i, last_cc)
     end
 
     codegen_typ = codegen_types[codegen_i]
@@ -203,7 +201,6 @@ function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nos
             # - boxed values
             #   XXX: use `deserves_retbox` instead?
 		    last_cc = GPUCompiler.BITS_VALUE
-		    arg_jl_i += 1
         elseif llvm_source_typ isa LLVM.PointerType
             if llvm_source_typ != codegen_typ
                 throw(AssertionError("Mismatch codegen type llvm_source_typ=$(string(llvm_source_typ)) codegen_typ=$(string(codegen_typ)) source_i=$source_i source_sig=$source_sig, source_typ=$source_typ, codegen_i=$codegen_i, codegen_types=$(string(codegen_ft))"))
@@ -223,7 +220,6 @@ function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nos
             )
             # - references to aggregates
             last_cc = GPUCompiler.MUT_REF
-            arg_jl_i += 1
         else
             @assert llvm_source_typ != codegen_typ
             push!(
@@ -240,7 +236,6 @@ function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nos
                 ),
             )
             last_cc = GPUCompiler.BITS_REF
-            arg_jl_i += 1
         end
     else
         push!(
@@ -257,13 +252,12 @@ function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nos
             ),
         )
         last_cc = GPUCompiler.BITS_VALUE
-        arg_jl_i += 1
     end
 
     codegen_i += 1
     orig_i += 1
     
-    return (orig_i, arg_jl_i, codegen_i, last_cc)
+    return (orig_i, codegen_i, last_cc)
 end
 
 # Modified from GPUCompiler classify_arguments
@@ -302,12 +296,11 @@ function classify_arguments(
     end
 
     last_cc = nothing
-    arg_jl_i = 1
     source_i = 0
-    for source_typ in source_sig.parameters
+    for (arg_jl_i, source_typ) in enumerate(source_sig.parameters)
         source_i += 1
         rooted_typ = nothing
-        orig_i, arg_jl_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc, parmsRemoved)
+        orig_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc, parmsRemoved)
 
         roots = inline_roots_type(source_typ)
         if roots != 0
@@ -323,7 +316,7 @@ function classify_arguments(
                 source_i += 1
                 rooted_typ = source_typ
                 source_typ = equivalent_rooted_type(source_typ)
-                orig_i, arg_jl_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc, parmsRemoved)
+                orig_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc, parmsRemoved)
             end
         end
     end
