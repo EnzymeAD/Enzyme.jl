@@ -322,7 +322,7 @@ function classify_arguments(
             if byref
                 source_i += 1
                 rooted_typ = source_typ
-                source_typ = equivalent_pointer_type(source_typ)
+                source_typ = equivalent_rooted_type(source_typ)
                 orig_i, arg_jl_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc, parmsRemoved)
             end
         end
