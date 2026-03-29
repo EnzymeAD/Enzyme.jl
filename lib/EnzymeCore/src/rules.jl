@@ -348,7 +348,7 @@ end
 function _annotate_tt(@nospecialize(TT0))
     TT = Base.unwrap_unionall(TT0)
     ft = TT.parameters[1]
-    tt = map(T->_annotate(Base.rewrap_unionall(T, TT0)), TT.parameters[2:end])
+    tt = map(_annotate ∘ Base.Fix2(Base.rewrap_unionall, TT0), TT.parameters[2:end])
     return ft, tt
 end
 
@@ -368,6 +368,11 @@ function has_rrule_from_sig(@nospecialize(TT);
     ft, tt = _annotate_tt(TT)
     TT = Tuple{<:RevConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
     return isapplicable(augmented_primal, TT; world, method_table, caller)
+end
+
+@inline function match_fully_covers(match)
+   match = match::Core.MethodMatch
+   return match.fully_covers
 end
 
 # `hasmethod` is a precise match using `Core.Compiler.findsup`,
@@ -393,7 +398,7 @@ function isapplicable(@nospecialize(f), @nospecialize(TT);
     end
     # merged with Base.any on 1.12
     _any = isdefined(Core.Compiler, :_any) ? Core.Compiler._any : any
-    fullmatch = _any(match::Core.MethodMatch->match.fully_covers, matches)
+    fullmatch = _any(match_fully_covers, matches)
     if !fullmatch
         if caller isa Core.MethodInstance
             add_mt_backedge!(caller, mt, sig)
