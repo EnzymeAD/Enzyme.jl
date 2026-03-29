@@ -153,7 +153,7 @@ end
 
 struct RemovedParam end
 
-function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nospecialize(rooted_typ::Union{Nothing, Type}), source_i::Int, arg_jl_i::Int, codegen_i::Int, last_cc)
+function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nospecialize(rooted_typ::Union{Nothing, Type}), source_i::Int, orig_i::Int, arg_jl_i::Int, codegen_i::Int, last_cc)
     if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
         push!(args, (cc = GPUCompiler.GHOST, typ = source_typ, arg_i = source_i,
             rooted_typ = rooted_typ,
@@ -163,7 +163,7 @@ function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nos
         ))
         arg_jl_i += 1
         last_cc = GPUCompiler.GHOST
-        return (arg_jl_i, codegen_i, last_cc)
+        return (orig_i, arg_jl_i, codegen_i, last_cc)
     end
 
     if in(orig_i - 1, parmsRemoved)
@@ -176,7 +176,7 @@ function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nos
         arg_jl_i += 1
         orig_i += 1
 	    last_cc = RemovedParam
-        return (arg_jl_i, codegen_i, last_cc)
+        return (orig_i, arg_jl_i, codegen_i, last_cc)
     end
 
     codegen_typ = codegen_types[codegen_i]
@@ -263,7 +263,7 @@ function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nos
     codegen_i += 1
     orig_i += 1
     
-    return (arg_jl_i, codegen_i, last_cc)
+    return (orig_i, arg_jl_i, codegen_i, last_cc)
 end
 
 # Modified from GPUCompiler classify_arguments
@@ -305,7 +305,7 @@ function classify_arguments(
     for source_typ in source_sig.parameters
         source_i += 1
         rooted_typ = nothing
-        arg_jl_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, arg_jl_i, codegen_i, last_cc)
+        orig_i, arg_jl_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc)
 
         roots = inline_roots_type(source_typ)
         if roots != 0
@@ -321,7 +321,7 @@ function classify_arguments(
                 source_i += 1
                 rooted_typ = source_typ
                 source_typ = equivalent_pointer_type(source_typ)
-                arg_jl_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, arg_jl_i, codegen_i, last_cc)
+                orig_i, arg_jl_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc)
             end
         end
     end
