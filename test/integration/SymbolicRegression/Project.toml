@@ -9,4 +9,4 @@ Enzyme = {path = "../../.."}
 EnzymeCore = {path = "../../../lib/EnzymeCore"}
 
 [compat]
-SymbolicRegression = "1.12.0"
+SymbolicRegression = "=1.12.0"
