@@ -334,7 +334,7 @@ function classify_arguments(
 		    println(io, "has_swiftself=", string(has_swiftself))
 		    println(io, "has_sret=", string(has_sret))
 		    println(io, "has_returnroots=", string(has_returnroots))
-		    println(io, "specTypes=", string(specTypes))
+		    println(io, "source_sig=", string(source_sig))
 		    println(io, "parmsRemoved=", string(parmsRemoved))
 		end
 		throw(CallingConventionMismatchError{String}(msg, mi, world))
