@@ -328,6 +328,13 @@ function enzyme_custom_setup_args(
 
     cv = LLVM.called_operand(orig)
     swiftself = has_swiftself(cv)
+
+    alloctx = LLVM.IRBuilder()
+    position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
+
+    ofn = LLVM.parent(LLVM.parent(orig))
+    world = enzyme_extract_world(ofn)
+
     jlargs = classify_arguments(
         mi.specTypes,
         called_type(orig),
@@ -335,13 +342,9 @@ function enzyme_custom_setup_args(
         returnRoots,
         swiftself,
         parmsRemoved,
+        mi,
+        world,
     )
-
-    alloctx = LLVM.IRBuilder()
-    position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
-
-    ofn = LLVM.parent(LLVM.parent(orig))
-    world = enzyme_extract_world(ofn)
 
     byval_tapes = LLVM.Value[]
 

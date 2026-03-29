@@ -27,6 +27,8 @@ function julia_activity_rule(f::LLVM.Function, method_table)
         returnRoots !== nothing,
         swiftself,
         parmsRemoved,
+        mi,
+        world,
     )
 
     kwarg_inactive = false

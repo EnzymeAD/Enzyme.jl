@@ -274,6 +274,8 @@ function classify_arguments(
     has_returnroots::Bool,
     has_swiftself::Bool,
     parmsRemoved::Vector{UInt64},
+    mi::Core.MethodInstance,
+    world::UInt,
 )
     codegen_types = parameters(codegen_ft)
 

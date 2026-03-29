@@ -1067,7 +1067,8 @@ end
             Duplicated,
             nothing,
             run_enzyme,
-            world
+            world,
+            mi,
         )
         if cur
             state.primalf = llvmfn
@@ -1133,6 +1134,8 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
             returnRoots !== nothing,
             swiftself,
             parmsRemoved,
+            mi,
+            world,
         )
 
         ctx = LLVM.context(f)
@@ -4224,7 +4227,8 @@ function lower_convention(
     @nospecialize(RetActivity::Type),
     @nospecialize(TT::Union{Type, Nothing}),
     run_enzyme::Bool,
-    world::UInt
+    world::UInt,
+    mi::Core.MethodInstance,
 )
     entry_ft = LLVM.function_type(entry_f)
 
@@ -4269,7 +4273,7 @@ function lower_convention(
     swiftself = has_swiftself(entry_f)
     @assert !swiftself "Swiftself attribute coming from differentiable context is not supported"
     prargs =
-        classify_arguments(functy, entry_ft, sret, returnRoots, swiftself, parmsRemoved)
+        classify_arguments(functy, entry_ft, sret, returnRoots, swiftself, parmsRemoved, mi, world)
     args = copy(prargs)
     filter!(args) do arg
         Base.@_inline_meta
@@ -5416,7 +5420,8 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             job.config.params.rt,
             TT,
             params.run_enzyme,
-            job.world
+            job.world,
+            job.source,
         )
     end
 
