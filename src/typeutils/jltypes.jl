@@ -332,7 +332,7 @@ function classify_arguments(
 		msg = sprint() do io::IO
 		    println(io, "expectLen != length(parameters(f))")
 		    println(io, string(codegen_ft))
-		    println(io, "expectLen=", string(codegen_i))
+		    println(io, "expectLen=", string(codegen_i-1))
 		    println(io, "has_swiftself=", string(has_swiftself))
 		    println(io, "has_sret=", string(has_sret))
 		    println(io, "has_returnroots=", string(has_returnroots))
