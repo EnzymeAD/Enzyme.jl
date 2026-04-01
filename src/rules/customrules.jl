@@ -671,7 +671,7 @@ function enzyme_custom_setup_args(
                 n_shadow_roots = inline_roots_type(Ty)
                 n_primal_roots = inline_roots_type(arg.typ)
                 if n_primal_roots != 0
-                    @assert !byval "Unimplemented: byval arguments with rooting on the type (but not call) not yet supported"
+                    @assert arg.cc != BITS_VALUE "Unimplemented: byval arguments with rooting on the type (but not call) not yet supported"
                 end
 
                 sroots_ty = nothing
