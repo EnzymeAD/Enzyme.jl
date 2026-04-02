@@ -237,7 +237,7 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
         else
 	        cur_inline_roots, eTy = if just_primal_rooting
                 @assert activity_wrap
-                inline_roots_type(eltype(Ty)), "primal.$eTy"
+                inline_roots_type(eltype(Ty)), "primal.$(eltype(Ty))"
 	        else
 	            num_inline_roots, string(Ty)
 	        end
