@@ -251,7 +251,7 @@ function get_trampoline(job)
             LLVM.name!(func, sym)
 
             if other_name !== nothing
-                # Otherwise MR will complain -- we could claim responsibilty,
+                # Otherwise MR will complain -- we could claim responsibility,
                 # but it would be nicer if _thunk just codegen'd the half
                 # we need.
                 other_func = functions(mod)[other_name]

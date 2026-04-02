@@ -235,7 +235,7 @@ The derivative that Enzyme creates for `A(x)` would create both the backing/inde
 
 For any program which generates sparse data structures internally, like the total program `f(A(x))`, this will always give you the answer you expect. Moreover, the memory requirements of the derivative will be the same as the primal (other AD tools will blow up the memory usage and construct dense derivatives where the primal was sparse).
 
-The added caveat, however, comes when you differentiate a top level function that has a sparse array input. For example, consider the sparse `sum` function which adds up all elements. While in one definition, this function represents summing up all elements of the virtual sparse array (including the zero's which are never materialized), in a more literal sense this `sum` function will only add elements 3 and 10 of the input sparse array -- the only two nonzero elements -- or equivalently the sum of the whole backing array. Correspondingly Enzyme will update the sparse shadow data structure to mark both elements 3 and 10 as having a derivative of 1 (or more literally set all the elements of the backing array to derivative 1). These are the only variables that Enzyme needs to update, since they are the only variables read (and thus the only ones which have a non-zero derivative). Thus any function which may call this method and compose via the chain rule will only ever read the derivative of these two elements. This is why this memory-safe representation composes within Enzyme, though may produce counter-intuitive reuslts at the top level.
+The added caveat, however, comes when you differentiate a top level function that has a sparse array input. For example, consider the sparse `sum` function which adds up all elements. While in one definition, this function represents summing up all elements of the virtual sparse array (including the zero's which are never materialized), in a more literal sense this `sum` function will only add elements 3 and 10 of the input sparse array -- the only two nonzero elements -- or equivalently the sum of the whole backing array. Correspondingly Enzyme will update the sparse shadow data structure to mark both elements 3 and 10 as having a derivative of 1 (or more literally set all the elements of the backing array to derivative 1). These are the only variables that Enzyme needs to update, since they are the only variables read (and thus the only ones which have a non-zero derivative). Thus any function which may call this method and compose via the chain rule will only ever read the derivative of these two elements. This is why this memory-safe representation composes within Enzyme, though may produce counter-intuitive results at the top level.
 
 If the name we gave to this data structure wasn’t "SparseArray" but instead "MyStruct" this is precisely the answer we would have desired. However, since the sparse array printer prints zeros for elements outside of the sparse backing array, this isn’t what one would expect. Making a nicer user conversion from Enzyme’s form of differential data structures, to the more natural "Julia" form where there is a semantic mismatch between what Julia intends a data structure to mean by name, and what is being discussed [here](https://github.com/EnzymeAD/Enzyme.jl/issues/1334).
 
@@ -323,7 +323,7 @@ If one created a new zero'd copy of each return from `g`, this would mean that t
 
 Instead, Enzyme has a special mode known as "Runtime Activity" which can handle these types of situations. It can come with a minor performance reduction, and is therefore off by default. It can be enabled with by setting runtime activity to true in a desired differentiation mode.
 
-The way Enzyme's runtime activity resolves this issue is to return the original primal variable as the derivative whenever it needs to denote the fact that a variable is a constant. As this issue can only arise with mutable variables, they must be represented in memory via a pointer. All addtional loads and stores will now be modified to first check if the primal pointer is the same as the shadow pointer, and if so, treat it as a constant. Note that this check is not saying that the same arrays contain the same values, but rather the same backing memory represents both the primal and the shadow (e.g. `a === b` or equivalently `pointer(a) == pointer(b)`).
+The way Enzyme's runtime activity resolves this issue is to return the original primal variable as the derivative whenever it needs to denote the fact that a variable is a constant. As this issue can only arise with mutable variables, they must be represented in memory via a pointer. All additional loads and stores will now be modified to first check if the primal pointer is the same as the shadow pointer, and if so, treat it as a constant. Note that this check is not saying that the same arrays contain the same values, but rather the same backing memory represents both the primal and the shadow (e.g. `a === b` or equivalently `pointer(a) == pointer(b)`).
 
 Enabling runtime activity does therefore, come with a sharp edge, which is that if the computed derivative of a function is mutable, one must also check to see if the primal and shadow represent the same pointer, and if so the true derivative of the function is actually zero.
 
@@ -492,9 +492,9 @@ This is somewhat inefficient, since we need to call the forward pass twice, once
 ```jldoctest complex
 fwd, rev = Enzyme.autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(f)}, Active, Active{ComplexF64})
 
-# Compute the reverse pass seeded with a differntial return of 1.0 + 0.0im
+# Compute the reverse pass seeded with a differential return of 1.0 + 0.0im
 grad_u = rev(Const(f), Active(z), 1.0 + 0.0im, fwd(Const(f), Active(z))[1])[1][1]
-# Compute the reverse pass seeded with a differntial return of 0.0 + 1.0im
+# Compute the reverse pass seeded with a differential return of 0.0 + 1.0im
 grad_v = rev(Const(f), Active(z), 0.0 + 1.0im, fwd(Const(f), Active(z))[1])[1][1]
 
 (grad_u, grad_v)
@@ -558,7 +558,7 @@ d_im   = -im * Enzyme.autodiff(Forward, f, Duplicated(z, 0.0+1.0im))[1]
 
 Interestingly, the derivative of `z*z` is the same when computed in either axis. That is because this function is part of a special class of functions that are invariant to the input direction, called holomorphic. 
 
-Thus, for holomorphic functions, we can simply seed Forward-mode AD with a shadow of one for whatever input we are differenitating. This is nice since seeding the shadow with an input of one is exactly what we'd do for real-valued funtions as well.
+Thus, for holomorphic functions, we can simply seed Forward-mode AD with a shadow of one for whatever input we are differenitating. This is nice since seeding the shadow with an input of one is exactly what we'd do for real-valued functions as well.
 
 Reverse-mode AD, however, is more tricky. This is because holomorphic functions are invariant to the direction of differentiation (aka the derivative inputs), not the direction of the differential return.
 
@@ -577,7 +577,7 @@ conj(grad_u)
 
 In the case of a scalar-input scalar-output function, that's sufficient. However, most of the time one uses reverse mode, it involves either several inputs or outputs, perhaps via memory. This case requires additional handling to properly sum all the partial derivatives from the use of each input and apply the conjugate operator at only the ones relevant to the differential return.
 
-For simplicity, Enzyme provides a helper utlity `ReverseHolomorphic` which performs Reverse mode properly here, assuming that the function is indeed holomorphic and thus has a well-defined single derivative.
+For simplicity, Enzyme provides a helper utility `ReverseHolomorphic` which performs Reverse mode properly here, assuming that the function is indeed holomorphic and thus has a well-defined single derivative.
 
 ```jldoctest complex
 Enzyme.autodiff(ReverseHolomorphic, f, Active, Active(z))[1][1]
@@ -754,7 +754,7 @@ mutable struct Obj
     function Obj(x)
         o = new(x)
         finalizer(o) do o
-            # do someting with o
+            # do something with o
         end
         return o
     end
