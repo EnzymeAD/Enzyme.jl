@@ -196,7 +196,7 @@ end
 const TypeTreeTable = IdDict{Any,Union{Nothing,TypeTree}}
 
 """
-    function typetree(T, ctx, dl, seen=TypeTreeTable())
+    typetree(T, ctx, dl, seen=TypeTreeTable())
 
 Construct a Enzyme typetree from a Julia type.
 
