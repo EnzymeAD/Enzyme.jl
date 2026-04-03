@@ -121,6 +121,9 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function; force_run=false, 
     if force_run
         newname = newname * "forcerun."
     end
+    if extra_rt
+        newname = newname * "extra_rt."
+    end
     if preprocess !== nothing
         newname = newname * ".po_$(preprocess)"
     end
@@ -132,6 +135,10 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function; force_run=false, 
     end
     newname = newname * LLVM.name(fn)
     cfn, _ = get_function!(mod, newname, FT)
+    if !isa(cfn, LLVM.Function)
+	    message = "Failed to find function for $newname, types $(string(FT)), found $(string(cfn)), from $(string(operands(cfn)[1])), fn=$(string(fn))"
+	    throw(AssertionError(message))
+    end
     if isempty(blocks(cfn))
         linkage!(cfn, LLVM.API.LLVMInternalLinkage)
         let builder = IRBuilder()
@@ -189,6 +196,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function; force_run=false, 
             end
         end
         push!(function_attributes(fn), EnumAttribute("alwaysinline"))
+        push!(function_attributes(fn), StringAttribute("enzyme_preserve_primal", "*"))
     end
     return cfn
 end
