@@ -348,7 +348,7 @@ end
 function _annotate_tt(@nospecialize(TT0))
     TT = Base.unwrap_unionall(TT0)
     ft = TT.parameters[1]
-    tt = Type[]
+    tt = TypeVar[]
     for TTp in TT.parameters[2:end]
         push!(tt, _annotate(Base.rewrap_unionall(TTp, TT0)))
     end
