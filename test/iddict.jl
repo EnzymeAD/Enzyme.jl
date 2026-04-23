@@ -193,5 +193,48 @@ end
     @test J_rev[2][:val] ≈ [0.0, 3.0]
 end
 
+@testset "Heterogeneous IdDict" begin
+    function compute_hetero_iddict(x::Float64, y::Vector{Float64})
+        d = IdDict{Symbol, Any}()
+        d[:val_float] = x
+        d[:val_array] = y
+        d[:val_int] = 42
+        
+        v1 = d[:val_float]::Float64
+        v2 = d[:val_array]::Vector{Float64}
+        v3 = d[:val_int]::Int
+        
+        v2[1] = v2[1] * v1 + v3
+        return v1 * 3.0
+    end
+
+    x = 1.5
+    y = [2.0]
+    dy = [1.0]
+    grad_x = autodiff(set_runtime_activity(Reverse), compute_hetero_iddict, Active, Active(x), Duplicated(y, dy))[1][1]
+    
+    # Primal result of v1 * 3.0 is 1.5 * 3.0 = 4.5
+    # y[1] becomes 2.0 * 1.5 + 42 = 45.0
+    # dy is [1.0], so we accumulate dy[1] * d(y[1])/dx = 1.0 * v2_old = 1.0 * 2.0 = 2.0
+    # d(v1 * 3.0)/dx = 3.0
+    # Total grad_x = 3.0 + 2.0 = 5.0.
+    @test grad_x ≈ 5.0
+    # Total grad_y[1] = dy[1] * d(y[1])/dy = 1.0 * v1 = 1.5.
+    @test dy[1] ≈ 1.5
+
+    x_fwd = 1.5
+    y_fwd = [2.0]
+    dy_fwd = [1.0]
+    fwd_res = autodiff(set_runtime_activity(Forward), compute_hetero_iddict, Duplicated, Duplicated(x_fwd, 1.0), Duplicated(y_fwd, dy_fwd))[1]
+    
+    # Forward mode returns the derivative of the return value.
+    # Return value is v1 * 3.0. Derivative is 3.0 * dx = 3.0.
+    @test fwd_res ≈ 3.0
+    # Array y is modified to v2[1] * v1 + 42.
+    # Derivative of y_fwd[1] = dy_fwd[1] * x + y_fwd[1] * dx = 1.0 * 1.5 + 2.0 * 1.0 = 3.5.
+    @test dy_fwd[1] ≈ 3.5
+end
+
+
 
 
