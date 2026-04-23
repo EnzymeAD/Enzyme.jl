@@ -210,6 +210,10 @@ const nofreefns = Set{String}((
     "cuCtxGetId",
     "cuDeviceGetName",
     "ijl_eqtable_get",
+    "jl_eqtable_pop",
+    "ijl_eqtable_pop",
+    "jl_eqtable_nextind",
+    "ijl_eqtable_nextind",
     "cuCtxGetApiVersion",
     "cuCtxSetCurrent",
 ))
@@ -340,6 +344,8 @@ const inactivefns = Set{String}((
     "jl_array_to_string",
     "ijl_array_to_string",
     "pcre2_jit_compile_8",
+    "jl_eqtable_nextind",
+    "ijl_eqtable_nextind",
     # "jl_"
 ))
 
@@ -756,6 +762,8 @@ function annotate!(mod::LLVM.Module)
         "jl_reshape_array",
         "ijl_eqtable_get",
         "jl_eqtable_get",
+        "jl_eqtable_pop",
+        "ijl_eqtable_pop",
         "jl_gc_run_pending_finalizers",
         "ijl_try_substrtod",
         "jl_try_substrtod",
@@ -1089,6 +1097,62 @@ function annotate!(mod::LLVM.Module)
                             "memory",
                             MemoryEffect(
                                 (MRI_ModRef << getLocationPos(ArgMem)) |
+                                (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
+                                (MRI_NoModRef << getLocationPos(Other)),
+                            ).data,
+                        ),
+                    )
+                end
+            end
+        end
+    end
+
+    # Key (arg 2) and found-flag ptr (arg 4) of jl_eqtable_pop are inactive.
+    # jl_eqtable_pop: (ht, key, default, found_ptr) -> value
+    # It modifies ht (removes an entry) and reads default, so argmemonly ModRef.
+    for fname in ("jl_eqtable_pop", "ijl_eqtable_pop")
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                push!(parameter_attributes(fn, 2), LLVM.StringAttribute("enzyme_inactive"))
+                push!(parameter_attributes(fn, 4), LLVM.StringAttribute("enzyme_inactive"))
+                if value_type(LLVM.parameters(fn)[4]) isa LLVM.PointerType
+                    push!(parameter_attributes(fn, 4), LLVM.EnumAttribute("writeonly"))
+                    push!(parameter_attributes(fn, 4), LLVM.EnumAttribute("nocapture"))
+                end
+                if LLVM.version().major <= 15
+                    push!(function_attributes(fn), LLVM.EnumAttribute("argmemonly"))
+                else
+                    push!(
+                        function_attributes(fn),
+                        EnumAttribute(
+                            "memory",
+                            MemoryEffect(
+                                (MRI_ModRef << getLocationPos(ArgMem)) |
+                                (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
+                                (MRI_NoModRef << getLocationPos(Other)),
+                            ).data,
+                        ),
+                    )
+                end
+            end
+        end
+    end
+
+    # jl_eqtable_nextind: (ht, i) -> next_index — pure read for IdDict iteration
+    for fname in ("jl_eqtable_nextind", "ijl_eqtable_nextind")
+        if haskey(funcs, fname)
+            for fn in funcs[fname]
+                push!(function_attributes(fn), LLVM.StringAttribute("enzyme_inactive"))
+                if LLVM.version().major <= 15
+                    push!(function_attributes(fn), LLVM.EnumAttribute("readonly"))
+                    push!(function_attributes(fn), LLVM.EnumAttribute("argmemonly"))
+                else
+                    push!(
+                        function_attributes(fn),
+                        EnumAttribute(
+                            "memory",
+                            MemoryEffect(
+                                (MRI_Ref << getLocationPos(ArgMem)) |
                                 (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
                                 (MRI_NoModRef << getLocationPos(Other)),
                             ).data,
