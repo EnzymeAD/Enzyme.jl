@@ -1154,25 +1154,94 @@ end
         return true
     end
 
-    err = emit_error(B, orig, "Enzyme: Not yet implemented forward for jl_eqtable_get")
-
-    newo = new_from_original(gutils, orig)
-    API.moveBefore(newo, err, B)
-    normal =
-        (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        width = get_width(gutils)
-        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-        for idx = 1:width
-            if width == 1
-                shadowres = normal
-            else
-                shadowres = insert_value!(B, shadowres, normal, idx - 1)
-            end
-        end
-        unsafe_store!(shadowR, shadowres.ref)
+    if shadowR == C_NULL
+        return false
     end
 
+    width = get_width(gutils)
+    origh, origkey, origdflt = arg_operands_view(orig)
+
+    if is_constant_value(gutils, origh)
+        emit_error(
+            B,
+            orig,
+            "Enzyme: Not yet implemented constant table in jl_eqtable_get " *
+            string(origh) *
+            " " *
+            string(orig) *
+            " result: " *
+            string(absint(orig)) *
+            " " *
+            string(abs_typeof(orig, true)) *
+            " dict: " *
+            string(absint(origh)) *
+            " " *
+            string(abs_typeof(origh, true)) *
+            " key " *
+            string(absint(origkey)) *
+            " " *
+            string(abs_typeof(origkey, true)) *
+            " dflt " *
+            string(absint(origdflt)) *
+            " " *
+            string(abs_typeof(origdflt, true)),
+        )
+        return false
+    end
+
+    shadowh = invert_pointer(gutils, origh, B)
+
+    shadowdflt = if is_constant_value(gutils, origdflt)
+        shadowdflt2 = julia_error(
+            Base.unsafe_convert(
+                Cstring,
+                "Mixed activity for default of jl_eqtable_get " *
+                string(orig) *
+                " " *
+                string(origdflt),
+            ),
+            orig.ref,
+            API.ET_MixedActivityError,
+            gutils.ref,
+            origdflt.ref,
+            B.ref,
+        )
+        if shadowdflt2 != C_NULL
+            LLVM.Value(shadowdflt2)
+        else
+            nop = new_from_original(gutils, origdflt)
+            if width == 1
+                nop
+            else
+                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(nop)))
+                shadowm = LLVM.UndefValue(ST)
+                for j = 1:width
+                    shadowm = insert_value!(B, shadowm, nop, j - 1)
+                end
+                shadowm
+            end
+        end
+    else
+        invert_pointer(gutils, origdflt, B)
+    end
+
+    newvals = API.CValueType[API.VT_Shadow, API.VT_Primal, API.VT_Shadow]
+
+    newops = LLVM.Value[
+        shadowh,
+        new_from_original(gutils, origkey),
+        shadowdflt,
+    ]
+    shadowres = batch_call_same_with_inverted_arg_if_active!(
+        B,
+        gutils,
+        orig,
+        newops,
+        newvals,
+        false,
+    )
+
+    unsafe_store!(shadowR, shadowres.ref)
     return false
 end
 
@@ -1310,25 +1379,65 @@ end
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    err = emit_error(B, orig, "Enzyme: Not yet implemented forward for jl_eqtable_put")
-    newo = new_from_original(gutils, orig)
-    API.moveBefore(newo, err, B)
 
-    normal =
-        (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        width = get_width(gutils)
-        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-        for idx = 1:width
+    width = get_width(gutils)
+
+    origh, origkey, origval, originserted = arg_operands_view(orig)
+
+    @assert !is_constant_value(gutils, origh)
+
+    shadowh = invert_pointer(gutils, origh, B)
+    shadowval = invert_pointer(gutils, origval, B)
+
+    shadowval = if is_constant_value(gutils, origval)
+        shadowdflt2 = julia_error(
+            Base.unsafe_convert(
+                Cstring,
+                "Mixed activity for val of jl_eqtable_put " *
+                string(orig) *
+                " " *
+                string(origval),
+            ),
+            orig.ref,
+            API.ET_MixedActivityError,
+            gutils.ref,
+            origval.ref,
+            B.ref,
+        )
+        if shadowdflt2 != C_NULL
+            LLVM.Value(shadowdflt2)
+        else
+            nop = new_from_original(gutils, origval)
             if width == 1
-                shadowres = normal
+                nop
             else
-                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(nop)))
+                shadowm = LLVM.UndefValue(ST)
+                for j = 1:width
+                    shadowm = insert_value!(B, shadowm, nop, j - 1)
+                end
+                shadowm
             end
         end
-        unsafe_store!(shadowR, shadowres.ref)
+    else
+        invert_pointer(gutils, origval, B)
     end
 
+    newvals = API.CValueType[API.VT_Shadow, API.VT_Primal, API.VT_Shadow, API.VT_None]
+
+    newops = LLVM.Value[
+      shadowh,
+      new_from_original(gutils, origkey),
+      shadowval,
+      LLVM.null(value_type(originserted)),
+    ]
+
+    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, newops, newvals, false;
+        preprocess=eqtable_shadow_active) #=lookup=#
+
+    if shadowR != C_NULL
+        unsafe_store!(shadowR, shadowres.ref)
+    end
     return false
 end
 
@@ -1415,25 +1524,64 @@ end
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    err = emit_error(B, orig, "Enzyme: Not yet implemented forward for jl_eqtable_pop")
-    newo = new_from_original(gutils, orig)
-    API.moveBefore(newo, err, B)
 
-    normal =
-        (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        width = get_width(gutils)
-        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-        for idx = 1:width
+    width = get_width(gutils)
+
+    origh, origkey, origdflt, origfound = arg_operands_view(orig)
+
+    @assert !is_constant_value(gutils, origh)
+
+    shadowh = invert_pointer(gutils, origh, B)
+
+    shadowdflt = if is_constant_value(gutils, origdflt)
+        shadowdflt2 = julia_error(
+            Base.unsafe_convert(
+                Cstring,
+                "Mixed activity for default of jl_eqtable_pop " *
+                string(orig) *
+                " " *
+                string(origdflt),
+            ),
+            orig.ref,
+            API.ET_MixedActivityError,
+            gutils.ref,
+            origdflt.ref,
+            B.ref,
+        )
+        if shadowdflt2 != C_NULL
+            LLVM.Value(shadowdflt2)
+        else
+            nop = new_from_original(gutils, origdflt)
             if width == 1
-                shadowres = normal
+                nop
             else
-                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(nop)))
+                shadowm = LLVM.UndefValue(ST)
+                for j = 1:width
+                    shadowm = insert_value!(B, shadowm, nop, j - 1)
+                end
+                shadowm
             end
         end
-        unsafe_store!(shadowR, shadowres.ref)
+    else
+        invert_pointer(gutils, origdflt, B)
     end
 
+    newvals = API.CValueType[API.VT_Shadow, API.VT_Primal, API.VT_Shadow, API.VT_None]
+
+    newops = LLVM.Value[
+      shadowh,
+      new_from_original(gutils, origkey),
+      shadowdflt,
+      LLVM.null(value_type(origfound)),
+    ]
+
+    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, newops, newvals, false;
+        preprocess=eqtable_shadow_active) #=lookup=#
+
+    if shadowR != C_NULL
+        unsafe_store!(shadowR, shadowres.ref)
+    end
     return false
 end
 
@@ -1484,8 +1632,6 @@ end
         invert_pointer(gutils, origdflt, B)
     end
 
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-
     newvals = API.CValueType[API.VT_Shadow, API.VT_Primal, API.VT_Shadow, API.VT_None]
 
     newops = LLVM.Value[
@@ -1498,7 +1644,9 @@ end
     shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, newops, newvals, false;
         preprocess=eqtable_shadow_active) #=lookup=#
 
-    unsafe_store!(shadowR, shadowres.ref)
+    if shadowR != C_NULL
+        unsafe_store!(shadowR, shadowres.ref)
+    end
     return false
 end
 
