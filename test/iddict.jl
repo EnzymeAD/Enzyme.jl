@@ -43,3 +43,38 @@ using Enzyme, Test, GPUArraysCore
     @test all(isfinite, dev_batch_1[2:end])
     @test all(isfinite, dev_batch_2[2:end])
 end
+
+@testset "Active data in IdDict" begin
+    function compute_iddict_active_float(x::Float64)
+        d = IdDict{Symbol, Float64}()
+        d[:val] = x * 2.0
+        v = d[:val]
+        return v * 3.0
+    end
+
+    # Reverse mode
+    grad = autodiff(set_runtime_activity(Reverse), compute_iddict_active_float, Active, Active(1.5))[1][1]
+    @test grad ≈ 6.0
+
+    # Forward mode
+    fwd_res = autodiff(set_runtime_activity(Forward), compute_iddict_active_float, Duplicated, Duplicated(1.5, 1.0))[1]
+    @test fwd_res ≈ 6.0
+
+    function compute_iddict_active_array(x::Vector{Float64})
+        d = IdDict{Symbol, Vector{Float64}}()
+        d[:val] = x
+        v = d[:val]
+        v[1] = v[1] * 2.0
+        return nothing
+    end
+
+    x = [1.5]
+    dx = [1.0]
+    autodiff(set_runtime_activity(Reverse), compute_iddict_active_array, Const, Duplicated(x, dx))
+    @test dx[1] ≈ 2.0
+
+    x_fwd = [1.5]
+    dx_fwd = [1.0]
+    autodiff(set_runtime_activity(Forward), compute_iddict_active_array, Const, Duplicated(x_fwd, dx_fwd))
+    @test dx_fwd[1] ≈ 2.0
+end

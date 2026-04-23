@@ -1346,13 +1346,6 @@ end
 
     newvals = API.CValueType[API.VT_Shadow, API.VT_Primal, API.VT_Shadow]
 
-    function post_err_if_active(B, cal, args)
-        emit_apply_generic!(
-            B,
-            LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, cal)],
-        )
-    end
-
     newops = LLVM.Value[
         shadowh,
         new_from_original(gutils, origkey),
@@ -1432,22 +1425,12 @@ end
       LLVM.null(value_type(originserted)),
     ]
 
-    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, newops, newvals, false;
-        preprocess=eqtable_shadow_active) #=lookup=#
+    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, newops, newvals, false) #=lookup=#
 
     if shadowR != C_NULL
         unsafe_store!(shadowR, shadowres.ref)
     end
     return false
-end
-
-function eqtable_shadow_active(B, args)
-    _, _, shadowval, _ = args
-    emit_apply_generic!(
-        B,
-        LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, shadowval)],
-    )
-    return nothing
 end
 
 @register_aug function eqtableput_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
@@ -1509,8 +1492,7 @@ end
       LLVM.null(value_type(originserted)),
     ]
 
-    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, newops, newvals, false;
-        preprocess=eqtable_shadow_active) #=lookup=#
+    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, newops, newvals, false) #=lookup=#
 
     unsafe_store!(shadowR, shadowres.ref)
     return false
@@ -1576,8 +1558,7 @@ end
       LLVM.null(value_type(origfound)),
     ]
 
-    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, newops, newvals, false;
-        preprocess=eqtable_shadow_active) #=lookup=#
+    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, newops, newvals, false) #=lookup=#
 
     if shadowR != C_NULL
         unsafe_store!(shadowR, shadowres.ref)
@@ -1641,8 +1622,7 @@ end
       LLVM.null(value_type(origfound)),
     ]
 
-    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, newops, newvals, false;
-        preprocess=eqtable_shadow_active) #=lookup=#
+    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, newops, newvals, false) #=lookup=#
 
     if shadowR != C_NULL
         unsafe_store!(shadowR, shadowres.ref)
