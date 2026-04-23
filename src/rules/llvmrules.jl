@@ -467,6 +467,11 @@ end
     return nothing
 end
 
+function post_arraycopy_makezero(B, callv, _, _)
+    emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, Enzyme.make_zero!), callv])
+    return nothing
+end
+
 function post_arraycopy_memset(B, callv, _, _)
     i8 = LLVM.IntType(8)
     algn = 0
@@ -503,14 +508,7 @@ end
 
     found, arty, byref = abs_typeof(origops[1])
 
-    if !found && !(eltype(arty) <: Base.IEEEFloat)
-        bt = GPUCompiler.backtrace(orig)
-        btstr = sprint() do io
-            print(io, "\nCaused by:")
-            Base.show_backtrace(io, bt)
-        end
-        GPUCompiler.@safe_warn "TODO forward zero-set of arraycopy of found ($found) eltype ($arty) used memset rather than runtime type $btstr"
-    end
+    needs_runtime_zero = !found && !(eltype(arty) <: Base.IEEEFloat)
 
     shadowres = batch_call_same_with_inverted_arg_if_active!(
         B,
@@ -519,7 +517,7 @@ end
         [shadowin],
         [API.VT_Shadow],
         false;
-        postprocess_const=post_arraycopy_memset
+        postprocess_const = needs_runtime_zero ? post_arraycopy_makezero : post_arraycopy_memset
     )::LLVM.Value #=lookup=#
 
     unsafe_store!(shadowR, shadowres.ref)
@@ -766,6 +764,11 @@ end
     return nothing
 end
 
+function post_genericmemcpy_makezero(B, callv, _, _)
+    emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, Enzyme.make_zero!), callv])
+    return nothing
+end
+
 function post_genericmemcpy_memset(B, callv, args, _)
     _, _, len = args
 
@@ -803,14 +806,7 @@ end
 
     found, arty, byref = abs_typeof(origops[1])
 
-    if !found && !(eltype(arty) <: Base.IEEEFloat)
-        bt = GPUCompiler.backtrace(orig)
-        btstr = sprint() do io
-            print(io, "\nCaused by:")
-            Base.show_backtrace(io, bt)
-        end
-        GPUCompiler.@safe_warn "TODO forward zero-set of memorycopy used memset rather than runtime type $btstr"
-    end
+    needs_runtime_zero = !found && !(eltype(arty) <: Base.IEEEFloat)
 
     shadowres = batch_call_same_with_inverted_arg_if_active!(
         B,
@@ -819,7 +815,7 @@ end
         [shadowin, shadowdata, len],
         [API.VT_Shadow, API.VT_Shadow, API.VT_Primal],
         false;
-        postprocess_const=post_genericmemcpy_memset
+        postprocess_const = needs_runtime_zero ? post_genericmemcpy_makezero : post_genericmemcpy_memset
     ) #=lookup=#
 
     unsafe_store!(shadowR, shadowres.ref)
