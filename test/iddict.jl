@@ -100,4 +100,98 @@ end
     dx_fwd = [1.0]
     autodiff(set_runtime_activity(Forward), compute_active_iddict_arg, Duplicated(d_fwd, d_shadow_fwd), Duplicated(x_fwd, dx_fwd))
     @test dx_fwd[1] ≈ 2.0
+
+    d_batch = IdDict{Symbol, Vector{Float64}}()
+    d_batch_1 = IdDict{Symbol, Vector{Float64}}()
+    d_batch_2 = IdDict{Symbol, Vector{Float64}}()
+    x_batch = [1.5]
+    dx_batch_1 = [1.0]
+    dx_batch_2 = [2.0]
+    autodiff(set_runtime_activity(Forward), compute_active_iddict_arg, BatchDuplicated(d_batch, (d_batch_1, d_batch_2)), BatchDuplicated(x_batch, (dx_batch_1, dx_batch_2)))
+    @test dx_batch_1[1] ≈ 2.0
+    @test dx_batch_2[1] ≈ 4.0
+
+    d_batch_rev = IdDict{Symbol, Vector{Float64}}()
+    d_batch_rev_1 = IdDict{Symbol, Vector{Float64}}()
+    d_batch_rev_2 = IdDict{Symbol, Vector{Float64}}()
+    x_batch_rev = [1.5]
+    dx_batch_rev_1 = [1.0]
+    dx_batch_rev_2 = [2.0]
+    autodiff(set_runtime_activity(Reverse), compute_active_iddict_arg, BatchDuplicated(d_batch_rev, (d_batch_rev_1, d_batch_rev_2)), BatchDuplicated(x_batch_rev, (dx_batch_rev_1, dx_batch_rev_2)))
+    @test dx_batch_rev_1[1] ≈ 2.0
+    @test dx_batch_rev_2[1] ≈ 4.0
 end
+
+@testset "make_zero and remake_zero for IdDict" begin
+    # empty
+    d1 = IdDict{Symbol, Vector{Float64}}()
+    d1_zero = Enzyme.make_zero(d1)
+    @test typeof(d1_zero) == typeof(d1)
+    @test length(d1_zero) == 0
+
+    # populated
+    d2 = IdDict{Symbol, Vector{Float64}}()
+    d2[:a] = [1.0, 2.0]
+    d2_zero = Enzyme.make_zero(d2)
+    @test typeof(d2_zero) == typeof(d2)
+    @test length(d2_zero) == 1
+    @test haskey(d2_zero, :a)
+    @test d2_zero[:a] == [0.0, 0.0]
+
+    # make_zero!
+    d3_shadow = IdDict{Symbol, Vector{Float64}}()
+    d3_shadow[:a] = [3.0, 4.0]
+    Enzyme.make_zero!(d3_shadow)
+    @test length(d3_shadow) == 1
+    @test d3_shadow[:a] == [0.0, 0.0]
+
+    # remake_zero!
+    d4_shadow = IdDict{Symbol, Vector{Float64}}()
+    d4_shadow[:a] = [5.0, 6.0]
+    Enzyme.remake_zero!(d4_shadow)
+    @test length(d4_shadow) == 1
+    @test d4_shadow[:a] == [0.0, 0.0]
+end
+
+@testset "Jacobian with IdDict" begin
+    function compute_iddict_jacobian(x::Vector{Float64})
+        d = IdDict{Symbol, Vector{Float64}}()
+        d[:val] = x
+        v = d[:val]
+        return [v[1] * 2.0, v[2] * 3.0]
+    end
+
+    x = [1.5, 2.5]
+    
+    J_fwd = Enzyme.jacobian(Forward, compute_iddict_jacobian, x)[1]
+    @test J_fwd ≈ [2.0 0.0; 0.0 3.0]
+
+    J_rev = Enzyme.jacobian(Reverse, compute_iddict_jacobian, x)[1]
+    @test J_rev ≈ [2.0 0.0; 0.0 3.0]
+end
+
+@testset "Jacobian with IdDict as input" begin
+    function compute_iddict_jacobian_input(d::IdDict{Symbol, Vector{Float64}})
+        v = d[:val]
+        return [v[1] * 2.0, v[2] * 3.0]
+    end
+
+    d = IdDict{Symbol, Vector{Float64}}()
+    d[:val] = [1.5, 2.5]
+    
+    d_s1 = IdDict{Symbol, Vector{Float64}}()
+    d_s1[:val] = [1.0, 0.0]
+    d_s2 = IdDict{Symbol, Vector{Float64}}()
+    d_s2[:val] = [0.0, 1.0]
+
+    J_fwd = Enzyme.jacobian(Forward, compute_iddict_jacobian_input, d; shadows=((d_s1, d_s2),))[1]
+    @test J_fwd == ([2.0, 0.0], [0.0, 3.0])
+
+    J_rev = Enzyme.jacobian(Reverse, compute_iddict_jacobian_input, d)[1]
+    @test length(J_rev) == 2
+    @test J_rev[1][:val] ≈ [2.0, 0.0]
+    @test J_rev[2][:val] ≈ [0.0, 3.0]
+end
+
+
+
