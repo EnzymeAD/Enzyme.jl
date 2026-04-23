@@ -78,3 +78,26 @@ end
     autodiff(set_runtime_activity(Forward), compute_iddict_active_array, Const, Duplicated(x_fwd, dx_fwd))
     @test dx_fwd[1] ≈ 2.0
 end
+
+@testset "Active IdDict" begin
+    function compute_active_iddict_arg(d::IdDict{Symbol, Vector{Float64}}, x::Vector{Float64})
+        d[:val] = x
+        v = d[:val]
+        v[1] = v[1] * 2.0
+        return nothing
+    end
+
+    d = IdDict{Symbol, Vector{Float64}}()
+    d_shadow = IdDict{Symbol, Vector{Float64}}()
+    x = [1.5]
+    dx = [1.0]
+    autodiff(set_runtime_activity(Reverse), compute_active_iddict_arg, Duplicated(d, d_shadow), Duplicated(x, dx))
+    @test dx[1] ≈ 2.0
+
+    d_fwd = IdDict{Symbol, Vector{Float64}}()
+    d_shadow_fwd = IdDict{Symbol, Vector{Float64}}()
+    x_fwd = [1.5]
+    dx_fwd = [1.0]
+    autodiff(set_runtime_activity(Forward), compute_active_iddict_arg, Duplicated(d_fwd, d_shadow_fwd), Duplicated(x_fwd, dx_fwd))
+    @test dx_fwd[1] ≈ 2.0
+end
