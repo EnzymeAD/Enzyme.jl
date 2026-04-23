@@ -1260,7 +1260,7 @@ function abstract_call_known(
     if interp.broadcast_rewrite
         if f === Base.copyto! && length(argtypes) == 3
             # Ideally we just override uses of the AbstractArray base class, but
-            # I don't know how to override the method in base, without accidentally overridding
+            # I don't know how to override the method in base, without accidentally overriding
             # it for say CuArray or other users. For safety, we only override for Array
             if widenconst(argtypes[2]) <: Array &&
                widenconst(argtypes[3]) <: Base.Broadcast.Broadcasted{Nothing}
