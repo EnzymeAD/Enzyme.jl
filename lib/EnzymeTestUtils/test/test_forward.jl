@@ -116,7 +116,7 @@ end
                 atol = rtol = sqrt(eps(real(T)))
 
                 # Test that require the attributor on 1.11
-                if v"1.11.0" <= VERSION < v"1.12.0" && Enzyme.run_attributor()
+                if v"1.11.0" <= VERSION < v"1.12.0" && !Enzyme.run_attributor()
                     if Tx == Const &&(T == ComplexF32 || T == ComplexF64)
                         Ta == Duplicated || Ta == BatchDuplicated || continue
                     end
