@@ -51,8 +51,31 @@ using Preferences
 bitcode_replacement() = parse(Bool, @load_preference("bitcode_replacement", "true"))
 bitcode_replacement!(val) = @set_preferences!("bitcode_replacement" => string(val))
 
+function llvm_compatible_cpu_name(name::String)
+    if Base.libllvm_version < v"19"
+        if Sys.isapple() && Sys.ARCH === :aarch64
+            m = match(r"^apple-m(\d+)$", name)
+            if m !== nothing
+                v = parse(Int, m.captures[1])
+                if v >= 4
+                    return "apple-m3"
+                end
+            end
+        end
+        m = match(r"^znver(\d+)$", name)
+        if m !== nothing
+            v = parse(Int, m.captures[1])
+            if v >= 5
+                return "znver4"
+            end
+        end
+    end
+    return name
+end
+
 function cpu_name()
-    ccall(:jl_get_cpu_name, String, ())
+    name = ccall(:jl_get_cpu_name, String, ())
+    return llvm_compatible_cpu_name(name)
 end
 
 function cpu_features()
