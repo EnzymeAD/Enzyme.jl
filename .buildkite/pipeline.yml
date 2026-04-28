@@ -19,7 +19,7 @@ steps:
       julia --color=yes -e '
           using Pkg
           pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
-          push!(pkgs, PackageSpec(; name="CUDA"))
+          push!(pkgs, PackageSpec(; name="CUDA", version="5"))
           Pkg.develop(pkgs)' || exit 3
 
       echo "+++ Run tests"
