@@ -52,7 +52,18 @@ bitcode_replacement() = parse(Bool, @load_preference("bitcode_replacement", "tru
 bitcode_replacement!(val) = @set_preferences!("bitcode_replacement" => string(val))
 
 function cpu_name()
-    ccall(:jl_get_cpu_name, String, ())
+    name = ccall(:jl_get_cpu_name, String, ())
+    if Base.libllvm_version < v"19"
+        if Sys.isapple() && Sys.ARCH === :aarch64
+            if name == "apple-m4"
+                return "apple-m3"
+            end
+        end
+        if name == "znver5"
+            return "znver4"
+        end
+    end
+    return name
 end
 
 function cpu_features()
