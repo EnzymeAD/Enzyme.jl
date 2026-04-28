@@ -90,10 +90,7 @@ struct MyTrnc
 end
 @noinline function trnc(l::Float64)
     # Call a C function from libc that takes a double and returns a double to block constprop
-	lcdf = Core.Intrinsics.llvmcall((
-            """
-            declare double @sin(double)
-            """, "sin"), Float64, Tuple{Float64}, l)
+	lcdf = ccall("extern sin", llvmcall, Float64, (Float64,), l)
     MyTrnc(lcdf, lcdf)
 end
 @noinline function lpdf(dists::MyFill, x::Vector{Float64})
