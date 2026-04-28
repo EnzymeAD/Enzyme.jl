@@ -23,6 +23,9 @@ constraints:
 - `rtol`: Relative tolerance for `isapprox`.
 - `atol`: Absolute tolerance for `isapprox`.
 - `testset_name`: Name to use for a testset in which all tests are evaluated.
+- `ignore_const_checks::Bool=false`: If `true`, skip the post-call assertion that
+    `Const` arguments were mutated identically by the rule and the primal function.
+    Useful when a rule legitimately scribbles on a `Const` scratch buffer.
 
 # Examples
 
@@ -61,7 +64,8 @@ function test_forward(
     rtol::Real=1e-9,
     atol::Real=1e-9,
     testset_name=nothing,
-    runtime_activity::Bool=false
+    runtime_activity::Bool=false,
+    ignore_const_checks::Bool=false,
 )
     call_with_copy = CallWithCopyKWargs(fkwargs)
     call_with_kwargs = CallWithKWargs(fkwargs)
@@ -126,6 +130,7 @@ function test_forward(
             rtol,
         )
         for (i, (act_i, arg_i)) in enumerate(zip(Base.tail(activities), args_copy))
+            ignore_const_checks && act_i isa Const && continue
             test_approx(
                 act_i.val,
                 arg_i,

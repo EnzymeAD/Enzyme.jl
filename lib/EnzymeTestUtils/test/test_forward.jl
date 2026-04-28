@@ -19,6 +19,30 @@ function f_kwargs_fwd!(x; kwargs...)
     return nothing
 end
 
+# Function with a scratch buffer that the rule mutates only during AD.
+# The primal does not touch `scratch`, so the rule's scribble would normally fail
+# the post-call mutation check unless `ignore_const_checks=true`.
+f_const_scratch_fwd(x, scratch) = x .^ 2
+
+function EnzymeRules.forward(
+    config,
+    func::Const{typeof(f_const_scratch_fwd)},
+    RT::Type{<:Union{Const,Duplicated,DuplicatedNoNeed}},
+    x::Union{Const,Duplicated},
+    scratch::Const,
+)
+    scratch.val .= x.val  # AD-only scribble on Const scratch buffer
+    if RT <: Const
+        return func.val(x.val, scratch.val)
+    end
+    dval = x isa Duplicated ? 2 .* x.val .* x.dval : zero(x.val)
+    if RT <: DuplicatedNoNeed
+        return dval
+    else
+        return Duplicated(func.val(x.val, scratch.val), dval)
+    end
+end
+
 function EnzymeRules.forward(
     config,
     func::Const{typeof(f_kwargs_fwd)},
@@ -211,6 +235,23 @@ end
                 @test fails() do
                     return test_forward(f_kwargs_fwd!, Const, (x, Tx); fkwargs)
                 end
+            end
+        end
+
+        @testset "ignore_const_checks" begin
+            x = randn(3)
+            scratch = zeros(3)
+            @test fails() do
+                test_forward(f_const_scratch_fwd, Duplicated, (x, Duplicated), (scratch, Const))
+            end
+            @test !fails() do
+                test_forward(
+                    f_const_scratch_fwd,
+                    Duplicated,
+                    (x, Duplicated),
+                    (scratch, Const);
+                    ignore_const_checks=true,
+                )
             end
         end
 
