@@ -1,5 +1,5 @@
 using Enzyme, OrdinaryDiffEqTsit5, StaticArrays, DiffEqBase, ForwardDiff, Test
-using OrdinaryDiffEq, SciMLSensitivity, Zygote
+using OrdinaryDiffEq, SciMLBase, SciMLSensitivity, Zygote
 using LinearSolve, LinearAlgebra
 
 @testset "Direct Differentiation of Explicit ODE Solve" begin
@@ -61,7 +61,11 @@ struct senseloss0{T}
 end
 function (f::senseloss0)(u0p)
     prob = ODEProblem{true}(odef, u0p[1:1], (0.0, 1.0), u0p[2:2])
-    sum(solve(prob, Tsit5(), abstol = 1e-12, reltol = 1e-12, saveat = 0.1))
+    # Use sol.u to iterate over timestep state vectors — forward-compatible with both
+    # RecursiveArrayTools v3 and v4. RAT v4 changed sol[i] (integer index) semantics to
+    # return a scalar element rather than the i-th timestep; sol.u[i] is the stable API.
+    sol = solve(prob, Tsit5(), abstol = 1e-12, reltol = 1e-12, saveat = 0.1)
+    sum(sum, sol.u)
 end
 
 @testset "SciMLSensitivity Adjoint Interface" begin
