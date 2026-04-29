@@ -18,12 +18,12 @@ Enzyme = {path = "../../.."}
 EnzymeCore = {path = "../../../lib/EnzymeCore"}
 
 [compat]
-DiffEqBase = "6.190, 7"
-ForwardDiff = "0.10.36, 1"
+DiffEqBase = "7"
+ForwardDiff = "1"
 LinearSolve = "3.12"
-OrdinaryDiffEq = "6.89, 7"
-OrdinaryDiffEqTsit5 = "1.1, 2"
-SciMLBase = "2, 3"
+OrdinaryDiffEq = "7"
+OrdinaryDiffEqTsit5 = "2"
+SciMLBase = "3"
 SciMLSensitivity = "7.69"
 StaticArrays = "1.9"
 Zygote = "0.7.10"
