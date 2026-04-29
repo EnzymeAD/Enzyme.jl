@@ -1222,7 +1222,12 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
             if sret !== nothing
                 idx = 0
                 if !in(0, parmsRemoved)
-                    rest = typetree(sret, ctx, dl)
+                    @assert sret <: Ptr
+                    sret_et = eltype(sret)
+                    rest = copy(typetree(sret_et, ctx, dl))
+                    shift!(rest, dl, 0, LLVM.sizeof(LLVM.DataLayout(dl), sret_ty(f, 1)), 0)
+                    merge!(rest, TypeTree(API.DT_Pointer, ctx))
+                    only!(rest, -1)
                     push!(
                         parameter_attributes(f, idx + 1),
                         StringAttribute("enzyme_type", string(rest)),
@@ -5516,8 +5521,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         fn = isa(inst, LLVM.CallInst) ? LLVM.called_operand(inst) : nothing
        
         if !API.HasFromStack(inst) && isa(inst, LLVM.AllocaInst)
-
-            calluse = nothing
+            calluse = LLVM.CallInst[]
             is_returnroots = false
             for u in LLVM.uses(inst)
                 u = LLVM.user(u)
@@ -5542,7 +5546,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
                             end
                         end
                         if hassret
-                            calluse = u
+                            push!(calluse, u)
                         end
                     end
                 end
