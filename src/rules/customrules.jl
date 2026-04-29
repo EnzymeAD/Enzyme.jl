@@ -1488,6 +1488,9 @@ function nthfield_if_byref!(B, isboxed, sret_union_type, res)
         # Build body
         B2 = LLVM.IRBuilder()
         entry = BasicBlock(func, "entry")
+        then = BasicBlock(func, "then")
+        merge = BasicBlock(func, "merge")
+        
         position!(B2, entry)
         
         # Extract arguments
@@ -1495,9 +1498,16 @@ function nthfield_if_byref!(B, isboxed, sret_union_type, res)
         sret_union_type2 = parameters(func)[2]
         res2 = parameters(func)[3]
         
+        br!(B2, isboxed2, then, merge)
+        
+        position!(B2, then)
         obj = extract_value!(B2, res2, 0)
         boxed_tape = emit_nthfield!(B2, obj, LLVM.ConstantInt(LLVM.IntType(64), 2))
-        ret = select!(B2, isboxed2, boxed_tape, sret_union_type2)
+        br!(B2, merge)
+        
+        position!(B2, merge)
+        ret = phi!(B2, T_prjlvalue)
+        append!(LLVM.incoming(ret), [(sret_union_type2, entry), (boxed_tape, then)])
         
         ret!(B2, ret)
     end
