@@ -16,11 +16,11 @@ steps:
     timeout_in_minutes: 60
     commands: |
       echo "--- Setup Julia packages"
-      julia --color=yes -e '
+      JULIA_PKG_PRECOMPILE_AUTO="false" julia --color=yes -e '
           using Pkg
           pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
-          push!(pkgs, PackageSpec(; name="CUDA"))
-          Pkg.develop(pkgs)' || exit 3
+          Pkg.develop(pkgs)
+          Pkg.add(PackageSpec(; name="CUDA", version="5"))' || exit 3
 
       echo "+++ Run tests"
       julia --color=yes test/cuda.jl
