@@ -63,7 +63,10 @@ jobs:
       - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.version }}
-      - uses: julia-actions/cache@v3
+      - name: Load Julia packages from cache
+        uses: wsmoses/cache@gcpb
+        with:
+          gcp-bucket: enzyme-ci-transient
       - name: "Install Dependencies"
         run: |
             julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 -e 'using Pkg; Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")])'
