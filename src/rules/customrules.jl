@@ -1465,6 +1465,46 @@ function sret_union_tape_type(@nospecialize(aug_RT))
     return Union{InnerTypes...}
 end
 
+function nthfield_if_byref!(B, isboxed, sret_union_type, res) 
+    mod = LLVM.parent(LLVM.parent(position(B)))
+    
+    # Types
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_int8 = LLVM.Int8Type()
+    T_int1 = LLVM.Int1Type()
+    T_res = LLVM.StructType([T_prjlvalue, T_int8])
+    
+    # Function name
+    func_name = "enzyme.nthfield_if_byref"
+    
+    # Get or create declaration
+    fty = LLVM.FunctionType(T_prjlvalue, [T_int1, T_prjlvalue, T_res])
+    func, _ = get_function!(mod, func_name, fty)
+    
+    if isempty(blocks(func))
+        linkage!(func, LLVM.API.LLVMInternalLinkage)
+        
+        # Build body
+        B2 = LLVM.IRBuilder()
+        entry = BasicBlock(func, "entry")
+        position!(B2, entry)
+        
+        # Extract arguments
+        isboxed2 = parameters(func)[1]
+        sret_union_type2 = parameters(func)[2]
+        res2 = parameters(func)[3]
+        
+        obj = extract_value!(B2, res2, 0)
+        boxed_tape = emit_nthfield!(B2, obj, LLVM.ConstantInt(LLVM.IntType(64), 2))
+        ret = select!(B2, isboxed2, boxed_tape, sret_union_type2)
+        
+        ret!(B2, ret)
+    end
+    
+    return call!(B, fty, func, [isboxed, sret_union_type, res])
+end
+
 function enzyme_custom_common_rev(
     forward::Bool,
     B::LLVM.IRBuilder,
@@ -2069,10 +2109,16 @@ function enzyme_custom_common_rev(
         end
         for_each_uniontype_small(inner, miRT)
 
+        isboxed = icmp!(B, LLVM.API.LLVMIntEQ, and!(B, idxv, LLVM.ConstantInt(value_type(idxv), 128)), LLVM.ConstantInt(value_type(idxv), 128))
+        cur = select!(B, isboxed, unsafe_to_llvm(B, UInt8), cur)
+        cur_size = select!(B, isboxed, LLVM.ConstantInt(sizeof(UInt8)), cur_size)
+
         sret_union_tape = emit_allocobj!(B, cur, cur_size, false)
         T_int8 = LLVM.Int8Type()
         memcpy!(B, bitcast!(B, sret_union_tape, LLVM.PointerType(T_int8, Tracked)), 0, gep!(B, T_int8, bitcast!(B, sret, LLVM.PointerType(T_int8)), LLVM.Value[cur_offset]), 0, cur_size)
 
+        sret_union_tape = nthfield_if_byref!(B, isboxed, sret_union_tape, res)
+        
         res = sret
 
     elseif sret !== nothing
