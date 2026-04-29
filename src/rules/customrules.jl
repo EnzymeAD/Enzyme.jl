@@ -1057,8 +1057,6 @@ end
         end
         # Fix calling convention within julia that Tuple{Float,Float} ->[2 x float] rather than {float, float}
         args[i] = calling_conv_fixup(B, args[i], party)
-        # GPUCompiler.@safe_error "Calling convention mismatch", party, args[i], i, llvmf, fn, args, sret, returnRoots
-        return false
     end
 
     res = LLVM.call!(B, LLVM.function_type(llvmf), llvmf, args)
