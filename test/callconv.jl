@@ -110,3 +110,23 @@ end
     dx = Enzyme.gradient(Reverse, f_sret_nested, x)
     @test dx[1] == [1.0, 0.0]
 end
+
+@noinline function rec(x, ps)
+    if length(ps) == 0
+        return (x,), x, 1
+    end
+    rest, lj2, idx2 = rec(x, Base.tail(ps))
+    return (x, rest...), x, idx2
+end
+
+function objective(y, ps)
+    res = rec(y, ps)
+    return res[2]
+end
+
+@testset "Recursive Struct Sret" begin
+    y0 = [1.0]
+    ps = ((1.0, 1.0), (2.0, 2.0))
+    dx = Enzyme.gradient(Reverse, objective, y0[1], ps)
+    @test dx == (1.0, ((0.0, 0.0), (0.0, 0.0)))
+end
