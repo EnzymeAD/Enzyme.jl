@@ -168,7 +168,7 @@ jobs:
           JULIA_LLVM_ARGS: ${{ matrix.llvm_args }}
       - uses: julia-actions/julia-processcoverage@v1
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v6
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           files: lcov.info
@@ -224,7 +224,7 @@ jobs:
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           directories: lib/EnzymeTestUtils/src
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v6
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           files: lcov.info
@@ -280,7 +280,7 @@ jobs:
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           directories: lib/EnzymeCore/src
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v6
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           files: lcov.info
