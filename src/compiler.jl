@@ -5521,7 +5521,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         fn = isa(inst, LLVM.CallInst) ? LLVM.called_operand(inst) : nothing
        
         if !API.HasFromStack(inst) && isa(inst, LLVM.AllocaInst)
-            calluse = LLVM.CallInst[]
+            calluse = nothing
             is_returnroots = false
             for u in LLVM.uses(inst)
                 u = LLVM.user(u)
@@ -5546,7 +5546,8 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
                             end
                         end
                         if hassret
-                            push!(calluse, u)
+                            @assert calluse === nothing
+                            calluse = u
                         end
                     end
                 end
