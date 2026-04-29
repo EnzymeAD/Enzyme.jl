@@ -5521,7 +5521,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         fn = isa(inst, LLVM.CallInst) ? LLVM.called_operand(inst) : nothing
        
         if !API.HasFromStack(inst) && isa(inst, LLVM.AllocaInst)
-            calluse = nothing
+            calluse = LLVM.CallInst[]
             is_returnroots = false
             for u in LLVM.uses(inst)
                 u = LLVM.user(u)
@@ -5546,14 +5546,19 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
                             end
                         end
                         if hassret
-                            @assert calluse === nothing
-                            calluse = u
+                            push!(calluse, u)
                         end
                     end
                 end
             end
-            if calluse isa LLVM.CallInst
-                _, RT = enzyme_custom_extract_mi(calluse, false)
+            if length(calluse) > 0
+                RTs = Union{Nothing, Type}[]
+                for cu in calluse
+                    _, RT = enzyme_custom_extract_mi(cu, false)
+                    push!(RTs, RT)
+                end
+                @assert all(RTs[1] == RT for RT in RTs[2:])
+                RT = RTs[1]
                 if RT !== nothing
                     llrt, sret, returnRoots = get_return_info(RT)
                     if !(sret isa Nothing) && !is_sret_union(RT)
