@@ -5557,7 +5557,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
                     _, RT = enzyme_custom_extract_mi(cu, false)
                     push!(RTs, RT)
                 end
-                @assert all(RTs[1] == RT for RT in RTs[2:])
+                @assert all(RTs[1] == RT for RT in RTs)
                 RT = RTs[1]
                 if RT !== nothing
                     llrt, sret, returnRoots = get_return_info(RT)
