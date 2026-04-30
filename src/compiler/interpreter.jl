@@ -203,7 +203,7 @@ EnzymeInterpreter(
     broadcast_rewrite::Bool = true,
     within_autodiff_rewrite::Bool = true,
     handler = nothing
-) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, inactive_rules, broadcast_rewrite, within_autodiff_rewrite, handler)
+) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, inactive_rules, broadcast_rewrite, within_autodiff_rewrite, handler)
 
 function EnzymeInterpreter(interp::EnzymeInterpreter;
     cache_or_token = (@static if HAS_INTEGRATED_CACHE

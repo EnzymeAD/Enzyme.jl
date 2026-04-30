@@ -11,10 +11,15 @@ import EnzymeCore:
     ReverseSplitWithPrimal,
     ReverseSplitModified,
     ReverseSplitWidth,
+    ForwardSplitNoPrimal,
+    ForwardSplitWithPrimal,
+    ForwardSplitModified,
+    ForwardSplitWidth,
     Mode,
     ReverseMode,
     ReverseModeSplit,
     ForwardMode,
+    ForwardModeSplit,
     ReverseHolomorphic,
     ReverseHolomorphicWithPrimal
 export Forward,
@@ -25,10 +30,15 @@ export Forward,
     ReverseSplitWithPrimal,
     ReverseSplitModified,
     ReverseSplitWidth,
+    ForwardSplitNoPrimal,
+    ForwardSplitWithPrimal,
+    ForwardSplitModified,
+    ForwardSplitWidth,
     Mode,
     ReverseMode,
     ReverseModeSplit,
     ForwardMode,
+    ForwardModeSplit,
     ReverseHolomorphic,
     ReverseHolomorphicWithPrimal
 
@@ -129,6 +139,7 @@ include("api.jl")
 Base.convert(::Type{API.CDerivativeMode}, ::ReverseMode) = API.DEM_ReverseModeCombined
 Base.convert(::Type{API.CDerivativeMode}, ::ReverseModeSplit) = API.DEM_ReverseModeGradient
 Base.convert(::Type{API.CDerivativeMode}, ::ForwardMode) = API.DEM_ForwardMode
+Base.convert(::Type{API.CDerivativeMode}, ::ForwardModeSplit) = API.DEM_ForwardModeSplit
 
 function guess_activity end
 
@@ -1150,6 +1161,106 @@ forward = autodiff_thunk(Forward, Const{typeof(f)}, Duplicated, Duplicated{Float
         A,
         tt′,
         Val(API.DEM_ForwardMode),
+        Val(width),
+        ModifiedBetween,
+        Val(ReturnPrimal),
+        Val(false),
+        RABI,
+        Val(ErrIfFuncWritten),
+        Val(RuntimeActivity),
+        Val(StrongZero)
+    ) #=ShadowInit=#
+end
+
+"""
+    autodiff_thunk(::ForwardModeSplit, ftype, Activity, argtypes::Type{<:Annotation}...)
+
+Provide the split forward and forward-derivative pass functions for annotated function type
+`ftype` when called with args of type `argtypes` when using split forward mode.
+
+`Activity` is the Activity of the return value, it may be `Const` or `Duplicated`
+(or its variants `BatchDuplicated`, `BatchDuplicatedNoNeed`).
+
+Returns a pair `(forward, derivative)` where:
+- `forward` is an [`AugmentedForwardThunk`](@ref) that runs the primal and captures a tape
+- `derivative` is a [`ForwardModeSplitThunk`](@ref) that takes the same args plus the tape, and returns the shadow (and optionally the primal)
+
+Example:
+
+```jldoctest
+f(x) = x * x
+
+forward, derivative = autodiff_thunk(ForwardSplitWithPrimal, Const{typeof(f)}, Duplicated, Duplicated{Float64})
+
+tape, result, shadow = forward(Const(f), Duplicated(3.14, 1.0))
+shadow2, result2 = derivative(Const(f), Duplicated(3.14, 1.0), tape)
+
+# output
+
+(6.28, 9.8596)
+```
+"""
+@inline function autodiff_thunk(
+    mode::ForwardModeSplit{
+        ReturnPrimal,
+        ReturnShadow,
+        RuntimeActivity,
+        StrongZero,
+        Width,
+        ModifiedBetweenT,
+        RABI,
+        ErrIfFuncWritten,
+    },
+    ::Type{FA},
+    ::Type{A},
+    args::Vararg{Type{<:Annotation},Nargs},
+) where {
+    FA<:Annotation,
+    A<:Annotation,
+    ReturnPrimal,
+    ReturnShadow,
+    Width,
+    ModifiedBetweenT,
+    RABI<:ABI,
+    Nargs,
+    ErrIfFuncWritten,
+    RuntimeActivity,
+    StrongZero,
+}
+    width = if Width == 0
+        w = same_or_one(1, args...)
+        if w == 0
+            throw(ErrorException("Cannot differentiate with a batch size of 0"))
+        end
+        w
+    else
+        Width
+    end
+
+    if A <: Active
+        throw(ErrorException("Active Returns not allowed in forward mode"))
+    end
+
+    if ModifiedBetweenT === true
+        ModifiedBetween = Val(falses_from_args(Nargs + 1))
+    else
+        ModifiedBetween = Val(ModifiedBetweenT)
+    end
+
+    tt = Tuple{map(eltype, args)...}
+
+    tt′ = Tuple{args...}
+    opt_mi = if RABI <: NonGenABI
+        my_methodinstance(Forward, eltype(FA), tt)
+    else
+        Val(0)
+    end
+    Enzyme.Compiler.thunk(
+        opt_mi,
+        FA,
+        A,
+        tt′,
+        Val(API.DEM_ForwardModeSplit),
         Val(width),
         ModifiedBetween,
         Val(ReturnPrimal),
