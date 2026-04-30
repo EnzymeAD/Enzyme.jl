@@ -637,6 +637,13 @@ EnzymeGradientUtilsGetStrongZero(gutils) =
         (EnzymeGradientUtilsRef,),
         gutils,
     ) != 0
+EnzymeGradientUtilsGetAtomicAdd(gutils) =
+    ccall(
+        (:EnzymeGradientUtilsGetAtomicAdd, libEnzyme),
+        UInt8,
+        (EnzymeGradientUtilsRef,),
+        gutils,
+    ) != 0
 EnzymeGradientUtilsNewFromOriginal(gutils, val) = ccall(
     (:EnzymeGradientUtilsNewFromOriginal, libEnzyme),
     LLVMValueRef,

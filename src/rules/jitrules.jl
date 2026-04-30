@@ -613,7 +613,7 @@ function nonzero_active_data(x::T) where {T}
     return false
 end
 
-function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, active_refs)
+function body_runtime_generic_rev(N, Width, Atomic, wrapped, primttypes, shadowargs, active_refs)
     outs = Vector{Expr}(undef, N*Width)
     for i = 1:N
         for w = 1:Width
@@ -626,7 +626,11 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
             out = quote
                 if tup[$i] === nothing
                 elseif $shad isa Base.RefValue
-                    $shad[] = recursive_add($shad[], $expr)
+                    if $Atomic
+                        Compiler.recursive_accumulate($shad, Base.RefValue($expr), Val(true))
+                    else
+                        $shad[] = recursive_add($shad[], $expr)
+                    end
                 else
                     throw(EnzymeNonScalarReturnException($shad, " tup[i]=" *
                         string(tup[$i]) *
@@ -761,11 +765,11 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
     end
 end
 
-function func_runtime_generic_rev(N, Width)
+function func_runtime_generic_rev(N, Width, Atomic)
     _, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width)
     body =
-        body_runtime_generic_rev(N, Width, wrapped, primtypes, batchshadowargs, active_refs)
+        body_runtime_generic_rev(N, Width, Atomic, wrapped, primtypes, batchshadowargs, active_refs)
 
     quote
         function runtime_generic_rev(
@@ -774,6 +778,7 @@ function func_runtime_generic_rev(N, Width)
             strongZero::Val{StrongZero},
             width::Val{$Width},
             ModifiedBetween::Val{MB},
+            atomic::Val{$Atomic},
             tape::TapeType,
             f::F,
             df::DF,
@@ -790,17 +795,19 @@ end
     strongZero::Val{StrongZero},
     width::Val{Width},
     ModifiedBetween::Val{MB},
+    atomic::Val{Atomic},
     tape::TapeType,
     f::F,
     df::DF,
     allargs...,
-) where {ActivityTup,MB,RuntimeActivity,StrongZero,Width,TapeType,F,DF}
+) where {ActivityTup,MB,RuntimeActivity,StrongZero,Width,Atomic,TapeType,F,DF}
     N = div(length(allargs) + 2, Width + 1) - 1
     _, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_rev(
         N,
         Width,
+        Atomic,
         wrapped,
         primtypes,
         batchshadowargs,
@@ -1939,6 +1946,9 @@ function generic_setup(
 
         for idx = 1:(ops_count+firstconst)
             push!(ModifiedBetween, uncacheable[(start-1)+idx] != 0)
+        end
+        if func == runtime_generic_rev
+            pushfirst!(vals, unsafe_to_llvm(B, Val(get_atomic_add(gutils))))
         end
         pushfirst!(vals, unsafe_to_llvm(B, Val((ModifiedBetween...,))))
     end
