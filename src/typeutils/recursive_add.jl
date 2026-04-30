@@ -50,24 +50,30 @@ end
 @inline mutable_register(::Type{T}) where {T<:Array} = true
 @inline mutable_register(::Type{T}) where {T} = ismutabletype(T)
 
-@inline function atomicrmw_add!(ptr::Ptr{Float64}, val::Float64)
-    Base.llvmcall(
-        "atomicrmw fadd double* %0, double %1 monotonic\nret void",
-        Cvoid,
-        Tuple{Ptr{Float64}, Float64},
-        ptr,
-        val
-    )
+@generated function atomicrmw_add!(ptr::Ptr{Float64}, val::Float64)
+    ptr_type = (Int == Int64) ? "i64" : "i32"
+    ir = """
+    %ptr = inttoptr $ptr_type %0 to double*
+    atomicrmw fadd double* %ptr, double %1 monotonic
+    ret void
+    """
+    return quote
+        Base.@_inline_meta
+        Base.llvmcall($ir, Cvoid, Tuple{Ptr{Float64}, Float64}, ptr, val)
+    end
 end
 
-@inline function atomicrmw_add!(ptr::Ptr{Float32}, val::Float32)
-    Base.llvmcall(
-        "atomicrmw fadd float* %0, float %1 monotonic\nret void",
-        Cvoid,
-        Tuple{Ptr{Float32}, Float32},
-        ptr,
-        val
-    )
+@generated function atomicrmw_add!(ptr::Ptr{Float32}, val::Float32)
+    ptr_type = (Int == Int64) ? "i64" : "i32"
+    ir = """
+    %ptr = inttoptr $ptr_type %0 to float*
+    atomicrmw fadd float* %ptr, float %1 monotonic
+    ret void
+    """
+    return quote
+        Base.@_inline_meta
+        Base.llvmcall($ir, Cvoid, Tuple{Ptr{Float32}, Float32}, ptr, val)
+    end
 end
 
 
