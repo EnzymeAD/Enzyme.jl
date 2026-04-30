@@ -28,11 +28,13 @@ end
         # Test NestedMut
         x = NestedMut(1.0, SimpleMut(2.0, 3))
         y = NestedMut(4.0, SimpleMut(5.0, 6))
+        inner = x.inner
         Enzyme.Compiler.recursive_accumulate(x, y)
         @test x.a ≈ 5.0
         @test x.inner.a ≈ 7.0
         @test x.inner.b == 3
-        
+        # Check for pointer-identity
+        @test x.inner === inner
         # Test ArrayMut
         x = ArrayMut(1.0, [2.0, 3.0])
         y = ArrayMut(4.0, [5.0, 6.0])
