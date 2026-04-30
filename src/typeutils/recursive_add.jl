@@ -170,8 +170,8 @@ end
     if atomic
         return quote
             GC.@preserve x y begin
-                px = Ptr{T}(pointer_from_objref(x))
-                py = Ptr{T}(pointer_from_objref(y))
+                px = pointer_from_objref(x)::Ptr{T}
+                py = pointer_from_objref(y)::Ptr{T}
                 atomic_accumulate!(px, py, f)
             end
             return nothing
