@@ -1026,7 +1026,8 @@ end
     )
 
     Enzyme.Compiler.runtime_generic_rev(
-        Val{(false, false, false)}, Val(false), Val(false), Val(2), Val((true, true, true)), augres[end],
+        Val{(false, false, false)}, Val(false), Val(false), Val(2), Val((true, true, true)),
+        Val(false), augres[end],
         ==, nothing, nothing,
         :foo, nothing, nothing,
         :bar, nothing, nothing
