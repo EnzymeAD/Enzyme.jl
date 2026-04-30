@@ -39,6 +39,9 @@ get_runtime_activity(gutils::GradientUtils) =
 get_strong_zero(gutils::GradientUtils) =
     API.EnzymeGradientUtilsGetStrongZero(gutils)
 
+get_atomic_add(gutils::GradientUtils) =
+    API.EnzymeGradientUtilsGetAtomicAdd(gutils)
+
 function get_shadow_type(gutils::GradientUtils, T::LLVM.LLVMType)
     w = get_width(gutils)
     if w == 1
