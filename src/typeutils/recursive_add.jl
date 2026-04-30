@@ -52,7 +52,7 @@ end
 
 @inline function atomicrmw_add!(ptr::Ptr{Float64}, val::Float64)
     Base.llvmcall(
-        "atomicrmw fadd ptr %0, double %1 monotonic\nret void",
+        "atomicrmw fadd double* %0, double %1 monotonic\nret void",
         Cvoid,
         Tuple{Ptr{Float64}, Float64},
         ptr,
@@ -62,7 +62,7 @@ end
 
 @inline function atomicrmw_add!(ptr::Ptr{Float32}, val::Float32)
     Base.llvmcall(
-        "atomicrmw fadd ptr %0, float %1 monotonic\nret void",
+        "atomicrmw fadd float* %0, float %1 monotonic\nret void",
         Cvoid,
         Tuple{Ptr{Float32}, Float32},
         ptr,
