@@ -5508,7 +5508,8 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     seen = TypeTreeTable()
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-    dl = string(LLVM.datalayout(mod))
+    DL = LLVM.datalayout(mod)
+    dl = string(DL)
     ctx = LLVM.context(mod)
                         
     sretkind = kind(if LLVM.version().major >= 12
@@ -5551,17 +5552,27 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
                     end
                 end
             end
-            if calluse isa LLVM.CallInst
-                _, RT = enzyme_custom_extract_mi(calluse, false)
+            if length(calluse) > 0
+                RTs = Union{Nothing, Type}[]
+                for cu in calluse
+                    _, RT = enzyme_custom_extract_mi(cu, false)
+                    push!(RTs, RT)
+                end
+                @assert all(RTs[1] == RT for RT in RTs)
+                RT = RTs[1]
                 if RT !== nothing
                     llrt, sret, returnRoots = get_return_info(RT)
+                    at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(inst))
                     if !(sret isa Nothing) && !is_sret_union(RT)
                         if is_returnroots
                             @assert returnRoots !== nothing
                             RT = equivalent_rooted_type(RT)
                         end
-                        metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
-                        metadata(inst)["enzymejl_allocart_name"] = MDNode(LLVM.Metadata[MDString(string(RT))])
+                        lRT = convert(LLVMType, RT)
+                        if LLVM.sizeof(DL, lRT) == LLVM.sizeof(DL, at)
+                            metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
+                            metadata(inst)["enzymejl_allocart_name"] = MDNode(LLVM.Metadata[MDString(string(RT))])
+                        end
                     end
                 end
             end
