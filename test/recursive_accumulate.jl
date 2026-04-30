@@ -36,9 +36,11 @@ end
         # Test ArrayMut
         x = ArrayMut(1.0, [2.0, 3.0])
         y = ArrayMut(4.0, [5.0, 6.0])
+        arr = x.arr
         Enzyme.Compiler.recursive_accumulate(x, y)
         @test x.a ≈ 5.0
         @test x.arr ≈ [7.0, 9.0]
+        @test x.arr === arr # pointer identity
         
         # Test Core.Box
         b1 = Core.Box(SimpleMut(1.0, 2))
