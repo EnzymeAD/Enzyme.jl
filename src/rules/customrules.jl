@@ -1500,7 +1500,7 @@ function nthfield_if_byref!(B, isboxed, sret_union_type, res)
         
         position!(B2, then)
         obj = extract_value!(B2, res2, 0)
-        boxed_tape = emit_nthfield!(B2, obj, LLVM.ConstantInt(LLVM.IntType(64), 2))
+        boxed_tape = emit_nthfield!(B2, obj, LLVM.ConstantInt(LLVM.IntType(8*sizeof(Int)), 2))
         br!(B2, merge)
         
         position!(B2, merge)
