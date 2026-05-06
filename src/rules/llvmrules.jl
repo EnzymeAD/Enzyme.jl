@@ -481,13 +481,14 @@ function post_arraycopy_memset(B, callv, _, _)
     len = get_array_len(B, callv)
     length = LLVM.mul!(B, len, elSize)
 
-    return LLVM.memset!(
+    LLVM.memset!(
         B,
         get_array_data(B, callv),
         LLVM.ConstantInt(i8, 0, false),
         length,
         algn,
     )
+    return nothing
 end
 
 @register_fwd function arraycopy_fwd(B, orig, gutils, normalR, shadowR)
