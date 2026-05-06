@@ -1177,7 +1177,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                     end
                 end
 
-                LLVM.link!(mod, pmod; only_needed = true)
+                LLVM.link!(mod, pmod)
 
                 replaceWith = functions(mod)[pname]
                 push!(function_attributes(replaceWith), EnumAttribute("alwaysinline"))
