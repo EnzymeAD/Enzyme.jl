@@ -120,22 +120,12 @@ pre-commit install
 
 Run all tests:
 ```bash
-julia --project=. -e 'using Pkg; Pkg.test()'
+julia --project=. -e 'import Pkg; Pkg.test()'
 ```
 
-Or using the test script:
+Run tests matching a pattern (e.g. "basic", "rules", "iddict"):
 ```bash
-julia --project=. test/runtests.jl
-```
-
-Run tests with multiple threads:
-```bash
-julia --project=. --threads=2 test/runtests.jl
-```
-
-Run specific tests:
-```bash
-julia --project=. test/runtests.jl <test_pattern>
+julia --project=. -e 'import Pkg; Pkg.test(; test_args=["<pattern>"])'
 ```
 
 ### Test Structure
@@ -143,15 +133,6 @@ julia --project=. test/runtests.jl <test_pattern>
 - GPU tests (cuda, metal, amdgpu) are skipped by default
 - Integration tests run in separate environments
 - Thread tests run with `--threads=2`
-
-### Common Test Commands
-```bash
-# Run basic tests
-julia --project=. -e 'using Pkg; Pkg.test("Enzyme"; test_args=`basic`)'
-
-# Run with verbose output
-julia --project=. test/runtests.jl --verbose
-```
 
 ## Building and CI
 
