@@ -62,7 +62,11 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
     method_table::Core.Compiler.MethodTableView
 
     # Cache of inference results for this particular interpreter
-    local_cache::Vector{InferenceResult}
+    local_cache::@static if isdefined(Core.Compiler, :InferenceCache)
+        Core.Compiler.InferenceCache
+    else
+        Vector{InferenceResult}
+    end
     # The world age we're working inside of
     world::UInt
 
@@ -177,7 +181,11 @@ function EnzymeInterpreter(
     mt == nothing ? Core.Compiler.InternalMethodTable(world) : Core.Compiler.OverlayMethodTable(world, mt),
 
         # Initially empty cache
-        Vector{InferenceResult}(),
+        (@static if isdefined(Core.Compiler, :InferenceCache)
+            Core.Compiler.InferenceCache()
+        else
+            Vector{InferenceResult}()
+        end),
 
         # world age counter
         world,
