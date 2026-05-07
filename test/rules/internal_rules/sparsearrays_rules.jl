@@ -29,6 +29,31 @@ function test_sparse(M, v, α, β)
     return test_reverse(LinearAlgebra.mul!, Const, (C, Const), (M, Const), (v, Const), (α, Active), (β, Active))
 end
 
+struct SparseWrapperScale{T}
+    λ::T
+end
+
+Base.convert(::Type{Number}, x::SparseWrapperScale) = x.λ
+Base.iszero(x::SparseWrapperScale) = iszero(x.λ)
+
+struct SparseWrapperMatrix{A}
+    A::A
+end
+
+struct SparseWrapperScaledMatrix
+    λ::SparseWrapperScale{Float64}
+    L::SparseWrapperMatrix{SparseMatrixCSC{Float64, Int}}
+end
+
+function sparse_wrapper_mul!(w, L::SparseWrapperScaledMatrix, v)
+    iszero(L.λ) && return lmul!(false, w)
+    α = convert(Number, L.λ)
+    return mul!(w, L.L.A, v, α, false)
+end
+
+const sparse_wrapper_matrix = sparse(Float64[0.0 1.0; 0.0 0.0])
+sparse_wrapper_nonconst_m = SparseWrapperMatrix(sparse_wrapper_matrix)
+
 @testset "SparseArrays spmatvec reverse rule" begin
     Ts = ComplexF64
 
@@ -63,6 +88,23 @@ end
         test_reverse(LinearAlgebra.mul!, T, (C, T), (real(M), T), (real(v), T), (real(α), Active), (β, Active))
         test_reverse(LinearAlgebra.mul!, T, (C, T), (M, T), (v, T), (α, Active), (real(β), Active))
     end
+end
+
+@testset "SparseArrays nested wrapper reverse rule" begin
+    function f(p)
+        u = [3.0, 4.0]
+        du = similar(u)
+        L = SparseWrapperScaledMatrix(SparseWrapperScale(-p[1]), sparse_wrapper_nonconst_m)
+        sparse_wrapper_mul!(du, L, u)
+        return sum(du)
+    end
+
+    p = [1.0]
+    dp = Enzyme.make_zero(p)
+
+    @test f(p) == -4.0
+    Enzyme.autodiff(Enzyme.set_runtime_activity(Enzyme.Reverse), f, Active, Duplicated(p, dp))
+    @test dp ≈ [-4.0]
 end
 
 @testset "SparseArrays spmatmat reverse rule" begin
