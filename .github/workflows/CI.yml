@@ -80,14 +80,17 @@ jobs:
             libEnzyme: packaged
             version: '1.12'
             assertions: true
-
+          - os: ubuntu-24.04
+            arch: default
+            libEnzyme: packaged
+            version: '1.13'
+            assertions: true
           - os: ubuntu-24.04
             arch: default
             libEnzyme: packaged
             version: '1.10'
             assertions: true
             llvm_args: '--opaque-pointers'
-
           - os: ubuntu-24.04
             arch: default
             libEnzyme: packaged
