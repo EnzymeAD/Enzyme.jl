@@ -20,7 +20,7 @@ steps:
           using Pkg
           pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
           Pkg.develop(pkgs)
-          Pkg.add(PackageSpec(; name="CUDA", version="5"))' || exit 3
+          Pkg.add(PackageSpec(; name="CUDA", version="6"))' || exit 3
 
       echo "+++ Run tests"
       julia --color=yes test/cuda.jl
