@@ -36,7 +36,7 @@ jobs:
         env:
           BUILDKITE_TOKEN: ${{ secrets.BUILDKITE_TOKEN }}
         run: |
-          ./.github/download_build.sh ${{ matrix.version }} build_${{ matrix.build }} julia.tar.gz
+          ./.github/download_build.sh "${{ matrix.version }}" "build_${{ matrix.build }}" julia.tar.gz
 
       - name: Upload Julia build
         uses: actions/upload-artifact@v7
