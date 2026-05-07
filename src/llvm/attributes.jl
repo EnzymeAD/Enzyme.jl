@@ -1,5 +1,12 @@
 const nofreefns = Set{String}((
+    "jl_genericmemory_copyto",
+    "jl_get_binding_value_seqcst",
+    "ijl_get_binding_value_seqcst",
+    "jl_lazy_load_and_lookup",
+    "ijl_lazy_load_and_lookup",
     "utf8proc_toupper",
+        "utf8proc_isupper",
+        "utf8proc_islower",
     "ClientGetAddressableDevices",
     "ClientNumAddressableDevices",
     "BufferToDevice",
@@ -187,10 +194,36 @@ const nofreefns = Set{String}((
     "ijl_process_events",
     "utf8proc_category",
     "jl_clock_now",
+    "ijl_new_task",
+    "cuMemPoolGetAttribute",
+    "ijl_hrtime",
+    "ijl_gc_collect",
+    "uv_thread_detach",
+    "uv_thread_create",
+    "cuDeviceCanAccessPeer",
+    "cuMemPoolSetAccess",
+    "cuMemcpyHtoDAsync_v2",
+    "cuDeviceGet",
+    "cuDeviceGetCount",
+    "cuDeviceGetAttribute",
+    "cuDevicePrimaryCtxRetain",
+    "cuCtxGetId",
+    "cuDeviceGetName",
+    "ijl_eqtable_get",
+    "cuCtxGetApiVersion",
+    "cuCtxSetCurrent",
 ))
 
 const inactivefns = Set{String}((
+    
+    # The binding lookup is asserted as inactive [e.g. globals are considered constant wrt differentiation]
+    # If and when this changes, we need to change that here
+    "jl_get_binding_value_seqcst",
+    "ijl_get_binding_value_seqcst",
+
     "utf8proc_toupper",
+        "utf8proc_isupper",
+        "utf8proc_islower",
     "ClientGetAddressableDevices",
     "ClientNumAddressableDevices",
     "BufferToDevice",

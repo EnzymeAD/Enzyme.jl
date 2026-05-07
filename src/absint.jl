@@ -123,7 +123,7 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
                 found = Any[]
                 legal, Ty = absint(operands(arg)[index], partial)
                 unionalls = TypeVar[]
-                for sarg in operands(arg)[(index + 1):(end - 1)]
+                for sarg in @view arg_operands_view(arg)[index+1:end]
                     slegal, foundv = absint(sarg, partial)
                     if slegal
                         push!(found, foundv)
@@ -149,7 +149,7 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
                 index += 1
                 found = Any[]
                 legal = true
-                for sarg in operands(arg)[index:(end - 1)]
+                for sarg in @view arg_operands_view(arg)[index:end]
                     slegal, foundv = absint(sarg, partial)
                     if slegal
                         push!(found, foundv)
@@ -221,7 +221,7 @@ function actual_size(@nospecialize(typ2))::Int
             return sum(map(sizeof, fieldtypes(typ2)))
         end
     end
-    if typ2 <: AbstractString || typ2 <: Symbol || typ2 <: Core.SimpleVector
+    if typ2 <: String || typ2 <: Symbol || typ2 <: Core.SimpleVector
         return sizeof(Int)
     elseif Base.isconcretetype(typ2)
         return sizeof(typ2)
@@ -357,6 +357,7 @@ function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Boo
     return larg, offset
 end
 
+const TypesNotToDisect = Set{Type}([BigFloat])
 
 function abs_typeof(
         @nospecialize(arg::LLVM.Value),
@@ -413,13 +414,15 @@ function abs_typeof(
     end
 
     if isa(arg, LLVM.AllocaInst) || isa(arg, LLVM.CallInst)
-        if haskey(metadata(arg), "enzymejl_allocart")
-            mds = operands(metadata(arg)["enzymejl_allocart"])[1]::MDString
+	for mdname in ("enzymejl_gc_alloc_rt", "enzymejl_allocart")
+        if haskey(metadata(arg), mdname)
+            mds = operands(metadata(arg)[mdname])[1]::MDString
             mds = Base.convert(String, mds)
             ptr = reinterpret(Ptr{Cvoid}, parse(UInt, mds))
             RT = Base.unsafe_pointer_to_objref(ptr)
             return (true, RT, GPUCompiler.MUT_REF)
         end
+	end
     end
 
     if isa(arg, LLVM.CallInst)
@@ -520,7 +523,7 @@ function abs_typeof(
                 found = Union{Type, TypeVar}[]
                 unionalls = TypeVar[]
                 legal = true
-                for sarg in operands(arg)[index:(end - 1)]
+                for sarg in @view arg_operands_view(arg)[index:end]
                     slegal, foundv, _ = abs_typeof(sarg, partial, seenphis)
                     if slegal
                         push!(found, foundv)
@@ -671,11 +674,14 @@ function abs_typeof(
                 @assert Base.isconcretetype(typ)
                 seen = false
                 lasti = 1
-		
+
                 for i in 1:typed_fieldcount(typ)
                     fo = typed_fieldoffset(typ, i)
                     if fo == offset && (i == typed_fieldcount(typ) || typed_fieldoffset(typ, i + 1) != offset)
                         offset = 0
+			if in(typ, TypesNotToDisect)
+			  legal = false
+			end
                         typ = typed_fieldtype(typ, i)
                         if !Base.allocatedinline(typ)
                             if byref != GPUCompiler.BITS_VALUE
@@ -687,6 +693,9 @@ function abs_typeof(
                         break
                     elseif fo > offset
                         offset = offset - typed_fieldoffset(typ, lasti)
+			if in(typ, TypesNotToDisect)
+			  legal = false
+			end
                         typ = typed_fieldtype(typ, lasti)
                         if offset == 0
                             if !Base.allocatedinline(typ)
@@ -711,6 +720,9 @@ function abs_typeof(
                 end
                 if !seen && typed_fieldcount(typ) > 0
                     offset = offset - typed_fieldoffset(typ, lasti)
+			if in(typ, TypesNotToDisect)
+			  legal = false
+			end
                     typ = typed_fieldtype(typ, lasti)
                     if offset == 0
                         if !Base.allocatedinline(typ)
@@ -733,12 +745,15 @@ function abs_typeof(
 
             typ2 = typ
             while legal && should_recurse(typ2, value_type(arg), byref, dl)
-                if !Base.isconcretetype(typ2)
+		if !Base.isconcretetype(typ2)
                     legal = false
                     break
                 end
                 idx, _ = first_non_ghost(typ2)
                 if idx != -1
+			if in(typ2, TypesNotToDisect)
+			  legal = false
+			end
                     typ2 = typed_fieldtype(typ2, idx)
                     if Base.allocatedinline(typ2)
                         if byref == GPUCompiler.BITS_VALUE
@@ -781,6 +796,9 @@ function abs_typeof(
                 end
                 cnt = 0
                 desc = Base.DataTypeFieldDesc(typ)
+		if in(typ, TypesNotToDisect)
+		   return (false, nothing, nothing)
+		end
                 for i in 1:fieldcount(typ)
                     styp = typed_fieldtype(typ, i)
                     if isghostty(styp)
@@ -831,7 +849,7 @@ function abs_typeof(
             for (v, _) in LLVM.incoming(cur)
                 v2, off = get_base_and_offset(v, inttoptr=false, addrcast=false)
                 if off != 0
-                    if isa(v, LLVM.Instruction) && arg in collect(operands(v))
+                    if isa(v, LLVM.Instruction) && any(Base.Fix2(==, arg), operands(v))
                         legal = false
                         break
                     end
@@ -839,7 +857,7 @@ function abs_typeof(
                 elseif v2 isa LLVM.PHIInst
                     push!(todo, v2)
                 else
-                    if isa(v2, LLVM.Instruction) && arg in collect(operands(v2))
+                    if isa(v2, LLVM.Instruction) && any(Base.Fix2(==, arg), operands(v2))
                         legal = false
                         break
                     end
@@ -925,7 +943,7 @@ function abs_cstring(@nospecialize(arg::LLVM.Value))::Tuple{Bool, String}
 
         if larg !== nothing
             if (isa(larg, LLVM.ConstantArray) || isa(larg, LLVM.ConstantDataArray)) && eltype(value_type(larg)) == LLVM.IntType(8)
-                return (true, String(map(Base.Fix1(convert, UInt8), collect(larg)[1:(end - 1)])))
+	        return (true, String(map(Base.Fix1(convert, UInt8), collect(larg)[1:(end-1)])))
             end
 
         end

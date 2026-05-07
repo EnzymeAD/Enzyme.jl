@@ -432,4 +432,53 @@ unstabletapesq(x) = unstabletape(x)^2
     @test Enzyme.autodiff(Enzyme.ReverseWithPrimal, unstabletapesq, Active(5.0))[1][1] ≈ ((5.0 + 7) * 10)
 end
 
+struct MyExtractedAlg
+    linesearch
+    trustregion
+    descent
+    forcing
+    max_shrink_times::Int
+    autodiff
+    vjp_autodiff
+    jvp_autodiff
+    concrete_jac
+    name::Symbol
+end
+
+@noinline function rule_func_inner(s::MyExtractedAlg, z::Float64)
+    # Nested AD!
+    f_dummy(x) = x[1] * 2.0 + (s.max_shrink_times === nothing ? 0.0 : Float64(s.max_shrink_times))
+    grad = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), f_dummy, [z])
+    return grad[1][1] + (s.name === :NewtonRaphson ? 1.0 : 0.0)
+end
+
+@noinline function rule_func_const(z::Float64, args...)
+    return rule_func_inner(args[1], z)
+end
+
+# Define custom rule to trigger rule wrapper processing
+function EnzymeRules.augmented_primal(config, func::Const{typeof(rule_func_const)}, ::Type{<:Annotation}, z::Active, args...)
+    primal = EnzymeRules.needs_primal(config) ? rule_func_const(z.val, map(x->x.val, args)...) : nothing
+    return AugmentedReturn(primal, nothing, nothing)
+end
+
+function EnzymeRules.reverse(config, func::Const{typeof(rule_func_const)}, dret::Active, tape, z::Active, args...)
+    return (dret.val, ntuple(_->nothing, Val(length(args)))...)
+end
+
+function loss_inplace(p)
+    alg = MyExtractedAlg(
+        nothing, nothing, nothing, nothing, 10,
+        nothing, nothing, nothing,
+        nothing, :NewtonRaphson
+    )
+    return rule_func_const(p[1], alg)
+end
+
+@testset "Unboxed struct custom rule with nested AD" begin
+    p = [2.0]
+    Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), loss_inplace, p)
+    @test true
+end
+
 end # ReverseRules

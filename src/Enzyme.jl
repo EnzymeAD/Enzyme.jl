@@ -141,7 +141,14 @@ include("typetree.jl")
 include("gradientutils.jl")
 include("utils.jl")
 include("compiler.jl")
-include("internal_rules.jl")
+include("internal_rules/core.jl")
+include("internal_rules/inactive.jl")
+include("internal_rules/linalg.jl")
+include("internal_rules/ranges.jl")
+include("internal_rules/sorting.jl")
+include("internal_rules/bigfloat.jl")
+include("internal_rules/rand.jl")
+include("internal_rules/math.jl")
 
 import .Compiler: CompilationException
 
@@ -481,10 +488,10 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
             # then subtracting twice the imaginary component to get the correct result
 
             for (k, v) in seen
-                Compiler.recursive_accumulate(k, v, refn_seed)
+                Compiler.recursive_accumulate(k, v, Val(false), refn_seed)
             end
             for (k, v) in seen2
-                Compiler.recursive_accumulate(k, v, imfn_seed)
+                Compiler.recursive_accumulate(k, v, Val(false), imfn_seed)
             end
 
             fused = fuse_complex_results(results, args...)
@@ -958,11 +965,11 @@ result, ∂v, ∂A
         ShadowInit
     },
     ::Type{FA},
-    ::Type{A},
+    ::Type{A0},
     args::Vararg{Type{<:Annotation},Nargs},
 ) where {
     FA<:Annotation,
-    A<:Annotation,
+    A0<:Annotation,
     ReturnPrimal,
     ReturnShadow,
     Width,
@@ -991,6 +998,13 @@ result, ∂v, ∂A
     end
 
     tt = Tuple{map(eltype, args)...}
+
+    A = if A0 isa UnionAll
+        rt0 = Compiler.primal_return_type(Reverse, eltype(FA), tt)
+        A0{rt0}
+    else
+        A0
+    end
 
     tt′ = Tuple{args...}
     opt_mi = if RABI <: NonGenABI
@@ -1566,21 +1580,5 @@ macro import_rrule(args...)
 end
 
 include("precompile.jl")
-
-function __init__()
-    @static if VERSION ≥ v"1.12-"
-        if ccall(:jl_generating_output, Cint, ()) == 1
-            @warn """
-            Enzyme.jl support for Julia 1.12 is presently in progress.
-			For the time being we recommend using 1.11 or LTS (1.10).
-
-            For latest updates, check the status of support for Julia 1.12+ at
-            https://github.com/EnzymeAD/Enzyme.jl/issues/2699.
-            """ maxlog = 1
-        end
-    end
-
-    return nothing
-end
 
 end # module

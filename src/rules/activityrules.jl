@@ -10,20 +10,8 @@ function julia_activity_rule(f::LLVM.Function, method_table)
 
     dl = string(LLVM.datalayout(LLVM.parent(f)))
 
-    expectLen = (sret !== nothing) + (returnRoots !== nothing)
-    for (source_typ, _) in rooted_argument_list(mi.specTypes.parameters)
-        if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
-            continue
-        end
-        expectLen += 1
-    end
-    expectLen -= length(parmsRemoved)
-
+    ftype = function_type(f)
     swiftself = has_swiftself(f)
-
-    if swiftself
-        expectLen += 1
-    end
 
     # Unsupported calling conv
     # also wouldn't have any type info for this [would for earlier args though]
@@ -32,29 +20,15 @@ function julia_activity_rule(f::LLVM.Function, method_table)
     end
     world = enzyme_extract_world(f)
 
-    # TODO fix the attributor inlining such that this can assert always true
-    if expectLen != length(parameters(f))
-        msg = sprint() do io::IO
-            println(io, "expectLen != length(parameters(f))")
-            println(io, string(f))
-            println(io, "expectLen=", string(expectLen))
-            println(io, "swiftself=", string(swiftself))
-            println(io, "sret=", string(sret))
-            println(io, "returnRoots=", string(returnRoots))
-            println(io, "mi.specTypes.parameters=", string(mi.specTypes.parameters))
-            println(io, "retRemoved=", string(retRemoved))
-            println(io, "parmsRemoved=", string(parmsRemoved))
-        end
-        throw(CallingConventionMismatchError{String}(msg, mi, world))
-    end
-
     jlargs = classify_arguments(
         mi.specTypes,
-        function_type(f),
+        ftype,
         sret !== nothing,
         returnRoots !== nothing,
         swiftself,
         parmsRemoved,
+        mi,
+        world,
     )
 
     kwarg_inactive = false
@@ -100,11 +74,13 @@ function julia_activity_rule(f::LLVM.Function, method_table)
                 idx += 1
             end
             if returnRoots !== nothing
-                if !in(idx, parmsRemoved)
+	        if !in(idx, parmsRemoved)
+		    if (VERSION < v"1.12" || guaranteed_const_nongen(RT, world))
                     push!(
                         parameter_attributes(f, idx + 1),
                         StringAttribute("enzyme_inactive"),
                     )
+		    end
                 end
             end
         end

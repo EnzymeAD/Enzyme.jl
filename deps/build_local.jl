@@ -4,7 +4,7 @@
 # the pre-built Enzyme_jll might not be loadable on this platform
 Enzyme_jll = Base.UUID("7cc45869-7501-5eee-bdea-0790c847d4ef")
 
-using Pkg, Scratch, Preferences, Libdl
+using Pkg, Scratch, Preferences, Libdl, CMake_jll
 
 BUILD_TYPE = "RelWithDebInfo"
 BCLoad = true
@@ -88,12 +88,12 @@ isdir(scratch_dir) && rm(scratch_dir; recursive=true)
 
 # Build!
 @info "Building" source_dir scratch_dir LLVM_DIR BUILD_TYPE
-run(`cmake -DLLVM_DIR=$(LLVM_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DENZYME_EXTERNAL_SHARED_LIB=ON -DENZYME_ENABLE_BENCHMARKS=OFF -B$(scratch_dir) -S$(source_dir)`)
+run(`$(CMake_jll.cmake_path) -DLLVM_DIR=$(LLVM_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) -DENZYME_EXTERNAL_SHARED_LIB=ON -DENZYME_ENABLE_BENCHMARKS=OFF -B$(scratch_dir) -S$(source_dir)`)
 
 if BCLoad
-  run(`cmake --build $(scratch_dir) --parallel $(Sys.CPU_THREADS) -t Enzyme-$(LLVM_VER_MAJOR) EnzymeBCLoad-$(LLVM_VER_MAJOR)`)
+  run(`$(CMake_jll.cmake_path) --build $(scratch_dir) --parallel $(Sys.CPU_THREADS) -t Enzyme-$(LLVM_VER_MAJOR) EnzymeBCLoad-$(LLVM_VER_MAJOR)`)
 else
-  run(`cmake --build $(scratch_dir) --parallel $(Sys.CPU_THREADS) -t Enzyme-$(LLVM_VER_MAJOR)`)
+  run(`$(CMake_jll.cmake_path) --build $(scratch_dir) --parallel $(Sys.CPU_THREADS) -t Enzyme-$(LLVM_VER_MAJOR)`)
 end
 
 # Discover built libraries

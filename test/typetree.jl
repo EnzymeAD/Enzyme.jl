@@ -51,6 +51,10 @@ end
 struct EmptyStruct
 end
 
+struct Wrapper{T}
+    d::T
+end
+
 @testset "TypeTree" begin
     @test tt(Float16) == "{[-1]:Float@half}"
     @test tt(Float32) == "{[-1]:Float@float}"
@@ -107,6 +111,13 @@ end
             @test tt(MemoryRef{EmptyStruct}) == "{[0]:Integer, [1]:Integer, [2]:Integer, [3]:Integer, [4]:Integer, [5]:Integer, [6]:Integer, [7]:Integer, [8]:Pointer, [8,0]:Integer, [8,1]:Integer, [8,2]:Integer, [8,3]:Integer, [8,4]:Integer, [8,5]:Integer, [8,6]:Integer, [8,7]:Integer, [8,8]:Pointer}"
             @test tt(MemoryRef{Union{Float64, Int64}}) == "{[0]:Integer, [1]:Integer, [2]:Integer, [3]:Integer, [4]:Integer, [5]:Integer, [6]:Integer, [7]:Integer, [8]:Pointer, [8,0]:Integer, [8,1]:Integer, [8,2]:Integer, [8,3]:Integer, [8,4]:Integer, [8,5]:Integer, [8,6]:Integer, [8,7]:Integer, [8,8]:Pointer}"
             @test tt(MemoryRef{Float64}) == "{[-1]:Pointer, [0,-1]:Float@double, [8,0]:Integer, [8,1]:Integer, [8,2]:Integer, [8,3]:Integer, [8,4]:Integer, [8,5]:Integer, [8,6]:Integer, [8,7]:Integer, [8,8]:Pointer, [8,8,-1]:Float@double}"
+
+
+            @test tt(Memory{Any}) == "{[0]:Integer, [1]:Integer, [2]:Integer, [3]:Integer, [4]:Integer, [5]:Integer, [6]:Integer, [7]:Integer, [8]:Pointer, [8,-1]:Pointer}"
+
+            @test tt(Memory{Float64}) == "{[0]:Integer, [1]:Integer, [2]:Integer, [3]:Integer, [4]:Integer, [5]:Integer, [6]:Integer, [7]:Integer, [8]:Pointer, [8,-1]:Float@double}"
+
+            @test tt(Memory{Wrapper}) == "{[0]:Integer, [1]:Integer, [2]:Integer, [3]:Integer, [4]:Integer, [5]:Integer, [6]:Integer, [7]:Integer, [8]:Pointer, [8,-1]:Pointer}"
         end
     end
 

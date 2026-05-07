@@ -613,7 +613,7 @@ function nonzero_active_data(x::T) where {T}
     return false
 end
 
-function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, active_refs)
+function body_runtime_generic_rev(N, Width, Atomic, wrapped, primttypes, shadowargs, active_refs)
     outs = Vector{Expr}(undef, N*Width)
     for i = 1:N
         for w = 1:Width
@@ -626,7 +626,11 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
             out = quote
                 if tup[$i] === nothing
                 elseif $shad isa Base.RefValue
-                    $shad[] = recursive_add($shad[], $expr)
+                    if $Atomic
+                        Compiler.recursive_accumulate($shad, Base.RefValue($expr), Val(true))
+                    else
+                        $shad[] = recursive_add($shad[], $expr)
+                    end
                 else
                     throw(EnzymeNonScalarReturnException($shad, " tup[i]=" *
                         string(tup[$i]) *
@@ -663,18 +667,42 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
     end
 
     dup = if Width == 1
-        :(Duplicated(f, df))
+        quote
+            if df isa Base.RefValue && !(f isa Base.RefValue)
+                MixedDuplicated(f, df)
+            else
+                Duplicated(f, df)
+            end
+        end
     else
         fargs = [:df]
         for i = 2:Width
             push!(fargs, Symbol("df_$i"))
         end
-        :(BatchDuplicated(f, ($(fargs...),)))
+        quote
+            if df isa Base.RefValue && !(f isa Base.RefValue)
+                BatchMixedDuplicated(f, ($(fargs...),))
+            else
+                BatchDuplicated(f, ($(fargs...),))
+            end
+        end
     end
     dupty = if Width == 1
-        :(Duplicated{FT})
+        quote
+            if df isa Base.RefValue && !(f isa Base.RefValue)
+                MixedDuplicated{FT}
+            else
+                Duplicated{FT}
+            end
+        end
     else
-        :(BatchDuplicated{FT,$Width})
+        quote
+            if df isa Base.RefValue && !(f isa Base.RefValue)
+                BatchMixedDuplicated{FT,$Width}
+            else
+                BatchDuplicated{FT,$Width}
+            end
+        end
     end
 
     quote
@@ -737,11 +765,11 @@ function body_runtime_generic_rev(N, Width, wrapped, primttypes, shadowargs, act
     end
 end
 
-function func_runtime_generic_rev(N, Width)
+function func_runtime_generic_rev(N, Width, Atomic)
     _, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width)
     body =
-        body_runtime_generic_rev(N, Width, wrapped, primtypes, batchshadowargs, active_refs)
+        body_runtime_generic_rev(N, Width, Atomic, wrapped, primtypes, batchshadowargs, active_refs)
 
     quote
         function runtime_generic_rev(
@@ -750,6 +778,7 @@ function func_runtime_generic_rev(N, Width)
             strongZero::Val{StrongZero},
             width::Val{$Width},
             ModifiedBetween::Val{MB},
+            atomic::Val{$Atomic},
             tape::TapeType,
             f::F,
             df::DF,
@@ -766,17 +795,19 @@ end
     strongZero::Val{StrongZero},
     width::Val{Width},
     ModifiedBetween::Val{MB},
+    atomic::Val{Atomic},
     tape::TapeType,
     f::F,
     df::DF,
     allargs...,
-) where {ActivityTup,MB,RuntimeActivity,StrongZero,Width,TapeType,F,DF}
+) where {ActivityTup,MB,RuntimeActivity,StrongZero,Width,Atomic,TapeType,F,DF}
     N = div(length(allargs) + 2, Width + 1) - 1
     _, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs)
     return body_runtime_generic_rev(
         N,
         Width,
+        Atomic,
         wrapped,
         primtypes,
         batchshadowargs,
@@ -1808,9 +1839,8 @@ function generic_setup(
 )
     width = get_width(gutils)
     mode = get_mode(gutils)
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-
-    ops = collect(operands(orig))[start+firstconst:end-1]
+    ops = @view arg_operands_view(orig)[start+firstconst:end]
+    ops_count = length(ops)
 
     T_int8 = LLVM.Int8Type()
     T_jlvalue = LLVM.StructType(LLVMType[])
@@ -1818,7 +1848,7 @@ function generic_setup(
 
     ActivityList = LLVM.Value[]
 
-    @assert length(ops) != 0
+    @assert ops_count != 0
     fill_val = unsafe_to_llvm(B, nothing)
 
     vals = LLVM.Value[]
@@ -1885,7 +1915,7 @@ function generic_setup(
             push!(vals, ev)
         end
     end
-    @assert length(ActivityList) == length(ops)
+    @assert length(ActivityList) == ops_count
 
     if tape !== nothing
         if tape isa Vector
@@ -1914,8 +1944,11 @@ function generic_setup(
 
         ModifiedBetween = Bool[]
 
-        for idx = 1:(length(ops)+firstconst)
+        for idx = 1:(ops_count+firstconst)
             push!(ModifiedBetween, uncacheable[(start-1)+idx] != 0)
+        end
+        if func == runtime_generic_rev
+            pushfirst!(vals, unsafe_to_llvm(B, Val(get_atomic_add(gutils))))
         end
         pushfirst!(vals, unsafe_to_llvm(B, Val((ModifiedBetween...,))))
     end
@@ -1936,6 +1969,15 @@ function generic_setup(
 
     pushfirst!(vals, unsafe_to_llvm(B, func))
 
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+
+    for v in vals
+       if value_type(v) != T_prjlvalue
+          throw(AssertionError("Illegal generic_setup, expected all arguments to by jlvaluet, found $(string(v)), within $(vals), orig=$(string(orig))"))
+       end
+    end
+    
     cal = emit_apply_generic!(B, vals)
 
     debug_from_orig!(gutils, cal, orig)
@@ -2372,7 +2414,7 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
        isiter == Base.iterate &&
        istup == Base.tuple &&
        length(operands(orig)) >= offset + 4
-        origops = collect(operands(orig)[1:end-1])
+        origops = arg_operands_view(orig)
         shadowins =
             [invert_pointer(gutils, origops[i], B) for i = (offset+3):length(origops)]
         shadowres = if width == 1
@@ -2384,7 +2426,7 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
                     push!(newops, shadowin2)
                     push!(newvals, API.VT_Shadow)
                 else
-                    push!(newops, new_from_original(gutils, origops[i]))
+                    push!(newops, new_from_original(gutils, v))
                     push!(newvals, API.VT_Primal)
                 end
             end
@@ -2410,7 +2452,7 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
                         push!(newops, shadowin2)
                         push!(newvals, API.VT_Shadow)
                     else
-                        push!(newops, new_from_original(gutils, origops[i]))
+                        push!(newops, new_from_original(gutils, v))
                         push!(newvals, API.VT_Primal)
                     end
                 end

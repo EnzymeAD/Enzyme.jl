@@ -466,7 +466,6 @@ function unique_gcmarker!(func::LLVM.Function)
     if length(found) > 1
         for i = 2:length(found)
             LLVM.replace_uses!(found[i], found[1])
-            ops = LLVM.collect(operands(found[i]))
             eraseInst(entry_bb, found[i])
         end
     end

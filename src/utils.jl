@@ -62,6 +62,12 @@ export Tracked, Derived
 
 const captured_constants = Base.IdSet{Any}()
 
+function arg_operands_view(inst::LLVM.CallInst)
+    N_args = LLVM.API.LLVMGetNumArgOperands(inst)
+    return @view LLVM.operands(inst)[1:N_args]
+end
+
+
 function unsafe_nothing_to_llvm(mod::LLVM.Module)
     globs = LLVM.globals(mod)
     k = "jl_nothing"
@@ -486,7 +492,7 @@ end
 
 @inline function typed_fieldtype(@nospecialize(T::Type), i::Int)::Type
     if T <: GenericMemoryRef && i == 1 || T <: GenericMemory && i == 2
-        if T <: GenericMemoryRef && i == 1 && is_memory_ref_field2_an_offset(T)
+        if T <: GenericMemoryRef && i == 1 && T isa DataType && is_memory_ref_field2_an_offset(T)
             Int
         else
             eT = eltype(T)

@@ -28,11 +28,11 @@ jobs:
           git fetch upstream
 
       - name: Setup Julia
-        uses: julia-actions/setup-julia@v2
+        uses: julia-actions/setup-julia@v3
         with:
           version: '1'
           arch: 'x64'
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
 
       - name: Install Runic
         run: |

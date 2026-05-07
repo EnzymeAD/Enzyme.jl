@@ -150,3 +150,20 @@ end
     @test y ≈ [3.0]
     @test dy ≈ [2.0]
 end
+
+@noinline function setone(rany)
+   rany[] = 1.0
+   nothing
+end
+
+function typeunstable_constant_shadow()
+        rany = Ref{Any}()
+        setone(rany)
+        return rany[]
+end
+
+@testset "Zero type unstable shadow" begin
+   fwd, _ = autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(typeunstable_constant_shadow)}, Active{Float64})
+   _, _, shad = fwd(Const(typeunstable_constant_shadow))
+end
+

@@ -28,6 +28,7 @@ end
     # test_scalar(SpecialFunctions.airybiprime, x)
     test_scalar(SpecialFunctions.besselj0, x)
     test_scalar(SpecialFunctions.besselj1, x)
+    test_scalar((y) -> SpecialFunctions.besseli(2, y), x)
     test_scalar((y) -> SpecialFunctions.besselj(2, y), x)
 
     # test_scalar((y) -> SpecialFunctions.sphericalbessely(y, 0.5), 0.3)
@@ -58,7 +59,7 @@ end
 
 # SpecialFunctions 0.7->0.8 changes:
 @testset "log gamma and co" begin
-    #It is important that we have negative numbers with both odd and even integer parts    
+    #It is important that we have negative numbers with both odd and even integer parts
     for x in (1.5, 2.5, 10.5, -0.6, -2.6, -3.3, 1.6+1.6im, 1.6-1.6im, -4.6+1.6im)
         if isdefined(SpecialFunctions, :lgamma)
             # test_scalar(SpecialFunctions.lgamma, x)

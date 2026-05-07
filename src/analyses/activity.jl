@@ -100,6 +100,9 @@ Base.@nospecializeinfer @inline function is_mutable_array(@nospecialize(T::Type)
             if string(mod) == "Reactant" && (T.name.name == :ConcretePJRTArray || T.name.name == :ConcreteIFRTArray || T.name.name == :TracedRArray)
                 return true
             end
+            if string(mod) == "CUDA" && (T.name.name == :CuRefValue || T.name.name == :CuPtr)
+                return true
+            end
         end
     end
     return false
@@ -416,7 +419,6 @@ function check_activity_cache_invalidations(world::UInt)
 
     tt = Tuple{typeof(EnzymeRules.inactive_type), Type}
 
-    methods = Core.MethodMatch[]
     matches = Base._methods_by_ftype(tt, -1, world)
     if matches === nothing
         @assert ActivityCache.size() == 0
@@ -434,8 +436,8 @@ function check_activity_cache_invalidations(world::UInt)
 
     empty!(ActivityCache)
     empty!(ActivityMethodCache)
-    for match in matches::Vector
-        push!(ActivityMethodCache, match::Core.MethodMatch)
+    for match in methods
+        push!(ActivityMethodCache, match)
     end
 
     ActivityWorldCache[] = world
