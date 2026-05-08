@@ -56,12 +56,12 @@ function code_typed_helper(mi::Core.MethodInstance, world::UInt, mode::Enzyme.AP
             GPUCompiler.GLOBAL_METHOD_TABLE, #=job.config.always_inline=#
             EnzymeCompilerParams,
             world,
-            mode == API.DEM_ForwardMode,
-            mode != API.DEM_ForwardMode,
+            mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit,
+            mode != API.DEM_ForwardMode && mode != API.DEM_ForwardModeSplit,
             true
         )
     else
-        if mode == API.DEM_ForwardMode
+        if mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit
             GLOBAL_FWD_CACHE
         else
             GLOBAL_REV_CACHE
@@ -1369,12 +1369,12 @@ function julia_error(
 		     ( isa(cur, LLVM.ConstantExpr) || isa(cur, LLVM.GlobalVariable)) &&
                    cur == data2
                     if width == 1
-                        if mode == API.DEM_ForwardMode
+                        if mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit
                             instance = make_zero(obj)
                             return unsafe_to_llvm(prevbb, instance)
                         else
-                            res = emit_allocobj!(prevbb, Base.RefValue{TT}) 
-			    T_int8 = LLVM.Int8Type() 
+                            res = emit_allocobj!(prevbb, Base.RefValue{TT})
+			    T_int8 = LLVM.Int8Type()
 			    T_size_t = convert(LLVM.LLVMType, UInt)
 			    LLVM.memset!(prevbb, bitcast!(prevbb, res, LLVM.PointerType(T_int8, 10)),  LLVM.ConstantInt(T_int8, 0), LLVM.ConstantInt(T_size_t, sizeof(TT)), 0)
                             push!(created, res)
@@ -1385,7 +1385,7 @@ function julia_error(
                             LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(cur))),
                         )
                         for idx = 1:width
-                            res = if mode == API.DEM_ForwardMode
+                            res = if mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit
                                 instance = make_zero(obj)
                                 unsafe_to_llvm(prevbb, instance)
                             else
