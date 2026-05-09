@@ -1974,6 +1974,9 @@ function generic_setup(
 
     for v in vals
        if value_type(v) != T_prjlvalue
+          if value_type(v) isa LLVM.PointerType && LLVM.addrspace(value_type(v)) == Tracked
+             continue
+          end
           throw(AssertionError("Illegal generic_setup, expected all arguments to by jlvaluet, found $(string(v)), within $(vals), orig=$(string(orig))"))
        end
     end
