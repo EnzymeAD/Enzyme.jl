@@ -1007,7 +1007,7 @@ end
 	    if (op === Base.:+ || op === Base.add_sum) && Base.isconcretetype(ET) && (ET <: Base.IEEEFloat || ET <: Complex{<:Base.IEEEFloat})
 		@inbounds i = first(inds)
 		@inbounds l = last(inds)
-		s = zero(ET)
+		s = zero(typeof(f(zero(ET))))
 		while i <= l
 		    @inbounds Ai = A[i]
 		    i+=1
