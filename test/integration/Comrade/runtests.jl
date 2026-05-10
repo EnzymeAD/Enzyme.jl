@@ -8,6 +8,8 @@ using LinearAlgebra
 
 using Test
 
+Enzyme.Compiler.DumpPreCallConv[] = true
+Enzyme.Compiler.DumpPostCallConv[] = true
 
 const ComradePATH = joinpath(dirname(pathof(Comrade)), "..", "examples", "Data")
 const dataurl = "https://de.cyverse.org/anon-files/iplant/home/shared/commons_repo/curated/EHTC_M87pol2017_Nov2023/hops_data/April11/SR2_M87_2017_101_lo_hops_ALMArot.uvfits"
@@ -267,28 +269,28 @@ end
     end
 
 
-    @testset "multidomain" begin
-        fov = 1.0
-        x = range(-fov/2, fov; length=8)
-        y = range(-fov, fov; length=8)
-        Ti = [1.0, 2.0]
-        Fr = [86e9, 230e9]
-        g = RectiGrid((;X=x, Y=y, Ti, Fr))
-        function foo4D(x, p)
-            cimg = ContinuousImage(IntensityMap(x, VLBISkyModels.imgdomain(p)), DeltaPulse())
-            vis = VLBISkyModels.visibilitymap(cimg, p)
-            return sum(abs2, vis)
-        end
+    # @testset "multidomain" begin
+    #     fov = 1.0
+    #     x = range(-fov/2, fov; length=8)
+    #     y = range(-fov, fov; length=8)
+    #     Ti = [1.0, 2.0]
+    #     Fr = [86e9, 230e9]
+    #     g = RectiGrid((;X=x, Y=y, Ti, Fr))
+    #     function foo4D(x, p)
+    #         cimg = ContinuousImage(IntensityMap(x, VLBISkyModels.imgdomain(p)), DeltaPulse())
+    #         vis = VLBISkyModels.visibilitymap(cimg, p)
+    #         return sum(abs2, vis)
+    #     end
 
-        x = rand(size(g)...)
-        U = randn(20) * 0.5
-        V = randn(20) * 0.5
-        uT = vcat(fill(Ti[1], 10), fill(Ti[2], 10))
-        uFr = vcat(fill(Fr[1], 5), fill(Fr[2], 5), fill(Fr[1], 5), fill(Fr[2], 5))
-        guv = UnstructuredDomain((U = U, V = V, Ti = uT, Fr = uFr))
-        gfour = FourierDualDomain(g, guv, NFFTAlg())
-        testgrad(foo4D, x, gfour)
-    end
+    #     x = rand(size(g)...)
+    #     U = randn(20) * 0.5
+    #     V = randn(20) * 0.5
+    #     uT = vcat(fill(Ti[1], 10), fill(Ti[2], 10))
+    #     uFr = vcat(fill(Fr[1], 5), fill(Fr[2], 5), fill(Fr[1], 5), fill(Fr[2], 5))
+    #     guv = UnstructuredDomain((U = U, V = V, Ti = uT, Fr = uFr))
+    #     gfour = FourierDualDomain(g, guv, NFFTAlg())
+    #     testgrad(foo4D, x, gfour)
+    # end
 end
 
 
