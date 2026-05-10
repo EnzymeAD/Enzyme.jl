@@ -1400,6 +1400,11 @@ function nested_codegen!(
         end
     end
 
+    # Copy return attributes
+    for attr in collect(return_attributes(lfn))
+        push!(return_attributes(decl), attr)
+    end
+
     enzyme_context.nested_cache[cache_key] = decl
     return decl
 end
