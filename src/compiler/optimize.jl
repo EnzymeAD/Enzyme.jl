@@ -459,12 +459,18 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
     end
     
     for f in functions(mod)
-	if isempty(blocks(f))
-		continue
-	end
-	if has_fn_attr(f, StringAttribute("enzyme_preserve_primal"))
-	     delete!(LLVM.function_attributes(f), StringAttribute("enzyme_preserve_primal"))
-	end
+        if isempty(blocks(f))
+            continue
+        end
+        # Before additional dead arg removal, get rid of the body of functions
+        # that we will retain the original calling convention for.
+        if startswith(LLVM.name(f), "ejlstr\$") || startswith(LLVM.name(f), "ejlptr\$")
+            Base.empty!(f)
+        end
+        
+        if has_fn_attr(f, StringAttribute("enzyme_preserve_primal"))
+            delete!(LLVM.function_attributes(f), StringAttribute("enzyme_preserve_primal"))
+        end
     end
 
     removeDeadArgs!(mod, tm, #=post_gc_fixup=#true)
