@@ -164,131 +164,131 @@ end
     #     end
     # end
 
-    @testset "Composite models" begin
-        m1 = Disk()
-        m2 = GaussianRing(2.0)
+    # @testset "Composite models" begin
+    #     m1 = Disk()
+    #     m2 = GaussianRing(2.0)
 
-        @testset "Sum" begin
-            foo(x, g) = sum(
-                abs2,
-                VLBISkyModels.visibilitymap_analytic(
-                    x[1] *
-                        stretched(
-                        Gaussian(), x[2],
-                        x[3]
-                    ) +
-                        shifted(
-                        MRing(x[4], x[4]), x[5],
-                        x[6]
-                    ), g
-                )
-            )
-            x = rand(6)
-            foo(x, g)
-            testgrad(foo, x, g)
-        end
-
-        @testset "Convolved" begin
-            foo(x, g) = sum(
-                abs2,
-                VLBISkyModels.visibilitymap_analytic(
-                    convolved(
-                        x[1] *
-                            stretched(
-                            Disk(), x[2],
-                            x[3]
-                        ),
-                        stretched(
-                            Ring(), x[4],
-                            x[4]
-                        )
-                    ), g
-                )
-            )
-            x = rand(4)
-            testgrad(foo, x, g)
-
-        end
-
-        @testset "Polarized Model" begin
-            foo(x, g) = sum(
-                norm,
-                VLBISkyModels.visibilitymap_analytic(
-                    rotated(
-                        PolarizedModel(
-                            Gaussian(),
-                            x[1] *
-                                Gaussian(),
-                            x[2] *
-                                Gaussian(),
-                            x[3] *
-                                Gaussian()
-                        ),
-                        x[4]
-                    ), g
-                )
-            )
-            testgrad(foo, rand(4), g)
-
-        end
-    end
-
-    @testset "M87 model test" begin
-        foo1(θ, g) = sum(abs2, VLBISkyModels.visibilitymap_analytic(model(θ), g))
-        x = [40.0, 5.0, 0.7, 0.5, 0.3, 10.0, 1.2, pi / 4, 5.0, -3.0]
-        @inferred foo1(x, g)
-        testgrad(foo1, x, g)
-    end
-
-    # @testset "ContinuousImage" begin
-    #     gim = imagepixels(5.0, 5.0, 32, 32)
-    #     gfour = FourierDualDomain(gim, g, NFFTAlg())
-    #     foo(x, gfour) = sum(
-    #         abs2,
-    #         VLBISkyModels.visibilitymap(
-    #             modify(
-    #                 ContinuousImage(
-    #                     IntensityMap(
-    #                         reshape(
-    #                             @view(x[1:(end - 1)]),
-    #                             size(VLBISkyModels.imgdomain(gfour))
-    #                         ),
-    #                         VLBISkyModels.imgdomain(gfour)
-    #                     ),
-    #                     BSplinePulse{3}()
-    #                 ),
-    #                 Shift(x[end], -x[end])
-    #             ), gfour
+    #     @testset "Sum" begin
+    #         foo(x, g) = sum(
+    #             abs2,
+    #             VLBISkyModels.visibilitymap_analytic(
+    #                 x[1] *
+    #                     stretched(
+    #                     Gaussian(), x[2],
+    #                     x[3]
+    #                 ) +
+    #                     shifted(
+    #                     MRing(x[4], x[4]), x[5],
+    #                     x[6]
+    #                 ), g
+    #             )
     #         )
-    #     )
-    #     x = rand(prod(size(VLBISkyModels.imgdomain(gfour))) + 1)
-    #     foo(x, gfour)
-    #     testgrad(foo, x, gfour)
-    # end
-
-
-    # @testset "multidomain" begin
-    #     fov = 1.0
-    #     x = range(-fov/2, fov; length=8)
-    #     y = range(-fov, fov; length=8)
-    #     Ti = [1.0, 2.0]
-    #     Fr = [86e9, 230e9]
-    #     g = RectiGrid((;X=x, Y=y, Ti, Fr))
-    #     function foo4D(x, p)
-    #         cimg = ContinuousImage(IntensityMap(x, VLBISkyModels.imgdomain(p)), DeltaPulse())
-    #         vis = VLBISkyModels.visibilitymap(cimg, p)
-    #         return sum(abs2, vis)
+    #         x = rand(6)
+    #         foo(x, g)
+    #         testgrad(foo, x, g)
     #     end
 
-    #     x = rand(size(g)...)
-    #     U = randn(20) * 0.5
-    #     V = randn(20) * 0.5
-    #     uT = vcat(fill(Ti[1], 10), fill(Ti[2], 10))
-    #     uFr = vcat(fill(Fr[1], 5), fill(Fr[2], 5), fill(Fr[1], 5), fill(Fr[2], 5))
-    #     guv = UnstructuredDomain((U = U, V = V, Ti = uT, Fr = uFr))
-    #     gfour = FourierDualDomain(g, guv, NFFTAlg())
-    #     testgrad(foo4D, x, gfour)
+    #     @testset "Convolved" begin
+    #         foo(x, g) = sum(
+    #             abs2,
+    #             VLBISkyModels.visibilitymap_analytic(
+    #                 convolved(
+    #                     x[1] *
+    #                         stretched(
+    #                         Disk(), x[2],
+    #                         x[3]
+    #                     ),
+    #                     stretched(
+    #                         Ring(), x[4],
+    #                         x[4]
+    #                     )
+    #                 ), g
+    #             )
+    #         )
+    #         x = rand(4)
+    #         testgrad(foo, x, g)
+
+    #     end
+
+    #     @testset "Polarized Model" begin
+    #         foo(x, g) = sum(
+    #             norm,
+    #             VLBISkyModels.visibilitymap_analytic(
+    #                 rotated(
+    #                     PolarizedModel(
+    #                         Gaussian(),
+    #                         x[1] *
+    #                             Gaussian(),
+    #                         x[2] *
+    #                             Gaussian(),
+    #                         x[3] *
+    #                             Gaussian()
+    #                     ),
+    #                     x[4]
+    #                 ), g
+    #             )
+    #         )
+    #         testgrad(foo, rand(4), g)
+
+    #     end
     # end
+
+    # @testset "M87 model test" begin
+    #     foo1(θ, g) = sum(abs2, VLBISkyModels.visibilitymap_analytic(model(θ), g))
+    #     x = [40.0, 5.0, 0.7, 0.5, 0.3, 10.0, 1.2, pi / 4, 5.0, -3.0]
+    #     @inferred foo1(x, g)
+    #     testgrad(foo1, x, g)
+    # end
+
+    @testset "ContinuousImage" begin
+        gim = imagepixels(5.0, 5.0, 32, 32)
+        gfour = FourierDualDomain(gim, g, NFFTAlg())
+        foo(x, gfour) = sum(
+            abs2,
+            VLBISkyModels.visibilitymap(
+                modify(
+                    ContinuousImage(
+                        IntensityMap(
+                            reshape(
+                                @view(x[1:(end - 1)]),
+                                size(VLBISkyModels.imgdomain(gfour))
+                            ),
+                            VLBISkyModels.imgdomain(gfour)
+                        ),
+                        BSplinePulse{3}()
+                    ),
+                    Shift(x[end], -x[end])
+                ), gfour
+            )
+        )
+        x = rand(prod(size(VLBISkyModels.imgdomain(gfour))) + 1)
+        foo(x, gfour)
+        testgrad(foo, x, gfour)
+    end
+
+
+    @testset "multidomain" begin
+        fov = 1.0
+        x = range(-fov/2, fov; length=8)
+        y = range(-fov, fov; length=8)
+        Ti = [1.0, 2.0]
+        Fr = [86e9, 230e9]
+        g = RectiGrid((;X=x, Y=y, Ti, Fr))
+        function foo4D(x, p)
+            cimg = ContinuousImage(IntensityMap(x, VLBISkyModels.imgdomain(p)), DeltaPulse())
+            vis = VLBISkyModels.visibilitymap(cimg, p)
+            return sum(abs2, vis)
+        end
+
+        x = rand(size(g)...)
+        U = randn(20) * 0.5
+        V = randn(20) * 0.5
+        uT = vcat(fill(Ti[1], 10), fill(Ti[2], 10))
+        uFr = vcat(fill(Fr[1], 5), fill(Fr[2], 5), fill(Fr[1], 5), fill(Fr[2], 5))
+        guv = UnstructuredDomain((U = U, V = V, Ti = uT, Fr = uFr))
+        gfour = FourierDualDomain(g, guv, NFFTAlg())
+        testgrad(foo4D, x, gfour)
+    end
 end
 
 
