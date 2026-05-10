@@ -68,6 +68,11 @@ const NoEffects = MemoryEffect(
     (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
     (MRI_NoModRef << getLocationPos(Other)),
 )
+const ReadArgMemWriteInaccessibleEffects = MemoryEffect(
+    (MRI_Ref << getLocationPos(ArgMem)) |
+    (MRI_Mod << getLocationPos(InaccessibleMem)) |
+    (MRI_NoModRef << getLocationPos(Other)),
+)
 
 # Get ModRefInfo for any location.
 function getModRef(effect::MemoryEffect, loc::IRMemLocation)::ModRefInfo

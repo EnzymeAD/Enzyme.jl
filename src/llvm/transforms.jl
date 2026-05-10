@@ -2589,6 +2589,15 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
                 EnumAttribute("argmemonly"),
             ],
         )
+        rwfunc, _ = get_function!(
+            mod,
+            "llvm.enzymefakereadwrite",
+            funcT,
+            LLVM.Attribute[
+                EnumAttribute("nofree"),
+                EnumAttribute("inaccessiblemem_or_argmemonly"),
+            ],
+        )
     else
         func, _ = get_function!(
             mod,
@@ -2613,6 +2622,12 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
             "llvm.enzymefakewrite",
             funcT,
             LLVM.Attribute[EnumAttribute("memory", WriteOnlyArgMemEffects.data), EnumAttribute("nofree")],
+        )
+        rwfunc, _ = get_function!(
+            mod,
+            "llvm.enzymefakereadwrite",
+            funcT,
+            LLVM.Attribute[EnumAttribute("memory", ReadArgMemWriteInaccessibleEffects.data), EnumAttribute("nofree")],
         )
     end
 
@@ -2639,14 +2654,22 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
             end 
         end
 
-        # Ensure that interprocedural optimizations do not delete the use of returnRoots, this will only occur on 2.
+        sretkind = LLVM.kind(if LLVM.version().major >= 12
+            LLVM.TypeAttribute("sret", LLVM.Int32Type())
+        else
+            LLVM.EnumAttribute("sret")
+        end)
+            
+        # Ensure that interprocedural optimizations do not delete the use of gc sret or returnRoots, this will only occur on 2.
         if post_gc_fixup
-            for idx in (2,)
+            for idx in (1, 2)
                 if length(collect(parameters(fn))) >= idx && any(
                     (
+                        
+                        ( kind(attr) == sretkind && any_jltypes(LLVM.value(attr))) ||
                         kind(attr) == kind(StringAttribute("enzymejl_returnRoots"))
                     ) for attr in collect(parameter_attributes(fn, idx))
-                )
+                    )
                     if !isempty(blocks(fn))
                         B = IRBuilder()
                         position!(B, first(instructions(LLVM.entry(fn))))
@@ -2676,23 +2699,23 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
                         nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
                         position!(B, nextInst)
                         inp = operands(u)[idx]
-                        cl = call!(B, funcT, rfunc, LLVM.Value[inp])
+                        cl = call!(B, funcT, rwfunc, LLVM.Value[inp])
                         if isa(value_type(inp), LLVM.PointerType)
                             LLVM.API.LLVMAddCallSiteAttribute(
                                 cl,
                                 LLVM.API.LLVMAttributeIndex(1),
                                 EnumAttribute("nocapture"),
                             )
+                            LLVM.API.LLVMAddCallSiteAttribute(
+                                cl,
+                                LLVM.API.LLVMAttributeIndex(1),
+                                EnumAttribute("readonly"),
+                            )
                         end
                     end
                 end
             end
         end
-        sretkind = kind(if LLVM.version().major >= 12
-            TypeAttribute("sret", LLVM.Int32Type())
-        else
-            EnumAttribute("sret")
-        end)
         for idx in (1, 2)
             if length(collect(parameters(fn))) < idx
                 continue
@@ -2813,7 +2836,11 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
     post_attr!(mod, RunAttributor[])
     propagate_returned!(mod)
     
-
+    for u in LLVM.uses(rwfunc)
+        u = LLVM.user(u)
+        eraseInst(LLVM.parent(u), u)
+    end
+    eraseInst(mod, rwfunc)
     for u in LLVM.uses(wfunc)
         u = LLVM.user(u)
         eraseInst(LLVM.parent(u), u)
