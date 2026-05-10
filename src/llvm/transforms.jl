@@ -2579,6 +2579,16 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
                 EnumAttribute("argmemonly"),
             ],
         )
+        wfunc, _ = get_function!(
+            mod,
+            "llvm.enzymefakewrite",
+            funcT,
+            LLVM.Attribute[
+                EnumAttribute("writeonly"),
+                EnumAttribute("nofree"),
+                EnumAttribute("argmemonly"),
+            ],
+        )
     else
         func, _ = get_function!(
             mod,
@@ -2597,6 +2607,12 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
             "llvm.enzyme.sret_use",
             funcT,
             LLVM.Attribute[EnumAttribute("memory", ReadOnlyArgMemEffects.data), EnumAttribute("nofree")],
+        )
+        wfunc, _ = get_function!(
+            mod,
+            "llvm.enzymefakewrite",
+            funcT,
+            LLVM.Attribute[EnumAttribute("memory", WriteOnlyArgMemEffects.data), EnumAttribute("nofree")],
         )
     end
 
@@ -2623,45 +2639,54 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
             end 
         end
 
-        # Ensure that interprocedural optimizations do not delete the use of returnRoots (or shadows)
-        # if inactive sret, this will only occur on 2. If active sret, inactive retRoot, can on 3, and
-        # active both can occur on 4. If the original sret is removed (at index 1) we no longer need
-        # to preserve this.
+        # Ensure that interprocedural optimizations do not delete the use of returnRoots, this will only occur on 2.
         if post_gc_fixup
-        for idx in (2, 3, 4)
-            if length(collect(parameters(fn))) >= idx && any(
-                (
-                    kind(attr) == kind(StringAttribute("enzymejl_returnRoots")) ||
-                    kind(attr) == kind(StringAttribute("enzymejl_returnRoots_v"))
-                ) for attr in collect(parameter_attributes(fn, idx))
-            )
-                for u in LLVM.uses(fn)
-                    u = LLVM.user(u)
-		    if !isa(u, LLVM.CallInst)
-                    	# TODO investigate if the inttoptr store that comes from reference caller poses an issue.
-			continue
-			msg = sprint() do io
-			   println(io, "Unknown user of fn: ", string(u))
-			   println(io, "fn: ", string(fn))
-			   println(io, "mod: ", string(LLVM.parent(fn)))
-			end
-			throw(AssertionError(msg))
-		    end
-                    B = IRBuilder()
-                    nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
-                    position!(B, nextInst)
-                    inp = operands(u)[idx]
-                    cl = call!(B, funcT, rfunc, LLVM.Value[inp])
-                    if isa(value_type(inp), LLVM.PointerType)
-                        LLVM.API.LLVMAddCallSiteAttribute(
-                            cl,
-                            LLVM.API.LLVMAttributeIndex(1),
-                            EnumAttribute("nocapture"),
-                        )
+            for idx in (2,)
+                if length(collect(parameters(fn))) >= idx && any(
+                    (
+                        kind(attr) == kind(StringAttribute("enzymejl_returnRoots"))
+                    ) for attr in collect(parameter_attributes(fn, idx))
+                )
+                    if !isempty(blocks(fn))
+                        B = IRBuilder()
+                        position!(B, first(instructions(LLVM.entry(fn))))
+                        p = parameters(fn)[idx]
+                        cl = call!(B, funcT, wfunc, LLVM.Value[p])
+                        if isa(value_type(p), LLVM.PointerType)
+                            LLVM.API.LLVMAddCallSiteAttribute(
+                                cl,
+                                LLVM.API.LLVMAttributeIndex(1),
+                                EnumAttribute("nocapture"),
+                            )
+                        end
+                    end
+                    for u in LLVM.uses(fn)
+                        u = LLVM.user(u)
+                        if !isa(u, LLVM.CallInst)
+                            # TODO investigate if the inttoptr store that comes from reference caller poses an issue.
+                            continue
+                            msg = sprint() do io
+                            println(io, "Unknown user of fn: ", string(u))
+                            println(io, "fn: ", string(fn))
+                            println(io, "mod: ", string(LLVM.parent(fn)))
+                            end
+                            throw(AssertionError(msg))
+                        end
+                        B = IRBuilder()
+                        nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
+                        position!(B, nextInst)
+                        inp = operands(u)[idx]
+                        cl = call!(B, funcT, rfunc, LLVM.Value[inp])
+                        if isa(value_type(inp), LLVM.PointerType)
+                            LLVM.API.LLVMAddCallSiteAttribute(
+                                cl,
+                                LLVM.API.LLVMAttributeIndex(1),
+                                EnumAttribute("nocapture"),
+                            )
+                        end
                     end
                 end
             end
-        end
         end
         sretkind = kind(if LLVM.version().major >= 12
             TypeAttribute("sret", LLVM.Int32Type())
@@ -2789,6 +2814,11 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
     propagate_returned!(mod)
     
 
+    for u in LLVM.uses(wfunc)
+        u = LLVM.user(u)
+        eraseInst(LLVM.parent(u), u)
+    end
+    eraseInst(mod, wfunc)
     for u in LLVM.uses(rfunc)
         u = LLVM.user(u)
         eraseInst(LLVM.parent(u), u)

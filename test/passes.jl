@@ -78,3 +78,48 @@ end
         @test length(collect(instructions(first(blocks(callfn))))) == 1
     end
 end
+
+@testset "Return roots preservation" begin
+    LLVM.Context() do ctx
+        mod = parse(LLVM.Module, """
+        source_filename = "start"
+        target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+        target triple = "x86_64-linux-gnu"
+
+        declare {}*** @julia.get_pgcstack()
+
+        define private void @julia_dims_4189(double* sret(double) %res, [2 x {} addrspace(10)*]* "enzymejl_returnRoots"="2", double addrspace(11)* %data) #0 {
+        top:
+          %pgcstack = call {}*** @julia.get_pgcstack()
+          %val = load double, double addrspace(11)* %data, align 8
+          store double 0.0, double* %res
+          ret void
+        }
+
+        define void @caller({} addrspace(10)* %v1, {} addrspace(10)* %v2) {
+        top:
+          %big_sret = alloca [10 x double]
+          %sret = getelementptr [10 x double], [10 x double]* %big_sret, i64 0, i64 1
+          %roots = alloca [2 x {} addrspace(10)*]
+          %data = addrspacecast double* inttoptr (i64 1 to double*) to double addrspace(11)*
+          call void @julia_dims_4189(double* sret(double) %sret, [2 x {} addrspace(10)*]* "enzymejl_returnRoots"="2" %roots, double addrspace(11)* %data)
+          ret void
+        }
+
+        attributes #0 = { nofree nosync nounwind willreturn noinline "enzyme_inactive" }
+        """)
+
+        Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), true)
+        
+        caller = LLVM.functions(mod)["caller"]
+        
+        insts = collect(instructions(first(blocks(caller))))
+        calls = collect(filter(i -> isa(i, LLVM.CallInst), insts))
+        
+        @test length(calls) == 1
+        if length(calls) == 1
+            call = calls[1]
+            @test length(operands(call)) == 3 # 2 arg (sret + roots) + called function
+        end
+    end
+end
