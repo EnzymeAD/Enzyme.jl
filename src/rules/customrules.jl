@@ -998,9 +998,7 @@ end
 
 
     enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
-    llvmf = nested_codegen!(enzyme_ctx, mode, mod, fmi, world)
-
-    push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
+    llvmf = nested_codegen!(enzyme_ctx, mode, mod, fmi, world, true)
 
     orig_swiftself = has_swiftself(LLVM.called_operand(orig))
 
@@ -1640,7 +1638,7 @@ function enzyme_custom_common_rev(
 
     if forward
         enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
-        llvmf = nested_codegen!(enzyme_ctx, mode, mod, ami, world)
+        llvmf = nested_codegen!(enzyme_ctx, mode, mod, ami, world, true)
         @assert llvmf !== nothing
         rev_RT = nothing
         final_mi = ami
@@ -1684,11 +1682,9 @@ function enzyme_custom_common_rev(
         rmi = rmi::Core.MethodInstance
         rev_RT = rev_RT::Type
         enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
-        llvmf = nested_codegen!(enzyme_ctx, mode, mod, rmi, world)
+        llvmf = nested_codegen!(enzyme_ctx, mode, mod, rmi, world, true)
         final_mi = rmi
     end
-
-    push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
 
     needsTape = !isghostty(TapeT) && !Core.Compiler.isconstType(TapeT)
 

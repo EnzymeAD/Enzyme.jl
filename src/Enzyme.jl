@@ -135,11 +135,11 @@ function guess_activity end
 mutable struct EnzymeContext
     modules_to_link::Vector{LLVM.Module}
     edges::Vector{Any}
-    nested_cache::Dict{Core.MethodInstance, LLVM.Function}
+    nested_cache::Dict{Core.MethodInstance, String}
     EnzymeContext() = new(
         LLVM.Module[],
         Any[],
-        Dict{Core.MethodInstance, LLVM.Function}()
+        Dict{Core.MethodInstance, String}()
     )
 end
 
