@@ -6017,8 +6017,6 @@ end
         end
     end
 
-
-
     API.EnzymeReplaceFunctionImplementation(mod)
 
     for (fname, lnk) in custom

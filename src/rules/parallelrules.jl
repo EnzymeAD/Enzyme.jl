@@ -633,7 +633,8 @@ end
     tt = Tuple{thunkTy,dfuncT,Bool}
     mode = get_mode(gutils)
     world = enzyme_extract_world(LLVM.parent(position(B)))
-    entry = nested_codegen!(mode, mod, runtime_pfor_fwd, tt, world)
+    enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
+    entry = nested_codegen!(enzyme_ctx, mode, mod, runtime_pfor_fwd, tt, world)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
     pval = functions(mod)[sname]
@@ -681,7 +682,8 @@ end
     }
     mode = get_mode(gutils)
     world = enzyme_extract_world(LLVM.parent(position(B)))
-    entry = nested_codegen!(mode, mod, runtime_pfor_augfwd, tt, world)
+    enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
+    entry = nested_codegen!(enzyme_ctx, mode, mod, runtime_pfor_augfwd, tt, world)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
     pval = functions(mod)[sname]
@@ -740,7 +742,8 @@ end
         Bool,
     }
     mode = get_mode(gutils)
-    entry = nested_codegen!(mode, mod, runtime_pfor_rev, tt, world)
+    enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
+    entry = nested_codegen!(enzyme_ctx, mode, mod, runtime_pfor_rev, tt, world)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
     pval = functions(mod)[sname]
