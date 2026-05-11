@@ -525,9 +525,9 @@ include("llvm/transforms.jl")
 include("llvm/passes.jl")
 include("typeutils/make_zero.jl")
 
-function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type), world::UInt)
+function nested_codegen!(enzyme_context::EnzymeContext, mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type), world::UInt)
     funcspec = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, typeof(f), tt, world)
-    nested_codegen!(mode, mod, funcspec, world)
+    nested_codegen!(enzyme_context, mode, mod, funcspec, world)
 end
 
 function prepare_llvm(interp, mod::LLVM.Module, job, meta)
@@ -614,7 +614,7 @@ include("typeutils/inference.jl")
 
 import .Interpreter: isKWCallSignature
 
-const mod_to_edges = Dict{LLVM.Module, Vector{Any}}()
+
 mutable struct HandlerState
     primalf::Union{Nothing, LLVM.Function}
     must_wrap::Bool
@@ -1314,13 +1314,26 @@ const DumpPreNestedOpt = Ref(false)
 const DumpPostNestedOpt = Ref(false)
 
 function nested_codegen!(
+    enzyme_context::EnzymeContext,
     mode::API.CDerivativeMode,
     mod::LLVM.Module,
     funcspec::Core.MethodInstance,
     world::UInt,
+    alwaysinline::Bool=false,
 )
-    # TODO: Put a cache here index on `mod` and f->tt
-
+    cache_key = funcspec
+    if haskey(enzyme_context.nested_cache, cache_key)
+        fname = enzyme_context.nested_cache[cache_key]
+        if haskey(functions(mod), fname)
+            return functions(mod)[fname]
+        end
+        for m in enzyme_context.modules_to_link
+            if haskey(functions(m), fname)
+                return functions(m)[fname]
+            end
+        end
+        error("Cached function $fname not found in any module!")
+    end
 
     # 3) Use the MI to create the correct augmented fwd/reverse
     # TODO:
@@ -1343,9 +1356,7 @@ function nested_codegen!(
         permit_inlining!(f)
     end
 
-    edges = get(mod_to_edges, mod, nothing)
-    @assert edges !== nothing
-    edges = edges::Vector{Any}
+    edges = enzyme_context.edges
     push!(edges, funcspec)
 
     LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
@@ -1378,11 +1389,38 @@ function nested_codegen!(
 	API.EnzymeDumpModuleRef(otherMod.ref)
     end
     
-    # 4) Link the corresponding module
-    LLVM.link!(mod, otherMod)
-    # 5) Call the function
+    # 4) Record module to link
+    push!(enzyme_context.modules_to_link, otherMod)
 
-    return functions(mod)[entry]
+    # Declare the function in mod so it can be called
+    lfn = functions(otherMod)[entry]
+    if alwaysinline
+        push!(function_attributes(lfn), EnumAttribute("alwaysinline"))
+    end
+
+    linkage!(lfn, LLVM.API.LLVMExternalLinkage)
+    FT = LLVM.function_type(lfn)
+    decl = LLVM.Function(mod, entry, FT)
+
+    # Copy function attributes
+    for attr in collect(function_attributes(lfn))
+        push!(function_attributes(decl), attr)
+    end
+
+    # Copy parameter attributes
+    for idx in 1:length(parameters(lfn))
+        for attr in collect(parameter_attributes(lfn, idx))
+            push!(parameter_attributes(decl, idx), attr)
+        end
+    end
+
+    # Copy return attributes
+    for attr in collect(return_attributes(lfn))
+        push!(return_attributes(decl), attr)
+    end
+
+    enzyme_context.nested_cache[cache_key] = LLVM.name(decl)
+    return decl
 end
 
 function removed_ret_parms(orig::LLVM.CallInst)
@@ -2502,6 +2540,7 @@ const DumpPostEnzyme = Ref(false)
 const DumpPostWrap = Ref(false)
 
 function enzyme!(
+    enzyme_context::EnzymeContext,
     job::CompilerJob,
     interp,
     mod::LLVM.Module,
@@ -2654,7 +2693,6 @@ function enzyme!(
         convert(API.CDIFFE_TYPE, rt)
     end
 
-    enzyme_context = EnzymeContext()
     GC.@preserve enzyme_context begin
     LLVM.@dispose logic  = Logic(enzyme_context) begin
 
@@ -2724,6 +2762,7 @@ function enzyme!(
 
         if wrap
             augmented_primalf = create_abi_wrapper(
+                enzyme_context,
                 augmented_primalf,
                 TT,
                 rt,
@@ -2766,6 +2805,7 @@ function enzyme!(
         ) #=atomicAdd=#
         if wrap
             adjointf = create_abi_wrapper(
+                enzyme_context,
                 adjointf,
                 TT,
                 rt,
@@ -2807,6 +2847,7 @@ function enzyme!(
         augmented_primalf = nothing
         if wrap
             adjointf = create_abi_wrapper(
+                enzyme_context,
                 adjointf,
                 TT,
                 rt,
@@ -2852,6 +2893,7 @@ function enzyme!(
         if wrap
             pf = adjointf
             adjointf = create_abi_wrapper(
+                enzyme_context,
                 adjointf,
                 TT,
                 rt,
@@ -2935,6 +2977,7 @@ function set_subprogram!(f::LLVM.Function, sp)
 end
 
 function create_abi_wrapper(
+    enzyme_context::EnzymeContext,
     enzymefn::LLVM.Function,
     @nospecialize(TT::Type),
     @nospecialize(rettype::Type),
@@ -3447,7 +3490,7 @@ function create_abi_wrapper(
 	    end
             Func = get_func(T)
             funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, Func, Tuple{}, world)
-            llvmf = nested_codegen!(Mode, mod, funcspec, world)
+            llvmf = nested_codegen!(enzyme_context, Mode, mod, funcspec, world)
             push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
             Func_RT = return_type(interp, funcspec)
             @assert Func_RT == NTuple{width,T′}
@@ -3458,7 +3501,15 @@ function create_abi_wrapper(
                 push!(args, psret)
             end
             res = LLVM.call!(builder, LLVM.function_type(llvmf), llvmf, args)
-            if get_subprogram(llvmf) !== nothing
+            if psret !== nothing
+                attr = if LLVM.version().major >= 12
+                    TypeAttribute("sret", convert(LLVMType, Func_RT))
+                else
+                    EnumAttribute("sret")
+                end
+                LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1), attr)
+            end
+            if get_subprogram(llvm_f) !== nothing
                 metadata(res)[LLVM.MD_dbg] = DILocation(0, 0, get_subprogram(llvm_f))
             end
             if psret !== nothing
@@ -5026,6 +5077,8 @@ function lower_convention(
         throw(LLVM.LLVMException(msg))
     end
 
+
+
     run!(AlwaysInlinerPass(), mod)
     if !hasReturnsTwice
         LLVM.API.LLVMRemoveEnumAttributeAtIndex(
@@ -5172,6 +5225,8 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
 
     params = config.params
 
+    enzyme_context = EnzymeContext()
+
     expectedTapeType = params.expectedTapeType
     mode = params.mode
     TT = params.TT
@@ -5219,8 +5274,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     @safe_debug "Emit LLVM with" primal_job
     GPUCompiler.prepare_job!(primal_job)
     mod, meta = GPUCompiler.emit_llvm(primal_job)
-    edges = Any[]
-    mod_to_edges[mod] = edges
+    edges = enzyme_context.edges
 
     primal_interp = GPUCompiler.get_interpreter(primal_job)
     prepare_llvm(primal_interp, mod, primal_job, meta)
@@ -5864,6 +5918,7 @@ end
         API.EnzymeDetectReadonlyOrThrow(mod)
 
         adjointf, augmented_primalf, TapeType = enzyme!(
+            enzyme_context,
             job,
 	    interp,
             mod,
@@ -5881,6 +5936,12 @@ end
             boxedArgs,
 	    removedRoots,
         )
+
+        # Link deferred modules
+        for otherMod in enzyme_context.modules_to_link
+            LLVM.link!(mod, otherMod)
+        end
+        empty!(enzyme_context.modules_to_link)
         toremove = String[]
         # Inline the wrapper
         for f in functions(mod)
@@ -5927,7 +5988,7 @@ end
             if !has_fn_attr(f, EnumAttribute("returns_twice"))
                 push!(function_attributes(f), EnumAttribute("returns_twice"))
                 push!(toremove, name(f))
-            end
+            end       
         end
         run!(AlwaysInlinerPass(), mod)
         for fname in toremove
@@ -5959,17 +6020,30 @@ end
     if !(primal_target isa GPUCompiler.NativeCompilerTarget)
         mark_gpu_intrinsics!(primal_target, mod)
     end
+
     for (name, fnty) in state.fnsToInject
         for (T, JT, pf) in
             ((LLVM.DoubleType(), Float64, ""), (LLVM.FloatType(), Float32, "f"))
             fname = String(name) * pf
             if haskey(functions(mod), fname)
                 funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, fnty, Tuple{JT}, job.world)
-                llvmf = nested_codegen!(mode, mod, funcspec, job.world)
+                llvmf = nested_codegen!(enzyme_context, mode, mod, funcspec, job.world)
+
+                llvmf = LLVM.name(llvmf)
+
+                # Link deferred modules generated by fnsToInject
+                for otherMod in enzyme_context.modules_to_link
+                    LLVM.link!(mod, otherMod)
+                end
+                empty!(enzyme_context.modules_to_link)
+
+                llvmf = functions(mod)[llvmf]
+
                 push!(function_attributes(llvmf), StringAttribute("implements", fname))
             end
         end
     end
+
     API.EnzymeReplaceFunctionImplementation(mod)
 
     for (fname, lnk) in custom
@@ -6035,7 +6109,7 @@ end
         linkage!(fn, LLVM.API.LLVMLinkerPrivateLinkage)
     end
     
-    delete!(mod_to_edges, mod)
+
 
     use_primal = mode == API.DEM_ReverseModePrimal
     entry = use_primal ? augmented_primalf : adjointf
