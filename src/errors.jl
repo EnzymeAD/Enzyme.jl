@@ -1716,19 +1716,19 @@ end
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_context(gutils).world
         elseif isa(val, LLVM.Argument)
             f = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_context(gutils).world
         end
         # TODO(vchuravy)
         # what is data?
         # Can we get world here?
-        # @assert world == enzyme_context(gutils).world
+        @assert world == enzyme_context(gutils).world
         mode = Enzyme.API.DEM_ReverseModeCombined
 
         if mi !== nothing
