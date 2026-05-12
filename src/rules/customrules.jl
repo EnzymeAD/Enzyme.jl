@@ -1595,8 +1595,8 @@ function enzyme_custom_common_rev(
 
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
-    ctx = enzyme_context(gutils)
-    world = ctx.world
+    enzyme_ctx = enzyme_context(gutils)
+    world = enzyme_ctx.world
 
     mode = get_mode(gutils)
 
@@ -1662,7 +1662,7 @@ function enzyme_custom_common_rev(
     final_mi = nothing
 
     if forward
-        llvmf = nested_codegen!(ctx, mode, mod, ami, true)
+        llvmf = nested_codegen!(enzyme_ctx, mode, mod, ami, true)
         @assert llvmf !== nothing
         rev_RT = nothing
         final_mi = ami
@@ -1705,7 +1705,7 @@ function enzyme_custom_common_rev(
         
         rmi = rmi::Core.MethodInstance
         rev_RT = rev_RT::Type
-        llvmf = nested_codegen!(ctx, mode, mod, rmi, true)
+        llvmf = nested_codegen!(enzyme_ctx, mode, mod, rmi, true)
         final_mi = rmi
     end
 
