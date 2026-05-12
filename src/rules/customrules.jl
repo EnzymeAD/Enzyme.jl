@@ -340,9 +340,7 @@ function enzyme_custom_setup_args(
     alloctx = LLVM.IRBuilder()
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
-    ofn = LLVM.parent(LLVM.parent(orig))
-    world = enzyme_extract_world(ofn)
-    @assert world == enzyme_context(gutils).world
+    world = enzyme_context(gutils).world
 
     jlargs = classify_arguments(
         mi.specTypes,
@@ -910,8 +908,7 @@ function enzyme_custom_setup_ret(
     width = get_width(gutils)
     mode = get_mode(gutils)
 
-    world = enzyme_extract_world(LLVM.parent(LLVM.parent(orig)))
-    @assert world == enzyme_context(gutils).world
+    world = enzyme_context(gutils).world
 
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
@@ -1349,9 +1346,7 @@ end
         needsShadow
     end
 
-    fn = LLVM.parent(LLVM.parent(orig))
-    world = enzyme_extract_world(fn)
-    @assert world == enzyme_context(gutils).world
+    world = enzyme_context(gutils).world
 
     C = EnzymeRules.RevConfig{
         Bool(needsPrimal),
@@ -1465,9 +1460,7 @@ end
     end
     TT = Tuple{tt...}
 
-    fn = LLVM.parent(LLVM.parent(orig))
-    world = enzyme_extract_world(fn)
-    @assert world == enzyme_context(gutils).world
+    world = enzyme_context(gutils).world
     @safe_debug "Trying to apply custom forward rule" TT isKWCall
         
     functy = if isKWCall
