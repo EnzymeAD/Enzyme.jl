@@ -1820,10 +1820,6 @@ end
             ) #=error=#
             world = enzyme_context(gutils).world
         end
-        # TODO(vchuravy)
-        # what is data?
-        # Can we get world here?
-        @assert world == enzyme_context(gutils).world
         mode = Enzyme.API.DEM_ReverseModeCombined
 
         if mi !== nothing
