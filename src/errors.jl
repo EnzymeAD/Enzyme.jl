@@ -1289,8 +1289,7 @@ function julia_error(
         seen = Dict{LLVM.Value,LLVM.Value}()
         illegal = false
         created = LLVM.Instruction[]
-        world = enzyme_extract_world(LLVM.parent(position(IRBuilder(B))))
-        @assert world == enzyme_context(gutils).world
+        world = enzyme_context(gutils).world
         width = get_width(gutils)
         function make_batched(@nospecialize(cur::LLVM.Value), B::LLVM.IRBuilder)::LLVM.Value
             if width == 1

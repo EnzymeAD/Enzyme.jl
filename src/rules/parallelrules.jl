@@ -225,8 +225,7 @@ end
     e_tt = Tuple{Const{Int}}
     modifiedBetween = (mode != API.DEM_ForwardMode, false)
 
-    world = enzyme_extract_world(LLVM.parent(position(B)))
-    @assert world == enzyme_context(gutils).world
+    world = enzyme_context(gutils).world
 
     pfuncT = funcT
 
@@ -770,8 +769,7 @@ end
     width = get_width(gutils)
     mode = get_mode(gutils)
 
-    world = enzyme_extract_world(LLVM.parent(position(B)))
-    @assert world == enzyme_context(gutils).world
+    world = enzyme_context(gutils).world
 
     vals = LLVM.Value[
         unsafe_to_llvm(B, runtime_newtask_fwd),
@@ -825,8 +823,7 @@ end
     uncacheable = get_uncacheable(gutils, orig)
     ModifiedBetween = (uncacheable[1] != 0,)
 
-    world = enzyme_extract_world(LLVM.parent(position(B)))
-    @assert world == enzyme_context(gutils).world
+    world = enzyme_context(gutils).world
 
     vals = LLVM.Value[
         unsafe_to_llvm(B, runtime_newtask_augfwd),
