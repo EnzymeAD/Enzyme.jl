@@ -378,7 +378,7 @@ function load_if_mixed(oval::OT, val::VT) where {OT, VT}
 end
 
 function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nospecialize(oval::LLVM.Value), @nospecialize(val::LLVM.Value))::LLVM.Value
-    world = enzyme_extract_world(LLVM.parent(position(B)))
+    world = enzyme_context(gutils).world
     legal, TT, _ = abs_typeof(oval)
     if !legal
         legal, TT, _ = abs_typeof(oval, true)
@@ -424,8 +424,8 @@ end
     end
 end
 
-function byref_from_val_if_mixed(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM.Value
-    world = enzyme_extract_world(LLVM.parent(position(B)))
+function byref_from_val_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nospecialize(val::LLVM.Value))::LLVM.Value
+    world = enzyme_context(gutils).world
     legal, TT, _ = abs_typeof(val)
     if !legal
         legal, TT, _ = abs_typeof(val, true)

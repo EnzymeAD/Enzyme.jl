@@ -258,7 +258,8 @@ import .Enzyme: GradientUtils, call_samefunc_with_inverted_bundles!,
                 get_strong_zero, get_shadow_type, get_uncacheable,
                 erase_with_placeholder, is_constant_value, is_constant_inst,
                 new_from_original, lookup_value, invert_pointer, debug_from_orig!,
-                add_reverse_block!, set_reverse_block!, enzyme_context, enzyme_gutils_context
+                add_reverse_block!, set_reverse_block!, enzyme_context, enzyme_gutils_context,
+                batch_call_same_with_inverted_arg_if_active!
 
 # Julia function to LLVM stem and arity
 const cmplx_known_ops =
@@ -1162,9 +1163,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
             continue
         end
 
-        world = enzyme_extract_world(f)
-        @assert world == interp.world
-
+        world = interp.world
         jlargs = classify_arguments(
             mi.specTypes,
             ftype,
@@ -1820,9 +1819,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
     if mode == API.DEM_ReverseModePrimal ||
        mode == API.DEM_ReverseModeGradient ||
        mode == API.DEM_ReverseModeCombined
-        fn = LLVM.parent(LLVM.parent(V))
-        world = enzyme_extract_world(fn)
-        @assert world == enzyme_context(gutils).world
+        world = enzyme_context(gutils).world
         if !guaranteed_nonactive(Ty, world)
             B = LLVM.IRBuilder()
             position!(B, V)
