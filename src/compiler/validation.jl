@@ -853,9 +853,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
             ops = arg_operands_view(inst)
             @assert length(ops) == 2
-            flib_v = ops[1]
-
-            flib = flib_v
+            flib = ops[1]
             if isa(flib, LLVM.ConstantExpr) || isa(flib, LLVM.GlobalVariable)
                 legal, flib2 = absint(flib)
                 if legal
@@ -884,8 +882,6 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             end
 
             # Julia 1.13+: fname is an ejl_inserted GlobalVariable holding a Julia Symbol.
-            # Use absint to evaluate it (absint knows about ejl_inserted globals via
-            # JuliaEnzymeNameMap) and convert the resulting Symbol to a String.
             if !isa(fname, String) && isa(fname_llvm, LLVM.GlobalVariable)
                 legal2, sym = absint(fname_llvm)
                 if legal2
@@ -903,9 +899,11 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 return
             end
 
-            found, replaceWith = isa(flib, String) ?
-                try_import_llvmbc(mod, flib, fname, imported) :
+            found, replaceWith = if isa(flib, String)
+                try_import_llvmbc(mod, flib, fname, imported)
+            else
                 (false, nothing)
+            end
 
             if found
 
@@ -937,7 +935,6 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             else
                 res = try
                     if isa(flib, String)
-                        # Old Julia: flib resolved to library file path
                         if fn == "jl_lazy_load_and_lookup"
                             ccall(
                                 :jl_lazy_load_and_lookup,
@@ -966,6 +963,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                             Symbol(fname),
                         )
                     else
+                        # flib is still an LLVM.Value — absint failed to resolve the library; skip.
                         nothing
                     end
                 catch e
