@@ -15,7 +15,7 @@ function EnzymeTestUtils.to_vec(x::AbstractGPUArray{<:EnzymeTestUtils.ElementTyp
     has_seen = haskey(seen_vecs, x)
     is_const = Enzyme.Compiler.guaranteed_const(Core.Typeof(x))
     if has_seen || is_const
-        x_vec = Float32[]
+        x_vec = similar(x, Float32, 1)
     else
         x_vec = reshape(x, length(x))
         seen_vecs[x] = x_vec
@@ -42,7 +42,7 @@ function to_vec(x::AbstractGPUArray{<:Complex{<:EnzymeTestUtils.ElementType}}, s
     has_seen = haskey(seen_vecs, x)
     is_const = Enzyme.Compiler.guaranteed_const(Core.Typeof(x))
     if has_seen || is_const
-        x_vec = Float32[]
+        x_vec = similar(x, Float32, 1)
     else
         y = reshape(x, length(x))
         x_vec = vcat(real.(y), imag.(y))
