@@ -1,6 +1,7 @@
 using EnzymeTestUtils
 using Random
 using Test
+using CUDA
 
 Random.seed!(0)
 
@@ -13,4 +14,5 @@ Random.seed!(0)
     include("test_forward.jl")
     include("test_reverse.jl")
     include("test_fd.jl")
+    CUDA.functional() && include("cuda_to_vec.jl")
 end
