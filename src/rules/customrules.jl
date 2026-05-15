@@ -195,7 +195,6 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
     # if either not a bits ref, or the data was not overwritten, the data is left
     # in the primal pointer.
     if val isa Nothing
-    
         # If we just want the primal pointer, we can simply push the old data as per usual.
     
         if !activity_wrap
@@ -214,9 +213,11 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
             return nothing
         else
             val = load!(B, arty, ogval)
+            metadata(val)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
         end
 
     end
+
 
     root_ptr = nothing
 
@@ -276,7 +277,8 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
         al
     end
 
-    store!(B, val, ptr)
+    st = store!(B, val, ptr)
+
 
     push!(args, al)
 
@@ -465,7 +467,8 @@ function enzyme_custom_setup_args(
                 if !reverse
                     if B !== nothing
                         val = load!(B, arty, val)
-
+                        metadata(val)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+ 
                         # Since we will be caching this value (and thus GC pointers need to be valid),
                         # if the roots aren't here, we need to recombine before we stash on tape.
                         # However, as an optimization, if the roots aren't overwritten we don't need to actually
@@ -479,8 +482,9 @@ function enzyme_custom_setup_args(
                                 val = nullify_rooted_values!(B, val)
                             end
                         end
-
+ 
                         push!(byval_tapes, val)
+
                     end
                 else
                     if B !== nothing
@@ -488,6 +492,7 @@ function enzyme_custom_setup_args(
                         val = extract_value!(B, tape, length(byval_tapes))
                         @assert value_type(val) == arty
                         push!(byval_tapes, val)
+
                     end
                 end
             else
@@ -507,6 +512,7 @@ function enzyme_custom_setup_args(
                         if !reverse
                             if B !== nothing
                                 root_cache = load!(B, root_ty, roots_op)
+                                metadata(root_cache)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                                 push!(byval_tapes, root_cache)
                             end
                         else
@@ -526,6 +532,7 @@ function enzyme_custom_setup_args(
 
                 # We still need to ensure the pointer of val is itself accessible in the reverse pass location,
                 # even if val itself is not
+
                 val = nothing
                 if reverse && B !== nothing
                     ogval = lookup_value(gutils, ogval, B)
@@ -634,7 +641,9 @@ function enzyme_custom_setup_args(
                     @assert orig_activep != activep
                     @assert orig_activep == API.DFT_CONSTANT
                     if val == nothing
-                        load!(B, iarty, ogval)
+                        ld = load!(B, iarty, ogval)
+                        metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                        ld
                     else
                         val
                     end
@@ -692,7 +701,9 @@ function enzyme_custom_setup_args(
                          ival
                     else
                         if val == nothing
-                            load!(B, iarty, ogval)
+                            ld = load!(B, iarty, ogval)
+                            metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                            ld
                         else
                             val
                         end
@@ -706,6 +717,7 @@ function enzyme_custom_setup_args(
                             ev =
                                 (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
                             ld = load!(B, iarty, ev)
+                            metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                             ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
                             @assert ival !== nothing
                         else
@@ -780,6 +792,7 @@ function enzyme_custom_setup_args(
                     for idx = 1:width
                         ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
                         ld = load!(B, llrty, ev)
+                        metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                         if n_primal_roots > 0
                             sroots = (width == 1) ? roots_ival : extract_value!(B, roots_ival, idx - 1)
                             ld = recombine_value!(B, ld, sroots)
@@ -997,9 +1010,8 @@ end
     width = get_width(gutils)
 
 
-    llvmf = nested_codegen!(mode, mod, fmi, world)
-
-    push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
+    enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
+    llvmf = nested_codegen!(enzyme_ctx, mode, mod, fmi, world, true)
 
     orig_swiftself = has_swiftself(LLVM.called_operand(orig))
 
@@ -1638,7 +1650,8 @@ function enzyme_custom_common_rev(
     final_mi = nothing
 
     if forward
-        llvmf = nested_codegen!(mode, mod, ami, world)
+        enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
+        llvmf = nested_codegen!(enzyme_ctx, mode, mod, ami, world, true)
         @assert llvmf !== nothing
         rev_RT = nothing
         final_mi = ami
@@ -1681,11 +1694,10 @@ function enzyme_custom_common_rev(
         
         rmi = rmi::Core.MethodInstance
         rev_RT = rev_RT::Type
-        llvmf = nested_codegen!(mode, mod, rmi, world)
+        enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
+        llvmf = nested_codegen!(enzyme_ctx, mode, mod, rmi, world, true)
         final_mi = rmi
     end
-
-    push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
 
     needsTape = !isghostty(TapeT) && !Core.Compiler.isconstType(TapeT)
 
@@ -2047,7 +2059,9 @@ function enzyme_custom_common_rev(
     res = LLVM.call!(B, LLVM.function_type(llvmf), llvmf, args)
     ncall = res
     debug_from_orig!(gutils, res, orig)
+
     callconv!(res, callconv(llvmf))
+
 
     hasNoRet = has_fn_attr(llvmf, EnumAttribute("noreturn"))
 

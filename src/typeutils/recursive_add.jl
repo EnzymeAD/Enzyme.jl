@@ -51,14 +51,23 @@ end
 @inline mutable_register(::Type{T}) where {T} = ismutabletype(T)
 
 @generated function atomicrmw_add!(ptr::Ptr{Float64}, val::Float64)
-    ptr_type = (Int == Int64) ? "i64" : "i32"
-    ir = """
-    define void @f($ptr_type %ptr_int, double %val) alwaysinline {
-        %ptr = inttoptr $ptr_type %ptr_int to double*
-        atomicrmw fadd double* %ptr, double %val monotonic
-        ret void
-    }
-    """
+    if VERSION >= v"1.12"
+        ir = """
+        define void @f(ptr %ptr, double %val) alwaysinline {
+            atomicrmw fadd ptr %ptr, double %val monotonic
+            ret void
+        }
+        """
+    else
+        ptr_type = (Int == Int64) ? "i64" : "i32"
+        ir = """
+        define void @f($ptr_type %ptr_int, double %val) alwaysinline {
+            %ptr = inttoptr $ptr_type %ptr_int to double*
+            atomicrmw fadd double* %ptr, double %val monotonic
+            ret void
+        }
+        """
+    end
     return quote
         Base.@_inline_meta
         Base.llvmcall(($ir, "f"), Cvoid, Tuple{Ptr{Float64}, Float64}, ptr, val)
@@ -66,14 +75,23 @@ end
 end
 
 @generated function atomicrmw_add!(ptr::Ptr{Float32}, val::Float32)
-    ptr_type = (Int == Int64) ? "i64" : "i32"
-    ir = """
-    define void @f($ptr_type %ptr_int, float %val) alwaysinline {
-        %ptr = inttoptr $ptr_type %ptr_int to float*
-        atomicrmw fadd float* %ptr, float %val monotonic
-        ret void
-    }
-    """
+    if VERSION >= v"1.12"
+        ir = """
+        define void @f(ptr %ptr, float %val) alwaysinline {
+            atomicrmw fadd ptr %ptr, float %val monotonic
+            ret void
+        }
+        """
+    else
+        ptr_type = (Int == Int64) ? "i64" : "i32"
+        ir = """
+        define void @f($ptr_type %ptr_int, float %val) alwaysinline {
+            %ptr = inttoptr $ptr_type %ptr_int to float*
+            atomicrmw fadd float* %ptr, float %val monotonic
+            ret void
+        }
+        """
+    end
     return quote
         Base.@_inline_meta
         Base.llvmcall(($ir, "f"), Cvoid, Tuple{Ptr{Float32}, Float32}, ptr, val)

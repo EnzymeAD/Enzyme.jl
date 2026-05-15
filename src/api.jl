@@ -623,6 +623,12 @@ EnzymeGradientUtilsGetWidth(gutils) = ccall(
     (EnzymeGradientUtilsRef,),
     gutils,
 )
+EnzymeGradientUtilsGetLogic(gutils) = ccall(
+    (:EnzymeGradientUtilsGetLogic, libEnzyme),
+    EnzymeLogicRef,
+    (EnzymeGradientUtilsRef,),
+    gutils,
+)
 EnzymeGradientUtilsGetRuntimeActivity(gutils) =
     ccall(
         (:EnzymeGradientUtilsGetRuntimeActivity, libEnzyme),

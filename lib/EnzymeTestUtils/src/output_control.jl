@@ -4,6 +4,13 @@
 
 # Test.get_test_result generates code that uses the following so we must import them
 using Test: Returned, Threw
+@static if isdefined(Test, :eval_test_function)
+    using Test: eval_test_function
+end
+@static if isdefined(Test, :eval_test_comparison)
+    using Test: eval_test_comparison
+end
+
 
 "A cunning hack to carry extra message along with the original expression in a test"
 struct ExprAndMsg

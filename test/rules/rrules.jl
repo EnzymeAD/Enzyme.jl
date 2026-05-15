@@ -480,5 +480,44 @@ end
     Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), loss_inplace, p)
     @test true
 end
+# Define a function on Tuples
+function my_nonlin(t::Tuple)
+    return t[1]*t[2] + t[3]*t[4]
+end
+
+# Define PROPER custom rule for it
+# Here we use Active for the Tuple argument
+function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(my_nonlin)}, ::Type{<:Active}, t::Active)
+    primal = needs_primal(config) ? func.val(t.val) : nothing
+    # We intentionally do NOT save t.val in the tape to trigger the bug!
+    return AugmentedReturn(primal, nothing, nothing)
+end
+
+function reverse(config::RevConfigWidth{1}, func::Const{typeof(my_nonlin)}, dret::Active, tape, t::Active)
+    tval = t.val
+    dt = (tval[2] * dret.val, tval[1] * dret.val, tval[4] * dret.val, tval[3] * dret.val)
+    return (dt,)
+end
+
+function f_loop(X, N)
+    total = 0.0
+    for k in 1:N
+        idx = (k-1)*4
+        t = (X[idx+1], X[idx+2], X[idx+3], X[idx+4])
+        total += my_nonlin(t)
+    end
+    return total
+end
+
+@testset "Loop-carried tuple argument caching" begin
+    X = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+    N = 2
+    grad_expected = [2.0, 1.0, 4.0, 3.0, 6.0, 5.0, 8.0, 7.0]
+    dX = zeros(size(X))
+    
+    Enzyme.autodiff(Reverse, f_loop, Active, Duplicated(X, dX), Const(N))
+    
+    @test dX ≈ grad_expected
+end
 
 end # ReverseRules

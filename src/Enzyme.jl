@@ -133,6 +133,14 @@ Base.convert(::Type{API.CDerivativeMode}, ::ForwardMode) = API.DEM_ForwardMode
 function guess_activity end
 
 mutable struct EnzymeContext
+    modules_to_link::Vector{LLVM.Module}
+    edges::Vector{Any}
+    nested_cache::Dict{Core.MethodInstance, String}
+    EnzymeContext() = new(
+        LLVM.Module[],
+        Any[],
+        Dict{Core.MethodInstance, String}()
+    )
 end
 
 include("logic.jl")
