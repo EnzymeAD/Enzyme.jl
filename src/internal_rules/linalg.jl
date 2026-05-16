@@ -346,7 +346,8 @@ function EnzymeRules.reverse(
     U = cache_fact.U
     N = EnzymeRules.width(config)
 
-    for i in 1:N
+    ntuple(Val(N)) do i
+        Base.@_inline_meta
         dB = N == 1 ? B.dval : B.dval[i]
         zU = adjoint(U) \ dB
         zL = adjoint(L) \ zU
@@ -361,6 +362,7 @@ function EnzymeRules.reverse(
             end
         end
         dB .= zL
+        return nothing
     end
 
     return (nothing, nothing)
