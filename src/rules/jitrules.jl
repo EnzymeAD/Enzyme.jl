@@ -2158,7 +2158,18 @@ end
     conv = LLVM.callconv(orig)
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
 
-    @assert conv == 37
+    if conv != 37
+        emit_error(B, orig, "Unexpected calling conv, got $conv, for $(string(orig))")
+
+        if !is_constant_value(gutils, orig)
+            width = get_width(gutils)
+            unsafe_store!(
+                shadowR,
+                UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))).ref,
+            )
+        end
+        return false
+    end
 
     common_generic_augfwd(1, B, orig, gutils, normalR, shadowR, tapeR)
 end
@@ -2189,7 +2200,10 @@ end
     conv = LLVM.callconv(orig)
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
 
-    @assert conv == 37
+    if conv != 37
+        emit_error(B, orig, "Unexpected calling conv, got $conv, for $(string(orig))")
+        return nothing
+    end
 
     common_generic_rev(1, B, orig, gutils, tape)
     return nothing
