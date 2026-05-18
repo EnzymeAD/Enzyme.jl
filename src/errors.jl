@@ -1224,6 +1224,9 @@ function julia_error(
         throw(IllegalFirstPointerException(msg, ir, bt))
     elseif errtype == API.ET_InternalError
         throw(EnzymeInternalError(msg, ir, bt))
+    elseif errtype == API.ET_ShowInternalError
+        Core.print(EnzymeInternalError(msg, ir, bt))
+	return C_NULL
     elseif errtype == API.ET_GCRewrite
         data2 = LLVM.Value(data2)
         fn = LLVM.Function(LLVM.API.LLVMGetParamParent(data2::LLVM.Argument))

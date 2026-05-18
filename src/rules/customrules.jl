@@ -165,7 +165,7 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
                           @nospecialize(roots_cache::Union{LLVM.Value, Nothing}), 
                           @nospecialize(shadow_roots::Union{Nothing, LLVM.Value}) = nothing,
 			  just_primal_rooting::Bool = false
-                          )::Union{Nothing, Tuple{LLVM.Value, LLVM.Value}}
+                          )::Union{Nothing, LLVM.Value}
 
     if !activity_wrap
         @assert arg.typ == Ty
@@ -212,7 +212,12 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
             @assert shadow_roots === nothing
             return nothing
         else
-            val = load!(B, arty, ogval)
+	    arty_foralloca = @static if VERSION >= v"1.12"
+	       strip_tracked_pointers(arty)
+	    else
+	       arty
+	    end
+            val = load!(B, arty_foralloca, ogval, "rule_val_load_v1_")
             metadata(val)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
         end
 
@@ -258,14 +263,19 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
 
     llty = convert(LLVMType, Ty; allow_boxed = true)
 
-    al0 = al = emit_allocobj!(B, Ty, "arg.$Ty")
-    al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
-    al = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
+    llty_foralloca = @static if VERSION >= v"1.12"
+       strip_tracked_pointers(llty)
+    else
+       llty
+    end
+
+    al0 = al = alloca!(B, llty_foralloca, "arg.$Ty")
+    al = addrspacecast!(B, al, LLVM.PointerType(llty_foralloca, Derived))
 
     ptr = if activity_wrap
         inbounds_gep!(
             B,
-            llty,
+            llty_foralloca,
             al,
             [
                 LLVM.ConstantInt(LLVM.IntType(64), 0),
@@ -286,13 +296,7 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
         push!(args, root_ptr)
     end
 
-    if num_inline_roots == 0
-        if any_jltypes(llty)
-            emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
-        end
-    end
-
-    return al0, al
+    return al
 end
 
 function enzyme_custom_setup_args(
@@ -466,7 +470,7 @@ function enzyme_custom_setup_args(
                 # If is overwritten
                 if !reverse
                     if B !== nothing
-                        val = load!(B, arty, val)
+                        val = load!(B, arty, val, "rules_load_ref_unc")
                         metadata(val)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
  
                         # Since we will be caching this value (and thus GC pointers need to be valid),
@@ -511,7 +515,7 @@ function enzyme_custom_setup_args(
 
                         if !reverse
                             if B !== nothing
-                                root_cache = load!(B, root_ty, roots_op)
+                                root_cache = load!(B, root_ty, roots_op, "rules_load_ref_cache")
                                 metadata(root_cache)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                                 push!(byval_tapes, root_cache)
                             end
@@ -641,7 +645,7 @@ function enzyme_custom_setup_args(
                     @assert orig_activep != activep
                     @assert orig_activep == API.DFT_CONSTANT
                     if val == nothing
-                        ld = load!(B, iarty, ogval)
+                        ld = load!(B, iarty, ogval, "rules_ival_load")
                         metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                         ld
                     else
@@ -701,7 +705,7 @@ function enzyme_custom_setup_args(
                          ival
                     else
                         if val == nothing
-                            ld = load!(B, iarty, ogval)
+                            ld = load!(B, iarty, ogval, "rules_bitsref_nonmixed")
                             metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                             ld
                         else
@@ -716,7 +720,7 @@ function enzyme_custom_setup_args(
                         if !is_constant_value(gutils, op)
                             ev =
                                 (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
-                            ld = load!(B, iarty, ev)
+                            ld = load!(B, iarty, ev, "rules_shadow_load")
                             metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                             ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
                             @assert ival !== nothing
@@ -791,7 +795,7 @@ function enzyme_custom_setup_args(
                     ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llrty)))
                     for idx = 1:width
                         ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
-                        ld = load!(B, llrty, ev)
+                        ld = load!(B, llrty, ev, "rules_mixed_shadow_load")
                         metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                         if n_primal_roots > 0
                             sroots = (width == 1) ? roots_ival : extract_value!(B, roots_ival, idx - 1)
@@ -824,11 +828,17 @@ function enzyme_custom_setup_args(
 
                 @assert ival !== nothing
                 just_primal_rooting = true
-                al0, al = push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache, shadow_roots, just_primal_rooting)
+                al = push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache, shadow_roots, just_primal_rooting)
+		    
+		llty_foralloca = @static if VERSION >= v"1.12"
+	            strip_tracked_pointers(llty)
+		else
+	            llty
+	        end
 
                 iptr = inbounds_gep!(
                     B,
-                    llty,
+                    llty_foralloca,
                     al,
                     [
                         LLVM.ConstantInt(LLVM.IntType(64), 0),
@@ -837,12 +847,6 @@ function enzyme_custom_setup_args(
                 )
 
                 store!(B, ival, iptr)
-
-                if n_shadow_roots == 0 && any_jltypes(llty)
-                    emit_writebarrier!(B, get_julia_inner_types(B, al0, ival))
-                end
-
-
             end
             push!(activity, Ty)
         end
