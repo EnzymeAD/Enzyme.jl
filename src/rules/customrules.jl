@@ -212,7 +212,7 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
             @assert shadow_roots === nothing
             return nothing
         else
-	    arty_foralloca = @static if VERSION >= v"1.12"
+	    arty_foralloca = if VERSION >= v"1.12" && num_inline_roots != 0
 	       strip_tracked_pointers(arty)
 	    else
 	       arty
@@ -263,7 +263,7 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
 
     llty = convert(LLVMType, Ty; allow_boxed = true)
 
-    llty_foralloca = @static if VERSION >= v"1.12"
+    llty_foralloca = if VERSION >= v"1.12" && num_inline_roots != 0
        strip_tracked_pointers(llty)
     else
        llty
@@ -830,7 +830,7 @@ function enzyme_custom_setup_args(
                 just_primal_rooting = true
                 al = push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache, shadow_roots, just_primal_rooting)
 		    
-		llty_foralloca = @static if VERSION >= v"1.12"
+		llty_foralloca = if VERSION >= v"1.12" && n_shadow_roots != 0
 	            strip_tracked_pointers(llty)
 		else
 	            llty
