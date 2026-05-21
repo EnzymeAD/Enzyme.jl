@@ -4878,7 +4878,7 @@ function lower_convention(
                 push!(
                     return_attributes(wrapper_f),
                     StringAttribute(
-                        "enzymejl_parmname",
+                        "enzymejl_parmtype_str",
                         string(actualRetType),
                     ),
                 )
@@ -4911,7 +4911,7 @@ function lower_convention(
                 push!(
                     return_attributes(wrapper_f),
                     StringAttribute(
-                        "enzymejl_parmname",
+                        "enzymejl_parmtype_str",
                         string(actualRetType),
                     ),
                 )
@@ -4953,7 +4953,7 @@ function lower_convention(
                 push!(
                     return_attributes(wrapper_f),
                     StringAttribute(
-                        "enzymejl_parmname",
+                        "enzymejl_parmtype_str",
                         string(expected_RT),
                     ),
                 )
