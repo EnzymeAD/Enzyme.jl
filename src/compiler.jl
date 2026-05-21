@@ -3571,14 +3571,14 @@ function create_abi_wrapper(
                 if data[i] != -1
                     eval = extract_value!(builder, val, data[i], "revprimal_extract_$(i)")
                 end
-                if i == 2 && actualRetType != eltype(literal_rt)
-                    if Base.isconcretetype(eltype(literal_rt)) && !Base.isconcretetype(actualRetType)
+                if i == 2 && actualRetType != literal_rt
+                    if Base.isconcretetype(literal_rt) && !Base.isconcretetype(actualRetType)
                         eval = addrspacecast!(builder, eval, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), Derived))
-                        lvalty = convert(LLVM.LLVMType, eltype(literal_rt))
+                        lvalty = convert(LLVM.LLVMType, literal_rt)
                         eval = bitcast!(builder, eval, LLVM.PointerType(lvalty, Derived))
                         eval = load!(builder, lvalty, eval)
                     else
-			emit_error(builder, nothing, "Unexpected type inference from LLVM codegen.  Actual return type from GPUCompiler: $(actualRetType), Inferred return type: $(eltype(literal_rt)), rettype=$(rettype), Mode=$Mode TT=$TT")
+			emit_error(builder, nothing, "Unexpected type inference from LLVM codegen. \nActual return type from GPUCompiler: $(actualRetType)\n Inferred return type: $(literal_rt)\n rettype=$(rettype)\n Mode=$Mode\n TT=$TT")
                     end 
                 end
                 if i == 3
@@ -3622,9 +3622,9 @@ function create_abi_wrapper(
                                 insert_value!(builder, ival, ires, idx - 1)
                         end
                         eval = ival
-                    elseif actualRetType != eltype(literal_rt)
-                        if Base.isconcretetype(eltype(literal_rt)) && !Base.isconcretetype(actualRetType)
-                            lvalty = convert(LLVM.LLVMType, eltype(literal_rt))
+                    elseif actualRetType != literal_rt
+                        if Base.isconcretetype(literal_rt) && !Base.isconcretetype(actualRetType)
+                            lvalty = convert(LLVM.LLVMType, literal_rt)
                             ival = UndefValue(
                                 LLVM.LLVMType(API.EnzymeGetShadowType(width, lvalty)),
                             )
@@ -3641,7 +3641,7 @@ function create_abi_wrapper(
                             end
                             eval = ival
                         else
-			    emit_error(builder, nothing, "Unexpected type inference from LLVM codegen.  Actual return type from GPUCompiler: $(actualRetType), Inferred return type: $(eltype(literal_rt))")
+			    emit_error(builder, nothing, "Unexpected type inference from LLVM codegen. \nActual return type from GPUCompiler: $(actualRetType)\n Inferred return type: $(literal_rt)\n rettype=$(rettype)\n Mode=$Mode\n TT=$TT")
                         end 
                     end
                 end
