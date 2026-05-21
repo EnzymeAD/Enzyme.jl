@@ -3624,7 +3624,7 @@ function create_abi_wrapper(
                                 insert_value!(builder, ival, ires, idx - 1)
                         end
                         eval = ival
-                    else if actualRetType != eltype(literal_rt)
+                    elseif actualRetType != eltype(literal_rt)
                         if Base.isconcretetype(eltype(literal_rt)) && !Base.isconcretetype(actualRetType)
                             lvalty = convert(LLVM.LLVMType, eltype(literal_rt))
                             ival = UndefValue(
@@ -4264,8 +4264,8 @@ function extract_struct_into!(builder::LLVM.IRBuilder, dst::LLVM.Value, src::LLV
                 continue
             end
 		
-	    dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstlocsi_$(name)_$(path)")
-	    val = length(path) == 0 ? src : Enzyme.API.e_extract_value!(builder, src, path, "srclocei_$(name)_$(path)")
+	    dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstlocsi_$(name)_$(join(path, ","))")
+	    val = length(path) == 0 ? src : Enzyme.API.e_extract_value!(builder, src, path, "srclocei_$(name)_$(join(path, ","))")
 	    st = store!(builder, val, dstloc)
         end
 
