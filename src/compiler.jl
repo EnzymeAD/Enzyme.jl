@@ -3231,8 +3231,6 @@ function create_abi_wrapper(
 
     jltype = convert(LLVM.LLVMType, combinedReturn)
 
-    @show combinedReturn, jltype, literal_rt, actualRetType, pactualRetType
-
     numLLVMReturns = nothing
     if isa(jltype, LLVM.ArrayType)
         numLLVMReturns = length(jltype)
@@ -3580,7 +3578,7 @@ function create_abi_wrapper(
                         eval = bitcast!(builder, eval, LLVM.PointerType(lvalty, Derived))
                         eval = load!(builder, lvalty, eval)
                     else
-                        throw(AssertionError("Unexpected type inference from LLVM codegen.  Actual return type from GPUCompiler: $(actualRetType), Inferred return type: $(eltype(literal_rt))"))
+			emit_error(builder, nothing, "Unexpected type inference from LLVM codegen.  Actual return type from GPUCompiler: $(actualRetType), Inferred return type: $(eltype(literal_rt)), rettype=$(rettype), Mode=$Mode TT=$TT")
                     end 
                 end
                 if i == 3
@@ -3643,7 +3641,7 @@ function create_abi_wrapper(
                             end
                             eval = ival
                         else
-                            throw(AssertionError("Unexpected type inference from LLVM codegen.  Actual return type from GPUCompiler: $(actualRetType), Inferred return type: $(eltype(literal_rt))"))
+			    emit_error(builder, nothing, "Unexpected type inference from LLVM codegen.  Actual return type from GPUCompiler: $(actualRetType), Inferred return type: $(eltype(literal_rt))")
                         end 
                     end
                 end

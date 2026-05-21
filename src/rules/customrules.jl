@@ -228,8 +228,6 @@ function push_box_for_argument!(
 
     root_ptr = nothing
 
-    @show roots_cache, roots_val, shadow_roots, Ty, just_primal_rooting, inline_roots_type(eltype(Ty))
-
     if roots_cache !== nothing
         root_ty = convert(LLVMType, AnyArray(num_inline_roots))
         if shadow_roots === nothing
