@@ -3575,7 +3575,7 @@ function create_abi_wrapper(
                 end
                 if i == 2 && actualRetType != eltype(literal_rt)
                     if Base.isconcretetype(eltype(literal_rt)) && !Base.isconcretetype(actualRetType)
-                        eval = addrspacecast!(builder, eval, LLVM.PointerType(LLVM.StructType([]), Derived))
+                        eval = addrspacecast!(builder, eval, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), Derived))
                         lvalty = convert(LLVM.LLVMType, eltype(literal_rt))
                         eval = bitcast!(builder, eval, LLVM.PointerType(lvalty, Derived))
                         eval = load!(builder, lvalty, eval)
@@ -3633,7 +3633,7 @@ function create_abi_wrapper(
                             for idx = 1:width
                                 pv =
                                     (width == 1) ? eval : extract_value!(builder, eval, idx - 1)
-                                eval = addrspacecast!(builder, eval, LLVM.PointerType(LLVM.StructType([]), Derived))
+                                eval = addrspacecast!(builder, eval, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), Derived))
                                 eval = bitcast!(builder, eval, LLVM.PointerType(lvalty, Derived))
                                 eval = load!(builder, lvalty, eval)
 
