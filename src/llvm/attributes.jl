@@ -1,4 +1,6 @@
 const nofreefns = Set{String}((
+    "jl_f__compute_sparams",
+    "ijl_f__compute_sparams",
     "jl_genericmemory_copyto",
     "jl_get_binding_value_seqcst",
     "ijl_get_binding_value_seqcst",
@@ -215,6 +217,8 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+    "jl_f__compute_sparams",
+    "ijl_f__compute_sparams",
     
     # The binding lookup is asserted as inactive [e.g. globals are considered constant wrt differentiation]
     # If and when this changes, we need to change that here
