@@ -153,7 +153,9 @@ end
     EnzymeCore.EnzymeRules.multiply_fwd_into(prev, pd, dx)
 end
 
-function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
+function push_box_for_argument!(
+                          @nospecialize(alloctx::LLVM.IRBuilder),
+                          @nospecialize(B::LLVM.IRBuilder),
                           @nospecialize(Ty::Type),
                           @nospecialize(val::Union{LLVM.Value, Nothing}),
                           @nospecialize(roots_val::Union{Nothing, LLVM.Value}),
@@ -191,9 +193,6 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
     end
 
     arty = convert(LLVMType, arg.typ; allow_boxed = true)
-
-    alloctx = LLVM.IRBuilder()
-    position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
     # if either not a bits ref, or the data was not overwritten, the data is left
     # in the primal pointer.
@@ -392,7 +391,7 @@ function enzyme_custom_setup_args(
                    !Core.Compiler.isconstType(Const{arg.typ})
                     val = unsafe_to_llvm(B, arg.typ.parameters[1])
                     roots_val = nothing
-                    push_box_for_argument!(B, Const{arg.typ}, val, roots_val, arg, args, uncacheable, true, val, nothing)
+                    push_box_for_argument!(alloctx, B, Const{arg.typ}, val, roots_val, arg, args, uncacheable, true, val, nothing)
                 else
                     @assert isghostty(Const{arg.typ}) ||
                             Core.Compiler.isconstType(Const{arg.typ})
@@ -564,13 +563,13 @@ function enzyme_custom_setup_args(
             if activep == API.DFT_CONSTANT
                 kwtup0 = arg.typ
                 if B !== nothing
-                    push_box_for_argument!(B, kwtup0, val, roots_val, arg, args, uncacheable, false, ogval, roots_cache)
+                    push_box_for_argument!(alloctx, B, kwtup0, val, roots_val, arg, args, uncacheable, false, ogval, roots_cache)
                 end
             else
                 @assert activep == API.DFT_DUP_ARG
                 kwtup0 = Duplicated{arg.typ}
                 if B !== nothing
-                    push_box_for_argument!(B, kwtup0, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache)
+                    push_box_for_argument!(alloctx, B, kwtup0, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache)
                 end
             end
 
@@ -585,7 +584,7 @@ function enzyme_custom_setup_args(
             Ty = Const{arg.typ}
 
             if B !== nothing
-                push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache)
+                push_box_for_argument!(alloctx, B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache)
             end
 
             push!(activity, Ty)
@@ -594,7 +593,7 @@ function enzyme_custom_setup_args(
             Ty = Active{arg.typ}
 
             if B !== nothing
-                push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache)
+                push_box_for_argument!(alloctx, B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache)
             end
 
             push!(activity, Ty)
@@ -833,7 +832,7 @@ function enzyme_custom_setup_args(
 
                 @assert ival !== nothing
                 just_primal_rooting = true
-                al = push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache, shadow_roots, just_primal_rooting)
+                al = push_box_for_argument!(alloctx, B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache, shadow_roots, just_primal_rooting)
 		    
 		llty_foralloca = if VERSION >= v"1.12" && n_shadow_roots != 0
 	            strip_tracked_pointers(llty)
