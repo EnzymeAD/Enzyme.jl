@@ -3231,7 +3231,7 @@ function create_abi_wrapper(
 
     jltype = convert(LLVM.LLVMType, combinedReturn)
 
-    @show combinedReturn, jltype
+    @show combinedReturn, jltype, literal_rt, actualRetType, pactualRetType
 
     numLLVMReturns = nothing
     if isa(jltype, LLVM.ArrayType)
