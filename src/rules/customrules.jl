@@ -192,6 +192,9 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
 
     arty = convert(LLVMType, arg.typ; allow_boxed = true)
 
+    alloctx = LLVM.IRBuilder()
+    position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
+
     # if either not a bits ref, or the data was not overwritten, the data is left
     # in the primal pointer.
     if val isa Nothing
@@ -202,7 +205,7 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
 
             if roots_val !== nothing
                 if roots_cache !== nothing
-                    ral = alloca!(B, convert(LLVMType, AnyArray(num_inline_roots)))
+                    ral = alloca!(alloctx, convert(LLVMType, AnyArray(num_inline_roots)))
                     store!(B, roots_cache, ral)
                     push!(args, ral)
                 else
@@ -212,11 +215,11 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
             @assert shadow_roots === nothing
             return nothing
         else
-	    arty_foralloca = if VERSION >= v"1.12" && num_inline_roots != 0
-	       strip_tracked_pointers(arty)
-	    else
-	       arty
-	    end
+            arty_foralloca = if VERSION >= v"1.12" && num_inline_roots != 0
+                strip_tracked_pointers(arty)
+            else
+                arty
+            end
             val = load!(B, arty_foralloca, ogval, "rule_val_load_v1_")
             metadata(val)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
         end
@@ -226,14 +229,16 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
 
     root_ptr = nothing
 
+    @show roots_cache, roots_val, shadow_roots, Ty, just_primal_rooting, inline_roots_type(eltype(Ty))
+
     if roots_cache !== nothing
         root_ty = convert(LLVMType, AnyArray(num_inline_roots))
         if shadow_roots === nothing
-            ral = alloca!(B, root_ty)
+            ral = alloca!(alloctx, root_ty)
             store!(B, roots_cache, ral)
             root_ptr = ral
         else
-            sr2 = bitcast!(B, shadow_roots, LLVM.PointerType(root_ty))
+            sr2 = bitcast!(B, shadow_roots, LLVM.PointerType(root_ty), "customrule_bitcast_to_shadowroots_v1")
             store!(B, roots_cache, sr2)
             root_ptr = shadow_roots
         end
@@ -251,7 +256,7 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
 	        if cur_inline_roots != 0
 		        root_ty = convert(LLVMType, AnyArray(cur_inline_roots))
 		        ld = load!(B, root_ty, roots_val, "loaded.roots.$eTy")
-		        sr2 = bitcast!(B, shadow_roots, LLVM.PointerType(root_ty))
+		        sr2 = bitcast!(B, shadow_roots, LLVM.PointerType(root_ty), "customrule_bitcast_to_shadowroots_v2")
 		        store!(B, ld, sr2)
 	        end
             root_ptr = shadow_roots
