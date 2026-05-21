@@ -1028,11 +1028,13 @@ end
     if sret !== nothing
 	sret_lty = convert(LLVMType, eltype(sret))
 	esret = eltype(sret)
-	if VERSION >= v"1.12" && returnRoots !== nothing
-	     dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(orig))))
-	     sret_lty = LLVM.ArrayType(LLVM.Int8Type(), LLVM.sizeof(dl, sret_lty))
-	end
-        sret = alloca!(alloctx, sret_lty)
+
+    	sret_lty_foralloca = if VERSION >= v"1.12" && returnRoots !== nothing
+	       strip_tracked_pointers(sret_lty)
+	    else
+	       sret_lty
+	    end
+        sret = alloca!(alloctx, sret_lty_foralloca)
     	metadata(sret)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(esret))))])
         pushfirst!(args, sret)
         if returnRoots !== nothing
@@ -1975,11 +1977,13 @@ function enzyme_custom_common_rev(
         else
             convert(LLVMType, eltype(sret)), eltype(sret)
         end
-    	if VERSION >= v"1.12" && returnRoots !== nothing
-    	     dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(orig))))
-    	     sret_lty = LLVM.ArrayType(LLVM.Int8Type(), LLVM.sizeof(dl, sret_lty))
-    	end
-        sret = alloca!(alloctx, sret_lty)
+
+        sret_lty_foralloca = if VERSION >= v"1.12" && returnRoots !== nothing
+            strip_tracked_pointers(sret_lty)
+        else
+            sret_lty
+        end
+        sret = alloca!(alloctx, sret_lty_foralloca)
 	metadata(sret)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(esret))))])
         pushfirst!(args, sret)
         if returnRoots !== nothing
