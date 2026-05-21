@@ -3573,6 +3573,16 @@ function create_abi_wrapper(
                 if data[i] != -1
                     eval = extract_value!(builder, val, data[i], "revprimal_extract_$(i)")
                 end
+                if i == 2 && actualRetType != eltype(literal_rt)
+                    if Base.isconcretetype(eltype(literal_rt)) && !Base.isconcretetype(actualRetType)
+                        eval = addrspacecast!(builder, eval, LLVM.PointerType(LLVM.StructType([]), Derived))
+                        lvalty = convert(LLVM.LLVMType, eltype(literal_rt))
+                        eval = bitcast!(builder, eval, LLVM.PointerType(lvalty, Derived))
+                        eval = load!(builder, lvalty, eval)
+                    else
+                        throw(AssertionError("Unexpected type inference from LLVM codegen.  Actual return type from GPUCompiler: $(actualRetType), Inferred return type: $(eltype(literal_rt))"))
+                    end 
+                end
                 if i == 3
                     if rettype <: MixedDuplicated || rettype <: BatchMixedDuplicated
                         ival = UndefValue(
@@ -3614,6 +3624,27 @@ function create_abi_wrapper(
                                 insert_value!(builder, ival, ires, idx - 1)
                         end
                         eval = ival
+                    else if actualRetType != eltype(literal_rt)
+                        if Base.isconcretetype(eltype(literal_rt)) && !Base.isconcretetype(actualRetType)
+                            lvalty = convert(LLVM.LLVMType, eltype(literal_rt))
+                            ival = UndefValue(
+                                LLVM.LLVMType(API.EnzymeGetShadowType(width, lvalty)),
+                            )
+                            for idx = 1:width
+                                pv =
+                                    (width == 1) ? eval : extract_value!(builder, eval, idx - 1)
+                                eval = addrspacecast!(builder, eval, LLVM.PointerType(LLVM.StructType([]), Derived))
+                                eval = bitcast!(builder, eval, LLVM.PointerType(lvalty, Derived))
+                                eval = load!(builder, lvalty, eval)
+
+                                ival =
+                                    (width == 1) ? eval :
+                                    insert_value!(builder, ival, eval, idx - 1)
+                            end
+                            eval = ival
+                        else
+                            throw(AssertionError("Unexpected type inference from LLVM codegen.  Actual return type from GPUCompiler: $(actualRetType), Inferred return type: $(eltype(literal_rt))"))
+                        end 
                     end
                 end
                 eval = fixup_abi(i, eval)
