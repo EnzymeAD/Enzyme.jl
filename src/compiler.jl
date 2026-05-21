@@ -3231,6 +3231,8 @@ function create_abi_wrapper(
 
     jltype = convert(LLVM.LLVMType, combinedReturn)
 
+    @show combinedReturn, jltype
+
     numLLVMReturns = nothing
     if isa(jltype, LLVM.ArrayType)
         numLLVMReturns = length(jltype)
@@ -3569,7 +3571,7 @@ function create_abi_wrapper(
             if existed[i] != 0
                 eval = val
                 if data[i] != -1
-                    eval = extract_value!(builder, val, data[i])
+                    eval = extract_value!(builder, val, data[i], "revprimal_extract_$(i)")
                 end
                 if i == 3
                     if rettype <: MixedDuplicated || rettype <: BatchMixedDuplicated
@@ -4876,6 +4878,13 @@ function lower_convention(
                 push!(
                     return_attributes(wrapper_f),
                     StringAttribute(
+                        "enzymejl_parmname",
+                        string(actualRetType),
+                    ),
+                )
+                push!(
+                    return_attributes(wrapper_f),
+                    StringAttribute(
                         "enzymejl_parmtype_ref",
                         string(UInt(GPUCompiler.BITS_REF)),
                     ),
@@ -4897,6 +4906,13 @@ function lower_convention(
                     StringAttribute(
                         "enzymejl_parmtype",
                         string(convert(UInt, unsafe_to_pointer(actualRetType))),
+                    ),
+                )
+                push!(
+                    return_attributes(wrapper_f),
+                    StringAttribute(
+                        "enzymejl_parmname",
+                        string(actualRetType),
                     ),
                 )
                 push!(
@@ -4932,6 +4948,13 @@ function lower_convention(
                     StringAttribute(
                         "enzymejl_parmtype",
                         string(convert(UInt, unsafe_to_pointer(expected_RT))),
+                    ),
+                )
+                push!(
+                    return_attributes(wrapper_f),
+                    StringAttribute(
+                        "enzymejl_parmname",
+                        string(expected_RT),
                     ),
                 )
                 push!(
