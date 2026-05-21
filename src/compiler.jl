@@ -3623,9 +3623,11 @@ function create_abi_wrapper(
                         LLVM.ConstantInt(LLVM.IntType(64), 0),
                         LLVM.ConstantInt(LLVM.IntType(32), returnNum),
                     ],
+                    "revprimal_1_wrap_sret_gep_$returnNum"
                 )
-                ptr = pointercast!(builder, ptr, LLVM.PointerType(value_type(eval)))
-		extract_struct_into!(builder, ptr, eval)
+                ptr = pointercast!(builder, ptr, LLVM.PointerType(value_type(eval)), 
+                    "revprimal_1_wrap_sret_cast_$returnNum")
+                extract_struct_into!(builder, ptr, eval, "revprimal_1_wrap_sret_extract_$returnNum")
                 returnNum += 1
                 if i == 3 && shadow_init
                     shadows = LLVM.Value[]
@@ -3665,9 +3667,10 @@ function create_abi_wrapper(
                         LLVM.ConstantInt(LLVM.IntType(64), 0),
                         LLVM.ConstantInt(LLVM.IntType(32), returnNum),
                     ],
+                    "revprimal_2_wrap_sret_gep_$returnNum"
                 )
-                ptr = pointercast!(builder, ptr, LLVM.PointerType(value_type(eval)))
-		extract_struct_into!(builder, ptr, eval)
+                ptr = pointercast!(builder, ptr, LLVM.PointerType(value_type(eval)), "revprimal_1_wrap_sret_cast_$returnNum")
+        		extract_struct_into!(builder, ptr, eval, "revprimal_2_wrap_sret_extract_$returnNum")
                 returnNum += 1
             end
         end
@@ -3765,9 +3768,10 @@ function create_abi_wrapper(
                     LLVM.ConstantInt(LLVM.IntType(64), 0),
                     LLVM.ConstantInt(LLVM.IntType(32), returnNum),
                 ],
+                "fwd_wrap_sret_gep_$returnNum"
             )
-            ptr = pointercast!(builder, ptr, LLVM.PointerType(value_type(eval)))
-	    extract_struct_into!(builder, ptr, eval)
+            ptr = pointercast!(builder, ptr, LLVM.PointerType(value_type(eval)), "fwd_wrap_sret_cast_$returnNum")
+    	    extract_struct_into!(builder, ptr, eval, "fwd_wrap_sret_extract_$returnNum")
         end
         @assert count_Sret == numLLVMReturns
     else
@@ -3797,14 +3801,16 @@ function create_abi_wrapper(
                                     length(elements(jltype)) - 1,
                                 ),
                             ],
+                            "revcombined_wrap_sret_gep_$returnNum"
                         ),
                         eval,
+                        "revcombined_wrap_sret_extract_$returnNum"
                     )
                     returnNum += 1
                 end
             end
         end
-        for T in TT.parameters[2:end]
+        for (i, T) in enumerate(TT.parameters[2:end])
             if T <: Active
                 T′ = eltype(T)
                 isboxed = GPUCompiler.deserves_argbox(T′)
@@ -3821,8 +3827,10 @@ function create_abi_wrapper(
                                 LLVM.ConstantInt(LLVM.IntType(32), 0),
                                 LLVM.ConstantInt(LLVM.IntType(32), activeNum),
                             ],
+                            "revcombined_wrap_sret_gep_active_$(i)_$(T′)"
                         ),
                         eval,
+                        "revcombined_wrap_sret_extract_active_$(i)_$(T′)"
                     )
                     returnNum += 1
                 end
@@ -4174,7 +4182,7 @@ function extract_nonjlvalues_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMTyp
 	return nothing
 end
 
-function extract_struct_into!(builder::LLVM.IRBuilder, dst::LLVM.Value, src::LLVM.Value)
+function extract_struct_into!(builder::LLVM.IRBuilder, dst::LLVM.Value, src::LLVM.Value, name::String)
     count = 0
     jltype = value_type(src)
     todo = Tuple{Vector{Cuint},LLVM.LLVMType}[(
@@ -4223,8 +4231,8 @@ function extract_struct_into!(builder::LLVM.IRBuilder, dst::LLVM.Value, src::LLV
                 continue
             end
 		
-	    dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstlocsi")
-	    val = length(path) == 0 ? src : Enzyme.API.e_extract_value!(builder, src, path)
+	    dstloc = inbounds_gep!(builder, jltype, dst, to_llvm(path), "dstlocsi_$(name)_$(path)")
+	    val = length(path) == 0 ? src : Enzyme.API.e_extract_value!(builder, src, path, "srclocei_$(name)_$(path)")
 	    st = store!(builder, val, dstloc)
         end
 
