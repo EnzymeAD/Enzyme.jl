@@ -498,7 +498,7 @@ function enzyme_custom_setup_args(
                 else
                     if B !== nothing
                         @assert tape isa LLVM.Value
-                        val = extract_value!(B, tape, length(byval_tapes))
+                        val = extract_value!(B, tape, length(byval_tapes), "roots_op_extract_v1_")
                         @assert value_type(val) == arty
                         push!(byval_tapes, val)
 
@@ -527,11 +527,11 @@ function enzyme_custom_setup_args(
                         else
                             if B !== nothing
                                 @assert tape isa LLVM.Value
-                                root_cache = extract_value!(B, tape, length(byval_tapes))
+                                root_cache = extract_value!(B, tape, length(byval_tapes), "roots_op_extract_v1_")
                                 @assert value_type(root_cache) == root_ty
                                 push!(byval_tapes, root_cache)
 
-                                al = alloca!(B, root_ty)
+                                al = alloca!(alloctx, root_ty, "roots_op_cache_v2_")
                                 store!(B, root_cache, al)
                                 roots_op = al
                             end
