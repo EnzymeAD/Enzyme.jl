@@ -198,6 +198,24 @@ end
 end
 
 @inline function EnzymeCore.make_zero(
+        ::Type{Core.SimpleVector},
+        seen::IdDict,
+        prev::Core.SimpleVector,
+        ::Val{copy_if_inactive} = Val(false),
+    )::Core.SimpleVector where {copy_if_inactive}
+    if haskey(seen, prev)
+        return seen[prev]
+    end
+    data = []
+    for v in prev
+        push!(data, EnzymeCore.make_zero(Core.Typeof(v), seen, v, Val(copy_if_inactive)))
+    end
+    newa = Core.svec(data)
+    seen[prev] = newa
+    return newa
+end
+
+@inline function EnzymeCore.make_zero(
         ::Type{RT},
         seen::IdDict,
         prev::RT,
