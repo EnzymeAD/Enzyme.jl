@@ -20,7 +20,7 @@ EnzymeTestUtilsGPUArraysCoreExt = ["Enzyme", "GPUArraysCore"]
 
 [compat]
 ConstructionBase = "1.4.1"
-CUDA = "6"
+CUDA = "5, 6"
 Enzyme = "0.13.78"
 EnzymeCore = "0.5, 0.6, 0.7, 0.8"
 FiniteDifferences = "0.12.33"
