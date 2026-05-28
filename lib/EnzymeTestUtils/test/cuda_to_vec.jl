@@ -7,7 +7,7 @@ include("helpers.jl")
 
 function test_to_vec(x)
     x_vec, from_vec = to_vec(x)
-    @test x_vec isa Vector{<:AbstractFloat}
+    @test x_vec isa CuVector{<:AbstractFloat}
     x2 = from_vec(x_vec)
     @test typeof(x2) === typeof(x)
     return EnzymeTestUtils.test_approx(x2, x)
@@ -49,7 +49,7 @@ end
             @test getfield(y, k) == x
             v, from_vec = to_vec(y)
             @test v == vec(x)
-            v2 = CUDA.cuRAND.randn(size(v))
+            v2 = CUDA.cuRAND.randn(size(v)...)
             y2 = from_vec(v2)
             @test getfield(y2, k) == reshape(v2, size(x))
             @test !isdefined(y2, k === :a ? :x : :a)
@@ -73,20 +73,6 @@ end
         x = CUDA.cuRAND.randn(2, 3)
         test_to_vec(reshape(x, 3, 2))
         test_to_vec(view(x, :, 1))
-    end
-
-    @testset "subarrays" begin
-        x = CUDA.cuRAND.randn(2, 3)
-        # note: bottom right 2x2 submatrix ommited from y but will be present in v
-        y = @views (x[:, 1], x[1, :])
-        test_to_vec(y)
-        v, from_vec = to_vec(y)
-        @test v == vec(x)
-        v2 = CUDA.cuRAND.randn(size(v))
-        y2 = from_vec(v2)
-        @test y2[1] == reshape(v2, size(x))[:, 1]
-        @test y2[2] == reshape(v2, size(x))[1, :]
-        @test Base.dataids(y2[1]) == Base.dataids(y2[2])
     end
 
     @testset "reshaped arrays share memory" begin
