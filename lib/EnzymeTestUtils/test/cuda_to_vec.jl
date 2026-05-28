@@ -3,9 +3,11 @@ using EnzymeTestUtils: to_vec
 using CUDA
 using Test
 
+include("helpers.jl")
+
 function test_to_vec(x)
     x_vec, from_vec = to_vec(x)
-    @test x_vec isa CuVector{<:AbstractFloat}
+    @test x_vec isa Vector{<:AbstractFloat}
     x2 = from_vec(x_vec)
     @test typeof(x2) === typeof(x)
     return EnzymeTestUtils.test_approx(x2, x)
