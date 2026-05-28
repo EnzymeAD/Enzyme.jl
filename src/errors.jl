@@ -1175,7 +1175,7 @@ function julia_error(
         API.EnzymeStringFree(ip)
 
         mi = nothing
-        world = nothing
+        world = enzyme_typeanalyzer_context(data).world
 
         if isa(val, LLVM.Instruction)
             f = LLVM.parent(LLVM.parent(val))::LLVM.Function
@@ -1183,17 +1183,13 @@ function julia_error(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
         elseif isa(val, LLVM.Argument)
             f = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
         end
-        # TODO: get world from TypeAnalyzer
-        # @assert world == enzyme_gutils_context(gutils).world
         throw(IllegalTypeAnalysisException(msg, mi, world, sval, ir, bt))
     elseif errtype == API.ET_NoType
         @assert B != C_NULL
