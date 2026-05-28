@@ -24,6 +24,11 @@ function enzyme_logic_context(logic::API.EnzymeLogicRef)
     return unsafe_pointer_to_objref(ptr)::EnzymeContext
 end
 
+function enzyme_typeanalyzer_context(typeanalyzer::API.EnzymeTypeAnalyzerRef)
+    logic = API.EnzymeTypeAnalyzerGetLogic(typeanalyzer)
+    return enzyme_logic_context(logic)
+end
+
 # typedef bool (*CustomRuleType)(int /*direction*/, CTypeTree * /*return*/,
 #                                CTypeTree * /*args*/, size_t /*numArgs*/,
 #                                LLVMValueRef)=T

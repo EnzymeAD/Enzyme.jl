@@ -1387,6 +1387,15 @@ function EnzymeTypeAnalyzerToString(typeanalyzer)
     )
 end
 
+function EnzymeTypeAnalyzerGetLogic(typeanalyzer)
+    ccall(
+        (:EnzymeTypeAnalyzerGetLogic, libEnzyme),
+        EnzymeLogicRef,
+        (EnzymeTypeAnalyzerRef,),
+        typeanalyzer,
+    )
+end
+
 function EnzymeGradientUtilsInvertedPointersToString(gutils)
     ccall(
         (:EnzymeGradientUtilsInvertedPointersToString, libEnzyme),
