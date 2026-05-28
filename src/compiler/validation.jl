@@ -886,12 +886,12 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 legal2, sym = absint(fname_llvm)
                 if legal2
                     sym = unbind(sym)
-                end
-                if isa(sym, GlobalRef) && isdefined(sym.mod, sym.name)
-                    sym = getfield(sym.mod, sym.name)
-                end
-                if isa(sym, Symbol)
-                    fname = String(sym)
+                    if isa(sym, GlobalRef) && isdefined(sym.mod, sym.name)
+                        sym = getfield(sym.mod, sym.name)
+                    end
+                    if isa(sym, Symbol)
+                        fname = String(sym)
+                    end
                 end
             end
 
