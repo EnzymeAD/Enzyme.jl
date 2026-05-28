@@ -271,7 +271,7 @@ function push_box_for_argument!(
        llty
     end
 
-    al0 = al = alloca!(B, llty_foralloca, "arg.$Ty")
+    al0 = al = alloca!(alloctx, llty_foralloca, "arg.$Ty")
     al = addrspacecast!(B, al, LLVM.PointerType(llty_foralloca, Derived))
 
     ptr = if activity_wrap
@@ -692,7 +692,7 @@ function enzyme_custom_setup_args(
                 sroots_ty = nothing
                 shadow_roots = if n_shadow_roots != 0
                     sroots_ty = convert(LLVMType, AnyArray(n_shadow_roots))
-                    alloca!(B, sroots_ty, "roots.arg.$Ty")
+                    alloca!(alloctx, sroots_ty, "roots.arg.$Ty")
                 end
 
 
@@ -756,7 +756,7 @@ function enzyme_custom_setup_args(
                                         LLVM.ConstantInt(LLVM.IntType(64), 0),
                                         LLVM.ConstantInt(LLVM.IntType(32), r - 1),
                                     ]
-                                ))
+                                ), "rules_shadow_root_load_$r_")
                                 stv = store!(B, ld, rptr)
                             end
                         end
@@ -1104,7 +1104,7 @@ end
 	if returnRoots !== nothing && VERSION >= v"1.12"
 	   res = recombine_value_ptr!(B, sty, sret, returnRoots)
 	else
-	   res = load!(B, sty, sret)
+	   res = load!(B, sty, sret, "rules_sret_load_to_res")
 	end
     end
     if swiftself
@@ -1843,7 +1843,7 @@ function enzyme_custom_common_rev(
                 tape_roots = inline_roots_type(TapeT)
                 if tape_roots != 0
                     roots_ty = convert(LLVMType, AnyArray(tape_roots))
-                    tape_al = alloca!(B, roots_ty)
+                    tape_al = alloca!(alloctx, roots_ty)
                     extract_roots_from_value!(B, tape, tape_al)
                 end
 
@@ -1898,7 +1898,7 @@ function enzyme_custom_common_rev(
 		    # TODO actually cache the roots in the forward for use in the reverse here
                     for idx = 1:width
                        ev = (width == 1) ? rptr_val : extract_value!(B, rptr_val, idx - 1)
-		       ld = load!(B, roots_ty, ev)
+		       ld = load!(B, roots_ty, ev, "rules_active_roots_nonzero")
 		       pv = gep!(B, nroots_ty, ral, [LLVM.ConstantInt(Int32(0)), LLVM.ConstantInt(Int32((idx-1)*active_roots))]) 
 		       store!(B, ld, pv)
 		    end
@@ -1909,7 +1909,7 @@ function enzyme_custom_common_rev(
                 val = UndefValue(shadow_type)
                 for idx = 1:width
                     ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
-                    ld = load!(B, llety, ev)
+                    ld = load!(B, llety, ev, "rules_shadow_ex_$idx_")
 		    extract_nonjlvalues_into!(B, llety, ev, LLVM.null(llety))
                     val = (width == 1) ? ld : insert_value!(B, val, ld, idx - 1)
                 end
@@ -2171,7 +2171,7 @@ function enzyme_custom_common_rev(
     	if returnRoots !== nothing && VERSION >= v"1.12"
     	    res = recombine_value_ptr!(B, sty, sret, returnRoots; must_cache=true)
     	else
-            res = load!(B, sty, sret)
+            res = load!(B, sty, sret, "rules_sret_not_nothing")
             API.SetMustCache!(res)
     	end
     end
@@ -2270,6 +2270,7 @@ function enzyme_custom_common_rev(
                         res,
                         LLVM.PointerType(StructTy, addrspace(value_type(res))),
                     ),
+                    "rules_nonvoid_struct"
                 )
                 API.SetMustCache!(lresV)
                 lresV
@@ -2422,7 +2423,7 @@ function enzyme_custom_common_rev(
             if width != 1
                 RefTy = NTuple{Int(width),RefTy}
             end
-            curs = load!(B, convert(LLVMType, RefTy), refal)
+            curs = load!(B, convert(LLVMType, RefTy), refal, "rules_mixed_prestore")
 
             for idx = 1:width
                 evp = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
