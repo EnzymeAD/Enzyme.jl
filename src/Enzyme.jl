@@ -137,7 +137,7 @@ mutable struct EnzymeContext
     modules_to_link::Vector{LLVM.Module}
     edges::Vector{Any}
     nested_cache::Dict{Core.MethodInstance, String}
-    EnzymeContext(world::UInt64) = new(
+    EnzymeContext(world::Integer) = new(
         world,
         LLVM.Module[],
         Any[],
