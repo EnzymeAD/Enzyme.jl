@@ -1909,7 +1909,7 @@ function enzyme_custom_common_rev(
                 val = UndefValue(shadow_type)
                 for idx = 1:width
                     ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
-                    ld = load!(B, llety, ev, "rules_shadow_ex_$idx_")
+                    ld = load!(B, llety, ev, "rules_shadow_ex_$(idx)_")
 		    extract_nonjlvalues_into!(B, llety, ev, LLVM.null(llety))
                     val = (width == 1) ? ld : insert_value!(B, val, ld, idx - 1)
                 end
