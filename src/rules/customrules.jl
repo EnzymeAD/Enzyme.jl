@@ -756,7 +756,7 @@ function enzyme_custom_setup_args(
                                         LLVM.ConstantInt(LLVM.IntType(64), 0),
                                         LLVM.ConstantInt(LLVM.IntType(32), r - 1),
                                     ]
-                                ), "rules_shadow_root_load_$r_")
+                                ), "rules_shadow_root_load_$(r)_")
                                 stv = store!(B, ld, rptr)
                             end
                         end
