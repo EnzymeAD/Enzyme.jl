@@ -756,4 +756,40 @@ end
 @testset "make_zero!" test_make_zero!()
 @testset "remake_zero!" test_remake_zero!()
 
+# Forward-mode differentiability of the bookkeeping builtins that make_zero /
+# make_zero! emit when recursing through undef-able / abstract fields and the
+# IdDict/IdSet `seen` aliasing tables. These showed up as `EnzymeNoDerivativeError`
+# for `jl_field_isdefined_checked` (make_zero's `isdefined(prev, i)` field walk) and
+# `jl_idset_peek_bp` (make_zero!'s `prev in seen` membership test) when nesting
+# forward-over-reverse — see EnzymeAD/Enzyme.jl#3135. They are exercised here in
+# isolation, without the `seen`-table mutation builtins (`jl_eqtable_*`,
+# `jl_idset_put_*`) whose forward rules are a separate follow-up.
+mutable struct MaybeUndefField
+    a::Float64
+    b::Any
+end
+function isdefined_field_walk(x)
+    m = MaybeUndefField(x, x)
+    s = 0.0
+    for i in 1:nfields(m)
+        if isdefined(m, i)  # runtime index -> jl_field_isdefined_checked
+            s += x
+        end
+    end
+    return s
+end
+
+function idset_membership(x)
+    seen = Base.IdSet{Any}()
+    v = Float64[x]
+    return (v in seen) ? (x * x) : (x * x * x)  # `in` -> jl_idset_peek_bp
+end
+
+@testset "forward inactivity of make_zero shadow-init builtins" begin
+    # both fields defined -> s = 2x, derivative 2
+    @test Enzyme.autodiff(Forward, isdefined_field_walk, Duplicated(2.0, 1.0)) == (2.0,)
+    # v not in empty seen -> x^3, derivative 3x^2 = 12 at x = 2
+    @test Enzyme.autodiff(Forward, idset_membership, Duplicated(2.0, 1.0)) == (12.0,)
+end
+
 end  # module MakeZeroTests

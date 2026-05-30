@@ -214,6 +214,11 @@ const nofreefns = Set{String}((
     "ijl_eqtable_get",
     "cuCtxGetApiVersion",
     "cuCtxSetCurrent",
+    # make_zero / make_zero! shadow-init bookkeeping (IdDict/IdSet seen-table queries)
+    "jl_field_isdefined_checked",
+    "ijl_field_isdefined_checked",
+    "jl_idset_peek_bp",
+    "ijl_idset_peek_bp",
 ))
 
 const inactivefns = Set{String}((
@@ -344,6 +349,11 @@ const inactivefns = Set{String}((
     "jl_array_to_string",
     "ijl_array_to_string",
     "pcre2_jit_compile_8",
+    # make_zero / make_zero! shadow-init bookkeeping (IdDict/IdSet seen-table queries)
+    "jl_field_isdefined_checked",
+    "ijl_field_isdefined_checked",
+    "jl_idset_peek_bp",
+    "ijl_idset_peek_bp",
     # "jl_"
 ))
 
