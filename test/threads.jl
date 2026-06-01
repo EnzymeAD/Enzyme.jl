@@ -154,3 +154,66 @@ end
     @test ty[3] ≈ [8.0, 8.0]
     @test ty[4] ≈ [10.0, 10.0]
 end
+
+@testset "Task Rules" begin
+    function wait_f(t)
+        Base.wait(t)
+        nothing
+    end
+    function _wait_f(t)
+        Base._wait(t)
+        nothing
+    end
+    function schedule_f(t)
+        Base.schedule(t)
+        nothing
+    end
+    function enq_work_f(t)
+        Base.enq_work(t)
+        nothing
+    end
+
+    t1 = Task(()->nothing)
+    t2 = Task(()->nothing)
+    t3 = Task(()->nothing)
+    t4 = Task(()->nothing)
+    
+    # Pre-schedule tasks for wait so we don't deadlock
+    Base.schedule(t1)
+    Base.schedule(t2)
+    Base.schedule(t3)
+    Base.schedule(t4)
+    Base.wait(t1)
+    Base.wait(t2)
+    Base.wait(t3)
+    Base.wait(t4)
+    
+    @test Enzyme.autodiff(Reverse, wait_f, Const(t1)) === ()
+    @test Enzyme.autodiff(Reverse, wait_f, Duplicated(t1, t2)) === ()
+    @test Enzyme.autodiff(Reverse, wait_f, BatchDuplicated(t1, (t2, t3))) === ()
+
+    @test Enzyme.autodiff(Forward, wait_f, Const(t1)) === ()
+    @test Enzyme.autodiff(Forward, wait_f, Duplicated(t1, t2)) === ()
+    @test Enzyme.autodiff(Forward, wait_f, BatchDuplicated(t1, (t2, t3))) === ()
+
+    @test Enzyme.autodiff(Reverse, _wait_f, Const(t1)) === ()
+    @test Enzyme.autodiff(Reverse, _wait_f, Duplicated(t1, t2)) === ()
+    @test Enzyme.autodiff(Reverse, _wait_f, BatchDuplicated(t1, (t2, t3))) === ()
+
+    @test Enzyme.autodiff(Forward, _wait_f, Const(t1)) === ()
+    @test Enzyme.autodiff(Forward, _wait_f, Duplicated(t1, t2)) === ()
+    @test Enzyme.autodiff(Forward, _wait_f, BatchDuplicated(t1, (t2, t3))) === ()
+
+
+    t5 = Task(()->nothing)
+    t6 = Task(()->nothing)
+    t7 = Task(()->nothing)
+    t8 = Task(()->nothing)
+
+    @test Enzyme.autodiff(Reverse, schedule_f, Const(t5)) === ()
+    @test Enzyme.autodiff(Forward, schedule_f, Const(t6)) === ()
+
+    t9 = Task(()->nothing); t10 = Task(()->nothing)
+    @test Enzyme.autodiff(Reverse, enq_work_f, Const(t9)) === ()
+    @test Enzyme.autodiff(Forward, enq_work_f, Const(t10)) === ()
+end

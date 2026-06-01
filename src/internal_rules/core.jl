@@ -445,3 +445,473 @@ function EnzymeRules.reverse(config, ::Const{typeof(Base.finalizer)}, dret, tape
     # No-op
     return (nothing, nothing)
 end
+
+# -------------------- Base.wait EnzymeRules --------------------
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    ::Const{typeof(Base.wait)},
+    ::Type{<:Const},
+    t::Duplicated{<:Task},
+)
+    Base.wait(t.val)
+    Base.wait(t.dval)
+    return nothing
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    ::Const{typeof(Base.wait)},
+    ::Type{<:Const},
+    t::BatchDuplicated{T, N},
+) where {T<:Task,N}
+    Base.wait(t.val)
+    for i in 1:N
+        Base.wait(t.dval[i])
+    end
+    return nothing
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    ::Const{typeof(Base.wait)},
+    ::Type{<:Const},
+    t::Const{<:Task},
+)
+    Base.wait(t.val)
+    return nothing
+end
+
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.RevConfig,
+    ::Const{typeof(Base.wait)},
+    ::Type{<:Const},
+    t::Annotation{<:Task},
+)
+    Base.wait(t.val)
+    return EnzymeRules.AugmentedReturn(nothing, nothing, nothing)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    ::Const{typeof(Base.wait)},
+    ::Type{<:Const},
+    tape,
+    t::Duplicated{<:Task},
+)
+    if isdefined(t, :dval)
+        try
+            if !Base.istaskstarted(t.dval) && !Base.istaskdone(t.dval)
+                Base.schedule(t.dval)
+            end
+        catch e
+            e isa UndefRefError && rethrow()
+        end
+    end
+    return (nothing,)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    ::Const{typeof(Base.wait)},
+    ::Type{<:Const},
+    tape,
+    t::BatchDuplicated{T, N},
+) where {T<:Task,N}
+    for i in 1:N
+        if isdefined(t.dval, i)
+            try
+                if !Base.istaskstarted(t.dval[i]) && !Base.istaskdone(t.dval[i])
+                    Base.schedule(t.dval[i])
+                end
+            catch e
+                e isa UndefRefError && rethrow()
+            end
+        end
+    end
+    return (nothing,)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    ::Const{typeof(Base.wait)},
+    ::Type{<:Const},
+    tape,
+    t::Const{<:Task},
+)
+    return (nothing,)
+end
+
+# -------------------- Base._wait EnzymeRules --------------------
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    ::Const{typeof(Base._wait)},
+    ::Type{<:Const},
+    t::Duplicated{<:Task},
+)
+    Base._wait(t.val)
+    Base._wait(t.dval)
+    return nothing
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    ::Const{typeof(Base._wait)},
+    ::Type{<:Const},
+    t::BatchDuplicated{T, N},
+) where {T<:Task,N}
+    Base._wait(t.val)
+    for i in 1:N
+        Base._wait(t.dval[i])
+    end
+    return nothing
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    ::Const{typeof(Base._wait)},
+    ::Type{<:Const},
+    t::Const{<:Task},
+)
+    Base._wait(t.val)
+    return nothing
+end
+
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.RevConfig,
+    ::Const{typeof(Base._wait)},
+    ::Type{<:Const},
+    t::Annotation{<:Task},
+)
+    Base._wait(t.val)
+    return EnzymeRules.AugmentedReturn(nothing, nothing, nothing)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    ::Const{typeof(Base._wait)},
+    ::Type{<:Const},
+    tape,
+    t::Duplicated{<:Task},
+)
+    # the reverse of _wait is to enqueue the shadow
+    if isdefined(t, :dval)
+        try
+            if !Base.istaskstarted(t.dval) && !Base.istaskdone(t.dval)
+                Base.schedule(t.dval)
+            end
+        catch e
+            e isa UndefRefError && rethrow()
+        end
+    end
+    return (nothing,)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    ::Const{typeof(Base._wait)},
+    ::Type{<:Const},
+    tape,
+    t::BatchDuplicated{T, N},
+) where {T<:Task,N}
+    for i in 1:N
+        if isdefined(t.dval, i)
+            try
+                if !Base.istaskstarted(t.dval[i]) && !Base.istaskdone(t.dval[i])
+                    Base.schedule(t.dval[i])
+                end
+            catch e
+                e isa UndefRefError && rethrow()
+            end
+        end
+    end
+    return (nothing,)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    ::Const{typeof(Base._wait)},
+    ::Type{<:Const},
+    tape,
+    t::Const{<:Task},
+)
+    return (nothing,)
+end
+
+@inline function _fwd_task_return(config::EnzymeRules.FwdConfig, t::Annotation{<:Task})
+    needs_primal = EnzymeRules.needs_primal(config)
+    needs_shadow = EnzymeRules.needs_shadow(config)
+    
+    if !needs_shadow
+        if needs_primal
+            return t.val
+        else
+            return nothing
+        end
+    else
+        if !needs_primal
+            if t isa BatchDuplicated
+                return t.dval
+            else
+                return t.dval
+            end
+        else
+            return t
+        end
+    end
+end
+
+# -------------------- Base.schedule EnzymeRules --------------------
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    ::Const{typeof(Base.schedule)},
+    ::Type{RT},
+    t::Duplicated{<:Task},
+) where RT
+    try
+        if !Base.istaskstarted(t.val) && !Base.istaskdone(t.val)
+            Base.schedule(t.val)
+        end
+    catch
+    end
+    if isdefined(t, :dval)
+        try
+            if !Base.istaskstarted(t.dval) && !Base.istaskdone(t.dval)
+                Base.schedule(t.dval)
+            end
+        catch e
+            e isa UndefRefError && rethrow()
+        end
+    end
+    return _fwd_task_return(config, t)
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    ::Const{typeof(Base.schedule)},
+    ::Type{RT},
+    t::BatchDuplicated{T, N},
+) where {RT, T<:Task, N}
+    if !Base.istaskstarted(t.val) && !Base.istaskdone(t.val)
+        Base.schedule(t.val)
+    end
+    for i in 1:N
+        if isdefined(t.dval, i)
+            try
+                if !Base.istaskstarted(t.dval[i]) && !Base.istaskdone(t.dval[i])
+                    Base.schedule(t.dval[i])
+                end
+            catch e
+                e isa UndefRefError || rethrow()
+            end
+        end
+    end
+    return _fwd_task_return(config, t)
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    ::Const{typeof(Base.schedule)},
+    ::Type{RT},
+    t::Const{<:Task},
+) where RT
+    if !Base.istaskstarted(t.val) && !Base.istaskdone(t.val)
+        Base.schedule(t.val)
+    end
+    return _fwd_task_return(config, t)
+end
+
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.RevConfig,
+    ::Const{typeof(Base.schedule)},
+    ::Type{RT},
+    t::Annotation{<:Task},
+) where RT
+    try
+        if !Base.istaskstarted(t.val) && !Base.istaskdone(t.val)
+            Base.schedule(t.val)
+        end
+    catch
+    end
+    primal = EnzymeRules.needs_primal(config) ? t.val : nothing
+    shadow = EnzymeRules.needs_shadow(config) ? (t isa Const ? nothing : t.dval) : nothing
+    return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    ::Const{typeof(Base.schedule)},
+    ::Type{RT},
+    tape,
+    t::Duplicated{<:Task},
+) where RT
+    # the reverse of schedule is to wait for the shadow
+    if isdefined(t, :dval)
+        try
+            if !Base.istaskdone(t.dval)
+                Base.wait(t.dval)
+            end
+        catch e
+            e isa UndefRefError || rethrow()
+        end
+    end
+    return (nothing,)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    ::Const{typeof(Base.schedule)},
+    ::Type{RT},
+    tape,
+    t::BatchDuplicated{T, N},
+) where {RT,T<:Task,N}
+    for i in 1:N
+        if isdefined(t.dval, i)
+            try
+                if !Base.istaskdone(t.dval[i])
+                    Base.wait(t.dval[i])
+                end
+            catch e
+                e isa UndefRefError || rethrow()
+            end
+        end
+    end
+    return (nothing,)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    ::Const{typeof(Base.schedule)},
+    ::Type{RT},
+    tape,
+    t::Const{<:Task},
+) where RT
+    return (nothing,)
+end
+
+# -------------------- Base.enq_work EnzymeRules --------------------
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    ::Const{typeof(Base.enq_work)},
+    ::Type{RT},
+    t::Duplicated{<:Task},
+) where RT
+    if !Base.istaskstarted(t.val) && !Base.istaskdone(t.val)
+        Base.enq_work(t.val)
+    end
+    if isdefined(t, :dval)
+        try
+            if !Base.istaskstarted(t.dval) && !Base.istaskdone(t.dval)
+                Base.enq_work(t.dval)
+            end
+        catch e
+            e isa UndefRefError && rethrow()
+        end
+    end
+    return _fwd_task_return(config, t)
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    ::Const{typeof(Base.enq_work)},
+    ::Type{RT},
+    t::BatchDuplicated{T, N},
+) where {RT, T<:Task, N}
+    if !Base.istaskstarted(t.val) && !Base.istaskdone(t.val)
+        Base.enq_work(t.val)
+    end
+    for i in 1:N
+        if isdefined(t.dval, i)
+            try
+                if !Base.istaskstarted(t.dval[i]) && !Base.istaskdone(t.dval[i])
+                    Base.enq_work(t.dval[i])
+                end
+            catch e
+                e isa UndefRefError && rethrow()
+            end
+        end
+    end
+    return _fwd_task_return(config, t)
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    ::Const{typeof(Base.enq_work)},
+    ::Type{RT},
+    t::Const{<:Task},
+) where RT
+    if !Base.istaskstarted(t.val) && !Base.istaskdone(t.val)
+        Base.enq_work(t.val)
+    end
+    return _fwd_task_return(config, t)
+end
+
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.RevConfig,
+    ::Const{typeof(Base.enq_work)},
+    ::Type{RT},
+    t::Annotation{<:Task},
+) where RT
+    try
+        if !Base.istaskstarted(t.val) && !Base.istaskdone(t.val)
+            Base.enq_work(t.val)
+        end
+    catch
+    end
+    primal = EnzymeRules.needs_primal(config) ? t.val : nothing
+    shadow = EnzymeRules.needs_shadow(config) ? (t isa Const ? nothing : t.dval) : nothing
+    return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    ::Const{typeof(Base.enq_work)},
+    ::Type{RT},
+    tape,
+    t::Duplicated{<:Task},
+) where RT
+    if isdefined(t, :dval)
+        try
+            if !Base.istaskdone(t.dval)
+                Base.wait(t.dval)
+            end
+        catch e
+            e isa UndefRefError || rethrow()
+        end
+    end
+    return (nothing,)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    ::Const{typeof(Base.enq_work)},
+    ::Type{RT},
+    tape,
+    t::BatchDuplicated{T, N},
+) where {RT,T<:Task,N}
+    for i in 1:N
+        if isdefined(t.dval, i)
+            try
+                if !Base.istaskdone(t.dval[i])
+                    Base.wait(t.dval[i])
+                end
+            catch e
+                e isa UndefRefError || rethrow()
+            end
+        end
+    end
+    return (nothing,)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    ::Const{typeof(Base.enq_work)},
+    ::Type{RT},
+    tape,
+    t::Const{<:Task},
+) where RT
+    return (nothing,)
+end
