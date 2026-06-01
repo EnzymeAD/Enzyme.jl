@@ -6,6 +6,8 @@ function call_and_zero!(f!, A, alg)
     return F′
 end
 
+rng = Random.default_rng()
+
 structured_randn!(A::AbstractMatrix) = randn!(A)
 structured_randn!(A::Diagonal) = (randn!(diagview(A)); return A)
 
