@@ -1,4 +1,4 @@
-using Test, MatrixAlgebraKit, Random, LinearAlgebra
+using Test, MatrixAlgebraKit, Random, LinearAlgebra, Enzyme, EnzymeTestUtils
 
 function call_and_zero!(f!, A, alg)
     F′ = f!(A, alg)
