@@ -2893,7 +2893,7 @@ function replace_builtin_fptr!(mod::LLVM.Module)
     end
     jl_get_builtin_fptr_fn = functions(mod)["jl_get_builtin_fptr"]
 
-    to_replace = Tuple{LLVM.CallInst, LLVM.Value}[]
+    to_replace_fptr = Tuple{LLVM.CallInst, LLVM.Value}[]
     
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, 10)
@@ -2910,41 +2910,41 @@ function replace_builtin_fptr!(mod::LLVM.Module)
                 if called_operand(inst) == jl_get_builtin_fptr_fn
                     arg1 = operands(inst)[1]
                     legal, obj = absint(arg1)
-                    if legal && isa(obj, Core.Builtin)
-                        builtin_name = string(nameof(obj))
-                        builtin_c_name = "jl_f_" * builtin_name
-                        if haskey(functions(mod), "ijl_f_" * builtin_name)
-                            builtin_c_name = "ijl_f_" * builtin_name
+                    if legal
+                        if isa(obj, DataType) && isdefined(obj, :instance)
+                            obj = obj.instance
                         end
-                        # Declare / Get the function
-                        builtin_fn, _ = get_function!(mod, builtin_c_name, generic_FT)
-                        
-                        # Now, builtin_fn has type generic_FT (or a pointer to it, but actually as an LLVM value it's pointer to generic_FT).
-                        # Let's cast it to value_type(inst) if they don't match.
-                        B = IRBuilder()
-                        position!(B, inst)
-                        
-                        casted_val = builtin_fn
-                        if value_type(builtin_fn) != value_type(inst)
-                            casted_val = bitcast!(B, builtin_fn, value_type(inst))
+                        if isa(obj, Core.Builtin)
+                            builtin_name = string(nameof(obj))
+                            builtin_c_name = "jl_f_" * builtin_name
+                            if haskey(functions(mod), "ijl_f_" * builtin_name)
+                                builtin_c_name = "ijl_f_" * builtin_name
+                            end
+                            # Declare / Get the function
+                            builtin_fn, _ = get_function!(mod, builtin_c_name, generic_FT)
+                            
+                            # Cast fptr itself for any remaining uses
+                            casted_val = builtin_fn
+                            if value_type(builtin_fn) != value_type(inst)
+                                B_fptr = IRBuilder()
+                                position!(B_fptr, inst)
+                                casted_val = LLVM.pointercast!(B_fptr, builtin_fn, value_type(inst))
+                            end
+                            push!(to_replace_fptr, (inst, casted_val))
                         end
-                        
-                        push!(to_replace, (inst, casted_val))
                     end
                 end
             end
         end
     end
 
-    if isempty(to_replace)
-        return false
-    end
-
-    for (inst, casted_val) in to_replace
+    changed = false
+    for (inst, casted_val) in to_replace_fptr
         replace_uses!(inst, casted_val)
         eraseInst(LLVM.parent(inst), inst)
+        changed = true
     end
-    return true
+    return changed
 end
 
 

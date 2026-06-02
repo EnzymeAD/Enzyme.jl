@@ -30,7 +30,6 @@ SafeAtomicToRegularStorePass() = NewPMFunctionPass("safe_atomic_to_regular_store
 Addr13NoAliasPass() = NewPMModulePass("addr13_noalias", addr13NoAlias)
 
 function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
-    replace_builtin_fptr!(mod)
     @dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, Addr13NoAliasPass())
