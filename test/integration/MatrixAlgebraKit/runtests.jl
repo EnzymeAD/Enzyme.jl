@@ -6,6 +6,9 @@ function call_and_zero!(f!, A, alg)
     return F′
 end
 
+precision(::Type{T}) where {T <: Number} = sqrt(eps(real(T)))
+precision(::Type{T}) where {T} = precision(eltype(T))
+
 rng = Random.default_rng()
 
 structured_randn!(A::AbstractMatrix) = randn!(A)
@@ -16,6 +19,9 @@ instantiate_matrix(::Type{AT}, size) where {AT <: Diagonal} = Diagonal(randn(rng
 
 @testset "lq" for T in (Float64, ComplexF64), sz in ((19, 17), (19, 19), (19, 23)) 
     A = instantiate_matrix(T, sz)
+    m, n = sz
+    atol = m * n * precision(T)
+    rtol = m * n * precision(T)
     alg = MatrixAlgebraKit.select_algorithm(lq_compact, A)
     LQ = lq_compact(A)
     ΔLQ = structured_randn!.(similar.(LQ))
@@ -37,6 +43,9 @@ end
 @testset "qr" for T in (Float64, ComplexF64), sz in ((19, 17), (19, 19), (19, 23)) 
     A = instantiate_matrix(T, sz)
     alg = MatrixAlgebraKit.select_algorithm(qr_compact, A)
+    m, n = sz
+    atol = m * n * precision(T)
+    rtol = m * n * precision(T)
     QR = qr_compact(A)
     ΔQR = structured_randn!.(similar.(QR))
     MatrixAlgebraKit.remove_lq_gauge_dependence!(ΔQR..., A, QR...)
@@ -56,6 +65,9 @@ end
 
 @testset "svd" for T in (Float64, ComplexF64), sz in ((19, 17), (19, 19), (19, 23)) 
     A = instantiate_matrix(T, sz)
+    m, n = sz
+    atol = m * n * precision(T)
+    rtol = m * n * precision(T)
     alg = MatrixAlgebraKit.select_algorithm(svd_compact, A)
     USVᴴ = svd_compact(A)
     ΔU, ΔS, ΔVᴴ = structured_randn!.(similar.((U, S, Vᴴ)))
