@@ -2887,4 +2887,65 @@ function safe_atomic_to_regular_store!(f::LLVM.Function)
     return changed
 end
 
+function replace_builtin_fptr!(mod::LLVM.Module)
+    if !haskey(functions(mod), "jl_get_builtin_fptr")
+        return false
+    end
+    jl_get_builtin_fptr_fn = functions(mod)["jl_get_builtin_fptr"]
+
+    to_replace = Tuple{LLVM.CallInst, LLVM.Value}[]
+    
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10)
+    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
+    T_int32 = LLVM.Int32Type()
+    generic_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32])
+
+    for f in collect(functions(mod))
+        if isempty(blocks(f))
+            continue
+        end
+        for bb in blocks(f), inst in instructions(bb)
+            if isa(inst, LLVM.CallInst)
+                if called_operand(inst) == jl_get_builtin_fptr_fn
+                    arg1 = operands(inst)[1]
+                    legal, obj = absint(arg1)
+                    if legal && isa(obj, Core.Builtin)
+                        builtin_name = string(nameof(obj))
+                        builtin_c_name = "jl_f_" * builtin_name
+                        if haskey(functions(mod), "ijl_f_" * builtin_name)
+                            builtin_c_name = "ijl_f_" * builtin_name
+                        end
+                        # Declare / Get the function
+                        builtin_fn, _ = get_function!(mod, builtin_c_name, generic_FT)
+                        
+                        # Now, builtin_fn has type generic_FT (or a pointer to it, but actually as an LLVM value it's pointer to generic_FT).
+                        # Let's cast it to value_type(inst) if they don't match.
+                        B = IRBuilder()
+                        position!(B, inst)
+                        
+                        casted_val = builtin_fn
+                        if value_type(builtin_fn) != value_type(inst)
+                            casted_val = bitcast!(B, builtin_fn, value_type(inst))
+                        end
+                        
+                        push!(to_replace, (inst, casted_val))
+                    end
+                end
+            end
+        end
+    end
+
+    if isempty(to_replace)
+        return false
+    end
+
+    for (inst, casted_val) in to_replace
+        replace_uses!(inst, casted_val)
+        eraseInst(LLVM.parent(inst), inst)
+    end
+    return true
+end
+
+
 
