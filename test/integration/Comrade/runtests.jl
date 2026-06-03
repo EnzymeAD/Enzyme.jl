@@ -10,7 +10,7 @@ using Test
 
 
 const ComradePATH = joinpath(dirname(pathof(Comrade)), "..", "examples", "Data")
-const dataurl = "https://de.cyverse.org/anon-files/iplant/home/shared/commons_repo/curated/EHTC_M87pol2017_Nov2023/hops_data/April11/SR2_M87_2017_101_lo_hops_ALMArot.uvfits"
+const dataurl = "https://github.com/ptiede/ComradeTestData/releases/download/Data/eht_2017_data.uvfits"
 const arrayf = joinpath(ComradePATH, "array.txt")
 const dataf = Base.download(dataurl)
 
