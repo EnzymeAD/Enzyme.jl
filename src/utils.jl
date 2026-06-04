@@ -608,9 +608,9 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
     ir = string(fn)
     bt = nothing
     if mi !== nothing
-        throw(EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world))
+        throw(Compiler.EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world))
     else
-        throw(EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world))
+        throw(Compiler.EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world))
     end
 end
 
