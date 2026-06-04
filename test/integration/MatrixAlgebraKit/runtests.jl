@@ -70,6 +70,7 @@ end
     rtol = m * n * precision(T)
     alg = MatrixAlgebraKit.select_algorithm(svd_compact, A)
     USVᴴ = svd_compact(A)
+    U, S, Vᴴ = USVᴴ
     ΔU, ΔS, ΔVᴴ = structured_randn!.(similar.((U, S, Vᴴ)))
     ΔU, ΔVᴴ = MatrixAlgebraKit.remove_svd_gauge_dependence!(ΔU, ΔVᴴ, U, S, Vᴴ)
     test_reverse(svd_compact, Duplicated, (A, Duplicated), (alg, Const); atol, rtol, output_tangent = ΔUSVᴴ)
