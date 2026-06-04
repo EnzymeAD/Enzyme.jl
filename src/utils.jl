@@ -597,7 +597,21 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
         return res
     end
 
-    throw(AssertionError("Function requesting sret type was not an sret\nidx=$idx\nfn=$(string(fn)) enzymejl_parmtype=$enzymejl_parmtype enzymejl_parmtype_ref=$enzymejl_parmtype_ref"))
+
+    mi, _ = enzyme_custom_extract_mi(
+        fn,
+        false,
+    ) #=error=#
+    world = enzyme_extract_world(fn)
+
+    msg = "Function requesting sret type was not an sret\n\nidx=$idxenzymejl_parmtype=$enzymejl_parmtype enzymejl_parmtype_ref=$enzymejl_parmtype_ref\n"
+    ir = string(fn)
+    bt = nothing
+    if mi !== nothing
+        throw(EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world))
+    else
+        throw(EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world))
+    end
 end
 
 export sret_ty
