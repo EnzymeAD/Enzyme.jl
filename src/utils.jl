@@ -604,7 +604,7 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
     ) #=error=#
     world = Compiler.enzyme_extract_world(fn)
 
-    msg = "Function requesting sret type was not an sret\n\nidx=$idxenzymejl_parmtype=$enzymejl_parmtype enzymejl_parmtype_ref=$enzymejl_parmtype_ref\n"
+    msg = "Function requesting sret type was not an sret\n\nidx=$idx\nenzymejl_parmtype=$enzymejl_parmtype enzymejl_parmtype_ref=$enzymejl_parmtype_ref\n"
     ir = string(fn)
     bt = nothing
     if mi !== nothing
