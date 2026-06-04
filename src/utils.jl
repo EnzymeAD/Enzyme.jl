@@ -598,11 +598,11 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
     end
 
 
-    mi, _ = enzyme_custom_extract_mi(
+    mi, _ = Compiler.enzyme_custom_extract_mi(
         fn,
         false,
     ) #=error=#
-    world = enzyme_extract_world(fn)
+    world = Compiler.enzyme_extract_world(fn)
 
     msg = "Function requesting sret type was not an sret\n\nidx=$idxenzymejl_parmtype=$enzymejl_parmtype enzymejl_parmtype_ref=$enzymejl_parmtype_ref\n"
     ir = string(fn)
