@@ -2259,13 +2259,23 @@ function propagate_returned!(mod::LLVM.Module)
                 fn = functions(mod)[name]
                 if linkage(fn) == LLVM.API.LLVMInternalLinkage ||
                    linkage(fn) == LLVM.API.LLVMPrivateLinkage
-                    has_user = false
+                    has_external_user = false
                     for u in LLVM.uses(fn)
-                        has_user = true
-                        break
+                        user_inst = LLVM.user(u)
+                        if isa(user_inst, LLVM.Instruction)
+                            user_fn = LLVM.parent(LLVM.parent(user_inst))
+                            if user_fn != fn
+                                has_external_user = true
+                                break
+                            end
+                        else
+                            has_external_user = true
+                            break
+                        end
                     end
-                    if !has_user
+                    if !has_external_user
                         LLVM.API.LLVMDeleteFunction(fn)
+                        continue
                     end
                 end
                 push!(todo, fn)
