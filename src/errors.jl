@@ -786,7 +786,7 @@ struct EnzymeInternalError{MI, WT} <: CompilationException
     msg::String
     ir::Union{Nothing,String}
     bt::Union{Nothing,Vector{StackTraces.StackFrame}}
-    mi::MT
+    mi::MI
     world::WT
 end
 
