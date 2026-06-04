@@ -1272,6 +1272,7 @@ function julia_error(
         err = if mi !== nothing
             EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world)
         else
+	    world = nothing
             EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world)
         end
                             
