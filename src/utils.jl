@@ -518,7 +518,7 @@ export typed_fieldcount
 export typed_fieldoffset
 
 # returns the inner type of an sret/enzyme_sret/enzyme_sret_v
-function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
+function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruction}=nothing)::LLVM.LLVMType
 
     vt = LLVM.value_type(LLVM.parameters(fn)[idx])
 
@@ -597,7 +597,24 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
         return res
     end
 
-    throw(AssertionError("Function requesting sret type was not an sret\nidx=$idx\nfn=$(string(fn)) enzymejl_parmtype=$enzymejl_parmtype enzymejl_parmtype_ref=$enzymejl_parmtype_ref"))
+
+    mi, _ = Compiler.enzyme_custom_extract_mi(
+        fn,
+        false,
+    ) #=error=#
+    world = Compiler.enzyme_extract_world(fn)
+
+    msg = "Function requesting sret type was not an sret\n\nidx=$idx\nenzymejl_parmtype=$enzymejl_parmtype enzymejl_parmtype_ref=$enzymejl_parmtype_ref\n"
+    ir = string(fn)
+    bt = nothing
+    if btval !== nothing        
+        bt = GPUCompiler.backtrace(btval)
+    end
+    if mi !== nothing
+        throw(Compiler.EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world))
+    else
+        throw(Compiler.EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world))
+    end
 end
 
 export sret_ty

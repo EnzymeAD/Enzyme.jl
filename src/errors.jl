@@ -782,10 +782,20 @@ function Base.showerror(io::IO, ece::IllegalFirstPointerException)
     end
 end
 
-struct EnzymeInternalError <: CompilationException
+struct EnzymeInternalError{MI, WT} <: CompilationException
     msg::String
     ir::Union{Nothing,String}
     bt::Union{Nothing,Vector{StackTraces.StackFrame}}
+    mi::MI
+    world::WT
+end
+
+function InteractiveUtils.code_typed(ece::EnzymeInternalError; interactive::Bool=false, kwargs...)
+    mi = ece.mi
+    if mi === nothing
+        throw(AssertionError("code_typed(::EnzymeInternalError; interactive::Bool=false, kwargs...) not supported for error without mi"))
+    end
+    code_typed_helper(ece.mi, ece.world; kwargs...)
 end
 
 function Base.showerror(io::IO, ece::EnzymeInternalError)
@@ -808,10 +818,27 @@ function Base.showerror(io::IO, ece::EnzymeInternalError)
         end
       end
     end
+
+    if ece.mi !== nothing
+        print(io, "Failure within method:\n")
+        println(io)
+        pretty_print_mi(ece.mi, io)
+        println(io)
+        println(io)
+
+        printstyled(io, "Hint"; bold = true, color = :cyan)
+        printstyled(
+            io,
+            ": catch this exception as `err` and call `code_typed(err)` to inspect the surrounding code.\n";
+            color = :cyan,
+        )
+    end
+
     if ece.bt !== nothing
         Base.show_backtrace(io, ece.bt)
         println(io)
     end
+
 end
 
 struct EnzymeMutabilityException <: EnzymeError
@@ -1222,11 +1249,37 @@ function julia_error(
         return C_NULL
     elseif errtype == API.ET_IllegalFirstPointer
         throw(IllegalFirstPointerException(msg, ir, bt))
-    elseif errtype == API.ET_InternalError
-        throw(EnzymeInternalError(msg, ir, bt))
-    elseif errtype == API.ET_ShowInternalError
-        Core.print(EnzymeInternalError(msg, ir, bt))
-	return C_NULL
+    elseif errtype == API.ET_InternalError || errtype == API.ET_ShowInternalError
+        world = nothing
+        mi = nothing
+
+        if isa(val, LLVM.Instruction)
+            f = LLVM.parent(LLVM.parent(val))::LLVM.Function
+            mi, rt = enzyme_custom_extract_mi(
+                f,
+                false,
+            ) #=error=#
+            world = enzyme_extract_world(f)
+        elseif isa(val, LLVM.Argument)
+            f = parent_scope(val)::LLVM.Function
+            mi, rt = enzyme_custom_extract_mi(
+                f,
+                false,
+            ) #=error=#
+            world = enzyme_extract_world(f)
+        end
+
+        err = if mi !== nothing
+            EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world)
+        else
+            EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world)
+        end
+                            
+        if errtype == API.ET_InternalError 
+            throw(err)
+        else
+            Core.println(err)
+        end
     elseif errtype == API.ET_GCRewrite
         data2 = LLVM.Value(data2)
         fn = LLVM.Function(LLVM.API.LLVMGetParamParent(data2::LLVM.Argument))

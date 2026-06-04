@@ -1956,6 +1956,7 @@ function propagate_returned!(mod::LLVM.Module)
                     val = nothing
                     illegalUse = false
                     torem = LLVM.Instruction[]
+                    btval = nothing
 
                     for u in LLVM.uses(fn)
                         un = LLVM.user(u)
@@ -1979,6 +1980,7 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
+                        btval = un
                         seenfn = false
                         todo = LLVM.Instruction[]
                         if isa(op_i, LLVM.AllocaInst)
@@ -2052,7 +2054,7 @@ function propagate_returned!(mod::LLVM.Module)
                         end
 
                         if has_use
-                            argeltype = sret_ty(fn, i)
+                            argeltype = sret_ty(fn, i, btval)
                             al = alloca!(B, argeltype)
                             if value_type(al) != value_type(arg)
                                 al = addrspacecast!(B, al, value_type(arg))
