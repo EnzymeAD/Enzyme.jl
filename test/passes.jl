@@ -114,3 +114,32 @@ end
         end
     end
 end
+
+@testset "Recursively dead function removal" begin
+    LLVM.Context() do ctx
+        mod = parse(LLVM.Module, """
+        source_filename = "start"
+        target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+        target triple = "x86_64-linux-gnu"
+
+        define internal fastcc void @dead_callee(i32* nocapture %arg) {
+        top:
+          %val = load i32, i32* %arg, align 4
+          ret void
+        }
+
+        define internal fastcc void @dead_recursive_fn(i32* %arg) {
+        top:
+          call fastcc void @dead_recursive_fn(i32* %arg)
+          call fastcc void @dead_callee(i32* %arg)
+          ret void
+        }
+        """)
+
+        Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), false)
+        
+        @test !haskey(LLVM.functions(mod), "dead_recursive_fn")
+        @test !haskey(LLVM.functions(mod), "dead_callee")
+    end
+end
+
