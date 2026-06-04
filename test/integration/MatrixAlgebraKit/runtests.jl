@@ -73,6 +73,7 @@ end
     U, S, Vᴴ = USVᴴ
     ΔU, ΔS, ΔVᴴ = structured_randn!.(similar.((U, S, Vᴴ)))
     ΔU, ΔVᴴ = MatrixAlgebraKit.remove_svd_gauge_dependence!(ΔU, ΔVᴴ, U, S, Vᴴ)
+    ΔUSVᴴ = (ΔU, ΔS, ΔVᴴ)
     test_reverse(svd_compact, Duplicated, (A, Duplicated), (alg, Const); atol, rtol, output_tangent = ΔUSVᴴ)
     test_reverse(call_and_zero!, Duplicated, (svd_compact!, Const), (A, Duplicated), (alg, Const); atol, rtol, output_tangent = ΔUSVᴴ)
 
