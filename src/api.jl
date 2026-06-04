@@ -623,6 +623,12 @@ EnzymeGradientUtilsGetWidth(gutils) = ccall(
     (EnzymeGradientUtilsRef,),
     gutils,
 )
+EnzymeGradientUtilsGetLogic(gutils) = ccall(
+    (:EnzymeGradientUtilsGetLogic, libEnzyme),
+    EnzymeLogicRef,
+    (EnzymeGradientUtilsRef,),
+    gutils,
+)
 EnzymeGradientUtilsGetRuntimeActivity(gutils) =
     ccall(
         (:EnzymeGradientUtilsGetRuntimeActivity, libEnzyme),
@@ -633,6 +639,13 @@ EnzymeGradientUtilsGetRuntimeActivity(gutils) =
 EnzymeGradientUtilsGetStrongZero(gutils) =
     ccall(
         (:EnzymeGradientUtilsGetStrongZero, libEnzyme),
+        UInt8,
+        (EnzymeGradientUtilsRef,),
+        gutils,
+    ) != 0
+EnzymeGradientUtilsGetAtomicAdd(gutils) =
+    ccall(
+        (:EnzymeGradientUtilsGetAtomicAdd, libEnzyme),
         UInt8,
         (EnzymeGradientUtilsRef,),
         gutils,
@@ -1334,7 +1347,9 @@ end
     ET_IllegalReplaceFicticiousPHIs = 8,
     ET_GetIndexError = 9,
     ET_NoTruncate = 10,
-    ET_GCRewrite = 11
+    ET_GCRewrite = 11,
+    ET_NaNError = 12,
+    ET_ShowInternalError = 12,
 )
 
 function EnzymeTypeAnalyzerToString(typeanalyzer)

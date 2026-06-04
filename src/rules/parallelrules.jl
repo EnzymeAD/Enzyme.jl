@@ -433,10 +433,17 @@ end
         
 	alloctx = LLVM.IRBuilder()
         position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
-        al = alloca!(alloctx, llty)
-	al2 = if num_arg_roots != 0
-	   alloca!(alloctx, convert(LLVMType, AnyArray(num_arg_roots)))
-	end
+        
+        llty_foralloca = if VERSION >= v"1.12" && num_arg_roots != 0
+            strip_tracked_pointers(llty)
+        else
+            llty
+        end
+
+        al = alloca!(alloctx, llty_foralloca)
+        al2 = if num_arg_roots != 0
+            alloca!(alloctx, convert(LLVMType, AnyArray(num_arg_roots)))
+        end
 
         if !isghostty(ppfuncT)
             v = new_from_original(gutils, operands(orig)[1])
@@ -633,7 +640,8 @@ end
     tt = Tuple{thunkTy,dfuncT,Bool}
     mode = get_mode(gutils)
     world = enzyme_extract_world(LLVM.parent(position(B)))
-    entry = nested_codegen!(mode, mod, runtime_pfor_fwd, tt, world)
+    enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
+    entry = nested_codegen!(enzyme_ctx, mode, mod, runtime_pfor_fwd, tt, world)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
     pval = functions(mod)[sname]
@@ -681,7 +689,8 @@ end
     }
     mode = get_mode(gutils)
     world = enzyme_extract_world(LLVM.parent(position(B)))
-    entry = nested_codegen!(mode, mod, runtime_pfor_augfwd, tt, world)
+    enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
+    entry = nested_codegen!(enzyme_ctx, mode, mod, runtime_pfor_augfwd, tt, world)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
     pval = functions(mod)[sname]
@@ -740,7 +749,8 @@ end
         Bool,
     }
     mode = get_mode(gutils)
-    entry = nested_codegen!(mode, mod, runtime_pfor_rev, tt, world)
+    enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
+    entry = nested_codegen!(enzyme_ctx, mode, mod, runtime_pfor_rev, tt, world)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
     pval = functions(mod)[sname]

@@ -392,11 +392,10 @@ end
 const DumpPreCallConv = Ref(false)
 const DumpPostCallConv = Ref(false)
 
-function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool = true)
+function fixup_callconv!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     addr13NoAlias(mod)
     
     removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
-    
 
     memcpy_sret_split!(mod)
     # if we did the move_sret_tofrom_roots, we will have loaded out of the sret, then stored into the rooted.
@@ -451,6 +450,31 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
             ),
         )
     end
+    return
+end
+
+function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool = true; callconv::Bool = true)
+    if callconv
+        fixup_callconv!(mod, tm)
+    end
+    
+    for f in functions(mod)
+        if isempty(blocks(f))
+            continue
+        end
+        # Before additional dead arg removal, get rid of the body of functions
+        # that we will retain the original calling convention for.
+        if startswith(LLVM.name(f), "ejlstr\$") || startswith(LLVM.name(f), "ejlptr\$")
+            Base.empty!(f)
+        end
+        
+        if has_fn_attr(f, StringAttribute("enzyme_preserve_primal"))
+            delete!(LLVM.function_attributes(f), StringAttribute("enzyme_preserve_primal"))
+        end
+    end
+
+    removeDeadArgs!(mod, tm, #=post_gc_fixup=#true)
+
     @dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, ReinsertGCMarkerPass())

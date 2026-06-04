@@ -2581,6 +2581,25 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
                 EnumAttribute("argmemonly"),
             ],
         )
+        wfunc, _ = get_function!(
+            mod,
+            "llvm.enzymefakewrite",
+            funcT,
+            LLVM.Attribute[
+                EnumAttribute("writeonly"),
+                EnumAttribute("nofree"),
+                EnumAttribute("argmemonly"),
+            ],
+        )
+        rwfunc, _ = get_function!(
+            mod,
+            "llvm.enzymefakereadwrite",
+            funcT,
+            LLVM.Attribute[
+                EnumAttribute("nofree"),
+                EnumAttribute("inaccessiblemem_or_argmemonly"),
+            ],
+        )
     else
         func, _ = get_function!(
             mod,
@@ -2599,6 +2618,18 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
             "llvm.enzyme.sret_use",
             funcT,
             LLVM.Attribute[EnumAttribute("memory", ReadOnlyArgMemEffects.data), EnumAttribute("nofree")],
+        )
+        wfunc, _ = get_function!(
+            mod,
+            "llvm.enzymefakewrite",
+            funcT,
+            LLVM.Attribute[EnumAttribute("memory", WriteOnlyArgMemEffects.data), EnumAttribute("nofree")],
+        )
+        rwfunc, _ = get_function!(
+            mod,
+            "llvm.enzymefakereadwrite",
+            funcT,
+            LLVM.Attribute[EnumAttribute("memory", ReadArgMemWriteInaccessibleEffects.data), EnumAttribute("nofree")],
         )
     end
 
@@ -2625,42 +2656,68 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
             end 
         end
 
-        # Ensure that interprocedural optimizations do not delete the use of returnRoots (or shadows)
-        # if inactive sret, this will only occur on 2. If active sret, inactive retRoot, can on 3, and
-        # active both can occur on 4. If the original sret is removed (at index 1) we no longer need
-        # to preserve this.
+        sretkind = LLVM.kind(if LLVM.version().major >= 12
+            LLVM.TypeAttribute("sret", LLVM.Int32Type())
+        else
+            LLVM.EnumAttribute("sret")
+        end)
+            
+        # Ensure that interprocedural optimizations do not delete the use of gc sret or returnRoots, this will only occur on 2.
         if post_gc_fixup
-        for idx in (2, 3, 4)
-            if length(collect(parameters(fn))) >= idx && any(
-                (
-                    kind(attr) == kind(StringAttribute("enzymejl_returnRoots")) ||
-                    kind(attr) == kind(StringAttribute("enzymejl_returnRoots_v"))
-                ) for attr in collect(parameter_attributes(fn, idx))
-            )
-                for u in LLVM.uses(fn)
-                    u = LLVM.user(u)
-                    @assert isa(u, LLVM.CallInst)
-                    B = IRBuilder()
-                    nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
-                    position!(B, nextInst)
-                    inp = operands(u)[idx]
-                    cl = call!(B, funcT, rfunc, LLVM.Value[inp])
-                    if isa(value_type(inp), LLVM.PointerType)
-                        LLVM.API.LLVMAddCallSiteAttribute(
-                            cl,
-                            LLVM.API.LLVMAttributeIndex(1),
-                            EnumAttribute("nocapture"),
-                        )
+            for idx in (1, 2)
+                if length(collect(parameters(fn))) >= idx && any(
+                    (
+                        
+                        ( kind(attr) == sretkind && any_jltypes(LLVM.value(attr))) ||
+                        kind(attr) == kind(StringAttribute("enzymejl_returnRoots"))
+                    ) for attr in collect(parameter_attributes(fn, idx))
+                    )
+                    if !isempty(blocks(fn))
+                        B = IRBuilder()
+                        position!(B, first(instructions(LLVM.entry(fn))))
+                        p = parameters(fn)[idx]
+                        cl = call!(B, funcT, wfunc, LLVM.Value[p])
+                        if isa(value_type(p), LLVM.PointerType)
+                            LLVM.API.LLVMAddCallSiteAttribute(
+                                cl,
+                                LLVM.API.LLVMAttributeIndex(1),
+                                EnumAttribute("nocapture"),
+                            )
+                        end
+                    end
+                    for u in LLVM.uses(fn)
+                        u = LLVM.user(u)
+                        if !isa(u, LLVM.CallInst)
+                            # TODO investigate if the inttoptr store that comes from reference caller poses an issue.
+                            continue
+                            msg = sprint() do io
+                            println(io, "Unknown user of fn: ", string(u))
+                            println(io, "fn: ", string(fn))
+                            println(io, "mod: ", string(LLVM.parent(fn)))
+                            end
+                            throw(AssertionError(msg))
+                        end
+                        B = IRBuilder()
+                        nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
+                        position!(B, nextInst)
+                        inp = operands(u)[idx]
+                        cl = call!(B, funcT, rwfunc, LLVM.Value[inp])
+                        if isa(value_type(inp), LLVM.PointerType)
+                            LLVM.API.LLVMAddCallSiteAttribute(
+                                cl,
+                                LLVM.API.LLVMAttributeIndex(1),
+                                EnumAttribute("nocapture"),
+                            )
+                            LLVM.API.LLVMAddCallSiteAttribute(
+                                cl,
+                                LLVM.API.LLVMAttributeIndex(1),
+                                EnumAttribute("readonly"),
+                            )
+                        end
                     end
                 end
             end
         end
-        end
-        sretkind = kind(if LLVM.version().major >= 12
-            TypeAttribute("sret", LLVM.Int32Type())
-        else
-            EnumAttribute("sret")
-        end)
         for idx in (1, 2)
             if length(collect(parameters(fn))) < idx
                 continue
@@ -2676,7 +2733,26 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
                 for u in LLVM.uses(fn)
                     u = LLVM.user(u)
                     if isa(u, LLVM.ConstantExpr)
-                        u = LLVM.user(only(LLVM.uses(u)))
+			for u in LLVM.uses(u)
+			   u = LLVM.user(u)
+			    if !isa(u, LLVM.CallInst)
+				continue
+			    end
+			    @assert isa(u, LLVM.CallInst)
+			    B = IRBuilder()
+			    nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
+			    position!(B, nextInst)
+			    inp = operands(u)[idx]
+			    cl = call!(B, funcT, sfunc, LLVM.Value[inp])
+			    if isa(value_type(inp), LLVM.PointerType)
+				LLVM.API.LLVMAddCallSiteAttribute(
+				    cl,
+				    LLVM.API.LLVMAttributeIndex(1),
+				    EnumAttribute("nocapture"),
+				)
+			    end
+			end
+			continue
                     end
                     if !isa(u, LLVM.CallInst)
                         continue
@@ -2762,7 +2838,16 @@ function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup
     post_attr!(mod, RunAttributor[])
     propagate_returned!(mod)
     
-
+    for u in LLVM.uses(rwfunc)
+        u = LLVM.user(u)
+        eraseInst(LLVM.parent(u), u)
+    end
+    eraseInst(mod, rwfunc)
+    for u in LLVM.uses(wfunc)
+        u = LLVM.user(u)
+        eraseInst(LLVM.parent(u), u)
+    end
+    eraseInst(mod, wfunc)
     for u in LLVM.uses(rfunc)
         u = LLVM.user(u)
         eraseInst(LLVM.parent(u), u)
@@ -2803,5 +2888,66 @@ function safe_atomic_to_regular_store!(f::LLVM.Function)
     end
     return changed
 end
+
+function replace_builtin_fptr!(mod::LLVM.Module)
+    if !haskey(functions(mod), "jl_get_builtin_fptr")
+        return false
+    end
+    jl_get_builtin_fptr_fn = functions(mod)["jl_get_builtin_fptr"]
+
+    to_replace_fptr = Tuple{LLVM.CallInst, LLVM.Value}[]
+    
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10)
+    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
+    T_int32 = LLVM.Int32Type()
+    generic_FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_pprjlvalue, T_int32])
+
+    for f in collect(functions(mod))
+        if isempty(blocks(f))
+            continue
+        end
+        for bb in blocks(f), inst in instructions(bb)
+            if isa(inst, LLVM.CallInst)
+                if called_operand(inst) == jl_get_builtin_fptr_fn
+                    arg1 = operands(inst)[1]
+                    legal, obj = absint(arg1)
+                    if legal
+                        if isa(obj, DataType) && isdefined(obj, :instance)
+                            obj = obj.instance
+                        end
+                        if isa(obj, Core.Builtin)
+                            builtin_name = string(nameof(obj))
+                            builtin_c_name = "jl_f_" * builtin_name
+                            if haskey(functions(mod), "ijl_f_" * builtin_name)
+                                builtin_c_name = "ijl_f_" * builtin_name
+                            end
+                            # Declare / Get the function
+                            builtin_fn, _ = get_function!(mod, builtin_c_name, generic_FT)
+                            
+                            # Cast fptr itself for any remaining uses
+                            casted_val = builtin_fn
+                            if value_type(builtin_fn) != value_type(inst)
+                                B_fptr = IRBuilder()
+                                position!(B_fptr, inst)
+                                casted_val = LLVM.pointercast!(B_fptr, builtin_fn, value_type(inst))
+                            end
+                            push!(to_replace_fptr, (inst, casted_val))
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    changed = false
+    for (inst, casted_val) in to_replace_fptr
+        replace_uses!(inst, casted_val)
+        eraseInst(LLVM.parent(inst), inst)
+        changed = true
+    end
+    return changed
+end
+
 
 

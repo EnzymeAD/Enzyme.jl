@@ -236,4 +236,11 @@ end
             @test !(occursin(" undef", s) || occursin(" poison", s))
         end
     end
+
+    # Now actually run it to make sure it doesn't crash (regression test for macOS ARM64)
+    x = randn(ComplexF64, 3)
+    y = randn(ComplexF64, 3)
+    autodiff(Forward, Const(fwd), Const, Const(x), Const(y))
+    @test true
 end
+

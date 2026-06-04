@@ -1249,7 +1249,7 @@ function julia_error(
         return C_NULL
     elseif errtype == API.ET_IllegalFirstPointer
         throw(IllegalFirstPointerException(msg, ir, bt))
-    elseif errtype == API.ET_InternalError
+    elseif errtype == API.ET_InternalError || errtype == API.ET_ShowInternalError
         world = nothing
         mi = nothing
 
@@ -1269,10 +1269,16 @@ function julia_error(
             world = enzyme_extract_world(f)
         end
 
-        if mi !== nothing
-            throw(EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world))
+        err = if mi !== nothing
+            EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world)
         else
-            throw(EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world))
+            EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world)
+        end
+                            
+        if errtype == API.ET_InternalError 
+            throw(err)
+        else
+            Core.println(err)
         end
     elseif errtype == API.ET_GCRewrite
         data2 = LLVM.Value(data2)

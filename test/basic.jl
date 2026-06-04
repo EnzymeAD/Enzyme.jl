@@ -702,3 +702,32 @@ f_typed_global(x) = x^2 * TYPED_VAL
     @test Enzyme.autodiff(Reverse, f_mutable_global, Active, Active(3.0))[1][1] ≈ 12.0
     @test Enzyme.autodiff(Reverse, f_typed_global, Active, Active(3.0))[1][1] ≈ 12.0
 end
+
+using LinearAlgebra
+
+struct WrapJ11{T, V}
+    ρ::T
+    λQ::V
+end
+
+function combined_j11(d::WrapJ11, p::Vector{Float64}, z::Vector{ComplexF64})
+    N  = length(d.λQ)
+    ld = sum(log, d.λQ)
+    cp = abs(dot(z, z))
+    return d.ρ * ld - N * 0.5 + cp + @inbounds p[1]
+end
+
+const Z_DATA_J11 = ComplexF64[1.0 + 1.0im]
+const LAMBDA_J11 = [2.0]
+
+@testset "Julia 1.11 generic_setup" begin
+    p0 = [1.0]
+    ρ0 = 1.5
+    dp = zero(p0)
+    
+    res = Enzyme.autodiff(set_runtime_activity(Enzyme.Reverse),
+        Const((p, ρ, z) -> combined_j11(WrapJ11(ρ, LAMBDA_J11), p, z)), Active,
+        Duplicated(p0, dp), Active(ρ0), Const(Z_DATA_J11))
+    
+    @test res[1][2] ≈ log(2.0)
+end

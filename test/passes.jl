@@ -78,3 +78,39 @@ end
         @test length(collect(instructions(first(blocks(callfn))))) == 1
     end
 end
+
+@testset "Return roots preservation" begin
+    LLVM.Context() do ctx
+        mod = parse(LLVM.Module, """
+        define private void @julia_dims_4189({ double, {} addrspace(10)*, {} addrspace(10)* }* sret({ double, {} addrspace(10)*, {} addrspace(10)* }) %res, [2 x {} addrspace(10)*]* "enzymejl_returnRoots"="2", double addrspace(11)* %data) #0 {
+        top:
+          %val = load double, double addrspace(11)* %data, align 8
+          store { double, {} addrspace(10)*, {} addrspace(10)* } zeroinitializer, { double, {} addrspace(10)*, {} addrspace(10)* }* %res
+          ret void
+        }
+
+        define void @caller({} addrspace(10)* %v1, {} addrspace(10)* %v2, double addrspace(11)* %data) {
+        top:
+          %sret = alloca { double, {} addrspace(10)*, {} addrspace(10)* }
+          %roots = alloca [2 x {} addrspace(10)*]
+          call void @julia_dims_4189({ double, {} addrspace(10)*, {} addrspace(10)* }* sret({ double, {} addrspace(10)*, {} addrspace(10)* }) %sret, [2 x {} addrspace(10)*]* "enzymejl_returnRoots"="2" %roots, double addrspace(11)* %data)
+          ret void
+        }
+
+        attributes #0 = { nofree nosync nounwind willreturn noinline "enzyme_inactive" }
+        """)
+
+        Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), true)
+        
+        caller = LLVM.functions(mod)["caller"]
+        
+        insts = collect(instructions(first(blocks(caller))))
+        calls = collect(filter(i -> isa(i, LLVM.CallInst), insts))
+        
+        @test length(calls) == 1
+        if length(calls) == 1
+            call = calls[1]
+            @test length(operands(call)) == 3 # 2 arg (sret + roots) + called function
+        end
+    end
+end
