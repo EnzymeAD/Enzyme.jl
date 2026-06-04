@@ -177,6 +177,10 @@ function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nos
         return (orig_i, codegen_i, last_cc)
     end
 
+    if codegen_i > length(codegen_types)
+        throw(AssertionError("codegen_i=$codegen_i > length(codegen_types)=$(length(codegen_types)) orig_i=$orig_i, last_cc=$last_cc source_typ=$source_typ rooted_typ=$rooted_typ arg_jl_i=$arg_jl_i parmsRemoved=$parmsRemoved"))
+    end
+
     codegen_typ = codegen_types[codegen_i]
 
     if codegen_typ isa LLVM.PointerType
