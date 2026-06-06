@@ -1,6 +1,7 @@
 using CUDA
 using Enzyme
 using Test
+using LinearAlgebra: mul!, dot
 
 function mul_kernel(A)
     i = threadIdx().x
@@ -191,5 +192,87 @@ end
     dA2 .= 3
     Enzyme.autodiff(Reverse, square!, BatchDuplicated(A, (dA, dA2)))
     @test all(dA .≈ (2:2:64))
-    @test all(dA2 .≈ 3*(2:2:64))
+    @test all(dA2 .≈ 3 * (2:2:64))
+end
+
+# Rules from EnzymeGPUArraysCoreExt for dense matmul / dot / sum on GPU arrays.
+@testset "GPUArrays linalg rules" begin
+    cu(x) = CuArray(x)
+
+    @testset "matmul reverse" begin
+        A0 = randn(Float32, 3, 4)
+        B0 = randn(Float32, 4, 2)
+        dA = cu(zero(A0))
+        dB = cu(zero(B0))
+        Enzyme.autodiff(Reverse, (A, B) -> sum(A * B), Active, Duplicated(cu(A0), dA), Duplicated(cu(B0), dB))
+        @test Array(dA) ≈ ones(Float32, 3, 2) * B0'
+        @test Array(dB) ≈ A0' * ones(Float32, 3, 2)
+    end
+
+    @testset "composed transpose matmul" begin
+        X0 = randn(Float32, 6, 3)
+        β0 = randn(Float32, 3)
+        dX = cu(zero(X0))
+        dβ = cu(zero(β0))
+        Enzyme.autodiff(Reverse, (X, β) -> sum(transpose(X) * (X * β)), Active, Duplicated(cu(X0), dX), Duplicated(cu(β0), dβ))
+        ϵ = 1.0f-3
+        fdβ = map(eachindex(β0)) do i
+            βp = copy(β0); βp[i] += ϵ
+            βm = copy(β0); βm[i] -= ϵ
+            (sum(transpose(X0) * (X0 * βp)) - sum(transpose(X0) * (X0 * βm))) / (2ϵ)
+        end
+        @test Array(dβ) ≈ fdβ rtol = 1.0f-2
+    end
+
+    @testset "mul! reverse (preallocated)" begin
+        A0 = randn(Float32, 3, 4)
+        B0 = randn(Float32, 4, 2)
+        dA = cu(zero(A0))
+        dB = cu(zero(B0))
+        function loss(C, A, B)
+            mul!(C, A, B)
+            return sum(C)
+        end
+        C = cu(zeros(Float32, 3, 2))
+        dC = cu(zeros(Float32, 3, 2))
+        Enzyme.autodiff(Reverse, loss, Active, Duplicated(C, dC), Duplicated(cu(A0), dA), Duplicated(cu(B0), dB))
+        @test Array(dA) ≈ ones(Float32, 3, 2) * B0'
+        @test Array(dB) ≈ A0' * ones(Float32, 3, 2)
+    end
+
+    @testset "dot reverse" begin
+        a0 = randn(Float32, 8)
+        b0 = randn(Float32, 8)
+        da = cu(zero(a0))
+        db = cu(zero(b0))
+        Enzyme.autodiff(Reverse, (a, b) -> dot(a, b), Active, Duplicated(cu(a0), da), Duplicated(cu(b0), db))
+        @test Array(da) ≈ b0
+        @test Array(db) ≈ a0
+    end
+
+    @testset "sum reverse" begin
+        x0 = randn(Float32, 10)
+        dx = cu(zero(x0))
+        Enzyme.autodiff(Reverse, sum, Active, Duplicated(cu(x0), dx))
+        @test all(Array(dx) .≈ 1)
+    end
+
+    @testset "sum(A .* B) broadcast reduction" begin
+        A0 = randn(Float32, 4, 5)
+        B0 = randn(Float32, 4, 5)
+        dA = cu(zero(A0))
+        dB = cu(zero(B0))
+        Enzyme.autodiff(Reverse, (A, B) -> sum(A .* B), Active, Duplicated(cu(A0), dA), Duplicated(cu(B0), dB))
+        @test Array(dA) ≈ B0
+        @test Array(dB) ≈ A0
+    end
+
+    @testset "matmul forward" begin
+        A0 = randn(Float32, 3, 4)
+        B0 = randn(Float32, 4, 2)
+        dA = randn(Float32, 3, 4)
+        dB = randn(Float32, 4, 2)
+        out = Enzyme.autodiff(Forward, (A, B) -> A * B, Duplicated, Duplicated(cu(A0), cu(dA)), Duplicated(cu(B0), cu(dB)))
+        @test Array(out[1]) ≈ dA * B0 + A0 * dB
+    end
 end
