@@ -549,8 +549,6 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, primaldst;
         shadowdst = invert_pointer(gutils, orig, B)
 		if primaldst !== nothing
 	        primaldst = new_from_original(gutils, primaldst)
-		else
-	        primaldst = new_from_original(gutils, orig)
 		end
     end
 
