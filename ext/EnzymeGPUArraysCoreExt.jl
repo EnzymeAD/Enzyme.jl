@@ -78,8 +78,8 @@ function EnzymeRules.forward(
         func::Const{typeof(mul!)},
         RT::Type{<:Annotation},
         C::Annotation{<:AbstractGPUArray},
-        A::Annotation,
-        B::Annotation,
+        A::Annotation{<:MaybeWrappedGPU},
+        B::Annotation{<:MaybeWrappedGPU},
         α::Annotation{<:Number},
         β::Annotation{<:Number},
     )
@@ -126,8 +126,8 @@ function EnzymeRules.augmented_primal(
         func::Const{typeof(mul!)},
         ::Type{RT},
         C::Annotation{<:AbstractGPUArray},
-        A::Annotation,
-        B::Annotation,
+        A::Annotation{<:MaybeWrappedGPU},
+        B::Annotation{<:MaybeWrappedGPU},
         α::Annotation{<:Number},
         β::Annotation{<:Number},
     ) where {RT}
@@ -153,8 +153,8 @@ function EnzymeRules.reverse(
         ::Type{RT},
         tape,
         C::Annotation{<:AbstractGPUArray},
-        A::Annotation,
-        B::Annotation,
+        A::Annotation{<:MaybeWrappedGPU},
+        B::Annotation{<:MaybeWrappedGPU},
         α::Annotation{<:Number},
         β::Annotation{<:Number},
     ) where {RT}
