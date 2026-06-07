@@ -879,7 +879,8 @@ end
         primalres = LLVM.Value(unsafe_load(normalR))
 
         len = new_from_original(gutils, origops[3])
-        memoryptr = origops[2]
+        memoryptr = origops[2]        
+        position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(primalres)))
         arraycopy_common(true, B, orig, origops[1], gutils, shadowres, primalres; len, memoryptr)
     end
 
