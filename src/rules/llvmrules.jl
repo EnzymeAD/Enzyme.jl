@@ -547,9 +547,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, primaldst;
 
     if !fwd
         shadowdst = invert_pointer(gutils, orig, B)
-		if primaldst !== nothing
-	        primaldst = new_from_original(gutils, primaldst)
-		end
+        primaldst = new_from_original(gutils, orig)
     end
 
     tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, orig))
@@ -639,9 +637,9 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, primaldst;
 
     if !fwd
         shadowdst = lookup_value(gutils, shadowdst, B)
-	if get_runtime_activity(gutils) && primaldst !== nothing
-	    primaldst = lookup_value(gutils, primaldst, B)
-	end
+    	if get_runtime_activity(gutils)
+    	    primaldst = lookup_value(gutils, primaldst, B)
+    	end
     end
 
 
@@ -651,23 +649,23 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, primaldst;
         if fwd
             lookup_src = false
             shadowsrc = invert_pointer(gutils, memoryptr, B)
-	    primalsrc = new_from_original(gutils, memoryptr) 
+    	    primalsrc = new_from_original(gutils, memoryptr) 
         else
             shadowsrc = invert_pointer(gutils, shadowsrc, B)
-	    primalsrc = new_from_original(gutils, primalsrc) 
+	        primalsrc = new_from_original(gutils, primalsrc) 
             shadowsrc = lookup_value(gutils, shadowsrc, B)
-	    if get_runtime_activity(gutils)
-	       primalsrc = lookup_value(gutils, primalsrc, B)
-	    end
+    	    if get_runtime_activity(gutils)
+    	       primalsrc = lookup_value(gutils, primalsrc, B)
+    	    end
         end
     else
         shadowsrc = invert_pointer(gutils, shadowsrc, B)
-	primalsrc = new_from_original(gutils, primalsrc)
+    	primalsrc = new_from_original(gutils, primalsrc)
         if !fwd
             shadowsrc = lookup_value(gutils, shadowsrc, B)
-	    if get_runtime_activity(gutils)
-	       primalsrc = lookup_value(gutils, primalsrc, B)
-	    end
+    	    if get_runtime_activity(gutils)
+    	       primalsrc = lookup_value(gutils, primalsrc, B)
+    	    end
         end
     end
 
@@ -702,7 +700,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, primaldst;
             inttoptr!(B, primalsrc, LLVM.PointerType(LLVM.IntType(8)))
         end
     else
-	primalsrc
+    	primalsrc
     end
 
         primaldst0 = if get_runtime_activity(gutils)
@@ -712,8 +710,8 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, primaldst;
             get_array_data(B, primaldst)
         end
     else
-	primalsrc
-     end
+    	primalsrc
+    end
 
     for i in 1:width
 
@@ -747,13 +745,12 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, primaldst;
         end
 
         if fwd && secretty != nothing
-	    # TODO runtime activity
-	    rt_len = length
-	    if get_runtime_activity(gutils)
-		is_diff = LLVM.icmp!(B, LLVM.API.LLVMIntEQ, shadowdst0, primaldst0)
-	        rt_length = LLVM.select!(B, is_diff, LLVM.ConstantInt(value_type(length), 0, false), length)
-	    end
-            LLVM.memset!(B, shadowdst0, LLVM.ConstantInt(i8, 0, false), length, algn)
+    	    rt_length = length
+    	    if get_runtime_activity(gutils)
+    		    is_diff = LLVM.icmp!(B, LLVM.API.LLVMIntEQ, shadowdst0, primaldst0)
+    	        rt_length = LLVM.select!(B, is_diff, LLVM.ConstantInt(value_type(length), 0, false), rt_length)
+    	    end
+            LLVM.memset!(B, shadowdst0, LLVM.ConstantInt(i8, 0, false), rt_length, algn)
         end
 
         push!(shadowsrcs, shadowsrc0)
@@ -774,10 +771,10 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, primaldst;
             0,
             false,
             shadowdst0,
-	    primaldst0,
+    	    primaldst0,
             false,
             shadowsrc0,
-	    primalsrc0,
+	        primalsrc0,
             length,
             isVolatile,
             orig,
