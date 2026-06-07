@@ -660,7 +660,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, primaldst;
         end
     else
         shadowsrc = invert_pointer(gutils, shadowsrc, B)
-	primalsrc = new_from_original(gutils, primalsrc, B)
+	primalsrc = new_from_original(gutils, primalsrc)
         if !fwd
             shadowsrc = lookup_value(gutils, shadowsrc, B)
 	    if get_runtime_activity(gutils)
