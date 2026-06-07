@@ -547,7 +547,11 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, primaldst;
 
     if !fwd
         shadowdst = invert_pointer(gutils, orig, B)
-        primaldst = new_from_original(gutils, primaldst)
+		if primaldst !== nothing
+	        primaldst = new_from_original(gutils, primaldst)
+		else
+	        primaldst = new_from_original(gutils, orig)
+		end
     end
 
     tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, orig))
