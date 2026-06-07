@@ -800,7 +800,7 @@ end
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
         shadowres = LLVM.Value(unsafe_load(shadowR))
         primalres = LLVM.Value(unsafe_load(normalR))
-
+        position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(primalres)))
         arraycopy_common(true, B, orig, origops[1], gutils, shadowres, primalres)
     end
 
