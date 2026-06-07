@@ -639,7 +639,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, primaldst;
 
     if !fwd
         shadowdst = lookup_value(gutils, shadowdst, B)
-	if get_runtime_activity(gutils)
+	if get_runtime_activity(gutils) && primaldst !== nothing
 	    primaldst = lookup_value(gutils, primaldst, B)
 	end
     end
