@@ -772,10 +772,10 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, primaldst;
             0,
             false,
             shadowdst0,
-	    primaldst0
+	    primaldst0,
             false,
             shadowsrc0,
-	    primalsrc0
+	    primalsrc0,
             length,
             isVolatile,
             orig,
