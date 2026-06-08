@@ -830,8 +830,10 @@ EnzymeGradientUtilsSubTransferHelper(
     srcAlign,
     offset,
     dstConstant,
+    shadowdst,
     origdst,
     srcConstant,
+    shadowsrc,
     origsrc,
     length,
     isVolatile,
@@ -851,7 +853,9 @@ EnzymeGradientUtilsSubTransferHelper(
         UInt64,
         UInt8,
         LLVMValueRef,
+        LLVMValueRef,
         UInt8,
+        LLVMValueRef,
         LLVMValueRef,
         LLVMValueRef,
         LLVMValueRef,
@@ -867,8 +871,10 @@ EnzymeGradientUtilsSubTransferHelper(
     srcAlign,
     offset,
     dstConstant,
+    shadowdst,
     origdst,
     srcConstant,
+    shadowsrc,
     origsrc,
     length,
     isVolatile,
@@ -961,8 +967,10 @@ function sub_transfer(
     srcAlign,
     offset,
     dstConstant,
+    shadowdst,
     origdst,
     srcConstant,
+    shadowsrc,
     origsrc,
     length,
     isVolatile,
@@ -970,11 +978,17 @@ function sub_transfer(
     allowForward,
     shadowsLookedUp,
 )
-    GC.@preserve secretty begin
+    GC.@preserve secretty origdst begin
         if secretty === nothing
             secretty = Base.unsafe_convert(LLVMTypeRef, C_NULL)
         else
             secretty = Base.unsafe_convert(LLVMTypeRef, secretty)
+        end
+
+        if origdst === nothing
+            origdst = Base.unsafe_convert(LLVMValueRef, C_NULL)
+        else
+            origdst = Base.unsafe_convert(LLVMValueRef, origdst)
         end
 
         EnzymeGradientUtilsSubTransferHelper(
@@ -986,8 +1000,10 @@ function sub_transfer(
             srcAlign,
             offset,
             dstConstant,
+            shadowdst,
             origdst,
             srcConstant,
+            shadowsrc,
             origsrc,
             length,
             isVolatile,
