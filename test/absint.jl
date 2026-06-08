@@ -47,7 +47,3 @@ end
     autodiff(Reverse, f_absint_memcpy!, Duplicated(dest, ddest), Duplicated(src, dsrc))
     @test ddest[1].a == 0.0 # Just verifying it runs without EnzymeNoTypeError
 end
-
-
-Enzyme.Compiler.VERBOSE_ERRORS[] = true
-Enzyme.API.printall!(true)
