@@ -2,7 +2,8 @@ module EnzymeGPUArraysCoreExt
 
 using GPUArraysCore
 using Enzyme
-using LinearAlgebra: LinearAlgebra, mul!, dot, Transpose, Adjoint, adjoint
+using LinearAlgebra: LinearAlgebra, mul!, dot, Transpose, Adjoint, adjoint,
+    UpperTriangular, LowerTriangular, Symmetric, Hermitian, triu, tril, diag, diagind
 using Enzyme.EnzymeCore: EnzymeCore
 using Enzyme.EnzymeCore.EnzymeRules:
     EnzymeRules,
@@ -54,13 +55,65 @@ end
 _project(::Type{<:Real}, x) = real(x)
 _project(::Type, x) = x
 
-# A GPU array or a (lazy) transpose/adjoint of one; the operand types that show
-# up in `A * B` matmuls, including `transpose(X) * y`.
+# A GPU array, or a structured/lazy wrapper of one; the operand types that show
+# up in `A * B` matmuls (`transpose(X) * y`, `Symmetric(A) * x`, ...). CUBLAS /
+# rocBLAS dispatch these to specialized kernels (trmm/symm/hemm), and the reverse
+# pass projects the cotangent back onto each wrapper's stored entries (see
+# `_accumulate_operand!`). UnitTriangular is intentionally excluded: its diagonal
+# is structurally fixed, so it cannot represent a tangent/cotangent.
 const MaybeWrappedGPU = Union{
     AbstractGPUArray,
     Transpose{<:Any, <:AbstractGPUArray},
     Adjoint{<:Any, <:AbstractGPUArray},
+    UpperTriangular{<:Any, <:AbstractGPUArray},
+    LowerTriangular{<:Any, <:AbstractGPUArray},
+    Symmetric{<:Any, <:AbstractGPUArray},
+    Hermitian{<:Any, <:AbstractGPUArray},
 }
+
+#=
+Accumulate `factor .* G` into the shadow `s` of a matmul operand, where `G` is
+the dense cotangent (`dY·B'` or `A'·dY`). For dense / transpose / adjoint shadows
+the cotangent is added directly. For structured shadows only the stored entries
+are free parameters, so `G` is projected onto that structure:
+
+  UpperTriangular  : keep `triu(G)`
+  LowerTriangular  : keep `tril(G)`
+  Symmetric(uplo)  : off-diagonal (i,j) collects `G[i,j] + G[j,i]`, diagonal `G[i,i]`
+  Hermitian(uplo)  : same with conjugation; the diagonal is real
+=#
+@inline function _accumulate_operand!(s, G, factor)
+    s .+= factor .* G
+    return nothing
+end
+
+function _accumulate_operand!(s::UpperTriangular, G, factor)
+    parent(s) .+= factor .* triu(G)
+    return nothing
+end
+
+function _accumulate_operand!(s::LowerTriangular, G, factor)
+    parent(s) .+= factor .* tril(G)
+    return nothing
+end
+
+function _accumulate_operand!(s::Symmetric, G, factor)
+    p = parent(s)
+    H = G .+ transpose(G)
+    p .+= factor .* (s.uplo == 'U' ? triu(H, 1) : tril(H, -1))
+    dg = view(p, diagind(p))
+    dg .+= factor .* diag(G)
+    return nothing
+end
+
+function _accumulate_operand!(s::Hermitian, G, factor)
+    p = parent(s)
+    H = G .+ adjoint(G)
+    p .+= factor .* (s.uplo == 'U' ? triu(H, 1) : tril(H, -1))
+    dg = view(p, diagind(p))
+    dg .+= factor .* real.(diag(G))
+    return nothing
+end
 
 #=
 mul!(C, A, B, α, β):  C = α·A·B + β·C₀
@@ -190,10 +243,10 @@ function EnzymeRules.reverse(
             Base.@_inline_meta
             dC = _bget(C.dval, Val(N), i)
             if !(A isa Const)
-                _bget(A.dval, Val(N), i) .+= αc .* (dC * adjoint(Bval))
+                _accumulate_operand!(_bget(A.dval, Val(N), i), dC * adjoint(Bval), αc)
             end
             if !(B isa Const)
-                _bget(B.dval, Val(N), i) .+= αc .* (adjoint(Aval) * dC)
+                _accumulate_operand!(_bget(B.dval, Val(N), i), adjoint(Aval) * dC, αc)
             end
             dC .*= βc
             nothing
@@ -291,10 +344,10 @@ function EnzymeRules.reverse(
             Base.@_inline_meta
             dYi = _bget(dY, Val(N), i)
             if !(A isa Const)
-                _bget(A.dval, Val(N), i) .+= dYi * adjoint(cache_B)
+                _accumulate_operand!(_bget(A.dval, Val(N), i), dYi * adjoint(cache_B), true)
             end
             if !(B isa Const)
-                _bget(B.dval, Val(N), i) .+= adjoint(cache_A) * dYi
+                _accumulate_operand!(_bget(B.dval, Val(N), i), adjoint(cache_A) * dYi, true)
             end
             fill!(dYi, zero(eltype(dYi)))
             nothing
