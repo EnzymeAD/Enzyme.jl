@@ -978,11 +978,17 @@ function sub_transfer(
     allowForward,
     shadowsLookedUp,
 )
-    GC.@preserve secretty begin
+    GC.@preserve secretty origdst begin
         if secretty === nothing
             secretty = Base.unsafe_convert(LLVMTypeRef, C_NULL)
         else
             secretty = Base.unsafe_convert(LLVMTypeRef, secretty)
+        end
+
+        if origdst === nothing
+            origdst = Base.unsafe_convert(LLVMValueRef, C_NULL)
+        else
+            origdst = Base.unsafe_convert(LLVMValueRef, origdst)
         end
 
         EnzymeGradientUtilsSubTransferHelper(

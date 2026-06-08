@@ -527,7 +527,7 @@ end
 
 # Optionally takes a length if requested
 # If this is a memory, pass memoryptr=<underlying data>
-function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, primaldst; len = nothing, memoryptr = nothing)
+function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = nothing, memoryptr = nothing)
     memory = memoryptr != nothing
     primalsrc = shadowsrc
     needsShadowP = Ref{UInt8}(0)
@@ -547,7 +547,6 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, primaldst;
 
     if !fwd
         shadowdst = invert_pointer(gutils, orig, B)
-        primaldst = new_from_original(gutils, orig)
     end
 
     tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, orig))
@@ -637,9 +636,6 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, primaldst;
 
     if !fwd
         shadowdst = lookup_value(gutils, shadowdst, B)
-    	if get_runtime_activity(gutils)
-    	    primaldst = lookup_value(gutils, primaldst, B)
-    	end
     end
 
 
@@ -703,16 +699,6 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, primaldst;
     	primalsrc
     end
 
-        primaldst0 = if get_runtime_activity(gutils)
-		if memory
-            get_memory_data(B, primaldst)
-        else
-            get_array_data(B, primaldst)
-        end
-    else
-    	primalsrc
-    end
-
     for i in 1:width
 
         evsrc = if width == 1
@@ -745,12 +731,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, primaldst;
         end
 
         if fwd && secretty != nothing
-    	    rt_length = length
-    	    if get_runtime_activity(gutils)
-    		    is_diff = LLVM.icmp!(B, LLVM.API.LLVMIntEQ, shadowdst0, primaldst0)
-    	        rt_length = LLVM.select!(B, is_diff, LLVM.ConstantInt(value_type(length), 0, false), rt_length)
-    	    end
-            LLVM.memset!(B, shadowdst0, LLVM.ConstantInt(i8, 0, false), rt_length, algn)
+            LLVM.memset!(B, shadowdst0, LLVM.ConstantInt(i8, 0, false), length, algn)
         end
 
         push!(shadowsrcs, shadowsrc0)
@@ -771,7 +752,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, primaldst;
             0,
             false,
             shadowdst0,
-    	    primaldst0,
+    	    nothing,
             false,
             shadowsrc0,
 	        primalsrc0,
@@ -796,9 +777,7 @@ end
 
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
         shadowres = LLVM.Value(unsafe_load(shadowR))
-        primalres = LLVM.Value(unsafe_load(normalR))
-        position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(primalres)))
-        arraycopy_common(true, B, orig, origops[1], gutils, shadowres, primalres)
+        arraycopy_common(true, B, orig, origops[1], gutils, shadowres)
     end
 
     return false
@@ -807,7 +786,7 @@ end
 @register_rev function arraycopy_rev(B, orig, gutils, tape)
     origops = LLVM.operands(orig)
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
-        arraycopy_common(false, B, orig, origops[1], gutils, nothing, nothing)
+        arraycopy_common(false, B, orig, origops[1], gutils, nothing)
     end
 
     return nothing
@@ -880,8 +859,7 @@ end
 
         len = new_from_original(gutils, origops[3])
         memoryptr = origops[2]        
-        position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(primalres)))
-        arraycopy_common(true, B, orig, origops[1], gutils, shadowres, primalres; len, memoryptr)
+        arraycopy_common(true, B, orig, origops[1], gutils, shadowres; len, memoryptr)
     end
 
     return false
@@ -892,7 +870,7 @@ end
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
         len = new_from_original(gutils, origops[3])
         memoryptr = origops[2]
-        arraycopy_common(false, B, orig, origops[1], gutils, nothing, nothing; len, memoryptr)
+        arraycopy_common(false, B, orig, origops[1], gutils, nothing; len, memoryptr)
     end
 
     return nothing
