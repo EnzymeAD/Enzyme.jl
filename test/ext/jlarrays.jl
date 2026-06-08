@@ -1,5 +1,5 @@
 using Enzyme, Test, JLArrays
-using LinearAlgebra: mul!, dot
+using LinearAlgebra: mul!, dot, UpperTriangular, LowerTriangular, Symmetric, Hermitian
 
 function jlres(x)
     2 * collect(x)
@@ -84,5 +84,55 @@ end
             Duplicated(jl(A0), jl(dA)), Duplicated(jl(B0), jl(dB)),
         )
         @test collect(out[1]) ≈ dA * B0 + A0 * dB
+    end
+
+    # Structured operands (triangular / symmetric / hermitian). The primal goes
+    # through the specialized BLAS kernel; the reverse must project the cotangent
+    # onto the wrapper's stored entries. Ground truth is central finite
+    # differences over the underlying data (non-stored entries must stay 0).
+    @testset "structured operand: $name" for (name, wrap) in (
+            ("UpperTriangular", UpperTriangular),
+            ("LowerTriangular", LowerTriangular),
+            ("Symmetric(:U)", X -> Symmetric(X, :U)),
+            ("Symmetric(:L)", X -> Symmetric(X, :L)),
+            ("Hermitian(:U)", X -> Hermitian(X, :U)),
+        )
+        n = 4
+        X0 = randn(n, n)
+        B0 = randn(n, 3)
+
+        dX = jl(zero(X0))
+        Enzyme.autodiff(
+            Reverse, (A, B) -> sum(A * B), Active,
+            Duplicated(wrap(jl(X0)), wrap(dX)), Const(jl(B0)),
+        )
+
+        ϵ = 1.0e-6
+        fd = zero(X0)
+        for idx in eachindex(X0)
+            Xp = copy(X0); Xp[idx] += ϵ
+            Xm = copy(X0); Xm[idx] -= ϵ
+            fd[idx] = (sum(wrap(Xp) * B0) - sum(wrap(Xm) * B0)) / (2ϵ)
+        end
+        @test collect(dX) ≈ fd rtol = 1.0e-5
+    end
+
+    @testset "structured operand on the right (B = UpperTriangular)" begin
+        m, n = 3, 4
+        A0 = randn(m, n)
+        X0 = randn(n, n)
+        dX = jl(zero(X0))
+        Enzyme.autodiff(
+            Reverse, (A, B) -> sum(A * B), Active,
+            Const(jl(A0)), Duplicated(UpperTriangular(jl(X0)), UpperTriangular(dX)),
+        )
+        ϵ = 1.0e-6
+        fd = zero(X0)
+        for idx in eachindex(X0)
+            Xp = copy(X0); Xp[idx] += ϵ
+            Xm = copy(X0); Xm[idx] -= ϵ
+            fd[idx] = (sum(A0 * UpperTriangular(Xp)) - sum(A0 * UpperTriangular(Xm))) / (2ϵ)
+        end
+        @test collect(dX) ≈ fd rtol = 1.0e-5
     end
 end
