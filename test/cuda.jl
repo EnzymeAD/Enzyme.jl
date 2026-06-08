@@ -1,7 +1,7 @@
 using CUDA
 using Enzyme
 using Test
-using LinearAlgebra: mul!, dot
+using LinearAlgebra: mul!, dot, UpperTriangular, LowerTriangular, Symmetric, Hermitian
 
 function mul_kernel(A)
     i = threadIdx().x
@@ -274,5 +274,33 @@ end
         dB = randn(Float32, 4, 2)
         out = Enzyme.autodiff(Forward, (A, B) -> A * B, Duplicated, Duplicated(cu(A0), cu(dA)), Duplicated(cu(B0), cu(dB)))
         @test Array(out[1]) ≈ dA * B0 + A0 * dB
+    end
+
+    # Structured operands: primal uses the specialized BLAS kernel; reverse
+    # projects the cotangent onto the wrapper's stored entries. Ground truth is
+    # central finite differences over the underlying data.
+    @testset "structured operand: $name" for (name, wrap) in (
+            ("UpperTriangular", UpperTriangular),
+            ("LowerTriangular", LowerTriangular),
+            ("Symmetric(:U)", X -> Symmetric(X, :U)),
+            ("Symmetric(:L)", X -> Symmetric(X, :L)),
+            ("Hermitian(:U)", X -> Hermitian(X, :U)),
+        )
+        n = 4
+        X0 = randn(Float32, n, n)
+        B0 = randn(Float32, n, 3)
+        dX = cu(zero(X0))
+        Enzyme.autodiff(
+            Reverse, (A, B) -> sum(A * B), Active,
+            Duplicated(wrap(cu(X0)), wrap(dX)), Const(cu(B0)),
+        )
+        ϵ = 1.0f-3
+        fd = zero(X0)
+        for idx in eachindex(X0)
+            Xp = copy(X0); Xp[idx] += ϵ
+            Xm = copy(X0); Xm[idx] -= ϵ
+            fd[idx] = (sum(wrap(Xp) * B0) - sum(wrap(Xm) * B0)) / (2ϵ)
+        end
+        @test Array(dX) ≈ fd rtol = 1.0f-2
     end
 end
