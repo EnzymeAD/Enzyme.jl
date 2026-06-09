@@ -387,6 +387,18 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
         offset = fieldoffset(T, f)
         subT = typed_fieldtype(T, f)
 
+        endbytes = offset + desc[f].size
+        nextbytes = if f == fieldcount(T)
+            sizeof(T)
+        else
+            fieldoffset(T, f+1)
+        end
+
+        # Fill in padding gaps with Anything
+        for i = endbytes:(nextbytes-1)
+            merge!(tt, TypeTree(API.DT_Anything, i, ctx))
+        end
+
         if !desc[f].isptr && subT isa Union
             rmT = remove_nothing_from_union_type(subT)
             if !(rmT isa Union)
@@ -421,6 +433,7 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
 
         merge!(tt, subtree)
     end
+
     canonicalize!(tt, sizeof(T), dl)
     return tt
 end
