@@ -340,8 +340,7 @@ function enzyme_custom_setup_args(
     alloctx = LLVM.IRBuilder()
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
-    ofn = LLVM.parent(LLVM.parent(orig))
-    world = enzyme_extract_world(ofn)
+    world = enzyme_context(gutils).world
 
     jlargs = classify_arguments(
         mi.specTypes,
@@ -867,7 +866,7 @@ function enzyme_custom_setup_ret(
     width = get_width(gutils)
     mode = get_mode(gutils)
 
-    world = enzyme_extract_world(LLVM.parent(LLVM.parent(orig)))
+    world = enzyme_context(gutils).world
 
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
@@ -994,7 +993,7 @@ end
 
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
-    world = enzyme_extract_world(fn)
+    world = enzyme_context(gutils).world
 
     # TODO: don't inject the code multiple times for multiple calls
 
@@ -1016,8 +1015,7 @@ end
     width = get_width(gutils)
 
 
-    enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
-    llvmf = nested_codegen!(enzyme_ctx, mode, mod, fmi, world, true)
+    llvmf = nested_codegen!(enzyme_context(gutils), mode, mod, fmi, true)
 
     orig_swiftself = has_swiftself(LLVM.called_operand(orig))
 
@@ -1306,8 +1304,7 @@ end
         needsShadow
     end
 
-    fn = LLVM.parent(LLVM.parent(orig))
-    world = enzyme_extract_world(fn)
+    world = enzyme_context(gutils).world
 
     C = EnzymeRules.RevConfig{
         Bool(needsPrimal),
@@ -1421,8 +1418,7 @@ end
     end
     TT = Tuple{tt...}
 
-    fn = LLVM.parent(LLVM.parent(orig))
-    world = enzyme_extract_world(fn)
+    world = enzyme_context(gutils).world
     @safe_debug "Trying to apply custom forward rule" TT isKWCall
         
     functy = if isKWCall
@@ -1447,8 +1443,7 @@ end
 end
 
 @inline function has_easy_rule_from_call(orig::LLVM.CallInst, gutils::GradientUtils)::Bool
-    fn = LLVM.parent(LLVM.parent(orig))
-    world = enzyme_extract_world(fn)
+    world = enzyme_context(gutils).world
     mi, RealRt = enzyme_custom_extract_mi(orig)
     specTypes = Interpreter.simplify_kw(mi.specTypes)
     return EnzymeRules.has_easy_rule_from_sig(specTypes; world)
@@ -1592,7 +1587,8 @@ function enzyme_custom_common_rev(
 
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
-    world = enzyme_extract_world(fn)
+    enzyme_ctx = enzyme_context(gutils)
+    world = enzyme_ctx.world
 
     mode = get_mode(gutils)
 
@@ -1658,8 +1654,7 @@ function enzyme_custom_common_rev(
     final_mi = nothing
 
     if forward
-        enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
-        llvmf = nested_codegen!(enzyme_ctx, mode, mod, ami, world, true)
+        llvmf = nested_codegen!(enzyme_ctx, mode, mod, ami, true)
         @assert llvmf !== nothing
         rev_RT = nothing
         final_mi = ami
@@ -1702,8 +1697,7 @@ function enzyme_custom_common_rev(
         
         rmi = rmi::Core.MethodInstance
         rev_RT = rev_RT::Type
-        enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
-        llvmf = nested_codegen!(enzyme_ctx, mode, mod, rmi, world, true)
+        llvmf = nested_codegen!(enzyme_ctx, mode, mod, rmi, true)
         final_mi = rmi
     end
 

@@ -401,7 +401,7 @@ set_fn_max_args(runtime_tuple_rev)
 function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
     width = get_width(gutils)
 
-    world = enzyme_extract_world(LLVM.parent(position(B)))
+    world = enzyme_context(gutils).world
 
     @assert is_constant_value(gutils, operands(orig)[offset])
     ops = @view arg_operands_view(orig)[offset+1:end]
@@ -870,7 +870,7 @@ end
         vals = [new_from_original(gutils, operands(orig)[1]), val_from_byref_if_mixed(B, gutils, operands(orig)[2], shadowsin)]
         shadowres = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), vals)
         callconv!(shadowres, callconv(orig))
-        shadowres = byref_from_val_if_mixed(B, shadowres)
+        shadowres = byref_from_val_if_mixed(B, gutils, shadowres)
     else
         shadowres =
             UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
@@ -881,7 +881,7 @@ end
             ]
             tmp = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), vals)
             callconv!(tmp, callconv(orig))
-            tmp = byref_from_val_if_mixed(B, tmp)
+            tmp = byref_from_val_if_mixed(B, gutils, tmp)
             shadowres = insert_value!(B, shadowres, tmp, idx - 1)
         end
     end
@@ -892,7 +892,7 @@ end
         unsafe_store!(tapeR, shadowres.ref)
     else
         @assert legal
-        world = enzyme_extract_world(LLVM.parent(position(B)))
+        world = enzyme_context(gutils).world
         if !guaranteed_nonactive(TT, world)
             unsafe_store!(tapeR, shadowres.ref)
         end
@@ -993,7 +993,7 @@ end
     torun = false
     if legal
         @assert legal
-        world = enzyme_extract_world(LLVM.parent(position(B)))
+        world = enzyme_context(gutils).world
         torun = !guaranteed_nonactive(TT, world)
     else
         torun = true
