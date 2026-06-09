@@ -2024,8 +2024,8 @@ function generic_setup(
     if runtime_activity
         pushfirst!(vals, unsafe_to_llvm(B, Val(get_runtime_activity(gutils)), enzyme_context(gutils).world))
     end
-    etup0 = emit_tuple!(B, ActivityList, enzyme_context(gutils).world)
-    etup = emit_apply_type!(B, Base.Val, LLVM.Value[etup0], enzyme_context(gutils).world)
+    etup0 = emit_tuple!(B, ActivityList, enzyme_context(gutils).world, enzyme_context(gutils))
+    etup = emit_apply_type!(B, Base.Val, LLVM.Value[etup0], enzyme_context(gutils).world, enzyme_context(gutils))
     if isa(etup, LLVM.Instruction)
         @assert length(collect(LLVM.uses(etup0))) == 1
     end
@@ -2483,9 +2483,9 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
         return true
     end
 
-    v, isiter = absint(operands(orig)[offset+1])
+    v, isiter = absint(operands(orig)[offset + 1], false, false, false, enzyme_context(gutils))
     isiter = unbind(isiter)
-    v2, istup = absint(operands(orig)[offset+2])
+    v2, istup = absint(operands(orig)[offset + 2], false, false, false, enzyme_context(gutils))
     istup = unbind(istup)
 
     width = get_width(gutils)
@@ -2636,8 +2636,8 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
         return true
     end
 
-    v, isiter = absint(operands(orig)[offset+1])
-    v2, istup = absint(operands(orig)[offset+2])
+    v, isiter = absint(operands(orig)[offset + 1], false, false, false, enzyme_context(gutils))
+    v2, istup = absint(operands(orig)[offset + 2], false, false, false, enzyme_context(gutils))
     isiter = unbind(isiter)
     istup = unbind(istup)
 

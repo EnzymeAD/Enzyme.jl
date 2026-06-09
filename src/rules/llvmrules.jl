@@ -195,7 +195,7 @@ include("parallelrules.jl")
         end
     end
 
-    mi, _ = enzyme_custom_extract_mi(LLVM.parent(LLVM.parent(orig)), false) #=error=#
+    mi, _ = enzyme_custom_extract_mi(enzyme_context(gutils), LLVM.parent(LLVM.parent(orig)), false) #=error=#
     world = enzyme_context(gutils).world
 
     if mi !== nothing
@@ -289,7 +289,7 @@ end
         end
     end
 
-    mi, _ = enzyme_custom_extract_mi(LLVM.parent(LLVM.parent(orig)), false) #=error=#
+    mi, _ = enzyme_custom_extract_mi(enzyme_context(gutils), LLVM.parent(LLVM.parent(orig)), false) #=error=#
     world = enzyme_context(gutils).world
 
     if mi !== nothing
@@ -390,7 +390,7 @@ end
         end
     end
 
-    mi, _ = enzyme_custom_extract_mi(LLVM.parent(LLVM.parent(orig)), false) #=error=#
+    mi, _ = enzyme_custom_extract_mi(enzyme_context(gutils), LLVM.parent(LLVM.parent(orig)), false) #=error=#
     world = enzyme_context(gutils).world
 
     if mi !== nothing
@@ -533,7 +533,7 @@ end
     shadowres =
         UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
 
-    found, arty, byref = abs_typeof(origops[1])
+    found, arty, byref = abs_typeof(origops[1], false, Set{LLVM.PHIInst}(), enzyme_context(gutils))
 
     needs_runtime_zero = !found && !(eltype(arty) <: Base.IEEEFloat)
 
@@ -854,7 +854,7 @@ end
     len = new_from_original(gutils, origops[3])
 
 
-    found, arty, byref = abs_typeof(origops[1])
+    found, arty, byref = abs_typeof(origops[1], false, Set{LLVM.PHIInst}(), enzyme_context(gutils))
 
     needs_runtime_zero = !found && !(eltype(arty) <: Base.IEEEFloat)
 
@@ -1270,21 +1270,21 @@ end
                 " " *
                 string(orig) *
                 " result: " *
-                string(absint(orig)) *
+                string(absint(orig, false, false, false, enzyme_context(gutils))) *
                 " " *
-                string(abs_typeof(orig, true)) *
+                string(abs_typeof(orig, true, Set{LLVM.PHIInst}(), enzyme_context(gutils))) *
                 " dict: " *
-                string(absint(origh)) *
+                string(absint(origh, false, false, false, enzyme_context(gutils))) *
                 " " *
-                string(abs_typeof(origh, true)) *
+                string(abs_typeof(origh, true, Set{LLVM.PHIInst}(), enzyme_context(gutils))) *
                 " key " *
-                string(absint(origkey)) *
+                string(absint(origkey, false, false, false, enzyme_context(gutils))) *
                 " " *
-                string(abs_typeof(origkey, true)) *
+                string(abs_typeof(origkey, true, Set{LLVM.PHIInst}(), enzyme_context(gutils))) *
                 " dflt " *
-                string(absint(origdflt)) *
+                string(absint(origdflt, false, false, false, enzyme_context(gutils))) *
                 " " *
-                string(abs_typeof(origdflt, true)), enzyme_context(gutils).world,
+                string(abs_typeof(origdflt, true, Set{LLVM.PHIInst}(), enzyme_context(gutils))), enzyme_context(gutils).world,
         )
     end
 
@@ -1730,7 +1730,7 @@ end
 
             args = LLVM.Value[anti, offset]
 
-            found, arty, byref = abs_typeof(origops[1])
+            found, arty, byref = abs_typeof(origops[1], false, Set{LLVM.PHIInst}(), enzyme_context(gutils))
             anti = shadowin
             elSize = if found
                 LLVM.ConstantInt(Csize_t(actual_size(eltype(arty))))
@@ -1845,7 +1845,7 @@ end
     end
     width = get_width(gutils)
 
-    legal, dest_ty, _ = abs_typeof(first(operands(orig)))
+    legal, dest_ty, _ = abs_typeof(first(operands(orig)), false, Set{LLVM.PHIInst}(), enzyme_context(gutils))
 
     if !legal
         emit_error(B, orig, "Enzyme: could not deduce element type of value within generic_memory_copyto of " * string(first(operands(orig))) * " within " * string(orig), enzyme_context(gutils).world)

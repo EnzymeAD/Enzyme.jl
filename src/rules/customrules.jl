@@ -1078,7 +1078,7 @@ Custom rule for method return value of type $(RealRt) has mismatch between retur
         if active_reg(RealRt, world) == MixedState && B !== nothing        
             bt = GPUCompiler.backtrace(orig)
             msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))            
-            mi, _ = enzyme_custom_extract_mi(orig)
+            mi, _ = enzyme_custom_extract_mi(enzyme_context(gutils), orig)
             emit_error(
                 B,
                 orig,
@@ -1134,7 +1134,7 @@ end
     fmi, (args, TT, fwd_RT, kwtup, RT, needsPrimal, RealRt, origNeedsPrimal, activity, C) = fwd_mi(orig, gutils, B)
 
     if kwtup !== nothing && kwtup <: Duplicated
-        mi, _ = enzyme_custom_extract_mi(orig)
+        mi, _ = enzyme_custom_extract_mi(enzyme_context(gutils), orig)
 
         bt = GPUCompiler.backtrace(orig)
         msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
@@ -1158,7 +1158,7 @@ end
     if gcstack_arg
         pushfirst!(args, reinsert_gcmarker!(fn, B))
     end
-    _, sret, returnRoots0 = get_return_info(enzyme_custom_extract_mi(llvmf)[2])
+    _, sret, returnRoots0 = get_return_info(enzyme_custom_extract_mi(enzyme_context(gutils), llvmf)[2])
     returnRoots = returnRoots0
     if sret !== nothing
 	sret_lty = convert(LLVMType, eltype(sret))
@@ -1417,7 +1417,7 @@ end
     width = get_width(gutils)
 
     # 1) extract out the MI from attributes
-    mi, RealRt = enzyme_custom_extract_mi(orig)
+    mi, RealRt = enzyme_custom_extract_mi(enzyme_context(gutils), orig)
     isKWCall = isKWCallSignature(mi.specTypes)
 
     # 2) Create activity, and annotate function spec
@@ -1506,7 +1506,7 @@ end
     @nospecialize(B::Union{Nothing, LLVM.IRBuilder}) = nothing,
 )
     # 1) extract out the MI from attributes
-    mi, RealRt = enzyme_custom_extract_mi(orig)
+    mi, RealRt = enzyme_custom_extract_mi(enzyme_context(gutils), orig)
 
     kwfunc = nothing
 
@@ -1572,7 +1572,7 @@ end
 
 @inline function has_easy_rule_from_call(orig::LLVM.CallInst, gutils::GradientUtils)::Bool
     world = enzyme_context(gutils).world
-    mi, RealRt = enzyme_custom_extract_mi(orig)
+    mi, RealRt = enzyme_custom_extract_mi(enzyme_context(gutils), orig)
     specTypes = Interpreter.simplify_kw(mi.specTypes)
     return EnzymeRules.has_easy_rule_from_sig(specTypes; world)
 end
@@ -1716,7 +1716,7 @@ function enzyme_custom_common_rev(
     # TODO: don't inject the code multiple times for multiple calls
 
     # 1) extract out the MI from attributes
-    mi, RealRt = enzyme_custom_extract_mi(orig)
+    mi, RealRt = enzyme_custom_extract_mi(enzyme_context(gutils), orig)
     isKWCall = isKWCallSignature(mi.specTypes)
 
     # 2) Create activity, and annotate function spec
@@ -1774,7 +1774,7 @@ function enzyme_custom_common_rev(
     end
     aug_RT = aug_RT::Type
     if kwtup !== nothing && kwtup <: Duplicated
-        mi, _ = enzyme_custom_extract_mi(orig)
+        mi, _ = enzyme_custom_extract_mi(enzyme_context(gutils), orig)
         bt = GPUCompiler.backtrace(orig)
         msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
         emit_error(B, orig, (msg2, mi, world), enzyme_context(gutils).world, NonConstantKeywordArgException)
@@ -1928,7 +1928,7 @@ function enzyme_custom_common_rev(
     orig_swiftself = has_swiftself(LLVM.called_operand(orig))
     gcstack_arg = has_gcstack_arg(llvmf)
 
-    miRT = enzyme_custom_extract_mi(llvmf)[2]
+    miRT = enzyme_custom_extract_mi(enzyme_context(gutils), llvmf)[2]
     _, sret, returnRoots0 = get_return_info(miRT)
     returnRoots = returnRoots0
     sret_union = is_sret_union(miRT)

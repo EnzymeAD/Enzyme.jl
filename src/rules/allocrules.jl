@@ -11,7 +11,7 @@ function array_shadow_handler(
     ctx = LLVM.context(LLVM.Value(OrigCI))
     gutils = GradientUtils(gutils)
 
-    legal, typ, byref = abs_typeof(inst)
+    legal, typ, byref = abs_typeof(inst, false, Set{LLVM.PHIInst}(), enzyme_context(gutils))
     if !legal
         throw(
             AssertionError(

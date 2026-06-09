@@ -280,7 +280,7 @@ function call_same_with_inverted_arg_if_active!(
         valTys[cmpidx] = API.VT_Both
     end
     args = collect(LLVM.Value, args)
-    forward_tys = LLVM.LLVMType[value_type(a) for a in args]
+    forward_tys = LLVM.LLVMType[LLVM.value_type(a) for a in args]
     insert!(args, 1, new_from_original(gutils, origops[cmpidx]))
     newval = nothing
     if LLVM.value_type(orig) != LLVM.VoidType() && postprocess_const === nothing && need_result

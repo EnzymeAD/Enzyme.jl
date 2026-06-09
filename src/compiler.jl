@@ -544,7 +544,7 @@ function nested_codegen!(enzyme_context::EnzymeContext, mode::API.CDerivativeMod
 end
 
 
-function prepare_llvm(interp, mod::LLVM.Module, job, meta)
+function prepare_llvm(enzyme_context::EnzymeContext, interp, mod::LLVM.Module, job, meta)
     for (mi, k) in meta.compiled
         k_name = GPUCompiler.safe_name(k.specfunc)
         if !haskey(functions(mod), k_name)
@@ -553,6 +553,8 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
         llvmfn = functions(mod)[k_name]
 
         RT = return_type(interp, mi)
+
+        enzyme_context.mi_cache[LLVM.name(llvmfn)] = (mi, RT)
 
         _, _, returnRoots0 = get_return_info(RT)
         returnRoots = returnRoots0 !== nothing
@@ -603,7 +605,7 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
             end
         end
 
-        fixup_1p12_sret!(llvmfn)
+        fixup_1p12_sret!(enzyme_context, llvmfn)
     end
 
     # We explicitly save the type of alloca's before they get lowered
@@ -617,7 +619,7 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
                 continue
             end
             if LLVM.name(fn) == "julia.gc_alloc_obj"
-                legal, RT, _ = abs_typeof(inst)
+                legal, RT, _ = abs_typeof(inst, false, Set{LLVM.PHIInst}(), enzyme_context)
                 if legal
                     metadata(inst)["enzymejl_gc_alloc_rt"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
                 end
@@ -752,7 +754,7 @@ function handleCustom(state::HandlerState, custom, k_name::String, llvmfn::LLVM.
     nothing
 end
 
-function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, mode::API.CDerivativeMode, world::UInt, method_table, custom::Dict{String, LLVM.API.LLVMLinkage}, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type))::Nothing
+function handle_compiled(enzyme_context::EnzymeContext, state::HandlerState, edges::Vector, run_enzyme::Bool, mode::API.CDerivativeMode, world::UInt, method_table, custom::Dict{String, LLVM.API.LLVMLinkage}, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type))::Nothing
     has_custom_rule = false
 
     specTypes = Interpreter.simplify_kw(mi.specTypes)
@@ -811,7 +813,7 @@ end
     name = meth.name
     jlmod = meth.module
 
-    julia_activity_rule(llvmfn, world, method_table)
+    julia_activity_rule(enzyme_context, llvmfn, world, method_table)
     if has_custom_rule
         handleCustom(
             state,
@@ -1189,6 +1191,7 @@ end
     if sret
         cur = llvmfn == state.primalf
         llvmfn, _, state.boxedArgs, state.loweredArgs, state.removedRoots = lower_convention(
+            enzyme_context,
             mi.specTypes,
             mod,
             llvmfn,
@@ -1231,7 +1234,7 @@ end
     return
 end
 
-function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLVM.Function}, job, edges, run_enzyme, mode::API.CDerivativeMode)::Tuple{Dict{String,LLVM.API.LLVMLinkage}, HandlerState}
+function set_module_types!(enzyme_context::EnzymeContext, interp, mod::LLVM.Module, primalf::Union{Nothing, LLVM.Function}, job, edges, run_enzyme, mode::API.CDerivativeMode)::Tuple{Dict{String, LLVM.API.LLVMLinkage}, HandlerState}
     # One memo table for the whole module: the argument and return types of
     # its functions overlap heavily (the same model / array types recur in
     # every kernel), and building a TypeTree walks the type's fields through
@@ -1242,7 +1245,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
         if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1") || startswith(LLVM.name(f), "jlcapi")
             continue
         end
-        mi, RT = enzyme_custom_extract_mi(f, false)
+        mi, RT = enzyme_custom_extract_mi(enzyme_context, f, false)
         if mi === nothing
             continue
         end
@@ -1412,7 +1415,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
             end
         end
         if mi !== nothing && RT !== nothing
-            handle_compiled(state, edges, run_enzyme, mode, world, method_table, custom, mod, mi, fname, RT)
+            handle_compiled(enzyme_context, state, edges, run_enzyme, mode, world, method_table, custom, mod, mi, fname, RT)
         end
     end
 
@@ -1458,7 +1461,7 @@ function nested_codegen!(
     otherMod, meta = GPUCompiler.emit_llvm(job)
 
     interp = GPUCompiler.get_interpreter(job)
-    prepare_llvm(interp, otherMod, job, meta)
+    prepare_llvm(enzyme_context, interp, otherMod, job, meta)
 
     entry = name(meta.entry)
 
@@ -1481,7 +1484,7 @@ function nested_codegen!(
 	API.EnzymeDumpModuleRef(otherMod.ref)
     end
 
-    check_ir(interp, job, otherMod)
+    check_ir(enzyme_context, interp, job, otherMod)
 
     if DumpPreNestedOpt[]
 	API.EnzymeDumpModuleRef(otherMod.ref)
@@ -1490,7 +1493,7 @@ function nested_codegen!(
     # Skipped inline of blas
 
     run_enzyme = false
-    set_module_types!(interp, otherMod, nothing, job, edges, run_enzyme, mode)
+    set_module_types!(enzyme_context, interp, otherMod, nothing, job, edges, run_enzyme, mode)
 
     # Apply first stage of optimization's so that this module is at the same stage as `mod`
     optimize!(otherMod, JIT.get_tm())
@@ -1852,7 +1855,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
     V = LLVM.CallInst(V)
     gutils = GradientUtils(gutils)
     mode = get_mode(gutils)
-    has, Ty, byref = abs_typeof(V)
+    has, Ty, byref = abs_typeof(V, false, Set{LLVM.PHIInst}(), enzyme_context(gutils))
     partial = false
     count = nothing
     if !has
@@ -1890,10 +1893,10 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
 			    if nm == "jl_f_apply_type" || nm == "ijl_f_apply_type"
 				index += 1
 				found = Any[]
-				legal, Ty = absint(operands(arg)[index], partial)
+                            legal, Ty = absint(operands(arg)[index], partial, false, false, enzyme_context(gutils))
 				Ty = unbind(Ty)
 				if legal && Ty == NTuple
-				   legal, Ty = absint(operands(arg)[index+2])
+                                legal, Ty = absint(operands(arg)[index + 2], false, false, false, enzyme_context(gutils))
 				   Ty = unbind(Ty)
 				   if legal
 					# count should represent {the total size in bytes, the aligned size of each element}
@@ -2604,6 +2607,46 @@ struct UnknownTapeType end
 ##
 # Enzyme compiler step
 ##
+
+function enzyme_custom_extract_mi(enzyme_context::EnzymeContext, orig::LLVM.CallInst, error::Bool = true)
+    operand = LLVM.called_operand(orig)
+    if isa(operand, LLVM.Function)
+        return enzyme_custom_extract_mi(enzyme_context, operand::LLVM.Function, error)
+    elseif error
+        GPUCompiler.@safe_error "Enzyme: Custom handler, could not find fn", orig
+    end
+    return nothing, nothing
+end
+
+function enzyme_custom_extract_mi(enzyme_context::EnzymeContext, orig::LLVM.Function, error::Bool = true)
+    name = LLVM.name(orig)
+    if haskey(enzyme_context.mi_cache, name)
+        return enzyme_context.mi_cache[name]
+    end
+
+    mi = nothing
+    RT = nothing
+    for fattr in collect(function_attributes(orig))
+        if isa(fattr, LLVM.StringAttribute)
+            if kind(fattr) == "enzymejl_mi"
+                ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
+                mi = Base.unsafe_pointer_to_objref(ptr)
+            end
+            if kind(fattr) == "enzymejl_rt"
+                ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
+                RT = Base.unsafe_pointer_to_objref(ptr)
+            end
+        end
+    end
+    if error && mi === nothing
+        GPUCompiler.@safe_error "Enzyme: Custom handler, could not find mi", orig
+    end
+    return mi, RT
+end
+
+# Handlers that may run without a context (the no-derivative handler is called with a
+# null GradientUtils from the batching, truncation and tracing entry points).
+enzyme_custom_extract_mi(::Nothing, orig::Union{LLVM.CallInst, LLVM.Function}, error::Bool = true) = enzyme_custom_extract_mi(orig, error)
 
 function enzyme_custom_extract_mi(orig::LLVM.CallInst, error::Bool = true)
     operand = LLVM.called_operand(orig)
@@ -4516,6 +4559,7 @@ end
 
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(
+        enzyme_context::EnzymeContext,
     @nospecialize(functy::Type),
     mod::LLVM.Module,
     entry_f::LLVM.Function,
@@ -5225,7 +5269,7 @@ function lower_convention(
 
     fixup_metadata!(entry_f)
 
-    mi, rt = enzyme_custom_extract_mi(entry_f)
+    mi, rt = enzyme_custom_extract_mi(enzyme_context, entry_f)
     attributes = function_attributes(wrapper_f)
     push!(
         attributes,
@@ -5561,7 +5605,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     edges = enzyme_context.edges
 
     primal_interp = GPUCompiler.get_interpreter(primal_job)
-    prepare_llvm(primal_interp, mod, primal_job, meta)
+    prepare_llvm(enzyme_context, primal_interp, mod, primal_job, meta)
     for f in functions(mod)
         permit_inlining!(f)
     end
@@ -5583,7 +5627,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         API.EnzymeDumpModuleRef(mod.ref)
     end
     interp = GPUCompiler.get_interpreter(job)
-    check_ir(interp, job, mod)
+    check_ir(enzyme_context, interp, job, mod)
     if DumpPostCheck[]
         API.EnzymeDumpModuleRef(mod.ref)
     end
@@ -5690,7 +5734,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
 	run!(GlobalOptPass(), mod)
     end
 
-    custom, state = set_module_types!(interp, mod, primalf, job, edges, params.run_enzyme, mode)
+    custom, state = set_module_types!(enzyme_context, interp, mod, primalf, job, edges, params.run_enzyme, mode)
 
     primalf = state.primalf
     must_wrap = state.must_wrap
@@ -5724,7 +5768,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             push!(return_attributes(wrapper_f), attr)
         end
 
-        mi, rt = enzyme_custom_extract_mi(primalf)
+        mi, rt = enzyme_custom_extract_mi(enzyme_context, primalf)
 
         let builder = IRBuilder()
             entry = BasicBlock(wrapper_f, "entry")
@@ -5789,6 +5833,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
 
     if state.lowerConvention
         primalf, returnRoots, boxedArgs, loweredArgs, removedRoots, actualRetType = lower_convention(
+            enzyme_context,
             source_sig,
             mod,
             primalf,
@@ -5939,7 +5984,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             if length(calluse) > 0
                 RTs = Union{Nothing, Type}[]
                 for cu in calluse
-                    _, RT = enzyme_custom_extract_mi(cu, false)
+                    _, RT = enzyme_custom_extract_mi(enzyme_context, cu, false)
                     push!(RTs, RT)
                 end
                 @assert all(RTs[1] == RT for RT in RTs)
@@ -5965,7 +6010,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         if !API.HasFromStack(inst) &&
            ((isa(inst, LLVM.CallInst) &&
              (!isa(fn, LLVM.Function) || isempty(blocks(fn))) ) || isa(inst, LLVM.LoadInst) || isa(inst, LLVM.AllocaInst) || isa(inst, LLVM.ExtractValueInst))
-            legal, source_typ, byref = abs_typeof(inst)
+            legal, source_typ, byref = abs_typeof(inst, false, Set{LLVM.PHIInst}(), enzyme_context)
             codegen_typ = value_type(inst)
             if legal
                 if codegen_typ isa LLVM.PointerType || codegen_typ isa LLVM.IntegerType
@@ -5998,7 +6043,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             
 @static if VERSION < v"1.11-"
 else    
-                    legal2, obj = absint(inst)
+                        legal2, obj = absint(inst, false, false, false, enzyme_context)
 		    obj = unbind(obj)
 		    if legal2 && is_memory_instance(obj)
                         metadata(inst)["nonnull"] = MDNode(LLVM.Metadata[])
@@ -6035,7 +6080,7 @@ end
                intr == LLVM.Intrinsic("llvm.memmove").id ||
                intr == LLVM.Intrinsic("llvm.memset").id
                 base, offset = get_base_and_offset(operands(inst)[1])
-                legal, jTy, byref = abs_typeof(base)
+                legal, jTy, byref = abs_typeof(base, false, Set{LLVM.PHIInst}(), enzyme_context)
                 sz =
                     if intr == LLVM.Intrinsic("llvm.memcpy").id ||
                        intr == LLVM.Intrinsic("llvm.memmove").id
@@ -6089,7 +6134,7 @@ end
             continue
         end
 
-        legal, jTy, byref = abs_typeof(inst, true)
+        legal, jTy, byref = abs_typeof(inst, true, Set{LLVM.PHIInst}(), enzyme_context)
         if !legal
             continue
         end
@@ -6136,7 +6181,7 @@ end
                     end
 
                     if !mayWriteToMemory(user)
-                        slegal, foundv, byref = abs_typeof(user)
+                        slegal, foundv, byref = abs_typeof(user, false, Set{LLVM.PHIInst}(), enzyme_context)
                         if slegal
                             reg2 = active_reg(foundv, job.world)
                             if reg2 == ActiveState || reg2 == AnyState
@@ -6164,7 +6209,7 @@ end
                         end
                         # we are storing into the variable
                         if operands(user)[2] == cur
-                            slegal, foundv, byref = abs_typeof(operands(user)[1])
+                            slegal, foundv, byref = abs_typeof(operands(user)[1], false, Set{LLVM.PHIInst}(), enzyme_context)
                             if slegal
                                 reg2 = active_reg(foundv, job.world)
                                 if reg2 == AnyState
@@ -6200,7 +6245,7 @@ end
                                 continue
                             end
                             if is_readonly(called)
-                                slegal, foundv, byref = abs_typeof(user)
+                                slegal, foundv, byref = abs_typeof(user, false, Set{LLVM.PHIInst}(), enzyme_context)
                                 if slegal
                                     reg2 = active_reg(foundv, job.world)
                                     if reg2 == ActiveState || reg2 == AnyState
@@ -6218,7 +6263,7 @@ end
                                         push!(todo, parm)
                                     end
                                 end
-                                slegal, foundv, byref = abs_typeof(user)
+                                slegal, foundv, byref = abs_typeof(user, false, Set{LLVM.PHIInst}(), enzyme_context)
                                 if slegal
                                     reg2 = active_reg(foundv, job.world)
                                     if reg2 == ActiveState || reg2 == AnyState
@@ -6238,7 +6283,7 @@ end
                         string(user) *
                         ", using " *
                         string(cur)
-                    slegal, foundv = absint(cur)
+                    slegal, foundv = absint(cur, false, false, false, enzyme_context)
                     if slegal
 		    	foundv = unbind(foundv)
                         resstr *= "of type " * string(foundv)

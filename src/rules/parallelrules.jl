@@ -190,7 +190,7 @@ end
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     llvmfn = LLVM.called_operand(orig)
-    mi = nothing
+    mi, _ = enzyme_custom_extract_mi(enzyme_context(gutils), llvmfn)
     fwdmodenm = nothing
     augfwdnm = nothing
     adjointnm = nothing
@@ -198,10 +198,6 @@ end
     attributes = function_attributes(llvmfn)
     for fattr in collect(attributes)
         if isa(fattr, LLVM.StringAttribute)
-            if kind(fattr) == "enzymejl_mi"
-                ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
-                mi = Base.unsafe_pointer_to_objref(ptr)
-            end
             if kind(fattr) == "enzymejl_tapetype"
                 ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
                 TapeType = Base.unsafe_pointer_to_objref(ptr)
