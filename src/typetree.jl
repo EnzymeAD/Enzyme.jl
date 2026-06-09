@@ -384,14 +384,14 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
     desc = Base.DataTypeFieldDesc(T)
 
     for f = 1:fieldcount(T)
-        offset = fieldoffset(T, f)
+        offset = Int(fieldoffset(T, f))
         subT = typed_fieldtype(T, f)
 
-        endbytes = offset + desc[f].size
+        endbytes = offset + Int(desc[f].size)
         nextbytes = if f == fieldcount(T)
-            sizeof(T)
+            Int(sizeof(T))
         else
-            fieldoffset(T, f+1)
+            Int(fieldoffset(T, f+1))
         end
 
         # Fill in padding gaps with Anything
