@@ -854,8 +854,6 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             ops = arg_operands_view(inst)
             @assert length(ops) == 2
             flib = ops[1]
-            fname = ops[2]
-
             if isa(flib, LLVM.ConstantExpr) || isa(flib, LLVM.GlobalVariable)
                 legal, flib2 = absint(flib)
                 if legal
@@ -866,12 +864,16 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 flib = getfield(flib.mod, flib.name)
             end
 
-            fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
-            if isa(fname, LLVM.ConstantExpr)
-                fname = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(fname, 0))
+            fname_llvm = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(inst, 1))
+            if isa(fname_llvm, LLVM.ConstantExpr)
+                fname_llvm = LLVM.Value(LLVM.LLVM.API.LLVMGetOperand(fname_llvm, 0))
             end
+            fname = fname_llvm
             if isa(fname, LLVM.GlobalVariable)
-                fname = LLVM.initializer(fname)
+                init = LLVM.initializer(fname)
+                if init !== nothing
+                    fname = init
+                end
             end
 
             if (isa(fname, LLVM.ConstantArray) || isa(fname, LLVM.ConstantDataArray)) &&
@@ -879,11 +881,29 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 fname = String(map(Base.Fix1(convert, UInt8), collect(fname)[1:(end - 1)]))
             end
 
-            if !isa(fname, String) || !isa(flib, String)
+            # Julia 1.13+: fname is an ejl_inserted GlobalVariable holding a Julia Symbol.
+            if !isa(fname, String) && isa(fname_llvm, LLVM.GlobalVariable)
+                legal2, sym = absint(fname_llvm)
+                if legal2
+                    sym = unbind(sym)
+                    if isa(sym, GlobalRef) && isdefined(sym.mod, sym.name)
+                        sym = getfield(sym.mod, sym.name)
+                    end
+                    if isa(sym, Symbol)
+                        fname = String(sym)
+                    end
+                end
+            end
+
+            if !isa(fname, String)
                 return
             end
 
-            found, replaceWith = try_import_llvmbc(mod, flib, fname, imported)
+            found, replaceWith = if isa(flib, String)
+                try_import_llvmbc(mod, flib, fname, imported)
+            else
+                (false, nothing)
+            end
 
             if found
 
@@ -914,22 +934,37 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
             else
                 res = try
-                    if fn == "jl_lazy_load_and_lookup"
-                        ccall(
-                            :jl_lazy_load_and_lookup,
-                            Ptr{Cvoid},
-                            (Any, Cstring),
-                            flib,
-                            fname,
-                        )
-                    else
+                    if isa(flib, String)
+                        if fn == "jl_lazy_load_and_lookup"
+                            ccall(
+                                :jl_lazy_load_and_lookup,
+                                Ptr{Cvoid},
+                                (Any, Cstring),
+                                flib,
+                                fname,
+                            )
+                        else
+                            ccall(
+                                :ijl_lazy_load_and_lookup,
+                                Ptr{Cvoid},
+                                (Any, Cstring),
+                                flib,
+                                fname,
+                            )
+                        end
+                    elseif !isa(flib, LLVM.Value)
+                        # Julia 1.13+: flib resolved to a Julia object (library reference)
+                        # via absint; call with (Any, Any) matching the Julia 1.13 C signature.
                         ccall(
                             :ijl_lazy_load_and_lookup,
                             Ptr{Cvoid},
-                            (Any, Cstring),
+                            (Any, Any),
                             flib,
-                            fname,
+                            Symbol(fname),
                         )
+                    else
+                        # flib is still an LLVM.Value — absint failed to resolve the library; skip.
+                        nothing
                     end
                 catch e
                     nothing
