@@ -5787,7 +5787,7 @@ end
                     ET = eltype(jTy)
                     if Base.isconcretetype(ET)
                         sz_et = sizeof(ET)
-                        if sz_et >= 0
+                        if sz_et > 0
                             jTy = ET
                             byref = GPUCompiler.MUT_REF
                             offset = offset % sz_et
