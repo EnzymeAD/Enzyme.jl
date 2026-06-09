@@ -56,8 +56,8 @@ function EnzymeTestUtils.to_vec(x::AbstractGPUArray{<:Complex{<:EnzymeTestUtils.
         has_seen && return reshape(seen_xs[x], size(x))
         is_const && return x
         x_new = Core.Typeof(x)(undef, sz)
-        x_vec_new_real = x_vec_new[1:length(x)]
-        x_vec_new_imag = x_vec_new[(length(x) + 1):(2*length(x))]
+        x_vec_new_real = view(x_vec_new, 1:length(x))
+        x_vec_new_imag = view(x_vec_new, (length(x) + 1):(2*length(x)))
         x_vec_complex = reshape(complex.(x_vec_new_real, x_vec_new_imag), sz)
         x_new .= x_vec_complex
         seen_xs[x] = x_new
