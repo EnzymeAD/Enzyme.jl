@@ -253,11 +253,11 @@ function rewrite_ccalls!(mod::LLVM.Module)
     end
 end
 
-function fixup_1p12_sret!(f::LLVM.Function)
+function fixup_1p12_sret!(enzyme_context::EnzymeContext, f::LLVM.Function)
     if VERSION < v"1.12"
         return
     end
-    mi, RT = enzyme_custom_extract_mi(f, false)
+    mi, RT = enzyme_custom_extract_mi(enzyme_context, f, false)
     if mi === nothing
         return
     end

@@ -378,3 +378,9 @@ function enzyme_gutils_context(gutils::API.EnzymeGradientUtilsRef)
     @assert ptr != C_NULL
     return unsafe_pointer_to_objref(ptr)::EnzymeContext
 end
+
+function enzyme_context(analyzer::API.EnzymeTypeAnalyzerRef)
+    ptr = API.EnzymeTypeAnalyzerGetExternalContext(analyzer)
+    @assert ptr != C_NULL
+    return unsafe_pointer_to_objref(ptr)::EnzymeContext
+end

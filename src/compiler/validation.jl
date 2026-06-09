@@ -181,15 +181,15 @@ function restore_lookups(mod::LLVM.Module)::Nothing
     return
 end
 
-function check_ir(interp, @nospecialize(job::CompilerJob), mod::LLVM.Module)
-    errors = check_ir!(interp, job, IRError[], mod)
+function check_ir(enzyme_context::EnzymeContext, interp, @nospecialize(job::CompilerJob), mod::LLVM.Module)
+    errors = check_ir!(enzyme_context, interp, job, IRError[], mod)
     unique!(errors)
     return if !isempty(errors)
         throw(InvalidIRError(job, errors))
     end
 end
 
-function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, mod::LLVM.Module)
+function check_ir!(enzyme_context::EnzymeContext, interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, mod::LLVM.Module)
     imported = Set(String[])
     if haskey(functions(mod), "malloc")
         f = functions(mod)["malloc"]
@@ -213,7 +213,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
         if in(f, del)
             continue
         end
-        check_ir!(interp, job, errors, imported, f, del, mod)
+        check_ir!(enzyme_context, interp, job, errors, imported, f, del, mod)
     end
     for d in del
         LLVM.API.LLVMDeleteFunction(d)
@@ -224,7 +224,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
         if in(f, del)
             continue
         end
-        check_ir!(interp, job, errors, imported, f, del, mod)
+        check_ir!(enzyme_context, interp, job, errors, imported, f, del, mod)
     end
     for d in del
         LLVM.API.LLVMDeleteFunction(d)
@@ -233,7 +233,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     return errors
 end
 
-function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, f::LLVM.Function, deletedfns::Vector{LLVM.Function}, mod::LLVM.Module)
+function check_ir!(enzyme_context::EnzymeContext, interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, f::LLVM.Function, deletedfns::Vector{LLVM.Function}, mod::LLVM.Module)
     calls = LLVM.CallInst[]
     isInline = API.EnzymeGetCLBool(cglobal((:EnzymeInline, API.libEnzyme))) != 0
     mod = LLVM.parent(f)
@@ -537,7 +537,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
     while length(calls) > 0
         inst = pop!(calls)
-        check_ir!(interp, job, errors, imported, inst, calls, mod)
+        check_ir!(enzyme_context, interp, job, errors, imported, inst, calls, mod)
     end
 
     return errors
@@ -686,7 +686,7 @@ end
 import GPUCompiler:
     DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
-function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, inst::LLVM.CallInst, calls::Vector{LLVM.CallInst}, mod::LLVM.Module)
+function check_ir!(enzyme_context::EnzymeContext, interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, inst::LLVM.CallInst, calls::Vector{LLVM.CallInst}, mod::LLVM.Module)
     world = job.world
     method_table = Core.Compiler.method_table(interp)
     bt = backtrace(inst)
@@ -857,7 +857,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             fname = ops[2]
 
             if isa(flib, LLVM.ConstantExpr) || isa(flib, LLVM.GlobalVariable)
-                legal, flib2 = absint(flib)
+                legal, flib2 = absint(flib, false, false, false, enzyme_context)
                 if legal
                     flib = unbind(flib2)
                 end
@@ -1009,12 +1009,12 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 # Add 1 to account for function being first arg
                 iteroff = 2
 
-                legal, iterlib = absint(operands(inst)[iteroff + 1])
+                legal, iterlib = absint(operands(inst)[iteroff + 1], false, false, false, enzyme_context)
                 iterlib = unbind(iterlib)
                 if legal && iterlib == Base.iterate
-                    legal, GT, byref = abs_typeof(operands(inst)[4 + 1], true)
+                    legal, GT, byref = abs_typeof(operands(inst)[4 + 1], true, Set{LLVM.PHIInst}(), enzyme_context)
                     funcoff = 3
-                    legal2, funclib, byref2 = abs_typeof(operands(inst)[funcoff + 1])
+                    legal2, funclib, byref2 = abs_typeof(operands(inst)[funcoff + 1], false, Set{LLVM.PHIInst}(), enzyme_context)
                     if legal && (GT <: Vector || GT <: Tuple)
                         if legal2
                             tys = Union{Type, Core.TypeofVararg}[funclib, Vararg{Any}]
@@ -1089,17 +1089,17 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             if isa(dest, LLVM.Function) && in(LLVM.name(dest), keys(generic_method_offsets))
                 offset, start = generic_method_offsets[LLVM.name(dest)]
                 # Add 1 to account for function being first arg
-                legal, flibty, byref = abs_typeof(operands(inst)[offset + 1])
+                legal, flibty, byref = abs_typeof(operands(inst)[offset + 1], false, Set{LLVM.PHIInst}(), enzyme_context)
                 if legal
                     tys = Union{Type, Core.TypeofVararg}[flibty]
                     for op in @view arg_operands_view(inst)[(start + 1):end]
-                        legal, typ, byref2 = abs_typeof(op, true)
+                        legal, typ, byref2 = abs_typeof(op, true, Set{LLVM.PHIInst}(), enzyme_context)
                         if !legal
                             typ = Any
                         end
                         push!(tys, typ)
                     end
-                    legal, flib = absint(operands(inst)[offset + 1])
+                    legal, flib = absint(operands(inst)[offset + 1], false, false, false, enzyme_context)
                     flib = unbind(flib)
                     if legal && isa(flib, Core.MethodInstance)
                         if !Base.isvarargtype(flib.specTypes.parameters[end])
@@ -1244,17 +1244,17 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
         if isa(dest, LLVM.Function) && in(LLVM.name(dest), keys(generic_method_offsets))
             offset, start = generic_method_offsets[LLVM.name(dest)]
 
-            legal, flibty, byref = abs_typeof(operands(inst)[offset])
+            legal, flibty, byref = abs_typeof(operands(inst)[offset], false, Set{LLVM.PHIInst}(), enzyme_context)
             if legal
                 tys = Union{Type, Core.TypeofVararg}[flibty]
                 for op in @view arg_operands_view(inst)[start:end]
-                    legal, typ, byref2 = abs_typeof(op, true)
+                    legal, typ, byref2 = abs_typeof(op, true, Set{LLVM.PHIInst}(), enzyme_context)
                     if !legal
                         typ = Any
                     end
                     push!(tys, typ)
                 end
-                legal, flib = absint(operands(inst)[offset + 1])
+                legal, flib = absint(operands(inst)[offset + 1], false, false, false, enzyme_context)
                 flib = unbind(flib)
                 if legal && isa(flib, Core.MethodInstance)
                     if !Base.isvarargtype(flib.specTypes.parameters[end])
@@ -1383,7 +1383,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world
             end
 
             if nm == "julia.gc_alloc_obj"
-                legal, Ty, byref = abs_typeof(cur)
+                legal, Ty, byref = abs_typeof(cur, false, Set{LLVM.PHIInst}(), enzyme_context)
                 @assert legal
                 if !guaranteed_nonactive(Ty, world)
                     NTy = Base.RefValue{Ty}
@@ -1460,7 +1460,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world
 
         if length(off) == 0 &&
                 value_type(cur) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
-            legal, typ, byref = abs_typeof(cur)
+            legal, typ, byref = abs_typeof(cur, false, Set{LLVM.PHIInst}(), enzyme_context)
             if legal
                 if guaranteed_nonactive(typ, world)
                     continue

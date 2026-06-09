@@ -447,7 +447,7 @@ function byref_from_val_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nosp
     end
 end
 
-function emit_apply_type!(B::LLVM.IRBuilder, @nospecialize(Ty::Type), args::Vector{LLVM.Value})::LLVM.Value
+function emit_apply_type!(B::LLVM.IRBuilder, @nospecialize(Ty::Type), args::Vector{LLVM.Value}, enzyme_context::Union{EnzymeContext, Nothing} = nothing)::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -455,7 +455,7 @@ function emit_apply_type!(B::LLVM.IRBuilder, @nospecialize(Ty::Type), args::Vect
     legal = true
     found = Any[]
     for arg in args
-        slegal, foundv = absint(arg)
+        slegal, foundv = absint(arg, false, false, false, enzyme_context)
         if slegal
 	    push!(found, unbind(foundv))
         else
@@ -502,7 +502,7 @@ function emit_apply_type!(B::LLVM.IRBuilder, @nospecialize(Ty::Type), args::Vect
     return tag
 end
 
-function emit_tuple!(B::LLVM.IRBuilder, args::Vector{LLVM.Value})::LLVM.Value
+function emit_tuple!(B::LLVM.IRBuilder, args::Vector{LLVM.Value}, enzyme_context::Union{EnzymeContext, Nothing} = nothing)::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -510,7 +510,7 @@ function emit_tuple!(B::LLVM.IRBuilder, args::Vector{LLVM.Value})::LLVM.Value
     legal = true
     found = Any[]
     for arg in args
-        slegal, foundv = absint(arg)
+        slegal, foundv = absint(arg, false, false, false, enzyme_context)
         if slegal
 	    push!(found, unbind(foundv))
         else

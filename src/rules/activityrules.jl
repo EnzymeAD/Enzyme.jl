@@ -1,9 +1,9 @@
 
-function julia_activity_rule(f::LLVM.Function, world, method_table)
+function julia_activity_rule(enzyme_context::EnzymeContext, f::LLVM.Function, world, method_table)
     if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1")
         return
     end
-    mi, RT = enzyme_custom_extract_mi(f)
+    mi, RT = enzyme_custom_extract_mi(enzyme_context, f)
 
     llRT, sret, returnRoots = get_return_info(RT)
     retRemoved, parmsRemoved = removed_ret_parms(f)
