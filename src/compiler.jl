@@ -5783,6 +5783,17 @@ end
                     else
                         operands(inst)[3]
                     end
+                if legal && byref == GPUCompiler.BITS_VALUE && jTy <: Ptr
+                    ET = eltype(jTy)
+                    if Base.isconcretetype(ET)
+                        sz_et = sizeof(ET)
+                        if sz_et > 0
+                            jTy = ET
+                            byref = GPUCompiler.MUT_REF
+                            offset = offset % sz_et
+                        end
+                    end
+                end
 
                 if legal && Base.isconcretetype(jTy)
                     if !(

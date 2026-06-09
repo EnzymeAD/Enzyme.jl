@@ -832,6 +832,77 @@ function abs_typeof(
         end
     end
 
+    if isa(arg, LLVM.GetElementPtrInst) && !all(Base.Fix2(isa, LLVM.ConstantInt), operands(arg)[2:end])
+        base = operands(arg)[1]
+        legal, typ, byref = abs_typeof(base, partial, seenphis)
+        if legal && byref == GPUCompiler.BITS_VALUE && typ <: Ptr && Base.isconcretetype(typ)
+            etyp = eltype(typ)
+            if Base.isconcretetype(etyp)
+                sz = try
+                    sizeof(etyp)
+                catch
+                    0
+                end
+                if sz > 0
+                    indices = operands(arg)[2:end]
+                    if length(indices) == 1
+                        idx = indices[1]
+                        
+                        b = LLVM.IRBuilder()
+                        position!(b, arg)
+                        
+                        source_type = LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(arg))
+                        base_ptr = operands(arg)[1]
+                        
+                        tmp_indices_0 = LLVM.Value[LLVM.ConstantInt(value_type(idx), 0)]
+                        tmp_gep_0 = LLVM.gep!(b, source_type, base_ptr, tmp_indices_0)
+                        
+                        tmp_indices_1 = LLVM.Value[LLVM.ConstantInt(value_type(idx), 1)]
+                        tmp_gep_1 = LLVM.gep!(b, source_type, base_ptr, tmp_indices_1)
+                        
+                        offty = LLVM.IntType(8 * sizeof(Int))
+                        offset_0_val = API.EnzymeComputeByteOffsetOfGEP(b, tmp_gep_0, offty)
+                        offset_1_val = API.EnzymeComputeByteOffsetOfGEP(b, tmp_gep_1, offty)
+                        
+                        LLVM.API.LLVMInstructionEraseFromParent(tmp_gep_0)
+                        LLVM.API.LLVMInstructionEraseFromParent(tmp_gep_1)
+                        
+                        if isa(offset_0_val, LLVM.ConstantInt) && isa(offset_1_val, LLVM.ConstantInt)
+                            C = convert(Int, offset_0_val)
+                            stride = convert(Int, offset_1_val) - C
+                            
+                            if C % sz == 0
+                                is_multiple = false
+                                if stride % sz == 0
+                                    is_multiple = true
+                                elseif idx isa LLVM.ConstantInt
+                                    is_multiple = (convert(Int, idx) * stride) % sz == 0
+                                elseif idx isa LLVM.Instruction && opcode(idx) == LLVM.API.LLVMShl
+                                    if operands(idx)[2] isa LLVM.ConstantInt
+                                        shift_amt = convert(Int, operands(idx)[2])
+                                        if shift_amt < 64
+                                            is_multiple = ((1 << shift_amt) * stride) % sz == 0
+                                        end
+                                    end
+                                elseif idx isa LLVM.Instruction && opcode(idx) == LLVM.API.LLVMMul
+                                    if operands(idx)[1] isa LLVM.ConstantInt
+                                        is_multiple = (convert(Int, operands(idx)[1]) * stride) % sz == 0
+                                    elseif operands(idx)[2] isa LLVM.ConstantInt
+                                        is_multiple = (convert(Int, operands(idx)[2]) * stride) % sz == 0
+                                    end
+                                end
+                                
+                                if is_multiple
+                                    return (true, typ, byref)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
     if isa(arg, LLVM.PHIInst)
         if arg in seenphis
             return (false, nothing, nothing)
