@@ -7,6 +7,254 @@ using Random
 using Statistics
 using Test
 
+import Enzyme.EnzymeRules: augmented_primal, reverse, Const, Duplicated, Active
+import Enzyme.EnzymeRules
+
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(Molly.dict_get)},
+    ::Type{Active{T}},
+    dic::Duplicated{D},
+    key::Const{K},
+    default::Union{Const{T}, Active{T}}
+) where {T, D<:Dict, K}
+    val = Molly.dict_get(dic.val, key.val, default.val)
+    found = haskey(dic.val, key.val)
+    primal = needs_primal(config) ? val : nothing
+    return EnzymeRules.AugmentedReturn(primal, nothing, found)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(Molly.dict_get)},
+    dret::Active{T},
+    tape, # found
+    dic::Duplicated{D},
+    key::Const{K},
+    default::Const{T}
+) where {T, D<:Dict, K}
+    found = tape
+    if found
+        dic.dval[key.val] += dret.val
+    end
+    return (nothing, nothing, nothing)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(Molly.dict_get)},
+    dret::Active{T},
+    tape, # found
+    dic::Duplicated{D},
+    key::Const{K},
+    default::Active{T}
+) where {T, D<:Dict, K}
+    found = tape
+    if found
+        dic.dval[key.val] += dret.val
+        d_default = zero(T)
+    else
+        d_default = dret.val
+    end
+    return (nothing, nothing, d_default)
+end
+
+
+# --- Optimized GBN2 functions to bypass unused gradients and avoid type instability ---
+
+import Molly: ImplicitSolventGBN2, mbondi3_radii, lookup_table, coulomb_const, iszero_value, to_device, array_type
+import Molly: gb_solvent_dielectric, gb_solute_dielectric, gbn2_offset, gb_probe_radius, gb_sa_factor, gbn2_neck_scale, gbn2_neck_cut, mbondi2_element_to_radius, gbn2_element_to_screen, gbn2_element_to_screen_nucleic, gbn2_atom_params, gbn2_atom_params_nucleic, gbn2_data_d0, gbn2_data_m0
+import Molly.Unitful: ustrip, unit, dimension, @u_str
+
+function born_radii_loop_GBN2_only(coord_i::SVector{D, C}, coord_j, ori, orj, srj, dist_cutoff,
+                                offset, neck_scale, neck_cut, d0, m0, boundary) where {D, C}
+    I = zero(coord_i[1] / unit(dist_cutoff)^2)
+    r = norm(vector(coord_i, coord_j, boundary))
+    if Molly.iszero_value(r) || (!Molly.iszero_value(dist_cutoff) && r > dist_cutoff)
+        return I
+    end
+    U = r + srj
+    if ori < U
+        D_ij = abs(r - srj)
+        L = max(ori, D_ij)
+        I += (1/L - 1/U + (r - (srj^2)/r)*(1/(U^2) - 1/(L^2))/4 + log(L/U)/(2*r)) / 2
+        if ori < (srj - r)
+            I += 2 * (1/ori - 1/L)
+        end
+    end
+    radius_i = ori + offset
+    radius_j = orj + offset
+    if r < (radius_i + radius_j + neck_cut)
+        if dimension(C) == u"𝐋"
+            r_d0_strip = 10 * ustrip(u"nm", r - d0) # The integral uses Å
+        else
+            r_d0_strip = 10 * (r - d0)
+        end
+        denom = 1 + r_d0_strip^2 + 3 * r_d0_strip^6 / 10
+        I += neck_scale * m0 / denom
+    end
+    return I
+end
+
+function born_radii_only(inter::ImplicitSolventGBN2{T}, coords, boundary) where T
+    Is = fill(zero(T) / unit(inter.dist_cutoff), length(coords))
+    @inbounds for i in eachindex(coords)
+        I_sum = zero(eltype(Is))
+        for j in eachindex(coords)
+            I = born_radii_loop_GBN2_only(
+                coords[i], coords[j], inter.oris[i], inter.orjs[j], inter.srjs[j],
+                inter.dist_cutoff, inter.offset, inter.neck_scale, inter.neck_cut,
+                inter.d0s[i, j], inter.m0s[i, j], boundary,
+            )
+            I_sum += I
+        end
+        Is[i] = I_sum
+    end
+
+    Bs_B_grads = Molly.born_radii_sum.(inter.offset_radii, inter.offset, Is,
+                                 inter.αs, inter.βs, inter.γs)
+    Bs      = Molly.get_i1.(Bs_B_grads)
+    return Bs
+end
+
+function Molly.AtomsCalculators.potential_energy(sys::System{<:Any, <:Any, T}, inter::ImplicitSolventGBN2;
+                                           kwargs...) where T
+    coords, boundary = sys.coords, sys.boundary
+    Bs = born_radii_only(inter, coords, boundary)
+    atom_charges = charge.(sys.atoms)
+
+    E = zero(T) * sys.energy_units
+    @inbounds for i in eachindex(sys)
+        for j in eachindex(sys)
+            E += Molly.gb_energy_loop(
+                coords[i], coords[j], i, j, atom_charges[i], atom_charges[j], Bs[i], Bs[j],
+                inter.oris[i], inter.dist_cutoff, inter.factor_solute, inter.factor_solvent,
+                inter.kappa, inter.offset, inter.probe_radius, inter.sa_factor,
+                inter.use_ACE, boundary,
+            )
+        end
+    end
+    return E
+end
+
+function Molly.ImplicitSolventGBN2(atoms::AbstractArray{Molly.Atom{TY, M, T, D, E}},
+                                atoms_data,
+                                bonds;
+                                solvent_dielectric=Molly.gb_solvent_dielectric,
+                                solute_dielectric=Molly.gb_solute_dielectric,
+                                kappa=0.0u"nm^-1",
+                                offset=Molly.gbn2_offset,
+                                dist_cutoff=0.0u"nm",
+                                probe_radius=Molly.gb_probe_radius,
+                                sa_factor=Molly.gb_sa_factor,
+                                use_ACE=true,
+                                neck_scale=Molly.gbn2_neck_scale,
+                                neck_cut=Molly.gbn2_neck_cut,
+                                element_to_radius=Molly.mbondi2_element_to_radius,
+                                element_to_screen=Molly.gbn2_element_to_screen,
+                                element_to_screen_nucleic=Molly.gbn2_element_to_screen_nucleic,
+                                atom_params=Molly.gbn2_atom_params,
+                                atom_params_nucleic=Molly.gbn2_atom_params_nucleic,
+                                data_d0=Molly.gbn2_data_d0,
+                                data_m0=Molly.gbn2_data_m0) where {TY, M, T, D, E}
+    units = dimension(D) == u"𝐋"
+    radii = Molly.mbondi3_radii(atoms_data, bonds; element_to_radius=element_to_radius)
+    nucleic_acid_residues = ("A", "C", "G", "U", "DA", "DC", "DG", "DT")
+
+    if units
+        offset_radii = T.(radii .- offset)
+    else
+        offset_radii = T.(ustrip.(radii) .- ustrip(offset))
+    end
+    scaled_offset_radii = map(atoms_data, offset_radii) do at_data, offset_radius
+        if at_data.res_name in nucleic_acid_residues
+            screen = Molly.dict_get(element_to_screen_nucleic, at_data.element, element_to_screen_nucleic["-"])
+        else
+            screen = Molly.dict_get(element_to_screen, at_data.element, element_to_screen["-"])
+        end
+        return T(screen) * offset_radius
+    end
+
+    αs_cpu = map(atoms_data) do at_data
+        if at_data.res_name in nucleic_acid_residues
+            α = Molly.dict_get(atom_params_nucleic, at_data.element * "_α", atom_params_nucleic["-_α"])
+        else
+            α = Molly.dict_get(atom_params, at_data.element * "_α", atom_params["-_α"])
+        end
+        return T(α)
+    end
+    βs_cpu = map(atoms_data) do at_data
+        if at_data.res_name in nucleic_acid_residues
+            β = Molly.dict_get(atom_params_nucleic, at_data.element * "_β", atom_params_nucleic["-_β"])
+        else
+            β = Molly.dict_get(atom_params, at_data.element * "_β", atom_params["-_β"])
+        end
+        return T(β)
+    end
+    γs_cpu = map(atoms_data) do at_data
+        if at_data.res_name in nucleic_acid_residues
+            γ = Molly.dict_get(atom_params_nucleic, at_data.element * "_γ", atom_params_nucleic["-_γ"])
+        else
+            γ = Molly.dict_get(atom_params, at_data.element * "_γ", atom_params["-_γ"])
+        end
+        return T(γ)
+    end
+
+    n_atoms = length(atoms)
+    inds_j = reshape(collect(1:n_atoms), 1, n_atoms)
+    inds_i = permutedims(inds_j, (2, 1))
+
+    table_d0_units = T.(Molly.lookup_table(data_d0, radii))
+    table_m0_units = T.(Molly.lookup_table(data_m0, radii))
+    if units
+        table_d0 = table_d0_units
+        table_m0 = table_m0_units
+    else
+        table_d0 = ustrip.(table_d0_units)
+        table_m0 = ustrip.(table_m0_units)
+    end
+
+    coulomb_const_units = (units ? Molly.coulomb_const : ustrip(Molly.coulomb_const))
+    if !Molly.iszero_value(solute_dielectric)
+        factor_solute = -T(coulomb_const_units) / T(solute_dielectric)
+    else
+        factor_solute = zero(T(coulomb_const_units))
+    end
+    if !Molly.iszero_value(solvent_dielectric)
+        factor_solvent = T(coulomb_const_units) / T(solvent_dielectric)
+    else
+        factor_solvent = zero(T(coulomb_const_units))
+    end
+
+    AT = Molly.array_type(atoms)
+    or = Molly.to_device(offset_radii, AT)
+    sor = Molly.to_device(scaled_offset_radii, AT)
+    is, js = Molly.to_device(inds_i, AT), Molly.to_device(inds_j, AT)
+    d0s, m0s = Molly.to_device(table_d0, AT), Molly.to_device(table_m0, AT)
+    αs, βs, γs = Molly.to_device(αs_cpu, AT), Molly.to_device(βs_cpu, AT), Molly.to_device(γs_cpu, AT)
+    oris = @view or[is]
+    orjs = @view or[js]
+    srjs = @view sor[js]
+
+    if units
+        return Molly.ImplicitSolventGBN2{T, D, typeof(αs), typeof(or), typeof(T(kappa)), typeof(T(sa_factor)),
+                        typeof(factor_solute), typeof(is), typeof(d0s), typeof(m0s), typeof(oris)}(
+                    or, sor, solvent_dielectric, solute_dielectric, T(kappa), offset, dist_cutoff,
+                    use_ACE, αs, βs, γs, probe_radius, T(sa_factor), factor_solute,
+                    factor_solvent, is, js, d0s, m0s, neck_scale, neck_cut, oris, orjs, srjs)
+    else
+        return Molly.ImplicitSolventGBN2{T, T, typeof(αs), typeof(or), typeof(T(ustrip(kappa))), T, T,
+                        typeof(is), typeof(d0s), typeof(m0s), typeof(oris)}(
+                    or, sor, solvent_dielectric, solute_dielectric, T(ustrip(kappa)), ustrip(offset),
+                    ustrip(dist_cutoff), use_ACE, αs, βs, γs, ustrip(probe_radius), ustrip(sa_factor),
+                    factor_solute, factor_solvent, is, js, d0s, m0s, neck_scale, ustrip(neck_cut),
+                    oris, orjs, srjs)
+    end
+end
+
+# --- End of GBN2 optimizations ---
+
+
 const data_dir = joinpath(dirname(pathof(Molly)), "..", "data")
 const ff_dir = joinpath(data_dir, "force_fields")
 const run_parallel_tests = (Threads.nthreads() > 1)
