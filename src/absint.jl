@@ -845,7 +845,7 @@ function abs_typeof(
                 end
                 if sz > 0
                     indices = operands(arg)[2:end]
-                    if length(indices) == 1
+		    if length(indices) == 1 && value_type(indices[1]) isa LLVM.IntegerType
                         idx = indices[1]
                         
                         b = LLVM.IRBuilder()

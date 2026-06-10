@@ -2959,5 +2959,134 @@ function replace_builtin_fptr!(mod::LLVM.Module)
     return changed
 end
 
+function get_callee(inst::LLVM.CallInst)
+    fn = called_operand(inst)
+    while true
+        if isa(fn, LLVM.Function)
+            return fn
+        elseif isa(fn, LLVM.ConstantExpr)
+            opc = opcode(fn)
+            if opc == LLVM.API.LLVMBitCast || opc == LLVM.API.LLVMAddrSpaceCast
+                fn = operands(fn)[1]
+                continue
+            end
+        end
+        break
+    end
+    return nothing
+end
+
+# LLVM's Inliner pass refuses to inline functions if their call sites have "jl_roots" operand bundles.
+# This pass finds all calls to alwaysinline functions carrying "jl_roots", extracts the roots,
+# wraps the call site in gc_preserve_begin/gc_preserve_end block pairs, and removes the "jl_roots" bundle
+# from the call instruction itself. This preserves GC rooting safety while enabling successful inlining.
+# This prevents JIT cross-module calling convention mismatches (e.g. DAE optimizing functions to fastcc
+# but leaving call declarations as ccc).
+function remove_alwaysinline_roots!(mod::LLVM.Module)
+    changed = false
+    for f in collect(functions(mod))
+        if isempty(blocks(f))
+            continue
+        end
+        
+        B = IRBuilder()
+        to_rewrite = []
+        
+        for bb in blocks(f), inst in instructions(bb)
+            if isa(inst, LLVM.CallInst)
+                callee = get_callee(inst)
+                if callee !== nothing && isa(callee, LLVM.Function) && has_fn_attr(callee, EnumAttribute("alwaysinline"))
+                    has_roots = false
+                    roots = LLVM.Value[]
+                    
+                    other_bundles = if !isdefined(LLVM, :OperandBundleDef)
+                        OperandBundle[]
+                    else
+                        OperandBundleDef[]
+                    end
+                    
+                    for bunduse in operand_bundles(inst)
+                        if isdefined(LLVM, :OperandBundleDef)
+                            bund_def = LLVM.OperandBundleDef(bunduse)
+                            if LLVM.tag_name(bund_def) == "jl_roots"
+                                has_roots = true
+                                for val in LLVM.inputs(bund_def)
+                                    push!(roots, val)
+                                end
+                            else
+                                push!(other_bundles, bund_def)
+                            end
+                        else
+                            if LLVM.tag(bunduse) == "jl_roots"
+                                has_roots = true
+                                for val in LLVM.inputs(bunduse)
+                                    push!(roots, val)
+                                end
+                            else
+                                push!(other_bundles, bunduse)
+                            end
+                        end
+                    end
+                    
+                    if has_roots
+                        push!(to_rewrite, (inst, roots, other_bundles))
+                    end
+                end
+            end
+        end
+        
+        for (inst, roots, other_bundles) in to_rewrite
+            position!(B, inst)
+            token = emit_gc_preserve_begin(B, roots)
+            
+            prevname = LLVM.name(inst)
+            LLVM.name!(inst, "")
+            
+            newinst = call!(
+                B,
+                called_type(inst),
+                called_operand(inst),
+                collect(arguments(inst)),
+                other_bundles,
+                prevname,
+            )
+            
+            for idx in [
+                LLVM.API.LLVMAttributeFunctionIndex,
+                LLVM.API.LLVMAttributeReturnIndex,
+                [
+                    LLVM.API.LLVMAttributeIndex(i) for
+                    i = 1:(length(arguments(inst)))
+                ]...,
+            ]
+                idx = reinterpret(LLVM.API.LLVMAttributeIndex, idx)
+                count = LLVM.API.LLVMGetCallSiteAttributeCount(inst, idx)
+                Attrs = Base.unsafe_convert(
+                    Ptr{LLVM.API.LLVMAttributeRef},
+                    Libc.malloc(sizeof(LLVM.API.LLVMAttributeRef) * count),
+                )
+                LLVM.API.LLVMGetCallSiteAttributes(inst, idx, Attrs)
+                for j = 1:count
+                    LLVM.API.LLVMAddCallSiteAttribute(
+                        newinst,
+                        idx,
+                        unsafe_load(Attrs, j),
+                    )
+                end
+                Libc.free(Attrs)
+            end
+            API.EnzymeCopyMetadata(newinst, inst)
+            callconv!(newinst, callconv(inst))
+            
+            emit_gc_preserve_end(B, token)
+            
+            replace_uses!(inst, newinst)
+            LLVM.erase!(inst)
+            changed = true
+        end
+    end
+    return changed
+end
+
 
 

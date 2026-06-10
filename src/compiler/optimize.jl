@@ -28,12 +28,14 @@ ReinsertGCMarkerPass() = NewPMFunctionPass("reinsert_gcmarker", reinsert_gcmarke
 RestoreAllocaType() = NewPMFunctionPass("restore_alloca_type", restore_alloca_type!)
 SafeAtomicToRegularStorePass() = NewPMFunctionPass("safe_atomic_to_regular_store", safe_atomic_to_regular_store!)
 Addr13NoAliasPass() = NewPMModulePass("addr13_noalias", addr13NoAlias)
+RemoveAlwaysInlineRootsPass() = NewPMModulePass("remove_alwaysinline_roots", remove_alwaysinline_roots!)
 
 function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     @dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, Addr13NoAliasPass())
         register!(pb, RestoreAllocaType())
+        register!(pb, RemoveAlwaysInlineRootsPass())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
@@ -52,6 +54,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 add!(fpm, SROAPass())
                 add!(fpm, MemCpyOptPass())
             end
+            add!(mpm, RemoveAlwaysInlineRootsPass())
             add!(mpm, AlwaysInlinerPass())
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, AllocOptPass())
@@ -224,7 +227,7 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         add!(fpm, DCEPass())
         add!(fpm, SROAPass())
     end
-
+    add!(mpm, RemoveAlwaysInlineRootsPass())
     add!(mpm, AlwaysInlinerPass())
 
     add!(mpm, NewPMFunctionPassManager()) do fpm
@@ -479,7 +482,8 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, ReinsertGCMarkerPass())
         register!(pb, SafeAtomicToRegularStorePass())
-		register!(pb, RestoreAllocaType())
+        register!(pb, RestoreAllocaType())
+        register!(pb, RemoveAlwaysInlineRootsPass())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())

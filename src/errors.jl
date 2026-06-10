@@ -1055,7 +1055,8 @@ function julia_error(
             for u in LLVM.uses(val)
                 u = LLVM.user(u)
                 if isa(u, LLVM.Instruction)
-                    bt = GPUCompiler.backtrace(val)
+                    bt = GPUCompiler.backtrace(u)
+                    break
                 end
             end
         elseif val isa LLVM.Function

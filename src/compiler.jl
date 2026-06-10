@@ -5145,6 +5145,7 @@ function lower_convention(
 
 
 
+    remove_alwaysinline_roots!(mod)
     run!(AlwaysInlinerPass(), mod)
     if !hasReturnsTwice
         LLVM.API.LLVMRemoveEnumAttributeAtIndex(
@@ -5446,6 +5447,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             end
         end
 
+        remove_alwaysinline_roots!(mod)
         run!(AlwaysInlinerPass(), mod)
         for fname in toremove
             if haskey(functions(mod), fname)
@@ -5785,8 +5787,8 @@ end
                     end
                 if legal && byref == GPUCompiler.BITS_VALUE && jTy <: Ptr
                     ET = eltype(jTy)
-                    if Base.isconcretetype(ET) && Base.isbitstype(ET)
-                        sz_et = sizeof(ET)
+                    if Base.isconcretetype(ET)
+		        sz_et = actual_size(ET)
                         if sz_et > 0
                             jTy = ET
                             byref = GPUCompiler.MUT_REF
@@ -6068,6 +6070,7 @@ end
                 push!(toremove, name(f))
             end       
         end
+        remove_alwaysinline_roots!(mod)
         run!(AlwaysInlinerPass(), mod)
         for fname in toremove
             if haskey(functions(mod), fname)

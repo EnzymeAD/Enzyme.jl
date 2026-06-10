@@ -130,3 +130,14 @@ end
     dx = Enzyme.gradient(Reverse, objective, y0[1], ps)
     @test dx == (1.0, ((0.0, 0.0), (0.0, 0.0)))
 end
+
+const M_test = [1.0 0.2 0.0; 0.0 1.0 0.1; 0.3 0.0 1.0]
+inner_test(t) = sum((M_test * t) .^ 2)
+g_test(p) = sum(Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), inner_test, p)[1])
+
+@testset "Nested BLAS AD calling convention / GC preserve inlining" begin
+    dp = [0.0, 0.0, 0.0]
+    Enzyme.autodiff(Enzyme.set_runtime_activity(Enzyme.Reverse), Enzyme.Const(g_test), Enzyme.Active, Enzyme.Duplicated([1.0, 2.0, 3.0], dp))
+    @test dp ≈ [3.18, 2.68, 2.82]
+end
+
