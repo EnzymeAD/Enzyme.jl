@@ -5,14 +5,18 @@ using Distributions
 using FiniteDifferences
 using VLBISkyModels
 using LinearAlgebra
+using Random
 
 using Test
 
+Random.seed!(42)
 
 const ComradePATH = joinpath(dirname(pathof(Comrade)), "..", "examples", "Data")
 const dataurl = "https://github.com/ptiede/ComradeTestData/releases/download/Data/eht_2017_data.uvfits"
 const arrayf = joinpath(ComradePATH, "array.txt")
 const dataf = Base.download(dataurl)
+
+
 
 function FiniteDifferences.to_vec(k::IntensityMap)
     v, b = to_vec(DD.data(k))
