@@ -163,6 +163,62 @@ function EnzymeRules.reverse(
     return (nothing, nothing)
 end
 
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(\)},
+        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated}},
+        A::Annotation{AT},
+        B::Annotation{BT},
+    ) where {AT <: Array, BT <: Array}
+    if !(EnzymeRules.needs_primal(config) || EnzymeRules.needs_shadow(config))
+        return nothing
+    end
+
+    m, n = size(A.val)
+    if !(A isa Const) && m != n
+        throw(ArgumentError("active rectangular linear solves are not supported"))
+    end
+
+    fact = compute_lu_cache(A.val, B.val)
+    retval = fact \ B.val
+
+    if EnzymeRules.needs_shadow(config)
+        N = EnzymeRules.width(config)
+        dretvals = ntuple(Val(N)) do i
+            Base.@_inline_meta
+            dB = B isa Const ? zero(B.val) : copy(N == 1 ? B.dval : B.dval[i])
+            if !(A isa Const)
+                dA = N == 1 ? A.dval : A.dval[i]
+                mul!(dB, dA, retval, -1, 1)
+            end
+            if m == n
+                ldiv!(fact, dB)
+                return dB::typeof(retval)
+            else
+                return (fact \ dB)::typeof(retval)
+            end
+        end
+
+        if EnzymeRules.needs_primal(config)
+            if N == 1
+                return Duplicated(retval, dretvals[1])
+            else
+                return BatchDuplicated(retval, dretvals)
+            end
+        else
+            if N == 1
+                return dretvals[1]
+            else
+                return dretvals
+            end
+        end
+    elseif EnzymeRules.needs_primal(config)
+        return retval
+    else
+        return nothing
+    end
+end
+
 const EnzymeTriangulars = Union{
     UpperTriangular{<:Complex},
     LowerTriangular{<:Complex},
@@ -503,4 +559,3 @@ end
 
 # partial derivative of the determinant is the matrix of cofactors
 EnzymeRules.@easy_rule(LinearAlgebra.det(A::AbstractMatrix), (cofactor(A),))
-
