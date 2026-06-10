@@ -15,7 +15,7 @@ function EnzymeTestUtils.to_vec(x::AbstractGPUArray{<:EnzymeTestUtils.ElementTyp
     has_seen = haskey(seen_vecs, x)
     is_const = Enzyme.Compiler.guaranteed_const(Core.Typeof(x))
     if has_seen || is_const
-        x_vec = Float32[]
+        x_vec = similar(x, Float32, 0)
     else
         x_vec = reshape(x, length(x))
         seen_vecs[x] = x_vec
@@ -38,11 +38,11 @@ function EnzymeTestUtils.to_vec(x::AbstractGPUArray{<:EnzymeTestUtils.ElementTyp
 end
 
 # basic containers: loop over defined elements, recursively converting them to vectors
-function to_vec(x::AbstractGPUArray{<:Complex{<:EnzymeTestUtils.ElementType}}, seen_vecs::EnzymeTestUtils.AliasDict)
+function EnzymeTestUtils.to_vec(x::AbstractGPUArray{<:Complex{<:EnzymeTestUtils.ElementType}}, seen_vecs::EnzymeTestUtils.AliasDict)
     has_seen = haskey(seen_vecs, x)
     is_const = Enzyme.Compiler.guaranteed_const(Core.Typeof(x))
     if has_seen || is_const
-        x_vec = Float32[]
+        x_vec = similar(x, Float32, 0)
     else
         y = reshape(x, length(x))
         x_vec = vcat(real.(y), imag.(y))
@@ -55,11 +55,11 @@ function to_vec(x::AbstractGPUArray{<:Complex{<:EnzymeTestUtils.ElementType}}, s
         end
         has_seen && return reshape(seen_xs[x], size(x))
         is_const && return x
-	x_new = Array{eltype(x)}(undef, sz)
-        @inbounds @simd for i in 1:length(x)
-            x_new[i] = eltype(x)(x_vec_new[i], x_vec_new[i + length(x)])
-        end
-	x_new = Core.Typeof(x)(x_new)
+        x_new = Core.Typeof(x)(undef, sz)
+        x_vec_new_real = view(x_vec_new, 1:length(x))
+        x_vec_new_imag = view(x_vec_new, (length(x) + 1):(2*length(x)))
+        x_vec_complex = reshape(complex.(x_vec_new_real, x_vec_new_imag), sz)
+        x_new .= x_vec_complex
         seen_xs[x] = x_new
         return x_new
     end
@@ -71,7 +71,7 @@ function to_vec(x::AbstractGPUArray, seen_vecs::EnzymeTestUtils.AliasDict)
     has_seen = haskey(seen_vecs, x)
     is_const = Enzyme.Compiler.guaranteed_const(Core.Typeof(x))
     if has_seen || is_const
-        x_vec = Float32[]
+        x_vec = similar(x, Float32, 0)
     else
         x_vecs = nothing
         from_vecs = []
@@ -87,7 +87,7 @@ function to_vec(x::AbstractGPUArray, seen_vecs::EnzymeTestUtils.AliasDict)
         end
 
         if x_vecs === nothing
-            x_vecs = (Float32[], true)
+            x_vecs = (similar(x, Float32, 0), true)
         end
         x_vec = x_vecs[1]
         seen_vecs[x] = x_vec
@@ -98,7 +98,7 @@ function to_vec(x::AbstractGPUArray, seen_vecs::EnzymeTestUtils.AliasDict)
         end
         has_seen && return reshape(seen_xs[x], size(x))
         is_const && return x
-	x_new = Array{eltype(x_vew_new)}(undef, size(x))
+        x_new = Array{eltype(x_vew_new)}(undef, size(x))
         k = 1
         for i in eachindex(x)
             isassigned(x, i) || continue
@@ -106,7 +106,7 @@ function to_vec(x::AbstractGPUArray, seen_vecs::EnzymeTestUtils.AliasDict)
             x_new[i] = xi
             k += 1
         end
-	x_new = Core.Typeof(x)(x_new)
+        x_new = Core.Typeof(x)(x_new)
         seen_xs[x] = x_new
         return x_new
     end
