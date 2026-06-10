@@ -1042,3 +1042,11 @@ end
 
     @test dM_sym ≈ [1.0 2.0 2.0 2.0; 2.0 1.0 2.0 2.0; 2.0 2.0 1.0 2.0; 2.0 2.0 2.0 1.0]
 end
+
+@testset "Symmetric ldiv padding" begin
+    A = [2.0 1.0; 1.0 3.0]
+    B = Symmetric([1.0 2.0; 2.0 4.0])
+    g = Enzyme.gradient(Reverse, (B, A_val) -> sum(cholesky(A_val) \ B), B, Const(A))[1]
+    @test g ≈ [0.4 0.6; 0.6 0.2]
+end
+
