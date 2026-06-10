@@ -30,7 +30,8 @@ import Enzyme:
     ismutabletype,
     create_fresh_codeinfo,
     add_edge!,
-    arg_operands_view
+    arg_operands_view,
+    LookupError
 
 using Enzyme
 
@@ -7257,7 +7258,7 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
     
     mi = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
     
-    mi === nothing && return stub(world, source, :(throw(MethodError($ft, $primal_tt, $world))))
+    mi === nothing && return stub(world, source, :(throw(LookupError($ft, $primal_tt, $world))))
  
     check_activity_cache_invalidations(world)
 
@@ -7376,7 +7377,7 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
  
     mi = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
     
-    mi === nothing && return stub(world, source, :(throw(MethodError($ft, $primal_tt, $world))))
+    mi === nothing && return stub(world, source, :(throw(LookupError($ft, $primal_tt, $world))))
     
     target = EnzymeTarget()
     rt2 = if A isa UnionAll
