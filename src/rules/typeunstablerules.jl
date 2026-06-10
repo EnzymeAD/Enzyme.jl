@@ -29,14 +29,58 @@
             end
         end
         if aref == DupState
-            return quote
-                Base.@_inline_meta
-                batchshadowarg
+
+            if batchshadowarg === Nothing && primarg !== Nothing
+                # in this case the arg is inactive [as we passed nothing for the shadow]. 
+                # However, we still have to return a duplicated value, as it is required by type.
+                if RuntimeActivity
+                    return quote
+                        Base.@_inline_meta
+                        primarg
+                    end
+                else
+                    return quote
+                        Base.@_inline_meta
+                        throw(
+                            EnzymeRuntimeActivityError{String, Nothing, Nothing}(
+                            "Error cannot store inactive but differentiable variable "*string(primarg)*" into active tuple",
+                            nothing,
+                            nothing
+                        )
+                        )
+                    end
+                end
+            else
+                return quote
+                    Base.@_inline_meta
+                    batchshadowarg
+                end
             end
         else
-            return quote
-                Base.@_inline_meta
-                batchshadowarg[]
+            if batchshadowarg === Nothing && primarg !== Nothing
+                # in this case the arg is inactive [as we passed nothing for the shadow]. 
+                # However, we still have to return a duplicated value, as it is required by type.
+                if aref == ActiveState
+                    return quote
+                        Enzyme.make_zero(primarg)
+                    end
+                else
+                    return quote
+                        Base.@_inline_meta
+                        throw(
+                            EnzymeRuntimeActivityError{String, Nothing, Nothing}(
+                            "Error cannot store inactive but differentiable variable "*string(primarg)*" into active tuple",
+                            nothing,
+                            nothing
+                            )
+                        )
+                    end
+                end
+            else
+                return quote
+                    Base.@_inline_meta
+                    batchshadowarg[]
+                end
             end
         end
     end
@@ -171,13 +215,18 @@ function body_construct_rev(
                 :(getfield($tsym, $i))
             end
             shad = batchshadowargs[i][w]
+            prim = primargs[i]
+
             out = :(
-                if $(Symbol("active_ref_$i")) == MixedState ||
-                   $(Symbol("active_ref_$i")) == ActiveState
-                    if $shad isa Base.RefValue
-                        $shad[] = recursive_add($shad[], $expr, identity, guaranteed_nonactive)
-                    else
-                        throw(EnzymeNonScalarReturnException($shad, ""))
+                # Inactive argument, don't need to update anything
+                if !($shad === nothing && $prim !== nothing)
+                    if $(Symbol("active_ref_$i")) == MixedState ||
+                       $(Symbol("active_ref_$i")) == ActiveState
+                        if $shad isa Base.RefValue
+                            $shad[] = recursive_add($shad[], $expr, identity, guaranteed_nonactive)
+                        else
+                            throw(EnzymeNonScalarReturnException($shad, ""))
+                        end
                     end
                 end
             )

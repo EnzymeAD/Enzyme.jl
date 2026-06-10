@@ -167,3 +167,9 @@ end
    _, _, shad = fwd(Const(typeunstable_constant_shadow))
 end
 
+kwcallee(x; saveat) = x + saveat # callee takes a keyword argument
+typeunstable_kwloss(x, r) = kwcallee(x; saveat = r[])
+
+@testset "Inactive argument to new struct" begin
+	@test Enzyme.gradient(Enzyme.Reverse, typeunstable_kwloss, 2.7, Enzyme.Const(Base.RefValue{Any}(3.1)))[1] ≈ 1.0
+end
