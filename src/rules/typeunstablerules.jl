@@ -134,6 +134,7 @@ function body_construct_augfwd(
     primargs,
     batchshadowargs,
     tuple,
+    @nospecialize(NewType::Union{Nothing, Type})
 )
     shadow_rets = Vector{Expr}[]
     results = Expr[quote
@@ -172,10 +173,18 @@ function body_construct_augfwd(
         push!(res_syms, sres)
     end
 
+    # Mutable structs are DupState overall: their shadow must be a plain shadow
+    # object, not a MixedState-style RefValue, to match what downstream consumers
+    # derive from active_reg_nothrow of the result type.
+    wrapcond = :any_mixed
+    if !tuple && ismutabletype(NewType)
+        wrapcond = false
+    end
+
     if Width == 1
         push!(results,
             quote
-                if any_mixed
+                if $wrapcond
                     $(ref_syms[1])
                 else
                     $(res_syms[1])
@@ -183,7 +192,7 @@ function body_construct_augfwd(
             end)
     else
         push!(results, quote
-                if any_mixed
+                if $wrapcond
                     ReturnType(($(ref_syms...),))
                 else
                     ReturnType(($(res_syms...),))
@@ -204,6 +213,7 @@ function body_construct_rev(
     batchshadowargs,
     dfns,
     tuple,
+    @nospecialize(NewType::Union{Nothing,Type})
 )
     outs = Vector{Expr}(undef, N*Width)
     for i = 1:N
@@ -235,11 +245,19 @@ function body_construct_rev(
     end
 
     tapes = Vector{Expr}(undef, Width)
-    @inbounds tapes[1] = :(tval_1 = tape[])
+    @inbounds tapes[1] = if !tuple && ismutabletype(NewType)
+        :(tval_1 = tape)
+    else
+        :(tval_1 = tape[])
+    end
     for w = 2:Width
         sym = Symbol("tval_$w")
         df = dfns[w]
-        @inbounds tapes[w] = :($sym = $df[])
+        @inbounds tapes[w] = if !tuple && ismutabletype(NewType)
+            :($sym = $df)
+        else
+            :($sym = $df[])
+        end
     end
 
     quote
@@ -255,7 +273,7 @@ end
 
 
 function body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns)
-    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns, true)
+    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns, true, nothing)
 end
 
 function body_runtime_newstruct_rev(
@@ -265,9 +283,10 @@ function body_runtime_newstruct_rev(
     active_refs,
     primargs,
     batchshadowargs,
-    dfns
+    dfns,
+    @nospecialize(NewType::Union{Nothing,Type})
 )
-    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns, false)
+    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns, false, NewType)
 end
 
 
@@ -280,7 +299,7 @@ function body_runtime_tuple_augfwd(
     primargs,
     batchshadowargs,
 )
-    body_construct_augfwd(N, RuntimeActivity, Width, primtypes, active_refs, primargs, batchshadowargs, true)
+    body_construct_augfwd(N, RuntimeActivity, Width, primtypes, active_refs, primargs, batchshadowargs, true, nothing)
 end
 
 @generated function runtime_tuple_augfwd(
@@ -355,6 +374,7 @@ function body_runtime_newstruct_augfwd(
     active_refs,
     primargs,
     batchshadowargs,
+    @nospecialize(NewType::Type)
 )
     body_construct_augfwd(
         N,
@@ -365,6 +385,7 @@ function body_runtime_newstruct_augfwd(
         primargs,
         batchshadowargs,
         false,
+        NewType
     )
 end
 
@@ -388,34 +409,8 @@ end
         active_refs,
         primargs,
         batchshadowargs,
+        NewType
     )
-end
-
-function func_runtime_newstruct_rev(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
-        setup_macro_wraps(false, N, Width; mixed_or_active = true)
-    body = body_runtime_newstruct_rev(
-        N,
-        Width,
-        primtypes,
-        active_refs,
-        primargs,
-        batchshadowargs,
-        dfns
-    )
-
-    quote
-        function runtime_newstruct_rev(
-            activity::Type{Val{ActivityTup}},
-            width::Val{$Width},
-            ModifiedBetween::Val{MB},
-            ::Type{NewStruct},
-            tape::TapeType,
-            $(allargs...),
-        ) where {ActivityTup,MB,NewStruct,TapeType,$(typeargs...)}
-            $body
-        end
-    end
 end
 
 @generated function runtime_newstruct_rev(
@@ -436,7 +431,8 @@ end
         active_refs,
         primargs,
         batchshadowargs,
-        dfns
+        dfns,
+        NewStruct
     )
 end
 
