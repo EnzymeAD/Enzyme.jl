@@ -8,6 +8,7 @@ using LinearAlgebra
 
 using Test
 
+Enzyme.Compiler.CheckNan[] = true
 
 const ComradePATH = joinpath(dirname(pathof(Comrade)), "..", "examples", "Data")
 const dataurl = "https://github.com/ptiede/ComradeTestData/releases/download/Data/eht_2017_data.uvfits"
