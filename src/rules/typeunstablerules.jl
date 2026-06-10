@@ -449,6 +449,11 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
     world = enzyme_extract_world(LLVM.parent(position(B)))
 
     @assert is_constant_value(gutils, operands(orig)[offset])
+    legal, NewType, _ = abs_typeof(operands(orig)[offset])
+    if !fwd && legal && !guaranteed_nonactive(NewType, world)
+        return false
+    end
+
     ops = @view arg_operands_view(orig)[offset+1:end]
     icvs = [is_constant_value(gutils, v) for v in ops]
     abs_partial = [abs_typeof(v, true) for v in ops]
@@ -572,40 +577,85 @@ function common_newstructv_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
 
         T_jlvalue = LLVM.StructType(LLVMType[])
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-
+        T_pprjlvalue = LLVM.PointerType(T_prjlvalue, Derived)
 
         width = get_width(gutils)
+        world = enzyme_extract_world(LLVM.parent(position(B)))
 
-        sret = generic_setup(
-            orig,
-            runtime_newstruct_augfwd,
-            width == 1 ? Any : AnyArray(Int(width)),
-            gutils,
-            offset,
-            B,
-            false;
-            firstconst = true,
-            endcast = false,
-            firstconst_after_tape = true,
-            runtime_activity = true,
-            strong_zero = false
-        ) #=start=#
+        # Unpack arguments
+        legal, NewType, _ = abs_typeof(operands(orig)[offset])
+        @assert legal
+
+        args_ptr = new_from_original(gutils, operands(orig)[offset+1])
+        dargs_ptr = invert_pointer(gutils, operands(orig)[offset+1], B)
+
+        function get_typed_ptr(val)
+            vty = value_type(val)
+            if vty isa LLVM.IntegerType
+                return LLVM.inttoptr!(B, val, T_pprjlvalue)
+            elseif vty isa LLVM.PointerType
+                if LLVM.addrspace(vty) != Derived
+                    val = LLVM.addrspacecast!(B, val, LLVM.PointerType(T_jlvalue, Derived))
+                end
+                return LLVM.pointercast!(B, val, T_pprjlvalue)
+            else
+                error("Unexpected type for args_ptr: $vty")
+            end
+        end
+
+        args_ptr_typed = get_typed_ptr(args_ptr)
+        dargs_ptrs_typed = []
+        for w in 1:width
+            ev = if width == 1
+                dargs_ptr
+            else
+                extract_value!(B, dargs_ptr, w - 1)
+            end
+            push!(dargs_ptrs_typed, get_typed_ptr(ev))
+        end
+
+        act_tup = Tuple{[!guaranteed_nonactive(fieldtype(NewType, i), world) for i in 1:fieldcount(NewType)]...}
+        mb_tup = Tuple{[true for _ in 1:fieldcount(NewType)]...}
+
+        vals = LLVM.Value[]
+        push!(vals, unsafe_to_llvm(B, runtime_newstruct_augfwd))
+        push!(vals, unsafe_to_llvm(B, Val{act_tup}))
+        push!(vals, unsafe_to_llvm(B, Val(get_runtime_activity(gutils))))
+        push!(vals, unsafe_to_llvm(B, Val(Int(width))))
+        push!(vals, unsafe_to_llvm(B, Val{mb_tup}))
+        push!(vals, unsafe_to_llvm(B, NewType))
+        push!(vals, unsafe_to_llvm(B, Val(width == 1 ? Any : AnyArray(Int(width)))))
+
+        for i in 1:fieldcount(NewType)
+            gep_prim = LLVM.inbounds_gep!(B, T_prjlvalue, args_ptr_typed, [LLVM.ConstantInt(i-1)])
+            val_i = LLVM.load!(B, T_prjlvalue, gep_prim)
+            push!(vals, val_i)
+
+            for w in 1:width
+                gep_shad = LLVM.inbounds_gep!(B, T_prjlvalue, dargs_ptrs_typed[w], [LLVM.ConstantInt(i-1)])
+                dval_i_w = LLVM.load!(B, T_prjlvalue, gep_shad)
+                push!(vals, dval_i_w)
+            end
+        end
+
+        cal = emit_apply_generic!(B, vals)
+        debug_from_orig!(gutils, cal, orig)
 
         if width == 1
-            shadow = sret
+            shadow = cal
         else
             AT = LLVM.ArrayType(T_prjlvalue, Int(width))
             llty = convert(LLVMType, AnyArray(Int(width)))
-            cal = sret
-            cal = LLVM.addrspacecast!(B, cal, LLVM.PointerType(T_jlvalue, Derived))
-            cal = LLVM.pointercast!(B, cal, LLVM.PointerType(llty, Derived))
+            cal2 = cal
+            cal2 = LLVM.addrspacecast!(B, cal2, LLVM.PointerType(T_jlvalue, Derived))
+            cal2 = LLVM.pointercast!(B, cal2, LLVM.PointerType(llty, Derived))
             ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
             shadow = LLVM.UndefValue(ST)
             for i = 1:width
                 gep = LLVM.inbounds_gep!(
                     B,
                     AT,
-                    cal,
+                    cal2,
                     [LLVM.ConstantInt(0), LLVM.ConstantInt(i - 1)],
                 )
                 ld = LLVM.load!(B, T_prjlvalue, gep)
@@ -614,7 +664,7 @@ function common_newstructv_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
         end
         unsafe_store!(shadowR, shadow.ref)
 
-        unsafe_store!(tapeR, sret.ref)
+        unsafe_store!(tapeR, cal.ref)
         return false
     end
 
@@ -644,24 +694,76 @@ function common_newstructv_rev(offset, B, orig, gutils, tape)
     if !newstruct_common(false, false, offset, B, orig, gutils, nothing, nothing) #=shadowR=#
         @assert tape !== C_NULL
         width = get_width(gutils)
-        generic_setup(
-            orig,
-            runtime_newstruct_rev,
-            Nothing,
-            gutils,
-            offset,
-            B,
-            true;
-            firstconst = true,
-            tape,
-            firstconst_after_tape = true,
-            runtime_activity = false,
-            strong_zero = false
-        ) #=start=#
+        world = enzyme_extract_world(LLVM.parent(position(B)))
+
+        # Unpack arguments
+        legal, NewType, _ = abs_typeof(operands(orig)[offset])
+        @assert legal
+
+        args_ptr = new_from_original(gutils, operands(orig)[offset+1])
+        dargs_ptr = invert_pointer(gutils, operands(orig)[offset+1], B)
+        args_ptr = lookup_value(gutils, args_ptr, B)
+        dargs_ptr = lookup_value(gutils, dargs_ptr, B)
+
+        function get_typed_ptr(val)
+            vty = value_type(val)
+            if vty isa LLVM.IntegerType
+                return LLVM.inttoptr!(B, val, T_pprjlvalue)
+            elseif vty isa LLVM.PointerType
+                if LLVM.addrspace(vty) != Derived
+                    val = LLVM.addrspacecast!(B, val, LLVM.PointerType(T_jlvalue, Derived))
+                end
+                return LLVM.pointercast!(B, val, T_pprjlvalue)
+            else
+                error("Unexpected type for args_ptr: $vty")
+            end
+        end
+
+        T_jlvalue = LLVM.StructType(LLVMType[])
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+        T_pprjlvalue = LLVM.PointerType(T_prjlvalue, Derived)
+
+        args_ptr_typed = get_typed_ptr(args_ptr)
+        dargs_ptrs_typed = []
+        for w in 1:width
+            ev = if width == 1
+                dargs_ptr
+            else
+                extract_value!(B, dargs_ptr, w - 1)
+            end
+            push!(dargs_ptrs_typed, get_typed_ptr(ev))
+        end
+
+        act_tup = Tuple{[!guaranteed_nonactive(fieldtype(NewType, i), world) for i in 1:fieldcount(NewType)]...}
+        mb_tup = Tuple{[true for _ in 1:fieldcount(NewType)]...}
+
+        vals = LLVM.Value[]
+        push!(vals, unsafe_to_llvm(B, runtime_newstruct_rev))
+        push!(vals, unsafe_to_llvm(B, Val{act_tup}))
+        push!(vals, unsafe_to_llvm(B, Val(Int(width))))
+        push!(vals, unsafe_to_llvm(B, Val{mb_tup}))
+        push!(vals, unsafe_to_llvm(B, NewType))
+        push!(vals, lookup_value(gutils, tape, B))
+
+        for i in 1:fieldcount(NewType)
+            gep_prim = LLVM.inbounds_gep!(B, T_prjlvalue, args_ptr_typed, [LLVM.ConstantInt(i-1)])
+            val_i = LLVM.load!(B, T_prjlvalue, gep_prim)
+            push!(vals, val_i)
+
+            for w in 1:width
+                gep_shad = LLVM.inbounds_gep!(B, T_prjlvalue, dargs_ptrs_typed[w], [LLVM.ConstantInt(i-1)])
+                dval_i_w = LLVM.load!(B, T_prjlvalue, gep_shad)
+                push!(vals, dval_i_w)
+            end
+        end
+
+        cal = emit_apply_generic!(B, vals)
+        debug_from_orig!(gutils, cal, orig)
     end
 
     return nothing
 end
+
 
 function common_f_tuple_fwd(offset, B, orig, gutils, normalR, shadowR)
     common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
@@ -828,9 +930,10 @@ end
 end
 
 @register_rev function new_structv_rev(B, orig, gutils, tape)
-    common_apply_latest_rev(1, B, orig, gutils, tape)
+    common_newstructv_rev(1, B, orig, gutils, tape)
     return nothing
 end
+
 
 @register_fwd function new_structt_fwd(B, orig, gutils, normalR, shadowR)
     needsShadowP = Ref{UInt8}(0)
