@@ -167,3 +167,46 @@ end
    _, _, shad = fwd(Const(typeunstable_constant_shadow))
 end
 
+
+@noinline newstruct_runtime_any()::Any = Base.inferencebarrier(Ref(1.0))
+
+mutable struct NewstructConstField{T}
+    v::Float64
+    inner::T
+end
+
+function newstruct_const_active_field(x)
+    w = NewstructConstField(0.0, newstruct_runtime_any())
+    w.v = sum(abs2, x)
+    return w.v
+end
+
+@testset "Runtime newstruct with constant active-typed field" begin
+    g = Enzyme.gradient(
+        set_runtime_activity(Reverse), newstruct_const_active_field, [3.0, 1.0]
+    )[1]
+    @test g ≈ [6.0, 2.0]
+end
+
+@noinline mutwrap_runtime_any()::Any = Base.inferencebarrier(Ref(1.0))
+
+mutable struct MutWrapGeneric{T}
+    v::Float64
+    inner::T
+end
+
+@noinline mutwrap_use(w, x) = w.v * @inbounds x[1]
+
+function mutwrap_generic_call(x)
+    w = MutWrapGeneric(0.0, mutwrap_runtime_any())
+    w.v = x[2]
+    f = Base.inferencebarrier(mutwrap_use)
+    return (f(w, x))::Float64
+end
+
+@testset "Mutable runtime newstruct shadow passed to generic call" begin
+    g = Enzyme.gradient(
+        set_runtime_activity(Reverse), mutwrap_generic_call, [3.0, 5.0]
+    )[1]
+    @test g ≈ [5.0, 3.0]
+end

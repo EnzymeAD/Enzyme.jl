@@ -27,6 +27,12 @@
                 end
               end
             end
+            if aref == ActiveState
+                return quote
+                    Base.@_inline_meta
+                    make_zero(primarg)
+                end
+            end
         end
         if aref == DupState
             return quote
@@ -128,10 +134,15 @@ function body_construct_augfwd(
         push!(res_syms, sres)
     end
 
+    # Mutable structs are DupState overall: their shadow must be a plain shadow
+    # object, not a MixedState-style RefValue, to match what downstream consumers
+    # derive from active_reg_nothrow of the result type.
+    wrapcond = tuple ? :any_mixed : :(any_mixed && !ismutabletype(NewType))
+
     if Width == 1
         push!(results,
             quote
-                if any_mixed
+                if $wrapcond
                     $(ref_syms[1])
                 else
                     $(res_syms[1])
@@ -139,7 +150,7 @@ function body_construct_augfwd(
             end)
     else
         push!(results, quote
-                if any_mixed
+                if $wrapcond
                     ReturnType(($(ref_syms...),))
                 else
                     ReturnType(($(res_syms...),))
@@ -172,8 +183,10 @@ function body_construct_rev(
             end
             shad = batchshadowargs[i][w]
             out = :(
-                if $(Symbol("active_ref_$i")) == MixedState ||
-                   $(Symbol("active_ref_$i")) == ActiveState
+                if (
+                        $(Symbol("active_ref_$i")) == MixedState ||
+                            $(Symbol("active_ref_$i")) == ActiveState
+                    ) && ActivityTup[$i]
                     if $shad isa Base.RefValue
                         $shad[] = recursive_add($shad[], $expr, identity, guaranteed_nonactive)
                     else
@@ -185,12 +198,23 @@ function body_construct_rev(
         end
     end
 
+    # Must mirror the shadow wrapping in body_construct_augfwd: mutable structs
+    # store the plain shadow object in the tape rather than a RefValue.
     tapes = Vector{Expr}(undef, Width)
-    @inbounds tapes[1] = :(tval_1 = tape[])
-    for w = 2:Width
-        sym = Symbol("tval_$w")
-        df = dfns[w]
-        @inbounds tapes[w] = :($sym = $df[])
+    if tuple
+        @inbounds tapes[1] = :(tval_1 = tape[])
+        for w in 2:Width
+            sym = Symbol("tval_$w")
+            df = dfns[w]
+            @inbounds tapes[w] = :($sym = $df[])
+        end
+    else
+        @inbounds tapes[1] = :(tval_1 = ismutabletype(NewStruct) ? tape : tape[])
+        for w in 2:Width
+            sym = Symbol("tval_$w")
+            df = dfns[w]
+            @inbounds tapes[w] = :($sym = ismutabletype(NewStruct) ? $df : $df[])
+        end
     end
 
     quote
