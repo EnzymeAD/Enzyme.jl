@@ -828,7 +828,7 @@ end
 end
 
 @register_rev function new_structv_rev(B, orig, gutils, tape)
-    common_apply_latest_rev(1, B, orig, gutils, tape)
+    common_newstructv_rev(1, B, orig, gutils, tape)
     return nothing
 end
 
