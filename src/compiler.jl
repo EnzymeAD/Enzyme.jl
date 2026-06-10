@@ -5785,7 +5785,7 @@ end
                     end
                 if legal && byref == GPUCompiler.BITS_VALUE && jTy <: Ptr
                     ET = eltype(jTy)
-                    if Base.isconcretetype(ET)
+                    if Base.isconcretetype(ET) && Base.isbitstype(ET)
                         sz_et = sizeof(ET)
                         if sz_et > 0
                             jTy = ET
