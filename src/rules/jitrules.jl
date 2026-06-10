@@ -1,3 +1,7 @@
+struct BuiltinWrapper{F}
+    f::F
+end
+@inline (w::BuiltinWrapper)(args...) = w.f(args...)
 
 @generated function create_activity_wrapper(::Val{Width}, ::Val{atup}, ::Val{aref}, primarg::PT, shadowarg) where {Width, atup, aref, PT}
     if atup && aref != AnyState
@@ -281,6 +285,11 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes, dfns)
     end
 
     return quote
+        f = if f isa Core.Builtin
+            BuiltinWrapper(f)
+        else
+            f
+        end
         args = ($(wrapped...),)
 
         # TODO: Annotation of return value
@@ -475,6 +484,12 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs,
     end
 
     return quote
+        f_unwrapped = f
+        f = if f isa Core.Builtin
+            BuiltinWrapper(f)
+        else
+            f
+        end
         $(active_refs...)
         args = ($(wrapped...),)
         $(MakeTypes...)
@@ -487,7 +502,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs,
         end
 
 
-        internal_tape, origRet, initShadow, annotation = if f isa typeof(Core.getglobal)
+        internal_tape, origRet, initShadow, annotation = if f_unwrapped isa typeof(Core.getglobal)
             gv = Core.getglobal(args[1].val, args[2].val)
             @assert sizeof(gv) == 0
             (nothing, gv, nothing, Const)
@@ -706,7 +721,13 @@ function body_runtime_generic_rev(N, Width, Atomic, wrapped, primttypes, shadowa
     end
 
     quote
-        if f isa typeof(Core.getglobal)
+        f_unwrapped = f
+        f = if f isa Core.Builtin
+            BuiltinWrapper(f)
+        else
+            f
+        end
+        if f_unwrapped isa typeof(Core.getglobal)
         else
             $(active_refs...)
             args = ($(wrapped...),)
@@ -1118,6 +1139,11 @@ function body_runtime_iterate_fwd(N, Width, wrapped, primtypes, active_refs)
         @inbounds wrappedexexpand[i] = :($(wrapped[i])...)
     end
     return quote
+        f = if f isa Core.Builtin
+            BuiltinWrapper(f)
+        else
+            f
+        end
         $(active_refs...)
         args = ($(wrappedexexpand...),)
         tt′ = Enzyme.vaTypeof(args...)
@@ -1406,6 +1432,11 @@ function body_runtime_iterate_augfwd(N, Width, modbetween, wrapped, primtypes, a
         results[i] = :(tmpvals[$i])
     end
     return quote
+        f = if f isa Core.Builtin
+            BuiltinWrapper(f)
+        else
+            f
+        end
         refs = Base.RefValue[]
         $(active_refs...)
         args = ($(wrappedexexpand...),)
@@ -1715,6 +1746,11 @@ function body_runtime_iterate_rev(
         push!(shadowsplat, :(($(s...),)))
     end
     quote
+        f = if f isa Core.Builtin
+            BuiltinWrapper(f)
+        else
+            f
+        end
         (tape0, refs) = tape
         $(active_refs...)
         args = ($(wrappedexexpand...),)
