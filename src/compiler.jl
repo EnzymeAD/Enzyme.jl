@@ -6353,6 +6353,13 @@ const DumpLLVMCall = Ref(false)
         is_adjoint = CC <: AdjointThunk || CC <: CombinedAdjointThunk
         is_split = CC <: AdjointThunk || CC <: AugmentedForwardThunk
         needs_tape = CC <: AdjointThunk
+        actual_TapeType = TapeType
+        if needs_tape && !(isghostty(TapeType) || Core.Compiler.isconstType(TapeType))
+            if Sys.ARCH === :x86_64 && !(TapeType <: EnzymeTapeToLoad) && (TapeType <: NamedTuple || TapeType <: Tuple || (!isghostty(TapeType) && !Core.Compiler.isconstType(TapeType) && !Base.isbitstype(TapeType)))
+                actual_TapeType = EnzymeTapeToLoad{TapeType}
+                @info "Wrapping TapeType" TapeType actual_TapeType
+            end
+        end
 
         argtt = tt.parameters[1]
         rettype = rt.parameters[1]
@@ -6437,6 +6444,7 @@ const DumpLLVMCall = Ref(false)
         sret_types = Type[]  # Julia types of all returned variables
         # By ref values we create and need to preserve
         ccexprs = Union{Expr,Symbol}[] # The expressions passed to the `llvmcall`
+        setup_exprs = Expr[]
 
         if !isghostty(F) && !Core.Compiler.isconstType(F)
             isboxed = GPUCompiler.deserves_argbox(F)
@@ -6627,8 +6635,14 @@ const DumpLLVMCall = Ref(false)
 
         if needs_tape
             if !(isghostty(TapeType) || Core.Compiler.isconstType(TapeType))
-                push!(types, TapeType)
-                push!(ccexprs, argexprs[i])
+                push!(types, actual_TapeType)
+                if actual_TapeType <: EnzymeTapeToLoad && !(TapeType <: EnzymeTapeToLoad)
+                    tape_sym = Symbol("wrapped_tape")
+                    push!(setup_exprs, :($tape_sym = Enzyme.Compiler.EnzymeTapeToLoad($(argexprs[i]))))
+                    push!(ccexprs, tape_sym)
+                else
+                    push!(ccexprs, argexprs[i])
+                end
             end
             i += 1
         end
@@ -6773,8 +6787,8 @@ const DumpLLVMCall = Ref(false)
 
         if needs_tape && !(isghostty(TapeType) || Core.Compiler.isconstType(TapeType))
             tape = callparams[end]
-            if TapeType <: EnzymeTapeToLoad
-                llty = Compiler.from_tape_type(eltype(TapeType))
+            if actual_TapeType <: EnzymeTapeToLoad
+                llty = Compiler.from_tape_type(eltype(actual_TapeType))
 	        
 		        arg_roots = inline_roots_type(llty)
                 if needs_rooting && arg_roots != 0
@@ -6791,13 +6805,13 @@ const DumpLLVMCall = Ref(false)
                 callparams[end] = tape
 
             else
-                llty = Compiler.from_tape_type(TapeType)
+                llty = Compiler.from_tape_type(actual_TapeType)
                 arg_roots = inline_roots_type(llty)
                 if needs_rooting && arg_roots != 0
                     tape = callparams[end-1]
                 end
 		if value_type(tape) != llty
-		   throw(AssertionError("MisMatched Tape type, expected $(string(value_type(tape))) found $(string(llty)) from $TapeType arg_roots=$arg_roots"))
+		   throw(AssertionError("MisMatched Tape type, expected $(string(value_type(tape))) found $(string(llty)) from $actual_TapeType arg_roots=$arg_roots"))
 		end
             end
         end
@@ -6864,6 +6878,7 @@ const DumpLLVMCall = Ref(false)
     if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
         return quote
             Base.@_inline_meta
+            $(setup_exprs...)
             Base.llvmcall(
                 ($ir, $fn),
                 $combinedReturn,
@@ -6875,6 +6890,7 @@ const DumpLLVMCall = Ref(false)
     else
         return quote
             Base.@_inline_meta
+            $(setup_exprs...)
             Base.llvmcall(
                 ($ir, $fn),
                 $combinedReturn,
