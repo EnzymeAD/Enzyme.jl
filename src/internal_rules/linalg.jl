@@ -331,13 +331,13 @@ function EnzymeRules.augmented_primal(
 
     # Check if A is overwritten and B is active (and thus required)
     cache_A = (
-            EnzymeRules.overwritten(config)[5]
+            EnzymeRules.overwritten(config)[3]
             && !(typeof(B) <: Const)
             && !(typeof(C) <: Const)
         ) ? copy(A.val) : nothing
 
     cache_B = (
-            EnzymeRules.overwritten(config)[6]
+            EnzymeRules.overwritten(config)[4]
             && !(typeof(A) <: Const)
             && !(typeof(C) <: Const)
         ) ? copy(B.val) : nothing
