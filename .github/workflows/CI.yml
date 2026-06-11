@@ -43,6 +43,7 @@ jobs:
           - '1.10'
           - '1.11'
           - '1.12'
+          - '1.13'
           - 'nightly'
         os:
           - ubuntu-24.04
@@ -192,6 +193,7 @@ jobs:
           - '1.10'
           - '1.11'
           - '1.12'
+          - '1.13'
           - 'nightly'
         os:
           - ubuntu-latest
@@ -248,6 +250,7 @@ jobs:
           - '1.10'
           - '1.11'
           - '1.12'
+          - '1.13'
           - 'nightly'
         os:
           - ubuntu-latest
