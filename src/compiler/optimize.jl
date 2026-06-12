@@ -29,6 +29,12 @@ RestoreAllocaType() = NewPMFunctionPass("restore_alloca_type", restore_alloca_ty
 SafeAtomicToRegularStorePass() = NewPMFunctionPass("safe_atomic_to_regular_store", safe_atomic_to_regular_store!)
 Addr13NoAliasPass() = NewPMModulePass("addr13_noalias", addr13NoAlias)
 
+# Lowers the `julia.atomicmodify.*` pseudo-intrinsics introduced in Julia 1.13
+# (JuliaLang/julia#57010); not yet wrapped by LLVM.jl.
+@static if VERSION >= v"1.13.0-DEV.321" && !isdefined(LLVM, :ExpandAtomicModifyPass)
+    ExpandAtomicModifyPass() = "ExpandAtomicModify"
+end
+
 function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     @dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
@@ -358,6 +364,10 @@ function addJuliaLegalizationPasses!(mpm::LLVM.NewPMPassManager, lower_intrinsic
             add!(fpm, LateLowerGCPass())
             if VERSION >= v"1.11.0-DEV.208"
                 add!(fpm, FinalLowerGCPass())
+            end
+            if VERSION >= v"1.13.0-DEV.321"
+                # after LateLowerGCPass so that all IPO is valid
+                add!(fpm, ExpandAtomicModifyPass())
             end
         end
         if VERSION < v"1.11.0-DEV.208"
