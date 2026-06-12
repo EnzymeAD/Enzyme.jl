@@ -10,8 +10,7 @@ steps:
       - JuliaCI/julia#v1:
           version: "{{matrix.version}}"
     agents:
-      queue: "juliagpu"
-      cuda: "*"
+      queue: "cuda"
     if: build.message !~ /\[skip tests\]/
     timeout_in_minutes: 60
     commands: |
@@ -36,8 +35,7 @@ steps:
 #       - JuliaCI/julia#v1:
 #           version: "{{matrix.version}}"
 #     agents:
-#       queue: "juliagpu"
-#       rocm: "*"
+#       queue: "rocm"
 #     if: build.message !~ /\[skip tests\]/
 #     timeout_in_minutes: 60
 #     commands: |
