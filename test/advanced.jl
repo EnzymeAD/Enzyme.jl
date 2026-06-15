@@ -1817,3 +1817,36 @@ end
 @testset "Unused shadow phi rev" begin
     fwd, rev = Enzyme.autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(cual)}, Duplicated)
 end
+
+@enum MyEnum Default Success
+
+struct Sol
+    u::Vector{Float64}
+    retcode::MyEnum
+end
+
+mutable struct Integ
+    sol::Sol
+end
+
+@noinline function myinit(u0::Vector{Float64})
+    return Integ(Sol(u0, Default))
+end
+
+function g_enum_test(u0)
+    integ = myinit(u0)
+    return integ.sol
+end
+
+@testset "Enum Autodiff" begin
+    forward, reverse = Enzyme.autodiff_thunk(
+        Enzyme.ReverseSplitWithPrimal, Enzyme.Const{typeof(g_enum_test)}, Enzyme.Duplicated,
+        Enzyme.Duplicated{Vector{Float64}})
+
+    u0 = [1.0]
+    du0 = zero(u0)
+    tape, result, shadow_result = forward(Enzyme.Const(g_enum_test), Enzyme.Duplicated(copy(u0), du0))
+    shadow_result.u .= 1.0
+    reverse(Enzyme.Const(g_enum_test), Enzyme.Duplicated(copy(u0), du0), tape)
+    @test du0 == [1.0]
+end

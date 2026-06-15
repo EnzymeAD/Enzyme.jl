@@ -491,6 +491,7 @@ end
 @inline any_jltypes(::Type{Nothing}) = false
 @inline any_jltypes(::Type{T}) where {T<:AbstractFloat} = false
 @inline any_jltypes(::Type{T}) where {T<:Integer} = false
+@inline any_jltypes(::Type{T}) where {T<:Enum} = false
 @inline any_jltypes(::Type{Complex{T}}) where {T} = any_jltypes(T)
 @inline any_jltypes(::Type{Tuple{}}) = false
 @inline any_jltypes(::Type{NTuple{Size,T}}) where {Size,T} = any_jltypes(T)

@@ -9,6 +9,8 @@ const dl = string(LLVM.DataLayout(LLVM.JITTargetMachine()))
 
 tt(T) = string(typetree(T, ctx, dl))
 
+@enum MyEnum Default Success
+
 struct Atom
   x::Float32
   y::Float32
@@ -56,6 +58,7 @@ struct Wrapper{T}
 end
 
 @testset "TypeTree" begin
+    @test tt(MyEnum) == "{[-1]:Integer}"
     @test tt(Float16) == "{[-1]:Float@half}"
     @test tt(Float32) == "{[-1]:Float@float}"
     @test tt(Float64) == "{[-1]:Float@double}"
@@ -131,6 +134,7 @@ end
 end
 
 @testset "GetOffsets" begin
+    @test Enzyme.get_offsets(MyEnum) == ((Enzyme.API.DT_Integer,0),)
     @test Enzyme.get_offsets(Float16) == ((Enzyme.API.DT_Half,0),)
     @test Enzyme.get_offsets(Float32) == ((Enzyme.API.DT_Float,0),)
     @test Enzyme.get_offsets(Float64) == ((Enzyme.API.DT_Double,0),)
