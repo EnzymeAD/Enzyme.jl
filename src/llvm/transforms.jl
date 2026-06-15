@@ -1198,7 +1198,13 @@ function nodecayed_phis!(mod::LLVM.Module)
                                         println(io, " rhs_skipload", rhs_skipload)
                                     end
                                     bt = GPUCompiler.backtrace(inst)
-                                    throw(EnzymeInternalError(msg, string(f), bt))
+				    mi, _ = Compiler.enzyme_custom_extract_mi(fn, false) #=error=#
+			            world = Compiler.enzyme_extract_world(f)
+				    if mi !== nothing
+				        throw(EnzymeInternalError{Core.MethodInstance, UInt}(msg, string(f), bt, mi, world))
+				    else
+				        throw(EnzymeInternalError{Nothing, Nothing}(msg, string(f), bt, mi, nothing))
+				    end
                                 end
                                 return select!(b, operands(v)[1], lhs_v, rhs_v),
                                 select!(b, operands(v)[1], lhs_offset, rhs_offset),
@@ -1214,7 +1220,13 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 println(io, " hasload: ", string(hasload))
                             end
                             bt = GPUCompiler.backtrace(inst)
-                            throw(EnzymeInternalError(msg, string(f), bt))
+			    mi, _ = Compiler.enzyme_custom_extract_mi(fn, false) #=error=#
+			    world = Compiler.enzyme_extract_world(f)
+			    if mi !== nothing
+			        throw(EnzymeInternalError{Core.MethodInstanc, UInt}(msg, string(f), bt, mi, world))
+			    else
+			        throw(EnzymeInternalError{Nothing, Nothing}(msg, string(f), bt, mi, nothing))
+			    end
                         end
                     
                         b = IRBuilder()
