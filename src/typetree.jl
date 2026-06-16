@@ -65,6 +65,9 @@ end
 @inline function typetree_primitive(::Type{T}) where {T<:Integer}
     return API.DT_Integer
 end
+@inline function typetree_primitive(::Type{T}) where {T<:Enum}
+    return API.DT_Integer
+end
 @inline function typetree_primitive(::Type{Char})
     return API.DT_Integer
 end
@@ -88,7 +91,7 @@ end
 const TypeTreeEmptyPointers = (BigFloat, Any, Symbol, Union{})
 
 function get_offsets(@nospecialize(T::Type))
-    for sT in (Integer, TypeTreePrimitives...)
+    for sT in (Integer, Enum, TypeTreePrimitives...)
         if T <: sT
             return ((typetree_primitive(T), 0),)
         end
@@ -219,6 +222,9 @@ function typetree(@nospecialize(T::Type), ctx, dl, seen = TypeTreeTable())
 end
 
 function typetree_inner(::Type{<:Integer}, ctx, dl, seen::TypeTreeTable)
+    return TypeTree(API.DT_Integer, -1, ctx)
+end
+function typetree_inner(::Type{<:Enum}, ctx, dl, seen::TypeTreeTable)
     return TypeTree(API.DT_Integer, -1, ctx)
 end
 for sT in TypeTreePrimitives

@@ -242,7 +242,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
         end
     end
 
-    if T <: Integer
+    if T <: Integer || T <: Enum
         return AnyState
     end
 
