@@ -12,7 +12,7 @@ precision(::Type{T}) where {T} = precision(eltype(T))
 rng = Random.default_rng()
 
 structured_randn!(A::AbstractMatrix) = randn!(A)
-structured_randn!(A::Diagonal) = (randn!(diagview(A)); return A)
+structured_randn!(A::Diagonal) = (randn!(MatrixAlgebraKit.diagview(A)); return A)
 
 instantiate_matrix(::Type{T}, size) where {T <: Number} = randn(rng, T, size)
 instantiate_matrix(::Type{AT}, size) where {AT <: Diagonal} = Diagonal(randn(rng, eltype(AT), size))
