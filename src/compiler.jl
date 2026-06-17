@@ -4890,11 +4890,24 @@ function lower_convention(
                 position!(builder, def)
                 ret!(builder, extract_value!(builder, res, 0))
 
+
+		llactualRetType = get_return_info(actualRetType)[1]
+
+		ret_tt0 = typetree(actualRetType, ctx, dl, seen)
+		ret_tt = if llactualRetType == Ptr{actualRetType}
+		    typeTree = copy(ret_tt0)
+                    merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
+                    only!(typeTree, -1)
+                    typeTree
+                else
+                    ret_tt0
+                end
+
                 push!(
                     return_attributes(wrapper_f),
                     StringAttribute(
                         "enzyme_type",
-                        string(typetree(actualRetType, ctx, dl, seen)),
+			ret_tt
                     ),
                 )
                 push!(
