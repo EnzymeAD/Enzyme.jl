@@ -4907,7 +4907,7 @@ function lower_convention(
                     return_attributes(wrapper_f),
                     StringAttribute(
                         "enzyme_type",
-			ret_tt
+            			ret_tt
                     ),
                 )
                 push!(
@@ -5023,11 +5023,22 @@ function lower_convention(
                 emit_error(builder, nothing, "Expected return type of primal to be "*string(expected_RT)*" but did not find a value of that type")
                 unreachable!(builder)
             else
+                llactualRetType = get_return_info(actualRetType)[1]
+                ret_tt0 = typetree(actualRetType, ctx, dl, seen)
+                ret_tt = if llactualRetType == Ptr{actualRetType}
+                    typeTree = copy(ret_tt0)
+                    merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
+                    only!(typeTree, -1)
+                    typeTree
+                else
+                    ret_tt0
+                end
+
                 push!(
                     return_attributes(wrapper_f),
                     StringAttribute(
                         "enzyme_type",
-                        string(typetree(actualRetType, ctx, dl, seen)),
+                        string(ret_tt),
                     ),
                 )
                 push!(
