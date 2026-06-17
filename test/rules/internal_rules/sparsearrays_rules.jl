@@ -18,7 +18,7 @@ end
            Active,
            Duplicated(p, dp),
        )[1]
-    @test dp ≈ 1.0
+    @test dp ≈ [1.0]
 end
 
 function test_sparse(M, v, α, β)
