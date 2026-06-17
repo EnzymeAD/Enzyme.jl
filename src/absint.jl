@@ -221,7 +221,7 @@ function actual_size(@nospecialize(typ2))::Int
             return sum(map(sizeof, fieldtypes(typ2)))
         end
     end
-    if typ2 <: String || typ2 <: Symbol || typ2 <: Core.SimpleVector
+    if typ2 <: String || typ2 <: Symbol || typ2 <: Core.SimpleVector || typ2 <: Core.Module
         return sizeof(Int)
     elseif Base.isconcretetype(typ2)
         return sizeof(typ2)
