@@ -414,6 +414,13 @@ function enzyme_custom_setup_args(
         if roots != 0
             roots_op = ops[arg.codegen.i + 1]
             roots_activep = API.EnzymeGradientUtilsGetDiffeType(gutils, roots_op, false)
+	    
+	    kwarg_inactive = isKWCall && arg.arg_jl_i == 2 && EnzymeRules.is_inactive_kwarg_from_sig(Interpreter.simplify_kw(mi.specTypes); world)
+	    
+	    if kwarg_inactive
+               roots_activep = API.DFT_CONSTANT
+            end
+
             any_active = false
             for ty in non_rooted_types(arg.typ)
                 if active_reg(ty, world) != Compiler.AnyState
@@ -430,7 +437,7 @@ function enzyme_custom_setup_args(
                 any_active_data = false
             end
 
-            if roots_activep != activep
+            if roots_activep != activep && !kwarg_inactive
                 throw(AssertionError("roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ)) non_rooted_types=$(non_rooted_types(arg.typ))"))
             end
         end
