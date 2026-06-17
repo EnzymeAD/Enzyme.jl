@@ -4,6 +4,23 @@ using LinearAlgebra
 using SparseArrays
 using Test
 
+function f_with_sparse_constructor(p)
+    A = sparse([1], [1], [1.0], 2, 2)
+    return p[1] * sum(A)
+end
+
+@testset "Sparse construction" begin
+    p = [2.0]
+    dp = Enzyme.make_zero(p)
+    Enzyme.autodiff(
+           Enzyme.set_runtime_activity(Enzyme.Reverse),
+           f_with_sparse_constructor,
+           Active,
+           Duplicated(p, dp),
+       )[1]
+    @test dp ≈ 1.0
+end
+
 function test_sparse(M, v, α, β)
     tout = promote_type(eltype(M), eltype(v), typeof(α), typeof(β))
     if v isa AbstractVector
