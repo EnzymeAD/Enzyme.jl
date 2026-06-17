@@ -482,7 +482,7 @@ function enzyme_custom_setup_args(
                         if roots_op != nothing
                             if uncacheable[arg.codegen.i + 1] != 0
                                 # Roots are overwritten, recombine with root
-                                val = recombine_value!(B, val, roots_op)
+                                val = recombine_value!(B, val, roots_val)
                             else
                                 # Roots are not overwritten, put placeholder valid GC value
                                 val = nullify_rooted_values!(B, val)
@@ -499,6 +499,9 @@ function enzyme_custom_setup_args(
                         @assert value_type(val) == arty
                         push!(byval_tapes, val)
 
+                        if roots_val !== nothing
+                            roots_val = lookup_value(gutils, roots_val, B)
+                        end
                     end
                 end
             else
@@ -517,7 +520,7 @@ function enzyme_custom_setup_args(
 
                         if !reverse
                             if B !== nothing
-                                root_cache = load!(B, root_ty, roots_op, "rules_load_ref_cache")
+                                root_cache = load!(B, root_ty, roots_val, "rules_load_ref_cache")
                                 metadata(root_cache)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                                 push!(byval_tapes, root_cache)
                             end
@@ -530,8 +533,12 @@ function enzyme_custom_setup_args(
 
                                 al = alloca!(alloctx, root_ty, "roots_op_cache_v2_")
                                 store!(B, root_cache, al)
-                                roots_op = al
+                                roots_val = al
                             end
+                        end
+                    else
+                        if reverse && B !== nothing
+                            roots_val = lookup_value(gutils, roots_val, B)
                         end
                     end
                 end
@@ -548,6 +555,9 @@ function enzyme_custom_setup_args(
             @assert value_type(val) == arty
             if reverse && B !== nothing
                 val = lookup_value(gutils, val, B)
+                if roots_val !== nothing
+                    roots_val = lookup_value(gutils, roots_val, B)
+                end
             end
         end
 
