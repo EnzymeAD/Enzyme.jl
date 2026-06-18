@@ -736,20 +736,45 @@ function enzyme_custom_setup_args(
                     @assert ival !== nothing
 
                     for idx = 1:width
+                        local_shadow_root = if roots_ival !== nothing
+                            (width == 1) ? roots_ival : extract_value!(B, roots_ival, idx - 1)
+                        end
+
                         if !is_constant_value(gutils, op)
                             ev =
                                 (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
-                            ld = load!(B, iarty, ev, "rules_shadow_load")
-                            metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                            
+                            ld = if uncache_arg
+                                if !reverse
+                                    ld0 = load!(B, iarty, ev, "rules_shadow_load")
+                                    metadata(ld0)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                                    if roots_op != nothing
+                                        if uncacheable[arg.arg_i + 1] != 0
+                                            ld0 = recombine_value!(B, ld0, local_shadow_root)
+                                        else
+                                            ld0 = nullify_rooted_values!(B, ld0)
+                                        end
+                                    end
+                                    push!(byval_tapes, ld0)
+                                    ld0
+                                else
+                                    @assert tape isa LLVM.Value
+                                    ld0 = extract_value!(B, tape, length(byval_tapes), "shadow_roots_op_extract_v1_")
+                                    @assert value_type(ld0) == iarty
+                                    push!(byval_tapes, ld0)
+                                    ld0
+                                end
+                            else
+                                ld0 = load!(B, iarty, ev, "rules_shadow_load")
+                                metadata(ld0)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                                ld0
+                            end
+
                             ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
                             @assert ival !== nothing
                         else
                             ival = (width == 1) ? ptr_val : insert_value!(B, ival, ptr_val, idx - 1)
                             @assert ival !== nothing
-                        end
-
-                        local_shadow_root = if roots_ival !== nothing
-                            (width == 1) ? roots_ival : extract_value!(B, roots_ival, idx - 1)
                         end
 
                         if shadow_roots !== nothing
