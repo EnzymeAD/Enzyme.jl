@@ -4890,11 +4890,7 @@ function lower_convention(
                 position!(builder, def)
                 ret!(builder, extract_value!(builder, res, 0))
 
-
-		llactualRetType = get_return_info(actualRetType)[1]
-
-		ret_tt0 = typetree(actualRetType, ctx, dl, seen)
-		
+				ret_tt0 = typetree(actualRetType, ctx, dl, seen)
 
                 push!(
                     return_attributes(wrapper_f),
