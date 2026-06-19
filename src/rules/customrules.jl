@@ -749,7 +749,7 @@ function enzyme_custom_setup_args(
                                     ld0 = load!(B, iarty, ev, "rules_shadow_load")
                                     metadata(ld0)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                                     if roots_op != nothing
-                                        if uncacheable[arg.arg_i + 1] != 0
+                                        if uncacheable[arg.codegen.i + 1] != 0
                                             ld0 = recombine_value!(B, ld0, local_shadow_root)
                                         else
                                             ld0 = nullify_rooted_values!(B, ld0)
