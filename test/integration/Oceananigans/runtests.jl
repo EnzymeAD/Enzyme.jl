@@ -16,7 +16,8 @@ function kinetic_energy(model, ν, K, dt=1)
 
     compute!(K)
 
-    return @allowscalar first(K)
+    # TODO return @allowscalar first(K)
+    return first(K)
 end
 
 @testset "Column model with ScalarDiffusivity" begin
