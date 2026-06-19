@@ -34,7 +34,7 @@ concurrency:
 jobs:
   test:
     timeout-minutes: 120
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - assertions=${{ matrix.assertions }} llvm_args=${{ matrix.llvm_args }} - ${{ github.event_name }}
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - llvm_args=${{ matrix.llvm_args }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -52,8 +52,6 @@ jobs:
           - ''
         arch:
           - default
-        assertions:
-          - false
         libEnzyme: [local, packaged]
         exclude:
           - os: windows-latest
@@ -64,58 +62,17 @@ jobs:
             arch: x86
             libEnzyme: packaged
             version: '1.10'
-            assertions: false
-          - os: ubuntu-24.04
-            arch: default
-            libEnzyme: packaged
-            version: '1.10'
-            assertions: true
           - os: ubuntu-24.04
             arch: default
             libEnzyme: packaged
             version: '1.11'
-            assertions: true
-          - os: ubuntu-24.04
-            arch: default
-            libEnzyme: packaged
-            version: '1.12'
-            assertions: true
-          - os: ubuntu-24.04
-            arch: default
-            libEnzyme: packaged
-            version: '1.13'
-            assertions: true
-          - os: ubuntu-24.04
-            arch: default
-            libEnzyme: packaged
-            version: '1.10'
-            assertions: true
-            llvm_args: '--opaque-pointers'
-          - os: ubuntu-24.04
-            arch: default
-            libEnzyme: packaged
-            version: '1.11'
-            assertions: false
             llvm_args: '--opaque-pointers'
     steps:
       - uses: actions/checkout@v6
       - uses: julia-actions/setup-julia@v3
-        if: ${{ ! matrix.assertions }}
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - uses: actions/checkout@v6
-        if: ${{ matrix.assertions }}
-        with:
-          repository: 'JuliaLang/julia'
-          ref: release-${{ matrix.version }}
-          path: 'julia'
-      - name: Compile Julia
-        if: ${{ matrix.assertions }}
-        run: |
-          sed -i.bak 's/exit 2/exit 0/g' julia/deps/tools/jlchecksum
-          make -C julia -j $(nproc) FORCE_ASSERTIONS=1 LLVM_ASSERTIONS=1 JULIA_PRECOMPILE=0
-          echo $PWD/julia/usr/bin >> $GITHUB_PATH
       - uses: julia-actions/cache@v3
       - name: add EnzymeCore EnzymeTestUtils
         shell: julia --color=yes --project=. {0}
@@ -164,7 +121,7 @@ jobs:
         id: run_tests
         # TODO restore coverage post https://github.com/JuliaGPU/GPUCompiler.jl/pull/711
         with:
-          coverage: ${{ matrix.version != '1.11' || !matrix.assertions }}
+          coverage: true
           test_args: ${{ env.runtest_test_args }}
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager

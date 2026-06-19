@@ -1,0 +1,136 @@
+name: TestAsserts
+
+# This workflow runs tests using assert builds downloaded by GetAsserts.
+# It does not use any secrets (BUILDKITE_TOKEN access is confined to GetAsserts).
+
+on:
+  workflow_run:
+    workflows: ["GetAsserts"]
+    types:
+      - completed
+
+permissions:
+  contents: read
+  # needed to report check runs since workflow_run can't report back to PRs natively
+  checks: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Julia ${{ matrix.version }} ${{ matrix.llvm_args }} (assert) - Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    if: github.event.workflow_run.conclusion == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: 'master'
+            build: 'x86_64-linux-gnuassert'
+            llvm_args: ''
+          - version: '1.11'
+            build: 'x86_64-linux-gnuassert'
+            llvm_args: '--opaque-pointers'
+          - version: '1.11'
+            build: 'x86_64-linux-gnuassert'
+            llvm_args: ''
+          - version: '1.12'
+            build: 'x86_64-linux-gnuassert'
+            llvm_args: ''
+          - version: '1.13'
+            build: 'x86_64-linux-gnuassert'
+            llvm_args: ''
+    steps:
+      - name: Report in-progress
+        uses: actions/github-script@v9
+        with:
+          script: |
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head_sha: '${{ github.event.workflow_run.head_sha }}',
+              name: 'Julia ${{ matrix.version }} ${{ matrix.llvm_args }} (assert) - Linux',
+              status: 'in_progress',
+              details_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+
+      - name: Download Julia build
+        uses: actions/download-artifact@v8
+        with:
+          name: julia-${{ matrix.version }}-${{ matrix.build }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Install Julia
+        run: |
+          tar -xf julia.tar.gz -C ../
+          rm julia.tar.gz
+          echo $PWD/../julia-*/bin >> $GITHUB_PATH
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - uses: julia-actions/cache@v3
+      - uses: julia-actions/julia-buildpkg@v1
+
+      - name: Run tests
+        run: julia --project -e 'using Pkg; Pkg.test(; coverage=true)'
+        env:
+          JULIA_LLVM_ARGS: ${{ matrix.llvm_args }}
+
+      - name: Report check run
+        if: always()
+        uses: actions/github-script@v9
+        with:
+          script: |
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head_sha: '${{ github.event.workflow_run.head_sha }}',
+              name: 'Julia ${{ matrix.version }} ${{ matrix.llvm_args }} (assert) - Linux',
+              status: 'completed',
+              conclusion: '${{ job.status }}',
+              details_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              output: {
+                title: 'Assert build test ${{ job.status }}',
+                summary: 'Tested against `${{ matrix.build }}` build of Julia ${{ matrix.version }}.'
+              }
+            });
+
+  report-failure:
+    name: Report download failure
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'failure'
+    steps:
+      - name: Report check runs
+        uses: actions/github-script@v9
+        with:
+          script: |
+            // Keep in sync with the matrix above
+            const entries = [
+              {version: 'master', llvm_args: ''},
+              {version: '1.11', llvm_args: '--opaque-pointers'},
+              {version: '1.11', llvm_args: ''},
+              {version: '1.12', llvm_args: ''},
+              {version: '1.13', llvm_args: ''},
+            ];
+            await Promise.all(entries.map(({version, llvm_args}) =>
+              github.rest.checks.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head_sha: '${{ github.event.workflow_run.head_sha }}',
+                name: `Julia ${version} ${llvm_args} (assert) - Linux`,
+                status: 'completed',
+                conclusion: 'failure',
+                details_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${{ github.event.workflow_run.id }}`,
+                output: {
+                  title: 'Assert build download failed',
+                  summary: 'The GetAsserts workflow failed to download the Julia build.'
+                }
+              })
+            ));
