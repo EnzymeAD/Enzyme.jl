@@ -597,8 +597,7 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
             if !isa(fn, LLVM.Function)
                 continue
             end
-            nm = LLVM.name(fn)
-            if nm == "julia.gc_alloc_obj" || nm == "jl_gc_alloc_typed" || nm == "ijl_gc_alloc_typed"
+            if LLVM.name(fn) == "julia.gc_alloc_obj"
                 legal, RT, _ = abs_typeof(inst)
                 if legal
                     metadata(inst)["enzymejl_gc_alloc_rt"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
@@ -1648,7 +1647,7 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
 	if Ty == Core.SimpleVector
 	   @assert count === nothing
 	   @assert isa(prev, LLVM.CallInst)
-	   @assert LLVM.name(LLVM.called_operand(prev)::LLVM.Function) in ("julia.gc_alloc_obj", "jl_gc_alloc_typed", "ijl_gc_alloc_typed")
+	   @assert LLVM.name(LLVM.called_operand(prev)::LLVM.Function) == "julia.gc_alloc_obj"
 	   sz = operands(prev)[2]
 	   sz = sub!(B, sz, LLVM.ConstantInt(Int(sizeof(Ptr{Cvoid}))))
            T_jlvalue = LLVM.StructType(LLVM.LLVMType[])

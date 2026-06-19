@@ -255,7 +255,8 @@ end
 
 struct MyBufferCallConv{A}
     data::A
-    count::Int
+    count::Int32
+    datatype::Float64
 end
 
 mutable struct MyRequestCallConv
@@ -263,7 +264,7 @@ mutable struct MyRequestCallConv
 end
 
 @inline function my_isend_callconv(x, req)
-    buf = MyBufferCallConv(x, 1)
+    buf = MyBufferCallConv(x, Int32(1), 1.0)
     req.buffer = buf
     return req
 end
