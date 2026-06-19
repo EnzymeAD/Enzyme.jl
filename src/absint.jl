@@ -670,7 +670,7 @@ function abs_typeof(
 
             legal = true
             sz = value_type(arg) == LLVM.IntType(1) ? 1 : sizeof(dl, value_type(arg))
-            is_padded = sz > actual_size(typ) && sz <= sizeof(typ)
+            is_padded = false
 
             while offset != 0 && legal
                 @assert Base.isconcretetype(typ)
@@ -685,7 +685,7 @@ function abs_typeof(
 			if in(parent_typ, TypesNotToDisect)
 			  legal = false
 			end
-                        next_offset = i == typed_fieldcount(parent_typ) ? sizeof(parent_typ) : typed_fieldoffset(parent_typ, i + 1)
+                        next_offset = i == typed_fieldcount(parent_typ) ? actual_size(parent_typ) : typed_fieldoffset(parent_typ, i + 1)
                         typ = typed_fieldtype(parent_typ, i)
                         if sz > actual_size(typ) && fo + sz <= next_offset
                             is_padded = true
@@ -740,7 +740,7 @@ function abs_typeof(
 			if in(parent_typ, TypesNotToDisect)
 			  legal = false
 			end
-                    next_offset = sizeof(parent_typ)
+                    next_offset = actual_size(parent_typ)
                     cur_fo = typed_fieldoffset(parent_typ, lasti)
                     typ = typed_fieldtype(parent_typ, lasti)
                     if offset == 0
