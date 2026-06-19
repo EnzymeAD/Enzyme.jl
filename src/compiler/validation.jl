@@ -1417,7 +1417,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world
                 nm = LLVM.name(fn)
             end
 
-            if nm == "julia.gc_alloc_obj"
+            if nm == "julia.gc_alloc_obj" || nm == "jl_gc_alloc_typed" || nm == "ijl_gc_alloc_typed"
                 legal, Ty, byref = abs_typeof(cur)
                 @assert legal
                 if !guaranteed_nonactive(Ty, world)
