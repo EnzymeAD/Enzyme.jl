@@ -669,20 +669,29 @@ function abs_typeof(
             end
 
             legal = true
+            sz = value_type(arg) == LLVM.IntType(1) ? 1 : sizeof(dl, value_type(arg))
+            is_padded = false
 
             while offset != 0 && legal
                 @assert Base.isconcretetype(typ)
                 seen = false
                 lasti = 1
+                parent_typ = typ
 
-                for i in 1:typed_fieldcount(typ)
-                    fo = typed_fieldoffset(typ, i)
-                    if fo == offset && (i == typed_fieldcount(typ) || typed_fieldoffset(typ, i + 1) != offset)
+                for i in 1:typed_fieldcount(parent_typ)
+                    fo = typed_fieldoffset(parent_typ, i)
+                    if fo == offset && (i == typed_fieldcount(parent_typ) || typed_fieldoffset(parent_typ, i + 1) != offset)
                         offset = 0
-			if in(typ, TypesNotToDisect)
+			if in(parent_typ, TypesNotToDisect)
 			  legal = false
 			end
-                        typ = typed_fieldtype(typ, i)
+                        next_offset = i == typed_fieldcount(parent_typ) ? actual_size(parent_typ) : typed_fieldoffset(parent_typ, i + 1)
+                        typ = typed_fieldtype(parent_typ, i)
+                        if sz > actual_size(typ) && fo + sz <= next_offset
+                            is_padded = true
+                        else
+                            is_padded = false
+                        end
                         if !Base.allocatedinline(typ)
                             if byref != GPUCompiler.BITS_VALUE
                                 legal = false
@@ -692,12 +701,19 @@ function abs_typeof(
                         seen = true
                         break
                     elseif fo > offset
-                        offset = offset - typed_fieldoffset(typ, lasti)
-			if in(typ, TypesNotToDisect)
+                        offset = offset - typed_fieldoffset(parent_typ, lasti)
+			if in(parent_typ, TypesNotToDisect)
 			  legal = false
 			end
-                        typ = typed_fieldtype(typ, lasti)
+                        next_offset = fo
+                        cur_fo = typed_fieldoffset(parent_typ, lasti)
+                        typ = typed_fieldtype(parent_typ, lasti)
                         if offset == 0
+                            if sz > actual_size(typ) && cur_fo + sz <= next_offset
+                                is_padded = true
+                            else
+                                is_padded = false
+                            end
                             if !Base.allocatedinline(typ)
                                 if byref != GPUCompiler.BITS_VALUE
                                     legal = false
@@ -705,6 +721,7 @@ function abs_typeof(
                                 byref = GPUCompiler.MUT_REF
                             end
                         else
+                            is_padded = false
                             if !Base.isconcretetype(typ) || !Base.allocatedinline(typ)
                                 legal = false
                             end
@@ -713,18 +730,25 @@ function abs_typeof(
                         break
                     end
 
-                    if (i != typed_fieldcount(typ) && fo != typed_fieldoffset(typ, i + 1)) ||
-                            (i == typed_fieldcount(typ) && fo != actual_size(typ))
+                    if (i != typed_fieldcount(parent_typ) && fo != typed_fieldoffset(parent_typ, i + 1)) ||
+                            (i == typed_fieldcount(parent_typ) && fo != actual_size(parent_typ))
                         lasti = i
                     end
                 end
-                if !seen && typed_fieldcount(typ) > 0
-                    offset = offset - typed_fieldoffset(typ, lasti)
-			if in(typ, TypesNotToDisect)
+                if !seen && typed_fieldcount(parent_typ) > 0
+                    offset = offset - typed_fieldoffset(parent_typ, lasti)
+			if in(parent_typ, TypesNotToDisect)
 			  legal = false
 			end
-                    typ = typed_fieldtype(typ, lasti)
+                    next_offset = actual_size(parent_typ)
+                    cur_fo = typed_fieldoffset(parent_typ, lasti)
+                    typ = typed_fieldtype(parent_typ, lasti)
                     if offset == 0
+                        if sz > actual_size(typ) && cur_fo + sz <= next_offset
+                            is_padded = true
+                        else
+                            is_padded = false
+                        end
                         if !Base.allocatedinline(typ)
                             if byref != GPUCompiler.BITS_VALUE
                                 legal = false
@@ -732,6 +756,7 @@ function abs_typeof(
                             byref = GPUCompiler.MUT_REF
                         end
                     else
+                        is_padded = false
                         if !Base.isconcretetype(typ) || !Base.allocatedinline(typ)
                             legal = false
                         end
@@ -745,6 +770,9 @@ function abs_typeof(
 
             typ2 = typ
             while legal && should_recurse(typ2, value_type(arg), byref, dl)
+                if is_padded
+                    break
+                end
 		if !Base.isconcretetype(typ2)
                     legal = false
                     break

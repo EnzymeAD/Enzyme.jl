@@ -252,3 +252,38 @@ end
 
     @test dimg == [4.0, 6.0, 8.0]
 end
+
+struct MyBufferCallConv{A}
+    data::A
+    count::Int32
+    datatype::Float64
+end
+
+mutable struct MyRequestCallConv
+    buffer::Any
+end
+
+@inline function my_isend_callconv(x, req)
+    buf = MyBufferCallConv(x, Int32(1), 1.0)
+    req.buffer = buf
+    return req
+end
+
+function f_my_request_callconv(x)
+    req = MyRequestCallConv(nothing)
+    my_isend_callconv(x, req)
+    buf = req.buffer::MyBufferCallConv{Vector{Float64}}
+    return buf.data[1] * buf.data[1]
+end
+
+@testset "Typed Alloca restore_alloca_type! with Any field" begin
+    x = [3.0]
+    dx = zeros(1)
+    Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Enzyme.Reverse),
+        f_my_request_callconv,
+        Active,
+        Duplicated(x, dx),
+    )
+    @test dx ≈ [6.0]
+end
