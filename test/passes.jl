@@ -143,3 +143,30 @@ end
     end
 end
 
+@testset "Mismatched calling convention/function type DAE safety" begin
+    LLVM.Context() do ctx
+        mod = parse(LLVM.Module, """
+        source_filename = "start"
+        target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+        target triple = "x86_64-linux-gnu"
+
+        define internal fastcc void @callee(i32* %arg1, i32* %arg2) {
+        top:
+          store i32 42, i32* %arg1, align 4
+          ret void
+        }
+
+        define void @caller(i32 addrspace(10)* %arg1, i32 addrspace(10)* %arg2) {
+        top:
+          call fastcc void @callee(i32 addrspace(10)* %arg1, i32 addrspace(10)* %arg2)
+          ret void
+        }
+        """)
+
+        Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), false)
+        
+        @test haskey(LLVM.functions(mod), "callee")
+        callee = LLVM.functions(mod)["callee"]
+        @test length(LLVM.parameters(callee)) == 2
+    end
+end
