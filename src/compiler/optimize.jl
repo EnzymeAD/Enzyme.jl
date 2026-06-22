@@ -30,7 +30,7 @@ SafeAtomicToRegularStorePass() = NewPMFunctionPass("safe_atomic_to_regular_store
 Addr13NoAliasPass() = NewPMModulePass("addr13_noalias", addr13NoAlias)
 RemoveAlwaysInlineRootsPass() = NewPMModulePass("remove_alwaysinline_roots", remove_alwaysinline_roots!)
 
-function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
+function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing})
     @dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, Addr13NoAliasPass())
@@ -395,7 +395,7 @@ end
 const DumpPreCallConv = Ref(false)
 const DumpPostCallConv = Ref(false)
 
-function fixup_callconv!(mod::LLVM.Module, tm::LLVM.TargetMachine)
+function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing})
     addr13NoAlias(mod)
     
     removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
@@ -456,7 +456,7 @@ function fixup_callconv!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     return
 end
 
-function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool = true; callconv::Bool = true)
+function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, machine::Bool = true; callconv::Bool = true)
     if callconv
         fixup_callconv!(mod, tm)
     end
