@@ -356,6 +356,39 @@ function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Boo
     end
     return larg, offset
 end
+function is_multiple_of(@nospecialize(val::LLVM.Value), sz::Int, stride::Int)::Bool
+    if val isa LLVM.ConstantInt
+        return (convert(Int, val) * stride) % sz == 0
+    elseif val isa LLVM.Instruction
+        opc = opcode(val)
+        if opc == LLVM.API.LLVMSelect
+            return is_multiple_of(operands(val)[2], sz, stride) &&
+                   is_multiple_of(operands(val)[3], sz, stride)
+        elseif opc == LLVM.API.LLVMShl
+            if operands(val)[2] isa LLVM.ConstantInt
+                shift_amt = convert(Int, operands(val)[2])
+                if shift_amt < 64
+                    return ((1 << shift_amt) * stride) % sz == 0
+                end
+            end
+        elseif opc == LLVM.API.LLVMMul
+            if operands(val)[1] isa LLVM.ConstantInt
+                c = convert(Int, operands(val)[1])
+                if (c * stride) % sz == 0
+                    return true
+                end
+                return is_multiple_of(operands(val)[2], sz, c * stride)
+            elseif operands(val)[2] isa LLVM.ConstantInt
+                c = convert(Int, operands(val)[2])
+                if (c * stride) % sz == 0
+                    return true
+                end
+                return is_multiple_of(operands(val)[1], sz, c * stride)
+            end
+        end
+    end
+    return false
+end
 
 const TypesNotToDisect = Set{Type}([BigFloat])
 
@@ -907,21 +940,8 @@ function abs_typeof(
                                 is_multiple = false
                                 if stride % sz == 0
                                     is_multiple = true
-                                elseif idx isa LLVM.ConstantInt
-                                    is_multiple = (convert(Int, idx) * stride) % sz == 0
-                                elseif idx isa LLVM.Instruction && opcode(idx) == LLVM.API.LLVMShl
-                                    if operands(idx)[2] isa LLVM.ConstantInt
-                                        shift_amt = convert(Int, operands(idx)[2])
-                                        if shift_amt < 64
-                                            is_multiple = ((1 << shift_amt) * stride) % sz == 0
-                                        end
-                                    end
-                                elseif idx isa LLVM.Instruction && opcode(idx) == LLVM.API.LLVMMul
-                                    if operands(idx)[1] isa LLVM.ConstantInt
-                                        is_multiple = (convert(Int, operands(idx)[1]) * stride) % sz == 0
-                                    elseif operands(idx)[2] isa LLVM.ConstantInt
-                                        is_multiple = (convert(Int, operands(idx)[2]) * stride) % sz == 0
-                                    end
+                                elseif is_multiple_of(idx, sz, stride)
+                                    is_multiple = true
                                 end
                                 
                                 if is_multiple
