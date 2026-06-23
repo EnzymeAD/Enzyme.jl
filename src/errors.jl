@@ -1250,6 +1250,33 @@ function julia_error(
         return C_NULL
     elseif errtype == API.ET_IllegalFirstPointer
         throw(IllegalFirstPointerException(msg, ir, bt))
+    elseif errtype == API.ET_NoAccumulate
+        world = nothing
+        mi = nothing
+
+        if isa(val, LLVM.Instruction)
+            f = LLVM.parent(LLVM.parent(val))::LLVM.Function
+            mi, rt = enzyme_custom_extract_mi(
+                f,
+                false,
+            ) #=error=#
+            world = enzyme_extract_world(f)
+        elseif isa(val, LLVM.Argument)
+            f = parent_scope(val)::LLVM.Function
+            mi, rt = enzyme_custom_extract_mi(
+                f,
+                false,
+            ) #=error=#
+            world = enzyme_extract_world(f)
+        end
+
+        err = if mi !== nothing
+            EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world)
+        else
+	    world = nothing
+            EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world)
+        end
+        throw(err)
     elseif errtype == API.ET_InternalError || errtype == API.ET_ShowInternalError
         world = nothing
         mi = nothing
