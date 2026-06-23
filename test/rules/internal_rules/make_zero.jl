@@ -49,5 +49,17 @@ using Test
         dpar = res[1]
         @test dpar.w ≈ [2.0, 0.0, 0.0]
     end
+
+    @testset "Reverse mode make_zero rule" begin
+        struct MyStruct
+            data::Vector{Float64}
+        end
+        function f_rev(x::Vector{Float64})
+            s = MyStruct(x)
+            z = Enzyme.make_zero(s)
+            return sum(z.data) + sum(x)
+        end
+        @test Enzyme.gradient(Enzyme.Reverse, f_rev, [1.0, 2.0]) ≈ [1.0, 1.0]
+    end
     
 end
