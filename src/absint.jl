@@ -866,10 +866,14 @@ function abs_typeof(
         if legal && byref == GPUCompiler.BITS_VALUE && typ <: Ptr && Base.isconcretetype(typ)
             etyp = eltype(typ)
             if Base.isconcretetype(etyp)
-                sz = try
-                    sizeof(etyp)
-                catch
-                    0
+                sz = if !Base.allocatedinline(etyp)
+                    sizeof(Ptr{Cvoid})
+                else
+                    try
+                        sizeof(etyp)
+                    catch
+                        0
+                    end
                 end
                 if sz > 0
                     indices = operands(arg)[2:end]
