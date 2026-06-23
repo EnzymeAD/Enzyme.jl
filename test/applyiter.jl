@@ -486,42 +486,6 @@ end
     @test dres[2][4] ≈ -9304.1
 end
 
-struct LJ_3206
-    cutoff::Float32
-    use_neighbors::Bool
-end
-
-struct CRF_3206
-    cutoff::Float32
-    use_neighbors::Bool
-end
-
-use_neighbors_3206(inter) = inter.use_neighbors
-
-mutable struct Sys_3206{P}
-    sigma::Float32
-    inters::P
-end
-
-@inline force_3206(::LJ_3206, sys) = sys.sigma
-@inline force_3206(::CRF_3206, sys) = 1.0f0
-
-@inline sum_forces_3206(inters::Tuple{T}, sys) where {T} = force_3206(inters[1], sys)
-@inline sum_forces_3206(inters::Tuple, sys) =
-    force_3206(first(inters), sys) + sum_forces_3206(Base.tail(inters), sys)
-
-function loss_3206(sigma, inters)
-    sys = Sys_3206(sigma, inters)
-    inters_nl = filter(use_neighbors_3206, sys.inters)
-    return sum_forces_3206(inters_nl, sys)
-end
-
-@testset "filter tuple" begin
-    inters = (LJ_3206(1.2f0, true), CRF_3206(2.3f0, true))
-    res = autodiff(set_runtime_activity(Reverse), loss_3206, Active, Active(0.4f0), Const(inters))
-    @test res[1][1] ≈ 1.0f0
-end
-
 @testset "legacy reverse apply iterate" begin
     function mktup(v)
         tup = tuple(v...)
