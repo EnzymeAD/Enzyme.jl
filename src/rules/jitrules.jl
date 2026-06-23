@@ -1,7 +1,18 @@
 struct BuiltinWrapper{F}
     f::F
 end
-@inline (w::BuiltinWrapper)(args...) = w.f(args...)
+
+@generated function (w::BuiltinWrapper{F})(args::Vararg{Any,N}) where {F, N}
+   cargs = Expr[]
+   for i in 1:N
+      push!(cargs, :(args[$i]))
+   end
+   cexp = Expr(:call, F.instance, cargs...)
+   return quote
+	Base.@_inline_meta
+	$cexp
+   end
+end
 
 @generated function create_activity_wrapper(::Val{Width}, ::Val{atup}, ::Val{aref}, primarg::PT, shadowarg) where {Width, atup, aref, PT}
     if atup && aref != AnyState
