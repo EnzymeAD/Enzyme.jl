@@ -287,3 +287,15 @@ end
     )
     @test dx ≈ [6.0]
 end
+
+mutable struct MutableUnion
+    u::Vector{Float64}
+    conv::Union{Nothing,Bool}     # Union{Nothing,Int} triggers it too; a plain Bool does NOT
+end
+@noinline dispatch(x)::MutableUnion = Base.inferencebarrier(MutableUnion([x], nothing))   # runtime dispatch required
+
+f_mutunion(x) = (m = dispatch(x); m.u[1]^2)
+
+@testset "Typed Alloca restore_alloca_type! with Any field" begin
+    @test Enzyme.gradient(Enzyme.Reverse, f_mutunion, 3.0)[1] ≈ 6.0
+end
