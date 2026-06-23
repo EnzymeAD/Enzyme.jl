@@ -1976,6 +1976,10 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
+                        if LLVM.called_type(un) != LLVM.function_type(fn)
+                            illegalUse = true
+                            break
+                        end
                         bad = false
                         for op in arg_operands_view(un)
                             if op == fn
@@ -2089,6 +2093,10 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
+                        if LLVM.called_type(un) != LLVM.function_type(fn)
+                            illegalUse = true
+                            break
+                        end
                         bad = false
                         for op in arg_operands_view(un)
                             if op == fn
@@ -2182,6 +2190,10 @@ function propagate_returned!(mod::LLVM.Module)
             for u in LLVM.uses(fn)
                 un = LLVM.user(u)
                 if !isa(un, LLVM.CallInst)
+                    illegalUse = true
+                    continue
+                end
+                if LLVM.called_type(un) != LLVM.function_type(fn)
                     illegalUse = true
                     continue
                 end
@@ -2566,7 +2578,7 @@ function checkNoAssumeFalse(mod::LLVM.Module, shouldshow::Bool = false)
     end
 end
 
-function removeDeadArgs!(mod::LLVM.Module, tm::LLVM.TargetMachine, post_gc_fixup::Bool)
+function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, post_gc_fixup::Bool)
     # We need to run globalopt first. This is because remove dead args will otherwise
     # take internal functions and replace their args with undef. Then on LLVM up to 
     # and including 12 (but fixed 13+), Attributor will incorrectly change functions that

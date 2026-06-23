@@ -57,13 +57,13 @@ jobs:
             arch: default
             libEnzyme: local
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
         if: ${{ ! matrix.assertions }}
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: ${{ matrix.assertions }}
         with:
           repository: 'JuliaLang/julia'
