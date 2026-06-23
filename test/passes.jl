@@ -158,7 +158,7 @@ end
 
         define void @caller(i32 addrspace(10)* %arg1, i32 addrspace(10)* %arg2) {
         top:
-          call fastcc void @callee(i32 addrspace(10)* %arg1, i32 addrspace(10)* %arg2)
+          call fastcc void (i32 addrspace(10)*, i32 addrspace(10)*)* bitcast (void (i32*, i32*)* @callee to void (i32 addrspace(10)*, i32 addrspace(10)*)*)(i32 addrspace(10)* %arg1, i32 addrspace(10)* %arg2)
           ret void
         }
         """)
