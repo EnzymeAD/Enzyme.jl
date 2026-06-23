@@ -400,9 +400,10 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
             Int(fieldoffset(T, f+1))
         end
 
-        # Fill in padding gaps with Anything
+        # Fill in padding gaps with Anything, unless subT was an integer
+        padding_T = subT <: Integer ? API.DT_Integer : API.DT_Anything
         for i = endbytes:(nextbytes-1)
-            merge!(tt, TypeTree(API.DT_Anything, i, ctx))
+            merge!(tt, TypeTree(padding_T, i, ctx))
         end
 
         if !desc[f].isptr && subT isa Union
