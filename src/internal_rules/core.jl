@@ -481,3 +481,38 @@ function EnzymeRules.reverse(config, ::Const{typeof(Base.finalizer)}, dret, tape
     # No-op
     return (nothing, nothing)
 end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(EnzymeCore.make_zero)},
+    RT,
+    prev::Annotation{T},
+) where {T}
+    primal = if EnzymeRules.needs_primal(config)
+        func.val(prev.val)
+    else
+        nothing
+    end
+
+    if EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            shadow = EnzymeCore.make_zero(prev.val)
+            if EnzymeRules.needs_primal(config)
+                return Duplicated(primal, shadow)
+            else
+                return shadow
+            end
+        else
+            shadows = ntuple(Val(EnzymeRules.width(config))) do _
+                EnzymeCore.make_zero(prev.val)
+            end
+            if EnzymeRules.needs_primal(config)
+                return BatchDuplicated(primal, shadows)
+            else
+                return shadows
+            end
+        end
+    else
+        return primal
+    end
+end
