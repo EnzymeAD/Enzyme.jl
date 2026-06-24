@@ -31,6 +31,20 @@ end
 
 
 @inline function EnzymeCore.make_zero(
+	::Type{Array{Union{}, N}},
+        seen::IdDict,
+	prev::Array{Union{}, N},
+        ::Val{copy_if_inactive} = Val(false),
+    )::Array{FT, N} where {copy_if_inactive, N}
+    if haskey(seen, prev)
+        return seen[prev]
+    end
+    newa = copy(prev)
+    seen[prev] = newa
+    return newa
+end
+
+@inline function EnzymeCore.make_zero(
         ::Type{Array{FT, N}},
         seen::IdDict,
         prev::Array{FT, N},
