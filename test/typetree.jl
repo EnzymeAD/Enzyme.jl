@@ -96,17 +96,17 @@ end
             @test tt(MemoryRef{Float32}) == "{[-1]:Pointer, [0,-1]:Float@float, [8,0]:Integer, [8,1]:Integer, [8,2]:Integer, [8,3]:Integer, [8,4]:Integer, [8,5]:Integer, [8,6]:Integer, [8,7]:Integer, [8,8]:Pointer, [8,8,-1]:Float@float}"
         end
     else
-        @test tt(UnionMember) == "{[0]:Float@float, [4]:Pointer, [8]:Integer, [9]:Anything, [10]:Anything, [11]:Anything}"
+        @test tt(UnionMember) == "{[0]:Float@float, [4]:Pointer, [8]:Integer, [9]:Integer, [10]:Integer, [11]:Integer}"
         @test tt(LList2{Float64}) == "{[0]:Pointer, [4]:Float@double}"
         @test tt(Sibling{LList2{Float64}}) == "{[-1]:Pointer, [-1,0]:Pointer, [-1,4]:Float@double}"
         @test tt(Sibling2{LList2{Float64}}) ==
-              "{[0]:Pointer, [0,0]:Pointer, [0,4]:Float@double, [4]:Integer, [5]:Anything, [6]:Anything, [7]:Anything, [8]:Pointer, [8,0]:Pointer, [8,4]:Float@double}"
+              "{[0]:Pointer, [0,0]:Pointer, [0,4]:Float@double, [4]:Integer, [5]:Integer, [6]:Integer, [7]:Integer, [8]:Pointer, [8,0]:Pointer, [8,4]:Float@double}"
         @test tt(Sibling{Tuple{Int,Float64}}) ==
               "{[0]:Integer, [1]:Integer, [2]:Integer, [3]:Integer, [4]:Float@double, [12]:Integer, [13]:Integer, [14]:Integer, [15]:Integer, [16]:Float@double}"
         @test tt(Sibling{LList2{Tuple{Int,Float64}}}) ==
               "{[-1]:Pointer, [-1,0]:Pointer, [-1,4]:Integer, [-1,5]:Integer, [-1,6]:Integer, [-1,7]:Integer, [-1,8]:Float@double}"
         @test tt(Sibling2{Sibling2{LList2{Tuple{Float32,Float64}}}}) ==
-              "{[0]:Pointer, [0,0]:Pointer, [0,4]:Float@float, [0,8]:Float@double, [4]:Integer, [5]:Anything, [6]:Anything, [7]:Anything, [8]:Pointer, [8,0]:Pointer, [8,4]:Float@float, [8,8]:Float@double, [12]:Integer, [13]:Anything, [14]:Anything, [15]:Anything, [16]:Pointer, [16,0]:Pointer, [16,4]:Float@float, [16,8]:Float@double, [20]:Integer, [21]:Anything, [22]:Anything, [23]:Anything, [24]:Pointer, [24,0]:Pointer, [24,4]:Float@float, [24,8]:Float@double}"
+              "{[0]:Pointer, [0,0]:Pointer, [0,4]:Float@float, [0,8]:Float@double, [4]:Integer, [5]:Integer, [6]:Integer, [7]:Integer, [8]:Pointer, [8,0]:Pointer, [8,4]:Float@float, [8,8]:Float@double, [12]:Integer, [13]:Integer, [14]:Integer, [15]:Integer, [16]:Pointer, [16,0]:Pointer, [16,4]:Float@float, [16,8]:Float@double, [20]:Integer, [21]:Integer, [22]:Integer, [23]:Integer, [24]:Pointer, [24,0]:Pointer, [24,4]:Float@float, [24,8]:Float@double}"
     end
 
     @static if VERSION >= v"1.11-"
