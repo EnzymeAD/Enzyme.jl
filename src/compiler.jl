@@ -6918,7 +6918,7 @@ function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module
         )
     end
 
-    if Sys.iswindows() && Sys.ARCH === :x86_64
+    if false && Sys.iswindows() && Sys.ARCH === :x86_64
         for f in functions(mod)
             if isempty(blocks(f))
                 continue
