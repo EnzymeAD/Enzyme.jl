@@ -64,6 +64,7 @@ jobs:
       - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.version }}
+          include-all-prereleases: true
       - name: Load Julia packages from cache
         uses: wsmoses/cache@gcpb
         with:
