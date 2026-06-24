@@ -62,9 +62,7 @@ steps:
       - JuliaCI/julia#v1:
           version: "{{matrix.version}}"
     agents:
-      queue: "juliaecosystem"
-      os: "macos"
-      arch: "aarch64"
+      queue: "metal"
     if: build.message !~ /\[skip tests\]/
     timeout_in_minutes: 60
     commands: |
