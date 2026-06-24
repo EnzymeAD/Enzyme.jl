@@ -59,7 +59,7 @@ using Test
             z = Enzyme.make_zero(s)
             return sum(z.data) + sum(x)
         end
-        @test Enzyme.gradient(Enzyme.Reverse, Const(f_rev), [1.0, 2.0]) ≈ [1.0, 1.0]
+        @test Enzyme.gradient(Enzyme.Reverse, Const(f_rev), [1.0, 2.0])[1] ≈ [1.0, 1.0]
     end
     
 end
