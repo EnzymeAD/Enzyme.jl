@@ -51,11 +51,11 @@ using Test
     end
 
     @testset "Reverse mode make_zero rule" begin
-        struct MyStruct
+        struct MyRevStruct
             data::Vector{Float64}
         end
         function f_rev(x::Vector{Float64})
-            s = MyStruct(x)
+            s = MyRevStruct(x)
             z = Enzyme.make_zero(s)
             return sum(z.data) + sum(x)
         end
