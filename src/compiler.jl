@@ -6918,16 +6918,6 @@ function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module
         )
     end
 
-    if false && Sys.iswindows() && Sys.ARCH === :x86_64
-        for f in functions(mod)
-            if isempty(blocks(f))
-                continue
-            end
-            # Default = 2, to match attr.addUWTableAttr(llvm::UWTableKind::Default); // force NeedsWinEH
-            push!(function_attributes(f), EnumAttribute("uwtable", 2))
-        end
-    end
-
     API.EnzymeDumpModuleRef(mod.ref)
 
     # Now invoke the JIT
