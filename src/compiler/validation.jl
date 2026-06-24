@@ -46,6 +46,7 @@ module FFI
             "jl_set_task_tid",
             "jl_new_task",
             "malloc",
+            "free",
             "memmove",
             "memcpy",
             "memset",
@@ -146,6 +147,10 @@ import GPUCompiler: IRError, InvalidIRError
 function restore_lookups(mod::LLVM.Module)::Nothing
     T_size_t = convert(LLVM.LLVMType, Int)
     for f in functions(mod)
+        nm = LLVM.name(f)
+        if nm == "malloc" || nm == "free"
+            continue
+        end
         for fattr in collect(function_attributes(f))
             if isa(fattr, LLVM.StringAttribute)
                 if kind(fattr) == "enzymejl_needs_restoration"
@@ -166,16 +171,38 @@ function restore_lookups(mod::LLVM.Module)::Nothing
     for (v, k) in FFI.ptr_map
         if haskey(functions(mod), k)
             f = functions(mod)[k]
-            replace_uses!(
-                f,
-                LLVM.Value(
-                    LLVM.API.LLVMConstIntToPtr(
-                        ConstantInt(T_size_t, convert(UInt, v)),
-                        value_type(f),
+
+            if k == "malloc" || k == "free"
+                if VERSION < v"1.11" || !Sys.iswindows()
+                    continue
+                end
+                # On windows we explicitly normalize all malloc/free calls to be the same,
+                # to ensure compatibility with calls to Libc.malloc/free from Julia
+                # Windows throws an error if an malloc/free pair come from different allocators
+                # and apparently the default malloc/free names are distinct from Libc.malloc
+                # Since julia-side functions may need to manage tape memory (like in threading),
+                # we adjust to that allocator.
+                repname = "ejlstr\$$k\$msvcrt"
+
+                repf, _ = get_function!(mod, repname, LLVM.function_type(f))
+
+                replace_uses!(
+                    f,
+                    repf,
+                )
+                eraseInst(mod, f)
+            else
+                replace_uses!(
+                    f,
+                    LLVM.Value(
+                        LLVM.API.LLVMConstIntToPtr(
+                            ConstantInt(T_size_t, convert(UInt, v)),
+                            value_type(f),
+                        ),
                     ),
-                ),
-            )
-            eraseInst(mod, f)
+                )
+                eraseInst(mod, f)
+            end
         end
     end
     return
