@@ -1,6 +1,9 @@
 using Enzyme, Test
 using Enzyme: EnzymeRules
 
+Enzyme.API.printall!(true)
+Enzyme.Compiler.DumpPostOpt[] = true
+
 @noinline function force_stup(A)
     A11 = A[];
     return (A11, 0.0)
