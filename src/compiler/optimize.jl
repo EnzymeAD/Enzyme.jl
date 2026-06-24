@@ -32,7 +32,9 @@ RemoveAlwaysInlineRootsPass() = NewPMModulePass("remove_alwaysinline_roots", rem
 
 function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti=nothing)
     @dispose pb = NewPMPassBuilder() begin
-        tti === nothing || LLVM.target_transform_info!(pb, tti)
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, Addr13NoAliasPass())
         register!(pb, RestoreAllocaType())
@@ -68,7 +70,9 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
     # Globalopt is separated as it can delete functions, which invalidates the Julia hardcoded pointers to
     # known functions
     @dispose pb = NewPMPassBuilder() begin
-        tti === nothing || LLVM.target_transform_info!(pb, tti)
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
@@ -86,7 +90,9 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
 
     function middle_optimize!(second_stage=false)
     @dispose pb = NewPMPassBuilder() begin
-        tti === nothing || LLVM.target_transform_info!(pb, tti)
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, RestoreAllocaType())
         add!(pb, NewPMAAManager()) do aam
@@ -187,7 +193,9 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
     # Globalopt is separated as it can delete functions, which invalidates the Julia hardcoded pointers to
     # known functions
     @dispose pb = NewPMPassBuilder() begin
-        tti === nothing || LLVM.target_transform_info!(pb, tti)
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
@@ -412,7 +420,9 @@ function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
     run!(InstCombinePass(), mod)
     # GVN actually forwards
     @dispose pb = NewPMPassBuilder() begin
-        tti === nothing || LLVM.target_transform_info!(pb, tti)
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         registerEnzymeAndPassPipeline!(pb)
     	add!(pb, SimpleGVNPass())
         run!(pb, mod, tm)
@@ -423,7 +433,9 @@ function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
     end
 
     @dispose pb = NewPMPassBuilder() begin
-        tti === nothing || LLVM.target_transform_info!(pb, tti)
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         registerEnzymeAndPassPipeline!(pb)
         add!(pb, "enzyme-fixup-batched-julia")
         if VERSION < v"1.12"
@@ -485,7 +497,9 @@ function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}
     removeDeadArgs!(mod, tm, #=post_gc_fixup=#true)
 
     @dispose pb = NewPMPassBuilder() begin
-        tti === nothing || LLVM.target_transform_info!(pb, tti)
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, ReinsertGCMarkerPass())
         register!(pb, SafeAtomicToRegularStorePass())
