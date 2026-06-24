@@ -46,6 +46,7 @@ module FFI
             "jl_set_task_tid",
             "jl_new_task",
             "malloc",
+            "free",
             "memmove",
             "memcpy",
             "memset",
