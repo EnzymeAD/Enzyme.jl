@@ -6918,8 +6918,6 @@ function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module
         )
     end
 
-    API.EnzymeDumpModuleRef(mod.ref)
-
     # Now invoke the JIT
     jitted_mod = JIT.add!(mod)
     adjoint_addr = JIT.lookup(adjoint_name)

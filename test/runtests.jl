@@ -1,68 +1,42 @@
-using Enzyme, Test
-using Enzyme: EnzymeRules
+import Enzyme
+import Enzyme_jll
+using ParallelTestRunner: addworker, filter_tests!, find_tests, parse_args, runtests
 
-Enzyme.API.printall!(true)
-Enzyme.Compiler.DumpPostOpt[] = true
-
-@noinline function force_stup(A)
-    A11 = A[];
-    return (A11, 0.0)
+# Start with autodiscovered tests
+testsuite = find_tests(@__DIR__)
+# Add threads tests to be run with multiple Julia threads (will be configured in
+# `test_worker`).
+testsuite["threads/2"] = :(include($(joinpath(@__DIR__, "threads.jl"))))
+# Exclude integration tests, they're handled differently (they each run in their
+# own environment)
+for (k, _) in testsuite
+    startswith(k, "integration/") && delete!(testsuite, k)
 end
 
-@noinline function mul2x2(y, x)
-    Aelements = force_stup(x)
+# Parse arguments
+args = parse_args(ARGS)
 
-    A11 = Aelements[1]
+if filter_tests!(testsuite, args)
+    # Skip GPU-specific tests by default.
+    delete!(testsuite, "metal")
+    delete!(testsuite, "cuda")
+    delete!(testsuite, "amdgpu")
+    delete!(testsuite, "common")
 
-    unsafe_store!(y, A11*A11)
-
-    nothing
+    # Skipped until https://github.com/EnzymeAD/Enzyme.jl/issues/2620 is fixed.
+    if Sys.iswindows()
+        delete!(testsuite, "ext/specialfunctions")
+    end
 end
 
-function f_exc(x)
-    y = Base.reinterpret(Ptr{Float64}, Libc.malloc(8))
-
-    mul2x2(y, x)
-
-    ld = unsafe_load(y)
-
-    return ld * ld
+function test_worker(name)
+    if name == "threads/2"
+        # Run the `threads/2` testset, with multiple threads.
+        return addworker(; exeflags = ["--threads=2"])
+    end
 end
 
-@testset "No JLValueT Calling Conv" begin
-	y = Ref(1.0)
-	f_x = make_zero(y)
-	Enzyme.autodiff(Reverse, f_exc, Duplicated(y, f_x))
+const init_code = quote end
 
-	@test f_x[] ≈ 4.0
-end
-
-struct Inner
-    a::Float64
-    b::Float64
-end
-
-struct Outer
-    inner::Inner
-    c::Float64
-end
-
-@noinline function force_stup_multi(A)
-    return (A.inner, 0.0)
-end
-
-@noinline function process_multi(x)
-    Aelements = force_stup_multi(x)
-    val = Aelements[1].a
-    return val * val
-end
-
-function wrapper_multi(x)
-    return process_multi(x)
-end
-
-# @testset "Multi-index ExtractValue" begin
-#     x = Outer(Inner(2.0, 3.0), 4.0)
-#     dx = Enzyme.gradient(Reverse, wrapper_multi, x)
-#     @test dx[1].inner.a ≈ 4.0
-# end
+@info "Testing against" Enzyme_jll.libEnzyme
+runtests(Enzyme, args; testsuite, init_code, test_worker)
