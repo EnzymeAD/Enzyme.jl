@@ -148,6 +148,9 @@ function restore_lookups(mod::LLVM.Module)::Nothing
     T_size_t = convert(LLVM.LLVMType, Int)
     for f in functions(mod)
         nm = LLVM.name(f)
+        if nm == "malloc" || nm == "free"
+            continue
+        end
         for fattr in collect(function_attributes(f))
             if isa(fattr, LLVM.StringAttribute)
                 if kind(fattr) == "enzymejl_needs_restoration"
@@ -166,6 +169,9 @@ function restore_lookups(mod::LLVM.Module)::Nothing
         end
     end
     for (v, k) in FFI.ptr_map
+        if k == "malloc" || k == "free"
+            continue
+        end
         if haskey(functions(mod), k)
             f = functions(mod)[k]
             replace_uses!(
