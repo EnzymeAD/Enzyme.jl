@@ -223,7 +223,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
         name!(f, "")
         ptr8 = LLVM.PointerType(LLVM.IntType(8))
 
-        prev_ft = eltype(value_type(f)::LLVM.PointerType)::LLVM.FunctionType
+        prev_ft = function_type(f)
 
         mfn = LLVM.API.LLVMAddFunction(
             mod,
