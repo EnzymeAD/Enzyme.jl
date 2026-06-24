@@ -481,3 +481,75 @@ function EnzymeRules.reverse(config, ::Const{typeof(Base.finalizer)}, dret, tape
     # No-op
     return (nothing, nothing)
 end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(EnzymeCore.make_zero)},
+    RT,
+    prev::Annotation{T},
+) where {T}
+    primal = if EnzymeRules.needs_primal(config)
+        func.val(prev.val)
+    else
+        nothing
+    end
+
+    if EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            shadow = EnzymeCore.make_zero(prev.val)
+            if EnzymeRules.needs_primal(config)
+                return Duplicated(primal, shadow)
+            else
+                return shadow
+            end
+        else
+            shadows = ntuple(Val(EnzymeRules.width(config))) do _
+                EnzymeCore.make_zero(prev.val)
+            end
+            if EnzymeRules.needs_primal(config)
+                return BatchDuplicated(primal, shadows)
+            else
+                return shadows
+            end
+        end
+    else
+        return primal
+    end
+end
+
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(EnzymeCore.make_zero)},
+    ::Type{RT},
+    prev::Annotation{T},
+) where {RT,T}
+    primal = if EnzymeRules.needs_primal(config)
+        func.val(prev.val)
+    else
+        nothing
+    end
+
+    shadow = if EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            EnzymeCore.make_zero(prev.val)
+        else
+            ntuple(Val(EnzymeRules.width(config))) do _
+                EnzymeCore.make_zero(prev.val)
+            end
+        end
+    else
+        nothing
+    end
+
+    return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(EnzymeCore.make_zero)},
+    ::Type{RT},
+    tape,
+    prev::Annotation{T},
+) where {RT,T}
+    return (nothing,)
+end
