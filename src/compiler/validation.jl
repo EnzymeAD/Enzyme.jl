@@ -155,7 +155,6 @@ function restore_lookups(mod::LLVM.Module)::Nothing
             if isa(fattr, LLVM.StringAttribute)
                 if kind(fattr) == "enzymejl_needs_restoration"
                     v = parse(UInt, LLVM.value(fattr))
-                    Core.println("replaced (1)", string(f), " with ", v)
                     replace_uses!(
                         f,
                         LLVM.Value(
@@ -193,7 +192,6 @@ function restore_lookups(mod::LLVM.Module)::Nothing
                 )
                 eraseInst(mod, f)
             else
-                Core.println("replaced (2)", string(f), " with ", v)
                 replace_uses!(
                     f,
                     LLVM.Value(
