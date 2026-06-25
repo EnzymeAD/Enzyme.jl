@@ -202,7 +202,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function; force_run=false, 
                 ret!(builder, parms[1])
             end
         end
-        push!(function_attributes(fn), EnumAttribute("alwaysinline"))
+        push!(function_attributes(cfn), EnumAttribute("alwaysinline"))
     end
     return cfn
 end
