@@ -35,7 +35,7 @@ end
         seen::IdDict,
 	prev::Array{Union{}, N},
         ::Val{copy_if_inactive} = Val(false),
-    )::Array{FT, N} where {copy_if_inactive, N}
+    )::Array{Union{}, N} where {copy_if_inactive, N}
     if haskey(seen, prev)
         return seen[prev]
     end
