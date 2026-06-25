@@ -135,16 +135,6 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function; force_run=false, 
         newname = newname * ".poc_$(postprocess_const)"
     end
     newname = newname * LLVM.name(fn)
-    newname_base = newname
-    counter = 0
-    while haskey(functions(mod), newname)
-        existing_F = functions(mod)[newname]
-        if function_type(existing_F) == FT
-            break
-        end
-        counter += 1
-        newname = newname_base * ".$(counter)"
-    end
     cfn, _ = get_function!(mod, newname, FT)
     if isempty(blocks(cfn))
         linkage!(cfn, LLVM.API.LLVMInternalLinkage)
