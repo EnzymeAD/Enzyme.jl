@@ -150,6 +150,20 @@ end
     ddata = ones(4)
     autodiff(Forward, rs, Duplicated(data, ddata))
     @test ddata ≈ [4.0, 1.0, 1.0, 6.0]
+
+    # Test for nested differentiation of reshape where Dead Argument Elimination could optimize the helper wrapper
+    f_nested(x) = reshape(x, 1)[1]
+    function g_nested(x)
+        dx = zero(x)
+        autodiff(set_runtime_activity(Reverse), f_nested, Duplicated(x, dx))
+        return dx
+    end
+    xv = [3.0]
+    dxv = [1.0]
+    xm = reshape([3.0], 1, 1)
+    dxm = reshape([1.0], 1, 1)
+    @test autodiff(set_runtime_activity(Forward), g_nested, Duplicated(xv, dxv))[1] ≈ [0.0]
+    @test autodiff(set_runtime_activity(Forward), g_nested, Duplicated(xm, dxm))[1] ≈ [0.0;;]
 end
 
 @testset "Array Copy" begin
