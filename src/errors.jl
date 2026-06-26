@@ -1437,7 +1437,7 @@ function julia_error(
 @static if VERSION < v"1.11-"
 else   
             if isa(cur, LLVM.ConstantExpr)
-                larg, off = get_base_and_offset(operands(cur)[1]; inst=data2)
+                larg, off = get_base_and_offset(operands(cur)[1]; inst=first(instructions(prevbb)))
                 legal2, obj = absint(larg)
                 obj = unbind(obj)
                 if legal2 && is_memory_instance(obj)
