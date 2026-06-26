@@ -352,6 +352,8 @@ function enzyme_custom_setup_args(
         parmsRemoved,
         mi,
         world,
+        ofn,
+        true,
     )
 
     byval_tapes = LLVM.Value[]
@@ -1333,7 +1335,10 @@ end
     width = get_width(gutils)
 
     # 1) extract out the MI from attributes
-    mi, RealRt = enzyme_custom_extract_mi(orig)
+    mi, RealRt = enzyme_custom_extract_mi(orig, false)
+    if mi === nothing
+        return nothing, nothing, nothing
+    end
     isKWCall = isKWCallSignature(mi.specTypes)
 
     # 2) Create activity, and annotate function spec
@@ -1423,7 +1428,10 @@ end
     @nospecialize(B::Union{Nothing, LLVM.IRBuilder}) = nothing,
 )
     # 1) extract out the MI from attributes
-    mi, RealRt = enzyme_custom_extract_mi(orig)
+    mi, RealRt = enzyme_custom_extract_mi(orig, false)
+    if mi === nothing
+        return nothing, nothing, nothing
+    end
 
     kwfunc = nothing
 
