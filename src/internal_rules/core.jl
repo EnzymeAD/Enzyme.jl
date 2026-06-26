@@ -120,7 +120,7 @@ function EnzymeRules.augmented_primal(
         nothing
     end
 
-    return EnzymeRules.AugmentedReturn(primal, shadow, shadow)
+    return EnzymeRules.augmented_rule_return_type(config, RT)(primal, shadow, shadow)
 end
 
 
