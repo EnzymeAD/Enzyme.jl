@@ -84,3 +84,54 @@ end
     )
     @test grads_enzyme[] ≈ 1.0
 end
+
+@testset "Absint load of constantexpr gep HVP" begin
+    @inline function mydouble(x)
+        y = similar(x)
+        for i in eachindex(x, y)
+            y[i] = 2 * x[i]
+        end
+        return y
+    end
+
+    @inline function myouterproduct(x, y)
+        z = similar(x, length(x), length(y))
+        for i in eachindex(x)
+            for j in eachindex(y)
+                z[i, j] = x[i] * y[j]
+            end
+        end
+        return z
+    end
+
+    function arr_to_num(x::AbstractArray)
+        a = mydouble(x)
+        b = myouterproduct(a, x)
+        return b[1]
+    end
+
+    function f(x, c)
+        c[1] = arr_to_num(x)
+        return c[1]
+    end
+
+    function g(x, c)
+        dx = zero(x)
+        dc = zero(c)
+        autodiff(Reverse, f, Duplicated(x, dx), Duplicated(c, dc))
+        return dx
+    end
+
+    function h(x, c, dx_batch)
+        dc_batch = map(dx -> zero(c), dx_batch)
+        result = autodiff(Forward, g, BatchDuplicated(x, dx_batch), BatchDuplicated(c, dc_batch))
+        return result
+    end
+
+    x = [3.0, 5.0]
+    dx_batch = ([1.0, 0.0], [0.0, 1.0])
+    c = [0.0]
+    res = h(x, c, dx_batch)
+    @test res[1][1] ≈ [4.0, 0.0]
+    @test res[1][2] ≈ [0.0, 0.0]
+end
