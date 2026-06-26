@@ -153,7 +153,7 @@ end
 
 struct RemovedParam end
 
-function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nospecialize(rooted_typ::Union{Nothing, Type}), source_i::Int, orig_i::Int, arg_jl_i::Int, codegen_i::Int, last_cc, parmsRemoved, @nospecialize(source_sig::Type), llvm_f::LLVM.Function)
+function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nospecialize(rooted_typ::Union{Nothing, Type}), source_i::Int, orig_i::Int, arg_jl_i::Int, codegen_i::Int, last_cc, parmsRemoved, @nospecialize(source_sig::Type))
     if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
         push!(args, (cc = GPUCompiler.GHOST, typ = source_typ, arg_i = source_i,
             rooted_typ = rooted_typ,
@@ -178,7 +178,7 @@ function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nos
     end
 
     if codegen_i > length(codegen_types)
-        throw(AssertionError("In function $(LLVM.name(llvm_f)): codegen_i=$codegen_i > length(codegen_types)=$(length(codegen_types)) orig_i=$orig_i, last_cc=$last_cc source_typ=$source_typ rooted_typ=$rooted_typ arg_jl_i=$arg_jl_i parmsRemoved=$parmsRemoved"))
+        throw(AssertionError("codegen_i=$codegen_i > length(codegen_types)=$(length(codegen_types)) orig_i=$orig_i, last_cc=$last_cc source_typ=$source_typ rooted_typ=$rooted_typ arg_jl_i=$arg_jl_i parmsRemoved=$parmsRemoved"))
     end
 
     codegen_typ = codegen_types[codegen_i]
@@ -274,13 +274,7 @@ function classify_arguments(
     parmsRemoved::Vector{UInt64},
     mi::Core.MethodInstance,
     world::UInt,
-    llvm_f::LLVM.Function,
-    called_at_start::Bool,
 )
-    if called_at_start
-        @assert isempty(parmsRemoved) "called_at_start=true but parmsRemoved is not empty"
-    end
-
     codegen_types = parameters(codegen_ft)
 
     args = []
@@ -310,39 +304,15 @@ function classify_arguments(
     for (arg_jl_i, source_typ) in enumerate(source_sig.parameters)
         source_i += 1
         rooted_typ = nothing
-        orig_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc, parmsRemoved, source_sig, llvm_f)
+        orig_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc, parmsRemoved, source_sig)
 
         roots = inline_roots_type(source_typ)
         if roots != 0
             byref = true
             if last_cc == RemovedParam
-                if called_at_start
-                    throw(AssertionError("last_cc == RemovedParam when called_at_start=true"))
-                end
-                if codegen_i > length(codegen_types)
-                    byref = false
-                else
-                    has_rooted_typ = false
-                    rooted_typ_val = nothing
-                    for attr in collect(LLVM.parameter_attributes(llvm_f, codegen_i))
-                        if attr isa LLVM.StringAttribute
-                            if LLVM.kind(attr) == "enzymejl_rooted_typ"
-                                has_rooted_typ = true
-                                rooted_typ_val = LLVM.value(attr)
-                                break
-                            end
-                        end
-                    end
-                    if has_rooted_typ
-                        expected_val = string(convert(UInt, unsafe_to_pointer(source_typ)))
-                        if rooted_typ_val != expected_val
-                            throw(AssertionError("enzymejl_rooted_typ attribute ($rooted_typ_val) does not match expected source_typ ($expected_val for $source_typ)"))
-                        end
-                        byref = true
-                    else
-                        byref = false
-                    end
-                end
+                # TODO(wmoses,vchuravy) if a parameter is removed, it is not possible to know if it was byref or not, we will assume it is byref for now.
+                # Note that getting this wrong can result in segfaults, invalid IR, or worse.
+                GPUCompiler.@safe_warn "TODO: Removed parameter with rooting cannot be known without calling convention. This is a bug which requires a fix in Julia (1.12+) itself"
             elseif last_cc == GPUCompiler.BITS_VALUE
                 byref = false
             end
@@ -350,7 +320,7 @@ function classify_arguments(
                 source_i += 1
                 rooted_typ = source_typ
                 source_typ = equivalent_rooted_type(source_typ)
-                orig_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc, parmsRemoved, source_sig, llvm_f)
+                orig_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc, parmsRemoved, source_sig)
             end
         end
     end

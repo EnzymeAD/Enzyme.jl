@@ -1162,8 +1162,6 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
             parmsRemoved,
             mi,
             world,
-            f,
-            isempty(parmsRemoved),
         )
 
         ctx = LLVM.context(f)
@@ -1284,11 +1282,25 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
     )
 
     for fname in LLVM.name.(functions(mod))
-        if !haskey(functions(mod), fname) || startswith(fname, "japi3") || startswith(fname, "japi1")
+        if !haskey(functions(mod), fname)
             continue
         end
         fn = functions(mod)[fname]
-        mi, RT = enzyme_custom_extract_mi(fn, false)
+        attributes = function_attributes(fn)
+        mi = nothing
+        RT = nothing
+        for fattr in collect(attributes)
+            if isa(fattr, LLVM.StringAttribute)
+                if kind(fattr) == "enzymejl_mi"
+                    ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
+                    mi = Base.unsafe_pointer_to_objref(ptr)
+                end
+            end
+            if kind(fattr) == "enzymejl_rt"
+                ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
+                RT = Base.unsafe_pointer_to_objref(ptr)
+            end
+        end
         if mi !== nothing && RT !== nothing
             handle_compiled(state, edges, run_enzyme, mode, world, method_table, custom, mod, mi, fname, RT)
         end
@@ -2482,9 +2494,6 @@ function enzyme_custom_extract_mi(orig::LLVM.CallInst, error::Bool = true)
 end
 
 function enzyme_custom_extract_mi(orig::LLVM.Function, error::Bool = true)
-    if startswith(LLVM.name(orig), "japi3") || startswith(LLVM.name(orig), "japi1") || startswith(LLVM.name(orig), "julia_throw_") || contains(LLVM.name(orig), ".")
-        return nothing, nothing
-    end
     mi = nothing
     RT = nothing
     for fattr in collect(function_attributes(orig))
@@ -4388,7 +4397,7 @@ function lower_convention(
     swiftself = has_swiftself(entry_f)
     @assert !swiftself "Swiftself attribute coming from differentiable context is not supported"
     prargs =
-        classify_arguments(functy, entry_ft, sret, returnRoots, swiftself, parmsRemoved, mi, world, entry_f, false)
+        classify_arguments(functy, entry_ft, sret, returnRoots, swiftself, parmsRemoved, mi, world)
     args = copy(prargs)
     filter!(args) do arg
         Base.@_inline_meta
@@ -4498,7 +4507,7 @@ function lower_convention(
     wrapper_fn = LLVM.name(entry_f)
     LLVM.name!(entry_f, safe_name(wrapper_fn * ".inner"))
     wrapper_ft = LLVM.FunctionType(RT, wrapper_types)
-    wrapper_f = LLVM.Function(mod, wrapper_fn, wrapper_ft)
+    wrapper_f = LLVM.Function(mod, LLVM.name(entry_f), wrapper_ft)
     callconv!(wrapper_f, callconv(entry_f))
     sfn = get_subprogram(entry_f)
     if sfn !== nothing
