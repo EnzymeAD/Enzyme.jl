@@ -1976,6 +1976,10 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
+                        if LLVM.called_type(un) != LLVM.function_type(fn)
+                            illegalUse = true
+                            break
+                        end
                         bad = false
                         for op in arg_operands_view(un)
                             if op == fn
@@ -2089,6 +2093,10 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
+                        if LLVM.called_type(un) != LLVM.function_type(fn)
+                            illegalUse = true
+                            break
+                        end
                         bad = false
                         for op in arg_operands_view(un)
                             if op == fn
@@ -2182,6 +2190,10 @@ function propagate_returned!(mod::LLVM.Module)
             for u in LLVM.uses(fn)
                 un = LLVM.user(u)
                 if !isa(un, LLVM.CallInst)
+                    illegalUse = true
+                    continue
+                end
+                if LLVM.called_type(un) != LLVM.function_type(fn)
                     illegalUse = true
                     continue
                 end

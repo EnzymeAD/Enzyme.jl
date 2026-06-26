@@ -63,4 +63,26 @@ using Test
         # sum(10p) * 3 = 30 * sum(p) -> gradient is [30.0, 30.0]
         @test only(grad) ≈ [30.0, 30.0]
     end
+
+    @testset "tuple and immutable accumulation" begin
+        mutable struct PTupleAccum
+            tspan::Tuple{Float64, Float64}
+            u0::Vector{Float64}
+        end
+
+        f_tuple(x) = (q = deepcopy(PTupleAccum((0.0, 1.0), [x, 2x])); sum(q.u0))
+        grad = Enzyme.gradient(Enzyme.Reverse, f_tuple, 2.0)
+        @test grad[1] ≈ 3.0
+
+        struct ImmutableSub
+            val::Float64
+        end
+        mutable struct PImmutableAccum
+            sub::ImmutableSub
+            u0::Vector{Float64}
+        end
+        f_immutable(x) = (q = deepcopy(PImmutableAccum(ImmutableSub(5.0), [x, 2x])); sum(q.u0) + q.sub.val)
+        grad2 = Enzyme.gradient(Enzyme.Reverse, f_immutable, 2.0)
+        @test grad2[1] ≈ 3.0
+    end
 end

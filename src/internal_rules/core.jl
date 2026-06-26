@@ -156,19 +156,33 @@ end
     seen::IdDict,
     from::RT,
 )::Tuple{RT,RT} where {RT<:AbstractFloat}
-    if !haskey(seen, into)
-        seen[into] = (into + from, RT(0))
+    return (into + from, RT(0))
+end
+
+@inline function accumulate_into(
+    into::RT,
+    seen::IdDict,
+    from::RT,
+)::Tuple{RT,RT} where {RT<:Tuple}
+    if Enzyme.Compiler.guaranteed_const(RT)
+        return (into, from)
     end
-    return seen[into]
+    res = ntuple(Val(length(into))) do i
+        Base.@_inline_meta
+        @inline accumulate_into(into[i], seen, from[i])
+    end
+    new_into = map(first, res)
+    new_from = map(Base.Fix2(Base.getindex, 2), res)
+    return (new_into, new_from)
 end
 
 @inline function accumulate_into(into::RT, seen::IdDict, from::RT)::Tuple{RT,RT} where {RT}
     if Enzyme.Compiler.guaranteed_const(RT)
         return (into, from)
     end
-    if !haskey(seen, into)
-        seen[into] = (into, from)
-        if ismutable(into)
+    if ismutable(into)
+        if !haskey(seen, into)
+            seen[into] = (into, from)
             nf = fieldcount(RT)
             for i in 1:nf
                 isdeffrom = isdefined(from, i)
@@ -190,11 +204,33 @@ end
                     throw(AssertionError("Unimplemented accumulate_into for type $RT"))
                 end
             end
-        else
-            throw(AssertionError("Unimplemented accumulate_into for type $RT"))
         end
+        return seen[into]
+    else
+        nf = fieldcount(RT)
+        flds_into = Vector{Any}(undef, nf)
+        flds_from = Vector{Any}(undef, nf)
+        nf_def = nf
+        for i in 1:nf
+            isdeffrom = isdefined(from, i)
+            isdefinto = isdefined(into, i)
+            if isdeffrom && isdefinto
+                xi_into = getfield(into, i)
+                xi_from = getfield(from, i)
+                tup = accumulate_into(xi_into, seen, xi_from)
+                flds_into[i] = tup[1]
+                flds_from[i] = tup[2]
+            elseif !isdeffrom && !isdefinto
+                nf_def = i - 1
+                break
+            else
+                throw(AssertionError("Unimplemented accumulate_into for type $RT"))
+            end
+        end
+        new_into = ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds_into, nf_def)::RT
+        new_from = ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds_from, nf_def)::RT
+        return (new_into, new_from)
     end
-    return seen[into]
 end
 
 
@@ -444,4 +480,76 @@ end
 function EnzymeRules.reverse(config, ::Const{typeof(Base.finalizer)}, dret, tape, f::Const, o)
     # No-op
     return (nothing, nothing)
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(EnzymeCore.make_zero)},
+    RT,
+    prev::Annotation{T},
+) where {T}
+    primal = if EnzymeRules.needs_primal(config)
+        func.val(prev.val)
+    else
+        nothing
+    end
+
+    if EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            shadow = EnzymeCore.make_zero(prev.val)
+            if EnzymeRules.needs_primal(config)
+                return Duplicated(primal, shadow)
+            else
+                return shadow
+            end
+        else
+            shadows = ntuple(Val(EnzymeRules.width(config))) do _
+                EnzymeCore.make_zero(prev.val)
+            end
+            if EnzymeRules.needs_primal(config)
+                return BatchDuplicated(primal, shadows)
+            else
+                return shadows
+            end
+        end
+    else
+        return primal
+    end
+end
+
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(EnzymeCore.make_zero)},
+    ::Type{RT},
+    prev::Annotation{T},
+) where {RT,T}
+    primal = if EnzymeRules.needs_primal(config)
+        func.val(prev.val)
+    else
+        nothing
+    end
+
+    shadow = if EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            EnzymeCore.make_zero(prev.val)
+        else
+            ntuple(Val(EnzymeRules.width(config))) do _
+                EnzymeCore.make_zero(prev.val)
+            end
+        end
+    else
+        nothing
+    end
+
+    return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(EnzymeCore.make_zero)},
+    ::Type{RT},
+    tape,
+    prev::Annotation{T},
+) where {RT,T}
+    return (nothing,)
 end

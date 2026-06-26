@@ -1366,6 +1366,7 @@ end
     ET_GCRewrite = 11,
     ET_NaNError = 12,
     ET_ShowInternalError = 12,
+    ET_NoAccumulate = 13,
 )
 
 function EnzymeTypeAnalyzerToString(typeanalyzer)

@@ -1885,7 +1885,10 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
 			if addrspace(value_type(prev3)) != Derived
 			  prev3 = addrspacecast!(B, prev3, LLVM.PointerType(T_prjlvalue, Derived))
 			end
-			zero_single_allocation(B, Ty2, T_prjlvalue, prev3, zeroAll, LLVM.ConstantInt(T_int64, 0); atomic=true) 
+			zero_single_allocation(B, Ty2, T_prjlvalue, prev3, zeroAll, LLVM.ConstantInt(T_int64, 0); atomic=true)
+		    elseif !typedesc[i].isptr && Ty2 isa Union
+			# Inline union type e.g. Union{Int, Nothing} -> struct { ..., i64, i8 }
+			continue
 		    else
 			if count !== nothing
 			   @assert off == 0
