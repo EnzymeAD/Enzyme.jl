@@ -74,6 +74,48 @@ using Test
     )
 end
 
+tri_upper_vec(A, b) = UpperTriangular(A) \ b
+tri_upper_mat(A, B) = UpperTriangular(A) \ B
+tri_lower_vec(A, b) = LowerTriangular(A) \ b
+tri_lower_mat(A, B) = LowerTriangular(A) \ B
+tri_unit_upper_vec(A, b) = UnitUpperTriangular(A) \ b
+tri_unit_upper_mat(A, B) = UnitUpperTriangular(A) \ B
+tri_unit_lower_vec(A, b) = UnitLowerTriangular(A) \ b
+tri_unit_lower_mat(A, B) = UnitLowerTriangular(A) \ B
+tri_transpose_upper_vec(A, b) = transpose(UpperTriangular(A)) \ b
+
+@testset "Forward triangular \\" begin
+    A = Float64[
+        3.0 0.4
+        0.6 2.7
+    ]
+    b = Float64[0.7, -0.2]
+    B = Float64[
+        0.6 -0.1
+        -0.4 0.7
+    ]
+
+    for (f, rhs) in (
+            (tri_upper_vec, b),
+            (tri_upper_mat, B),
+            (tri_lower_vec, b),
+            (tri_lower_mat, B),
+            (tri_unit_upper_vec, b),
+            (tri_unit_upper_mat, B),
+            (tri_unit_lower_vec, b),
+            (tri_unit_lower_mat, B),
+            (tri_transpose_upper_vec, b),
+        )
+        test_forward(f, Duplicated, (copy(A), Duplicated), (copy(rhs), Duplicated))
+    end
+
+    test_forward(tri_upper_vec, DuplicatedNoNeed, (copy(A), Duplicated), (copy(b), Duplicated))
+    test_forward(tri_upper_vec, BatchDuplicated, (copy(A), BatchDuplicated), (copy(b), BatchDuplicated))
+    test_forward(tri_unit_lower_mat, BatchDuplicatedNoNeed, (copy(A), BatchDuplicated), (copy(B), BatchDuplicated))
+    test_forward(tri_upper_vec, Duplicated, (copy(A), Const), (copy(b), Duplicated))
+    test_forward(tri_upper_vec, Duplicated, (copy(A), Duplicated), (copy(b), Const))
+end
+
 function tr_solv(A, B, uplo, trans, diag, idx)
     B = copy(B)
     LAPACK.trtrs!(uplo, trans, diag, A, B)
