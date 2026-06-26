@@ -3,7 +3,10 @@ function julia_activity_rule(f::LLVM.Function, method_table)
     if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1")
         return
     end
-    mi, RT = enzyme_custom_extract_mi(f)
+    mi, RT = enzyme_custom_extract_mi(f, false)
+    if mi === nothing
+        return
+    end
 
     llRT, sret, returnRoots = get_return_info(RT)
     retRemoved, parmsRemoved = removed_ret_parms(f)
@@ -29,6 +32,8 @@ function julia_activity_rule(f::LLVM.Function, method_table)
         parmsRemoved,
         mi,
         world,
+        f,
+        false,
     )
 
     kwarg_inactive = false

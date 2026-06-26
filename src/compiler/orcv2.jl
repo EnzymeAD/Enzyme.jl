@@ -170,7 +170,7 @@ function add_trampoline!(jd, (lljit, lctm, ism), entry, target)
     mu = LLVM.reexports(lctm, ism, jd, [alias])
     LLVM.define(jd, mu)
 
-    LLVM.lookup(lljit, jd, entry)
+    LLVM.lookup(lljit, entry)
 end
 
 function prepare!(mod)
@@ -293,7 +293,7 @@ end
 
 function lookup(name)
     lljit = jit[].jit
-    LLVM.lookup(lljit, JITDylib(lljit), name)
+    LLVM.lookup(lljit, name)
 end
 
 end # module
