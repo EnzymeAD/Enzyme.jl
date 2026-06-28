@@ -268,7 +268,7 @@ end
     m = ZeroAllocCell(ones(Float32, 2, 2))
     x = 1.0f0
     # This should not segfault or bus error when turns is 0 (i.e. zero-sized tape/cache allocation)
-    val, grads = Enzyme.autodiff(set_runtime_activity(ReverseWithPrimal), Const(zero_alloc_loss_func), Active,
+    grads, val = Enzyme.autodiff(set_runtime_activity(ReverseWithPrimal), Const(zero_alloc_loss_func), Active,
                                  Const(x), Duplicated(m, ZeroAllocCell(zeros(Float32, 2, 2))), Const(0), Const(2))
     @test val ≈ 2.0f0
 end
