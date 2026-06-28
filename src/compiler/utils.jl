@@ -68,6 +68,11 @@ const NoEffects = MemoryEffect(
     (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
     (MRI_NoModRef << getLocationPos(Other)),
 )
+const ReadArgMemWriteInaccessibleEffects = MemoryEffect(
+    (MRI_Ref << getLocationPos(ArgMem)) |
+    (MRI_Mod << getLocationPos(InaccessibleMem)) |
+    (MRI_NoModRef << getLocationPos(Other)),
+)
 
 # Get ModRefInfo for any location.
 function getModRef(effect::MemoryEffect, loc::IRMemLocation)::ModRefInfo
@@ -466,7 +471,6 @@ function unique_gcmarker!(func::LLVM.Function)
     if length(found) > 1
         for i = 2:length(found)
             LLVM.replace_uses!(found[i], found[1])
-            ops = LLVM.collect(operands(found[i]))
             eraseInst(entry_bb, found[i])
         end
     end

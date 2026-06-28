@@ -730,3 +730,68 @@ end
    f = Foo(1.0)
    @test Enzyme.jacobian(Enzyme.Reverse, f, x)[1][1] ≈ 2.0
 end
+
+using LinearAlgebra
+
+struct WrapJ11{T, V}
+    ρ::T
+    λQ::V
+end
+
+function combined_j11(d::WrapJ11, p::Vector{Float64}, z::Vector{ComplexF64})
+    N  = length(d.λQ)
+    ld = sum(log, d.λQ)
+    cp = abs(dot(z, z))
+    return d.ρ * ld - N * 0.5 + cp + @inbounds p[1]
+end
+
+const Z_DATA_J11 = ComplexF64[1.0 + 1.0im]
+const LAMBDA_J11 = [2.0]
+
+@testset "Julia 1.11 generic_setup" begin
+    p0 = [1.0]
+    ρ0 = 1.5
+    dp = zero(p0)
+    
+    res = Enzyme.autodiff(set_runtime_activity(Enzyme.Reverse),
+        Const((p, ρ, z) -> combined_j11(WrapJ11(ρ, LAMBDA_J11), p, z)), Active,
+        Duplicated(p0, dp), Active(ρ0), Const(Z_DATA_J11))
+    
+    @test res[1][2] ≈ log(2.0)
+end
+
+struct LJ_3206
+    cutoff::Float32
+    use_neighbors::Bool
+end
+
+struct CRF_3206
+    cutoff::Float32
+    use_neighbors::Bool
+end
+
+use_neighbors_3206(inter) = inter.use_neighbors
+
+mutable struct Sys_3206{P}
+    sigma::Float32
+    inters::P
+end
+
+@inline force_3206(::LJ_3206, sys) = sys.sigma
+@inline force_3206(::CRF_3206, sys) = 1.0f0
+
+@inline sum_forces_3206(inters::Tuple{T}, sys) where {T} = force_3206(inters[1], sys)
+@inline sum_forces_3206(inters::Tuple, sys) =
+    force_3206(first(inters), sys) + sum_forces_3206(Base.tail(inters), sys)
+
+function loss_3206(sigma, inters)
+    sys = Sys_3206(sigma, inters)
+    inters_nl = filter(use_neighbors_3206, sys.inters)
+    return sum_forces_3206(inters_nl, sys)
+end
+
+@testset "filter tuple" begin
+    inters = (LJ_3206(1.2f0, true), CRF_3206(2.3f0, true))
+    res = autodiff(set_runtime_activity(Reverse), loss_3206, Active, Active(0.4f0), Const(inters))
+    @test res[1][1] ≈ 1.0f0
+end

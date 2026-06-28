@@ -237,13 +237,12 @@ end
     # TODO: Clean this up and add to `nested_codegen!` asa feature
     width = Int(get_width(gutils))
 
-    ops = collect(operands(orig))[1:end-1]
     dupClosure = !guaranteed_const_nongen(funcT, world)
     if dupClosure
-	if is_constant_value(gutils, ops[1])
+	if is_constant_value(gutils, operands(orig)[1])
 	    dupClosure = false
 	    if inline_roots_type(funcT) != 0
-	        if !is_constant_value(gutils, ops[2])
+	        if !is_constant_value(gutils, operands(orig)[2])
 		    dupClosure = true
 		end
 	    end
@@ -434,13 +433,20 @@ end
         
 	alloctx = LLVM.IRBuilder()
         position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
-        al = alloca!(alloctx, llty)
-	al2 = if num_arg_roots != 0
-	   alloca!(alloctx, convert(LLVMType, AnyArray(num_arg_roots)))
-	end
+        
+        llty_foralloca = if VERSION >= v"1.12" && num_arg_roots != 0
+            strip_tracked_pointers(llty)
+        else
+            llty
+        end
+
+        al = alloca!(alloctx, llty_foralloca)
+        al2 = if num_arg_roots != 0
+            alloca!(alloctx, convert(LLVMType, AnyArray(num_arg_roots)))
+        end
 
         if !isghostty(ppfuncT)
-            v = new_from_original(gutils, ops[1])
+            v = new_from_original(gutils, operands(orig)[1])
             pllty = convert(LLVMType, ppfuncT)
 	    
             pv = nothing
@@ -459,7 +465,7 @@ end
             end
 	    
 	    if inline_roots_type(ppfuncT) != 0
-		v2 = new_from_original(gutils, ops[2])
+		v2 = new_from_original(gutils, operands(orig)[2])
 		v = recombine_value!(fwdbuilder, v, v2)
 	    end
 
@@ -508,7 +514,7 @@ end
         if pdupClosure
 
             if !isghostty(ppfuncT)
-                dv = invert_pointer(gutils, ops[1], B)
+                dv = invert_pointer(gutils, operands(orig)[1], B)
                    
 		fwdbuilder = if mode == API.DEM_ReverseModeGradient
 		     B2 = LLVM.IRBuilder()
@@ -522,7 +528,7 @@ end
                 pv = nothing
 	        
                 dv2 = if inline_roots_type(ppfuncT) != 0
-                   invert_pointer(gutils, ops[2], B)
+                   invert_pointer(gutils, operands(orig)[2], B)
                 end
 
                 if value_type(dv) != spllty
@@ -612,7 +618,8 @@ end
         push!(vals, tape)
     end
 
-    push!(vals, new_from_original(gutils, operands(orig)[end-1]))
+    push!(vals, new_from_original(gutils, arg_operands_view(orig)[end]))
+
     return refed, LLVM.name(subfunc), dfuncT, vals, thunkTy, TapeType, copies
 end
 
@@ -633,7 +640,8 @@ end
     tt = Tuple{thunkTy,dfuncT,Bool}
     mode = get_mode(gutils)
     world = enzyme_extract_world(LLVM.parent(position(B)))
-    entry = nested_codegen!(mode, mod, runtime_pfor_fwd, tt, world)
+    enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
+    entry = nested_codegen!(enzyme_ctx, mode, mod, runtime_pfor_fwd, tt, world)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
     pval = functions(mod)[sname]
@@ -681,7 +689,8 @@ end
     }
     mode = get_mode(gutils)
     world = enzyme_extract_world(LLVM.parent(position(B)))
-    entry = nested_codegen!(mode, mod, runtime_pfor_augfwd, tt, world)
+    enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
+    entry = nested_codegen!(enzyme_ctx, mode, mod, runtime_pfor_augfwd, tt, world)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
     pval = functions(mod)[sname]
@@ -740,7 +749,8 @@ end
         Bool,
     }
     mode = get_mode(gutils)
-    entry = nested_codegen!(mode, mod, runtime_pfor_rev, tt, world)
+    enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
+    entry = nested_codegen!(enzyme_ctx, mode, mod, runtime_pfor_rev, tt, world)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
     pval = functions(mod)[sname]
@@ -771,16 +781,14 @@ end
 
     world = enzyme_extract_world(LLVM.parent(position(B)))
 
-    ops = collect(operands(orig))
-
     vals = LLVM.Value[
         unsafe_to_llvm(B, runtime_newtask_fwd),
-        new_from_original(gutils, ops[1]),
-        invert_pointer(gutils, ops[1], B),
-        new_from_original(gutils, ops[2]),
+        new_from_original(gutils, operands(orig)[1]),
+        invert_pointer(gutils, operands(orig)[1], B),
+        new_from_original(gutils, operands(orig)[2]),
         (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(
             B,
-            new_from_original(gutils, ops[3]),
+            new_from_original(gutils, operands(orig)[3]),
         ),
         unsafe_to_llvm(B, Val(get_runtime_activity(gutils))),
         unsafe_to_llvm(B, Val(get_strong_zero(gutils))),
@@ -827,16 +835,14 @@ end
 
     world = enzyme_extract_world(LLVM.parent(position(B)))
 
-    ops = collect(operands(orig))
-
     vals = LLVM.Value[
         unsafe_to_llvm(B, runtime_newtask_augfwd),
-        new_from_original(gutils, ops[1]),
-        invert_pointer(gutils, ops[1], B),
-        new_from_original(gutils, ops[2]),
+        new_from_original(gutils, operands(orig)[1]),
+        invert_pointer(gutils, operands(orig)[1], B),
+        new_from_original(gutils, operands(orig)[2]),
         (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(
             B,
-            new_from_original(gutils, ops[3]),
+            new_from_original(gutils, operands(orig)[3]),
         ),
         unsafe_to_llvm(B, Val(get_runtime_activity(gutils))),
         unsafe_to_llvm(B, Val(get_strong_zero(gutils))),
@@ -878,15 +884,14 @@ end
 end
 
 @register_fwd function set_task_tid_fwd(B, orig, gutils, normalR, shadowR)
-    ops = collect(operands(orig))[1:end-1]
-    if is_constant_value(gutils, ops[1])
+    if is_constant_value(gutils, operands(orig)[1])
         return true
     end
 
-    inv = invert_pointer(gutils, ops[1], B)
+    inv = invert_pointer(gutils, operands(orig)[1], B)
     width = get_width(gutils)
     if width == 1
-        nops = LLVM.Value[inv, new_from_original(gutils, ops[2])]
+        nops = LLVM.Value[inv, new_from_original(gutils, operands(orig)[2])]
         valTys = API.CValueType[API.VT_Shadow, API.VT_Primal]
         cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, nops, valTys, false) #=lookup=#
         debug_from_orig!(gutils, cal, orig)
@@ -895,7 +900,7 @@ end
         for idx = 1:width
             nops = LLVM.Value[
                 extract_value(B, inv, idx - 1),
-                new_from_original(gutils, ops[2]),
+                new_from_original(gutils, operands(orig)[2]),
             ]
             valTys = API.CValueType[API.VT_Shadow, API.VT_Primal]
             cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, nops, valTys, false) #=lookup=#

@@ -33,11 +33,15 @@ end
 
 get_width(gutils::GradientUtils) = API.EnzymeGradientUtilsGetWidth(gutils)
 get_mode(gutils::GradientUtils) = API.EnzymeGradientUtilsGetMode(gutils)
+get_logic(gutils::GradientUtils) = API.EnzymeGradientUtilsGetLogic(gutils)
 get_runtime_activity(gutils::GradientUtils) =
     API.EnzymeGradientUtilsGetRuntimeActivity(gutils)
 
 get_strong_zero(gutils::GradientUtils) =
     API.EnzymeGradientUtilsGetStrongZero(gutils)
+
+get_atomic_add(gutils::GradientUtils) =
+    API.EnzymeGradientUtilsGetAtomicAdd(gutils)
 
 function get_shadow_type(gutils::GradientUtils, T::LLVM.LLVMType)
     w = get_width(gutils)
@@ -188,7 +192,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function; force_run=false, 
                 ret!(builder, parms[1])
             end
         end
-        push!(function_attributes(fn), EnumAttribute("alwaysinline"))
+        push!(function_attributes(cfn), EnumAttribute("alwaysinline"))
     end
     return cfn
 end
@@ -223,8 +227,7 @@ function call_same_with_inverted_arg_if_active!(
     need_result = true
 )::Union{LLVM.Value, Nothing}
     @assert length(args) == length(valTys)
-
-    origops = collect(operands(orig))
+    origops = arg_operands_view(orig)
     if !force_run && is_constant_value(gutils, origops[cmpidx])
         if !need_result
             return nothing

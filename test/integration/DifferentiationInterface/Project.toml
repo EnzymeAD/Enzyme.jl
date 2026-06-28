@@ -13,6 +13,6 @@ EnzymeCore = { path = "../../../lib/EnzymeCore" }
 
 [compat]
 ADTypes = "1.17.0"
-DifferentiationInterface = "=0.7.12"
-DifferentiationInterfaceTest = "=0.10.4"
+DifferentiationInterface = "=0.7.18"
+DifferentiationInterfaceTest = "=0.11.0"
 StaticArrays = "1.9"

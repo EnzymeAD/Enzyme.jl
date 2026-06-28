@@ -154,3 +154,49 @@ end
 
 end # KWReverseRules
 
+module RootedEnzymeKwargBug
+
+using Test
+using Enzyme
+using Enzyme.EnzymeRules
+import .EnzymeRules: augmented_primal, reverse
+using .EnzymeRules
+
+# A function with an EnzymeRules custom rule, called via `Core.kwcall`.
+# Its kwargs deliberately mix a `Vector{Float64}` (a rooted/heap pointer) and
+# `Float64` scalars (non-rooted but active-by-default) — mirroring solve's
+# `(; saveat=[...], abstol=1e-6, reltol=1e-3)`.
+function f(x; saveat, abstol, reltol)
+    return sum(abs2, x) * abstol
+end
+
+Enzyme.EnzymeRules.inactive_kwarg(::typeof(f), x; saveat, abstol, reltol) = nothing
+
+function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(f)},
+        ::Type{<:Active}, x::Duplicated; saveat, abstol, reltol)
+    primal = needs_primal(config) ? func.val(x.val; saveat, abstol, reltol) : nothing
+    return AugmentedReturn(primal, nothing, nothing)
+end
+
+function reverse(config::RevConfigWidth{1}, ::Const{typeof(f)},
+        dret::Active, tape, x::Duplicated; saveat, abstol, reltol)
+    x.dval .+= 2 .* x.val .* abstol .* dret.val
+    return (nothing,)
+end
+
+# Hide `f` behind a `Ref{Any}` so the call site is type-unstable: Enzyme can't
+# infer the callee and must route the kwcall through `runtime_generic_augfwd`
+# (the "path that's not inferred"), exactly as `solve` is reached in the real case.
+# The kwargs are literals here, so the whole kwargs NamedTuple is Constant — but
+# it contains the active-ish Vector + Floats.
+const FREF = Ref{Any}(f)
+g(x) = FREF[](x; saveat = [0.1, 0.2], abstol = 1e-6, reltol = 1e-3)
+
+@testset "KWClosure rule" begin
+    x = [1.0, 0.1]
+    dx = zero(x)
+    autodiff(set_runtime_activity(Reverse), g, Active, Duplicated(x, dx))
+end
+
+end # module
+

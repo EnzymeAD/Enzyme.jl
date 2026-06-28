@@ -31,6 +31,20 @@ end
 
 
 @inline function EnzymeCore.make_zero(
+	::Type{Array{Union{}, N}},
+        seen::IdDict,
+	prev::Array{Union{}, N},
+        ::Val{copy_if_inactive} = Val(false),
+    )::Array{Union{}, N} where {copy_if_inactive, N}
+    if haskey(seen, prev)
+        return seen[prev]
+    end
+    newa = copy(prev)
+    seen[prev] = newa
+    return newa
+end
+
+@inline function EnzymeCore.make_zero(
         ::Type{Array{FT, N}},
         seen::IdDict,
         prev::Array{FT, N},
@@ -195,6 +209,24 @@ end
     seen[prev] = res
     res.contents = EnzymeCore.make_zero(Core.Typeof(prev2), seen, prev2, Val(copy_if_inactive))
     return res
+end
+
+@inline function EnzymeCore.make_zero(
+        ::Type{Core.SimpleVector},
+        seen::IdDict,
+        prev::Core.SimpleVector,
+        ::Val{copy_if_inactive} = Val(false),
+    )::Core.SimpleVector where {copy_if_inactive}
+    if haskey(seen, prev)
+        return seen[prev]
+    end
+    data = []
+    for v in prev
+        push!(data, EnzymeCore.make_zero(Core.Typeof(v), seen, v, Val(copy_if_inactive)))
+    end
+    newa = Core.svec(data)
+    seen[prev] = newa
+    return newa
 end
 
 @inline function EnzymeCore.make_zero(

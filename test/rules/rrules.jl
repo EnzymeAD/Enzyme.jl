@@ -432,4 +432,92 @@ unstabletapesq(x) = unstabletape(x)^2
     @test Enzyme.autodiff(Enzyme.ReverseWithPrimal, unstabletapesq, Active(5.0))[1][1] ≈ ((5.0 + 7) * 10)
 end
 
+struct MyExtractedAlg
+    linesearch
+    trustregion
+    descent
+    forcing
+    max_shrink_times::Int
+    autodiff
+    vjp_autodiff
+    jvp_autodiff
+    concrete_jac
+    name::Symbol
+end
+
+@noinline function rule_func_inner(s::MyExtractedAlg, z::Float64)
+    # Nested AD!
+    f_dummy(x) = x[1] * 2.0 + (s.max_shrink_times === nothing ? 0.0 : Float64(s.max_shrink_times))
+    grad = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), f_dummy, [z])
+    return grad[1][1] + (s.name === :NewtonRaphson ? 1.0 : 0.0)
+end
+
+@noinline function rule_func_const(z::Float64, args...)
+    return rule_func_inner(args[1], z)
+end
+
+# Define custom rule to trigger rule wrapper processing
+function EnzymeRules.augmented_primal(config, func::Const{typeof(rule_func_const)}, ::Type{<:Annotation}, z::Active, args...)
+    primal = EnzymeRules.needs_primal(config) ? rule_func_const(z.val, map(x->x.val, args)...) : nothing
+    return AugmentedReturn(primal, nothing, nothing)
+end
+
+function EnzymeRules.reverse(config, func::Const{typeof(rule_func_const)}, dret::Active, tape, z::Active, args...)
+    return (dret.val, ntuple(_->nothing, Val(length(args)))...)
+end
+
+function loss_inplace(p)
+    alg = MyExtractedAlg(
+        nothing, nothing, nothing, nothing, 10,
+        nothing, nothing, nothing,
+        nothing, :NewtonRaphson
+    )
+    return rule_func_const(p[1], alg)
+end
+
+@testset "Unboxed struct custom rule with nested AD" begin
+    p = [2.0]
+    Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), loss_inplace, p)
+    @test true
+end
+# Define a function on Tuples
+function my_nonlin(t::Tuple)
+    return t[1]*t[2] + t[3]*t[4]
+end
+
+# Define PROPER custom rule for it
+# Here we use Active for the Tuple argument
+function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(my_nonlin)}, ::Type{<:Active}, t::Active)
+    primal = needs_primal(config) ? func.val(t.val) : nothing
+    # We intentionally do NOT save t.val in the tape to trigger the bug!
+    return AugmentedReturn(primal, nothing, nothing)
+end
+
+function reverse(config::RevConfigWidth{1}, func::Const{typeof(my_nonlin)}, dret::Active, tape, t::Active)
+    tval = t.val
+    dt = (tval[2] * dret.val, tval[1] * dret.val, tval[4] * dret.val, tval[3] * dret.val)
+    return (dt,)
+end
+
+function f_loop(X, N)
+    total = 0.0
+    for k in 1:N
+        idx = (k-1)*4
+        t = (X[idx+1], X[idx+2], X[idx+3], X[idx+4])
+        total += my_nonlin(t)
+    end
+    return total
+end
+
+@testset "Loop-carried tuple argument caching" begin
+    X = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+    N = 2
+    grad_expected = [2.0, 1.0, 4.0, 3.0, 6.0, 5.0, 8.0, 7.0]
+    dX = zeros(size(X))
+    
+    Enzyme.autodiff(Reverse, f_loop, Active, Duplicated(X, dX), Const(N))
+    
+    @test dX ≈ grad_expected
+end
+
 end # ReverseRules

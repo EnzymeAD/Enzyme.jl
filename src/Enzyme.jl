@@ -133,6 +133,14 @@ Base.convert(::Type{API.CDerivativeMode}, ::ForwardMode) = API.DEM_ForwardMode
 function guess_activity end
 
 mutable struct EnzymeContext
+    modules_to_link::Vector{LLVM.Module}
+    edges::Vector{Any}
+    nested_cache::Dict{Core.MethodInstance, String}
+    EnzymeContext() = new(
+        LLVM.Module[],
+        Any[],
+        Dict{Core.MethodInstance, String}()
+    )
 end
 
 include("logic.jl")
@@ -488,10 +496,10 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
             # then subtracting twice the imaginary component to get the correct result
 
             for (k, v) in seen
-                Compiler.recursive_accumulate(k, v, refn_seed)
+                Compiler.recursive_accumulate(k, v, Val(false), refn_seed)
             end
             for (k, v) in seen2
-                Compiler.recursive_accumulate(k, v, imfn_seed)
+                Compiler.recursive_accumulate(k, v, Val(false), imfn_seed)
             end
 
             fused = fuse_complex_results(results, args...)

@@ -62,7 +62,11 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
     method_table::Core.Compiler.MethodTableView
 
     # Cache of inference results for this particular interpreter
-    local_cache::Vector{InferenceResult}
+    local_cache::@static if isdefined(Core.Compiler, :InferenceCache)
+        Core.Compiler.InferenceCache
+    else
+        Vector{InferenceResult}
+    end
     # The world age we're working inside of
     world::UInt
 
@@ -81,26 +85,35 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
     handler::T
 end
 
+const SigCacheLock = ReentrantLock()
+const InterpreterLock = ReentrantLock()
 const SigCache = Dict{Tuple, Dict{UInt, Base.IdSet{Type}}}()
 function get_rule_signatures(f, TT, world)
-    subdict = if haskey(SigCache, (f, TT))
-       SigCache[(f, TT)]
-    else
-       tmp = Dict{UInt, Base.IdSet{Type}}()
-       SigCache[(f, TT)] = tmp
-       tmp
+    subdict = lock(SigCacheLock) do
+        if haskey(SigCache, (f, TT))
+           SigCache[(f, TT)]
+        else
+           tmp = Dict{UInt, Base.IdSet{Type}}()
+           SigCache[(f, TT)] = tmp
+           tmp
+        end
     end
-    if haskey(subdict, world)
-       return subdict[world]
+    
+    return lock(SigCacheLock) do
+        if haskey(subdict, world)
+           return subdict[world]
+        end
+        
+        fwdrules_meths = Base._methods(f, TT, -1, world)::Vector
+        sigs = Type[]
+        for rule in fwdrules_meths
+            push!(sigs, (rule::Core.MethodMatch).method.sig)
+        end
+        result = Base.IdSet{Type}(sigs)
+        
+        subdict[world] = result
+        return result
     end
-    fwdrules_meths = Base._methods(f, TT, -1, world)::Vector
-    sigs = Type[]
-    for rule in fwdrules_meths
-        push!(sigs, (rule::Core.MethodMatch).method.sig)
-    end
-    result = Base.IdSet{Type}(sigs)
-    subdict[world] = result
-    return result
 end
 
 function rule_sigs_equal(a, b)
@@ -142,33 +155,50 @@ function EnzymeInterpreter(
     @static if HAS_INTEGRATED_CACHE
 
     else
-        cache_or_token = cache_or_token::CodeCache
-        invalid = false
-        if forward_rules
-            fwdrules = get_rule_signatures(EnzymeRules.forward, Tuple{<:FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)
-            if !rule_sigs_equal(fwdrules, LastFwdWorld[])
-                LastFwdWorld[] = fwdrules
-                invalid = true
-            end
-        end
-        if reverse_rules
-            revrules = get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)
-            if !rule_sigs_equal(revrules, LastRevWorld[])
-                LastRevWorld[] = revrules
-                invalid = true
-            end
+        fwdrules = if forward_rules
+            get_rule_signatures(EnzymeRules.forward, Tuple{<:FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)
+        else
+            nothing
         end
 
-        if inactive_rules
-            inarules = get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)
-            if !rule_sigs_equal(inarules, LastInaWorld[])
-                LastInaWorld[] = inarules
-                invalid = true
-            end
+        revrules = if reverse_rules
+            get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)
+        else
+            nothing
         end
-        
-        if invalid
-            Base.empty!(cache_or_token)
+
+        inarules = if inactive_rules
+            get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)
+        else
+            nothing
+        end
+
+        cache_or_token = cache_or_token::CodeCache
+        invalid = false
+        lock(InterpreterLock) do
+            if forward_rules
+                if !rule_sigs_equal(fwdrules, LastFwdWorld[])
+                    LastFwdWorld[] = fwdrules
+                    invalid = true
+                end
+            end
+            if reverse_rules
+                if !rule_sigs_equal(revrules, LastRevWorld[])
+                    LastRevWorld[] = revrules
+                    invalid = true
+                end
+            end
+    
+            if inactive_rules
+                if !rule_sigs_equal(inarules, LastInaWorld[])
+                    LastInaWorld[] = inarules
+                    invalid = true
+                end
+            end
+            
+            if invalid
+                Base.empty!(cache_or_token)
+            end
         end
     end
 
@@ -177,7 +207,11 @@ function EnzymeInterpreter(
     mt == nothing ? Core.Compiler.InternalMethodTable(world) : Core.Compiler.OverlayMethodTable(world, mt),
 
         # Initially empty cache
-        Vector{InferenceResult}(),
+        (@static if isdefined(Core.Compiler, :InferenceCache)
+            Core.Compiler.InferenceCache()
+        else
+            Vector{InferenceResult}()
+        end),
 
         # world age counter
         world,

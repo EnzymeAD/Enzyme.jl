@@ -62,6 +62,12 @@ export Tracked, Derived
 
 const captured_constants = Base.IdSet{Any}()
 
+function arg_operands_view(inst::LLVM.CallInst)
+    N_args = LLVM.API.LLVMGetNumArgOperands(inst)
+    return @view LLVM.operands(inst)[1:N_args]
+end
+
+
 function unsafe_nothing_to_llvm(mod::LLVM.Module)
     globs = LLVM.globals(mod)
     k = "jl_nothing"
@@ -512,7 +518,7 @@ export typed_fieldcount
 export typed_fieldoffset
 
 # returns the inner type of an sret/enzyme_sret/enzyme_sret_v
-function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
+function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruction}=nothing)::LLVM.LLVMType
 
     vt = LLVM.value_type(LLVM.parameters(fn)[idx])
 
@@ -562,11 +568,11 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
         end
 
         if ekind == "enzyme_sret"
-	    ety = parse(UInt, LLVM.value(attr))
-	    ety = Base.reinterpret(LLVM.API.LLVMTypeRef, ety)
-	    ety = LLVM.LLVMType(ety)
+            ety = parse(UInt, LLVM.value(attr))
+            ety = Base.reinterpret(LLVM.API.LLVMTypeRef, ety)
+            ety = LLVM.LLVMType(ety)
             if !LLVM.is_opaque(vt)
-		@assert ety == eltype(vt)
+                @assert ety == eltype(vt) "Mismatched sret type $(string(fn))\nidx=$idx\nety ($(string(ety))) != eltype(vt) (vt = $(string(vt)))"
             end
         
             return ety
@@ -591,7 +597,24 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
         return res
     end
 
-    throw(AssertionError("Function requesting sret type was not an sret\nidx=$idx\nfn=$(string(fn)) enzymejl_parmtype=$enzymejl_parmtype enzymejl_parmtype_ref=$enzymejl_parmtype_ref"))
+
+    mi, _ = Compiler.enzyme_custom_extract_mi(
+        fn,
+        false,
+    ) #=error=#
+    world = Compiler.enzyme_extract_world(fn)
+
+    msg = "Function requesting sret type was not an sret\n\nidx=$idx\nenzymejl_parmtype=$enzymejl_parmtype enzymejl_parmtype_ref=$enzymejl_parmtype_ref\n"
+    ir = string(fn)
+    bt = nothing
+    if btval !== nothing        
+        bt = GPUCompiler.backtrace(btval)
+    end
+    if mi !== nothing
+        throw(Compiler.EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world))
+    else
+        throw(Compiler.EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world))
+    end
 end
 
 export sret_ty

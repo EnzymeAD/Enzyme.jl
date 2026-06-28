@@ -546,6 +546,16 @@ end
     sqr(x) = x * x
     power(x, n) = x^n
 
+
+    function objective1(x)
+        objvar = power(x, 2)
+        return objvar
+    end
+
+    x0 = 2.1
+    res = Enzyme.jacobian(Forward, Const(Enzyme.gradient), Const(Reverse), Const(objective1), x0)
+    @test res[3][1] ≈ 2.0
+
     function objective(x)
         (x1, x2, x3, x4) = x
         objvar = -4 - -(((((((((((((sqr(x1) + sqr(x2)) + sqr(x3 + x4)) + x3) + sqr(sin(x3))) + sqr(x1) * sqr(x2)) + x4) + sqr(sin(x3))) + sqr(-1 + x4)) + sqr(sqr(x2))) + sqr(sqr(x3) + sqr(x1 + x4))) + sqr(((-4 + sqr(sin(x4))) + sqr(x2) * sqr(x3)) + x1)) + power(sin(x4), 4)))
@@ -1026,7 +1036,8 @@ end
     )
 
     Enzyme.Compiler.runtime_generic_rev(
-        Val{(false, false, false)}, Val(false), Val(false), Val(2), Val((true, true, true)), augres[end],
+        Val{(false, false, false)}, Val(false), Val(false), Val(2), Val((true, true, true)),
+        Val(false), augres[end],
         ==, nothing, nothing,
         :foo, nothing, nothing,
         :bar, nothing, nothing
@@ -1805,4 +1816,71 @@ end
 
 @testset "Unused shadow phi rev" begin
     fwd, rev = Enzyme.autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(cual)}, Duplicated)
+end
+
+@enum MyEnum Default Success
+
+struct Sol
+    u::Vector{Float64}
+    retcode::MyEnum
+end
+
+mutable struct Integ
+    sol::Sol
+end
+
+@noinline function myinit(u0::Vector{Float64})
+    return Integ(Sol(u0, Default))
+end
+
+function g_enum_test(u0)
+    integ = myinit(u0)
+    return integ.sol
+end
+
+@testset "Enum Autodiff" begin
+    forward, reverse = Enzyme.autodiff_thunk(
+        Enzyme.ReverseSplitWithPrimal, Enzyme.Const{typeof(g_enum_test)}, Enzyme.Duplicated,
+        Enzyme.Duplicated{Vector{Float64}})
+
+    u0 = [1.0]
+    du0 = zero(u0)
+    tape, result, shadow_result = forward(Enzyme.Const(g_enum_test), Enzyme.Duplicated(copy(u0), du0))
+    shadow_result.u .= 1.0
+    reverse(Enzyme.Const(g_enum_test), Enzyme.Duplicated(copy(u0), du0), tape)
+    @test du0 == [1.0]
+end
+
+struct ResultOk{A}
+    x::A
+    ok::Bool
+end
+
+@noinline function result_ok_f1(x)
+    return ResultOk(x .* 1.0, true)
+end
+
+@noinline function result_ok_f2(x)
+    return ResultOk(x .* 2.0, true)
+end
+
+@noinline function result_ok_dispatch(x, flag)
+    res = if flag == 1
+        result_ok_f1(x)
+    else
+        result_ok_f2(x)
+    end
+    return res
+end
+
+function result_ok_caller(x, flag)
+    res = result_ok_dispatch(x, flag)
+    return sum(res.x)
+end
+
+@testset "Struct with bool field and dispatch" begin
+    x = [1.0, 2.0]
+    dx = [0.0, 0.0]
+    autodiff(Reverse, result_ok_caller, Duplicated(x, dx), Const(1))
+    @test dx ≈ [1.0, 1.0]
 end

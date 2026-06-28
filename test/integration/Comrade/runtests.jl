@@ -5,14 +5,18 @@ using Distributions
 using FiniteDifferences
 using VLBISkyModels
 using LinearAlgebra
+using Random
 
 using Test
 
+Random.seed!(42)
 
 const ComradePATH = joinpath(dirname(pathof(Comrade)), "..", "examples", "Data")
-const dataurl = "https://de.cyverse.org/anon-files/iplant/home/shared/commons_repo/curated/EHTC_M87pol2017_Nov2023/hops_data/April11/SR2_M87_2017_101_lo_hops_ALMArot.uvfits"
+const dataurl = "https://github.com/ptiede/ComradeTestData/releases/download/Data/eht_2017_data.uvfits"
 const arrayf = joinpath(ComradePATH, "array.txt")
 const dataf = Base.download(dataurl)
+
+
 
 function FiniteDifferences.to_vec(k::IntensityMap)
     v, b = to_vec(DD.data(k))
@@ -69,8 +73,8 @@ end
 
 @testset "Model Gradients" begin
 
-    u = randn(10) * 0.5
-    v = randn(10) * 0.5
+    u = rand(10) .- 0.5
+    v = rand(10) .- 0.5
     t = sort(rand(10) * 0.5)
     f = fill(230.0e9, 10)
     g = UnstructuredDomain((U = u, V = v, Ti = t, Fr = f))
@@ -281,8 +285,8 @@ end
         end
 
         x = rand(size(g)...)
-        U = randn(20) * 0.5
-        V = randn(20) * 0.5
+        U = (rand(20) .- 0.5)*0.25 # keep well within bounded in [1/2, 1/2)
+        V = (rand(20) .- 0.5)*0.25 # keep well within bounded in [1/2, 1/2)
         uT = vcat(fill(Ti[1], 10), fill(Ti[2], 10))
         uFr = vcat(fill(Fr[1], 5), fill(Fr[2], 5), fill(Fr[1], 5), fill(Fr[2], 5))
         guv = UnstructuredDomain((U = U, V = V, Ti = uT, Fr = uFr))

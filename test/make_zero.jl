@@ -756,4 +756,28 @@ end
 @testset "make_zero!" test_make_zero!()
 @testset "remake_zero!" test_remake_zero!()
 
+# Forward-mode differentiability of `jl_field_isdefined_checked`, the bookkeeping
+# builtin make_zero emits for the `isdefined(prev, i)` field walk when recursing
+# through undef-able / abstract fields. It showed up as `EnzymeNoDerivativeError`
+# when nesting forward-over-reverse — see EnzymeAD/Enzyme.jl#3135.
+mutable struct MaybeUndefField
+    a::Float64
+    b::Any
+end
+function isdefined_field_walk(x)
+    m = MaybeUndefField(x, x)
+    s = 0.0
+    for i in 1:nfields(m)
+        if isdefined(m, i)  # runtime index -> jl_field_isdefined_checked
+            s += x
+        end
+    end
+    return s
+end
+
+@testset "forward inactivity of make_zero shadow-init builtins" begin
+    # both fields defined -> s = 2x, derivative 2
+    @test Enzyme.autodiff(Forward, isdefined_field_walk, Duplicated(2.0, 1.0)) == (2.0,)
+end
+
 end  # module MakeZeroTests

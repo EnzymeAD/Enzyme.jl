@@ -16,7 +16,7 @@ jobs:
     if: github.event.pull_request.draft == false
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{github.event.pull_request.head.ref}}
           repository: ${{github.event.pull_request.head.repo.full_name}}
@@ -28,7 +28,7 @@ jobs:
           git fetch upstream
 
       - name: Setup Julia
-        uses: julia-actions/setup-julia@v2
+        uses: julia-actions/setup-julia@v3
         with:
           version: '1'
           arch: 'x64'

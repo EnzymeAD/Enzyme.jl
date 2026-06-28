@@ -7,6 +7,9 @@ LLVM.@function_pass "jl-inst-simplify" JLInstSimplifyPass
 LLVM.@module_pass "preserve-nvvm" PreserveNVVMPass
 LLVM.@module_pass "preserve-nvvm-end" PreserveNVVMEndPass
 LLVM.@module_pass "simple-gvn" SimpleGVNPass
+LLVM.@module_pass "enzyme-fixup-julia" FixupJuliaCallingConventionPass
+LLVM.@module_pass "enzyme-fixup-julia-sret" FixupJuliaCallingConventionSRetPass
+LLVM.@module_pass "enzyme-fixup-batched-julia" FixupBatchedJuliaCallingConventionPass
 
 const RunAttributor = Ref(VERSION < v"1.12")
 
@@ -25,12 +28,14 @@ ReinsertGCMarkerPass() = NewPMFunctionPass("reinsert_gcmarker", reinsert_gcmarke
 RestoreAllocaType() = NewPMFunctionPass("restore_alloca_type", restore_alloca_type!)
 SafeAtomicToRegularStorePass() = NewPMFunctionPass("safe_atomic_to_regular_store", safe_atomic_to_regular_store!)
 Addr13NoAliasPass() = NewPMModulePass("addr13_noalias", addr13NoAlias)
+RemoveAlwaysInlineRootsPass() = NewPMModulePass("remove_alwaysinline_roots", remove_alwaysinline_roots!)
 
-function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
+function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing})
     @dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, Addr13NoAliasPass())
         register!(pb, RestoreAllocaType())
+        register!(pb, RemoveAlwaysInlineRootsPass())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
@@ -49,6 +54,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 add!(fpm, SROAPass())
                 add!(fpm, MemCpyOptPass())
             end
+            add!(mpm, RemoveAlwaysInlineRootsPass())
             add!(mpm, AlwaysInlinerPass())
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, AllocOptPass())
@@ -221,7 +227,7 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         add!(fpm, DCEPass())
         add!(fpm, SROAPass())
     end
-
+    add!(mpm, RemoveAlwaysInlineRootsPass())
     add!(mpm, AlwaysInlinerPass())
 
     add!(mpm, NewPMFunctionPassManager()) do fpm
@@ -356,6 +362,10 @@ function addJuliaLegalizationPasses!(mpm::LLVM.NewPMPassManager, lower_intrinsic
             if VERSION >= v"1.11.0-DEV.208"
                 add!(fpm, FinalLowerGCPass())
             end
+            if VERSION >= v"1.13.0-DEV.321"
+                # after LateLowerGCPass so that all IPO is valid
+                add!(fpm, ExpandAtomicModifyPass())
+            end
         end
         if VERSION < v"1.11.0-DEV.208"
             add!(mpm, FinalLowerGCPass())
@@ -389,11 +399,10 @@ end
 const DumpPreCallConv = Ref(false)
 const DumpPostCallConv = Ref(false)
 
-function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool = true)
+function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing})
     addr13NoAlias(mod)
     
     removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
-    
 
     memcpy_sret_split!(mod)
     # if we did the move_sret_tofrom_roots, we will have loaded out of the sret, then stored into the rooted.
@@ -407,14 +416,20 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
     	add!(pb, SimpleGVNPass())
         run!(pb, mod, tm)
     end
+
     if DumpPreCallConv[]
 	    API.EnzymeDumpModuleRef(mod.ref)
     end
-    for f in collect(functions(mod))
-        API.EnzymeFixupBatchedJuliaCallingConvention(f)
-    end
-    for f in collect(functions(mod))
-        API.EnzymeFixupJuliaCallingConvention(f)
+
+    @dispose pb = NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+        add!(pb, "enzyme-fixup-batched-julia")
+        if VERSION < v"1.12"
+            add!(pb, "enzyme-fixup-julia-sret")
+        else
+            add!(pb, "enzyme-fixup-julia")
+        end
+        run!(pb, mod, tm)
     end
     if DumpPostCallConv[]
 	    API.EnzymeDumpModuleRef(mod.ref)
@@ -442,11 +457,37 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
             ),
         )
     end
+    return
+end
+
+function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, machine::Bool = true; callconv::Bool = true)
+    if callconv
+        fixup_callconv!(mod, tm)
+    end
+    
+    for f in functions(mod)
+        if isempty(blocks(f))
+            continue
+        end
+        # Before additional dead arg removal, get rid of the body of functions
+        # that we will retain the original calling convention for.
+        if startswith(LLVM.name(f), "ejlstr\$") || startswith(LLVM.name(f), "ejlptr\$")
+            Base.empty!(f)
+        end
+        
+        if has_fn_attr(f, StringAttribute("enzyme_preserve_primal"))
+            delete!(LLVM.function_attributes(f), StringAttribute("enzyme_preserve_primal"))
+        end
+    end
+
+    removeDeadArgs!(mod, tm, #=post_gc_fixup=#true)
+
     @dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, ReinsertGCMarkerPass())
         register!(pb, SafeAtomicToRegularStorePass())
-		register!(pb, RestoreAllocaType())
+        register!(pb, RestoreAllocaType())
+        register!(pb, RemoveAlwaysInlineRootsPass())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())

@@ -623,6 +623,12 @@ EnzymeGradientUtilsGetWidth(gutils) = ccall(
     (EnzymeGradientUtilsRef,),
     gutils,
 )
+EnzymeGradientUtilsGetLogic(gutils) = ccall(
+    (:EnzymeGradientUtilsGetLogic, libEnzyme),
+    EnzymeLogicRef,
+    (EnzymeGradientUtilsRef,),
+    gutils,
+)
 EnzymeGradientUtilsGetRuntimeActivity(gutils) =
     ccall(
         (:EnzymeGradientUtilsGetRuntimeActivity, libEnzyme),
@@ -633,6 +639,13 @@ EnzymeGradientUtilsGetRuntimeActivity(gutils) =
 EnzymeGradientUtilsGetStrongZero(gutils) =
     ccall(
         (:EnzymeGradientUtilsGetStrongZero, libEnzyme),
+        UInt8,
+        (EnzymeGradientUtilsRef,),
+        gutils,
+    ) != 0
+EnzymeGradientUtilsGetAtomicAdd(gutils) =
+    ccall(
+        (:EnzymeGradientUtilsGetAtomicAdd, libEnzyme),
         UInt8,
         (EnzymeGradientUtilsRef,),
         gutils,
@@ -817,8 +830,10 @@ EnzymeGradientUtilsSubTransferHelper(
     srcAlign,
     offset,
     dstConstant,
+    shadowdst,
     origdst,
     srcConstant,
+    shadowsrc,
     origsrc,
     length,
     isVolatile,
@@ -838,7 +853,9 @@ EnzymeGradientUtilsSubTransferHelper(
         UInt64,
         UInt8,
         LLVMValueRef,
+        LLVMValueRef,
         UInt8,
+        LLVMValueRef,
         LLVMValueRef,
         LLVMValueRef,
         LLVMValueRef,
@@ -854,8 +871,10 @@ EnzymeGradientUtilsSubTransferHelper(
     srcAlign,
     offset,
     dstConstant,
+    shadowdst,
     origdst,
     srcConstant,
+    shadowsrc,
     origsrc,
     length,
     isVolatile,
@@ -948,8 +967,10 @@ function sub_transfer(
     srcAlign,
     offset,
     dstConstant,
+    shadowdst,
     origdst,
     srcConstant,
+    shadowsrc,
     origsrc,
     length,
     isVolatile,
@@ -957,11 +978,17 @@ function sub_transfer(
     allowForward,
     shadowsLookedUp,
 )
-    GC.@preserve secretty begin
+    GC.@preserve secretty origdst begin
         if secretty === nothing
             secretty = Base.unsafe_convert(LLVMTypeRef, C_NULL)
         else
             secretty = Base.unsafe_convert(LLVMTypeRef, secretty)
+        end
+
+        if origdst === nothing
+            origdst = Base.unsafe_convert(LLVMValueRef, C_NULL)
+        else
+            origdst = Base.unsafe_convert(LLVMValueRef, origdst)
         end
 
         EnzymeGradientUtilsSubTransferHelper(
@@ -973,8 +1000,10 @@ function sub_transfer(
             srcAlign,
             offset,
             dstConstant,
+            shadowdst,
             origdst,
             srcConstant,
+            shadowsrc,
             origsrc,
             length,
             isVolatile,
@@ -1334,7 +1363,10 @@ end
     ET_IllegalReplaceFicticiousPHIs = 8,
     ET_GetIndexError = 9,
     ET_NoTruncate = 10,
-    ET_GCRewrite = 11
+    ET_GCRewrite = 11,
+    ET_NaNError = 12,
+    ET_ShowInternalError = 12,
+    ET_NoAccumulate = 13,
 )
 
 function EnzymeTypeAnalyzerToString(typeanalyzer)
@@ -1570,20 +1602,7 @@ EnzymeAnonymousAliasScope(dom::LLVM.Metadata, str) = LLVM.Metadata(
         str,
     ),
 )
-EnzymeFixupJuliaCallingConvention(f) = ccall(
-    (:EnzymeFixupJuliaCallingConvention, libEnzyme),
-    Cvoid,
-    (LLVM.API.LLVMValueRef, UInt8),
-    f,
-    # only on julia before 1.12 did sret contain actual data
-    VERSION < v"1.12"
-)
-EnzymeFixupBatchedJuliaCallingConvention(f) = ccall(
-    (:EnzymeFixupBatchedJuliaCallingConvention, libEnzyme),
-    Cvoid,
-    (LLVM.API.LLVMValueRef,),
-    f,
-)
+
 
 e_extract_value!(builder, AggVal, Index, Name::String = "") = GC.@preserve Index begin
     LLVM.Value(

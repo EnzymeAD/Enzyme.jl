@@ -9,14 +9,14 @@ jobs:
   CompatHelper:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Get Julia compatibility
         id: julia_compat
         # NOTE: this requires a julia compat lower-bound with minor version!
         run : |
           version=$(grep '^julia = ' Project.toml | grep -o '".*"' | cut -d '"' -f2)
           echo "::set-output name=version::$version"
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ steps.julia_compat.outputs.version }}
           arch: x64
