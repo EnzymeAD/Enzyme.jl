@@ -4487,30 +4487,77 @@ function lower_convention(
         end
     end
 
-    # Copy classification attributes to wrapper_f parameters
+    # Copy and reconstruct classification attributes for wrapper_f parameters
     let wrapper_idx = 1
         if swiftself
             wrapper_idx += 1
         end
+        dl = string(LLVM.datalayout(mod))
+        ctx = LLVM.context(entry_f)
         for arg in args
             if arg.arg_i in removedRoots
                 continue
             end
             
-            # Copy attributes from entry_f to wrapper_f
-            orig_param_idx = arg.codegen.i
-            for attr in collect(parameter_attributes(entry_f, orig_param_idx))
-                if attr isa LLVM.StringAttribute
-                    attr_kind = LLVM.kind(attr)
-                    if attr_kind == "enzymejl_parmtype" || 
-                       attr_kind == "enzymejl_parmtype_str" || 
-                       attr_kind == "enzymejl_parmtype_ref" || 
-                       attr_kind == "enzymejl_rooted_typ" || 
-                       attr_kind == "enzyme_type"
+            # Copy immutable attributes
+            push!(
+                parameter_attributes(wrapper_f, wrapper_idx),
+                StringAttribute("enzymejl_parmtype", string(convert(UInt, unsafe_to_pointer(arg.typ))))
+            )
+            push!(
+                parameter_attributes(wrapper_f, wrapper_idx),
+                StringAttribute("enzymejl_parmtype_str", string(arg.typ))
+            )
+            if arg.rooted_typ !== nothing
+                push!(
+                    parameter_attributes(wrapper_f, wrapper_idx),
+                    StringAttribute("enzymejl_rooted_typ", string(convert(UInt, unsafe_to_pointer(arg.rooted_typ))))
+                )
+            end
+
+            # Reconstruct ref type and typetree based on raised/lowered status
+            if arg.arg_i in loweredArgs
+                # Was BITS_REF, now BITS_VALUE
+                push!(
+                    parameter_attributes(wrapper_f, wrapper_idx),
+                    StringAttribute("enzymejl_parmtype_ref", string(UInt(GPUCompiler.BITS_VALUE)))
+                )
+                rest = typetree(arg.typ, ctx, dl)
+                push!(
+                    parameter_attributes(wrapper_f, wrapper_idx),
+                    StringAttribute("enzyme_type", string(rest))
+                )
+            elseif arg.arg_i in raisedArgs
+                # Was BITS_VALUE (or BITS_REF), now MUT_REF (passed by boxed Any pointer)
+                push!(
+                    parameter_attributes(wrapper_f, wrapper_idx),
+                    StringAttribute("enzymejl_parmtype_ref", string(UInt(GPUCompiler.MUT_REF)))
+                )
+                rest = copy(typetree(arg.typ, ctx, dl))
+                if allocatedinline(arg.typ)
+                    shift!(rest, dl, 0, sizeof(arg.typ), 0)
+                end
+                merge!(rest, TypeTree(API.DT_Pointer, ctx))
+                only!(rest, -1)
+                push!(
+                    parameter_attributes(wrapper_f, wrapper_idx),
+                    StringAttribute("enzyme_type", string(rest))
+                )
+            else
+                # No change to type/convention, copy directly
+                push!(
+                    parameter_attributes(wrapper_f, wrapper_idx),
+                    StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc)))
+                )
+                # Copy original enzyme_type attribute
+                orig_param_idx = arg.codegen.i
+                for attr in collect(parameter_attributes(entry_f, orig_param_idx))
+                    if attr isa LLVM.StringAttribute && LLVM.kind(attr) == "enzyme_type"
                         push!(parameter_attributes(wrapper_f, wrapper_idx), attr)
                     end
                 end
             end
+
             wrapper_idx += 1
         end
     end
