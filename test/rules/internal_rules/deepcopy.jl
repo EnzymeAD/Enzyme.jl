@@ -85,4 +85,18 @@ using Test
         grad2 = Enzyme.gradient(Enzyme.Reverse, f_immutable, 2.0)
         @test grad2[1] ≈ 3.0
     end
+
+    @testset "runtime activity forward-mode deepcopy" begin
+        struct Wrap
+            v::Vector{Float64}
+            tag::Int
+        end
+
+        f(w) = Base.deepcopy(w)
+        w  = Wrap([1.0, 2.0], 7)
+        dw = Wrap([1.0, 0.0], 0)
+        
+        res = Enzyme.autodiff(Enzyme.set_runtime_activity(Enzyme.Forward), Enzyme.Const(f), Enzyme.Duplicated, Enzyme.Duplicated(w, dw))
+        @test res[1].v ≈ [1.0, 0.0]
+    end
 end
