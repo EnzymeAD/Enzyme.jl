@@ -4,6 +4,40 @@ using LinearAlgebra
 using SparseArrays
 using Test
 
+const T_test = Float64
+struct RHS_test{M}
+    A1::M
+    A2::M
+end
+(r::RHS_test)(du, u, p, t) = (mul!(du, r.A1, u, -p[1], zero(T_test)); mul!(du, r.A2, u, p[2], one(T_test)); nothing)
+
+mutable struct Integrator_test{RU, uType, pType}
+    f::RU
+    u::uType
+    p::pType
+    t::T_test
+    dt::T_test
+end
+
+function step_test!(integ::Integrator_test)
+    du = zeros(T_test, 2)
+    integ.f(du, integ.u, integ.p, integ.t)
+    integ.u .+= integ.dt .* du
+    integ.t += integ.dt
+end
+
+function solve_custom_test(integ)
+    step_test!(integ)
+    step_test!(integ)
+    return integ.u[1] + integ.u[2]
+end
+
+const U_sparse_test = RHS_test(sparse(T_test[0.0 1.0; 0.0 0.0]), sparse(T_test[0.0 0.0; 1.0 0.0]))
+function f_sparse_test(p)
+    integ = Integrator_test(U_sparse_test, T_test[3.0, 4.0], p, 0.0, 0.1)
+    return solve_custom_test(integ)
+end
+
 function f_with_sparse_constructor(p)
     A = sparse([1], [1], [1.0], 2, 2)
     return p[1] * sum(A)
@@ -102,3 +136,15 @@ end
     test_sparse(M, v, α, β)
 
 end
+
+@testset "Sparse mul! with aliased shadow (primal corruption)" begin
+    p = [1.0, 2.0]
+    dp_sparse = Enzyme.make_zero(p)
+    
+    # Before the fix, this would corrupt U_sparse_test.A1.nzval and produce wrong gradients.
+    Enzyme.autodiff(Enzyme.set_runtime_activity(Enzyme.Reverse), f_sparse_test, Active, Duplicated(p, dp_sparse))
+    
+    @test dp_sparse ≈ [-0.94, 0.53]
+    @test U_sparse_test.A1.nzval == [1.0]
+end
+
