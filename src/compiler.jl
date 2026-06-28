@@ -2202,14 +2202,16 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
         end
 
         obj = emit_allocobj!(B, tag, allocSize, needs_dynamic_size_workaround)
-        LLVM.API.LLVMAddCallSiteAttribute(
-            obj,
-            LLVM.API.LLVMAttributeReturnIndex,
-            StringAttribute(
-                "enzyme_type",
-                "{[-1]:Pointer, [-1,-1]:Pointer}",
-            ),
-        )
+        if CountTrackedPointers(LLVMType).all
+            LLVM.API.LLVMAddCallSiteAttribute(
+                obj,
+                LLVM.API.LLVMAttributeReturnIndex,
+                StringAttribute(
+                    "enzyme_type",
+                    "{[-1]:Pointer, [-1,-1]:Pointer}",
+                ),
+            )
+        end
 
         if ZI != C_NULL
             unsafe_store!(
