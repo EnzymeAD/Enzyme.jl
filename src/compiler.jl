@@ -585,7 +585,115 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
         end
 
         fixup_1p12_sret!(llvmfn)
-    end
+
+        # Classify and set types
+        ftype = function_type(llvmfn)
+        swiftself = has_swiftself(llvmfn)
+        if !Base.isvarargtype(mi.specTypes.parameters[end])
+            dl = string(LLVM.datalayout(LLVM.parent(llvmfn)))
+            ctx = LLVM.context(llvmfn)
+            
+            # Since this is prepare_llvm, no parameters can be removed yet.
+            empty_parms = UInt64[]
+            jlargs = classify_arguments(
+                mi.specTypes,
+                ftype,
+                sret !== nothing,
+                returnRoots0 !== nothing,
+                swiftself,
+                empty_parms,
+                mi,
+                job.world,
+                llvmfn,
+                true,
+            )
+
+            push!(function_attributes(llvmfn), StringAttribute("enzyme_ta_norecur"))
+
+            if !no_type_setting(mi.specTypes; job.world)[1]
+                for arg in jlargs
+                    if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
+                        continue
+                    end
+                    push!(
+                        parameter_attributes(llvmfn, arg.codegen.i),
+                        StringAttribute(
+                            "enzymejl_parmtype",
+                            string(convert(UInt, unsafe_to_pointer(arg.typ))),
+                        ),
+                    )
+                    push!(
+                        parameter_attributes(llvmfn, arg.codegen.i),
+                        StringAttribute(
+                            "enzymejl_parmtype_str",
+                            string(arg.typ),
+                        ),
+                    )
+                    push!(
+                        parameter_attributes(llvmfn, arg.codegen.i),
+                        StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))),
+                    )
+                    if arg.rooted_typ !== nothing
+                        push!(
+                            parameter_attributes(llvmfn, arg.codegen.i),
+                            StringAttribute("enzymejl_rooted_typ", string(convert(UInt, unsafe_to_pointer(arg.rooted_typ))))
+                        )
+                    end
+
+                    byref = arg.cc
+                    rest = copy(typetree(arg.typ, ctx, dl))
+
+                    if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
+                        if allocatedinline(arg.typ)
+                            shift!(rest, dl, 0, sizeof(arg.typ), 0)
+                        end
+                        merge!(rest, TypeTree(API.DT_Pointer, ctx))
+                        only!(rest, -1)
+                    end
+                    push!(
+                        parameter_attributes(llvmfn, arg.codegen.i),
+                        StringAttribute("enzyme_type", string(rest)),
+                    )
+                end
+            end
+
+            if !no_type_setting(mi.specTypes; job.world)[2]
+                if sret !== nothing
+                    idx = 0
+                    @assert sret <: Ptr
+                    sret_et = eltype(sret)
+                    rest = copy(typetree(sret_et, ctx, dl))
+                    shift!(rest, dl, 0, LLVM.sizeof(LLVM.DataLayout(dl), sret_ty(llvmfn, 1)), 0)
+                    merge!(rest, TypeTree(API.DT_Pointer, ctx))
+                    only!(rest, -1)
+                    push!(
+                        parameter_attributes(llvmfn, idx + 1),
+                        StringAttribute("enzyme_type", string(rest)),
+                    )
+                    idx += 1
+                    if returnRoots0 !== nothing
+                        rest = TypeTree(API.DT_Pointer, -1, ctx)
+                        push!(
+                            parameter_attributes(llvmfn, idx + 1),
+                            StringAttribute("enzyme_type", string(rest)),
+                        )
+                    end
+                end
+
+                if llRT !== nothing &&
+                   LLVM.return_type(LLVM.function_type(llvmfn)) != LLVM.VoidType()
+                    rest = if llRT == Ptr{RT}
+                        typeTree = copy(typetree(RT, ctx, dl))
+                        merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
+                        only!(typeTree, -1)
+                        typeTree
+                    else
+                        typetree(RT, ctx, dl)
+                    end
+                    push!(return_attributes(llvmfn), StringAttribute("enzyme_type", string(rest)))
+                end
+            end
+        end
 
     # We explicitly save the type of alloca's before they get lowered
     for f in functions(mod)
@@ -1126,147 +1234,6 @@ end
 end
 
 function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLVM.Function}, job, edges, run_enzyme, mode::API.CDerivativeMode)::Tuple{Dict{String,LLVM.API.LLVMLinkage}, HandlerState}
-
-    for f in functions(mod)
-        if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1")
-            continue
-        end
-        mi, RT = enzyme_custom_extract_mi(f, false)
-        if mi === nothing
-            continue
-        end
-
-        llRT, sret, returnRoots = get_return_info(RT)
-        retRemoved, parmsRemoved = removed_ret_parms(f)
-
-        dl = string(LLVM.datalayout(LLVM.parent(f)))
-
-        ftype = function_type(f)
-
-        swiftself = has_swiftself(f)
-
-        # Unsupported calling conv
-        # also wouldn't have any type info for this [would for earlier args though]
-        if Base.isvarargtype(mi.specTypes.parameters[end])
-            continue
-        end
-
-        world = enzyme_extract_world(f)
-
-        jlargs = classify_arguments(
-            mi.specTypes,
-            ftype,
-            sret !== nothing,
-            returnRoots !== nothing,
-            swiftself,
-            parmsRemoved,
-            mi,
-            world,
-            f,
-            isempty(parmsRemoved),
-        )
-
-        ctx = LLVM.context(f)
-
-        push!(function_attributes(f), StringAttribute("enzyme_ta_norecur"))
-
-        if !no_type_setting(mi.specTypes; world)[1]
-            for arg in jlargs
-                if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
-                    continue
-                end
-                push!(
-                    parameter_attributes(f, arg.codegen.i),
-                    StringAttribute(
-                        "enzymejl_parmtype",
-                        string(convert(UInt, unsafe_to_pointer(arg.typ))),
-                    ),
-                )
-                push!(
-                    parameter_attributes(f, arg.codegen.i),
-                    StringAttribute(
-                        "enzymejl_parmtype_str",
-                        string(arg.typ),
-                    ),
-                )
-                push!(
-                    parameter_attributes(f, arg.codegen.i),
-                    StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))),
-                )
-		if arg.rooted_typ !== nothing
-			push!(
-			    parameter_attributes(f, arg.codegen.i),
-			    StringAttribute("enzymejl_rooted_typ", string(convert(UInt, unsafe_to_pointer(arg.rooted_typ))))
-			)
-		end
-
-                byref = arg.cc
-
-                rest = copy(typetree(arg.typ, ctx, dl))
-
-                if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
-                    # adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
-                    # object passing this in by ref isnt a {[-1]:Pointer, [-1,-1]:Int}
-                    # aka the next field after this in the bigger object isn't guaranteed to also be the same.
-                    if allocatedinline(arg.typ)
-                        shift!(rest, dl, 0, sizeof(arg.typ), 0)
-                    end
-                    merge!(rest, TypeTree(API.DT_Pointer, ctx))
-                    only!(rest, -1)
-                else
-                    # canonicalize wrt size
-                end
-                push!(
-                    parameter_attributes(f, arg.codegen.i),
-                    StringAttribute("enzyme_type", string(rest)),
-                )
-            end
-        end
-
-        if !no_type_setting(mi.specTypes; world)[2]
-            if sret !== nothing
-                idx = 0
-                if !in(0, parmsRemoved)
-                    @assert sret <: Ptr
-                    sret_et = eltype(sret)
-                    rest = copy(typetree(sret_et, ctx, dl))
-                    shift!(rest, dl, 0, LLVM.sizeof(LLVM.DataLayout(dl), sret_ty(f, 1)), 0)
-                    merge!(rest, TypeTree(API.DT_Pointer, ctx))
-                    only!(rest, -1)
-                    push!(
-                        parameter_attributes(f, idx + 1),
-                        StringAttribute("enzyme_type", string(rest)),
-                    )
-                    idx += 1
-                end
-                if returnRoots !== nothing
-                    if !in(1, parmsRemoved)
-                        rest = TypeTree(API.DT_Pointer, -1, ctx)
-                        push!(
-                            parameter_attributes(f, idx + 1),
-                            StringAttribute("enzyme_type", string(rest)),
-                        )
-                    end
-                end
-            end
-
-            if llRT !== nothing &&
-               LLVM.return_type(LLVM.function_type(f)) != LLVM.VoidType()
-                @assert !retRemoved
-                rest = if llRT == Ptr{RT}
-                    typeTree = copy(typetree(RT, ctx, dl))
-                    merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
-                    only!(typeTree, -1)
-                    typeTree
-                else
-                    typetree(RT, ctx, dl)
-                end
-                push!(return_attributes(f), StringAttribute("enzyme_type", string(rest)))
-            end
-        end
-
-    end
-
     custom = Dict{String,LLVM.API.LLVMLinkage}()
 
     world = job.world
@@ -1295,6 +1262,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
     end
 
     return custom, state
+end
 end
 
 const DumpPreNestedCheck = Ref(false)
@@ -4516,6 +4484,34 @@ function lower_convention(
     for (i, v) in enumerate(wrapper_attrs)
         for attr in v
             push!(parameter_attributes(wrapper_f, i), attr)
+        end
+    end
+
+    # Copy classification attributes to wrapper_f parameters
+    let wrapper_idx = 1
+        if swiftself
+            wrapper_idx += 1
+        end
+        for arg in args
+            if arg.arg_i in removedRoots
+                continue
+            end
+            
+            # Copy attributes from entry_f to wrapper_f
+            orig_param_idx = arg.codegen.i
+            for attr in collect(parameter_attributes(entry_f, orig_param_idx))
+                if attr isa LLVM.StringAttribute
+                    attr_kind = LLVM.kind(attr)
+                    if attr_kind == "enzymejl_parmtype" || 
+                       attr_kind == "enzymejl_parmtype_str" || 
+                       attr_kind == "enzymejl_parmtype_ref" || 
+                       attr_kind == "enzymejl_rooted_typ" || 
+                       attr_kind == "enzyme_type"
+                        push!(parameter_attributes(wrapper_f, wrapper_idx), attr)
+                    end
+                end
+            end
+            wrapper_idx += 1
         end
     end
 
