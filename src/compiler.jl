@@ -2482,9 +2482,6 @@ function enzyme_custom_extract_mi(orig::LLVM.CallInst, error::Bool = true)
 end
 
 function enzyme_custom_extract_mi(orig::LLVM.Function, error::Bool = true)
-    if startswith(LLVM.name(orig), "japi3") || startswith(LLVM.name(orig), "japi1") || startswith(LLVM.name(orig), "julia_throw_") || contains(LLVM.name(orig), ".")
-        return nothing, nothing
-    end
     mi = nothing
     RT = nothing
     for fattr in collect(function_attributes(orig))
@@ -4498,7 +4495,7 @@ function lower_convention(
     wrapper_fn = LLVM.name(entry_f)
     LLVM.name!(entry_f, safe_name(wrapper_fn * ".inner"))
     wrapper_ft = LLVM.FunctionType(RT, wrapper_types)
-    wrapper_f = LLVM.Function(mod, wrapper_fn, wrapper_ft)
+    wrapper_f = LLVM.Function(mod, LLVM.name(entry_f), wrapper_ft)
     callconv!(wrapper_f, callconv(entry_f))
     sfn = get_subprogram(entry_f)
     if sfn !== nothing
