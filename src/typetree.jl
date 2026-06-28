@@ -400,8 +400,8 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
             Int(fieldoffset(T, f+1))
         end
 
-        # Fill in padding gaps with Anything, unless subT was an integer
-        padding_T = subT <: Integer ? API.DT_Integer : API.DT_Anything
+        # Fill in padding gaps with Anything, unless subT was an integer or Enum
+        padding_T = (subT <: Integer || subT <: Enum) ? API.DT_Integer : API.DT_Anything
         for i = endbytes:(nextbytes-1)
             merge!(tt, TypeTree(padding_T, i, ctx))
         end
