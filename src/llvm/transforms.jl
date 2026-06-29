@@ -1968,7 +1968,6 @@ function propagate_returned!(mod::LLVM.Module)
                     val = nothing
                     illegalUse = false
                     torem = LLVM.Instruction[]
-                    btval = nothing
 
                     for u in LLVM.uses(fn)
                         un = LLVM.user(u)
@@ -1996,7 +1995,6 @@ function propagate_returned!(mod::LLVM.Module)
                             illegalUse = true
                             break
                         end
-                        btval = un
                         seenfn = false
                         todo = LLVM.Instruction[]
                         if isa(op_i, LLVM.AllocaInst)
@@ -2063,7 +2061,7 @@ function propagate_returned!(mod::LLVM.Module)
                         end
                         
                         argeltype = if has_use
-                            argeltype0 = sret_ty(fn, i, btval; throw_error=false)
+                            argeltype0 = sret_ty(fn, i, #=btval=#nothing, #=throw_error=#false)
                             if argeltype0 === nothing
                                 illegalUse = true
                             end

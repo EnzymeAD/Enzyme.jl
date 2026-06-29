@@ -518,7 +518,7 @@ export typed_fieldcount
 export typed_fieldoffset
 
 # returns the inner type of an sret/enzyme_sret/enzyme_sret_v
-function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruction}=nothing; throw_error::Bool=true)::Union{Nothing, LLVM.LLVMType}
+function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruction}=nothing, throw_error=true)::Union{Nothing, LLVM.LLVMType}
 
     vt = LLVM.value_type(LLVM.parameters(fn)[idx])
 
@@ -540,7 +540,7 @@ function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruc
             if !LLVM.is_opaque(vt)
                 @assert eltype(vt) == res
             end
-            return res
+            return res::LLVM.LLVMType
         end
 
         if ekind == "enzymejl_sret_union_bytes"
@@ -551,7 +551,7 @@ function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruc
             if !LLVM.is_opaque(vt)
                 @assert eltype(vt) == res
             end
-            return res
+            return res::LLVM.LLVMType
         end
 
         if ekind == "enzymejl_returnRoots"
@@ -564,7 +564,7 @@ function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruc
             if !LLVM.is_opaque(vt)
                 @assert eltype(vt) == res
             end
-            return res
+            return res::LLVM.LLVMType
         end
 
         if ekind == "enzyme_sret"
@@ -575,7 +575,7 @@ function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruc
                 @assert ety == eltype(vt) "Mismatched sret type $(string(fn))\nidx=$idx\nety ($(string(ety))) != eltype(vt) (vt = $(string(vt)))"
             end
         
-            return ety
+            return ety::LLVM.LLVMType
         end
 
         if ekind == "enzymejl_parmtype_ref"
@@ -594,7 +594,7 @@ function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruc
         if !LLVM.is_opaque(vt)
             @assert eltype(vt) == res
         end
-        return res
+        return res::LLVM.LLVMType
     end
 
 
