@@ -1901,6 +1901,11 @@ function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
 end
 
 function propagate_returned!(mod::LLVM.Module)
+    sretkind = LLVM.kind(if LLVM.version().major >= 12
+        LLVM.TypeAttribute("sret", LLVM.Int32Type())
+    else
+        LLVM.EnumAttribute("sret")
+    end)
     globs = LLVM.GlobalVariable[]
     for g in globals(mod)
         if linkage(g) == LLVM.API.LLVMInternalLinkage ||
@@ -2133,6 +2138,24 @@ function propagate_returned!(mod::LLVM.Module)
                         illegalUse = true
                         break
                     end
+                    # If every caller passes undef/poison for this argument (val === nothing),
+                    # the interprocedural const-prop below would replace the argument with undef
+                    # inside the body. That is only sound for arguments used purely as values.
+                    # For an sret-like output pointer (`sret`/`enzyme_sret`/`enzyme_sret_v`) the
+                    # body *stores into* the argument, so replacing it with undef turns those
+                    # stores into stores-to-undef. Downstream InstCombine/SROA then treat that as
+                    # UB and collapse the whole function to `unreachable`/`poison`, miscompiling
+                    # the augmented forward pass (segfault, issue #3087). Skip the replacement for
+                    # such write-only output pointers when there is no concrete value to propagate.
+                    if !illegalUse && val === nothing && any(
+                        (
+                            kind(attr) == sretkind ||
+                            kind(attr) == kind(StringAttribute("enzyme_sret")) ||
+                            kind(attr) == kind(StringAttribute("enzyme_sret_v"))
+                        ) for attr in collect(parameter_attributes(fn, i))
+                    )
+                        illegalUse = true
+                    end
                     if !illegalUse
                         if val === nothing
                             val = LLVM.UndefValue(value_type(arg))
@@ -2332,7 +2355,7 @@ function delete_writes_into_removed_args(fn::LLVM.Function, toremove::Vector{Int
             cur, cval = pop!(todorep)
             if isa(cur, LLVM.StoreInst)
                 if operands(cur)[2] == cval
-                    LLVM.API.LLVMInstructionEraseFromParent(nphi)
+                    LLVM.API.LLVMInstructionEraseFromParent(cur)
                     continue
                 end
             end
