@@ -2056,26 +2056,32 @@ function propagate_returned!(mod::LLVM.Module)
                         end
                     end
                     if !illegalUse
-                        for c in reverse(torem)
-                            eraseInst(LLVM.parent(c), c)
-                        end
-                        B = IRBuilder()
-
-                        position!(B, first(instructions(first(blocks(fn)))))
-
                         has_use = false
                         for _ in LLVM.uses(arg)
                             has_use = true
                             break
                         end
-
-                        if has_use
-                            argeltype = sret_ty(fn, i, btval)
-                            al = alloca!(B, argeltype)
-                            if value_type(al) != value_type(arg)
-                                al = addrspacecast!(B, al, value_type(arg))
+                        
+                        argeltype = if has_use
+                            argeltype0 = sret_ty(fn, i, btval; throw_error=false)
+                            if argeltype0 === nothing
+                                illegalUse = true
                             end
-                            LLVM.replace_uses!(arg, al)
+                            argeltype0
+                        end
+                        if !illegalUse
+                            for c in reverse(torem)
+                                eraseInst(LLVM.parent(c), c)
+                            end
+                            if has_use
+                                B = IRBuilder()
+                                position!(B, first(instructions(first(blocks(fn)))))
+                                al = alloca!(B, argeltype)
+                                if value_type(al) != value_type(arg)
+                                    al = addrspacecast!(B, al, value_type(arg))
+                                end
+                                LLVM.replace_uses!(arg, al)
+                            end
                         end
                     end
                 end

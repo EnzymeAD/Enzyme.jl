@@ -1,6 +1,6 @@
 
 function julia_activity_rule(f::LLVM.Function, method_table)
-    if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1")
+    if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1") || startswith(LLVM.name(f), "jlcapi")
         return
     end
     mi, RT = enzyme_custom_extract_mi(f)

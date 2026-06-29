@@ -518,7 +518,7 @@ export typed_fieldcount
 export typed_fieldoffset
 
 # returns the inner type of an sret/enzyme_sret/enzyme_sret_v
-function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruction}=nothing)::LLVM.LLVMType
+function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruction}=nothing; throw_error::Bool=true)::Union{Nothing, LLVM.LLVMType}
 
     vt = LLVM.value_type(LLVM.parameters(fn)[idx])
 
@@ -597,6 +597,10 @@ function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruc
         return res
     end
 
+
+    if !throw_error
+        return nothing
+    end
 
     mi, _ = Compiler.enzyme_custom_extract_mi(
         fn,
