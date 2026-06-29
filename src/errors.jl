@@ -1223,7 +1223,7 @@ function julia_error(
         end
 	    
         mi = nothing
-        world = nothing
+        world = enzyme_typeanalyzer_context(data).world
 
         if isa(val, LLVM.Instruction)
             f = LLVM.parent(LLVM.parent(val))::LLVM.Function
@@ -1231,14 +1231,12 @@ function julia_error(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
         elseif isa(val, LLVM.Argument)
             f = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
         end
         if mi !== nothing
             emit_error(B, nothing, (msg2, mi, world), EnzymeNoTypeError{Core.MethodInstance, UInt})

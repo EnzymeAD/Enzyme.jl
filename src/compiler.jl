@@ -2488,6 +2488,10 @@ struct UnknownTapeType end
 # Enzyme compiler step
 ##
 
+# Prefer reading the world from the `EnzymeContext` (see `enzyme_context`) whenever a
+# `GradientUtils`/`TypeAnalyzer` context is reachable. This helper is retained only for the
+# few error paths and LLVM passes that operate on raw functions without access to a context
+# (e.g. `sret_ty` and the GC-rewrite analyses, the generic internal-error handlers).
 function enzyme_extract_world(fn::LLVM.Function)::UInt
     for fattr in collect(function_attributes(fn))
         if isa(fattr, LLVM.StringAttribute)
