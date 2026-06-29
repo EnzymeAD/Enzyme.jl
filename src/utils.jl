@@ -8,8 +8,11 @@
 function unsafe_to_pointer end
 export unsafe_to_pointer
 
+const compiler_roots = Dict{Ptr{Cvoid}, Any}()
+const compiler_roots_lock = ReentrantLock()
+
 if VERSION >= v"1.12-"
-    @inline function unsafe_to_pointer(@nospecialize(val::Type))
+    @inline function _unsafe_to_pointer(@nospecialize(val::Type))
         return Core.Intrinsics.llvmcall((
             """
             declare nonnull ptr @julia.pointer_from_objref(ptr addrspace(11))
@@ -22,7 +25,7 @@ if VERSION >= v"1.12-"
             """, "f"), Ptr{Cvoid}, Tuple{Any}, val)
     end
 elseif Int == Int64
-    @inline function unsafe_to_pointer(@nospecialize(val::Type))
+    @inline function _unsafe_to_pointer(@nospecialize(val::Type))
         return Base.llvmcall((
             """
             declare nonnull {}* @julia.pointer_from_objref({} addrspace(11)*)
@@ -36,7 +39,7 @@ elseif Int == Int64
             """, "f"), Ptr{Cvoid}, Tuple{Any}, val)
     end
 else
-    @inline function unsafe_to_pointer(@nospecialize(val::Type))
+    @inline function _unsafe_to_pointer(@nospecialize(val::Type))
         return Base.llvmcall((
             """
             declare nonnull {}* @julia.pointer_from_objref({} addrspace(11)*)
@@ -49,6 +52,14 @@ else
             }
             """, "f"), Ptr{Cvoid}, Tuple{Any}, val)
     end
+end
+
+function unsafe_to_pointer(@nospecialize(val::Type))
+    ptr = _unsafe_to_pointer(val)
+    lock(compiler_roots_lock) do
+        compiler_roots[ptr] = val
+    end
+    return ptr
 end
 
 
