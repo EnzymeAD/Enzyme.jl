@@ -613,6 +613,7 @@ function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruc
     if mi !== nothing
         throw(Compiler.EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world))
     else
+        world = nothing
         throw(Compiler.EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world))
     end
 end
