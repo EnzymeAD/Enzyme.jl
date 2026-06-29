@@ -152,3 +152,11 @@ end
         @test Enzyme.get_offsets(UnionMember) == [(Enzyme.API.DT_Float, 0), (Enzyme.API.DT_Pointer, 4), (Enzyme.API.DT_Integer, 8)]
     end
 end
+
+@testset "from_tape_type" begin
+    LLVM.Context() do ctx
+        @test Enzyme.Compiler.from_tape_type(NTuple{8, VecElement{Float32}}) == LLVM.VectorType(LLVM.FloatType(), 8)
+        @test Enzyme.Compiler.from_tape_type(NTuple{8, Float32}) == LLVM.ArrayType(LLVM.FloatType(), 8)
+    end
+end
+

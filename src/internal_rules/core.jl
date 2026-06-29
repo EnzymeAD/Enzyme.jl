@@ -55,8 +55,55 @@ end
                 @inbounds newa[i] = deepcopy_rtact(copied[i], primal[i], seen, shadow[i])
             end
             return newa
+        elseif RT <: Tuple
+            return ntuple(Val(length(shadow))) do i
+                deepcopy_rtact(copied[i], primal[i], seen, shadow[i])
+            end
         end
-        throw(AssertionError("Unimplemented deepcopy with runtime activity for type $RT"))
+
+        nf = nfields(shadow)
+        if nf == 0 || isbitstype(RT)
+            return shadow
+        end
+
+        if ismutabletype(RT)
+            new_shadow = ccall(:jl_new_struct_uninit, Any, (Any,), RT)::RT
+            if seen === nothing
+                seen = IdDict()
+            end
+            seen[shadow] = new_shadow
+            for i in 1:nf
+                if isdefined(shadow, i)
+                    if isdefined(primal, i) && isdefined(copied, i)
+                        xi = deepcopy_rtact(getfield(copied, i), getfield(primal, i), seen, getfield(shadow, i))
+                        ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), new_shadow, i-1, xi)
+                    end
+                end
+            end
+            return new_shadow
+        else
+            flds = Vector{Any}(undef, nf)
+            for i in 1:nf
+                if isdefined(shadow, i)
+                    if isdefined(primal, i) && isdefined(copied, i)
+                        xi = deepcopy_rtact(getfield(copied, i), getfield(primal, i), seen, getfield(shadow, i))
+                        flds[i] = xi
+                    else
+                        nf = i - 1
+                        break
+                    end
+                else
+                    nf = i - 1
+                    break
+                end
+            end
+            new_shadow = ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds, nf)::RT
+            if seen === nothing
+                seen = IdDict()
+            end
+            seen[shadow] = new_shadow
+            return new_shadow
+        end
     end
 end
 
@@ -120,7 +167,7 @@ function EnzymeRules.augmented_primal(
         nothing
     end
 
-    return EnzymeRules.AugmentedReturn(primal, shadow, shadow)
+    return EnzymeRules.augmented_rule_return_type(config, RT)(primal, shadow, shadow)
 end
 
 

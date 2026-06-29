@@ -462,8 +462,20 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
             if !found_partial
                 return false
             end
-            if !guaranteed_const_nongen(typ_partial, world)
-                return false
+            if !get_runtime_activity(gutils)                
+                if !guaranteed_const_nongen(typ_partial, world)
+                    return false
+                end
+            else
+                # In the special case of runtime activity if the argument is constant,
+                # we still support that, storing the constant value into the struct, so
+                # long as the struct element we are storing itself contains no direct
+                # active data [aka is pure duplicated, or const], since we will then
+                # still preserve the primal === shadow pointer relationships for anything
+                # stored.
+                if !guaranteed_nonactive(typ_partial, world; AbstractIsMixed=true)
+                    return false
+                end
             end
         end
         # if any active [e.g. ActiveState / MixedState] data could exist

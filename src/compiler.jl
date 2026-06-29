@@ -2097,7 +2097,8 @@ function zero_allocation(
             LLVM.PointerType(LLVMType, addrspace(value_type(nobj))),
         )
 
-        LLVM.br!(builder, loop)
+        cond = icmp!(builder, LLVM.API.LLVMIntEQ, nsize, LLVM.ConstantInt(value_type(nsize), 0))
+        br!(builder, cond, exit, loop)
         position!(builder, loop)
         idx = LLVM.phi!(builder, value_type(Size), "zero_alloc_idx")
         inc = add!(builder, idx, LLVM.ConstantInt(value_type(Size), 1))
@@ -2201,6 +2202,16 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
         end
 
         obj = emit_allocobj!(B, tag, allocSize, needs_dynamic_size_workaround)
+        if CountTrackedPointers(LLVMType).all
+            LLVM.API.LLVMAddCallSiteAttribute(
+                obj,
+                LLVM.API.LLVMAttributeReturnIndex,
+                StringAttribute(
+                    "enzyme_type",
+                    "{[-1]:Pointer, [-1,-1]:Pointer}",
+                ),
+            )
+        end
 
         if ZI != C_NULL
             unsafe_store!(

@@ -216,3 +216,34 @@ end
     )[1]
     @test g ≈ [5.0, 3.0]
 end
+
+# ODEProblem-shaped immutable struct, parameterized by `iip`.
+struct Prob3246{iip, U, T, P}
+    u0::U      # inactive array
+    tspan::T   # inactive isbits tuple
+    p::P       # active array
+end
+Prob3246{iip}(u0, tspan, p) where {iip} =
+    Prob3246{iip, typeof(u0), typeof(tspan), typeof(p)}(u0, tspan, p)
+
+@noinline build_3246(u0, tspan, p, flag) = Prob3246{flag}(u0, tspan, p)
+
+function loss_3246(p, flag)
+    sum(abs2, build_3246([1.0, 2.0], (0.0, 1.0), p, flag).p)
+end
+
+@testset "Issue 3246 HVP with runtime activity" begin
+    RA_R = Enzyme.set_runtime_activity(Enzyme.Reverse)
+    RA_F = Enzyme.set_runtime_activity(Enzyme.Forward)
+    
+    FLAG = Ref(true)
+    runtime_iip() = FLAG[]
+    
+    grad(x) = Enzyme.gradient(RA_R, p -> loss_3246(p, runtime_iip()), x)[1]
+    
+    x0 = [1.0, 2.0, 3.0]
+    v = [1.0, 0.0, 0.0]
+    
+    res = Enzyme.autodiff(RA_F, Enzyme.Const(grad), Enzyme.Duplicated(x0, v))
+    @test res[1] ≈ [2.0, 0.0, 0.0]
+end

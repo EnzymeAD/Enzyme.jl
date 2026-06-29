@@ -384,10 +384,15 @@ function EnzymeRules.reverse(
     Aval = !isnothing(cache_A) ? cache_A : A.val
     Bval = !isnothing(cache_B) ? cache_B : B.val
 
+    rta = EnzymeRules.runtime_activity(config)
+    A_is_const = isa(A, Const) || (rta && A.dval === A.val)
+    B_is_const = isa(B, Const) || (rta && B.dval === B.val)
+    C_is_const = isa(C, Const) || (rta && C.dval === C.val)
+
     N = EnzymeRules.width(config)
-    if !isa(C, Const)
+    if !C_is_const
         dCs = C.dval
-        dBs = isa(B, Const) ? dCs : B.dval
+        dBs = B_is_const ? dCs : B.dval
         dα = if !isa(α, Const)
             if N == 1
                 _project(typeof(α.val), conj(LinearAlgebra.dot(C.dval, cache_α)))
@@ -415,7 +420,7 @@ function EnzymeRules.reverse(
         end
 
         for i in 1:N
-            if !isa(A, Const)
+            if !A_is_const
                 # dA .+= α'dC*B'
                 # You need to be careful so that dA sparsity pattern does not change. Otherwise
                 # you will get incorrect gradients. So for now we do the slow and bad way of accumulating
@@ -435,7 +440,7 @@ function EnzymeRules.reverse(
                 # mul!(dA, dCs, Bval', α.val, true)
             end
 
-            if !isa(B, Const)
+            if !B_is_const
                 #dB .+= α*A'*dC
                 # Get the type of all arguments since we may need to
                 # project down to a smaller type during accumulation
