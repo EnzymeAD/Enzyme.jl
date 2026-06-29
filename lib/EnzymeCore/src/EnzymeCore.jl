@@ -9,6 +9,29 @@ export BatchDuplicatedFunc
 export within_autodiff, ignore_derivatives
 export needs_primal
 
+"""
+    congruent(x, y)
+
+Check if two values have the same type and shape. Returns `true` if they are congruent, otherwise `false`.
+
+To implement your own congruency check for a custom type, define a method for `congruent(x::T, y::T) where T<:MyType`.
+"""
+@inline function congruent(x, y)
+    return typeof(x) == typeof(y)
+end
+
+@inline function congruent(x::T, y::T) where {T <: SubArray}
+    return x.indices == y.indices && x.offset1 == y.offset1 && x.stride1 == y.stride1
+end
+
+@noinline throw_congruent_error(x, y) = throw(AssertionError("Values $x and $y are not congruent"))
+
+@inline function check_congruency(x, y)
+    return if !congruent(x, y)
+        throw_congruent_error(x, y)
+    end
+end
+
 function batch_size end
 
 """
@@ -18,7 +41,7 @@ Abstract type for [`autodiff`](@ref Enzyme.autodiff) function argument wrappers 
 [`Const`](@ref), [`Active`](@ref) and [`Duplicated`](@ref).
 """
 abstract type Annotation{T} end
-Base.eltype(::Type{<:Annotation{T}}) where T = T
+Base.eltype(::Type{<:Annotation{T}}) where {T} = T
 
 """
     Const(x)
@@ -31,7 +54,7 @@ struct Const{T} <: Annotation{T}
 end
 
 # To deal with Const(Int) and prevent it to go to `Const{DataType}(T)`
-Const(::Type{T}) where T = Const{Type{T}}(T)
+Const(::Type{T}) where {T} = Const{Type{T}}(T)
 
 """
     Active(x)
@@ -48,45 +71,36 @@ Enzyme will auto-differentiate in respect `Active` arguments.
 struct Active{T} <: Annotation{T}
     val::T
     @inline Active(x::T1) where {T1} = new{T1}(x)
-    @inline Active(x::T1) where {T1 <: Array} = error("Unsupported Active{"*string(T1)*"}, consider Duplicated or Const")
+    @inline Active(x::T1) where {T1 <: Array} = error("Unsupported Active{" * string(T1) * "}, consider Duplicated or Const")
 end
 
 Active(i::Integer) = Active(float(i))
-Active(ci::Complex{T}) where T <: Integer = Active(float(ci))
+Active(ci::Complex{T}) where {T <: Integer} = Active(float(ci))
 
 """
-    Duplicated(x, ∂f_∂x)
+    Duplicated(x, ∂f_∂x, check=true)
 
 Mark a function argument `x` of [`autodiff`](@ref Enzyme.autodiff) as duplicated, Enzyme will
 auto-differentiate in respect to such arguments, with `dx` acting as an
 accumulator for gradients (so ``\\partial f / \\partial x`` will be *added to*)
 `∂f_∂x`.
+
+If `check` is true the values will be checked for congruency (same type and shape).
 """
 struct Duplicated{T} <: Annotation{T}
     val::T
     dval::T
-    @inline Duplicated(x::T1, dx::T1, check::Bool=true) where {T1} = new{T1}(x, dx)
-    @inline function Duplicated(x::T1, dx::T1, check::Bool=true) where {T1 <: SubArray}
+    @inline function Duplicated{T1}(x::T1, dx::T1, check::Bool = true) where {T1}
         if check
-            @assert x.indices == dx.indices
-            @assert x.offset1 == dx.offset1
-            @assert x.stride1 == dx.stride1
+            check_congruency(x, dx)
         end
-        new{T1}(x, dx)
-    end
-    @inline Duplicated{T1}(x::T1, dx::T1, check::Bool=true) where {T1} = new{T1}(x, dx)
-    @inline function Duplicated{T1}(x::T1, dx::T1, check::Bool=true) where {T1 <: SubArray}
-        if check
-            @assert x.indices == dx.indices
-            @assert x.offset1 == dx.offset1
-            @assert x.stride1 == dx.stride1
-        end
-        new{T1}(x, dx)
+        return new{T1}(x, dx)
     end
 end
+Duplicated(x::T, y::T, check::Bool = true) where {T} = Duplicated{T}(x, y, check)
 
 """
-    DuplicatedNoNeed(x, ∂f_∂x)
+    DuplicatedNoNeed(x, ∂f_∂x, check=true)
 
 Like [`Duplicated`](@ref), except also specifies that Enzyme may avoid computing
 the original result and only compute the derivative values. This creates opportunities
@@ -116,136 +130,116 @@ function stores values in `x` and reads them back in subsequent computations, us
 should not be used for preallocated workspace, even if the user might not care about its
 final value, as marking a variable as NoNeed means that reads from the variable are now
 undefined.
+
+If `check` is true the values will be checked for congruency (same type and shape).
 """
 struct DuplicatedNoNeed{T} <: Annotation{T}
     val::T
     dval::T
-    @inline DuplicatedNoNeed(x::T1, dx::T1, check::Bool=true) where {T1} = new{T1}(x, dx)
-    @inline function DuplicatedNoNeed(x::T1, dx::T1, check::Bool=true) where {T1 <: SubArray}
+    @inline function DuplicatedNoNeed{T1}(x::T1, dx::T1, check::Bool = true) where {T1}
         if check
-            @assert x.indices == dx.indices
-            @assert x.offset1 == dx.offset1
-            @assert x.stride1 == dx.stride1
+            check_congruency(x, dx)
         end
-        new{T1}(x, dx)
-    end
-    @inline DuplicatedNoNeed{T1}(x::T1, dx::T1, check::Bool=true) where {T1} = new{T1}(x, dx)
-    @inline function DuplicatedNoNeed{T1}(x::T1, dx::T1, check::Bool=true) where {T1 <: SubArray}
-        if check
-            @assert x.indices == dx.indices
-            @assert x.offset1 == dx.offset1
-            @assert x.stride1 == dx.stride1
-        end
-        new{T1}(x, dx)
+        return new{T1}(x, dx)
     end
 end
+DuplicatedNoNeed(x::T, y::T, check::Bool = true) where {T} = DuplicatedNoNeed{T}(x, y, check)
 
 """
-    BatchDuplicated(x, ∂f_∂xs)
+    BatchDuplicated(x, ∂f_∂xs, check=true)
 
 Like [`Duplicated`](@ref), except contains several shadows to compute derivatives
 for all at once. Argument `∂f_∂xs` should be a tuple of the several values of type `x`.
+
+If `check` is true each shadow will be checked for congruency (same type and shape) with `x`.
 """
-struct BatchDuplicated{T,N} <: Annotation{T}
+struct BatchDuplicated{T, N} <: Annotation{T}
     val::T
-    dval::NTuple{N,T}
-    @inline BatchDuplicated(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1, N} = new{T1, N}(x, dx)
-    @inline function BatchDuplicated(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1 <: SubArray, N}
+    dval::NTuple{N, T}
+    @inline function BatchDuplicated{T1, N}(x::T1, dx::NTuple{N, T1}, check::Bool = true) where {T1, N}
         if check
-            for dxi in dx
-                @assert x.indices == dxi.indices
-                @assert x.offset1 == dxi.offset1
-                @assert x.stride1 == dxi.stride1
-            end
+            foreach(dxi -> check_congruency(x, dxi), dx)
         end
-        new{T1, N}(x, dx)
-    end
-    @inline BatchDuplicated{T1, N}(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1, N} = new{T1, N}(x, dx)
-    @inline function BatchDuplicated{T1, N}(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1 <: SubArray, N}
-        if check
-            for dxi in dx
-                @assert x.indices == dxi.indices
-                @assert x.offset1 == dxi.offset1
-                @assert x.stride1 == dxi.stride1
-            end
-        end
-        new{T1, N}(x, dx)
+        return new{T1, N}(x, dx)
     end
 end
+BatchDuplicated(x::T, y::NTuple{N, T}, check::Bool = true) where {T, N} = BatchDuplicated{T, N}(x, y, check)
 
-struct BatchDuplicatedFunc{T,N,Func} <: Annotation{T}
+struct BatchDuplicatedFunc{T, N, Func} <: Annotation{T}
     val::T
 end
-get_func(::BatchDuplicatedFunc{T,N,Func}) where {T,N,Func} = Func
-get_func(::Type{BatchDuplicatedFunc{T,N,Func}}) where {T,N,Func} = Func
+get_func(::BatchDuplicatedFunc{T, N, Func}) where {T, N, Func} = Func
+get_func(::Type{BatchDuplicatedFunc{T, N, Func}}) where {T, N, Func} = Func
 
 """
-    BatchDuplicatedNoNeed(x, ∂f_∂xs)
+    BatchDuplicatedNoNeed(x, ∂f_∂xs, check=true)
 
 Like [`DuplicatedNoNeed`](@ref), except contains several shadows to compute derivatives
 for all at once. Argument `∂f_∂xs` should be a tuple of the several values of type `x`.
+
+If `check` is true each shadow will be checked for congruency (same type and shape) with `x`.
 """
-struct BatchDuplicatedNoNeed{T,N} <: Annotation{T}
+struct BatchDuplicatedNoNeed{T, N} <: Annotation{T}
     val::T
-    dval::NTuple{N,T}
-    @inline BatchDuplicatedNoNeed(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1, N} = new{T1, N}(x, dx)
-    @inline function BatchDuplicatedNoNeed(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1 <: SubArray, N}
+    dval::NTuple{N, T}
+    @inline function BatchDuplicatedNoNeed{T1, N}(x::T1, dx::NTuple{N, T1}, check::Bool = true) where {T1, N}
         if check
-            for dxi in dx
-                @assert x.indices == dxi.indices
-                @assert x.offset1 == dxi.offset1
-                @assert x.stride1 == dxi.stride1
-            end
+            foreach(dxi -> check_congruency(x, dxi), dx)
         end
-        new{T1, N}(x, dx)
-    end
-    @inline BatchDuplicatedNoNeed{T1, N}(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1, N} = new{T1, N}(x, dx)
-    @inline function BatchDuplicatedNoNeed{T1, N}(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1 <: SubArray, N}
-        if check
-            for dxi in dx
-                @assert x.indices == dxi.indices
-                @assert x.offset1 == dxi.offset1
-                @assert x.stride1 == dxi.stride1
-            end
-        end
-        new{T1, N}(x, dx)
+        return new{T1, N}(x, dx)
     end
 end
-@inline batch_size(::BatchDuplicated{T,N}) where {T,N} = N
-@inline batch_size(::BatchDuplicatedFunc{T,N}) where {T,N} = N
-@inline batch_size(::BatchDuplicatedNoNeed{T,N}) where {T,N} = N
-@inline batch_size(::Type{BatchDuplicated{T,N}}) where {T,N} = N
-@inline batch_size(::Type{BatchDuplicatedFunc{T,N}}) where {T,N} = N
-@inline batch_size(::Type{BatchDuplicatedNoNeed{T,N}}) where {T,N} = N
+BatchDuplicatedNoNeed(x::T, y::NTuple{N, T}, check::Bool = true) where {T, N} = BatchDuplicatedNoNeed{T, N}(x, y, check)
+
+@inline batch_size(::BatchDuplicated{T, N}) where {T, N} = N
+@inline batch_size(::BatchDuplicatedFunc{T, N}) where {T, N} = N
+@inline batch_size(::BatchDuplicatedNoNeed{T, N}) where {T, N} = N
+@inline batch_size(::Type{BatchDuplicated{T, N}}) where {T, N} = N
+@inline batch_size(::Type{BatchDuplicatedFunc{T, N}}) where {T, N} = N
+@inline batch_size(::Type{BatchDuplicatedNoNeed{T, N}}) where {T, N} = N
 
 
 """
-    MixedDuplicated(x, ∂f_∂x)
+    MixedDuplicated(x, ∂f_∂x, check=true)
 
 Like [`Duplicated`](@ref), except x may contain both active [immutable] and duplicated [mutable]
 data which is differentiable. Only used within custom rules.
+
+If `check` is true the values will be checked for congruency (same type and shape).
 """
 struct MixedDuplicated{T} <: Annotation{T}
     val::T
     dval::Base.RefValue{T}
-    @inline MixedDuplicated(x::T1, dx::Base.RefValue{T1}, check::Bool=true) where {T1} = new{T1}(x, dx)
-    @inline MixedDuplicated{T1}(x::T1, dx::Base.RefValue{T1}, check::Bool=true) where {T1} = new{T1}(x, dx)
+    @inline function MixedDuplicated{T1}(x::T1, dx::Base.RefValue{T1}, check::Bool = true) where {T1}
+        if check
+            check_congruency(x, dx[])
+        end
+        return new{T1}(x, dx)
+    end
 end
+MixedDuplicated(x::T, dx::Base.RefValue{T}, check::Bool = true) where {T} = MixedDuplicated{T}(x, dx, check)
 
 """
-    BatchMixedDuplicated(x, ∂f_∂xs)
+    BatchMixedDuplicated(x, ∂f_∂xs, check=true)
 
 Like [`MixedDuplicated`](@ref), except contains several shadows to compute derivatives
 for all at once. Only used within custom rules.
+
+If `check` is true each shadow will be checked for congruency (same type and shape) with `x`.
 """
-struct BatchMixedDuplicated{T,N} <: Annotation{T}
+struct BatchMixedDuplicated{T, N} <: Annotation{T}
     val::T
-    dval::NTuple{N,Base.RefValue{T}}
-    @inline BatchMixedDuplicated(x::T1, dx::NTuple{N,Base.RefValue{T1}}, check::Bool=true) where {T1, N} = new{T1, N}(x, dx)
-    @inline BatchMixedDuplicated{T1, N}(x::T1, dx::NTuple{N,Base.RefValue{T1}}, check::Bool=true) where {T1, N} = new{T1, N}(x, dx)
+    dval::NTuple{N, Base.RefValue{T}}
+    @inline function BatchMixedDuplicated{T1, N}(x::T1, dx::NTuple{N, Base.RefValue{T1}}, check::Bool = true) where {T1, N}
+        if check
+            foreach(dxi -> check_congruency(x, dxi[]), dx)
+        end
+        return new{T1, N}(x, dx)
+    end
 end
-@inline batch_size(::BatchMixedDuplicated{T,N}) where {T,N} = N
-@inline batch_size(::Type{BatchMixedDuplicated{T,N}}) where {T,N} = N
+BatchMixedDuplicated(x::T, dx::NTuple{N, Base.RefValue{T}}, check::Bool = true) where {T, N} = BatchMixedDuplicated{T, N}(x, dx, check)
+@inline batch_size(::BatchMixedDuplicated{T, N}) where {T, N} = N
+@inline batch_size(::Type{BatchMixedDuplicated{T, N}}) where {T, N} = N
 
 """
     abstract type ABI
@@ -318,8 +312,8 @@ abstract type Mode{ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} end
 
 Returns whether the given mode has runtime activity set. For a deeper explanation of what strong zero is see the [FAQ](@ref faq-runtime-activity)
 """
-runtime_activity(::Mode{<:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
-runtime_activity(::Type{<:Mode{<:Any, <:Any, RuntimeActivity}}) where RuntimeActivity = RuntimeActivity
+runtime_activity(::Mode{<:Any, <:Any, RuntimeActivity}) where {RuntimeActivity} = RuntimeActivity
+runtime_activity(::Type{<:Mode{<:Any, <:Any, RuntimeActivity}}) where {RuntimeActivity} = RuntimeActivity
 
 """
     strong_zero(::Mode)
@@ -327,8 +321,8 @@ runtime_activity(::Type{<:Mode{<:Any, <:Any, RuntimeActivity}}) where RuntimeAct
 
 Returns whether the given mode has strong zero set. For a deeper explanation of what strong zero is see the [FAQ](@ref faq-strong-zero)
 """
-strong_zero(::Mode{<:Any, <:Any, <:Any, StrongZero}) where StrongZero = StrongZero
-strong_zero(::Type{<:Mode{<:Any, <:Any, <:Any, StrongZero}}) where StrongZero = StrongZero
+strong_zero(::Mode{<:Any, <:Any, <:Any, StrongZero}) where {StrongZero} = StrongZero
+strong_zero(::Type{<:Mode{<:Any, <:Any, <:Any, StrongZero}}) where {StrongZero} = StrongZero
 
 """
     struct ReverseMode{
@@ -362,66 +356,66 @@ Subtype of [`Mode`](@ref) for reverse mode differentiation.
     - [`set_strong_zero`](@ref) / [`clear_strong_zero`](@ref)
     - [`set_abi`](@ref)
 """
-struct ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten} <: Mode{ABI, ErrIfFuncWritten,RuntimeActivity,StrongZero} end
+struct ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} <: Mode{ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} end
 
 """
     const Reverse
 
 Default instance of [`ReverseMode`](@ref) that doesn't return the primal
 """
-const Reverse = ReverseMode{false,false, false, DefaultABI, false, false}()
+const Reverse = ReverseMode{false, false, false, DefaultABI, false, false}()
 
 """
     const ReverseWithPrimal
 
 Default instance of [`ReverseMode`](@ref) that also returns the primal.
 """
-const ReverseWithPrimal = ReverseMode{true,false,false,DefaultABI, false, false}()
+const ReverseWithPrimal = ReverseMode{true, false, false, DefaultABI, false, false}()
 
 """
     const ReverseHolomorphic
 
 Holomorphic instance of [`ReverseMode`](@ref) that doesn't return the primal
 """
-const ReverseHolomorphic = ReverseMode{false,false,false,DefaultABI, true, false}()
+const ReverseHolomorphic = ReverseMode{false, false, false, DefaultABI, true, false}()
 
 """
     const ReverseHolomorphicWithPrimal
 
 Holomorphic instance of [`ReverseMode`](@ref) that also returns the primal
 """
-const ReverseHolomorphicWithPrimal = ReverseMode{true,false,false,DefaultABI, true, false}()
+const ReverseHolomorphicWithPrimal = ReverseMode{true, false, false, DefaultABI, true, false}()
 
-@inline set_err_if_func_written(::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,true}()
-@inline clear_err_if_func_written(::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,false}()
+@inline set_err_if_func_written(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, true}()
+@inline clear_err_if_func_written(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, false}()
 
-@inline set_abi(::Type{ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,OldABI,Holomorphic,ErrIfFuncWritten}}, ::Type{NewABI}) where {ReturnPrimal,RuntimeActivity,StrongZero,OldABI,Holomorphic,ErrIfFuncWritten,NewABI<:ABI} = ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,NewABI,Holomorphic,ErrIfFuncWritten}
-@inline set_abi(::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,OldABI,Holomorphic,ErrIfFuncWritten}, ::Type{NewABI}) where {ReturnPrimal,RuntimeActivity,StrongZero,OldABI,Holomorphic,ErrIfFuncWritten,NewABI<:ABI} = ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,NewABI,Holomorphic,ErrIfFuncWritten}()
+@inline set_abi(::Type{ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, OldABI, Holomorphic, ErrIfFuncWritten}}, ::Type{NewABI}) where {ReturnPrimal, RuntimeActivity, StrongZero, OldABI, Holomorphic, ErrIfFuncWritten, NewABI <: ABI} = ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, NewABI, Holomorphic, ErrIfFuncWritten}
+@inline set_abi(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, OldABI, Holomorphic, ErrIfFuncWritten}, ::Type{NewABI}) where {ReturnPrimal, RuntimeActivity, StrongZero, OldABI, Holomorphic, ErrIfFuncWritten, NewABI <: ABI} = ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, NewABI, Holomorphic, ErrIfFuncWritten}()
 
-@inline set_runtime_activity(::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,true,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}()
-@inline set_runtime_activity(::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}, rt::Bool) where {ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,rt,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}()
-@inline set_runtime_activity(::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}, ::Mode{<:Any, <:Any, RT2}) where {ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten, RT2} = ReverseMode{ReturnPrimal,RT2,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}()
-@inline clear_runtime_activity(::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,false,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}()
+@inline set_runtime_activity(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, true, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}()
+@inline set_runtime_activity(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}, rt::Bool) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, rt, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}()
+@inline set_runtime_activity(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}, ::Mode{<:Any, <:Any, RT2}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, RT2} = ReverseMode{ReturnPrimal, RT2, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}()
+@inline clear_runtime_activity(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, false, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}()
 
 
-@inline set_strong_zero(::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,RuntimeActivity,true,ABI,Holomorphic,ErrIfFuncWritten}()
-@inline set_strong_zero(::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}, rt::Bool) where {ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,RuntimeActivity,rt,ABI,Holomorphic,ErrIfFuncWritten}()
-@inline set_strong_zero(::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}, ::Mode{<:Any, <:Any, <:Any, SZ2}) where {ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten, SZ2} = ReverseMode{ReturnPrimal,RuntimeActivity,SZ2,ABI,Holomorphic,ErrIfFuncWritten}()
-@inline clear_strong_zero(::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{ReturnPrimal,RuntimeActivity,false,ABI,Holomorphic,ErrIfFuncWritten}()
+@inline set_strong_zero(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, RuntimeActivity, true, ABI, Holomorphic, ErrIfFuncWritten}()
+@inline set_strong_zero(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}, rt::Bool) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, RuntimeActivity, rt, ABI, Holomorphic, ErrIfFuncWritten}()
+@inline set_strong_zero(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}, ::Mode{<:Any, <:Any, <:Any, SZ2}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, SZ2} = ReverseMode{ReturnPrimal, RuntimeActivity, SZ2, ABI, Holomorphic, ErrIfFuncWritten}()
+@inline clear_strong_zero(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, RuntimeActivity, false, ABI, Holomorphic, ErrIfFuncWritten}()
 
 """
     WithPrimal(::Mode)
 
 Return a new mode which includes the primal value.
 """
-@inline WithPrimal(::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{true,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}()
+@inline WithPrimal(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{true, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}()
 
 """
     NoPrimal(::Mode)
 
 Return a new mode which excludes the primal value.
 """
-@inline NoPrimal(::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}) where {ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten} = ReverseMode{false,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten}()
+@inline NoPrimal(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{false, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}()
 
 """
     needs_primal(::Mode)
@@ -467,55 +461,55 @@ Subtype of [`Mode`](@ref) for split reverse mode differentiation, to use in [`au
     - [`set_abi`](@ref)
     - [`ReverseSplitModified`](@ref), [`ReverseSplitWidth`](@ref)
 """
-struct ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI,Holomorphic,ErrIfFuncWritten,ShadowInit} <: Mode{ABI, ErrIfFuncWritten,RuntimeActivity,StrongZero} end
+struct ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} <: Mode{ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} end
 
 """
     const ReverseSplitNoPrimal
 
 Default instance of [`ReverseModeSplit`](@ref) that doesn't return the primal
 """
-const ReverseSplitNoPrimal = ReverseModeSplit{false, true, false, false, 0, true,DefaultABI, false, false, false}()
+const ReverseSplitNoPrimal = ReverseModeSplit{false, true, false, false, 0, true, DefaultABI, false, false, false}()
 
 """
     const ReverseSplitWithPrimal
 
 Default instance of [`ReverseModeSplit`](@ref) that also returns the primal
 """
-const ReverseSplitWithPrimal = ReverseModeSplit{true, true, false, false, 0, true,DefaultABI, false, false, false}()
+const ReverseSplitWithPrimal = ReverseModeSplit{true, true, false, false, 0, true, DefaultABI, false, false, false}()
 
 """
     ReverseSplitModified(::ReverseModeSplit, ::Val{MB})
 
 Return a new instance of [`ReverseModeSplit`](@ref) mode where `ModifiedBetween` is set to `MB`. 
 """
-@inline ReverseSplitModified(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MBO, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, ::Val{MB}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,MB,MBO,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity, StrongZero, Width,MB,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+@inline ReverseSplitModified(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MBO, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, ::Val{MB}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MB, MBO, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MB, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
 
 """
     ReverseSplitWidth(::ReverseModeSplit, ::Val{W})
 
 Return a new instance of [`ReverseModeSplit`](@ref) mode where `Width` is set to `W`. 
 """
-@inline ReverseSplitWidth(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, WidthO, MB, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, ::Val{Width}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero, Width,MB,WidthO,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,MB,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+@inline ReverseSplitWidth(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, WidthO, MB, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, ::Val{Width}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MB, WidthO, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MB, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
 
-@inline set_err_if_func_written(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, true, ShadowInit}()
-@inline clear_err_if_func_written(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal,ReturnShadow,Width,ModifiedBetween,ABI, Holomorphic, false, ShadowInit}()
+@inline set_err_if_func_written(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, true, ShadowInit}()
+@inline clear_err_if_func_written(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, Width, ModifiedBetween, ABI, Holomorphic, false, ShadowInit}()
 
-@inline set_runtime_activity(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal,ReturnShadow,true,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
-@inline set_runtime_activity(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, rt::Bool) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal,ReturnShadow,rt,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
-@inline set_runtime_activity(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, ::Mode{<:Any, <:Any, RT2}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, RT2} = ReverseModeSplit{ReturnPrimal,ReturnShadow,RT2,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
-@inline clear_runtime_activity(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal,ReturnShadow,false,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+@inline set_runtime_activity(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, true, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+@inline set_runtime_activity(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, rt::Bool) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, rt, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+@inline set_runtime_activity(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, ::Mode{<:Any, <:Any, RT2}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, RT2} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RT2, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+@inline clear_runtime_activity(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, false, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
 
 
-@inline set_strong_zero(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,true,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
-@inline set_strong_zero(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, rt::Bool) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,rt,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
-@inline set_strong_zero(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, ::Mode{<:Any, <:Any, <:Any, SZ2}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, SZ2} = ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,SZ2,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
-@inline clear_strong_zero(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,false,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+@inline set_strong_zero(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, true, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+@inline set_strong_zero(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, rt::Bool) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, rt, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+@inline set_strong_zero(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, ::Mode{<:Any, <:Any, <:Any, SZ2}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, SZ2} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, SZ2, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+@inline clear_strong_zero(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, false, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
 
-@inline set_abi(::Type{ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,OldABI,Holomorphic,ErrIfFuncWritten,ShadowInit}}, ::Type{NewABI}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,OldABI,Holomorphic,ErrIfFuncWritten,ShadowInit,NewABI<:ABI} = ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,NewABI,Holomorphic,ErrIfFuncWritten,ShadowInit}
-@inline set_abi(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,OldABI,Holomorphic,ErrIfFuncWritten,ShadowInit}, ::Type{NewABI}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,OldABI,Holomorphic,ErrIfFuncWritten,ShadowInit,NewABI<:ABI} = ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,NewABI,Holomorphic,ErrIfFuncWritten,ShadowInit}()
+@inline set_abi(::Type{ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, OldABI, Holomorphic, ErrIfFuncWritten, ShadowInit}}, ::Type{NewABI}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, OldABI, Holomorphic, ErrIfFuncWritten, ShadowInit, NewABI <: ABI} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, NewABI, Holomorphic, ErrIfFuncWritten, ShadowInit}
+@inline set_abi(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, OldABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, ::Type{NewABI}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, OldABI, Holomorphic, ErrIfFuncWritten, ShadowInit, NewABI <: ABI} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, NewABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
 
-@inline WithPrimal(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{true,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
-@inline NoPrimal(::ReverseModeSplit{ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{false,ReturnShadow,RuntimeActivity,StrongZero,Width,ModifiedBetween,ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+@inline WithPrimal(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{true, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+@inline NoPrimal(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{false, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
 
 @inline needs_primal(::ReverseModeSplit{ReturnPrimal}) where {ReturnPrimal} = ReturnPrimal
 @inline needs_primal(::Type{<:ReverseModeSplit{ReturnPrimal}}) where {ReturnPrimal} = ReturnPrimal
@@ -547,7 +541,7 @@ Subtype of [`Mode`](@ref) for forward mode differentiation.
     - [`set_runtime_activity`](@ref) / [`clear_runtime_activity`](@ref)
     - [`set_abi`](@ref)
 """
-struct ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten,RuntimeActivity,StrongZero} <: Mode{ABI, ErrIfFuncWritten, RuntimeActivity,StrongZero}
+struct ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} <: Mode{ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}
 end
 
 """
@@ -564,24 +558,24 @@ Default instance of [`ForwardMode`](@ref) that also returns the primal
 """
 const ForwardWithPrimal = ForwardMode{true, DefaultABI, false, false, false}()
 
-@inline set_err_if_func_written(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero} = ForwardMode{ReturnPrimal,ABI,true,RuntimeActivity,StrongZero}()
-@inline clear_err_if_func_written(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero} = ForwardMode{ReturnPrimal,ABI,false,RuntimeActivity,StrongZero}()
+@inline set_err_if_func_written(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}) where {ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} = ForwardMode{ReturnPrimal, ABI, true, RuntimeActivity, StrongZero}()
+@inline clear_err_if_func_written(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}) where {ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} = ForwardMode{ReturnPrimal, ABI, false, RuntimeActivity, StrongZero}()
 
-@inline set_abi(::Type{ForwardMode{ReturnPrimal,OldABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}}, ::Type{NewABI}) where {ReturnPrimal,OldABI,ErrIfFuncWritten,RuntimeActivity,StrongZero,NewABI<:ABI} = ForwardMode{ReturnPrimal,NewABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}
-@inline set_abi(::ForwardMode{ReturnPrimal,OldABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}, ::Type{NewABI}) where {ReturnPrimal,OldABI,ErrIfFuncWritten,RuntimeActivity,StrongZero,NewABI<:ABI} = ForwardMode{ReturnPrimal,NewABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}()
+@inline set_abi(::Type{ForwardMode{ReturnPrimal, OldABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}}, ::Type{NewABI}) where {ReturnPrimal, OldABI, ErrIfFuncWritten, RuntimeActivity, StrongZero, NewABI <: ABI} = ForwardMode{ReturnPrimal, NewABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}
+@inline set_abi(::ForwardMode{ReturnPrimal, OldABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}, ::Type{NewABI}) where {ReturnPrimal, OldABI, ErrIfFuncWritten, RuntimeActivity, StrongZero, NewABI <: ABI} = ForwardMode{ReturnPrimal, NewABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}()
 
-@inline set_runtime_activity(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero} = ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,true,StrongZero}()
-@inline set_runtime_activity(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}, rt::Bool) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero} = ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,rt,StrongZero}()
-@inline set_runtime_activity(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}, ::Mode{<:Any, <:Any, RT2}) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero, RT2} = ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RT2,StrongZero}()
-@inline clear_runtime_activity(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero} = ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,false,StrongZero}()
+@inline set_runtime_activity(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}) where {ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} = ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, true, StrongZero}()
+@inline set_runtime_activity(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}, rt::Bool) where {ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} = ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, rt, StrongZero}()
+@inline set_runtime_activity(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}, ::Mode{<:Any, <:Any, RT2}) where {ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero, RT2} = ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RT2, StrongZero}()
+@inline clear_runtime_activity(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}) where {ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} = ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, false, StrongZero}()
 
-@inline set_strong_zero(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero} = ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,true}()
-@inline set_strong_zero(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}, rt::Bool) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero} = ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,rt}()()
-@inline set_strong_zero(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}, ::Mode{<:Any, <:Any, <:Any, SZ2}) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero,SZ2} = ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,SZ2}()
-@inline clear_strong_zero(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero} = ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,false}()
+@inline set_strong_zero(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}) where {ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} = ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, true}()
+@inline set_strong_zero(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}, rt::Bool) where {ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} = ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, rt}()()
+@inline set_strong_zero(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}, ::Mode{<:Any, <:Any, <:Any, SZ2}) where {ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero, SZ2} = ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, SZ2}()
+@inline clear_strong_zero(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}) where {ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} = ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, false}()
 
-@inline WithPrimal(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero} = ForwardMode{true,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}()
-@inline NoPrimal(::ForwardMode{ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}) where {ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero} = ForwardMode{false,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}()
+@inline WithPrimal(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}) where {ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} = ForwardMode{true, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}()
+@inline NoPrimal(::ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}) where {ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} = ForwardMode{false, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}()
 
 @inline needs_primal(::ForwardMode{ReturnPrimal}) where {ReturnPrimal} = ReturnPrimal
 @inline needs_primal(::Type{<:ForwardMode{ReturnPrimal}}) where {ReturnPrimal} = ReturnPrimal
@@ -624,8 +618,8 @@ function remake_zero! end
 
 Helper function to recursively make zero.
 """
-@inline function make_zero(prev::T, ::Val{copy_if_inactive}=Val(false)) where {T, copy_if_inactive}
-    make_zero(Core.Typeof(prev), IdDict(), prev, Val(copy_if_inactive))
+@inline function make_zero(prev::T, ::Val{copy_if_inactive} = Val(false)) where {T, copy_if_inactive}
+    return make_zero(Core.Typeof(prev), IdDict(), prev, Val(copy_if_inactive))
 end
 
 function tape_type end
@@ -750,30 +744,30 @@ This function acts as the identity on a [`ReverseModeSplit`](@ref).
 See also [`Combined`](@ref).
 """
 function Split(
-    ::ReverseMode{
+        ::ReverseMode{
+            ReturnPrimal,
+            RuntimeActivity,
+            StrongZero,
+            ABI,
+            Holomorphic,
+            ErrIfFuncWritten,
+        },
+        ::Val{ReturnShadow} = Val(true),
+        ::Val{Width} = Val(0),
+        ::Val{ModifiedBetween} = Val(true),
+        ::Val{ShadowInit} = Val(false),
+    ) where {
         ReturnPrimal,
+        ReturnShadow,
         RuntimeActivity,
         StrongZero,
+        Width,
+        ModifiedBetween,
         ABI,
         Holomorphic,
-        ErrIfFuncWritten
-    },
-    ::Val{ReturnShadow}=Val(true),
-    ::Val{Width}=Val(0),
-    ::Val{ModifiedBetween}=Val(true),
-    ::Val{ShadowInit}=Val(false),
-) where {
-    ReturnPrimal,
-    ReturnShadow,
-    RuntimeActivity,
-    StrongZero,
-    Width,
-    ModifiedBetween,
-    ABI,
-    Holomorphic,
-    ErrIfFuncWritten,
-    ShadowInit
-}
+        ErrIfFuncWritten,
+        ShadowInit,
+    }
     mode_split = ReverseModeSplit{
         ReturnPrimal,
         ReturnShadow,
@@ -784,7 +778,7 @@ function Split(
         ABI,
         Holomorphic,
         ErrIfFuncWritten,
-        ShadowInit
+        ShadowInit,
     }()
     return mode_split
 end
@@ -801,7 +795,19 @@ This function acts as the identity on a [`ReverseMode`](@ref).
 See also [`Split`](@ref).
 """
 function Combined(
-    ::ReverseModeSplit{
+        ::ReverseModeSplit{
+            ReturnPrimal,
+            ReturnShadow,
+            RuntimeActivity,
+            StrongZero,
+            Width,
+            ModifiedBetween,
+            ABI,
+            Holomorphic,
+            ErrIfFuncWritten,
+            ShadowInit,
+        }
+    ) where {
         ReturnPrimal,
         ReturnShadow,
         RuntimeActivity,
@@ -811,27 +817,15 @@ function Combined(
         ABI,
         Holomorphic,
         ErrIfFuncWritten,
-        ShadowInit
+        ShadowInit,
     }
-) where {
-    ReturnPrimal,
-    ReturnShadow,
-    RuntimeActivity,
-    StrongZero,
-    Width,
-    ModifiedBetween,
-    ABI,
-    Holomorphic,
-    ErrIfFuncWritten,
-    ShadowInit
-}
     mode_unsplit = ReverseMode{
         ReturnPrimal,
         RuntimeActivity,
         StrongZero,
         ABI,
         Holomorphic,
-        ErrIfFuncWritten
+        ErrIfFuncWritten,
     }()
     return mode_unsplit
 end
