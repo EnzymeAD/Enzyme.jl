@@ -1094,8 +1094,8 @@ end
     if length(args) != length(parameters(llvmf))
         bt = GPUCompiler.backtrace(orig)
         msg2 = sprint() do io
-            if startswith(LLVM.name(llvmf), "japi3") || startswith(LLVM.name(llvmf), "japi1")
-                Base.println(io, "Function uses the japi convention, which is not supported yet: ", LLVM.name(llvmf))
+            if startswith(LLVM.name(llvmf), "japi3") || startswith(LLVM.name(llvmf), "japi1") || startswith(LLVM.name(llvmf), "jlcapi")
+                Base.println(io, "Function uses the japi/jlcapi convention, which is not supported yet: ", LLVM.name(llvmf))
             else
                 Base.println(io, "args = ", args)
                 Base.println(io, "llvmf = ", string(llvmf))
@@ -2043,8 +2043,8 @@ function enzyme_custom_common_rev(
     if length(args) != length(parameters(llvmf))
         bt = GPUCompiler.backtrace(orig)
         msg2 = sprint() do io
-            if startswith(LLVM.name(llvmf), "japi3") || startswith(LLVM.name(llvmf), "japi1")
-                Base.println(io, "Function uses the japi convention, which is not supported yet: ", LLVM.name(llvmf))
+            if startswith(LLVM.name(llvmf), "japi3") || startswith(LLVM.name(llvmf), "japi1") || startswith(LLVM.name(llvmf), "jlcapi")
+                Base.println(io, "Function uses the japi/jlcapi convention, which is not supported yet: ", LLVM.name(llvmf))
             else
                 Base.println(io, "args = ", args)
                 Base.println(io, "llvmf = ", string(llvmf))

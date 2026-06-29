@@ -1,4 +1,6 @@
 const nofreefns = Set{String}((
+    "jl_get_abi_converter",
+    "ijl_get_abi_converter",
     "jl_f__compute_sparams",
     "ijl_f__compute_sparams",
     "jl_genericmemory_copyto",
