@@ -352,6 +352,8 @@ function enzyme_custom_setup_args(
         parmsRemoved,
         mi,
         world,
+        ofn,
+        true,
     )
 
     byval_tapes = LLVM.Value[]
