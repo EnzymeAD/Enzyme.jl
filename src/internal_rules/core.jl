@@ -110,21 +110,21 @@ end
 function EnzymeRules.forward(
     config::EnzymeRules.FwdConfig,
     func::Const{typeof(Base.deepcopy)},
-    ::Type{<:Duplicated},
+    RT::Type{<:Duplicated},
     x::Duplicated,
 )
     primal = func.val(x.val)
-    return Duplicated(primal, deepcopy_rtact(primal, x.val, nothing, x.dval))
+    return EnzymeRules.forward_rule_return_type(config, RT)(primal, deepcopy_rtact(primal, x.val, nothing, x.dval))
 end
 
 function EnzymeRules.forward(
     config::EnzymeRules.FwdConfig,
     func::Const{typeof(Base.deepcopy)},
-    ::Type{<:BatchDuplicated},
+    RT::Type{<:BatchDuplicated},
     x::BatchDuplicated{T,N},
 ) where {T,N}
     primal = func.val(x.val)
-    return BatchDuplicated(primal, ntuple(Val(N)) do i
+    return EnzymeRules.forward_rule_return_type(config, RT)(primal, ntuple(Val(N)) do i
         deepcopy_rtact(primal, x.val, nothing, x.dval[i])
     end)
 end
