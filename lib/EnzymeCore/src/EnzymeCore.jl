@@ -74,6 +74,15 @@ struct Duplicated{T} <: Annotation{T}
         end
         new{T1}(x, dx)
     end
+    @inline Duplicated{T1}(x::T1, dx::T1, check::Bool=true) where {T1} = new{T1}(x, dx)
+    @inline function Duplicated{T1}(x::T1, dx::T1, check::Bool=true) where {T1 <: SubArray}
+        if check
+            @assert x.indices == dx.indices
+            @assert x.offset1 == dx.offset1
+            @assert x.stride1 == dx.stride1
+        end
+        new{T1}(x, dx)
+    end
 end
 
 """
@@ -84,7 +93,6 @@ the original result and only compute the derivative values. This creates opportu
 for improved performance.
 
 ```julia
-
 function square_byref(out, v)
     out[] = v * v
     nothing
@@ -121,6 +129,15 @@ struct DuplicatedNoNeed{T} <: Annotation{T}
         end
         new{T1}(x, dx)
     end
+    @inline DuplicatedNoNeed{T1}(x::T1, dx::T1, check::Bool=true) where {T1} = new{T1}(x, dx)
+    @inline function DuplicatedNoNeed{T1}(x::T1, dx::T1, check::Bool=true) where {T1 <: SubArray}
+        if check
+            @assert x.indices == dx.indices
+            @assert x.offset1 == dx.offset1
+            @assert x.stride1 == dx.stride1
+        end
+        new{T1}(x, dx)
+    end
 end
 
 """
@@ -133,7 +150,18 @@ struct BatchDuplicated{T,N} <: Annotation{T}
     val::T
     dval::NTuple{N,T}
     @inline BatchDuplicated(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1, N} = new{T1, N}(x, dx)
-    @inline function DuplicatedNoNeed(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1 <: SubArray, N}
+    @inline function BatchDuplicated(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1 <: SubArray, N}
+        if check
+            for dxi in dx
+                @assert x.indices == dxi.indices
+                @assert x.offset1 == dxi.offset1
+                @assert x.stride1 == dxi.stride1
+            end
+        end
+        new{T1, N}(x, dx)
+    end
+    @inline BatchDuplicated{T1, N}(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1, N} = new{T1, N}(x, dx)
+    @inline function BatchDuplicated{T1, N}(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1 <: SubArray, N}
         if check
             for dxi in dx
                 @assert x.indices == dxi.indices
@@ -161,7 +189,18 @@ struct BatchDuplicatedNoNeed{T,N} <: Annotation{T}
     val::T
     dval::NTuple{N,T}
     @inline BatchDuplicatedNoNeed(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1, N} = new{T1, N}(x, dx)
-    @inline function DuplicatedNoNeed(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1 <: SubArray, N}
+    @inline function BatchDuplicatedNoNeed(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1 <: SubArray, N}
+        if check
+            for dxi in dx
+                @assert x.indices == dxi.indices
+                @assert x.offset1 == dxi.offset1
+                @assert x.stride1 == dxi.stride1
+            end
+        end
+        new{T1, N}(x, dx)
+    end
+    @inline BatchDuplicatedNoNeed{T1, N}(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1, N} = new{T1, N}(x, dx)
+    @inline function BatchDuplicatedNoNeed{T1, N}(x::T1, dx::NTuple{N,T1}, check::Bool=true) where {T1 <: SubArray, N}
         if check
             for dxi in dx
                 @assert x.indices == dxi.indices
@@ -190,6 +229,7 @@ struct MixedDuplicated{T} <: Annotation{T}
     val::T
     dval::Base.RefValue{T}
     @inline MixedDuplicated(x::T1, dx::Base.RefValue{T1}, check::Bool=true) where {T1} = new{T1}(x, dx)
+    @inline MixedDuplicated{T1}(x::T1, dx::Base.RefValue{T1}, check::Bool=true) where {T1} = new{T1}(x, dx)
 end
 
 """
@@ -202,6 +242,7 @@ struct BatchMixedDuplicated{T,N} <: Annotation{T}
     val::T
     dval::NTuple{N,Base.RefValue{T}}
     @inline BatchMixedDuplicated(x::T1, dx::NTuple{N,Base.RefValue{T1}}, check::Bool=true) where {T1, N} = new{T1, N}(x, dx)
+    @inline BatchMixedDuplicated{T1, N}(x::T1, dx::NTuple{N,Base.RefValue{T1}}, check::Bool=true) where {T1, N} = new{T1, N}(x, dx)
 end
 @inline batch_size(::BatchMixedDuplicated{T,N}) where {T,N} = N
 @inline batch_size(::Type{BatchMixedDuplicated{T,N}}) where {T,N} = N
