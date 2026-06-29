@@ -18,10 +18,15 @@ function enzyme_context(logic::Logic)
     return logic.ctx::EnzymeContext
 end
 
-function enzyme_context(logic::API.EnzymeLogicRef)
+function enzyme_logic_context(logic::API.EnzymeLogicRef)
     ptr = API.LogicGetExternalContext(logic)
     @assert ptr != C_NULL
     return unsafe_pointer_to_objref(ptr)::EnzymeContext
+end
+
+function enzyme_typeanalyzer_context(typeanalyzer::API.EnzymeTypeAnalyzerRef)
+    logic = API.EnzymeTypeAnalyzerGetLogic(typeanalyzer)
+    return enzyme_logic_context(logic)
 end
 
 # typedef bool (*CustomRuleType)(int /*direction*/, CTypeTree * /*return*/,
