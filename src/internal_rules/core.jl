@@ -129,6 +129,52 @@ function EnzymeRules.forward(
     end)
 end
 
+# A `Const` argument carries no shadow, but a `Duplicated` result may still be
+# requested (e.g. via runtime-activity widening), so deepcopy the primal and
+# pair it with a freshly zeroed shadow.
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(Base.deepcopy)},
+    ::Type{<:DuplicatedNoNeed},
+    x::Const,
+)
+    return Enzyme.make_zero(func.val(x.val))
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(Base.deepcopy)},
+    ::Type{<:BatchDuplicatedNoNeed},
+    x::Const,
+)
+    primal = func.val(x.val)
+    return ntuple(Val(EnzymeRules.width(config))) do _
+        Enzyme.make_zero(primal)
+    end
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(Base.deepcopy)},
+    ::Type{<:Duplicated},
+    x::Const,
+)
+    primal = func.val(x.val)
+    return Duplicated(primal, Enzyme.make_zero(primal))
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(Base.deepcopy)},
+    ::Type{<:BatchDuplicated},
+    x::Const,
+)
+    primal = func.val(x.val)
+    return BatchDuplicated(primal, ntuple(Val(EnzymeRules.width(config))) do _
+        Enzyme.make_zero(primal)
+    end)
+end
+
 function EnzymeRules.augmented_primal(
     config::EnzymeRules.RevConfig,
     func::Const{typeof(Base.deepcopy)},
