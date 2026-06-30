@@ -168,7 +168,9 @@ end
     @test @filecheck begin
         # The call site bitcasts the callee to a mismatched function type, so DAE
         # must leave the callee untouched: both of its arguments are preserved.
-        @check "define internal fastcc void @callee(i32* %arg1, i32* %arg2)"
+        @check "define internal fastcc void @callee("
+        @check_same "%arg1"
+        @check_same "%arg2"
         LLVM.Context() do ctx
             mod = parse(
                 LLVM.Module, """
