@@ -1175,7 +1175,7 @@ function julia_error(
         API.EnzymeStringFree(ip)
 
         mi = nothing
-        world = enzyme_typeanalyzer_context(data).world
+        world = enzyme_context(TypeAnalyzer(data)).world
 
         if isa(val, LLVM.Instruction)
             f = LLVM.parent(LLVM.parent(val))::LLVM.Function
@@ -1223,7 +1223,7 @@ function julia_error(
         end
 	    
         mi = nothing
-        world = enzyme_typeanalyzer_context(data).world
+        world = enzyme_context(TypeAnalyzer(data)).world
 
         if isa(val, LLVM.Instruction)
             f = LLVM.parent(LLVM.parent(val))::LLVM.Function

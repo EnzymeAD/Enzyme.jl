@@ -33,7 +33,7 @@ end
 
 get_width(gutils::GradientUtils) = API.EnzymeGradientUtilsGetWidth(gutils)
 get_mode(gutils::GradientUtils) = API.EnzymeGradientUtilsGetMode(gutils)
-get_logic(gutils::GradientUtils) = API.EnzymeGradientUtilsGetLogic(gutils)
+get_logic(gutils::GradientUtils) = Logic(API.EnzymeGradientUtilsGetLogic(gutils))
 get_runtime_activity(gutils::GradientUtils) =
     API.EnzymeGradientUtilsGetRuntimeActivity(gutils)
 
@@ -367,14 +367,4 @@ function batch_call_same_with_inverted_arg_if_active!(
     return shadow
 end
 
-function enzyme_context(gutils::GradientUtils)
-    ptr = API.EnzymeGradientUtilsGetExternalContext(gutils)
-    @assert ptr != C_NULL
-    return unsafe_pointer_to_objref(ptr)::EnzymeContext
-end
-
-function enzyme_gutils_context(gutils::API.EnzymeGradientUtilsRef)
-    ptr = API.EnzymeGradientUtilsGetExternalContext(gutils)
-    @assert ptr != C_NULL
-    return unsafe_pointer_to_objref(ptr)::EnzymeContext
-end
+enzyme_context(gutils::GradientUtils) = enzyme_context(get_logic(gutils))

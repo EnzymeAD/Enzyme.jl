@@ -579,15 +579,6 @@ EnzymeCloneFunctionWithoutReturnOrArgs(fn::LLVM.Function, keepret, args) = ccall
 EnzymeGetShadowType(width, T) =
     ccall((:EnzymeGetShadowType, libEnzyme), LLVMTypeRef, (UInt64, LLVMTypeRef), width, T)
 
-function EnzymeGradientUtilsGetExternalContext(gutils)
-    ccall(
-        (:EnzymeGradientUtilsGetExternalContext, libEnzyme),
-        Ptr{Cvoid},
-        (EnzymeGradientUtilsRef,),
-        gutils,
-    )
-end
-
 EnzymeGradientUtilsReplaceAWithB(gutils, a, b) = ccall(
     (:EnzymeGradientUtilsReplaceAWithB, libEnzyme),
     Cvoid,
