@@ -248,12 +248,12 @@ include("compiler/utils.jl")
 
 include("compiler/orcv2.jl")
 
-import .Enzyme: GradientUtils, call_samefunc_with_inverted_bundles!,
+import .Enzyme: GradientUtils, TypeAnalyzer, call_samefunc_with_inverted_bundles!,
                 get_width, get_mode, get_runtime_activity,
                 get_strong_zero, get_atomic_add, get_shadow_type, get_uncacheable,
                 erase_with_placeholder, is_constant_value, is_constant_inst,
                 new_from_original, lookup_value, invert_pointer, debug_from_orig!,
-                add_reverse_block!, set_reverse_block!, enzyme_context, enzyme_gutils_context,
+                add_reverse_block!, set_reverse_block!, enzyme_context,
                 batch_call_same_with_inverted_arg_if_active!
 
 # Julia function to LLVM stem and arity
