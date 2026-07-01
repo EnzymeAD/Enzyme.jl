@@ -1292,7 +1292,10 @@ function abstract_call_known(
     end
     
     let ft = Core.Compiler.widenconst(argtypes[1])
-        if ft isa DataType && string(ft.name.name) == "FunctionWrapper" && string(ft.name.module) == "FunctionWrappers"
+        is_fw_call = ft isa DataType && string(ft.name.name) == "FunctionWrapper" && string(ft.name.module) == "FunctionWrappers"
+        is_do_ccall = ft isa DataType && string(ft.name.name) == "typeof(do_ccall)" && string(ft.name.module) == "FunctionWrappers"
+        
+        if is_fw_call || is_do_ccall
             arginfo2 = ArgInfo(
                 fargs isa Nothing ? nothing :
                 [:(Enzyme.Compiler.funcwrapper_rewrite), fargs...],
@@ -1300,7 +1303,7 @@ function abstract_call_known(
             )
             return Base.@invoke abstract_call_known(
                 interp::AbstractInterpreter,
-                Enzyme.Compiler.funcwrapper_rewrite::Any,
+                Enzyme.Compiler.funcwrapper_rewrite,
                 arginfo2::ArgInfo,
                 si::StmtInfo,
                 sv::AbsIntState,
