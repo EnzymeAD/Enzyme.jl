@@ -1,5 +1,7 @@
 module Compiler
 
+function funcwrapper_rewrite end
+
 import ..Enzyme
 import Enzyme:
     Const,

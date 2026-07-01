@@ -1291,6 +1291,24 @@ function abstract_call_known(
         end
     end
     
+    let ft = Core.Compiler.widenconst(argtypes[1])
+        if ft isa DataType && string(ft.name.name) == "FunctionWrapper" && string(ft.name.module) == "FunctionWrappers"
+            arginfo2 = ArgInfo(
+                fargs isa Nothing ? nothing :
+                [:(Enzyme.Compiler.funcwrapper_rewrite), fargs...],
+                [Core.Const(Enzyme.Compiler.funcwrapper_rewrite), argtypes...],
+            )
+            return Base.@invoke abstract_call_known(
+                interp::AbstractInterpreter,
+                Enzyme.Compiler.funcwrapper_rewrite::Any,
+                arginfo2::ArgInfo,
+                si::StmtInfo,
+                sv::AbsIntState,
+                max_methods::Int,
+            )
+        end
+    end
+
     if interp.broadcast_rewrite
         if f === Base.copyto! && length(argtypes) == 3
             # Ideally we just override uses of the AbstractArray base class, but
