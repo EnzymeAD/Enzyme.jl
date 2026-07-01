@@ -91,6 +91,7 @@ end
 GPUCompiler.llvm_triple(target::EnzymeTarget) = GPUCompiler.llvm_triple(target.target)
 GPUCompiler.llvm_datalayout(target::EnzymeTarget) = GPUCompiler.llvm_datalayout(target.target)
 GPUCompiler.llvm_machine(target::EnzymeTarget) = GPUCompiler.llvm_machine(target.target)
+GPUCompiler.llvm_targetinfo(target::EnzymeTarget) = GPUCompiler.llvm_targetinfo(target.target)
 GPUCompiler.nest_target(::EnzymeTarget, other::AbstractCompilerTarget) = EnzymeTarget(other)
 GPUCompiler.have_fma(target::EnzymeTarget, T::Type) = GPUCompiler.have_fma(target.target, T)
 GPUCompiler.dwarf_version(target::EnzymeTarget) = GPUCompiler.dwarf_version(target.target)
@@ -294,6 +295,7 @@ const known_ops = Dict{DataType,Tuple{Symbol,Int,Union{Nothing,Tuple{Symbol,Data
     typeof(Base.FastMath.tanh_fast) => (:tanh, 1, nothing),
     typeof(Base.fma_emulated) => (:fma, 3, nothing),
 )
+
 @inline function find_math_method(@nospecialize(func::Type), sparam_vals::Core.SimpleVector)
     if func ∈ keys(known_ops)
         name, arity, toinject = known_ops[func]
@@ -5609,6 +5611,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     #     target_machine = JIT.get_tm()
     # else
     target_machine = GPUCompiler.llvm_machine(job.config.target)
+    target_info    = GPUCompiler.llvm_targetinfo(job.config.target)
 
     parallel = false
     process_module = false
@@ -5643,7 +5646,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     end
 
     # Run early pipeline
-    optimize!(mod, target_machine)
+    optimize!(mod, target_machine, target_info)
 
     if process_module
         GPUCompiler.optimize_module!(primal_job, mod)
@@ -6198,7 +6201,7 @@ end
     if !(primal_target isa GPUCompiler.NativeCompilerTarget)
         reinsert_gcmarker!(adjointf)
         augmented_primalf !== nothing && reinsert_gcmarker!(augmented_primalf)
-        post_optimize!(mod, target_machine, false) #=machine=#
+        post_optimize!(mod, target_machine, false; tti=target_info) #=machine=#
     end
 
     adjointf = functions(mod)[adjointf_name]
