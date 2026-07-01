@@ -855,7 +855,6 @@ end
 
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
         shadowres = LLVM.Value(unsafe_load(shadowR))
-        primalres = LLVM.Value(unsafe_load(normalR))
 
         len = new_from_original(gutils, origops[3])
         memoryptr = origops[2]        
