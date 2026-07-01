@@ -296,172 +296,6 @@ const known_ops = Dict{DataType,Tuple{Symbol,Int,Union{Nothing,Tuple{Symbol,Data
     typeof(Base.fma_emulated) => (:fma, 3, nothing),
 )
 
-# Maps GPU math intrinsic names (e.g. Metal AIR) to their libm equivalents.
-# Used by annotate_gpu_math_intrinsics! so Enzyme's C++ core can apply its
-# built-in derivative rules to opaque GPU intrinsics without Julia dispatch.
-const GPU_MATH_INTRINSIC_MAP = Dict{String,String}(
-    "air.log.f32"    => "logf",    "air.log.f64"    => "log",
-    "air.log2.f32"   => "log2f",   "air.log2.f64"   => "log2",
-    "air.log10.f32"  => "log10f",  "air.log10.f64"  => "log10",
-    "air.log1p.f32"  => "log1pf",  "air.log1p.f64"  => "log1p",
-    "air.exp.f32"    => "expf",    "air.exp.f64"    => "exp",
-    "air.exp2.f32"   => "exp2f",   "air.exp2.f64"   => "exp2",
-    "air.expm1.f32"  => "expm1f",  "air.expm1.f64"  => "expm1",
-    "air.sqrt.f32"   => "sqrtf",   "air.sqrt.f64"   => "sqrt",
-    "air.cbrt.f32"   => "cbrtf",   "air.cbrt.f64"   => "cbrt",
-    "air.sin.f32"    => "sinf",    "air.sin.f64"    => "sin",
-    "air.cos.f32"    => "cosf",    "air.cos.f64"    => "cos",
-    "air.tan.f32"    => "tanf",    "air.tan.f64"    => "tan",
-    "air.asin.f32"   => "asinf",   "air.asin.f64"   => "asin",
-    "air.acos.f32"   => "acosf",   "air.acos.f64"   => "acos",
-    "air.atan.f32"   => "atanf",   "air.atan.f64"   => "atan",
-    "air.atan2.f32"  => "atan2f",  "air.atan2.f64"  => "atan2",
-    "air.sinh.f32"   => "sinhf",   "air.sinh.f64"   => "sinh",
-    "air.cosh.f32"   => "coshf",   "air.cosh.f64"   => "cosh",
-    "air.tanh.f32"   => "tanhf",   "air.tanh.f64"   => "tanh",
-    "air.fma.f32"    => "fmaf",    "air.fma.f64"    => "fma",
-    "air.pow.f32"    => "powf",    "air.pow.f64"    => "pow",
-    "air.fast_log.f32"   => "logf",
-    "air.fast_exp.f32"   => "expf",
-    "air.fast_sin.f32"   => "sinf",
-    "air.fast_cos.f32"   => "cosf",
-    "air.fast_tan.f32"   => "tanf",
-    "air.fast_tanh.f32"  => "tanhf",
-    "air.fast_sqrt.f32"  => "sqrtf",
-    "air.fast_asin.f32"  => "asinf",
-    "air.fast_acos.f32"  => "acosf",
-    "air.fast_atan.f32"  => "atanf",
-    "air.fast_atan2.f32" => "atan2f",
-    "air.fast_sinh.f32"  => "sinhf",
-    "air.fast_cosh.f32"  => "coshf",
-    "air.fast_acosh.f32" => "acoshf",
-    "air.fast_asinh.f32" => "asinhf",
-)
-
-# Annotate external GPU math intrinsic declarations (e.g. air.log.f32) with
-# enzyme_math so the Enzyme C++ core uses its built-in derivative formulas.
-# This is needed because the Metal log/exp/etc. implementations are compiled
-# via @device_override and may be inlined away before set_module_types! sees
-# them — leaving only the bare AIR intrinsic declaration without annotation.
-function annotate_gpu_math_intrinsics!(mod::LLVM.Module)
-    for fn in functions(mod)
-        fname = LLVM.name(fn)
-        isempty(blocks(fn)) || continue           # external declarations only
-        libm_name = get(GPU_MATH_INTRINSIC_MAP, fname, nothing)
-        libm_name === nothing && continue
-        attrs = function_attributes(fn)
-        any(isa(a, LLVM.StringAttribute) && kind(a) == "enzyme_math"
-            for a in collect(attrs)) && continue  # already annotated
-        push!(attrs, StringAttribute("enzyme_math", libm_name))
-        push!(attrs, StringAttribute("enzyme_shouldrecompute"))
-        push!(attrs, StringAttribute("enzyme_preserve_primal", "*"))
-        push!(attrs, EnumAttribute("willreturn"))
-        push!(attrs, EnumAttribute("nosync"))
-        push!(attrs, EnumAttribute("nofree"))
-        if LLVM.version().major <= 15
-            push!(attrs, EnumAttribute("readnone"))
-        else
-            push!(attrs, EnumAttribute("memory", NoEffects.data))
-        end
-    end
-end
-
-# Build a reverse lookup: libm_name => air_name (e.g. "cosf" => "air.cos.f32").
-# Only single-precision entries so we don't duplicate (log => log has f32 + f64).
-const GPU_LIBM_TO_AIR_MAP = Dict{String,String}(
-    v => k for (k, v) in GPU_MATH_INTRINSIC_MAP if endswith(k, ".f32")
-)
-
-# After enzyme! runs, derivative IR may contain calls to LLVM math intrinsics
-# (e.g. llvm.cos.f32 for d/dx sin) or libm-style names (e.g. coshf for
-# d/dx tanh) that Metal's AIR compiler cannot lower.  This combined map
-# drives a post-enzyme pass that replaces both categories with AIR equivalents.
-const GPU_MATH_POSTENZYME_MAP = let
-    llvm_to_air = Dict{String,String}(
-        "llvm.sin.f32"   => "air.sin.f32",
-        "llvm.cos.f32"   => "air.cos.f32",
-        "llvm.tan.f32"   => "air.tan.f32",
-        "llvm.exp.f32"   => "air.exp.f32",
-        "llvm.exp2.f32"  => "air.exp2.f32",
-        "llvm.log.f32"   => "air.log.f32",
-        "llvm.log2.f32"  => "air.log2.f32",
-        "llvm.log10.f32" => "air.log10.f32",
-        "llvm.pow.f32"   => "air.pow.f32",
-        "llvm.sin.f64"   => "air.sin.f64",
-        "llvm.cos.f64"   => "air.cos.f64",
-        "llvm.exp.f64"   => "air.exp.f64",
-        "llvm.exp2.f64"  => "air.exp2.f64",
-        "llvm.log.f64"   => "air.log.f64",
-        "llvm.log2.f64"  => "air.log2.f64",
-        "llvm.pow.f64"   => "air.pow.f64",
-    )
-    # Also include libm → AIR (Enzyme emits e.g. coshf for d/dx tanh)
-    merge(llvm_to_air, GPU_LIBM_TO_AIR_MAP)
-end
-
-# Replace unresolvable math function references in Enzyme-generated IR with
-# their AIR equivalents.  Handles both LLVM intrinsics (llvm.cos.f32) and
-# libm-style names (coshf) that Enzyme C++ emits in derivative computations.
-function replace_gpu_math_references!(mod::LLVM.Module)
-    for (old_name, air_name) in GPU_MATH_POSTENZYME_MAP
-        haskey(functions(mod), old_name) || continue
-        old_fn = functions(mod)[old_name]
-        isempty(blocks(old_fn)) || continue  # external declarations only
-        ftype = LLVM.function_type(old_fn)
-        air_fn = if haskey(functions(mod), air_name)
-            functions(mod)[air_name]
-        else
-            air_new = LLVM.Function(mod, air_name, ftype)
-            attrs = function_attributes(air_new)
-            push!(attrs, EnumAttribute("willreturn"))
-            push!(attrs, EnumAttribute("nosync"))
-            push!(attrs, EnumAttribute("nofree"))
-            if LLVM.version().major <= 15
-                push!(attrs, EnumAttribute("readnone"))
-            else
-                push!(attrs, EnumAttribute("memory", NoEffects.data))
-            end
-            air_new
-        end
-        for use in collect(LLVM.uses(old_fn))
-            inst = LLVM.user(use)
-            isa(inst, LLVM.CallInst) || continue
-            LLVM.called_operand(inst) == old_fn || continue
-            args = collect(operands(inst))[1:end-1]
-            LLVM.@dispose builder=IRBuilder() begin
-                position!(builder, inst)
-                new_call = call!(builder, ftype, air_fn, args)
-                LLVM.replace_uses!(inst, new_call)
-            end
-            LLVM.API.LLVMInstructionEraseFromParent(inst)
-        end
-    end
-end
-
-# Create stub definitions for libm functions that Enzyme C++ emits when computing
-# derivatives of annotated GPU intrinsics (e.g. d/dx sin(x) = cos(x) → Enzyme
-# generates a call to "cosf" which must be resolved in the Metal module).
-function create_gpu_math_libm_stubs!(mod::LLVM.Module)
-    for (libm_name, air_name) in GPU_LIBM_TO_AIR_MAP
-        haskey(functions(mod), air_name)  || continue  # AIR fn not in module
-        haskey(functions(mod), libm_name) && continue  # stub already exists
-        air_fn = functions(mod)[air_name]
-        isempty(blocks(air_fn)) || continue            # must be a declaration
-        ftype = LLVM.function_type(air_fn)
-        stub = LLVM.Function(mod, libm_name, ftype)
-        args = collect(parameters(stub))
-        block = BasicBlock(stub, "entry")
-        LLVM.@dispose builder=IRBuilder() begin
-            position!(builder, block)
-            result = call!(builder, ftype, air_fn, args)
-            ret!(builder, result)
-        end
-        # Mark stub as private + alwaysinline so it disappears after inlining
-        linkage!(stub, LLVM.API.LLVMPrivateLinkage)
-        push!(function_attributes(stub), EnumAttribute("alwaysinline", 0))
-    end
-end
-
 @inline function find_math_method(@nospecialize(func::Type), sparam_vals::Core.SimpleVector)
     if func ∈ keys(known_ops)
         name, arity, toinject = known_ops[func]
@@ -6180,15 +6014,6 @@ end
         # Generate the adjoint
         memcpy_alloca_to_loadstore(mod)
         force_recompute!(mod)
-        # Annotate GPU math intrinsics (e.g. air.log.f32 for Metal) so the
-        # Enzyme C++ core can apply its built-in derivative rules.  Must run
-        # after all inlining passes so bare AIR declarations are visible.
-        annotate_gpu_math_intrinsics!(mod)
-        # Provide stub definitions for libm names (e.g. cosf, sinf) that
-        # Enzyme C++ emits when computing derivatives of the annotated
-        # intrinsics.  Without stubs, symbols like "cosf" are unresolved in
-        # the Metal module and the AIR compiler rejects the kernel.
-        create_gpu_math_libm_stubs!(mod)
         API.EnzymeDetectReadonlyOrThrow(mod)
 
         adjointf, augmented_primalf, TapeType = enzyme!(
@@ -6216,10 +6041,6 @@ end
             LLVM.link!(mod, otherMod)
         end
         empty!(enzyme_context.modules_to_link)
-        # Replace LLVM math intrinsics (e.g. llvm.cos.f32) and libm-style
-        # names (e.g. coshf for d/dx tanh) that Enzyme C++ emits in derivative
-        # code with their AIR equivalents for Metal targets.
-        replace_gpu_math_references!(mod)
         toremove = String[]
         # Inline the wrapper
         for f in functions(mod)
