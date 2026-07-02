@@ -368,7 +368,7 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
             if EnzymeRules.primal_type(fwd_RT) <: RealRt
                 hint = "Expected the abstract type $RealRt for primal, you returned $(EnzymeRules.primal_type(fwd_RT)). Even though $(EnzymeRules.primal_type(fwd_RT)) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
             else
-                hint = "Mismatched primal type $(EnzymeRules.sprimal_type(fwd_RT)), expected $RealRt"
+                hint = "Mismatched primal type $(EnzymeRules.primal_type(fwd_RT)), expected $RealRt"
             end
         elseif EnzymeRules.shadow_type(fwd_RT) != RealRt
             if width == 1
