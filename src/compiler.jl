@@ -5329,7 +5329,8 @@ function link_split_existing!(mod::LLVM.Module, newmod::LLVM.Module)
     for f in collect(newfns)
         isdeclaration(f) && continue
         fname = LLVM.name(f)
-        (haskey(modfns, fname) && !isdeclaration(modfns[fname])) || continue
+        haskey(modfns, fname) || continue
+        isdeclaration(modfns[fname]) && continue
         newname = fname * "_split"
         i = 0
         while haskey(newfns, newname) || haskey(modfns, newname)
