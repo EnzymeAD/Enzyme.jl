@@ -164,7 +164,7 @@ import .Compiler: CompilationException
     ntuple(Returns(false), Val(N))
 end
 @inline function trues_from_args(N)
-    ntuple(Returns(false), Val(N))
+    ntuple(Returns(true), Val(N))
 end
 
 @inline function any_active(args::Vararg{Annotation,N}) where {N}
