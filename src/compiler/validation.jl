@@ -144,6 +144,88 @@ end
 
 import GPUCompiler: IRError, InvalidIRError
 
+# Fetch the pointer recorded for later `restore_lookups` on `f`, if any.
+function restoration_ptr(f::LLVM.Function)::Union{UInt, Nothing}
+    for fattr in collect(function_attributes(f))
+        if isa(fattr, LLVM.StringAttribute) && kind(fattr) == "enzymejl_needs_restoration"
+            return parse(UInt, LLVM.value(fattr))
+        end
+    end
+    return nothing
+end
+
+struct DlInfo
+    fname::Ptr{Cchar}
+    fbase::Ptr{Cvoid}
+    sname::Ptr{Cchar}
+    saddr::Ptr{Cvoid}
+end
+
+# `jl_lookup_code_address` reports the nearest preceding symbol for a C pointer, so on
+# platforms with incomplete symbol info (notably Windows, where lookups only see DLL
+# exports) two distinct pointers can be attributed to the same symbol name. Verify a
+# reported name by asking the loader which module contains `ptr` and resolving `fn`
+# within exactly that module; comparing the resulting address against `ptr` is
+# alias-safe and independent of the nearest-symbol guess. The lookup is deliberately
+# scoped to `ptr`'s own module: a process-wide search could find an unrelated library's
+# copy of the symbol and misreport a correct name as wrong. Returns:
+#   :match    — the name resolves to `ptr`
+#   :mismatch — the name resolves to a different pointer, so it is the wrong name for `ptr`
+#   :unknown  — the name could not be resolved
+function resolve_symbol_name(fn::String, file::String, ptr::Ptr{Cvoid})::Symbol
+    hnd = C_NULL
+    needsclose = false
+    @static if Sys.iswindows()
+        # GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT
+        href = Ref{Ptr{Cvoid}}(C_NULL)
+        if ccall(
+                :GetModuleHandleExW,
+                stdcall,
+                Cint,
+                (UInt32, Ptr{Cvoid}, Ptr{Ptr{Cvoid}}),
+                UInt32(0x06),
+                ptr,
+                href,
+            ) != 0
+            hnd = href[]
+        end
+    else
+        info = Ref(DlInfo(C_NULL, C_NULL, C_NULL, C_NULL))
+        if ccall(:dladdr, Cint, (Ptr{Cvoid}, Ref{DlInfo}), ptr, info) != 0 &&
+                info[].fname != C_NULL
+            lib = Libdl.dlopen(
+                unsafe_string(info[].fname),
+                Libdl.RTLD_LAZY | Libdl.RTLD_NOLOAD;
+                throw_error = false,
+            )
+            if lib !== nothing
+                hnd = lib
+                needsclose = true
+            end
+        end
+    end
+    if hnd == C_NULL && !isempty(file)
+        # Fall back to the object `jl_lookup_code_address` reported (on Windows this is
+        # the containing DLL; on Linux/macOS it is a source path, which fails to load).
+        lib = Libdl.dlopen(file, Libdl.RTLD_LAZY | Libdl.RTLD_NOLOAD; throw_error = false)
+        if lib !== nothing
+            hnd = lib
+            needsclose = true
+        end
+    end
+    if hnd == C_NULL
+        return :unknown
+    end
+    resolved = Libdl.dlsym(hnd, fn; throw_error = false)
+    if needsclose
+        Libdl.dlclose(hnd)
+    end
+    if resolved === nothing
+        return :unknown
+    end
+    return resolved == ptr ? (:match) : (:mismatch)
+end
+
 function restore_lookups(mod::LLVM.Module)::Nothing
     T_size_t = convert(LLVM.LLVMType, Int)
     for f in functions(mod)
@@ -1342,9 +1424,30 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                     else
                         fn = FFI.memoize!(ptr, fn)
 
+                        # Names from `jl_lookup_code_address` are nearest-symbol guesses;
+                        # a wrong guess maps two distinct pointers to one name (seen on
+                        # Windows with `__gmpz_init2`/`__gmpz_set_si`). Drop names that
+                        # provably belong to a different address. Curated `FFI.ptr_map`
+                        # names are trusted as-is.
+                        if length(fn) > 0 && !haskey(FFI.ptr_map, ptr) &&
+                                resolve_symbol_name(fn, string(file), ptr) == :mismatch
+                            fn = ""
+                        end
+
                         if length(fn) > 0
                             mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
                             lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
+                            if lfn != C_NULL
+                                # An earlier call site may have claimed this name for a
+                                # different pointer. Reusing its declaration would make
+                                # `restore_lookups` stamp that pointer onto this call site
+                                # too, so key the declaration by pointer instead.
+                                prev = restoration_ptr(LLVM.Function(lfn))
+                                if prev !== nothing && prev != reinterpret(UInt, ptr)
+                                    fn = string(fn, "\$", reinterpret(UInt, ptr))
+                                    lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
+                                end
+                            end
                             if lfn == C_NULL
                                 lfn = LLVM.API.LLVMAddFunction(
                                     mod,
