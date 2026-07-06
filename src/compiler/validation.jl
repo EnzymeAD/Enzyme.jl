@@ -1321,8 +1321,12 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             end
 
             # look it up in the Julia JIT cache
-            frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint), ptr, 0)
-
+            frames = if Sys.iswindows()
+                ()
+            else
+                ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint), ptr, 0)
+            end
+            
             if length(frames) >= 1
                 fn, file, line, linfo, fromC, inlined = last(frames)
 
