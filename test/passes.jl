@@ -4,9 +4,13 @@ using Enzyme, LLVM, Test, FileCheck
 @testset "Partial return preservation" begin
     @test @filecheck begin
         # Both stores into the freshly allocated struct must be preserved.
+        # Match without spelling out the pointer type so this works under both
+        # opaque (`ptr addrspace(10)`) and typed (`{} addrspace(10)*`) pointers.
         @check_label "@inner"
-        @check "store atomic ptr addrspace(10) %v1"
-        @check "store atomic ptr addrspace(10) %v2"
+        @check "store atomic"
+        @check_same "%v1"
+        @check "store atomic"
+        @check_same "%v2"
         LLVM.Context() do ctx
             mod = parse(
                 LLVM.Module, """
