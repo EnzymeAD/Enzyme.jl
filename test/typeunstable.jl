@@ -247,3 +247,20 @@ end
     res = Enzyme.autodiff(RA_F, Enzyme.Const(grad), Enzyme.Duplicated(x0, v))
     @test res[1] ≈ [2.0, 0.0, 0.0]
 end
+
+struct TypeUnstableGetfieldBox{T1, T2}
+    a::T1
+    b::T2
+end
+
+@noinline function getfield_unstable_fn(x, idx)
+    box = TypeUnstableGetfieldBox(1.0, x)
+    val = getfield(box, idx)
+    return val[1] * val[2]
+end
+
+@testset "Forward type-unstable getfield" begin
+    idx = Base.inferencebarrier(2)
+    res = Enzyme.autodiff(set_runtime_activity(Forward), getfield_unstable_fn, Duplicated([2.0, 3.0], [1.0, 0.0]), Const(idx))
+    @test res[1] ≈ 3.0
+end
