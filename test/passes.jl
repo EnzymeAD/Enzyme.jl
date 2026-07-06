@@ -170,3 +170,55 @@ end
         @test length(LLVM.parameters(callee)) == 2
     end
 end
+
+@testset "link_split_existing!" begin
+    LLVM.Context() do ctx
+        dst = parse(
+            LLVM.Module,
+            """
+            define i64 @julia___dup(i64 %x) {
+              %r = add i64 %x, 1
+              ret i64 %r
+            }
+            define i64 @only_in_dst(i64 %x) {
+              ret i64 %x
+            }
+            """,
+        )
+        src = parse(
+            LLVM.Module,
+            """
+            define i64 @julia___dup(i64 %x) {
+              %r = add i64 %x, 2
+              ret i64 %r
+            }
+            define i64 @uses_dup(i64 %x) {
+              %r = call i64 @julia___dup(i64 %x)
+              ret i64 %r
+            }
+            """,
+        )
+
+        Enzyme.Compiler.link_split_existing!(dst, src)
+
+        fns = LLVM.functions(dst)
+        # `dst`'s original definition is preserved.
+        @test haskey(fns, "julia___dup")
+        @test !LLVM.isdeclaration(fns["julia___dup"])
+        # `src`'s colliding definition is preserved under a unique suffixed name.
+        @test haskey(fns, "julia___dup_split")
+        @test !LLVM.isdeclaration(fns["julia___dup_split"])
+        # Non-colliding functions link in unchanged.
+        @test haskey(fns, "only_in_dst")
+        @test haskey(fns, "uses_dup")
+        # `src`'s caller now targets its own (renamed) copy, not `dst`'s definition.
+        usesfn = fns["uses_dup"]
+        callinst = first(
+            filter(
+                Base.Fix2(isa, LLVM.CallInst),
+                collect(instructions(first(blocks(usesfn)))),
+            ),
+        )
+        @test LLVM.name(last(collect(operands(callinst)))) == "julia___dup_split"
+    end
+end

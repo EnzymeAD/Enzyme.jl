@@ -1,5 +1,7 @@
 module Compiler
 
+function funcwrapper_rewrite end
+
 import ..Enzyme
 import Enzyme:
     Const,
@@ -91,6 +93,9 @@ end
 GPUCompiler.llvm_triple(target::EnzymeTarget) = GPUCompiler.llvm_triple(target.target)
 GPUCompiler.llvm_datalayout(target::EnzymeTarget) = GPUCompiler.llvm_datalayout(target.target)
 GPUCompiler.llvm_machine(target::EnzymeTarget) = GPUCompiler.llvm_machine(target.target)
+if isdefined(GPUCompiler, :llvm_targetinfo)
+    GPUCompiler.llvm_targetinfo(target::EnzymeTarget) = GPUCompiler.llvm_targetinfo(target.target)
+end
 GPUCompiler.nest_target(::EnzymeTarget, other::AbstractCompilerTarget) = EnzymeTarget(other)
 GPUCompiler.have_fma(target::EnzymeTarget, T::Type) = GPUCompiler.have_fma(target.target, T)
 GPUCompiler.dwarf_version(target::EnzymeTarget) = GPUCompiler.dwarf_version(target.target)
@@ -294,6 +299,7 @@ const known_ops = Dict{DataType,Tuple{Symbol,Int,Union{Nothing,Tuple{Symbol,Data
     typeof(Base.FastMath.tanh_fast) => (:tanh, 1, nothing),
     typeof(Base.fma_emulated) => (:fma, 3, nothing),
 )
+
 @inline function find_math_method(@nospecialize(func::Type), sparam_vals::Core.SimpleVector)
     if func ∈ keys(known_ops)
         name, arity, toinject = known_ops[func]
@@ -530,6 +536,7 @@ function nested_codegen!(enzyme_context::EnzymeContext, mode::API.CDerivativeMod
     nested_codegen!(enzyme_context, mode, mod, funcspec, world)
 end
 
+
 function prepare_llvm(interp, mod::LLVM.Module, job, meta)
     for f in functions(mod)
         attributes = function_attributes(f)
@@ -560,7 +567,7 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
             push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
         end
 
-	if startswith(LLVM.name(llvmfn), "japi3") || startswith(LLVM.name(llvmfn), "japi1")
+	if startswith(LLVM.name(llvmfn), "japi3") || startswith(LLVM.name(llvmfn), "japi1") || startswith(LLVM.name(llvmfn), "jlcapi")
 	   continue
 	end
 
@@ -1128,7 +1135,7 @@ end
 function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLVM.Function}, job, edges, run_enzyme, mode::API.CDerivativeMode)::Tuple{Dict{String,LLVM.API.LLVMLinkage}, HandlerState}
 
     for f in functions(mod)
-        if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1")
+        if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1") || startswith(LLVM.name(f), "jlcapi")
             continue
         end
         mi, RT = enzyme_custom_extract_mi(f, false)
@@ -1342,7 +1349,7 @@ function nested_codegen!(
 
     target = DefaultCompilerTarget()
     params = PrimalCompilerParams(mode)
-    job = CompilerJob(funcspec, CompilerConfig(target, params; kernel = false, libraries = true, toplevel = true, optimize = false, cleanup = false, only_entry = false, validate = false), world)
+    job = CompilerJob(funcspec, CompilerConfig(target, params; kernel = false, libraries = true, toplevel = true, optimize = false, cleanup = false, only_entry = false, validate = false, entry_abi = :specfunc), world)
 
     GPUCompiler.prepare_job!(job)
     otherMod, meta = GPUCompiler.emit_llvm(job)
@@ -2097,7 +2104,8 @@ function zero_allocation(
             LLVM.PointerType(LLVMType, addrspace(value_type(nobj))),
         )
 
-        LLVM.br!(builder, loop)
+        cond = icmp!(builder, LLVM.API.LLVMIntEQ, nsize, LLVM.ConstantInt(value_type(nsize), 0))
+        br!(builder, cond, exit, loop)
         position!(builder, loop)
         idx = LLVM.phi!(builder, value_type(Size), "zero_alloc_idx")
         inc = add!(builder, idx, LLVM.ConstantInt(value_type(Size), 1))
@@ -2201,6 +2209,16 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
         end
 
         obj = emit_allocobj!(B, tag, allocSize, needs_dynamic_size_workaround)
+        if CountTrackedPointers(LLVMType).all
+            LLVM.API.LLVMAddCallSiteAttribute(
+                obj,
+                LLVM.API.LLVMAttributeReturnIndex,
+                StringAttribute(
+                    "enzyme_type",
+                    "{[-1]:Pointer, [-1,-1]:Pointer}",
+                ),
+            )
+        end
 
         if ZI != C_NULL
             unsafe_store!(
@@ -2329,7 +2347,7 @@ for (k, v) in (
     ("enz_runtime_jl_getfield_aug", Enzyme.Compiler.rt_jl_getfield_aug),
     ("enz_runtime_jl_getfield_rev", Enzyme.Compiler.rt_jl_getfield_rev),
     ("enz_runtime_idx_jl_getfield_aug", Enzyme.Compiler.idx_jl_getfield_aug),
-    ("enz_runtime_idx_jl_getfield_rev", Enzyme.Compiler.idx_jl_getfield_aug),
+    ("enz_runtime_idx_jl_getfield_rev", Enzyme.Compiler.idx_jl_getfield_rev),
     ("enz_runtime_jl_setfield_aug", Enzyme.Compiler.rt_jl_setfield_aug),
     ("enz_runtime_jl_setfield_rev", Enzyme.Compiler.rt_jl_setfield_rev),
     ("enz_runtime_error_if_differentiable", Enzyme.Compiler.error_if_differentiable),
@@ -5301,6 +5319,35 @@ const DumpPreCheck = Ref(false)
 const DumpPostCheck = Ref(false)
 const DumpPreOpt = Ref(false)
 
+"""
+    link_split_existing!(mod::LLVM.Module, newmod::LLVM.Module)
+
+Link `newmod` into `mod` like `LLVM.link!(mod, newmod)`, but first rename any
+function that is defined in both modules. A function defined in `newmod` whose
+name already refers to a definition in `mod` is given a unique suffix in `newmod`
+before linking, so its definition is preserved as a distinct symbol instead of
+triggering a `symbol multiply defined` linker error.
+"""
+function link_split_existing!(mod::LLVM.Module, newmod::LLVM.Module)
+    modfns = functions(mod)
+    newfns = functions(newmod)
+    for f in collect(newfns)
+        isdeclaration(f) && continue
+        fname = LLVM.name(f)
+        haskey(modfns, fname) || continue
+        isdeclaration(modfns[fname]) && continue
+        newname = fname * "_split"
+        i = 0
+        while haskey(newfns, newname) || haskey(modfns, newname)
+            i += 1
+            newname = string(fname, "_split", i)
+        end
+        LLVM.name!(f, newname)
+    end
+    LLVM.link!(mod, newmod)
+    return nothing
+end
+
 function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     @assert output == :llvm
     
@@ -5351,7 +5398,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         cleanup = false,
         only_entry = false,
         validate = false,
-        # ??? entry_abi
+        entry_abi = :specfunc,
     )
     primal_job = CompilerJob(primal, primal_config, job.world)
     @safe_debug "Emit LLVM with" primal_job
@@ -5598,6 +5645,11 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     #     target_machine = JIT.get_tm()
     # else
     target_machine = GPUCompiler.llvm_machine(job.config.target)
+    target_info = if isdefined(GPUCompiler, :llvm_targetinfo)
+        GPUCompiler.llvm_targetinfo(job.config.target)
+    else
+        nothing
+    end
 
     parallel = false
     process_module = false
@@ -5632,7 +5684,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     end
 
     # Run early pipeline
-    optimize!(mod, target_machine)
+    optimize!(mod, target_machine, target_info)
 
     if process_module
         GPUCompiler.optimize_module!(primal_job, mod)
@@ -6035,7 +6087,7 @@ end
 
         # Link deferred modules
         for otherMod in enzyme_context.modules_to_link
-            LLVM.link!(mod, otherMod)
+            link_split_existing!(mod, otherMod)
         end
         empty!(enzyme_context.modules_to_link)
         toremove = String[]
@@ -6130,7 +6182,7 @@ end
 
                 # Link deferred modules generated by fnsToInject
                 for otherMod in enzyme_context.modules_to_link
-                    LLVM.link!(mod, otherMod)
+                    link_split_existing!(mod, otherMod)
                 end
                 empty!(enzyme_context.modules_to_link)
 
@@ -6187,7 +6239,7 @@ end
     if !(primal_target isa GPUCompiler.NativeCompilerTarget)
         reinsert_gcmarker!(adjointf)
         augmented_primalf !== nothing && reinsert_gcmarker!(augmented_primalf)
-        post_optimize!(mod, target_machine, false) #=machine=#
+        post_optimize!(mod, target_machine, false; tti=target_info) #=machine=#
     end
 
     adjointf = functions(mod)[adjointf_name]

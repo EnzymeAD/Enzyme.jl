@@ -225,7 +225,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
         name!(f, "")
         ptr8 = LLVM.PointerType(LLVM.IntType(8))
 
-        prev_ft = eltype(value_type(f)::LLVM.PointerType)::LLVM.FunctionType
+        prev_ft = function_type(f)
 
         mfn = LLVM.API.LLVMAddFunction(
             mod,
@@ -618,6 +618,40 @@ end
 
 const DebugLTO = Ref(false)
 
+# Recover the function type used to call the result of an `ijl_lazy_load_and_lookup`.
+# The looked-up pointer reaches the indirect call directly, through a cache slot
+# (`store`/`load`, possibly via a global), and/or through phi/cast nodes. Walk that
+# transitive closure to find the call. Returns the LLVM function type or `nothing`.
+function lazy_lookup_callee_type(inst::LLVM.Instruction)
+    seen = Set{LLVM.Value}()
+    worklist = LLVM.Value[inst]
+    while !isempty(worklist)
+        v = pop!(worklist)
+        v in seen && continue
+        push!(seen, v)
+        for u in LLVM.uses(v)
+            user = LLVM.user(u)
+            if isa(user, LLVM.CallInst)
+                if called_operand(user) == v
+                    return called_type(user)
+                end
+            elseif isa(user, LLVM.PHIInst) ||
+                    isa(user, LLVM.BitCastInst) ||
+                    isa(user, LLVM.AddrSpaceCastInst)
+                push!(worklist, user)
+            elseif isa(user, LLVM.StoreInst) &&
+                    LLVM.Value(LLVM.API.LLVMGetOperand(user, 0)) == v
+                ptr = LLVM.Value(LLVM.API.LLVMGetOperand(user, 1))
+                for u2 in LLVM.uses(ptr)
+                    ld = LLVM.user(u2)
+                    isa(ld, LLVM.LoadInst) && push!(worklist, ld)
+                end
+            end
+        end
+    end
+    return nothing
+end
+
 function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, imported::Set{String})
     found = false
     inmod = nothing
@@ -928,8 +962,46 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 return
             end
 
-            found, replaceWith = if isa(flib, String)
-                try_import_llvmbc(mod, flib, fname, imported)
+            # Resolve the library reference to an on-disk path so we can either import
+            # its bitcode or emit a named `ejlstr$...` declaration. On Julia 1.13+ `flib`
+            # is a library-reference object (e.g. a LazyLibrary) rather than a path string.
+            flib_path = if isa(flib, String)
+                flib
+            else
+                try
+                    Libdl.dlpath(flib)
+                catch
+                    try
+                        Libdl.dlpath(Libdl.dlopen(flib))
+                    catch
+                        nothing
+                    end
+                end
+            end
+
+            found, replaceWith = if isa(flib_path, String)
+                f2, rw = try_import_llvmbc(mod, flib_path, fname, imported)
+                if f2
+                    (true, rw)
+                else
+                    # The library ships no bitcode for `fname`. Mirror the PLT (`jlplt_*_got`)
+                    # path: emit a named declaration carrying `enzyme_math` so Enzyme recognizes
+                    # the foreign math function (e.g. `Faddeeva_erf`) for activity analysis,
+                    # instead of leaving an anonymous `inttoptr` indirect call.
+                    FT = lazy_lookup_callee_type(inst)
+                    if FT !== nothing
+                        fused_name = "ejlstr\$$fname\$$flib_path"
+                        newf, _ = get_function!(mod, fused_name, FT)
+                        while isa(newf, LLVM.ConstantExpr)
+                            newf = operands(newf)[1]
+                        end
+                        push!(function_attributes(newf), StringAttribute("enzyme_math", fname))
+                        push!(function_attributes(newf), StringAttribute(PRESERVEPRIMAL_ATTR_KIND, "*"))
+                        (true, newf)
+                    else
+                        (false, nothing)
+                    end
+                end
             else
                 (false, nothing)
             end

@@ -192,20 +192,19 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
                 end
             end
         end
-        if !isa(ce, LLVM.ConstantInt)
-            return (false, nothing)
+        if isa(ce, LLVM.ConstantInt)
+            ptr = unsafe_load(reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, ce)))
+            if ptr == C_NULL
+                # bt = GPUCompiler.backtrace(arg)
+                # btstr = sprint() do io
+                #     Base.show_backtrace(io, bt)
+                # end
+                # @error "Found null pointer at\n $btstr" arg
+                return (false, nothing)
+            end
+            typ = Base.unsafe_pointer_to_objref(ptr)
+            return (true, typ)
         end
-        ptr = unsafe_load(reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, ce)))
-        if ptr == C_NULL
-            # bt = GPUCompiler.backtrace(arg)
-            # btstr = sprint() do io
-            #     Base.show_backtrace(io, bt)
-            # end
-            # @error "Found null pointer at\n $btstr" arg
-            return (false, nothing)
-        end
-        typ = Base.unsafe_pointer_to_objref(ptr)
-        return (true, typ)
     end
 
     return (false, nothing)

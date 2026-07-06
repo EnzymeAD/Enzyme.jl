@@ -100,4 +100,3 @@ function EnzymeRules.reverse(
     dxs = map(x -> _hypotreverse(x, w, dret, n), xs)
     return (dx, dy, dz, dxs...)
 end
-

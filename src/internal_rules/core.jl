@@ -55,8 +55,101 @@ end
                 @inbounds newa[i] = deepcopy_rtact(copied[i], primal[i], seen, shadow[i])
             end
             return newa
+        elseif RT <: Tuple
+            return ntuple(Val(length(shadow))) do i
+                deepcopy_rtact(copied[i], primal[i], seen, shadow[i])
+            end
         end
-        throw(AssertionError("Unimplemented deepcopy with runtime activity for type $RT"))
+
+        nf = nfields(shadow)
+        if nf == 0 || isbitstype(RT)
+            return shadow
+        end
+
+        if ismutabletype(RT)
+            new_shadow = ccall(:jl_new_struct_uninit, Any, (Any,), RT)::RT
+            if seen === nothing
+                seen = IdDict()
+            end
+            seen[shadow] = new_shadow
+            for i in 1:nf
+                if isdefined(shadow, i)
+                    if isdefined(primal, i) && isdefined(copied, i)
+                        xi = deepcopy_rtact(getfield(copied, i), getfield(primal, i), seen, getfield(shadow, i))
+                        ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), new_shadow, i-1, xi)
+                    end
+                end
+            end
+            return new_shadow
+        else
+            flds = Vector{Any}(undef, nf)
+            for i in 1:nf
+                if isdefined(shadow, i)
+                    if isdefined(primal, i) && isdefined(copied, i)
+                        xi = deepcopy_rtact(getfield(copied, i), getfield(primal, i), seen, getfield(shadow, i))
+                        flds[i] = xi
+                    else
+                        nf = i - 1
+                        break
+                    end
+                else
+                    nf = i - 1
+                    break
+                end
+            end
+            new_shadow = ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds, nf)::RT
+            if seen === nothing
+                seen = IdDict()
+            end
+            seen[shadow] = new_shadow
+            return new_shadow
+        end
+    end
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(Base.deepcopy)},
+    RT::Type{<:Duplicated},
+    x::Duplicated,
+)
+    primal = func.val(x.val)
+    return EnzymeRules.forward_rule_return_type(config, RT)(primal, deepcopy_rtact(primal, x.val, nothing, x.dval))
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(Base.deepcopy)},
+    RT::Type{<:BatchDuplicated},
+    x::BatchDuplicated{T,N},
+) where {T,N}
+    primal = func.val(x.val)
+    return EnzymeRules.forward_rule_return_type(config, RT)(primal, ntuple(Val(N)) do i
+        deepcopy_rtact(primal, x.val, nothing, x.dval[i])
+    end)
+end
+
+# A `Const` argument carries no shadow, but a `Duplicated` result may still be
+# requested (e.g. via runtime-activity widening), so deepcopy the primal and
+# pair it with a freshly zeroed shadow.
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(Base.deepcopy)},
+    ::Type{<:DuplicatedNoNeed},
+    x::Const,
+)
+    return Enzyme.make_zero(func.val(x.val))
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(Base.deepcopy)},
+    ::Type{<:BatchDuplicatedNoNeed},
+    x::Const,
+)
+    primal = func.val(x.val)
+    return ntuple(Val(EnzymeRules.width(config))) do _
+        Enzyme.make_zero(primal)
     end
 end
 
@@ -64,21 +157,21 @@ function EnzymeRules.forward(
     config::EnzymeRules.FwdConfig,
     func::Const{typeof(Base.deepcopy)},
     ::Type{<:Duplicated},
-    x::Duplicated,
+    x::Const,
 )
     primal = func.val(x.val)
-    return Duplicated(primal, deepcopy_rtact(primal, x.val, nothing, x.dval))
+    return Duplicated(primal, Enzyme.make_zero(primal))
 end
 
 function EnzymeRules.forward(
     config::EnzymeRules.FwdConfig,
     func::Const{typeof(Base.deepcopy)},
     ::Type{<:BatchDuplicated},
-    x::BatchDuplicated{T,N},
-) where {T,N}
+    x::Const,
+)
     primal = func.val(x.val)
-    return BatchDuplicated(primal, ntuple(Val(N)) do i
-        deepcopy_rtact(primal, x.val, nothing, x.dval[i])
+    return BatchDuplicated(primal, ntuple(Val(EnzymeRules.width(config))) do _
+        Enzyme.make_zero(primal)
     end)
 end
 
@@ -120,7 +213,7 @@ function EnzymeRules.augmented_primal(
         nothing
     end
 
-    return EnzymeRules.AugmentedReturn(primal, shadow, shadow)
+    return EnzymeRules.augmented_rule_return_type(config, RT)(primal, shadow, shadow)
 end
 
 
