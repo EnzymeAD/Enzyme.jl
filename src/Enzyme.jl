@@ -163,6 +163,9 @@ import .Compiler: CompilationException
 @inline function falses_from_args(N)
     ntuple(Returns(false), Val(N))
 end
+@inline function trues_from_args(N)
+    ntuple(Returns(true), Val(N))
+end
 
 @inline function any_active(args::Vararg{Annotation,N}) where {N}
     any(ntuple(Val(N)) do i
@@ -1000,7 +1003,7 @@ result, ∂v, ∂A
     end
 
     if ModifiedBetweenT === true
-        ModifiedBetween = Val(falses_from_args(Nargs + 1))
+        ModifiedBetween = Val(trues_from_args(Nargs + 1))
     else
         ModifiedBetween = Val(ModifiedBetweenT)
     end
@@ -1210,7 +1213,7 @@ end
     end
 
     if ModifiedBetweenT === true
-        ModifiedBetween = Val(falses_from_args(Nargs + 1))
+        ModifiedBetween = Val(trues_from_args(Nargs + 1))
     else
         ModifiedBetween = Val(ModifiedBetweenT)
     end
@@ -1292,7 +1295,7 @@ import .Compiler: remove_innerty, UnknownTapeType
     end
 
     if ModifiedBetweenT === true
-        ModifiedBetween = falses_from_args(Val(1), args...)
+        ModifiedBetween = trues_from_args(1+length(args))
     else
         ModifiedBetween = ModifiedBetweenT
     end
@@ -1448,7 +1451,7 @@ result, ∂v, ∂A
     end
 
     if ModifiedBetweenT === true
-        ModifiedBetween = Val(falses_from_args(Nargs + 1))
+        ModifiedBetween = Val(trues_from_args(Nargs + 1))
     else
         ModifiedBetween = Val(ModifiedBetweenT)
     end
