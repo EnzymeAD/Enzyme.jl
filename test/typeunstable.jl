@@ -264,3 +264,25 @@ end
     res = Enzyme.autodiff(set_runtime_activity(Forward), getfield_unstable_fn, Duplicated([2.0, 3.0], [1.0, 0.0]), Const(idx))
     @test res[1] ≈ 3.0
 end
+
+struct MiniProblem3280{U, P, K}
+    u0::U
+    tspan::Tuple{Float64, Float64}
+    p::P
+    kwargs::K
+end
+
+function loss_3280(p)
+    prob = MiniProblem3280([1.0], (0.0, 1.0), p, pairs((;)))
+    active_field = Enzyme.Compiler.idx_jl_getfield_aug(
+        Val(NamedTuple{(1,)}), prob, Val{2}, Val(false))
+    return sum(abs2, active_field)
+end
+
+@testset "idx_jl_getfield_aug calling convention (Issue 3280 reproducer)" begin
+    p = [0.5]
+    dp = zero(p)
+    Enzyme.autodiff(set_runtime_activity(Reverse), Enzyme.Const(loss_3280), Enzyme.Active,
+        Enzyme.Duplicated(p, dp))
+    @test dp ≈ [1.0]
+end

@@ -1226,8 +1226,8 @@ function rt_jl_getfield_aug(
     dptr::T,
     ::Type{Val{symname}},
     ::Val{isconst},
-    dptrs::Vararg{T2,Nargs},
-) where {NT,T,T2,Nargs,symname,isconst}
+    dptrs::Vararg{T,Nargs},
+) where {NT,T,Nargs,symname,isconst}
     res = if dptr isa Base.RefValue
         Base.getfield(dptr[], symname)
     else
@@ -1274,8 +1274,8 @@ function idx_jl_getfield_aug(
     dptr::T,
     ::Type{Val{symname}},
     ::Val{isconst},
-    dptrs::Vararg{T2,Nargs},
-) where {NT,T,T2,Nargs,symname,isconst}
+    dptrs::Vararg{T,Nargs},
+) where {NT,T,Nargs,symname,isconst}
     res = if dptr isa Base.RefValue
         Base.getfield(dptr[], symname + 1)
     else
@@ -1343,8 +1343,8 @@ function rt_jl_getfield_rev(
     dret,
     ::Type{Val{symname}},
     ::Val{isconst},
-    dptrs::Vararg{T2,Nargs},
-) where {T,T2,Nargs,symname,isconst}
+    dptrs::Vararg{T,Nargs},
+) where {T,Nargs,symname,isconst}
     cur = if dptr isa Base.RefValue
         getfield(dptr[], symname)
     else
@@ -1425,8 +1425,8 @@ function idx_jl_getfield_rev(
     dret,
     ::Type{Val{symname}},
     ::Val{isconst},
-    dptrs::Vararg{T2,Nargs},
-) where {T,T2,Nargs,symname,isconst}
+    dptrs::Vararg{T,Nargs},
+) where {T,Nargs,symname,isconst}
     cur = if dptr isa Base.RefValue
         Base.getfield(dptr[], symname + 1)
     else
