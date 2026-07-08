@@ -923,15 +923,15 @@ end
     autodiff_thunk(::ReverseModeSplit, ftype, Activity, argtypes::Type{<:Annotation}...)
 
 Provide the split forward and reverse pass functions for annotated function type
-ftype when called with args of type `argtypes` when using reverse mode.
+`ftype` when called with args of type `argtypes` when using reverse mode.
 
 `Activity` is the Activity of the return value, it may be `Const`, `Active`,
 or `Duplicated` (or its variants `DuplicatedNoNeed`, `BatchDuplicated`, and
 `BatchDuplicatedNoNeed`).
 
-The forward function will return a tape, the primal (or nothing if not requested),
-and the shadow (or nothing if not a `Duplicated` variant), and tapes the corresponding
-type arguements provided.
+The forward function will return a tape, the primal (or `nothing` if not requested),
+and the shadow (or `nothing` if not a `Duplicated` variant), and tapes the corresponding
+type arguments provided.
 
 The reverse function will return the derivative of `Active` arguments, updating the `Duplicated`
 arguments in place. The same arguments to the forward pass should be provided, followed by
@@ -1044,6 +1044,8 @@ end
     autodiff(::Function, ::Mode, args...)
 
 Specialization of [`autodiff`](@ref) to handle do argument closures.
+ 
+Example:
 
 ```jldoctest
 
@@ -1075,12 +1077,12 @@ end
     autodiff_thunk(::ForwardMode, ftype, Activity, argtypes::Type{<:Annotation}...)
 
 Provide the thunk forward mode function for annotated function type
-ftype when called with args of type `argtypes`.
+`ftype` when called with args of type `argtypes`.
 
 `Activity` is the Activity of the return value, it may be `Const` or `Duplicated`
 (or its variants `DuplicatedNoNeed`, `BatchDuplicated`, and`BatchDuplicatedNoNeed`).
 
-The forward function will return the shadow (or nothing if not a `Duplicated` variant)
+The forward function will return the shadow (or `nothing` if not a `Duplicated` variant)
 and the primal (if requested).
 
 Example returning both the return derivative and original return:
@@ -1367,15 +1369,15 @@ end
     autodiff_deferred_thunk(::ReverseModeSplit, TapeType::Type, ftype::Type{<:Annotation}, Activity::Type{<:Annotation}, argtypes::Type{<:Annotation}...)
 
 Provide the split forward and reverse pass functions for annotated function type
-ftype when called with args of type `argtypes` when using reverse mode.
+`ftype` when called with args of type `argtypes` when using reverse mode.
 
 `Activity` is the Activity of the return value, it may be `Const`, `Active`,
 or `Duplicated` (or its variants `DuplicatedNoNeed`, `BatchDuplicated`, and
 `BatchDuplicatedNoNeed`).
 
-The forward function will return a tape, the primal (or nothing if not requested),
-and the shadow (or nothing if not a `Duplicated` variant), and tapes the corresponding
-type arguements provided.
+The forward function will return a tape, the primal (or `nothing` if not requested),
+and the shadow (or `nothing` if not a `Duplicated` variant), and tapes the corresponding
+type arguments provided.
 
 The reverse function will return the derivative of `Active` arguments, updating the `Duplicated`
 arguments in place. The same arguments to the forward pass should be provided, followed by
@@ -1539,6 +1541,8 @@ and may also be slower than not having a rule at all.
 
 Use with caution.
 
+Example:
+
 ```julia
 Enzyme.@import_frule(typeof(Base.sort), Any);
 
@@ -1567,9 +1571,9 @@ function _import_rrule end # defined in EnzymeChainRulesCoreExt extension
 """
     import_rrule(::fn, tys...)
 
-Automatically import a `ChainRules.rrule` as a custom reverse mode EnzymeRule. When called in batch mode, this
+Automatically import a `ChainRules.rrule` as a custom reverse mode `EnzymeRule`. When called in batch mode, this
 will end up calling the primal multiple times which results in slower code. This macro assumes that the underlying
-function to be imported is read-only, and returns a Duplicated or Const object. This macro also assumes that the
+function to be imported is read-only, and returns a `Duplicated` or `Const` object. This macro also assumes that the
 inputs permit a `.+=` operation and that the output has a valid `Enzyme.make_zero` function defined. It also assumes
 that `overwritten(x)` accurately describes if there is any non-preserved data from forward to reverse, not just
 the outermost data structure being overwritten as provided by the specification.
