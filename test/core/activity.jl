@@ -43,3 +43,59 @@ end
 
     @test Enzyme.Compiler.active_reg(Tuple, Base.get_world_counter(), AbstractIsMixed=true, justActive=true) == Enzyme.Compiler.MixedState
 end
+
+# Reactant number and array wrappers are recognized by module/type name in
+# `is_wrapped_number`/`is_mutable_array`; mock the names so classification is
+# testable without a Reactant dependency.
+module Reactant
+    mutable struct TracedRNumber{T} <: Number
+        v::T
+    end
+    mutable struct TracedRInteger{T} <: Integer
+        v::T
+    end
+    mutable struct TracedRFloat{T} <: AbstractFloat
+        v::T
+    end
+    mutable struct TracedRComplex{T} <: Number
+        v::T
+    end
+    mutable struct ConcretePJRTFloat{T, D} <: AbstractFloat
+        v::T
+    end
+    mutable struct ConcreteIFRTInteger{T} <: Integer
+        v::T
+    end
+    mutable struct TracedRArray{T, N} <: AbstractArray{T, N} end
+end
+
+module NotReactant
+    mutable struct TracedRFloat{T} <: AbstractFloat
+        v::T
+    end
+end
+
+@testset "Wrapped number activity" begin
+    @test Enzyme.Compiler.is_wrapped_number(Reactant.TracedRFloat{Float64})
+    @test Enzyme.Compiler.is_wrapped_number(Reactant.ConcretePJRTFloat{Float64, 1})
+    @test !Enzyme.Compiler.is_wrapped_number(NotReactant.TracedRFloat{Float64})
+    @test !Enzyme.Compiler.is_wrapped_number(Float64)
+
+    # wrapped numbers subtyping AbstractFloat/Integer must classify as mutable
+    # wrappers of their unwrapped type, not hit the raw float/integer fast paths
+    @test Enzyme.Compiler.active_reg(Reactant.TracedRFloat{Float64}, Base.get_world_counter()) == Enzyme.Compiler.DupState
+    @test Enzyme.Compiler.active_reg(Reactant.TracedRFloat{Float64}, Base.get_world_counter(), justActive = true) == Enzyme.Compiler.AnyState
+    @test Enzyme.Compiler.active_reg(Reactant.TracedRInteger{Int}, Base.get_world_counter()) == Enzyme.Compiler.AnyState
+    @test Enzyme.Compiler.active_reg(Reactant.TracedRComplex{ComplexF64}, Base.get_world_counter()) == Enzyme.Compiler.DupState
+    @test Enzyme.Compiler.active_reg(Reactant.TracedRNumber{Float64}, Base.get_world_counter()) == Enzyme.Compiler.DupState
+    @test Enzyme.Compiler.active_reg(Reactant.ConcretePJRTFloat{Float64, 1}, Base.get_world_counter()) == Enzyme.Compiler.DupState
+    @test Enzyme.Compiler.active_reg(Reactant.ConcreteIFRTInteger{Int}, Base.get_world_counter()) == Enzyme.Compiler.AnyState
+    @test Enzyme.Compiler.active_reg(Tuple{Reactant.TracedRFloat{Float64}, Float64}, Base.get_world_counter()) == Enzyme.Compiler.MixedState
+
+    # same-named types outside the Reactant module use the plain rules
+    @test Enzyme.Compiler.active_reg(NotReactant.TracedRFloat{Float64}, Base.get_world_counter()) == Enzyme.Compiler.ActiveState
+
+    @test Enzyme.Compiler.is_mutable_array(Reactant.TracedRArray{Float64, 1})
+    @test Enzyme.Compiler.active_reg(Reactant.TracedRArray{Float64, 1}, Base.get_world_counter()) == Enzyme.Compiler.DupState
+    @test Enzyme.Compiler.active_reg(Reactant.TracedRArray{Int, 1}, Base.get_world_counter()) == Enzyme.Compiler.AnyState
+end

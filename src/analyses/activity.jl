@@ -97,10 +97,10 @@ Base.@nospecializeinfer @inline function is_mutable_array(@nospecialize(T::Type)
     if T isa DataType
         if hasproperty(T, :name) && hasproperty(T.name, :module)
             mod = T.name.module
-            if string(mod) == "Reactant" && (T.name.name == :ConcretePJRTArray || T.name.name == :ConcreteIFRTArray || T.name.name == :TracedRArray)
+            if nameof(mod) === :Reactant && (T.name.name == :ConcretePJRTArray || T.name.name == :ConcreteIFRTArray || T.name.name == :TracedRArray)
                 return true
             end
-            if string(mod) == "CUDA" && (T.name.name == :CuRefValue || T.name.name == :CuPtr)
+            if nameof(mod) === :CUDA && (T.name.name == :CuRefValue || T.name.name == :CuPtr)
                 return true
             end
         end
@@ -109,15 +109,17 @@ Base.@nospecializeinfer @inline function is_mutable_array(@nospecialize(T::Type)
 end
 
 Base.@nospecializeinfer @inline function is_wrapped_number(@nospecialize(T::Type))
-    if T isa UnionAll
-        return is_wrapped_number(T.body)
-    end
     while T isa UnionAll
         T = T.body
     end
     if T isa DataType && hasproperty(T, :name) && hasproperty(T.name, :module)
         mod = T.name.module
-        if string(mod) == "Reactant" && (T.name.name == :ConcretePJRTNumber || T.name.name == :ConcreteIFRTNumber || T.name.name == :TracedRNumber)
+        if nameof(mod) === :Reactant && T.name.name in (
+                :ConcretePJRTNumber, :ConcreteIFRTNumber, :TracedRNumber,
+                :TracedRInteger, :TracedRFloat, :TracedRComplex,
+                :ConcretePJRTInteger, :ConcretePJRTFloat, :ConcretePJRTComplex,
+                :ConcreteIFRTInteger, :ConcreteIFRTFloat, :ConcreteIFRTComplex,
+            )
             return true
         end
     end
@@ -162,14 +164,9 @@ Base.@nospecializeinfer @inline function active_reg_inner(
         )
     end
 
-    if T <: BigFloat
-        return DupState
-    end
-
-    if T <: AbstractFloat
-        return ActiveState
-    end
-
+    # Wrapped numbers are mutable references to their underlying value; they
+    # may subtype AbstractFloat (or Integer) and must be classified before the
+    # raw float/integer fast paths.
     if is_wrapped_number(T)
         if justActive
             return AnyState
@@ -191,6 +188,14 @@ Base.@nospecializeinfer @inline function active_reg_inner(
                 return DupState
             end
         end
+    end
+
+    if T <: BigFloat
+        return DupState
+    end
+
+    if T <: AbstractFloat
+        return ActiveState
     end
 
     if is_mutable_array(T)
