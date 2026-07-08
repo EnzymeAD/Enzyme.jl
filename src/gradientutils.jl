@@ -106,9 +106,13 @@ function set_reverse_block!(gutils::GradientUtils, block::LLVM.BasicBlock)
     return API.EnzymeGradientUtilsSetReverseBlock(gutils, block)
 end
 
-function get_or_insert_conditional_execute!(fn::LLVM.Function; force_run=false, need_result=true, preprocess=nothing, postprocess=nothing, postprocess_const=nothing, cmpidx::Int = 1)
+function get_or_insert_conditional_execute!(fn::LLVM.Function; force_run=false, need_result=true, preprocess=nothing, postprocess=nothing, postprocess_const=nothing, cmpidx::Int = 1, arg_tys=nothing)
     FT0 = LLVM.function_type(fn)
     ptys = LLVM.parameters(FT0)
+    if length(ptys) < cmpidx
+        @assert arg_tys !== nothing
+        ptys = collect(LLVM.LLVMType, arg_tys)
+    end
     insert!(ptys, 1, ptys[cmpidx])
 
     void_rt = LLVM.return_type(FT0) == LLVM.VoidType() || !need_result
@@ -134,6 +138,9 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function; force_run=false, 
     if postprocess_const !== nothing
         newname = newname * ".poc_$(postprocess_const)"
     end
+    if arg_tys !== nothing
+        newname = newname * ".argtys$(hash(string.(arg_tys)))"
+    end
     newname = newname * LLVM.name(fn)
     cfn, _ = get_function!(mod, newname, FT)
     if isempty(blocks(cfn))
@@ -151,7 +158,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function; force_run=false, 
 
             if force_run
                 if preprocess !== nothing
-                    ppr = preprocess(builder, args)
+                    ppr = preprocess(builder, rparms)
                 end
                 res = call!(builder, FT0, fn, rparms)
                 callconv!(res, callconv(fn))
@@ -275,14 +282,17 @@ function call_same_with_inverted_arg_if_active!(
         valTys[cmpidx] = API.VT_Both
     end
     args = collect(LLVM.Value, args)
+    prefn = LLVM.called_operand(orig)::LLVM.Function
+    arg_tys = if length(LLVM.parameters(LLVM.function_type(prefn))) < cmpidx
+        LLVM.LLVMType[value_type(arg) for arg in args]
+    end
     insert!(args, 1, new_from_original(gutils, origops[cmpidx]))
     newval = nothing
     if value_type(orig) != LLVM.VoidType() && postprocess_const === nothing && need_result
         newval = new_from_original(gutils, orig)
         insert!(args, 1, newval)
     end
-    prefn = LLVM.called_operand(orig)::LLVM.Function
-    condfn = get_or_insert_conditional_execute!(prefn; force_run, preprocess, postprocess, postprocess_const, need_result, cmpidx)
+    condfn = get_or_insert_conditional_execute!(prefn; force_run, preprocess, postprocess, postprocess_const, need_result, cmpidx, arg_tys)
 
     res = LLVM.Value(
         API.EnzymeGradientUtilsCallWithInvertedBundles(

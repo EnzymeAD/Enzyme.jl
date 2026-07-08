@@ -286,3 +286,28 @@ end
         Enzyme.Duplicated(p, dp))
     @test dp ≈ [1.0]
 end
+
+mutable struct TypeUnstableSetpropertyBox
+    x::Any
+end
+
+@noinline function setproperty_unstable!(box, name, x)::Any
+    setproperty!(box, name, x)
+    return box
+end
+
+function setproperty_unstable_fn(x)
+    box = TypeUnstableSetpropertyBox(nothing)
+    name = Base.inferencebarrier(:x)
+    setproperty_unstable!(box, name, x[1])
+    return box.x
+end
+
+@testset "Forward type-unstable setproperty!" begin
+    res = Enzyme.autodiff(
+        set_runtime_activity(Forward),
+        setproperty_unstable_fn,
+        Duplicated([2.0], [3.0]),
+    )
+    @test res[1] ≈ 3.0
+end
