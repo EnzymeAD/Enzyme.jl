@@ -368,7 +368,7 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
             if EnzymeRules.primal_type(fwd_RT) <: RealRt
                 hint = "Expected the abstract type $RealRt for primal, you returned $(EnzymeRules.primal_type(fwd_RT)). Even though $(EnzymeRules.primal_type(fwd_RT)) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
             else
-                hint = "Mismatched primal type $(EnzymeRules.sprimal_type(fwd_RT)), expected $RealRt"
+                hint = "Mismatched primal type $(EnzymeRules.primal_type(fwd_RT)), expected $RealRt"
             end
         elseif EnzymeRules.shadow_type(fwd_RT) != RealRt
             if width == 1
@@ -1434,6 +1434,33 @@ function julia_error(
 			 end
 		    end
 		end
+@static if VERSION < v"1.11-"
+else   
+            if isa(cur, LLVM.ConstantExpr)
+                larg, off = get_base_and_offset(operands(cur)[1]; inst=first(instructions(position(prevbb))))
+                legal2, obj = absint(larg)
+                obj = unbind(obj)
+                if legal2 && is_memory_instance(obj)
+                    return make_batched(ncur, prevbb)
+                end
+            end
+
+            if isa(cur, LLVM.LoadInst)
+                larg, off = get_base_and_offset(operands(cur)[1]; inst=cur)
+                legal2, obj = absint(larg)
+                obj = unbind(obj)
+                if legal2 && is_memory_instance(obj)
+                    return make_batched(ncur, prevbb)
+                end
+                if isa(larg, LLVM.LoadInst)
+                    legal2, obj = absint(larg)
+                    obj = unbind(obj)
+                    if legal2 && is_memory_instance(obj)
+                        return make_batched(ncur, prevbb)
+                    end
+                end
+            end
+end
 
             legal, TT, byref = abs_typeof(cur, true)
 
@@ -1491,20 +1518,6 @@ function julia_error(
                     end
 
                 end
-
-@static if VERSION < v"1.11-"
-else   
-                if isa(cur, LLVM.LoadInst)
-                    larg, off = get_base_and_offset(operands(cur)[1])
-                    if isa(larg, LLVM.LoadInst)
-                        legal2, obj = absint(larg)
-			obj = unbind(obj)
-			if legal2 && is_memory_instance(obj)
-                            return make_batched(ncur, prevbb)
-                        end
-                    end
-                end
-end
 
                 badval = if legal2
                     sv = string(obj) * " of type" * " " * string(TT)

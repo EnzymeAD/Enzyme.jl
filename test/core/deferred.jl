@@ -20,7 +20,11 @@ using Enzyme, Test
             ReverseSplitWithPrimal,
             Const{typeof(dot)}, Active, Duplicated{typeof(thunk_A)}
         )
-        @test Tuple{Float64, Float64} === TapeType
+        @static if VERSION < v"1.11-"
+            @test Tuple{Float64, Float64} === TapeType
+        else
+            @test NamedTuple{(Symbol("1"), Symbol("2"), Symbol("3")), Tuple{Any, Float64, Float64}} === TapeType
+        end
         Ret = Active
         fwd, rev = Enzyme.autodiff_deferred_thunk(
             ReverseSplitWithPrimal,
@@ -30,7 +34,7 @@ using Enzyme, Test
             Duplicated{typeof(thunk_A)}
         )
         tape, primal, _ = fwd(Const(dot), dup)
-        @test isa(tape, Tuple{Float64, Float64})
+        @test isa(tape, TapeType)
         rev(Const(dot), dup, 1.0, tape)
         @test all(primal == 34)
         @test all(dA .== [6.0, 10.0])

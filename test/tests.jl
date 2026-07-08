@@ -246,6 +246,33 @@ end
     @test 0.0 ≈ res[1]
 end
 
+mutable struct ZeroAllocCell
+    h::Matrix{Float32}
+end
+@noinline function (m::ZeroAllocCell)(x)
+    m.h .+= x
+    return nothing
+end
+function zero_alloc_loss_func(x, m, turns, t2)
+    val = 0.0f0
+    for i in 1:t2
+        for _ in 1:turns
+            m(x)
+        end
+        val += first(m.h)
+    end
+    return val
+end
+
+@testset "Zero-sized array allocation in nested loops" begin
+    m = ZeroAllocCell(ones(Float32, 2, 2))
+    x = 1.0f0
+    # This should not segfault or bus error when turns is 0 (i.e. zero-sized tape/cache allocation)
+    grads, val = Enzyme.autodiff(set_runtime_activity(ReverseWithPrimal), Const(zero_alloc_loss_func), Active,
+                                 Const(x), Duplicated(m, ZeroAllocCell(zeros(Float32, 2, 2))), Const(0), Const(2))
+    @test val ≈ 2.0f0
+end
+
 @inline function myquantile(v::AbstractVector, p::Real; alpha)
     n = length(v)
 
