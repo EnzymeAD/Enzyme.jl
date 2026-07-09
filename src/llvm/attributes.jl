@@ -51,6 +51,8 @@ const nofreefns = Set{String}((
     "ijl_try_substrtod",
     "jl_try_substrtod",
     "jl_f__apply_iterate",
+    "jl_f_current_scope",
+    "ijl_f_current_scope",
     "ijl_field_index",
     "jl_field_index",
     "julia.call",
@@ -263,6 +265,8 @@ const inactivefns = Set{String}((
     "jl_gc_get_total_bytes",
     "ijl_try_substrtod",
     "jl_try_substrtod",
+    "jl_f_current_scope",
+    "ijl_f_current_scope",
     "ijl_tagged_gensym",
     "jl_tagged_gensym",
     "jl_get_world_counter",
@@ -599,6 +603,8 @@ function annotate!(mod::LLVM.Module)
         "ijl_get_nth_field_checked",
         "jl_f__svec_ref",
         "ijl_f__svec_ref",
+        "jl_f_current_scope",
+        "ijl_f_current_scope",
         "UnsafeBufferPointer"
     )
         if haskey(funcs, fname)
