@@ -591,7 +591,7 @@ function EnzymeRules.forward(
         if EnzymeRules.width(config) == 1
             shadow = EnzymeCore.make_zero(prev.val)
             if EnzymeRules.needs_primal(config)
-                return Duplicated(primal, shadow)
+                return EnzymeRules.forward_rule_return_type(config, RT)(primal, shadow)
             else
                 return shadow
             end
@@ -600,7 +600,7 @@ function EnzymeRules.forward(
                 EnzymeCore.make_zero(prev.val)
             end
             if EnzymeRules.needs_primal(config)
-                return BatchDuplicated(primal, shadows)
+                return EnzymeRules.forward_rule_return_type(config, RT)(primal, shadows)
             else
                 return shadows
             end
