@@ -832,4 +832,68 @@ end
 
 Combined(mode::ReverseMode) = mode
 
+"""
+    forward_counterpart(::Mode)
+
+Turn a [`ReverseMode`](@ref) or [`ReverseModeSplit`](@ref) object into a [`ForwardMode`](@ref) object while preserving as many of the settings as possible.
+Settings that do not exist in forward mode (e.g. `Holomorphic` and the split-specific parameters) are dropped.
+
+This function acts as the identity on a [`ForwardMode`](@ref).
+
+See also [`reverse_counterpart`](@ref).
+"""
+function forward_counterpart(
+        ::ReverseMode{
+            ReturnPrimal,
+            RuntimeActivity,
+            StrongZero,
+            ABI,
+            Holomorphic,
+            ErrIfFuncWritten,
+        },
+    ) where {
+        ReturnPrimal,
+        RuntimeActivity,
+        StrongZero,
+        ABI,
+        Holomorphic,
+        ErrIfFuncWritten,
+    }
+    return ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}()
+end
+
+forward_counterpart(mode::ReverseModeSplit) = forward_counterpart(Combined(mode))
+forward_counterpart(mode::ForwardMode) = mode
+
+"""
+    reverse_counterpart(::Mode)
+
+Turn a [`ForwardMode`](@ref) object into a [`ReverseMode`](@ref) object while preserving as many of the settings as possible.
+Settings that do not exist in forward mode (e.g. `Holomorphic`) are set to their default values.
+
+This function acts as the identity on a [`ReverseMode`](@ref) or [`ReverseModeSplit`](@ref).
+
+See also [`forward_counterpart`](@ref).
+"""
+function reverse_counterpart(
+        ::ForwardMode{
+            ReturnPrimal,
+            ABI,
+            ErrIfFuncWritten,
+            RuntimeActivity,
+            StrongZero,
+        },
+    ) where {
+        ReturnPrimal,
+        ABI,
+        ErrIfFuncWritten,
+        RuntimeActivity,
+        StrongZero,
+    }
+    return ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, false, ErrIfFuncWritten}()
+end
+
+reverse_counterpart(mode::ReverseMode) = mode
+reverse_counterpart(mode::ReverseModeSplit) = mode
+
 end # module EnzymeCore
