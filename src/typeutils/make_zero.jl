@@ -234,6 +234,24 @@ end
         seen::IdDict,
         prev::RT,
         ::Val{copy_if_inactive} = Val(false),
+    )::RT where {copy_if_inactive, RT <: Dict}
+    if haskey(seen, prev)
+        return seen[prev]
+    end
+    res = empty(prev)
+    seen[prev] = res
+    for (k, v) in prev
+        new_v = EnzymeCore.make_zero(Core.Typeof(v), seen, v, Val(copy_if_inactive))
+        res[k] = new_v
+    end
+    return res
+end
+
+@inline function EnzymeCore.make_zero(
+        ::Type{RT},
+        seen::IdDict,
+        prev::RT,
+        ::Val{copy_if_inactive} = Val(false),
     )::RT where {copy_if_inactive, RT}
     if guaranteed_const(RT)
         return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
@@ -579,6 +597,24 @@ macro register_make_zero_inplace(sym)
                 prev.contents = make_zero_immutable!(pv, seen)
             else
                 $sym(pv, seen)
+            end
+            return nothing
+        end
+
+        @inline function $sym(prev::Dict, seen::ST)::Nothing where {ST}
+            if prev in seen
+                return nothing
+            end
+            push!(seen, prev)
+            for (k, v) in prev
+                SBT = Core.Typeof(v)
+                if guaranteed_const(SBT)
+                    continue
+                elseif !ismutabletype(SBT)
+                    prev[k] = make_zero_immutable!(v, seen)
+                else
+                    $sym(v, seen)
+                end
             end
             return nothing
         end
