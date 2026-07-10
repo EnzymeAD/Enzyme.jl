@@ -851,8 +851,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                         end
                                         replace_uses!(
                                             ld,
-                                            LLVM.inttoptr!(
-                                                b,
+                                            LLVM.const_inttoptr(
                                                 replaceWith,
                                                 value_type(inst),
                                             ),
@@ -862,9 +861,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                             end
                         end
 
-                        b = IRBuilder()
-                        position!(b, inst)
-                        replacement = LLVM.inttoptr!(b, replaceWith, value_type(inst))
+                        replacement = LLVM.const_inttoptr(replaceWith, value_type(inst))
                         for u in LLVM.uses(inst)
                             u = LLVM.user(u)
                             if isa(u, LLVM.CallInst)
@@ -890,8 +887,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                             end
                                             replace_uses!(
                                                 u,
-                                                LLVM.inttoptr!(
-                                                    b,
+                                                LLVM.const_inttoptr(
                                                     replaceWith,
                                                     value_type(u),
                                                 ),
@@ -1014,21 +1010,16 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         for u in LLVM.uses(ptr)
                             ld = LLVM.user(u)
                             if isa(ld, LLVM.LoadInst)
-                                b = IRBuilder()
-                                position!(b, ld)
                                 replace_uses!(
                                     ld,
-                                    LLVM.pointercast!(b, replaceWith, value_type(inst)),
+                                    LLVM.const_pointercast(replaceWith, value_type(inst)),
                                 )
                             end
                         end
                     end
                 end
 
-                b = IRBuilder()
-
-                position!(b, inst)
-                replace_uses!(inst, LLVM.pointercast!(b, replaceWith, value_type(inst)))
+                replace_uses!(inst, LLVM.const_pointercast(replaceWith, value_type(inst)))
                 LLVM.API.LLVMInstructionEraseFromParent(inst)
 
             else
@@ -1090,16 +1081,14 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                     end
                                     replace_uses!(
                                         ld,
-                                        LLVM.inttoptr!(b, replaceWith, value_type(inst)),
+                                        LLVM.const_inttoptr(replaceWith, value_type(inst)),
                                     )
                                 end
                             end
                         end
                     end
 
-                    b = IRBuilder()
-                    position!(b, inst)
-                    replacement = LLVM.inttoptr!(b, replaceWith, value_type(inst))
+                    replacement = LLVM.const_inttoptr(replaceWith, value_type(inst))
                     for u in LLVM.uses(inst)
                         u = LLVM.user(u)
                         if isa(u, LLVM.CallInst)
@@ -1125,7 +1114,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                         end
                                         replace_uses!(
                                             u,
-                                            LLVM.inttoptr!(b, replaceWith, value_type(u)),
+                                            LLVM.const_inttoptr(replaceWith, value_type(u)),
                                         )
                                     end
                                 end
