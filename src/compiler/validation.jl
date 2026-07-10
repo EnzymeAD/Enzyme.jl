@@ -260,6 +260,91 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     return errors
 end
 
+function try_replace_constant_load!(inst::LLVM.Instruction; check_mutability::Bool=true, do_replace::Bool=true)::LLVM.Value
+    if !(isa(value_type(inst), LLVM.PointerType) && addrspace(value_type(inst)) == Tracked)
+        return inst
+    end
+    inst0, _ = get_base_and_offset(inst; offsetAllowed = false, inttoptr = true)
+    if !(isa(inst0, LLVM.LoadInst) && addrspace(value_type(operands(inst0)[1])) == 0)
+        return inst
+    end
+    addr = operands(inst0)[1]
+    addr, off = get_base_and_offset(addr; offsetAllowed = true, inttoptr = true)
+    gname = nothing
+    load1 = false
+    originally_load = false
+    if isa(addr, LLVM.GlobalVariable) && haskey(metadata(addr), "julia.constgv")
+        paddr = addr
+        addr = LLVM.initializer(paddr)
+        gname = LLVM.name(paddr) * "\$false"
+        addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
+    elseif isa(addr, LLVM.LoadInst)
+        paddr = operands(addr)[1]
+        if isa(paddr, LLVM.GlobalVariable) && haskey(metadata(paddr), "julia.constgv")
+            addr = LLVM.initializer(paddr)
+            gname = LLVM.name(paddr) * "\$true"
+            addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
+            load1 = true
+            originally_load = true
+        end
+    elseif isa(addr, LLVM.ConstantInt)
+        gname = string(convert(UInt, addr)) * "\$true"
+        load1 = true
+    end
+
+    if isa(addr, LLVM.ConstantInt)
+
+        initaddr = convert(UInt, addr) + off
+        if gname isa String
+            gname = gname * "\$$initaddr"
+        end
+        ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
+        if load1
+            if check_mutability && originally_load
+                ptr0 = Base.reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, addr))
+                obj0 = Base.unsafe_pointer_to_objref(ptr0)
+                if obj0 === nothing
+                    return inst
+                end
+
+                # If mutable object the inner object may not be the same at runtime
+                if ismutable(obj0)
+                    return inst
+                end
+            end
+
+            ptr = Base.unsafe_load(ptr, :unordered)
+            if ptr == C_NULL
+                return inst
+            end
+        end
+        obj = Base.unsafe_pointer_to_objref(ptr)
+        if obj === nothing
+            return inst
+        end
+
+        obj0 = obj
+
+        # TODO we can use this to make it properly relocatable
+        if isa(obj, Core.Binding)
+            obj = obj.value
+            if gname === nothing
+                obj0 = obj
+            end
+        end
+
+        b = IRBuilder()
+        position!(b, inst)
+        newf = unsafe_to_llvm(b, obj0; insert_name_if_not_exists = gname)
+        if do_replace
+            replace_uses!(inst, newf)
+            LLVM.API.LLVMInstructionEraseFromParent(inst)
+        end
+        return newf
+    end
+    return inst
+end
+
 function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, f::LLVM.Function, deletedfns::Vector{LLVM.Function}, mod::LLVM.Module)
     calls = LLVM.CallInst[]
     isInline = API.EnzymeGetCLBool(cglobal((:EnzymeInline, API.libEnzyme))) != 0
@@ -270,87 +355,8 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             inst = LLVM.Instruction(iter)
             iter = LLVM.API.LLVMGetNextInstruction(iter)
 
-            if isa(value_type(inst), LLVM.PointerType) && addrspace(value_type(inst)) == Tracked
-                inst0, _ = get_base_and_offset(inst; offsetAllowed = false, inttoptr = true)
-                if isa(inst0, LLVM.LoadInst) && addrspace(value_type(operands(inst0)[1])) == 0
-                    addr = operands(inst0)[1]
-                    addr, off = get_base_and_offset(addr; offsetAllowed = true, inttoptr = true)
-                    gname = nothing
-                    load1 = false
-                    originally_load = false
-                    if isa(addr, LLVM.GlobalVariable) && haskey(metadata(addr), "julia.constgv")
-                        paddr = addr
-                        addr = LLVM.initializer(paddr)
-                        gname = LLVM.name(paddr) * "\$false"
-                        addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
-                    elseif isa(addr, LLVM.LoadInst)
-                        paddr = operands(addr)[1]
-                        if isa(paddr, LLVM.GlobalVariable) && haskey(metadata(paddr), "julia.constgv")
-                            addr = LLVM.initializer(paddr)
-                            gname = LLVM.name(paddr) * "\$true"
-                            addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
-                            load1 = true
-                            originally_load = true
-                        end
-                    elseif isa(addr, LLVM.ConstantInt)
-                        gname = string(convert(UInt, addr)) * "\$true"
-                        load1 = true
-                    end
-
-                    if isa(addr, LLVM.ConstantInt)
-
-                        initaddr = convert(UInt, addr) + off
-                        if gname isa String
-                            gname = gname * "\$$initaddr"
-                        end
-                        ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
-                        if load1
-                            if originally_load
-                                ptr0 = Base.reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, addr))
-                                obj0 = Base.unsafe_pointer_to_objref(ptr0)
-                                if obj0 === nothing
-                                    continue
-                                end
-
-                                # If mutable object the inner object may not be the same at runtime
-                                if ismutable(obj0) 
-                                    continue
-                                end
-                            end
-
-                            ptr = Base.unsafe_load(ptr, :unordered)
-                            if ptr == C_NULL
-                                continue
-                            end
-                        end
-                        obj = Base.unsafe_pointer_to_objref(ptr)
-                        if obj === nothing
-                            continue
-                        end
-
-                        obj0 = obj
-
-                        # TODO we can use this to make it properly relocatable
-                        if isa(obj, Core.Binding)
-                            obj = obj.value
-                            if gname === nothing
-                                obj0 = obj
-                            end
-                        end
-
-                        # We really don't want to mess with the atomic baked in loads here
-                        #if obj isa Base.ReentrantLock
-                        #   continue
-                        #end
-
-                        b = IRBuilder()
-                        position!(b, inst)
-                        newf = unsafe_to_llvm(b, obj0; insert_name_if_not_exists = gname)
-                        replace_uses!(inst, newf)
-                        LLVM.API.LLVMInstructionEraseFromParent(inst)
-                        continue
-                    end
-                end
+            if try_replace_constant_load!(inst; check_mutability=true, do_replace=true) != inst
+                continue
             end
             if isa(inst, LLVM.CallInst)
                 push!(calls, inst)
@@ -818,7 +824,11 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
 
-            arg1, _ = get_base_and_offset(operands(inst)[1]; offsetAllowed = false, inttoptr = true)
+            op1 = operands(inst)[1]
+            if isa(op1, LLVM.Instruction)
+                op1 = try_replace_constant_load!(op1; check_mutability=false, do_replace=false)
+            end
+            arg1, _ = get_base_and_offset(op1; offsetAllowed = false, inttoptr = true)
             if isa(arg1, LLVM.ConstantInt)
                 arg1 = reinterpret(Ptr{Cvoid}, convert(UInt, arg1))
                 legal2, fname = abs_cstring(operands(inst)[2])
@@ -927,6 +937,9 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             ops = arg_operands_view(inst)
             @assert length(ops) == 2
             flib = ops[1]
+            if isa(flib, LLVM.Instruction)
+                flib = try_replace_constant_load!(flib; check_mutability=false, do_replace=false)
+            end
             if isa(flib, LLVM.ConstantExpr) || isa(flib, LLVM.GlobalVariable)
                 legal, flib2 = absint(flib)
                 if legal
