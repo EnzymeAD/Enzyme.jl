@@ -277,6 +277,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                     addr, off = get_base_and_offset(addr; offsetAllowed = true, inttoptr = true)
                     gname = nothing
                     load1 = false
+                    originally_load = false
                     if isa(addr, LLVM.GlobalVariable) && haskey(metadata(addr), "julia.constgv")
                         paddr = addr
                         addr = LLVM.initializer(paddr)
@@ -289,6 +290,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                             gname = LLVM.name(paddr) * "\$true"
                             addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
                             load1 = true
+                            originally_load = true
                         end
                     elseif isa(addr, LLVM.ConstantInt)
                         gname = string(convert(UInt, addr)) * "\$true"
@@ -303,7 +305,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         end
                         ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
                         if load1
-                            if isa(addr, LLVM.LoadInst)
+                            if originally_load
                                 ptr0 = Base.reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, addr))
                                 obj0 = Base.unsafe_pointer_to_objref(ptr0)
                                 if obj0 === nothing
