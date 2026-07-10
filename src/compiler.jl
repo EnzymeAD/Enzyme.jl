@@ -176,10 +176,6 @@ GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) 
 # GPUCompiler.isintrinsic(::CompilerJob{EnzymeTarget}, fn::String) = true
 # GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
 
-# TODO: encode debug build or not in the compiler job
-#       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
-GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
-
 # provide a specific interpreter to use.
 if VERSION >= v"1.11.0-DEV.1552"
     struct EnzymeCacheToken
@@ -199,7 +195,7 @@ if VERSION >= v"1.11.0-DEV.1552"
             inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
         )
 
-    GPUCompiler.ci_cache_token(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+    GPUCompiler.cache_owner(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         EnzymeCacheToken(
             typeof(job.config.target),
             job.config.always_inline,
@@ -213,7 +209,7 @@ if VERSION >= v"1.11.0-DEV.1552"
 
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         Interpreter.EnzymeInterpreter(
-            GPUCompiler.ci_cache_token(job),
+            GPUCompiler.cache_owner(job),
             GPUCompiler.method_table(job),
             job.world,
             job.config.params.mode,
@@ -234,7 +230,7 @@ else
         end
     end
 
-    GPUCompiler.ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+    GPUCompiler.get_code_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         enzyme_ci_cache(job)
 
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
@@ -622,6 +618,31 @@ include("compiler/validation.jl")
 include("typeutils/inference.jl")
 
 import .Interpreter: isKWCallSignature
+
+# Drive inference on `mi` when GPUCompiler's `compile_method_instance` runs with an
+# `EnzymeInterpreter` (GPUCompiler only provides `drive_inference!` for `GPUInterpreter`).
+@static if VERSION >= v"1.11.0-DEV.1552"
+    GPUCompiler.drive_inference!(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance) =
+        GPUCompiler.CompilerCaching.typeinf!(interp, mi)
+else
+    # mirrors the 1.10 `CodeCache`-based implementation in GPUCompiler's deprecated.jl
+    function GPUCompiler.drive_inference!(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance)
+        src = Core.Compiler.typeinf_ext_toplevel(interp, mi)
+        @assert src !== nothing "Inference of $mi failed"
+
+        # For const-return CIs the inference result wasn't recorded — set it from the
+        # returned source so callers re-using the CI don't need to re-infer.
+        wvc = Core.Compiler.WorldView(interp.code_cache,
+                                      Core.Compiler.WorldRange(interp.world, interp.world))
+        if Core.Compiler.haskey(wvc, mi)
+            ci = Core.Compiler.getindex(wvc, mi)
+            if ci.inferred === nothing
+                @atomic ci.inferred = src
+            end
+        end
+        return nothing
+    end
+end
 
 
 mutable struct HandlerState
