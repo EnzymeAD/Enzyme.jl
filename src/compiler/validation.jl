@@ -303,6 +303,19 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         end
                         ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
                         if load1
+                            if isa(addr, LLVM.LoadInst)
+                                ptr0 = Base.reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, addr))
+                                obj0 = Base.unsafe_pointer_to_objref(ptr0)
+                                if obj0 === nothing
+                                    continue
+                                end
+
+                                # If mutable object the inner object may not be the same at runtime
+                                if ismutable(obj0) 
+                                    continue
+                                end
+                            end
+
                             ptr = Base.unsafe_load(ptr, :unordered)
                             if ptr == C_NULL
                                 continue
@@ -312,6 +325,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         if obj === nothing
                             continue
                         end
+
                         obj0 = obj
 
                         # TODO we can use this to make it properly relocatable
