@@ -66,3 +66,8 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [sources.EnzymeCore]
 path = "lib/EnzymeCore"
+
+# XXX: remove before merging, once GPUCompiler 2.0 is released
+[sources.GPUCompiler]
+url = "https://github.com/JuliaGPU/GPUCompiler.jl"
+rev = "tb/compilercaching"
