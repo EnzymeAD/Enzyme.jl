@@ -309,7 +309,7 @@ function try_replace_constant_load!(inst::LLVM.Instruction; check_mutability::Bo
             # the global object itself.
             if originally_tracked_load || !isa(obj0, Core.Binding)
                 # If mutable object the inner object may not be the same at runtime
-                if isstructtype(Core.Typeof(obj0)) && ismutable(obj0)
+                if isstructtype(Core.Typeof(obj0)) && ismutable(obj0) && nameof(Core.Typeof(obj0)) !== :GenericMemory
                     return inst
                 end
             end
