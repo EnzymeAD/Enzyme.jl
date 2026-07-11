@@ -703,6 +703,20 @@ f_typed_global(x) = x^2 * TYPED_VAL
     @test Enzyme.autodiff(Reverse, f_typed_global, Active, Active(3.0))[1][1] ≈ 12.0
 end
 
+const GLOB_DICT_3311 = Dict{Int, Int}()
+function f_glob_dict_3311(x)
+    get(GLOB_DICT_3311, 1, nothing)
+    GLOB_DICT_3311[1] = 2
+    get(GLOB_DICT_3311, 1, nothing)
+    return x
+end
+
+@testset "Global Dict mutation and constant folding" begin
+    empty!(GLOB_DICT_3311)
+    res = Enzyme.autodiff(Forward, f_glob_dict_3311, Duplicated(1.0, 1.0))[1]
+    @test res ≈ 1.0
+end
+
 using LinearAlgebra
 
 struct WrapJ11{T, V}
