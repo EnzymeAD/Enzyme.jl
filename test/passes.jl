@@ -1,4 +1,5 @@
 using Enzyme, LLVM, Test
+import Libdl
 
 
 @testset "Partial return preservation" begin
@@ -220,5 +221,44 @@ end
             ),
         )
         @test LLVM.name(last(collect(operands(callinst)))) == "julia___dup_split"
+    end
+end
+
+@testset "Literal-pointer symbol resolution" begin
+    # `jl_lookup_code_address` can attribute two distinct pointers to the same
+    # (nearest) symbol name on platforms with export-only symbol info. The
+    # helpers below back the guards in `check_ir!` that keep such call sites
+    # from being merged onto one restored address.
+    libmpfr = Libdl.dlpath(Base.MPFR.libmpfr)
+    hnd = Libdl.dlopen(libmpfr)
+    p_add = Libdl.dlsym(hnd, :mpfr_add)
+    p_sub = Libdl.dlsym(hnd, :mpfr_sub)
+    @test Enzyme.Compiler.resolve_symbol_name("mpfr_add", libmpfr, p_add) == :match
+    # A nearest-symbol misattribution must be detected, not trusted.
+    @test Enzyme.Compiler.resolve_symbol_name("mpfr_add", libmpfr, p_sub) == :mismatch
+    # The containing module is found via the loader, so an unloadable `file` (as
+    # reported on Linux/macOS, where it is a source path) does not degrade the answer.
+    @test Enzyme.Compiler.resolve_symbol_name("mpfr_add", "/not/a/library/add.c", p_add) ==
+        :match
+    @test Enzyme.Compiler.resolve_symbol_name("mpfr_add", "/not/a/library/add.c", p_sub) ==
+        :mismatch
+    @test Enzyme.Compiler.resolve_symbol_name("not_a_real_symbol_abcxyz", libmpfr, p_add) ==
+        :unknown
+    # A pointer outside any loaded module cannot be attributed at all.
+    heapptr = Libc.malloc(8)
+    @test Enzyme.Compiler.resolve_symbol_name("mpfr_add", "", heapptr) == :unknown
+    Libc.free(heapptr)
+
+    LLVM.Context() do ctx
+        mod = parse(
+            LLVM.Module,
+            """
+            declare void @foo() #0
+            declare void @bar()
+            attributes #0 = { "enzymejl_needs_restoration"="12345" }
+            """,
+        )
+        @test Enzyme.Compiler.restoration_ptr(functions(mod)["foo"]) == UInt(12345)
+        @test Enzyme.Compiler.restoration_ptr(functions(mod)["bar"]) === nothing
     end
 end
