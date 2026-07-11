@@ -272,21 +272,24 @@ function try_replace_constant_load!(inst::LLVM.Instruction; check_mutability::Bo
     addr, off = get_base_and_offset(addr; offsetAllowed = true, inttoptr = true)
     gname = nothing
     load1 = false
+    originally_tracked = false
     originally_tracked_load = false
     if isa(addr, LLVM.GlobalVariable) && haskey(metadata(addr), "julia.constgv")
         paddr = addr
         addr = LLVM.initializer(paddr)
         gname = LLVM.name(paddr) * "\$false"
         addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
+        originally_tracked = true
     elseif isa(addr, LLVM.LoadInst)
         paddr = operands(addr)[1]
         if isa(paddr, LLVM.GlobalVariable) && haskey(metadata(paddr), "julia.constgv")
             addr = LLVM.initializer(paddr)
             gname = LLVM.name(paddr) * "\$true"
             base_addr, _ = get_base_and_offset(addr; offsetAllowed = true, inttoptr = false)
-            originally_tracked_load = isa(value_type(base_addr), LLVM.PointerType) && addrspace(value_type(base_addr)) == Tracked
+            originally_tracked = true
             addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
             load1 = true
+            originally_tracked_load = true
         end
     elseif isa(addr, LLVM.ConstantInt)
         gname = string(convert(UInt, addr)) * "\$true"
@@ -294,6 +297,23 @@ function try_replace_constant_load!(inst::LLVM.Instruction; check_mutability::Bo
     end
 
     if isa(addr, LLVM.ConstantInt)
+        if check_mutability && originally_tracked
+            ptr0 = Base.reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, addr))
+            obj0 = Base.unsafe_pointer_to_objref(ptr0)
+            if obj0 === nothing
+                return inst
+            end
+
+            # If we are loading from the object, or there is not expected to already be
+            # one level of indirection [e.g. binding], we are actually loading from within
+            # the global object itself.
+            if originally_tracked_load || !isa(obj0, Core.Binding)
+                # If mutable object the inner object may not be the same at runtime
+                if isstructtype(Core.Typeof(obj0)) && ismutable(obj0)
+                    return inst
+                end
+            end
+        end
 
         initaddr = convert(UInt, addr) + off
         if gname isa String
@@ -301,19 +321,6 @@ function try_replace_constant_load!(inst::LLVM.Instruction; check_mutability::Bo
         end
         ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
         if load1
-            if check_mutability && originally_tracked_load
-                ptr0 = Base.reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, addr))
-                obj0 = Base.unsafe_pointer_to_objref(ptr0)
-                if obj0 === nothing
-                    return inst
-                end
-
-                # If mutable object the inner object may not be the same at runtime
-                if isstructtype(typeof(obj0)) && ismutable(obj0)
-                    return inst
-                end
-            end
-
             ptr = Base.unsafe_load(ptr, :unordered)
             if ptr == C_NULL
                 return inst
