@@ -267,7 +267,9 @@ function restore_lookups(mod::LLVM.Module)::Nothing
                 repname = "ejlstr\$$k\$msvcrt"
 
                 repf, _ = get_function!(mod, repname, LLVM.function_type(f))
-                push!(function_attributes(repf), StringAttribute("enzyme_math", k))
+                if repf isa LLVM.Function
+                    push!(function_attributes(repf), StringAttribute("enzyme_math", k))
+                end
 
                 replace_uses!(
                     f,
