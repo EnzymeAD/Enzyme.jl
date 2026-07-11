@@ -272,7 +272,7 @@ function try_replace_constant_load!(inst::LLVM.Instruction; check_mutability::Bo
     addr, off = get_base_and_offset(addr; offsetAllowed = true, inttoptr = true)
     gname = nothing
     load1 = false
-    originally_load = false
+    originally_tracked_load = false
     if isa(addr, LLVM.GlobalVariable) && haskey(metadata(addr), "julia.constgv")
         paddr = addr
         addr = LLVM.initializer(paddr)
@@ -283,9 +283,10 @@ function try_replace_constant_load!(inst::LLVM.Instruction; check_mutability::Bo
         if isa(paddr, LLVM.GlobalVariable) && haskey(metadata(paddr), "julia.constgv")
             addr = LLVM.initializer(paddr)
             gname = LLVM.name(paddr) * "\$true"
+            base_addr, _ = get_base_and_offset(addr; offsetAllowed = true, inttoptr = false)
+            originally_tracked_load = isa(value_type(base_addr), LLVM.PointerType) && addrspace(value_type(base_addr)) == Tracked
             addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
             load1 = true
-            originally_load = true
         end
     elseif isa(addr, LLVM.ConstantInt)
         gname = string(convert(UInt, addr)) * "\$true"
@@ -300,7 +301,7 @@ function try_replace_constant_load!(inst::LLVM.Instruction; check_mutability::Bo
         end
         ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
         if load1
-            if check_mutability && originally_load
+            if check_mutability && originally_tracked_load
                 ptr0 = Base.reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, addr))
                 obj0 = Base.unsafe_pointer_to_objref(ptr0)
                 if obj0 === nothing
@@ -308,7 +309,7 @@ function try_replace_constant_load!(inst::LLVM.Instruction; check_mutability::Bo
                 end
 
                 # If mutable object the inner object may not be the same at runtime
-                if ismutable(obj0)
+                if isstructtype(typeof(obj0)) && ismutable(obj0)
                     return inst
                 end
             end
