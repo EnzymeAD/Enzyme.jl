@@ -289,8 +289,11 @@ function push_box_for_argument!(
         al
     end
 
-    st = store!(B, val, ptr)
-
+    if VERSION >= v"1.12" && num_inline_roots != 0
+        extract_nonjlvalues_into!(B, arty, ptr, val)
+    else
+        store!(B, val, ptr)
+    end
 
     push!(args, al)
 
