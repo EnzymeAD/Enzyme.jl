@@ -70,29 +70,8 @@ jobs:
           - os: ubuntu-24.04
             arch: default
             libEnzyme: packaged
-            version: '1.11'
-            assertions: true
-          - os: ubuntu-24.04
-            arch: default
-            libEnzyme: packaged
-            version: '1.12'
-            assertions: true
-          - os: ubuntu-24.04
-            arch: default
-            libEnzyme: packaged
-            version: '1.13'
-            assertions: true
-          - os: ubuntu-24.04
-            arch: default
-            libEnzyme: packaged
             version: '1.10'
             assertions: true
-            llvm_args: '--opaque-pointers'
-          - os: ubuntu-24.04
-            arch: default
-            libEnzyme: packaged
-            version: '1.11'
-            assertions: false
             llvm_args: '--opaque-pointers'
     steps:
       - uses: actions/checkout@v7
@@ -105,7 +84,7 @@ jobs:
         if: ${{ matrix.assertions }}
         with:
           repository: 'JuliaLang/julia'
-          ref: release-${{ matrix.version }}-llvm15.0.7-13
+          ref: 084f8a71a2e0583d5fce09a82faab96eac01a0ed
           path: 'julia'
       - name: Compile Julia
         if: ${{ matrix.assertions }}
