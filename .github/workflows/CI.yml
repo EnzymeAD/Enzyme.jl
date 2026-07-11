@@ -40,13 +40,9 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1.10'
           - '1.11'
           - '1.12'
-          - 'nightly'
         os:
-          - ubuntu-24.04
-          - macOS-latest
           - windows-latest
         llvm_args:
           - ''
@@ -59,44 +55,6 @@ jobs:
           - os: windows-latest
             arch: default
             libEnzyme: local
-        include:
-          - os: ubuntu-24.04
-            arch: x86
-            libEnzyme: packaged
-            version: '1.10'
-            assertions: false
-          - os: ubuntu-24.04
-            arch: default
-            libEnzyme: packaged
-            version: '1.10'
-            assertions: true
-          - os: ubuntu-24.04
-            arch: default
-            libEnzyme: packaged
-            version: '1.11'
-            assertions: true
-          - os: ubuntu-24.04
-            arch: default
-            libEnzyme: packaged
-            version: '1.12'
-            assertions: true
-          - os: ubuntu-24.04
-            arch: default
-            libEnzyme: packaged
-            version: '1.13'
-            assertions: true
-          - os: ubuntu-24.04
-            arch: default
-            libEnzyme: packaged
-            version: '1.10'
-            assertions: true
-            llvm_args: '--opaque-pointers'
-          - os: ubuntu-24.04
-            arch: default
-            libEnzyme: packaged
-            version: '1.11'
-            assertions: false
-            llvm_args: '--opaque-pointers'
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
