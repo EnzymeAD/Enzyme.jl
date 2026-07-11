@@ -803,7 +803,7 @@ function annotate!(mod::LLVM.Module)
 
 
 
-    for fname in ("julia.pointer_from_objref",)
+    for fname in ("julia.pointer_from_objref", "julia_pointer_from_objref")
         if haskey(funcs, fname)
             for fn in funcs[fname]
                 if LLVM.version().major <= 15
@@ -811,6 +811,8 @@ function annotate!(mod::LLVM.Module)
                 else
                     push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
                 end
+                push!(function_attributes(fn), LLVM.EnumAttribute("nounwind"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("willreturn"))
             end
         end
     end
