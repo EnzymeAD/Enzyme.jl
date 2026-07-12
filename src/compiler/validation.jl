@@ -1721,6 +1721,14 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world
                     throw(AssertionError(msg))
                 end
                 continue
+            elseif isa(al, LLVM.GlobalVariable)
+                name_gv = LLVM.name(al)
+                if haskey(JuliaGlobalNameMap, name_gv)
+                    val = JuliaGlobalNameMap[name_gv]
+                    if guaranteed_nonactive(Core.Typeof(val), world)
+                        continue
+                    end
+                end
             end
         end
 
