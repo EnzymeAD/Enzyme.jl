@@ -47,6 +47,8 @@ module FFI
             "jl_new_task",
             "malloc",
             "free",
+            "realloc",
+            "calloc",
             "memmove",
             "memcpy",
             "memset",
@@ -230,7 +232,7 @@ function restore_lookups(mod::LLVM.Module)::Nothing
     T_size_t = convert(LLVM.LLVMType, Int)
     for f in functions(mod)
         nm = LLVM.name(f)
-        if nm == "malloc" || nm == "free"
+        if nm == "malloc" || nm == "free" || nm == "realloc" || nm == "calloc"
             continue
         end
         for fattr in collect(function_attributes(f))
