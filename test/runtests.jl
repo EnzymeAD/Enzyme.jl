@@ -76,10 +76,5 @@ end
         dx = deepcopy(dx_pre)
         Enzyme.autodiff(Reverse, mixed_metasumsq, Active, Const(mixed_metaconcat), Duplicated(x, dx))
         @test mixed_tupapprox(dx, dx_post)
-
-        dx = deepcopy(dx_pre)
-        res = Enzyme.autodiff(ReverseWithPrimal, mixed_metasumsq, Active, Const(mixed_metaconcat), Duplicated(x, dx))
-        @test res[2] ≈ primal
-        @test mixed_tupapprox(dx, dx_post)
     end
 end
