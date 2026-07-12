@@ -460,7 +460,8 @@ end
         orig,
         [shadowin],
         [API.VT_Primal for _ in 1:length(origops)],
-        true;
+        true,
+        "duplicate";
         need_result = false
     )
 
@@ -517,7 +518,8 @@ end
         orig,
         [shadowin],
         [API.VT_Shadow],
-        false;
+        false,
+        "arraycopy";
         postprocess_const = needs_runtime_zero ? post_arraycopy_makezero : post_arraycopy_memset
     )::LLVM.Value #=lookup=#
 
@@ -837,7 +839,8 @@ end
         orig,
         [shadowin, shadowdata, len],
         [API.VT_Shadow, API.VT_Shadow, API.VT_Primal],
-        false;
+        false,
+        "genericmemory_copy_slice";
         postprocess_const = needs_runtime_zero ? post_arraycopy_makezero : post_genericmemcpy_memset
     ) #=lookup=#
 
@@ -983,7 +986,8 @@ end
             orig,
             args,
             [API.VT_Primal, API.VT_Shadow, API.VT_Primal],
-            false;
+            false,
+            "arrayreshape";
             cmpidx = 2
         ) #=lookup=#
         unsafe_store!(shadowR, shadowres.ref)
@@ -1037,6 +1041,7 @@ end
         args,
         [API.VT_Shadow, API.VT_Shadow],
         false,
+        "gcloaded",
     ) #=lookup=#
 
     unsafe_store!(shadowR, shadowres.ref)
@@ -1315,6 +1320,7 @@ end
         newops,
         newvals,
         false,
+        "eqtableget",
     )
 
     unsafe_store!(shadowR, shadowres.ref)
@@ -1420,7 +1426,7 @@ end
     ]
 
     shadowres = batch_call_same_with_inverted_arg_if_active!(
-        B, gutils, orig, newops, newvals, false;
+        B, gutils, orig, newops, newvals, false, "eqtableput";
         preprocess = eqtable_shadow_active
     ) #=lookup=#
 
@@ -1513,7 +1519,8 @@ end
         orig,
         args,
         [API.VT_Shadow, API.VT_Primal],
-        false;
+        false,
+        "array_grow_end";
         need_result = false
     ) #=lookup=#
     return false
@@ -1565,7 +1572,8 @@ end
         orig,
         args,
         [API.VT_Shadow, API.VT_Primal],
-        false;
+        false,
+        "array_grow_end";
         preprocess = pre_shadow_array_grow!,
         postprocess = post_shadow_array_grow!,
         need_result = false
@@ -1758,7 +1766,7 @@ end
     ]
 
     batch_call_same_with_inverted_arg_if_active!(
-        B, gutils, orig, args, valTys, false;
+        B, gutils, orig, args, valTys, false, "array_ptr_copy";
         need_result = false
     ) #=lookup=#
 
@@ -1792,7 +1800,7 @@ end
         new_from_original(gutils, operands(orig)[4]),
     ]
 
-    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false; cmpidx = 2)::LLVM.Value
+    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false, "ptr_to_array"; cmpidx = 2)::LLVM.Value
 
     unsafe_store!(shadowR, shadowres.ref)
 
