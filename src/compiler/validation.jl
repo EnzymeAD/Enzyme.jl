@@ -359,7 +359,7 @@ function try_replace_constant_load!(inst::LLVM.Instruction; check_mutability::Bo
     load1 = false
     originally_tracked = false
     originally_tracked_load = false
-    if isa(addr, LLVM.GlobalVariable) && haskey(metadata(addr), "julia.constgv")
+    if isa(addr, LLVM.GlobalVariable) && (haskey(metadata(addr), "julia.constgv") || !check_mutability)
         paddr = addr
         addr = LLVM.initializer(paddr)
         gname = LLVM.name(paddr) * "\$false"
@@ -367,7 +367,7 @@ function try_replace_constant_load!(inst::LLVM.Instruction; check_mutability::Bo
         originally_tracked = true
     elseif isa(addr, LLVM.LoadInst)
         paddr = operands(addr)[1]
-        if isa(paddr, LLVM.GlobalVariable) && haskey(metadata(paddr), "julia.constgv")
+        if isa(paddr, LLVM.GlobalVariable) && (haskey(metadata(paddr), "julia.constgv") || !check_mutability)
             addr = LLVM.initializer(paddr)
             gname = LLVM.name(paddr) * "\$true"
             base_addr, _ = get_base_and_offset(addr; offsetAllowed = true, inttoptr = false)
@@ -868,8 +868,13 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     bt = backtrace(inst)
     dest = called_operand(inst)
 
-    if isa(dest, LLVM.PHIInst) && all(Base.Fix1(==, operands(dest)[1]), operands(dest))
+    if isa(dest, LLVM.PHIInst) && !isempty(operands(dest)) && all(Base.Fix1(==, operands(dest)[1]), operands(dest))
         dest = operands(dest)[1]
+        LLVM.API.LLVMSetOperand(
+            inst,
+            LLVM.API.LLVMGetNumOperands(inst) - 1,
+            dest,
+        )
     end
     if isa(dest, LLVM.ConstantExpr) && opcode(dest) == LLVM.API.LLVMIntToPtr && isa(operands(dest)[1], LLVM.ConstantExpr) && opcode(operands(dest)[1]) == LLVM.API.LLVMPtrToInt
         dest = operands(operands(dest)[1])[1]
@@ -1061,7 +1066,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             end
 
             # Julia 1.13+: fname is an ejl_inserted GlobalVariable holding a Julia Symbol.
-            if !isa(fname, String) && isa(fname_llvm, LLVM.GlobalVariable)
+            if !isa(fname, String)
                 legal2, sym = absint(fname_llvm)
                 if legal2
                     sym = unbind(sym)
@@ -1073,7 +1078,6 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                     end
                 end
             end
-
             if !isa(fname, String)
                 return
             end
@@ -1086,10 +1090,10 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             else
                 try
                     Libdl.dlpath(flib)
-                catch
+                catch err
                     try
                         Libdl.dlpath(Libdl.dlopen(flib))
-                    catch
+                    catch err2
                         nothing
                     end
                 end
