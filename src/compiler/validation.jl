@@ -254,7 +254,7 @@ function restore_lookups(mod::LLVM.Module)::Nothing
         if haskey(functions(mod), k)
             f = functions(mod)[k]
 
-            if k == "malloc" || k == "free"
+            if k == "malloc" || k == "free" || k == "realloc" || k == "calloc"
                 if VERSION < v"1.11" || !Sys.iswindows()
                     continue
                 end
