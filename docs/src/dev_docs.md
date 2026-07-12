@@ -3,7 +3,7 @@
 ## Development of Enzyme and Enzyme.jl together (recommended)
 
 Normally Enzyme.jl downloads and installs [Enzyme](https://github.com/EnzymeAD/enzyme) for the user automatically since Enzyme needs to be built against
-Julia bundeled LLVM. In case that you are making updates to Enzyme and want to test them against Enzyme.jl the instructions
+Julia bundled LLVM. In case that you are making updates to Enzyme and want to test them against Enzyme.jl the instructions
 below should help you get started.
 
 Start Julia in your development copy of Enzyme.jl and initialize the deps project
@@ -24,7 +24,7 @@ It may take a few minutes to compile fully.
 ~/s/Enzyme.jl (master)> julia --project=deps deps/build_local.jl
 ```
 
-You will now find a file LocalPrefernces.toml which has been generated and contains a path to the new Enzyme\_jll binary you have built.
+You will now find a file LocalPreferences.toml which has been generated and contains a path to the new Enzyme\_jll binary you have built.
 To use your Enzyme\_jll instead of the default shipped by Enzyme.jl, ensure that this file is at the root of any Julia project you wish
 to test it with *and* that the Julia project has Enzyme\_jll as an explicit dependency. Note that an indirect dependency here is not
 sufficient (e.g. just because a project depends on Enzyme.jl, which depends on Enzyme\_jll, does not mean that your project will pick up
