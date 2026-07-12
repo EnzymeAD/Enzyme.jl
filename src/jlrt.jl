@@ -79,26 +79,17 @@ function emit_allocobj!(B::LLVM.IRBuilder, @nospecialize(T::DataType), name::Str
 end
 
 declare_pointerfromobjref!(mod::LLVM.Module) = begin
-    F, fty = get_function!(mod, "julia.pointer_from_objref") do
-        T_jlvalue = LLVM.StructType(LLVMType[])
-        T_prjlvalue = LLVM.PointerType(T_jlvalue, Derived)
-        T_pjlvalue = LLVM.PointerType(T_jlvalue)
-        LLVM.FunctionType(T_pjlvalue, [T_prjlvalue])
-    end
-    attrs = function_attributes(F)
     readnone_attr = if LLVM.version().major <= 15
         LLVM.EnumAttribute("readnone")
     else
         LLVM.EnumAttribute("memory", NoEffects.data)
     end
-    if !any(attr -> LLVM.kind(attr) == LLVM.kind(readnone_attr), collect(attrs))
-        push!(attrs, readnone_attr)
-    end
-    if !any(attr -> LLVM.kind(attr) == LLVM.kind(LLVM.EnumAttribute("nounwind")), collect(attrs))
-        push!(attrs, LLVM.EnumAttribute("nounwind"))
-    end
-    if !any(attr -> LLVM.kind(attr) == LLVM.kind(LLVM.EnumAttribute("willreturn")), collect(attrs))
-        push!(attrs, LLVM.EnumAttribute("willreturn"))
+    attrs = LLVM.Attribute[readnone_attr, LLVM.EnumAttribute("nounwind"), LLVM.EnumAttribute("willreturn")]
+    F, fty = get_function!(mod, "julia.pointer_from_objref", attrs) do
+        T_jlvalue = LLVM.StructType(LLVMType[])
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Derived)
+        T_pjlvalue = LLVM.PointerType(T_jlvalue)
+        LLVM.FunctionType(T_pjlvalue, [T_prjlvalue])
     end
     return F, fty
 end
