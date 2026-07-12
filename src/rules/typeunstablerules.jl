@@ -1660,7 +1660,7 @@ end
             API.VT_Primal,
         ]
 
-        shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false; force_run=is_constant_value(gutils, operands(orig)[1]))::LLVM.Value
+        shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false, "nthfield"; force_run=is_constant_value(gutils, operands(orig)[1]))::LLVM.Value
 
         unsafe_store!(shadowR, shadowres.ref)
     else
@@ -1890,7 +1890,8 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
             orig,
             args,
             valTys,
-            false;
+            false,
+            "setfield";
             cmpidx = 4 + (offset - 1),
             need_result = false
         ) #=lookup=#
