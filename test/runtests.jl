@@ -1,5 +1,9 @@
 using Enzyme, Test
 
+Enzyme.API.printall!(true)
+Enzyme.Compiler.DumpPostOpt[] = true
+Enzyme.Compiler.DumpPreCheck[] = true
+
 mixed_concat() = ()
 mixed_concat(a) = a
 mixed_concat(a, b) = (a..., b...)
