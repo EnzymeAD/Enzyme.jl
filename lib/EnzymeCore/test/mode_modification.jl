@@ -1,5 +1,5 @@
 using EnzymeCore
-using EnzymeCore: InlineABI, ReverseModeSplit, Split, Combined, set_runtime_activity, set_err_if_func_written, set_abi, set_strong_zero, forward_counterpart, reverse_counterpart
+using EnzymeCore: InlineABI, ReverseModeSplit, Split, Combined, set_runtime_activity, set_err_if_func_written, set_abi, set_strong_zero, as_forward, as_reverse
 using Test
 
 @testset "Split / unsplit mode" begin
@@ -12,7 +12,7 @@ using Test
     @test Split(set_err_if_func_written(Reverse)) == set_err_if_func_written(ReverseSplitNoPrimal)
     @test Split(set_abi(Reverse, InlineABI)) == set_abi(ReverseSplitNoPrimal, InlineABI)
 
-    @test Split(Reverse, Val(:ReturnShadow), Val(:Width), Val(:ModifiedBetween), Val(:ShadowInit)) == ReverseModeSplit{false,:ReturnShadow,false,false,:Width,:ModifiedBetween,EnzymeCore.DefaultABI,false,false,:ShadowInit}()
+    @test Split(Reverse, Val(:ReturnShadow), Val(:Width), Val(:ModifiedBetween), Val(:ShadowInit)) == ReverseModeSplit{false, :ReturnShadow, false, false, :Width, :ModifiedBetween, EnzymeCore.DefaultABI, false, false, :ShadowInit}()
 
     @test Combined(Reverse) == Reverse
     @test Combined(ReverseWithPrimal) == ReverseWithPrimal
@@ -25,29 +25,29 @@ using Test
 end
 
 @testset "Forward / reverse counterparts" begin
-    @test forward_counterpart(Reverse) == Forward
-    @test forward_counterpart(ReverseWithPrimal) == ForwardWithPrimal
-    @test forward_counterpart(ReverseHolomorphic) == Forward
-    @test forward_counterpart(ReverseSplitNoPrimal) == Forward
-    @test forward_counterpart(ReverseSplitWithPrimal) == ForwardWithPrimal
-    @test forward_counterpart(Forward) == Forward
-    @test forward_counterpart(ForwardWithPrimal) == ForwardWithPrimal
+    @test as_forward(Reverse) == Forward
+    @test as_forward(ReverseWithPrimal) == ForwardWithPrimal
+    @test as_forward(ReverseHolomorphic) == Forward
+    @test as_forward(ReverseSplitNoPrimal) == Forward
+    @test as_forward(ReverseSplitWithPrimal) == ForwardWithPrimal
+    @test as_forward(Forward) == Forward
+    @test as_forward(ForwardWithPrimal) == ForwardWithPrimal
 
-    @test forward_counterpart(set_runtime_activity(Reverse)) == set_runtime_activity(Forward)
-    @test forward_counterpart(set_err_if_func_written(Reverse)) == set_err_if_func_written(Forward)
-    @test forward_counterpart(set_strong_zero(Reverse)) == set_strong_zero(Forward)
-    @test forward_counterpart(set_abi(Reverse, InlineABI)) == set_abi(Forward, InlineABI)
-    @test forward_counterpart(set_runtime_activity(ReverseSplitNoPrimal)) == set_runtime_activity(Forward)
+    @test as_forward(set_runtime_activity(Reverse)) == set_runtime_activity(Forward)
+    @test as_forward(set_err_if_func_written(Reverse)) == set_err_if_func_written(Forward)
+    @test as_forward(set_strong_zero(Reverse)) == set_strong_zero(Forward)
+    @test as_forward(set_abi(Reverse, InlineABI)) == set_abi(Forward, InlineABI)
+    @test as_forward(set_runtime_activity(ReverseSplitNoPrimal)) == set_runtime_activity(Forward)
 
-    @test reverse_counterpart(Forward) == Reverse
-    @test reverse_counterpart(ForwardWithPrimal) == ReverseWithPrimal
-    @test reverse_counterpart(Reverse) == Reverse
-    @test reverse_counterpart(ReverseWithPrimal) == ReverseWithPrimal
-    @test reverse_counterpart(ReverseSplitNoPrimal) == ReverseSplitNoPrimal
-    @test reverse_counterpart(ReverseSplitWithPrimal) == ReverseSplitWithPrimal
+    @test as_reverse(Forward) == Reverse
+    @test as_reverse(ForwardWithPrimal) == ReverseWithPrimal
+    @test as_reverse(Reverse) == Reverse
+    @test as_reverse(ReverseWithPrimal) == ReverseWithPrimal
+    @test as_reverse(ReverseSplitNoPrimal) == ReverseSplitNoPrimal
+    @test as_reverse(ReverseSplitWithPrimal) == ReverseSplitWithPrimal
 
-    @test reverse_counterpart(set_runtime_activity(Forward)) == set_runtime_activity(Reverse)
-    @test reverse_counterpart(set_err_if_func_written(Forward)) == set_err_if_func_written(Reverse)
-    @test reverse_counterpart(set_strong_zero(Forward)) == set_strong_zero(Reverse)
-    @test reverse_counterpart(set_abi(Forward, InlineABI)) == set_abi(Reverse, InlineABI)
+    @test as_reverse(set_runtime_activity(Forward)) == set_runtime_activity(Reverse)
+    @test as_reverse(set_err_if_func_written(Forward)) == set_err_if_func_written(Reverse)
+    @test as_reverse(set_strong_zero(Forward)) == set_strong_zero(Reverse)
+    @test as_reverse(set_abi(Forward, InlineABI)) == set_abi(Reverse, InlineABI)
 end

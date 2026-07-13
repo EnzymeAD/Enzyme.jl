@@ -833,16 +833,16 @@ end
 Combined(mode::ReverseMode) = mode
 
 """
-    forward_counterpart(::Mode)
+    as_forward(::Mode)
 
 Turn a [`ReverseMode`](@ref) or [`ReverseModeSplit`](@ref) object into a [`ForwardMode`](@ref) object while preserving as many of the settings as possible.
 Settings that do not exist in forward mode (e.g. `Holomorphic` and the split-specific parameters) are dropped.
 
 This function acts as the identity on a [`ForwardMode`](@ref).
 
-See also [`reverse_counterpart`](@ref).
+See also [`as_reverse`](@ref).
 """
-function forward_counterpart(
+function as_forward(
         ::ReverseMode{
             ReturnPrimal,
             RuntimeActivity,
@@ -862,20 +862,20 @@ function forward_counterpart(
     return ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}()
 end
 
-forward_counterpart(mode::ReverseModeSplit) = forward_counterpart(Combined(mode))
-forward_counterpart(mode::ForwardMode) = mode
+as_forward(mode::ReverseModeSplit) = as_forward(Combined(mode))
+as_forward(mode::ForwardMode) = mode
 
 """
-    reverse_counterpart(::Mode)
+    as_reverse(::Mode)
 
 Turn a [`ForwardMode`](@ref) object into a [`ReverseMode`](@ref) object while preserving as many of the settings as possible.
 Settings that do not exist in forward mode (e.g. `Holomorphic`) are set to their default values.
 
 This function acts as the identity on a [`ReverseMode`](@ref) or [`ReverseModeSplit`](@ref).
 
-See also [`forward_counterpart`](@ref).
+See also [`as_forward`](@ref).
 """
-function reverse_counterpart(
+function as_reverse(
         ::ForwardMode{
             ReturnPrimal,
             ABI,
@@ -893,7 +893,7 @@ function reverse_counterpart(
     return ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, false, ErrIfFuncWritten}()
 end
 
-reverse_counterpart(mode::ReverseMode) = mode
-reverse_counterpart(mode::ReverseModeSplit) = mode
+as_reverse(mode::ReverseMode) = mode
+as_reverse(mode::ReverseModeSplit) = mode
 
 end # module EnzymeCore
