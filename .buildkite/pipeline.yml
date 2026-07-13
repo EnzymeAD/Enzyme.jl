@@ -70,8 +70,8 @@ steps:
       julia --color=yes -e '
           using Pkg
           pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
-          push!(pkgs, PackageSpec(; name="Metal"))
           Pkg.develop(pkgs)' || exit 3
+          Pkg.add([PackageSpec(; name="Metal")])' || exit 3
 
       echo "+++ Run tests"
       julia --color=yes test/metal.jl
