@@ -3117,4 +3117,101 @@ function remove_alwaysinline_roots!(mod::LLVM.Module)
 end
 
 
+function is_cast(v::LLVM.Value)
+    if isa(v, LLVM.AddrSpaceCastInst) || isa(v, LLVM.BitCastInst)
+        return true
+    end
+    if isa(v, LLVM.ConstantExpr)
+        op = LLVM.opcode(v)
+        return op == LLVM.API.LLVMAddrSpaceCast || op == LLVM.API.LLVMBitCast
+    end
+    return false
+end
 
+function evaluates_to_nothing(inst::LLVM.Value)
+    if isa(inst, LLVM.LoadInst)
+        ptr = operands(inst)[1]
+        while is_cast(ptr)
+            ptr = operands(ptr)[1]
+        end
+        return isa(ptr, LLVM.GlobalVariable) && LLVM.name(ptr) == "jl_nothing"
+    elseif is_cast(inst)
+        return evaluates_to_nothing(operands(inst)[1])
+    end
+    return false
+end
+
+function evaluates_to_nothing_addr(val::LLVM.Value)
+    if isa(val, LLVM.ConstantExpr) && LLVM.opcode(val) == LLVM.API.LLVMIntToPtr
+        val = operands(val)[1]
+    end
+    if isa(val, LLVM.ConstantInt)
+        nothing_addr = unsafe_load(cglobal(:jl_nothing, Ptr{Cvoid}))
+        return convert(UInt64, val) == reinterpret(UInt64, nothing_addr)
+    end
+    return false
+end
+
+function is_nothing_val(val::LLVM.Value)
+    if isa(val, LLVM.GlobalVariable)
+        return false
+    end
+    if evaluates_to_nothing(val)
+        return true
+    end
+    
+    ptr = val
+    while is_cast(ptr)
+        ptr = operands(ptr)[1]
+    end
+    return evaluates_to_nothing_addr(ptr)
+end
+
+function replace_nothing_loads!(mod::LLVM.Module)
+    ejl_nothing = unsafe_nothing_to_llvm(mod)
+    for f in functions(mod)
+        if isempty(blocks(f))
+            continue
+        end
+        
+        to_replace = LLVM.Instruction[]
+        for bb in blocks(f), inst in instructions(bb)
+            if is_nothing_val(inst)
+                push!(to_replace, inst)
+            end
+            
+            for (idx, op) in enumerate(operands(inst))
+                if !isa(op, LLVM.Instruction) && is_nothing_val(op)
+                    replacement = ejl_nothing
+                    if value_type(ejl_nothing) != value_type(op)
+                        if isa(value_type(op), LLVM.PointerType) && addrspace(value_type(ejl_nothing)) != addrspace(value_type(op))
+                            replacement = LLVM.const_addrspacecast(ejl_nothing, value_type(op))
+                        else
+                            replacement = LLVM.const_bitcast(ejl_nothing, value_type(op))
+                        end
+                    end
+                    LLVM.API.LLVMSetOperand(inst, idx-1, replacement)
+                end
+            end
+        end
+        
+        for inst in to_replace
+            replacement = ejl_nothing
+            if value_type(ejl_nothing) != value_type(inst)
+                if isa(value_type(inst), LLVM.PointerType) && addrspace(value_type(ejl_nothing)) != addrspace(value_type(inst))
+                    replacement = LLVM.const_addrspacecast(ejl_nothing, value_type(inst))
+                else
+                    replacement = LLVM.const_bitcast(ejl_nothing, value_type(inst))
+                end
+            end
+            
+            LLVM.replace_uses!(inst, replacement)
+        end
+        
+        for inst in to_replace
+            if isempty(LLVM.uses(inst))
+                LLVM.API.LLVMInstructionEraseFromParent(inst)
+            end
+        end
+    end
+end

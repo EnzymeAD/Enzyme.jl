@@ -413,6 +413,14 @@ function annotate!(mod::LLVM.Module)
         end
     end
 
+    for gname in keys(JuliaGlobalNameMap)
+        globs = LLVM.globals(mod)
+        if haskey(globs, gname)
+            glob = globs[gname]
+            API.SetMD(glob, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
+        end
+    end
+
     for fname in inactivefns
         if haskey(funcs, fname)
             for fn in funcs[fname]
