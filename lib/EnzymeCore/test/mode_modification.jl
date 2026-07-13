@@ -12,7 +12,7 @@ using Test
     @test Split(set_err_if_func_written(Reverse)) == set_err_if_func_written(ReverseSplitNoPrimal)
     @test Split(set_abi(Reverse, InlineABI)) == set_abi(ReverseSplitNoPrimal, InlineABI)
 
-    @test Split(Reverse, Val(:ReturnShadow), Val(:Width), Val(:ModifiedBetween), Val(:ShadowInit)) == ReverseModeSplit{false, :ReturnShadow, false, false, :Width, :ModifiedBetween, EnzymeCore.DefaultABI, false, false, :ShadowInit}()
+    @test Split(Reverse, Val(:ReturnShadow), Val(:Width), Val(:ModifiedBetween), Val(:ShadowInit)) == ReverseModeSplit{false,:ReturnShadow,false,false,:Width,:ModifiedBetween,EnzymeCore.DefaultABI,false,false,:ShadowInit}()
 
     @test Combined(Reverse) == Reverse
     @test Combined(ReverseWithPrimal) == ReverseWithPrimal
@@ -24,7 +24,7 @@ using Test
     @test Combined(set_abi(ReverseSplitNoPrimal, InlineABI)) == set_abi(Reverse, InlineABI)
 end
 
-@testset "Forward / reverse counterparts" begin
+@testset "as_forward / as_reverse" begin
     @test as_forward(Reverse) == Forward
     @test as_forward(ReverseWithPrimal) == ForwardWithPrimal
     @test as_forward(ReverseHolomorphic) == Forward
