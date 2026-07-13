@@ -308,8 +308,8 @@ function get_function!(
     return F, FT
 end
 
-function get_function!(@nospecialize(builderF), mod::LLVM.Module, name::String)
-    get_function!(mod, name, builderF())
+function get_function!(@nospecialize(builderF), mod::LLVM.Module, name::String, attrs::Vector{LLVM.Attribute} = LLVM.Attribute[])
+    get_function!(mod, name, builderF(), attrs)
 end
 
 T_ppjlvalue() = LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[])))
@@ -319,6 +319,7 @@ function declare_pgcstack!(mod::LLVM.Module)
         mod,
         "julia.get_pgcstack",
         LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue())),
+        LLVM.Attribute[StringAttribute("enzyme_inactive"), StringAttribute("enzyme_no_escaping_allocation")]
     )
 end
 

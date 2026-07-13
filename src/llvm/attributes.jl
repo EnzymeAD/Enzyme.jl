@@ -159,6 +159,7 @@ const nofreefns = Set{String}((
     "jl_enter_handler",
     "ijl_enter_handler",
     "__sigsetjmp",
+    "sigsetjmp",
     "jl_array_grow_end",
     "ijl_array_grow_end",
     "jl_f_getfield",
@@ -335,6 +336,7 @@ const inactivefns = Set{String}((
     "jl_enter_handler",
     "ijl_enter_handler",
     "__sigsetjmp",
+    "sigsetjmp",
     "jl_current_exception",
     "ijl_current_exception",
     "memhash_seed",
@@ -733,6 +735,7 @@ function annotate!(mod::LLVM.Module)
         "jl_enter_handler",
         "ijl_enter_handler",
         "__sigsetjmp",
+        "sigsetjmp",
         "ijl_get_nth_field_checked",
         "jl_get_nth_field_checked",
         "jl_egal__unboxed",
@@ -783,6 +786,7 @@ function annotate!(mod::LLVM.Module)
         "jl_enter_handler",
         "ijl_enter_handler",
         "__sigsetjmp",
+        "sigsetjmp",
         "ijl_get_nth_field_checked",
         "jl_get_nth_field_checked",
         "jl_egal__unboxed",
@@ -803,7 +807,7 @@ function annotate!(mod::LLVM.Module)
 
 
 
-    for fname in ("julia.pointer_from_objref",)
+    for fname in ("julia.pointer_from_objref", "julia_pointer_from_objref")
         if haskey(funcs, fname)
             for fn in funcs[fname]
                 if LLVM.version().major <= 15
@@ -811,6 +815,8 @@ function annotate!(mod::LLVM.Module)
                 else
                     push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
                 end
+                push!(function_attributes(fn), LLVM.EnumAttribute("nounwind"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("willreturn"))
             end
         end
     end

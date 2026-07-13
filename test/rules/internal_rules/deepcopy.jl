@@ -2,6 +2,8 @@ using Enzyme
 using Enzyme.EnzymeRules
 using Test
 
+const U0_test = [2.0]
+
 @testset "core fallback traversal" begin
     @testset "Dict metadata" begin
         mutable struct CustomStateFallback
@@ -136,5 +138,23 @@ using Test
         bdupnn = EnzymeRules.forward(cfg2, fc, Enzyme.BatchDuplicatedNoNeed, xc)
         @test length(bdupnn) == 2
         @test all(d -> d ≈ [0.0, 0.0], bdupnn)
+    end
+
+    @testset "captured constant array deepcopy" begin
+        function loss_captured(p)
+            copied = deepcopy((u0 = U0_test, p = p))
+            return (copied.p[1] * copied.u0[1])^2
+        end
+
+        p = [2.0]
+        mode = Enzyme.set_runtime_activity(Enzyme.Reverse)
+
+        grad1 = only(Enzyme.gradient(mode, loss_captured, p))
+        @test grad1 ≈ [16.0]
+        @test U0_test ≈ [2.0]
+
+        grad2 = only(Enzyme.gradient(mode, loss_captured, p))
+        @test grad2 ≈ [16.0]
+        @test U0_test ≈ [2.0]
     end
 end

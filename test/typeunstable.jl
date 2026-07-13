@@ -286,3 +286,27 @@ end
         Enzyme.Duplicated(p, dp))
     @test dp ≈ [1.0]
 end
+
+mutable struct SetpropertyBox
+    x::Vector{Float64}
+end
+
+function loss_setproperty_mwe(x)
+    box = SetpropertyBox(zeros(length(x)))
+    setproperty!(Base.inferencebarrier(box), Base.inferencebarrier(:x), x)
+    return sum(abs2, box.x)
+end
+
+@testset "Forward type-unstable setproperty! with runtime activity" begin
+    @test Enzyme.autodiff(
+        Enzyme.Forward,
+        Enzyme.Const(loss_setproperty_mwe),
+        Enzyme.Duplicated([0.5], [1.0]),
+    ) == (1.0,)
+
+    @test Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Enzyme.Forward),
+        Enzyme.Const(loss_setproperty_mwe),
+        Enzyme.Duplicated([0.5], [1.0]),
+    ) == (1.0,)
+end

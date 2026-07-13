@@ -221,8 +221,13 @@ end
     into::RT,
     seen::IdDict,
     from::RT,
-)::Tuple{RT,RT} where {RT<:Array}
+    primal::RT,
+    ::Val{rtact},
+)::Tuple{RT,RT} where {RT<:Array, rtact}
     if Enzyme.Compiler.guaranteed_const(RT)
+        return (into, from)
+    end
+    if rtact && into === primal
         return (into, from)
     end
     if !haskey(seen, into)
@@ -231,7 +236,7 @@ end
             isdefinto = isassigned(into, i)
             isdeffrom = isassigned(from, i)
             if isdefinto && isdeffrom
-                tup = accumulate_into(into[i], seen, from[i])
+                tup = accumulate_into(into[i], seen, from[i], primal[i], Val(rtact))
                 @inbounds into[i] = tup[1]
                 @inbounds from[i] = tup[2]
             elseif !isdefinto && !isdeffrom
@@ -248,7 +253,9 @@ end
     into::RT,
     seen::IdDict,
     from::RT,
-)::Tuple{RT,RT} where {RT<:AbstractFloat}
+    primal::RT,
+    ::Val{rtact},
+)::Tuple{RT,RT} where {RT<:AbstractFloat, rtact}
     return (into + from, RT(0))
 end
 
@@ -256,21 +263,26 @@ end
     into::RT,
     seen::IdDict,
     from::RT,
-)::Tuple{RT,RT} where {RT<:Tuple}
+    primal::RT,
+    ::Val{rtact},
+)::Tuple{RT,RT} where {RT<:Tuple, rtact}
     if Enzyme.Compiler.guaranteed_const(RT)
         return (into, from)
     end
     res = ntuple(Val(length(into))) do i
         Base.@_inline_meta
-        @inline accumulate_into(into[i], seen, from[i])
+        @inline accumulate_into(into[i], seen, from[i], primal[i], Val(rtact))
     end
     new_into = map(first, res)
     new_from = map(Base.Fix2(Base.getindex, 2), res)
     return (new_into, new_from)
 end
 
-@inline function accumulate_into(into::RT, seen::IdDict, from::RT)::Tuple{RT,RT} where {RT}
+@inline function accumulate_into(into::RT, seen::IdDict, from::RT, primal::RT, ::Val{rtact})::Tuple{RT,RT} where {RT, rtact}
     if Enzyme.Compiler.guaranteed_const(RT)
+        return (into, from)
+    end
+    if rtact && into === primal
         return (into, from)
     end
     if ismutable(into)
@@ -283,7 +295,8 @@ end
                 if isdeffrom && isdefinto
                     xi_into = getfield(into, i)
                     xi_from = getfield(from, i)
-                    tup = accumulate_into(xi_into, seen, xi_from)
+                    xi_primal = getfield(primal, i)
+                    tup = accumulate_into(xi_into, seen, xi_from, xi_primal, Val(rtact))
                     if Base.isconst(RT, i)
                         ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), into, i - 1, tup[1])
                         ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), from, i - 1, tup[2])
@@ -310,7 +323,8 @@ end
             if isdeffrom && isdefinto
                 xi_into = getfield(into, i)
                 xi_from = getfield(from, i)
-                tup = accumulate_into(xi_into, seen, xi_from)
+                xi_primal = getfield(primal, i)
+                tup = accumulate_into(xi_into, seen, xi_from, xi_primal, Val(rtact))
                 flds_into[i] = tup[1]
                 flds_from[i] = tup[2]
             elseif !isdeffrom && !isdefinto
@@ -335,13 +349,13 @@ function EnzymeRules.reverse(
     x::Annotation{Ty},
 ) where {RT,Ty}
     @assert !(x isa Active)
-
+    rtact = EnzymeRules.runtime_activity(config)
     if EnzymeRules.needs_shadow(config)
         if EnzymeRules.width(config) == 1
-            accumulate_into(x.dval, IdDict(), shadow)
+            accumulate_into(x.dval, IdDict(), shadow, x.val, Val(rtact))
         else
             for i = 1:EnzymeRules.width(config)
-                accumulate_into(x.dval[i], IdDict(), shadow[i])
+                accumulate_into(x.dval[i], IdDict(), shadow[i], x.val, Val(rtact))
             end
         end
     end
