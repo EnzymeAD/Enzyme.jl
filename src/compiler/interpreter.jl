@@ -1079,6 +1079,10 @@ end
 @inline function bc_or_array_or_number_ty(@nospecialize(Ty::Type), midnothing::Bool=true)::Bool
     if ( midnothing && Ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing}) ||
        (!midnothing && Ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle})
+        # If `Ty` is not a fully-specified `DataType` (e.g. a `UnionAll` with free
+        # type parameters, or a `Union`), the args tuple type is unknown so we
+        # cannot apply the override.
+        Ty isa DataType || return false
         return all(Base.Fix2(bc_or_array_or_number_ty, midnothing), Ty.parameters[4].parameters)
     else
     return Ty <: AbstractArray || Ty <: Number || Ty <: Base.RefValue
@@ -1088,6 +1092,7 @@ end
 @inline function has_array(@nospecialize(Ty::Type), midnothing::Bool=true)::Bool
     if ( midnothing && Ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing}) ||
        (!midnothing && Ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle})
+        Ty isa DataType || return false
         return any(Base.Fix2(has_array, midnothing), Ty.parameters[4].parameters)
     else
     return Ty <: AbstractArray
