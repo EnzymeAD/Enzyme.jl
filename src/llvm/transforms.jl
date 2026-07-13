@@ -3141,6 +3141,17 @@ function evaluates_to_nothing(inst::LLVM.Value)
     return false
 end
 
+function evaluates_to_nothing_addr(val::LLVM.Value)
+    if isa(val, LLVM.ConstantExpr) && LLVM.opcode(val) == LLVM.API.LLVMIntToPtr
+        val = operands(val)[1]
+    end
+    if isa(val, LLVM.ConstantInt)
+        nothing_addr = unsafe_load(cglobal(:jl_nothing, Ptr{Cvoid}))
+        return convert(UInt, val) == reinterpret(UInt, nothing_addr)
+    end
+    return false
+end
+
 function is_nothing_val(val::LLVM.Value)
     if isa(val, LLVM.GlobalVariable)
         return false
@@ -3148,8 +3159,12 @@ function is_nothing_val(val::LLVM.Value)
     if evaluates_to_nothing(val)
         return true
     end
-    legal, obj = absint(val)
-    return legal && obj === nothing
+    
+    ptr = val
+    while is_cast(ptr)
+        ptr = operands(ptr)[1]
+    end
+    return evaluates_to_nothing_addr(ptr)
 end
 
 function replace_nothing_loads!(mod::LLVM.Module)
