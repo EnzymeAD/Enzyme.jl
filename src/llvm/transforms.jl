@@ -3147,7 +3147,7 @@ function evaluates_to_nothing_addr(val::LLVM.Value)
     end
     if isa(val, LLVM.ConstantInt)
         nothing_addr = unsafe_load(cglobal(:jl_nothing, Ptr{Cvoid}))
-        return convert(UInt, val) == reinterpret(UInt, nothing_addr)
+        return convert(UInt64, val) == reinterpret(UInt64, nothing_addr)
     end
     return false
 end
