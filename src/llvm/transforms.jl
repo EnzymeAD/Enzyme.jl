@@ -3141,6 +3141,17 @@ function evaluates_to_nothing(inst::LLVM.Value)
     return false
 end
 
+function is_nothing_val(val::LLVM.Value)
+    if isa(val, LLVM.GlobalVariable)
+        return false
+    end
+    if evaluates_to_nothing(val)
+        return true
+    end
+    legal, obj = absint(val)
+    return legal && obj === nothing
+end
+
 function replace_nothing_loads!(mod::LLVM.Module)
     ejl_nothing = unsafe_nothing_to_llvm(mod)
     for f in functions(mod)
@@ -3150,8 +3161,22 @@ function replace_nothing_loads!(mod::LLVM.Module)
         
         to_replace = LLVM.Instruction[]
         for bb in blocks(f), inst in instructions(bb)
-            if evaluates_to_nothing(inst)
+            if is_nothing_val(inst)
                 push!(to_replace, inst)
+            end
+            
+            for (idx, op) in enumerate(operands(inst))
+                if !isa(op, LLVM.Instruction) && is_nothing_val(op)
+                    replacement = ejl_nothing
+                    if value_type(ejl_nothing) != value_type(op)
+                        if isa(value_type(op), LLVM.PointerType) && addrspace(value_type(ejl_nothing)) != addrspace(value_type(op))
+                            replacement = LLVM.const_addrspacecast(ejl_nothing, value_type(op))
+                        else
+                            replacement = LLVM.const_bitcast(ejl_nothing, value_type(op))
+                        end
+                    end
+                    LLVM.API.LLVMSetOperand(inst, idx-1, replacement)
+                end
             end
         end
         
