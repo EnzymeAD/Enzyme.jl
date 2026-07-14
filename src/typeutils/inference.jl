@@ -115,7 +115,7 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
         slotnames,
         Core.svec(),
     )
-    mi === nothing && return stub(world, source, :(throw(MethodError(ft, tt, $world))))
+    mi === nothing && return stub(world, source, :(throw(LookupError(ft, tt, $world))))
 
     result = primal_return_type_world(mode, world, mi)
     code = Any[Core.Compiler.ReturnNode(result)]
