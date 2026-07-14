@@ -247,3 +247,66 @@ end
     res = Enzyme.autodiff(RA_F, Enzyme.Const(grad), Enzyme.Duplicated(x0, v))
     @test res[1] ≈ [2.0, 0.0, 0.0]
 end
+
+struct TypeUnstableGetfieldBox{T1, T2}
+    a::T1
+    b::T2
+end
+
+@noinline function getfield_unstable_fn(x, idx)
+    box = TypeUnstableGetfieldBox(1.0, x)
+    val = getfield(box, idx)
+    return val[1] * val[2]
+end
+
+@testset "Forward type-unstable getfield" begin
+    idx = Base.inferencebarrier(2)
+    res = Enzyme.autodiff(set_runtime_activity(Forward), getfield_unstable_fn, Duplicated([2.0, 3.0], [1.0, 0.0]), Const(idx))
+    @test res[1] ≈ 3.0
+end
+
+struct MiniProblem3280{U, P, K}
+    u0::U
+    tspan::Tuple{Float64, Float64}
+    p::P
+    kwargs::K
+end
+
+function loss_3280(p)
+    prob = MiniProblem3280([1.0], (0.0, 1.0), p, pairs((;)))
+    active_field = Enzyme.Compiler.idx_jl_getfield_aug(
+        Val(NamedTuple{(1,)}), prob, Val{2}, Val(false))
+    return sum(abs2, active_field)
+end
+
+@testset "idx_jl_getfield_aug calling convention (Issue 3280 reproducer)" begin
+    p = [0.5]
+    dp = zero(p)
+    Enzyme.autodiff(set_runtime_activity(Reverse), Enzyme.Const(loss_3280), Enzyme.Active,
+        Enzyme.Duplicated(p, dp))
+    @test dp ≈ [1.0]
+end
+
+mutable struct SetpropertyBox
+    x::Vector{Float64}
+end
+
+function loss_setproperty_mwe(x)
+    box = SetpropertyBox(zeros(length(x)))
+    setproperty!(Base.inferencebarrier(box), Base.inferencebarrier(:x), x)
+    return sum(abs2, box.x)
+end
+
+@testset "Forward type-unstable setproperty! with runtime activity" begin
+    @test Enzyme.autodiff(
+        Enzyme.Forward,
+        Enzyme.Const(loss_setproperty_mwe),
+        Enzyme.Duplicated([0.5], [1.0]),
+    ) == (1.0,)
+
+    @test Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Enzyme.Forward),
+        Enzyme.Const(loss_setproperty_mwe),
+        Enzyme.Duplicated([0.5], [1.0]),
+    ) == (1.0,)
+end

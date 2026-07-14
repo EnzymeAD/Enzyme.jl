@@ -703,6 +703,20 @@ f_typed_global(x) = x^2 * TYPED_VAL
     @test Enzyme.autodiff(Reverse, f_typed_global, Active, Active(3.0))[1][1] ≈ 12.0
 end
 
+const GLOB_DICT_3311 = Dict{Int, Int}()
+function f_glob_dict_3311(x)
+    get(GLOB_DICT_3311, 1, nothing)
+    GLOB_DICT_3311[1] = 2
+    get(GLOB_DICT_3311, 1, nothing)
+    return x
+end
+
+@testset "Global Dict mutation and constant folding" begin
+    empty!(GLOB_DICT_3311)
+    res = Enzyme.autodiff(Forward, f_glob_dict_3311, Duplicated(1.0, 1.0))[1]
+    @test res ≈ 1.0
+end
+
 using LinearAlgebra
 
 struct WrapJ11{T, V}
@@ -767,3 +781,75 @@ end
     res = autodiff(set_runtime_activity(Reverse), loss_3206, Active, Active(0.4f0), Const(inters))
     @test res[1][1] ≈ 1.0f0
 end
+
+struct ReverseLossCallback_BCM{S, B}
+    sol::S
+    buffer::B
+end
+
+struct PresetTimeCallback_BCM{T, A}
+    times::T
+    affect!::A
+end
+
+struct CallbackSet_BCM{C}
+    callbacks::C
+end
+
+function separate_nonunique_bcm(t)
+    duplicates = filter(Returns(false), [(0.0, 1)])
+    occurrences = last.(duplicates)
+    duplicate_times = isempty(occurrences) ? nothing : [[0.0]]
+    return t, duplicate_times
+end
+
+make_buffer_bcm(::Val{:none}) = nothing
+make_buffer_bcm(::Val{:vector}) = Float64[]
+
+function generate_callbacks_bcm(solution_value, isdae, times, buffer_val)
+    t, duplicate_times = separate_nonunique_bcm(times)
+    solution = isdae ? solution_value : nothing
+    buffer = make_buffer_bcm(buffer_val)
+    
+    cb = PresetTimeCallback_BCM(
+        times,
+        ReverseLossCallback_BCM(solution, buffer)
+    )
+    
+    cb_set = if duplicate_times !== nothing
+        cb_duplicate = PresetTimeCallback_BCM(
+            duplicate_times[1],
+            ReverseLossCallback_BCM(solution, cb.affect!.buffer)
+        )
+        CallbackSet_BCM((cb, nothing, cb_duplicate))
+    else
+        CallbackSet_BCM((cb, nothing))
+    end
+    
+    return cb_set, duplicate_times
+end
+
+function differentiate_bcm(buffer_val)
+    solution = [0.5]
+    times = collect(range(0.0, 1.0, length = 5))
+    
+    return Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Enzyme.Forward),
+        Enzyme.Const(generate_callbacks_bcm),
+        Enzyme.Const(solution),
+        Enzyme.Const(false),
+        Enzyme.Duplicated(times, ones(length(times))),
+        Enzyme.Const(buffer_val)
+    )
+end
+
+@testset "OverrideBCMaterialize nothing propagation" begin
+    # Test Val(:none) (works previously)
+    res_none = differentiate_bcm(Val(:none))
+    @test res_none !== nothing
+    
+    # Test Val(:vector) (previously failed on 1.11 with IllegalTypeAnalysisException)
+    res_vector = differentiate_bcm(Val(:vector))
+    @test res_vector !== nothing
+end
+

@@ -453,39 +453,50 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
     icvs = [is_constant_value(gutils, v) for v in ops]
     abs_partial = [abs_typeof(v, true) for v in ops]
     abs = [abs_typeof(v) for v in ops]
+    legalRT, structRT = abs_typeof(orig)
 
     @assert length(icvs) == length(abs)
-    for (icv, (found_partial, typ_partial, byref_partial), (found, typ, byref)) in
-        zip(icvs, abs_partial, abs)
-        # Constants not handled unless known inactive from type
-        if icv
-            if !found_partial
-                return false
-            end
-            if !get_runtime_activity(gutils)                
-                if !guaranteed_const_nongen(typ_partial, world)
+    for (icv, (found_partial, typ_partial, byref_partial), (found, typ, byref), idx) in
+        zip(icvs, abs_partial, abs, 1:length(ops))
+        if !fwd
+            # Constants not handled unless known inactive from type
+            if icv
+                if !found_partial
                     return false
                 end
+                if !get_runtime_activity(gutils)                
+                    if !guaranteed_const_nongen(typ_partial, world)
+                        return false
+                    end
+                else
+                    # In the special case of runtime activity if the argument is constant,
+                    # we still support that, storing the constant value into the struct, so
+                    # long as the struct element we are storing itself contains no direct
+                    # active data [aka is pure duplicated, or const], since we will then
+                    # still preserve the primal === shadow pointer relationships for anything
+                    # stored.
+                    if !guaranteed_nonactive(typ_partial, world; AbstractIsMixed=true)
+                        bypass = false
+                        if legalRT
+                            desc = Base.DataTypeFieldDesc(structRT)
+                            if desc[idx].isptr
+                                bypass = true
+                            end
+                        end
+                        if !bypass
+                            return false
+                        end
+                    end
+                end
             else
-                # In the special case of runtime activity if the argument is constant,
-                # we still support that, storing the constant value into the struct, so
-                # long as the struct element we are storing itself contains no direct
-                # active data [aka is pure duplicated, or const], since we will then
-                # still preserve the primal === shadow pointer relationships for anything
-                # stored.
+                # if any active [e.g. ActiveState / MixedState] data could exist
+                # err
+                if !found_partial
+                    return false
+                end
                 if !guaranteed_nonactive(typ_partial, world; AbstractIsMixed=true)
                     return false
                 end
-            end
-        end
-        # if any active [e.g. ActiveState / MixedState] data could exist
-        # err
-        if !fwd
-            if !found_partial
-                return false
-            end
-            if !guaranteed_nonactive(typ_partial, world; AbstractIsMixed=true)
-                return false
             end
         end
     end
@@ -1215,8 +1226,8 @@ function rt_jl_getfield_aug(
     dptr::T,
     ::Type{Val{symname}},
     ::Val{isconst},
-    dptrs::Vararg{T2,Nargs},
-) where {NT,T,T2,Nargs,symname,isconst}
+    dptrs::Vararg{T,Nargs},
+) where {NT,T,Nargs,symname,isconst}
     res = if dptr isa Base.RefValue
         Base.getfield(dptr[], symname)
     else
@@ -1263,8 +1274,8 @@ function idx_jl_getfield_aug(
     dptr::T,
     ::Type{Val{symname}},
     ::Val{isconst},
-    dptrs::Vararg{T2,Nargs},
-) where {NT,T,T2,Nargs,symname,isconst}
+    dptrs::Vararg{T,Nargs},
+) where {NT,T,Nargs,symname,isconst}
     res = if dptr isa Base.RefValue
         Base.getfield(dptr[], symname + 1)
     else
@@ -1332,8 +1343,8 @@ function rt_jl_getfield_rev(
     dret,
     ::Type{Val{symname}},
     ::Val{isconst},
-    dptrs::Vararg{T2,Nargs},
-) where {T,T2,Nargs,symname,isconst}
+    dptrs::Vararg{T,Nargs},
+) where {T,Nargs,symname,isconst}
     cur = if dptr isa Base.RefValue
         getfield(dptr[], symname)
     else
@@ -1414,8 +1425,8 @@ function idx_jl_getfield_rev(
     dret,
     ::Type{Val{symname}},
     ::Val{isconst},
-    dptrs::Vararg{T2,Nargs},
-) where {T,T2,Nargs,symname,isconst}
+    dptrs::Vararg{T,Nargs},
+) where {T,Nargs,symname,isconst}
     cur = if dptr isa Base.RefValue
         Base.getfield(dptr[], symname + 1)
     else
@@ -1649,7 +1660,7 @@ end
             API.VT_Primal,
         ]
 
-        shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false; force_run=is_constant_value(gutils, operands(orig)[1]))::LLVM.Value
+        shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false, "nthfield"; force_run=is_constant_value(gutils, operands(orig)[1]))::LLVM.Value
 
         unsafe_store!(shadowR, shadowres.ref)
     else
@@ -1879,7 +1890,8 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
             orig,
             args,
             valTys,
-            false;
+            false,
+            "setfield";
             cmpidx = 4 + (offset - 1),
             need_result = false
         ) #=lookup=#

@@ -47,6 +47,8 @@ module FFI
             "jl_new_task",
             "malloc",
             "free",
+            "realloc",
+            "calloc",
             "memmove",
             "memcpy",
             "memset",
@@ -144,11 +146,93 @@ end
 
 import GPUCompiler: IRError, InvalidIRError
 
+# Fetch the pointer recorded for later `restore_lookups` on `f`, if any.
+function restoration_ptr(f::LLVM.Function)::Union{UInt, Nothing}
+    for fattr in collect(function_attributes(f))
+        if isa(fattr, LLVM.StringAttribute) && kind(fattr) == "enzymejl_needs_restoration"
+            return parse(UInt, LLVM.value(fattr))
+        end
+    end
+    return nothing
+end
+
+struct DlInfo
+    fname::Ptr{Cchar}
+    fbase::Ptr{Cvoid}
+    sname::Ptr{Cchar}
+    saddr::Ptr{Cvoid}
+end
+
+# `jl_lookup_code_address` reports the nearest preceding symbol for a C pointer, so on
+# platforms with incomplete symbol info (notably Windows, where lookups only see DLL
+# exports) two distinct pointers can be attributed to the same symbol name. Verify a
+# reported name by asking the loader which module contains `ptr` and resolving `fn`
+# within exactly that module; comparing the resulting address against `ptr` is
+# alias-safe and independent of the nearest-symbol guess. The lookup is deliberately
+# scoped to `ptr`'s own module: a process-wide search could find an unrelated library's
+# copy of the symbol and misreport a correct name as wrong. Returns:
+#   :match    — the name resolves to `ptr`
+#   :mismatch — the name resolves to a different pointer, so it is the wrong name for `ptr`
+#   :unknown  — the name could not be resolved
+function resolve_symbol_name(fn::String, file::String, ptr::Ptr{Cvoid})::Symbol
+    hnd = C_NULL
+    needsclose = false
+    @static if Sys.iswindows()
+        # GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT
+        href = Ref{Ptr{Cvoid}}(C_NULL)
+        if ccall(
+                :GetModuleHandleExW,
+                stdcall,
+                Cint,
+                (UInt32, Ptr{Cvoid}, Ptr{Ptr{Cvoid}}),
+                UInt32(0x06),
+                ptr,
+                href,
+            ) != 0
+            hnd = href[]
+        end
+    else
+        info = Ref(DlInfo(C_NULL, C_NULL, C_NULL, C_NULL))
+        if ccall(:dladdr, Cint, (Ptr{Cvoid}, Ref{DlInfo}), ptr, info) != 0 &&
+                info[].fname != C_NULL
+            lib = Libdl.dlopen(
+                unsafe_string(info[].fname),
+                Libdl.RTLD_LAZY | Libdl.RTLD_NOLOAD;
+                throw_error = false,
+            )
+            if lib !== nothing
+                hnd = lib
+                needsclose = true
+            end
+        end
+    end
+    if hnd == C_NULL && !isempty(file)
+        # Fall back to the object `jl_lookup_code_address` reported (on Windows this is
+        # the containing DLL; on Linux/macOS it is a source path, which fails to load).
+        lib = Libdl.dlopen(file, Libdl.RTLD_LAZY | Libdl.RTLD_NOLOAD; throw_error = false)
+        if lib !== nothing
+            hnd = lib
+            needsclose = true
+        end
+    end
+    if hnd == C_NULL
+        return :unknown
+    end
+    resolved = Libdl.dlsym(hnd, fn; throw_error = false)
+    if needsclose
+        Libdl.dlclose(hnd)
+    end
+    if resolved === nothing
+        return :unknown
+    end
+    return resolved == ptr ? (:match) : (:mismatch)
+end
+
 function restore_lookups(mod::LLVM.Module)::Nothing
     T_size_t = convert(LLVM.LLVMType, Int)
     for f in functions(mod)
         nm = LLVM.name(f)
-        if nm == "malloc" || nm == "free"
+        if nm == "malloc" || nm == "free" || nm == "realloc" || nm == "calloc"
             continue
         end
         for fattr in collect(function_attributes(f))
@@ -172,7 +256,7 @@ function restore_lookups(mod::LLVM.Module)::Nothing
         if haskey(functions(mod), k)
             f = functions(mod)[k]
 
-            if k == "malloc" || k == "free"
+            if k == "malloc" || k == "free" || k == "realloc" || k == "calloc"
                 if VERSION < v"1.11" || !Sys.iswindows()
                     continue
                 end
@@ -184,7 +268,8 @@ function restore_lookups(mod::LLVM.Module)::Nothing
                 # we adjust to that allocator.
                 repname = "ejlstr\$$k\$msvcrt"
 
-                repf, _ = get_function!(mod, repname, LLVM.function_type(f))
+                attrs = LLVM.Attribute[StringAttribute("enzyme_math", k)]
+                repf, _ = get_function!(mod, repname, LLVM.function_type(f), attrs)
 
                 replace_uses!(
                     f,
@@ -260,6 +345,99 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     return errors
 end
 
+function try_replace_constant_load!(inst::LLVM.Instruction; check_mutability::Bool=true, do_replace::Bool=true)::LLVM.Value
+    if !(isa(value_type(inst), LLVM.PointerType) && addrspace(value_type(inst)) == Tracked)
+        return inst
+    end
+    inst0, _ = get_base_and_offset(inst; offsetAllowed = false, inttoptr = true)
+    if !(isa(inst0, LLVM.LoadInst) && addrspace(value_type(operands(inst0)[1])) == 0)
+        return inst
+    end
+    addr = operands(inst0)[1]
+    addr, off = get_base_and_offset(addr; offsetAllowed = true, inttoptr = true)
+    gname = nothing
+    load1 = false
+    originally_tracked = false
+    originally_tracked_load = false
+    if isa(addr, LLVM.GlobalVariable) && (haskey(metadata(addr), "julia.constgv") || !check_mutability)
+        paddr = addr
+        addr = LLVM.initializer(paddr)
+        gname = LLVM.name(paddr) * "\$false"
+        addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
+        originally_tracked = true
+    elseif isa(addr, LLVM.LoadInst)
+        paddr = operands(addr)[1]
+        if isa(paddr, LLVM.GlobalVariable) && (haskey(metadata(paddr), "julia.constgv") || !check_mutability)
+            addr = LLVM.initializer(paddr)
+            gname = LLVM.name(paddr) * "\$true"
+            base_addr, _ = get_base_and_offset(addr; offsetAllowed = true, inttoptr = false)
+            originally_tracked = true
+            addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
+            load1 = true
+            originally_tracked_load = true
+        end
+    elseif isa(addr, LLVM.ConstantInt)
+        gname = string(convert(UInt, addr)) * "\$true"
+        load1 = true
+    end
+
+    if isa(addr, LLVM.ConstantInt)
+        if check_mutability && originally_tracked
+            ptr0 = Base.reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, addr))
+            obj0 = Base.unsafe_pointer_to_objref(ptr0)
+            if obj0 === nothing
+                return inst
+            end
+
+            # If we are loading from the object, or there is not expected to already be
+            # one level of indirection [e.g. binding], we are actually loading from within
+            # the global object itself.
+            if originally_tracked_load || !isa(obj0, Core.Binding)
+                # If mutable object the inner object may not be the same at runtime
+                if isstructtype(Core.Typeof(obj0)) && ismutable(obj0) && nameof(Core.Typeof(obj0)) !== :GenericMemory
+                    return inst
+                end
+            end
+        end
+
+        initaddr = convert(UInt, addr) + off
+        if gname isa String
+            gname = gname * "\$$initaddr"
+        end
+        ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
+        if load1
+            ptr = Base.unsafe_load(ptr, :unordered)
+            if ptr == C_NULL
+                return inst
+            end
+        end
+        obj = Base.unsafe_pointer_to_objref(ptr)
+        if obj === nothing
+            return inst
+        end
+
+        obj0 = obj
+
+        # TODO we can use this to make it properly relocatable
+        if isa(obj, Core.Binding)
+            obj = obj.value
+            if gname === nothing
+                obj0 = obj
+            end
+        end
+
+        b = IRBuilder()
+        position!(b, inst)
+        newf = unsafe_to_llvm(b, obj0; insert_name_if_not_exists = gname)
+        if do_replace
+            replace_uses!(inst, newf)
+            LLVM.API.LLVMInstructionEraseFromParent(inst)
+        end
+        return newf
+    end
+    return inst
+end
+
 function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, f::LLVM.Function, deletedfns::Vector{LLVM.Function}, mod::LLVM.Module)
     calls = LLVM.CallInst[]
     isInline = API.EnzymeGetCLBool(cglobal((:EnzymeInline, API.libEnzyme))) != 0
@@ -270,71 +448,8 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             inst = LLVM.Instruction(iter)
             iter = LLVM.API.LLVMGetNextInstruction(iter)
 
-            if isa(value_type(inst), LLVM.PointerType) && addrspace(value_type(inst)) == Tracked
-                inst0, _ = get_base_and_offset(inst; offsetAllowed = false, inttoptr = true)
-                if isa(inst0, LLVM.LoadInst) && addrspace(value_type(operands(inst0)[1])) == 0
-                    addr = operands(inst0)[1]
-                    addr, off = get_base_and_offset(addr; offsetAllowed = true, inttoptr = true)
-                    gname = nothing
-                    load1 = false
-                    if isa(addr, LLVM.GlobalVariable) && haskey(metadata(addr), "julia.constgv")
-                        paddr = addr
-                        addr = LLVM.initializer(paddr)
-                        gname = LLVM.name(paddr) * "\$false"
-                        addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
-                    elseif isa(addr, LLVM.LoadInst)
-                        paddr = operands(addr)[1]
-                        if isa(paddr, LLVM.GlobalVariable) && haskey(metadata(paddr), "julia.constgv")
-                            addr = LLVM.initializer(paddr)
-                            gname = LLVM.name(paddr) * "\$true"
-                            addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
-                            load1 = true
-                        end
-                    elseif isa(addr, LLVM.ConstantInt)
-                        gname = string(convert(UInt, addr)) * "\$true"
-                        load1 = true
-                    end
-
-                    if isa(addr, LLVM.ConstantInt)
-
-                        initaddr = convert(UInt, addr) + off
-                        if gname isa String
-                            gname = gname * "\$$initaddr"
-                        end
-                        ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
-                        if load1
-                            ptr = Base.unsafe_load(ptr, :unordered)
-                            if ptr == C_NULL
-                                continue
-                            end
-                        end
-                        obj = Base.unsafe_pointer_to_objref(ptr)
-                        if obj === nothing
-                            continue
-                        end
-                        obj0 = obj
-
-                        # TODO we can use this to make it properly relocatable
-                        if isa(obj, Core.Binding)
-                            obj = obj.value
-                            if gname === nothing
-                                obj0 = obj
-                            end
-                        end
-
-                        # We really don't want to mess with the atomic baked in loads here
-                        #if obj isa Base.ReentrantLock
-                        #   continue
-                        #end
-
-                        b = IRBuilder()
-                        position!(b, inst)
-                        newf = unsafe_to_llvm(b, obj0; insert_name_if_not_exists = gname)
-                        replace_uses!(inst, newf)
-                        LLVM.API.LLVMInstructionEraseFromParent(inst)
-                        continue
-                    end
-                end
+            if try_replace_constant_load!(inst; check_mutability=true, do_replace=true) != inst
+                continue
             end
             if isa(inst, LLVM.CallInst)
                 push!(calls, inst)
@@ -753,8 +868,13 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     bt = backtrace(inst)
     dest = called_operand(inst)
 
-    if isa(dest, LLVM.PHIInst) && all(Base.Fix1(==, operands(dest)[1]), operands(dest))
+    if isa(dest, LLVM.PHIInst) && !isempty(operands(dest)) && all(Base.Fix1(==, operands(dest)[1]), operands(dest))
         dest = operands(dest)[1]
+        LLVM.API.LLVMSetOperand(
+            inst,
+            LLVM.API.LLVMGetNumOperands(inst) - 1,
+            dest,
+        )
     end
     if isa(dest, LLVM.ConstantExpr) && opcode(dest) == LLVM.API.LLVMIntToPtr && isa(operands(dest)[1], LLVM.ConstantExpr) && opcode(operands(dest)[1]) == LLVM.API.LLVMPtrToInt
         dest = operands(operands(dest)[1])[1]
@@ -802,7 +922,11 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             ofn = LLVM.parent(LLVM.parent(inst))
             mod = LLVM.parent(ofn)
 
-            arg1, _ = get_base_and_offset(operands(inst)[1]; offsetAllowed = false, inttoptr = true)
+            op1 = operands(inst)[1]
+            if isa(op1, LLVM.Instruction)
+                op1 = try_replace_constant_load!(op1; check_mutability=false, do_replace=false)
+            end
+            arg1, _ = get_base_and_offset(op1; offsetAllowed = false, inttoptr = true)
             if isa(arg1, LLVM.ConstantInt)
                 arg1 = reinterpret(Ptr{Cvoid}, convert(UInt, arg1))
                 legal2, fname = abs_cstring(operands(inst)[2])
@@ -851,8 +975,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                         end
                                         replace_uses!(
                                             ld,
-                                            LLVM.inttoptr!(
-                                                b,
+                                            LLVM.const_inttoptr(
                                                 replaceWith,
                                                 value_type(inst),
                                             ),
@@ -862,9 +985,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                             end
                         end
 
-                        b = IRBuilder()
-                        position!(b, inst)
-                        replacement = LLVM.inttoptr!(b, replaceWith, value_type(inst))
+                        replacement = LLVM.const_inttoptr(replaceWith, value_type(inst))
                         for u in LLVM.uses(inst)
                             u = LLVM.user(u)
                             if isa(u, LLVM.CallInst)
@@ -890,8 +1011,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                             end
                                             replace_uses!(
                                                 u,
-                                                LLVM.inttoptr!(
-                                                    b,
+                                                LLVM.const_inttoptr(
                                                     replaceWith,
                                                     value_type(u),
                                                 ),
@@ -915,6 +1035,9 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             ops = arg_operands_view(inst)
             @assert length(ops) == 2
             flib = ops[1]
+            if isa(flib, LLVM.Instruction)
+                flib = try_replace_constant_load!(flib; check_mutability=false, do_replace=false)
+            end
             if isa(flib, LLVM.ConstantExpr) || isa(flib, LLVM.GlobalVariable)
                 legal, flib2 = absint(flib)
                 if legal
@@ -943,7 +1066,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             end
 
             # Julia 1.13+: fname is an ejl_inserted GlobalVariable holding a Julia Symbol.
-            if !isa(fname, String) && isa(fname_llvm, LLVM.GlobalVariable)
+            if !isa(fname, String)
                 legal2, sym = absint(fname_llvm)
                 if legal2
                     sym = unbind(sym)
@@ -955,7 +1078,6 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                     end
                 end
             end
-
             if !isa(fname, String)
                 return
             end
@@ -968,10 +1090,10 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             else
                 try
                     Libdl.dlpath(flib)
-                catch
+                catch err
                     try
                         Libdl.dlpath(Libdl.dlopen(flib))
-                    catch
+                    catch err2
                         nothing
                     end
                 end
@@ -1014,21 +1136,16 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         for u in LLVM.uses(ptr)
                             ld = LLVM.user(u)
                             if isa(ld, LLVM.LoadInst)
-                                b = IRBuilder()
-                                position!(b, ld)
                                 replace_uses!(
                                     ld,
-                                    LLVM.pointercast!(b, replaceWith, value_type(inst)),
+                                    LLVM.const_pointercast(replaceWith, value_type(inst)),
                                 )
                             end
                         end
                     end
                 end
 
-                b = IRBuilder()
-
-                position!(b, inst)
-                replace_uses!(inst, LLVM.pointercast!(b, replaceWith, value_type(inst)))
+                replace_uses!(inst, LLVM.const_pointercast(replaceWith, value_type(inst)))
                 LLVM.API.LLVMInstructionEraseFromParent(inst)
 
             else
@@ -1090,16 +1207,14 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                     end
                                     replace_uses!(
                                         ld,
-                                        LLVM.inttoptr!(b, replaceWith, value_type(inst)),
+                                        LLVM.const_inttoptr(replaceWith, value_type(inst)),
                                     )
                                 end
                             end
                         end
                     end
 
-                    b = IRBuilder()
-                    position!(b, inst)
-                    replacement = LLVM.inttoptr!(b, replaceWith, value_type(inst))
+                    replacement = LLVM.const_inttoptr(replaceWith, value_type(inst))
                     for u in LLVM.uses(inst)
                         u = LLVM.user(u)
                         if isa(u, LLVM.CallInst)
@@ -1125,7 +1240,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                         end
                                         replace_uses!(
                                             u,
-                                            LLVM.inttoptr!(b, replaceWith, value_type(u)),
+                                            LLVM.const_inttoptr(replaceWith, value_type(u)),
                                         )
                                     end
                                 end
@@ -1342,9 +1457,30 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                     else
                         fn = FFI.memoize!(ptr, fn)
 
+                        # Names from `jl_lookup_code_address` are nearest-symbol guesses;
+                        # a wrong guess maps two distinct pointers to one name (seen on
+                        # Windows with `__gmpz_init2`/`__gmpz_set_si`). Drop names that
+                        # provably belong to a different address. Curated `FFI.ptr_map`
+                        # names are trusted as-is.
+                        if length(fn) > 0 && !haskey(FFI.ptr_map, ptr) &&
+                                resolve_symbol_name(fn, string(file), ptr) == :mismatch
+                            fn = ""
+                        end
+
                         if length(fn) > 0
                             mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
                             lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
+                            if lfn != C_NULL
+                                # An earlier call site may have claimed this name for a
+                                # different pointer. Reusing its declaration would make
+                                # `restore_lookups` stamp that pointer onto this call site
+                                # too, so key the declaration by pointer instead.
+                                prev = restoration_ptr(LLVM.Function(lfn))
+                                if prev !== nothing && prev != reinterpret(UInt, ptr)
+                                    fn = string(fn, "\$", reinterpret(UInt, ptr))
+                                    lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
+                                end
+                            end
                             if lfn == C_NULL
                                 lfn = LLVM.API.LLVMAddFunction(
                                     mod,
@@ -1589,6 +1725,14 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world
                     throw(AssertionError(msg))
                 end
                 continue
+            elseif isa(al, LLVM.GlobalVariable)
+                name_gv = LLVM.name(al)
+                if haskey(JuliaGlobalNameMap, name_gv)
+                    val = JuliaGlobalNameMap[name_gv]
+                    if guaranteed_nonactive(Core.Typeof(val), world)
+                        continue
+                    end
+                end
             end
         end
 

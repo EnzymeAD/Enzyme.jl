@@ -1308,21 +1308,26 @@ function abstract_call_known(
     let ft = Core.Compiler.widenconst(argtypes[1])
         if ft isa DataType && ft.name.name == Symbol("#do_ccall") && string(ft.name.module) == "FunctionWrappers"
             ft2 = Core.Compiler.widenconst(argtypes[2])
-            Ret = ft2.parameters[1]
-            ArgsT = ft2.parameters[2]
-            arginfo2 = ArgInfo(
-                fargs isa Nothing ? nothing :
-                [:(FuncWrapperRewriter{Ret, ArgsT}), fargs[2:end]...],
-                [Core.Const(FuncWrapperRewriter{Ret, ArgsT}()), argtypes[2:end]...],
-            )
-            return Base.@invoke abstract_call_known(
-                interp::AbstractInterpreter,
-                FuncWrapperRewriter{Ret, ArgsT}(),
-                arginfo2::ArgInfo,
-                si::StmtInfo,
-                sv::AbsIntState,
-                max_methods::Int,
-            )
+            # The FunctionWrapper type may be only partially known during
+            # abstract interpretation (a UnionAll), rewrite only fully
+            # determined calls:
+            if ft2 isa DataType && length(ft2.parameters) >= 2
+                Ret = ft2.parameters[1]
+                ArgsT = ft2.parameters[2]
+                arginfo2 = ArgInfo(
+                    fargs isa Nothing ? nothing :
+                    [:(FuncWrapperRewriter{Ret, ArgsT}), fargs[2:end]...],
+                    [Core.Const(FuncWrapperRewriter{Ret, ArgsT}()), argtypes[2:end]...],
+                )
+                return Base.@invoke abstract_call_known(
+                    interp::AbstractInterpreter,
+                    FuncWrapperRewriter{Ret, ArgsT}(),
+                    arginfo2::ArgInfo,
+                    si::StmtInfo,
+                    sv::AbsIntState,
+                    max_methods::Int,
+                )
+            end
         end
     end
 

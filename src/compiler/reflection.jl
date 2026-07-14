@@ -99,6 +99,7 @@ function enzyme_code_llvm(
     debuginfo::Symbol = :default,
     dump_module::Bool = false,
     mode = API.DEM_ReverseModeCombined,
+    kwargs...
 )
     if mode == API.DEM_ForwardMode
         if A <: Active
@@ -111,7 +112,7 @@ function enzyme_code_llvm(
         end
     end
     JuliaContext() do ctx
-        entry_fn, ir = reflect(func, A, types; optimize, run_enzyme, second_stage, mode)
+        entry_fn, ir = reflect(func, A, types; optimize, run_enzyme, second_stage, mode, kwargs...)
         ts_mod = ThreadSafeModule(ir)
         GC.@preserve ts_mod entry_fn begin
             value = Ref(jl_llvmf_dump(ts_mod.ref, entry_fn.ref))

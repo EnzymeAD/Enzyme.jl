@@ -93,7 +93,9 @@ end
 GPUCompiler.llvm_triple(target::EnzymeTarget) = GPUCompiler.llvm_triple(target.target)
 GPUCompiler.llvm_datalayout(target::EnzymeTarget) = GPUCompiler.llvm_datalayout(target.target)
 GPUCompiler.llvm_machine(target::EnzymeTarget) = GPUCompiler.llvm_machine(target.target)
-GPUCompiler.llvm_targetinfo(target::EnzymeTarget) = GPUCompiler.llvm_targetinfo(target.target)
+if isdefined(GPUCompiler, :llvm_targetinfo)
+    GPUCompiler.llvm_targetinfo(target::EnzymeTarget) = GPUCompiler.llvm_targetinfo(target.target)
+end
 GPUCompiler.nest_target(::EnzymeTarget, other::AbstractCompilerTarget) = EnzymeTarget(other)
 GPUCompiler.have_fma(target::EnzymeTarget, T::Type) = GPUCompiler.have_fma(target.target, T)
 GPUCompiler.dwarf_version(target::EnzymeTarget) = GPUCompiler.dwarf_version(target.target)
@@ -358,6 +360,76 @@ const known_ops = Dict{DataType,Tuple{Symbol,Int,Union{Nothing,Tuple{Symbol,Data
     return nothing, nothing, nothing
 end
 
+const JuliaGlobalNameMap = Dict{String,Any}(
+    "jl_type_type" => Type,
+    "jl_any_type" => Any,
+    "jl_datatype_type" => DataType,
+    "jl_methtable_type" => Core.MethodTable,
+    "jl_symbol_type" => Symbol,
+    "jl_simplevector_type" => Core.SimpleVector,
+    "jl_nothing_type" => Nothing,
+    "jl_tvar_type" => TypeVar,
+    "jl_typeofbottom_type" => Core.TypeofBottom,
+    "jl_bottom_type" => Union{},
+    "jl_unionall_type" => UnionAll,
+    "jl_uniontype_type" => Union,
+    "jl_emptytuple_type" => Tuple{},
+    "jl_emptytuple" => (),
+    "jl_int8_type" => Int8,
+    "jl_uint8_type" => UInt8,
+    "jl_int16_type" => Int16,
+    "jl_uint16_type" => UInt16,
+    "jl_int32_type" => Int32,
+    "jl_uint32_type" => UInt32,
+    "jl_int64_type" => Int64,
+    "jl_uint64_type" => UInt64,
+    "jl_float16_type" => Float16,
+    "jl_float32_type" => Float32,
+    "jl_float64_type" => Float64,
+    "jl_ssavalue_type" => Core.SSAValue,
+    "jl_slotnumber_type" => Core.SlotNumber,
+    "jl_argument_type" => Core.Argument,
+    "jl_bool_type" => Bool,
+    "jl_char_type" => Char,
+    "jl_false" => false,
+    "jl_true" => true,
+    "jl_abstractstring_type" => AbstractString,
+    "jl_string_type" => String,
+    "jl_an_empty_string" => "",
+    "jl_function_type" => Function,
+    "jl_builtin_type" => Core.Builtin,
+    "jl_module_type" => Core.Module,
+    "jl_globalref_type" => Core.GlobalRef,
+    "jl_ref_type" => Ref,
+    "jl_pointer_typename" => Ptr,
+    "jl_voidpointer_type" => Ptr{Nothing},
+    "jl_abstractarray_type" => AbstractArray,
+    "jl_densearray_type" => DenseArray,
+    "jl_array_type" => Array,
+    "jl_array_any_type" => Array{Any,1},
+    "jl_array_symbol_type" => Array{Symbol,1},
+    "jl_array_uint8_type" => Array{UInt8,1},
+
+    # "jl_array_uint32_type" => Array{UInt32, 1},
+
+    "jl_array_int32_type" => Array{Int32,1},
+    "jl_expr_type" => Expr,
+    "jl_method_type" => Method,
+    "jl_method_instance_type" => Core.MethodInstance,
+    "jl_code_instance_type" => Core.CodeInstance,
+    "jl_const_type" => Core.Const,
+    "jl_llvmpointer_type" => Core.LLVMPtr,
+    "jl_namedtuple_type" => NamedTuple,
+    "jl_task_type" => Task,
+    "jl_uint8pointer_type" => Ptr{UInt8},
+    "jl_nothing" => nothing,
+    "jl_anytuple_type" => Tuple,
+    "jl_vararg_type" => Core.TypeofVararg,
+    "jl_opaque_closure_type" => Core.OpaqueClosure,
+    "jl_array_uint64_type" => Array{UInt64,1},
+    "jl_binding_type" => Core.Binding,
+)
+
 include("llvm/attrkinds.jl")
 include("llvm/attributes.jl")
 
@@ -450,76 +522,6 @@ const JuliaEnzymeNameMap = Dict{String,Any}(
     "enz_non_scalar_return_exc" => EnzymeNonScalarReturnException,
 )
 
-const JuliaGlobalNameMap = Dict{String,Any}(
-    "jl_type_type" => Type,
-    "jl_any_type" => Any,
-    "jl_datatype_type" => DataType,
-    "jl_methtable_type" => Core.MethodTable,
-    "jl_symbol_type" => Symbol,
-    "jl_simplevector_type" => Core.SimpleVector,
-    "jl_nothing_type" => Nothing,
-    "jl_tvar_type" => TypeVar,
-    "jl_typeofbottom_type" => Core.TypeofBottom,
-    "jl_bottom_type" => Union{},
-    "jl_unionall_type" => UnionAll,
-    "jl_uniontype_type" => Union,
-    "jl_emptytuple_type" => Tuple{},
-    "jl_emptytuple" => (),
-    "jl_int8_type" => Int8,
-    "jl_uint8_type" => UInt8,
-    "jl_int16_type" => Int16,
-    "jl_uint16_type" => UInt16,
-    "jl_int32_type" => Int32,
-    "jl_uint32_type" => UInt32,
-    "jl_int64_type" => Int64,
-    "jl_uint64_type" => UInt64,
-    "jl_float16_type" => Float16,
-    "jl_float32_type" => Float32,
-    "jl_float64_type" => Float64,
-    "jl_ssavalue_type" => Core.SSAValue,
-    "jl_slotnumber_type" => Core.SlotNumber,
-    "jl_argument_type" => Core.Argument,
-    "jl_bool_type" => Bool,
-    "jl_char_type" => Char,
-    "jl_false" => false,
-    "jl_true" => true,
-    "jl_abstractstring_type" => AbstractString,
-    "jl_string_type" => String,
-    "jl_an_empty_string" => "",
-    "jl_function_type" => Function,
-    "jl_builtin_type" => Core.Builtin,
-    "jl_module_type" => Core.Module,
-    "jl_globalref_type" => Core.GlobalRef,
-    "jl_ref_type" => Ref,
-    "jl_pointer_typename" => Ptr,
-    "jl_voidpointer_type" => Ptr{Nothing},
-    "jl_abstractarray_type" => AbstractArray,
-    "jl_densearray_type" => DenseArray,
-    "jl_array_type" => Array,
-    "jl_array_any_type" => Array{Any,1},
-    "jl_array_symbol_type" => Array{Symbol,1},
-    "jl_array_uint8_type" => Array{UInt8,1},
-
-    # "jl_array_uint32_type" => Array{UInt32, 1},
-
-    "jl_array_int32_type" => Array{Int32,1},
-    "jl_expr_type" => Expr,
-    "jl_method_type" => Method,
-    "jl_method_instance_type" => Core.MethodInstance,
-    "jl_code_instance_type" => Core.CodeInstance,
-    "jl_const_type" => Core.Const,
-    "jl_llvmpointer_type" => Core.LLVMPtr,
-    "jl_namedtuple_type" => NamedTuple,
-    "jl_task_type" => Task,
-    "jl_uint8pointer_type" => Ptr{UInt8},
-    "jl_nothing" => nothing,
-    "jl_anytuple_type" => Tuple,
-    "jl_vararg_type" => Core.TypeofVararg,
-    "jl_opaque_closure_type" => Core.OpaqueClosure,
-    "jl_array_uint64_type" => Array{UInt64,1},
-    "jl_binding_type" => Core.Binding,
-)
-
 include("absint.jl")
 include("llvm/transforms.jl")
 include("llvm/passes.jl")
@@ -529,6 +531,7 @@ function nested_codegen!(enzyme_context::EnzymeContext, mode::API.CDerivativeMod
     funcspec = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, typeof(f), tt, world)
     nested_codegen!(enzyme_context, mode, mod, funcspec, world)
 end
+
 
 function prepare_llvm(interp, mod::LLVM.Module, job, meta)
     for f in functions(mod)
@@ -1367,7 +1370,7 @@ function nested_codegen!(
 
     target = DefaultCompilerTarget()
     params = PrimalCompilerParams(mode)
-    job = CompilerJob(funcspec, CompilerConfig(target, params; kernel = false, libraries = true, toplevel = true, optimize = false, cleanup = false, only_entry = false, validate = false), world)
+    job = CompilerJob(funcspec, CompilerConfig(target, params; kernel = false, libraries = true, toplevel = true, optimize = false, cleanup = false, only_entry = false, validate = false, entry_abi = :specfunc), world)
 
     GPUCompiler.prepare_job!(job)
     otherMod, meta = GPUCompiler.emit_llvm(job)
@@ -2365,7 +2368,7 @@ for (k, v) in (
     ("enz_runtime_jl_getfield_aug", Enzyme.Compiler.rt_jl_getfield_aug),
     ("enz_runtime_jl_getfield_rev", Enzyme.Compiler.rt_jl_getfield_rev),
     ("enz_runtime_idx_jl_getfield_aug", Enzyme.Compiler.idx_jl_getfield_aug),
-    ("enz_runtime_idx_jl_getfield_rev", Enzyme.Compiler.idx_jl_getfield_aug),
+    ("enz_runtime_idx_jl_getfield_rev", Enzyme.Compiler.idx_jl_getfield_rev),
     ("enz_runtime_jl_setfield_aug", Enzyme.Compiler.rt_jl_setfield_aug),
     ("enz_runtime_jl_setfield_rev", Enzyme.Compiler.rt_jl_setfield_rev),
     ("enz_runtime_error_if_differentiable", Enzyme.Compiler.error_if_differentiable),
@@ -5337,6 +5340,35 @@ const DumpPreCheck = Ref(false)
 const DumpPostCheck = Ref(false)
 const DumpPreOpt = Ref(false)
 
+"""
+    link_split_existing!(mod::LLVM.Module, newmod::LLVM.Module)
+
+Link `newmod` into `mod` like `LLVM.link!(mod, newmod)`, but first rename any
+function that is defined in both modules. A function defined in `newmod` whose
+name already refers to a definition in `mod` is given a unique suffix in `newmod`
+before linking, so its definition is preserved as a distinct symbol instead of
+triggering a `symbol multiply defined` linker error.
+"""
+function link_split_existing!(mod::LLVM.Module, newmod::LLVM.Module)
+    modfns = functions(mod)
+    newfns = functions(newmod)
+    for f in collect(newfns)
+        isdeclaration(f) && continue
+        fname = LLVM.name(f)
+        haskey(modfns, fname) || continue
+        isdeclaration(modfns[fname]) && continue
+        newname = fname * "_split"
+        i = 0
+        while haskey(newfns, newname) || haskey(modfns, newname)
+            i += 1
+            newname = string(fname, "_split", i)
+        end
+        LLVM.name!(f, newname)
+    end
+    LLVM.link!(mod, newmod)
+    return nothing
+end
+
 function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     @assert output == :llvm
     
@@ -5387,7 +5419,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         cleanup = false,
         only_entry = false,
         validate = false,
-        # ??? entry_abi
+        entry_abi = :specfunc,
     )
     primal_job = CompilerJob(primal, primal_config, job.world)
     @safe_debug "Emit LLVM with" primal_job
@@ -5634,7 +5666,11 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     #     target_machine = JIT.get_tm()
     # else
     target_machine = GPUCompiler.llvm_machine(job.config.target)
-    target_info    = GPUCompiler.llvm_targetinfo(job.config.target)
+    target_info = if isdefined(GPUCompiler, :llvm_targetinfo)
+        GPUCompiler.llvm_targetinfo(job.config.target)
+    else
+        nothing
+    end
 
     parallel = false
     process_module = false
@@ -5683,6 +5719,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             end
         end
     end
+    replace_nothing_loads!(mod)
 
     seen = TypeTreeTable()
     T_jlvalue = LLVM.StructType(LLVMType[])
@@ -6072,7 +6109,7 @@ end
 
         # Link deferred modules
         for otherMod in enzyme_context.modules_to_link
-            LLVM.link!(mod, otherMod)
+            link_split_existing!(mod, otherMod)
         end
         empty!(enzyme_context.modules_to_link)
         toremove = String[]
@@ -6167,7 +6204,7 @@ end
 
                 # Link deferred modules generated by fnsToInject
                 for otherMod in enzyme_context.modules_to_link
-                    LLVM.link!(mod, otherMod)
+                    link_split_existing!(mod, otherMod)
                 end
                 empty!(enzyme_context.modules_to_link)
 
