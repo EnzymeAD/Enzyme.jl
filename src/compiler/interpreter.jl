@@ -539,6 +539,31 @@ import Core.Compiler:
     widenconst,
     MethodResultPure
 
+@static if VERSION >= v"1.12.0-"
+macro enzyme_invoke_abstract_call_known(interp, f, arginfo, si, vtypes, sv, max_methods)
+    return esc(:(Base.@invoke abstract_call_known(
+        $interp::AbstractInterpreter,
+        $f::Any,
+        $arginfo::ArgInfo,
+        $si::StmtInfo,
+        $vtypes::Union{Nothing, Vector{Core.Compiler.VarState}},
+        $sv::AbsIntState,
+        $max_methods::Int,
+    )))
+end
+else
+macro enzyme_invoke_abstract_call_known(interp, f, arginfo, si, vtypes, sv, max_methods)
+    return esc(:(Base.@invoke abstract_call_known(
+        $interp::AbstractInterpreter,
+        $f::Any,
+        $arginfo::ArgInfo,
+        $si::StmtInfo,
+        $sv::AbsIntState,
+        $max_methods::Int,
+    )))
+end
+end
+
 @static if VERSION < v"1.11.0-"
 else
     @inline function myunsafe_copyto!(dest::MemoryRef{T}, src::MemoryRef{T}, n) where {T}
@@ -1170,7 +1195,7 @@ end
 
 # Inferred eltype of result of broadcast(f, args...)
 function ty_combine_eltypes(state::NamedTuple, f, args::Tuple)::Core.Compiler.Future{Type}
-    (; interp, sv, max_methods) = state
+    (; interp, sv, max_methods, vtypes) = state
     argT = ty_eltypes(state, args)
     ret = Core.Compiler.Future{Type}()
     function finish_abstract_call(interp, sv)
@@ -1183,6 +1208,7 @@ function ty_combine_eltypes(state::NamedTuple, f, args::Tuple)::Core.Compiler.Fu
             interp,
             ArgInfo(nothing, Any[f, argT[].parameters...]),
             StmtInfo(true, false),
+            vtypes,
             sv,
             max_methods,
         )
@@ -1208,9 +1234,10 @@ struct broadcast_rewriter
     max_methods::Int
     f::Any
     arginfo::ArgInfo
+    vtypes::Any
 end
 function (bcr::broadcast_rewriter)(interp, sv)
-    (; ret, ElType, fargs, argtypes, si, max_methods, f, arginfo) = bcr
+    (; ret, ElType, fargs, argtypes, si, max_methods, f, arginfo, vtypes) = bcr
     isready(ElType) || return false
     ElType = ElType[]
     local retFuture
@@ -1220,25 +1247,27 @@ function (bcr::broadcast_rewriter)(interp, sv)
             fargs isa Nothing ? nothing : [:(fn2), fargs[2:end]...],
            [Core.Const(fn2), argtypes[2:end]...],
         )
-        retFuture = Base.@invoke abstract_call_known(
-            interp::AbstractInterpreter,
-            fn2::Any,
-            arginfo2::ArgInfo,
-            si::StmtInfo,
-            sv::AbsIntState,
-            max_methods::Int,
+        retFuture = @enzyme_invoke_abstract_call_known(
+            interp,
+            fn2,
+            arginfo2,
+            si,
+            vtypes,
+            sv,
+            max_methods,
         )
     else 
         if interp.handler != nothing
             return interp.handler(interp, f, arginfo, si, sv, max_methods)
         end
-        retFuture = Base.@invoke abstract_call_known(
-            interp::AbstractInterpreter,
-            f::Any,
-            arginfo::ArgInfo,
-            si::StmtInfo,
-            sv::AbsIntState,
-            max_methods::Int,
+        retFuture = @enzyme_invoke_abstract_call_known(
+            interp,
+            f,
+            arginfo,
+            si,
+            vtypes,
+            sv,
+            max_methods,
         )
     end
     
@@ -1261,11 +1290,12 @@ end
     return res::Ret
 end
 
-function abstract_call_known(
+function abstract_call_known_impl(
     interp::EnzymeInterpreter{Handler},
     @nospecialize(f),
     arginfo::ArgInfo,
     si::StmtInfo,
+    vtypes,
     sv::AbsIntState,
     max_methods::Int = get_max_methods(interp, f, sv),
 ) where Handler
@@ -1319,13 +1349,14 @@ function abstract_call_known(
                     [:(FuncWrapperRewriter{Ret, ArgsT}), fargs[2:end]...],
                     [Core.Const(FuncWrapperRewriter{Ret, ArgsT}()), argtypes[2:end]...],
                 )
-                return Base.@invoke abstract_call_known(
-                    interp::AbstractInterpreter,
+                return @enzyme_invoke_abstract_call_known(
+                    interp,
                     FuncWrapperRewriter{Ret, ArgsT}(),
-                    arginfo2::ArgInfo,
-                    si::StmtInfo,
-                    sv::AbsIntState,
-                    max_methods::Int,
+                    arginfo2,
+                    si,
+                    vtypes,
+                    sv,
+                    max_methods,
                 )
             end
         end
@@ -1345,13 +1376,14 @@ function abstract_call_known(
                     [Core.Const(Enzyme.Compiler.Interpreter.override_bc_copyto!), argtypes[2:end]...],
                 )
 
-                return Base.@invoke abstract_call_known(
-                    interp::AbstractInterpreter,
+                return @enzyme_invoke_abstract_call_known(
+                    interp,
                     Enzyme.Compiler.Interpreter.override_bc_copyto!::Any,
-                    arginfo2::ArgInfo,
-                    si::StmtInfo,
-                    sv::AbsIntState,
-                    max_methods::Int,
+                    arginfo2,
+                    si,
+                    vtypes,
+                    sv,
+                    max_methods,
                 )
             end
         end
@@ -1367,13 +1399,14 @@ function abstract_call_known(
                     [Core.Const(Enzyme.Compiler.Interpreter.override_bc_mapreduceimpl), argtypes[2:end]...],
                 )
 
-                return Base.@invoke abstract_call_known(
-                    interp::AbstractInterpreter,
+                return @enzyme_invoke_abstract_call_known(
+                    interp,
                     Enzyme.Compiler.Interpreter.override_bc_mapreduceimpl::Any,
-                    arginfo2::ArgInfo,
-                    si::StmtInfo,
-                    sv::AbsIntState,
-                    max_methods::Int,
+                    arginfo2,
+                    si,
+                    vtypes,
+                    sv,
+                    max_methods,
                 )
             end
         end
@@ -1387,13 +1420,14 @@ function abstract_call_known(
                     [Core.Const(Enzyme.Compiler.Interpreter.override_bc_mapreduce), argtypes[2:end]...],
                 )
 
-                return Base.@invoke abstract_call_known(
-                    interp::AbstractInterpreter,
+                return @enzyme_invoke_abstract_call_known(
+                    interp,
                     Enzyme.Compiler.Interpreter.override_bc_mapreduce::Any,
-                    arginfo2::ArgInfo,
-                    si::StmtInfo,
-                    sv::AbsIntState,
-                    max_methods::Int,
+                    arginfo2,
+                    si,
+                    vtypes,
+                    sv,
+                    max_methods,
                 )
             end
         end
@@ -1413,13 +1447,14 @@ function abstract_call_known(
                     [Core.Const(Enzyme.Compiler.Interpreter.override_bc_foldl), argtypes[2:end]...],
                 )
 
-                return Base.@invoke abstract_call_known(
-                    interp::AbstractInterpreter,
+                return @enzyme_invoke_abstract_call_known(
+                    interp,
                     Enzyme.Compiler.Interpreter.override_bc_foldl::Any,
-                    arginfo2::ArgInfo,
-                    si::StmtInfo,
-                    sv::AbsIntState,
-                    max_methods::Int,
+                    arginfo2,
+                    si,
+                    vtypes,
+                    sv,
+                    max_methods,
                 )
             end
         end
@@ -1437,20 +1472,21 @@ function abstract_call_known(
                 [:(Enzyme.Compiler.Interpreter.myunsafe_copyto!), fargs[2:end]...],
                 [Core.Const(Enzyme.Compiler.Interpreter.myunsafe_copyto!), argtypes[2:end]...],
             )
-            return Base.@invoke abstract_call_known(
-                interp::AbstractInterpreter,
+            return @enzyme_invoke_abstract_call_known(
+                interp,
                 Enzyme.Compiler.Interpreter.myunsafe_copyto!::Any,
-                arginfo2::ArgInfo,
-                si::StmtInfo,
-                sv::AbsIntState,
-                max_methods::Int,
+                arginfo2,
+                si,
+                vtypes,
+                sv,
+                max_methods,
             )
         end
     end
     if interp.broadcast_rewrite && f === Base.materialize && length(argtypes) == 2
             bcty = widenconst(argtypes[2])
             if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && bc_or_array_or_number_ty(bcty) && has_array(bcty)
-                ElType = ty_broadcast_getindex_eltype((; interp, sv, max_methods), bcty)
+                ElType = ty_broadcast_getindex_eltype((; interp, sv, max_methods, vtypes), bcty)
                 if VERSION < v"1.12"
                     if ElType !== Union{} && Base.isconcretetype(ElType)
                         fn2 = Enzyme.Compiler.Interpreter.OverrideBCMaterialize{ElType}()
@@ -1459,13 +1495,14 @@ function abstract_call_known(
                            [Core.Const(fn2), argtypes[2:end]...],
                         )
 
-                        return Base.@invoke abstract_call_known(
-                            interp::AbstractInterpreter,
-                            fn2::Any,
-                            arginfo2::ArgInfo,
-                            si::StmtInfo,
-                            sv::AbsIntState,
-                            max_methods::Int,
+                        return @enzyme_invoke_abstract_call_known(
+                            interp,
+                            fn2,
+                            arginfo2,
+                            si,
+                            vtypes,
+                            sv,
+                            max_methods,
                         )
                     end
                 else
@@ -1478,7 +1515,8 @@ function abstract_call_known(
                                 si,
                                 max_methods,
                                 f,
-                                arginfo)
+                                arginfo,
+                                vtypes)
                     bcr = bcr(interp, sv) || push!(sv.tasks, bcr)
                     return ret
                 end
@@ -1488,14 +1526,40 @@ function abstract_call_known(
         return interp.handler(interp, f, arginfo, si, sv, max_methods)
     end
     
-    return Base.@invoke abstract_call_known(
-        interp::AbstractInterpreter,
-        f::Any,
-        arginfo::ArgInfo,
-        si::StmtInfo,
-        sv::AbsIntState,
-        max_methods::Int,
+    return @enzyme_invoke_abstract_call_known(
+        interp,
+        f,
+        arginfo,
+        si,
+        vtypes,
+        sv,
+        max_methods,
     )
+end
+
+@static if VERSION >= v"1.12.0-"
+function abstract_call_known(
+    interp::EnzymeInterpreter{Handler},
+    @nospecialize(f),
+    arginfo::ArgInfo,
+    si::StmtInfo,
+    vtypes::Union{Nothing, Vector{Core.Compiler.VarState}},
+    sv::AbsIntState,
+    max_methods::Int = get_max_methods(interp, f, sv),
+) where Handler
+    abstract_call_known_impl(interp, f, arginfo, si, vtypes, sv, max_methods)
+end
+else
+function abstract_call_known(
+    interp::EnzymeInterpreter{Handler},
+    @nospecialize(f),
+    arginfo::ArgInfo,
+    si::StmtInfo,
+    sv::AbsIntState,
+    max_methods::Int = get_max_methods(interp, f, sv),
+) where Handler
+    abstract_call_known_impl(interp, f, arginfo, si, nothing, sv, max_methods)
+end
 end
 
 end
