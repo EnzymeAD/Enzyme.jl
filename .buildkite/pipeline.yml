@@ -70,7 +70,7 @@ steps:
       julia --color=yes -e '
           using Pkg
           pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
-          Pkg.develop(pkgs)' || exit 3
+          Pkg.develop(pkgs)
           Pkg.add([PackageSpec(; name="Metal")])' || exit 3
 
       echo "+++ Run tests"
