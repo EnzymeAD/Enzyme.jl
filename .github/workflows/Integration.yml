@@ -59,6 +59,7 @@ jobs:
           - MatrixAlgebraKit
           - Molly
           - MPI
+          - SpeedyWeather
           - Comrade
           - Turing
     steps:
