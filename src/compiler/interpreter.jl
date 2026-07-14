@@ -539,7 +539,9 @@ import Core.Compiler:
     widenconst,
     MethodResultPure
 
-@static if VERSION >= v"1.12.0-"
+const HAS_7ARG_ABSTRACT_CALL_KNOWN = any(m -> length(m.sig.parameters) == 8, methods(Core.Compiler.abstract_call_known))
+
+@static if HAS_7ARG_ABSTRACT_CALL_KNOWN
 macro enzyme_invoke_abstract_call_known(interp, f, arginfo, si, vtypes, sv, max_methods)
     return esc(:(Base.@invoke abstract_call_known(
         $interp::AbstractInterpreter,
@@ -1537,7 +1539,7 @@ function abstract_call_known_impl(
     )
 end
 
-@static if VERSION >= v"1.12.0-"
+@static if HAS_7ARG_ABSTRACT_CALL_KNOWN
 function abstract_call_known(
     interp::EnzymeInterpreter{Handler},
     @nospecialize(f),
