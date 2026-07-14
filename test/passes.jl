@@ -1,4 +1,5 @@
 using Enzyme, LLVM, Test
+using FileCheck
 import Libdl
 
 
@@ -262,3 +263,113 @@ end
         @test Enzyme.Compiler.restoration_ptr(functions(mod)["bar"]) === nothing
     end
 end
+
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3284
+# The `jl_get_abi_converter` lowering of `@cfunction` only exists on 1.12+, and
+# older Julia's LLVM cannot parse the opaque-pointer IR below.
+@static if VERSION >= v"1.12"
+
+    @testset "Rewrite abi converter calls (1.12 pattern)" begin
+        LLVM.Context() do ctx
+            # Shape of the `@cfunction` dispatch site emitted by Julia 1.12's
+            # codegen: `jl_get_abi_converter(ct, fptr, last_world, cfuncdata)` with
+            # a six-slot cfuncdata whose third slot holds the in-module
+            # `unspecialized` apply-generic thunk.
+            mod = parse(
+                LLVM.Module,
+                """
+                @jl_world_counter = external global i64
+                @fptr = private global ptr @gfthunk
+                @last_world = private global i64 0
+                @declrt = private global ptr null
+                @sigt = private global ptr null
+                @cfuncdata = private global [6 x ptr] [ptr null, ptr null, ptr @gfthunk, ptr @declrt, ptr @sigt, ptr inttoptr (i64 1 to ptr)]
+
+                declare ptr @jl_get_abi_converter(ptr, ptr, ptr, ptr)
+
+                define internal double @gfthunk(double %0) {
+                top:
+                  ret double %0
+                }
+
+                define double @trampoline(ptr %ct, double %x) {
+                top:
+                  %last_world = load atomic i64, ptr @last_world acquire, align 8
+                  %fptr = load atomic ptr, ptr @fptr monotonic, align 8
+                  %world = load atomic i64, ptr @jl_world_counter acquire, align 8
+                  %stale = icmp ne i64 %last_world, %world
+                  br i1 %stale, label %guard_pass, label %guard_exit
+
+                guard_pass:
+                  %cw = call ptr @jl_get_abi_converter(ptr %ct, ptr @fptr, ptr @last_world, ptr @cfuncdata)
+                  br label %guard_exit
+
+                guard_exit:
+                  %target = phi ptr [ %fptr, %top ], [ %cw, %guard_pass ]
+                  %res = call double %target(double %x)
+                  ret double %res
+                }
+                """,
+            )
+            Enzyme.Compiler.rewrite_abi_converter_calls!(mod)
+            @test @filecheck begin
+                @check_label "define double @trampoline"
+                @check_not "call ptr @jl_get_abi_converter"
+                @check "phi ptr [ %fptr, %top ], [ @gfthunk, %guard_pass ]"
+                string(mod)
+            end
+        end
+    end
+
+    @testset "Rewrite abi converter calls (1.13 pattern)" begin
+        LLVM.Context() do ctx
+            # Shape of the dispatch site emitted by Julia 1.13+:
+            # `jl_get_abi_converter(ct, cfuncdata)` with an eight-slot cfuncdata
+            # ([fptr, last_world, plast_codeinst, last_codeinst, unspecialized,
+            # declrt, sigt, flags]) whose fifth slot holds the thunk.
+            mod = parse(
+                LLVM.Module,
+                """
+                @jl_world_counter = external global i64
+                @declrt = private global ptr null
+                @sigt = private global ptr null
+                @cfuncdata = private global [8 x ptr] [ptr @gfthunk, ptr null, ptr null, ptr null, ptr @gfthunk, ptr @declrt, ptr @sigt, ptr inttoptr (i64 1 to ptr)]
+
+                declare ptr @ijl_get_abi_converter(ptr, ptr)
+
+                define internal double @gfthunk(double %0) {
+                top:
+                  ret double %0
+                }
+
+                define double @trampoline(ptr %ct, double %x) {
+                top:
+                  %last_world_p = getelementptr inbounds i64, ptr @cfuncdata, i32 1
+                  %last_world = load atomic i64, ptr %last_world_p acquire, align 8
+                  %fptr = load atomic ptr, ptr @cfuncdata monotonic, align 8
+                  %world = load atomic i64, ptr @jl_world_counter acquire, align 8
+                  %stale = icmp ne i64 %last_world, %world
+                  br i1 %stale, label %guard_pass, label %guard_exit
+
+                guard_pass:
+                  %cw = call ptr @ijl_get_abi_converter(ptr %ct, ptr @cfuncdata)
+                  br label %guard_exit
+
+                guard_exit:
+                  %target = phi ptr [ %fptr, %top ], [ %cw, %guard_pass ]
+                  %res = call double %target(double %x)
+                  ret double %res
+                }
+                """,
+            )
+            Enzyme.Compiler.rewrite_abi_converter_calls!(mod)
+            @test @filecheck begin
+                @check_label "define double @trampoline"
+                @check_not "call ptr @ijl_get_abi_converter"
+                @check "phi ptr [ %fptr, %top ], [ @gfthunk, %guard_pass ]"
+                string(mod)
+            end
+        end
+    end
+
+end # VERSION >= v"1.12"

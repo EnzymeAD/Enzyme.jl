@@ -612,6 +612,8 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
             end
         end
     end
+
+    return rewrite_abi_converter_calls!(mod)
 end
 
 include("compiler/optimize.jl")

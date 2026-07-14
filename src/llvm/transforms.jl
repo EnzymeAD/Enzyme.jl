@@ -297,6 +297,61 @@ function fixup_1p12_sret!(f::LLVM.Function)
     return
 end
 
+"""
+    rewrite_abi_converter_calls!(mod::LLVM.Module)
+
+Julia 1.12+ lowers `@cfunction` to a world-age-guarded dispatch site that calls
+`jl_get_abi_converter` to obtain a callable pointer for the target in the
+current world. That runtime resolver picks a code instance from the native JIT
+cache, which is the wrong one for GPUCompiler-emitted code: both its owner
+(`ci->owner`) and its ABI (compiled with `gcstack_arg = true`, i.e. pgcstack in
+the swiftself register) differ from this module (`gcstack_arg = false`), so the
+raw specsig pointer handed back is called with a mismatched ABI and reads a
+garbage GC stack out of the swiftself register (#3284).
+
+Rewrite each such site to act like `jl_apply_generic` instead: Julia's codegen
+already emitted an in-module `unspecialized` dispatcher thunk for every site
+(stored in the cfuncdata global) that boxes the arguments and dispatches via
+`jl_apply_generic`. That thunk was compiled with this module's own ABI and
+resolves the callee from the correct cache in the current world, so replace
+every `jl_get_abi_converter` call with it and let the world-age guard fold
+away.
+"""
+function rewrite_abi_converter_calls!(mod::LLVM.Module)
+    for fname in ("jl_get_abi_converter", "ijl_get_abi_converter")
+        if !haskey(functions(mod), fname)
+            continue
+        end
+        f = functions(mod)[fname]
+        for u in collect(LLVM.uses(f))
+            ci = LLVM.user(u)
+            if !isa(ci, LLVM.CallInst) || LLVM.called_operand(ci) != f
+                continue
+            end
+            # `jl_get_abi_converter(ct, data)` on 1.13+, `(ct, fptr, last_world, data)`
+            # on 1.12; the last argument is the cfuncdata global in both.
+            data = arguments(ci)[end]
+            if !isa(data, LLVM.GlobalVariable)
+                error("Enzyme internal error: expected cfuncdata global as last argument of $fname in $(string(ci))")
+            end
+            init = LLVM.initializer(data)
+            nslots = length(operands(init))
+            # struct cfuncdata_t: the unspecialized thunk is the 3rd field on 1.12
+            # ([plast_codeinst, last_codeinst, unspecialized, declrt, sigt, flags]) and
+            # the 5th on 1.13+ ([fptr, last_world, plast_codeinst, last_codeinst,
+            # unspecialized, declrt, sigt, flags]).
+            slot = nslots == 6 ? 3 : nslots == 8 ? 5 : error("Enzyme internal error: unknown cfuncdata layout with $nslots slots in $(string(data))")
+            unspec = operands(init)[slot]
+            if !isa(unspec, LLVM.Function)
+                error("Enzyme internal error: cfuncdata of $fname has no unspecialized dispatcher in $(string(data))")
+            end
+            replace_uses!(ci, unspec)
+            LLVM.erase!(ci)
+        end
+    end
+    return nothing
+end
+
 function force_recompute!(mod::LLVM.Module)
     for f in functions(mod), bb in blocks(f)
     iter = LLVM.API.LLVMGetFirstInstruction(bb)
