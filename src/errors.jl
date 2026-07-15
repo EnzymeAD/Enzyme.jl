@@ -724,7 +724,7 @@ function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
             printstyled(io, "Hint"; bold = true, color = :cyan)
             printstyled(
                 io,
-                ": catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\nIf you have Cthulhu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.";
+                ": catch this exception as `err` and call `code_typed(err)` to inspect the erroneous code.\nIf you have Cthulhu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.";
                 color = :cyan,
             )
         end
