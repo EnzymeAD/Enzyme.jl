@@ -33,7 +33,7 @@ end
 
 get_width(gutils::GradientUtils) = API.EnzymeGradientUtilsGetWidth(gutils)
 get_mode(gutils::GradientUtils) = API.EnzymeGradientUtilsGetMode(gutils)
-get_logic(gutils::GradientUtils) = API.EnzymeGradientUtilsGetLogic(gutils)
+get_logic(gutils::GradientUtils) = Logic(API.EnzymeGradientUtilsGetLogic(gutils))
 get_runtime_activity(gutils::GradientUtils) =
     API.EnzymeGradientUtilsGetRuntimeActivity(gutils)
 
@@ -157,7 +157,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function, forward_tys::Vect
                     ppr = preprocess(builder, args)
                 end
                 res = call!(builder, FT0, fn, rparms)
-                callconv!(res, callconv(fn))
+                LLVM.callconv!(res, LLVM.callconv(fn))
             end
 
             cmp = icmp!(builder, LLVM.API.LLVMIntNE, parms[1 + extra_rt], parms[1 + cmpidx + extra_rt])
@@ -170,7 +170,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function, forward_tys::Vect
                     ppr = preprocess(builder, rparms)
                 end
                 res = call!(builder, FT0, fn, rparms)
-                callconv!(res, callconv(fn))
+                LLVM.callconv!(res, LLVM.callconv(fn))
             end
             if postprocess !== nothing
                 postprocess(builder, res, rparms, ppr)
@@ -253,7 +253,7 @@ function call_same_with_inverted_arg_if_active!(
             valTys,
             lookup
         )
-        callconv!(res, callconv(orig))
+        LLVM.callconv!(res, LLVM.callconv(orig))
         debug_from_orig!(gutils, res, orig)
 
         if postprocess_const === nothing
@@ -282,7 +282,7 @@ function call_same_with_inverted_arg_if_active!(
     forward_tys = LLVM.LLVMType[value_type(a) for a in args]
     insert!(args, 1, new_from_original(gutils, origops[cmpidx]))
     newval = nothing
-    if value_type(orig) != LLVM.VoidType() && postprocess_const === nothing && need_result
+    if LLVM.value_type(orig) != LLVM.VoidType() && postprocess_const === nothing && need_result
         newval = new_from_original(gutils, orig)
         insert!(args, 1, newval)
     end
@@ -303,7 +303,7 @@ function call_same_with_inverted_arg_if_active!(
             false,
         ),
     ) #=lookup=#
-    callconv!(res, callconv(orig))
+    LLVM.callconv!(res, LLVM.callconv(orig))
 
     debug_from_orig!(gutils, res, orig)
     if movebefore && newval !== nothing
@@ -336,9 +336,9 @@ function batch_call_same_with_inverted_arg_if_active!(
 
     width = get_width(gutils)
 
-    void_rt = value_type(orig) ==LLVM.VoidType()
+    void_rt = LLVM.value_type(orig) ==LLVM.VoidType()
     shadow = if !void_rt && need_result
-        ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+        ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, LLVM.value_type(orig)))
         LLVM.UndefValue(ST)::LLVM.Value
     end
 
@@ -349,7 +349,7 @@ function batch_call_same_with_inverted_arg_if_active!(
             args2 = collect(LLVM.Value, args)
             for i in 1:length(valTys)
                 if valTys[i] == API.VT_Shadow
-                    args2[i] = extract_value!(B, args2[i], idx - 1)
+                    args2[i] = LLVM.extract_value!(B, args2[i], idx - 1)
                 end
             end
         end
@@ -360,7 +360,7 @@ function batch_call_same_with_inverted_arg_if_active!(
         if width == 1
             shadow = res
         else            
-            shadow = insert_value!(B, shadow, res, idx - 1)
+            shadow = LLVM.insert_value!(B, shadow, res, idx - 1)
             if idx == 1
                 norm = new_from_original(gutils, orig)
                 if norm == res
@@ -372,3 +372,5 @@ function batch_call_same_with_inverted_arg_if_active!(
 
     return shadow
 end
+
+enzyme_context(gutils::GradientUtils) = enzyme_context(get_logic(gutils))
