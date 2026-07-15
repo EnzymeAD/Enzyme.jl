@@ -122,8 +122,9 @@ jobs:
         # TODO restore coverage post https://github.com/JuliaGPU/GPUCompiler.jl/pull/711
         with:
           coverage: ${{ matrix.version != '1.11' || !matrix.assertions }}
-          test_args: ${{ env.runtest_test_args }} --threads=2
+          test_args: ${{ env.runtest_test_args }}
         env:
+          JULIA_NUM_THREADS: 2
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
           JULIA_LLVM_ARGS: ${{ matrix.llvm_args }}
       - uses: julia-actions/julia-processcoverage@v1
