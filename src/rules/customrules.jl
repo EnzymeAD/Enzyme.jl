@@ -667,13 +667,11 @@ function enzyme_custom_setup_args(
                     @assert orig_activep != activep
                     @assert orig_activep == API.DFT_CONSTANT
                     if val == nothing
-                        iarty_forload = if roots_op !== nothing
-                            strip_tracked_pointers(iarty)
-                        else
-                            iarty
-                        end
-                        ld = load!(B, iarty_forload, ogval, "rules_ival_load")
+                        ld = load!(B, iarty, ogval, "rules_ival_load")
                         metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+			if roots_op !== nothing
+                            ld = nullify_rooted_values!(B, ld)
+                        end
                         ld
                     else
                         val
@@ -732,13 +730,11 @@ function enzyme_custom_setup_args(
                          ival
                     else
                         if val == nothing
-                            iarty_forload = if roots_op !== nothing
-                                strip_tracked_pointers(iarty)
-                            else
-                                iarty
-                            end
-                            ld = load!(B, iarty_forload, ogval, "rules_bitsref_nonmixed")
+                            ld = load!(B, iarty, ogval, "rules_bitsref_nonmixed")
                             metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+			    if roots_op !== nothing
+                                ld = nullify_rooted_values!(B, ld)
+                            end
                             ld
                         else
                             val
