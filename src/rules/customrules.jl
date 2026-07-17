@@ -669,16 +669,19 @@ function enzyme_custom_setup_args(
                     if val == nothing
                         # The by-ref memory does not contain valid data for the
                         # inline-rooted pointer fields (those are passed via the
-                        # separate roots argument), so load a type with the
-                        # tracked pointers stripped to avoid forging GC pointers.
-                        iarty_forload = if roots_op !== nothing
-                            @assert width == 1
-                            strip_tracked_pointers(arty)
+                        # separate roots argument). Load a type with the tracked
+                        # pointers stripped to avoid forging GC pointers; for
+                        # batched widths nullify the rooted lanes instead.
+                        if roots_op !== nothing && width == 1
+                            ld = load!(B, strip_tracked_pointers(arty), ogval, "rules_ival_load")
+                            metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                         else
-                            iarty
+                            ld = load!(B, iarty, ogval, "rules_ival_load")
+                            metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                            if roots_op !== nothing
+                                ld = nullify_rooted_values!(B, ld)
+                            end
                         end
-                        ld = load!(B, iarty_forload, ogval, "rules_ival_load")
-                        metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                         ld
                     else
                         val
@@ -739,16 +742,19 @@ function enzyme_custom_setup_args(
                         if val == nothing
                             # The by-ref memory does not contain valid data for the
                             # inline-rooted pointer fields (those are passed via the
-                            # separate roots argument), so load a type with the
-                            # tracked pointers stripped to avoid forging GC pointers.
-                            iarty_forload = if roots_op !== nothing
-                                @assert width == 1
-                                strip_tracked_pointers(arty)
+                            # separate roots argument). Load a type with the tracked
+                            # pointers stripped to avoid forging GC pointers; for
+                            # batched widths nullify the rooted lanes instead.
+                            if roots_op !== nothing && width == 1
+                                ld = load!(B, strip_tracked_pointers(arty), ogval, "rules_bitsref_nonmixed")
+                                metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                             else
-                                iarty
+                                ld = load!(B, iarty, ogval, "rules_bitsref_nonmixed")
+                                metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                                if roots_op !== nothing
+                                    ld = nullify_rooted_values!(B, ld)
+                                end
                             end
-                            ld = load!(B, iarty_forload, ogval, "rules_bitsref_nonmixed")
-                            metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                             ld
                         else
                             val
