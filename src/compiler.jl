@@ -3842,21 +3842,23 @@ function create_abi_wrapper(
                             makeInstanceOf(builder, sret_types[returnNum+1])
                         end,
                     )
+                    ptr = inbounds_gep!(
+                        builder,
+                        jltype,
+                        sret,
+                        [
+                            LLVM.ConstantInt(LLVM.IntType(64), 0),
+                            LLVM.ConstantInt(
+                                LLVM.IntType(32),
+                                length(elements(jltype)) - 1,
+                            ),
+                        ],
+                        "revcombined_wrap_sret_gep_$returnNum"
+                    )
+                    ptr = pointercast!(builder, ptr, LLVM.PointerType(T_prjlvalue), "revcombined_wrap_sret_cast_$returnNum")
 	    	    extract_struct_into!(
                         builder,
-                        inbounds_gep!(
-                            builder,
-                            jltype,
-                            sret,
-                            [
-                                LLVM.ConstantInt(LLVM.IntType(64), 0),
-                                LLVM.ConstantInt(
-                                    LLVM.IntType(32),
-                                    length(elements(jltype)) - 1,
-                                ),
-                            ],
-                            "revcombined_wrap_sret_gep_$returnNum"
-                        ),
+                        ptr,
                         eval,
                         "revcombined_wrap_sret_extract_$returnNum"
                     )
@@ -3870,19 +3872,21 @@ function create_abi_wrapper(
                 isboxed = GPUCompiler.deserves_argbox(T′)
                 if !isboxed
                     eval = extract_value!(builder, val, returnNum)
+                    ptr = inbounds_gep!(
+                        builder,
+                        jltype,
+                        sret,
+                        [
+                            LLVM.ConstantInt(LLVM.IntType(64), 0),
+                            LLVM.ConstantInt(LLVM.IntType(32), 0),
+                            LLVM.ConstantInt(LLVM.IntType(32), activeNum),
+                        ],
+                        "revcombined_wrap_sret_gep_active_$(i)_$(T′)"
+                    )
+                    ptr = pointercast!(builder, ptr, LLVM.PointerType(T_prjlvalue), "revcombined_wrap_sret_cast_active_$(i)_$(T′)")
 	    	    extract_struct_into!(
                         builder,
-                        inbounds_gep!(
-                            builder,
-                            jltype,
-                            sret,
-                            [
-                                LLVM.ConstantInt(LLVM.IntType(64), 0),
-                                LLVM.ConstantInt(LLVM.IntType(32), 0),
-                                LLVM.ConstantInt(LLVM.IntType(32), activeNum),
-                            ],
-                            "revcombined_wrap_sret_gep_active_$(i)_$(T′)"
-                        ),
+                        ptr,
                         eval,
                         "revcombined_wrap_sret_extract_active_$(i)_$(T′)"
                     )
@@ -3895,7 +3899,7 @@ function create_abi_wrapper(
     end
 
     if returnRoots
-       move_sret_tofrom_roots!(builder, jltype, sret, root_ty, rootRet, SRetPointerToRootPointer)
+       move_sret_tofrom_roots!(builder, jltype, sret, root_ty, pointercast!(builder, rootRet, LLVM.PointerType(T_prjlvalue)), SRetPointerToRootPointer)
     end
     if T_ret != T_void
         ret!(builder, load!(builder, T_ret, sret))
