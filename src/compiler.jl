@@ -176,6 +176,12 @@ GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) 
 # GPUCompiler.isintrinsic(::CompilerJob{EnzymeTarget}, fn::String) = true
 # GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
 
+@static if isdefined(GPUCompiler, :runtime_slug) # GPUCompiler v1 only
+    # TODO: encode debug build or not in the compiler job
+    #       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
+    GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
+end
+
 # provide a specific interpreter to use.
 if VERSION >= v"1.11.0-DEV.1552"
     struct EnzymeCacheToken
@@ -195,7 +201,7 @@ if VERSION >= v"1.11.0-DEV.1552"
             inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
         )
 
-    GPUCompiler.cache_owner(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+    @inline _cache_owner(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
         EnzymeCacheToken(
             typeof(job.config.target),
             job.config.always_inline,
@@ -206,10 +212,17 @@ if VERSION >= v"1.11.0-DEV.1552"
             job.config.params.mode != API.DEM_ForwardMode,
             true
         )
+    @static if isdefined(GPUCompiler, :get_code_cache) # GPUCompiler v2
+        GPUCompiler.cache_owner(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            _cache_owner(job)
+    else
+        GPUCompiler.ci_cache_token(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            _cache_owner(job)
+    end
 
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         Interpreter.EnzymeInterpreter(
-            GPUCompiler.cache_owner(job),
+        @static isdefined(GPUCompiler, :cache_owner) ? GPUCompiler.cache_owner(job) : GPUCompiler.ci_cache_token(job), # support both GPUCompiler v1 and v2
             GPUCompiler.method_table(job),
             job.world,
             job.config.params.mode,
@@ -230,8 +243,13 @@ else
         end
     end
 
-    GPUCompiler.get_code_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        enzyme_ci_cache(job)
+    @static if isdefined(GPUCompiler, :get_code_cache) # GPUCompiler v2
+        GPUCompiler.get_code_cache(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            enzyme_ci_cache(job)
+    else
+        GPUCompiler.ci_cache(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            enzyme_ci_cache(job)
+    end
 
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         Interpreter.EnzymeInterpreter(
