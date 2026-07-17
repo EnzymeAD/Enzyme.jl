@@ -3842,21 +3842,22 @@ function create_abi_wrapper(
                             makeInstanceOf(builder, sret_types[returnNum+1])
                         end,
                     )
+                    ptr = inbounds_gep!(
+                        builder,
+                        jltype,
+                        sret,
+                        [
+                            LLVM.ConstantInt(LLVM.IntType(64), 0),
+                            LLVM.ConstantInt(
+                                LLVM.IntType(32),
+                                length(elements(jltype)) - 1,
+                            ),
+                        ],
+                        "revcombined_wrap_sret_gep_$returnNum"
+                    )
 	    	    extract_struct_into!(
                         builder,
-                        inbounds_gep!(
-                            builder,
-                            jltype,
-                            sret,
-                            [
-                                LLVM.ConstantInt(LLVM.IntType(64), 0),
-                                LLVM.ConstantInt(
-                                    LLVM.IntType(32),
-                                    length(elements(jltype)) - 1,
-                                ),
-                            ],
-                            "revcombined_wrap_sret_gep_$returnNum"
-                        ),
+                        ptr,
                         eval,
                         "revcombined_wrap_sret_extract_$returnNum"
                     )
@@ -3870,19 +3871,20 @@ function create_abi_wrapper(
                 isboxed = GPUCompiler.deserves_argbox(T′)
                 if !isboxed
                     eval = extract_value!(builder, val, returnNum)
+                    ptr = inbounds_gep!(
+                        builder,
+                        jltype,
+                        sret,
+                        [
+                            LLVM.ConstantInt(LLVM.IntType(64), 0),
+                            LLVM.ConstantInt(LLVM.IntType(32), 0),
+                            LLVM.ConstantInt(LLVM.IntType(32), activeNum),
+                        ],
+                        "revcombined_wrap_sret_gep_active_$(i)_$(T′)"
+                    )
 	    	    extract_struct_into!(
                         builder,
-                        inbounds_gep!(
-                            builder,
-                            jltype,
-                            sret,
-                            [
-                                LLVM.ConstantInt(LLVM.IntType(64), 0),
-                                LLVM.ConstantInt(LLVM.IntType(32), 0),
-                                LLVM.ConstantInt(LLVM.IntType(32), activeNum),
-                            ],
-                            "revcombined_wrap_sret_gep_active_$(i)_$(T′)"
-                        ),
+                        ptr,
                         eval,
                         "revcombined_wrap_sret_extract_active_$(i)_$(T′)"
                     )
@@ -3895,7 +3897,7 @@ function create_abi_wrapper(
     end
 
     if returnRoots
-       move_sret_tofrom_roots!(builder, jltype, sret, root_ty, rootRet, SRetPointerToRootPointer)
+       move_sret_tofrom_roots!(builder, jltype, sret, root_ty, pointercast!(builder, rootRet, LLVM.PointerType(T_prjlvalue)), SRetPointerToRootPointer)
     end
     if T_ret != T_void
         ret!(builder, load!(builder, T_ret, sret))
@@ -3974,6 +3976,31 @@ function to_llvm(lst::Vector{Cuint})
     end
     return vals
 end
+
+function initialize_roots_to_null!(builder::LLVM.IRBuilder, al::LLVM.Value, count::Int)
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    for i in 1:count
+        gep = inbounds_gep!(builder, T_prjlvalue, al, [LLVM.ConstantInt(LLVM.IntType(sizeof(Int)*8), i-1)])
+        store!(builder, LLVM.null(T_prjlvalue), gep)
+    end
+end
+
+function create_rooted_array(builder::LLVM.IRBuilder, count::Int, name::String="")
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    count_val = LLVM.ConstantInt(LLVM.IntType(sizeof(Int)*8), count)
+    al = array_alloca!(builder, T_prjlvalue, count_val, name)
+    initialize_roots_to_null!(builder, al, count)
+    return al
+end
+
+function create_rooted_array(builder::LLVM.IRBuilder, array_ty::LLVM.ArrayType, name::String="")
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    @assert eltype(array_ty) == T_prjlvalue "create_rooted_array: ArrayType element type must be T_prjlvalue"
+    return create_rooted_array(builder, length(array_ty), name)
+end
     
 function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value, root_ty::LLVM.LLVMType, rootRet::Union{LLVM.Value, Nothing}, direction::SRetRootMovement; must_cache::Bool = false)
         count = 0
@@ -4000,11 +4027,13 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
             if isa(ty, LLVM.PointerType) && any_jltypes(ty)
 
         		if direction == SRetPointerToRootPointer || direction == SRetValueToRootPointer || direction == RootPointerToSRetPointer || direction == RootPointerToSRetValue || direction == RootAndSRetPointerToValue
+                          T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+                          T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
                           loc = inbounds_gep!(
                               builder,
-                              root_ty,
+                              T_prjlvalue,
                               rootRet,
-        		      to_llvm(Cuint[count]),
+        		      [LLVM.ConstantInt(LLVM.IntType(sizeof(Int)*8), count)],
         		     )
         		end
                         
@@ -4688,7 +4717,7 @@ function lower_convention(
 	    if arg.arg_i in removedRoots
 	    	wrapparm = parameters(wrapper_f)[wrapper_idx - 1]
 		root_ty = convert(LLVMType, arg.typ)
-		ptr = alloca!(builder, root_ty, LLVM.name(parm)*".innerparm")
+		ptr = create_rooted_array(builder, root_ty, LLVM.name(parm)*".innerparm")
                 if TT !== nothing && TT.parameters[arg.arg_jl_i] <: Const
                     metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
                 end
@@ -6835,7 +6864,7 @@ const DumpLLVMCall = Ref(false)
             tracked = CountTrackedPointers(jltype)
             pushfirst!(
                 callparams,
-                alloca!(builder, LLVM.ArrayType(T_prjlvalue, tracked.count), "enzyme_call.return_roots"),
+                alloca!(builder, LLVM.ArrayType(T_prjlvalue, tracked.count), "enzyme_call.return_roots")
             )
 	    jltype_foralloca = if VERSION >= v"1.12"
 	       strip_tracked_pointers(jltype)

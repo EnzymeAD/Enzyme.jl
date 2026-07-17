@@ -442,7 +442,7 @@ end
 
         al = alloca!(alloctx, llty_foralloca)
         al2 = if num_arg_roots != 0
-            alloca!(alloctx, convert(LLVMType, AnyArray(num_arg_roots)))
+            create_rooted_array(alloctx, num_arg_roots)
         end
 
         if !isghostty(ppfuncT)
