@@ -4409,7 +4409,7 @@ function lower_convention(
     # generate the wrapper function type & definition
     wrapper_types = LLVM.LLVMType[]
     wrapper_attrs = Vector{LLVM.Attribute}[]
-    _, sret, returnRoots0 = get_return_info(actualRetType)
+    _, sret, returnRoots = get_return_info(actualRetType)
     sret_union = is_sret_union(actualRetType)
 
     if sret_union
@@ -4420,7 +4420,7 @@ function lower_convention(
         RT = convert(LLVMType, eltype(sret))
     end
     sret = sret !== nothing
-    returnRoots = returnRoots0 !== nothing
+    returnRoots = returnRoots !== nothing
 
     loweredReturn = RetActivity <: Active && !allocatedinline(actualRetType)
     if (RetActivity <: Active || RetActivity <: MixedDuplicated ||  RetActivity <: BatchMixedDuplicated) && (allocatedinline(actualRetType) != allocatedinline(eltype(RetActivity)))
