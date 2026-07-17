@@ -1085,7 +1085,7 @@ end
     	metadata(sret)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(esret))))])
         pushfirst!(args, sret)
         if returnRoots !== nothing
-            returnRoots = create_rooted_array(alloctx, convert(LLVMType, eltype(returnRoots)))
+            returnRoots = alloca!(alloctx, convert(LLVMType, eltype(returnRoots)))
             insert!(args, 2, returnRoots)
         else
             returnRoots = nothing
