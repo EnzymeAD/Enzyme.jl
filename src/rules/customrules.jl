@@ -271,14 +271,13 @@ function push_box_for_argument!(
        llty
     end
 
-    al0 = al = alloca!(alloctx, llty_foralloca, "arg.$Ty")
-    al = addrspacecast!(B, al, LLVM.PointerType(llty_foralloca, Derived))
+    al0 = alloca!(alloctx, llty_foralloca, "arg.$Ty")
 
     ptr = if activity_wrap
         inbounds_gep!(
             B,
             llty_foralloca,
-            al,
+            al0,
             [
                 LLVM.ConstantInt(LLVM.IntType(64), 0),
                 LLVM.ConstantInt(LLVM.IntType(32), 0),
@@ -286,7 +285,7 @@ function push_box_for_argument!(
         )
     else
         @assert llty == arty
-        al
+        al0
     end
 
     if VERSION >= v"1.12" && num_inline_roots != 0
@@ -295,13 +294,14 @@ function push_box_for_argument!(
         store!(B, val, ptr)
     end
 
+    al = addrspacecast!(B, al0, LLVM.PointerType(llty_foralloca, Derived))
     push!(args, al)
 
     if root_ptr !== nothing
         push!(args, root_ptr)
     end
 
-    return al
+    return al0
 end
 
 function enzyme_custom_setup_args(
