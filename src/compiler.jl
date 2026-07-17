@@ -3966,7 +3966,8 @@ end
     RootPointerToSRetPointer = 3,
     NullifySRetValue = 4,
     RootAndSRetPointerToValue = 5,
-   )
+    NullifyRoots = 6,
+)
 
 function to_llvm(lst::Vector{Cuint})
     vals = LLVM.Value[]
@@ -4061,6 +4062,9 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
         		    loc = load!(builder, ty, loc)
         		    push!(extracted, loc)
                             store!(builder, loc, outloc)
+			elseif direction == NullifyRoots
+			    outloc = inbounds_gep!(builder, jltype, sret, to_llvm(path))
+			    store!(builder, LLVM.null(ty), outloc)
         		else
         		    @assert false "Unhandled direction"
         		end
@@ -4120,6 +4124,15 @@ function nullify_rooted_values!(builder::LLVM.IRBuilder, sret::LLVM.Value)
    @assert !tracked.all
    root_ty = convert(LLVMType, AnyArray(Int(tracked.count)))
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, nothing, NullifySRetValue)
+end
+
+function nullify_rooted_pointers!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value)
+   tracked = CountTrackedPointers(jltype)
+   if tracked.count == 0
+      return nothing
+   end
+   root_ty = convert(LLVMType, AnyArray(Int(tracked.count)))
+   move_sret_tofrom_roots!(builder, jltype, sret, root_ty, nothing, NullifyRoots)
 end
 
 function recombine_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM.Value; must_cache::Bool=false)::LLVM.Value
@@ -4702,6 +4715,12 @@ function lower_convention(
                     sret_ty(entry_f, 1+sret),
                     "innerreturnroots",
                 )
+                T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+                T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+                for i in 1:length(sret_ty(entry_f, 1+sret))
+                    gep = inbounds_gep!(builder, T_prjlvalue, retRootPtr, [LLVM.ConstantInt(LLVM.IntType(sizeof(Int)*8), i-1)])
+                    store!(builder, LLVM.ConstantPointerNull(T_prjlvalue), gep)
+                end
                 # retRootPtr = alloca!(builder, parameters(wrapper_f)[1])
                 push!(wrapper_args, retRootPtr)
             end

@@ -272,6 +272,7 @@ function push_box_for_argument!(
     end
 
     al0 = alloca!(alloctx, llty_foralloca, "arg.$Ty")
+    nullify_rooted_pointers!(alloctx, llty_foralloca, al0)
 
     ptr = if activity_wrap
         inbounds_gep!(
@@ -1082,10 +1083,13 @@ end
 	       sret_lty
 	    end
         sret = alloca!(alloctx, sret_lty_foralloca)
+        nullify_rooted_pointers!(alloctx, sret_lty_foralloca, sret)
     	metadata(sret)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(esret))))])
         pushfirst!(args, sret)
         if returnRoots !== nothing
-            returnRoots = alloca!(alloctx, convert(LLVMType, eltype(returnRoots)))
+            root_ty = convert(LLVMType, eltype(returnRoots))
+            returnRoots = alloca!(alloctx, root_ty)
+            nullify_rooted_pointers!(alloctx, root_ty, returnRoots)
             insert!(args, 2, returnRoots)
         else
             returnRoots = nothing
@@ -2029,10 +2033,14 @@ function enzyme_custom_common_rev(
             sret_lty
         end
         sret = alloca!(alloctx, sret_lty_foralloca)
+        nullify_rooted_pointers!(alloctx, sret_lty_foralloca, sret)
+
 	metadata(sret)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(esret))))])
         pushfirst!(args, sret)
         if returnRoots !== nothing
-            returnRoots = alloca!(alloctx, convert(LLVMType, eltype(returnRoots)))
+            rr_lty = convert(LLVMType, eltype(returnRoots))
+            returnRoots = alloca!(alloctx, rr_lty, "returnRoots")
+            nullify_rooted_pointers!(alloctx, rr_lty, returnRoots)
             insert!(args, 2, returnRoots)
         else
             returnRoots = nothing
