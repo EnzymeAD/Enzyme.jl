@@ -3855,7 +3855,6 @@ function create_abi_wrapper(
                         ],
                         "revcombined_wrap_sret_gep_$returnNum"
                     )
-                    ptr = pointercast!(builder, ptr, LLVM.PointerType(T_prjlvalue), "revcombined_wrap_sret_cast_$returnNum")
 	    	    extract_struct_into!(
                         builder,
                         ptr,
