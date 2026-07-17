@@ -212,7 +212,7 @@ if VERSION >= v"1.11.0-DEV.1552"
             job.config.params.mode != API.DEM_ForwardMode,
             true
         )
-    @static if isdefined(GPUCompiler, :get_code_cache) # GPUCompiler v2
+    @static if isdefined(GPUCompiler, :cache_owner) # GPUCompiler v2
         GPUCompiler.cache_owner(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
             _cache_owner(job)
     else
@@ -222,7 +222,7 @@ if VERSION >= v"1.11.0-DEV.1552"
 
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         Interpreter.EnzymeInterpreter(
-        @static isdefined(GPUCompiler, :cache_owner) ? GPUCompiler.cache_owner(job) : GPUCompiler.ci_cache_token(job), # support both GPUCompiler v1 and v2
+        @static(isdefined(GPUCompiler, :cache_owner) ? GPUCompiler.cache_owner(job) : GPUCompiler.ci_cache_token(job)), # support both GPUCompiler v1 and v2
             GPUCompiler.method_table(job),
             job.world,
             job.config.params.mode,
@@ -637,6 +637,7 @@ import .Interpreter: isKWCallSignature
 
 # Drive inference on `mi` when GPUCompiler's `compile_method_instance` runs with an
 # `EnzymeInterpreter` (GPUCompiler only provides `drive_inference!` for `GPUInterpreter`).
+@static if isdefined(GPUCompiler, :drive_inference!) # GPUCompiler v2
 @static if VERSION >= v"1.11.0-DEV.1552"
     GPUCompiler.drive_inference!(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance) =
         GPUCompiler.CompilerCaching.typeinf!(interp, mi)
@@ -659,6 +660,7 @@ else
         return nothing
     end
 end
+end # @static if isdefined(GPUCompiler, :drive_inference!)
 
 
 mutable struct HandlerState
