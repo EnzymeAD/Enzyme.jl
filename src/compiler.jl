@@ -3974,6 +3974,31 @@ function to_llvm(lst::Vector{Cuint})
     end
     return vals
 end
+
+function initialize_roots_to_null!(builder::LLVM.IRBuilder, al::LLVM.Value, count::Int)
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    for i in 1:count
+        gep = inbounds_gep!(builder, T_prjlvalue, al, [LLVM.ConstantInt(LLVM.IntType(sizeof(Int)*8), i-1)])
+        store!(builder, LLVM.null(T_prjlvalue), gep)
+    end
+end
+
+function create_rooted_array(builder::LLVM.IRBuilder, count::Int, name::String="")
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    count_val = LLVM.ConstantInt(LLVM.IntType(sizeof(Int)*8), count)
+    al = array_alloca!(builder, T_prjlvalue, count_val, name)
+    initialize_roots_to_null!(builder, al, count)
+    return al
+end
+
+function create_rooted_array(builder::LLVM.IRBuilder, array_ty::LLVM.ArrayType, name::String="")
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    @assert eltype(array_ty) == T_prjlvalue "create_rooted_array: ArrayType element type must be T_prjlvalue"
+    return create_rooted_array(builder, length(array_ty), name)
+end
     
 function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value, root_ty::LLVM.LLVMType, rootRet::Union{LLVM.Value, Nothing}, direction::SRetRootMovement; must_cache::Bool = false)
         count = 0
@@ -4000,11 +4025,13 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
             if isa(ty, LLVM.PointerType) && any_jltypes(ty)
 
         		if direction == SRetPointerToRootPointer || direction == SRetValueToRootPointer || direction == RootPointerToSRetPointer || direction == RootPointerToSRetValue || direction == RootAndSRetPointerToValue
+                          T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+                          T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
                           loc = inbounds_gep!(
                               builder,
-                              root_ty,
+                              T_prjlvalue,
                               rootRet,
-        		      to_llvm(Cuint[count]),
+        		      [LLVM.ConstantInt(LLVM.IntType(sizeof(Int)*8), count)],
         		     )
         		end
                         
@@ -4668,13 +4695,9 @@ function lower_convention(
                 push!(wrapper_args, sretPtr)
             end
             if returnRoots && !in(1, parmsRemoved)
-                T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
-                T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-                num_roots = length(eltype(returnRoots0).parameters[1])
-                retRootPtr = array_alloca!(
+                retRootPtr = alloca!(
                     builder,
-                    T_prjlvalue,
-                    LLVM.ConstantInt(LLVM.IntType(sizeof(Int)*8), num_roots),
+                    sret_ty(entry_f, 1+sret),
                     "innerreturnroots",
                 )
                 # retRootPtr = alloca!(builder, parameters(wrapper_f)[1])
@@ -4692,7 +4715,7 @@ function lower_convention(
 	    if arg.arg_i in removedRoots
 	    	wrapparm = parameters(wrapper_f)[wrapper_idx - 1]
 		root_ty = convert(LLVMType, arg.typ)
-		ptr = alloca!(builder, root_ty, LLVM.name(parm)*".innerparm")
+		ptr = create_rooted_array(builder, root_ty, LLVM.name(parm)*".innerparm")
                 if TT !== nothing && TT.parameters[arg.arg_jl_i] <: Const
                     metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
                 end
@@ -6839,7 +6862,7 @@ const DumpLLVMCall = Ref(false)
             tracked = CountTrackedPointers(jltype)
             pushfirst!(
                 callparams,
-                array_alloca!(builder, T_prjlvalue, LLVM.ConstantInt(LLVM.IntType(sizeof(Int)*8), tracked.count), "enzyme_call.return_roots"),
+                create_rooted_array(builder, tracked.count, "enzyme_call.return_roots"),
             )
 	    jltype_foralloca = if VERSION >= v"1.12"
 	       strip_tracked_pointers(jltype)

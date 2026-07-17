@@ -204,9 +204,7 @@ function push_box_for_argument!(
 
             if roots_val !== nothing
                 if roots_cache !== nothing
-                    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
-                    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-                    ral = array_alloca!(alloctx, T_prjlvalue, LLVM.ConstantInt(LLVM.IntType(sizeof(Int)*8), num_inline_roots))
+                    ral = create_rooted_array(alloctx, num_inline_roots)
                     store!(B, roots_cache, ral)
                     push!(args, ral)
                 else
@@ -233,9 +231,7 @@ function push_box_for_argument!(
     if roots_cache !== nothing
         root_ty = convert(LLVMType, AnyArray(num_inline_roots))
         if shadow_roots === nothing
-            T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
-            T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-            ral = array_alloca!(alloctx, T_prjlvalue, LLVM.ConstantInt(LLVM.IntType(sizeof(Int)*8), num_inline_roots))
+            ral = create_rooted_array(alloctx, num_inline_roots)
             store!(B, roots_cache, ral)
             root_ptr = ral
         else
@@ -545,9 +541,7 @@ function enzyme_custom_setup_args(
                                 @assert value_type(root_cache) == root_ty
                                 push!(byval_tapes, root_cache)
 
-                                T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
-                                T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-                                al = array_alloca!(alloctx, T_prjlvalue, LLVM.ConstantInt(LLVM.IntType(sizeof(Int)*8), roots), "roots_op_cache_v2_")
+                                al = create_rooted_array(alloctx, roots, "roots_op_cache_v2_")
                                 store!(B, root_cache, al)
                                 roots_val = al
                             end
@@ -718,9 +712,7 @@ function enzyme_custom_setup_args(
                 sroots_ty = nothing
                 shadow_roots = if n_shadow_roots != 0
                     sroots_ty = convert(LLVMType, AnyArray(n_shadow_roots))
-                    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
-                    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-                    array_alloca!(alloctx, T_prjlvalue, LLVM.ConstantInt(LLVM.IntType(sizeof(Int)*8), n_shadow_roots), "roots.arg.$Ty")
+                    create_rooted_array(alloctx, n_shadow_roots, "roots.arg.$Ty")
                 end
 
 
@@ -1093,7 +1085,7 @@ end
     	metadata(sret)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(esret))))])
         pushfirst!(args, sret)
         if returnRoots !== nothing
-            returnRoots = alloca!(alloctx, convert(LLVMType, eltype(returnRoots)))
+            returnRoots = create_rooted_array(alloctx, convert(LLVMType, eltype(returnRoots)))
             insert!(args, 2, returnRoots)
         else
             returnRoots = nothing
@@ -1895,9 +1887,7 @@ function enzyme_custom_common_rev(
 
                 tape_roots = inline_roots_type(TapeT)
                 if tape_roots != 0
-                    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
-                    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-                    tape_al = array_alloca!(alloctx, T_prjlvalue, LLVM.ConstantInt(LLVM.IntType(sizeof(Int)*8), tape_roots))
+                    tape_al = create_rooted_array(alloctx, tape_roots)
                     extract_roots_from_value!(B, tape, tape_al)
                 end
 
@@ -1945,9 +1935,7 @@ function enzyme_custom_common_rev(
 		    ptr_val = nullify_rooted_values!(ptr_val, B) # TODO this should be fwdB
 		    @assert !is_constant_value(gutils,  operands(orig)[1+!isghostty(funcTy)+orig_swiftself+1])
 		    roots_ty = convert(LLVMType, AnyArray(width * active_roots))
-		    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
-		    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-		    ral = array_alloca!(alloctx, T_prjlvalue, LLVM.ConstantInt(LLVM.IntType(sizeof(Int)*8), width * active_roots))
+		    ral = create_rooted_array(alloctx, width * active_roots)
 		    rptr_val = invert_pointer(gutils, operands(orig)[1+!isghostty(funcTy)+orig_swiftself+1], B)
                     rptr_val = lookup_value(gutils, rptr_val, B)
 		    # TODO actually cache the roots in the forward for use in the reverse here
@@ -2044,7 +2032,7 @@ function enzyme_custom_common_rev(
 	metadata(sret)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(esret))))])
         pushfirst!(args, sret)
         if returnRoots !== nothing
-            returnRoots = alloca!(alloctx, convert(LLVMType, eltype(returnRoots)))
+            returnRoots = create_rooted_array(alloctx, convert(LLVMType, eltype(returnRoots)))
             insert!(args, 2, returnRoots)
         else
             returnRoots = nothing
