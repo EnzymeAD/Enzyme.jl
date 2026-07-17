@@ -442,7 +442,9 @@ end
 
         al = alloca!(alloctx, llty_foralloca)
         al2 = if num_arg_roots != 0
-            alloca!(alloctx, convert(LLVMType, AnyArray(num_arg_roots)))
+            T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+            T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+            array_alloca!(alloctx, T_prjlvalue, LLVM.ConstantInt(LLVM.IntType(sizeof(Int)*8), num_arg_roots))
         end
 
         if !isghostty(ppfuncT)

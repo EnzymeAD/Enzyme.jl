@@ -4382,7 +4382,7 @@ function lower_convention(
     # generate the wrapper function type & definition
     wrapper_types = LLVM.LLVMType[]
     wrapper_attrs = Vector{LLVM.Attribute}[]
-    _, sret, returnRoots = get_return_info(actualRetType)
+    _, sret, returnRoots0 = get_return_info(actualRetType)
     sret_union = is_sret_union(actualRetType)
 
     if sret_union
@@ -4393,7 +4393,7 @@ function lower_convention(
         RT = convert(LLVMType, eltype(sret))
     end
     sret = sret !== nothing
-    returnRoots = returnRoots !== nothing
+    returnRoots = returnRoots0 !== nothing
 
     loweredReturn = RetActivity <: Active && !allocatedinline(actualRetType)
     if (RetActivity <: Active || RetActivity <: MixedDuplicated ||  RetActivity <: BatchMixedDuplicated) && (allocatedinline(actualRetType) != allocatedinline(eltype(RetActivity)))
@@ -4668,9 +4668,13 @@ function lower_convention(
                 push!(wrapper_args, sretPtr)
             end
             if returnRoots && !in(1, parmsRemoved)
-                retRootPtr = alloca!(
+                T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+                T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+                num_roots = length(eltype(returnRoots0).parameters[1])
+                retRootPtr = array_alloca!(
                     builder,
-                    sret_ty(entry_f, 1+sret),
+                    T_prjlvalue,
+                    LLVM.ConstantInt(LLVM.IntType(sizeof(Int)*8), num_roots),
                     "innerreturnroots",
                 )
                 # retRootPtr = alloca!(builder, parameters(wrapper_f)[1])
@@ -6835,7 +6839,7 @@ const DumpLLVMCall = Ref(false)
             tracked = CountTrackedPointers(jltype)
             pushfirst!(
                 callparams,
-                alloca!(builder, LLVM.ArrayType(T_prjlvalue, tracked.count), "enzyme_call.return_roots"),
+                array_alloca!(builder, T_prjlvalue, LLVM.ConstantInt(LLVM.IntType(sizeof(Int)*8), tracked.count), "enzyme_call.return_roots"),
             )
 	    jltype_foralloca = if VERSION >= v"1.12"
 	       strip_tracked_pointers(jltype)
