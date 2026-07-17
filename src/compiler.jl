@@ -6862,7 +6862,7 @@ const DumpLLVMCall = Ref(false)
             tracked = CountTrackedPointers(jltype)
             pushfirst!(
                 callparams,
-                create_rooted_array(builder, tracked.count, "enzyme_call.return_roots"),
+                alloca!(builder, LLVM.ArrayType(T_prjlvalue, tracked.count), "enzyme_call.return_roots")
             )
 	    jltype_foralloca = if VERSION >= v"1.12"
 	       strip_tracked_pointers(jltype)
