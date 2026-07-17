@@ -667,7 +667,17 @@ function enzyme_custom_setup_args(
                     @assert orig_activep != activep
                     @assert orig_activep == API.DFT_CONSTANT
                     if val == nothing
-                        ld = load!(B, iarty, ogval, "rules_ival_load")
+                        # The by-ref memory does not contain valid data for the
+                        # inline-rooted pointer fields (those are passed via the
+                        # separate roots argument), so load a type with the
+                        # tracked pointers stripped to avoid forging GC pointers.
+                        iarty_forload = if roots_op !== nothing
+                            @assert width == 1
+                            strip_tracked_pointers(arty)
+                        else
+                            iarty
+                        end
+                        ld = load!(B, iarty_forload, ogval, "rules_ival_load")
                         metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                         ld
                     else
@@ -727,7 +737,17 @@ function enzyme_custom_setup_args(
                          ival
                     else
                         if val == nothing
-                            ld = load!(B, iarty, ogval, "rules_bitsref_nonmixed")
+                            # The by-ref memory does not contain valid data for the
+                            # inline-rooted pointer fields (those are passed via the
+                            # separate roots argument), so load a type with the
+                            # tracked pointers stripped to avoid forging GC pointers.
+                            iarty_forload = if roots_op !== nothing
+                                @assert width == 1
+                                strip_tracked_pointers(arty)
+                            else
+                                iarty
+                            end
+                            ld = load!(B, iarty_forload, ogval, "rules_bitsref_nonmixed")
                             metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                             ld
                         else
@@ -770,6 +790,15 @@ function enzyme_custom_setup_args(
                             else
                                 ld0 = load!(B, iarty, ev, "rules_shadow_load")
                                 metadata(ld0)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                                # As above, the shadow by-ref memory has no valid
+                                # inline-rooted pointer fields.
+                                if roots_op != nothing
+                                    if uncacheable[arg.codegen.i + 1] != 0
+                                        ld0 = recombine_value!(B, ld0, local_shadow_root)
+                                    else
+                                        ld0 = nullify_rooted_values!(B, ld0)
+                                    end
+                                end
                                 ld0
                             end
 
