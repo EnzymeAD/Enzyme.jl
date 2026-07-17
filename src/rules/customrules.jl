@@ -666,7 +666,7 @@ function enzyme_custom_setup_args(
                 ival = if is_constant_value(gutils, op)
                     @assert orig_activep != activep
                     @assert orig_activep == API.DFT_CONSTANT
-                    if val == Nothing
+                    if val == nothing
                         iarty_forload = if roots_op !== nothing
                             strip_tracked_pointers(iarty)
                         else
