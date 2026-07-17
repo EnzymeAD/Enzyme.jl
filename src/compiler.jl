@@ -3883,7 +3883,6 @@ function create_abi_wrapper(
                         ],
                         "revcombined_wrap_sret_gep_active_$(i)_$(T′)"
                     )
-                    ptr = pointercast!(builder, ptr, LLVM.PointerType(T_prjlvalue), "revcombined_wrap_sret_cast_active_$(i)_$(T′)")
 	    	    extract_struct_into!(
                         builder,
                         ptr,
