@@ -5744,6 +5744,35 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         EnumAttribute("sret")
     end)
 
+    for f in functions(mod)
+        _, RT = enzyme_custom_extract_mi(f, false)
+        valid_type = RT !== nothing && Base.isconcretetype(RT) && !(
+            RT isa UnionAll ||
+            RT isa Union ||
+            RT == Union{} ||
+            RT === Tuple ||
+            (
+                is_concrete_tuple(RT) &&
+                any(T2 isa Core.TypeofVararg for T2 in RT.parameters)
+            )
+        )
+
+        if valid_type
+            size = Compiler.datatype_layoutsize(RT)
+            md = to_fullmd(RT, 0, size)
+            for bb in blocks(f)
+                term = terminator(bb)
+                if term !== nothing && LLVM.API.LLVMIsAReturnInst(term) != C_NULL && !isempty(operands(term))
+                    cur = operands(term)[1]
+                    if LLVM.API.LLVMIsAInsertValueInst(cur) != C_NULL
+                        metadata(term)["enzyme_truetype"] = md
+                        metadata(f)["enzyme_truetype"] = md
+                    end
+                end
+            end
+        end
+    end
+
     for f in functions(mod), bb in blocks(f), inst in instructions(bb)
         fn = isa(inst, LLVM.CallInst) ? LLVM.called_operand(inst) : nothing
        
