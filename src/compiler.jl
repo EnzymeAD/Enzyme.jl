@@ -5353,29 +5353,31 @@ const DumpPreOpt = Ref(false)
 """
     link_split_existing!(mod::LLVM.Module, newmod::LLVM.Module)
 
-Link `newmod` into `mod` like `LLVM.link!(mod, newmod)`, but first rename any
-function that is defined in both modules. A function defined in `newmod` whose
-name already refers to a definition in `mod` is given a unique suffix in `newmod`
-before linking, so its definition is preserved as a distinct symbol instead of
-triggering a `symbol multiply defined` linker error.
+Link `newmod` into `mod` like `LLVM.link!(mod, newmod)`, but set `LLVMInternalLinkage` on
+any function defined in both modules before linking. This allows LLVM's linker to natively
+internalize and resolve duplicate definitions without string comparisons or linker collisions.
 """
 function link_split_existing!(mod::LLVM.Module, newmod::LLVM.Module)
     modfns = functions(mod)
     newfns = functions(newmod)
+    has_collided = false
     for f in collect(newfns)
         isdeclaration(f) && continue
         fname = LLVM.name(f)
         haskey(modfns, fname) || continue
         isdeclaration(modfns[fname]) && continue
-        newname = fname * "_split"
-        i = 0
-        while haskey(newfns, newname) || haskey(modfns, newname)
-            i += 1
-            newname = string(fname, "_split", i)
-        end
-        LLVM.name!(f, newname)
+        linkage!(f, LLVM.API.LLVMInternalLinkage)
+        has_collided = true
     end
     LLVM.link!(mod, newmod)
+    if has_collided
+        LLVM.@dispose pb = LLVM.NewPMPassBuilder() begin
+            mpm = LLVM.NewPMModulePassManager()
+            LLVM.add!(mpm, LLVM.MergeFunctionsPass())
+            LLVM.add!(pb, mpm)
+            LLVM.run!(pb, mod)
+        end
+    end
     return nothing
 end
 
