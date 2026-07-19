@@ -175,6 +175,7 @@ end
 
 @testset "link_split_existing!" begin
     LLVM.Context() do ctx
+        # Test 1: Differing definitions are preserved as distinct internal specializations
         dst = parse(
             LLVM.Module,
             """
@@ -204,16 +205,11 @@ end
         Enzyme.Compiler.link_split_existing!(dst, src)
 
         fns = LLVM.functions(dst)
-        # `dst`'s original definition is preserved.
         @test haskey(fns, "julia___dup")
         @test !LLVM.isdeclaration(fns["julia___dup"])
-        # `src`'s colliding definition is preserved under a unique suffixed name.
-        @test haskey(fns, "julia___dup_split")
-        @test !LLVM.isdeclaration(fns["julia___dup_split"])
-        # Non-colliding functions link in unchanged.
+        @test LLVM.linkage(fns["julia___dup"]) == LLVM.API.LLVMExternalLinkage
         @test haskey(fns, "only_in_dst")
         @test haskey(fns, "uses_dup")
-        # `src`'s caller now targets its own (renamed) copy, not `dst`'s definition.
         usesfn = fns["uses_dup"]
         callinst = first(
             filter(
@@ -221,7 +217,44 @@ end
                 collect(instructions(first(blocks(usesfn)))),
             ),
         )
-        @test LLVM.name(last(collect(operands(callinst)))) == "julia___dup_split"
+        called_fn = last(collect(operands(callinst)))
+        @test LLVM.linkage(called_fn) == LLVM.API.LLVMInternalLinkage
+
+        # Test 2: Identical definitions are folded by MergeFunctionsPass
+        dst2 = parse(
+            LLVM.Module,
+            """
+            define i64 @julia___dup(i64 %x) {
+              %r = add i64 %x, 1
+              ret i64 %r
+            }
+            """,
+        )
+        src2 = parse(
+            LLVM.Module,
+            """
+            define i64 @julia___dup(i64 %x) {
+              %r = add i64 %x, 1
+              ret i64 %r
+            }
+            define i64 @uses_dup2(i64 %x) {
+              %r = call i64 @julia___dup(i64 %x)
+              ret i64 %r
+            }
+            """,
+        )
+        Enzyme.Compiler.link_split_existing!(dst2, src2)
+        fns2 = LLVM.functions(dst2)
+        @test haskey(fns2, "julia___dup")
+        @test haskey(fns2, "uses_dup2")
+        usesfn2 = fns2["uses_dup2"]
+        callinst2 = first(
+            filter(
+                Base.Fix2(isa, LLVM.CallInst),
+                collect(instructions(first(blocks(usesfn2)))),
+            ),
+        )
+        @test LLVM.name(last(collect(operands(callinst2)))) == "julia___dup"
     end
 end
 
