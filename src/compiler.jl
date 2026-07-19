@@ -5354,22 +5354,28 @@ const DumpPreOpt = Ref(false)
     link_split_existing!(mod::LLVM.Module, newmod::LLVM.Module)
 
 Link `newmod` into `mod` like `LLVM.link!(mod, newmod)`, but first rename any
-function that is defined in both modules. A function defined in `newmod` whose
-name already refers to a definition in `mod` is given a unique suffix in `newmod`
+function or global variable that is defined in both modules. A symbol defined in `newmod`
+whose name already refers to a definition in `mod` is given a unique suffix in `newmod`
 before linking, so its definition is preserved as a distinct symbol instead of
 triggering a `symbol multiply defined` linker error.
 """
 function link_split_existing!(mod::LLVM.Module, newmod::LLVM.Module)
     modfns = functions(mod)
+    modglobs = globals(mod)
     newfns = functions(newmod)
-    for f in collect(newfns)
+    newglobs = globals(newmod)
+
+    has_symbol(m_fns, m_globs, name) = haskey(m_fns, name) || haskey(m_globs, name)
+    is_def(m_fns, m_globs, name) = (haskey(m_fns, name) && !isdeclaration(m_fns[name])) ||
+                                  (haskey(m_globs, name) && !isdeclaration(m_globs[name]))
+
+    for f in vcat(collect(newfns), collect(newglobs))
         isdeclaration(f) && continue
         fname = LLVM.name(f)
-        haskey(modfns, fname) || continue
-        isdeclaration(modfns[fname]) && continue
+        is_def(modfns, modglobs, fname) || continue
         newname = fname * "_split"
         i = 0
-        while haskey(newfns, newname) || haskey(modfns, newname)
+        while has_symbol(newfns, newglobs, newname) || has_symbol(modfns, modglobs, newname)
             i += 1
             newname = string(fname, "_split", i)
         end
@@ -6946,7 +6952,7 @@ const DumpLLVMCall = Ref(false)
             # TODO, consider optimization
             # However, julia will optimize after this, so no need
             submod = parse(LLVM.Module, String(submod))
-            LLVM.link!(mod, submod)
+            link_split_existing!(mod, submod)
             lfn = functions(mod)[String(subname)]
             FT = LLVM.function_type(lfn)
         end

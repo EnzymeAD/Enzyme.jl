@@ -849,7 +849,7 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
         # override libdevice's triple and datalayout to avoid warnings
         triple!(inmod, triple(mod))
         datalayout!(inmod, datalayout(mod))
-        LLVM.link!(mod, copy(inmod))
+        link_split_existing!(mod, copy(inmod))
         for n in internalize
             linkage!(functions(mod)[n], LLVM.API.LLVMInternalLinkage)
             push!(imported, n)
@@ -1426,7 +1426,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                     end
                 end
 
-                LLVM.link!(mod, pmod)
+                link_split_existing!(mod, pmod)
 
                 replaceWith = functions(mod)[pname]
                 push!(function_attributes(replaceWith), EnumAttribute("alwaysinline"))

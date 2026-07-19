@@ -282,7 +282,7 @@ end
 
             cmod, edges, fwdmodenm, _, _, _ = _thunk(ejob, false) #=postopt=#
 
-            LLVM.link!(mod, cmod)
+            Compiler.link_split_existing!(mod, cmod)
 
             push!(attributes, StringAttribute("enzymejl_forward", fwdmodenm))
             push!(
@@ -342,7 +342,7 @@ end
 
             cmod, edges, adjointnm, augfwdnm, TapeType, _ = _thunk(ejob, false) #=postopt=#
 
-            LLVM.link!(mod, cmod)
+            Compiler.link_split_existing!(mod, cmod)
 
             push!(attributes, StringAttribute("enzymejl_augforward", augfwdnm))
             push!(
