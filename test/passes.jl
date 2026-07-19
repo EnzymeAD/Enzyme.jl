@@ -223,6 +223,26 @@ end
         )
         @test LLVM.name(last(collect(operands(callinst)))) == "julia___dup_split"
     end
+    LLVM.Context() do ctx
+        dst = parse(
+            LLVM.Module,
+            """
+            @julia_sin_25307 = global i32 1
+            """,
+        )
+        src = parse(
+            LLVM.Module,
+            """
+            @julia_sin_25307 = global i32 2
+            """,
+        )
+
+        Enzyme.Compiler.link_split_existing!(dst, src)
+
+        globs = LLVM.globals(dst)
+        @test haskey(globs, "julia_sin_25307")
+        @test haskey(globs, "julia_sin_25307_split")
+    end
 end
 
 @testset "Literal-pointer symbol resolution" begin
