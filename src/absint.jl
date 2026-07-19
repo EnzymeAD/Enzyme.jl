@@ -626,6 +626,11 @@ function abs_typeof(
             end
             return (legal, RT, nothing)
         end
+
+        if nm == "jl_reshape_array" || nm == "ijl_reshape_array"
+            vals = absint(operands(arg)[1], partial, false, #=typetag=#true)
+            return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
+        end
         @static if VERSION < v"1.11-"
         else
             if nm == "jl_genericmemory_copy_slice" || nm == "ijl_genericmemory_copy_slice"
