@@ -5766,9 +5766,9 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
                 term = terminator(bb)
                 if term !== nothing && LLVM.API.LLVMIsAReturnInst(term) != C_NULL && !isempty(operands(term))
                     cur = operands(term)[1]
-                    if LLVM.API.LLVMIsAInsertValueInst(cur) != C_NULL
-                        metadata(term)["enzyme_truetype"] = md
-                        metadata(f)["enzyme_truetype"] = md
+                    while LLVM.API.LLVMIsAInsertValueInst(cur) != C_NULL
+                        metadata(cur)["enzyme_truetype"] = md
+                        cur = operands(cur)[1]
                     end
                 end
             end
