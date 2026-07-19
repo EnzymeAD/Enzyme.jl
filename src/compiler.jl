@@ -2749,6 +2749,7 @@ function enzyme!(
                 rt <: BatchMixedDuplicated
             )
         returnUsed &= returnPrimal
+        nowrite_shadows = zeros(UInt8, length(uncacheable_args))
         augmented = API.EnzymeCreateAugmentedPrimal(
             logic,
             primalf,
@@ -2759,6 +2760,7 @@ function enzyme!(
             shadowReturnUsed,            #=shadowReturnUsed=#
             typeInfo,
             uncacheable_args,
+            nowrite_shadows,
             false,
             runtimeActivity,
             strongZero,
