@@ -354,7 +354,12 @@ function for_each_uniontype_small(@nospecialize(f), @nospecialize(ty::Type), cou
         return allunbox
     end
     # https://github.com/JuliaLang/julia/blob/170d6439445c86e640214620dad3423d2bb42337/src/codegen.cpp#L1233
-    if Base.isconcretetype(ty) && !ismutabletype(ty) && Base.datatype_pointerfree(ty)
+    is_unboxed = if VERSION >= v"1.13.0-DEV.0"
+        Base.isconcretetype(ty) && !ismutabletype(ty)
+    else
+        Base.isconcretetype(ty) && !ismutabletype(ty) && Base.datatype_pointerfree(ty)
+    end
+    if is_unboxed
         counter[] += 1
         f(ty)
         return true
