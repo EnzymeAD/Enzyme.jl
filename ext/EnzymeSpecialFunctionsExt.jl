@@ -11,6 +11,31 @@ function __init__()
     Enzyme.Compiler.cmplx_known_ops[typeof(SpecialFunctions.besselk)] = (:cmplx_kn, 2, nothing)
 end
 
+# Exponentially scaled Bessel functions (x/ref: https://github.com/EnzymeAD/Enzyme.jl/issues/2880)
+# besselix(nu, x) = besseli(nu, x) * exp(-abs(x)) for real x, hence the extra -sign(x)*Ω term.
+EnzymeRules.@easy_rule(
+    SpecialFunctions.besselix(nu::Real, x::Real),
+    (@Constant, (SpecialFunctions.besselix(nu - 1, x) + SpecialFunctions.besselix(nu + 1, x)) / 2 - sign(x) * Ω),
+)
+
+# besseljx(nu, x) = besselj(nu, x) * exp(-abs(imag(x))), so the scaling is constant for real x.
+EnzymeRules.@easy_rule(
+    SpecialFunctions.besseljx(nu::Real, x::Real),
+    (@Constant, (SpecialFunctions.besseljx(nu - 1, x) - SpecialFunctions.besseljx(nu + 1, x)) / 2),
+)
+
+# besselyx(nu, x) = bessely(nu, x) * exp(-abs(imag(x))), so the scaling is constant for real x.
+EnzymeRules.@easy_rule(
+    SpecialFunctions.besselyx(nu::Real, x::Real),
+    (@Constant, (SpecialFunctions.besselyx(nu - 1, x) - SpecialFunctions.besselyx(nu + 1, x)) / 2),
+)
+
+# besselkx(nu, x) = besselk(nu, x) * exp(x), hence the extra +Ω term.
+EnzymeRules.@easy_rule(
+    SpecialFunctions.besselkx(nu::Real, x::Real),
+    (@Constant, Ω - (SpecialFunctions.besselkx(nu - 1, x) + SpecialFunctions.besselkx(nu + 1, x)) / 2),
+)
+
 # x/ref: https://github.com/JuliaMath/SpecialFunctions.jl/pull/506
 ## Incomplete beta derivatives via Boik & Robinson-Cox
 #
