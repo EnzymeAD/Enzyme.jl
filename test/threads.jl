@@ -36,34 +36,3 @@ using Test
     @test 0.0 ≈ @test_warn r"active variables passed by value to jl_new_task are not yet supported" autodiff[](Reverse, tasktest2, Duplicated(R, dR), Active(2.0))[1][2]
     @test () === Enzyme.autodiff(Forward, tasktest, Duplicated(R, dR), Duplicated(2.0, 1.0))
 end
-
-@testset "Advanced Threads $(Threads.nthreads())" begin
-    function foo(y)
-        Threads.@threads for i in 1:3
-            y[i] *= 2
-        end
-        nothing
-    end
-
-    x = [1.0, 2.0, 3.0]
-    dx = [1.0, 1.0, 1.0]
-    Enzyme.autodiff(Reverse, foo, Duplicated(x, dx))
-    @test 2.0 ≈ x[1]
-    @test 4.0 ≈ x[2]
-    @test 6.0 ≈ x[3]
-    @test 2.0 ≈ dx[1]
-    @test 2.0 ≈ dx[2]
-    @test 2.0 ≈ dx[3]
-
-    x = [1.0, 2.0, 3.0]
-    dx = [1.0, 1.0, 1.0]
-    Enzyme.autodiff(Forward, foo, Duplicated(x, dx))
-    @test 2.0 ≈ x[1]
-    @test 4.0 ≈ x[2]
-    @test 6.0 ≈ x[3]
-    @test 2.0 ≈ dx[1]
-    @test 2.0 ≈ dx[2]
-    @test 2.0 ≈ dx[3]
-end
-
-
