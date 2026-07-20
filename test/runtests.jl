@@ -4,7 +4,7 @@ using ParallelTestRunner: addworker, filter_tests!, find_tests, parse_args, runt
 
 # Start with autodiscovered tests
 testsuite = find_tests(@__DIR__)
-clear!(testsuite)
+empty!(testsuite)
 # Add threads tests to be run with multiple Julia threads (will be configured in
 # `test_worker`).
 testsuite["threads/2"] = :(include($(joinpath(@__DIR__, "threads.jl"))))
