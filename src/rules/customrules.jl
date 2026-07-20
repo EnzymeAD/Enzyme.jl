@@ -669,6 +669,9 @@ function enzyme_custom_setup_args(
                     if val == nothing
                         ld = load!(B, iarty, ogval, "rules_ival_load")
                         metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+			if roots_op !== nothing
+                            ld = nullify_rooted_values!(B, ld)
+                        end
                         ld
                     else
                         val
@@ -729,6 +732,9 @@ function enzyme_custom_setup_args(
                         if val == nothing
                             ld = load!(B, iarty, ogval, "rules_bitsref_nonmixed")
                             metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+			    if roots_op !== nothing
+                                ld = nullify_rooted_values!(B, ld)
+                            end
                             ld
                         else
                             val
@@ -770,6 +776,15 @@ function enzyme_custom_setup_args(
                             else
                                 ld0 = load!(B, iarty, ev, "rules_shadow_load")
                                 metadata(ld0)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                                # As above, the shadow by-ref memory has no valid
+                                # inline-rooted pointer fields.
+                                if roots_op != nothing
+                                    if uncacheable[arg.codegen.i + 1] != 0
+                                        ld0 = recombine_value!(B, ld0, local_shadow_root)
+                                    else
+                                        ld0 = nullify_rooted_values!(B, ld0)
+                                    end
+                                end
                                 ld0
                             end
 
