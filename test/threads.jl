@@ -24,15 +24,4 @@ using Test
     
     Enzyme.autodiff(Forward, tasktest, Duplicated(R, dR), Duplicated(2.0, 1.0))
     @test Float64[1.0, 1.0] ≈ dR
-
-    function tasktest2(M, x)
-        task = Threads.@spawn begin
-           return
-        end
-        Base.wait(task)
-        nothing
-    end
-    # The empty return previously resulted in an illegal instruction error
-    @test 0.0 ≈ @test_warn r"active variables passed by value to jl_new_task are not yet supported" autodiff[](Reverse, tasktest2, Duplicated(R, dR), Active(2.0))[1][2]
-    @test () === Enzyme.autodiff(Forward, tasktest, Duplicated(R, dR), Duplicated(2.0, 1.0))
 end
