@@ -2403,6 +2403,7 @@ function enzyme_custom_common_rev(
                     end
                     shadowV = C_NULL
                 else
+                    @assert value_type(shadowV) == shadowType
                     shadowV = shadowV.ref
                 end
                 idx += 1
