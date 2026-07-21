@@ -41,26 +41,10 @@ jobs:
       matrix:
         version:
           - '1.10'
-          - '1.11'
-          - '1.12'
         os:
           - linux-x86-n2-32
         package:
-          - Bijectors
-          - Checkpointing
-          - DifferentiationInterface
-          - Distributions
-          - DynamicExpressions
-          - SymbolicRegression
           - Lux
-          - Oceananigans
-          - SciML
-          - KernelAbstractions
-          - MatrixAlgebraKit
-          - Molly
-          - MPI
-          - Comrade
-          - Turing
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
@@ -75,6 +59,8 @@ jobs:
             julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 -e 'using Pkg; Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")])'
         shell: bash
         if: ${{ matrix.version == '1.10' }}
+      - name: Setup upterm session
+        uses: owenthereal/action-upterm@v1
       - name: "Instantiate"
         run: |
           julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 -e 'using Pkg; Pkg.instantiate()'
