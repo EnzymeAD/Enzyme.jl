@@ -78,6 +78,20 @@ end
     dout = [1.0, 1.0]
     res = autodiff(Reverse, f_multi, Const, Duplicated(out, dout), Active(2.0))
     @test res[1][2] ≈ 2.0
+
+    # Amplified check: with many iterations and threads, a non-atomic per-thread
+    # accumulation of the active variable's adjoint loses contributions under
+    # contention. `d(in)` must equal `length(out)` on every run (see issue #3378).
+    N = 2000
+    let out = zeros(N), dout = ones(N)
+        autodiff(Reverse, f_multi, Const, Duplicated(out, dout), Active(2.0))
+    end
+    @test all(1:50) do _
+        out = zeros(N)
+        dout = ones(N)
+        res = autodiff(Reverse, f_multi, Const, Duplicated(out, dout), Active(2.0))
+        res[1][2] ≈ N
+    end
 end
 
 @testset "Closure-less threads $(Threads.nthreads())" begin

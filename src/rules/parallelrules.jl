@@ -160,7 +160,7 @@ function (st::ReversePFor{ThunkTy, FT, AnyJL, byRef, TT})(tid) where {ThunkTy, F
     else
         @inbounds st.tapes[tid]
     end
-    
+
     if byRef
         st.thunk(Const(referenceCaller), st.ft, Const(tid), tres)
     else
@@ -168,6 +168,52 @@ function (st::ReversePFor{ThunkTy, FT, AnyJL, byRef, TT})(tid) where {ThunkTy, F
     end
 
     nothing
+end
+
+# Build a thread-private copy of a reverse-mode shadow closure. Mutable / inactive captures
+# (arrays, boxes, integers, ranges, ...) are shared with the caller's shadow: their shadow
+# carries the incoming cotangents the reverse pass *reads* (e.g. the loop's `dout`), and
+# their in-place accumulation must land back in the caller. Active immutable captures (floats,
+# and immutable structs containing them) are zeroed so each thread accumulates into its own
+# partial; the partials are summed back into the caller's shadow after the parallel region
+# (see `runtime_pfor_rev`). This avoids the data race of multiple threads doing a non-atomic
+# read-modify-write of a shared active scalar shadow.
+#
+# `make_zero` is not used: by default it *zeros* the mutable shadows (an incoming `dout`
+# would be read as zeros, giving a zero gradient). It can be made to share them by pre-seeding
+# its `seen::IdDict` with each mutable object mapped to itself, but collecting those objects
+# is the same traversal done here, so we share-and-zero directly with a literal `zero` on the
+# leaves (robust for non-finite shadow values, unlike an `x - x` form).
+@inline zero_active_shadow(x::T) where {T <: AbstractFloat} = zero(x)
+@inline zero_active_shadow(x::T) where {T <: Complex} = zero(x)
+@inline function zero_active_shadow(x::T) where {T}
+    (guaranteed_const(T) || mutable_register(T)) && return x
+    return splatnew(
+        T, ntuple(Val(fieldcount(T))) do i
+            Base.@_inline_meta
+            zero_active_shadow(getfield(x, i))
+        end
+    )
+end
+
+struct ReversePForSplit{ThunkTy, VT, PT, AnyJL, TT}
+    thunk::ThunkTy
+    val::VT
+    privates::PT
+    tapes::TT
+end
+
+function (st::ReversePForSplit{ThunkTy, VT, PT, AnyJL, TT})(tid) where {ThunkTy, VT, PT, AnyJL, TT}
+    tres = if !AnyJL
+        unsafe_load(st.tapes, tid)
+    else
+        @inbounds st.tapes[tid]
+    end
+
+    ft_tid = Duplicated(st.val, @inbounds st.privates[tid])
+    st.thunk(Const(referenceCaller), ft_tid, Const(tid), tres)
+
+    return nothing
 end
 
 function runtime_pfor_rev(
@@ -178,7 +224,26 @@ function runtime_pfor_rev(
     tapes,
     threading_args...,
 ) where {ThunkTy,FT,AnyJL,byRef}
-    Base.Threads.threading_run(ReversePFor{ThunkTy, FT, AnyJL, byRef, typeof(tapes)}(thunk, ft, tapes), threading_args...)
+    if byRef && FT <: Duplicated && ft.dval isa Base.RefValue
+        # Give each thread its own shadow closure so accumulation of active immutable
+        # captures (e.g. an `Active` scalar written inside the loop) does not race, then
+        # reduce the per-thread partials back into the caller's shadow.
+        master = ft.dval
+        n = Base.Threads.threadpoolsize()
+        privates = Vector{typeof(master)}(undef, n)
+        for i in 1:n
+            @inbounds privates[i] = Base.RefValue(zero_active_shadow(master[]))
+        end
+        Base.Threads.threading_run(
+            ReversePForSplit{ThunkTy, typeof(ft.val), typeof(privates), AnyJL, typeof(tapes)}(thunk, ft.val, privates, tapes),
+            threading_args...,
+        )
+        for i in 1:n
+            master[] = recursive_add(master[], (@inbounds privates[i])[], identity, mutable_register)
+        end
+    else
+        Base.Threads.threading_run(ReversePFor{ThunkTy, FT, AnyJL, byRef, typeof(tapes)}(thunk, ft, tapes), threading_args...)
+    end
     if !AnyJL
         Libc.free(tapes)
     end
