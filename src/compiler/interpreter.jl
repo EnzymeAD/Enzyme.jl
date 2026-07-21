@@ -664,7 +664,7 @@ end
 # @btime lindex_v2(idx, dst, src2)
 # # 1.617 μs (0 allocations: 0 bytes)
 @inline linear_getindex(b::Base.Broadcast.Extruded, i::Int) = linear_getindex(b.x, i)
-@inline linear_getindex(bc::Base.Broadcast.Broadcasted, i::Int) = bc.f(map(arg -> linear_getindex(arg, i), bc.args)...)
+@inline linear_getindex(bc::Base.Broadcast.Broadcasted, i::Int) = bc.f(map(Base.Fix2(linear_getindex, i), bc.args)...)
 @inline linear_getindex(a::AbstractArray, i::Int) = @inbounds a[i]
 @inline linear_getindex(x::Number, i::Int) = x
 @inline linear_getindex(x::Ref, i::Int) = x[]
