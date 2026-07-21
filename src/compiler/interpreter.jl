@@ -663,6 +663,12 @@ end
 # 
 # @btime lindex_v2(idx, dst, src2)
 # # 1.617 μs (0 allocations: 0 bytes)
+@inline linear_getindex(b::Base.Broadcast.Extruded, i::Int) = linear_getindex(b.x, i)
+@inline linear_getindex(bc::Base.Broadcast.Broadcasted, i::Int) = bc.f(map(Base.Fix2(linear_getindex, i), bc.args)...)
+@inline linear_getindex(a::AbstractArray, i::Int) = @inbounds a[i]
+@inline linear_getindex(x::Number, i::Int) = x
+@inline linear_getindex(x::Ref, i::Int) = x[]
+
 @generated function lindex_v2(idx::BC2, dest, src, ::Val{Checked}=Val(true)) where {BC2, Checked}
     if BC2 <: Base.CartesianIndices
         nloops = BC2.parameters[1]
@@ -700,8 +706,9 @@ end
                     tmp = Base.udiv_int(tmp, $lim)
                 end)
             end
+            get_expr = quote @inbounds Base.Broadcast._broadcast_getindex(src, Base.CartesianIndex($(idxs...))) end
         else
-            idxs = [quote I+1 end]
+            get_expr = quote @inbounds linear_getindex(src, I+1) end
         end
 
         return quote
@@ -712,7 +719,7 @@ end
                     @inbounds while true
                         let tmp = I
                             $(lexprs...)
-                            @inbounds dest[I+1] = @inbounds Base.Broadcast._broadcast_getindex(src, Base.CartesianIndex($(idxs...)))
+                            @inbounds dest[I+1] = $get_expr
                         end
                         I += 1
                         if I == total
