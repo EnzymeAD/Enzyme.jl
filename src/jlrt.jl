@@ -1140,7 +1140,7 @@ function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.I
         stringv = globalstring_ptr!(B, stringv, "enz_exception")
     end
 
-    ct = if occursin("ptx", LLVM.triple(mod)) || occursin("amdgcn", LLVM.triple(mod))
+    ct = if occursin("ptx", LLVM.triple(mod)) || occursin("amdgcn", LLVM.triple(mod)) || || occursin("spir", LLVM.triple(mod))
 	if string isa Tuple
 	    errty = errty.name.wrapper{Nothing, Nothing}
 	end
