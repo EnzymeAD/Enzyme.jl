@@ -174,6 +174,20 @@ function add_trampoline!(jd, (lljit, lctm, ism), entry, target)
 end
 
 function prepare!(mod)
+    # On Windows, LLVM's GlobalOpt demotes internal functions to `private` linkage,
+    # which emits no object symbol. Julia's per-symbol Win64 JIT unwind registrar
+    # (create_PRUNTIME_FUNCTION) then skips those functions, so their frames get no
+    # RUNTIME_FUNCTION and a fault (e.g. a GC safepoint) landing on one defeats
+    # Windows exception dispatch. Promote them back to `internal` here -- the last
+    # step before JIT emission, after all optimization -- so they keep a local
+    # symbol and get registered. See EnzymeAD/Enzyme.jl#3374.
+    if Sys.iswindows()
+        for f in functions(mod)
+            if !LLVM.isdeclaration(f) && LLVM.linkage(f) == LLVM.API.LLVMPrivateLinkage
+                LLVM.linkage!(f, LLVM.API.LLVMInternalLinkage)
+            end
+        end
+    end
     for f in collect(functions(mod))
         ptr = fix_ptr_lookup(LLVM.name(f))
         if ptr === nothing
