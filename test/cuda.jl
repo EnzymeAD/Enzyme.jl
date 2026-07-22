@@ -49,38 +49,113 @@ end
 
 @testset "CUDA array-memory copies" begin
     ER = Enzyme.EnzymeRules
-    config = ER.RevConfig{true,true,1,(false,false,false,false,false),false,false}()
+    config = ER.RevConfig{true, true, 1, (false, false, false, false, false), false, false}()
     n = 3
+    offset = sizeof(Float32)
     src = Float32[4, 5, 6]
     dsrc = Float32[10, 10, 10]
     seed = Float32[1, 2, 3]
-    result = zeros(Float32, n)
-    dest_mem = CUDA.alloc(CUDA.ArrayMemory{Float32}, (n,))
-    ddest_mem = CUDA.alloc(CUDA.ArrayMemory{Float32}, (n,))
+    memory_src = Float32[99, 4, 5, 6]
+    memory_dsrc = Float32[77, 10, 10, 10]
+    memory_seed = Float32[88, 1, 2, 3]
+
+    dest_mem = CUDA.alloc(CUDA.ArrayMemory{Float32}, (n + 1,))
+    ddest_mem = CUDA.alloc(CUDA.ArrayMemory{Float32}, (n + 1,))
+    src_mem = CUDA.alloc(CUDA.ArrayMemory{Float32}, (n + 1,))
+    dsrc_mem = CUDA.alloc(CUDA.ArrayMemory{Float32}, (n + 1,))
+
+    write_memory! = function (memory, values)
+        GC.@preserve values begin
+            Base.unsafe_copyto!(pointer(memory), 0, pointer(values), length(values))
+        end
+    end
+    read_memory = function (memory)
+        values = zeros(Float32, n + 1)
+        GC.@preserve values begin
+            Base.unsafe_copyto!(pointer(values), pointer(memory), 0, length(values))
+        end
+        return values
+    end
+    reverse_copy! = function (seed!, dest_ann, src_ann; doff = nothing, soff = nothing)
+        args = if doff !== nothing
+            (dest_ann, Const(doff), src_ann, Const(n))
+        elseif soff !== nothing
+            (dest_ann, src_ann, Const(soff), Const(n))
+        else
+            (dest_ann, src_ann, Const(n))
+        end
+        return_type = Duplicated{typeof(dest_ann.val)}
+        ER.augmented_primal(
+            config, Const(Base.unsafe_copyto!), return_type, args...,
+        )
+        seed!()
+        ER.reverse(
+            config, Const(Base.unsafe_copyto!), return_type, nothing, args...,
+        )
+    end
 
     try
+        # Ptr -> CuArrayPtr
         dest = pointer(dest_mem)
         ddest = pointer(ddest_mem)
-        GC.@preserve src dsrc seed result begin
+        GC.@preserve src dsrc begin
             dest_ann = Duplicated(dest, ddest)
             src_ann = Duplicated(pointer(src), pointer(dsrc))
-            return_type = Duplicated{typeof(dest)}
-            ER.augmented_primal(
-                config, Const(Base.unsafe_copyto!), return_type,
-                dest_ann, Const(0), src_ann, Const(n),
-            )
-            Base.unsafe_copyto!(ddest, 0, pointer(seed), n)
-            ER.reverse(
-                config, Const(Base.unsafe_copyto!), return_type, nothing,
-                dest_ann, Const(0), src_ann, Const(n),
-            )
-            Base.unsafe_copyto!(pointer(result), ddest, 0, n)
+            reverse_copy!(dest_ann, src_ann; doff = offset) do
+                write_memory!(ddest_mem, memory_seed)
+            end
         end
         @test dsrc == Float32[11, 12, 13]
-        @test result == zeros(Float32, n)
+        @test read_memory(ddest_mem) == Float32[88, 0, 0, 0]
+
+        # CuArrayPtr -> Ptr
+        write_memory!(src_mem, memory_src)
+        write_memory!(dsrc_mem, memory_dsrc)
+        dest = zeros(Float32, n)
+        ddest = copy(seed)
+        GC.@preserve dest ddest begin
+            dest_ann = Duplicated(pointer(dest), pointer(ddest))
+            src_ann = Duplicated(pointer(src_mem), pointer(dsrc_mem))
+            reverse_copy!(dest_ann, src_ann; soff = offset) do
+                copyto!(ddest, seed)
+            end
+        end
+        @test dest == src
+        @test read_memory(dsrc_mem) == Float32[77, 11, 12, 13]
+        @test ddest == zeros(Float32, n)
+
+        # CuPtr -> CuArrayPtr
+        fill!(dsrc, 10)
+        device_src = CuArray(src)
+        device_dsrc = CuArray(dsrc)
+        dest = pointer(dest_mem)
+        ddest = pointer(ddest_mem)
+        dest_ann = Duplicated(dest, ddest)
+        src_ann = Duplicated(pointer(device_src), pointer(device_dsrc))
+        reverse_copy!(dest_ann, src_ann; doff = offset) do
+            write_memory!(ddest_mem, memory_seed)
+        end
+        @test Array(device_dsrc) == Float32[11, 12, 13]
+        @test read_memory(ddest_mem) == Float32[88, 0, 0, 0]
+
+        # CuArrayPtr -> CuPtr
+        write_memory!(src_mem, memory_src)
+        write_memory!(dsrc_mem, memory_dsrc)
+        device_dest = CUDA.zeros(Float32, n)
+        device_ddest = CuArray(seed)
+        dest_ann = Duplicated(pointer(device_dest), pointer(device_ddest))
+        src_ann = Duplicated(pointer(src_mem), pointer(dsrc_mem))
+        reverse_copy!(dest_ann, src_ann; soff = offset) do
+            copyto!(device_ddest, seed)
+        end
+        @test Array(device_dest) == src
+        @test read_memory(dsrc_mem) == Float32[77, 11, 12, 13]
+        @test Array(device_ddest) == zeros(Float32, n)
     finally
         CUDA.free(dest_mem)
         CUDA.free(ddest_mem)
+        CUDA.free(src_mem)
+        CUDA.free(dsrc_mem)
     end
 end
 

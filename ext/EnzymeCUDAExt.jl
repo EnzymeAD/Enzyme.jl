@@ -5,9 +5,9 @@ using Enzyme
 using Enzyme: EnzymeRules
 
 @inline _asarray(ptr::Ptr{T}, n::Integer) where {T} =
-    unsafe_wrap(Array, ptr, n; own=false)
+    unsafe_wrap(Array, ptr, n; own = false)
 @inline _asarray(ptr::CuPtr{T}, n::Integer) where {T} =
-    unsafe_wrap(CuArray, ptr, n; own=false)
+    unsafe_wrap(CuArray, ptr, n; own = false)
 
 @inline _stage(ptr::Ptr, offset::Integer, n::Integer) =
     _asarray(ptr + offset, n)
@@ -19,7 +19,7 @@ function _stage(ptr::CuArrayPtr{T}, offset::Integer, n::Integer) where {T}
     return buffer
 end
 
-@inline _commit!(::Union{Ptr,CuPtr}, offset, buffer, n) = nothing
+@inline _commit!(::Union{Ptr, CuPtr}, offset, buffer, n) = nothing
 function _commit!(ptr::CuArrayPtr, offset, buffer, n)
     Base.unsafe_copyto!(ptr, offset, pointer(buffer), n)
     return nothing
@@ -52,7 +52,7 @@ function _zero!(dest, doff, n)
 end
 
 @inline function _shadow(x, config, batch)
-    EnzymeRules.width(config) == 1 ? x.dval : x.dval[batch]
+    return EnzymeRules.width(config) == 1 ? x.dval : x.dval[batch]
 end
 
 function EnzymeRules.augmented_primal(
