@@ -9,9 +9,7 @@ using Enzyme: EnzymeRules
 @inline _asarray(ptr::CuPtr{T}, n::Integer) where {T} =
     unsafe_wrap(CuArray, ptr, n; own = false)
 
-@inline _stage(ptr::Ptr, offset::Integer, n::Integer) =
-    _asarray(ptr + offset, n)
-@inline _stage(ptr::CuPtr, offset::Integer, n::Integer) =
+@inline _stage(ptr::Union{Ptr, CuPtr}, offset::Integer, n::Integer) =
     _asarray(ptr + offset, n)
 function _stage(ptr::CuArrayPtr{T}, offset::Integer, n::Integer) where {T}
     buffer = CuArray{T}(undef, n)
@@ -25,29 +23,59 @@ function _commit!(ptr::CuArrayPtr, offset, buffer, n)
     return nothing
 end
 
+function _zero!(ptr::Ptr{T}, off::Integer, n::Integer) where {T <: AbstractFloat}
+    n == 0 && return nothing
+    Base.Libc.memset(ptr + off * sizeof(T), 0, n * sizeof(T))
+    return nothing
+end
+function _zero!(ptr::CuPtr{T}, off::Integer, n::Integer) where {T <: AbstractFloat}
+    n == 0 && return nothing
+    bytes = reinterpret(CuPtr{UInt8}, ptr + off * sizeof(T))
+    CUDA.memset(bytes, UInt8(0), n * sizeof(T))
+    return nothing
+end
+function _zero!(ptr::CuArrayPtr{T}, off::Integer, n::Integer) where {T}
+    n == 0 && return nothing
+    buffer = _stage(ptr, off, n)
+    fill!(buffer, zero(eltype(buffer)))
+    _commit!(ptr, off, buffer, n)
+    return nothing
+end
+
+# Device kernel for `dst[i] += src[i]`; avoids materializing a broadcast.
+function _addto_kernel!(dst, src, n)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    @inbounds if i <= n
+        dst[i] += src[i]
+    end
+    return nothing
+end
+
+function _accumulate!(dst::CuArray, src::CuArray)
+    n = length(dst)
+    n == 0 && return nothing
+    threads = min(n, 256)
+    blocks = cld(n, threads)
+    @cuda threads = threads blocks = blocks _addto_kernel!(dst, src, n)
+    return nothing
+end
+_accumulate!(dst::Array, src::Array) = (dst .+= src; nothing)
+
 function _accumulate_and_zero!(src, soff, dest, doff, n::Integer)
     n == 0 && return nothing
     typeof(src) === typeof(dest) && src == dest && soff == doff && return nothing
 
     dsrc = _stage(src, soff, n)
     ddest = _stage(dest, doff, n)
-    if dsrc isa Array && ddest isa Array || dsrc isa CuArray && ddest isa CuArray
-        dsrc .+= ddest
+    if dsrc isa CuArray && ddest isa CuArray
+        _accumulate!(dsrc, ddest)
     else
         tmp = similar(dsrc)
         copyto!(tmp, ddest)
-        dsrc .+= tmp
+        _accumulate!(dsrc, tmp)
     end
-    fill!(ddest, zero(eltype(ddest)))
     _commit!(src, soff, dsrc, n)
-    _commit!(dest, doff, ddest, n)
-    return nothing
-end
-
-function _zero!(dest, doff, n)
-    ddest = _stage(dest, doff, n)
-    fill!(ddest, zero(eltype(ddest)))
-    _commit!(dest, doff, ddest, n)
+    _zero!(dest, doff, n)
     return nothing
 end
 
