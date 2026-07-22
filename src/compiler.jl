@@ -5479,6 +5479,16 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     primal_job = CompilerJob(primal, primal_config, job.world)
     @safe_debug "Emit LLVM with" primal_job
     GPUCompiler.prepare_job!(primal_job)
+    # TODO(relocatable-globals): On the GPUCompiler v2 path, `emit_llvm` runs
+    # `relocate_gvs!`, which materializes `julia.constgv` isbits constants as
+    # device-resident boxes and leaves other constgv globals as external
+    # declarations (their initializers were stripped by `compile_method_instance`
+    # for session portability). Enzyme's analysis passes assume the v1 form, where
+    # every constgv global carries a baked host-pointer `inttoptr` initializer, so
+    # they can no longer fold/track these constants. This is the root cause of the
+    # remaining Julia 1.12 failures (activity/shadow errors in test/basic.jl). The
+    # right fix is to make Enzyme relocatable — handle the materialized boxes and
+    # session-portable globals directly — rather than depending on baked addresses.
     mod, meta = GPUCompiler.emit_llvm(primal_job)
     edges = enzyme_context.edges
 
