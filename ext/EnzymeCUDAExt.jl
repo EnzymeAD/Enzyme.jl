@@ -3,6 +3,7 @@ module EnzymeCUDAExt
 using CUDA
 using Enzyme
 using Enzyme: EnzymeRules
+using LinearAlgebra: axpy!
 
 @inline _asarray(ptr::Ptr{T}, n::Integer) where {T} =
     unsafe_wrap(Array, ptr, n; own = false)
@@ -42,21 +43,10 @@ function _zero!(ptr::CuArrayPtr{T}, off::Integer, n::Integer) where {T}
     return nothing
 end
 
-# Device kernel for `dst[i] += src[i]`; avoids materializing a broadcast.
-function _addto_kernel!(dst, src, n)
-    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
-    @inbounds if i <= n
-        dst[i] += src[i]
-    end
-    return nothing
-end
-
 function _accumulate!(dst::CuArray, src::CuArray)
-    n = length(dst)
-    n == 0 && return nothing
-    threads = min(n, 256)
-    blocks = cld(n, threads)
-    @cuda threads = threads blocks = blocks _addto_kernel!(dst, src, n)
+    length(dst) == 0 && return nothing
+    # `dst .+= src` via cuBLAS; covers Float16/32/64 and complex shadows.
+    axpy!(one(eltype(dst)), src, dst)
     return nothing
 end
 _accumulate!(dst::Array, src::Array) = (dst .+= src; nothing)

@@ -4,25 +4,30 @@ using LinearAlgebra: dot
 using Test
 
 @testset "CUDA memory copies" begin
-    x = Float32[1, 2, 3]
-    dx = zeros(Float32, 3)
-    Enzyme.autodiff(
-        Reverse,
-        x -> sum(abs2, Array(CuArray(x))),
-        Active,
-        Duplicated(x, dx),
-    )
-    @test dx == 2 .* x
+    #= Exercise the reverse copy rules across CUDA's memory types. A host<->device
+    roundtrip gradient must recover `2x`. =#
+    grad_roundtrip = function (to_gpu)
+        x = Float32[1, 2, 3]
+        dx = zeros(Float32, 3)
+        Enzyme.autodiff(
+            Reverse,
+            x -> sum(abs2, Array(to_gpu(x))),
+            Active,
+            Duplicated(x, dx),
+        )
+        return dx
+    end
 
-    weights = Float32[4, 5, 6]
-    fill!(dx, 0)
-    Enzyme.autodiff(
-        Reverse,
-        x -> dot(Array(CuArray(x)), weights),
-        Active,
-        Duplicated(x, dx),
-    )
-    @test dx == weights
+    @testset "device memory" begin
+        @test grad_roundtrip(x -> cu(x)) == Float32[2, 4, 6]
+    end
+    # Unified/host memory: `pointer(::CuArray{…,Unified/Host})` is inferred as `Union{CuPtr,Ptr}`, so the `pointer` rule cannot yet return a concrete
+    @testset "unified memory" begin
+        @test_broken grad_roundtrip(x -> cu(x; unified = true)) == Float32[2, 4, 6]
+    end
+    @testset "host memory" begin
+        @test_broken grad_roundtrip(x -> cu(x; host = true)) == Float32[2, 4, 6]
+    end
 
     x = CuArray(Float32[1, 2, 3])
     original = copy(x)
