@@ -60,7 +60,7 @@ jobs:
         shell: bash
         if: ${{ matrix.version == '1.10' }}
       - name: Setup upterm session
-        uses: owenthereal/action-upterm@v1
+        uses: mxschmitt/action-tmate@v3
       - name: "Instantiate"
         run: |
           julia --color=yes --project=test/integration/${{ matrix.package }} --threads=auto --check-bounds=yes -O1 -e 'using Pkg; Pkg.instantiate()'
