@@ -47,7 +47,7 @@ CUDA = "5, 6"
 EnzymeCore = "0.8.21"
 Enzyme_jll = "0.0.289"
 GPUArraysCore = "0.1.6, 0.2"
-GPUCompiler = "2"
+GPUCompiler = "1.6.2, 2"
 LLVM = "9.10"
 LogExpFunctions = "0.3.2, 1"
 ObjectFile = "0.4, 0.5"
@@ -69,3 +69,8 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [sources.EnzymeCore]
 path = "lib/EnzymeCore"
+
+# XXX: remove before merging, once GPUCompiler 2.0 is released
+[sources.GPUCompiler]
+url = "https://github.com/JuliaGPU/GPUCompiler.jl"
+rev = "tb/compilercaching"
