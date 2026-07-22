@@ -105,6 +105,7 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
+          include-all-prereleases: true
       - uses: actions/checkout@v7
         if: ${{ matrix.assertions }}
         with:
@@ -204,6 +205,7 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
+          include-all-prereleases: true
       - uses: julia-actions/cache@v3
       - name: setup EnzymeTestUtils
         shell: julia --color=yes {0}
@@ -261,6 +263,7 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
+          include-all-prereleases: true
       - uses: julia-actions/cache@v3
       - name: setup EnzymeCore
         shell: julia --color=yes {0}
