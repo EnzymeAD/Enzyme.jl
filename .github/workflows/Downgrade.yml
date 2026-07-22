@@ -61,6 +61,7 @@ jobs:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - uses: julia-actions/julia-downgrade-compat@v1
         with:
+          # EnzymeCore is dev'd from a local path, so its compat cannot be downgraded.
           skip: EnzymeCore
       - uses: julia-actions/julia-buildpkg@v1
         env:
