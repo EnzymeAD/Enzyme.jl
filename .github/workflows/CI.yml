@@ -99,17 +99,17 @@ jobs:
             assertions: false
             llvm_args: '--opaque-pointers'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
         if: ${{ ! matrix.assertions }}
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: ${{ matrix.assertions }}
         with:
           repository: 'JuliaLang/julia'
-          ref: release-${{ matrix.version }}
+          ref: ${{ matrix.version == '1.12' && 'v1.12.6' || matrix.version == '1.10' && 'backports-release-1.10' || format('release-{0}', matrix.version) }}
           path: 'julia'
       - name: Compile Julia
         if: ${{ matrix.assertions }}
@@ -163,16 +163,14 @@ jobs:
         if: matrix.version != 'nightly' || steps.buildpkg.outcome == 'success'
         continue-on-error: ${{ matrix.version == 'nightly' }}
         id: run_tests
-        # TODO restore coverage post https://github.com/JuliaGPU/GPUCompiler.jl/pull/711
         with:
-          coverage: ${{ matrix.version != '1.11' || !matrix.assertions }}
           test_args: ${{ env.runtest_test_args }}
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
           JULIA_LLVM_ARGS: ${{ matrix.llvm_args }}
       - uses: julia-actions/julia-processcoverage@v1
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
-      - uses: codecov/codecov-action@v6
+      - uses: codecov/codecov-action@v7
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           files: lcov.info
@@ -201,7 +199,7 @@ jobs:
           - default
         libEnzyme: [packaged]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.version }}
@@ -229,7 +227,7 @@ jobs:
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           directories: lib/EnzymeTestUtils/src
-      - uses: codecov/codecov-action@v6
+      - uses: codecov/codecov-action@v7
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           files: lcov.info
@@ -258,7 +256,7 @@ jobs:
           - default
         libEnzyme: [packaged]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.version }}
@@ -286,7 +284,7 @@ jobs:
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           directories: lib/EnzymeCore/src
-      - uses: codecov/codecov-action@v6
+      - uses: codecov/codecov-action@v7
         if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           files: lcov.info

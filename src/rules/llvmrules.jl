@@ -460,7 +460,8 @@ end
         orig,
         [shadowin],
         [API.VT_Primal for _ in 1:length(origops)],
-        true;
+        true,
+        "duplicate";
         need_result = false
     )
 
@@ -517,7 +518,8 @@ end
         orig,
         [shadowin],
         [API.VT_Shadow],
-        false;
+        false,
+        "arraycopy";
         postprocess_const = needs_runtime_zero ? post_arraycopy_makezero : post_arraycopy_memset
     )::LLVM.Value #=lookup=#
 
@@ -529,6 +531,7 @@ end
 # If this is a memory, pass memoryptr=<underlying data>
 function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = nothing, memoryptr = nothing)
     memory = memoryptr != nothing
+    primalsrc = shadowsrc
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(
@@ -644,14 +647,23 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = noth
         if fwd
             lookup_src = false
             shadowsrc = invert_pointer(gutils, memoryptr, B)
+    	    primalsrc = new_from_original(gutils, memoryptr) 
         else
             shadowsrc = invert_pointer(gutils, shadowsrc, B)
+	        primalsrc = new_from_original(gutils, primalsrc) 
             shadowsrc = lookup_value(gutils, shadowsrc, B)
+    	    if get_runtime_activity(gutils)
+    	       primalsrc = lookup_value(gutils, primalsrc, B)
+    	    end
         end
     else
         shadowsrc = invert_pointer(gutils, shadowsrc, B)
+    	primalsrc = new_from_original(gutils, primalsrc)
         if !fwd
             shadowsrc = lookup_value(gutils, shadowsrc, B)
+    	    if get_runtime_activity(gutils)
+    	       primalsrc = lookup_value(gutils, primalsrc, B)
+    	    end
         end
     end
 
@@ -672,6 +684,22 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = noth
 
     shadowsrcs = LLVM.Value[]
     shadowdsts = LLVM.Value[]
+        
+    # src already has done the lookup from the argument
+    primalsrc0 = if get_runtime_activity(gutils)
+	    if lookup_src
+            if memory
+                # TODO this may not be at the same offset as the start of the copy, e.g. get_memory_data(src) != memoryptr
+                get_memory_data(B, primalsrc)
+            else
+                get_array_data(B, primalsrc)
+            end
+        else
+            inttoptr!(B, primalsrc, LLVM.PointerType(LLVM.IntType(8)))
+        end
+    else
+    	primalsrc
+    end
 
     for i in 1:width
 
@@ -726,8 +754,10 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = noth
             0,
             false,
             shadowdst0,
+    	    nothing,
             false,
             shadowsrc0,
+	        primalsrc0,
             length,
             isVolatile,
             orig,
@@ -749,7 +779,6 @@ end
 
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
         shadowres = LLVM.Value(unsafe_load(shadowR))
-
         arraycopy_common(true, B, orig, origops[1], gutils, shadowres)
     end
 
@@ -810,7 +839,8 @@ end
         orig,
         [shadowin, shadowdata, len],
         [API.VT_Shadow, API.VT_Shadow, API.VT_Primal],
-        false;
+        false,
+        "genericmemory_copy_slice";
         postprocess_const = needs_runtime_zero ? post_arraycopy_makezero : post_genericmemcpy_memset
     ) #=lookup=#
 
@@ -830,7 +860,7 @@ end
         shadowres = LLVM.Value(unsafe_load(shadowR))
 
         len = new_from_original(gutils, origops[3])
-        memoryptr = origops[2]
+        memoryptr = origops[2]        
         arraycopy_common(true, B, orig, origops[1], gutils, shadowres; len, memoryptr)
     end
 
@@ -956,7 +986,8 @@ end
             orig,
             args,
             [API.VT_Primal, API.VT_Shadow, API.VT_Primal],
-            false;
+            false,
+            "arrayreshape";
             cmpidx = 2
         ) #=lookup=#
         unsafe_store!(shadowR, shadowres.ref)
@@ -1010,6 +1041,7 @@ end
         args,
         [API.VT_Shadow, API.VT_Shadow],
         false,
+        "gcloaded",
     ) #=lookup=#
 
     unsafe_store!(shadowR, shadowres.ref)
@@ -1288,6 +1320,7 @@ end
         newops,
         newvals,
         false,
+        "eqtableget",
     )
 
     unsafe_store!(shadowR, shadowres.ref)
@@ -1393,7 +1426,7 @@ end
     ]
 
     shadowres = batch_call_same_with_inverted_arg_if_active!(
-        B, gutils, orig, newops, newvals, false;
+        B, gutils, orig, newops, newvals, false, "eqtableput";
         preprocess = eqtable_shadow_active
     ) #=lookup=#
 
@@ -1486,7 +1519,8 @@ end
         orig,
         args,
         [API.VT_Shadow, API.VT_Primal],
-        false;
+        false,
+        "array_grow_end";
         need_result = false
     ) #=lookup=#
     return false
@@ -1538,7 +1572,8 @@ end
         orig,
         args,
         [API.VT_Shadow, API.VT_Primal],
-        false;
+        false,
+        "array_grow_end";
         preprocess = pre_shadow_array_grow!,
         postprocess = post_shadow_array_grow!,
         need_result = false
@@ -1731,7 +1766,7 @@ end
     ]
 
     batch_call_same_with_inverted_arg_if_active!(
-        B, gutils, orig, args, valTys, false;
+        B, gutils, orig, args, valTys, false, "array_ptr_copy";
         need_result = false
     ) #=lookup=#
 
@@ -1765,7 +1800,7 @@ end
         new_from_original(gutils, operands(orig)[4]),
     ]
 
-    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false; cmpidx = 2)::LLVM.Value
+    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false, "ptr_to_array"; cmpidx = 2)::LLVM.Value
 
     unsafe_store!(shadowR, shadowres.ref)
 

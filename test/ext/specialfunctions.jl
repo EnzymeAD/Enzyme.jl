@@ -31,6 +31,13 @@ end
     test_scalar((y) -> SpecialFunctions.besseli(2, y), x)
     test_scalar((y) -> SpecialFunctions.besselj(2, y), x)
 
+    # Exponentially scaled Bessel functions (rules defined for real arguments)
+    # https://github.com/EnzymeAD/Enzyme.jl/issues/2880
+    if x isa Real
+        test_scalar((y) -> SpecialFunctions.besselix(2, y), x)
+        test_scalar((y) -> SpecialFunctions.besseljx(2, y), x)
+    end
+
     # test_scalar((y) -> SpecialFunctions.sphericalbessely(y, 0.5), 0.3)
     # test_scalar(SpecialFunctions.dawson, x)
 
@@ -49,6 +56,11 @@ end
         test_scalar(SpecialFunctions.bessely0, x)
         test_scalar(SpecialFunctions.bessely1, x)
         test_scalar((y) -> SpecialFunctions.bessely(2, y), x)
+
+        if x isa Real
+            test_scalar((y) -> SpecialFunctions.besselyx(2, y), x)
+            test_scalar((y) -> SpecialFunctions.besselkx(2, y), x)
+        end
 
         # No derivative defined in Enzyme for libc atm
         # test_scalar(SpecialFunctions.gamma, x)

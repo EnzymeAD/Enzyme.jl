@@ -29,14 +29,58 @@
             end
         end
         if aref == DupState
-            return quote
-                Base.@_inline_meta
-                batchshadowarg
+
+            if batchshadowarg === Nothing && primarg !== Nothing
+                # in this case the arg is inactive [as we passed nothing for the shadow]. 
+                # However, we still have to return a duplicated value, as it is required by type.
+                if RuntimeActivity
+                    return quote
+                        Base.@_inline_meta
+                        primarg
+                    end
+                else
+                    return quote
+                        Base.@_inline_meta
+                        throw(
+                            EnzymeRuntimeActivityError{String, Nothing, Nothing}(
+                            "Error cannot store inactive but differentiable variable "*string(primarg)*" into active tuple",
+                            nothing,
+                            nothing
+                        )
+                        )
+                    end
+                end
+            else
+                return quote
+                    Base.@_inline_meta
+                    batchshadowarg
+                end
             end
         else
-            return quote
-                Base.@_inline_meta
-                batchshadowarg[]
+            if batchshadowarg === Nothing && primarg !== Nothing
+                # in this case the arg is inactive [as we passed nothing for the shadow]. 
+                # However, we still have to return a duplicated value, as it is required by type.
+                if aref == ActiveState
+                    return quote
+                        Enzyme.make_zero(primarg)
+                    end
+                else
+                    return quote
+                        Base.@_inline_meta
+                        throw(
+                            EnzymeRuntimeActivityError{String, Nothing, Nothing}(
+                            "Error cannot store inactive but differentiable variable "*string(primarg)*" into active tuple",
+                            nothing,
+                            nothing
+                            )
+                        )
+                    end
+                end
+            else
+                return quote
+                    Base.@_inline_meta
+                    batchshadowarg[]
+                end
             end
         end
     end
@@ -90,6 +134,7 @@ function body_construct_augfwd(
     primargs,
     batchshadowargs,
     tuple,
+    @nospecialize(NewType::Union{Nothing, Type})
 )
     shadow_rets = Vector{Expr}[]
     results = Expr[quote
@@ -128,10 +173,18 @@ function body_construct_augfwd(
         push!(res_syms, sres)
     end
 
+    # Mutable structs are DupState overall: their shadow must be a plain shadow
+    # object, not a MixedState-style RefValue, to match what downstream consumers
+    # derive from active_reg_nothrow of the result type.
+    wrapcond = :any_mixed
+    if !tuple && ismutabletype(NewType)
+        wrapcond = false
+    end
+
     if Width == 1
         push!(results,
             quote
-                if any_mixed
+                if $wrapcond
                     $(ref_syms[1])
                 else
                     $(res_syms[1])
@@ -139,7 +192,7 @@ function body_construct_augfwd(
             end)
     else
         push!(results, quote
-                if any_mixed
+                if $wrapcond
                     ReturnType(($(ref_syms...),))
                 else
                     ReturnType(($(res_syms...),))
@@ -160,6 +213,7 @@ function body_construct_rev(
     batchshadowargs,
     dfns,
     tuple,
+    @nospecialize(NewType::Union{Nothing,Type})
 )
     outs = Vector{Expr}(undef, N*Width)
     for i = 1:N
@@ -171,13 +225,18 @@ function body_construct_rev(
                 :(getfield($tsym, $i))
             end
             shad = batchshadowargs[i][w]
+            prim = primargs[i]
+
             out = :(
-                if $(Symbol("active_ref_$i")) == MixedState ||
-                   $(Symbol("active_ref_$i")) == ActiveState
-                    if $shad isa Base.RefValue
-                        $shad[] = recursive_add($shad[], $expr, identity, guaranteed_nonactive)
-                    else
-                        throw(EnzymeNonScalarReturnException($shad, ""))
+                # Inactive argument, don't need to update anything
+                if !($shad === nothing && $prim !== nothing)
+                    if $(Symbol("active_ref_$i")) == MixedState ||
+                       $(Symbol("active_ref_$i")) == ActiveState
+                        if $shad isa Base.RefValue
+                            $shad[] = recursive_add($shad[], $expr, identity, guaranteed_nonactive)
+                        else
+                            throw(EnzymeNonScalarReturnException($shad, ""))
+                        end
                     end
                 end
             )
@@ -186,11 +245,19 @@ function body_construct_rev(
     end
 
     tapes = Vector{Expr}(undef, Width)
-    @inbounds tapes[1] = :(tval_1 = tape[])
+    @inbounds tapes[1] = if !tuple && ismutabletype(NewType)
+        :(tval_1 = tape)
+    else
+        :(tval_1 = tape[])
+    end
     for w = 2:Width
         sym = Symbol("tval_$w")
         df = dfns[w]
-        @inbounds tapes[w] = :($sym = $df[])
+        @inbounds tapes[w] = if !tuple && ismutabletype(NewType)
+            :($sym = $df)
+        else
+            :($sym = $df[])
+        end
     end
 
     quote
@@ -206,7 +273,7 @@ end
 
 
 function body_runtime_tuple_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns)
-    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns, true)
+    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns, true, nothing)
 end
 
 function body_runtime_newstruct_rev(
@@ -216,9 +283,10 @@ function body_runtime_newstruct_rev(
     active_refs,
     primargs,
     batchshadowargs,
-    dfns
+    dfns,
+    @nospecialize(NewType::Union{Nothing,Type})
 )
-    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns, false)
+    body_construct_rev(N, Width, primtypes, active_refs, primargs, batchshadowargs, dfns, false, NewType)
 end
 
 
@@ -231,7 +299,7 @@ function body_runtime_tuple_augfwd(
     primargs,
     batchshadowargs,
 )
-    body_construct_augfwd(N, RuntimeActivity, Width, primtypes, active_refs, primargs, batchshadowargs, true)
+    body_construct_augfwd(N, RuntimeActivity, Width, primtypes, active_refs, primargs, batchshadowargs, true, nothing)
 end
 
 @generated function runtime_tuple_augfwd(
@@ -306,6 +374,7 @@ function body_runtime_newstruct_augfwd(
     active_refs,
     primargs,
     batchshadowargs,
+    @nospecialize(NewType::Type)
 )
     body_construct_augfwd(
         N,
@@ -316,6 +385,7 @@ function body_runtime_newstruct_augfwd(
         primargs,
         batchshadowargs,
         false,
+        NewType
     )
 end
 
@@ -339,34 +409,8 @@ end
         active_refs,
         primargs,
         batchshadowargs,
+        NewType
     )
-end
-
-function func_runtime_newstruct_rev(N, Width)
-    primargs, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
-        setup_macro_wraps(false, N, Width; mixed_or_active = true)
-    body = body_runtime_newstruct_rev(
-        N,
-        Width,
-        primtypes,
-        active_refs,
-        primargs,
-        batchshadowargs,
-        dfns
-    )
-
-    quote
-        function runtime_newstruct_rev(
-            activity::Type{Val{ActivityTup}},
-            width::Val{$Width},
-            ModifiedBetween::Val{MB},
-            ::Type{NewStruct},
-            tape::TapeType,
-            $(allargs...),
-        ) where {ActivityTup,MB,NewStruct,TapeType,$(typeargs...)}
-            $body
-        end
-    end
 end
 
 @generated function runtime_newstruct_rev(
@@ -387,7 +431,8 @@ end
         active_refs,
         primargs,
         batchshadowargs,
-        dfns
+        dfns,
+        NewStruct
     )
 end
 
@@ -408,27 +453,50 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
     icvs = [is_constant_value(gutils, v) for v in ops]
     abs_partial = [abs_typeof(v, true) for v in ops]
     abs = [abs_typeof(v) for v in ops]
+    legalRT, structRT = abs_typeof(orig)
 
     @assert length(icvs) == length(abs)
-    for (icv, (found_partial, typ_partial, byref_partial), (found, typ, byref)) in
-        zip(icvs, abs_partial, abs)
-        # Constants not handled unless known inactive from type
-        if icv
-            if !found_partial
-                return false
-            end
-            if !guaranteed_const_nongen(typ_partial, world)
-                return false
-            end
-        end
-        # if any active [e.g. ActiveState / MixedState] data could exist
-        # err
+    for (icv, (found_partial, typ_partial, byref_partial), (found, typ, byref), idx) in
+        zip(icvs, abs_partial, abs, 1:length(ops))
         if !fwd
-            if !found_partial
-                return false
-            end
-            if !guaranteed_nonactive(typ_partial, world; AbstractIsMixed=true)
-                return false
+            # Constants not handled unless known inactive from type
+            if icv
+                if !found_partial
+                    return false
+                end
+                if !get_runtime_activity(gutils)                
+                    if !guaranteed_const_nongen(typ_partial, world)
+                        return false
+                    end
+                else
+                    # In the special case of runtime activity if the argument is constant,
+                    # we still support that, storing the constant value into the struct, so
+                    # long as the struct element we are storing itself contains no direct
+                    # active data [aka is pure duplicated, or const], since we will then
+                    # still preserve the primal === shadow pointer relationships for anything
+                    # stored.
+                    if !guaranteed_nonactive(typ_partial, world; AbstractIsMixed=true)
+                        bypass = false
+                        if legalRT
+                            desc = Base.DataTypeFieldDesc(structRT)
+                            if desc[idx].isptr
+                                bypass = true
+                            end
+                        end
+                        if !bypass
+                            return false
+                        end
+                    end
+                end
+            else
+                # if any active [e.g. ActiveState / MixedState] data could exist
+                # err
+                if !found_partial
+                    return false
+                end
+                if !guaranteed_nonactive(typ_partial, world; AbstractIsMixed=true)
+                    return false
+                end
             end
         end
     end
@@ -783,7 +851,7 @@ end
 end
 
 @register_rev function new_structv_rev(B, orig, gutils, tape)
-    common_apply_latest_rev(1, B, orig, gutils, tape)
+    common_newstructv_rev(1, B, orig, gutils, tape)
     return nothing
 end
 
@@ -1158,8 +1226,8 @@ function rt_jl_getfield_aug(
     dptr::T,
     ::Type{Val{symname}},
     ::Val{isconst},
-    dptrs::Vararg{T2,Nargs},
-) where {NT,T,T2,Nargs,symname,isconst}
+    dptrs::Vararg{T,Nargs},
+) where {NT,T,Nargs,symname,isconst}
     res = if dptr isa Base.RefValue
         Base.getfield(dptr[], symname)
     else
@@ -1206,8 +1274,8 @@ function idx_jl_getfield_aug(
     dptr::T,
     ::Type{Val{symname}},
     ::Val{isconst},
-    dptrs::Vararg{T2,Nargs},
-) where {NT,T,T2,Nargs,symname,isconst}
+    dptrs::Vararg{T,Nargs},
+) where {NT,T,Nargs,symname,isconst}
     res = if dptr isa Base.RefValue
         Base.getfield(dptr[], symname + 1)
     else
@@ -1275,8 +1343,8 @@ function rt_jl_getfield_rev(
     dret,
     ::Type{Val{symname}},
     ::Val{isconst},
-    dptrs::Vararg{T2,Nargs},
-) where {T,T2,Nargs,symname,isconst}
+    dptrs::Vararg{T,Nargs},
+) where {T,Nargs,symname,isconst}
     cur = if dptr isa Base.RefValue
         getfield(dptr[], symname)
     else
@@ -1357,8 +1425,8 @@ function idx_jl_getfield_rev(
     dret,
     ::Type{Val{symname}},
     ::Val{isconst},
-    dptrs::Vararg{T2,Nargs},
-) where {T,T2,Nargs,symname,isconst}
+    dptrs::Vararg{T,Nargs},
+) where {T,Nargs,symname,isconst}
     cur = if dptr isa Base.RefValue
         Base.getfield(dptr[], symname + 1)
     else
@@ -1592,7 +1660,7 @@ end
             API.VT_Primal,
         ]
 
-        shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false; force_run=is_constant_value(gutils, operands(orig)[1]))::LLVM.Value
+        shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false, "nthfield"; force_run=is_constant_value(gutils, operands(orig)[1]))::LLVM.Value
 
         unsafe_store!(shadowR, shadowres.ref)
     else
@@ -1822,7 +1890,8 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
             orig,
             args,
             valTys,
-            false;
+            false,
+            "setfield";
             cmpidx = 4 + (offset - 1),
             need_result = false
         ) #=lookup=#

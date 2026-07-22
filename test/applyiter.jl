@@ -522,3 +522,23 @@ end
     Enzyme.autodiff(Reverse, mktup3, Duplicated(data, ddata))
     @test ddata[1][1] ≈ 6.0
 end
+
+struct S{I,V}
+    j::I
+    v1::V
+    v2::V
+end
+
+function invokeiter(a, n)
+    r = fill(a, n)
+    j = hcat(1:n...)
+    v1 = view(r, permutedims(j, (2, 1)))
+    S{typeof(j), typeof(v1)}(j, v1, view(r, j))
+    return 1.0
+end
+
+@testset "Invoke within apply iterate" begin
+    autodiff(set_runtime_activity(Reverse), invokeiter, Active, Active(1.0), Const(34))
+end
+
+

@@ -1,4 +1,8 @@
 const nofreefns = Set{String}((
+    "jl_get_abi_converter",
+    "ijl_get_abi_converter",
+    "jl_f__compute_sparams",
+    "ijl_f__compute_sparams",
     "jl_genericmemory_copyto",
     "jl_get_binding_value_seqcst",
     "ijl_get_binding_value_seqcst",
@@ -47,6 +51,8 @@ const nofreefns = Set{String}((
     "ijl_try_substrtod",
     "jl_try_substrtod",
     "jl_f__apply_iterate",
+    "jl_f_current_scope",
+    "ijl_f_current_scope",
     "ijl_field_index",
     "jl_field_index",
     "julia.call",
@@ -150,6 +156,10 @@ const nofreefns = Set{String}((
     "_platform_memcmp",
     "memcmp",
     "julia.except_enter",
+    "jl_enter_handler",
+    "ijl_enter_handler",
+    "__sigsetjmp",
+    "sigsetjmp",
     "jl_array_grow_end",
     "ijl_array_grow_end",
     "jl_f_getfield",
@@ -212,9 +222,16 @@ const nofreefns = Set{String}((
     "ijl_eqtable_get",
     "cuCtxGetApiVersion",
     "cuCtxSetCurrent",
+    # make_zero / make_zero! shadow-init bookkeeping (IdDict/IdSet seen-table queries)
+    "jl_field_isdefined_checked",
+    "ijl_field_isdefined_checked",
+    "jl_idset_peek_bp",
+    "ijl_idset_peek_bp",
 ))
 
 const inactivefns = Set{String}((
+    "jl_f__compute_sparams",
+    "ijl_f__compute_sparams",
     
     # The binding lookup is asserted as inactive [e.g. globals are considered constant wrt differentiation]
     # If and when this changes, we need to change that here
@@ -249,6 +266,8 @@ const inactivefns = Set{String}((
     "jl_gc_get_total_bytes",
     "ijl_try_substrtod",
     "jl_try_substrtod",
+    "jl_f_current_scope",
+    "ijl_f_current_scope",
     "ijl_tagged_gensym",
     "jl_tagged_gensym",
     "jl_get_world_counter",
@@ -314,6 +333,10 @@ const inactivefns = Set{String}((
     "ijl_matching_methods",
     "jl_excstack_state",
     "ijl_excstack_state",
+    "jl_enter_handler",
+    "ijl_enter_handler",
+    "__sigsetjmp",
+    "sigsetjmp",
     "jl_current_exception",
     "ijl_current_exception",
     "memhash_seed",
@@ -340,6 +363,11 @@ const inactivefns = Set{String}((
     "jl_array_to_string",
     "ijl_array_to_string",
     "pcre2_jit_compile_8",
+    # make_zero / make_zero! shadow-init bookkeeping (IdDict/IdSet seen-table queries)
+    "jl_field_isdefined_checked",
+    "ijl_field_isdefined_checked",
+    "jl_idset_peek_bp",
+    "ijl_idset_peek_bp",
     # "jl_"
 ))
 
@@ -382,6 +410,14 @@ function annotate!(mod::LLVM.Module)
         if haskey(globs, gname)
             glob = globs[gname]
             API.SetMD(glob, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+        end
+    end
+
+    for gname in keys(JuliaGlobalNameMap)
+        globs = LLVM.globals(mod)
+        if haskey(globs, gname)
+            glob = globs[gname]
+            API.SetMD(glob, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
         end
     end
 
@@ -577,6 +613,8 @@ function annotate!(mod::LLVM.Module)
         "ijl_get_nth_field_checked",
         "jl_f__svec_ref",
         "ijl_f__svec_ref",
+        "jl_f_current_scope",
+        "ijl_f_current_scope",
         "UnsafeBufferPointer"
     )
         if haskey(funcs, fname)
@@ -702,6 +740,10 @@ function annotate!(mod::LLVM.Module)
         "ijl_restore_excstack",
         "jl_restore_excstack",
         "julia.except_enter",
+        "jl_enter_handler",
+        "ijl_enter_handler",
+        "__sigsetjmp",
+        "sigsetjmp",
         "ijl_get_nth_field_checked",
         "jl_get_nth_field_checked",
         "jl_egal__unboxed",
@@ -749,6 +791,10 @@ function annotate!(mod::LLVM.Module)
         "ijl_restore_excstack",
         "jl_restore_excstack",
         "julia.except_enter",
+        "jl_enter_handler",
+        "ijl_enter_handler",
+        "__sigsetjmp",
+        "sigsetjmp",
         "ijl_get_nth_field_checked",
         "jl_get_nth_field_checked",
         "jl_egal__unboxed",
@@ -769,7 +815,7 @@ function annotate!(mod::LLVM.Module)
 
 
 
-    for fname in ("julia.pointer_from_objref",)
+    for fname in ("julia.pointer_from_objref", "julia_pointer_from_objref")
         if haskey(funcs, fname)
             for fn in funcs[fname]
                 if LLVM.version().major <= 15
@@ -777,6 +823,8 @@ function annotate!(mod::LLVM.Module)
                 else
                     push!(function_attributes(fn), EnumAttribute("memory", NoEffects.data))
                 end
+                push!(function_attributes(fn), LLVM.EnumAttribute("nounwind"))
+                push!(function_attributes(fn), LLVM.EnumAttribute("willreturn"))
             end
         end
     end

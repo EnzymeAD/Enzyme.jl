@@ -112,6 +112,9 @@ from_tape_type(::Type{T}) where {T<:AbstractFloat} = convert(LLVMType, T)
 from_tape_type(::Type{T}) where {T<:Integer} = convert(LLVMType, T)
 from_tape_type(::Type{NTuple{Size,T}}) where {Size,T} =
     LLVM.ArrayType(from_tape_type(T), Size)
+from_tape_type(::Type{Core.VecElement{T}}) where {T} = from_tape_type(T)
+from_tape_type(::Type{NTuple{Size,Core.VecElement{T}}}) where {Size,T} =
+    LLVM.VectorType(from_tape_type(T), Size)
 from_tape_type(::Type{Core.LLVMPtr{T,Addr}}) where {T,Addr} =
     LLVM.PointerType(from_tape_type(UInt8), Addr)
 # from_tape_type(::Type{Core.LLVMPtr{T, Addr}}, ctx) where {T, Addr} = LLVM.PointerType(from_tape_type(T, ctx), Addr)

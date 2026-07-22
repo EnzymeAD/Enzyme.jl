@@ -85,26 +85,35 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
     handler::T
 end
 
+const SigCacheLock = ReentrantLock()
+const InterpreterLock = ReentrantLock()
 const SigCache = Dict{Tuple, Dict{UInt, Base.IdSet{Type}}}()
 function get_rule_signatures(f, TT, world)
-    subdict = if haskey(SigCache, (f, TT))
-       SigCache[(f, TT)]
-    else
-       tmp = Dict{UInt, Base.IdSet{Type}}()
-       SigCache[(f, TT)] = tmp
-       tmp
+    subdict = lock(SigCacheLock) do
+        if haskey(SigCache, (f, TT))
+           SigCache[(f, TT)]
+        else
+           tmp = Dict{UInt, Base.IdSet{Type}}()
+           SigCache[(f, TT)] = tmp
+           tmp
+        end
     end
-    if haskey(subdict, world)
-       return subdict[world]
+    
+    return lock(SigCacheLock) do
+        if haskey(subdict, world)
+           return subdict[world]
+        end
+        
+        fwdrules_meths = Base._methods(f, TT, -1, world)::Vector
+        sigs = Type[]
+        for rule in fwdrules_meths
+            push!(sigs, (rule::Core.MethodMatch).method.sig)
+        end
+        result = Base.IdSet{Type}(sigs)
+        
+        subdict[world] = result
+        return result
     end
-    fwdrules_meths = Base._methods(f, TT, -1, world)::Vector
-    sigs = Type[]
-    for rule in fwdrules_meths
-        push!(sigs, (rule::Core.MethodMatch).method.sig)
-    end
-    result = Base.IdSet{Type}(sigs)
-    subdict[world] = result
-    return result
 end
 
 function rule_sigs_equal(a, b)
@@ -146,33 +155,50 @@ function EnzymeInterpreter(
     @static if HAS_INTEGRATED_CACHE
 
     else
-        cache_or_token = cache_or_token::CodeCache
-        invalid = false
-        if forward_rules
-            fwdrules = get_rule_signatures(EnzymeRules.forward, Tuple{<:FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)
-            if !rule_sigs_equal(fwdrules, LastFwdWorld[])
-                LastFwdWorld[] = fwdrules
-                invalid = true
-            end
-        end
-        if reverse_rules
-            revrules = get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)
-            if !rule_sigs_equal(revrules, LastRevWorld[])
-                LastRevWorld[] = revrules
-                invalid = true
-            end
+        fwdrules = if forward_rules
+            get_rule_signatures(EnzymeRules.forward, Tuple{<:FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)
+        else
+            nothing
         end
 
-        if inactive_rules
-            inarules = get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)
-            if !rule_sigs_equal(inarules, LastInaWorld[])
-                LastInaWorld[] = inarules
-                invalid = true
-            end
+        revrules = if reverse_rules
+            get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)
+        else
+            nothing
         end
-        
-        if invalid
-            Base.empty!(cache_or_token)
+
+        inarules = if inactive_rules
+            get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)
+        else
+            nothing
+        end
+
+        cache_or_token = cache_or_token::CodeCache
+        invalid = false
+        lock(InterpreterLock) do
+            if forward_rules
+                if !rule_sigs_equal(fwdrules, LastFwdWorld[])
+                    LastFwdWorld[] = fwdrules
+                    invalid = true
+                end
+            end
+            if reverse_rules
+                if !rule_sigs_equal(revrules, LastRevWorld[])
+                    LastRevWorld[] = revrules
+                    invalid = true
+                end
+            end
+    
+            if inactive_rules
+                if !rule_sigs_equal(inarules, LastInaWorld[])
+                    LastInaWorld[] = inarules
+                    invalid = true
+                end
+            end
+            
+            if invalid
+                Base.empty!(cache_or_token)
+            end
         end
     end
 
@@ -305,6 +331,11 @@ function is_primitive_func(@nospecialize(TT))::Bool
        ft === typeof(Base.Threads.threading_run)
         return true
     end
+
+    if ft isa DataType && ft.name.name == Symbol("#do_ccall") && string(ft.name.module) == "FunctionWrappers"
+        return true
+    end
+
     return false
 end
 
@@ -632,6 +663,12 @@ end
 # 
 # @btime lindex_v2(idx, dst, src2)
 # # 1.617 μs (0 allocations: 0 bytes)
+@inline linear_getindex(b::Base.Broadcast.Extruded, i::Int) = linear_getindex(b.x, i)
+@inline linear_getindex(bc::Base.Broadcast.Broadcasted, i::Int) = bc.f(map(Base.Fix2(linear_getindex, i), bc.args)...)
+@inline linear_getindex(a::AbstractArray, i::Int) = @inbounds a[i]
+@inline linear_getindex(x::Number, i::Int) = x
+@inline linear_getindex(x::Ref, i::Int) = x[]
+
 @generated function lindex_v2(idx::BC2, dest, src, ::Val{Checked}=Val(true)) where {BC2, Checked}
     if BC2 <: Base.CartesianIndices
         nloops = BC2.parameters[1]
@@ -669,8 +706,9 @@ end
                     tmp = Base.udiv_int(tmp, $lim)
                 end)
             end
+            get_expr = quote @inbounds Base.Broadcast._broadcast_getindex(src, Base.CartesianIndex($(idxs...))) end
         else
-            idxs = [quote I+1 end]
+            get_expr = quote @inbounds linear_getindex(src, I+1) end
         end
 
         return quote
@@ -681,7 +719,7 @@ end
                     @inbounds while true
                         let tmp = I
                             $(lexprs...)
-                            @inbounds dest[I+1] = @inbounds Base.Broadcast._broadcast_getindex(src, Base.CartesianIndex($(idxs...)))
+                            @inbounds dest[I+1] = $get_expr
                         end
                         I += 1
                         if I == total
@@ -1221,6 +1259,15 @@ function (bcr::broadcast_rewriter)(interp, sv)
 end
 end
 
+struct FuncWrapperRewriter{Ret, ArgsT}
+end
+
+@inline function (fnwr::FuncWrapperRewriter{Ret, ArgsT})(f, args) where {Ret, ArgsT}
+    closure = f.obj[]
+    res = closure(args...)
+    return res::Ret
+end
+
 function abstract_call_known(
     interp::EnzymeInterpreter{Handler},
     @nospecialize(f),
@@ -1265,6 +1312,32 @@ function abstract_call_known(
         end
     end
     
+    let ft = Core.Compiler.widenconst(argtypes[1])
+        if ft isa DataType && ft.name.name == Symbol("#do_ccall") && string(ft.name.module) == "FunctionWrappers"
+            ft2 = Core.Compiler.widenconst(argtypes[2])
+            # The FunctionWrapper type may be only partially known during
+            # abstract interpretation (a UnionAll), rewrite only fully
+            # determined calls:
+            if ft2 isa DataType && length(ft2.parameters) >= 2
+                Ret = ft2.parameters[1]
+                ArgsT = ft2.parameters[2]
+                arginfo2 = ArgInfo(
+                    fargs isa Nothing ? nothing :
+                    [:(FuncWrapperRewriter{Ret, ArgsT}), fargs[2:end]...],
+                    [Core.Const(FuncWrapperRewriter{Ret, ArgsT}()), argtypes[2:end]...],
+                )
+                return Base.@invoke abstract_call_known(
+                    interp::AbstractInterpreter,
+                    FuncWrapperRewriter{Ret, ArgsT}(),
+                    arginfo2::ArgInfo,
+                    si::StmtInfo,
+                    sv::AbsIntState,
+                    max_methods::Int,
+                )
+            end
+        end
+    end
+
     if interp.broadcast_rewrite
         if f === Base.copyto! && length(argtypes) == 3
             # Ideally we just override uses of the AbstractArray base class, but

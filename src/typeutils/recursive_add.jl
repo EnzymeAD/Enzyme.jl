@@ -42,6 +42,7 @@ end
 end
 
 @inline mutable_register(::Type{T}) where {T<:Integer} = true
+@inline mutable_register(::Type{T}) where {T<:Enum} = true
 @inline mutable_register(::Type{T}) where {T<:AbstractFloat} = false
 @inline mutable_register(::Type{Complex{T}}) where {T<:AbstractFloat} = false
 @inline mutable_register(::Type{T}) where {T<:Tuple} = false

@@ -28,12 +28,17 @@ ReinsertGCMarkerPass() = NewPMFunctionPass("reinsert_gcmarker", reinsert_gcmarke
 RestoreAllocaType() = NewPMFunctionPass("restore_alloca_type", restore_alloca_type!)
 SafeAtomicToRegularStorePass() = NewPMFunctionPass("safe_atomic_to_regular_store", safe_atomic_to_regular_store!)
 Addr13NoAliasPass() = NewPMModulePass("addr13_noalias", addr13NoAlias)
+RemoveAlwaysInlineRootsPass() = NewPMModulePass("remove_alwaysinline_roots", remove_alwaysinline_roots!)
 
-function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
+function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti=nothing)
     @dispose pb = NewPMPassBuilder() begin
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, Addr13NoAliasPass())
         register!(pb, RestoreAllocaType())
+        register!(pb, RemoveAlwaysInlineRootsPass())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
@@ -52,6 +57,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 add!(fpm, SROAPass())
                 add!(fpm, MemCpyOptPass())
             end
+            add!(mpm, RemoveAlwaysInlineRootsPass())
             add!(mpm, AlwaysInlinerPass())
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, AllocOptPass())
@@ -64,6 +70,9 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     # Globalopt is separated as it can delete functions, which invalidates the Julia hardcoded pointers to
     # known functions
     @dispose pb = NewPMPassBuilder() begin
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
@@ -81,6 +90,9 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
 
     function middle_optimize!(second_stage=false)
     @dispose pb = NewPMPassBuilder() begin
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, RestoreAllocaType())
         add!(pb, NewPMAAManager()) do aam
@@ -181,6 +193,9 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     # Globalopt is separated as it can delete functions, which invalidates the Julia hardcoded pointers to
     # known functions
     @dispose pb = NewPMPassBuilder() begin
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
@@ -194,9 +209,9 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         end
         run!(pb, mod, tm)
     end
-    
+
     run!(GCInvariantVerifierPass(strong=false), mod)
-    
+
     removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
     
     run!(GCInvariantVerifierPass(strong=false), mod)
@@ -224,7 +239,7 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         add!(fpm, DCEPass())
         add!(fpm, SROAPass())
     end
-
+    add!(mpm, RemoveAlwaysInlineRootsPass())
     add!(mpm, AlwaysInlinerPass())
 
     add!(mpm, NewPMFunctionPassManager()) do fpm
@@ -359,6 +374,10 @@ function addJuliaLegalizationPasses!(mpm::LLVM.NewPMPassManager, lower_intrinsic
             if VERSION >= v"1.11.0-DEV.208"
                 add!(fpm, FinalLowerGCPass())
             end
+            if VERSION >= v"1.13.0-DEV.321"
+                # after LateLowerGCPass so that all IPO is valid
+                add!(fpm, ExpandAtomicModifyPass())
+            end
         end
         if VERSION < v"1.11.0-DEV.208"
             add!(mpm, FinalLowerGCPass())
@@ -392,9 +411,9 @@ end
 const DumpPreCallConv = Ref(false)
 const DumpPostCallConv = Ref(false)
 
-function fixup_callconv!(mod::LLVM.Module, tm::LLVM.TargetMachine)
+function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti=nothing)
     addr13NoAlias(mod)
-    
+
     removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
 
     memcpy_sret_split!(mod)
@@ -405,6 +424,9 @@ function fixup_callconv!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     run!(InstCombinePass(), mod)
     # GVN actually forwards
     @dispose pb = NewPMPassBuilder() begin
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         registerEnzymeAndPassPipeline!(pb)
     	add!(pb, SimpleGVNPass())
         run!(pb, mod, tm)
@@ -415,6 +437,9 @@ function fixup_callconv!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     end
 
     @dispose pb = NewPMPassBuilder() begin
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         registerEnzymeAndPassPipeline!(pb)
         add!(pb, "enzyme-fixup-batched-julia")
         if VERSION < v"1.12"
@@ -453,9 +478,9 @@ function fixup_callconv!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     return
 end
 
-function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool = true; callconv::Bool = true)
+function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, machine::Bool = true; callconv::Bool = true, tti=nothing)
     if callconv
-        fixup_callconv!(mod, tm)
+        fixup_callconv!(mod, tm, tti)
     end
     
     for f in functions(mod)
@@ -476,10 +501,14 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
     removeDeadArgs!(mod, tm, #=post_gc_fixup=#true)
 
     @dispose pb = NewPMPassBuilder() begin
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, ReinsertGCMarkerPass())
         register!(pb, SafeAtomicToRegularStorePass())
-		register!(pb, RestoreAllocaType())
+        register!(pb, RestoreAllocaType())
+        register!(pb, RemoveAlwaysInlineRootsPass())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())

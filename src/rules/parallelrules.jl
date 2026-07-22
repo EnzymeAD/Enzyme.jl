@@ -433,10 +433,17 @@ end
         
 	alloctx = LLVM.IRBuilder()
         position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
-        al = alloca!(alloctx, llty)
-	al2 = if num_arg_roots != 0
-	   alloca!(alloctx, convert(LLVMType, AnyArray(num_arg_roots)))
-	end
+        
+        llty_foralloca = if VERSION >= v"1.12" && num_arg_roots != 0
+            strip_tracked_pointers(llty)
+        else
+            llty
+        end
+
+        al = alloca!(alloctx, llty_foralloca)
+        al2 = if num_arg_roots != 0
+            create_rooted_array(alloctx, num_arg_roots)
+        end
 
         if !isghostty(ppfuncT)
             v = new_from_original(gutils, operands(orig)[1])

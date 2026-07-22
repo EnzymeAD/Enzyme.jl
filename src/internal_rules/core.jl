@@ -55,8 +55,101 @@ end
                 @inbounds newa[i] = deepcopy_rtact(copied[i], primal[i], seen, shadow[i])
             end
             return newa
+        elseif RT <: Tuple
+            return ntuple(Val(length(shadow))) do i
+                deepcopy_rtact(copied[i], primal[i], seen, shadow[i])
+            end
         end
-        throw(AssertionError("Unimplemented deepcopy with runtime activity for type $RT"))
+
+        nf = nfields(shadow)
+        if nf == 0 || isbitstype(RT)
+            return shadow
+        end
+
+        if ismutabletype(RT)
+            new_shadow = ccall(:jl_new_struct_uninit, Any, (Any,), RT)::RT
+            if seen === nothing
+                seen = IdDict()
+            end
+            seen[shadow] = new_shadow
+            for i in 1:nf
+                if isdefined(shadow, i)
+                    if isdefined(primal, i) && isdefined(copied, i)
+                        xi = deepcopy_rtact(getfield(copied, i), getfield(primal, i), seen, getfield(shadow, i))
+                        ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), new_shadow, i-1, xi)
+                    end
+                end
+            end
+            return new_shadow
+        else
+            flds = Vector{Any}(undef, nf)
+            for i in 1:nf
+                if isdefined(shadow, i)
+                    if isdefined(primal, i) && isdefined(copied, i)
+                        xi = deepcopy_rtact(getfield(copied, i), getfield(primal, i), seen, getfield(shadow, i))
+                        flds[i] = xi
+                    else
+                        nf = i - 1
+                        break
+                    end
+                else
+                    nf = i - 1
+                    break
+                end
+            end
+            new_shadow = ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds, nf)::RT
+            if seen === nothing
+                seen = IdDict()
+            end
+            seen[shadow] = new_shadow
+            return new_shadow
+        end
+    end
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(Base.deepcopy)},
+    RT::Type{<:Duplicated},
+    x::Duplicated,
+)
+    primal = func.val(x.val)
+    return EnzymeRules.forward_rule_return_type(config, RT)(primal, deepcopy_rtact(primal, x.val, nothing, x.dval))
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(Base.deepcopy)},
+    RT::Type{<:BatchDuplicated},
+    x::BatchDuplicated{T,N},
+) where {T,N}
+    primal = func.val(x.val)
+    return EnzymeRules.forward_rule_return_type(config, RT)(primal, ntuple(Val(N)) do i
+        deepcopy_rtact(primal, x.val, nothing, x.dval[i])
+    end)
+end
+
+# A `Const` argument carries no shadow, but a `Duplicated` result may still be
+# requested (e.g. via runtime-activity widening), so deepcopy the primal and
+# pair it with a freshly zeroed shadow.
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(Base.deepcopy)},
+    ::Type{<:DuplicatedNoNeed},
+    x::Const,
+)
+    return Enzyme.make_zero(func.val(x.val))
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(Base.deepcopy)},
+    ::Type{<:BatchDuplicatedNoNeed},
+    x::Const,
+)
+    primal = func.val(x.val)
+    return ntuple(Val(EnzymeRules.width(config))) do _
+        Enzyme.make_zero(primal)
     end
 end
 
@@ -64,21 +157,21 @@ function EnzymeRules.forward(
     config::EnzymeRules.FwdConfig,
     func::Const{typeof(Base.deepcopy)},
     ::Type{<:Duplicated},
-    x::Duplicated,
+    x::Const,
 )
     primal = func.val(x.val)
-    return Duplicated(primal, deepcopy_rtact(primal, x.val, nothing, x.dval))
+    return Duplicated(primal, Enzyme.make_zero(primal))
 end
 
 function EnzymeRules.forward(
     config::EnzymeRules.FwdConfig,
     func::Const{typeof(Base.deepcopy)},
     ::Type{<:BatchDuplicated},
-    x::BatchDuplicated{T,N},
-) where {T,N}
+    x::Const,
+)
     primal = func.val(x.val)
-    return BatchDuplicated(primal, ntuple(Val(N)) do i
-        deepcopy_rtact(primal, x.val, nothing, x.dval[i])
+    return BatchDuplicated(primal, ntuple(Val(EnzymeRules.width(config))) do _
+        Enzyme.make_zero(primal)
     end)
 end
 
@@ -120,7 +213,7 @@ function EnzymeRules.augmented_primal(
         nothing
     end
 
-    return EnzymeRules.AugmentedReturn(primal, shadow, shadow)
+    return EnzymeRules.augmented_rule_return_type(config, RT)(primal, shadow, shadow)
 end
 
 
@@ -128,8 +221,13 @@ end
     into::RT,
     seen::IdDict,
     from::RT,
-)::Tuple{RT,RT} where {RT<:Array}
+    primal::RT,
+    ::Val{rtact},
+)::Tuple{RT,RT} where {RT<:Array, rtact}
     if Enzyme.Compiler.guaranteed_const(RT)
+        return (into, from)
+    end
+    if rtact && into === primal
         return (into, from)
     end
     if !haskey(seen, into)
@@ -138,7 +236,7 @@ end
             isdefinto = isassigned(into, i)
             isdeffrom = isassigned(from, i)
             if isdefinto && isdeffrom
-                tup = accumulate_into(into[i], seen, from[i])
+                tup = accumulate_into(into[i], seen, from[i], primal[i], Val(rtact))
                 @inbounds into[i] = tup[1]
                 @inbounds from[i] = tup[2]
             elseif !isdefinto && !isdeffrom
@@ -155,20 +253,41 @@ end
     into::RT,
     seen::IdDict,
     from::RT,
-)::Tuple{RT,RT} where {RT<:AbstractFloat}
-    if !haskey(seen, into)
-        seen[into] = (into + from, RT(0))
-    end
-    return seen[into]
+    primal::RT,
+    ::Val{rtact},
+)::Tuple{RT,RT} where {RT<:AbstractFloat, rtact}
+    return (into + from, RT(0))
 end
 
-@inline function accumulate_into(into::RT, seen::IdDict, from::RT)::Tuple{RT,RT} where {RT}
+@inline function accumulate_into(
+    into::RT,
+    seen::IdDict,
+    from::RT,
+    primal::RT,
+    ::Val{rtact},
+)::Tuple{RT,RT} where {RT<:Tuple, rtact}
     if Enzyme.Compiler.guaranteed_const(RT)
         return (into, from)
     end
-    if !haskey(seen, into)
-        seen[into] = (into, from)
-        if ismutable(into)
+    res = ntuple(Val(length(into))) do i
+        Base.@_inline_meta
+        @inline accumulate_into(into[i], seen, from[i], primal[i], Val(rtact))
+    end
+    new_into = map(first, res)
+    new_from = map(Base.Fix2(Base.getindex, 2), res)
+    return (new_into, new_from)
+end
+
+@inline function accumulate_into(into::RT, seen::IdDict, from::RT, primal::RT, ::Val{rtact})::Tuple{RT,RT} where {RT, rtact}
+    if Enzyme.Compiler.guaranteed_const(RT)
+        return (into, from)
+    end
+    if rtact && into === primal
+        return (into, from)
+    end
+    if ismutable(into)
+        if !haskey(seen, into)
+            seen[into] = (into, from)
             nf = fieldcount(RT)
             for i in 1:nf
                 isdeffrom = isdefined(from, i)
@@ -176,7 +295,8 @@ end
                 if isdeffrom && isdefinto
                     xi_into = getfield(into, i)
                     xi_from = getfield(from, i)
-                    tup = accumulate_into(xi_into, seen, xi_from)
+                    xi_primal = getfield(primal, i)
+                    tup = accumulate_into(xi_into, seen, xi_from, xi_primal, Val(rtact))
                     if Base.isconst(RT, i)
                         ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), into, i - 1, tup[1])
                         ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), from, i - 1, tup[2])
@@ -190,11 +310,34 @@ end
                     throw(AssertionError("Unimplemented accumulate_into for type $RT"))
                 end
             end
-        else
-            throw(AssertionError("Unimplemented accumulate_into for type $RT"))
         end
+        return seen[into]
+    else
+        nf = fieldcount(RT)
+        flds_into = Vector{Any}(undef, nf)
+        flds_from = Vector{Any}(undef, nf)
+        nf_def = nf
+        for i in 1:nf
+            isdeffrom = isdefined(from, i)
+            isdefinto = isdefined(into, i)
+            if isdeffrom && isdefinto
+                xi_into = getfield(into, i)
+                xi_from = getfield(from, i)
+                xi_primal = getfield(primal, i)
+                tup = accumulate_into(xi_into, seen, xi_from, xi_primal, Val(rtact))
+                flds_into[i] = tup[1]
+                flds_from[i] = tup[2]
+            elseif !isdeffrom && !isdefinto
+                nf_def = i - 1
+                break
+            else
+                throw(AssertionError("Unimplemented accumulate_into for type $RT"))
+            end
+        end
+        new_into = ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds_into, nf_def)::RT
+        new_from = ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds_from, nf_def)::RT
+        return (new_into, new_from)
     end
-    return seen[into]
 end
 
 
@@ -206,13 +349,13 @@ function EnzymeRules.reverse(
     x::Annotation{Ty},
 ) where {RT,Ty}
     @assert !(x isa Active)
-
+    rtact = EnzymeRules.runtime_activity(config)
     if EnzymeRules.needs_shadow(config)
         if EnzymeRules.width(config) == 1
-            accumulate_into(x.dval, IdDict(), shadow)
+            accumulate_into(x.dval, IdDict(), shadow, x.val, Val(rtact))
         else
             for i = 1:EnzymeRules.width(config)
-                accumulate_into(x.dval[i], IdDict(), shadow[i])
+                accumulate_into(x.dval[i], IdDict(), shadow[i], x.val, Val(rtact))
             end
         end
     end
@@ -444,4 +587,76 @@ end
 function EnzymeRules.reverse(config, ::Const{typeof(Base.finalizer)}, dret, tape, f::Const, o)
     # No-op
     return (nothing, nothing)
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(EnzymeCore.make_zero)},
+    RT,
+    prev::Annotation{T},
+) where {T}
+    primal = if EnzymeRules.needs_primal(config)
+        func.val(prev.val)
+    else
+        nothing
+    end
+
+    if EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            shadow = EnzymeCore.make_zero(prev.val)
+            if EnzymeRules.needs_primal(config)
+                return EnzymeRules.forward_rule_return_type(config, RT)(primal, shadow)
+            else
+                return shadow
+            end
+        else
+            shadows = ntuple(Val(EnzymeRules.width(config))) do _
+                EnzymeCore.make_zero(prev.val)
+            end
+            if EnzymeRules.needs_primal(config)
+                return EnzymeRules.forward_rule_return_type(config, RT)(primal, shadows)
+            else
+                return shadows
+            end
+        end
+    else
+        return primal
+    end
+end
+
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(EnzymeCore.make_zero)},
+    ::Type{RT},
+    prev::Annotation{T},
+) where {RT,T}
+    primal = if EnzymeRules.needs_primal(config)
+        func.val(prev.val)
+    else
+        nothing
+    end
+
+    shadow = if EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            EnzymeCore.make_zero(prev.val)
+        else
+            ntuple(Val(EnzymeRules.width(config))) do _
+                EnzymeCore.make_zero(prev.val)
+            end
+        end
+    else
+        nothing
+    end
+
+    return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(EnzymeCore.make_zero)},
+    ::Type{RT},
+    tape,
+    prev::Annotation{T},
+) where {RT,T}
+    return (nothing,)
 end

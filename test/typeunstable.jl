@@ -167,3 +167,146 @@ end
    _, _, shad = fwd(Const(typeunstable_constant_shadow))
 end
 
+kwcallee(x; saveat) = x + saveat # callee takes a keyword argument
+typeunstable_kwloss(x, r) = kwcallee(x; saveat = r[])
+
+@testset "Inactive argument to new struct" begin
+	@test Enzyme.gradient(Enzyme.Reverse, typeunstable_kwloss, 2.7, Enzyme.Const(Base.RefValue{Any}(3.1)))[1] ≈ 1.0
+end
+
+@noinline newstruct_runtime_any()::Any = Base.inferencebarrier(Ref(1.0))
+
+mutable struct NewstructConstField{T}
+    v::Float64
+    inner::T
+end
+
+function newstruct_const_active_field(x)
+    w = NewstructConstField(0.0, newstruct_runtime_any())
+    w.v = sum(abs2, x)
+    return w.v
+end
+
+@testset "Runtime newstruct with constant active-typed field" begin
+    g = Enzyme.gradient(
+        set_runtime_activity(Reverse), newstruct_const_active_field, [3.0, 1.0]
+    )[1]
+    @test g ≈ [6.0, 2.0]
+end
+
+@noinline mutwrap_runtime_any()::Any = Base.inferencebarrier(Ref(1.0))
+
+mutable struct MutWrapGeneric{T}
+    v::Float64
+    inner::T
+end
+
+@noinline mutwrap_use(w, x) = w.v * @inbounds x[1]
+
+function mutwrap_generic_call(x)
+    w = MutWrapGeneric(0.0, mutwrap_runtime_any())
+    w.v = x[2]
+    f = Base.inferencebarrier(mutwrap_use)
+    return (f(w, x))::Float64
+end
+
+@testset "Mutable runtime newstruct shadow passed to generic call" begin
+    g = Enzyme.gradient(
+        set_runtime_activity(Reverse), mutwrap_generic_call, [3.0, 5.0]
+    )[1]
+    @test g ≈ [5.0, 3.0]
+end
+
+# ODEProblem-shaped immutable struct, parameterized by `iip`.
+struct Prob3246{iip, U, T, P}
+    u0::U      # inactive array
+    tspan::T   # inactive isbits tuple
+    p::P       # active array
+end
+Prob3246{iip}(u0, tspan, p) where {iip} =
+    Prob3246{iip, typeof(u0), typeof(tspan), typeof(p)}(u0, tspan, p)
+
+@noinline build_3246(u0, tspan, p, flag) = Prob3246{flag}(u0, tspan, p)
+
+function loss_3246(p, flag)
+    sum(abs2, build_3246([1.0, 2.0], (0.0, 1.0), p, flag).p)
+end
+
+@testset "Issue 3246 HVP with runtime activity" begin
+    RA_R = Enzyme.set_runtime_activity(Enzyme.Reverse)
+    RA_F = Enzyme.set_runtime_activity(Enzyme.Forward)
+    
+    FLAG = Ref(true)
+    runtime_iip() = FLAG[]
+    
+    grad(x) = Enzyme.gradient(RA_R, p -> loss_3246(p, runtime_iip()), x)[1]
+    
+    x0 = [1.0, 2.0, 3.0]
+    v = [1.0, 0.0, 0.0]
+    
+    res = Enzyme.autodiff(RA_F, Enzyme.Const(grad), Enzyme.Duplicated(x0, v))
+    @test res[1] ≈ [2.0, 0.0, 0.0]
+end
+
+struct TypeUnstableGetfieldBox{T1, T2}
+    a::T1
+    b::T2
+end
+
+@noinline function getfield_unstable_fn(x, idx)
+    box = TypeUnstableGetfieldBox(1.0, x)
+    val = getfield(box, idx)
+    return val[1] * val[2]
+end
+
+@testset "Forward type-unstable getfield" begin
+    idx = Base.inferencebarrier(2)
+    res = Enzyme.autodiff(set_runtime_activity(Forward), getfield_unstable_fn, Duplicated([2.0, 3.0], [1.0, 0.0]), Const(idx))
+    @test res[1] ≈ 3.0
+end
+
+struct MiniProblem3280{U, P, K}
+    u0::U
+    tspan::Tuple{Float64, Float64}
+    p::P
+    kwargs::K
+end
+
+function loss_3280(p)
+    prob = MiniProblem3280([1.0], (0.0, 1.0), p, pairs((;)))
+    active_field = Enzyme.Compiler.idx_jl_getfield_aug(
+        Val(NamedTuple{(1,)}), prob, Val{2}, Val(false))
+    return sum(abs2, active_field)
+end
+
+@testset "idx_jl_getfield_aug calling convention (Issue 3280 reproducer)" begin
+    p = [0.5]
+    dp = zero(p)
+    Enzyme.autodiff(set_runtime_activity(Reverse), Enzyme.Const(loss_3280), Enzyme.Active,
+        Enzyme.Duplicated(p, dp))
+    @test dp ≈ [1.0]
+end
+
+mutable struct SetpropertyBox
+    x::Vector{Float64}
+end
+
+function loss_setproperty_mwe(x)
+    box = SetpropertyBox(zeros(length(x)))
+    setproperty!(Base.inferencebarrier(box), Base.inferencebarrier(:x), x)
+    return sum(abs2, box.x)
+end
+
+@testset "Forward type-unstable setproperty! with runtime activity" begin
+    @test Enzyme.autodiff(
+        Enzyme.Forward,
+        Enzyme.Const(loss_setproperty_mwe),
+        Enzyme.Duplicated([0.5], [1.0]),
+    ) == (1.0,)
+
+    @test Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Enzyme.Forward),
+        Enzyme.Const(loss_setproperty_mwe),
+        Enzyme.Duplicated([0.5], [1.0]),
+    ) == (1.0,)
+end

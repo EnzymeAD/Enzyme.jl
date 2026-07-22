@@ -1817,3 +1817,70 @@ end
 @testset "Unused shadow phi rev" begin
     fwd, rev = Enzyme.autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(cual)}, Duplicated)
 end
+
+@enum MyEnum Default Success
+
+struct Sol
+    u::Vector{Float64}
+    retcode::MyEnum
+end
+
+mutable struct Integ
+    sol::Sol
+end
+
+@noinline function myinit(u0::Vector{Float64})
+    return Integ(Sol(u0, Default))
+end
+
+function g_enum_test(u0)
+    integ = myinit(u0)
+    return integ.sol
+end
+
+@testset "Enum Autodiff" begin
+    forward, reverse = Enzyme.autodiff_thunk(
+        Enzyme.ReverseSplitWithPrimal, Enzyme.Const{typeof(g_enum_test)}, Enzyme.Duplicated,
+        Enzyme.Duplicated{Vector{Float64}})
+
+    u0 = [1.0]
+    du0 = zero(u0)
+    tape, result, shadow_result = forward(Enzyme.Const(g_enum_test), Enzyme.Duplicated(copy(u0), du0))
+    shadow_result.u .= 1.0
+    reverse(Enzyme.Const(g_enum_test), Enzyme.Duplicated(copy(u0), du0), tape)
+    @test du0 == [1.0]
+end
+
+struct ResultOk{A}
+    x::A
+    ok::Bool
+end
+
+@noinline function result_ok_f1(x)
+    return ResultOk(x .* 1.0, true)
+end
+
+@noinline function result_ok_f2(x)
+    return ResultOk(x .* 2.0, true)
+end
+
+@noinline function result_ok_dispatch(x, flag)
+    res = if flag == 1
+        result_ok_f1(x)
+    else
+        result_ok_f2(x)
+    end
+    return res
+end
+
+function result_ok_caller(x, flag)
+    res = result_ok_dispatch(x, flag)
+    return sum(res.x)
+end
+
+@testset "Struct with bool field and dispatch" begin
+    x = [1.0, 2.0]
+    dx = [0.0, 0.0]
+    autodiff(Reverse, result_ok_caller, Duplicated(x, dx), Const(1))
+    @test dx ≈ [1.0, 1.0]
+end

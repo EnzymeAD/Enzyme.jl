@@ -703,6 +703,20 @@ f_typed_global(x) = x^2 * TYPED_VAL
     @test Enzyme.autodiff(Reverse, f_typed_global, Active, Active(3.0))[1][1] ≈ 12.0
 end
 
+const GLOB_DICT_3311 = Dict{Int, Int}()
+function f_glob_dict_3311(x)
+    get(GLOB_DICT_3311, 1, nothing)
+    GLOB_DICT_3311[1] = 2
+    get(GLOB_DICT_3311, 1, nothing)
+    return x
+end
+
+@testset "Global Dict mutation and constant folding" begin
+    empty!(GLOB_DICT_3311)
+    res = Enzyme.autodiff(Forward, f_glob_dict_3311, Duplicated(1.0, 1.0))[1]
+    @test res ≈ 1.0
+end
+
 using LinearAlgebra
 
 struct WrapJ11{T, V}
@@ -731,3 +745,111 @@ const LAMBDA_J11 = [2.0]
     
     @test res[1][2] ≈ log(2.0)
 end
+
+struct LJ_3206
+    cutoff::Float32
+    use_neighbors::Bool
+end
+
+struct CRF_3206
+    cutoff::Float32
+    use_neighbors::Bool
+end
+
+use_neighbors_3206(inter) = inter.use_neighbors
+
+mutable struct Sys_3206{P}
+    sigma::Float32
+    inters::P
+end
+
+@inline force_3206(::LJ_3206, sys) = sys.sigma
+@inline force_3206(::CRF_3206, sys) = 1.0f0
+
+@inline sum_forces_3206(inters::Tuple{T}, sys) where {T} = force_3206(inters[1], sys)
+@inline sum_forces_3206(inters::Tuple, sys) =
+    force_3206(first(inters), sys) + sum_forces_3206(Base.tail(inters), sys)
+
+function loss_3206(sigma, inters)
+    sys = Sys_3206(sigma, inters)
+    inters_nl = filter(use_neighbors_3206, sys.inters)
+    return sum_forces_3206(inters_nl, sys)
+end
+
+@testset "filter tuple" begin
+    inters = (LJ_3206(1.2f0, true), CRF_3206(2.3f0, true))
+    res = autodiff(set_runtime_activity(Reverse), loss_3206, Active, Active(0.4f0), Const(inters))
+    @test res[1][1] ≈ 1.0f0
+end
+
+struct ReverseLossCallback_BCM{S, B}
+    sol::S
+    buffer::B
+end
+
+struct PresetTimeCallback_BCM{T, A}
+    times::T
+    affect!::A
+end
+
+struct CallbackSet_BCM{C}
+    callbacks::C
+end
+
+function separate_nonunique_bcm(t)
+    duplicates = filter(Returns(false), [(0.0, 1)])
+    occurrences = last.(duplicates)
+    duplicate_times = isempty(occurrences) ? nothing : [[0.0]]
+    return t, duplicate_times
+end
+
+make_buffer_bcm(::Val{:none}) = nothing
+make_buffer_bcm(::Val{:vector}) = Float64[]
+
+function generate_callbacks_bcm(solution_value, isdae, times, buffer_val)
+    t, duplicate_times = separate_nonunique_bcm(times)
+    solution = isdae ? solution_value : nothing
+    buffer = make_buffer_bcm(buffer_val)
+    
+    cb = PresetTimeCallback_BCM(
+        times,
+        ReverseLossCallback_BCM(solution, buffer)
+    )
+    
+    cb_set = if duplicate_times !== nothing
+        cb_duplicate = PresetTimeCallback_BCM(
+            duplicate_times[1],
+            ReverseLossCallback_BCM(solution, cb.affect!.buffer)
+        )
+        CallbackSet_BCM((cb, nothing, cb_duplicate))
+    else
+        CallbackSet_BCM((cb, nothing))
+    end
+    
+    return cb_set, duplicate_times
+end
+
+function differentiate_bcm(buffer_val)
+    solution = [0.5]
+    times = collect(range(0.0, 1.0, length = 5))
+    
+    return Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Enzyme.Forward),
+        Enzyme.Const(generate_callbacks_bcm),
+        Enzyme.Const(solution),
+        Enzyme.Const(false),
+        Enzyme.Duplicated(times, ones(length(times))),
+        Enzyme.Const(buffer_val)
+    )
+end
+
+@testset "OverrideBCMaterialize nothing propagation" begin
+    # Test Val(:none) (works previously)
+    res_none = differentiate_bcm(Val(:none))
+    @test res_none !== nothing
+    
+    # Test Val(:vector) (previously failed on 1.11 with IllegalTypeAnalysisException)
+    res_vector = differentiate_bcm(Val(:vector))
+    @test res_vector !== nothing
+end
+

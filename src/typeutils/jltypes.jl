@@ -153,7 +153,7 @@ end
 
 struct RemovedParam end
 
-function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nospecialize(rooted_typ::Union{Nothing, Type}), source_i::Int, orig_i::Int, arg_jl_i::Int, codegen_i::Int, last_cc, parmsRemoved)
+function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nospecialize(rooted_typ::Union{Nothing, Type}), source_i::Int, orig_i::Int, arg_jl_i::Int, codegen_i::Int, last_cc, parmsRemoved, @nospecialize(source_sig::Type))
     if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
         push!(args, (cc = GPUCompiler.GHOST, typ = source_typ, arg_i = source_i,
             rooted_typ = rooted_typ,
@@ -175,6 +175,10 @@ function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nos
         orig_i += 1
 	    last_cc = RemovedParam
         return (orig_i, codegen_i, last_cc)
+    end
+
+    if codegen_i > length(codegen_types)
+        throw(AssertionError("codegen_i=$codegen_i > length(codegen_types)=$(length(codegen_types)) orig_i=$orig_i, last_cc=$last_cc source_typ=$source_typ rooted_typ=$rooted_typ arg_jl_i=$arg_jl_i parmsRemoved=$parmsRemoved"))
     end
 
     codegen_typ = codegen_types[codegen_i]
@@ -300,7 +304,7 @@ function classify_arguments(
     for (arg_jl_i, source_typ) in enumerate(source_sig.parameters)
         source_i += 1
         rooted_typ = nothing
-        orig_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc, parmsRemoved)
+        orig_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc, parmsRemoved, source_sig)
 
         roots = inline_roots_type(source_typ)
         if roots != 0
@@ -316,7 +320,7 @@ function classify_arguments(
                 source_i += 1
                 rooted_typ = source_typ
                 source_typ = equivalent_rooted_type(source_typ)
-                orig_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc, parmsRemoved)
+                orig_i, codegen_i, last_cc = handle_param(args, codegen_types, source_typ, rooted_typ, source_i, orig_i, arg_jl_i, codegen_i, last_cc, parmsRemoved, source_sig)
             end
         end
     end
@@ -487,6 +491,7 @@ end
 @inline any_jltypes(::Type{Nothing}) = false
 @inline any_jltypes(::Type{T}) where {T<:AbstractFloat} = false
 @inline any_jltypes(::Type{T}) where {T<:Integer} = false
+@inline any_jltypes(::Type{T}) where {T<:Enum} = false
 @inline any_jltypes(::Type{Complex{T}}) where {T} = any_jltypes(T)
 @inline any_jltypes(::Type{Tuple{}}) = false
 @inline any_jltypes(::Type{NTuple{Size,T}}) where {Size,T} = any_jltypes(T)
