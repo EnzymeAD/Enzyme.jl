@@ -100,7 +100,8 @@ Base.@nospecializeinfer @inline function is_mutable_array(@nospecialize(T::Type)
             if nameof(mod) === :Reactant && (T.name.name == :ConcretePJRTArray || T.name.name == :ConcreteIFRTArray || T.name.name == :TracedRArray)
                 return true
             end
-            if nameof(mod) === :CUDA && (T.name.name == :CuRefValue || T.name.name == :CuPtr)
+            if nameof(mod) in (:CUDA, :CUDACore) &&
+                    T.name.name in (:CuRefValue, :CuPtr, :CuArrayPtr)
                 return true
             end
         end

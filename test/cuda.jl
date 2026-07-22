@@ -1,6 +1,88 @@
 using CUDA
 using Enzyme
+using LinearAlgebra: dot
 using Test
+
+@testset "CUDA memory copies" begin
+    x = Float32[1, 2, 3]
+    dx = zeros(Float32, 3)
+    Enzyme.autodiff(
+        Reverse,
+        x -> sum(abs2, Array(CuArray(x))),
+        Active,
+        Duplicated(x, dx),
+    )
+    @test dx == 2 .* x
+
+    weights = Float32[4, 5, 6]
+    fill!(dx, 0)
+    Enzyme.autodiff(
+        Reverse,
+        x -> dot(Array(CuArray(x)), weights),
+        Active,
+        Duplicated(x, dx),
+    )
+    @test dx == weights
+
+    x = CuArray(Float32[1, 2, 3])
+    original = copy(x)
+    dx = CUDA.zeros(Float32, 3)
+    Enzyme.autodiff(
+        Reverse,
+        x -> sum(abs2, Array(x)),
+        Active,
+        Duplicated(x, dx),
+    )
+    @test Array(x) == Array(original)
+    @test Array(dx) == 2 .* Array(x)
+
+    fill!(dx, 0)
+    Enzyme.autodiff(
+        Reverse,
+        x -> sum(abs2, Array(copy(x))),
+        Active,
+        Duplicated(x, dx),
+    )
+    @test Array(x) == Array(original)
+    @test Array(dx) == 2 .* Array(x)
+end
+
+@testset "CUDA array-memory copies" begin
+    ER = Enzyme.EnzymeRules
+    config = ER.RevConfig{true,true,1,(false,false,false,false,false),false,false}()
+    n = 3
+    src = Float32[4, 5, 6]
+    dsrc = Float32[10, 10, 10]
+    seed = Float32[1, 2, 3]
+    result = zeros(Float32, n)
+    dest_mem = CUDA.alloc(CUDA.ArrayMemory{Float32}, (n,))
+    ddest_mem = CUDA.alloc(CUDA.ArrayMemory{Float32}, (n,))
+
+    try
+        dest = pointer(dest_mem)
+        ddest = pointer(ddest_mem)
+        GC.@preserve src dsrc seed result begin
+            dest_ann = Duplicated(dest, ddest)
+            src_ann = Duplicated(pointer(src), pointer(dsrc))
+            return_type = Duplicated{typeof(dest)}
+            ER.augmented_primal(
+                config, Const(Base.unsafe_copyto!), return_type,
+                dest_ann, Const(0), src_ann, Const(n),
+            )
+            Base.unsafe_copyto!(ddest, 0, pointer(seed), n)
+            ER.reverse(
+                config, Const(Base.unsafe_copyto!), return_type, nothing,
+                dest_ann, Const(0), src_ann, Const(n),
+            )
+            Base.unsafe_copyto!(pointer(result), ddest, 0, n)
+        end
+        @test dsrc == Float32[11, 12, 13]
+        @test result == zeros(Float32, n)
+    finally
+        CUDA.free(dest_mem)
+        CUDA.free(ddest_mem)
+    end
+end
 
 function mul_kernel(A)
     i = threadIdx().x
