@@ -163,6 +163,56 @@ function EnzymeRules.reverse(
     return (nothing, nothing)
 end
 
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(\)},
+        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated, BatchDuplicatedNoNeed, BatchDuplicated}},
+        A::Annotation{<:LinearAlgebra.AbstractTriangular},
+        B::Annotation{<:Array},
+    )
+    if !(EnzymeRules.needs_primal(config) || EnzymeRules.needs_shadow(config))
+        return nothing
+    end
+
+    retval = func.val(A.val, B.val)
+
+    if EnzymeRules.needs_shadow(config)
+        N = EnzymeRules.width(config)
+        dretvals = ntuple(Val(N)) do i
+            Base.@_inline_meta
+            dB = B isa Const ? zero(retval) : copy(N == 1 ? B.dval : B.dval[i])
+            if !(A isa Const)
+                dA = N == 1 ? A.dval : A.dval[i]
+                if A.val isa Union{UnitUpperTriangular, UnitLowerTriangular}
+                    mul!(dB, _zero_unused_elements!(copy(parent(dA)), A.val), retval, -1, 1)
+                else
+                    mul!(dB, dA, retval, -1, 1)
+                end
+            end
+            ldiv!(A.val, dB)
+            return dB
+        end
+
+        if EnzymeRules.needs_primal(config)
+            if N == 1
+                return Duplicated(retval, dretvals[1])
+            else
+                return BatchDuplicated(retval, dretvals)
+            end
+        else
+            if N == 1
+                return dretvals[1]
+            else
+                return dretvals
+            end
+        end
+    elseif EnzymeRules.needs_primal(config)
+        return retval
+    else
+        return nothing
+    end
+end
+
 const EnzymeTriangulars = Union{
     UpperTriangular{<:Complex},
     LowerTriangular{<:Complex},
@@ -508,4 +558,3 @@ end
 
 # partial derivative of the determinant is the matrix of cofactors
 EnzymeRules.@easy_rule(LinearAlgebra.det(A::AbstractMatrix), (cofactor(A),))
-
