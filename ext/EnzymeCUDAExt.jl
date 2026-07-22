@@ -3,26 +3,11 @@ module EnzymeCUDAExt
 using CUDA
 using Enzyme
 using Enzyme: EnzymeRules
-using LinearAlgebra: axpy!
 
 @inline _asarray(ptr::Ptr{T}, n::Integer) where {T} =
     unsafe_wrap(Array, ptr, n; own = false)
 @inline _asarray(ptr::CuPtr{T}, n::Integer) where {T} =
     unsafe_wrap(CuArray, ptr, n; own = false)
-
-@inline _stage(ptr::Union{Ptr, CuPtr}, offset::Integer, n::Integer) =
-    _asarray(ptr + offset, n)
-function _stage(ptr::CuArrayPtr{T}, offset::Integer, n::Integer) where {T}
-    buffer = CuArray{T}(undef, n)
-    Base.unsafe_copyto!(pointer(buffer), ptr, offset, n)
-    return buffer
-end
-
-@inline _commit!(::Union{Ptr, CuPtr}, offset, buffer, n) = nothing
-function _commit!(ptr::CuArrayPtr, offset, buffer, n)
-    Base.unsafe_copyto!(ptr, offset, pointer(buffer), n)
-    return nothing
-end
 
 function _zero!(ptr::Ptr{T}, off::Integer, n::Integer) where {T <: AbstractFloat}
     n == 0 && return nothing
@@ -35,36 +20,55 @@ function _zero!(ptr::CuPtr{T}, off::Integer, n::Integer) where {T <: AbstractFlo
     CUDA.memset(bytes, UInt8(0), n * sizeof(T))
     return nothing
 end
-function _zero!(ptr::CuArrayPtr{T}, off::Integer, n::Integer) where {T}
-    n == 0 && return nothing
-    buffer = _stage(ptr, off, n)
-    fill!(buffer, zero(eltype(buffer)))
-    _commit!(ptr, off, buffer, n)
-    return nothing
-end
 
-function _accumulate!(dst::CuArray, src::CuArray)
-    length(dst) == 0 && return nothing
-    # `dst .+= src` via cuBLAS; covers Float16/32/64 and complex shadows.
-    axpy!(one(eltype(dst)), src, dst)
+#= Element-wise `dst .+= src`, moving across host/device as needed.
+
+ The device path could instead call cuBLAS via `axpy!(one(eltype(dst)), src, dst)`,
+ but broadcast is faster in the size regime these shadows live in:
+
+eltype    n           broadcast(us)   axpy(us)        speedup(bcast/axpy)
+Float32   1           7.896           13.734          0.57
+Float32   16          8.115           13.123          0.62
+Float32   256         8.668           13.615          0.64
+Float32   4096        8.096           13.318          0.61
+Float32   65536       8.483           13.476          0.63
+Float32   1048576     8.266           13.597          0.61
+Float32   16777216    96.727          95.242          1.02
+Float64   1           9.326           13.458          0.69
+Float64   16          9.092           13.423          0.68
+Float64   256         9.014           14.109          0.64
+Float64   4096        8.579           13.794          0.62
+Float64   65536       8.256           14.423          0.57
+Float64   1048576     9.157           13.786          0.66
+Float64   16777216    256.104         257.62          0.99
+=#
+_accumulate!(dst::CuArray, src::CuArray) = (dst .+= src; nothing)
+_accumulate!(dst::Array, src::Array) = (dst .+= src; nothing)
+_accumulate!(dst::CuArray, src::Array) = _accumulate!(dst, CuArray(src))
+_accumulate!(dst::Array, src::CuArray) = _accumulate!(dst, Array(src))
+
+function _accumulate!(
+        acc::Union{Ptr, CuPtr}, aoff::Integer,
+        val::Union{Ptr, CuPtr}, voff::Integer, n::Integer,
+    )
+    _accumulate!(_asarray(acc + aoff, n), _asarray(val + voff, n))
     return nothing
 end
-_accumulate!(dst::Array, src::Array) = (dst .+= src; nothing)
+#= Accumulate target is array memory (copy from array memory): stage into a
+ device buffer, accumulate, then write back via the array-copy APIs. =#
+function _accumulate!(
+        acc::CuArrayPtr{T}, aoff::Integer, val::Union{Ptr, CuPtr}, voff::Integer, n::Integer,
+    ) where {T}
+    buffer = CuArray{T}(undef, n)
+    Base.unsafe_copyto!(pointer(buffer), acc, aoff, n)
+    _accumulate!(buffer, _asarray(val + voff, n))
+    Base.unsafe_copyto!(acc, aoff, pointer(buffer), n)
+    return nothing
+end
 
 function _accumulate_and_zero!(src, soff, dest, doff, n::Integer)
     n == 0 && return nothing
-    typeof(src) === typeof(dest) && src == dest && soff == doff && return nothing
-
-    dsrc = _stage(src, soff, n)
-    ddest = _stage(dest, doff, n)
-    if dsrc isa CuArray && ddest isa CuArray
-        _accumulate!(dsrc, ddest)
-    else
-        tmp = similar(dsrc)
-        copyto!(tmp, ddest)
-        _accumulate!(dsrc, tmp)
-    end
-    _commit!(src, soff, dsrc, n)
+    _accumulate!(src, soff, dest, doff, n)
     _zero!(dest, doff, n)
     return nothing
 end
@@ -116,8 +120,6 @@ const COPY_DIRECTIONS = (
     (Ptr, CuPtr),
     (CuPtr, Ptr),
     (CuPtr, CuPtr),
-    (CuArrayPtr, Ptr),
-    (CuArrayPtr, CuPtr),
     (Ptr, CuArrayPtr),
     (CuPtr, CuArrayPtr),
 )
@@ -173,54 +175,6 @@ end
 
 for SrcPtr in (Ptr, CuPtr)
     @eval begin
-        function EnzymeRules.augmented_primal(
-                config::EnzymeRules.RevConfig,
-                func::Const{typeof(Base.unsafe_copyto!)},
-                ::Type{RT},
-                dest::Annotation{<:CuArrayPtr},
-                doff::Const,
-                src::Annotation{<:$SrcPtr},
-                n::Const;
-                kwargs...,
-            ) where {RT}
-            func.val(dest.val, doff.val, src.val, n.val; kwargs...)
-            primal = EnzymeRules.needs_primal(config) ? dest.val : nothing
-            shadow = if !(RT <: Const) && EnzymeRules.needs_shadow(config) &&
-                    !(dest isa Const)
-                dest.dval
-            else
-                nothing
-            end
-            return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
-        end
-
-        function EnzymeRules.reverse(
-                config::EnzymeRules.RevConfig,
-                func::Const{typeof(Base.unsafe_copyto!)},
-                ::Type{RT},
-                tape,
-                dest::Annotation{<:CuArrayPtr},
-                doff::Const,
-                src::Annotation{<:$SrcPtr},
-                n::Const;
-                kwargs...,
-            ) where {RT}
-            if !(dest isa Const)
-                for batch in 1:EnzymeRules.width(config)
-                    ddest = _shadow(dest, config, batch)
-                    if src isa Const
-                        _zero!(ddest, doff.val, n.val)
-                    else
-                        _accumulate_and_zero!(
-                            _shadow(src, config, batch), 0,
-                            ddest, doff.val, n.val,
-                        )
-                    end
-                end
-            end
-            return (nothing, nothing, nothing, nothing)
-        end
-
         function EnzymeRules.augmented_primal(
                 config::EnzymeRules.RevConfig,
                 func::Const{typeof(Base.unsafe_copyto!)},

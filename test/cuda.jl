@@ -58,14 +58,10 @@ end
     n = 3
     offset = sizeof(Float32)
     src = Float32[4, 5, 6]
-    dsrc = Float32[10, 10, 10]
     seed = Float32[1, 2, 3]
     memory_src = Float32[99, 4, 5, 6]
     memory_dsrc = Float32[77, 10, 10, 10]
-    memory_seed = Float32[88, 1, 2, 3]
 
-    dest_mem = CUDA.alloc(CUDA.ArrayMemory{Float32}, (n + 1,))
-    ddest_mem = CUDA.alloc(CUDA.ArrayMemory{Float32}, (n + 1,))
     src_mem = CUDA.alloc(CUDA.ArrayMemory{Float32}, (n + 1,))
     dsrc_mem = CUDA.alloc(CUDA.ArrayMemory{Float32}, (n + 1,))
 
@@ -100,19 +96,6 @@ end
     end
 
     try
-        # Ptr -> CuArrayPtr
-        dest = pointer(dest_mem)
-        ddest = pointer(ddest_mem)
-        GC.@preserve src dsrc begin
-            dest_ann = Duplicated(dest, ddest)
-            src_ann = Duplicated(pointer(src), pointer(dsrc))
-            reverse_copy!(dest_ann, src_ann; doff = offset) do
-                write_memory!(ddest_mem, memory_seed)
-            end
-        end
-        @test dsrc == Float32[11, 12, 13]
-        @test read_memory(ddest_mem) == Float32[88, 0, 0, 0]
-
         # CuArrayPtr -> Ptr
         write_memory!(src_mem, memory_src)
         write_memory!(dsrc_mem, memory_dsrc)
@@ -129,20 +112,6 @@ end
         @test read_memory(dsrc_mem) == Float32[77, 11, 12, 13]
         @test ddest == zeros(Float32, n)
 
-        # CuPtr -> CuArrayPtr
-        fill!(dsrc, 10)
-        device_src = CuArray(src)
-        device_dsrc = CuArray(dsrc)
-        dest = pointer(dest_mem)
-        ddest = pointer(ddest_mem)
-        dest_ann = Duplicated(dest, ddest)
-        src_ann = Duplicated(pointer(device_src), pointer(device_dsrc))
-        reverse_copy!(dest_ann, src_ann; doff = offset) do
-            write_memory!(ddest_mem, memory_seed)
-        end
-        @test Array(device_dsrc) == Float32[11, 12, 13]
-        @test read_memory(ddest_mem) == Float32[88, 0, 0, 0]
-
         # CuArrayPtr -> CuPtr
         write_memory!(src_mem, memory_src)
         write_memory!(dsrc_mem, memory_dsrc)
@@ -157,8 +126,6 @@ end
         @test read_memory(dsrc_mem) == Float32[77, 11, 12, 13]
         @test Array(device_ddest) == zeros(Float32, n)
     finally
-        CUDA.free(dest_mem)
-        CUDA.free(ddest_mem)
         CUDA.free(src_mem)
         CUDA.free(dsrc_mem)
     end
