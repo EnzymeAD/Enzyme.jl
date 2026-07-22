@@ -74,6 +74,31 @@ using Test
     )
 end
 
+dense_vec(A, b) = A \ b
+dense_mat(A, B) = A \ B
+
+@testset "Forward dense \\" begin
+    A = Float64[
+        5.0 0.2
+        0.1 4.5
+    ]
+    b = Float64[0.7, -0.2]
+    B = Float64[
+        0.6 -0.1
+        -0.4 0.7
+    ]
+
+    for (f, rhs) in ((dense_vec, b), (dense_mat, B))
+        test_forward(f, Duplicated, (copy(A), Duplicated), (copy(rhs), Duplicated))
+    end
+
+    test_forward(dense_vec, DuplicatedNoNeed, (copy(A), Duplicated), (copy(b), Duplicated))
+    test_forward(dense_vec, BatchDuplicated, (copy(A), BatchDuplicated), (copy(b), BatchDuplicated))
+    test_forward(dense_mat, BatchDuplicatedNoNeed, (copy(A), BatchDuplicated), (copy(B), BatchDuplicated))
+    test_forward(dense_vec, Duplicated, (copy(A), Const), (copy(b), Duplicated))
+    test_forward(dense_mat, Duplicated, (copy(A), Duplicated), (copy(B), Const))
+end
+
 function tr_solv(A, B, uplo, trans, diag, idx)
     B = copy(B)
     LAPACK.trtrs!(uplo, trans, diag, A, B)
