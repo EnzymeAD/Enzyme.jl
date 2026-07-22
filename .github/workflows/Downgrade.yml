@@ -62,7 +62,9 @@ jobs:
       - uses: julia-actions/julia-downgrade-compat@v1
         with:
           # EnzymeCore is dev'd from a local path, so its compat cannot be downgraded.
-          skip: EnzymeCore
+          # SparseArrays is an upgradeable stdlib; its only version on a given Julia
+          # is the bundled one, so it cannot be downgraded to an older release.
+          skip: EnzymeCore,SparseArrays
       - uses: julia-actions/julia-buildpkg@v1
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
