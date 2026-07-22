@@ -52,6 +52,7 @@ jobs:
           - Distributions
           - DynamicExpressions
           - SymbolicRegression
+          - Flux
           - Lux
           - Oceananigans
           - SciML
