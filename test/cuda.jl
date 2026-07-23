@@ -1,6 +1,56 @@
 using CUDA
 using Enzyme
+using LinearAlgebra: dot
 using Test
+
+@testset "CUDA memory copies" begin
+    #= Exercise the reverse copy rules across CUDA's memory types. A host<->device
+    roundtrip gradient must recover `2x`. =#
+    grad_roundtrip = function (to_gpu)
+        x = Float32[1, 2, 3]
+        dx = zeros(Float32, 3)
+        Enzyme.autodiff(
+            Reverse,
+            x -> sum(abs2, Array(to_gpu(x))),
+            Active,
+            Duplicated(x, dx),
+        )
+        return dx
+    end
+
+    @testset "device memory" begin
+        @test grad_roundtrip(x -> cu(x)) == Float32[2, 4, 6]
+    end
+    # Unified/host memory: `pointer(::CuArray{…,Unified/Host})` is inferred as `Union{CuPtr,Ptr}`, so the `pointer` rule cannot yet return a concrete
+    @testset "unified memory" begin
+        @test grad_roundtrip(x -> cu(x; unified = true)) == Float32[2, 4, 6]
+    end
+    @testset "host memory" begin
+        @test grad_roundtrip(x -> cu(x; host = true)) == Float32[2, 4, 6]
+    end
+
+    x = CuArray(Float32[1, 2, 3])
+    original = copy(x)
+    dx = CUDA.zeros(Float32, 3)
+    Enzyme.autodiff(
+        Reverse,
+        x -> sum(abs2, Array(x)),
+        Active,
+        Duplicated(x, dx),
+    )
+    @test Array(x) == Array(original)
+    @test Array(dx) == 2 .* Array(x)
+
+    fill!(dx, 0)
+    Enzyme.autodiff(
+        Reverse,
+        x -> sum(abs2, Array(copy(x))),
+        Active,
+        Duplicated(x, dx),
+    )
+    @test Array(x) == Array(original)
+    @test Array(dx) == 2 .* Array(x)
+end
 
 function mul_kernel(A)
     i = threadIdx().x
