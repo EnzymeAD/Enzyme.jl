@@ -4,11 +4,6 @@ using CUDA
 using Enzyme
 using Enzyme: EnzymeRules
 
-@inline _asarray(ptr::Ptr{T}, n::Integer) where {T} =
-    unsafe_wrap(Array, ptr, n; own = false)
-@inline _asarray(ptr::CuPtr{T}, n::Integer) where {T} =
-    unsafe_wrap(CuArray, ptr, n; own = false)
-
 function _zero!(ptr::Ptr{T}, off::Integer, n::Integer) where {T <: AbstractFloat}
     n == 0 && return nothing
     Base.Libc.memset(ptr + off * sizeof(T), 0, n * sizeof(T))
@@ -51,18 +46,11 @@ function _accumulate!(
         acc::Union{Ptr, CuPtr}, aoff::Integer,
         val::Union{Ptr, CuPtr}, voff::Integer, n::Integer,
     )
-    _accumulate!(_asarray(acc + aoff, n), _asarray(val + voff, n))
-    return nothing
-end
-#= Accumulate target is array memory (copy from array memory): stage into a
- device buffer, accumulate, then write back via the array-copy APIs. =#
-function _accumulate!(
-        acc::CuArrayPtr{T}, aoff::Integer, val::Union{Ptr, CuPtr}, voff::Integer, n::Integer,
-    ) where {T}
-    buffer = CuArray{T}(undef, n)
-    Base.unsafe_copyto!(pointer(buffer), acc, aoff, n)
-    _accumulate!(buffer, _asarray(val + voff, n))
-    Base.unsafe_copyto!(acc, aoff, pointer(buffer), n)
+    dst = acc isa CuPtr ? unsafe_wrap(CuArray, acc + aoff, n; own = false) :
+        unsafe_wrap(Array, acc + aoff, n; own = false)
+    src = val isa CuPtr ? unsafe_wrap(CuArray, val + voff, n; own = false) :
+        unsafe_wrap(Array, val + voff, n; own = false)
+    _accumulate!(dst, src)
     return nothing
 end
 
@@ -120,8 +108,6 @@ const COPY_DIRECTIONS = (
     (Ptr, CuPtr),
     (CuPtr, Ptr),
     (CuPtr, CuPtr),
-    (Ptr, CuArrayPtr),
-    (CuPtr, CuArrayPtr),
 )
 
 for (DstPtr, SrcPtr) in COPY_DIRECTIONS
@@ -169,58 +155,6 @@ for (DstPtr, SrcPtr) in COPY_DIRECTIONS
                 end
             end
             return (nothing, nothing, nothing)
-        end
-    end
-end
-
-for SrcPtr in (Ptr, CuPtr)
-    @eval begin
-        function EnzymeRules.augmented_primal(
-                config::EnzymeRules.RevConfig,
-                func::Const{typeof(Base.unsafe_copyto!)},
-                ::Type{RT},
-                dest::Annotation{<:$SrcPtr},
-                src::Annotation{<:CuArrayPtr},
-                soff::Const,
-                n::Const;
-                kwargs...,
-            ) where {RT}
-            func.val(dest.val, src.val, soff.val, n.val; kwargs...)
-            primal = EnzymeRules.needs_primal(config) ? dest.val : nothing
-            shadow = if !(RT <: Const) && EnzymeRules.needs_shadow(config) &&
-                    !(dest isa Const)
-                dest.dval
-            else
-                nothing
-            end
-            return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
-        end
-
-        function EnzymeRules.reverse(
-                config::EnzymeRules.RevConfig,
-                func::Const{typeof(Base.unsafe_copyto!)},
-                ::Type{RT},
-                tape,
-                dest::Annotation{<:$SrcPtr},
-                src::Annotation{<:CuArrayPtr},
-                soff::Const,
-                n::Const;
-                kwargs...,
-            ) where {RT}
-            if !(dest isa Const)
-                for batch in 1:EnzymeRules.width(config)
-                    ddest = _shadow(dest, config, batch)
-                    if src isa Const
-                        _zero!(ddest, 0, n.val)
-                    else
-                        _accumulate_and_zero!(
-                            _shadow(src, config, batch), soff.val,
-                            ddest, 0, n.val,
-                        )
-                    end
-                end
-            end
-            return (nothing, nothing, nothing, nothing)
         end
     end
 end
