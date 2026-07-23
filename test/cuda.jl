@@ -23,10 +23,10 @@ using Test
     end
     # Unified/host memory: `pointer(::CuArray{…,Unified/Host})` is inferred as `Union{CuPtr,Ptr}`, so the `pointer` rule cannot yet return a concrete
     @testset "unified memory" begin
-        @test_broken grad_roundtrip(x -> cu(x; unified = true)) == Float32[2, 4, 6]
+        @test grad_roundtrip(x -> cu(x; unified = true)) == Float32[2, 4, 6]
     end
     @testset "host memory" begin
-        @test_broken grad_roundtrip(x -> cu(x; host = true)) == Float32[2, 4, 6]
+        @test grad_roundtrip(x -> cu(x; host = true)) == Float32[2, 4, 6]
     end
 
     x = CuArray(Float32[1, 2, 3])
