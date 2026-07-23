@@ -43,6 +43,7 @@ jobs:
           - '1.10'
           - '1.11'
           - '1.12'
+          - '1.13'
           - 'nightly'
         os:
           - ubuntu-24.04
@@ -104,6 +105,7 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
+          include-all-prereleases: true
       - uses: actions/checkout@v7
         if: ${{ matrix.assertions }}
         with:
@@ -190,6 +192,7 @@ jobs:
           - '1.10'
           - '1.11'
           - '1.12'
+          - '1.13'
           - 'nightly'
         os:
           - ubuntu-latest
@@ -202,6 +205,7 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
+          include-all-prereleases: true
       - uses: julia-actions/cache@v3
       - name: setup EnzymeTestUtils
         shell: julia --color=yes {0}
@@ -246,6 +250,7 @@ jobs:
           - '1.10'
           - '1.11'
           - '1.12'
+          - '1.13'
           - 'nightly'
         os:
           - ubuntu-latest
@@ -258,6 +263,7 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
+          include-all-prereleases: true
       - uses: julia-actions/cache@v3
       - name: setup EnzymeCore
         shell: julia --color=yes {0}
