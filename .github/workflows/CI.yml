@@ -43,7 +43,6 @@ jobs:
           - '1.10'
           - '1.11'
           - '1.12'
-          - 'nightly'
         os:
           - ubuntu-24.04
           - macOS-latest
@@ -135,15 +134,12 @@ jobs:
           cp LocalPreferences.toml test/
       - name: Build libEnzyme MacOS
         if: ${{ matrix.libEnzyme == 'local' && matrix.os == 'macOS-latest'}}
-        continue-on-error: ${{ matrix.version == 'nightly' }}
         id: build_libenzyme_mac
         run: |
           julia --color=yes --project=deps -e 'using Pkg; Pkg.instantiate()'
           SDKROOT=`xcrun --show-sdk-path` julia --color=yes --project=deps deps/build_local.jl
           cp LocalPreferences.toml test/
       - uses: julia-actions/julia-buildpkg@v1
-        if: matrix.version != 'nightly' || steps.build_libenzyme.outcome == 'success' || steps.build_libenzyme_mac.outcome == 'success'
-        continue-on-error: ${{ matrix.version == 'nightly' }}
         id: buildpkg
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
@@ -159,8 +155,6 @@ jobs:
           fi
           echo "runtest_test_args=${TEST_ARGS[@]}" >> "${GITHUB_ENV}"
       - uses: julia-actions/julia-runtest@v1
-        if: matrix.version != 'nightly' || steps.buildpkg.outcome == 'success'
-        continue-on-error: ${{ matrix.version == 'nightly' }}
         id: run_tests
         with:
           test_args: ${{ env.runtest_test_args }}
@@ -168,9 +162,7 @@ jobs:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
           JULIA_LLVM_ARGS: ${{ matrix.llvm_args }}
       - uses: julia-actions/julia-processcoverage@v1
-        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
       - uses: codecov/codecov-action@v7
-        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -180,7 +172,6 @@ jobs:
     timeout-minutes: 60
     name: EnzymeTestUtils - Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.version == 'nightly' }}
     env:
       JULIA_PROJECT: "lib/EnzymeTestUtils"
     strategy:
@@ -190,7 +181,6 @@ jobs:
           - '1.10'
           - '1.11'
           - '1.12'
-          - 'nightly'
         os:
           - ubuntu-latest
         arch:
@@ -206,7 +196,6 @@ jobs:
       - name: setup EnzymeTestUtils
         shell: julia --color=yes {0}
         id: setup_testutils
-        continue-on-error: ${{ matrix.version == 'nightly' }}
         run: |
           using Pkg
           Pkg.develop([PackageSpec(; path) for path in (".", "lib/EnzymeCore")])
@@ -214,19 +203,15 @@ jobs:
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - name: Run the tests
-        if: matrix.version != 'nightly' || steps.setup_testutils.outcome == 'success'
-        continue-on-error: ${{ matrix.version == 'nightly' }}
         id: run_tests
         shell: julia --color=yes {0}
         run: |
           using Pkg
           Pkg.test("EnzymeTestUtils"; coverage=true)
       - uses: julia-actions/julia-processcoverage@v1
-        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           directories: lib/EnzymeTestUtils/src
       - uses: codecov/codecov-action@v7
-        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -236,7 +221,6 @@ jobs:
     timeout-minutes: 20
     name: EnzymeCore - Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.version == 'nightly' }}
     env:
       JULIA_PROJECT: "lib/EnzymeCore"
     strategy:
@@ -246,7 +230,6 @@ jobs:
           - '1.10'
           - '1.11'
           - '1.12'
-          - 'nightly'
         os:
           - ubuntu-latest
         arch:
@@ -262,7 +245,6 @@ jobs:
       - name: setup EnzymeCore
         shell: julia --color=yes {0}
         id: setup_testutils
-        continue-on-error: ${{ matrix.version == 'nightly' }}
         run: |
           using Pkg
           Pkg.develop([PackageSpec(; path) for path in (".",)])
@@ -270,19 +252,15 @@ jobs:
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - name: Run the tests
-        if: matrix.version != 'nightly' || steps.setup_testutils.outcome == 'success'
-        continue-on-error: ${{ matrix.version == 'nightly' }}
         id: run_tests
         shell: julia --color=yes {0}
         run: |
           using Pkg
           Pkg.test("EnzymeCore"; coverage=true)
       - uses: julia-actions/julia-processcoverage@v1
-        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           directories: lib/EnzymeCore/src
       - uses: codecov/codecov-action@v7
-        if: matrix.version != 'nightly' || steps.run_tests.outcome == 'success'
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
