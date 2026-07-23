@@ -193,3 +193,65 @@ end
     @test all(dA .≈ (2:2:64))
     @test all(dA2 .≈ 3*(2:2:64))
 end
+
+# https://github.com/EnzymeAD/Enzyme.jl/issues/2837
+struct Linear2837{W, B}
+    weight::W
+    bias::B
+end
+(m::Linear2837)(x) = m.weight * x .+ m.bias
+
+@testset "unsafe_copyto! through gemv (#2837)" begin
+    # analytic gradient of `sum(W*x .+ b)`: dW[i,j] = x[j], db[i] = 1
+    W = cu(Float32[1.0 2.0; 3.0 4.0])
+    b = cu(Float32[0.5, -0.5])
+    x = cu(Float32[0.3, 0.7])
+    f(W, b, x) = sum(W * x .+ b)
+
+    dW = Enzyme.make_zero(W)
+    db = Enzyme.make_zero(b)
+    # Before the `EnzymeCUDAExt` rules this threw `EnzymeNoDerivativeError` (no
+    # augmented forward pass for cuMemcpyHtoDAsync_v2); before the `mul!` rule the
+    # weight gradient came back zero.
+    Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Reverse), Const(f), Active,
+        Duplicated(W, dW), Duplicated(b, db), Const(x),
+    )
+    @test Array(dW) ≈ ones(Float32, 2) * Array(x)'
+    @test all(Array(db) .≈ 1)
+
+    # the exact MWE from the issue: differentiate a struct "model"
+    model = Linear2837(cu(Float32[1.0 2.0; 3.0 4.0]), cu(Float32[0.5, -0.5]))
+    dmodel = Duplicated(model, Enzyme.make_zero(model))
+    g(m, x) = sum(m(x))
+    Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Reverse), Const(g), Active, dmodel, Const(x),
+    )
+    @test Array(dmodel.dval.weight) ≈ ones(Float32, 2) * Array(x)'
+    @test all(Array(dmodel.dval.bias) .≈ 1)
+end
+
+# gemv/gemm mul! rule (cuBLAS) — reverse and forward mode
+@testset "mul! on CuArrays (#2837)" begin
+    rev = Enzyme.set_runtime_activity(Reverse)
+    fwd = Enzyme.set_runtime_activity(Forward)
+
+    # reverse: y = W*x  →  dW = 1*x', dx = W'*1
+    W = cu(randn(Float32, 3, 4)); x = cu(randn(Float32, 4))
+    dW = Enzyme.make_zero(W); dx = Enzyme.make_zero(x)
+    Enzyme.autodiff(rev, Const(p -> sum(p[1] * p[2])), Active, Duplicated((W, x), (dW, dx)))
+    @test Array(dW) ≈ ones(Float32, 3) * Array(x)'
+    @test Array(dx) ≈ Array(W)' * ones(Float32, 3)
+
+    # reverse: C = A*B  →  dA = 1*B', dB = A'*1
+    A = cu(randn(Float32, 3, 4)); B = cu(randn(Float32, 4, 5))
+    dA = Enzyme.make_zero(A); dB = Enzyme.make_zero(B)
+    Enzyme.autodiff(rev, Const(p -> sum(p[1] * p[2])), Active, Duplicated((A, B), (dA, dB)))
+    @test Array(dA) ≈ ones(Float32, 3, 5) * Array(B)'
+    @test Array(dB) ≈ Array(A)' * ones(Float32, 3, 5)
+
+    # forward: ẏ = Ẇ*x
+    Ẇ = cu(randn(Float32, 3, 4))
+    ẏ = Enzyme.autodiff(fwd, Const((W, x) -> W * x), Duplicated(W, Ẇ), Const(x))[1]
+    @test Array(ẏ) ≈ Array(Ẇ) * Array(x)
+end
