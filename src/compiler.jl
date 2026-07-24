@@ -176,9 +176,11 @@ GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) 
 # GPUCompiler.isintrinsic(::CompilerJob{EnzymeTarget}, fn::String) = true
 # GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
 
-# TODO: encode debug build or not in the compiler job
-#       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
-GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
+@static if isdefined(GPUCompiler, :runtime_slug) # GPUCompiler v1 only
+    # TODO: encode debug build or not in the compiler job
+    #       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
+    GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
+end
 
 # provide a specific interpreter to use.
 if VERSION >= v"1.11.0-DEV.1552"
@@ -199,7 +201,7 @@ if VERSION >= v"1.11.0-DEV.1552"
             inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
         )
 
-    GPUCompiler.ci_cache_token(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+    @inline _cache_owner(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
         EnzymeCacheToken(
             typeof(job.config.target),
             job.config.always_inline,
@@ -210,10 +212,17 @@ if VERSION >= v"1.11.0-DEV.1552"
             job.config.params.mode != API.DEM_ForwardMode,
             true
         )
+    @static if isdefined(GPUCompiler, :cache_owner) # GPUCompiler v2
+        GPUCompiler.cache_owner(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            _cache_owner(job)
+    else
+        GPUCompiler.ci_cache_token(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            _cache_owner(job)
+    end
 
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         Interpreter.EnzymeInterpreter(
-            GPUCompiler.ci_cache_token(job),
+        @static(isdefined(GPUCompiler, :cache_owner) ? GPUCompiler.cache_owner(job) : GPUCompiler.ci_cache_token(job)), # support both GPUCompiler v1 and v2
             GPUCompiler.method_table(job),
             job.world,
             job.config.params.mode,
@@ -234,8 +243,13 @@ else
         end
     end
 
-    GPUCompiler.ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        enzyme_ci_cache(job)
+    @static if isdefined(GPUCompiler, :get_code_cache) # GPUCompiler v2
+        GPUCompiler.get_code_cache(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            enzyme_ci_cache(job)
+    else
+        GPUCompiler.ci_cache(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            enzyme_ci_cache(job)
+    end
 
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         Interpreter.EnzymeInterpreter(
@@ -622,6 +636,33 @@ include("compiler/validation.jl")
 include("typeutils/inference.jl")
 
 import .Interpreter: isKWCallSignature
+
+# Drive inference on `mi` when GPUCompiler's `compile_method_instance` runs with an
+# `EnzymeInterpreter` (GPUCompiler only provides `drive_inference!` for `GPUInterpreter`).
+@static if isdefined(GPUCompiler, :drive_inference!) # GPUCompiler v2
+@static if VERSION >= v"1.11.0-DEV.1552"
+    GPUCompiler.drive_inference!(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance) =
+        GPUCompiler.CompilerCaching.typeinf!(interp, mi)
+else
+    # mirrors the 1.10 `CodeCache`-based implementation in GPUCompiler's deprecated.jl
+    function GPUCompiler.drive_inference!(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance)
+        src = Core.Compiler.typeinf_ext_toplevel(interp, mi)
+        @assert src !== nothing "Inference of $mi failed"
+
+        # For const-return CIs the inference result wasn't recorded — set it from the
+        # returned source so callers re-using the CI don't need to re-infer.
+        wvc = Core.Compiler.WorldView(interp.code_cache,
+                                      Core.Compiler.WorldRange(interp.world, interp.world))
+        if Core.Compiler.haskey(wvc, mi)
+            ci = Core.Compiler.getindex(wvc, mi)
+            if ci.inferred === nothing
+                @atomic ci.inferred = src
+            end
+        end
+        return nothing
+    end
+end
+end # @static if isdefined(GPUCompiler, :drive_inference!)
 
 
 mutable struct HandlerState
@@ -5438,6 +5479,16 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     primal_job = CompilerJob(primal, primal_config, job.world)
     @safe_debug "Emit LLVM with" primal_job
     GPUCompiler.prepare_job!(primal_job)
+    # TODO(relocatable-globals): On the GPUCompiler v2 path, `emit_llvm` runs
+    # `relocate_gvs!`, which materializes `julia.constgv` isbits constants as
+    # device-resident boxes and leaves other constgv globals as external
+    # declarations (their initializers were stripped by `compile_method_instance`
+    # for session portability). Enzyme's analysis passes assume the v1 form, where
+    # every constgv global carries a baked host-pointer `inttoptr` initializer, so
+    # they can no longer fold/track these constants. This is the root cause of the
+    # remaining Julia 1.12 failures (activity/shadow errors in test/basic.jl). The
+    # right fix is to make Enzyme relocatable — handle the materialized boxes and
+    # session-portable globals directly — rather than depending on baked addresses.
     mod, meta = GPUCompiler.emit_llvm(primal_job)
     edges = enzyme_context.edges
 

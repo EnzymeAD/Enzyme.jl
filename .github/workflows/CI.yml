@@ -34,7 +34,7 @@ concurrency:
 jobs:
   test:
     timeout-minutes: 120
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - assertions=${{ matrix.assertions }} llvm_args=${{ matrix.llvm_args }} - ${{ github.event_name }}
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - assertions=${{ matrix.assertions }} llvm_args=${{ matrix.llvm_args }} - GPUCompiler=${{ matrix.gpucompiler || 'default' }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -96,6 +96,19 @@ jobs:
             version: '1.11'
             assertions: false
             llvm_args: '--opaque-pointers'
+          # Verify that the GPUCompiler v1 compatibility path still works.
+          - os: ubuntu-24.04
+            arch: default
+            libEnzyme: packaged
+            version: '1.10'
+            assertions: false
+            gpucompiler: '1'
+          - os: ubuntu-24.04
+            arch: default
+            libEnzyme: packaged
+            version: '1.11'
+            assertions: false
+            gpucompiler: '1'
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
@@ -123,6 +136,15 @@ jobs:
           Pkg.develop([PackageSpec(; path) for path in ("lib/EnzymeCore", "lib/EnzymeTestUtils")])
           Pkg.instantiate()
         if: ${{ matrix.version == '1.10' }}
+        env:
+          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+      - name: Pin GPUCompiler to v1
+        if: ${{ matrix.gpucompiler == '1' }}
+        shell: julia --color=yes --project=. {0}
+        run: |
+          using Pkg
+          Pkg.add(PackageSpec(; name = "GPUCompiler", version = "1"))
+          Pkg.status()
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - name: Build libEnzyme
