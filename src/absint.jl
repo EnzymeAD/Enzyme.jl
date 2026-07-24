@@ -139,7 +139,7 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
 
                 if legal
                     res = Ty{found...}
-                    if res isa Core.TypeofVararg
+                    if Base.isvarargtype(res)
                         res = Tuple{res}
                         for u in unionalls
                             res = UnionAll(u, res)
