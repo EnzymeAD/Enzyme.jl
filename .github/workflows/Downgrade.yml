@@ -1,0 +1,67 @@
+name: Downgrade
+on:
+  pull_request:
+    paths: &paths
+      - '.github/workflows/Downgrade.yml'
+      - 'deps/**'
+      - 'ext/**'
+      - 'lib/**'
+      - 'src/**'
+      - 'test/**'
+      - '!test/integration/**'
+      - 'Project.toml'
+  push:
+    branches:
+      - main
+      - release-*
+    paths: *paths
+    tags: '*'
+
+concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+jobs:
+  test:
+    timeout-minutes: 120
+    name: Downgrade - Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - '1.10'
+        os:
+          - ubuntu-24.04
+        arch:
+          - default
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: ${{ matrix.version }}
+          arch: ${{ matrix.arch }}
+      - uses: julia-actions/cache@v3
+      - name: add EnzymeCore EnzymeTestUtils
+        shell: julia --color=yes --project=. {0}
+        run: |
+          using Pkg
+          Pkg.develop([PackageSpec(; path) for path in ("lib/EnzymeCore", "lib/EnzymeTestUtils")])
+        env:
+          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+      - uses: julia-actions/julia-downgrade-compat@v1
+        with:
+          # EnzymeCore is dev'd from a local path, so its compat cannot be downgraded.
+          # SparseArrays is an upgradeable stdlib; its only version on a given Julia
+          # is the bundled one, so it cannot be downgraded to an older release.
+          skip: EnzymeCore,SparseArrays
+      - uses: julia-actions/julia-buildpkg@v1
+        env:
+          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+      - uses: julia-actions/julia-runtest@v1
+        with:
+          test_args: '--verbose'
+        env:
+          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
