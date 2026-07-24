@@ -459,7 +459,11 @@ function enzyme_custom_setup_args(
         root_ty = nothing
         roots_val = if roots_op !== nothing
             root_ty = convert(LLVMType, AnyArray(roots))
-            new_from_original(gutils, roots_op)
+            roots_val = new_from_original(gutils, roots_op)
+            if reverse && B !== nothing
+                roots_val = lookup_value(gutils, roots_val, B)
+            end
+            roots_val
         end
 
 
