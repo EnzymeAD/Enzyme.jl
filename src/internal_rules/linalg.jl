@@ -295,6 +295,79 @@ function EnzymeRules.forward(
     end
 end
 
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(ldiv!)},
+        ::Type{RT},
+        fact::Annotation{<:Cholesky},
+        B::Annotation{<:AbstractVecOrMat};
+        kwargs...,
+    ) where {RT}
+    if B isa Const
+        retval = func.val(fact.val, B.val; kwargs...)
+        primal = EnzymeRules.needs_primal(config) ? retval : nothing
+        return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+    end
+
+    cache_fact = if EnzymeRules.overwritten(config)[2]
+        Cholesky(copy(fact.val.factors), fact.val.uplo, fact.val.info)
+    else
+        fact.val
+    end
+    L = cache_fact.L
+    U = cache_fact.U
+
+    ldiv!(L, B.val)
+    cache_Lout = fact isa Const ? nothing : copy(B.val)
+    ldiv!(U, B.val)
+    cache_Uout = fact isa Const ? nothing : copy(B.val)
+
+    primal = EnzymeRules.needs_primal(config) ? B.val : nothing
+    shadow = EnzymeRules.needs_shadow(config) ? B.dval : nothing
+
+    return EnzymeRules.AugmentedReturn(primal, shadow, (cache_fact, cache_Lout, cache_Uout))
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(ldiv!)},
+        ::Type{RT},
+        cache,
+        fact::Annotation{<:Cholesky},
+        B::Annotation{<:AbstractVecOrMat};
+        kwargs...,
+    ) where {RT}
+    if B isa Const
+        return (nothing, nothing)
+    end
+
+    cache_fact, cache_Lout, cache_Uout = cache
+    L = cache_fact.L
+    U = cache_fact.U
+    N = EnzymeRules.width(config)
+
+    ntuple(Val(N)) do i
+        Base.@_inline_meta
+        dB = N == 1 ? B.dval : B.dval[i]
+        zU = adjoint(U) \ dB
+        zL = adjoint(L) \ zU
+        if !(fact isa Const)
+            dfact = N == 1 ? fact.dval : fact.dval[i]
+            dU = zU * adjoint(cache_Uout)
+            dL = zL * adjoint(cache_Lout)
+            if cache_fact.uplo == 'U'
+                dfact.factors .-= triu!(dU + adjoint(dL))
+            else
+                dfact.factors .-= tril!(dL + adjoint(dU))
+            end
+        end
+        dB .= zL
+        return nothing
+    end
+
+    return (nothing, nothing)
+end
+
 
 _zero_unused_elements!(X, ::UpperTriangular) = triu!(X)
 _zero_unused_elements!(X, ::LowerTriangular) = tril!(X)
@@ -508,4 +581,3 @@ end
 
 # partial derivative of the determinant is the matrix of cofactors
 EnzymeRules.@easy_rule(LinearAlgebra.det(A::AbstractMatrix), (cofactor(A),))
-

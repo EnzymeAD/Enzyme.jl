@@ -523,6 +523,41 @@ end
     end
 end
 
+function chol_ldiv_weighted(fact, B, W)::Float64
+    B = copy(B)
+    ldiv!(fact, B)
+    return LinearAlgebra.dot(W, B)
+end
+
+@testset "Reverse Cholesky ldiv!" begin
+    F = Float64[
+        1.4 0.2
+        0.0 1.5
+    ]
+    b = Float64[0.7, -0.2]
+    w = Float64[0.3, -0.4]
+    fact = LinearAlgebra.Cholesky(copy(F), 'U', 0)
+    test_reverse(chol_ldiv_weighted, Active, (fact, Duplicated), (b, Duplicated), (w, Const))
+    test_reverse(chol_ldiv_weighted, Active, (fact, BatchDuplicated), (b, BatchDuplicated), (w, Const))
+    test_reverse(chol_ldiv_weighted, Active, (fact, Const), (b, Duplicated), (w, Const))
+    test_reverse(chol_ldiv_weighted, Active, (fact, Duplicated), (b, Const), (w, Const))
+
+    F = Float64[
+        1.4 0.0
+        0.2 1.5
+    ]
+    B = Float64[
+        0.7 -0.2
+        0.1 0.5
+    ]
+    W = Float64[
+        0.3 -0.4
+        0.2 0.6
+    ]
+    fact = LinearAlgebra.Cholesky(copy(F), 'L', 0)
+    test_reverse(chol_ldiv_weighted, Active, (fact, Duplicated), (B, Duplicated), (W, Const))
+end
+
 function chol_upper(x)
     x = reshape(x, 4, 4)
     x = parent(cholesky(Hermitian(x)).U)
