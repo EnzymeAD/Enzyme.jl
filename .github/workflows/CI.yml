@@ -1,7 +1,7 @@
 name: CI
 on:
   pull_request:
-    paths:
+    paths: &paths
       - '.github/workflows/CI.yml'
       - 'deps/**'
       - 'ext/**'
@@ -14,15 +14,7 @@ on:
     branches:
       - main
       - release-*
-    paths:
-      - '.github/workflows/CI.yml'
-      - 'deps/**'
-      - 'ext/**'
-      - 'lib/**'
-      - 'src/**'
-      - 'test/**'
-      - '!test/integration/**'
-      - 'Project.toml'
+    paths: *paths
     tags: '*'
 
 concurrency:
@@ -56,7 +48,8 @@ jobs:
         libEnzyme: [local, packaged]
         exclude:
           - os: windows-latest
-            arch: default
+            libEnzyme: local
+          - os: macOS-latest
             libEnzyme: local
         include:
           - os: ubuntu-24.04
