@@ -653,20 +653,70 @@ function handleCustom(state::HandlerState, custom, k_name::String, llvmfn::LLVM.
     nothing
 end
 
+const FRULE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
+const RRULE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
+const NOALIAS_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
+
+function cached_has_frule(specTypes::Type, world::UInt, method_table)
+    key = (specTypes, world, method_table)
+    val = get(FRULE_CACHE, key, nothing)
+    if val !== nothing
+        return val::Bool
+    end
+    func = specTypes.parameters[1]
+    if func isa Core.Builtin
+        FRULE_CACHE[key] = false
+        return false
+    end
+    res = EnzymeRules.has_frule_from_sig(specTypes; world, method_table)
+    FRULE_CACHE[key] = res
+    return res
+end
+
+function cached_has_rrule(specTypes::Type, world::UInt, method_table)
+    key = (specTypes, world, method_table)
+    val = get(RRULE_CACHE, key, nothing)
+    if val !== nothing
+        return val::Bool
+    end
+    func = specTypes.parameters[1]
+    if func isa Core.Builtin
+        RRULE_CACHE[key] = false
+        return false
+    end
+    res = EnzymeRules.has_rrule_from_sig(specTypes; world, method_table)
+    RRULE_CACHE[key] = res
+    return res
+end
+
+function cached_noalias(specTypes::Type, world::UInt, method_table)
+    key = (specTypes, world, method_table)
+    val = get(NOALIAS_CACHE, key, nothing)
+    if val !== nothing
+        return val::Bool
+    end
+    func = specTypes.parameters[1]
+    if func isa Core.Builtin
+        NOALIAS_CACHE[key] = false
+        return false
+    end
+    res = EnzymeRules.noalias_from_sig(specTypes; world, method_table)
+    NOALIAS_CACHE[key] = res
+    return res
+end
+
 function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, mode::API.CDerivativeMode, world::UInt, method_table, custom::Dict{String, LLVM.API.LLVMLinkage}, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type))::Nothing
     has_custom_rule = false
 
     specTypes = Interpreter.simplify_kw(mi.specTypes)
 
     if mode == API.DEM_ForwardMode
-        has_custom_rule =
-            EnzymeRules.has_frule_from_sig(specTypes; world, method_table)
+        has_custom_rule = cached_has_frule(specTypes, world, method_table)
         if has_custom_rule
             @safe_debug "Found frule for" mi.specTypes
         end
     else
-        has_custom_rule =
-            EnzymeRules.has_rrule_from_sig(specTypes; world, method_table)
+        has_custom_rule = cached_has_rrule(specTypes, world, method_table)
         if has_custom_rule
             @safe_debug "Found rrule for" mi.specTypes
         end
@@ -681,7 +731,7 @@ function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, m
         state.actualRetType = rettype
     end
 
-    if EnzymeRules.noalias_from_sig(mi.specTypes; world, method_table)
+    if cached_noalias(specTypes, world, method_table)
         push!(edges, mi)
         push!(return_attributes(llvmfn), EnumAttribute("noalias"))
         for u in LLVM.uses(llvmfn)
