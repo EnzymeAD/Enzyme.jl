@@ -23,3 +23,8 @@ git runic <base-branch>
 pre-commit install
 ```
 CI enforces Runic formatting on all PRs.
+
+## Coding Conventions
+
+- **Avoid Closures**: Avoid using anonymous functions / closures (e.g. `_ -> foo`) and inner/local functions in runtime and compiler helper methods, as local functions suffer from the same closure allocation and type instability issues. Prefer using `Returns(val)` (e.g., `ntuple(Returns(x), Val(W))`), callable structs, or top-level functions instead.
+
