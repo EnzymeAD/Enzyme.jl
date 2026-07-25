@@ -563,7 +563,7 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
             attributes,
             StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(RT)))),
         )
-        if EnzymeRules.has_easy_rule_from_sig(Interpreter.simplify_kw(mi.specTypes); job.world)
+        if cached_has_easy_rule(Interpreter.simplify_kw(mi.specTypes), job.world)
             push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
         end
 
@@ -619,7 +619,24 @@ end
 const FRULE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
 const RRULE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
 const INACTIVE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
+const EASY_RULE_CACHE = Dict{Tuple{Type, UInt}, Bool}()
 const NOALIAS_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
+
+function cached_has_easy_rule(specTypes::Type, world::UInt)
+    key = (specTypes, world)
+    val = get(EASY_RULE_CACHE, key, nothing)
+    if val !== nothing
+        return val::Bool
+    end
+    func = specTypes.parameters[1]
+    if func isa Core.Builtin
+        EASY_RULE_CACHE[key] = false
+        return false
+    end
+    res = EnzymeRules.has_easy_rule_from_sig(specTypes; world)
+    EASY_RULE_CACHE[key] = res
+    return res
+end
 
 function cached_has_frule(specTypes::Type, world::UInt, method_table)
     key = (specTypes, world, method_table)
@@ -5187,7 +5204,7 @@ function lower_convention(
         attributes,
         StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(rt)))),
     )
-    if EnzymeRules.has_easy_rule_from_sig(Interpreter.simplify_kw(mi.specTypes); world)
+    if cached_has_easy_rule(Interpreter.simplify_kw(mi.specTypes), world)
         push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
     end
     for prev in collect(function_attributes(entry_f))
