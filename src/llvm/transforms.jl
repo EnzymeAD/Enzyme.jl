@@ -2951,16 +2951,9 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
         eraseInst(LLVM.parent(u), u)
     end
     eraseInst(mod, sfunc)
-    for fn in functions(mod)
-        for b in blocks(fn)
-            inst = first(LLVM.instructions(b))
-            if isa(inst, LLVM.CallInst)
-                fn = LLVM.called_operand(inst)
-                if fn == func
-                    eraseInst(b, inst)
-                end
-            end
-        end
+    for u in LLVM.uses(func)
+        u = LLVM.user(u)
+        eraseInst(LLVM.parent(u), u)
     end
     eraseInst(mod, func)
 end
