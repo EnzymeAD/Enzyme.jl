@@ -197,15 +197,32 @@ end
     beta = 2.0
     dbeta = 1.0
 
-    @test_throws Enzyme.Compiler.EnzymeRuntimeActivityError autodiff(
-        Forward,
-        TestCallWithKWargs((;)),
-        Const,
-        Const(test_trace!),
-        Const(dst),
-        Const(src),
-        Duplicated(beta, dbeta)
-    )
+    if VERSION < v"1.13-"
+        # 1.13+ is smart enough to prove the first arg of the split convention is readnone and thus
+	# work without runtime activity
+        @test_throws Enzyme.Compiler.EnzymeRuntimeActivityError autodiff(
+            Forward,
+            TestCallWithKWargs((;)),
+            Const,
+            Const(test_trace!),
+            Const(dst),
+            Const(src),
+            Duplicated(beta, dbeta)
+        )
+    else
+        autodiff(
+            Forward,
+            TestCallWithKWargs((;)),
+            Const,
+            Const(test_trace!),
+            Const(dst),
+            Const(src),
+            Duplicated(beta, dbeta)
+        )
+        @test dst.data == [2.0, 4.0]
+    end
+    
+    dst = TestTensor(TestSpace(2, true), [1.0, 2.0])
 
     autodiff(
         set_runtime_activity(Forward),
