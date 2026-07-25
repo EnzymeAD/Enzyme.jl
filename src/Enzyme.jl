@@ -534,7 +534,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     ) #=ShadowInit=#
 
     if A0 <: Active
-        args = (args..., Compiler.default_adjoint(rt))
+        args = (args..., Compiler.default_adjoint(rt, Val(width)))
     end
     thunk(f, args...)
 end
@@ -815,7 +815,7 @@ code, as well as high-order differentiation.
     thunk =
         Compiler.CombinedAdjointThunk{Ptr{Cvoid},FA,A2,tt′,width,ReturnPrimal}(adjoint_ptr)
     if A <: Active
-        args = (args..., Compiler.default_adjoint(rt))
+        args = (args..., Compiler.default_adjoint(rt, Val(width)))
     elseif A <: Duplicated ||
            A <: DuplicatedNoNeed ||
            A <: BatchDuplicated ||

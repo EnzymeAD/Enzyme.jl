@@ -920,6 +920,21 @@ end
     @test 0.0 ≈ dout[]
     @test 0.0 ≈ dout2[]
 
+    function batch_active_ret(out, arg1, arg2)
+        N_TIME_STEPS = size(out, 1)
+        N_COLUMNS = size(out, 2)
+        for i in 1:N_TIME_STEPS
+            for j in 1:N_COLUMNS
+                prev = i == 1 ? 0.0 : out[i-1, j]
+                out[i, j] = prev * arg1 + arg2
+            end
+        end
+        return sum(view(out, N_TIME_STEPS, :))
+    end
+    out_b = zeros(4, 5)
+    dout_b = (Enzyme.make_zero(out_b), Enzyme.make_zero(out_b))
+    res_b = Enzyme.autodiff(Reverse, batch_active_ret, Active, BatchDuplicated(out_b, dout_b), Active(1.0), Active(2.0))
+    @test res_b == ((nothing, (60.0, 60.0), (20.0, 20.0)),)
 end
 
 function batchgf(out, args)
