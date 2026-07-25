@@ -719,12 +719,16 @@ function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
         print(io, " This usually indicates the use of a Union type, which is not fully supported with Enzyme.API.strictAliasing set to true [the default].\n")
         print(io, " Ideally, remove the union (which will also make your code faster), or try setting Enzyme.API.strictAliasing!(false) before any autodiff call.\n")
         print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
-            if ece.mi !== nothing
-            print(io, " Failure within method: ", ece.mi, "\n")
+        if ece.mi !== nothing
+            print(io, "Failure within method:\n")
+            println(io)
+            pretty_print_mi(ece.mi, io)
+            println(io)
+            println(io)
             printstyled(io, "Hint"; bold = true, color = :cyan)
             printstyled(
                 io,
-                ": catch this exception as `err` and call `code_typed(err)` to inspect the erroneous code.\nIf you have Cthulhu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.";
+                ": catch this exception as `err` and call `code_typed(err)` to inspect the erroneous code.\nIf you have Cthulhu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.\n";
                 color = :cyan,
             )
         end
@@ -938,7 +942,11 @@ function Base.showerror(io::IO, ece::EnzymeNoTypeError)
         print(io, msg, '\n')
     end
     if ece.mi !== nothing
-        print(io, " Failure within method: ", ece.mi, "\n")
+        print(io, "Failure within method:\n")
+        println(io)
+        pretty_print_mi(ece.mi, io)
+        println(io)
+        println(io)
         printstyled(io, "Hint"; bold = true, color = :cyan)
         printstyled(
             io,
