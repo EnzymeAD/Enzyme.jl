@@ -436,7 +436,8 @@ function enzyme_custom_setup_args(
                 if roots_activep != API.DFT_DUP_ARG
                     if B !== nothing
                         bt = GPUCompiler.backtrace(orig)
-                        msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
+                        msg_info = "Custom rule argument $(arg.arg_jl_i) of type $(arg.typ) has constant non-rooted types ($(non_rooted_types(arg.typ))) but active rooted types ($(equivalent_rooted_type(arg.typ)))."
+                        msg2 = msg_info * "\n\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
                         emit_error(B, orig, (msg2, mi, world), CallingConventionMismatchError{Cstring})
                         return args, activity, (overwritten...,), actives, kwtup, mixeds, byval_tapes
                     else
@@ -453,7 +454,17 @@ function enzyme_custom_setup_args(
                     if !runtime_activity
                         if B !== nothing
                             bt = GPUCompiler.backtrace(orig)
-                            msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
+                            msg_info = """
+Custom rule for method was passed an argument with mismatched activity between its rooted and non-rooted fields.
+Argument $(arg.arg_jl_i) of type $(arg.typ):
+  - Non-rooted types: $(non_rooted_types(arg.typ)) (differentiable / active)
+  - Rooted types: $(equivalent_rooted_type(arg.typ)) (constant / inactive)
+
+To fix this, either:
+  a) Pass this argument as Duplicated(...) or Active(...) instead of Const(...), or
+  b) Enable runtime activity on the autodiff mode, e.g.: autodiff(set_runtime_activity(Forward), ...).
+"""
+                            msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
                             emit_error(B, orig, (msg2, mi, world), EnzymeRuntimeActivityError{Cstring, Core.MethodInstance, UInt})
                             return args, activity, (overwritten...,), actives, kwtup, mixeds, byval_tapes
                         else
@@ -463,7 +474,8 @@ function enzyme_custom_setup_args(
                 else
                     if B !== nothing
                         bt = GPUCompiler.backtrace(orig)
-                        msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
+                        msg_info = "Custom rule argument $(arg.arg_jl_i) of type $(arg.typ) has mismatch between roots_activep ($roots_activep) and activep ($activep)."
+                        msg2 = msg_info * "\n\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
                         emit_error(B, orig, (msg2, mi, world), CallingConventionMismatchError{Cstring})
                         return args, activity, (overwritten...,), actives, kwtup, mixeds, byval_tapes
                     else
