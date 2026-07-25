@@ -436,12 +436,9 @@ function enzyme_custom_setup_args(
                 if roots_activep != API.DFT_DUP_ARG
                     if B !== nothing
                         bt = GPUCompiler.backtrace(orig)
-                        str_mi = sprint(io -> pretty_print_mi(mi, io))
                         arg_idx = isKWCall ? (arg.arg_jl_i >= 3 ? arg.arg_jl_i - 2 : arg.arg_jl_i) : (arg.arg_jl_i >= 2 ? arg.arg_jl_i - 1 : arg.arg_jl_i)
                         msg_info = """
-Custom rule for method:
-$str_mi
-argument $arg_idx of type $(arg.typ) has constant non-rooted types ($(tuple_non_rooted_types(arg.typ))) but active rooted types ($(tuple_rooted_types(arg.typ))).
+Custom rule for method argument $arg_idx of type $(arg.typ) has constant non-rooted types ($(tuple_non_rooted_types(arg.typ))) but active rooted types ($(tuple_rooted_types(arg.typ))).
 """
                         msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
                         emit_error(B, orig, (msg2, mi, world), CallingConventionMismatchError{Cstring})
@@ -460,12 +457,9 @@ argument $arg_idx of type $(arg.typ) has constant non-rooted types ($(tuple_non_
                     if !runtime_activity
                         if B !== nothing
                             bt = GPUCompiler.backtrace(orig)
-                            str_mi = sprint(io -> pretty_print_mi(mi, io))
                             arg_idx = isKWCall ? (arg.arg_jl_i >= 3 ? arg.arg_jl_i - 2 : arg.arg_jl_i) : (arg.arg_jl_i >= 2 ? arg.arg_jl_i - 1 : arg.arg_jl_i)
                             msg_info = """
-Custom rule for method:
-$str_mi
-was passed an argument with mismatched activity between its rooted and non-rooted fields.
+Custom rule was passed an argument with mismatched activity between its rooted and non-rooted fields.
 Argument $arg_idx of type $(arg.typ):
   - Non-rooted types: $(tuple_non_rooted_types(arg.typ)) (differentiable / active)
   - Rooted types: $(tuple_rooted_types(arg.typ)) (constant / inactive)
@@ -484,12 +478,9 @@ To fix this, either:
                 else
                     if B !== nothing
                         bt = GPUCompiler.backtrace(orig)
-                        str_mi = sprint(io -> pretty_print_mi(mi, io))
                         arg_idx = isKWCall ? (arg.arg_jl_i >= 3 ? arg.arg_jl_i - 2 : arg.arg_jl_i) : (arg.arg_jl_i >= 2 ? arg.arg_jl_i - 1 : arg.arg_jl_i)
                         msg_info = """
-Custom rule for method:
-$str_mi
-argument $arg_idx of type $(arg.typ) has mismatch between roots_activep ($roots_activep) and activep ($activep).
+Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between roots_activep ($roots_activep) and activep ($activep).
   - Non-rooted types: $(tuple_non_rooted_types(arg.typ))
   - Rooted types: $(tuple_rooted_types(arg.typ))
 """
@@ -1060,11 +1051,8 @@ function enzyme_custom_setup_ret(
             	if roots_activep != activep
 		    if B !== nothing
 		        bt = GPUCompiler.backtrace(orig)
-		        str_mi = sprint(io -> pretty_print_mi(mi, io))
 		        msg_info = """
-Custom rule for method:
-$str_mi
-return value of type $(RealRt) has mismatch between returned roots_activep ($roots_activep) and activep ($activep).
+Custom rule for method return value of type $(RealRt) has mismatch between returned roots_activep ($roots_activep) and activep ($activep).
   - Non-rooted types: $(tuple_non_rooted_types(RealRt))
   - Rooted types: $(tuple_rooted_types(RealRt))
 """
