@@ -567,6 +567,15 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
             push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
         end
 
+        specTypes_prep = Interpreter.simplify_kw(mi.specTypes)
+        mt_prep = Core.Compiler.method_table(interp)
+        is_frule = interp.forward_rules && cached_has_frule(specTypes_prep, job.world, mt_prep)
+        is_rrule = interp.reverse_rules && cached_has_rrule(specTypes_prep, job.world, mt_prep)
+        is_inact = interp.inactive_rules && cached_is_inactive(specTypes_prep, job.world, mt_prep)
+        if llvmfn != meta.entry && (is_frule || is_rrule || is_inact)
+            empty!(LLVM.blocks(llvmfn))
+        end
+
 	if startswith(LLVM.name(llvmfn), "japi3") || startswith(LLVM.name(llvmfn), "japi1") || startswith(LLVM.name(llvmfn), "jlcapi")
 	   continue
 	end
