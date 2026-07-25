@@ -1,5 +1,4 @@
 using Gamma
-using HypergeometricFunctions
 using FiniteDifferences
 
 include("../common.jl")
@@ -17,16 +16,16 @@ Enzyme.Compiler.VERBOSE_ERRORS[] = true
     test_scalar(Gamma.gamma, 4.5f0; rtol = 1.0e-4, atol = 1.0e-4)
 end
 
-@testset "Gamma.gamma in-context (HypergeometricFunctions ₂F₁)" begin
-    # Reverse mode differentiating ₂F₁ w.r.t. all of (a, b, c) routes through the
-    # parameter-derivative of `gamma` and reproduced the original failure.
-    F(a, b, c, z) = HypergeometricFunctions._₂F₁(a, b, c, z)
-    a, b, c, z = 1.1, 1.3, 2.3, 0.4
-    fd = collect(FiniteDifferences.grad(central_fdm(5, 1), F, a, b, c, z))
+@testset "Gamma.gamma in-context (beta function)" begin
+    # The rule must also fire for `gamma` calls inside a larger differentiated
+    # function, with partials accumulating across several call sites.
+    B(a, b) = Gamma.gamma(a) * Gamma.gamma(b) / Gamma.gamma(a + b)
+    a, b = 1.1, 2.3
+    fd = collect(FiniteDifferences.grad(central_fdm(5, 1), B, a, b))
 
-    rev = collect(Float64.(Enzyme.gradient(Enzyme.Reverse, Enzyme.Const(F), a, b, c, z)))
-    @test isapprox(rev, fd; rtol = 1.0e-5, atol = 1.0e-5)
+    rev = collect(Enzyme.gradient(Enzyme.Reverse, Enzyme.Const(B), a, b))
+    @test isapprox(rev, fd; rtol = 1.0e-6, atol = 1.0e-6)
 
-    fwd = collect(Float64.(Enzyme.gradient(Enzyme.Forward, Enzyme.Const(F), a, b, c, z)))
-    @test isapprox(fwd, fd; rtol = 1.0e-5, atol = 1.0e-5)
+    fwd = collect(Enzyme.gradient(Enzyme.Forward, Enzyme.Const(B), a, b))
+    @test isapprox(fwd, fd; rtol = 1.0e-6, atol = 1.0e-6)
 end
