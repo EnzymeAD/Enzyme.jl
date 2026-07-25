@@ -6467,6 +6467,8 @@ include("typeutils/recursive_add.jl")
         )
     end
 end
+@inline default_adjoint(::Type{T}, ::Val{1}) where {T} = default_adjoint(T)
+@inline default_adjoint(::Type{T}, ::Val{W}) where {T,W} = ntuple(Returns(default_adjoint(T)), Val(W))
 
 const DumpLLVMCall = Ref(false)
 
