@@ -434,14 +434,63 @@ function enzyme_custom_setup_args(
 
             if roots_activep != activep && activep == API.DFT_CONSTANT && !any_active
                 if roots_activep != API.DFT_DUP_ARG
-                    throw(AssertionError("v1 roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ)) non_rooted_types=$(non_rooted_types(arg.typ))"))
+                    if B !== nothing
+                        bt = GPUCompiler.backtrace(orig)
+                        arg_idx = isKWCall ? (arg.arg_jl_i >= 3 ? arg.arg_jl_i - 2 : arg.arg_jl_i) : (arg.arg_jl_i >= 2 ? arg.arg_jl_i - 1 : arg.arg_jl_i)
+                        msg_info = """
+Custom rule for method argument $arg_idx of type $(arg.typ) has constant non-rooted types ($(tuple_non_rooted_types(arg.typ))) but active rooted types ($(tuple_rooted_types(arg.typ))).
+"""
+                        msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
+                        emit_error(B, orig, (msg2, mi, world), CallingConventionMismatchError{Cstring})
+                        return args, activity, (overwritten...,), actives, kwtup, mixeds, byval_tapes
+                    else
+                        throw(AssertionError("v1 roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ)) non_rooted_types=$(non_rooted_types(arg.typ))"))
+                    end
                 end
                 activep = roots_activep
                 any_active_data = false
             end
 
             if roots_activep != activep && !kwarg_inactive
-                throw(AssertionError("roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ)) non_rooted_types=$(non_rooted_types(arg.typ))"))
+                if roots_activep == API.DFT_CONSTANT
+                    runtime_activity = API.EnzymeGradientUtilsGetRuntimeActivity(gutils) != 0
+                    if !runtime_activity
+                        if B !== nothing
+                            bt = GPUCompiler.backtrace(orig)
+                            arg_idx = isKWCall ? (arg.arg_jl_i >= 3 ? arg.arg_jl_i - 2 : arg.arg_jl_i) : (arg.arg_jl_i >= 2 ? arg.arg_jl_i - 1 : arg.arg_jl_i)
+                            msg_info = """
+Custom rule was passed an argument with mismatched activity between its rooted and non-rooted fields.
+Argument $arg_idx of type $(arg.typ):
+  - Non-rooted types: $(tuple_non_rooted_types(arg.typ)) (differentiable / active)
+  - Rooted types: $(tuple_rooted_types(arg.typ)) (constant / inactive)
+
+To fix this, either:
+  a) Pass this argument as Duplicated(...) or Active(...) instead of Const(...), or
+  b) Enable runtime activity on the autodiff mode, e.g.: autodiff(set_runtime_activity(Forward), ...).
+"""
+                            msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
+                            emit_error(B, orig, (msg2, mi, world), EnzymeRuntimeActivityError{Cstring, Core.MethodInstance, UInt})
+                            return args, activity, (overwritten...,), actives, kwtup, mixeds, byval_tapes
+                        else
+                            throw(AssertionError("roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ)) non_rooted_types=$(non_rooted_types(arg.typ))"))
+                        end
+                    end
+                else
+                    if B !== nothing
+                        bt = GPUCompiler.backtrace(orig)
+                        arg_idx = isKWCall ? (arg.arg_jl_i >= 3 ? arg.arg_jl_i - 2 : arg.arg_jl_i) : (arg.arg_jl_i >= 2 ? arg.arg_jl_i - 1 : arg.arg_jl_i)
+                        msg_info = """
+Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between roots_activep ($roots_activep) and activep ($activep).
+  - Non-rooted types: $(tuple_non_rooted_types(arg.typ))
+  - Rooted types: $(tuple_rooted_types(arg.typ))
+"""
+                        msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
+                        emit_error(B, orig, (msg2, mi, world), CallingConventionMismatchError{Cstring})
+                        return args, activity, (overwritten...,), actives, kwtup, mixeds, byval_tapes
+                    else
+                        throw(AssertionError("roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ)) non_rooted_types=$(non_rooted_types(arg.typ))"))
+                    end
+                end
             end
         end
 
@@ -695,9 +744,22 @@ function enzyme_custom_setup_args(
                     ival = lookup_value(gutils, ival, B)
                 end
                 if roots_op !== nothing
-                    roots_ival = invert_pointer(gutils, roots_op, B)
-                    if reverse
-                        roots_ival = lookup_value(gutils, roots_ival, B)
+                    roots_ival = if is_constant_value(gutils, roots_op)
+                        if width == 1
+                            roots_val
+                        else
+                            b_ival = UndefValue(LLVM.ArrayType(value_type(roots_val), Int(width)))
+                            for idx in 1:width
+                                b_ival = insert_value!(B, b_ival, roots_val, idx - 1)
+                            end
+                            b_ival
+                        end
+                    else
+                        roots_ival0 = invert_pointer(gutils, roots_op, B)
+                        if reverse
+                            roots_ival0 = lookup_value(gutils, roots_ival0, B)
+                        end
+                        roots_ival0
                     end
                 end
                 @assert ival !== nothing
@@ -987,7 +1049,19 @@ function enzyme_custom_setup_ret(
 		    needsShadowP[] = activep == API.DFT_DUP_ARG || activep == API.DFT_DUP_NONEED
 		end
             	if roots_activep != activep
+		    if B !== nothing
+		        bt = GPUCompiler.backtrace(orig)
+		        msg_info = """
+Custom rule for method return value of type $(RealRt) has mismatch between returned roots_activep ($roots_activep) and activep ($activep).
+  - Non-rooted types: $(tuple_non_rooted_types(RealRt))
+  - Rooted types: $(tuple_rooted_types(RealRt))
+"""
+		        msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
+		        emit_error(B, orig, (msg2, mi, world), CallingConventionMismatchError{Cstring})
+		        return false
+		    else
 			throw("Returned roots_activep ($roots_activep) != activep ($activep) arg.typ=$(RealRt) equivalent_rooted_type=$(equivalent_rooted_type(RealRt)) non_rooted_types=$(non_rooted_types(RealRt))")
+		    end
 		end
 		roots_needsPrimal = roots_activep == API.DFT_DUP_ARG || roots_activep == API.DFT_CONSTANT
 		roots_needsShadowP = roots_activep == API.DFT_DUP_ARG || roots_activep == API.DFT_DUP_NONEED
