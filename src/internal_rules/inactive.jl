@@ -90,6 +90,9 @@ end
 function EnzymeRules.inactive_noinl(::typeof(Base.hash), args...)
     return nothing
 end
+function EnzymeRules.inactive_noinl(::typeof(Base.ht_keyindex), args...)
+    return nothing
+end
 function EnzymeRules.inactive_noinl(
     ::typeof(Base.setindex!),
     ::IdDict{K,V},
