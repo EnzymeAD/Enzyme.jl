@@ -269,8 +269,6 @@ function fixup_1p12_sret!(f::LLVM.Function)
     end
 
     dl = datalayout(LLVM.parent(f))
-    lltype = convert(LLVMType, RT)
-    sz = LLVM.sizeof(dl, lltype)
 
     @assert VERSION < v"1.13"
     #TODO for 1.13 fixup this
@@ -281,18 +279,26 @@ function fixup_1p12_sret!(f::LLVM.Function)
             intr = LLVM.API.LLVMGetIntrinsicID(LLVM.called_operand(ci))
             if intr == LLVM.Intrinsic("llvm.memcpy").id
                 cst = operands(ci)[3]
-                if cst isa LLVM.ConstantInt && convert(UInt, cst) == sz
+                if cst isa LLVM.ConstantInt
                     push!(torep, ci)
                 end
             end
         end
     end
 
-    for ci in torep
-        B = LLVM.IRBuilder()
-        position!(B, ci)
-        copy_struct_into!(B, lltype, operands(ci)[1], operands(ci)[2], false)
-        LLVM.erase!(ci)
+    if length(torep) > 0
+	lltype = convert(LLVMType, RT)
+        sz = LLVM.sizeof(dl, lltype)
+        for ci in torep
+            cst = operands(ci)[3]::LLVM.ConstantInt
+            if convert(UInt, cst) != sz
+                continue
+            end
+            B = LLVM.IRBuilder()
+            position!(B, ci)
+            copy_struct_into!(B, lltype, operands(ci)[1], operands(ci)[2], false)
+            LLVM.erase!(ci)
+        end
     end
     return
 end
