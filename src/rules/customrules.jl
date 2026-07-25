@@ -436,8 +436,13 @@ function enzyme_custom_setup_args(
                 if roots_activep != API.DFT_DUP_ARG
                     if B !== nothing
                         bt = GPUCompiler.backtrace(orig)
-                        msg_info = "Custom rule argument $(arg.arg_jl_i) of type $(arg.typ) has constant non-rooted types ($(non_rooted_types(arg.typ))) but active rooted types ($(equivalent_rooted_type(arg.typ)))."
-                        msg2 = msg_info * "\n\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
+                        str_mi = sprint(io -> pretty_print_mi(mi, io))
+                        msg_info = """
+Custom rule for method:
+$str_mi
+argument $(arg.arg_jl_i) of type $(arg.typ) has constant non-rooted types ($(tuple_non_rooted_types(arg.typ))) but active rooted types ($(tuple_rooted_types(arg.typ))).
+"""
+                        msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
                         emit_error(B, orig, (msg2, mi, world), CallingConventionMismatchError{Cstring})
                         return args, activity, (overwritten...,), actives, kwtup, mixeds, byval_tapes
                     else
@@ -454,11 +459,14 @@ function enzyme_custom_setup_args(
                     if !runtime_activity
                         if B !== nothing
                             bt = GPUCompiler.backtrace(orig)
+                            str_mi = sprint(io -> pretty_print_mi(mi, io))
                             msg_info = """
-Custom rule for method was passed an argument with mismatched activity between its rooted and non-rooted fields.
+Custom rule for method:
+$str_mi
+was passed an argument with mismatched activity between its rooted and non-rooted fields.
 Argument $(arg.arg_jl_i) of type $(arg.typ):
-  - Non-rooted types: $(non_rooted_types(arg.typ)) (differentiable / active)
-  - Rooted types: $(equivalent_rooted_type(arg.typ)) (constant / inactive)
+  - Non-rooted types: $(tuple_non_rooted_types(arg.typ)) (differentiable / active)
+  - Rooted types: $(tuple_rooted_types(arg.typ)) (constant / inactive)
 
 To fix this, either:
   a) Pass this argument as Duplicated(...) or Active(...) instead of Const(...), or
@@ -474,8 +482,15 @@ To fix this, either:
                 else
                     if B !== nothing
                         bt = GPUCompiler.backtrace(orig)
-                        msg_info = "Custom rule argument $(arg.arg_jl_i) of type $(arg.typ) has mismatch between roots_activep ($roots_activep) and activep ($activep)."
-                        msg2 = msg_info * "\n\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
+                        str_mi = sprint(io -> pretty_print_mi(mi, io))
+                        msg_info = """
+Custom rule for method:
+$str_mi
+argument $(arg.arg_jl_i) of type $(arg.typ) has mismatch between roots_activep ($roots_activep) and activep ($activep).
+  - Non-rooted types: $(tuple_non_rooted_types(arg.typ))
+  - Rooted types: $(tuple_rooted_types(arg.typ))
+"""
+                        msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
                         emit_error(B, orig, (msg2, mi, world), CallingConventionMismatchError{Cstring})
                         return args, activity, (overwritten...,), actives, kwtup, mixeds, byval_tapes
                     else
@@ -1042,7 +1057,15 @@ function enzyme_custom_setup_ret(
             	if roots_activep != activep
 		    if B !== nothing
 		        bt = GPUCompiler.backtrace(orig)
-		        msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
+		        str_mi = sprint(io -> pretty_print_mi(mi, io))
+		        msg_info = """
+Custom rule for method:
+$str_mi
+return value of type $(RealRt) has mismatch between returned roots_activep ($roots_activep) and activep ($activep).
+  - Non-rooted types: $(tuple_non_rooted_types(RealRt))
+  - Rooted types: $(tuple_rooted_types(RealRt))
+"""
+		        msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
 		        emit_error(B, orig, (msg2, mi, world), CallingConventionMismatchError{Cstring})
 		        return false
 		    else

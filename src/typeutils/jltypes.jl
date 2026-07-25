@@ -151,6 +151,18 @@ function equivalent_rooted_type(@nospecialize(typ::DataType))
     return res
 end
 
+function tuple_non_rooted_types(@nospecialize(typ::DataType))
+    return Tuple(non_rooted_types(typ))
+end
+
+function tuple_rooted_types(@nospecialize(typ::DataType))
+    eq = equivalent_rooted_type(typ)
+    if eq <: NamedTuple && length(eq.parameters) >= 2
+        return Tuple(eq.parameters[2].parameters)
+    end
+    return ()
+end
+
 struct RemovedParam end
 
 function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nospecialize(rooted_typ::Union{Nothing, Type}), source_i::Int, orig_i::Int, arg_jl_i::Int, codegen_i::Int, last_cc, parmsRemoved, @nospecialize(source_sig::Type))
