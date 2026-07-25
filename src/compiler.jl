@@ -616,6 +616,75 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
     return rewrite_abi_converter_calls!(mod)
 end
 
+const FRULE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
+const RRULE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
+const INACTIVE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
+const NOALIAS_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
+
+function cached_has_frule(specTypes::Type, world::UInt, method_table)
+    key = (specTypes, world, method_table)
+    val = get(FRULE_CACHE, key, nothing)
+    if val !== nothing
+        return val::Bool
+    end
+    func = specTypes.parameters[1]
+    if func isa Core.Builtin
+        FRULE_CACHE[key] = false
+        return false
+    end
+    res = EnzymeRules.has_frule_from_sig(specTypes; world, method_table)
+    FRULE_CACHE[key] = res
+    return res
+end
+
+function cached_has_rrule(specTypes::Type, world::UInt, method_table)
+    key = (specTypes, world, method_table)
+    val = get(RRULE_CACHE, key, nothing)
+    if val !== nothing
+        return val::Bool
+    end
+    func = specTypes.parameters[1]
+    if func isa Core.Builtin
+        RRULE_CACHE[key] = false
+        return false
+    end
+    res = EnzymeRules.has_rrule_from_sig(specTypes; world, method_table)
+    RRULE_CACHE[key] = res
+    return res
+end
+
+function cached_is_inactive(specTypes::Type, world::UInt, method_table)
+    key = (specTypes, world, method_table)
+    val = get(INACTIVE_CACHE, key, nothing)
+    if val !== nothing
+        return val::Bool
+    end
+    func = specTypes.parameters[1]
+    if func isa Core.Builtin
+        INACTIVE_CACHE[key] = false
+        return false
+    end
+    res = EnzymeRules.is_inactive_from_sig(specTypes; world, method_table)
+    INACTIVE_CACHE[key] = res
+    return res
+end
+
+function cached_noalias(specTypes::Type, world::UInt, method_table)
+    key = (specTypes, world, method_table)
+    val = get(NOALIAS_CACHE, key, nothing)
+    if val !== nothing
+        return val::Bool
+    end
+    func = specTypes.parameters[1]
+    if func isa Core.Builtin
+        NOALIAS_CACHE[key] = false
+        return false
+    end
+    res = EnzymeRules.noalias_from_sig(specTypes; world, method_table)
+    NOALIAS_CACHE[key] = res
+    return res
+end
+
 include("compiler/optimize.jl")
 include("compiler/interpreter.jl")
 include("compiler/validation.jl")
@@ -651,58 +720,6 @@ function handleCustom(state::HandlerState, custom, k_name::String, llvmfn::LLVM.
     end
     state.must_wrap |= llvmfn == state.primalf
     nothing
-end
-
-const FRULE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
-const RRULE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
-const NOALIAS_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
-
-function cached_has_frule(specTypes::Type, world::UInt, method_table)
-    key = (specTypes, world, method_table)
-    val = get(FRULE_CACHE, key, nothing)
-    if val !== nothing
-        return val::Bool
-    end
-    func = specTypes.parameters[1]
-    if func isa Core.Builtin
-        FRULE_CACHE[key] = false
-        return false
-    end
-    res = EnzymeRules.has_frule_from_sig(specTypes; world, method_table)
-    FRULE_CACHE[key] = res
-    return res
-end
-
-function cached_has_rrule(specTypes::Type, world::UInt, method_table)
-    key = (specTypes, world, method_table)
-    val = get(RRULE_CACHE, key, nothing)
-    if val !== nothing
-        return val::Bool
-    end
-    func = specTypes.parameters[1]
-    if func isa Core.Builtin
-        RRULE_CACHE[key] = false
-        return false
-    end
-    res = EnzymeRules.has_rrule_from_sig(specTypes; world, method_table)
-    RRULE_CACHE[key] = res
-    return res
-end
-
-function cached_noalias(specTypes::Type, world::UInt, method_table)
-    key = (specTypes, world, method_table)
-    val = get(NOALIAS_CACHE, key, nothing)
-    if val !== nothing
-        return val::Bool
-    end
-    func = specTypes.parameters[1]
-    if func isa Core.Builtin
-        NOALIAS_CACHE[key] = false
-        return false
-    end
-    res = EnzymeRules.noalias_from_sig(specTypes; world, method_table)
-    NOALIAS_CACHE[key] = res
-    return res
 end
 
 function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, mode::API.CDerivativeMode, world::UInt, method_table, custom::Dict{String, LLVM.API.LLVMLinkage}, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type))::Nothing

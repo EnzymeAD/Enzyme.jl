@@ -16,6 +16,7 @@ const HAS_INTEGRATED_CACHE = VERSION >= v"1.11.0-DEV.1552"
 
 import ..Enzyme
 import ..EnzymeRules
+import ..cached_has_frule, ..cached_has_rrule, ..cached_is_inactive
 
 @static if VERSION ≥ v"1.11.0-DEV.1498"
     import Core.Compiler: get_inference_world
@@ -406,11 +407,11 @@ end
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
     else
         method_table = Core.Compiler.method_table(interp)
-        if interp.inactive_rules && EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
+        if interp.inactive_rules && cached_is_inactive(specTypes, interp.world, method_table)
             callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
-        elseif interp.forward_rules && EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
+        elseif interp.forward_rules && cached_has_frule(specTypes, interp.world, method_table)
             callinfo = NoInlineCallInfo(callinfo, atype, :frule)
-        elseif interp.reverse_rules && EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
+        elseif interp.reverse_rules && cached_has_rrule(specTypes, interp.world, method_table)
             callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
         end
     end
