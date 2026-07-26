@@ -69,7 +69,7 @@ jobs:
           version: ${{ matrix.version }}
 
       - name: Load Julia packages from cache
-        uses: julia-actions/cache@v3.2
+        uses: julia-actions/cache@v3.2.0
         with:
           cache-name: workflow=${{ matrix.version }}-${{ matrix.os }}-${{ matrix.package }}
           gcp-bucket: ${{ (contains(matrix.os, 'linux') && 'enzyme-ci-transient' ) || '' }}
