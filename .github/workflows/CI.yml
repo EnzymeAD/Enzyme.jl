@@ -111,7 +111,6 @@ jobs:
 
       - uses: julia-actions/cache@v3.2.0
         with:
-          cache-name: workflow=${{ matrix.version }}-${{ matrix.os }}-${{ matrix.llvm_args }}-assertions=${{ matrix.assertions }}-${{ inputs.libEnzyme }}
           gcp-bucket: ${{ (contains(matrix.os, 'linux') && 'enzyme-ci-transient' ) || '' }}
           key-prefix: enzymejl/
 
@@ -193,7 +192,6 @@ jobs:
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v3.2.0
         with:
-          cache-name: workflow=${{ matrix.version }}-${{ matrix.os }}
           gcp-bucket: ${{ (contains(matrix.os, 'linux') && 'enzyme-ci-transient' ) || '' }}
           key-prefix: enzymejl-etu/
       - name: setup EnzymeTestUtils
@@ -246,7 +244,6 @@ jobs:
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v3.2.0
         with:
-          cache-name: workflow=${{ matrix.version }}-${{ matrix.os }}
           gcp-bucket: ${{ (contains(matrix.os, 'linux') && 'enzyme-ci-transient' ) || '' }}
           key-prefix: enzymejl-ecore/
 
