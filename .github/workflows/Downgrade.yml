@@ -51,7 +51,7 @@ jobs:
           Pkg.develop([PackageSpec(; path) for path in ("lib/EnzymeCore", "lib/EnzymeTestUtils")])
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
-      - uses: julia-actions/julia-downgrade-compat@v1
+      - uses: julia-actions/julia-downgrade-compat@v2
         with:
           # EnzymeCore is dev'd from a local path, so its compat cannot be downgraded.
           # SparseArrays is an upgradeable stdlib; its only version on a given Julia
