@@ -225,6 +225,15 @@ end
     return has_method(sig, mt.world, mt.mt) || has_method(sig, mt.world, nothing)
 end
 
+# Fallback for method table views we don't know about, such as the
+# `StackedMethodTable` GPUCompiler layers on top of the internal table.
+# `findsup` performs the same `jl_gf_invoke_lookup_worlds` lookup as the methods
+# above, but respects the view's own layering.
+@inline function has_method(@nospecialize(sig::Type), world::UInt, mt::Core.Compiler.MethodTableView)
+    match, _ = Core.Compiler.findsup(sig, mt)
+    return match !== nothing
+end
+
 @inline function lookup_world(
     @nospecialize(sig::Type),
     world::UInt,
@@ -280,6 +289,20 @@ end
     else
         return lookup_world(sig, mt.world, nothing, min_world, max_world)
     end
+end
+
+# See the `has_method` fallback above.
+@inline function lookup_world(
+    @nospecialize(sig::Type),
+    world::UInt,
+    mt::Core.Compiler.MethodTableView,
+    min_world::Ref{UInt},
+    max_world::Ref{UInt},
+)
+    match, valid_worlds = Core.Compiler.findsup(sig, mt)
+    min_world[] = max(min_world[], valid_worlds.min_world)
+    max_world[] = min(max_world[], valid_worlds.max_world)
+    return match
 end
 
 
