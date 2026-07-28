@@ -55,8 +55,22 @@ end
 _project(::Type{<:Real}, x) = real(x)
 _project(::Type, x) = x
 
-# A GPU array, or a structured/lazy wrapper of one; the operand types that show
-# up in `A * B` matmuls (`transpose(X) * y`, `Symmetric(A) * x`, ...). CUBLAS /
+#=
+Cotangent for an `Active` scalar argument: a single value at width 1, an
+N-tuple when batched. `f(i)` gives the raw (possibly complex) contribution for
+batch element `i`, which is then projected onto `T`, the scalar's own type.
+
+Dispatching on `Val{N}` matters: branching on `N == 1` at run time makes the
+result infer as `Any`, and reverse rules must return exactly the argument's
+type (`Tuple{…, Float32, …}`), so an inexact match is a hard error.
+=#
+@inline _dscalar(::Val{1}, ::Type{T}, f::F) where {T, F} = _project(T, f(1))::T
+@inline function _dscalar(::Val{N}, ::Type{T}, f::F) where {N, T, F}
+    return ntuple(i -> _project(T, f(i))::T, Val(N))
+end
+
+# A GPU array, or a structured/lazy wrapper of one; the `mul!` operand types that
+# show up in matmuls (`transpose(X) * y`, `Symmetric(A) * x`, ...). CUBLAS /
 # rocBLAS dispatch these to specialized kernels (trmm/symm/hemm), and the reverse
 # pass projects the cotangent back onto each wrapper's stored entries (see
 # `_accumulate_operand!`). UnitTriangular is intentionally excluded: its diagonal
@@ -218,24 +232,12 @@ function EnzymeRules.reverse(
     N = width(config)
 
     if !(C isa Const)
-        dα = if !(α isa Const)
-            if N == 1
-                _project(typeof(α.val), conj(dot(C.dval, cache_α)))
-            else
-                ntuple(i -> _project(typeof(α.val), conj(dot(C.dval[i], cache_α))), Val(N))
-            end
-        else
+        dα = !(α isa Const) ?
+            _dscalar(Val(N), typeof(α.val), i -> conj(dot(_bget(C.dval, Val(N), i), cache_α))) :
             nothing
-        end
-        dβ = if !(β isa Const)
-            if N == 1
-                _project(typeof(β.val), conj(dot(C.dval, Cval)))
-            else
-                ntuple(i -> _project(typeof(β.val), conj(dot(C.dval[i], Cval))), Val(N))
-            end
-        else
+        dβ = !(β isa Const) ?
+            _dscalar(Val(N), typeof(β.val), i -> conj(dot(_bget(C.dval, Val(N), i), Cval))) :
             nothing
-        end
 
         αc = conj(α.val)
         βc = conj(β.val)
@@ -252,8 +254,8 @@ function EnzymeRules.reverse(
             nothing
         end
     else
-        dα = !(α isa Const) ? (N == 1 ? zero(α.val) : ntuple(Returns(zero(α.val)), Val(N))) : nothing
-        dβ = !(β isa Const) ? (N == 1 ? zero(β.val) : ntuple(Returns(zero(β.val)), Val(N))) : nothing
+        dα = !(α isa Const) ? _dscalar(Val(N), typeof(α.val), _ -> zero(α.val)) : nothing
+        dβ = !(β isa Const) ? _dscalar(Val(N), typeof(β.val), _ -> zero(β.val)) : nothing
     end
 
     return (nothing, nothing, nothing, dα, dβ)
@@ -266,6 +268,16 @@ Unlike the in-place `mul!` rule above, `*` allocates its result, so the rule
 owns the output shadow: `augmented_primal` returns a zeroed shadow and
 `reverse` zeroes it again after reading. Without this, the freshly-allocated
 result's shadow is uninitialized and downstream `+=` accumulates onto garbage.
+
+`A * B` does lower to `mul!(similar(...), A, B, true, false)`, so it is tempting
+to drop this rule and let the `mul!` one above cover it. That is not safe: it
+holds for CuArrays (every pattern covered below was re-checked on a GPU with
+this rule removed, and all still passed) but NOT for AbstractGPUArray in
+general. On JLArrays, dropping it makes `A * UpperTriangular(X)` return a wrong
+cotangent, because the shadow of the array `*` allocates via `similar` is not
+zeroed -- whereas the same operands passed to an explicit 5-arg `mul!` are
+differentiated correctly. So the allocation, not the multiply, is what this
+rule is really for.
 
 JVP:      dY = dA·B + A·dB
 Pullback: dA += dY·B'
@@ -357,11 +369,15 @@ function EnzymeRules.reverse(
 end
 
 #=
-dot(a, b):  scalar inner product
+dot(a, b) = Σ conj(aᵢ)·bᵢ :  scalar inner product
 
 JVP:      dr  = ⟨da, b⟩ + ⟨a, db⟩
-Pullback: da += dr̄·b
-          db += dr̄·a   (real convention; targets real GPU workloads)
+Pullback: da += conj(dr)·b   (`a` enters conjugated)
+          db += dr·a
+
+The conjugation on `da` is a no-op for real eltypes but required for complex
+ones; both directions are checked against Enzyme's own (rule-free) CPU path in
+test/ext/jlarrays.jl.
 =#
 
 function EnzymeRules.forward(
@@ -422,7 +438,9 @@ function EnzymeRules.reverse(
             Base.@_inline_meta
             dr = _bget(dret.val, Val(N), i)
             if !(a isa Const)
-                _bget(a.dval, Val(N), i) .+= dr .* bv
+                # `a` enters `dot` conjugated, so its cotangent picks up conj(dr).
+                # No-op for real eltypes.
+                _bget(a.dval, Val(N), i) .+= conj(dr) .* bv
             end
             if !(b isa Const)
                 _bget(b.dval, Val(N), i) .+= dr .* av

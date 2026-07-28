@@ -1,8 +1,7 @@
 using CUDA
 using Enzyme
-using LinearAlgebra: dot
-using Test
 using LinearAlgebra: mul!, dot, UpperTriangular, LowerTriangular, Symmetric, Hermitian
+using Test
 
 @testset "CUDA memory copies" begin
     #= Exercise the reverse copy rules across CUDA's memory types. A host<->device
