@@ -487,25 +487,132 @@ function EnzymeRules.reverse(
     return (nothing, nothing, nothing, dα, dβ)
 end
 
-function cofactor(A)
-    cofA     = similar(A)
-    minorAij = similar(A, size(A, 1) - 1, size(A, 2) - 1)
-    for i in 1:size(A, 1), j in 1:size(A, 2)
-        fill!(minorAij, zero(eltype(A)))
-
-        # build minor matrix
-        for k in 1:size(A, 1), l in 1:size(A, 2)
-            if !(k == i || l == j)
-                ki = k < i ? k : k - 1
-                li = l < j ? l : l - 1
-                @inbounds minorAij[ki, li] = A[k, l]
-            end
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(det)},
+    ::Type{RT},
+    A::Annotation{AT},
+) where {RT,AT<:StridedMatrix}
+    cache_A = EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
+    res = det(A.val)
+    retres = EnzymeRules.needs_primal(config) ? res : nothing
+    dres = if EnzymeRules.width(config) == 1 && EnzymeRules.needs_shadow(config)
+        zero(res)
+    elseif EnzymeRules.width(config) > 1 && EnzymeRules.needs_shadow(config)
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            zero(res)
         end
-        @inbounds cofA[i, j] = (-1)^(i - 1 + j - 1) * det(minorAij)
+    else
+        nothing
     end
-    return cofA
+    cache = (res, cache_A)
+    return EnzymeRules.AugmentedReturn(retres, dres, cache)
 end
 
-# partial derivative of the determinant is the matrix of cofactors
-EnzymeRules.@easy_rule(LinearAlgebra.det(A::AbstractMatrix), (cofactor(A),))
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(det)},
+    dret::Active,
+    cache,
+    A::Annotation{<:StridedMatrix},
+)
+    ret, cache_A = cache
+    if !isa(A, Const)
+        A.dval .+= inv(cache_A)' * dot(ret, dret.val)
+    end
+    return (nothing,)
+end
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(det)},
+    ::Type{<:Const},
+    cache,
+    A::Annotation{<:Array},
+)
+    return (nothing,)
+end
 
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(det)},
+    ::Type{RT},
+    A::Annotation{<:StridedMatrix},
+) where {RT}
+    res = det(A.val)
+    dres = !isa(A, Const) ? res * sum(diag(A.val \ A.dval)) : zero(res)
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return Duplicated(res, dres)
+    elseif EnzymeRules.needs_primal(config)
+        return res
+    elseif EnzymeRules.needs_shadow(config)
+        return dres
+    else
+        return nothing
+    end
+end
+
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(logdet)},
+    ::Type{RT},
+    A::Annotation{AT},
+) where {RT,AT<:StridedMatrix}
+    cache_A = EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
+    res = logdet(A.val)
+    retres = EnzymeRules.needs_primal(config) ? res : nothing
+    dres = if EnzymeRules.width(config) == 1 && EnzymeRules.needs_shadow(config)
+        zero(res)
+    elseif EnzymeRules.width(config) > 1 && EnzymeRules.needs_shadow(config)
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            zero(res)
+        end
+    else
+        nothing
+    end
+    return EnzymeRules.AugmentedReturn(retres, dres, cache_A)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(logdet)},
+    dret::Active,
+    cache_A,
+    A::Annotation{<:StridedMatrix},
+)
+    !isa(A, Const) && (A.dval .+= dret.val * inv(cache_A)')
+    return (nothing,)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(logdet)},
+    ::Type{<:Const},
+    cache,
+    A::Annotation{<:StridedMatrix},
+)
+    return (nothing,)
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(logdet)},
+    ::Type{RT},
+    A::Annotation{<:StridedMatrix},
+) where {RT}
+    res = logdet(A.val)
+    dres = !isa(A, Const) ? sum(diag(A.val \ A.dval)) : zero(res)
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return Duplicated(res, dres)
+    elseif EnzymeRules.needs_primal(config)
+        return res
+    elseif EnzymeRules.needs_shadow(config)
+        return dres
+    else
+        return nothing
+    end
+end
+
+EnzymeRules.has_easy_rule(::typeof(logdet), ::StridedMatrix) = true
+EnzymeRules.has_easy_rule(::typeof(det), ::StridedMatrix) = true
