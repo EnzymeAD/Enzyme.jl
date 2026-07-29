@@ -338,7 +338,7 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
         TestCase(
             MatrixFDist(6.0, 7.0, _pdmat(randn(rng, 5, 5))),
             rand(rng, MatrixFDist(6.0, 7.0, _pdmat(randn(rng, 5, 5))));
-            broken=Forward
+            broken=Both
         ),
         TestCase(LKJ(5, 1.1), rand(rng, LKJ(5, 1.1)); broken=Forward),
 
