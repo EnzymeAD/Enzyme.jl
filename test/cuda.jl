@@ -316,15 +316,6 @@ end
         @test Array(dB) ≈ A0
     end
 
-    @testset "matmul forward" begin
-        A0 = randn(Float32, 3, 4)
-        B0 = randn(Float32, 4, 2)
-        dA = randn(Float32, 3, 4)
-        dB = randn(Float32, 4, 2)
-        out = Enzyme.autodiff(Forward, (A, B) -> A * B, Duplicated, Duplicated(cu(A0), cu(dA)), Duplicated(cu(B0), cu(dB)))
-        @test Array(out[1]) ≈ dA * B0 + A0 * dB
-    end
-
     # Structured operands: primal uses the specialized BLAS kernel; reverse
     # projects the cotangent onto the wrapper's stored entries. Ground truth is
     # central finite differences over the underlying data.

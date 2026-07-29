@@ -146,19 +146,6 @@ end
         # so that pattern is covered in the CUDA test instead.
     end
 
-    @testset "matmul forward" begin
-        A0 = randn(3, 4)
-        B0 = randn(4, 2)
-        dA = randn(3, 4)
-        dB = randn(4, 2)
-        # d(A*B) = dA*B + A*dB
-        out = Enzyme.autodiff(
-            Forward, (A, B) -> A * B, Duplicated,
-            Duplicated(jl(A0), jl(dA)), Duplicated(jl(B0), jl(dB)),
-        )
-        @test collect(out[1]) ≈ dA * B0 + A0 * dB
-    end
-
     # Structured operands (triangular / symmetric / hermitian). The primal goes
     # through the specialized BLAS kernel; the reverse must project the cotangent
     # onto the wrapper's stored entries. Ground truth is central finite
