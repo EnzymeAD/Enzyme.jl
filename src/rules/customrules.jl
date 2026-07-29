@@ -2477,6 +2477,15 @@ function enzyme_custom_common_rev(
                     end
                     shadowV = C_NULL
                 else
+                    if value_type(shadowV) != shadowType && isabstracttype(RealRt)
+                        @assert value_type(shadowV) == T_prjlvalue
+                        shadowV_agg = UndefValue(shadowType)
+                        for i = 1:width
+                            elem = emit_nthfield!(B, shadowV, Int(i - 1))
+                            shadowV_agg = insert_value!(B, shadowV_agg, elem, Int(i - 1))
+                        end
+                        shadowV = shadowV_agg
+                    end
                     @assert value_type(shadowV) == shadowType
                     shadowV = shadowV.ref
                 end
