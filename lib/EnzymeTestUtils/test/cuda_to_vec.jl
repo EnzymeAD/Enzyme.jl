@@ -30,11 +30,11 @@ end
     end=# # doesn't work yet
 
     @testset "incompletely initialized struct" begin
-        x = CUDA.cuRAND.randn(2, 3)
+        x = CUDA.cuRAND.randn(Float32, 2, 3)
         y = TestStruct2(x)
         v, from_vec = to_vec(y)
         @test v == vec(x)
-        v2 = CUDA.cuRAND.randn(size(v))
+        v2 = CUDA.cuRAND.randn(Float32, size(v)...)
         y2 = from_vec(v2)
         @test y2.x == reshape(v2, size(x))
         @test !isdefined(y2, :a)
