@@ -495,7 +495,6 @@ function EnzymeRules.augmented_primal(
 ) where {RT,AT<:StridedMatrix}
     cache_A = EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
     res = det(A.val)
-    dres = make_zero(res)
     retres = EnzymeRules.needs_primal(config) ? res : nothing
     dres = if EnzymeRules.width(config) == 1 && EnzymeRules.needs_shadow(config)
         zero(res)
@@ -614,3 +613,6 @@ function EnzymeRules.forward(
         return nothing
     end
 end
+
+EnzymeRules.has_easy_rule(::typeof(logdet), ::StridedMatrix) = true
+EnzymeRules.has_easy_rule(::typeof(det), ::StridedMatrix) = true
