@@ -14,7 +14,7 @@ using Test
     dbf64 = 0.27 # for testing mixed methods
     
     @test autodiff(Enzyme.Forward, BigFloat, Duplicated)[:1] isa BigFloat
-    @test autodiff(Enzyme.Forward, zero, Duplicated, Const(BigFloat))[:1] ≈ 0
+    @test isnothing(autodiff(Enzyme.Reverse, zero, Active, Const(BigFloat))[1][1])
 
     @test autodiff(Enzyme.Forward, +, Duplicated, Duplicated(a, da), Duplicated(b, db))[:1] ≈ da+db 
     @test autodiff(Enzyme.Forward, +, Duplicated, Duplicated(a, da), Duplicated(bf64, dbf64))[:1] ≈ da+dbf64 
