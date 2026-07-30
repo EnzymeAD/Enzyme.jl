@@ -67,6 +67,27 @@ function EnzymeRules.reverse(
     return ()
 end
 
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.RevConfigWidth{1},
+    ::Const{typeof(zero)},
+    RT,
+    ::Const{Type{BigFloat}},
+)
+    primal = EnzymeRules.needs_primal(config) ? zero(BigFloat) : nothing
+    shadow = EnzymeRules.needs_shadow(config) ? zero(BigFloat) : nothing
+    return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfigWidth{1},
+    ::Const{typeof(zero)},
+    RT,
+    tape,
+    ::Const{Type{BigFloat}},
+)
+    return (nothing,)
+end
+
 EnzymeRules.@easy_rule(+(a::BigFloat, b::Number), (1,1))
 EnzymeRules.@easy_rule(+(a::Number, b::BigFloat), (1,1))
 EnzymeRules.@easy_rule(+(a::BigFloat, b::BigFloat), (1,1))
@@ -83,4 +104,3 @@ EnzymeRules.@easy_rule(Base.inv(a::BigFloat), (-(one(a)/a^2),))
 EnzymeRules.@easy_rule(Base.sin(a::BigFloat), (cos(a),))
 EnzymeRules.@easy_rule(Base.cos(a::BigFloat), (-sin(a),))
 EnzymeRules.@easy_rule(Base.tan(a::BigFloat), (one(a) + Ω^2,))
-EnzymeRules.@easy_rule(Base.zero(BigFloat), (0,))
