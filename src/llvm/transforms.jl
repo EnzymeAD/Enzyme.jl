@@ -818,6 +818,14 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 end
                                 continue
                             end
+                            undeforpoison = isa(base, LLVM.UndefValue)
+                            @static if LLVM.version() >= v"12"
+                                undeforpoison |= isa(base, LLVM.PoisonValue)
+                            end
+                            if undeforpoison
+                                # undef/poison incomings impose no GC constraint
+                                continue
+                            end
                             all_args = false
                             break
                         end
@@ -843,6 +851,14 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 for (v, _) in LLVM.incoming(base)
                                     push!(addrtodo, v)
                                 end
+                                continue
+                            end
+                            undeforpoison = isa(base, LLVM.UndefValue)
+                            @static if LLVM.version() >= v"12"
+                                undeforpoison |= isa(base, LLVM.PoisonValue)
+                            end
+                            if undeforpoison
+                                # undef/poison constrains neither base nor offset
                                 continue
                             end
 			    if offset === nothing
