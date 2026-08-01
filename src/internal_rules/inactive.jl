@@ -141,6 +141,9 @@ end
 function EnzymeRules.inactive_noinl(::typeof(Base.methods), args...) 
     return nothing
 end
+function EnzymeRules.inactive_noinl(::typeof(Base.fieldnames), args...) 
+    return nothing
+end
 
 @inline EnzymeRules.inactive_type(v::Type{Nothing}) = true
 @inline EnzymeRules.inactive_type(v::Type{Union{}}) = true
