@@ -31,6 +31,26 @@ reads junk out of it -- see the `@test_broken` at the end.
         return sum(C)
     end
 
+    #=
+    Central differences over the entries of `X0`. For a complex input Enzyme's
+    cotangent of a real-valued loss is ∂L/∂Re + i·∂L/∂Im, so both directions are
+    needed.
+    =#
+    function fdgrad(f, X0, ϵ = 1.0e-6)
+        g = zero(X0)
+        for idx in eachindex(X0)
+            Xp = copy(X0); Xp[idx] += ϵ
+            Xm = copy(X0); Xm[idx] -= ϵ
+            g[idx] = (f(Xp) - f(Xm)) / (2ϵ)
+            if eltype(X0) <: Complex
+                Xip = copy(X0); Xip[idx] += im * ϵ
+                Xim = copy(X0); Xim[idx] -= im * ϵ
+                g[idx] += im * (f(Xip) - f(Xim)) / (2ϵ)
+            end
+        end
+        return g
+    end
+
     @testset "matmul reverse ($m×$k × $k×$n)" for (m, k, n) in ((3, 4, 2), (5, 5, 1))
         A0 = randn(m, k)
         B0 = randn(k, n)
@@ -47,6 +67,45 @@ reads junk out of it -- see the `@test_broken` at the end.
         ones_mn = ones(m, n)
         @test collect(dA) ≈ ones_mn * B0'
         @test collect(dB) ≈ A0' * ones_mn
+    end
+
+    #=
+    Batch width > 1, which `_bget`, `_dscalar` and every `ntuple(Val(N))` in the
+    rules exist to serve and nothing else here reaches. The shadows start at
+    different values so this also pins that each batch element accumulates into
+    its own array rather than all of them landing in the first.
+    =#
+    @testset "batched matmul reverse" begin
+        m, k, n = 3, 4, 2
+        A0 = randn(m, k)
+        B0 = randn(k, n)
+        dA1 = jl(fill(1.0, m, k))
+        dA2 = jl(fill(-2.0, m, k))
+        Enzyme.autodiff(
+            Reverse, matmul_sum, Active,
+            BatchDuplicated(jl(zeros(m, n)), (jl(zeros(m, n)), jl(zeros(m, n)))),
+            BatchDuplicated(jl(A0), (dA1, dA2)), Const(jl(B0)),
+        )
+        expected = ones(m, n) * B0'
+        @test collect(dA1) ≈ 1.0 .+ expected
+        @test collect(dA2) ≈ -2.0 .+ expected
+    end
+
+    # A `Const` output has no shadow, so nothing flows back through the matmul and
+    # the rule's early return is what runs -- dA here comes only from `sum(A)`.
+    @testset "Const output buffer" begin
+        m, k, n = 3, 4, 2
+        A0 = randn(m, k)
+        function const_out(C, A, B)
+            mul!(C, A, B)
+            return sum(A)
+        end
+        dA = jl(zero(A0))
+        Enzyme.autodiff(
+            Reverse, const_out, Active,
+            Const(jl(zeros(m, n))), Duplicated(jl(A0), dA), Const(jl(randn(k, n))),
+        )
+        @test all(collect(dA) .≈ 1)
     end
 
     #=
@@ -69,21 +128,9 @@ reads junk out of it -- see the `@test_broken` at the end.
             Duplicated(jl(X0), dX), Duplicated(jl(β0), dβ),
         )
 
-        # finite-difference check against the CPU primal
         gcpu(X, β) = sum(transpose(X) * (X * β))
-        ϵ = 1.0e-6
-        fdβ = map(eachindex(β0)) do i
-            βp = copy(β0); βp[i] += ϵ
-            βm = copy(β0); βm[i] -= ϵ
-            (gcpu(X0, βp) - gcpu(X0, βm)) / (2ϵ)
-        end
-        @test collect(dβ) ≈ fdβ rtol = 1.0e-4
-        fdX = map(eachindex(X0)) do i
-            Xp = copy(X0); Xp[i] += ϵ
-            Xm = copy(X0); Xm[i] -= ϵ
-            (gcpu(Xp, β0) - gcpu(Xm, β0)) / (2ϵ)
-        end
-        @test collect(dX) ≈ reshape(fdX, size(X0)) rtol = 1.0e-4
+        @test collect(dβ) ≈ fdgrad(β -> gcpu(X0, β), β0) rtol = 1.0e-4
+        @test collect(dX) ≈ fdgrad(X -> gcpu(X, β0), X0) rtol = 1.0e-4
     end
 
     #=
@@ -117,20 +164,7 @@ reads junk out of it -- see the `@test_broken` at the end.
             Duplicated(jl(copy(A0)), dA), Const(jl(B0)),
         )
 
-        ϵ = 1.0e-6
-        fd = zero(A0)
-        for idx in eachindex(A0)
-            Ap = copy(A0); Ap[idx] += ϵ
-            Am = copy(A0); Am[idx] -= ϵ
-            g = (cpu(Ap) - cpu(Am)) / (2ϵ)
-            if T <: Complex
-                Aip = copy(A0); Aip[idx] += im * ϵ
-                Aim = copy(A0); Aim[idx] -= im * ϵ
-                g += im * (cpu(Aip) - cpu(Aim)) / (2ϵ)
-            end
-            fd[idx] = g
-        end
-        @test collect(dA) ≈ fd rtol = 1.0e-4
+        @test collect(dA) ≈ fdgrad(cpu, A0) rtol = 1.0e-4
     end
 
     #=
@@ -190,6 +224,23 @@ reads junk out of it -- see the `@test_broken` at the end.
         Enzyme.autodiff(Reverse, h, Active, Duplicated(jl(a0), da), Duplicated(jl(b0), db))
         @test collect(da) ≈ b0
         @test collect(db) ≈ a0
+    end
+
+    # Batched, where the return cotangent arrives as a tuple of `Active`s rather
+    # than as one `Active`. The shadows start apart so this also pins that each
+    # batch element accumulates into its own array.
+    @testset "batched dot reverse" begin
+        a0 = randn(6)
+        b0 = randn(6)
+        h(a, b) = dot(a, b)
+        da1 = jl(fill(1.0, 6))
+        da2 = jl(fill(-2.0, 6))
+        Enzyme.autodiff(
+            Reverse, h, Active,
+            BatchDuplicated(jl(a0), (da1, da2)), Const(jl(b0)),
+        )
+        @test collect(da1) ≈ 1.0 .+ b0
+        @test collect(da2) ≈ -2.0 .+ b0
     end
 
     #=
@@ -257,14 +308,35 @@ reads junk out of it -- see the `@test_broken` at the end.
             Duplicated(wrap(jl(X0)), wrap(dX)), Const(jl(B0)),
         )
 
-        ϵ = 1.0e-6
-        fd = zero(X0)
-        for idx in eachindex(X0)
-            Xp = copy(X0); Xp[idx] += ϵ
-            Xm = copy(X0); Xm[idx] -= ϵ
-            fd[idx] = (sum(wrap(Xp) * B0) - sum(wrap(Xm) * B0)) / (2ϵ)
+        @test collect(dX) ≈ fdgrad(X -> sum(wrap(X) * B0), X0) rtol = 1.0e-5
+    end
+
+    #=
+    The one combination where the projection stops being linear in α: a Hermitian
+    operand sums a term and its conjugate and reads the diagonal as real, so α has
+    to be folded into the cotangent before the projection, not after. It also needs
+    a complex eltype to reach at all -- `wrapper_char` sends a real Hermitian as
+    'S'.
+    =#
+    @testset "Hermitian operand, complex alpha" begin
+        n, p = 3, 2
+        A0 = randn(ComplexF64, n, n)
+        B0 = randn(ComplexF64, n, p)
+        α = 1.7 - 0.9im
+        cpu(A) = real(sum(Hermitian(A, :U) * B0 * α))
+
+        function herm_sum(C, A, B)
+            mul!(C, Hermitian(A, :U), B, α, false)
+            return real(sum(C))
         end
-        @test collect(dX) ≈ fd rtol = 1.0e-5
+        dA = jl(zero(A0))
+        Enzyme.autodiff(
+            Reverse, herm_sum, Active,
+            Duplicated(jl(zeros(ComplexF64, n, p)), jl(zeros(ComplexF64, n, p))),
+            Duplicated(jl(copy(A0)), dA), Const(jl(B0)),
+        )
+
+        @test collect(dA) ≈ fdgrad(cpu, A0) rtol = 1.0e-4
     end
 
     #=
@@ -286,14 +358,7 @@ reads junk out of it -- see the `@test_broken` at the end.
             Duplicated(jl(zeros(n)), jl(zeros(n))),
             Duplicated(Symmetric(jl(X0), :L), Symmetric(dX, :L)), Const(jl(v0)),
         )
-        ϵ = 1.0e-6
-        fd = zero(X0)
-        for idx in eachindex(X0)
-            Xp = copy(X0); Xp[idx] += ϵ
-            Xm = copy(X0); Xm[idx] -= ϵ
-            fd[idx] = (sum(Symmetric(Xp, :L) * v0) - sum(Symmetric(Xm, :L) * v0)) / (2ϵ)
-        end
-        @test collect(dX) ≈ fd rtol = 1.0e-5
+        @test collect(dX) ≈ fdgrad(X -> sum(Symmetric(X, :L) * v0), X0) rtol = 1.0e-5
     end
 
     @testset "structured operand on the right: $name" for (name, wrap) in (
@@ -310,14 +375,7 @@ reads junk out of it -- see the `@test_broken` at the end.
             Duplicated(jl(zeros(m, n)), jl(zeros(m, n))),
             Const(jl(A0)), Duplicated(wrap(jl(X0)), wrap(dX)),
         )
-        ϵ = 1.0e-6
-        fd = zero(X0)
-        for idx in eachindex(X0)
-            Xp = copy(X0); Xp[idx] += ϵ
-            Xm = copy(X0); Xm[idx] -= ϵ
-            fd[idx] = (sum(A0 * wrap(Xp)) - sum(A0 * wrap(Xm))) / (2ϵ)
-        end
-        @test collect(dX) ≈ fd rtol = 1.0e-5
+        @test collect(dX) ≈ fdgrad(X -> sum(A0 * wrap(X)), X0) rtol = 1.0e-5
     end
 
     #=
@@ -351,21 +409,8 @@ reads junk out of it -- see the `@test_broken` at the end.
             Reverse, f, Active, Duplicated(jl(copy(M0)), dM), Duplicated(jl(X0), dX),
         )
 
-        ϵ = 1.0e-6
-        fdM = zero(M0)
-        for idx in eachindex(M0)
-            Mp = copy(M0); Mp[idx] += ϵ
-            Mm = copy(M0); Mm[idx] -= ϵ
-            fdM[idx] = (cpu(Mp, X0) - cpu(Mm, X0)) / (2ϵ)
-        end
-        fdX = zero(X0)
-        for idx in eachindex(X0)
-            Xp = copy(X0); Xp[idx] += ϵ
-            Xm = copy(X0); Xm[idx] -= ϵ
-            fdX[idx] = (cpu(M0, Xp) - cpu(M0, Xm)) / (2ϵ)
-        end
-        @test collect(dM) ≈ fdM rtol = 1.0e-5
-        @test collect(dX) ≈ fdX rtol = 1.0e-5
+        @test collect(dM) ≈ fdgrad(M -> cpu(M, X0), M0) rtol = 1.0e-5
+        @test collect(dX) ≈ fdgrad(X -> cpu(M0, X), X0) rtol = 1.0e-5
     end
 
     #=

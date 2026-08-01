@@ -50,9 +50,28 @@ end
 @inline _bget(x, ::Val{1}, ::Int) = x
 @inline _bget(x, ::Val{N}, i::Int) where {N} = x[i]
 
-# Project an accumulated cotangent onto the (possibly real) parameter type.
-_project(::Type{<:Real}, x) = real(x)
-_project(::Type, x) = x
+#=
+The cotangent of an `Active` return. Batching splits this differently from a
+shadow: it is one `Active` at width 1 but an N-tuple *of* `Active`s above it,
+not an `Active` holding a tuple, so the unwrap has to happen per element.
+=#
+@inline _dret(dret, w::Val, i::Int) = _bget(dret, w, i).val
+
+#=
+An operand contributes no cotangent when it is `Const`, and also when runtime
+activity hands us a `Duplicated` whose shadow is the primal itself -- writing to
+that would corrupt the value the augmented pass just computed.
+=#
+@inline _isconst(_, ::Const) = true
+@inline _isconst(config, x::Annotation) =
+    EnzymeRules.runtime_activity(config) && x.dval === x.val
+
+# Every rule here returns its output argument and stashes a tape.
+@inline _augreturn(config, out::Annotation, tape) = AugmentedReturn(
+    needs_primal(config) ? out.val : nothing,
+    needs_shadow(config) ? out.dval : nothing,
+    tape,
+)
 
 #=
 Cotangent of an `Active` scalar argument: `f(i)`'s raw (possibly complex)
@@ -60,9 +79,9 @@ contribution projected onto `T`, bare at width 1 and an N-tuple when batched.
 Dispatch on `Val{N}` rather than branching on `N == 1`, which infers as `Any` --
 a reverse rule that misses the argument's exact type is a hard error.
 =#
-@inline _dscalar(::Val{1}, ::Type{T}, f::F) where {T, F} = _project(T, f(1))::T
+@inline _dscalar(::Val{1}, ::Type{T}, f::F) where {T, F} = Enzyme._project(T, f(1))::T
 @inline function _dscalar(::Val{N}, ::Type{T}, f::F) where {N, T, F}
-    return ntuple(i -> _project(T, f(i))::T, Val(N))
+    return ntuple(i -> Enzyme._project(T, f(i))::T, Val(N))
 end
 
 #=
@@ -105,103 +124,79 @@ else
         LinearAlgebra.generic_matmatmul!(C, tA, tB, A, B, α, β)
 end
 
+#=
+The ops a char can name -- identity, transpose, conj, adjoint -- form a group
+under composition, so write one as the pair of flags (transposed, conjugated)
+and the pullbacks stop needing a lookup table: `adjoint` flips both flags,
+`transpose` flips the first, and applying either to a product also swaps its two
+operands. `wrap`'s chars cover three of the four combinations; the fourth, a
+bare conj, has to be materialized (`_opdata`), and only for complex eltypes.
+=#
 @inline _plain(t::AbstractChar) = (k = uppercase(t); k == 'N' || k == 'T' || k == 'C')
+@inline _opflags(t::AbstractChar) =
+    (k = uppercase(t); k == 'N' ? (false, false) : k == 'T' ? (true, false) : (true, true))
+@inline _adjop(f::Tuple{Bool, Bool}) = (!f[1], !f[2])
+@inline _transop(f::Tuple{Bool, Bool}) = (!f[1], f[2])
+@inline _opchar(f::Tuple{Bool, Bool}) = f[1] ? (f[2] ? 'C' : 'T') : 'N'
+@inline _opdata(X, f::Tuple{Bool, Bool}) = (!f[1] && f[2]) ? _conj(X) : X
 
 #=
-Accumulate `factor .* G` into the shadow of an operand the primal read as
-`wrap(X, t)`, `G` being the cotangent of that wrapped operand. 'T'/'C' only
+Accumulate `G` into the shadow of an operand the primal read as `wrap(X, t)`,
+`G` being the (already scaled) cotangent of that wrapped operand. 'T'/'C' only
 transpose it. 'S'/'H' need a projection: one triangle is stored and each of its
 entries feeds two positions of the wrapped matrix, so (i,j) collects
 G[i,j] + G[j,i] and the diagonal collects G[i,i]. Hermitian keeps only the real
 part there, its diagonal being real by construction.
+
+`G` has to arrive scaled by conj(α) rather than scaled here, because the
+Hermitian projection is not linear in that factor: it conjugates one of the two
+terms it sums, and takes the real part of the diagonal.
 =#
-function _accumulate_operand!(dX, t::AbstractChar, G, factor)
+function _accumulate_operand!(dX, t::AbstractChar, G)
     kind = uppercase(t)
     if kind == 'N'
-        dX .+= factor .* G
+        dX .+= G
     elseif kind == 'T'
-        dX .+= factor .* transpose(G)
+        dX .+= transpose(G)
     elseif kind == 'C'
-        dX .+= factor .* adjoint(G)
+        dX .+= adjoint(G)
     else
         H = kind == 'S' ? G .+ transpose(G) : G .+ adjoint(G)
-        dX .+= factor .* (_stored_upper(t) ? triu(H, 1) : tril(H, -1))
+        dX .+= _stored_upper(t) ? triu(H, 1) : tril(H, -1)
         dg = view(dX, diagind(dX))
-        dg .+= factor .* (kind == 'S' ? diag(G) : real.(diag(G)))
+        dg .+= kind == 'S' ? diag(G) : real.(diag(G))
     end
     return nothing
+end
+
+# Scale a cotangent we just allocated, in place, skipping the no-op α = 1 case.
+@inline function _scale!(G, factor)
+    isone(factor) || (G .*= factor)
+    return G
 end
 
 #=
-`dA += factor·dC·op(B)'`, projected back through op(A).
+`dX += factor · op(L, fL) · op(R, fR)`, projected back through the operand's own
+op `tX`. Both cotangents of a matmul have that shape -- `dC·op(B)'` for the left
+operand, `op(A)'·dC` for the right -- so both go back through
+`generic_matmatmul!` with β = 1, which is the accumulation: no temporary, no
+elementwise pass. Undoing `tX` rewrites the product rather than transposing its
+result, which is where the operand swap comes from.
 
-Both halves of that are themselves a matmul with a transposition, so as long as
-'N'/'T'/'C' describe both operands the whole thing is one more trip through
-`generic_matmatmul!` with β = 1: the accumulation is the rule's own β argument,
-no temporary and no elementwise pass. Which chars come out of rearranging
-`(dC·op(B)')` into a single gemm:
-
-    tA = 'N'    factor·dC·op(B)'          op(B)' is 'C'/conj/'N' for tB N/T/C
-    tA = 'T'    factor·conj(op(B))·dCᵀ    conj(op(B)) is conj/'C'/'T'
-    tA = 'C'    factor·op(B)·dC'          op(B) is tB itself
-
-The two `conj` slots are the only ones no char covers, and they cost a
-materialized conjugate for complex eltypes only. Symmetric/Hermitian can't play:
-`adjoint(Symmetric(B))` is not a gemm operand and the cotangent needs projecting
-onto a triangle either way, so those fall back to forming `G` and accumulating.
+Symmetric/Hermitian can't play: `adjoint(Symmetric(B))` is not a gemm operand,
+and the cotangent has to be projected onto a triangle regardless, so those form
+the product and hand it to `_accumulate_operand!`.
 =#
-function _pullback_left!(dA, tA::AbstractChar, tB::AbstractChar, dC, B, factor)
-    if !(_plain(tA) && _plain(tB))
-        _accumulate_operand!(dA, tA, dC * _wrap_adjoint(B, tB), factor)
-    elseif uppercase(tA) == 'N'
-        kb = uppercase(tB)
-        if kb == 'N'
-            _gemm!(dA, 'N', 'C', dC, B, factor, true)
-        elseif kb == 'C'
-            _gemm!(dA, 'N', 'N', dC, B, factor, true)
-        else
-            _gemm!(dA, 'N', 'N', dC, _conj(B), factor, true)
-        end
-    elseif uppercase(tA) == 'T'
-        kb = uppercase(tB)
-        if kb == 'N'
-            _gemm!(dA, 'N', 'T', _conj(B), dC, factor, true)
-        elseif kb == 'T'
-            _gemm!(dA, 'C', 'T', B, dC, factor, true)
-        else
-            _gemm!(dA, 'T', 'T', B, dC, factor, true)
-        end
+function _pullback!(dX, tX::AbstractChar, L, fL, R, fR, factor)
+    kind = uppercase(tX)
+    if kind == 'N'
+        _gemm!(dX, _opchar(fL), _opchar(fR), _opdata(L, fL), _opdata(R, fR), factor, true)
+    elseif kind == 'T'
+        gL, gR = _transop(fL), _transop(fR)
+        _gemm!(dX, _opchar(gR), _opchar(gL), _opdata(R, gR), _opdata(L, gL), factor, true)
     else
-        _gemm!(dA, tB, 'C', B, dC, factor, true)
-    end
-    return nothing
-end
-
-# `dB += factor·op(A)'·dC`, projected back through op(B): the mirror of
-# `_pullback_left!`, with the same fallback for Symmetric/Hermitian.
-function _pullback_right!(dB, tA::AbstractChar, tB::AbstractChar, A, dC, factor)
-    if !(_plain(tA) && _plain(tB))
-        _accumulate_operand!(dB, tB, _wrap_adjoint(A, tA) * dC, factor)
-    elseif uppercase(tB) == 'N'
-        ka = uppercase(tA)
-        if ka == 'N'
-            _gemm!(dB, 'C', 'N', A, dC, factor, true)
-        elseif ka == 'C'
-            _gemm!(dB, 'N', 'N', A, dC, factor, true)
-        else
-            _gemm!(dB, 'N', 'N', _conj(A), dC, factor, true)
-        end
-    elseif uppercase(tB) == 'T'
-        ka = uppercase(tA)
-        if ka == 'N'
-            _gemm!(dB, 'T', 'N', dC, _conj(A), factor, true)
-        elseif ka == 'T'
-            _gemm!(dB, 'T', 'C', dC, A, factor, true)
-        else
-            _gemm!(dB, 'T', 'T', dC, A, factor, true)
-        end
-    else
-        _gemm!(dB, 'C', tA, dC, A, factor, true)
+        gL, gR = _adjop(fL), _adjop(fR)
+        _gemm!(dX, _opchar(gR), _opchar(gL), _opdata(R, gR), _opdata(L, gL), factor, true)
     end
     return nothing
 end
@@ -222,8 +217,7 @@ combination:
     dβ  = conj(⟨dC, C₀⟩)
 
 The first two are matmuls with a transposition, so they go back through this
-same function with β = 1 and nothing is accumulated by hand -- see
-`_pullback_left!`.
+same function with β = 1 and nothing is accumulated by hand -- see `_pullback!`.
 
 3-arg `mul!` lands here with α = true, β = false, so `dC` gets zeroed, as it
 must: that form overwrites `C` instead of accumulating into it.
@@ -233,17 +227,20 @@ before that, so the rules are version-gated wrappers over the two helpers below.
 =#
 
 @inline function _matmul_caches(
-        C::Annotation, tA::AbstractChar, tB::AbstractChar, A::Annotation, B::Annotation,
+        config, C::Annotation, tA::AbstractChar, tB::AbstractChar, A::Annotation, B::Annotation,
         ovw_A::Bool, ovw_B::Bool, ::Val{α_active}, ::Val{β_active},
     ) where {α_active, β_active}
     #=
-    dβ needs C₀, dB needs A and dA needs B; copy each only when the reverse pass
-    reads it and something has overwritten it by then.
+    dβ needs C₀, dα the product, dB needs A and dA needs B. A `Const` C means the
+    reverse pass returns early and reads none of them, and `cache_prod` costs a
+    second matmul, so gate everything on the cotangent actually being wanted.
     =#
-    cache_C = β_active ? copy(C.val) : nothing
-    cache_A = (ovw_A && !(B isa Const) && !(C isa Const)) ? copy(A.val) : nothing
-    cache_B = (ovw_B && !(A isa Const) && !(C isa Const)) ? copy(B.val) : nothing
-    cache_prod = α_active ? LinearAlgebra.wrap(A.val, tA) * LinearAlgebra.wrap(B.val, tB) : nothing
+    c_const = _isconst(config, C)
+    cache_C = (β_active && !c_const) ? copy(C.val) : nothing
+    cache_A = (ovw_A && !_isconst(config, B) && !c_const) ? copy(A.val) : nothing
+    cache_B = (ovw_B && !_isconst(config, A) && !c_const) ? copy(B.val) : nothing
+    cache_prod = (α_active && !c_const) ?
+        LinearAlgebra.wrap(A.val, tA) * LinearAlgebra.wrap(B.val, tB) : nothing
     return (cache_C, cache_A, cache_B, cache_prod)
 end
 
@@ -252,10 +249,10 @@ end
         αval::Number, βval::Number, tape, ::Val{α_active}, ::Val{β_active},
     ) where {α_active, β_active}
     N = width(config)
-    if C isa Const
+    if _isconst(config, C)
         # Without C's shadow there is nothing to pull back from.
-        dα = α_active ? _dscalar(Val(N), typeof(αval), _ -> zero(αval)) : nothing
-        dβ = β_active ? _dscalar(Val(N), typeof(βval), _ -> zero(βval)) : nothing
+        dα = α_active ? _dscalar(Val(N), typeof(αval), Returns(zero(αval))) : nothing
+        dβ = β_active ? _dscalar(Val(N), typeof(βval), Returns(zero(βval))) : nothing
         return (dα, dβ)
     end
 
@@ -273,16 +270,26 @@ end
 
     αc = conj(αval)
     βc = conj(βval)
+    fA = _opflags(tA)
+    fB = _opflags(tB)
+    a_const = _isconst(config, A)
+    b_const = _isconst(config, B)
+    plain = _plain(tA) && _plain(tB)
     ntuple(Val(N)) do i
         Base.@_inline_meta
         dC = _bget(C.dval, Val(N), i)
-        if !(A isa Const)
-            _pullback_left!(_bget(A.dval, Val(N), i), tA, tB, dC, Bval, αc)
+        if !a_const
+            dA = _bget(A.dval, Val(N), i)
+            plain ? _pullback!(dA, tA, dC, (false, false), Bval, _adjop(fB), αc) :
+                _accumulate_operand!(dA, tA, _scale!(dC * _wrap_adjoint(Bval, tB), αc))
         end
-        if !(B isa Const)
-            _pullback_right!(_bget(B.dval, Val(N), i), tA, tB, Aval, dC, αc)
+        if !b_const
+            dB = _bget(B.dval, Val(N), i)
+            plain ? _pullback!(dB, tB, Aval, _adjop(fA), dC, (false, false), αc) :
+                _accumulate_operand!(dB, tB, _scale!(_wrap_adjoint(Aval, tA) * dC, αc))
         end
-        dC .*= βc
+        # β = 1 is the accumulate-into-C case, where this would be a no-op kernel.
+        isone(βc) || (dC .*= βc)
         nothing
     end
 
@@ -313,15 +320,13 @@ end
         ) where {RT}
         active = Val(!(add isa Const))
         tape = _matmul_caches(
-            C, tA.val, tB.val, A, B,
+            config, C, tA.val, tB.val, A, B,
             overwritten(config)[5], overwritten(config)[6], active, active,
         )
 
         func.val(C.val, tA.val, tB.val, A.val, B.val, add.val)
 
-        primal = needs_primal(config) ? C.val : nothing
-        shadow = needs_shadow(config) ? C.dval : nothing
-        return AugmentedReturn(primal, shadow, tape)
+        return _augreturn(config, C, tape)
     end
 
     function EnzymeRules.reverse(
@@ -358,15 +363,13 @@ end
         ) where {RT}
         active = Val(!(add isa Const))
         tape = _matmul_caches(
-            y, tA.val, 'N', A, x,
+            config, y, tA.val, 'N', A, x,
             overwritten(config)[4], overwritten(config)[5], active, active,
         )
 
         func.val(y.val, tA.val, A.val, x.val, add.val)
 
-        primal = needs_primal(config) ? y.val : nothing
-        shadow = needs_shadow(config) ? y.dval : nothing
-        return AugmentedReturn(primal, shadow, tape)
+        return _augreturn(config, y, tape)
     end
 
     function EnzymeRules.reverse(
@@ -405,16 +408,14 @@ else
             β::Annotation{<:Number},
         ) where {RT}
         tape = _matmul_caches(
-            C, tA.val, tB.val, A, B,
+            config, C, tA.val, tB.val, A, B,
             overwritten(config)[5], overwritten(config)[6],
             Val(!(α isa Const)), Val(!(β isa Const)),
         )
 
         func.val(C.val, tA.val, tB.val, A.val, B.val, α.val, β.val)
 
-        primal = needs_primal(config) ? C.val : nothing
-        shadow = needs_shadow(config) ? C.dval : nothing
-        return AugmentedReturn(primal, shadow, tape)
+        return _augreturn(config, C, tape)
     end
 
     function EnzymeRules.reverse(
@@ -449,16 +450,14 @@ else
             β::Annotation{<:Number},
         ) where {RT}
         tape = _matmul_caches(
-            y, tA.val, 'N', A, x,
+            config, y, tA.val, 'N', A, x,
             overwritten(config)[4], overwritten(config)[5],
             Val(!(α isa Const)), Val(!(β isa Const)),
         )
 
         func.val(y.val, tA.val, A.val, x.val, α.val, β.val)
 
-        primal = needs_primal(config) ? y.val : nothing
-        shadow = needs_shadow(config) ? y.dval : nothing
-        return AugmentedReturn(primal, shadow, tape)
+        return _augreturn(config, y, tape)
     end
 
     function EnzymeRules.reverse(
@@ -548,15 +547,13 @@ function EnzymeRules.augmented_primal(
     ) where {RT}
     # `lmul!(T, B)` arrives as C === B, so the primal overwrites the B that dA needs.
     aliased = C.val === B.val
-    cache_A = (overwritten(config)[6] && !(B isa Const) && !(C isa Const)) ? copy(A.val) : nothing
-    cache_B = ((aliased || overwritten(config)[7]) && !(A isa Const) && !(C isa Const)) ?
+    cache_A = (overwritten(config)[6] && !_isconst(config, B) && !_isconst(config, C)) ? copy(A.val) : nothing
+    cache_B = ((aliased || overwritten(config)[7]) && !_isconst(config, A) && !_isconst(config, C)) ?
         copy(B.val) : nothing
 
     func.val(C.val, uploc.val, isunitc.val, tfun.val, A.val, B.val)
 
-    primal = needs_primal(config) ? C.val : nothing
-    shadow = needs_shadow(config) ? C.dval : nothing
-    return AugmentedReturn(primal, shadow, (cache_A, cache_B, aliased))
+    return _augreturn(config, C, (cache_A, cache_B, aliased))
 end
 
 function EnzymeRules.reverse(
@@ -571,24 +568,24 @@ function EnzymeRules.reverse(
         A::Annotation{<:AbstractGPUMatrix},
         B::Annotation{<:AbstractGPUVecOrMat},
     ) where {RT}
-    if !(C isa Const)
+    if !_isconst(config, C)
         cache_A, cache_B, aliased = tape
         Aval = cache_A !== nothing ? cache_A : A.val
         Bval = cache_B !== nothing ? cache_B : B.val
-        M′ = (B isa Const) ? nothing :
+        M′ = _isconst(config, B) ? nothing :
             _triangular_adjoint(Aval, uploc.val, isunitc.val, tfun.val)
         N = width(config)
         ntuple(Val(N)) do i
             Base.@_inline_meta
             dC = _bget(C.dval, Val(N), i)
             # dA first: when the shadows alias, dB below overwrites dC.
-            if !(A isa Const)
+            if !_isconst(config, A)
                 _accumulate_triangular!(
                     _bget(A.dval, Val(N), i), uploc.val, isunitc.val, tfun.val,
                     dC * adjoint(Bval),
                 )
             end
-            if !(B isa Const)
+            if !_isconst(config, B)
                 dB = _bget(B.dval, Val(N), i)
                 G = LinearAlgebra.mul!(zero(dC), M′, dC)
                 # Replace when C === B: dB is dC, and C's cotangent is spent here.
@@ -614,15 +611,13 @@ function EnzymeRules.augmented_primal(
     ) where {RT}
     # `rmul!(A, T)` lands here as C === A.
     aliased = C.val === A.val
-    cache_A = ((aliased || overwritten(config)[6]) && !(B isa Const) && !(C isa Const)) ?
+    cache_A = ((aliased || overwritten(config)[6]) && !_isconst(config, B) && !_isconst(config, C)) ?
         copy(A.val) : nothing
-    cache_B = (overwritten(config)[7] && !(A isa Const) && !(C isa Const)) ? copy(B.val) : nothing
+    cache_B = (overwritten(config)[7] && !_isconst(config, A) && !_isconst(config, C)) ? copy(B.val) : nothing
 
     func.val(C.val, uploc.val, isunitc.val, tfun.val, A.val, B.val)
 
-    primal = needs_primal(config) ? C.val : nothing
-    shadow = needs_shadow(config) ? C.dval : nothing
-    return AugmentedReturn(primal, shadow, (cache_A, cache_B, aliased))
+    return _augreturn(config, C, (cache_A, cache_B, aliased))
 end
 
 function EnzymeRules.reverse(
@@ -637,24 +632,24 @@ function EnzymeRules.reverse(
         A::Annotation{<:AbstractGPUMatrix},
         B::Annotation{<:AbstractGPUMatrix},
     ) where {RT}
-    if !(C isa Const)
+    if !_isconst(config, C)
         cache_A, cache_B, aliased = tape
         Aval = cache_A !== nothing ? cache_A : A.val
         Bval = cache_B !== nothing ? cache_B : B.val
-        M′ = (A isa Const) ? nothing :
+        M′ = _isconst(config, A) ? nothing :
             _triangular_adjoint(Bval, uploc.val, isunitc.val, tfun.val)
         N = width(config)
         ntuple(Val(N)) do i
             Base.@_inline_meta
             dC = _bget(C.dval, Val(N), i)
             # dB first: when the shadows alias, dA below overwrites dC.
-            if !(B isa Const)
+            if !_isconst(config, B)
                 _accumulate_triangular!(
                     _bget(B.dval, Val(N), i), uploc.val, isunitc.val, tfun.val,
                     adjoint(Aval) * dC,
                 )
             end
-            if !(A isa Const)
+            if !_isconst(config, A)
                 dA = _bget(A.dval, Val(N), i)
                 G = LinearAlgebra.mul!(zero(dC), dC, M′)
                 # Replace when C === A: dA is dC, and C's cotangent is spent here.
@@ -681,8 +676,8 @@ function EnzymeRules.augmented_primal(
         b::Annotation{<:AbstractGPUArray},
     )
     primal = needs_primal(config) ? dot(a.val, b.val) : nothing
-    cache_a = (overwritten(config)[2] && !(b isa Const)) ? copy(a.val) : nothing
-    cache_b = (overwritten(config)[3] && !(a isa Const)) ? copy(b.val) : nothing
+    cache_a = (overwritten(config)[2] && !_isconst(config, b)) ? copy(a.val) : nothing
+    cache_b = (overwritten(config)[3] && !_isconst(config, a)) ? copy(b.val) : nothing
     return AugmentedReturn(primal, nothing, (cache_a, cache_b))
 end
 
@@ -701,12 +696,12 @@ function EnzymeRules.reverse(
         N = width(config)
         ntuple(Val(N)) do i
             Base.@_inline_meta
-            dr = _bget(dret.val, Val(N), i)
-            if !(a isa Const)
+            dr = _dret(dret, Val(N), i)
+            if !_isconst(config, a)
                 # `a` entered conjugated, so its cotangent picks up conj(dr).
                 _bget(a.dval, Val(N), i) .+= conj(dr) .* bv
             end
-            if !(b isa Const)
+            if !_isconst(config, b)
                 _bget(b.dval, Val(N), i) .+= dr .* av
             end
             nothing
@@ -734,11 +729,11 @@ function EnzymeRules.reverse(
         tape,
         x::Annotation{<:AbstractGPUArray},
     )
-    if !(dret isa Const) && !(x isa Const)
+    if !(dret isa Const) && !_isconst(config, x)
         N = width(config)
         ntuple(Val(N)) do i
             Base.@_inline_meta
-            _bget(x.dval, Val(N), i) .+= _bget(dret.val, Val(N), i)
+            _bget(x.dval, Val(N), i) .+= _dret(dret, Val(N), i)
             nothing
         end
     end
