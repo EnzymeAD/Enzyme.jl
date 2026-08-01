@@ -1,6 +1,6 @@
 using CUDA
 using Enzyme
-using LinearAlgebra: mul!, dot, UpperTriangular, LowerTriangular, Symmetric, Hermitian
+using LinearAlgebra: mul!, dot, Symmetric
 using Test
 
 @testset "CUDA memory copies" begin
@@ -244,7 +244,9 @@ end
     @test all(dA2 .≈ 3*(2:2:64))
 end
 
-# Rules from EnzymeGPUArraysCoreExt for dense matmul / dot / sum on GPU arrays.
+#=
+Rules from EnzymeGPUArraysCoreExt for dense matmul / dot on GPU arrays. 
+=#
 @testset "GPUArrays linalg rules" begin
     cu(x) = CuArray(x)
 
@@ -278,13 +280,13 @@ end
         B0 = randn(Float32, 4, 2)
         dA = cu(zero(A0))
         dB = cu(zero(B0))
-        function loss(C, A, B)
+        function matmul!(C, A, B)
             mul!(C, A, B)
-            return sum(C)
+            return nothing
         end
         C = cu(zeros(Float32, 3, 2))
-        dC = cu(zeros(Float32, 3, 2))
-        Enzyme.autodiff(Reverse, loss, Active, Duplicated(C, dC), Duplicated(cu(A0), dA), Duplicated(cu(B0), dB))
+        dC = cu(ones(Float32, 3, 2))
+        Enzyme.autodiff(Reverse, matmul!, Const, Duplicated(C, dC), Duplicated(cu(A0), dA), Duplicated(cu(B0), dB))
         @test Array(dA) ≈ ones(Float32, 3, 2) * B0'
         @test Array(dB) ≈ A0' * ones(Float32, 3, 2)
     end
@@ -299,48 +301,20 @@ end
         @test Array(db) ≈ a0
     end
 
-    @testset "sum reverse" begin
-        x0 = randn(Float32, 10)
-        dx = cu(zero(x0))
-        Enzyme.autodiff(Reverse, sum, Active, Duplicated(cu(x0), dx))
-        @test all(Array(dx) .≈ 1)
-    end
-
-    @testset "sum(A .* B) broadcast reduction" begin
-        A0 = randn(Float32, 4, 5)
-        B0 = randn(Float32, 4, 5)
-        dA = cu(zero(A0))
-        dB = cu(zero(B0))
-        Enzyme.autodiff(Reverse, (A, B) -> sum(A .* B), Active, Duplicated(cu(A0), dA), Duplicated(cu(B0), dB))
-        @test Array(dA) ≈ B0
-        @test Array(dB) ≈ A0
-    end
-
-    # Structured operands: primal uses the specialized BLAS kernel; reverse
-    # projects the cotangent onto the wrapper's stored entries. Ground truth is
-    # central finite differences over the underlying data.
-    @testset "structured operand: $name" for (name, wrap) in (
-            ("UpperTriangular", UpperTriangular),
-            ("LowerTriangular", LowerTriangular),
-            ("Symmetric(:U)", X -> Symmetric(X, :U)),
-            ("Symmetric(:L)", X -> Symmetric(X, :L)),
-            ("Hermitian(:U)", X -> Hermitian(X, :U)),
-        )
+    # Symmetric/Hermitian reach `generic_matmatmul!` as an 'S'/'H' char; the rule
+    # refuses them rather than handing back the cotangent of the full matrix.
+    @testset "Symmetric operand is rejected" begin
         n = 4
         X0 = randn(Float32, n, n)
-        B0 = randn(Float32, n, 3)
         dX = cu(zero(X0))
-        Enzyme.autodiff(
-            Reverse, (A, B) -> sum(A * B), Active,
-            Duplicated(wrap(cu(X0)), wrap(dX)), Const(cu(B0)),
-        )
-        ϵ = 1.0f-3
-        fd = zero(X0)
-        for idx in eachindex(X0)
-            Xp = copy(X0); Xp[idx] += ϵ
-            Xm = copy(X0); Xm[idx] -= ϵ
-            fd[idx] = (sum(wrap(Xp) * B0) - sum(wrap(Xm) * B0)) / (2ϵ)
+        function matmul!(C, A, B)
+            mul!(C, A, B)
+            return nothing
         end
-        @test Array(dX) ≈ fd rtol = 1.0f-2
+        @test_throws ArgumentError Enzyme.autodiff(
+            Reverse, matmul!, Const,
+            Duplicated(cu(zeros(Float32, n, 3)), cu(ones(Float32, n, 3))),
+            Duplicated(Symmetric(cu(X0), :U), Symmetric(dX, :U)), Const(cu(randn(Float32, n, 3))),
+        )
     end
 end

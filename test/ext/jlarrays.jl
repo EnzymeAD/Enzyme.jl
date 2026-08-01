@@ -1,6 +1,5 @@
 using Enzyme, Test, JLArrays
-using LinearAlgebra: mul!, lmul!, rmul!, dot, transpose, adjoint,
-    UpperTriangular, LowerTriangular, Symmetric, Hermitian
+using LinearAlgebra: mul!, dot, transpose, adjoint, Symmetric
 
 function jlres(x)
     2 * collect(x)
@@ -13,22 +12,32 @@ end
 end
 
 #=
-AbstractGPUArray linear-algebra rules (matmul / dot / sum). JLArray is a
-CPU-backed `AbstractGPUArray`, so it reaches these rules through the same
-LinearAlgebra entry points a real backend does, without needing a device.
+AbstractGPUArray linear-algebra rules (matmul / dot). JLArray is a CPU-backed
+`AbstractGPUArray`, so it reaches these rules through the same LinearAlgebra
+entry points a real backend does, without needing a device.
 
-The rules live on `generic_matmatmul!` / `generic_matvecmul!` /
-`generic_trimatmul!` / `generic_mattrimul!`, so the tests drive `mul!` with an
-explicit output buffer. The allocating `A * B` reaches the same rules, but on
-JLArray the shadow of the array it allocates is never zeroed and the reverse pass
-reads junk out of it -- see the `@test_broken` at the end.
+The rules live on `generic_matmatmul!` / `generic_matvecmul!`, so the tests drive
+`mul!` with an explicit output buffer and differentiate a function that returns
+nothing, seeding the output's shadow with ones. That is the cotangent `sum(C)`
+would hand back, and it keeps every testset here on the rules under test: a
+reduction over a JLArray goes through the backend's `mapreducedim!` kernel, and
+Enzyme cannot yet differentiate that one (LLVM verifier error out of
+`EnzymeCreateAugmentedPrimal`). `dot` is not an option either -- GPUArrays infers
+it as `Any`, so nesting it inside a larger function asks the rule for a shadow of
+a scalar.
+
+Not covered for the same reason: the allocating `A * B`. It reaches the same
+rules, but the shadow of the array `similar` hands back is never zeroed for an
+AbstractGPUArray, so the reverse pass reads junk out of it instead of the
+incoming cotangent -- an allocation problem rather than a matmul one, it hits any
+rule whose output was freshly allocated, and it does not reproduce on CUDA.
 =#
 @testset "GPUArrays linalg rules" begin
     jl(x) = JLArray(x)
 
-    function matmul_sum(C, A, B)
+    function matmul!(C, A, B)
         mul!(C, A, B)
-        return sum(C)
+        return nothing
     end
 
     #=
@@ -55,12 +64,13 @@ reads junk out of it -- see the `@test_broken` at the end.
         A0 = randn(m, k)
         B0 = randn(k, n)
 
-        # loss = sum(A·B); analytic grads dA = ones*B', dB = A'*ones
+        # dC = ones is the cotangent of sum(A·B); analytic grads dA = ones·B',
+        # dB = A'·ones
         dA = jl(zero(A0))
         dB = jl(zero(B0))
         Enzyme.autodiff(
-            Reverse, matmul_sum, Active,
-            Duplicated(jl(zeros(m, n)), jl(zeros(m, n))),
+            Reverse, matmul!, Const,
+            Duplicated(jl(zeros(m, n)), jl(ones(m, n))),
             Duplicated(jl(A0), dA), Duplicated(jl(B0), dB),
         )
 
@@ -82,8 +92,8 @@ reads junk out of it -- see the `@test_broken` at the end.
         dA1 = jl(fill(1.0, m, k))
         dA2 = jl(fill(-2.0, m, k))
         Enzyme.autodiff(
-            Reverse, matmul_sum, Active,
-            BatchDuplicated(jl(zeros(m, n)), (jl(zeros(m, n)), jl(zeros(m, n)))),
+            Reverse, matmul!, Const,
+            BatchDuplicated(jl(zeros(m, n)), (jl(ones(m, n)), jl(ones(m, n)))),
             BatchDuplicated(jl(A0), (dA1, dA2)), Const(jl(B0)),
         )
         expected = ones(m, n) * B0'
@@ -91,21 +101,17 @@ reads junk out of it -- see the `@test_broken` at the end.
         @test collect(dA2) ≈ -2.0 .+ expected
     end
 
-    # A `Const` output has no shadow, so nothing flows back through the matmul and
-    # the rule's early return is what runs -- dA here comes only from `sum(A)`.
+    # A `Const` output has no shadow, so the rule's early return is what runs and
+    # nothing at all flows back into the operands.
     @testset "Const output buffer" begin
         m, k, n = 3, 4, 2
-        A0 = randn(m, k)
-        function const_out(C, A, B)
-            mul!(C, A, B)
-            return sum(A)
-        end
-        dA = jl(zero(A0))
+        dA = jl(fill(7.0, m, k))
         Enzyme.autodiff(
-            Reverse, const_out, Active,
-            Const(jl(zeros(m, n))), Duplicated(jl(A0), dA), Const(jl(randn(k, n))),
+            Reverse, matmul!, Const,
+            Const(jl(zeros(m, n))), Duplicated(jl(randn(m, k)), dA),
+            Const(jl(randn(k, n))),
         )
-        @test all(collect(dA) .≈ 1)
+        @test all(collect(dA) .≈ 7.0)
     end
 
     #=
@@ -115,16 +121,16 @@ reads junk out of it -- see the `@test_broken` at the end.
     @testset "matvec reverse with transpose" begin
         X0 = randn(6, 3)
         β0 = randn(3)
-        function g(y, z, X, β)
+        function g!(y, z, X, β)
             mul!(z, X, β)
             mul!(y, transpose(X), z)
-            return sum(y)
+            return nothing
         end
         dX = jl(zero(X0))
         dβ = jl(zero(β0))
         Enzyme.autodiff(
-            Reverse, g, Active,
-            Duplicated(jl(zeros(3)), jl(zeros(3))), Duplicated(jl(zeros(6)), jl(zeros(6))),
+            Reverse, g!, Const,
+            Duplicated(jl(zeros(3)), jl(ones(3))), Duplicated(jl(zeros(6)), jl(zeros(6))),
             Duplicated(jl(X0), dX), Duplicated(jl(β0), dβ),
         )
 
@@ -139,7 +145,8 @@ reads junk out of it -- see the `@test_broken` at the end.
     chars it has to pick differ per combination -- 'C' is a genuine adjoint once
     the eltype is complex, and a transposed complex operand needs a materialized
     conjugate that no char can express. Enzyme's cotangent for a real-valued loss
-    of complex inputs is ∂L/∂Re + i·∂L/∂Im, which central differences reproduce.
+    of complex inputs is ∂L/∂Re + i·∂L/∂Im, so a real `dC` of ones is the seed for
+    `real(sum(C))`, which central differences reproduce.
     =#
     @testset "matmul reverse, $name" for (name, T, wa, wb) in (
             ("transpose(A)·B", Float64, transpose, identity),
@@ -153,14 +160,14 @@ reads junk out of it -- see the `@test_broken` at the end.
         B0 = randn(T, wb === identity ? (k, n) : (n, k))
         cpu(A) = real(sum(wa(A) * wb(B0)))
 
-        function wrapped_sum(C, A, B)
+        function wrapped_mul!(C, A, B)
             mul!(C, wa(A), wb(B))
-            return real(sum(C))
+            return nothing
         end
         dA = jl(zero(A0))
         Enzyme.autodiff(
-            Reverse, wrapped_sum, Active,
-            Duplicated(jl(zeros(T, m, n)), jl(zeros(T, m, n))),
+            Reverse, wrapped_mul!, Const,
+            Duplicated(jl(zeros(T, m, n)), jl(ones(T, m, n))),
             Duplicated(jl(copy(A0)), dA), Const(jl(B0)),
         )
 
@@ -178,38 +185,38 @@ reads junk out of it -- see the `@test_broken` at the end.
         C0 = randn(3, 2)
 
         # loss = sum(2·A·B + 0.5·C₀)  ⇒  dA = 2·ones·B',  dC₀ = 0.5
-        function loss(C, A, B)
+        function loss!(C, A, B)
             mul!(C, A, B, 2.0, 0.5)
-            return sum(C)
+            return nothing
         end
         dA = jl(zero(A0))
-        dC = jl(zero(C0))
+        dC = jl(ones(3, 2))
         Enzyme.autodiff(
-            Reverse, loss, Active,
+            Reverse, loss!, Const,
             Duplicated(jl(copy(C0)), dC), Duplicated(jl(A0), dA), Const(jl(B0)),
         )
         @test collect(dA) ≈ 2.0 .* (ones(3, 2) * B0')
         @test all(collect(dC) .≈ 0.5)
 
-        # dα = sum(A·B) and dβ = sum(C₀) come back as Active scalar returns
-        function lossα(C, A, B, α)
+        # dα = sum(A·B) and dβ = sum(C₀) come back as Active argument cotangents
+        function lossα!(C, A, B, α)
             mul!(C, A, B, α, 0.5)
-            return sum(C)
+            return nothing
         end
         outα = Enzyme.autodiff(
-            Reverse, lossα, Active,
-            Duplicated(jl(copy(C0)), jl(zero(C0))), Duplicated(jl(A0), jl(zero(A0))),
+            Reverse, lossα!, Const,
+            Duplicated(jl(copy(C0)), jl(ones(3, 2))), Duplicated(jl(A0), jl(zero(A0))),
             Const(jl(B0)), Active(2.0),
         )
         @test outα[1][4] ≈ sum(A0 * B0)
 
-        function lossβ(C, A, B, β)
+        function lossβ!(C, A, B, β)
             mul!(C, A, B, 2.0, β)
-            return sum(C)
+            return nothing
         end
         outβ = Enzyme.autodiff(
-            Reverse, lossβ, Active,
-            Duplicated(jl(copy(C0)), jl(zero(C0))), Duplicated(jl(A0), jl(zero(A0))),
+            Reverse, lossβ!, Const,
+            Duplicated(jl(copy(C0)), jl(ones(3, 2))), Duplicated(jl(A0), jl(zero(A0))),
             Const(jl(B0)), Active(0.5),
         )
         @test outβ[1][4] ≈ sum(C0)
@@ -271,163 +278,21 @@ reads junk out of it -- see the `@test_broken` at the end.
         @test collect(db) ≈ (2 - 3im) .* a0
     end
 
-    @testset "sum reverse" begin
-        x0 = randn(10)
-        da = jl(zero(x0))
-        Enzyme.autodiff(Reverse, sum, Active, Duplicated(jl(x0), da))
-        @test all(collect(da) .≈ 1)
-        #=
-        `sum(A .* B)` leans on this rule too, but JLArrays can't differentiate the
-        broadcast kernel, so that one lives in the CUDA tests.
-        =#
-    end
-
     #=
-    Structured operands arrive unwrapped: Symmetric/Hermitian as an 'S'/'H' char
-    to `generic_matmatmul!`, triangular ones as uploc/isunitc/tfun to
-    `generic_trimatmul!`/`generic_mattrimul!`. Only stored entries are free
-    parameters, so finite differences over the raw data are the check -- the
-    non-stored ones have to come back 0.
+    Symmetric/Hermitian operands reach `generic_matmatmul!` as an 'S'/'H' char and
+    need their cotangent projected onto the stored triangle, which is not a matmul.
+    Triangular ones go to `generic_trimatmul!`/`generic_mattrimul!`, which have no
+    rule at all. Both are follow-up work; until then the rule refuses the ones it
+    does see rather than returning the cotangent of the full matrix.
     =#
-    @testset "structured operand: $name" for (name, wrap) in (
-            ("UpperTriangular", UpperTriangular),
-            ("LowerTriangular", LowerTriangular),
-            ("Symmetric(:U)", X -> Symmetric(X, :U)),
-            ("Symmetric(:L)", X -> Symmetric(X, :L)),
-            ("Hermitian(:U)", X -> Hermitian(X, :U)),
-            ("transpose(UpperTriangular)", X -> transpose(UpperTriangular(X))),
-        )
+    @testset "Symmetric operand is rejected" begin
         n = 4
         X0 = randn(n, n)
-        B0 = randn(n, 3)
-
         dX = jl(zero(X0))
-        Enzyme.autodiff(
-            Reverse, matmul_sum, Active,
-            Duplicated(jl(zeros(n, 3)), jl(zeros(n, 3))),
-            Duplicated(wrap(jl(X0)), wrap(dX)), Const(jl(B0)),
+        @test_throws ArgumentError Enzyme.autodiff(
+            Reverse, matmul!, Const,
+            Duplicated(jl(zeros(n, 3)), jl(ones(n, 3))),
+            Duplicated(Symmetric(jl(X0), :U), Symmetric(dX, :U)), Const(jl(randn(n, 3))),
         )
-
-        @test collect(dX) ≈ fdgrad(X -> sum(wrap(X) * B0), X0) rtol = 1.0e-5
-    end
-
-    #=
-    The one combination where the projection stops being linear in α: a Hermitian
-    operand sums a term and its conjugate and reads the diagonal as real, so α has
-    to be folded into the cotangent before the projection, not after. It also needs
-    a complex eltype to reach at all -- `wrapper_char` sends a real Hermitian as
-    'S'.
-    =#
-    @testset "Hermitian operand, complex alpha" begin
-        n, p = 3, 2
-        A0 = randn(ComplexF64, n, n)
-        B0 = randn(ComplexF64, n, p)
-        α = 1.7 - 0.9im
-        cpu(A) = real(sum(Hermitian(A, :U) * B0 * α))
-
-        function herm_sum(C, A, B)
-            mul!(C, Hermitian(A, :U), B, α, false)
-            return real(sum(C))
-        end
-        dA = jl(zero(A0))
-        Enzyme.autodiff(
-            Reverse, herm_sum, Active,
-            Duplicated(jl(zeros(ComplexF64, n, p)), jl(zeros(ComplexF64, n, p))),
-            Duplicated(jl(copy(A0)), dA), Const(jl(B0)),
-        )
-
-        @test collect(dA) ≈ fdgrad(cpu, A0) rtol = 1.0e-4
-    end
-
-    #=
-    A structured operand times a vector goes through `generic_matvecmul!` instead,
-    where the projection lands on an outer-product cotangent. `:L` also checks that
-    the rule reads the triangle out of the char's case ('s', not 'S').
-    =#
-    @testset "structured matvec: Symmetric(:L)" begin
-        n = 4
-        X0 = randn(n, n)
-        v0 = randn(n)
-        dX = jl(zero(X0))
-        function matvec_sum(y, A, x)
-            mul!(y, A, x)
-            return sum(y)
-        end
-        Enzyme.autodiff(
-            Reverse, matvec_sum, Active,
-            Duplicated(jl(zeros(n)), jl(zeros(n))),
-            Duplicated(Symmetric(jl(X0), :L), Symmetric(dX, :L)), Const(jl(v0)),
-        )
-        @test collect(dX) ≈ fdgrad(X -> sum(Symmetric(X, :L) * v0), X0) rtol = 1.0e-5
-    end
-
-    @testset "structured operand on the right: $name" for (name, wrap) in (
-            ("UpperTriangular", UpperTriangular),
-            ("transpose(UpperTriangular)", X -> transpose(UpperTriangular(X))),
-            ("Symmetric(:L)", X -> Symmetric(X, :L)),
-        )
-        m, n = 3, 4
-        A0 = randn(m, n)
-        X0 = randn(n, n)
-        dX = jl(zero(X0))
-        Enzyme.autodiff(
-            Reverse, matmul_sum, Active,
-            Duplicated(jl(zeros(m, n)), jl(zeros(m, n))),
-            Const(jl(A0)), Duplicated(wrap(jl(X0)), wrap(dX)),
-        )
-        @test collect(dX) ≈ fdgrad(X -> sum(A0 * wrap(X)), X0) rtol = 1.0e-5
-    end
-
-    #=
-    `lmul!`/`rmul!` reach the triangular rules with the output aliasing the operand
-    it overwrites, so the operand's cotangent has to replace the shared shadow
-    rather than accumulate into it. Only cotangents are checked here, which is just
-    as well -- the GPUArrays triangular kernels accumulate into their output, so
-    the in-place primal is itself off by the operand on JLArray.
-
-    Both cases wrap in `UpperTriangular` because Julia 1.11's `lmul!`/`rmul!` ask
-    `istriu` first, which for a `LowerTriangular` has to read the data and so
-    scalar-indexes a GPU array. The rule is oblivious to which triangle it is; the
-    testsets above cover both.
-    =#
-    @testset "triangular in place: $name" for (name, f, cpu) in (
-            (
-                "lmul!", (B, X) -> (lmul!(UpperTriangular(X), B); sum(B)),
-                (B, X) -> sum(UpperTriangular(X) * B),
-            ),
-            (
-                "rmul!", (A, X) -> (rmul!(A, UpperTriangular(X)); sum(A)),
-                (A, X) -> sum(A * UpperTriangular(X)),
-            ),
-        )
-        n = 4
-        M0 = randn(n, n)
-        X0 = randn(n, n)
-        dM = jl(zero(M0))
-        dX = jl(zero(X0))
-        Enzyme.autodiff(
-            Reverse, f, Active, Duplicated(jl(copy(M0)), dM), Duplicated(jl(X0), dX),
-        )
-
-        @test collect(dM) ≈ fdgrad(M -> cpu(M, X0), M0) rtol = 1.0e-5
-        @test collect(dX) ≈ fdgrad(X -> cpu(M0, X), X0) rtol = 1.0e-5
-    end
-
-    #=
-    `A * B` is `mul!(similar(...), A, B)`, so it reaches the same rules -- but
-    Enzyme never zeroes the shadow of what `similar` hands back for an
-    AbstractGPUArray, and the reverse pass reads that memory instead of the
-    incoming cotangent. An allocation problem, not a matmul one: it hits any rule
-    whose output was freshly allocated. Doesn't reproduce on CUDA.
-    =#
-    @testset "allocating A * B (unzeroed shadow)" begin
-        A0 = randn(3, 4)
-        B0 = randn(4, 2)
-        dA = jl(zero(A0))
-        Enzyme.autodiff(
-            Reverse, (A, B) -> sum(A * B), Active,
-            Duplicated(jl(A0), dA), Const(jl(B0)),
-        )
-        @test_broken collect(dA) ≈ ones(3, 2) * B0'
     end
 end

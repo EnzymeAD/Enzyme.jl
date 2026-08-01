@@ -2,8 +2,7 @@ module EnzymeGPUArraysCoreExt
 
 using GPUArraysCore
 using Enzyme
-using LinearAlgebra: LinearAlgebra, dot, Symmetric, Hermitian, UpperTriangular,
-    LowerTriangular, UnitUpperTriangular, UnitLowerTriangular, triu, tril, diag, diagind
+using LinearAlgebra: LinearAlgebra, dot
 using Enzyme.EnzymeCore: EnzymeCore
 using Enzyme.EnzymeCore.EnzymeRules:
     EnzymeRules,
@@ -84,37 +83,8 @@ a reverse rule that misses the argument's exact type is a hard error.
     return ntuple(i -> Enzyme._project(T, f(i))::T, Val(N))
 end
 
-#=
-Before anything reaches the GPU, `mul!` and `*` strip the wrapper off each
-operand and pass a char for how to read the bare array: 'N' plain, 'T'
-transposed, 'C' adjoint, 'S' Symmetric, 'H' Hermitian, the case naming the
-stored triangle ('S' upper, 's' lower). Julia ≥1.11 sends a `WrapperChar`, which
-holds the case in its own field, so go through `Char` to get the triangle back.
-=#
-@inline _stored_upper(t::AbstractChar) = isuppercase(Char(t))
-
 # `conj`, materialized; a no-op for real eltypes.
 @inline _conj(X) = eltype(X) <: Real ? X : conj.(X)
-
-#=
-`adjoint(wrap(X, t))`, leaving at most one lazy wrapper on the array. The
-backends peel off a single layer, so a nested `adjoint(transpose(X))` (or
-`adjoint(Symmetric(X))` when complex) matches no method and scalar-indexes.
-=#
-@inline function _wrap_adjoint(X, t::AbstractChar)
-    kind = uppercase(t)
-    return if kind == 'N'
-        adjoint(X)
-    elseif kind == 'T'
-        _conj(X)
-    elseif kind == 'C'
-        X
-    elseif kind == 'S'
-        Symmetric(_conj(X), _stored_upper(t) ? :U : :L)
-    else
-        Hermitian(X, _stored_upper(t) ? :U : :L)
-    end
-end
 
 @static if VERSION < v"1.12.0-DEV"
     @inline _gemm!(C, tA::AbstractChar, tB::AbstractChar, A, B, α::Number, β::Number) =
@@ -125,12 +95,10 @@ else
 end
 
 #=
-The ops a char can name -- identity, transpose, conj, adjoint -- form a group
-under composition, so write one as the pair of flags (transposed, conjugated)
-and the pullbacks stop needing a lookup table: `adjoint` flips both flags,
-`transpose` flips the first, and applying either to a product also swaps its two
-operands. `wrap`'s chars cover three of the four combinations; the fourth, a
-bare conj, has to be materialized (`_opdata`), and only for complex eltypes.
+Before anything reaches the GPU, `mul!` and `*` strip the wrapper off each
+operand and pass a char for how to read the bare array: 'N' plain, 'T'
+transposed, 'C' adjoint (and 'S'/'H' for Symmetric/Hermitian, which these rules
+do not handle -- see `_assert_rectangular`).
 =#
 @inline _plain(t::AbstractChar) = (k = uppercase(t); k == 'N' || k == 'T' || k == 'C')
 @inline _opflags(t::AbstractChar) =
@@ -141,38 +109,24 @@ bare conj, has to be materialized (`_opdata`), and only for complex eltypes.
 @inline _opdata(X, f::Tuple{Bool, Bool}) = (!f[1] && f[2]) ? _conj(X) : X
 
 #=
-Accumulate `G` into the shadow of an operand the primal read as `wrap(X, t)`,
-`G` being the (already scaled) cotangent of that wrapped operand. 'T'/'C' only
-transpose it. 'S'/'H' need a projection: one triangle is stored and each of its
-entries feeds two positions of the wrapped matrix, so (i,j) collects
-G[i,j] + G[j,i] and the diagonal collects G[i,i]. Hermitian keeps only the real
-part there, its diagonal being real by construction.
-
-`G` has to arrive scaled by conj(α) rather than scaled here, because the
-Hermitian projection is not linear in that factor: it conjugates one of the two
-terms it sums, and takes the real part of the diagonal.
+Symmetric/Hermitian operands reach the same entry points, as an 'S'/'H' char.
+Their cotangent is not another matmul -- only one triangle is stored, and each
+of its entries feeds two positions of the wrapped matrix, so it has to be
+projected -- and neither is a triangular operand's, which LinearAlgebra routes
+to `generic_trimatmul!`/`generic_mattrimul!` instead. Both are left to a
+follow-up; refusing them here beats handing back the cotangent of the full
+matrix as if it were the cotangent of the stored one.
 =#
-function _accumulate_operand!(dX, t::AbstractChar, G)
-    kind = uppercase(t)
-    if kind == 'N'
-        dX .+= G
-    elseif kind == 'T'
-        dX .+= transpose(G)
-    elseif kind == 'C'
-        dX .+= adjoint(G)
-    else
-        H = kind == 'S' ? G .+ transpose(G) : G .+ adjoint(G)
-        dX .+= _stored_upper(t) ? triu(H, 1) : tril(H, -1)
-        dg = view(dX, diagind(dX))
-        dg .+= kind == 'S' ? diag(G) : real.(diag(G))
+@inline function _assert_rectangular(tA::AbstractChar, tB::AbstractChar)
+    if !(_plain(tA) && _plain(tB))
+        throw(
+            ArgumentError(
+                "Enzyme: reverse mode over a Symmetric/Hermitian GPU array operand is " *
+                    "not supported yet (got wrapper chars '$(Char(tA))' and '$(Char(tB))')"
+            )
+        )
     end
     return nothing
-end
-
-# Scale a cotangent we just allocated, in place, skipping the no-op α = 1 case.
-@inline function _scale!(G, factor)
-    isone(factor) || (G .*= factor)
-    return G
 end
 
 #=
@@ -180,12 +134,9 @@ end
 op `tX`. Both cotangents of a matmul have that shape -- `dC·op(B)'` for the left
 operand, `op(A)'·dC` for the right -- so both go back through
 `generic_matmatmul!` with β = 1, which is the accumulation: no temporary, no
-elementwise pass. Undoing `tX` rewrites the product rather than transposing its
-result, which is where the operand swap comes from.
-
-Symmetric/Hermitian can't play: `adjoint(Symmetric(B))` is not a gemm operand,
-and the cotangent has to be projected onto a triangle regardless, so those form
-the product and hand it to `_accumulate_operand!`.
+elementwise pass, and the scaling rides along as α. Undoing `tX` rewrites the
+product rather than transposing its result, which is where the operand swap
+comes from.
 =#
 function _pullback!(dX, tX::AbstractChar, L, fL, R, fR, factor)
     kind = uppercase(tX)
@@ -205,10 +156,10 @@ end
     generic_matmatmul!(C, tA, tB, A, B, α, β)    C = α·op(A)·op(B) + β·C₀
     generic_matvecmul!(y, tA, A, x, α, β)        y = α·op(A)·x + β·y₀
 
-Where every non-triangular GPU matmul ends up, whether it came from `*` or from
+Where every rectangular GPU matmul ends up, whether it came from `*` or from
 3-/5-arg `mul!`, and whether the backend takes it on to CUBLAS or to the
-GPUArrays fallback kernels. One rule per function therefore covers every wrapper
-combination:
+GPUArrays fallback kernels. One rule per function therefore covers plain,
+transposed and adjointed operands in any combination:
 
     dA += conj(α)·dC·op(B)'          projected back through op(A)
     dB += conj(α)·op(A)'·dC          projected back through op(B)
@@ -230,6 +181,7 @@ before that, so the rules are version-gated wrappers over the two helpers below.
         config, C::Annotation, tA::AbstractChar, tB::AbstractChar, A::Annotation, B::Annotation,
         ovw_A::Bool, ovw_B::Bool, ::Val{α_active}, ::Val{β_active},
     ) where {α_active, β_active}
+    _assert_rectangular(tA, tB)
     #=
     dβ needs C₀, dα the product, dB needs A and dA needs B. A `Const` C means the
     reverse pass returns early and reads none of them, and `cache_prod` costs a
@@ -274,19 +226,14 @@ end
     fB = _opflags(tB)
     a_const = _isconst(config, A)
     b_const = _isconst(config, B)
-    plain = _plain(tA) && _plain(tB)
     ntuple(Val(N)) do i
         Base.@_inline_meta
         dC = _bget(C.dval, Val(N), i)
         if !a_const
-            dA = _bget(A.dval, Val(N), i)
-            plain ? _pullback!(dA, tA, dC, (false, false), Bval, _adjop(fB), αc) :
-                _accumulate_operand!(dA, tA, _scale!(dC * _wrap_adjoint(Bval, tB), αc))
+            _pullback!(_bget(A.dval, Val(N), i), tA, dC, (false, false), Bval, _adjop(fB), αc)
         end
         if !b_const
-            dB = _bget(B.dval, Val(N), i)
-            plain ? _pullback!(dB, tB, Aval, _adjop(fA), dC, (false, false), αc) :
-                _accumulate_operand!(dB, tB, _scale!(_wrap_adjoint(Aval, tA) * dC, αc))
+            _pullback!(_bget(B.dval, Val(N), i), tB, Aval, _adjop(fA), dC, (false, false), αc)
         end
         # β = 1 is the accumulate-into-C case, where this would be a no-op kernel.
         isone(βc) || (dC .*= βc)
@@ -482,187 +429,6 @@ else
 end
 
 #=
-    generic_trimatmul!(C, uploc, isunitc, tfun, A, B)    C = tfun(T(A))·B
-    generic_mattrimul!(C, uploc, isunitc, tfun, A, B)    C = A·tfun(T(B))
-
-Triangular operands never reach `generic_matmatmul!`; LinearAlgebra sends them
-here instead, again bare plus a description of how to read them: `uploc`
-('U'/'L') names the stored triangle, `isunitc` is 'U' when the diagonal is
-structurally 1, and `tfun` is identity/transpose/adjoint. The operand is
-`tfun(T_uploc(A))` -- `transpose(UpperTriangular(X))` arrives as uploc 'U' with
-`tfun` `transpose`. There is no α/β here, `C` is always overwritten, so this is
-where `C`'s cotangent gets consumed. With `M` the operand as the primal reads it:
-
-    dA += tfun(tril/triu(dC·B'))
-    dB += M'·dC
-    dC := 0
-
-`M'·dC` goes through `mul!` into a zeroed buffer, not `*`. The GPUArrays kernels
-for these two end with `C[i,j] += …` rather than `=`, so with the uninitialized
-array `*` allocates they mix junk into the result; zeroing first makes that
-accumulation harmless, and backends that do overwrite (CUBLAS trmm) don't care.
-=#
-
-#=
-`adjoint(tfun(T_uploc(A)))`, again with a single lazy wrapper (see
-`_wrap_adjoint`). Only `identity` leaves an adjoint behind, and with it the
-flipped triangle; `transpose` and `adjoint` cancel against the outer one, the
-former down to a conjugation of the data.
-=#
-@inline function _triangular_adjoint(A, uploc::AbstractChar, isunitc::AbstractChar, tfun::F) where {F}
-    P = tfun === identity ? adjoint(A) : (tfun === transpose ? _conj(A) : A)
-    upper = tfun === identity ? uploc != 'U' : uploc == 'U'
-    return if upper
-        isunitc == 'U' ? UnitUpperTriangular(P) : UpperTriangular(P)
-    else
-        isunitc == 'U' ? UnitLowerTriangular(P) : LowerTriangular(P)
-    end
-end
-
-#=
-Project `G` back onto A's stored triangle, skipping a structurally-fixed unit
-diagonal. `tfun` swaps the triangles, so it can be undone after the projection
-rather than before -- and it has to be, because `triu`/`tril` of a lazy transpose
-drops into a scalar-indexing loop while broadcasting over one is fine.
-=#
-@inline function _accumulate_triangular!(
-        dA, uploc::AbstractChar, isunitc::AbstractChar, tfun::F, G,
-    ) where {F}
-    k = isunitc == 'U' ? 1 : 0
-    upper = tfun === identity ? uploc == 'U' : uploc != 'U'
-    dA .+= tfun(upper ? triu(G, k) : tril(G, -k))
-    return nothing
-end
-
-function EnzymeRules.augmented_primal(
-        config::RevConfig,
-        func::Const{typeof(LinearAlgebra.generic_trimatmul!)},
-        ::Type{RT},
-        C::Annotation{<:AbstractGPUVecOrMat},
-        uploc::Const{<:AbstractChar},
-        isunitc::Const{<:AbstractChar},
-        tfun::Const,
-        A::Annotation{<:AbstractGPUMatrix},
-        B::Annotation{<:AbstractGPUVecOrMat},
-    ) where {RT}
-    # `lmul!(T, B)` arrives as C === B, so the primal overwrites the B that dA needs.
-    aliased = C.val === B.val
-    cache_A = (overwritten(config)[6] && !_isconst(config, B) && !_isconst(config, C)) ? copy(A.val) : nothing
-    cache_B = ((aliased || overwritten(config)[7]) && !_isconst(config, A) && !_isconst(config, C)) ?
-        copy(B.val) : nothing
-
-    func.val(C.val, uploc.val, isunitc.val, tfun.val, A.val, B.val)
-
-    return _augreturn(config, C, (cache_A, cache_B, aliased))
-end
-
-function EnzymeRules.reverse(
-        config::RevConfig,
-        func::Const{typeof(LinearAlgebra.generic_trimatmul!)},
-        ::Type{RT},
-        tape,
-        C::Annotation{<:AbstractGPUVecOrMat},
-        uploc::Const{<:AbstractChar},
-        isunitc::Const{<:AbstractChar},
-        tfun::Const,
-        A::Annotation{<:AbstractGPUMatrix},
-        B::Annotation{<:AbstractGPUVecOrMat},
-    ) where {RT}
-    if !_isconst(config, C)
-        cache_A, cache_B, aliased = tape
-        Aval = cache_A !== nothing ? cache_A : A.val
-        Bval = cache_B !== nothing ? cache_B : B.val
-        M′ = _isconst(config, B) ? nothing :
-            _triangular_adjoint(Aval, uploc.val, isunitc.val, tfun.val)
-        N = width(config)
-        ntuple(Val(N)) do i
-            Base.@_inline_meta
-            dC = _bget(C.dval, Val(N), i)
-            # dA first: when the shadows alias, dB below overwrites dC.
-            if !_isconst(config, A)
-                _accumulate_triangular!(
-                    _bget(A.dval, Val(N), i), uploc.val, isunitc.val, tfun.val,
-                    dC * adjoint(Bval),
-                )
-            end
-            if !_isconst(config, B)
-                dB = _bget(B.dval, Val(N), i)
-                G = LinearAlgebra.mul!(zero(dC), M′, dC)
-                # Replace when C === B: dB is dC, and C's cotangent is spent here.
-                aliased ? (dB .= G) : (dB .+= G)
-            end
-            aliased || fill!(dC, zero(eltype(dC)))
-            nothing
-        end
-    end
-    return (nothing, nothing, nothing, nothing, nothing, nothing)
-end
-
-function EnzymeRules.augmented_primal(
-        config::RevConfig,
-        func::Const{typeof(LinearAlgebra.generic_mattrimul!)},
-        ::Type{RT},
-        C::Annotation{<:AbstractGPUMatrix},
-        uploc::Const{<:AbstractChar},
-        isunitc::Const{<:AbstractChar},
-        tfun::Const,
-        A::Annotation{<:AbstractGPUMatrix},
-        B::Annotation{<:AbstractGPUMatrix},
-    ) where {RT}
-    # `rmul!(A, T)` lands here as C === A.
-    aliased = C.val === A.val
-    cache_A = ((aliased || overwritten(config)[6]) && !_isconst(config, B) && !_isconst(config, C)) ?
-        copy(A.val) : nothing
-    cache_B = (overwritten(config)[7] && !_isconst(config, A) && !_isconst(config, C)) ? copy(B.val) : nothing
-
-    func.val(C.val, uploc.val, isunitc.val, tfun.val, A.val, B.val)
-
-    return _augreturn(config, C, (cache_A, cache_B, aliased))
-end
-
-function EnzymeRules.reverse(
-        config::RevConfig,
-        func::Const{typeof(LinearAlgebra.generic_mattrimul!)},
-        ::Type{RT},
-        tape,
-        C::Annotation{<:AbstractGPUMatrix},
-        uploc::Const{<:AbstractChar},
-        isunitc::Const{<:AbstractChar},
-        tfun::Const,
-        A::Annotation{<:AbstractGPUMatrix},
-        B::Annotation{<:AbstractGPUMatrix},
-    ) where {RT}
-    if !_isconst(config, C)
-        cache_A, cache_B, aliased = tape
-        Aval = cache_A !== nothing ? cache_A : A.val
-        Bval = cache_B !== nothing ? cache_B : B.val
-        M′ = _isconst(config, A) ? nothing :
-            _triangular_adjoint(Bval, uploc.val, isunitc.val, tfun.val)
-        N = width(config)
-        ntuple(Val(N)) do i
-            Base.@_inline_meta
-            dC = _bget(C.dval, Val(N), i)
-            # dB first: when the shadows alias, dA below overwrites dC.
-            if !_isconst(config, B)
-                _accumulate_triangular!(
-                    _bget(B.dval, Val(N), i), uploc.val, isunitc.val, tfun.val,
-                    adjoint(Aval) * dC,
-                )
-            end
-            if !_isconst(config, A)
-                dA = _bget(A.dval, Val(N), i)
-                G = LinearAlgebra.mul!(zero(dC), dC, M′)
-                # Replace when C === A: dA is dC, and C's cotangent is spent here.
-                aliased ? (dA .= G) : (dA .+= G)
-            end
-            aliased || fill!(dC, zero(eltype(dC)))
-            nothing
-        end
-    end
-    return (nothing, nothing, nothing, nothing, nothing, nothing)
-end
-
-#=
 dot(a, b) = Σ conj(aᵢ)·bᵢ, so `da += conj(dr)·b` and `db += dr·a`. The
 asymmetry only shows up for complex eltypes; test/ext/jlarrays.jl pins both
 directions against Enzyme's own rule-free CPU path.
@@ -708,36 +474,6 @@ function EnzymeRules.reverse(
         end
     end
     return (nothing, nothing)
-end
-
-# sum(x): the return cotangent broadcasts onto every element, `dx += dr`.
-
-function EnzymeRules.augmented_primal(
-        config::RevConfig,
-        func::Const{typeof(sum)},
-        ::Type,
-        x::Annotation{<:AbstractGPUArray},
-    )
-    primal = needs_primal(config) ? sum(x.val) : nothing
-    return AugmentedReturn(primal, nothing, nothing)
-end
-
-function EnzymeRules.reverse(
-        config::RevConfig,
-        func::Const{typeof(sum)},
-        dret,
-        tape,
-        x::Annotation{<:AbstractGPUArray},
-    )
-    if !(dret isa Const) && !_isconst(config, x)
-        N = width(config)
-        ntuple(Val(N)) do i
-            Base.@_inline_meta
-            _bget(x.dval, Val(N), i) .+= _dret(dret, Val(N), i)
-            nothing
-        end
-    end
-    return (nothing,)
 end
 
 end # module
