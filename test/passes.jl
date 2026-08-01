@@ -437,3 +437,71 @@ end
     end
 
 end # VERSION >= v"1.12"
+
+# An addrspace(11) phi with argument-derived and poison incomings must be skipped by
+# the `all_args` prefilter; the rewriter cannot handle a bare addrspace(11) argument.
+@testset "nodecayed_phis! addrspace(11) phi with poison incoming" begin
+    @test @filecheck begin
+        # incomings: gep(arg, 8) and poison
+        @check_label "@kernel_gep"
+        @check_not "nodecayed"
+        @check "phi"
+        @check_same "addrspace(11)"
+        @check_same "%gep"
+        @check_same "poison"
+        # zero-offset variant: the argument itself and poison
+        @check_label "@kernel_direct"
+        @check_not "nodecayed"
+        @check "phi"
+        @check_same "addrspace(11)"
+        @check_same "%q"
+        @check_same "poison"
+        LLVM.Context() do ctx
+            mod = parse(
+                LLVM.Module, """
+                source_filename = "start"
+                target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+                target triple = "x86_64-linux-gnu"
+
+                define i8 @kernel_gep(i1 %cond, i8 addrspace(11)* %g) #0 {
+                top:
+                  br i1 %cond, label %ok, label %guard
+
+                ok:
+                  %gep = getelementptr inbounds i8, i8 addrspace(11)* %g, i64 8
+                  br label %merge
+
+                guard:
+                  br label %merge
+
+                merge:
+                  %p = phi i8 addrspace(11)* [ %gep, %ok ], [ poison, %guard ]
+                  %ld = load i8, i8 addrspace(11)* %p, align 1
+                  ret i8 %ld
+                }
+
+                define i8 @kernel_direct(i1 %cond, i8 addrspace(11)* %q) #0 {
+                top:
+                  br i1 %cond, label %ok2, label %guard2
+
+                ok2:
+                  br label %merge2
+
+                guard2:
+                  br label %merge2
+
+                merge2:
+                  %p2 = phi i8 addrspace(11)* [ %q, %ok2 ], [ poison, %guard2 ]
+                  %ld2 = load i8, i8 addrspace(11)* %p2, align 1
+                  ret i8 %ld2
+                }
+
+                attributes #0 = { "enzymejl_world"="1" }
+                """
+            )
+
+            Enzyme.Compiler.nodecayed_phis!(mod)
+            string(mod)
+        end
+    end
+end
