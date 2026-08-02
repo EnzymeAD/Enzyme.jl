@@ -424,7 +424,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
                     #=ShadowInit=#true
                 }(),
                 FA,
-                Duplicated{rt},
+                width == 1 ? Duplicated{rt} : BatchDuplicated{rt, width},
                 (tt′).parameters...
             )
             res = forward(f, args...)
@@ -756,13 +756,15 @@ code, as well as high-order differentiation.
                     ErrIfFuncWritten,
                     #=ShadowInit=#true
                 }()
-            TapeType = tape_type(rs, FA, Duplicated{rt},
+            rt_annotation = width == 1 ? Duplicated{rt} : BatchDuplicated{rt, width}
+            TapeType = tape_type(
+                rs, FA, rt_annotation,
                 (tt′).parameters...)
             forward, adjoint = autodiff_deferred_thunk(
                 rs,
                 TapeType,
                 FA,
-                Duplicated{rt},
+                rt_annotation,
                 (tt′).parameters...
             )
             res = forward(f, args...)
