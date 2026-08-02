@@ -141,7 +141,7 @@ function Base.showerror(io::IO, ece::NonConstantKeywordArgException)
     printstyled(io, "Hint"; bold = true, color = :cyan)
     printstyled(
         io,
-        ": Experimental utility Enzyme.EnzymeRules.inactive_kwarg will enable you to mark the keyword arguments as non-differentiable, if that is correct.";
+        ": Enzyme.EnzymeRules.inactive_kwarg will enable you to mark the keyword arguments as non-differentiable, if that is correct.";
         color = :cyan,
     )
     println(io)

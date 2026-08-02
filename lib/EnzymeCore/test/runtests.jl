@@ -39,6 +39,11 @@ using EnzymeCore
     @testset "Mode modification" begin
         include("mode_modification.jl")
     end
+    @testset "Public API" begin
+        @static if VERSION >= v"1.11"
+            @test Base.ispublic(EnzymeCore.EnzymeRules, :inactive_kwarg)
+        end
+    end
 end
 
 @testset "within_autodiff" begin
