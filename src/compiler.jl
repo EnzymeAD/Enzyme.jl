@@ -3279,6 +3279,18 @@ function create_abi_wrapper(
         end
         # shadow return
         if existed[3] != 0
+            # A non-batch activity describes a single shadow, so it is only legal at
+            # width one; a batch activity must agree with the width it was built for.
+            if rettype <: Duplicated ||
+                    rettype <: DuplicatedNoNeed ||
+                    rettype <: MixedDuplicated
+                @assert width == 1
+            elseif rettype <: BatchDuplicated ||
+                    rettype <: BatchDuplicatedNoNeed ||
+                    rettype <: BatchDuplicatedFunc ||
+                    rettype <: BatchMixedDuplicated
+                @assert width == batch_size(rettype)
+            end
             if rettype <: Duplicated ||
                rettype <: DuplicatedNoNeed ||
                rettype <: BatchDuplicated ||
@@ -6888,8 +6900,10 @@ const DumpLLVMCall = Ref(false)
                 push!(sret_types, Nothing)
             end
             if rettype <: Duplicated || rettype <: DuplicatedNoNeed
+                @assert width == 1
                 push!(sret_types, jlRT)
             elseif rettype <: MixedDuplicated
+                @assert width == 1
                 rty = if Base.isconcretetype(jlRT)
                     Base.RefValue{jlRT}
                 else
@@ -6897,8 +6911,10 @@ const DumpLLVMCall = Ref(false)
                 end
                 push!(sret_types, rty)
             elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
+                @assert width == batch_size(rettype)
                 push!(sret_types, AnonymousStruct(NTuple{width,jlRT}))
             elseif rettype <: BatchMixedDuplicated
+                @assert width == batch_size(rettype)
                 rty = if Base.isconcretetype(jlRT)
                     Base.RefValue{jlRT}
                 else
@@ -7243,6 +7259,37 @@ const cache_lock = ReentrantLock()
     end
 end
 
+"""
+    instantiate_annotation(A, rt, width)
+
+Fill in the free parameters of a (possibly partially applied) activity annotation
+`A` with element type `rt` and batch width `width`.
+
+The batch annotations take a second parameter carrying the batch width. Applying
+only `A{rt}` to them leaves that parameter free, and a subsequent `A{rt}` binds the
+*element type* to it, yielding an annotation whose `batch_size` is a type rather
+than the width. Filling both explicitly keeps `batch_size(A) == width`, which the
+shadow-return ABI in `create_abi_wrapper` and `enzyme_call` asserts.
+"""
+@inline function instantiate_annotation(
+        @nospecialize(A::Type{<:Annotation}),
+        @nospecialize(rt::Type),
+        width::Int,
+    )
+    A isa UnionAll || return A
+    return if A <: BatchDuplicated
+        BatchDuplicated{rt, width}
+    elseif A <: BatchDuplicatedNoNeed
+        BatchDuplicatedNoNeed{rt, width}
+    elseif A <: BatchDuplicatedFunc
+        BatchDuplicatedFunc{rt, width}
+    elseif A <: BatchMixedDuplicated
+        BatchMixedDuplicated{rt, width}
+    else
+        A{rt}
+    end
+end
+
 @inline function thunkbase(
     mi::Core.MethodInstance,
     World::Union{UInt, Nothing},
@@ -7307,7 +7354,7 @@ end
     rt2 = if !run_enzyme
         Const{rrt}
     elseif A2 isa UnionAll
-        A2{rrt}
+        instantiate_annotation(A2, rrt, width)
     else
         @assert A isa DataType
         # Can we relax this condition?
@@ -7612,7 +7659,7 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
                 error($estr)
             end
         end
-        A{rrt}
+        instantiate_annotation(A, rrt, Width)
     else
         @assert A isa DataType
         A

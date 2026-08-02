@@ -756,6 +756,8 @@ function body_runtime_generic_rev(N, Width, Atomic, wrapped, primttypes, shadowa
 
             annotation = if $Width != 1 && annotation0 <: Duplicated
                 BatchDuplicated{rt,$Width}
+            elseif $Width != 1 && annotation0 <: MixedDuplicated
+                BatchMixedDuplicated{rt, $Width}
             else
                 annotation0
             end
