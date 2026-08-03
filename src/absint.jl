@@ -13,6 +13,86 @@ function unbind(@nospecialize(val))
    end
 end
 
+"""
+    absint_materialized_box(arg)
+
+Recover the Julia object out of a replica emitted by GPUCompiler's `materialize_box!`, which
+resolves a `julia.constgv` slot to module-resident data rather than to a host address:
+
+```llvm
+@gv_box = private unnamed_addr constant { i64, [8 x i8] } { i64 <tag>, [8 x i8] c"..." }
+```
+
+The tag word yields the type (a small-tag immediate, or a host `DataType` pointer) and the
+payload the value. Only isbits objects are ever materialized this way, so a decoded value is
+`===` to the original for every purpose Julia gives it.
+
+Host code never sees these -- [`relocate_julia_globals!`](@ref) restates them as object
+addresses, which is also what keeps them GC-legal -- but device code does.
+"""
+function absint_materialized_box(@nospecialize(arg::LLVM.Value))::Tuple{Bool, Any}
+    ce = arg
+    while isa(ce, LLVM.ConstantExpr) &&
+            (opcode(ce) == LLVM.API.LLVMAddrSpaceCast || opcode(ce) == LLVM.API.LLVMBitCast)
+        ce = operands(ce)[1]
+    end
+    if !(isa(ce, LLVM.ConstantExpr) && opcode(ce) == LLVM.API.LLVMGetElementPtr)
+        return (false, nothing)
+    end
+    ops = operands(ce)
+    gv = ops[1]
+    if !isa(gv, LLVM.GlobalVariable) || !LLVM.isconstant(gv)
+        return (false, nothing)
+    end
+    init = LLVM.initializer(gv)
+    if init === nothing ||
+            LLVM.API.LLVMGetValueKind(init) != LLVM.API.LLVMConstantStructValueKind
+        return (false, nothing)
+    end
+    fields = collect(operands(init))
+    hdr_idx = findfirst(Base.Fix2(isa, LLVM.ConstantInt), fields)
+    if hdr_idx === nothing || hdr_idx == length(fields)
+        return (false, nothing)
+    end
+    # The reference must be to the payload, not to the tag word or the padding.
+    if length(ops) < 2 || !isa(ops[end], LLVM.ConstantInt) ||
+            convert(Int, ops[end]::LLVM.ConstantInt) != hdr_idx
+        return (false, nothing)
+    end
+    payload = fields[hdr_idx + 1]
+    payloadty = value_type(payload)
+    if !isa(payloadty, LLVM.ArrayType) || eltype(payloadty) != LLVM.Int8Type()
+        return (false, nothing)
+    end
+
+    hdr = convert(UInt, fields[hdr_idx]::LLVM.ConstantInt)
+    tptr = if hdr < (JL_MAX_TAGS << 4)
+        jl_small_typeof = Ptr{Ptr{Cvoid}}(cglobal(:jl_small_typeof))
+        unsafe_load(jl_small_typeof, (hdr ÷ Core.sizeof(Ptr{Cvoid})) + 1)
+    else
+        reinterpret(Ptr{Cvoid}, hdr)
+    end
+    if tptr == C_NULL
+        return (false, nothing)
+    end
+    T = Base.unsafe_pointer_to_objref(tptr)
+    if !isa(T, DataType) || !Base.isbitstype(T)
+        return (false, nothing)
+    end
+    n = Int(length(payloadty))
+    if n != Core.sizeof(T)
+        return (false, nothing)
+    end
+    bytes = Vector{UInt8}(undef, n)
+    for i in 1:n
+        el = LLVM.Value(LLVM.API.LLVMGetElementAsConstant(payload, Cuint(i - 1)))
+        isa(el, LLVM.ConstantInt) || return (false, nothing)
+        bytes[i] = convert(UInt8, el)
+    end
+    obj = GC.@preserve bytes unsafe_load(Base.reinterpret(Ptr{T}, pointer(bytes)))
+    return (true, obj)
+end
+
 function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked::Bool=false, typetag::Bool=false)::Tuple{Bool, Any}
     if (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)) || (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Derived)) || istracked
         ce, _ = get_base_and_offset(arg; offsetAllowed = false, inttoptr = true)
@@ -60,6 +140,10 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
 	    reinterpret(Ptr{Cvoid}, ce)
 	  end
             val = Base.unsafe_pointer_to_objref(ptr)
+            return (true, val)
+        end
+        legal, val = absint_materialized_box(ce)
+        if legal
             return (true, val)
         end
     end
@@ -432,6 +516,10 @@ function abs_typeof(
         if isa(ce, LLVM.ConstantInt)
             ptr = reinterpret(Ptr{Cvoid}, convert(UInt, ce))
             val = Base.unsafe_pointer_to_objref(ptr)
+            return (true, Core.Typeof(val), GPUCompiler.BITS_REF)
+        end
+        legal, val = absint_materialized_box(ce)
+        if legal
             return (true, Core.Typeof(val), GPUCompiler.BITS_REF)
         end
     end

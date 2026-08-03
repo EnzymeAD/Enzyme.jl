@@ -719,6 +719,7 @@ end
 include("compiler/optimize.jl")
 include("compiler/interpreter.jl")
 include("compiler/validation.jl")
+include("compiler/relocation.jl")
 include("typeutils/inference.jl")
 
 import .Interpreter: isKWCallSignature
@@ -726,28 +727,30 @@ import .Interpreter: isKWCallSignature
 # Drive inference on `mi` when GPUCompiler's `compile_method_instance` runs with an
 # `EnzymeInterpreter` (GPUCompiler only provides `drive_inference!` for `GPUInterpreter`).
 @static if isdefined(GPUCompiler, :drive_inference!) # GPUCompiler v2
-@static if VERSION >= v"1.11.0-DEV.1552"
-    GPUCompiler.drive_inference!(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance) =
-        GPUCompiler.CompilerCaching.typeinf!(interp, mi)
-else
-    # mirrors the 1.10 `CodeCache`-based implementation in GPUCompiler's deprecated.jl
-    function GPUCompiler.drive_inference!(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance)
-        src = Core.Compiler.typeinf_ext_toplevel(interp, mi)
-        @assert src !== nothing "Inference of $mi failed"
+    @static if VERSION >= v"1.11.0-DEV.1552"
+        GPUCompiler.drive_inference!(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance) =
+            GPUCompiler.CompilerCaching.typeinf!(interp, mi)
+    else
+        # mirrors the 1.10 `CodeCache`-based implementation in GPUCompiler's deprecated.jl
+        function GPUCompiler.drive_inference!(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance)
+            src = Core.Compiler.typeinf_ext_toplevel(interp, mi)
+            @assert src !== nothing "Inference of $mi failed"
 
-        # For const-return CIs the inference result wasn't recorded — set it from the
-        # returned source so callers re-using the CI don't need to re-infer.
-        wvc = Core.Compiler.WorldView(interp.code_cache,
-                                      Core.Compiler.WorldRange(interp.world, interp.world))
-        if Core.Compiler.haskey(wvc, mi)
-            ci = Core.Compiler.getindex(wvc, mi)
-            if ci.inferred === nothing
-                @atomic ci.inferred = src
+            # For const-return CIs the inference result wasn't recorded — set it from the
+            # returned source so callers re-using the CI don't need to re-infer.
+            wvc = Core.Compiler.WorldView(
+                interp.code_cache,
+                Core.Compiler.WorldRange(interp.world, interp.world)
+            )
+            if Core.Compiler.haskey(wvc, mi)
+                ci = Core.Compiler.getindex(wvc, mi)
+                if ci.inferred === nothing
+                    @atomic ci.inferred = src
+                end
             end
+            return nothing
         end
-        return nothing
     end
-end
 end # @static if isdefined(GPUCompiler, :drive_inference!)
 
 
@@ -1480,7 +1483,8 @@ function nested_codegen!(
 
     GPUCompiler.prepare_job!(job)
     otherMod, meta = GPUCompiler.emit_llvm(job)
-    
+    relocate_julia_globals!(otherMod, job, meta)
+
     interp = GPUCompiler.get_interpreter(job)
     prepare_llvm(interp, otherMod, job, meta)
 
@@ -5563,17 +5567,12 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     primal_job = CompilerJob(primal, primal_config, job.world)
     @safe_debug "Emit LLVM with" primal_job
     GPUCompiler.prepare_job!(primal_job)
-    # TODO(relocatable-globals): On the GPUCompiler v2 path, `emit_llvm` runs
-    # `relocate_gvs!`, which materializes `julia.constgv` isbits constants as
-    # device-resident boxes and leaves other constgv globals as external
-    # declarations (their initializers were stripped by `compile_method_instance`
-    # for session portability). Enzyme's analysis passes assume the v1 form, where
-    # every constgv global carries a baked host-pointer `inttoptr` initializer, so
-    # they can no longer fold/track these constants. This is the root cause of the
-    # remaining Julia 1.12 failures (activity/shadow errors in test/basic.jl). The
-    # right fix is to make Enzyme relocatable — handle the materialized boxes and
-    # session-portable globals directly — rather than depending on baked addresses.
     mod, meta = GPUCompiler.emit_llvm(primal_job)
+    # On the GPUCompiler v2 path `emit_llvm` has just run `relocate_gvs!`, which
+    # resolves `julia.constgv` slots into a form Enzyme does not understand (and, for
+    # materialized boxes, one that is not GC-legal on the host). Restate them in Enzyme's
+    # own reference form before anything else looks at the module.
+    relocate_julia_globals!(mod, primal_job, meta)
     edges = enzyme_context.edges
 
     primal_interp = GPUCompiler.get_interpreter(primal_job)

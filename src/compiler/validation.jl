@@ -362,20 +362,12 @@ function try_replace_constant_load!(inst::LLVM.Instruction; check_mutability::Bo
     if isa(addr, LLVM.GlobalVariable) && (haskey(metadata(addr), "julia.constgv") || !check_mutability)
         paddr = addr
         addr = LLVM.initializer(paddr)
-        # TODO(relocatable-globals): Under GPUCompiler v2, `compile_method_instance`
-        # strips `julia.constgv` initializers for session portability and defers
-        # them to `relocate_gvs!`, which either materializes a device-resident box
-        # or leaves the global as an external declaration (initializer === nothing).
-        # Enzyme assumes v1 behaviour, where these globals always carry a baked
-        # host-pointer `inttoptr` initializer, so we can only bail out here rather
-        # than fold the load. This defeats constant folding and, downstream, breaks
-        # activity analysis (materialized `_box` globals look active) and shadow-
-        # global creation (external-declaration constgvs have no shadow) — see the
-        # remaining Julia 1.12 failures in test/basic.jl (e.g. 255, 284, 620, 660).
-        # The real fix is to make Enzyme relocatable: teach it to understand the
-        # materialized boxes / session-portable globals rather than requiring baked
-        # host addresses. Bailing keeps us correct (falls back to a real load) but
-        # loses the optimization on the v2 path.
+        # Folding needs the object's address. For host code `relocate_julia_globals!`
+        # has already put one here, whatever form GPUCompiler resolved the slot to.
+        # Device code keeps its module-resident replica, which has no address to fold
+        # to (`absint` decodes it instead), and a non-toplevel GPUCompiler v2 job may
+        # not have resolved the slot at all. Bailing out keeps us correct -- the load
+        # stays a load -- and only costs the optimization.
         addr === nothing && return inst
         gname = LLVM.name(paddr) * "\$false"
         addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
@@ -384,8 +376,7 @@ function try_replace_constant_load!(inst::LLVM.Instruction; check_mutability::Bo
         paddr = operands(addr)[1]
         if isa(paddr, LLVM.GlobalVariable) && (haskey(metadata(paddr), "julia.constgv") || !check_mutability)
             addr = LLVM.initializer(paddr)
-            # See TODO(relocatable-globals) above: GPUCompiler v2 may leave this
-            # `julia.constgv` global as an initializer-less external declaration.
+            # As above: an unresolved slot has no address to fold to.
             addr === nothing && return inst
             gname = LLVM.name(paddr) * "\$true"
             base_addr, _ = get_base_and_offset(addr; offsetAllowed = true, inttoptr = false)

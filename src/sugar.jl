@@ -23,7 +23,9 @@ end
 
         GPUCompiler.prepare_job!(job)
         mod, meta = GPUCompiler.emit_llvm(job)
-        
+        Compiler.relocate_julia_globals!(mod, job, meta)
+
+
         copysetfn = meta.entry
         blk = first(LLVM.blocks(copysetfn))
         iter = LLVM.API.LLVMGetFirstInstruction(blk)
