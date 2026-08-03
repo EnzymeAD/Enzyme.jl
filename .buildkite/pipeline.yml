@@ -19,7 +19,7 @@ steps:
           using Pkg
           pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
           Pkg.develop(pkgs)
-          Pkg.add(PackageSpec(; name="CUDA", version="6"))' || exit 3
+          Pkg.add(PackageSpec(; name="CUDA", rev="main"))' || exit 3
 
       echo "+++ Run tests"
       julia --color=yes test/cuda.jl
@@ -45,12 +45,12 @@ steps:
 #           pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
 #           push!(pkgs, PackageSpec(; name="AMDGPU"))
 #           Pkg.develop(pkgs)' || exit 3
-# 
+#
 #       echo "+++ Run tests"
 #       julia --color=yes test/amdgpu.jl
 #     env:
 #       JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
-# 
+#
   - label: "Metal Julia v{{matrix.version}}"
     matrix:
       setup:
@@ -71,7 +71,7 @@ steps:
           using Pkg
           pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
           Pkg.develop(pkgs)
-          Pkg.add([PackageSpec(; name="Metal")])' || exit 3
+          Pkg.add([PackageSpec(; name="Metal", rev="main")])' || exit 3
 
       echo "+++ Run tests"
       julia --color=yes test/metal.jl
