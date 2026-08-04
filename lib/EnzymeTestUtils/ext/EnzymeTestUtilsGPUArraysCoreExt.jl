@@ -70,7 +70,10 @@ function EnzymeTestUtils.to_vec(x::AbstractGPUArray{<:Complex{<:EnzymeTestUtils.
         x_vec_new_real = view(x_vec_new, 1:length(x))
         x_vec_new_imag = view(x_vec_new, (length(x) + 1):(2 * length(x)))
         x_vec_complex = reshape(complex.(x_vec_new_real, x_vec_new_imag), sz)
-        x_new .= x_vec_complex
+        # `x_vec_new` may be host-backed (e.g. the vector FiniteDifferences hands back), in
+        # which case `x_vec_complex` is too. Broadcasting into `x_new` would then capture a
+        # host array in a kernel; `copyto!` is a memcpy and handles either source.
+        copyto!(x_new, x_vec_complex)
         seen_xs[x] = x_new
         return x_new
     end
