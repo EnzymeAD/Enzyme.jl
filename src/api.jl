@@ -1103,6 +1103,24 @@ function zcache!(val)
     ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
 end
 
+"""
+    attributor_stack_size!(val::Integer)
+
+Size in bytes of the stack Enzyme runs the LLVM Attributor on (64MB by default).
+The Attributor recurses with the depth of the code being differentiated, so rather
+than run on the stack of whichever task happens to call `autodiff` -- a Julia `Task`
+only gets a 4MB stack, and a `Distributed` worker runs every request on one -- Enzyme
+runs it on a stack of this size. Setting this to `0` runs the Attributor on the
+calling stack instead.
+
+The Attributor only runs on Julia versions prior to 1.12, so this has no effect on
+1.12 and later.
+"""
+function attributor_stack_size!(val)
+    ptr = cglobal((:EnzymeAttributorStackSize, libEnzyme))
+    return ccall((:EnzymeSetCLInteger, libEnzyme), Cvoid, (Ptr{Cvoid}, Int64), ptr, val)
+end
+
 
 """
     printperf!(val::Bool)
