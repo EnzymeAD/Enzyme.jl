@@ -58,12 +58,9 @@ end
     @testset "tests pass for functions with no rules" begin
         @testset "unary function tests" begin
             combinations = [
-                "vector arguments" => (Vector, f_array),
-                "matrix arguments" => (Matrix, f_array),
-                "multidimensional array arguments" => (Array{<:Any, 3}, f_array),
-                "tuple argument and return" => (Tuple, f_tuple),
-                "namedtuple argument and return" => (NamedTuple, f_namedtuple),
-                "struct argument and return" => (TestStruct, f_struct),
+                "vector arguments" => (CuVector, f_array),
+                "matrix arguments" => (CuMatrix, f_array),
+                "multidimensional array arguments" => (CuArray{<:Any, 3}, f_array),
             ]
             sz = (2, 3, 4)
             @testset "$name" for (name, (TT, fun)) in combinations
@@ -80,15 +77,7 @@ end
                     # skip invalid combinations
                     are_activities_compatible(Tret, Tx) || continue
 
-                    if TT <: Array
-                        x = randn(T, sz[1:ndims(TT)])
-                    elseif TT <: Tuple
-                        x = (randn(T), randn(T))
-                    elseif TT <: NamedTuple
-                        x = (a = randn(T), b = randn(T))
-                    else  # TT <: TestStruct
-                        x = TestStruct(randn(T, 5), randn(T))
-                    end
+                    x = CuArray(randn(T, sz[1:ndims(TT)]))
                     atol = rtol = sqrt(eps(real(T)))
                     runtime_activity = TT <: TestStruct && (Tret <: Const)
                     test_forward(fun, Tret, (x, Tx); atol, rtol, runtime_activity)
@@ -111,7 +100,7 @@ end
                 # skip invalid combinations
                 are_activities_compatible(Tret, Tx, Ta) || continue
 
-                x = randn(T, 3)
+                x = CuArray(randn(T, 3))
                 a = randn(T)
                 atol = rtol = sqrt(eps(real(T)))
 
@@ -128,7 +117,7 @@ end
                 # if some are batch, none must be duplicated
                 are_activities_compatible(Tret, Tx) || continue
 
-                x = Hermitian(Float32[1 2; 3 4])
+                x = Hermitian(CuArray(Float32[1 2; 3 4]))
 
                 atol = rtol = 0.01
                 test_forward(f_structured_nan, Tret, (x, Tx); atol, rtol)
@@ -143,7 +132,7 @@ end
                 # if some are batch, none must be duplicated
                 are_activities_compatible(Tret, Tx) || continue
 
-                x = Hermitian(randn(T, 5, 5))
+                x = Hermitian(CuArray(randn(T, 5, 5)))
 
                 atol = rtol = sqrt(eps(real(T)))
                 test_forward(f_structured_array, Tret, (x, Tx); atol, rtol)
@@ -155,7 +144,7 @@ end
                 z = x * 2
                 return (z, z)
             end
-            x = randn(2, 3)
+            x = CuArray(randn(2, 3))
             @testset for Tret in (Const, Duplicated, BatchDuplicated),
                     Tx in (Const, Duplicated, BatchDuplicated)
 
@@ -169,7 +158,7 @@ end
                 z = x * 2
                 return (z, z)
             end
-            x = randn(2, 3)
+            x = CuArray(randn(2, 3))
             @testset for Tret in (Const, Duplicated, BatchDuplicated),
                     Tx in (Const, Duplicated, BatchDuplicated)
 
@@ -190,8 +179,8 @@ end
                 # since y is returned, it needs the same activity as the return type
                 Ty = Tret
 
-                x = randn(T, sz)
-                y = zeros(T, sz)
+                x = CuArray(randn(T, sz))
+                y = CuArray(zeros(T, sz))
                 a = randn(T)
 
                 atol = rtol = sqrt(eps(real(T)))
@@ -203,7 +192,7 @@ end
 
         @testset "incorrect mutated argument detected" begin
             @testset for Tx in (Const, Duplicated)
-                x = randn(3)
+                x = CuArray(randn(3))
                 a = randn()
 
                 test_forward(f_kwargs_fwd!, Const, (x, Tx); fkwargs = (; a))
@@ -224,74 +213,13 @@ end
                 # if some are batch, all non-Const must be batch
                 are_activities_compatible(Tret, Tc, Ty) || continue
 
-                c = MutatedCallable(randn(T, n))
+                c = MutatedCallable(CuArray(randn(T, n)))
                 y = randn(T, n)
 
                 atol = rtol = sqrt(eps(real(T)))
                 @test !fails() do
                     test_forward((c, Tc), Tret, (y, Ty); atol, rtol)
                 end
-            end
-        end
-    end
-
-    @testset "kwargs correctly forwarded" begin
-        @testset for Tret in (Duplicated, BatchDuplicated),
-                Tx in (Const, Duplicated, BatchDuplicated)
-
-            are_activities_compatible(Tret, Tx) || continue
-
-            x = randn(3)
-            a = randn()
-
-            @test fails() do
-                test_forward(f_kwargs_fwd, Tret, (x, Tx))
-            end
-            test_forward(f_kwargs_fwd, Tret, (x, Tx); fkwargs = (; a))
-        end
-    end
-
-    @testset "incorrect primal detected" begin
-        @testset for Tret in (Duplicated, BatchDuplicated),
-                Tx in (Const, Duplicated, BatchDuplicated)
-
-            are_activities_compatible(Tret, Tx) || continue
-
-            x = randn(3)
-            a = randn()
-
-            test_forward(f_kwargs_fwd, Tret, (x, Tx); fkwargs = (; a))
-            fkwargs = (; a, incorrect_primal = true)
-            @test fails() do
-                test_forward(f_kwargs_fwd, Tret, (x, Tx); fkwargs)
-            end
-        end
-    end
-
-    @testset "incorrect tangent detected" begin
-        @testset for Tret in (Duplicated, DuplicatedNoNeed), Tx in (Const, Duplicated)
-            x = randn(3)
-            a = randn()
-
-            test_forward(f_kwargs_fwd, Tret, (x, Tx); fkwargs = (; a))
-            fkwargs = (; a, incorrect_tangent = true)
-            @test fails() do
-                test_forward(f_kwargs_fwd, Tret, (x, Tx); fkwargs)
-            end
-        end
-    end
-
-    @testset "incorrect batch tangent detected" begin
-        @testset for Tret in (BatchDuplicated, BatchDuplicatedNoNeed),
-                Tx in (Const, BatchDuplicated)
-
-            x = randn(3)
-            a = randn()
-
-            test_forward(f_kwargs_fwd, Tret, (x, Tx); fkwargs = (; a))
-            fkwargs = (; a, incorrect_batched_tangent = true)
-            @test fails() do
-                test_forward(f_kwargs_fwd, Tret, (x, Tx); fkwargs)
             end
         end
     end
