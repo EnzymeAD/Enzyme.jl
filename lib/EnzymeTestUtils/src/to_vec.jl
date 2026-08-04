@@ -100,6 +100,15 @@ acopyto!(dst, src) = Base.copyto!(dst, src)
 function append_or_merge(prev::Union{Nothing, Tuple{AbstractVector, Bool}}, newv::AbstractVector)::Tuple{AbstractVector, Bool}
     if prev === nothing
         return (newv, false)
+    elseif isempty(newv)
+        # nothing to merge in, so keep `prev` and its allocation as-is
+        return prev
+    elseif isempty(prev[1])
+        # `prev` holds no data: constant and undefined fields vectorize to an empty host
+        # vector, and appending into it would drag a GPU-backed `newv` back to the host.
+        # Let `newv` supply the container instead. Flagged as not-a-new-allocation, since
+        # `newv` may alias the object being vectorized (e.g. a `reshape` of it).
+        return (newv, false)
     elseif prev[2] && eltype(newv) <: eltype(prev[1])
         append!(prev[1], newv)
         return prev
@@ -109,10 +118,9 @@ function append_or_merge(prev::Union{Nothing, Tuple{AbstractVector, Bool}}, newv
             append!(prev[1], newv)
             return prev
         else
-            # allocate like whichever input actually holds data, so that e.g. GPU-backed
-            # vectors stay on the device instead of being merged into a host `Vector`
-            proto = isempty(prev[1]) ? newv : prev[1]
-            res = similar(proto, ET2, length(prev[1]) + length(newv))
+            # allocate like `prev`, which by here is known to hold data, so that e.g.
+            # GPU-backed vectors stay on the device instead of merging into a host `Vector`
+            res = similar(prev[1], ET2, length(prev[1]) + length(newv))
             acopyto!(@view(res[1:length(prev[1])]), prev[1])
             acopyto!(@view(res[length(prev[1])+1:end]), newv)
             return (res, true)
