@@ -245,11 +245,15 @@ end
 end
 
 #=
-Rules from EnzymeGPUArraysCoreExt for dense matmul / dot on GPU arrays. 
+The matmul/dot rules on a real backend, where they route through CUBLAS instead of
+the GPUArrays fallback kernels. This file also covers the allocating `A * B` and
+reductions over the result, neither of which works on JLArray (see
+test/ext/jlarrays.jl for why, and for the rest of the coverage).
 =#
 @testset "GPUArrays linalg rules" begin
     cu(x) = CuArray(x)
 
+    # sum(A·B) seeds dC with ones, so dA = ones·B' and dB = A'·ones.
     @testset "matmul reverse" begin
         A0 = randn(Float32, 3, 4)
         B0 = randn(Float32, 4, 2)
@@ -260,6 +264,8 @@ Rules from EnzymeGPUArraysCoreExt for dense matmul / dot on GPU arrays.
         @test Array(dB) ≈ A0' * ones(Float32, 3, 2)
     end
 
+    # `X` plain and transposed in one loss, so both cotangents accumulate into the
+    # same shadow. Checked against central differences.
     @testset "composed transpose matmul" begin
         X0 = randn(Float32, 6, 3)
         β0 = randn(Float32, 3)
@@ -275,6 +281,7 @@ Rules from EnzymeGPUArraysCoreExt for dense matmul / dot on GPU arrays.
         @test Array(dβ) ≈ fdβ rtol = 1.0f-2
     end
 
+    # 3-arg `mul!` on an explicit buffer, the path the JLArray tests use throughout.
     @testset "mul! reverse (preallocated)" begin
         A0 = randn(Float32, 3, 4)
         B0 = randn(Float32, 4, 2)
@@ -301,8 +308,8 @@ Rules from EnzymeGPUArraysCoreExt for dense matmul / dot on GPU arrays.
         @test Array(db) ≈ a0
     end
 
-    # Symmetric/Hermitian reach `generic_matmatmul!` as an 'S'/'H' char; the rule
-    # refuses them rather than handing back the cotangent of the full matrix.
+    # Symmetric/Hermitian operands aren't supported yet; the rule rejects them
+    # instead of returning the full matrix's cotangent.
     @testset "Symmetric operand is rejected" begin
         n = 4
         X0 = randn(Float32, n, n)

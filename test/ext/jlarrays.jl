@@ -12,25 +12,21 @@ end
 end
 
 #=
-AbstractGPUArray linear-algebra rules (matmul / dot). JLArray is a CPU-backed
-`AbstractGPUArray`, so it reaches these rules through the same LinearAlgebra
-entry points a real backend does, without needing a device.
+The AbstractGPUArray matmul/dot rules. JLArray is a CPU-backed AbstractGPUArray,
+so it hits the same LinearAlgebra entry points a real backend does, no device
+needed.
 
-The rules live on `generic_matmatmul!` / `generic_matvecmul!`, so the tests drive
-`mul!` with an explicit output buffer and differentiate a function that returns
-nothing, seeding the output's shadow with ones. That is the cotangent `sum(C)`
-would hand back, and it keeps every testset here on the rules under test: a
-reduction over a JLArray goes through the backend's `mapreducedim!` kernel, and
-Enzyme cannot yet differentiate that one (LLVM verifier error out of
-`EnzymeCreateAugmentedPrimal`). `dot` is not an option either -- GPUArrays infers
-it as `Any`, so nesting it inside a larger function asks the rule for a shadow of
-a scalar.
+The rules sit on `generic_matmatmul!` / `generic_matvecmul!`, so these tests call
+`mul!` into an explicit buffer and seed the output shadow with ones, which is what
+`sum(C)` would hand back. A reduction can't be used instead: `mapreducedim!` over
+a JLArray doesn't differentiate yet (LLVM verifier error out of
+`EnzymeCreateAugmentedPrimal`), and `dot` on GPUArrays infers as `Any`, so nesting
+it asks the rule for a scalar's shadow.
 
-Not covered for the same reason: the allocating `A * B`. It reaches the same
-rules, but the shadow of the array `similar` hands back is never zeroed for an
-AbstractGPUArray, so the reverse pass reads junk out of it instead of the
-incoming cotangent -- an allocation problem rather than a matmul one, it hits any
-rule whose output was freshly allocated, and it does not reproduce on CUDA.
+The allocating `A * B` isn't tested here either. The shadow of the array `similar`
+returns is never zeroed for an AbstractGPUArray, so the reverse pass reads junk
+instead of the incoming cotangent. That affects any rule with a freshly allocated
+output and doesn't happen on CUDA.
 =#
 @testset "GPUArrays linalg rules" begin
     jl(x) = JLArray(x)
@@ -40,11 +36,9 @@ rule whose output was freshly allocated, and it does not reproduce on CUDA.
         return nothing
     end
 
-    #=
-    Central differences over the entries of `X0`. For a complex input Enzyme's
-    cotangent of a real-valued loss is ∂L/∂Re + i·∂L/∂Im, so both directions are
-    needed.
-    =#
+    # Central differences over the entries of `X0`. For complex inputs Enzyme's
+    # cotangent of a real loss is ∂L/∂Re + i·∂L/∂Im, so the imaginary direction
+    # gets its own difference.
     function fdgrad(f, X0, ϵ = 1.0e-6)
         g = zero(X0)
         for idx in eachindex(X0)
@@ -79,12 +73,9 @@ rule whose output was freshly allocated, and it does not reproduce on CUDA.
         @test collect(dB) ≈ A0' * ones_mn
     end
 
-    #=
-    Batch width > 1, which `_bget`, `_dscalar` and every `ntuple(Val(N))` in the
-    rules exist to serve and nothing else here reaches. The shadows start at
-    different values so this also pins that each batch element accumulates into
-    its own array rather than all of them landing in the first.
-    =#
+    # Width 2, the only case that reaches `_bget` and the `ntuple(Val(N))` loops.
+    # The shadows start at different values, so this also checks each batch
+    # element accumulates into its own array.
     @testset "batched matmul reverse" begin
         m, k, n = 3, 4, 2
         A0 = randn(m, k)
@@ -101,8 +92,27 @@ rule whose output was freshly allocated, and it does not reproduce on CUDA.
         @test collect(dA2) ≈ -2.0 .+ expected
     end
 
-    # A `Const` output has no shadow, so the rule's early return is what runs and
-    # nothing at all flows back into the operands.
+    # Active α at width 2, where the cotangent comes back as a tuple of scalars:
+    # dα[i] = ⟨dCᵢ, A·B⟩.
+    @testset "batched matmul reverse, Active alpha" begin
+        m, k, n = 3, 4, 2
+        A0 = randn(m, k)
+        B0 = randn(k, n)
+        function lossα!(C, A, B, α)
+            mul!(C, A, B, α, 0.5)
+            return nothing
+        end
+        out = Enzyme.autodiff(
+            Reverse, lossα!, Const,
+            BatchDuplicated(jl(randn(m, n)), (jl(ones(m, n)), jl(fill(2.0, m, n)))),
+            Const(jl(A0)), Const(jl(B0)), Active(2.0),
+        )
+        s = sum(A0 * B0)
+        @test all(out[1][4] .≈ (s, 2.0 * s))
+    end
+
+    # A `Const` output has no shadow, so the rule returns early and the operands
+    # get nothing.
     @testset "Const output buffer" begin
         m, k, n = 3, 4, 2
         dA = jl(fill(7.0, m, k))
@@ -114,10 +124,8 @@ rule whose output was freshly allocated, and it does not reproduce on CUDA.
         @test all(collect(dA) .≈ 7.0)
     end
 
-    #=
-    The same operand plain and transposed, and both products matrix-vector: two
-    passes through `generic_matvecmul!`, with tA = 'N' and then 'T'.
-    =#
+    # The same operand plain and transposed, both products matrix-vector: two
+    # passes through `generic_matvecmul!`, tA = 'N' then 'T'.
     @testset "matvec reverse with transpose" begin
         X0 = randn(6, 3)
         β0 = randn(3)
@@ -140,13 +148,11 @@ rule whose output was freshly allocated, and it does not reproduce on CUDA.
     end
 
     #=
-    Wrapped operands, where the pullback's char algebra stops being trivial: it
-    rewrites each cotangent as one more `generic_matmatmul!` with β = 1, and the
-    chars it has to pick differ per combination -- 'C' is a genuine adjoint once
-    the eltype is complex, and a transposed complex operand needs a materialized
-    conjugate that no char can express. Enzyme's cotangent for a real-valued loss
-    of complex inputs is ∂L/∂Re + i·∂L/∂Im, so a real `dC` of ones is the seed for
-    `real(sum(C))`, which central differences reproduce.
+    Wrapped operands, where the char algebra in `_pullback!` actually matters: the
+    chars differ per combination, 'C' is a real adjoint once the eltype is complex,
+    and a transposed complex operand needs a materialized conjugate that no char
+    can express. A real `dC` of ones seeds `real(sum(C))`, which is what `fdgrad`
+    differentiates.
     =#
     @testset "matmul reverse, $name" for (name, T, wa, wb) in (
             ("transpose(A)·B", Float64, transpose, identity),
@@ -174,11 +180,9 @@ rule whose output was freshly allocated, and it does not reproduce on CUDA.
         @test collect(dA) ≈ fdgrad(cpu, A0) rtol = 1.0e-4
     end
 
-    #=
-    5-arg `mul!`, which the tests above miss: β ≠ 0 scales dC by conj(β), and an
-    Active α/β has to come back typed exactly as the scalar was (and before Julia
-    1.12 the two of them arrive as one `MulAddMul`).
-    =#
+    # 5-arg `mul!`, which the tests above miss: β ≠ 0 scales dC by conj(β), and an
+    # Active α/β has to come back as the scalar's own type (one `MulAddMul` before
+    # Julia 1.12).
     @testset "mul! beta != 0 and Active alpha/beta" begin
         A0 = randn(3, 4)
         B0 = randn(4, 2)
@@ -233,9 +237,8 @@ rule whose output was freshly allocated, and it does not reproduce on CUDA.
         @test collect(db) ≈ a0
     end
 
-    # Batched, where the return cotangent arrives as a tuple of `Active`s rather
-    # than as one `Active`. The shadows start apart so this also pins that each
-    # batch element accumulates into its own array.
+    # Batched, so the return cotangent is a tuple of `Active`s. The shadows start
+    # apart to check per-element accumulation.
     @testset "batched dot reverse" begin
         a0 = randn(6)
         b0 = randn(6)
@@ -250,11 +253,9 @@ rule whose output was freshly allocated, and it does not reproduce on CUDA.
         @test collect(da2) ≈ -2.0 .+ b0
     end
 
-    #=
-    `a`'s cotangent picks up conj(dr) and `b`'s does not, which a real cotangent
-    cannot tell apart -- hence the complex loss (dr = 2-3im). Ground truth is
-    Enzyme on plain `Array`, which no rule here touches.
-    =#
+    # Only `a`'s cotangent picks up conj(dr), which a real cotangent can't tell
+    # apart, so the loss is complex (dr = 2-3im). Reference values come from Enzyme
+    # on plain `Array`s, which these rules don't touch.
     @testset "dot reverse, complex conjugation" begin
         a0 = ComplexF64[1 + 2im, -3 + 1im, 0.5 - 1.5im]
         b0 = ComplexF64[2 - 1im, 0.25 + 3im, -1 + 0.5im]
@@ -278,13 +279,9 @@ rule whose output was freshly allocated, and it does not reproduce on CUDA.
         @test collect(db) ≈ (2 - 3im) .* a0
     end
 
-    #=
-    Symmetric/Hermitian operands reach `generic_matmatmul!` as an 'S'/'H' char and
-    need their cotangent projected onto the stored triangle, which is not a matmul.
-    Triangular ones go to `generic_trimatmul!`/`generic_mattrimul!`, which have no
-    rule at all. Both are follow-up work; until then the rule refuses the ones it
-    does see rather than returning the cotangent of the full matrix.
-    =#
+    # Symmetric/Hermitian operands need their cotangent projected onto the stored
+    # triangle, which isn't a matmul, so the rule rejects them for now. Triangular
+    # operands go elsewhere in LinearAlgebra and have no rule at all.
     @testset "Symmetric operand is rejected" begin
         n = 4
         X0 = randn(n, n)

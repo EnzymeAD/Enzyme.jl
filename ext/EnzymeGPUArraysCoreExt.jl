@@ -8,7 +8,7 @@ using Enzyme.EnzymeCore.EnzymeRules:
     EnzymeRules,
     RevConfig,
     Annotation,
-    AugmentedReturn,
+    augmented_rule_return_type,
     needs_primal,
     needs_shadow,
     overwritten,
@@ -49,41 +49,54 @@ end
 @inline _bget(x, ::Val{1}, ::Int) = x
 @inline _bget(x, ::Val{N}, i::Int) where {N} = x[i]
 
-#=
-The cotangent of an `Active` return. Batching splits this differently from a
-shadow: it is one `Active` at width 1 but an N-tuple *of* `Active`s above it,
-not an `Active` holding a tuple, so the unwrap has to happen per element.
-=#
+# Unwraps the return cotangent. At width > 1 `dret` is a tuple of `Active`s, not
+# one `Active` holding a tuple.
 @inline _dret(dret, w::Val, i::Int) = _bget(dret, w, i).val
 
-#=
-An operand contributes no cotangent when it is `Const`, and also when runtime
-activity hands us a `Duplicated` whose shadow is the primal itself -- writing to
-that would corrupt the value the augmented pass just computed.
-=#
+# True when an operand takes no cotangent: `Const`, or a runtime-activity shadow
+# that aliases the primal. Writing to the latter would clobber the primal.
 @inline _isconst(_, ::Const) = true
 @inline _isconst(config, x::Annotation) =
     EnzymeRules.runtime_activity(config) && x.dval === x.val
 
-# Every rule here returns its output argument and stashes a tape.
-@inline _augreturn(config, out::Annotation, tape) = AugmentedReturn(
-    needs_primal(config) ? out.val : nothing,
-    needs_shadow(config) ? out.dval : nothing,
-    tape,
-)
-
 #=
-Cotangent of an `Active` scalar argument: `f(i)`'s raw (possibly complex)
-contribution projected onto `T`, bare at width 1 and an N-tuple when batched.
-Dispatch on `Val{N}` rather than branching on `N == 1`, which infers as `Any` --
-a reverse rule that misses the argument's exact type is a hard error.
+Augmented return for the rules here: output argument plus a tape. Enzyme checks
+the primal/shadow types, so get them from `augmented_rule_return_type`. Use the
+2-arg form; the 3-arg one is `@generated` on the tape type, and a tape holding an
+`A·B` product doesn't always infer.
 =#
-@inline _dscalar(::Val{1}, ::Type{T}, f::F) where {T, F} = Enzyme._project(T, f(1))::T
-@inline function _dscalar(::Val{N}, ::Type{T}, f::F) where {N, T, F}
-    return ntuple(i -> Enzyme._project(T, f(i))::T, Val(N))
+@inline function _augreturn(config, ::Type{RT}, out::Annotation, tape) where {RT}
+    return augmented_rule_return_type(config, RT)(
+        needs_primal(config) ? out.val : nothing,
+        needs_shadow(config) ? out.dval : nothing,
+        tape,
+    )
 end
 
-# `conj`, materialized; a no-op for real eltypes.
+# `conj(⟨dCᵢ, M⟩)` as a `T`: batch element `i`'s share of dα or dβ. A struct
+# instead of a closure so `ntuple` gets something concrete.
+struct _DotCotangent{T, W, D, M}
+    dvals::D
+    mat::M
+end
+@inline _DotCotangent{T}(::Val{W}, dvals::D, mat::M) where {T, W, D, M} =
+    _DotCotangent{T, W, D, M}(dvals, mat)
+@inline (f::_DotCotangent{T, W})(i::Int) where {T, W} =
+    Enzyme._project(T, conj(dot(_bget(f.dvals, Val(W), i), f.mat)))::T
+
+# Cotangent of an `Active` scalar: bare at width 1, an N-tuple when batched.
+# Dispatch on `Val{N}` rather than an `N == 1` branch, which infers as `Any`.
+# Returning the wrong type here is a hard error.
+@inline _dscalar(w::Val{1}, ::Type{T}, dvals, M) where {T} =
+    _DotCotangent{T}(w, dvals, M)(1)
+@inline _dscalar(w::Val{N}, ::Type{T}, dvals, M) where {N, T} =
+    ntuple(_DotCotangent{T}(w, dvals, M), Val(N))
+
+# Same shape, zero value.
+@inline _dzero(::Val{1}, ::Type{T}) where {T} = zero(T)
+@inline _dzero(::Val{N}, ::Type{T}) where {N, T} = ntuple(Returns(zero(T)), Val(N))
+
+# Materialized `conj`. No-op for real eltypes.
 @inline _conj(X) = eltype(X) <: Real ? X : conj.(X)
 
 @static if VERSION < v"1.12.0-DEV"
@@ -94,12 +107,8 @@ else
         LinearAlgebra.generic_matmatmul!(C, tA, tB, A, B, α, β)
 end
 
-#=
-Before anything reaches the GPU, `mul!` and `*` strip the wrapper off each
-operand and pass a char for how to read the bare array: 'N' plain, 'T'
-transposed, 'C' adjoint (and 'S'/'H' for Symmetric/Hermitian, which these rules
-do not handle -- see `_assert_rectangular`).
-=#
+# `mul!` and `*` unwrap each operand and pass a char saying how to read the bare
+# array: 'N' plain, 'T' transposed, 'C' adjoint, 'S'/'H' Symmetric/Hermitian.
 @inline _plain(t::AbstractChar) = (k = uppercase(t); k == 'N' || k == 'T' || k == 'C')
 @inline _opflags(t::AbstractChar) =
     (k = uppercase(t); k == 'N' ? (false, false) : k == 'T' ? (true, false) : (true, true))
@@ -109,13 +118,11 @@ do not handle -- see `_assert_rectangular`).
 @inline _opdata(X, f::Tuple{Bool, Bool}) = (!f[1] && f[2]) ? _conj(X) : X
 
 #=
-Symmetric/Hermitian operands reach the same entry points, as an 'S'/'H' char.
-Their cotangent is not another matmul -- only one triangle is stored, and each
-of its entries feeds two positions of the wrapped matrix, so it has to be
-projected -- and neither is a triangular operand's, which LinearAlgebra routes
-to `generic_trimatmul!`/`generic_mattrimul!` instead. Both are left to a
-follow-up; refusing them here beats handing back the cotangent of the full
-matrix as if it were the cotangent of the stored one.
+Symmetric/Hermitian operands show up as 'S'/'H'. Only one triangle is stored and
+each entry feeds two positions, so their cotangent needs a projection instead of
+a matmul. Reject them rather than return the full matrix's cotangent. Triangular
+operands go to `generic_trimatmul!`/`generic_mattrimul!` and never get here. Both
+are follow-up work.
 =#
 @inline function _assert_rectangular(tA::AbstractChar, tB::AbstractChar)
     if !(_plain(tA) && _plain(tB))
@@ -130,13 +137,12 @@ matrix as if it were the cotangent of the stored one.
 end
 
 #=
-`dX += factor · op(L, fL) · op(R, fR)`, projected back through the operand's own
-op `tX`. Both cotangents of a matmul have that shape -- `dC·op(B)'` for the left
-operand, `op(A)'·dC` for the right -- so both go back through
-`generic_matmatmul!` with β = 1, which is the accumulation: no temporary, no
-elementwise pass, and the scaling rides along as α. Undoing `tX` rewrites the
-product rather than transposing its result, which is where the operand swap
-comes from.
+`dX += factor · op(L, fL) · op(R, fR)`, projected back through `tX`, the op on the
+operand being written to. Both matmul cotangents have this shape (`dC·op(B)'` for
+the left operand, `op(A)'·dC` for the right), so both go through
+`generic_matmatmul!` with β = 1, which accumulates in place with no temporary and
+takes `factor` as α. Undoing `tX` rewrites the product instead of transposing the
+result, so the operands swap.
 =#
 function _pullback!(dX, tX::AbstractChar, L, fL, R, fR, factor)
     kind = uppercase(tX)
@@ -156,9 +162,8 @@ end
     generic_matmatmul!(C, tA, tB, A, B, α, β)    C = α·op(A)·op(B) + β·C₀
     generic_matvecmul!(y, tA, A, x, α, β)        y = α·op(A)·x + β·y₀
 
-Where every rectangular GPU matmul ends up, whether it came from `*` or from
-3-/5-arg `mul!`, and whether the backend takes it on to CUBLAS or to the
-GPUArrays fallback kernels. One rule per function therefore covers plain,
+Every rectangular GPU matmul goes through these, from `*` or 3-/5-arg `mul!`, on
+CUBLAS or on the GPUArrays fallback kernels. One rule each covers plain,
 transposed and adjointed operands in any combination:
 
     dA += conj(α)·dC·op(B)'          projected back through op(A)
@@ -167,14 +172,14 @@ transposed and adjointed operands in any combination:
     dα  = conj(⟨dC, op(A)·op(B)⟩)
     dβ  = conj(⟨dC, C₀⟩)
 
-The first two are matmuls with a transposition, so they go back through this
-same function with β = 1 and nothing is accumulated by hand -- see `_pullback!`.
+The first two are matmuls, so they go back through this same function with β = 1
+instead of accumulating by hand. See `_pullback!`.
 
-3-arg `mul!` lands here with α = true, β = false, so `dC` gets zeroed, as it
-must: that form overwrites `C` instead of accumulating into it.
+3-arg `mul!` arrives as α = true, β = false, which zeroes `dC`. That's right:
+3-arg `mul!` overwrites `C`.
 
-α and β are separate arguments on Julia ≥1.12 and packed into a `MulAddMul`
-before that, so the rules are version-gated wrappers over the two helpers below.
+α and β are separate arguments on Julia ≥1.12 and one `MulAddMul` before that, so
+the rules below are version-gated wrappers over two shared helpers.
 =#
 
 @inline function _matmul_caches(
@@ -182,11 +187,9 @@ before that, so the rules are version-gated wrappers over the two helpers below.
         ovw_A::Bool, ovw_B::Bool, ::Val{α_active}, ::Val{β_active},
     ) where {α_active, β_active}
     _assert_rectangular(tA, tB)
-    #=
-    dβ needs C₀, dα the product, dB needs A and dA needs B. A `Const` C means the
-    reverse pass returns early and reads none of them, and `cache_prod` costs a
-    second matmul, so gate everything on the cotangent actually being wanted.
-    =#
+    # dβ needs C₀, dα the product, dA needs B, dB needs A. A `Const` C makes the
+    # reverse pass return early and read none of them, and `cache_prod` costs an
+    # extra matmul, so only cache what will actually be read.
     c_const = _isconst(config, C)
     cache_C = (β_active && !c_const) ? copy(C.val) : nothing
     cache_A = (ovw_A && !_isconst(config, B) && !c_const) ? copy(A.val) : nothing
@@ -202,9 +205,9 @@ end
     ) where {α_active, β_active}
     N = width(config)
     if _isconst(config, C)
-        # Without C's shadow there is nothing to pull back from.
-        dα = α_active ? _dscalar(Val(N), typeof(αval), Returns(zero(αval))) : nothing
-        dβ = β_active ? _dscalar(Val(N), typeof(βval), Returns(zero(βval))) : nothing
+        # No shadow on C means nothing to pull back.
+        dα = α_active ? _dzero(Val(N), typeof(αval)) : nothing
+        dβ = β_active ? _dzero(Val(N), typeof(βval)) : nothing
         return (dα, dβ)
     end
 
@@ -213,12 +216,8 @@ end
     Aval = cache_A !== nothing ? cache_A : A.val
     Bval = cache_B !== nothing ? cache_B : B.val
 
-    dα = α_active ?
-        _dscalar(Val(N), typeof(αval), i -> conj(dot(_bget(C.dval, Val(N), i), cache_prod))) :
-        nothing
-    dβ = β_active ?
-        _dscalar(Val(N), typeof(βval), i -> conj(dot(_bget(C.dval, Val(N), i), Cval))) :
-        nothing
+    dα = α_active ? _dscalar(Val(N), typeof(αval), C.dval, cache_prod) : nothing
+    dβ = β_active ? _dscalar(Val(N), typeof(βval), C.dval, Cval) : nothing
 
     αc = conj(αval)
     βc = conj(βval)
@@ -235,7 +234,7 @@ end
         if !b_const
             _pullback!(_bget(B.dval, Val(N), i), tB, Aval, _adjop(fA), dC, (false, false), αc)
         end
-        # β = 1 is the accumulate-into-C case, where this would be a no-op kernel.
+        # Skip the scale at β = 1; it would be a no-op kernel.
         isone(βc) || (dC .*= βc)
         nothing
     end
@@ -245,13 +244,21 @@ end
 
 @static if VERSION < v"1.12.0-DEV"
 
-    #=
-    With α and β packed into one `MulAddMul`, an active α or β arrives as a
-    single active struct, so its cotangent has to come back as that struct type.
-    =#
+    # Here α and β are one `MulAddMul`, so an active α or β is a single active
+    # struct and its cotangent comes back as that struct.
+
+    # `i -> MAM(dα[i], dβ[i])` without the closure.
+    struct _PackMulAddMul{MAM, A, B}
+        dα::A
+        dβ::B
+    end
+    @inline _PackMulAddMul{MAM}(dα::A, dβ::B) where {MAM, A, B} =
+        _PackMulAddMul{MAM, A, B}(dα, dβ)
+    @inline (f::_PackMulAddMul{MAM})(i::Int) where {MAM} = MAM(f.dα[i], f.dβ[i])
+
     @inline _dmuladdmul(::Val{1}, ::Type{MAM}, dα, dβ) where {MAM} = MAM(dα, dβ)
     @inline function _dmuladdmul(::Val{N}, ::Type{MAM}, dα, dβ) where {N, MAM}
-        return ntuple(i -> MAM(dα[i], dβ[i]), Val(N))
+        return ntuple(_PackMulAddMul{MAM}(dα, dβ), Val(N))
     end
 
     function EnzymeRules.augmented_primal(
@@ -273,7 +280,7 @@ end
 
         func.val(C.val, tA.val, tB.val, A.val, B.val, add.val)
 
-        return _augreturn(config, C, tape)
+        return _augreturn(config, RT, C, tape)
     end
 
     function EnzymeRules.reverse(
@@ -316,7 +323,7 @@ end
 
         func.val(y.val, tA.val, A.val, x.val, add.val)
 
-        return _augreturn(config, y, tape)
+        return _augreturn(config, RT, y, tape)
     end
 
     function EnzymeRules.reverse(
@@ -362,7 +369,7 @@ else
 
         func.val(C.val, tA.val, tB.val, A.val, B.val, α.val, β.val)
 
-        return _augreturn(config, C, tape)
+        return _augreturn(config, RT, C, tape)
     end
 
     function EnzymeRules.reverse(
@@ -404,7 +411,7 @@ else
 
         func.val(y.val, tA.val, A.val, x.val, α.val, β.val)
 
-        return _augreturn(config, y, tape)
+        return _augreturn(config, RT, y, tape)
     end
 
     function EnzymeRules.reverse(
@@ -428,23 +435,23 @@ else
 
 end
 
-#=
-dot(a, b) = Σ conj(aᵢ)·bᵢ, so `da += conj(dr)·b` and `db += dr·a`. The
-asymmetry only shows up for complex eltypes; test/ext/jlarrays.jl pins both
-directions against Enzyme's own rule-free CPU path.
-=#
+# dot(a, b) = Σ conj(aᵢ)·bᵢ, so `da += conj(dr)·b` and `db += dr·a`. The asymmetry
+# only shows up for complex eltypes.
 
 function EnzymeRules.augmented_primal(
         config::RevConfig,
         func::Const{typeof(dot)},
-        ::Type,
+        ::Type{RT},
         a::Annotation{<:AbstractGPUArray},
         b::Annotation{<:AbstractGPUArray},
-    )
-    primal = needs_primal(config) ? dot(a.val, b.val) : nothing
+    ) where {RT}
     cache_a = (overwritten(config)[2] && !_isconst(config, b)) ? copy(a.val) : nothing
     cache_b = (overwritten(config)[3] && !_isconst(config, a)) ? copy(b.val) : nothing
-    return AugmentedReturn(primal, nothing, (cache_a, cache_b))
+    tape = (cache_a, cache_b)
+    # A scalar return is `Active`, so there's no shadow to return.
+    return augmented_rule_return_type(config, RT)(
+        needs_primal(config) ? dot(a.val, b.val) : nothing, nothing, tape,
+    )
 end
 
 function EnzymeRules.reverse(
@@ -463,8 +470,16 @@ function EnzymeRules.reverse(
         ntuple(Val(N)) do i
             Base.@_inline_meta
             dr = _dret(dret, Val(N), i)
+            #= axpy! is slower. measured on 5090
+            n	        broadcastmed (µs)	axpy! med (µs)	ratio
+            1 000	    15.90	            23.34	        1.47
+            100 000	    18.76	            22.78	        1.21
+            1 000 000	19.30	            23.38	        1.21
+            10 000 000	163.05	            162.54	        1.00
+            100 000 000	1534	            1537	        1.00
+            =#
             if !_isconst(config, a)
-                # `a` entered conjugated, so its cotangent picks up conj(dr).
+                # `a` is conjugated in the primal, so dr comes back conjugated.
                 _bget(a.dval, Val(N), i) .+= conj(dr) .* bv
             end
             if !_isconst(config, b)
