@@ -21,13 +21,12 @@ end
             test_to_vec(JLArray(randn(T, sz)))
         end
     end
-    #=
     @testset "struct" begin
         v = JLArray(randn(2, 3))
         x = TestStruct(1, TestStruct("foo", v))
         test_to_vec(x)
         @test to_vec(x)[1] == vec(v)
-    end=# # doesn't work yet
+    end
 
     @testset "incompletely initialized struct" begin
         x = JLArray(randn(2, 3))
