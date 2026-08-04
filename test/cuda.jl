@@ -1,6 +1,6 @@
 using CUDA
 using Enzyme
-using LinearAlgebra: dot
+using LinearAlgebra: mul!, dot, Symmetric
 using Test
 
 @testset "CUDA memory copies" begin
@@ -242,4 +242,86 @@ end
     Enzyme.autodiff(Reverse, square!, BatchDuplicated(A, (dA, dA2)))
     @test all(dA .≈ (2:2:64))
     @test all(dA2 .≈ 3*(2:2:64))
+end
+
+#=
+The matmul/dot rules on a real backend, where they route through CUBLAS instead of
+the GPUArrays fallback kernels. This file also covers the allocating `A * B` and
+reductions over the result, neither of which works on JLArray (see
+test/ext/jlarrays.jl for why, and for the rest of the coverage).
+=#
+@testset "GPUArrays linalg rules" begin
+    cu(x) = CuArray(x)
+
+    # sum(A·B) seeds dC with ones, so dA = ones·B' and dB = A'·ones.
+    @testset "matmul reverse" begin
+        A0 = randn(Float32, 3, 4)
+        B0 = randn(Float32, 4, 2)
+        dA = cu(zero(A0))
+        dB = cu(zero(B0))
+        Enzyme.autodiff(Reverse, (A, B) -> sum(A * B), Active, Duplicated(cu(A0), dA), Duplicated(cu(B0), dB))
+        @test Array(dA) ≈ ones(Float32, 3, 2) * B0'
+        @test Array(dB) ≈ A0' * ones(Float32, 3, 2)
+    end
+
+    # `X` plain and transposed in one loss, so both cotangents accumulate into the
+    # same shadow. Checked against central differences.
+    @testset "composed transpose matmul" begin
+        X0 = randn(Float32, 6, 3)
+        β0 = randn(Float32, 3)
+        dX = cu(zero(X0))
+        dβ = cu(zero(β0))
+        Enzyme.autodiff(Reverse, (X, β) -> sum(transpose(X) * (X * β)), Active, Duplicated(cu(X0), dX), Duplicated(cu(β0), dβ))
+        ϵ = 1.0f-3
+        fdβ = map(eachindex(β0)) do i
+            βp = copy(β0); βp[i] += ϵ
+            βm = copy(β0); βm[i] -= ϵ
+            (sum(transpose(X0) * (X0 * βp)) - sum(transpose(X0) * (X0 * βm))) / (2ϵ)
+        end
+        @test Array(dβ) ≈ fdβ rtol = 1.0f-2
+    end
+
+    # 3-arg `mul!` on an explicit buffer, the path the JLArray tests use throughout.
+    @testset "mul! reverse (preallocated)" begin
+        A0 = randn(Float32, 3, 4)
+        B0 = randn(Float32, 4, 2)
+        dA = cu(zero(A0))
+        dB = cu(zero(B0))
+        function matmul!(C, A, B)
+            mul!(C, A, B)
+            return nothing
+        end
+        C = cu(zeros(Float32, 3, 2))
+        dC = cu(ones(Float32, 3, 2))
+        Enzyme.autodiff(Reverse, matmul!, Const, Duplicated(C, dC), Duplicated(cu(A0), dA), Duplicated(cu(B0), dB))
+        @test Array(dA) ≈ ones(Float32, 3, 2) * B0'
+        @test Array(dB) ≈ A0' * ones(Float32, 3, 2)
+    end
+
+    @testset "dot reverse" begin
+        a0 = randn(Float32, 8)
+        b0 = randn(Float32, 8)
+        da = cu(zero(a0))
+        db = cu(zero(b0))
+        Enzyme.autodiff(Reverse, (a, b) -> dot(a, b), Active, Duplicated(cu(a0), da), Duplicated(cu(b0), db))
+        @test Array(da) ≈ b0
+        @test Array(db) ≈ a0
+    end
+
+    # Symmetric/Hermitian operands aren't supported yet; the rule rejects them
+    # instead of returning the full matrix's cotangent.
+    @testset "Symmetric operand is rejected" begin
+        n = 4
+        X0 = randn(Float32, n, n)
+        dX = cu(zero(X0))
+        function matmul!(C, A, B)
+            mul!(C, A, B)
+            return nothing
+        end
+        @test_throws ArgumentError Enzyme.autodiff(
+            Reverse, matmul!, Const,
+            Duplicated(cu(zeros(Float32, n, 3)), cu(ones(Float32, n, 3))),
+            Duplicated(Symmetric(cu(X0), :U), Symmetric(dX, :U)), Const(cu(randn(Float32, n, 3))),
+        )
+    end
 end
