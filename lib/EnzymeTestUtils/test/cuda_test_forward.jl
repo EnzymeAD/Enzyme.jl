@@ -1,4 +1,6 @@
-using Enzyme
+# TODO needs https://github.com/JuliaGPU/CUDA.jl/pull/3214 to work
+
+#=using Enzyme
 using EnzymeTestUtils
 using LinearAlgebra
 using MetaTesting
@@ -209,4 +211,4 @@ end
             end
         end
     end
-end
+end=#

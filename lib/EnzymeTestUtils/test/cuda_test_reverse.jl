@@ -118,7 +118,9 @@ end
                     Tx in (Const, Duplicated, BatchDuplicated)
 
                 are_activities_compatible(Tret, Tx) || continue
-                test_reverse(f, Tret, (x, Tx))
+                # unlike the CPU equivalent, Enzyme reports a need for runtime activity
+                # here when `x` is `Const`
+                test_reverse(f, Tret, (x, Tx); runtime_activity = true)
             end
         end
 
@@ -132,7 +134,9 @@ end
                     Tx in (Const, Duplicated, BatchDuplicated)
 
                 are_activities_compatible(Tret, Tx) || continue
-                test_reverse(f, Tret, (x, Tx))
+                # unlike the CPU equivalent, Enzyme reports a need for runtime activity
+                # here when `x` is `Const`
+                test_reverse(f, Tret, (x, Tx); runtime_activity = true)
             end
         end
 
@@ -151,7 +155,7 @@ end
                 a = randn(T)
 
                 atol = rtol = sqrt(eps(real(T)))
-                test_reverse(f_mut_rev!, Ty, (y, Ty), (x, Tx), (a, Ta); atol, rtol)
+                test_reverse(f_mut_rev!, Ty, (y, Ty), (x, Tx), (a, Ta); atol, rtol, runtime_activity = true)
             end
         end
 
