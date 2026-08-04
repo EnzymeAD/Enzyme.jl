@@ -1,7 +1,7 @@
 using EnzymeTestUtils
 using Random
 using Test
-using CUDA
+using CUDA, JLArrays
 
 Random.seed!(0)
 
@@ -10,6 +10,7 @@ Random.seed!(0)
     include("test_approx.jl")
     include("compatible_activities.jl")
     include("to_vec.jl")
+    include("jlarrays_to_vec.jl")
     include("generate_tangent.jl")
     include("test_forward.jl")
     include("test_reverse.jl")

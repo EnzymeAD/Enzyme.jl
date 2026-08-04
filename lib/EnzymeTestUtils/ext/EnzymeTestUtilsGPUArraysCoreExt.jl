@@ -10,6 +10,17 @@ function EnzymeTestUtils.acopyto!(dst, src::AbstractGPUArray)
     EnzymeTestUtils.acopyto!(dst, temp)
 end
 
+# `Base.dataids` falls back to `objectid` for GPU arrays, so it cannot tell that an array
+# and a reshape of it share memory. The device pointer can.
+EnzymeTestUtils.aliasids(x::AbstractGPUArray) = (UInt(pointer(x)),)
+
+# the fields of a GPU array are device pointers and reference counts, which carry no
+# semantic information, so compare only the contents
+function EnzymeTestUtils.test_approx(x::AbstractGPUArray{<:Number}, y::AbstractGPUArray{<:Number}, msg; kwargs...)
+    EnzymeTestUtils.@test_msg msg isapprox(x, y; kwargs...)
+    return nothing
+end
+
 # basic containers: loop over defined elements, recursively converting them to vectors
 function EnzymeTestUtils.to_vec(x::AbstractGPUArray{<:EnzymeTestUtils.ElementType}, seen_vecs::EnzymeTestUtils.AliasDict)
     has_seen = haskey(seen_vecs, x)
@@ -57,7 +68,7 @@ function EnzymeTestUtils.to_vec(x::AbstractGPUArray{<:Complex{<:EnzymeTestUtils.
         is_const && return x
         x_new = Core.Typeof(x)(undef, sz)
         x_vec_new_real = view(x_vec_new, 1:length(x))
-        x_vec_new_imag = view(x_vec_new, (length(x) + 1):(2*length(x)))
+        x_vec_new_imag = view(x_vec_new, (length(x) + 1):(2 * length(x)))
         x_vec_complex = reshape(complex.(x_vec_new_real, x_vec_new_imag), sz)
         x_new .= x_vec_complex
         seen_xs[x] = x_new
@@ -67,7 +78,7 @@ function EnzymeTestUtils.to_vec(x::AbstractGPUArray{<:Complex{<:EnzymeTestUtils.
 end
 
 # basic containers: loop over defined elements, recursively converting them to vectors
-function to_vec(x::AbstractGPUArray, seen_vecs::EnzymeTestUtils.AliasDict)
+function EnzymeTestUtils.to_vec(x::AbstractGPUArray, seen_vecs::EnzymeTestUtils.AliasDict)
     has_seen = haskey(seen_vecs, x)
     is_const = Enzyme.Compiler.guaranteed_const(Core.Typeof(x))
     if has_seen || is_const
@@ -79,7 +90,7 @@ function to_vec(x::AbstractGPUArray, seen_vecs::EnzymeTestUtils.AliasDict)
         l = 0
         for i in eachindex(x)
             isassigned(x, i) || continue
-            xi_vec, xi_from_vec = to_vec(x[i], seen_vecs)
+            xi_vec, xi_from_vec = EnzymeTestUtils.to_vec(x[i], seen_vecs)
             push!(subvec_inds, (l + 1):(l + length(xi_vec)))
             push!(from_vecs, xi_from_vec)
             x_vecs = EnzymeTestUtils.append_or_merge(x_vecs, xi_vec)
@@ -98,7 +109,7 @@ function to_vec(x::AbstractGPUArray, seen_vecs::EnzymeTestUtils.AliasDict)
         end
         has_seen && return reshape(seen_xs[x], size(x))
         is_const && return x
-        x_new = Array{eltype(x_vew_new)}(undef, size(x))
+        x_new = Array{eltype(x)}(undef, size(x))
         k = 1
         for i in eachindex(x)
             isassigned(x, i) || continue
