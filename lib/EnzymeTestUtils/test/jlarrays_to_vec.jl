@@ -59,13 +59,17 @@ end
         @testset for T in (Float32, Float64, ComplexF32, ComplexF64),
                 sz in (2, (2, 3), (2, 3, 4))
 
-                test_to_vec([JLArray(randn(T, sz)) for _ in 1:10])
+            test_to_vec([JLArray(randn(T, sz)) for _ in 1:10])
         end
     end
 
     @testset "dict" begin
         x = Dict(:a => JLArray(randn(2)), :b => JLArray(randn(3)))
         test_to_vec(x)
+        # Float32 matches the eltype of the empty host vectors that a `Dict`'s constant
+        # fields produce, which is the case where merging used to append the device data
+        # into the host placeholder instead of keeping it on the device
+        test_to_vec(Dict(:a => JLArray(randn(Float32, 2)), :b => JLArray(randn(Float32, 3))))
     end
 
     @testset "views of arrays" begin
