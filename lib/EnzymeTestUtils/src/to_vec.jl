@@ -6,24 +6,32 @@ struct AliasDict{K,V} <: AbstractDict{K,V}
 end
 AliasDict() = AliasDict(IdDict(), IdDict{Tuple{UInt,Vararg{UInt}},Any}())
 
+# identifiers of the memory backing `x`, or `nothing` if aliasing can only be detected by
+# object identity. Objects that share memory (e.g. an array and a reshape of it) must
+# return equal identifiers. Extended for GPU arrays by the GPUArraysCore extension, since
+# `Base.dataids` falls back to `objectid` for them.
+aliasids(x) = nothing
+aliasids(x::Array) = Base.dataids(x)
+
 function Base.haskey(d::AliasDict, key)
     haskey(d.id_dict, key) && return true
-    key isa Array && haskey(d.dataids_dict, Base.dataids(key)) && return true
-    return false
+    ids = aliasids(key)
+    ids === nothing && return false
+    return haskey(d.dataids_dict, ids)
 end
 
-Base.getindex(d::AliasDict, key) = d.id_dict[key]
-function Base.getindex(d::AliasDict, key::Array)
+function Base.getindex(d::AliasDict, key)
     haskey(d.id_dict, key) && return d.id_dict[key]
-    dataids = Base.dataids(key)
-    return d.dataids_dict[dataids]
+    ids = aliasids(key)
+    ids === nothing && throw(KeyError(key))
+    return d.dataids_dict[ids]
 end
 
 function Base.setindex!(d::AliasDict, val, key)
     d.id_dict[key] = val
-    if key isa Array
-        dataids = Base.dataids(key)
-        d.dataids_dict[dataids] = val
+    ids = aliasids(key)
+    if ids !== nothing
+        d.dataids_dict[ids] = val
     end
     return d
 end
@@ -101,7 +109,10 @@ function append_or_merge(prev::Union{Nothing, Tuple{AbstractVector, Bool}}, newv
             append!(prev[1], newv)
             return prev
         else
-            res = Vector{ET2}(undef, length(prev[1]) + length(newv))
+            # allocate like whichever input actually holds data, so that e.g. GPU-backed
+            # vectors stay on the device instead of being merged into a host `Vector`
+            proto = isempty(prev[1]) ? newv : prev[1]
+            res = similar(proto, ET2, length(prev[1]) + length(newv))
             acopyto!(@view(res[1:length(prev[1])]), prev[1])
             acopyto!(@view(res[length(prev[1])+1:end]), newv)
             return (res, true)
