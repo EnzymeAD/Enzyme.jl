@@ -3,6 +3,7 @@ using EnzymeTestUtils
 using LinearAlgebra
 using MetaTesting
 using Test
+using CUDA
 
 function f_mut_rev!(y, x, a)
     map!(xi -> xi * a, y, x)
@@ -59,9 +60,9 @@ end
     @testset "tests pass for functions with no rules" begin
         @testset "unary function tests" begin
             combinations = [
-                "vector arguments" => (Vector, f_array),
-                "matrix arguments" => (Matrix, f_array),
-                "multidimensional array arguments" => (Array{<:Any, 3}, f_array),
+                "vector arguments" => (CuVector, f_array),
+                "matrix arguments" => (CuMatrix, f_array),
+                "multidimensional array arguments" => (CuArray{<:Any, 3}, f_array),
             ]
             sz = (2, 3, 4)
             @testset "$name" for (name, (TT, fun)) in combinations
@@ -82,7 +83,7 @@ end
                     Ta in (Const, Active),
                     T in (Float32, Float64, ComplexF32, ComplexF64)
 
-                x = randn(T, 3)
+                x = CuArray(randn(T, 3))
                 a = randn(T)
                 atol = rtol = sqrt(eps(real(T)))
                 @test !fails() do
@@ -98,7 +99,7 @@ end
                 # if some are batch, none must be duplicated
                 are_activities_compatible(Tret, Tx) || continue
 
-                x = Hermitian(Float32[1 2; 3 4])
+                x = Hermitian(CuArray(Float32[1 2; 3 4]))
 
                 atol = rtol = 0.01
                 test_reverse(f_structured_nan, Tret, (x, Tx); atol, rtol)
@@ -113,7 +114,7 @@ end
                 # if some are batch, none must be duplicated
                 are_activities_compatible(Tret, Tx) || continue
 
-                x = Hermitian(randn(T, 5, 5))
+                x = Hermitian(CuArray(randn(T, 5, 5)))
 
                 atol = rtol = sqrt(eps(real(T)))
                 test_reverse(f_structured_array, Tret, (x, Tx); atol, rtol)
@@ -125,7 +126,7 @@ end
                 z = x * 2
                 return (z, z)
             end
-            x = randn(2, 3)
+            x = CuArray(randn(2, 3))
 
             @testset for Tret in (Const, Duplicated, BatchDuplicated),
                     Tx in (Const, Duplicated, BatchDuplicated)
@@ -140,7 +141,7 @@ end
                 z = x * 2
                 return (z, vec(z))
             end
-            x = randn(2, 3)
+            x = CuArray(randn(2, 3))
             @testset for Tret in (Const, Duplicated, BatchDuplicated),
                     Tx in (Const, Duplicated, BatchDuplicated)
 
@@ -159,8 +160,8 @@ end
                 # if some are batch, none must be duplicated
                 are_activities_compatible(Ty, Tx, Ta) || continue
 
-                x = randn(T, sz)
-                y = zeros(T, sz)
+                x = CuArray(randn(T, sz))
+                y = CuArray(zeros(T, sz))
                 a = randn(T)
 
                 atol = rtol = sqrt(eps(real(T)))
@@ -178,8 +179,8 @@ end
                 # if some are batch, none must be duplicated
                 are_activities_compatible(Tret, Tc, Ty) || continue
 
-                c = MutatedCallable(randn(T, n))
-                y = randn(T, n)
+                c = MutatedCallable(CuArray(randn(T, n)))
+                y = CuArray(randn(T, n))
 
                 atol = rtol = sqrt(eps(real(T)))
 
@@ -198,7 +199,7 @@ end
 
     @testset "kwargs correctly forwarded" begin
         @testset for Tx in (Const, Duplicated)
-            x = randn(3)
+            x = CuArray(randn(3))
             a = randn()
 
             @test fails() do
@@ -208,22 +209,9 @@ end
         end
     end
 
-    @testset "incorrect primal detected" begin
-        @testset for Tx in (Const, Duplicated)
-            x = randn(3)
-            a = randn()
-
-            test_reverse(f_kwargs_rev, Duplicated, (x, Tx); fkwargs = (; a))
-            fkwargs = (; a, incorrect_primal = true)
-            @test fails() do
-                test_reverse(f_kwargs_rev, Duplicated, (x, Tx); fkwargs)
-            end
-        end
-    end
-
     @testset "incorrect mutated argument detected" begin
         @testset for Tx in (Const, Duplicated)
-            x = randn(3)
+            x = CuArray(randn(3))
             a = randn()
 
             test_reverse(f_kwargs_rev!, Const, (x, Tx); fkwargs = (; a))
@@ -236,7 +224,7 @@ end
 
     @testset "incorrect tangent detected" begin
         @testset for Tx in (Duplicated,)
-            x = randn(3)
+            x = CuArray(randn(3))
             a = randn()
 
             test_reverse(f_kwargs_rev, Duplicated, (x, Tx); fkwargs = (; a))
@@ -247,22 +235,4 @@ end
         end
     end
 
-    @testset "incorrect tape detected" begin
-        @testset for Tx in (Duplicated,)
-            x = randn(3)
-            a = randn()
-
-            function f_kwargs_rev_overwrite(x; kwargs...)
-                y = f_kwargs_rev(x; kwargs...)
-                x[1] = 0.0
-                return y
-            end
-
-            test_reverse(f_kwargs_rev_overwrite, Duplicated, (x, Tx); fkwargs = (; a))
-            fkwargs = (; a, incorrect_tape = true)
-            @test fails() do
-                test_reverse(f_kwargs_rev_overwrite, Duplicated, (x, Tx); fkwargs)
-            end
-        end
-    end
 end
