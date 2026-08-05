@@ -109,20 +109,23 @@ function append_or_merge(prev::Union{Nothing, Tuple{AbstractVector, Bool}}, newv
         # Let `newv` supply the container instead. Flagged as not-a-new-allocation, since
         # `newv` may alias the object being vectorized (e.g. a `reshape` of it).
         return (newv, false)
-    elseif prev[2] && eltype(newv) <: eltype(prev[1])
+    elseif prev[2] && prev[1] isa Array && newv isa Array && eltype(newv) <: eltype(prev[1])
+        # `append!` grows `prev[1]` in place and iterates `newv`, so both must be host
+        # arrays: GPU arrays are not resizable and disallow the elementwise reads
         append!(prev[1], newv)
         return prev
     else
         ET2 = Base.promote_type(eltype(prev[1]), eltype(newv))
-        if prev[2] && ET2 == eltype(prev[1])
+        if prev[2] && prev[1] isa Array && newv isa Array && ET2 == eltype(prev[1])
             append!(prev[1], newv)
             return prev
         else
-            # allocate like `prev`, which by here is known to hold data, so that e.g.
-            # GPU-backed vectors stay on the device instead of merging into a host `Vector`
-            res = similar(prev[1], ET2, length(prev[1]) + length(newv))
+            # allocate like whichever side is not a plain host `Array`, so that merging a
+            # host-backed vector with a GPU-backed one stays on the device. Merging into a
+            # host container would fall back to elementwise copies, which GPU arrays reject.
+            res = similar(prev[1] isa Array ? newv : prev[1], ET2, length(prev[1]) + length(newv))
             acopyto!(@view(res[1:length(prev[1])]), prev[1])
-            acopyto!(@view(res[length(prev[1])+1:end]), newv)
+            acopyto!(@view(res[(length(prev[1]) + 1):end]), newv)
             return (res, true)
         end
     end
