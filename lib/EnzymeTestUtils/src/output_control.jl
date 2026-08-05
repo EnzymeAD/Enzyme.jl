@@ -11,7 +11,14 @@ end
     using Test: eval_test_comparison
 end
 
-"A cunning hack to carry extra message along with the original expression in a test"
+"""
+A cunning hack to carry extra message along with the original expression in a test.
+
+`msg` is a thunk rather than a string: `Test` only prints the original expression when a
+check fails, and these messages are routinely interpolated from the values under test.
+Building one eagerly on every check costs an interpolation at best, and for GPU-backed
+values a copy off the device.
+"""
 struct ExprAndMsg
     ex
     msg
@@ -57,12 +64,15 @@ macro test_msg(msg, ex, kws...)
     Test.test_expr!("@test_msg msg", ex, kws...)
 
     result = Test.get_test_result(ex, __source__)
-    return :(Test.do_test($result, $ExprAndMsg($(string(ex)), $(esc(msg)))))
+    # `msg` is deferred: it is only needed if the check fails, and evaluating it can be
+    # expensive when it interpolates the values under test
+    return :(Test.do_test($result, $ExprAndMsg($(string(ex)), () -> $(esc(msg)))))
 end
 
 function Base.print(io::IO, x::ExprAndMsg)
     print(io, x.ex)
-    return !isempty(x.msg) && print(io, "\n  Problem: ", x.msg)
+    msg = x.msg()
+    return !isempty(msg) && print(io, "\n  Problem: ", msg)
 end
 
 ### helpers for printing in log messages etc
