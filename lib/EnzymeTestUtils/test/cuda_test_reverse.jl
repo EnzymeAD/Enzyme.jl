@@ -5,6 +5,8 @@ using MetaTesting
 using Test
 using CUDA
 
+f_output_tangent(x) = 2 .* x
+
 function f_mut_rev!(y, x, a)
     map!(xi -> xi * a, y, x)
     return y
@@ -143,6 +145,21 @@ end
                 # unlike the CPU equivalent, Enzyme reports a need for runtime activity
                 # here when `x` is `Const`
                 test_reverse(f, Tret, (x, Tx); runtime_activity = true)
+            end
+        end
+
+        @testset "device output_tangent" begin
+            # `output_tangent` is the only way the cotangent reaches `j′vp` already on the
+            # device, where it is read one element at a time.
+            @testset for Tret in (Const, Duplicated),
+                    T in (Float64, ComplexF64)
+
+                x = CuArray(randn(T, 3))
+                ȳ = CuArray(randn(T, 3))
+                atol = rtol = sqrt(eps(real(T)))
+                test_reverse(
+                    f_output_tangent, Tret, (x, Duplicated); output_tangent = ȳ, atol, rtol
+                )
             end
         end
 
