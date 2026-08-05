@@ -24,9 +24,20 @@ end
 EnzymeTestUtils.aliasids(x::AbstractGPUArray) = (UInt(pointer(x)),)
 
 # the fields of a GPU array are device pointers and reference counts, which carry no
-# semantic information, so compare only the contents
+# semantic information, so compare only the contents.
+#
+# `Test` splices the evaluated operands of a comparison into the message it builds for a
+# failure, and showing a GPU array copies it off the device. Handing it `isapprox(x, y)`
+# directly therefore puts that copy inside the failure formatting, where a crash takes the
+# whole worker down. Compare on the device, and only once the check has failed copy to the
+# host and hand the values over as ordinary arrays, so the report shows them.
 function EnzymeTestUtils.test_approx(x::AbstractGPUArray{<:Number}, y::AbstractGPUArray{<:Number}, msg; kwargs...)
-    EnzymeTestUtils.@test_msg msg isapprox(x, y; kwargs...)
+    isapprox_result = isapprox(x, y; kwargs...)
+    if isapprox_result
+        EnzymeTestUtils.@test_msg msg isapprox_result
+    else
+        EnzymeTestUtils.test_approx(Array(x), Array(y), msg; kwargs...)
+    end
     return nothing
 end
 
