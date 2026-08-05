@@ -1406,28 +1406,59 @@ const DumpPreNestedCheck = Ref(false)
 const DumpPreNestedOpt = Ref(false)
 const DumpPostNestedOpt = Ref(false)
 
-function nested_codegen!(
-    enzyme_context::EnzymeContext,
-    mode::API.CDerivativeMode,
-    mod::LLVM.Module,
-    funcspec::Core.MethodInstance,
-    world::UInt,
-    alwaysinline::Bool=false,
-)
-    cache_key = funcspec
-    if haskey(enzyme_context.nested_cache, cache_key)
-        fname = enzyme_context.nested_cache[cache_key]
-        if haskey(functions(mod), fname)
-            return functions(mod)[fname]
-        end
-        for m in enzyme_context.modules_to_link
-            if haskey(functions(m), fname)
-                return functions(m)[fname]
-            end
-        end
-        error("Cached function $fname not found in any module!")
-    end
+"""
+    NestedCodegenResult
 
+The reusable product of one nested (rule body) codegen: the fully processed module, the
+name of its entry function, and the Julia edges discovered while processing it.
+
+The module is held as bitcode rather than as an `LLVM.Module` because every thunk build
+runs inside its own `GPUCompiler.JuliaContext`, which is disposed once the build finishes.
+An `LLVM.Module` cannot outlive that context, but its serialized form can, and re-parsing
+it into the active context is orders of magnitude cheaper than regenerating it.
+"""
+struct NestedCodegenResult
+    bitcode::Vector{UInt8}
+    entry::String
+    edges::Vector{Any}
+end
+
+"""
+Process-wide cache of nested codegen results, shared across thunk builds.
+
+The key is everything that changes the emitted module: the method instance being
+compiled, the derivative mode (which selects `frule` vs `rrule` handling in
+`set_module_types!`), and the world age (which selects the code being compiled).
+Note that `mode` was previously absent from the key, which was safe only because it is
+constant within a single build.
+"""
+const NESTED_CODEGEN_CACHE = Dict{Tuple{Core.MethodInstance, API.CDerivativeMode, UInt}, NestedCodegenResult}()
+
+# The cached bitcode is retained for the life of the process, so bound how much of it we
+# keep. On overflow the whole cache is dropped rather than evicting individual entries:
+# these modules are purely a compile-time speedup, so losing one costs time, not
+# correctness, and a coarse policy avoids tracking per-entry recency.
+const NESTED_CODEGEN_CACHE_BYTES = Ref{Int}(0)
+const NESTED_CODEGEN_CACHE_MAX_BYTES = Ref{Int}(256 * 1024 * 1024)
+
+function clear_nested_codegen_cache!()
+    empty!(NESTED_CODEGEN_CACHE)
+    NESTED_CODEGEN_CACHE_BYTES[] = 0
+    return nothing
+end
+
+"""
+    build_nested_codegen(mode, funcspec, world)
+
+Emit, check, type and optimize the module implementing `funcspec`, returning both the
+module itself (for the caller to link) and a `NestedCodegenResult` snapshot of it that can
+be replayed in a later build.
+"""
+function build_nested_codegen(
+        mode::API.CDerivativeMode,
+        funcspec::Core.MethodInstance,
+        world::UInt,
+    )::Tuple{LLVM.Module, NestedCodegenResult}
     # 3) Use the MI to create the correct augmented fwd/reverse
     # TODO:
     #  - GPU support
@@ -1439,7 +1470,7 @@ function nested_codegen!(
 
     GPUCompiler.prepare_job!(job)
     otherMod, meta = GPUCompiler.emit_llvm(job)
-    
+
     interp = GPUCompiler.get_interpreter(job)
     prepare_llvm(interp, otherMod, job, meta)
 
@@ -1449,25 +1480,18 @@ function nested_codegen!(
         permit_inlining!(f)
     end
 
-    edges = enzyme_context.edges
-    push!(edges, funcspec)
+    # Collected into a private vector rather than straight onto the context so that the
+    # same edges can be replayed into every later build that reuses this module.
+    edges = Any[funcspec]
 
-    LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
-        registerEnzymeAndPassPipeline!(pb)
-        LLVM.add!(pb, LLVM.NewPMModulePassManager()) do mpm
-            LLVM.add!(mpm, PreserveNVVMPass())
-        end
-        LLVM.run!(pb, mod)
-    end
-    
     if DumpPreNestedCheck[]
-	API.EnzymeDumpModuleRef(otherMod.ref)
+        API.EnzymeDumpModuleRef(otherMod.ref)
     end
 
     check_ir(interp, job, otherMod)
-            
+
     if DumpPreNestedOpt[]
-	API.EnzymeDumpModuleRef(otherMod.ref)
+        API.EnzymeDumpModuleRef(otherMod.ref)
     end
 
     # Skipped inline of blas
@@ -1477,19 +1501,83 @@ function nested_codegen!(
 
     # Apply first stage of optimization's so that this module is at the same stage as `mod`
     optimize!(otherMod, JIT.get_tm())
-    
+
     if DumpPostNestedOpt[]
-	API.EnzymeDumpModuleRef(otherMod.ref)
+        API.EnzymeDumpModuleRef(otherMod.ref)
     end
-    
+
+    # Snapshot before the caller mutates linkage/attributes for this particular use site,
+    # so what is cached is the plain processed module.
+    result = NestedCodegenResult(convert(Vector{UInt8}, otherMod), entry, edges)
+    return otherMod, result
+end
+
+function cache_nested_codegen!(
+        key::Tuple{Core.MethodInstance, API.CDerivativeMode, UInt},
+        result::NestedCodegenResult,
+    )
+    nbytes = length(result.bitcode)
+    if NESTED_CODEGEN_CACHE_BYTES[] + nbytes > NESTED_CODEGEN_CACHE_MAX_BYTES[]
+        clear_nested_codegen_cache!()
+    end
+    NESTED_CODEGEN_CACHE[key] = result
+    NESTED_CODEGEN_CACHE_BYTES[] += nbytes
+    return nothing
+end
+
+function nested_codegen!(
+        enzyme_context::EnzymeContext,
+        mode::API.CDerivativeMode,
+        mod::LLVM.Module,
+        funcspec::Core.MethodInstance,
+        world::UInt,
+        alwaysinline::Bool = false,
+    )
+    # This module was already linked into the module under construction.
+    build_key = (funcspec, mode)
+    if haskey(enzyme_context.nested_cache, build_key)
+        fname = enzyme_context.nested_cache[build_key]
+        if haskey(functions(mod), fname)
+            return mark_alwaysinline!(functions(mod)[fname], alwaysinline)
+        end
+        for m in enzyme_context.modules_to_link
+            if haskey(functions(m), fname)
+                return mark_alwaysinline!(functions(m)[fname], alwaysinline)
+            end
+        end
+        error("Cached function $fname not found in any module!")
+    end
+
+    LLVM.@dispose pb = LLVM.NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+        LLVM.add!(pb, LLVM.NewPMModulePassManager()) do mpm
+            LLVM.add!(mpm, PreserveNVVMPass())
+        end
+        LLVM.run!(pb, mod)
+    end
+
+    cache_key = (funcspec, mode, world)
+    result = get(NESTED_CODEGEN_CACHE, cache_key, nothing)
+    local otherMod::LLVM.Module
+    if result === nothing
+        otherMod, result = build_nested_codegen(mode, funcspec, world)
+        cache_nested_codegen!(cache_key, result)
+    else
+        otherMod = parse(LLVM.Module, result.bitcode)
+    end
+
+    # Replayed on every build, not just the one that generated the module, so that each
+    # resulting CodeInstance records the same dependencies and is invalidated alike.
+    append!(enzyme_context.edges, result.edges)
+
+    entry = result.entry
+
     # 4) Record module to link
     push!(enzyme_context.modules_to_link, otherMod)
 
     # Declare the function in mod so it can be called
     lfn = functions(otherMod)[entry]
-    if alwaysinline
-        push!(function_attributes(lfn), EnumAttribute("alwaysinline"))
-    end
+    mark_alwaysinline!(lfn, alwaysinline)
 
     linkage!(lfn, LLVM.API.LLVMExternalLinkage)
     FT = LLVM.function_type(lfn)
@@ -1512,8 +1600,22 @@ function nested_codegen!(
         push!(return_attributes(decl), attr)
     end
 
-    enzyme_context.nested_cache[cache_key] = LLVM.name(decl)
+    enzyme_context.nested_cache[build_key] = LLVM.name(decl)
     return decl
+end
+
+"""
+    mark_alwaysinline!(fn, alwaysinline)
+
+Add the `alwaysinline` attribute to `fn` if `alwaysinline` is set and it is not already
+present, returning `fn`. Applied per use site rather than baked into the cached module,
+since the same nested module can be requested with and without inlining.
+"""
+function mark_alwaysinline!(fn::LLVM.Function, alwaysinline::Bool)
+    if alwaysinline && !has_fn_attr(fn, EnumAttribute("alwaysinline"))
+        push!(function_attributes(fn), EnumAttribute("alwaysinline"))
+    end
+    return fn
 end
 
 function removed_ret_parms(orig::LLVM.CallInst)

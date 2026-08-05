@@ -135,11 +135,15 @@ function guess_activity end
 mutable struct EnzymeContext
     modules_to_link::Vector{LLVM.Module}
     edges::Vector{Any}
-    nested_cache::Dict{Core.MethodInstance, String}
+    # Per-build record of the nested modules already linked into this build, mapping the
+    # compiled method instance and derivative mode to the name of its entry function.
+    # This only tracks LLVM state local to the current build; the reusable product of a
+    # nested build is cached process-wide in `Compiler.NESTED_CODEGEN_CACHE`.
+    nested_cache::Dict{Tuple{Core.MethodInstance, API.CDerivativeMode}, String}
     EnzymeContext() = new(
         LLVM.Module[],
         Any[],
-        Dict{Core.MethodInstance, String}()
+        Dict{Tuple{Core.MethodInstance, API.CDerivativeMode}, String}()
     )
 end
 
