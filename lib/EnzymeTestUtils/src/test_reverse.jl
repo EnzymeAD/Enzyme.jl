@@ -161,7 +161,10 @@ function test_reverse(
                 )
             else
                 @test_msg(
-                    "returned derivative for argument $(i-1) with activity $act_i must be `nothing`",
+                    # interpolate the activity's type, not the annotation itself: `@test_msg`
+                    # builds this message eagerly, and printing an annotation prints the
+                    # arrays it wraps, which copies them off the device on every check
+                    "returned derivative for argument $(i-1) with activity $(_string_typeof(act_i)) must be `nothing`",
                     dx_ad_i === nothing,
                 )
                 target_str = if i == 1
