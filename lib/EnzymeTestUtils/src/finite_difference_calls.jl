@@ -52,7 +52,9 @@ _fd_forward(fdm, f, ::Type{<:Const}, y, activities) = ()
 function multi_tovec(active_return, vals)
     if active_return
         v0, v1 = vals[1], Base.tail(vals)
-        res = vcat(to_vec(v0)[1], to_vec(v1)[1])
+        # `vcat` of a host-backed and a GPU-backed vector falls back to elementwise copies,
+        # which GPU arrays disallow, so merge these the same way `to_vec` merges fields
+        res = append_or_merge(append_or_merge(nothing, to_vec(v0)[1]), to_vec(v1)[1])[1]
         return res
     else
         to_vec(vals)[1]
