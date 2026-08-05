@@ -4,7 +4,16 @@ using GPUArraysCore
 using EnzymeTestUtils
 using Enzyme
 
-function EnzymeTestUtils.acopyto!(dst, src::AbstractGPUArray)
+# a device-backed destination takes the data directly. `AnyGPUArray` rather than
+# `AbstractGPUArray` because `append_or_merge` copies into `@view`s of the freshly
+# allocated result, and a wrapper around a GPU array is not itself an `AbstractGPUArray`.
+function EnzymeTestUtils.acopyto!(dst::AnyGPUArray, src::AnyGPUArray)
+    return Base.copyto!(dst, src)
+end
+
+# a host destination cannot be written to from the device directly, so stage the data
+# through a temporary host buffer
+function EnzymeTestUtils.acopyto!(dst, src::AnyGPUArray)
     temp = Array{eltype(src)}(undef, size(src))
     Base.copyto!(temp, src)
     EnzymeTestUtils.acopyto!(dst, temp)
