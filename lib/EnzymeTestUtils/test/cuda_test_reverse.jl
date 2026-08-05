@@ -66,7 +66,13 @@ end
             ]
             sz = (2, 3, 4)
             @testset "$name" for (name, (TT, fun)) in combinations
-                @testset for Tret in (Active, Const),
+                # `Active` is omitted, unlike the CPU equivalent. An active return makes
+                # `fun` return a scalar, and `sum(abs2, ::CuArray)` reduces via
+                # `GPUArrays._mapreduce`, which reads the single-element result back with
+                # `@allowscalar`. `@allowscalar` scopes itself through task-local storage,
+                # which Enzyme cannot differentiate:
+                #     No create nofree of empty function (ijl_eqtable_put)
+                @testset for Tret in (Const,),
                         Tx in (Const, Duplicated, BatchDuplicated),
                         T in (Float32, Float64, ComplexF32, ComplexF64)
 
