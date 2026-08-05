@@ -180,7 +180,7 @@ for (DstArr, SrcArr) in ARRAY_COPY_DIRECTIONS
 		doffs::Const,
 		src::Annotation{<:$SrcArr{T}},
 		soffs::Const,
-                n::Const) where {RT, T<: AbstractFloat}
+                n::Const) where {RT, T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
             func.val(dest.val, doffs.val, src.val, soffs.val, n.val)
             primal = EnzymeRules.needs_primal(config) ? dest.val : nothing
             shadow = if !(RT <: Const) && EnzymeRules.needs_shadow(config) &&
@@ -201,7 +201,7 @@ for (DstArr, SrcArr) in ARRAY_COPY_DIRECTIONS
 		doffs::Const,
 		src::Annotation{<:$SrcArr{T}},
 		soffs::Const,
-                n::Const) where {RT, T<: AbstractFloat}
+                n::Const) where {RT, T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
             if !(dest isa Const)
                 for batch in 1:EnzymeRules.width(config)
                     ddest = _shadow(dest, config, batch)

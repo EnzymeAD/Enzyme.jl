@@ -21,6 +21,32 @@ using Test
     @testset "device memory" begin
         @test grad_roundtrip(x -> cu(x)) == Float32[2, 4, 6]
     end
+
+    #= The copy rules used to be real-only, so a complex copy fell through to Enzyme's
+    default handling and silently did nothing: the primal was never copied and the
+    cotangent never propagated. =#
+    @testset "complex copies, $T" for T in (ComplexF32, ComplexF64)
+        n = 8
+        x = CuArray(T[i + 2im * i for i in 1:n])
+        y = CUDA.zeros(T, n)
+        dx = CUDA.zeros(T, n)
+        dy = CuArray(ones(T, n))
+        x_before, dy_before = Array(x), Array(dy)
+
+        Enzyme.autodiff(
+            Reverse,
+            Const((dst, src) -> (copyto!(dst, src); nothing)),
+            Const,
+            Duplicated(y, dy),
+            Duplicated(x, dx),
+        )
+        CUDA.synchronize()
+
+        # the primal must actually run, and `y = x` pulls the cotangent back onto `x`
+        @test Array(y) == x_before
+        @test Array(dx) == dy_before
+        @test all(iszero, Array(dy))
+    end
     # Unified/host memory: `pointer(::CuArray{…,Unified/Host})` is inferred as `Union{CuPtr,Ptr}`, so the `pointer` rule cannot yet return a concrete
     @testset "unified memory" begin
         @test grad_roundtrip(x -> cu(x; unified = true)) == Float32[2, 4, 6]
