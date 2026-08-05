@@ -597,6 +597,21 @@ function calling_conv_fixup(
         push!(lhs_n, 0)
         return calling_conv_fixup(builder, val, tape, prev, lhs_n, ridxs, emesg)
     end
+    # An aggregate that Julia refuses to store inline (see `to_tape_type`) is
+    # boxed on the Julia side; load it back out of the box.
+    if isa(ctype, LLVM.PointerType) &&
+       LLVM.addrspace(ctype) == Tracked &&
+       (isa(tape, LLVM.StructType) || isa(tape, LLVM.ArrayType) || isa(tape, LLVM.VectorType))
+        if length(lidxs) != 0
+            val = API.e_extract_value!(builder, val, lidxs)
+        end
+        val = unbox_tape_value!(builder, val, tape)
+        return if length(ridxs) != 0
+            API.e_insert_value!(builder, prev, val, ridxs)
+        else
+            val
+        end
+    end
 
 
     msg2 = sprint() do io
@@ -618,4 +633,113 @@ function calling_conv_fixup(
         )
     end
     throw(AssertionError(msg2))
+end
+
+# Elements of an LLVM aggregate addressable with extractvalue/insertvalue, or
+# nothing otherwise.  Vectors are deliberately excluded: they are indexed with
+# extractelement, and being always primitive-typed they never hold the boxed
+# aggregates this is used to walk.
+function aggregate_elements(@nospecialize(ty::LLVM.LLVMType))
+    if isa(ty, LLVM.StructType)
+        return LLVM.LLVMType[e for e in elements(ty)]
+    elseif isa(ty, LLVM.ArrayType)
+        return LLVM.LLVMType[eltype(ty) for _ = 1:length(ty)]
+    else
+        return nothing
+    end
+end
+
+# Allocate a Julia object holding `val` (an aggregate in Enzyme's tape layout)
+# and return the resulting `ptr addrspace(10)`.  Counterpart of
+# `unbox_tape_value!`; see the comment on `to_tape_type` for why this is needed.
+# `tape_type` is called here at top level, so the object's own type is the
+# unboxed one -- only aggregates nested inside it get boxed in turn.
+function box_tape_value!(builder::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))
+    T = tape_type(LLVM.value_type(val))::DataType
+    jlty = convert(LLVM.LLVMType, T; allow_boxed = true)
+    jval = julia_conv_fixup(builder, val, jlty)
+    box = emit_allocobj!(builder, T, "enzyme_boxed_tape")
+    dst = addrspacecast!(builder, box, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), Derived))
+    if !LLVM.is_opaque(LLVM.value_type(dst))
+        dst = bitcast!(builder, dst, LLVM.PointerType(jlty, Derived))
+    end
+    extract_struct_into!(builder, dst, jval, "enzyme_boxed_tape")
+    emit_writebarrier!(builder, get_julia_inner_types(builder, box, jval))
+    return box
+end
+
+# Load an aggregate of LLVM type `tape` back out of the box built by
+# `box_tape_value!`.
+function unbox_tape_value!(
+    builder::LLVM.IRBuilder,
+    @nospecialize(val::LLVM.Value),
+    @nospecialize(tape::LLVM.LLVMType),
+)
+    ptr = addrspacecast!(builder, val, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), Derived))
+    if !LLVM.is_opaque(LLVM.value_type(ptr))
+        ptr = bitcast!(builder, ptr, LLVM.PointerType(tape, Derived))
+    end
+    return load!(builder, tape, ptr)
+end
+
+# Inverse of `calling_conv_fixup`: rewrite `val`, which is in Enzyme's internal
+# tape layout, into `jlty`, the layout Julia gives the corresponding tape type.
+# The two only differ in the i1-vs-i8 spelling of `Bool`, in struct-vs-array
+# spellings of homogeneous aggregates, and in aggregates Julia stores boxed.
+function julia_conv_fixup(
+    builder::LLVM.IRBuilder,
+    @nospecialize(val::LLVM.Value),
+    @nospecialize(jlty::LLVM.LLVMType),
+)::LLVM.Value
+    vty = LLVM.value_type(val)
+    if vty == jlty
+        return val
+    end
+
+    jkids = aggregate_elements(jlty)
+    vkids = aggregate_elements(vty)
+    if jkids !== nothing && vkids !== nothing && length(jkids) == length(vkids)
+        res = LLVM.UndefValue(jlty)
+        for i = 1:length(jkids)
+            sub = extract_value!(builder, val, i - 1)
+            sub = julia_conv_fixup(builder, sub, jkids[i])
+            res = insert_value!(builder, res, sub, i - 1)
+        end
+        return res
+    end
+
+    # Bool is i1 inside Enzyme's tape but i8 in Julia's layout
+    if isa(jlty, LLVM.IntegerType) && isa(vty, LLVM.IntegerType)
+        return if LLVM.width(jlty) > LLVM.width(vty)
+            zext!(builder, val, jlty)
+        else
+            trunc!(builder, val, jlty)
+        end
+    end
+
+    if isa(jlty, LLVM.PointerType) &&
+       isa(vty, LLVM.PointerType) &&
+       LLVM.addrspace(jlty) == LLVM.addrspace(vty)
+        return pointercast!(builder, val, jlty)
+    end
+
+    # Julia stores this aggregate boxed (see `to_tape_type`)
+    if isa(jlty, LLVM.PointerType) && LLVM.addrspace(jlty) == Tracked && vkids !== nothing
+        box = box_tape_value!(builder, val)
+        return if LLVM.value_type(box) == jlty
+            box
+        else
+            pointercast!(builder, box, jlty)
+        end
+    end
+
+    if isa(jlty, LLVM.ArrayType) && length(jlty) == 1 && eltype(jlty) == vty
+        return insert_value!(builder, LLVM.UndefValue(jlty), val, 0)
+    end
+
+    throw(
+        AssertionError(
+            "Enzyme Internal Error: Illegal tape layout fixup\njlty = $(string(jlty))\nvty = $(string(vty))\nval = $(string(val))",
+        ),
+    )
 end
