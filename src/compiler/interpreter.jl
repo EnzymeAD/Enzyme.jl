@@ -1506,4 +1506,96 @@ function abstract_call_known(
     )
 end
 
+"""
+    HAS_CODEINFO_LIST
+
+Whether `jl_emit_native` takes an explicit list of `CodeInstance => CodeInfo` pairs
+describing what to emit (as opposed to being handed a `MethodInstance` and walking the
+call graph itself). Only on such versions can `nested_codegen!` ask for the entry alone
+and have Julia stub out the callees; see `OnlyEntryKey`.
+"""
+const HAS_CODEINFO_LIST = VERSION >= v"1.12.0-DEV.1823"
+
+"""
+    OnlyEntryKey
+
+Task-local-storage key guarding the "emit the entry only" mode used by
+`Enzyme.Compiler.nested_codegen!`.
+
+When this flag is set, `GPUCompiler.ci_cache_populate` hands `jl_emit_native`
+only the entry `CodeInstance` instead of the whole transitively reachable callee graph.
+Julia's `resolve_workqueue` then patches up every call site that was left dangling by
+emitting a `jl_invoke` thunk (plus a specsig-to-fptr1 adapter where the call site uses the
+specialized ABI), so the callees dispatch into Julia's own natively compiled code rather
+than being re-emitted into Enzyme's private module.
+
+This matters because `nested_codegen!` is called once per rule per thunk, and the module it
+builds is checked, type-annotated, optimized and then retained by the JIT. Emitting the
+entry alone keeps that module small in all four respects. It is only correct because these
+modules are never differentiated (`run_enzyme = false`) and are linked in after `enzyme!`
+has already run, so Enzyme never needs to see through the calls that become thunks.
+
+The flag is task-local rather than global because it must not leak into unrelated jobs that
+share the interpreter — notably `Enzyme.onehot_internal`, which uses the same
+`PrimalCompilerParams` but consumes the emitted module as an `llvmcall` string and so needs
+its callees emitted.
+"""
+const OnlyEntryKey = gensym(:enzyme_only_entry)
+
+"""
+    OnlyEntry
+
+Master switch for the entry-only nested codegen described in `OnlyEntryKey`. Set to
+`false` to restore the previous behaviour of emitting the full callee graph.
+"""
+const OnlyEntry = Ref(HAS_CODEINFO_LIST)
+
+@inline function only_entry_requested()
+    HAS_CODEINFO_LIST || return false
+    OnlyEntry[] || return false
+    return get(task_local_storage(), OnlyEntryKey, false)::Bool
+end
+
+@static if HAS_CODEINFO_LIST
+
+    # Mirrors the entry-handling half of `GPUCompiler.ci_cache_populate`, minus the
+    # `collectinvokes!` worklist walk that pulls in the transitive callee graph.
+    function entry_codeinfo(@nospecialize(interp::EnzymeInterpreter), mi::MethodInstance)
+        CC = Core.Compiler
+        codeinfos = Pair{Core.CodeInstance, Core.CodeInfo}[]
+        ci = CC.typeinf_ext(interp, mi, CC.SOURCE_MODE_NOT_REQUIRED)
+        ci === nothing && return codeinfos
+        cimi = CC.get_ci_mi(ci)
+        src = if CC.use_const_api(ci)
+            @static if VERSION >= v"1.13.0-DEV.1121"
+                CC.codeinfo_for_const(
+                    interp, cimi, CC.WorldRange(ci.min_world, ci.max_world),
+                    ci.edges, ci.rettype_const
+                )
+            else
+                CC.codeinfo_for_const(interp, cimi, ci.rettype_const)
+            end
+        else
+            CC.typeinf_code(interp, cimi, true)
+        end
+        if src isa Core.CodeInfo
+            push!(codeinfos, ci => src)
+        end
+        return codeinfos
+    end
+
+    function GPUCompiler.ci_cache_populate(
+            @nospecialize(interp::EnzymeInterpreter), cache, mi::MethodInstance,
+            min_world::UInt, max_world::UInt
+        )
+        if only_entry_requested()
+            return entry_codeinfo(interp, mi)
+        end
+        return Base.@invoke GPUCompiler.ci_cache_populate(
+            interp::Any, cache::Any, mi::Any, min_world::Any, max_world::Any
+        )
+    end
+
+end
+
 end

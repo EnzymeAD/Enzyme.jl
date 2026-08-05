@@ -1406,6 +1406,18 @@ const DumpPreNestedCheck = Ref(false)
 const DumpPreNestedOpt = Ref(false)
 const DumpPostNestedOpt = Ref(false)
 
+function emit_llvm_only_entry(@nospecialize(job::CompilerJob))
+    tls = task_local_storage()
+    key = Interpreter.OnlyEntryKey
+    prev = get(tls, key, false)
+    tls[key] = true
+    try
+        return GPUCompiler.emit_llvm(job)
+    finally
+        tls[key] = prev
+    end
+end
+
 function nested_codegen!(
     enzyme_context::EnzymeContext,
     mode::API.CDerivativeMode,
@@ -1438,8 +1450,8 @@ function nested_codegen!(
     job = CompilerJob(funcspec, CompilerConfig(target, params; kernel = false, libraries = true, toplevel = true, optimize = false, cleanup = false, only_entry = false, validate = false, entry_abi = :specfunc), world)
 
     GPUCompiler.prepare_job!(job)
-    otherMod, meta = GPUCompiler.emit_llvm(job)
-    
+    otherMod, meta = emit_llvm_only_entry(job)
+
     interp = GPUCompiler.get_interpreter(job)
     prepare_llvm(interp, otherMod, job, meta)
 
