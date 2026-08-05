@@ -4,11 +4,14 @@ using CUDA
 using Enzyme
 using Enzyme: EnzymeRules
 
-function _zero!(ptr::Ptr{T}, off::Integer, n::Integer) where {T <: AbstractFloat}
+# Complex is handled here because the shadow operations are element-wise: zeroing is a
+# `memset` sized by `sizeof(T)`, and accumulation is a broadcast, both of which are
+# agnostic to the real/complex split.
+function _zero!(ptr::Ptr{T}, off::Integer, n::Integer) where {T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
     Base.Libc.memset(ptr + off * sizeof(T), 0, n * sizeof(T))
     return nothing
 end
-function _zero!(ptr::CuPtr{T}, off::Integer, n::Integer) where {T <: AbstractFloat}
+function _zero!(ptr::CuPtr{T}, off::Integer, n::Integer) where {T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
     bytes = reinterpret(CuPtr{UInt8}, ptr + off * sizeof(T))
     CUDA.memset(bytes, UInt8(0), n * sizeof(T))
     return nothing
@@ -145,7 +148,7 @@ for (DstPtr, SrcPtr) in PTR_COPY_DIRECTIONS
 		src::Annotation{<:$SrcPtr{T}},
                 n::Const;
                 kwargs...,
-            ) where {RT, T <: AbstractFloat}
+            ) where {RT, T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
             if !(dest isa Const)
                 for batch in 1:EnzymeRules.width(config)
                     ddest = _shadow(dest, config, batch)
