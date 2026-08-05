@@ -307,6 +307,20 @@ Enzyme also supports a second way to mark things inactive, where the marker is "
 EnzymeRules.inactive_noinl(::typeof(det), ::UnitaryMatrix) = true
 ```
 
+Sometimes only the keyword arguments of a function are non-differentiable, while the function itself
+produces a derivative-carrying result. A solver call like `solve(prob, alg; abstol, reltol)` is a
+typical example: the tolerances are configuration, but the solution is differentiated. Marking the
+whole call inactive would be wrong here, so [`EnzymeRules.inactive_kwarg`](@ref) marks only the
+keyword arguments inactive.
+
+```julia
+EnzymeRules.inactive_kwarg(::typeof(solve), ::MyProblem, args...; kwargs...) = nothing
+```
+
+The return value of an `inactive_kwarg` method is ignored — only the presence of the method matters.
+Without such a declaration, passing an active value as a keyword argument to a function with a custom
+rule throws `Enzyme.Compiler.NonConstantKeywordArgException`.
+
 ### [Easy Rules](@id man-easy-rule)
 
 The recommended way for writing rules for most use cases is through the [`EnzymeRules.@easy_rule`](@ref) macro. This macro enables users to write derivatives for any functions which only read from their arguments (e.g. do not overwrite memory), and has numbers, matricies of numbers, or tuples thereof as arguments/result types. 

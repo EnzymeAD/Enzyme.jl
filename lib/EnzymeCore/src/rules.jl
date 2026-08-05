@@ -9,6 +9,11 @@ import ..EnzymeCore: needs_primal
 export needs_primal, needs_shadow, width, overwritten, runtime_activity
 export primal_type, shadow_type, tape_type, easy_scalar_rule, forward_rule_return_type, augmented_rule_return_type
 
+# `public` is only parseable on 1.11+, so it has to go through `eval` to stay loadable on 1.10.
+@static if VERSION >= v"1.11"
+    eval(Meta.parse("public inactive_kwarg"))
+end
+
 import Base: unwrapva, isvarargtype, unwrap_unionall, rewrap_unionall
 
 """
@@ -465,7 +470,22 @@ end
 
 Mark a particular function as always having inactive keyword arguments. The return does not matter, merely its declaration.
 
-This function is currently considered internal/experimental and may not respect semver.
+Unlike [`inactive`](@ref), which marks the entire call (and therefore its result) inactive, this
+only marks the keyword arguments inactive; the positional arguments and the return value keep
+their usual activity. This is what one wants for a function whose keywords are pure
+configuration but whose result is differentiable, for example a solver called as
+`solve(prob, alg; abstol, reltol)`.
+
+Methods are declared for the keyword-accepting function itself, and the return value is ignored:
+
+```julia
+EnzymeCore.EnzymeRules.inactive_kwarg(::typeof(solve), ::MyProblem, args...; kwargs...) = nothing
+```
+
+Without such a declaration, passing a `Duplicated` (or otherwise active) value as a keyword
+argument to a function with a custom rule throws `Enzyme.Compiler.NonConstantKeywordArgException`.
+Declaring `inactive_kwarg` asserts that the keyword arguments carry no derivative information; if
+one of them does, the resulting derivative will be incorrect.
 """
 function inactive_kwarg end
 
