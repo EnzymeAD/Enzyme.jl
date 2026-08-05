@@ -71,7 +71,10 @@ end
 
 function Base.print(io::IO, x::ExprAndMsg)
     print(io, x.ex)
-    msg = x.msg()
+    # `msg` is normally a thunk, but accept an already-built message too: `@test_msg`
+    # expands at the caller's precompile time, so a module compiled against the earlier
+    # expansion still stores a string here
+    msg = x.msg isa Base.Callable ? x.msg() : x.msg
     return !isempty(msg) && print(io, "\n  Problem: ", msg)
 end
 
