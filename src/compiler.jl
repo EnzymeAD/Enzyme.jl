@@ -5535,6 +5535,10 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     @safe_debug "Emit LLVM with" primal_job
     GPUCompiler.prepare_job!(primal_job)
     mod, meta = GPUCompiler.emit_llvm(primal_job)
+    # `emit_llvm` is not concretely inferred, so without this assertion every
+    # subsequent use of `mod` (e.g. `LLVM.context(mod)`) is a dynamic dispatch
+    # through jl_apply_generic, which forces boxing and GC-rooting across it.
+    mod = mod::LLVM.Module
     edges = enzyme_context.edges
 
     primal_interp = GPUCompiler.get_interpreter(primal_job)
