@@ -19,6 +19,13 @@ function EnzymeTestUtils.acopyto!(dst, src::AnyGPUArray)
     EnzymeTestUtils.acopyto!(dst, temp)
 end
 
+# Without this, a GPU array matches only the generic `map_fields_recursive`, which
+# recurses into its fields: `CuArray` -> `(data, maxsize, offset, dims)` -> `DataRef`
+# -> `(rc, freed, cached)`. That applies `copyto!` to reference-counting state, so the
+# buffer can be released while a kernel is still reading it. Host arrays already have
+# such a leaf method; GPU arrays need the same.
+EnzymeTestUtils.map_fields_recursive(f, x::AbstractGPUArray{<:Number}...) = f(x...)
+
 # `Base.dataids` falls back to `objectid` for GPU arrays, so it cannot tell that an array
 # and a reshape of it share memory. The device pointer can.
 EnzymeTestUtils.aliasids(x::AbstractGPUArray) = (UInt(pointer(x)),)
