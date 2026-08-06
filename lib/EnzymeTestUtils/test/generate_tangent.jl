@@ -2,6 +2,7 @@ using Test
 using EnzymeTestUtils
 using EnzymeTestUtils: rand_tangent, zero_tangent
 using Enzyme
+using JLArrays
 using Quaternions
 
 @testset "tangent generation" begin
@@ -14,6 +15,15 @@ using Quaternions
             return xi .* zi
         end
         @test w == (x=4.5, y=(a=4, b=:foo, c=[26.0]), z=:bar)
+    end
+
+    @testset "GPU arrays + map_fields_recursive" begin
+        x = JLArray(randn(4))
+        y = JLArray(zeros(4))
+        res = EnzymeTestUtils.map_fields_recursive(copyto!, y, x)
+        @test res === y
+        @test getfield(res, :data) === getfield(y, :data)
+        @test Array(res) == Array(x)
     end
 
     @testset "rand_tangent" begin
