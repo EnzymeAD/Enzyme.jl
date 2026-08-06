@@ -16,6 +16,7 @@ Random.seed!(0)
     include("test_reverse.jl")
     include("test_fd.jl")
     CUDA.functional() && include("cuda_to_vec.jl")
+    CUDA.functional() && include("cuda_generate_tangent.jl")
     CUDA.functional() && include("cuda_test_reverse.jl")
     CUDA.functional() && include("cuda_test_forward.jl")
 end
