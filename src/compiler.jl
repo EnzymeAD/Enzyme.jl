@@ -135,7 +135,15 @@ end
 # FIXME: Should this take something like PTXCompilerParams/CUDAParams?
 struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
     mode::API.CDerivativeMode
+
+    # Whether to emit only the entry, leaving callees as `jl_invoke` thunks
+    only_entry::Bool
 end
+
+PrimalCompilerParams(mode::API.CDerivativeMode) = PrimalCompilerParams(mode, false)
+
+params_only_entry(::AbstractCompilerParams) = false
+params_only_entry(params::PrimalCompilerParams) = params.only_entry
 
 function EnzymeCompilerParams(TT, mode, width, rt, run_enzyme, abiwrap,
                               modifiedBetween, returnPrimal, shadowInit,
@@ -211,14 +219,16 @@ if VERSION >= v"1.11.0-DEV.1552"
             true
         )
 
-    GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        Interpreter.EnzymeInterpreter(
+    function GPUCompiler.get_interpreter(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams})
+        return Interpreter.EnzymeInterpreter(
             GPUCompiler.ci_cache_token(job),
             GPUCompiler.method_table(job),
             job.world,
             job.config.params.mode,
-            true
+            true;
+            only_entry = params_only_entry(job.config.params)
         )
+    end
 else
 
     # the codeinstance cache to use -- should only be used for the constructor
@@ -237,14 +247,16 @@ else
     GPUCompiler.ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         enzyme_ci_cache(job)
 
-    GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        Interpreter.EnzymeInterpreter(
+    function GPUCompiler.get_interpreter(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams})
+        return Interpreter.EnzymeInterpreter(
             enzyme_ci_cache(job),
             GPUCompiler.method_table(job),
             job.world,
             job.config.params.mode,
-            true
+            true;
+            only_entry = params_only_entry(job.config.params)
         )
+    end
 end
 
 import GPUCompiler: @safe_debug, @safe_info, @safe_warn, @safe_error
@@ -1406,18 +1418,6 @@ const DumpPreNestedCheck = Ref(false)
 const DumpPreNestedOpt = Ref(false)
 const DumpPostNestedOpt = Ref(false)
 
-function emit_llvm_only_entry(@nospecialize(job::CompilerJob))
-    tls = task_local_storage()
-    key = Interpreter.OnlyEntryKey
-    prev = get(tls, key, false)
-    tls[key] = true
-    try
-        return GPUCompiler.emit_llvm(job)
-    finally
-        tls[key] = prev
-    end
-end
-
 function nested_codegen!(
     enzyme_context::EnzymeContext,
     mode::API.CDerivativeMode,
@@ -1446,11 +1446,11 @@ function nested_codegen!(
     #  - When OrcV2 only use a MaterializationUnit to avoid mutation of the module here
 
     target = DefaultCompilerTarget()
-    params = PrimalCompilerParams(mode)
+    params = PrimalCompilerParams(mode, Interpreter.only_entry_requested())
     job = CompilerJob(funcspec, CompilerConfig(target, params; kernel = false, libraries = true, toplevel = true, optimize = false, cleanup = false, only_entry = false, validate = false, entry_abi = :specfunc), world)
 
     GPUCompiler.prepare_job!(job)
-    otherMod, meta = emit_llvm_only_entry(job)
+    otherMod, meta = GPUCompiler.emit_llvm(job)
 
     interp = GPUCompiler.get_interpreter(job)
     prepare_llvm(interp, otherMod, job, meta)

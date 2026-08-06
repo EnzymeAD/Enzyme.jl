@@ -83,6 +83,9 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
     # When false, leave the check for within_autodiff to the handler.
     within_autodiff_rewrite::Bool
 
+    # When true, `ci_cache_populate` returns the entry alone rather than the callee graph.
+    only_entry::Bool
+
     handler::T
 end
 
@@ -135,16 +138,17 @@ const LastRevWorld = Ref(Base.IdSet{Type}())
 const LastInaWorld = Ref(Base.IdSet{Type}())
 
 function EnzymeInterpreter(
-    cache_or_token,
-    mt::Union{Nothing,Core.MethodTable},
-    world::UInt,
-    forward_rules::Bool,
-    reverse_rules::Bool,
-    inactive_rules::Bool,
-    broadcast_rewrite::Bool = true,
-    within_autodiff_rewrite::Bool = true,
-    handler = nothing
-)
+        cache_or_token,
+        mt::Union{Nothing, Core.MethodTable},
+        world::UInt,
+        forward_rules::Bool,
+        reverse_rules::Bool,
+        inactive_rules::Bool,
+        broadcast_rewrite::Bool = true,
+        within_autodiff_rewrite::Bool = true,
+        handler = nothing;
+        only_entry::Bool = false
+    )
     @assert world <= Base.get_world_counter()
 
     parms = @static if VERSION >= v"1.12.0-DEV.1017"
@@ -225,6 +229,7 @@ function EnzymeInterpreter(
         inactive_rules::Bool,
         broadcast_rewrite::Bool,
         within_autodiff_rewrite::Bool,
+        only_entry::Bool,
         handler
     )
 end
@@ -237,26 +242,32 @@ EnzymeInterpreter(
     inactive_rules::Bool,
     broadcast_rewrite::Bool = true,
     within_autodiff_rewrite::Bool = true,
-    handler = nothing
-) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, inactive_rules, broadcast_rewrite, within_autodiff_rewrite, handler)
+    handler = nothing;
+    only_entry::Bool = false
+) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, inactive_rules, broadcast_rewrite, within_autodiff_rewrite, handler; only_entry)
 
-function EnzymeInterpreter(interp::EnzymeInterpreter;
-    cache_or_token = (@static if HAS_INTEGRATED_CACHE
-        interp.token
-    else
-        interp.code_cache
-    end),
-    mt = interp.method_table,
-    local_cache = interp.local_cache,
-    world = interp.world,
-    inf_params = interp.inf_params,
-    opt_params = interp.opt_params,
-    forward_rules = interp.forward_rules,
-    reverse_rules = interp.reverse_rules,
-    inactive_rules = interp.inactive_rules,
-    broadcast_rewrite = interp.broadcast_rewrite,
-    within_autodiff_rewrite = interp.within_autodiff_rewrite,
-    handler = interp.handler)
+function EnzymeInterpreter(
+        interp::EnzymeInterpreter;
+        cache_or_token = (
+            @static if HAS_INTEGRATED_CACHE
+                interp.token
+            else
+                interp.code_cache
+            end
+        ),
+        mt = interp.method_table,
+        local_cache = interp.local_cache,
+        world = interp.world,
+        inf_params = interp.inf_params,
+        opt_params = interp.opt_params,
+        forward_rules = interp.forward_rules,
+        reverse_rules = interp.reverse_rules,
+        inactive_rules = interp.inactive_rules,
+        broadcast_rewrite = interp.broadcast_rewrite,
+        within_autodiff_rewrite = interp.within_autodiff_rewrite,
+        only_entry = interp.only_entry,
+        handler = interp.handler
+    )
     return EnzymeInterpreter(
         cache_or_token,
         mt,
@@ -269,6 +280,7 @@ function EnzymeInterpreter(interp::EnzymeInterpreter;
         inactive_rules,
         broadcast_rewrite,
         within_autodiff_rewrite,
+        only_entry,
         handler
     )
 end
@@ -1512,22 +1524,22 @@ end
 Whether `jl_emit_native` takes an explicit list of `CodeInstance => CodeInfo` pairs
 describing what to emit (as opposed to being handed a `MethodInstance` and walking the
 call graph itself). Only on such versions can `nested_codegen!` ask for the entry alone
-and have Julia stub out the callees; see `OnlyEntryKey`.
+and have Julia stub out the callees; see `OnlyEntry`.
 """
 const HAS_CODEINFO_LIST = VERSION >= v"1.12.0-DEV.1823"
 
 """
-    OnlyEntryKey
+    OnlyEntry
 
-Task-local-storage key guarding the "emit the entry only" mode used by
-`Enzyme.Compiler.nested_codegen!`.
+Master switch for the entry-only nested codegen used by `Enzyme.Compiler.nested_codegen!`.
 
-When this flag is set, `GPUCompiler.ci_cache_populate` hands `jl_emit_native`
-only the entry `CodeInstance` instead of the whole transitively reachable callee graph.
-Julia's `resolve_workqueue` then patches up every call site that was left dangling by
-emitting a `jl_invoke` thunk (plus a specsig-to-fptr1 adapter where the call site uses the
-specialized ABI), so the callees dispatch into Julia's own natively compiled code rather
-than being re-emitted into Enzyme's private module.
+When enabled, `nested_codegen!` sets `only_entry` on its `PrimalCompilerParams`, and
+`GPUCompiler.ci_cache_populate` then hands `jl_emit_native` only the entry `CodeInstance`
+instead of the whole transitively reachable callee graph. Julia's `resolve_workqueue`
+patches up every call site left dangling by emitting a `jl_invoke` thunk (plus a
+specsig-to-fptr1 adapter where the call site uses the specialized ABI), so the callees
+dispatch into Julia's own natively compiled code rather than being re-emitted into Enzyme's
+private module.
 
 This matters because `nested_codegen!` is called once per rule per thunk, and the module it
 builds is checked, type-annotated, optimized and then retained by the JIT. Emitting the
@@ -1535,26 +1547,11 @@ entry alone keeps that module small in all four respects. It is only correct bec
 modules are never differentiated (`run_enzyme = false`) and are linked in after `enzyme!`
 has already run, so Enzyme never needs to see through the calls that become thunks.
 
-The flag is task-local rather than global because it must not leak into unrelated jobs that
-share the interpreter — notably `Enzyme.onehot_internal`, which uses the same
-`PrimalCompilerParams` but consumes the emitted module as an `llvmcall` string and so needs
-its callees emitted.
-"""
-const OnlyEntryKey = gensym(:enzyme_only_entry)
-
-"""
-    OnlyEntry
-
-Master switch for the entry-only nested codegen described in `OnlyEntryKey`. Set to
-`false` to restore the previous behaviour of emitting the full callee graph.
+Set to `false` to restore the previous behaviour of emitting the full callee graph.
 """
 const OnlyEntry = Ref(HAS_CODEINFO_LIST)
 
-@inline function only_entry_requested()
-    HAS_CODEINFO_LIST || return false
-    OnlyEntry[] || return false
-    return get(task_local_storage(), OnlyEntryKey, false)::Bool
-end
+@inline only_entry_requested() = HAS_CODEINFO_LIST && OnlyEntry[]
 
 @static if HAS_CODEINFO_LIST
 
@@ -1588,7 +1585,7 @@ end
             @nospecialize(interp::EnzymeInterpreter), cache, mi::MethodInstance,
             min_world::UInt, max_world::UInt
         )
-        if only_entry_requested()
+        if interp.only_entry
             return entry_codeinfo(interp, mi)
         end
         return Base.@invoke GPUCompiler.ci_cache_populate(
