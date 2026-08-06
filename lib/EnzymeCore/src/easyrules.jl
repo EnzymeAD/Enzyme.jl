@@ -93,7 +93,7 @@ Internal function.
 
 Multiply a partial derivative (df/dx) by its shadow input (dx) to form `df`.
 
-Specifically, perform prev + partial * dx, returning the result or re-using prev's memory, where applicable.
+Specifically, perform `prev + partial * dx`, returning the result or re-using `prev`'s memory, where applicable.
 """
 function multiply_fwd_into end
 
@@ -104,7 +104,7 @@ Internal function.
 
 Multiply a partial derivative (df/dx) by its shadow input (df) to form `dx`.
 
-Specifically, perform prev + conj(partial * conj(dx)), returning the result or re-using prev's memory, where applicable.
+Specifically, perform `prev + conj(partial * conj(dx))`, returning the result or re-using `prev`'s memory, where applicable.
 """
 function multiply_rev_into end
 
@@ -689,7 +689,7 @@ The `easy_rule` macro assumes that the function `f` does not mutate any of its a
 
 The `easy_rule` macro only works if inputs are scalars or arrays of scalars, and the result is a scalar, array, or tuple thereof.
 
-For each output result (a single output is assumed if a scalar is returned), a tuple of partial derivatives is expected. Specifically, each tuple contains one entry for each argument to `f`. This entry should contain the jacobian `∂fi_∂xj` where `i` is the number of the output, and `j` is the number of the input. If both input `i` and output `j` are scalars, `∂fi_∂xj` should be a scalar. If at least one of these are an abstractarray, `∂fi_∂xj` should be a tensor of size `(size(output[j])..., size(input[i])...)`, where scalars are considered zero-dimensional.
+For each output result (a single output is assumed if a scalar is returned), a tuple of partial derivatives is expected. Specifically, each tuple contains one entry for each argument to `f`. This entry should contain the Jacobian `∂fi_∂xj` where `i` is the number of the output, and `j` is the number of the input. If both input `i` and output `j` are scalars, `∂fi_∂xj` should be a scalar. If at least one of these are an `AbstractArray`, `∂fi_∂xj` should be a tensor of size `(size(output[j])..., size(input[i])...)`, where scalars are considered zero-dimensional.
 
 The arguments to `f` can either have no type constraints, or specific type constraints.
 

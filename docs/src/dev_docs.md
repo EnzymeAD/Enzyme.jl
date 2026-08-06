@@ -100,7 +100,7 @@ Depending on how you installed Julia the LLVM Julia is using will be different.
 3. Uses a pre-built Julia from your system vendor (Not recommended)
 
 To check what LLVM Julia is using use:
-```
+```julia-repl
 julia> Base.libllvm_version_string
 "9.0.1jl"
 ```
@@ -116,7 +116,7 @@ cd build-jl
 
 ### Prebuilt binary from julialang.org
 
-```
+```sh
 LLVM_MAJOR_VER=`julia -e "print(Base.libllvm_version.major)"`
 julia -e "using Pkg; pkg\"add LLVM_full_jll@${LLVM_MAJOR_VER}\""
 LLVM_DIR=`julia -e "using LLVM_full_jll; print(LLVM_full_jll.artifact_dir)"`
@@ -125,6 +125,6 @@ cmake ../enzyme/ -G Ninja -DENZYME_EXTERNAL_SHARED_LIB=ON -DLLVM_DIR=${LLVM_DIR}
 ```
 
 ### Manual build of Julia
-```
+```sh
 cmake ../enzyme/ -G Ninja -DENZYME_EXTERNAL_SHARED_LIB=ON -DLLVM_DIR=${PATH_TO_BUILDDIR_OF_JULIA}/usr/lib/cmake/llvm/
 ```
