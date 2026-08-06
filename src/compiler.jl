@@ -567,6 +567,15 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
             push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
         end
 
+        specTypes_prep = Interpreter.simplify_kw(mi.specTypes)
+        mt_prep = Core.Compiler.method_table(interp)
+        is_frule = interp.forward_rules && cached_has_frule(specTypes_prep, job.world, mt_prep)
+        is_rrule = interp.reverse_rules && cached_has_rrule(specTypes_prep, job.world, mt_prep)
+        is_inact = interp.inactive_rules && cached_is_inactive(specTypes_prep, job.world, mt_prep)
+        if llvmfn != meta.entry && (is_frule || is_rrule || is_inact)
+            empty!(LLVM.blocks(llvmfn))
+        end
+
 	if startswith(LLVM.name(llvmfn), "japi3") || startswith(LLVM.name(llvmfn), "japi1") || startswith(LLVM.name(llvmfn), "jlcapi")
 	   continue
 	end
@@ -706,6 +715,70 @@ include("compiler/optimize.jl")
 include("compiler/interpreter.jl")
 include("compiler/validation.jl")
 include("typeutils/inference.jl")
+function GPUCompiler.ci_cache_populate(interp::Interpreter.EnzymeInterpreter, cache, source, min_world, max_world)
+    codeinfos = Pair{Core.Compiler.CodeInstance, Core.Compiler.CodeInfo}[]
+    has_compilequeue = VERSION >= v"1.13.0-DEV.499" || v"1.12-beta3" <= VERSION < v"1.13-"
+    ci = Core.Compiler.typeinf_ext(interp, source, Core.Compiler.SOURCE_MODE_NOT_REQUIRED)
+    if has_compilequeue
+        workqueue = Core.Compiler.CompilationQueue(; interp)
+        push!(workqueue, ci)
+    else
+        workqueue = Core.Compiler.CodeInstance[ci]
+        inspected = Core.Compiler.IdSet{Core.Compiler.CodeInstance}()
+    end
+
+    mt = Core.Compiler.method_table(interp)
+
+    while !isempty(workqueue)
+        callee = pop!(workqueue)
+        if has_compilequeue
+            Core.Compiler.isinspected(workqueue, callee) && continue
+            Core.Compiler.markinspected!(workqueue, callee)
+        else
+            callee in inspected && continue
+            push!(inspected, callee)
+        end
+
+        mi = Core.Compiler.get_ci_mi(callee)
+        if Core.Compiler.use_const_api(callee)
+            if VERSION >= v"1.13.0-DEV.1121"
+                src = Core.Compiler.codeinfo_for_const(interp, mi, Core.Compiler.WorldRange(callee.min_world, callee.max_world), callee.edges, callee.rettype_const)
+            else
+                src = Core.Compiler.codeinfo_for_const(interp, mi, callee.rettype_const)
+            end
+        else
+            src = Core.Compiler.typeinf_code(interp, mi, true)
+        end
+
+        if src isa Core.Compiler.CodeInfo
+            specTypes = Interpreter.simplify_kw(mi.specTypes)
+            is_kw = (length(mi.specTypes.parameters) > 0 && mi.specTypes.parameters[1] === typeof(Core.kwcall))
+            is_frule = interp.forward_rules && cached_has_frule(specTypes, interp.world, mt)
+            is_rrule = interp.reverse_rules && cached_has_rrule(specTypes, interp.world, mt)
+            is_inact = interp.inactive_rules && cached_is_inactive(specTypes, interp.world, mt)
+            is_rule = !is_kw && (mi != source) && (is_frule || is_rrule || is_inact)
+
+            if is_rule
+                stub = copy(src)
+                stub.code = Any[Core.ReturnNode()]
+                stub.ssavaluetypes = 0
+                stub.ssaflags = UInt32[]
+                push!(codeinfos, callee => stub)
+                # Skip collectinvokes! Callees of custom rule functions are pruned from workqueue and recursive codegen!
+            else
+                if has_compilequeue
+                    sptypes = Core.Compiler.sptypes_from_meth_instance(mi)
+                    Core.Compiler.collectinvokes!(workqueue, src, sptypes)
+                else
+                    Core.Compiler.collectinvokes!(workqueue, src)
+                end
+                push!(codeinfos, callee => src)
+            end
+        end
+    end
+
+    return codeinfos
+end
 
 import .Interpreter: isKWCallSignature
 
