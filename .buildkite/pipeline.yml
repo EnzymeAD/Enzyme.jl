@@ -25,6 +25,8 @@ steps:
       echo "+++ Run tests"
       julia --color=yes --code-coverage=@ test/cuda.jl
       julia --color=yes --code-coverage=@ lib/EnzymeTestUtils/test/cuda_to_vec.jl
+      julia --color=yes --code-coverage=@ lib/EnzymeTestUtils/test/cuda_test_reverse.jl
+      julia --color=yes --code-coverage=@ lib/EnzymeTestUtils/test/cuda_test_forward.jl
     env:
       JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
 
