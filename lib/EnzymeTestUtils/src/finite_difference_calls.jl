@@ -52,22 +52,33 @@ _fd_forward(fdm, f, ::Type{<:Const}, y, activities) = ()
 function multi_tovec(active_return, vals)
     if active_return
         v0, v1 = vals[1], Base.tail(vals)
-        res = vcat(to_vec(v0)[1], to_vec(v1)[1])
+        # `vcat` of a host-backed and a GPU-backed vector falls back to elementwise copies,
+        # which GPU arrays disallow, so merge these the same way `to_vec` merges fields
+        res = append_or_merge(append_or_merge(nothing, to_vec(v0)[1]), to_vec(v1)[1])[1]
         return res
     else
         to_vec(vals)[1]
     end
 end
 
+# Finite differencing below perturbs and reads one element at a time, which requires
+# scalar indexing. `to_vec` can hand back a GPU-backed vector, and those disallow scalar
+# indexing, so do the element-wise work on a host copy. `f_vec` reconstructs the
+# arguments via `from_vec`, which accepts a host-backed vector and moves the data back
+# to the device.
+_host_vec(x::Array) = x
+_host_vec(x) = Array(x)
+
 function j′vp(fdm, f_vec, ȳ, x)
-  ẏs = map(eachindex(x)) do n
-    return fdm(zero(eltype(x))) do ε
-        xn = x[n]
+  xh = _host_vec(x)
+  ẏs = map(eachindex(xh)) do n
+    return fdm(zero(eltype(xh))) do ε
+        xn = xh[n]
         try
-            x[n] = xn + ε
-            return copy(f_vec(x))  # copy required incase `f(x)` returns something that aliases `x`
+            xh[n] = xn + ε
+            return copy(f_vec(xh))  # copy required incase `f(x)` returns something that aliases `x`
         finally
-            x[n] = xn  # Can't do `x[n] -= ϵ` as floating-point math is not associative
+            xh[n] = xn  # Can't do `x[n] -= ϵ` as floating-point math is not associative
         end
     end
   end
@@ -76,9 +87,12 @@ function j′vp(fdm, f_vec, ȳ, x)
         else
           transpose(reduce(hcat, ẏs))
         end
+  # `result` and `mat` stay on whatever device `x` and the outputs live on; only the
+  # scalar reads of the cotangent need to be on the host
+  ȳh = _host_vec(ȳ)
   result = zero(x)
   for i in 1:length(ȳ)
-    tp = @inbounds ȳ[i] 
+    tp = @inbounds ȳh[i]
     if isfinite(tp) && !iszero(tp)
       result .+= mat[:, i] .* tp
     end

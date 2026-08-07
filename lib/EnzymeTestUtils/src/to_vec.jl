@@ -6,24 +6,32 @@ struct AliasDict{K,V} <: AbstractDict{K,V}
 end
 AliasDict() = AliasDict(IdDict(), IdDict{Tuple{UInt,Vararg{UInt}},Any}())
 
+# identifiers of the memory backing `x`, or `nothing` if aliasing can only be detected by
+# object identity. Objects that share memory (e.g. an array and a reshape of it) must
+# return equal identifiers. Extended for GPU arrays by the GPUArraysCore extension, since
+# `Base.dataids` falls back to `objectid` for them.
+aliasids(x) = nothing
+aliasids(x::Array) = Base.dataids(x)
+
 function Base.haskey(d::AliasDict, key)
     haskey(d.id_dict, key) && return true
-    key isa Array && haskey(d.dataids_dict, Base.dataids(key)) && return true
-    return false
+    ids = aliasids(key)
+    ids === nothing && return false
+    return haskey(d.dataids_dict, ids)
 end
 
-Base.getindex(d::AliasDict, key) = d.id_dict[key]
-function Base.getindex(d::AliasDict, key::Array)
+function Base.getindex(d::AliasDict, key)
     haskey(d.id_dict, key) && return d.id_dict[key]
-    dataids = Base.dataids(key)
-    return d.dataids_dict[dataids]
+    ids = aliasids(key)
+    ids === nothing && throw(KeyError(key))
+    return d.dataids_dict[ids]
 end
 
 function Base.setindex!(d::AliasDict, val, key)
     d.id_dict[key] = val
-    if key isa Array
-        dataids = Base.dataids(key)
-        d.dataids_dict[dataids] = val
+    ids = aliasids(key)
+    if ids !== nothing
+        d.dataids_dict[ids] = val
     end
     return d
 end
@@ -92,18 +100,32 @@ acopyto!(dst, src) = Base.copyto!(dst, src)
 function append_or_merge(prev::Union{Nothing, Tuple{AbstractVector, Bool}}, newv::AbstractVector)::Tuple{AbstractVector, Bool}
     if prev === nothing
         return (newv, false)
-    elseif prev[2] && eltype(newv) <: eltype(prev[1])
+    elseif isempty(newv)
+        # nothing to merge in, so keep `prev` and its allocation as-is
+        return prev
+    elseif isempty(prev[1])
+        # `prev` holds no data: constant and undefined fields vectorize to an empty host
+        # vector, and appending into it would drag a GPU-backed `newv` back to the host.
+        # Let `newv` supply the container instead. Flagged as not-a-new-allocation, since
+        # `newv` may alias the object being vectorized (e.g. a `reshape` of it).
+        return (newv, false)
+    elseif prev[2] && prev[1] isa Array && newv isa Array && eltype(newv) <: eltype(prev[1])
+        # `append!` grows `prev[1]` in place and iterates `newv`, so both must be host
+        # arrays: GPU arrays are not resizable and disallow the elementwise reads
         append!(prev[1], newv)
         return prev
     else
         ET2 = Base.promote_type(eltype(prev[1]), eltype(newv))
-        if prev[2] && ET2 == eltype(prev[1])
+        if prev[2] && prev[1] isa Array && newv isa Array && ET2 == eltype(prev[1])
             append!(prev[1], newv)
             return prev
         else
-            res = Vector{ET2}(undef, length(prev[1]) + length(newv))
+            # allocate like whichever side is not a plain host `Array`, so that merging a
+            # host-backed vector with a GPU-backed one stays on the device. Merging into a
+            # host container would fall back to elementwise copies, which GPU arrays reject.
+            res = similar(prev[1] isa Array ? newv : prev[1], ET2, length(prev[1]) + length(newv))
             acopyto!(@view(res[1:length(prev[1])]), prev[1])
-            acopyto!(@view(res[length(prev[1])+1:end]), newv)
+            acopyto!(@view(res[(length(prev[1]) + 1):end]), newv)
             return (res, true)
         end
     end
