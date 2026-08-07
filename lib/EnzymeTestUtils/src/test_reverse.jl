@@ -39,7 +39,11 @@ additional constraints:
 - `rtol`: Relative tolerance for `isapprox`.
 - `atol`: Absolute tolerance for `isapprox`.
 - `testset_name`: Name to use for a testset in which all tests are evaluated.
-- `output_tangent`: Optional final tangent to provide at the beginning of the reverse-mode differentiation 
+- `output_tangent`: Optional final tangent to provide at the beginning of the reverse-mode differentiation
+- `ignore_const_checks::Bool=false`: If `true`, skip the post-call assertion that
+    `Const` arguments were mutated identically by the rule and the primal function,
+    and skip the FD-vs-AD derivative comparison for `Const` arguments. Useful when a
+    rule legitimately scribbles on a `Const` scratch buffer.
 
 # Examples
 
@@ -76,7 +80,9 @@ function test_reverse(
     atol::Real=1e-9,
     testset_name=nothing,
     runtime_activity::Bool=false,
-    output_tangent=nothing)
+    output_tangent=nothing,
+    ignore_const_checks::Bool=false,
+)
     call_with_captured_kwargs = CallWithKWargs(fkwargs)
     if testset_name === nothing
         testset_name = "test_reverse: $f with return activity $ret_activity on $(_string_activity(args))"
@@ -119,6 +125,7 @@ function test_reverse(
             rtol,
         )
         for (i, (act_i, arg_i)) in enumerate(zip(Base.tail(activities), args_copy))
+            ignore_const_checks && act_i isa Const && continue
             test_approx(
                 act_i.val,
                 arg_i,
@@ -146,6 +153,7 @@ function test_reverse(
         @test length(dx_ad) == length(dx_fdm) == length(activities)
         # check all returned derivatives against FiniteDifferences
         for (i, (act_i, dx_ad_i, dx_fdm_i)) in enumerate(zip(activities, dx_ad, dx_fdm))
+            ignore_const_checks && act_i isa Const && continue
             target_str = if i == 1
                 "active derivative for callable"
             else
