@@ -243,3 +243,49 @@ end
     @test all(dA .≈ (2:2:64))
     @test all(dA2 .≈ 3*(2:2:64))
 end
+
+# https://github.com/EnzymeAD/Enzyme.jl/issues/2837
+# `mul!` on GPU arrays (backend BLAS gemv/gemm), handled by EnzymeGPUArraysCoreExt.
+struct Linear2837{W, B}
+    weight::W
+    bias::B
+end
+(m::Linear2837)(x) = m.weight * x .+ m.bias
+
+@testset "mul! on CuArrays (#2837)" begin
+    rev = Enzyme.set_runtime_activity(Reverse)
+    fwd = Enzyme.set_runtime_activity(Forward)
+
+    # reverse gemv:  y = W*x  →  dW = 1*x', dx = W'*1
+    W = cu(randn(Float32, 3, 4)); x = cu(randn(Float32, 4))
+    dW = Enzyme.make_zero(W); dx = Enzyme.make_zero(x)
+    Enzyme.autodiff(rev, Const(p -> sum(p[1] * p[2])), Active, Duplicated((W, x), (dW, dx)))
+    @test Array(dW) ≈ ones(Float32, 3) * Array(x)'
+    @test Array(dx) ≈ Array(W)' * ones(Float32, 3)
+
+    # reverse gemm:  C = A*B  →  dA = 1*B', dB = A'*1
+    A = cu(randn(Float32, 3, 4)); B = cu(randn(Float32, 4, 5))
+    dA = Enzyme.make_zero(A); dB = Enzyme.make_zero(B)
+    Enzyme.autodiff(rev, Const(p -> sum(p[1] * p[2])), Active, Duplicated((A, B), (dA, dB)))
+    @test Array(dA) ≈ ones(Float32, 3, 5) * Array(B)'
+    @test Array(dB) ≈ Array(A)' * ones(Float32, 3, 5)
+
+    # wrapped operand (AnyGPUArray): sum(Wᵀ*x)  →  dW[i,j] = x[i]
+    Wt = cu(randn(Float32, 4, 3)); xt = cu(randn(Float32, 4))
+    dWt = Enzyme.make_zero(Wt)
+    Enzyme.autodiff(rev, Const((W, x) -> sum(transpose(W) * x)), Active, Duplicated(Wt, dWt), Const(xt))
+    @test Array(dWt) ≈ Array(xt) * ones(Float32, 3)'
+
+    # the #2837 MWE: differentiate a struct "model", sum(W*x .+ b)
+    model = Linear2837(cu(Float32[1.0 2.0; 3.0 4.0]), cu(Float32[0.5, -0.5]))
+    dmodel = Duplicated(model, Enzyme.make_zero(model))
+    xm = cu(Float32[0.3, 0.7])
+    Enzyme.autodiff(rev, Const((m, x) -> sum(m(x))), Active, dmodel, Const(xm))
+    @test Array(dmodel.dval.weight) ≈ ones(Float32, 2) * Array(xm)'
+    @test all(Array(dmodel.dval.bias) .≈ 1)
+
+    # forward gemv:  ẏ = Ẇ*x
+    Wf = cu(randn(Float32, 3, 4)); xf = cu(randn(Float32, 4)); Ẇ = cu(randn(Float32, 3, 4))
+    ẏ = Enzyme.autodiff(fwd, Const((W, x) -> W * x), Duplicated(Wf, Ẇ), Const(xf))[1]
+    @test Array(ẏ) ≈ Array(Ẇ) * Array(xf)
+end
