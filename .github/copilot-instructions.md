@@ -176,6 +176,7 @@ Extensions are in `ext/` directory:
 - EnzymeBFloat16sExt
 - EnzymeChainRulesCoreExt
 - EnzymeGPUArraysCoreExt
+- EnzymeGammaExt
 - EnzymeLogExpFunctionsExt
 - EnzymeSpecialFunctionsExt
 - EnzymeStaticArraysExt
