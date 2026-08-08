@@ -113,6 +113,7 @@ export autodiff,
 
 export jacobian, gradient, gradient!, hvp, hvp!, hvp_and_gradient!
 export batch_size, onehot, chunkedonehot
+export run_attributor, set_run_attributor!
 
 using LinearAlgebra
 import SparseArrays
@@ -122,6 +123,7 @@ export EnzymeRules
 
 # Independent code, must be loaded before "compiler.jl"
 include("pmap.jl")
+include("preferences.jl")
 
 import LLVM
 include("api.jl")
