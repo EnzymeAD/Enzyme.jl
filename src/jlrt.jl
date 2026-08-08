@@ -1,5 +1,38 @@
 # For julia runtime function emission
-    
+
+"""
+    is_device_triple(triple::String)
+
+Whether `triple` names a GPU/accelerator target. Such modules have no Julia
+runtime, so exceptions have to go through GPUCompiler's `gpu_report_exception`
+family instead of `jl_throw`.
+"""
+function is_device_triple(triple::String)
+    # NOTE: Metal (air64-apple-macosx) is deliberately not listed here yet; it has
+    #       never taken this path and enabling it is untested.
+    return occursin("ptx", triple) ||      # nvptx64-nvidia-cuda
+        occursin("amdgcn", triple) ||      # amdgcn-amd-amdhsa
+        occursin("spir", triple)           # spirv64-unknown-unknown / spir64-unknown-unknown
+end
+
+"""
+    coerce_ptr!(B, val, ty)
+
+Bring pointer `val` into the representation `ty`. Targets whose datalayout sets a
+non-zero global address space (`-G1`: SPIR-V, AMDGPU) put string constants in
+`addrspace(1)`, while the GPUCompiler runtime declarations take an `addrspace(0)`
+pointer, so an explicit `addrspacecast` is needed -- this is what GPUCompiler
+itself emits. On targets where both are `addrspace(0)` this is a no-op.
+"""
+function coerce_ptr!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospecialize(ty::LLVM.LLVMType))
+    vty = value_type(val)
+    vty == ty && return val
+    if vty isa LLVM.PointerType && ty isa LLVM.PointerType
+        return addrspacecast!(B, val, ty)
+    end
+    return ptrtoint!(B, val, ty)
+end
+
 function emit_allocobj!(
     B::LLVM.IRBuilder,
     @nospecialize(tag::LLVM.Value),
@@ -1140,7 +1173,7 @@ function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.I
         stringv = globalstring_ptr!(B, stringv, "enz_exception")
     end
 
-    ct = if occursin("ptx", LLVM.triple(mod)) || occursin("amdgcn", LLVM.triple(mod))
+    ct = if is_device_triple(LLVM.triple(mod))
 	if string isa Tuple
 	    errty = errty.name.wrapper{Nothing, Nothing}
 	end
@@ -1150,7 +1183,7 @@ function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.I
         exc, _ =
             get_function!(mod, "gpu_report_exception", LLVM.FunctionType(vt, [ptr]))
 
-        stringv = ptrtoint!(B, stringv, ptr)
+        stringv = coerce_ptr!(B, stringv, ptr)
 
         call!(B, LLVM.function_type(exc), exc, [stringv])
 
@@ -1165,9 +1198,9 @@ function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.I
             for (i, frame) in enumerate(bt)
                 idx = ConstantInt(parameters(ft)[1], i)
                 func = globalstring_ptr!(B, String(frame.func), "di_func")
-                func = ptrtoint!(B, func, ptr)
+                func = coerce_ptr!(B, func, ptr)
                 file = globalstring_ptr!(B, String(frame.file), "di_file")
-                file = ptrtoint!(B, file, ptr)
+                file = coerce_ptr!(B, file, ptr)
                 line = ConstantInt(parameters(ft)[4], frame.line)
                 call!(B, ft, framefn, [idx, func, file, line])
             end

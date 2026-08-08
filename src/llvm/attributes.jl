@@ -417,6 +417,17 @@ function annotate!(mod::LLVM.Module)
         end
     end
 
+    # SPIR-V exposes the work-item/work-group identity as external globals
+    # (`@__spirv_BuiltInGlobalInvocationId` and friends) rather than as intrinsic
+    # calls the way PTX and AMDGPU do. They are read-only integer state, so there
+    # is nothing to differentiate; without this Enzyme bails out with
+    # "cannot compute with global variable that doesn't have marked shadow global".
+    for glob in LLVM.globals(mod)
+        if startswith(String(LLVM.name(glob)), "__spirv_BuiltIn")
+            API.SetMD(glob, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+        end
+    end
+
     for gname in keys(JuliaGlobalNameMap)
         globs = LLVM.globals(mod)
         if haskey(globs, gname)
