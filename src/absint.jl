@@ -940,10 +940,12 @@ function abs_typeof(
                         LLVM.API.LLVMInstructionEraseFromParent(tmp_gep_1)
                         
                         if isa(offset_0_val, LLVM.ConstantInt) && isa(offset_1_val, LLVM.ConstantInt)
-                            stride = convert(Int, offset_1_val) - convert(Int, offset_0_val)
-                            C = convert(Int, offset_0_val) + base_offset
+                            C = convert(Int, offset_0_val)
+                            stride = convert(Int, offset_1_val) - C
 
-                            if C % sz == 0
+                            # C and base_offset must each individually be a multiple of
+                            # the element size, they cannot be combined to form one.
+                            if C % sz == 0 && base_offset % sz == 0
                                 is_multiple = false
                                 if stride % sz == 0
                                     is_multiple = true
