@@ -206,8 +206,10 @@ end
 # trying to differentiate the `shl` computing the byte offset into `q.tables`.
 @testset "Absint dynamic index of vector of mutable structs" begin
     @test absint_run_world([1.0]) ≈ 3.0
-    # On 1.10 this hits a pre-existing "undef value upon lcssa" in lookupM, which
-    # reproduces without the absint change this test was added alongside.
+    # On 1.10 this hits an "undef value upon lcssa" in lookupM, which reproduces
+    # without the absint change this test was added alongside. Fixed by
+    # https://github.com/EnzymeAD/Enzyme/pull/3114; unskip once that is in a
+    # released Enzyme_jll.
     @static if VERSION < v"1.11-"
         @test_skip Enzyme.gradient(set_runtime_activity(Reverse), absint_run_world, [1.0])[1] ≈ [3.0]
     else
