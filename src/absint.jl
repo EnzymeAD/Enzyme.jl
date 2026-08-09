@@ -898,7 +898,10 @@ function abs_typeof(
     end
 
     if isa(arg, LLVM.GetElementPtrInst) && !all(Base.Fix2(isa, LLVM.ConstantInt), operands(arg)[2:end])
-        base = operands(arg)[1]
+        # The pointer being indexed may itself be a constant-offset gep off of the
+        # typed base (e.g. after licm hoists the `-sizeof(T)` memoryref adjustment
+        # out of the loop), so look through any such constant offsets here.
+        base, base_offset = get_base_and_offset(operands(arg)[1])
         legal, typ, byref = abs_typeof(base, partial, seenphis)
         if legal && byref == GPUCompiler.BITS_VALUE && typ <: Ptr && Base.isconcretetype(typ)
             etyp = eltype(typ)
@@ -939,8 +942,10 @@ function abs_typeof(
                         if isa(offset_0_val, LLVM.ConstantInt) && isa(offset_1_val, LLVM.ConstantInt)
                             C = convert(Int, offset_0_val)
                             stride = convert(Int, offset_1_val) - C
-                            
-                            if C % sz == 0
+
+                            # C and base_offset must each individually be a multiple of
+                            # the element size, they cannot be combined to form one.
+                            if C % sz == 0 && base_offset % sz == 0
                                 is_multiple = false
                                 if stride % sz == 0
                                     is_multiple = true
