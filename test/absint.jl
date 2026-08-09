@@ -135,3 +135,76 @@ end
     @test res[1][1] ≈ [4.0, 0.0]
     @test res[1][2] ≈ [0.0, 0.0]
 end
+
+struct AbsintNode
+    neighbors::Vector{AbsintNode}
+end
+
+mutable struct AbsintArchetype
+    tables::Vector{UInt32}
+    node::AbsintNode
+end
+
+struct AbsintTable
+    entities::Vector{Int64}
+    id::UInt32
+end
+
+struct AbsintQuery{S <: Tuple}
+    archetypes::Vector{AbsintArchetype}
+    tables::Vector{AbsintTable}
+    storages::S
+end
+
+function absint_iterate(q::AbsintQuery, state::Tuple{Int, Int})
+    arch, tab = state
+    while arch <= length(q.archetypes)
+        @inbounds archetype = q.archetypes[arch]
+        if tab == 0
+            if isempty(archetype.tables)
+                arch += 1
+                continue
+            end
+            tab = 1
+        end
+        tables = archetype.tables
+        while tab <= length(tables)
+            @inbounds table = q.tables[Int(tables[tab])]
+            @inbounds positions = q.storages[1][table.id]
+            return (table.entities, positions), (arch, tab + 1)
+        end
+        arch += 1
+        tab = 0
+    end
+    return nothing
+end
+
+Base.iterate(q::AbsintQuery, state::Tuple{Int, Int}) = absint_iterate(q, state)
+Base.iterate(q::AbsintQuery) = Base.iterate(q, (1, 0))
+
+function absint_run_world(args::Vector{Float64})
+    @inbounds alpha = args[1]
+    archetypes = AbsintArchetype[AbsintArchetype(UInt32[1], AbsintNode(Vector{AbsintNode}(undef, 1)))]
+    tables = AbsintTable[AbsintTable(Int64[1], UInt32(1))]
+    push!(archetypes, AbsintArchetype(UInt32[2], AbsintNode(Vector{AbsintNode}(undef, 1))))
+    push!(tables, AbsintTable(Int64[101], UInt32(2)))
+    columns = Vector{Float64}[[alpha], [2 * alpha]]
+    q = AbsintQuery(archetypes, tables, (columns,))
+    total = zero(alpha)
+    for (entities, positions) in q
+        @inbounds for pos in positions
+            total += pos
+        end
+    end
+    return total
+end
+
+# The `node` field makes `AbsintNode` a recursive type, whose typetree is
+# necessarily incomplete. Without absint deducing the type of the dynamically
+# indexed `q.archetypes[arch]` load, the `UInt32` table index loaded from
+# `archetype.tables` is conservatively assumed active, and Enzyme errors out
+# trying to differentiate the `shl` computing the byte offset into `q.tables`.
+@testset "Absint dynamic index of vector of mutable structs" begin
+    @test absint_run_world([1.0]) ≈ 3.0
+    @test Enzyme.gradient(set_runtime_activity(Reverse), absint_run_world, [1.0])[1] ≈ [3.0]
+end
