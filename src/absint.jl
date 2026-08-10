@@ -139,8 +139,18 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
 
                 if legal
                     res = Ty{found...}
-                    for u in unionalls
-                        res = UnionAll(u, res)
+                    if res isa Core.TypeofVararg
+                        # A bare `Vararg` cannot be wrapped in a `UnionAll`
+                        # (deprecated: `Vararg{T} where T`). Widen each partial
+                        # typevar to its upper bound instead.
+                        if !isempty(unionalls)
+                            found = Any[f in unionalls ? f.ub : f for f in found]
+                            res = Ty{found...}
+                        end
+                    else
+                        for u in unionalls
+                            res = UnionAll(u, res)
+                        end
                     end
                     return (true, res)
                 end
