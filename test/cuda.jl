@@ -23,29 +23,82 @@ using Test
     end
 
     #= The copy rules used to be real-only, so a complex copy fell through to Enzyme's
-    default handling and silently did nothing: the primal was never copied and the
-    cotangent never propagated. =#
+    default handling and failed. Each direction below reaches a different rule instance:
+    device<->device and host<->device cover all three of `ARRAY_COPY_DIRECTIONS`, and a
+    host destination is the only way to reach the `_zero!(::Ptr, …)` shadow reset.
+
+    The cotangent seed is deliberately *not* real: a real seed is a fixed point of
+    conjugation, so it cannot tell a correct copy adjoint apart from a conjugating one.
+    `dx` is likewise seeded non-zero, so accumulation is distinguishable from overwrite. =#
     @testset "complex copies, $T" for T in (ComplexF32, ComplexF64)
         n = 8
-        x = CuArray(T[i + 2im * i for i in 1:n])
-        y = CUDA.zeros(T, n)
-        dx = CUDA.zeros(T, n)
-        dy = CuArray(ones(T, n))
-        x_before, dy_before = Array(x), Array(dy)
+        seed, prior = T(1 + 2im), T(10 - 3im)
+        copy_kernel = (dst, src) -> (copyto!(dst, src); nothing)
 
-        Enzyme.autodiff(
-            Reverse,
-            Const((dst, src) -> (copyto!(dst, src); nothing)),
-            Const,
-            Duplicated(y, dy),
-            Duplicated(x, dx),
+        # `dev` builds a device array, `hst` a host one, so a single body covers every
+        # host/device combination the rules are registered for.
+        dev, hst = (v -> CuArray(v)), identity
+        directions = (
+            ("device to device", dev, dev),
+            ("host to device", dev, hst),
+            ("device to host", hst, dev),
         )
-        CUDA.synchronize()
+        @testset "$name" for (name, to_dst, to_src) in directions
+            src_vals = T[i + 2im * i for i in 1:n]
+            src = to_src(copy(src_vals))
+            dst = to_dst(zeros(T, n))
+            dsrc = to_src(fill(prior, n))
+            ddst = to_dst(fill(seed, n))
 
-        # the primal must actually run, and `y = x` pulls the cotangent back onto `x`
-        @test Array(y) == x_before
-        @test Array(dx) == dy_before
-        @test all(iszero, Array(dy))
+            Enzyme.autodiff(
+                Reverse, Const(copy_kernel), Const,
+                Duplicated(dst, ddst), Duplicated(src, dsrc),
+            )
+            CUDA.synchronize()
+
+            # the primal must actually run
+            @test Array(dst) == src_vals
+            # `dst = src` accumulates the destination cotangent onto the source, unconjugated
+            @test Array(dsrc) == fill(prior + seed, n)
+            # and the destination cotangent is reset afterwards
+            @test all(iszero, Array(ddst))
+        end
+
+        # A `Const` source must leave the destination shadow zeroed without accumulating.
+        @testset "constant source" begin
+            src = CuArray(T[i + 2im * i for i in 1:n])
+            dst = CUDA.zeros(T, n)
+            ddst = CuArray(fill(seed, n))
+
+            Enzyme.autodiff(
+                Reverse, Const(copy_kernel), Const,
+                Duplicated(dst, ddst), Const(src),
+            )
+            CUDA.synchronize()
+
+            @test Array(dst) == Array(src)
+            @test all(iszero, Array(ddst))
+        end
+
+        # Width > 1 exercises the `_shadow(…, batch)` loop in the reverse rules.
+        @testset "batched" begin
+            src_vals = T[i + 2im * i for i in 1:n]
+            src = CuArray(copy(src_vals))
+            dst = CUDA.zeros(T, n)
+            dsrc = (CUDA.zeros(T, n), CUDA.zeros(T, n))
+            ddst = (CuArray(fill(seed, n)), CuArray(fill(2 * seed, n)))
+
+            Enzyme.autodiff(
+                Reverse, Const(copy_kernel), Const,
+                BatchDuplicated(dst, ddst), BatchDuplicated(src, dsrc),
+            )
+            CUDA.synchronize()
+
+            @test Array(dst) == src_vals
+            @test Array(dsrc[1]) == fill(seed, n)
+            @test Array(dsrc[2]) == fill(2 * seed, n)
+            @test all(all(iszero, Array(d)) for d in ddst)
+        end
     end
     # Unified/host memory: `pointer(::CuArray{…,Unified/Host})` is inferred as `Union{CuPtr,Ptr}`, so the `pointer` rule cannot yet return a concrete
     @testset "unified memory" begin
