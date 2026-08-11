@@ -31,23 +31,25 @@ Also see [Implementing pullbacks](@ref) on how to implement back-propagation for
 We will try a few things with the following functions:
 
 ```jldoctest rosenbrock
-julia> rosenbrock(x, y) = (1.0 - x)^2 + 100.0 * (y - x^2)^2
-rosenbrock (generic function with 1 method)
+julia> rosenbrock(x, y) = (1.0 - x)^2 + 100.0 * (y - x^2)^2;
 
-julia> rosenbrock_inp(x) = (1.0 - x[1])^2 + 100.0 * (x[2] - x[1]^2)^2
-rosenbrock_inp (generic function with 1 method)
+julia> rosenbrock_inp(x) = (1.0 - x[1])^2 + 100.0 * (x[2] - x[1]^2)^2;
 ```
+
+where we note for future reference that the value of this function at `x=1.0`, `y=2.0` is `100.0`, and its derivative
+with respect to `x` at that point is `-400.0`, and its derivative with respect to `y` at that point is `200.0`. 
 
 ## Reverse mode
 
 The return value of reverse mode [`autodiff`](@ref) is a tuple that contains as a first value
-the derivative value of the active inputs and optionally the primal return value.
+the derivative value of the active inputs and optionally the _primal_ return value (i.e. the 
+value of the undifferentiated function).
 
 ```jldoctest rosenbrock
-julia> autodiff(Reverse, rosenbrock, Active, Active(1.0), Active(2.0))
+julia> autodiff(Reverse, rosenbrock, Active(1.0), Active(2.0))
 ((-400.0, 200.0),)
 
-julia> autodiff(ReverseWithPrimal, rosenbrock, Active, Active(1.0), Active(2.0))
+julia> autodiff(ReverseWithPrimal, rosenbrock, Active(1.0), Active(2.0))
 ((-400.0, 200.0), 100.0)
 ```
 
@@ -62,7 +64,7 @@ julia> dx = [0.0, 0.0]
  0.0
  0.0
 
-julia> autodiff(Reverse, rosenbrock_inp, Active, Duplicated(x, dx))
+julia> autodiff(Reverse, rosenbrock_inp, Duplicated(x, dx))
 ((nothing,),)
 
 julia> dx
@@ -71,8 +73,9 @@ julia> dx
   200.0
 ```
 
-Both the inplace and "normal" variant return the gradient. The difference is that with
-[`Active`](@ref) the gradient is returned and with [`Duplicated`](@ref) the gradient is accumulated in place.
+Both the inplace and "normal" variant return the gradient. The difference is that with [`Active`](@ref) 
+the gradient is returned and with [`Duplicated`](@ref) the gradient is accumulated in-place into `dx`, 
+and a value of `nothing` is placed in the corresponding slot of the returned `Tuple`.
 
 ## Forward mode
 
@@ -121,7 +124,7 @@ julia> dx = [1.0, 1.0]
  1.0
  1.0
 
-julia> autodiff(ForwardWithPrimal, rosenbrock_inp, Duplicated, Duplicated(x, dx))
+julia> autodiff(ForwardWithPrimal, rosenbrock_inp, Duplicated(x, dx))
 (-400.0, 400.0)
 ```
 
