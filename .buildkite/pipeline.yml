@@ -9,6 +9,7 @@ steps:
     plugins:
       - JuliaCI/julia#v1:
           version: "{{matrix.version}}"
+      - JuliaCI/julia-coverage#v1: ~
     agents:
       queue: "cuda"
     if: build.message !~ /\[skip tests\]/
@@ -22,7 +23,7 @@ steps:
           Pkg.add(PackageSpec(; name="CUDA", version="6"))' || exit 3
 
       echo "+++ Run tests"
-      julia --color=yes test/cuda.jl
+      julia --color=yes --code-coverage=@ test/cuda.jl
     env:
       JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
 
@@ -61,6 +62,7 @@ steps:
     plugins:
       - JuliaCI/julia#v1:
           version: "{{matrix.version}}"
+      - JuliaCI/julia-coverage#v1: ~
     agents:
       queue: "metal"
     if: build.message !~ /\[skip tests\]/
@@ -74,6 +76,6 @@ steps:
           Pkg.add([PackageSpec(; name="Metal")])' || exit 3
 
       echo "+++ Run tests"
-      julia --color=yes test/metal.jl
+      julia --color=yes --code-coverage=@ test/metal.jl
     env:
       JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
