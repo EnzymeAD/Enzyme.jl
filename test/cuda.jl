@@ -100,6 +100,47 @@ using Test
             @test all(all(iszero, Array(d)) for d in ddst)
         end
     end
+
+    #= The pointer-level rules are registered separately from the array-level ones, and
+    their `augmented_primal` carries no eltype bound while their `reverse` was restricted
+    to `AbstractFloat`. A complex copy reaching them therefore survived the augmented pass
+    and died on the reverse one with a `MethodError`.
+
+    A copy that reaches these rules from user code also goes through `pointer`, which has
+    its own correctness bug (see the commented-out rule in the extension): the primal copy
+    does not land and the shadows are left untouched. That affects real and complex alike,
+    so rather than pin down values that are known-wrong, assert the property this widening
+    is actually about -- complex behaves exactly as its real counterpart does. The
+    assertion stays honest once the `pointer` bug is fixed and both become correct. =#
+    @testset "pointer level, $R vs $C" for (R, C) in
+            ((Float32, ComplexF32), (Float64, ComplexF64))
+        ptr_copy = function (S)
+            n = 8
+            src = CuArray(S[i for i in 1:n])
+            dst = CUDA.zeros(S, n)
+            dsrc = CUDA.zeros(S, n)
+            ddst = CuArray(ones(S, n))
+            kernel = function (d, s)
+                GC.@preserve d s begin
+                    unsafe_copyto!(pointer(d), pointer(s), n)
+                end
+                return nothing
+            end
+            Enzyme.autodiff(
+                Reverse, Const(kernel), Const,
+                Duplicated(dst, ddst), Duplicated(src, dsrc),
+            )
+            CUDA.synchronize()
+            return (
+                copied = Array(dst) == Array(src),
+                src_shadow_zero = all(iszero, Array(dsrc)),
+                dst_shadow_zero = all(iszero, Array(ddst)),
+            )
+        end
+
+        # before the widening this threw `MethodError: no method matching reverse(…)`
+        @test ptr_copy(C) == ptr_copy(R)
+    end
     # Unified/host memory: `pointer(::CuArray{…,Unified/Host})` is inferred as `Union{CuPtr,Ptr}`, so the `pointer` rule cannot yet return a concrete
     @testset "unified memory" begin
         @test grad_roundtrip(x -> cu(x; unified = true)) == Float32[2, 4, 6]
