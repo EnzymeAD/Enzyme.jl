@@ -4,8 +4,6 @@ using LinearAlgebra: mul!, dot, Symmetric
 using Test
 
 @testset "CUDA memory copies" begin
-    #= Exercise the reverse copy rules across CUDA's memory types. A host<->device
-    roundtrip gradient must recover `2x`. =#
     grad_roundtrip = function (to_gpu)
         x = Float32[1, 2, 3]
         dx = zeros(Float32, 3)
@@ -21,7 +19,99 @@ using Test
     @testset "device memory" begin
         @test grad_roundtrip(x -> cu(x)) == Float32[2, 4, 6]
     end
-    # Unified/host memory: `pointer(::CuArray{…,Unified/Host})` is inferred as `Union{CuPtr,Ptr}`, so the `pointer` rule cannot yet return a concrete
+
+    @testset "complex copies, $T" for T in (ComplexF32, ComplexF64)
+        n = 8
+        seed, prior = T(1 + 2im), T(10 - 3im)
+        copy_kernel = (dst, src) -> (copyto!(dst, src); nothing)
+
+        dev, hst = (v -> CuArray(v)), identity
+        directions = (
+            ("device to device", dev, dev),
+            ("host to device", dev, hst),
+            ("device to host", hst, dev),
+        )
+        @testset "$name" for (name, to_dst, to_src) in directions
+            src_vals = T[i + 2im * i for i in 1:n]
+            src = to_src(copy(src_vals))
+            dst = to_dst(zeros(T, n))
+            dsrc = to_src(fill(prior, n))
+            ddst = to_dst(fill(seed, n))
+
+            Enzyme.autodiff(
+                Reverse, Const(copy_kernel), Const,
+                Duplicated(dst, ddst), Duplicated(src, dsrc),
+            )
+            CUDA.synchronize()
+
+            @test Array(dst) == src_vals
+            @test Array(dsrc) == fill(prior + seed, n)
+            @test all(iszero, Array(ddst))
+        end
+
+        @testset "constant source" begin
+            src = CuArray(T[i + 2im * i for i in 1:n])
+            dst = CUDA.zeros(T, n)
+            ddst = CuArray(fill(seed, n))
+
+            Enzyme.autodiff(
+                Reverse, Const(copy_kernel), Const,
+                Duplicated(dst, ddst), Const(src),
+            )
+            CUDA.synchronize()
+
+            @test Array(dst) == Array(src)
+            @test all(iszero, Array(ddst))
+        end
+
+        @testset "batched" begin
+            src_vals = T[i + 2im * i for i in 1:n]
+            src = CuArray(copy(src_vals))
+            dst = CUDA.zeros(T, n)
+            dsrc = (CUDA.zeros(T, n), CUDA.zeros(T, n))
+            ddst = (CuArray(fill(seed, n)), CuArray(fill(2 * seed, n)))
+
+            Enzyme.autodiff(
+                Reverse, Const(copy_kernel), Const,
+                BatchDuplicated(dst, ddst), BatchDuplicated(src, dsrc),
+            )
+            CUDA.synchronize()
+
+            @test Array(dst) == src_vals
+            @test Array(dsrc[1]) == fill(seed, n)
+            @test Array(dsrc[2]) == fill(2 * seed, n)
+            @test all(all(iszero, Array(d)) for d in ddst)
+        end
+    end
+
+    @testset "pointer level, $R vs $C" for (R, C) in
+            ((Float32, ComplexF32), (Float64, ComplexF64))
+        ptr_copy = function (S)
+            n = 8
+            src = CuArray(S[i for i in 1:n])
+            dst = CUDA.zeros(S, n)
+            dsrc = CUDA.zeros(S, n)
+            ddst = CuArray(ones(S, n))
+            kernel = function (d, s)
+                GC.@preserve d s begin
+                    unsafe_copyto!(pointer(d), pointer(s), n)
+                end
+                return nothing
+            end
+            Enzyme.autodiff(
+                Reverse, Const(kernel), Const,
+                Duplicated(dst, ddst), Duplicated(src, dsrc),
+            )
+            CUDA.synchronize()
+            return (
+                copied = Array(dst) == Array(src),
+                src_shadow_zero = all(iszero, Array(dsrc)),
+                dst_shadow_zero = all(iszero, Array(ddst)),
+            )
+        end
+
+        @test ptr_copy(C) == ptr_copy(R)
+    end
     @testset "unified memory" begin
         @test grad_roundtrip(x -> cu(x; unified = true)) == Float32[2, 4, 6]
     end
