@@ -9,6 +9,7 @@ steps:
     plugins:
       - JuliaCI/julia#v1:
           version: "{{matrix.version}}"
+      - JuliaCI/julia-coverage#v1: ~
     agents:
       queue: "cuda"
     if: build.message !~ /\[skip tests\]/
@@ -22,7 +23,7 @@ steps:
           Pkg.add(PackageSpec(; name="CUDA", version="6"))' || exit 3
 
       echo "+++ Run tests"
-      julia --color=yes test/cuda.jl
+      julia --color=yes --code-coverage=@ test/cuda.jl
     env:
       JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
 
@@ -61,6 +62,7 @@ steps:
     plugins:
       - JuliaCI/julia#v1:
           version: "{{matrix.version}}"
+      - JuliaCI/julia-coverage#v1: ~
     agents:
       queue: "metal"
     if: build.message !~ /\[skip tests\]/
@@ -74,6 +76,9 @@ steps:
           Pkg.add([PackageSpec(; name="Metal")])' || exit 3
 
       echo "+++ Run tests"
-      julia --color=yes test/metal.jl
+      julia --color=yes --code-coverage=@ test/metal.jl
     env:
       JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+
+env:
+  SECRET_CODECOV_TOKEN: "qoiDkcckne4jd2/uA0uVRnr0a+lt89H/8VwHVSrbrfs1gnMVCsuoIQ7VKHbRXoqm4smR2qDQF0C2yu/n8YmTohd5lgJryuil63FCP4RTfdtW2kR6QV6wi26+JpKZ7tXvHiQFXAby8YhLg/2RAn+y0B5vR9iXvkpCkfSIFdXPUmBrY5cBs1YwONRrOsLQY8E7UkD5mdg80OKT2eaUq26QSb1ipns6yFOT361GDiAl9B1Nm1/GEN7KZN9nN37ATcHnMWnALyHmvzYa2aux3pTr3tDCAUxejGR+SqxjWjJ4RA1zZE1106a58d5PzX8v0vq0Q+NMeZCCa/65igEbt94uEw==;U2FsdGVkX1/qp2mNLgVWtBzevIGK9yhebLzdHlo4LmMkpFk4A4k9BYM9pIg8nYg6taxno0LH6Q8QfDg12EmfGQ=="
