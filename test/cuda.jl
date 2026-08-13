@@ -4,8 +4,6 @@ using LinearAlgebra: mul!, dot, Symmetric
 using Test
 
 @testset "CUDA memory copies" begin
-    #= Exercise the reverse copy rules across CUDA's memory types. A host<->device
-    roundtrip gradient must recover `2x`. =#
     grad_roundtrip = function (to_gpu)
         x = Float32[1, 2, 3]
         dx = zeros(Float32, 3)
@@ -22,21 +20,11 @@ using Test
         @test grad_roundtrip(x -> cu(x)) == Float32[2, 4, 6]
     end
 
-    #= The copy rules used to be real-only, so a complex copy fell through to Enzyme's
-    default handling and failed. Each direction below reaches a different rule instance:
-    device<->device and host<->device cover all three of `ARRAY_COPY_DIRECTIONS`, and a
-    host destination is the only way to reach the `_zero!(::Ptr, …)` shadow reset.
-
-    The cotangent seed is deliberately *not* real: a real seed is a fixed point of
-    conjugation, so it cannot tell a correct copy adjoint apart from a conjugating one.
-    `dx` is likewise seeded non-zero, so accumulation is distinguishable from overwrite. =#
     @testset "complex copies, $T" for T in (ComplexF32, ComplexF64)
         n = 8
         seed, prior = T(1 + 2im), T(10 - 3im)
         copy_kernel = (dst, src) -> (copyto!(dst, src); nothing)
 
-        # `dev` builds a device array, `hst` a host one, so a single body covers every
-        # host/device combination the rules are registered for.
         dev, hst = (v -> CuArray(v)), identity
         directions = (
             ("device to device", dev, dev),
@@ -56,15 +44,11 @@ using Test
             )
             CUDA.synchronize()
 
-            # the primal must actually run
             @test Array(dst) == src_vals
-            # `dst = src` accumulates the destination cotangent onto the source, unconjugated
             @test Array(dsrc) == fill(prior + seed, n)
-            # and the destination cotangent is reset afterwards
             @test all(iszero, Array(ddst))
         end
 
-        # A `Const` source must leave the destination shadow zeroed without accumulating.
         @testset "constant source" begin
             src = CuArray(T[i + 2im * i for i in 1:n])
             dst = CUDA.zeros(T, n)
@@ -80,7 +64,6 @@ using Test
             @test all(iszero, Array(ddst))
         end
 
-        # Width > 1 exercises the `_shadow(…, batch)` loop in the reverse rules.
         @testset "batched" begin
             src_vals = T[i + 2im * i for i in 1:n]
             src = CuArray(copy(src_vals))
@@ -101,17 +84,6 @@ using Test
         end
     end
 
-    #= The pointer-level rules are registered separately from the array-level ones, and
-    their `augmented_primal` carries no eltype bound while their `reverse` was restricted
-    to `AbstractFloat`. A complex copy reaching them therefore survived the augmented pass
-    and died on the reverse one with a `MethodError`.
-
-    A copy that reaches these rules from user code also goes through `pointer`, which has
-    its own correctness bug (see the commented-out rule in the extension): the primal copy
-    does not land and the shadows are left untouched. That affects real and complex alike,
-    so rather than pin down values that are known-wrong, assert the property this widening
-    is actually about -- complex behaves exactly as its real counterpart does. The
-    assertion stays honest once the `pointer` bug is fixed and both become correct. =#
     @testset "pointer level, $R vs $C" for (R, C) in
             ((Float32, ComplexF32), (Float64, ComplexF64))
         ptr_copy = function (S)
@@ -138,10 +110,8 @@ using Test
             )
         end
 
-        # before the widening this threw `MethodError: no method matching reverse(…)`
         @test ptr_copy(C) == ptr_copy(R)
     end
-    # Unified/host memory: `pointer(::CuArray{…,Unified/Host})` is inferred as `Union{CuPtr,Ptr}`, so the `pointer` rule cannot yet return a concrete
     @testset "unified memory" begin
         @test grad_roundtrip(x -> cu(x; unified = true)) == Float32[2, 4, 6]
     end
