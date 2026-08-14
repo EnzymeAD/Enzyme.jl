@@ -24,8 +24,10 @@ steps:
 
       echo "+++ Run tests"
       julia --color=yes --code-coverage=@ test/cuda.jl
-      julia --color=yes --code-coverage=@ -e 'include("lib/EnzymeTestUtils/test/helpers.jl")\ninclude("lib/EnzymeTestUtils/test/cuda_to_vec.jl")'
-      julia --color=yes --code-coverage=@ -e 'include("lib/EnzymeTestUtils/test/helpers.jl")\ninclude("lib/EnzymeTestUtils/test/test_reverse.jl")'
+      julia --color=yes --code-coverage=@ -e 'include("lib/EnzymeTestUtils/test/helpers.jl")
+                                              include("lib/EnzymeTestUtils/test/cuda_to_vec.jl")'
+      julia --color=yes --code-coverage=@ -e 'include("lib/EnzymeTestUtils/test/helpers.jl")
+                                              include("lib/EnzymeTestUtils/test/test_reverse.jl")'
       # doesn't work yet due to GPUCompiler 2 blocking CUDA PR
       #julia --color=yes --code-coverage=@ -e 'include("lib/EnzymeTestUtils/test/helpers.jl")\ninclude("lib/EnzymeTestUtils/test/test_forward.jl")'
     env:
