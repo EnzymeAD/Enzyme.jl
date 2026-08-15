@@ -64,8 +64,6 @@ macro test_msg(msg, ex, kws...)
     Test.test_expr!("@test_msg msg", ex, kws...)
 
     result = Test.get_test_result(ex, __source__)
-    # `msg` is deferred: it is only needed if the check fails, and evaluating it can be
-    # expensive when it interpolates the values under test
     return :(Test.do_test($result, $ExprAndMsg($(string(ex)), () -> $(esc(msg)))))
 end
 
