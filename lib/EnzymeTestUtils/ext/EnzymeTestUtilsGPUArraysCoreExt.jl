@@ -4,40 +4,20 @@ using GPUArraysCore
 using EnzymeTestUtils
 using Enzyme
 
-# a device-backed destination takes the data directly. `AnyGPUArray` rather than
-# `AbstractGPUArray` because `append_or_merge` copies into `@view`s of the freshly
-# allocated result, and a wrapper around a GPU array is not itself an `AbstractGPUArray`.
 function EnzymeTestUtils.acopyto!(dst::AnyGPUArray, src::AnyGPUArray)
     return Base.copyto!(dst, src)
 end
 
-# a host destination cannot be written to from the device directly, so stage the data
-# through a temporary host buffer
 function EnzymeTestUtils.acopyto!(dst, src::AnyGPUArray)
     temp = Array{eltype(src)}(undef, size(src))
     Base.copyto!(temp, src)
     EnzymeTestUtils.acopyto!(dst, temp)
 end
 
-# Without this, a GPU array matches only the generic `map_fields_recursive`, which
-# recurses into its fields: `CuArray` -> `(data, maxsize, offset, dims)` -> `DataRef`
-# -> `(rc, freed, cached)`. That applies `copyto!` to reference-counting state, so the
-# buffer can be released while a kernel is still reading it. Host arrays already have
-# such a leaf method; GPU arrays need the same.
 EnzymeTestUtils.map_fields_recursive(f, x::AbstractGPUArray{<:Number}...) = f(x...)
 
-# `Base.dataids` falls back to `objectid` for GPU arrays, so it cannot tell that an array
-# and a reshape of it share memory. The device pointer can.
 EnzymeTestUtils.aliasids(x::AbstractGPUArray) = (UInt(pointer(x)),)
 
-# the fields of a GPU array are device pointers and reference counts, which carry no
-# semantic information, so compare only the contents.
-#
-# `Test` splices the evaluated operands of a comparison into the message it builds for a
-# failure, and showing a GPU array copies it off the device. Handing it `isapprox(x, y)`
-# directly therefore puts that copy inside the failure formatting, where a crash takes the
-# whole worker down. Compare on the device, and only once the check has failed copy to the
-# host and hand the values over as ordinary arrays, so the report shows them.
 function EnzymeTestUtils.test_approx(x::AbstractGPUArray{<:Number}, y::AbstractGPUArray{<:Number}, msg; kwargs...)
     isapprox_result = isapprox(x, y; kwargs...)
     if isapprox_result
@@ -48,7 +28,6 @@ function EnzymeTestUtils.test_approx(x::AbstractGPUArray{<:Number}, y::AbstractG
     return nothing
 end
 
-# basic containers: loop over defined elements, recursively converting them to vectors
 function EnzymeTestUtils.to_vec(x::AbstractGPUArray{<:EnzymeTestUtils.ElementType}, seen_vecs::EnzymeTestUtils.AliasDict)
     has_seen = haskey(seen_vecs, x)
     is_const = Enzyme.Compiler.guaranteed_const(Core.Typeof(x))
@@ -75,7 +54,6 @@ function EnzymeTestUtils.to_vec(x::AbstractGPUArray{<:EnzymeTestUtils.ElementTyp
     return x_vec, FastGPUArray_from_vec
 end
 
-# basic containers: loop over defined elements, recursively converting them to vectors
 function EnzymeTestUtils.to_vec(x::AbstractGPUArray{<:Complex{<:EnzymeTestUtils.ElementType}}, seen_vecs::EnzymeTestUtils.AliasDict)
     has_seen = haskey(seen_vecs, x)
     is_const = Enzyme.Compiler.guaranteed_const(Core.Typeof(x))
@@ -97,9 +75,6 @@ function EnzymeTestUtils.to_vec(x::AbstractGPUArray{<:Complex{<:EnzymeTestUtils.
         x_vec_new_real = view(x_vec_new, 1:length(x))
         x_vec_new_imag = view(x_vec_new, (length(x) + 1):(2 * length(x)))
         x_vec_complex = reshape(complex.(x_vec_new_real, x_vec_new_imag), sz)
-        # `x_vec_new` may be host-backed (e.g. the vector FiniteDifferences hands back), in
-        # which case `x_vec_complex` is too. Broadcasting into `x_new` would then capture a
-        # host array in a kernel; `copyto!` is a memcpy and handles either source.
         copyto!(x_new, x_vec_complex)
         seen_xs[x] = x_new
         return x_new
@@ -107,7 +82,6 @@ function EnzymeTestUtils.to_vec(x::AbstractGPUArray{<:Complex{<:EnzymeTestUtils.
     return x_vec, ComplexGPUArray_from_vec
 end
 
-# basic containers: loop over defined elements, recursively converting them to vectors
 function EnzymeTestUtils.to_vec(x::AbstractGPUArray, seen_vecs::EnzymeTestUtils.AliasDict)
     has_seen = haskey(seen_vecs, x)
     is_const = Enzyme.Compiler.guaranteed_const(Core.Typeof(x))
