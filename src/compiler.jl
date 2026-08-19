@@ -2014,7 +2014,8 @@ function zero_allocation(B::LLVM.API.LLVMBuilderRef, LLVMType::LLVM.API.LLVMType
     B = LLVM.IRBuilder(B)
     LLVMType = LLVM.LLVMType(LLVMType)
     obj = LLVM.Value(obj)
-    jlType = Compiler.tape_type(LLVMType)
+    # raw tape storage: needs the layout-faithful type, not the boxed one
+    jlType = Compiler.tape_type(LLVMType; boxnested = false)
     zeroAll = isTape == 0
     func = LLVM.parent(position(B))
     mod = LLVM.parent(func)
@@ -2243,12 +2244,25 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
 
         esizeof(X) = X == Any ? sizeof(Int) : sizeof(X)
 
-        TT = Compiler.tape_type(LLVMType)
+        # raw tape storage: needs the layout-faithful type, not the boxed one.
+        # `TT_nested` mirrors `LLVMType` field for field and is what the zeroing
+        # walk below needs; `TT` is the type the allocation is tagged with, and
+        # only has to agree on byte layout.
+        TT_nested = Compiler.tape_type(LLVMType; boxnested = false)
+        TT = TT_nested
         if esizeof(TT) != convert(Int, AlignedSize)
-            GPUCompiler.@safe_error "Enzyme aligned size and Julia size disagree" AlignedSize =
-                convert(Int, AlignedSize) esizeof(TT) fieldtypes(TT) LLVMType=strip(string(LLVMType))
-            emit_error(B, nothing, "Enzyme: Tape allocation failed.") # TODO: Pick appropriate orig
-            return LLVM.API.LLVMValueRef(LLVM.UndefValue(LLVMType).ref)
+            # Julia does not lay this type out the way Enzyme wrote it, typically
+            # because a nested field of 32768 bytes or more gets boxed.  Fall back
+            # to a flat type with the same byte offsets, see `raw_storage_type`.
+            TT2 = Compiler.raw_storage_type(datalayout(mod), LLVMType)
+            if TT2 !== nothing && esizeof(TT2) == convert(Int, AlignedSize)
+                TT = TT2
+            else
+                GPUCompiler.@safe_error "Enzyme aligned size and Julia size disagree" AlignedSize =
+                    convert(Int, AlignedSize) esizeof(TT) fieldtypes(TT) LLVMType=strip(string(LLVMType))
+                emit_error(B, nothing, "Enzyme: Tape allocation failed.") # TODO: Pick appropriate orig
+                return LLVM.API.LLVMValueRef(LLVM.UndefValue(LLVMType).ref)
+            end
         end
         @assert esizeof(TT) == convert(Int, AlignedSize)
         if Count isa LLVM.ConstantInt
@@ -2309,7 +2323,7 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
         if ZI != C_NULL
             unsafe_store!(
                 ZI,
-                zero_allocation(B, TT, LLVMType, obj, AlignedSize, Size, false),
+                zero_allocation(B, TT_nested, LLVMType, obj, AlignedSize, Size, false),
             ) #=ZeroAll=#
         end
         AS = Tracked
@@ -2845,7 +2859,10 @@ function enzyme!(
             typeInfo,
             uncacheable_args,
             nowrite_shadows,
-            false,
+            # Enzyme normally decides for itself whether a tape is heap allocated.
+            # `ENZYME_FORCE_ANONYMOUS_TAPE=1` forces it on for everything, which is
+            # the only way to get test coverage of that path from Julia.
+            get(ENV, "ENZYME_FORCE_ANONYMOUS_TAPE", "0") == "1",
             runtimeActivity,
             strongZero,
             width,
@@ -2858,7 +2875,11 @@ function enzyme!(
         tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
         utape = API.EnzymeExtractUnderlyingTapeTypeFromAugmentation(augmented)
         if utape != C_NULL
-            TapeType = EnzymeTapeToLoad{Compiler.tape_type(LLVMType(utape))}
+            # anonymous tape: the augmented forward hands back a pointer to raw
+            # heap storage holding `utape` in Enzyme's own layout, so the element
+            # type must stay layout-faithful -- there is no Julia field here for
+            # a box to live in.  See `to_tape_type`.
+            TapeType = EnzymeTapeToLoad{Compiler.tape_type(LLVMType(utape); boxnested = false)}
             tape = utape
         elseif tape != C_NULL
             TapeType = Compiler.tape_type(LLVMType(tape))
@@ -3258,7 +3279,11 @@ function create_abi_wrapper(
         tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
         utape = API.EnzymeExtractUnderlyingTapeTypeFromAugmentation(augmented)
         if utape != C_NULL
-            TapeType = EnzymeTapeToLoad{Compiler.tape_type(LLVMType(utape))}
+            # anonymous tape: the augmented forward hands back a pointer to raw
+            # heap storage holding `utape` in Enzyme's own layout, so the element
+            # type must stay layout-faithful -- there is no Julia field here for
+            # a box to live in.  See `to_tape_type`.
+            TapeType = EnzymeTapeToLoad{Compiler.tape_type(LLVMType(utape); boxnested = false)}
         elseif tape != C_NULL
             TapeType = Compiler.tape_type(LLVMType(tape))
         else
@@ -3377,15 +3402,25 @@ function create_abi_wrapper(
         end
     end
 
+    anonymous_tape = false
     if needs_tape
         tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
         utape = API.EnzymeExtractUnderlyingTapeTypeFromAugmentation(augmented)
-        if utape != C_NULL
+        anonymous_tape = utape != C_NULL
+        if anonymous_tape
             tape = utape
         end
         if tape != C_NULL
             tape = LLVM.LLVMType(tape)
-            jltape = convert(LLVM.LLVMType, Compiler.tape_type(tape); allow_boxed = true)
+            jltape = if anonymous_tape
+                # The anonymous tape lives in raw heap storage.  Take the object
+                # pointer and load Enzyme's exact tape type from it below, rather
+                # than having `enzyme_call` load a (potentially enormous)
+                # aggregate out of an addrspace(10) pointer and pass it by value.
+                T_prjlvalue
+            else
+                convert(LLVM.LLVMType, Compiler.tape_type(tape); allow_boxed = true)
+            end
             push!(T_wrapperargs, jltape)
             arg_roots = inline_roots_type(tape)
             if arg_rooting && arg_roots != 0
@@ -3652,6 +3687,10 @@ function create_abi_wrapper(
         # Fix calling convention within julia that Tuple{Float,Float} ->[2 x float] rather than {float, float}
         # and that Bool -> i8, not i1
         tparm = params[i]
+        if anonymous_tape
+            # raw heap storage: read Enzyme's tape type straight back out of it
+            tparm = unbox_tape_value!(builder, tparm, tape)
+        end
         tparm = calling_conv_fixup(builder, tparm, tape)
         push!(realparms, tparm)
         i += 1
@@ -3767,6 +3806,17 @@ function create_abi_wrapper(
                     end
                 end
                 eval = fixup_abi(i, eval)
+                if i == 1
+                    # The tape leaves Enzyme in Enzyme's own layout but is stored
+                    # into a slot Julia typed as `TapeType`; rewrite it into
+                    # Julia's layout, boxing the aggregates Julia will not store
+                    # inline.  `calling_conv_fixup` undoes this in the reverse
+                    # wrapper.  See `to_tape_type`.
+                    jltapety = convert(LLVM.LLVMType, sret_types[1]; allow_boxed = true)
+                    if value_type(eval) != jltapety
+                        eval = julia_conv_fixup(builder, eval, jltapety)
+                    end
+                end
                 ptr = inbounds_gep!(
                     builder,
                     jltype,
@@ -7016,22 +7066,14 @@ const DumpLLVMCall = Ref(false)
         if needs_tape && !(isghostty(TapeType) || Core.Compiler.isconstType(TapeType))
             tape = callparams[end]
             if TapeType <: EnzymeTapeToLoad
-                llty = Compiler.from_tape_type(eltype(TapeType))
-	        
-		        arg_roots = inline_roots_type(llty)
+                # The wrapper takes the tape object pointer and loads Enzyme's
+                # tape type from it itself, so nothing to do here.
+                arg_roots = inline_roots_type(
+                    Compiler.from_tape_type(eltype(TapeType)),
+                )
                 if needs_rooting && arg_roots != 0
                     throw(AssertionError("Should check about rooted tape calling conv"))
                 end
-
-                tape = bitcast!(
-                    builder,
-                    tape,
-                    LLVM.PointerType(llty, LLVM.addrspace(value_type(tape))),
-                )
-                tape = load!(builder, llty, tape)
-                API.SetMustCache!(tape)
-                callparams[end] = tape
-
             else
                 llty = Compiler.from_tape_type(TapeType)
                 arg_roots = inline_roots_type(llty)
