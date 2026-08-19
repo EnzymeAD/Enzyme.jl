@@ -691,12 +691,16 @@ function abs_typeof(
             else
                 cholmod_exception = true
             end
+            # A memoryref's data pointer addresses one element past the element
+            # being indexed, so the gep offsets walking back into it are
+            # negative. Reduce with mod rather than rem to land on the offset
+            # within the element rather than a negative residue.
             if !Base.allocatedinline(typ) && cholmod_exception
                 shouldLoad = false
-                offset %= sizeof(Int)
+                offset = mod(offset, sizeof(Int))
             else
                 sz = max(1, actual_size(ET))
-                offset %= sz
+                offset = mod(offset, sz)
             end
         end
 

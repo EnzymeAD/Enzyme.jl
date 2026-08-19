@@ -34,6 +34,11 @@ function test_worker(name)
         # Run the `threads/2` testset, with multiple threads.
         return addworker(; exeflags = ["--threads=2"])
     end
+    if name == "absint_inbounds"
+        # Run the `absint_inbounds` testset with `@inbounds` honored, which
+        # `Pkg.test`'s default of `--check-bounds=yes` would otherwise disable.
+        return addworker(; exeflags = ["--check-bounds=auto"])
+    end
 end
 
 const init_code = quote end
