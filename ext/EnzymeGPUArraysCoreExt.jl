@@ -65,10 +65,15 @@ the primal/shadow types, so get them from `augmented_rule_return_type`. Use the
 2-arg form; the 3-arg one is `@generated` on the tape type, and a tape holding an
 `A·B` product doesn't always infer.
 =#
+@inline _outshadow(::Val{1}, out::Const) = Enzyme.make_zero(out.val)
+@inline _outshadow(::Val{W}, out::Const) where {W} =
+    ntuple(Returns(Enzyme.make_zero(out.val)), Val(W))
+@inline _outshadow(::Val, out::Annotation) = out.dval
+
 @inline function _augreturn(config, ::Type{RT}, out::Annotation, tape) where {RT}
     return augmented_rule_return_type(config, RT)(
         needs_primal(config) ? out.val : nothing,
-        needs_shadow(config) ? out.dval : nothing,
+        needs_shadow(config) ? _outshadow(Val(width(config)), out) : nothing,
         tape,
     )
 end
@@ -159,12 +164,27 @@ function _pullback!(dX, tX::AbstractChar, L, fL, R, fR, factor)
 end
 
 #=
+    mul!(C, A, B, α, β)                          C = α·A·B + β·C₀   (A, B possibly wrapped)
     generic_matmatmul!(C, tA, tB, A, B, α, β)    C = α·op(A)·op(B) + β·C₀
     generic_matvecmul!(y, tA, A, x, α, β)        y = α·op(A)·x + β·y₀
 
-Every rectangular GPU matmul goes through these, from `*` or 3-/5-arg `mul!`, on
-CUBLAS or on the GPUArrays fallback kernels. One rule each covers plain,
-transposed and adjointed operands in any combination:
+The rules intercept at two levels. The primary rules sit on public 5-arg `mul!`
+restricted to GPU operands: every `*` and 3-/5-arg `mul!` goes through it on all
+supported Julia versions (3-arg forwards to 5-arg before `_mul!` dispatch), the
+operand wrappers are still visible as types, and α/β are plain `Number`s. This is
+also the only spot reliably reached by *static* dispatch: since GPUArrays 11.5.11
+the strided-view routing below `mul!` uses `invoke` with abstract signatures, so
+`generic_matmatmul!` is reached through runtime dispatch, where the jitrules
+fallback has to guess the return activity from its type and hands rules
+`needs_shadow = true` even for a `Const` output.
+
+The `generic_matmatmul!`/`generic_matvecmul!` rules stay as a backstop for calls
+that don't come through GPU-typed 5-arg `mul!`: outer products (`Adjoint` of a
+*vector* isn't in the operand unions), direct callers, and LinearAlgebra
+internals. At that level α and β are separate arguments on Julia ≥1.12 and one
+`MulAddMul` before that, so those rules are version-gated.
+
+All of them are thin wrappers over two shared helpers, computing:
 
     dA += conj(α)·dC·op(B)'          projected back through op(A)
     dB += conj(α)·op(A)'·dC          projected back through op(B)
@@ -172,14 +192,11 @@ transposed and adjointed operands in any combination:
     dα  = conj(⟨dC, op(A)·op(B)⟩)
     dβ  = conj(⟨dC, C₀⟩)
 
-The first two are matmuls, so they go back through this same function with β = 1
-instead of accumulating by hand. See `_pullback!`.
+The first two are matmuls, so they go back through `generic_matmatmul!` with
+β = 1 instead of accumulating by hand. See `_pullback!`.
 
 3-arg `mul!` arrives as α = true, β = false, which zeroes `dC`. That's right:
 3-arg `mul!` overwrites `C`.
-
-α and β are separate arguments on Julia ≥1.12 and one `MulAddMul` before that, so
-the rules below are version-gated wrappers over two shared helpers.
 =#
 
 @inline function _matmul_caches(
@@ -433,6 +450,138 @@ else
         return (nothing, nothing, nothing, nothing, dα, dβ)
     end
 
+end
+
+#=
+The `mul!`-level rules. The operand unions mirror GPUArrays' strided-view routing
+(`AnyStridedGPU*` in GPUArrays/src/host/linalg.jl) but are rebuilt here from
+GPUArraysCore + Base so this extension keeps its light dependency. Each argument
+gets its own free eltype so mixed-eltype products still match. `Diagonal` and
+triangular wrappers are deliberately absent: those go to their own `mul!`
+methods, not the generic matmul path.
+=#
+
+const StridedGPUSubArray{T, N} = Base.StridedSubArray{T, N, <:AbstractGPUArray}
+const AnyStridedGPUArray{T, N} = Union{AbstractGPUArray{T, N}, StridedGPUSubArray{T, N}}
+const AnyStridedGPUVector{T} = AnyStridedGPUArray{T, 1}
+const AnyStridedGPUMatrix{T} = AnyStridedGPUArray{T, 2}
+const AnyStridedGPUVecOrMat{T} = Union{AnyStridedGPUVector{T}, AnyStridedGPUMatrix{T}}
+const AnyStridedGPUMatrixOperand{T} = Union{
+    AnyStridedGPUMatrix{T},
+    LinearAlgebra.Adjoint{T, <:AnyStridedGPUMatrix{T}},
+    LinearAlgebra.Transpose{T, <:AnyStridedGPUMatrix{T}},
+    LinearAlgebra.Symmetric{T, <:AnyStridedGPUMatrix{T}},
+    LinearAlgebra.Hermitian{T, <:AnyStridedGPUMatrix{T}},
+}
+const AnyStridedGPUVecOrMatOperand{T} = Union{
+    AnyStridedGPUVecOrMat{T},
+    AnyStridedGPUMatrixOperand{T},
+}
+
+# The wrapper type carries what the tA/tB chars carry at the generic_* level.
+# 'S'/'H' are recognized only to be rejected by `_assert_rectangular`.
+@inline _tchar(::AbstractArray) = 'N'
+@inline _tchar(::LinearAlgebra.Adjoint) = 'C'
+@inline _tchar(::LinearAlgebra.Transpose) = 'T'
+@inline _tchar(::LinearAlgebra.Symmetric) = 'S'
+@inline _tchar(::LinearAlgebra.Hermitian) = 'H'
+
+@inline _bare(X::AbstractArray) = X
+@inline _bare(
+    X::Union{
+        LinearAlgebra.Adjoint, LinearAlgebra.Transpose,
+        LinearAlgebra.Symmetric, LinearAlgebra.Hermitian,
+    },
+) = parent(X)
+
+#=
+Strip the wrapper off primal and shadows so the shared helpers see the same bare
+array + char the generic_* rules see. Comparing at the bare level also makes
+`_isconst`'s aliasing check work: an inactive runtime-activity shadow of a
+wrapper is a fresh wrapper struct around the same parent, so the wrappers never
+alias even when the data does.
+=#
+@inline _bare_ann(X::Const) = Const(_bare(X.val))
+@inline _bare_ann(X::Duplicated) = Duplicated(_bare(X.val), _bare(X.dval))
+@inline _bare_ann(X::BatchDuplicated{T, N}) where {T, N} =
+    BatchDuplicated(_bare(X.val), map(_bare, X.dval))
+
+function EnzymeRules.augmented_primal(
+        config::RevConfig,
+        func::Const{typeof(LinearAlgebra.mul!)},
+        ::Type{RT},
+        C::Annotation{<:AnyStridedGPUMatrix},
+        A::Annotation{<:AnyStridedGPUVecOrMatOperand},
+        B::Annotation{<:AnyStridedGPUVecOrMatOperand},
+        α::Annotation{<:Number},
+        β::Annotation{<:Number},
+    ) where {RT}
+    tape = _matmul_caches(
+        config, C, _tchar(A.val), _tchar(B.val), _bare_ann(A), _bare_ann(B),
+        overwritten(config)[3], overwritten(config)[4],
+        Val(!(α isa Const)), Val(!(β isa Const)),
+    )
+
+    func.val(C.val, A.val, B.val, α.val, β.val)
+
+    return _augreturn(config, RT, C, tape)
+end
+
+function EnzymeRules.reverse(
+        config::RevConfig,
+        func::Const{typeof(LinearAlgebra.mul!)},
+        ::Type{RT},
+        tape,
+        C::Annotation{<:AnyStridedGPUMatrix},
+        A::Annotation{<:AnyStridedGPUVecOrMatOperand},
+        B::Annotation{<:AnyStridedGPUVecOrMatOperand},
+        α::Annotation{<:Number},
+        β::Annotation{<:Number},
+    ) where {RT}
+    dα, dβ = _matmul_reverse!(
+        config, C, _tchar(A.val), _tchar(B.val), _bare_ann(A), _bare_ann(B),
+        α.val, β.val, tape, Val(!(α isa Const)), Val(!(β isa Const)),
+    )
+    return (nothing, nothing, nothing, dα, dβ)
+end
+
+function EnzymeRules.augmented_primal(
+        config::RevConfig,
+        func::Const{typeof(LinearAlgebra.mul!)},
+        ::Type{RT},
+        y::Annotation{<:AnyStridedGPUVector},
+        A::Annotation{<:AnyStridedGPUMatrixOperand},
+        x::Annotation{<:AnyStridedGPUVector},
+        α::Annotation{<:Number},
+        β::Annotation{<:Number},
+    ) where {RT}
+    tape = _matmul_caches(
+        config, y, _tchar(A.val), 'N', _bare_ann(A), x,
+        overwritten(config)[3], overwritten(config)[4],
+        Val(!(α isa Const)), Val(!(β isa Const)),
+    )
+
+    func.val(y.val, A.val, x.val, α.val, β.val)
+
+    return _augreturn(config, RT, y, tape)
+end
+
+function EnzymeRules.reverse(
+        config::RevConfig,
+        func::Const{typeof(LinearAlgebra.mul!)},
+        ::Type{RT},
+        tape,
+        y::Annotation{<:AnyStridedGPUVector},
+        A::Annotation{<:AnyStridedGPUMatrixOperand},
+        x::Annotation{<:AnyStridedGPUVector},
+        α::Annotation{<:Number},
+        β::Annotation{<:Number},
+    ) where {RT}
+    dα, dβ = _matmul_reverse!(
+        config, y, _tchar(A.val), 'N', _bare_ann(A), x,
+        α.val, β.val, tape, Val(!(α isa Const)), Val(!(β isa Const)),
+    )
+    return (nothing, nothing, nothing, dα, dβ)
 end
 
 # dot(a, b) = Σ conj(aᵢ)·bᵢ, so `da += conj(dr)·b` and `db += dr·a`. The asymmetry
