@@ -639,7 +639,16 @@ function nonzero_active_data(x::T) where {T}
     return false
 end
 
-function body_runtime_generic_rev(N, Width, Atomic, wrapped, primttypes, shadowargs, active_refs)
+function body_runtime_generic_rev(
+    N,
+    Width,
+    Atomic,
+    wrapped,
+    primttypes,
+    shadowargs,
+    active_refs,
+    dfns,
+)
     outs = Vector{Expr}(undef, N*Width)
     for i = 1:N
         for w = 1:Width
@@ -701,15 +710,11 @@ function body_runtime_generic_rev(N, Width, Atomic, wrapped, primttypes, shadowa
             end
         end
     else
-        fargs = [:df]
-        for i = 2:Width
-            push!(fargs, Symbol("df_$i"))
-        end
         quote
             if df isa Base.RefValue && !(f isa Base.RefValue)
-                BatchMixedDuplicated(f, ($(fargs...),))
+                BatchMixedDuplicated(f, ($(dfns...),))
             else
-                BatchDuplicated(f, ($(fargs...),))
+                BatchDuplicated(f, ($(dfns...),))
             end
         end
     end
@@ -803,7 +808,16 @@ function func_runtime_generic_rev(N, Width, Atomic)
     _, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width)
     body =
-        body_runtime_generic_rev(N, Width, Atomic, wrapped, primtypes, batchshadowargs, active_refs)
+        body_runtime_generic_rev(
+            N,
+            Width,
+            Atomic,
+            wrapped,
+            primtypes,
+            batchshadowargs,
+            active_refs,
+            dfns,
+        )
 
     quote
         function runtime_generic_rev(
@@ -846,6 +860,7 @@ end
         primtypes,
         batchshadowargs,
         active_refs,
+        dfns,
     )
 end
 
