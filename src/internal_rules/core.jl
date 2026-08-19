@@ -559,8 +559,12 @@ function EnzymeRules.forward(config, ::Const{typeof(Base.finalizer)}, _, f::Cons
         end
     end
 
-    if EnzymeRules.needs_primal(config)
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
         return o
+    elseif EnzymeRules.needs_shadow(config)
+        return o.dval
+    elseif EnzymeRules.needs_primal(config)
+        return o.val
     else
         return nothing
     end
