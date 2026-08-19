@@ -1041,9 +1041,39 @@ end
     @test xact.dval[2] ≈ dy2 * 2
 end
 
+@noinline function nested_generic_const_result!(out, x)
+    copyto!(out, x)
+    return out
+end
+
+const NESTED_GENERIC_CONST_RESULT = Ref{Any}(nested_generic_const_result!)
+
+function discard_nested_generic_result(out, x)
+    NESTED_GENERIC_CONST_RESULT[](out, x)
+    return nothing
+end
+
+@testset "Nested generic constant return activity" begin
+    out = zeros(3)
+    x = [1.0, 2.0, 3.0]
+    dx = fill(7.0, 3)
+
+    Enzyme.autodiff(
+        Reverse,
+        discard_nested_generic_result,
+        Const,
+        Const(out),
+        Duplicated(x, dx),
+    )
+
+    @test out == x
+    @test dx == fill(7.0, 3)
+end
+
 @testset "Batched inactive" begin
     augres = Enzyme.Compiler.runtime_generic_augfwd(
-        Val{(false, false, false)}, Val(false), Val(false), Val(2), Val((true, true, true)),
+        Val{(false, false, false)}, Val(Enzyme.API.DFT_CONSTANT),
+        Val(false), Val(false), Val(2), Val((true, true, true)),
         Val(Enzyme.Compiler.AnyArray(2 + Int(2))),
         ==, nothing, nothing,
         :foo, nothing, nothing,
@@ -1051,7 +1081,8 @@ end
     )
 
     Enzyme.Compiler.runtime_generic_rev(
-        Val{(false, false, false)}, Val(false), Val(false), Val(2), Val((true, true, true)),
+        Val{(false, false, false)}, Val(Enzyme.API.DFT_CONSTANT),
+        Val(false), Val(false), Val(2), Val((true, true, true)),
         Val(false), augres[end],
         ==, nothing, nothing,
         :foo, nothing, nothing,
@@ -1251,6 +1282,7 @@ end
 @testset "Union i8" begin
     args = (
         Val{(false, false, false)},
+        Val(Enzyme.API.DFT_CONSTANT),
         Val(false),
         Val(false),
         Val(1),
@@ -1270,6 +1302,7 @@ end
 
     args2 = (
         Val{(false, false, false)},
+        Val(Enzyme.API.DFT_CONSTANT),
         Val(false),
         Val(false),
         Val(1),
