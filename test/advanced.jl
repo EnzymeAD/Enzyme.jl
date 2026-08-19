@@ -1059,6 +1059,48 @@ end
     )
 end
 
+@testset "Batched active with runtime activity" begin
+    struct Inner
+        a::Float64
+        r::Tuple{UnitRange{Int64}}
+    end
+    (t::Inner)(x) = fill(x[1], sum(length, t.r))
+    struct Outer
+        v::Vector{Inner}
+    end
+    function (t::Outer)(x::AbstractVector)
+        y = Vector{Float64}(undef, 2)
+        y[1] = t.v[1](x)[1]
+        y[2] = t.v[1](x)[1]
+        return y
+    end
+    outer = Outer([Inner(1.0, (1:1,))])
+    d_outer1 = Outer([Inner(0.0, (1:1,))])
+    d_outer2 = Outer([Inner(0.0, (1:1,))])
+    x = ones(2)
+    dx1 = zeros(2)
+    dx2 = zeros(2)
+
+    augres = Enzyme.Compiler.runtime_generic_augfwd(
+        Val{(true, true)},
+        Val(true), Val(false), Val(2),
+        Val((true, false)),
+        Val(Enzyme.Compiler.AnyArray(2 + Int(2))),
+        outer, d_outer1, d_outer2,
+        x, dx1, dx2,
+    )
+
+    Enzyme.Compiler.runtime_generic_rev(
+        Val{(true, true)},
+        Val(true), Val(false), Val(2),
+        Val((true, false)),
+        Val(false),
+        augres[end],
+        outer, d_outer1, d_outer2,
+        x, dx1, dx2,
+    )
+end
+
 @testset "Uncached batch sizes" begin
     genericsin(x) = Base.invokelatest(sin, x)
     res = Enzyme.autodiff(Forward, genericsin, BatchDuplicated(2.0, NTuple{10, Float64}((Float64(i) for i in 1:10))))[1]
