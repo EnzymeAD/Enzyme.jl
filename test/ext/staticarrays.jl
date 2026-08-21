@@ -90,3 +90,20 @@ end
     res = Enzyme.gradient(Enzyme.Forward, unstable_fun, inp)[1]
     @test res ≈ [1.0, 0.0]
 end
+
+function inner_forhess(x)
+    return tanh.(x)
+end
+
+function for_hess(x)
+    return sum(inner_forhess(x))
+end
+
+grad_forhess(x) = autodiff(Reverse, for_hess, Active, Active(x))[1][1]
+hess(x) = jacobian(Forward, grad_forhess, x)[1]
+
+@testset "StaticArrays hessian" begin
+    x = @SVector zeros(10)
+    res = [-2.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0; 0.0 -2.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0; 0.0 0.0 -2.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 -2.0 0.0 0.0 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0 -2.0 0.0 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0 0.0 -2.0 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0 0.0 0.0 -2.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0 0.0 0.0 0.0 -2.0 0.0 0.0; 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 -2.0 0.0; 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 -2.0]
+    @test jacobian(Forward, grad_forhess, x)[1] ≈ res
+end

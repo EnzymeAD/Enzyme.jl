@@ -409,3 +409,6 @@ Enzyme.@import_frule typeof(f) Float32
 ```
 
 See the docs on [`Enzyme.@import_frule`](@ref) and [`Enzyme.@import_rrule`](@ref) for more information.
+
+## Congruency
+In general Enzyme requires shadow values to be of the same type and shape. See the docs on [`EnzymeCore.congruent`](@ref)

@@ -321,7 +321,7 @@ function Base.showerror(io::IO, ece::ForwardRuleReturnError{C, RT, fwd_RT}) wher
     printstyled(io, "Hint"; bold = true, color = :cyan)
     printstyled(
         io,
-        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\n";
+        ": if the reason for the return type is unclear, you can catch this exception as `err` and call `code_typed(err)` to inspect the erroneous code.\n";
         color = :cyan,
     )
     println(io)
@@ -368,13 +368,13 @@ function Base.showerror(io::IO, ece::AugmentedRuleReturnError{C, RT, fwd_RT}) wh
             if EnzymeRules.primal_type(fwd_RT) <: RealRt
                 hint = "Expected the abstract type $RealRt for primal, you returned $(EnzymeRules.primal_type(fwd_RT)). Even though $(EnzymeRules.primal_type(fwd_RT)) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
             else
-                hint = "Mismatched primal type $(EnzymeRules.sprimal_type(fwd_RT)), expected $RealRt"
+                hint = "Mismatched primal type $(EnzymeRules.primal_type(fwd_RT)), expected $RealRt"
             end
         elseif EnzymeRules.shadow_type(fwd_RT) != RealRt
             if width == 1
                 if EnzymeRules.shadow_type(fwd_RT) <: RealRt
                     hint = "Expected the abstract type $RealRt for shadow, you returned $(EnzymeRules.shadow_type(fwd_RT)). Even though $(EnzymeRules.shadow_type(fwd_RT)) <: $RealRt, rules require an exact match (akin to how you cannot substitute Vector{Float64} in a method that takes a Vector{Real})."
-                elseif shadow_type(fwd_RT) <: (NTuple{N, <:RealRt} where N)
+                elseif EnzymeRules.shadow_type(fwd_RT) <: (NTuple{N, <:RealRt} where N)
                     hint = "Batch size was 1, expected a single shadow, not a tuple of shadows."
                 else
                     hint = "Mismatched shadow type $(EnzymeRules.shadow_type(fwd_RT)), expected $(EnzymeRules.shadow_type(ExpRT))."
@@ -627,7 +627,37 @@ function Base.showerror(io::IO, ece::UnionSretReturnException{RT}) where RT
     Base.println(io, Base.unsafe_string(ece.backtrace))
 end
 
+struct NonInferredActiveReturn <: CompilationException
+    actualRetType::Type
+    rettype::Type
+end
 
+function Base.showerror(io::IO, ece::NonInferredActiveReturn)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
+    print(io, "NonInferredActiveReturn: Enzyme compilation failed.\n")
+    println(io, " Called reverse-mode autodiff with return activity $(ece.rettype), which had a different setting of Base.allocatedinline from the actual return type $(ece.actualRetType). This is not presently supported (but open an issue).")
+
+    if ece.actualRetType <: eltype(ece.rettype)
+        newRT = if ece.rettype <: Active
+            Active{ece.actualRetType}
+        elseif ece.rettype <: MixedDuplicated
+            MixedDuplicated{ece.actualRetType}
+        elseif ece.rettype <: BatchMixedDuplicated
+            BatchMixedDuplicated{ece.actualRetType, batch_size(ece.rettype)}
+        else
+            throw(AssertionError("Unexpected Activity $(ece.rettype)"))
+        end
+
+        printstyled(io, "Hint"; bold = true, color = :cyan)
+        printstyled(
+            io,
+            ": You can avoid this error by explicitly setting the return activity as $newRT";
+            color = :cyan,
+        )
+    end
+end
 
 struct NoDerivativeException <: CompilationException
     msg::String
@@ -677,18 +707,33 @@ function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
         Base.Experimental.show_error_hints(io, ece)
     end
     print(io, "IllegalTypeAnalysisException: Enzyme compilation failed due to illegal type analysis.\n")
-    print(io, " This usually indicates the use of a Union type, which is not fully supported with Enzyme.API.strictAliasing set to true [the default].\n")
-    print(io, " Ideally, remove the union (which will also make your code faster), or try setting Enzyme.API.strictAliasing!(false) before any autodiff call.\n")
-    print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
-        if ece.mi !== nothing
-        print(io, " Failure within method: ", ece.mi, "\n")
-        printstyled(io, "Hint"; bold = true, color = :cyan)
+    if VERSION >= v"1.12" && VERSION < v"1.12.5"
+        printstyled(io, "Hint:"; bold = true, color = :cyan)
         printstyled(
             io,
-            ": catch this exception as `err` and call `code_typed(err)` to inspect the errornous code.\nIf you have Cthulu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.";
+            ": You are using Julia $(VERSION) which is known as a source of this error. This will be fixed in Julia 1.12.5. Either use Julia 1.10, 1.11, or wait for Julia 1.12.5.\nTo track the release progress, see https://github.com/JuliaLang/julia/pull/60612.";
             color = :cyan,
         )
+        print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
+    else
+        print(io, " This usually indicates the use of a Union type, which is not fully supported with Enzyme.API.strictAliasing set to true [the default].\n")
+        print(io, " Ideally, remove the union (which will also make your code faster), or try setting Enzyme.API.strictAliasing!(false) before any autodiff call.\n")
+        print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
+        if ece.mi !== nothing
+            print(io, "Failure within method:\n")
+            println(io)
+            pretty_print_mi(ece.mi, io)
+            println(io)
+            println(io)
+            printstyled(io, "Hint"; bold = true, color = :cyan)
+            printstyled(
+                io,
+                ": catch this exception as `err` and call `code_typed(err)` to inspect the erroneous code.\nIf you have Cthulhu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.\n";
+                color = :cyan,
+            )
+        end
     end
+
     if VERBOSE_ERRORS[]
         if ece.ir !== nothing
             print(io, "Current scope: \n")
@@ -741,10 +786,20 @@ function Base.showerror(io::IO, ece::IllegalFirstPointerException)
     end
 end
 
-struct EnzymeInternalError <: CompilationException
+struct EnzymeInternalError{MI, WT} <: CompilationException
     msg::String
     ir::Union{Nothing,String}
     bt::Union{Nothing,Vector{StackTraces.StackFrame}}
+    mi::MI
+    world::WT
+end
+
+function InteractiveUtils.code_typed(ece::EnzymeInternalError; interactive::Bool=false, kwargs...)
+    mi = ece.mi
+    if mi === nothing
+        throw(AssertionError("code_typed(::EnzymeInternalError; interactive::Bool=false, kwargs...) not supported for error without mi"))
+    end
+    code_typed_helper(ece.mi, ece.world; kwargs...)
 end
 
 function Base.showerror(io::IO, ece::EnzymeInternalError)
@@ -767,10 +822,27 @@ function Base.showerror(io::IO, ece::EnzymeInternalError)
         end
       end
     end
+
+    if ece.mi !== nothing
+        print(io, "Failure within method:\n")
+        println(io)
+        pretty_print_mi(ece.mi, io)
+        println(io)
+        println(io)
+
+        printstyled(io, "Hint"; bold = true, color = :cyan)
+        printstyled(
+            io,
+            ": catch this exception as `err` and call `code_typed(err)` to inspect the surrounding code.\n";
+            color = :cyan,
+        )
+    end
+
     if ece.bt !== nothing
         Base.show_backtrace(io, ece.bt)
         println(io)
     end
+
 end
 
 struct EnzymeMutabilityException <: EnzymeError
@@ -785,8 +857,8 @@ function Base.showerror(io::IO, ece::EnzymeMutabilityException)
     print(io, "EnzymeMutabilityException: ", msg, '\n')
 end
 
-struct EnzymeRuntimeActivityError{MT,WT} <: EnzymeError
-    msg::Cstring
+struct EnzymeRuntimeActivityError{ST, MT,WT} <: EnzymeError
+    msg::ST
     mi::MT
     world::WT
 end
@@ -799,7 +871,7 @@ function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)
     println(io, "Constant memory is stored (or returned) to a differentiable variable and correctness cannot be guaranteed with static activity analysis.")
     println(
         io,
-        "This might be due to the use of a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/faq/#Runtime-Activity).",
+        "This might be due to the use of a constant variable as temporary storage for active memory (https://enzyme.mit.edu/julia/stable/faq/#faq-runtime-activity).",
     )
     println(
         io,
@@ -831,7 +903,11 @@ function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)
         )
     end
     println(io)
-    msg = Base.unsafe_string(ece.msg)
+    msg = if ece.msg isa Cstring
+        Base.unsafe_string(ece.msg)
+    else
+        ece.msg
+    end
     print(io, msg, '\n')
 end
 
@@ -854,19 +930,23 @@ function Base.showerror(io::IO, ece::EnzymeNoTypeError)
         Base.Experimental.show_error_hints(io, ece)
     end
     print(io, "EnzymeNoTypeError: Enzyme cannot statically prove the type of a value being differentiated and risks a correctness error if it gets it wrong.\n")
-    print(io, " Generally this shouldn't occur as Enzyme records type information from julia, but may be expected if you, for example copy untyped data.\n")
+    print(io, " Generally this shouldn't occur as Enzyme records type information from julia, but may be expected if you, for example, copy untyped data.\n")
     print(io, " or alternatively emit very large sized registers that exceed the maximum size of Enzyme's type analysis. If it seems reasonable to differentiate\n")
     print(io, " this code, open an issue! If the cause of the error is too large of a register, you can request Enzyme increase the size (https://enzyme.mit.edu/julia/dev/api/#Enzyme.API.maxtypeoffset!-Tuple{Any})\n")
     print(io, " or depth (https://enzyme.mit.edu/julia/dev/api/#Enzyme.API.maxtypedepth!-Tuple{Any}) of its type analysis.\n");
     print(io, " Alternatively, you can tell Enzyme to take its best guess from context with (https://enzyme.mit.edu/julia/dev/api/#Enzyme.API.looseTypeAnalysis!-Tuple{Any})\n")
-    print(io, " All of these settings are global configurations that need to be set immeidately after loading Enzyme, before any differentiation occurs\n")
+    print(io, " All of these settings are global configurations that need to be set immediately after loading Enzyme, before any differentiation occurs.\n")
     print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
     if VERBOSE_ERRORS[]
         msg = Base.unsafe_string(ece.msg)
         print(io, msg, '\n')
     end
     if ece.mi !== nothing
-        print(io, " Failure within method: ", ece.mi, "\n")
+        print(io, "Failure within method:\n")
+        println(io)
+        pretty_print_mi(ece.mi, io)
+        println(io)
+        println(io)
         printstyled(io, "Hint"; bold = true, color = :cyan)
         printstyled(
             io,
@@ -983,11 +1063,16 @@ function julia_error(
             for u in LLVM.uses(val)
                 u = LLVM.user(u)
                 if isa(u, LLVM.Instruction)
-                    bt = GPUCompiler.backtrace(val)
+                    bt = GPUCompiler.backtrace(u)
+                    break
                 end
             end
         elseif val isa LLVM.Function
             # Need to convert function to string, since when the error is going to be printed
+            # the module might have been destroyed
+            ir = string(val)
+        elseif val isa LLVM.GlobalVariable
+            # Need to convert global to string, since when the error is going to be printed
             # the module might have been destroyed
             ir = string(val)
         else
@@ -1064,7 +1149,18 @@ function julia_error(
                 print(io, "Current scope: \n")
                 print(io, ir)
             end
-            if !isa(val, LLVM.Argument)
+	    legal, obj = absint(val)
+	    if legal
+		obj0 = obj
+		obj = unbind(obj)
+	        println(io, "\nValue of type: ", Core.Typeof(obj))
+		println(io ,  " of value    : ", obj)
+		if obj0 isa Core.Binding
+		println(io ,  " binding     : ", obj0)	    
+		end
+		println(io)
+	    end
+	    if !isa(val, LLVM.Argument) && !isa(val, LLVM.GlobalVariable) 
                 print(io, "\n Inverted pointers: \n")
                 ip = API.EnzymeGradientUtilsInvertedPointersToString(gutils)
                 sval = Base.unsafe_string(ip)
@@ -1162,15 +1258,83 @@ function julia_error(
         return C_NULL
     elseif errtype == API.ET_IllegalFirstPointer
         throw(IllegalFirstPointerException(msg, ir, bt))
-    elseif errtype == API.ET_InternalError
-        throw(EnzymeInternalError(msg, ir, bt))
+    elseif errtype == API.ET_NoAccumulate
+        world = nothing
+        mi = nothing
+
+        if isa(val, LLVM.Instruction)
+            f = LLVM.parent(LLVM.parent(val))::LLVM.Function
+            mi, rt = enzyme_custom_extract_mi(
+                f,
+                false,
+            ) #=error=#
+            world = enzyme_extract_world(f)
+        elseif isa(val, LLVM.Argument)
+            f = parent_scope(val)::LLVM.Function
+            mi, rt = enzyme_custom_extract_mi(
+                f,
+                false,
+            ) #=error=#
+            world = enzyme_extract_world(f)
+        end
+
+        err = if mi !== nothing
+            EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world)
+        else
+	    world = nothing
+            EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world)
+        end
+        throw(err)
+    elseif errtype == API.ET_InternalError || errtype == API.ET_ShowInternalError
+        world = nothing
+        mi = nothing
+
+        if isa(val, LLVM.Instruction)
+            f = LLVM.parent(LLVM.parent(val))::LLVM.Function
+            mi, rt = enzyme_custom_extract_mi(
+                f,
+                false,
+            ) #=error=#
+            world = enzyme_extract_world(f)
+        elseif isa(val, LLVM.Argument)
+            f = parent_scope(val)::LLVM.Function
+            mi, rt = enzyme_custom_extract_mi(
+                f,
+                false,
+            ) #=error=#
+            world = enzyme_extract_world(f)
+        end
+
+        err = if mi !== nothing
+            EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world)
+        else
+	    world = nothing
+            EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world)
+        end
+                            
+        if errtype == API.ET_InternalError 
+            throw(err)
+        else
+            Core.println(err)
+        end
     elseif errtype == API.ET_GCRewrite
-        msgN = sprint() do io::IO
+        data2 = LLVM.Value(data2)
+        fn = LLVM.Function(LLVM.API.LLVMGetParamParent(data2::LLVM.Argument))
+        @static if VERSION < v"1.11"
+	    sretkind = LLVM.kind(if LLVM.version().major >= 12
+		LLVM.TypeAttribute("sret", LLVM.Int32Type())
+	    else
+		LLVM.EnumAttribute("sret")
+	    end)
+	    if occursin("Could not find use of stored value", msg) && length(parameters(fn)) >= 1 && any(LLVM.kind(attr) == sretkind for attr in collect(LLVM.parameter_attributes(fn, 1)))
+		return C_NULL
+	    end
+        end
+	msgN = sprint() do io::IO
             print(io, msg)
             println(io)
-            data2 = LLVM.Value(data2)
-            fn = LLVM.Function(LLVM.API.LLVMGetParamParent(data2::LLVM.Argument))
             println(io, "Fn = ", string(fn))
+	    println(io, "val = ", string(val))
             println(io, "arg = ", string(data2::LLVM.Argument))
             if data !== C_NULL
                 data = LLVM.Value(LLVM.API.LLVMValueRef(data))
@@ -1244,30 +1408,6 @@ function julia_error(
                 return seen[cur]
             end
 
-@static if VERSION < v"1.11-"
-else   
-	if isa(cur, LLVM.LoadInst) && isa(value_type(cur), LLVM.PointerType) && LLVM.addrspace(value_type(operands(cur)[1])) == Derived
-                    larg, off = get_base_and_offset(operands(cur)[1]; inst=ncur, inttoptr=true)
-		    if isa(larg, LLVM.ConstantInt) && off == sizeof(Int)
-			ptr = reinterpret(Ptr{Cvoid}, convert(UInt, larg))
-			obj = Base.unsafe_pointer_to_objref(ptr)
-                        if obj isa Memory && obj == typeof(obj).instance
-                            return make_batched(ncur, prevbb)
-                        end
-		    end
-                end
-	if isa(cur, LLVM.ConstantExpr) && isa(value_type(cur), LLVM.PointerType) && LLVM.addrspace(value_type(cur)) == Derived
-		larg, off = get_base_and_offset(cur; inst=first(instructions(position(prevbb))), inttoptr=true)
-		if isa(larg, LLVM.ConstantInt) && (off == sizeof(Int) || off == 0)
-			ptr = reinterpret(Ptr{Cvoid}, convert(UInt, larg))
-			obj = Base.unsafe_pointer_to_objref(ptr)
-                        if obj isa Memory && obj == typeof(obj).instance
-                            return make_batched(ncur, prevbb)
-                        end
-		    end
-                end
-end
-                
 		if isa(cur, LLVM.LoadInst)
                     larg, off = get_base_and_offset(operands(cur)[1])
 		    if off == 0 && isa(larg, LLVM.AllocaInst)
@@ -1302,6 +1442,33 @@ end
 			 end
 		    end
 		end
+@static if VERSION < v"1.11-"
+else   
+            if isa(cur, LLVM.ConstantExpr)
+                larg, off = get_base_and_offset(operands(cur)[1]; inst=first(instructions(position(prevbb))))
+                legal2, obj = absint(larg)
+                obj = unbind(obj)
+                if legal2 && is_memory_instance(obj)
+                    return make_batched(ncur, prevbb)
+                end
+            end
+
+            if isa(cur, LLVM.LoadInst)
+                larg, off = get_base_and_offset(operands(cur)[1]; inst=cur)
+                legal2, obj = absint(larg)
+                obj = unbind(obj)
+                if legal2 && is_memory_instance(obj)
+                    return make_batched(ncur, prevbb)
+                end
+                if isa(larg, LLVM.LoadInst)
+                    legal2, obj = absint(larg)
+                    obj = unbind(obj)
+                    if legal2 && is_memory_instance(obj)
+                        return make_batched(ncur, prevbb)
+                    end
+                end
+            end
+end
 
             legal, TT, byref = abs_typeof(cur, true)
 
@@ -1311,18 +1478,25 @@ end
                 end
 
                 legal2, obj = absint(cur)
-
+		obj0 = obj
                 # Only do so for the immediate operand/etc to a phi, since otherwise we will make multiple
                 if legal2
+		   obj = unbind(obj)
+		   if is_memory_instance(obj) || (obj isa Core.SimpleVector && length(obj) == 0)
+			return make_batched(ncur, prevbb)
+		   end
                    if active_reg(TT, world) == ActiveState &&
-                   isa(cur, LLVM.ConstantExpr) &&
+		     ( isa(cur, LLVM.ConstantExpr) || isa(cur, LLVM.GlobalVariable)) &&
                    cur == data2
                     if width == 1
                         if mode == API.DEM_ForwardMode
                             instance = make_zero(obj)
                             return unsafe_to_llvm(prevbb, instance)
                         else
-                            res = emit_allocobj!(prevbb, Base.RefValue{TT})
+                            res = emit_allocobj!(prevbb, Base.RefValue{TT}) 
+			    T_int8 = LLVM.Int8Type() 
+			    T_size_t = convert(LLVM.LLVMType, UInt)
+			    LLVM.memset!(prevbb, bitcast!(prevbb, res, LLVM.PointerType(T_int8, 10)),  LLVM.ConstantInt(T_int8, 0), LLVM.ConstantInt(T_size_t, sizeof(TT)), 0)
                             push!(created, res)
                             return res
                         end
@@ -1336,6 +1510,9 @@ end
                                 unsafe_to_llvm(prevbb, instance)
                             else
                                 sres = emit_allocobj!(prevbb, Base.RefValue{TT})
+			        T_int8 = LLVM.Int8Type() 
+			        T_size_t = convert(LLVM.LLVMType, UInt)
+			        LLVM.memset!(prevbb, bitcast!(prevbb, sres, LLVM.PointerType(T_int8, 10)),  LLVM.ConstantInt(T_int8, 0), LLVM.ConstantInt(T_size_t, sizeof(TT)), 0)
                                 push!(created, sres)
                                 sres
                             end
@@ -1348,29 +1525,14 @@ end
                     end
                     end
 
-@static if VERSION < v"1.11-"
-else    
-                    if obj isa Memory && obj == typeof(obj).instance
-                        return make_batched(ncur, prevbb)
-                    end
-end
                 end
-
-@static if VERSION < v"1.11-"
-else   
-                if isa(cur, LLVM.LoadInst)
-                    larg, off = get_base_and_offset(operands(cur)[1])
-                    if isa(larg, LLVM.LoadInst)
-                        legal2, obj = absint(larg)
-                        if legal2 && obj isa Memory && obj == typeof(obj).instance
-                            return make_batched(ncur, prevbb)
-                        end
-                    end
-                end
-end
 
                 badval = if legal2
-                    string(obj) * " of type" * " " * string(TT)
+                    sv = string(obj) * " of type" * " " * string(TT)
+		    if obj0 isa Core.Binding
+			sv = sv *" binded at "*string(obj0)
+		    end
+		    sv
                 else
                     "Unknown object of type" * " " * string(TT)
                 end
@@ -1531,7 +1693,7 @@ end
                 end
             end
            
-            if isa(cur, LLVM.LoadInst) || isa(cur, LLVM.BitCastInst) || isa(cur, LLVM.AddrSpaceCastInst) || (isa(cur, LLVM.GetElementPtrInst) && all(Base.Fix2(isa, LLVM.ConstantInt), operands(cur)[2:end]))
+	    if isa(cur, LLVM.LoadInst) || isa(cur, LLVM.BitCastInst) || isa(cur, LLVM.AddrSpaceCastInst) || (isa(cur, LLVM.GetElementPtrInst) && all(Base.Fix2(isa, LLVM.ConstantInt), operands(cur)[2:end])) || (isa(cur,LLVM.ConstantExpr) &&  opcode(cur) in (LLVM.API.LLVMBitCast, LLVM.API.LLVMAddrSpaceCast, LLVM.API.LLVMGetElementPtr))
                 lhs = make_replacement(operands(cur)[1], prevbb)
                 if illegal
                     return ncur
@@ -1667,9 +1829,9 @@ end
         mode = Enzyme.API.DEM_ReverseModeCombined
 
         if mi !== nothing
-            emit_error(b, nothing, (msg2, mi, world), EnzymeRuntimeActivityError{Core.MethodInstance, UInt})
+            emit_error(b, nothing, (msg2, mi, world), EnzymeRuntimeActivityError{Cstring, Core.MethodInstance, UInt})
         else
-            emit_error(b, nothing, msg2, EnzymeRuntimeActivityError{Nothing, Nothing})
+            emit_error(b, nothing, msg2, EnzymeRuntimeActivityError{Cstring, Nothing, Nothing})
         end
         return C_NULL
     elseif errtype == API.ET_GetIndexError

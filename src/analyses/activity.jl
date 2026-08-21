@@ -12,6 +12,7 @@ end
 @inline element(::Val{T}) where {T} = T
 
 @inline ptreltype(::Type{Ptr{T}}) where {T} = T
+@inline ptreltype(::Type{Core.SimpleVector}) = Any
 @inline ptreltype(::Type{Core.LLVMPtr{T,N}}) where {T,N} = T
 @inline ptreltype(::Type{Core.LLVMPtr{T} where N}) where {T} = T
 @inline ptreltype(::Type{Base.RefValue{T}}) where {T} = T
@@ -29,6 +30,7 @@ end
 
 @inline is_arrayorvararg_ty(::Type) = false
 @inline is_arrayorvararg_ty(::Type{Tuple{Vararg{T2}}}) where {T2} = true
+@inline is_arrayorvararg_ty(::Type{Core.SimpleVector}) = true
 @inline is_arrayorvararg_ty(::Type{Ptr{T}}) where {T} = true
 @inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{T,N}}) where {T,N} = true
 @inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{T,N} where N}) where {T} = true
@@ -95,7 +97,11 @@ Base.@nospecializeinfer @inline function is_mutable_array(@nospecialize(T::Type)
     if T isa DataType
         if hasproperty(T, :name) && hasproperty(T.name, :module)
             mod = T.name.module
-            if string(mod) == "Reactant" && (T.name.name == :ConcretePJRTArray || T.name.name == :ConcreteIFRTArray || T.name.name == :TracedRArray)
+            if nameof(mod) === :Reactant && (T.name.name == :ConcretePJRTArray || T.name.name == :ConcreteIFRTArray || T.name.name == :TracedRArray)
+                return true
+            end
+            if nameof(mod) in (:CUDA, :CUDACore) &&
+                    T.name.name in (:CuRefValue, :CuPtr, :CuArrayPtr)
                 return true
             end
         end
@@ -104,15 +110,17 @@ Base.@nospecializeinfer @inline function is_mutable_array(@nospecialize(T::Type)
 end
 
 Base.@nospecializeinfer @inline function is_wrapped_number(@nospecialize(T::Type))
-    if T isa UnionAll
-        return is_wrapped_number(T.body)
-    end
     while T isa UnionAll
         T = T.body
     end
     if T isa DataType && hasproperty(T, :name) && hasproperty(T.name, :module)
         mod = T.name.module
-        if string(mod) == "Reactant" && (T.name.name == :ConcretePJRTNumber || T.name.name == :ConcreteIFRTNumber || T.name.name == :TracedRNumber)
+        if nameof(mod) === :Reactant && T.name.name in (
+                :ConcretePJRTNumber, :ConcreteIFRTNumber, :TracedRNumber,
+                :TracedRInteger, :TracedRFloat, :TracedRComplex,
+                :ConcretePJRTInteger, :ConcretePJRTFloat, :ConcretePJRTComplex,
+                :ConcreteIFRTInteger, :ConcreteIFRTFloat, :ConcreteIFRTComplex,
+            )
             return true
         end
     end
@@ -157,14 +165,9 @@ Base.@nospecializeinfer @inline function active_reg_inner(
         )
     end
 
-    if T <: BigFloat
-        return DupState
-    end
-
-    if T <: AbstractFloat
-        return ActiveState
-    end
-
+    # Wrapped numbers are mutable references to their underlying value; they
+    # may subtype AbstractFloat (or Integer) and must be classified before the
+    # raw float/integer fast paths.
     if is_wrapped_number(T)
         if justActive
             return AnyState
@@ -186,6 +189,14 @@ Base.@nospecializeinfer @inline function active_reg_inner(
                 return DupState
             end
         end
+    end
+
+    if T <: BigFloat
+        return DupState
+    end
+
+    if T <: AbstractFloat
+        return ActiveState
     end
 
     if is_mutable_array(T)
@@ -237,7 +248,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
         end
     end
 
-    if T <: Integer
+    if T <: Integer || T <: Enum
         return AnyState
     end
 
@@ -414,7 +425,6 @@ function check_activity_cache_invalidations(world::UInt)
 
     tt = Tuple{typeof(EnzymeRules.inactive_type), Type}
 
-    methods = Core.MethodMatch[]
     matches = Base._methods_by_ftype(tt, -1, world)
     if matches === nothing
         @assert ActivityCache.size() == 0
@@ -432,8 +442,8 @@ function check_activity_cache_invalidations(world::UInt)
 
     empty!(ActivityCache)
     empty!(ActivityMethodCache)
-    for match in matches::Vector
-        push!(ActivityMethodCache, match::Core.MethodMatch)
+    for match in methods
+        push!(ActivityMethodCache, match)
     end
 
     ActivityWorldCache[] = world

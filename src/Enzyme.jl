@@ -136,6 +136,14 @@ Base.convert(::Type{API.CDerivativeMode}, ::ForwardMode) = API.DEM_ForwardMode
 function guess_activity end
 
 mutable struct EnzymeContext
+    modules_to_link::Vector{LLVM.Module}
+    edges::Vector{Any}
+    nested_cache::Dict{Core.MethodInstance, String}
+    EnzymeContext() = new(
+        LLVM.Module[],
+        Any[],
+        Dict{Core.MethodInstance, String}()
+    )
 end
 
 include("logic.jl")
@@ -144,12 +152,22 @@ include("typetree.jl")
 include("gradientutils.jl")
 include("utils.jl")
 include("compiler.jl")
-include("internal_rules.jl")
+include("internal_rules/core.jl")
+include("internal_rules/inactive.jl")
+include("internal_rules/linalg.jl")
+include("internal_rules/ranges.jl")
+include("internal_rules/sorting.jl")
+include("internal_rules/bigfloat.jl")
+include("internal_rules/rand.jl")
+include("internal_rules/math.jl")
 
 import .Compiler: CompilationException
 
 @inline function falses_from_args(N)
     ntuple(Returns(false), Val(N))
+end
+@inline function trues_from_args(N)
+    ntuple(Returns(true), Val(N))
 end
 
 @inline function any_active(args::Vararg{Annotation,N}) where {N}
@@ -409,7 +427,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
                     #=ShadowInit=#true
                 }(),
                 FA,
-                Duplicated{rt},
+                width == 1 ? Duplicated{rt} : BatchDuplicated{rt, width},
                 (tt′).parameters...
             )
             res = forward(f, args...)
@@ -484,10 +502,10 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
             # then subtracting twice the imaginary component to get the correct result
 
             for (k, v) in seen
-                Compiler.recursive_accumulate(k, v, refn_seed)
+                Compiler.recursive_accumulate(k, v, Val(false), refn_seed)
             end
             for (k, v) in seen2
-                Compiler.recursive_accumulate(k, v, imfn_seed)
+                Compiler.recursive_accumulate(k, v, Val(false), imfn_seed)
             end
 
             fused = fuse_complex_results(results, args...)
@@ -519,7 +537,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     ) #=ShadowInit=#
 
     if A0 <: Active
-        args = (args..., Compiler.default_adjoint(rt))
+        args = (args..., Compiler.default_adjoint(rt, Val(width)))
     end
     thunk(f, args...)
 end
@@ -741,13 +759,15 @@ code, as well as high-order differentiation.
                     ErrIfFuncWritten,
                     #=ShadowInit=#true
                 }()
-            TapeType = tape_type(rs, FA, Duplicated{rt},
+            rt_annotation = width == 1 ? Duplicated{rt} : BatchDuplicated{rt, width}
+            TapeType = tape_type(
+                rs, FA, rt_annotation,
                 (tt′).parameters...)
             forward, adjoint = autodiff_deferred_thunk(
                 rs,
                 TapeType,
                 FA,
-                Duplicated{rt},
+                rt_annotation,
                 (tt′).parameters...
             )
             res = forward(f, args...)
@@ -800,7 +820,7 @@ code, as well as high-order differentiation.
     thunk =
         Compiler.CombinedAdjointThunk{Ptr{Cvoid},FA,A2,tt′,width,ReturnPrimal}(adjoint_ptr)
     if A <: Active
-        args = (args..., Compiler.default_adjoint(rt))
+        args = (args..., Compiler.default_adjoint(rt, Val(width)))
     elseif A <: Duplicated ||
            A <: DuplicatedNoNeed ||
            A <: BatchDuplicated ||
@@ -908,15 +928,15 @@ end
     autodiff_thunk(::ReverseModeSplit, ftype, Activity, argtypes::Type{<:Annotation}...)
 
 Provide the split forward and reverse pass functions for annotated function type
-ftype when called with args of type `argtypes` when using reverse mode.
+`ftype` when called with args of type `argtypes` when using reverse mode.
 
 `Activity` is the Activity of the return value, it may be `Const`, `Active`,
 or `Duplicated` (or its variants `DuplicatedNoNeed`, `BatchDuplicated`, and
 `BatchDuplicatedNoNeed`).
 
-The forward function will return a tape, the primal (or nothing if not requested),
-and the shadow (or nothing if not a `Duplicated` variant), and tapes the corresponding
-type arguements provided.
+The forward function will return a tape, the primal (or `nothing` if not requested),
+and the shadow (or `nothing` if not a `Duplicated` variant), and tapes the corresponding
+type arguments provided.
 
 The reverse function will return the derivative of `Active` arguments, updating the `Duplicated`
 arguments in place. The same arguments to the forward pass should be provided, followed by
@@ -961,11 +981,11 @@ result, ∂v, ∂A
         ShadowInit
     },
     ::Type{FA},
-    ::Type{A},
+    ::Type{A0},
     args::Vararg{Type{<:Annotation},Nargs},
 ) where {
     FA<:Annotation,
-    A<:Annotation,
+    A0<:Annotation,
     ReturnPrimal,
     ReturnShadow,
     Width,
@@ -988,12 +1008,19 @@ result, ∂v, ∂A
     end
 
     if ModifiedBetweenT === true
-        ModifiedBetween = Val(falses_from_args(Nargs + 1))
+        ModifiedBetween = Val(trues_from_args(Nargs + 1))
     else
         ModifiedBetween = Val(ModifiedBetweenT)
     end
 
     tt = Tuple{map(eltype, args)...}
+
+    A = if A0 isa UnionAll
+        rt0 = Compiler.primal_return_type(Reverse, eltype(FA), tt)
+        A0{rt0}
+    else
+        A0
+    end
 
     tt′ = Tuple{args...}
     opt_mi = if RABI <: NonGenABI
@@ -1022,6 +1049,8 @@ end
     autodiff(::Function, ::Mode, args...)
 
 Specialization of [`autodiff`](@ref) to handle do argument closures.
+ 
+Example:
 
 ```jldoctest
 
@@ -1053,12 +1082,12 @@ end
     autodiff_thunk(::ForwardMode, ftype, Activity, argtypes::Type{<:Annotation}...)
 
 Provide the thunk forward mode function for annotated function type
-ftype when called with args of type `argtypes`.
+`ftype` when called with args of type `argtypes`.
 
 `Activity` is the Activity of the return value, it may be `Const` or `Duplicated`
 (or its variants `DuplicatedNoNeed`, `BatchDuplicated`, and`BatchDuplicatedNoNeed`).
 
-The forward function will return the shadow (or nothing if not a `Duplicated` variant)
+The forward function will return the shadow (or `nothing` if not a `Duplicated` variant)
 and the primal (if requested).
 
 Example returning both the return derivative and original return:
@@ -1191,7 +1220,7 @@ end
     end
 
     if ModifiedBetweenT === true
-        ModifiedBetween = Val(falses_from_args(Nargs + 1))
+        ModifiedBetween = Val(trues_from_args(Nargs + 1))
     else
         ModifiedBetween = Val(ModifiedBetweenT)
     end
@@ -1273,7 +1302,7 @@ import .Compiler: remove_innerty, UnknownTapeType
     end
 
     if ModifiedBetweenT === true
-        ModifiedBetween = falses_from_args(Val(1), args...)
+        ModifiedBetween = trues_from_args(1+length(args))
     else
         ModifiedBetween = ModifiedBetweenT
     end
@@ -1345,15 +1374,15 @@ end
     autodiff_deferred_thunk(::ReverseModeSplit, TapeType::Type, ftype::Type{<:Annotation}, Activity::Type{<:Annotation}, argtypes::Type{<:Annotation}...)
 
 Provide the split forward and reverse pass functions for annotated function type
-ftype when called with args of type `argtypes` when using reverse mode.
+`ftype` when called with args of type `argtypes` when using reverse mode.
 
 `Activity` is the Activity of the return value, it may be `Const`, `Active`,
 or `Duplicated` (or its variants `DuplicatedNoNeed`, `BatchDuplicated`, and
 `BatchDuplicatedNoNeed`).
 
-The forward function will return a tape, the primal (or nothing if not requested),
-and the shadow (or nothing if not a `Duplicated` variant), and tapes the corresponding
-type arguements provided.
+The forward function will return a tape, the primal (or `nothing` if not requested),
+and the shadow (or `nothing` if not a `Duplicated` variant), and tapes the corresponding
+type arguments provided.
 
 The reverse function will return the derivative of `Active` arguments, updating the `Duplicated`
 arguments in place. The same arguments to the forward pass should be provided, followed by
@@ -1429,7 +1458,7 @@ result, ∂v, ∂A
     end
 
     if ModifiedBetweenT === true
-        ModifiedBetween = Val(falses_from_args(Nargs + 1))
+        ModifiedBetween = Val(trues_from_args(Nargs + 1))
     else
         ModifiedBetween = Val(ModifiedBetweenT)
     end
@@ -1517,6 +1546,8 @@ and may also be slower than not having a rule at all.
 
 Use with caution.
 
+Example:
+
 ```julia
 Enzyme.@import_frule(typeof(Base.sort), Any);
 
@@ -1545,9 +1576,9 @@ function _import_rrule end # defined in EnzymeChainRulesCoreExt extension
 """
     import_rrule(::fn, tys...)
 
-Automatically import a `ChainRules.rrule` as a custom reverse mode EnzymeRule. When called in batch mode, this
+Automatically import a `ChainRules.rrule` as a custom reverse mode `EnzymeRule`. When called in batch mode, this
 will end up calling the primal multiple times which results in slower code. This macro assumes that the underlying
-function to be imported is read-only, and returns a Duplicated or Const object. This macro also assumes that the
+function to be imported is read-only, and returns a `Duplicated` or `Const` object. This macro also assumes that the
 inputs permit a `.+=` operation and that the output has a valid `Enzyme.make_zero` function defined. It also assumes
 that `overwritten(x)` accurately describes if there is any non-preserved data from forward to reverse, not just
 the outermost data structure being overwritten as provided by the specification.
@@ -1568,24 +1599,6 @@ macro import_rrule(args...)
     return _import_rrule(args...)
 end
 
-if VERSION < v"1.12.0"
-    include("precompile.jl")
-end
-
-function __init__()
-    @static if VERSION ≥ v"1.12-"
-        if ccall(:jl_generating_output, Cint, ()) == 1
-            @warn """
-            Enzyme.jl support for Julia 1.12 is presently in progress.
-			For the time being we recommend using 1.11 or LTS (1.10).
-
-            For latest updates, check the status of support for Julia 1.12+ at
-            https://github.com/EnzymeAD/Enzyme.jl/issues/2699.
-            """ maxlog = 1
-        end
-    end
-
-    return nothing
-end
+include("precompile.jl")
 
 end # module

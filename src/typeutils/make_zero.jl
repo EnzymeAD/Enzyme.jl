@@ -31,6 +31,20 @@ end
 
 
 @inline function EnzymeCore.make_zero(
+	::Type{Array{Union{}, N}},
+        seen::IdDict,
+	prev::Array{Union{}, N},
+        ::Val{copy_if_inactive} = Val(false),
+    )::Array{Union{}, N} where {copy_if_inactive, N}
+    if haskey(seen, prev)
+        return seen[prev]
+    end
+    newa = copy(prev)
+    seen[prev] = newa
+    return newa
+end
+
+@inline function EnzymeCore.make_zero(
         ::Type{Array{FT, N}},
         seen::IdDict,
         prev::Array{FT, N},
@@ -194,6 +208,42 @@ end
     res = Core.Box()
     seen[prev] = res
     res.contents = EnzymeCore.make_zero(Core.Typeof(prev2), seen, prev2, Val(copy_if_inactive))
+    return res
+end
+
+@inline function EnzymeCore.make_zero(
+        ::Type{Core.SimpleVector},
+        seen::IdDict,
+        prev::Core.SimpleVector,
+        ::Val{copy_if_inactive} = Val(false),
+    )::Core.SimpleVector where {copy_if_inactive}
+    if haskey(seen, prev)
+        return seen[prev]
+    end
+    data = []
+    for v in prev
+        push!(data, EnzymeCore.make_zero(Core.Typeof(v), seen, v, Val(copy_if_inactive)))
+    end
+    newa = Core.svec(data)
+    seen[prev] = newa
+    return newa
+end
+
+@inline function EnzymeCore.make_zero(
+        ::Type{RT},
+        seen::IdDict,
+        prev::RT,
+        ::Val{copy_if_inactive} = Val(false),
+    )::RT where {copy_if_inactive, RT <: Dict}
+    if haskey(seen, prev)
+        return seen[prev]
+    end
+    res = empty(prev)
+    seen[prev] = res
+    for (k, v) in prev
+        new_v = EnzymeCore.make_zero(Core.Typeof(v), seen, v, Val(copy_if_inactive))
+        res[k] = new_v
+    end
     return res
 end
 
@@ -547,6 +597,24 @@ macro register_make_zero_inplace(sym)
                 prev.contents = make_zero_immutable!(pv, seen)
             else
                 $sym(pv, seen)
+            end
+            return nothing
+        end
+
+        @inline function $sym(prev::Dict, seen::ST)::Nothing where {ST}
+            if prev in seen
+                return nothing
+            end
+            push!(seen, prev)
+            for (k, v) in prev
+                SBT = Core.Typeof(v)
+                if guaranteed_const(SBT)
+                    continue
+                elseif !ismutabletype(SBT)
+                    prev[k] = make_zero_immutable!(v, seen)
+                else
+                    $sym(v, seen)
+                end
             end
             return nothing
         end

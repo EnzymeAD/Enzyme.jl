@@ -154,3 +154,24 @@ end
     @test ty[3] ≈ [8.0, 8.0]
     @test ty[4] ≈ [10.0, 10.0]
 end
+
+@testset "GEP non-inline type analysis" begin
+    function spread_no_broadcast!(bufs, q, ::Val{N}) where N
+        Threads.@threads for t in 1:N
+            for i in t:N:length(q)
+                @inbounds bufs[t][i, i + 1, i + 2] += q[i]
+            end
+        end
+        return sum(sum, bufs)
+    end
+
+    q = [1.0, 2.0]
+    dq = [0.0, 0.0]
+    bufs = [zeros(4, 4, 4) for _ in 1:2]
+    dbufs = [zeros(4, 4, 4) for _ in 1:2]
+
+    autodiff(ReverseWithPrimal, spread_no_broadcast!, Active, Duplicated(bufs, dbufs),
+             Duplicated(q, dq), Const(Val(2)))
+    @test dq ≈ [1.0, 1.0]
+end
+

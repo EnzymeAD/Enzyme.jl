@@ -153,7 +153,9 @@ end
     EnzymeCore.EnzymeRules.multiply_fwd_into(prev, pd, dx)
 end
 
-function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
+function push_box_for_argument!(
+                          @nospecialize(alloctx::LLVM.IRBuilder),
+                          @nospecialize(B::LLVM.IRBuilder),
                           @nospecialize(Ty::Type),
                           @nospecialize(val::Union{LLVM.Value, Nothing}),
                           @nospecialize(roots_val::Union{Nothing, LLVM.Value}),
@@ -163,8 +165,9 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
                           activity_wrap::Bool,
                           ogval::LLVM.Value,
                           @nospecialize(roots_cache::Union{LLVM.Value, Nothing}), 
-                          @nospecialize(shadow_roots::Union{Nothing, LLVM.Value}) = nothing
-                          )::Union{Nothing, Tuple{LLVM.Value, LLVM.Value}}
+                          @nospecialize(shadow_roots::Union{Nothing, LLVM.Value}) = nothing,
+			  just_primal_rooting::Bool = false
+                          )::Union{Nothing, LLVM.Value}
 
     if !activity_wrap
         @assert arg.typ == Ty
@@ -182,11 +185,11 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
     end
 
     if shadow_roots !== nothing
-        if inline_roots_type(Ty) < inline_roots_type(arg.typ)
-            throw(AssertionError("inline_roots_type(Ty = $Ty) [ $(inline_roots_type(Ty)) ] < inline_roots_type(arg.typ = $(arg.typ))  [ $(inline_roots_type(arg.typ)) ]"))
+        if num_inline_roots < inline_roots_type(arg.typ)
+            throw(AssertionError("inline_roots_type(Ty = $Ty) [ $num_inline_roots ] < inline_roots_type(arg.typ = $(arg.typ))  [ $(inline_roots_type(arg.typ)) ]"))
         end
     else
-        @assert inline_roots_type(Ty) == inline_roots_type(arg.typ)
+        @assert num_inline_roots == inline_roots_type(arg.typ)
     end
 
     arty = convert(LLVMType, arg.typ; allow_boxed = true)
@@ -194,7 +197,6 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
     # if either not a bits ref, or the data was not overwritten, the data is left
     # in the primal pointer.
     if val isa Nothing
-    
         # If we just want the primal pointer, we can simply push the old data as per usual.
     
         if !activity_wrap
@@ -202,7 +204,7 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
 
             if roots_val !== nothing
                 if roots_cache !== nothing
-                    ral = alloca!(B, convert(LLVMType, AnyArray(num_inline_roots)))
+                    ral = create_rooted_array(alloctx, num_inline_roots)
                     store!(B, roots_cache, ral)
                     push!(args, ral)
                 else
@@ -212,20 +214,28 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
             @assert shadow_roots === nothing
             return nothing
         else
-            val = load!(B, arty, ogval)
+            arty_foralloca = if VERSION >= v"1.12" && num_inline_roots != 0
+                strip_tracked_pointers(arty)
+            else
+                arty
+            end
+            val = load!(B, arty_foralloca, ogval, "rule_val_load_v1_")
+            metadata(val)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
         end
 
     end
 
+
     root_ptr = nothing
+
     if roots_cache !== nothing
         root_ty = convert(LLVMType, AnyArray(num_inline_roots))
         if shadow_roots === nothing
-            ral = alloca!(B, root_ty)
+            ral = create_rooted_array(alloctx, num_inline_roots)
             store!(B, roots_cache, ral)
             root_ptr = ral
         else
-            sr2 = bitcast!(B, shadow_roots, LLVM.PointerType(root_ty))
+            sr2 = bitcast!(B, shadow_roots, LLVM.PointerType(root_ty), "customrule_bitcast_to_shadowroots_v1")
             store!(B, roots_cache, sr2)
             root_ptr = shadow_roots
         end
@@ -233,10 +243,19 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
         if shadow_roots === nothing
             root_ptr = roots_val
         else
-            root_ty = convert(LLVMType, AnyArray(num_inline_roots))
-            ld = load!(B, root_ty, roots_val)
-            sr2 = bitcast!(B, shadow_roots, LLVM.PointerType(root_ty))
-            store!(B, ld, sr2)
+	        cur_inline_roots, eTy = if just_primal_rooting
+                @assert activity_wrap
+                inline_roots_type(eltype(Ty)), "primal.$(eltype(Ty))"
+	        else
+	            num_inline_roots, string(Ty)
+	        end
+	    
+	        if cur_inline_roots != 0
+		        root_ty = convert(LLVMType, AnyArray(cur_inline_roots))
+		        ld = load!(B, root_ty, roots_val, "loaded.roots.$eTy")
+		        sr2 = bitcast!(B, shadow_roots, LLVM.PointerType(root_ty), "customrule_bitcast_to_shadowroots_v2")
+		        store!(B, ld, sr2)
+	        end
             root_ptr = shadow_roots
         end
     end
@@ -246,15 +265,19 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
 
     llty = convert(LLVMType, Ty; allow_boxed = true)
 
-    al0 = al = emit_allocobj!(B, Ty, "arg.$Ty")
-    al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
-    al = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
+    llty_foralloca = if VERSION >= v"1.12" && num_inline_roots != 0
+       strip_tracked_pointers(llty)
+    else
+       llty
+    end
+
+    al0 = alloca!(alloctx, llty_foralloca, "arg.$Ty")
 
     ptr = if activity_wrap
         inbounds_gep!(
             B,
-            llty,
-            al,
+            llty_foralloca,
+            al0,
             [
                 LLVM.ConstantInt(LLVM.IntType(64), 0),
                 LLVM.ConstantInt(LLVM.IntType(32), 0),
@@ -262,24 +285,23 @@ function push_box_for_argument!(@nospecialize(B::LLVM.IRBuilder),
         )
     else
         @assert llty == arty
-        al
+        al0
     end
 
-    store!(B, val, ptr)
+    if VERSION >= v"1.12" && num_inline_roots != 0
+        extract_nonjlvalues_into!(B, arty, ptr, val)
+    else
+        store!(B, val, ptr)
+    end
 
+    al = addrspacecast!(B, al0, LLVM.PointerType(llty_foralloca, Derived))
     push!(args, al)
 
     if root_ptr !== nothing
         push!(args, root_ptr)
     end
 
-    if num_inline_roots == 0
-        if any_jltypes(llty)
-            emit_writebarrier!(B, get_julia_inner_types(B, al0, val))
-        end
-    end
-
-    return al0, al
+    return al0
 end
 
 function enzyme_custom_setup_args(
@@ -292,9 +314,8 @@ function enzyme_custom_setup_args(
     isKWCall::Bool,
     @nospecialize(tape::Union{Nothing, LLVM.Value}),
 )
-    ops = collect(operands(orig))
-    called = ops[end]
-    ops = ops[1:end-1]
+    called = operands(orig)[end]
+    ops = arg_operands_view(orig)
     width = get_width(gutils)
     kwtup = nothing
 
@@ -318,6 +339,13 @@ function enzyme_custom_setup_args(
 
     cv = LLVM.called_operand(orig)
     swiftself = has_swiftself(cv)
+
+    alloctx = LLVM.IRBuilder()
+    position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
+
+    ofn = LLVM.parent(LLVM.parent(orig))
+    world = enzyme_extract_world(ofn)
+
     jlargs = classify_arguments(
         mi.specTypes,
         called_type(orig),
@@ -325,13 +353,9 @@ function enzyme_custom_setup_args(
         returnRoots,
         swiftself,
         parmsRemoved,
+        mi,
+        world,
     )
-
-    alloctx = LLVM.IRBuilder()
-    position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
-
-    ofn = LLVM.parent(LLVM.parent(orig))
-    world = enzyme_extract_world(ofn)
 
     byval_tapes = LLVM.Value[]
 
@@ -342,8 +366,15 @@ function enzyme_custom_setup_args(
             continue
         end
         
+        roots = inline_roots_type(arg.typ)
+        # TODO(wmoses,vchuravy) if a parameter is removed, it is not possible to know if it was byref or not, we will assume it is byref for now.
+        # Note that getting this wrong can result in segfaults, invalid IR, or worse.
+        if arg.cc == GPUCompiler.BITS_VALUE
+            roots = false
+        end
+
         if arg.cc == GPUCompiler.GHOST
-            @assert inline_roots_type(arg.typ) == 0
+            @assert roots == 0
             @assert guaranteed_const_nongen(arg.typ, world)
             if isKWCall && arg.arg_i == 2
                 Ty = arg.typ
@@ -361,7 +392,7 @@ function enzyme_custom_setup_args(
                    !Core.Compiler.isconstType(Const{arg.typ})
                     val = unsafe_to_llvm(B, arg.typ.parameters[1])
                     roots_val = nothing
-                    push_box_for_argument!(B, Const{arg.typ}, val, roots_val, arg, args, uncacheable, true, val, nothing)
+                    push_box_for_argument!(alloctx, B, Const{arg.typ}, val, roots_val, arg, args, uncacheable, true, val, nothing)
                 else
                     @assert isghostty(Const{arg.typ}) ||
                             Core.Compiler.isconstType(Const{arg.typ})
@@ -378,14 +409,88 @@ function enzyme_custom_setup_args(
         activity_state = active_reg(arg.typ, world)
 
         activep = API.EnzymeGradientUtilsGetDiffeType(gutils, op, false) #=isforeign=#
+	orig_activep = activep
+	any_active_data = mode != API.DEM_ForwardMode && (activity_state == ActiveState || activity_state == MixedState)
 
         roots_activep = nothing
 
-        if inline_roots_type(arg.typ) != 0
+        if roots != 0
             roots_op = ops[arg.codegen.i + 1]
             roots_activep = API.EnzymeGradientUtilsGetDiffeType(gutils, roots_op, false)
-            if roots_activep != activep
-                throw("roots_activep ($roots_activep) != activep ($activep)")
+	    
+	    kwarg_inactive = isKWCall && arg.arg_jl_i == 2 && EnzymeRules.is_inactive_kwarg_from_sig(Interpreter.simplify_kw(mi.specTypes); world)
+	    
+	    if kwarg_inactive
+               roots_activep = API.DFT_CONSTANT
+            end
+
+            any_active = false
+            for ty in non_rooted_types(arg.typ)
+                if active_reg(ty, world) != Compiler.AnyState
+                    any_active = true
+                    break
+                end
+            end
+
+            if roots_activep != activep && activep == API.DFT_CONSTANT && !any_active
+                if roots_activep != API.DFT_DUP_ARG
+                    if B !== nothing
+                        bt = GPUCompiler.backtrace(orig)
+                        arg_idx = isKWCall ? (arg.arg_jl_i >= 3 ? arg.arg_jl_i - 2 : arg.arg_jl_i) : (arg.arg_jl_i >= 2 ? arg.arg_jl_i - 1 : arg.arg_jl_i)
+                        msg_info = """
+Custom rule for method argument $arg_idx of type $(arg.typ) has constant non-rooted types ($(tuple_non_rooted_types(arg.typ))) but active rooted types ($(tuple_rooted_types(arg.typ))).
+"""
+                        msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
+                        emit_error(B, orig, (msg2, mi, world), CallingConventionMismatchError{Cstring})
+                        return args, activity, (overwritten...,), actives, kwtup, mixeds, byval_tapes
+                    else
+                        throw(AssertionError("v1 roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ)) non_rooted_types=$(non_rooted_types(arg.typ))"))
+                    end
+                end
+                activep = roots_activep
+                any_active_data = false
+            end
+
+            if roots_activep != activep && !kwarg_inactive
+                if roots_activep == API.DFT_CONSTANT
+                    runtime_activity = API.EnzymeGradientUtilsGetRuntimeActivity(gutils) != 0
+                    if !runtime_activity
+                        if B !== nothing
+                            bt = GPUCompiler.backtrace(orig)
+                            arg_idx = isKWCall ? (arg.arg_jl_i >= 3 ? arg.arg_jl_i - 2 : arg.arg_jl_i) : (arg.arg_jl_i >= 2 ? arg.arg_jl_i - 1 : arg.arg_jl_i)
+                            msg_info = """
+Custom rule was passed an argument with mismatched activity between its rooted and non-rooted fields.
+Argument $arg_idx of type $(arg.typ):
+  - Non-rooted types: $(tuple_non_rooted_types(arg.typ)) (differentiable / active)
+  - Rooted types: $(tuple_rooted_types(arg.typ)) (constant / inactive)
+
+To fix this, either:
+  a) Pass this argument as Duplicated(...) or Active(...) instead of Const(...), or
+  b) Enable runtime activity on the autodiff mode, e.g.: autodiff(set_runtime_activity(Forward), ...).
+"""
+                            msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
+                            emit_error(B, orig, (msg2, mi, world), EnzymeRuntimeActivityError{Cstring, Core.MethodInstance, UInt})
+                            return args, activity, (overwritten...,), actives, kwtup, mixeds, byval_tapes
+                        else
+                            throw(AssertionError("roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ)) non_rooted_types=$(non_rooted_types(arg.typ))"))
+                        end
+                    end
+                else
+                    if B !== nothing
+                        bt = GPUCompiler.backtrace(orig)
+                        arg_idx = isKWCall ? (arg.arg_jl_i >= 3 ? arg.arg_jl_i - 2 : arg.arg_jl_i) : (arg.arg_jl_i >= 2 ? arg.arg_jl_i - 1 : arg.arg_jl_i)
+                        msg_info = """
+Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between roots_activep ($roots_activep) and activep ($activep).
+  - Non-rooted types: $(tuple_non_rooted_types(arg.typ))
+  - Rooted types: $(tuple_rooted_types(arg.typ))
+"""
+                        msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
+                        emit_error(B, orig, (msg2, mi, world), CallingConventionMismatchError{Cstring})
+                        return args, activity, (overwritten...,), actives, kwtup, mixeds, byval_tapes
+                    else
+                        throw(AssertionError("roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ)) non_rooted_types=$(non_rooted_types(arg.typ))"))
+                    end
+                end
             end
         end
 
@@ -402,7 +507,7 @@ function enzyme_custom_setup_args(
 
         root_ty = nothing
         roots_val = if roots_op !== nothing
-            root_ty = convert(LLVMType, AnyArray(inline_roots_type(arg.typ)))
+            root_ty = convert(LLVMType, AnyArray(roots))
             new_from_original(gutils, roots_op)
         end
 
@@ -426,8 +531,9 @@ function enzyme_custom_setup_args(
                 # If is overwritten
                 if !reverse
                     if B !== nothing
-                        val = load!(B, arty, val)
-
+                        val = load!(B, arty, val, "rules_load_ref_unc")
+                        metadata(val)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+ 
                         # Since we will be caching this value (and thus GC pointers need to be valid),
                         # if the roots aren't here, we need to recombine before we stash on tape.
                         # However, as an optimization, if the roots aren't overwritten we don't need to actually
@@ -435,21 +541,26 @@ function enzyme_custom_setup_args(
                         if roots_op != nothing
                             if uncacheable[arg.codegen.i + 1] != 0
                                 # Roots are overwritten, recombine with root
-                                val = recombine_value!(B, val, roots_op)
+                                val = recombine_value!(B, val, roots_val)
                             else
                                 # Roots are not overwritten, put placeholder valid GC value
                                 val = nullify_rooted_values!(B, val)
                             end
                         end
-
+ 
                         push!(byval_tapes, val)
+
                     end
                 else
                     if B !== nothing
                         @assert tape isa LLVM.Value
-                        val = extract_value!(B, tape, length(byval_tapes))
+                        val = extract_value!(B, tape, length(byval_tapes), "roots_op_extract_v1_")
                         @assert value_type(val) == arty
                         push!(byval_tapes, val)
+
+                        if roots_val !== nothing
+                            roots_val = lookup_value(gutils, roots_val, B)
+                        end
                     end
                 end
             else
@@ -468,26 +579,32 @@ function enzyme_custom_setup_args(
 
                         if !reverse
                             if B !== nothing
-                                root_cache = load!(B, root_ty, roots_op)
+                                root_cache = load!(B, root_ty, roots_val, "rules_load_ref_cache")
+                                metadata(root_cache)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                                 push!(byval_tapes, root_cache)
                             end
                         else
                             if B !== nothing
                                 @assert tape isa LLVM.Value
-                                root_cache = extract_value!(B, tape, length(byval_tapes))
+                                root_cache = extract_value!(B, tape, length(byval_tapes), "roots_op_extract_v1_")
                                 @assert value_type(root_cache) == root_ty
                                 push!(byval_tapes, root_cache)
 
-                                al = alloca!(B, root_ty)
+                                al = create_rooted_array(alloctx, roots, "roots_op_cache_v2_")
                                 store!(B, root_cache, al)
-                                roots_op = al
+                                roots_val = al
                             end
+                        end
+                    else
+                        if reverse && B !== nothing
+                            roots_val = lookup_value(gutils, roots_val, B)
                         end
                     end
                 end
 
                 # We still need to ensure the pointer of val is itself accessible in the reverse pass location,
                 # even if val itself is not
+
                 val = nothing
                 if reverse && B !== nothing
                     ogval = lookup_value(gutils, ogval, B)
@@ -497,6 +614,9 @@ function enzyme_custom_setup_args(
             @assert value_type(val) == arty
             if reverse && B !== nothing
                 val = lookup_value(gutils, val, B)
+                if roots_val !== nothing
+                    roots_val = lookup_value(gutils, roots_val, B)
+                end
             end
         end
 
@@ -510,13 +630,13 @@ function enzyme_custom_setup_args(
             if activep == API.DFT_CONSTANT
                 kwtup0 = arg.typ
                 if B !== nothing
-                    push_box_for_argument!(B, kwtup0, val, roots_val, arg, args, uncacheable, false, ogval, roots_cache)
+                    push_box_for_argument!(alloctx, B, kwtup0, val, roots_val, arg, args, uncacheable, false, ogval, roots_cache)
                 end
             else
                 @assert activep == API.DFT_DUP_ARG
                 kwtup0 = Duplicated{arg.typ}
                 if B !== nothing
-                    push_box_for_argument!(B, kwtup0, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache)
+                    push_box_for_argument!(alloctx, B, kwtup0, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache)
                 end
             end
 
@@ -531,56 +651,26 @@ function enzyme_custom_setup_args(
             Ty = Const{arg.typ}
 
             if B !== nothing
-                push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache)
+                push_box_for_argument!(alloctx, B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache)
             end
 
             push!(activity, Ty)
 
-        elseif activep == API.DFT_OUT_DIFF || (
-            mode != API.DEM_ForwardMode &&
-            activity_state == ActiveState
-        )
+	elseif activep == API.DFT_OUT_DIFF || (any_active_data && activity_state == ActiveState)
             Ty = Active{arg.typ}
 
             if B !== nothing
-                push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache)
+                push_box_for_argument!(alloctx, B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache)
             end
 
             push!(activity, Ty)
             push!(actives, op)
         else
 
-            ival = nothing
-            roots_ival = nothing
-            if B !== nothing
-                ival = invert_pointer(gutils, op, B)
-
-                uncache_arg = uncacheable[arg.codegen.i] != 0
-                if roots_op !== nothing
-                    uncache_arg |= uncacheable[arg.codegen.i + 1] != 0
-                end
-                if uncache_arg
-                    # TODO we will are not restoring the bits_ref data of the
-                    # shadow value (though now we are at least doing so properly for primal)
-                    # x/ref https://github.com/EnzymeAD/Enzyme.jl/issues/2304
-                end
-
-                if reverse
-                    ival = lookup_value(gutils, ival, B)
-                end
-                if roots_op !== nothing
-                    roots_ival = invert_pointer(gutils, roots_op, B)
-                    if reverse
-                        roots_ival = lookup_value(gutils, roots_ival, B)
-                    end
-                end
-            end
-
-
             shadowty = arg.typ
             mixed = false
             if width == 1
-                if activity_state == MixedState
+                if any_active_data && activity_state == MixedState
                     # TODO mixedupnoneed
                     shadowty = Base.RefValue{shadowty}
                     Ty = MixedDuplicated{arg.typ}
@@ -594,7 +684,7 @@ function enzyme_custom_setup_args(
                     end
                 end
             else
-                if activity_state == MixedState
+                if any_active_data && activity_state == MixedState
                     # TODO batchmixedupnoneed
                     shadowty = Base.RefValue{shadowty}
                     Ty = BatchMixedDuplicated{arg.typ,Int(width)}
@@ -618,16 +708,76 @@ function enzyme_custom_setup_args(
             if mixed
                 @assert arg.cc == GPUCompiler.BITS_REF
             end
+            
+            ival = nothing
+            roots_ival = nothing
+            if B !== nothing
+                ival = if is_constant_value(gutils, op)
+                    @assert orig_activep != activep
+                    @assert orig_activep == API.DFT_CONSTANT
+                    if val == nothing
+                        ld = load!(B, iarty, ogval, "rules_ival_load")
+                        metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+			if roots_op !== nothing
+                            ld = nullify_rooted_values!(B, ld)
+                        end
+                        ld
+                    else
+                        val
+                    end
+                else
+                    invert_pointer(gutils, op, B)
+                end
+                @assert ival !== nothing
+
+                uncache_arg = uncacheable[arg.codegen.i] != 0
+                if roots_op !== nothing
+                    uncache_arg |= uncacheable[arg.codegen.i + 1] != 0
+                end
+                if uncache_arg
+                    # TODO we will are not restoring the bits_ref data of the
+                    # shadow value (though now we are at least doing so properly for primal)
+                    # x/ref https://github.com/EnzymeAD/Enzyme.jl/issues/2304
+                end
+
+                if reverse && !is_constant_value(gutils, op)
+                    ival = lookup_value(gutils, ival, B)
+                end
+                if roots_op !== nothing
+                    roots_ival = if is_constant_value(gutils, roots_op)
+                        if width == 1
+                            roots_val
+                        else
+                            b_ival = UndefValue(LLVM.ArrayType(value_type(roots_val), Int(width)))
+                            for idx in 1:width
+                                b_ival = insert_value!(B, b_ival, roots_val, idx - 1)
+                            end
+                            b_ival
+                        end
+                    else
+                        roots_ival0 = invert_pointer(gutils, roots_op, B)
+                        if reverse
+                            roots_ival0 = lookup_value(gutils, roots_ival0, B)
+                        end
+                        roots_ival0
+                    end
+                end
+                @assert ival !== nothing
+            end
 
             if B !== nothing
+                @assert ival !== nothing
 
                 n_shadow_roots = inline_roots_type(Ty)
                 n_primal_roots = inline_roots_type(arg.typ)
+                if n_primal_roots != 0
+                    @assert arg.cc != GPUCompiler.BITS_VALUE "Unimplemented: byval arguments with rooting on the type (but not call) not yet supported"
+                end
 
                 sroots_ty = nothing
                 shadow_roots = if n_shadow_roots != 0
                     sroots_ty = convert(LLVMType, AnyArray(n_shadow_roots))
-                    alloca!(B, sroots_ty)
+                    create_rooted_array(alloctx, n_shadow_roots, "roots.arg.$Ty")
                 end
 
 
@@ -635,20 +785,76 @@ function enzyme_custom_setup_args(
                 T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
                 if arg.cc == GPUCompiler.BITS_REF && !mixed
-
                     @assert n_shadow_roots == (width + 1) * n_primal_roots
 
-                    ptr_val = ival
+                    ptr_val = if !is_constant_value(gutils, op)
+                        @assert ival !== nothing
+                         ival
+                    else
+                        if val == nothing
+                            ld = load!(B, iarty, ogval, "rules_bitsref_nonmixed")
+                            metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+			    if roots_op !== nothing
+                                ld = nullify_rooted_values!(B, ld)
+                            end
+                            ld
+                        else
+                            val
+                        end
+                    end
+                    @assert ptr_val !== nothing
                     ival = UndefValue(siarty)
+                    @assert ival !== nothing
 
                     for idx = 1:width
-                        ev =
-                            (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
-                        ld = load!(B, iarty, ev)
-                        ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
-
                         local_shadow_root = if roots_ival !== nothing
                             (width == 1) ? roots_ival : extract_value!(B, roots_ival, idx - 1)
+                        end
+
+                        if !is_constant_value(gutils, op)
+                            ev =
+                                (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
+                            
+                            ld = if uncache_arg
+                                if !reverse
+                                    ld0 = load!(B, iarty, ev, "rules_shadow_load")
+                                    metadata(ld0)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                                    if roots_op != nothing
+                                        if uncacheable[arg.codegen.i + 1] != 0
+                                            ld0 = recombine_value!(B, ld0, local_shadow_root)
+                                        else
+                                            ld0 = nullify_rooted_values!(B, ld0)
+                                        end
+                                    end
+                                    push!(byval_tapes, ld0)
+                                    ld0
+                                else
+                                    @assert tape isa LLVM.Value
+                                    ld0 = extract_value!(B, tape, length(byval_tapes), "shadow_roots_op_extract_v1_")
+                                    @assert value_type(ld0) == iarty
+                                    push!(byval_tapes, ld0)
+                                    ld0
+                                end
+                            else
+                                ld0 = load!(B, iarty, ev, "rules_shadow_load")
+                                metadata(ld0)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                                # As above, the shadow by-ref memory has no valid
+                                # inline-rooted pointer fields.
+                                if roots_op != nothing
+                                    if uncacheable[arg.codegen.i + 1] != 0
+                                        ld0 = recombine_value!(B, ld0, local_shadow_root)
+                                    else
+                                        ld0 = nullify_rooted_values!(B, ld0)
+                                    end
+                                end
+                                ld0
+                            end
+
+                            ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
+                            @assert ival !== nothing
+                        else
+                            ival = (width == 1) ? ptr_val : insert_value!(B, ival, ptr_val, idx - 1)
+                            @assert ival !== nothing
                         end
 
                         if shadow_roots !== nothing
@@ -672,15 +878,30 @@ function enzyme_custom_setup_args(
                                         LLVM.ConstantInt(LLVM.IntType(64), 0),
                                         LLVM.ConstantInt(LLVM.IntType(32), r - 1),
                                     ]
-                                ))
-                                store!(B, ld, rptr)
+                                ), "rules_shadow_root_load_$(r)_")
+                                stv = store!(B, ld, rptr)
                             end
                         end
 
                     end
+                    @assert ival !== nothing
+                elseif !mixed && is_constant_value(gutils, op)
+                    @assert n_shadow_roots == (width + 1) * n_primal_roots
+
+                    ptr_val = val
+                    ival = UndefValue(siarty)
+
+                    for idx = 1:width
+                        ival = (width == 1) ? ptr_val : insert_value!(B, ptr_val, ld, idx - 1)
+                    end
+                    @assert ival !== nothing
                 end
+                @assert ival !== nothing
+                
 
                 if mixed
+                    @assert !is_constant_value(gutils, op)
+                    @assert arg.cc == GPUCompiler.BITS_REF
                     RefTy = arg.typ
                     if width != 1
                         RefTy = NTuple{Int(width),RefTy}
@@ -698,7 +919,8 @@ function enzyme_custom_setup_args(
                     ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llrty)))
                     for idx = 1:width
                         ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
-                        ld = load!(B, llrty, ev)
+                        ld = load!(B, llrty, ev, "rules_mixed_shadow_load")
+                        metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                         if n_primal_roots > 0
                             sroots = (width == 1) ? roots_ival : extract_value!(B, roots_ival, idx - 1)
                             ld = recombine_value!(B, ld, sroots)
@@ -728,11 +950,19 @@ function enzyme_custom_setup_args(
                     push!(mixeds, (ptr_val, arg.typ, refal))
                 end
 
-                al0, al = push_box_for_argument!(B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache, shadow_roots)
+                @assert ival !== nothing
+                just_primal_rooting = true
+                al = push_box_for_argument!(alloctx, B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache, shadow_roots, just_primal_rooting)
+		    
+		llty_foralloca = if VERSION >= v"1.12" && n_shadow_roots != 0
+	            strip_tracked_pointers(llty)
+		else
+	            llty
+	        end
 
                 iptr = inbounds_gep!(
                     B,
-                    llty,
+                    llty_foralloca,
                     al,
                     [
                         LLVM.ConstantInt(LLVM.IntType(64), 0),
@@ -741,12 +971,6 @@ function enzyme_custom_setup_args(
                 )
 
                 store!(B, ival, iptr)
-
-                if n_shadow_roots == 0 && any_jltypes(llty)
-                    emit_writebarrier!(B, get_julia_inner_types(B, al0, ival))
-                end
-
-
             end
             push!(activity, Ty)
         end
@@ -806,11 +1030,42 @@ function enzyme_custom_setup_ret(
         end
     needsPrimal = needsPrimalP[] != 0
     origNeedsPrimal = needsPrimal
-    _, sret, _ = get_return_info(RealRt)
+    _, sret, returnRoots = get_return_info(RealRt)
+    cv = LLVM.called_operand(orig)
+    swiftself = has_swiftself(cv)
+
+    may_have_active_reg = mode != API.DEM_ForwardMode && !guaranteed_nonactive(RealRt, world)
+
     if sret !== nothing
-        activep = API.EnzymeGradientUtilsGetDiffeType(gutils, operands(orig)[1], false) #=isforeign=#
+        activep = API.EnzymeGradientUtilsGetDiffeType(gutils, operands(orig)[1+swiftself], false) #=isforeign=#
         needsPrimal = activep == API.DFT_DUP_ARG || activep == API.DFT_CONSTANT
         needsShadowP[] = activep == API.DFT_DUP_ARG || activep == API.DFT_DUP_NONEED
+	if returnRoots !== nothing && VERSION >= v"1.12"
+        	roots_activep = API.EnzymeGradientUtilsGetDiffeType(gutils, operands(orig)[2+swiftself], false) #=isforeign=#
+		may_have_active_reg = false
+		if activep == API.DFT_CONSTANT
+		    activep = roots_activep
+        	    needsPrimal |= activep == API.DFT_DUP_ARG || activep == API.DFT_CONSTANT
+		    needsShadowP[] = activep == API.DFT_DUP_ARG || activep == API.DFT_DUP_NONEED
+		end
+            	if roots_activep != activep
+		    if B !== nothing
+		        bt = GPUCompiler.backtrace(orig)
+		        msg_info = """
+Custom rule for method return value of type $(RealRt) has mismatch between returned roots_activep ($roots_activep) and activep ($activep).
+  - Non-rooted types: $(tuple_non_rooted_types(RealRt))
+  - Rooted types: $(tuple_rooted_types(RealRt))
+"""
+		        msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
+		        emit_error(B, orig, (msg2, mi, world), CallingConventionMismatchError{Cstring})
+		        return false
+		    else
+			throw("Returned roots_activep ($roots_activep) != activep ($activep) arg.typ=$(RealRt) equivalent_rooted_type=$(equivalent_rooted_type(RealRt)) non_rooted_types=$(non_rooted_types(RealRt))")
+		    end
+		end
+		roots_needsPrimal = roots_activep == API.DFT_DUP_ARG || roots_activep == API.DFT_CONSTANT
+		roots_needsShadowP = roots_activep == API.DFT_DUP_ARG || roots_activep == API.DFT_DUP_NONEED
+	end
     end
 
     if !needsPrimal && activep == API.DFT_DUP_ARG
@@ -820,10 +1075,7 @@ function enzyme_custom_setup_ret(
     if activep == API.DFT_CONSTANT
         RT = Const{RealRt}
 
-    elseif activep == API.DFT_OUT_DIFF || (
-        mode != API.DEM_ForwardMode &&
-        !guaranteed_nonactive(RealRt, world)
-    )
+    elseif activep == API.DFT_OUT_DIFF || may_have_active_reg
         if active_reg(RealRt, world) == MixedState && B !== nothing        
             bt = GPUCompiler.backtrace(orig)
             msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))            
@@ -898,17 +1150,28 @@ end
     width = get_width(gutils)
 
 
-    llvmf = nested_codegen!(mode, mod, fmi, world)
+    enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
+    llvmf = nested_codegen!(enzyme_ctx, mode, mod, fmi, world, true)
 
-    push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
+    orig_swiftself = has_swiftself(LLVM.called_operand(orig))
 
     swiftself = has_swiftself(llvmf)
     if swiftself
         pushfirst!(reinsert_gcmarker!(fn, B))
     end
-    _, sret, returnRoots = get_return_info(enzyme_custom_extract_mi(llvmf)[2])
+    _, sret, returnRoots0 = get_return_info(enzyme_custom_extract_mi(llvmf)[2])
+    returnRoots = returnRoots0
     if sret !== nothing
-        sret = alloca!(alloctx, convert(LLVMType, eltype(sret)))
+	sret_lty = convert(LLVMType, eltype(sret))
+	esret = eltype(sret)
+
+    	sret_lty_foralloca = if VERSION >= v"1.12" && returnRoots !== nothing
+	       strip_tracked_pointers(sret_lty)
+	    else
+	       sret_lty
+	    end
+        sret = alloca!(alloctx, sret_lty_foralloca)
+    	metadata(sret)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(esret))))])
         pushfirst!(args, sret)
         if returnRoots !== nothing
             returnRoots = alloca!(alloctx, convert(LLVMType, eltype(returnRoots)))
@@ -923,8 +1186,8 @@ end
     if length(args) != length(parameters(llvmf))
         bt = GPUCompiler.backtrace(orig)
         msg2 = sprint() do io
-            if startswith(LLVM.name(llvmf), "japi3") || startswith(LLVM.name(llvmf), "japi1")
-                Base.println(io, "Function uses the japi convention, which is not supported yet: ", LLVM.name(llvmf))
+            if startswith(LLVM.name(llvmf), "japi3") || startswith(LLVM.name(llvmf), "japi1") || startswith(LLVM.name(llvmf), "jlcapi")
+                Base.println(io, "Function uses the japi/jlcapi convention, which is not supported yet: ", LLVM.name(llvmf))
             else
                 Base.println(io, "args = ", args)
                 Base.println(io, "llvmf = ", string(llvmf))
@@ -948,8 +1211,6 @@ end
         end
         # Fix calling convention within julia that Tuple{Float,Float} ->[2 x float] rather than {float, float}
         args[i] = calling_conv_fixup(B, args[i], party)
-        # GPUCompiler.@safe_error "Calling convention mismatch", party, args[i], i, llvmf, fn, args, sret, returnRoots
-        return false
     end
 
     res = LLVM.call!(B, LLVM.function_type(llvmf), llvmf, args)
@@ -969,8 +1230,16 @@ end
         else
             attr = EnumAttribute("sret")
         end
-        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1), attr)
-        res = load!(B, sty, sret)
+        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1 + swiftself), attr)
+	if returnRoots !== nothing
+	    LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(2 + swiftself), StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1]))))
+	end
+
+	if returnRoots !== nothing && VERSION >= v"1.12"
+	   res = recombine_value_ptr!(B, sty, sret, returnRoots)
+	else
+	   res = load!(B, sty, sret, "rules_sret_load_to_res")
+	end
     end
     if swiftself
         attr = EnumAttribute("swiftself")
@@ -1000,9 +1269,19 @@ end
     if RT <: Const
         if needsPrimal
             @assert RealRt == fwd_RT
-            if get_return_info(RealRt)[2] !== nothing
-                val = new_from_original(gutils, operands(orig)[1])
-                store!(B, res, val)
+	    _, prim_sret, prim_roots = get_return_info(RealRt)
+            if prim_sret !== nothing
+                val = new_from_original(gutils, operands(orig)[1+orig_swiftself])
+		
+		if prim_roots !== nothing && VERSION >= v"1.12"
+                    extract_nonjlvalues_into!(B, value_type(res), val, res)
+
+                    rval = new_from_original(gutils, operands(orig)[2+orig_swiftself])
+
+		    extract_roots_from_value!(B, res, rval)
+		else
+                    store!(B, res, val)
+		end
             else
                 normalV = res.ref
             end
@@ -1016,12 +1295,39 @@ end
                 ST = NTuple{Int(width),ST}
             end
             @assert ST == fwd_RT
-            if get_return_info(RealRt)[2] !== nothing
-                dval_ptr = invert_pointer(gutils, operands(orig)[1], B)
-                for idx = 1:width
+	    _, prim_sret, prim_roots = get_return_info(RealRt)
+            if prim_sret !== nothing
+	        dval_ptr = if !is_constant_value(gutils, operands(orig)[1+orig_swiftself])
+		    @assert prim_roots !== nothing && VERSION >= v"1.12"
+		    @assert !is_constant_value(gutils, operands(orig)[2+orig_swiftself])
+		    nothing
+		else
+		    invert_pointer(gutils, operands(orig)[1+orig_swiftself], B)
+		end
+                dval = extract_value!(B, res, 1)
+		
+		droots = if prim_roots !== nothing && VERSION >= v"1.12"
+		    @assert !is_constant_value(gutils, operands(orig)[2+orig_swiftself])
+		    invert_pointer(gutils, operands(orig)[2], B)
+	        end
+                
+		for idx = 1:width
                     ev = (width == 1) ? dval : extract_value!(B, dval, idx - 1)
-                    pev = (width == 1) ? dval_ptr : extract_value!(B, dval_ptr, idx - 1)
-                    store!(B, res, pev)
+			
+		    if prim_roots !== nothing && VERSION >= v"1.12"
+                    	if !is_constant_value(gutils, operands(orig)[1+orig_swiftself])
+			   pev = (width == 1) ? dval_ptr : extract_value!(B, dval_ptr, idx - 1)
+		           extract_nonjlvalues_into!(B, value_type(ev), pev, ev)
+			end
+
+		        rval = (width == 1) ? droots : extract_value!(B, droots, idx - 1)
+
+		        extract_roots_from_value!(B, ev, rval)
+		    else
+			@assert dval_ptr !== nothing
+                        pev = (width == 1) ? dval_ptr : extract_value!(B, dval_ptr, idx - 1)
+                        store!(B, ev, pev)
+		    end
                 end
             else
                 shadowV = res.ref
@@ -1033,16 +1339,52 @@ end
                 BatchDuplicated{RealRt,Int(width)}
             end
             @assert ST == fwd_RT
-            if get_return_info(RealRt)[2] !== nothing
-                val = new_from_original(gutils, operands(orig)[1])
-                store!(B, extract_value!(B, res, 0), val)
+	    
+	    _, prim_sret, prim_roots = get_return_info(RealRt)
+            if prim_sret !== nothing
+                val = new_from_original(gutils, operands(orig)[1+orig_swiftself])
+                
+		res0 = extract_value!(B, res, 0)
+		if prim_roots !== nothing && VERSION >= v"1.12"
+                    extract_nonjlvalues_into!(B, value_type(res0), val, res0)
 
-                dval_ptr = invert_pointer(gutils, operands(orig)[1], B)
+                    rval = new_from_original(gutils, operands(orig)[2+orig_swiftself])
+
+		    extract_roots_from_value!(B, res0, rval)
+		else
+                    store!(B, res0, val)
+		end
+
+	        dval_ptr = if is_constant_value(gutils, operands(orig)[1+orig_swiftself])
+		    @assert prim_roots !== nothing && VERSION >= v"1.12"
+		    @assert !is_constant_value(gutils, operands(orig)[2+orig_swiftself])
+		    nothing
+		else
+		    invert_pointer(gutils, operands(orig)[1+orig_swiftself], B)
+		end
                 dval = extract_value!(B, res, 1)
-                for idx = 1:width
+		
+		droots = if prim_roots !== nothing && VERSION >= v"1.12"
+		    @assert !is_constant_value(gutils, operands(orig)[2+orig_swiftself])
+		    invert_pointer(gutils, operands(orig)[2+orig_swiftself], B)
+	        end
+                
+		for idx = 1:width
                     ev = (width == 1) ? dval : extract_value!(B, dval, idx - 1)
-                    pev = (width == 1) ? dval_ptr : extract_value!(B, dval_ptr, idx - 1)
-                    store!(B, ev, pev)
+		    if prim_roots !== nothing && VERSION >= v"1.12"
+		        if !is_constant_value(gutils, operands(orig)[1+orig_swiftself])
+			    pev = (width == 1) ? dval_ptr : extract_value!(B, dval_ptr, idx - 1)
+			    extract_nonjlvalues_into!(B, value_type(ev), pev, ev)
+			end
+
+		        rval = (width == 1) ? droots : extract_value!(B, droots, idx - 1)
+
+		        extract_roots_from_value!(B, ev, rval)
+		    else
+			@assert dval_ptr !== nothing
+                    	pev = (width == 1) ? dval_ptr : extract_value!(B, dval_ptr, idx - 1)
+                        store!(B, ev, pev)
+		    end
                 end
             else
                 normalV = extract_value!(B, res, 0).ref
@@ -1266,6 +1608,65 @@ end
     return true
 end
 
+function sret_union_tape_type(@nospecialize(aug_RT))
+    InnerTypes = Type[]
+    for_each_uniontype_small(aug_RT) do T
+        TapeT = EnzymeRules.tape_type(T)
+        push!(InnerTypes, TapeT)
+    end
+    return Union{InnerTypes...}
+end
+
+function nthfield_if_byref!(B, isboxed, sret_union_type, res) 
+    mod = LLVM.parent(LLVM.parent(position(B)))
+    
+    # Types
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_int8 = LLVM.Int8Type()
+    T_int1 = LLVM.Int1Type()
+    T_res = LLVM.StructType([T_prjlvalue, T_int8])
+    
+    # Function name
+    func_name = "enzyme.nthfield_if_byref"
+    
+    # Get or create declaration
+    fty = LLVM.FunctionType(T_prjlvalue, [T_int1, T_prjlvalue, T_res])
+    func, _ = get_function!(mod, func_name, fty)
+    
+    if isempty(blocks(func))
+        linkage!(func, LLVM.API.LLVMInternalLinkage)
+        
+        # Build body
+        B2 = LLVM.IRBuilder()
+        entry = BasicBlock(func, "entry")
+        then = BasicBlock(func, "then")
+        merge = BasicBlock(func, "merge")
+        
+        position!(B2, entry)
+        
+        # Extract arguments
+        isboxed2 = parameters(func)[1]
+        sret_union_type2 = parameters(func)[2]
+        res2 = parameters(func)[3]
+        
+        br!(B2, isboxed2, then, merge)
+        
+        position!(B2, then)
+        obj = extract_value!(B2, res2, 0)
+        boxed_tape = emit_nthfield!(B2, obj, LLVM.ConstantInt(LLVM.IntType(8*sizeof(Int)), 2))
+        br!(B2, merge)
+        
+        position!(B2, merge)
+        ret = phi!(B2, T_prjlvalue)
+        append!(LLVM.incoming(ret), [(sret_union_type2, entry), (boxed_tape, then)])
+        
+        ret!(B2, ret)
+    end
+    
+    return call!(B, fty, func, [isboxed, sret_union_type, res])
+end
+
 function enzyme_custom_common_rev(
     forward::Bool,
     B::LLVM.IRBuilder,
@@ -1357,6 +1758,11 @@ function enzyme_custom_common_rev(
        !(aug_RT isa Union) &&
        !(aug_RT === Union{})
         TapeT = EnzymeRules.tape_type(aug_RT)
+    elseif (
+           aug_RT <: EnzymeRules.AugmentedReturn ||
+           aug_RT <: EnzymeRules.AugmentedReturnFlexShadow
+       ) && is_sret_union(aug_RT)
+        TapeT = sret_union_tape_type(aug_RT)
     elseif (aug_RT isa UnionAll) &&
            (aug_RT <: EnzymeRules.AugmentedReturn) && hasfield(typeof(aug_RT.body), :name) &&
            aug_RT.body.name == EnzymeCore.EnzymeRules.AugmentedReturn.body.body.body.name
@@ -1386,7 +1792,8 @@ function enzyme_custom_common_rev(
     final_mi = nothing
 
     if forward
-        llvmf = nested_codegen!(mode, mod, ami, world)
+        enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
+        llvmf = nested_codegen!(enzyme_ctx, mode, mod, ami, world, true)
         @assert llvmf !== nothing
         rev_RT = nothing
         final_mi = ami
@@ -1429,11 +1836,10 @@ function enzyme_custom_common_rev(
         
         rmi = rmi::Core.MethodInstance
         rev_RT = rev_RT::Type
-        llvmf = nested_codegen!(mode, mod, rmi, world)
+        enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
+        llvmf = nested_codegen!(enzyme_ctx, mode, mod, rmi, world, true)
         final_mi = rmi
     end
-
-    push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
 
     needsTape = !isghostty(TapeT) && !Core.Compiler.isconstType(TapeT)
 
@@ -1461,7 +1867,12 @@ function enzyme_custom_common_rev(
             tapeV = tapeV.ref
         end
     elseif tape isa LLVM.Value && length(byval_tapes) != 0
-        tape = extract_value!(B, tape, length(byval_tapes))
+        if needsTape
+            @assert length(LLVM.elements(value_type(tape))) ==  length(byval_tapes) + 1
+            tape = extract_value!(B, tape, length(byval_tapes))
+        else
+            tape = nothing
+        end
     end
 
     # if !forward
@@ -1477,17 +1888,17 @@ function enzyme_custom_common_rev(
     #     llvmf = nested_codegen!(mode, mod, rev_func, Tuple{argTys...}, world)
     # end
 
+    orig_swiftself = has_swiftself(LLVM.called_operand(orig))
     swiftself = has_swiftself(llvmf)
 
     miRT = enzyme_custom_extract_mi(llvmf)[2]
-    _, sret, returnRoots = get_return_info(miRT)
+    _, sret, returnRoots0 = get_return_info(miRT)
+    returnRoots = returnRoots0
     sret_union = is_sret_union(miRT)
 
     if sret_union
-        bt = GPUCompiler.backtrace(orig)
-        msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
-        emit_error(B, orig, (msg2, final_mi, world), UnionSretReturnException{miRT})
-        return tapeV
+        @assert sret !== nothing
+        @assert returnRoots === nothing
     end
 
     if !forward
@@ -1565,9 +1976,8 @@ function enzyme_custom_common_rev(
 
                 tape_roots = inline_roots_type(TapeT)
                 if tape_roots != 0
-                    roots_ty = convert(LLVMType, AnyArray(tape_roots))
-                    tape_al = alloca!(B, roots_ty)
-                    extract_roots_from_value!(B, tape, ral)
+                    tape_al = create_rooted_array(alloctx, tape_roots)
+                    extract_roots_from_value!(B, tape, tape_al)
                 end
 
                 al0 = al = emit_allocobj!(B, TapeT, "tape.$TapeT")
@@ -1591,30 +2001,50 @@ function enzyme_custom_common_rev(
             end
 
             llty = convert(LLVMType, nRT)
+            
+	    active_roots = inline_roots_type(RT)
+
+	    ral = nothing
 
             if API.EnzymeGradientUtilsGetDiffeType(gutils, orig, false) == API.DFT_OUT_DIFF #=isforeign=#
+		@assert active_roots == 0
                 val = LLVM.Value(API.EnzymeGradientUtilsDiffe(gutils, orig, B))
                 API.EnzymeGradientUtilsSetDiffe(gutils, orig, LLVM.null(value_type(val)), B)
             else
                 llety = convert(LLVMType, eltype(RT); allow_boxed = true)
-                ptr_val = invert_pointer(gutils, operands(orig)[1+!isghostty(funcTy)], B)
+        	if active_roots != 0
+		   msg2 = "Unimplemented in 1.12 (use 1.10 or 1.11): Active Return with rooted types, RT=$RT"
+		   emit_error(B, orig, (msg2, final_mi, world), CallingConventionMismatchError{Cstring})
+		   return tapeV
+		end
+		@assert !is_constant_value(gutils,  operands(orig)[1+!isghostty(funcTy)+orig_swiftself]) "Handle constant RT, but active roots"
+		ptr_val = invert_pointer(gutils, operands(orig)[1+!isghostty(funcTy)+orig_swiftself], B)
+           
+		if active_roots != 0
+		    ptr_val = nullify_rooted_values!(ptr_val, B) # TODO this should be fwdB
+		    @assert !is_constant_value(gutils,  operands(orig)[1+!isghostty(funcTy)+orig_swiftself+1])
+		    roots_ty = convert(LLVMType, AnyArray(width * active_roots))
+		    ral = create_rooted_array(alloctx, width * active_roots)
+		    rptr_val = invert_pointer(gutils, operands(orig)[1+!isghostty(funcTy)+orig_swiftself+1], B)
+                    rptr_val = lookup_value(gutils, rptr_val, B)
+		    # TODO actually cache the roots in the forward for use in the reverse here
+                    for idx = 1:width
+                       ev = (width == 1) ? rptr_val : extract_value!(B, rptr_val, idx - 1)
+		       ld = load!(B, roots_ty, ev, "rules_active_roots_nonzero")
+		       pv = gep!(B, T_prjlvalue, ral, [LLVM.ConstantInt(Int32((idx-1)*active_roots))]) 
+		       store!(B, ld, pv)
+		    end
+		end
+
+		shadow_type = LLVM.LLVMType(API.EnzymeGetShadowType(width, llety))
                 ptr_val = lookup_value(gutils, ptr_val, B)
-                val = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llety)))
+                val = UndefValue(shadow_type)
                 for idx = 1:width
                     ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
-                    ld = load!(B, llety, ev)
-                    store!(B, LLVM.null(llety), ev)
+                    ld = load!(B, llety, ev, "rules_shadow_ex_$(idx)_")
+		    extract_nonjlvalues_into!(B, llety, ev, LLVM.null(llety))
                     val = (width == 1) ? ld : insert_value!(B, val, ld, idx - 1)
                 end
-            end
-
-            active_roots = inline_roots_type(RT)
-
-            ral = if active_roots != 0
-                roots_ty = convert(LLVMType, AnyArray(active_roots))
-                ral = alloca!(B, roots_ty)
-                extract_roots_from_value!(B, val, ral)
-                ral
             end
 
             al0 = al = emit_allocobj!(B, nRT, "activeRT.$RT")
@@ -1676,7 +2106,19 @@ function enzyme_custom_common_rev(
     end
 
     if sret !== nothing
-        sret = alloca!(alloctx, convert(LLVMType, eltype(sret)))
+    	sret_lty, esret = if sret_union
+            LLVM.ArrayType(LLVM.Int8Type(), union_alloca_type(miRT)), miRT
+        else
+            convert(LLVMType, eltype(sret)), eltype(sret)
+        end
+
+        sret_lty_foralloca = if VERSION >= v"1.12" && returnRoots !== nothing
+            strip_tracked_pointers(sret_lty)
+        else
+            sret_lty
+        end
+        sret = alloca!(alloctx, sret_lty_foralloca)
+	metadata(sret)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(esret))))])
         pushfirst!(args, sret)
         if returnRoots !== nothing
             returnRoots = alloca!(alloctx, convert(LLVMType, eltype(returnRoots)))
@@ -1691,8 +2133,8 @@ function enzyme_custom_common_rev(
     if length(args) != length(parameters(llvmf))
         bt = GPUCompiler.backtrace(orig)
         msg2 = sprint() do io
-            if startswith(LLVM.name(llvmf), "japi3") || startswith(LLVM.name(llvmf), "japi1")
-                Base.println(io, "Function uses the japi convention, which is not supported yet: ", LLVM.name(llvmf))
+            if startswith(LLVM.name(llvmf), "japi3") || startswith(LLVM.name(llvmf), "japi1") || startswith(LLVM.name(llvmf), "jlcapi")
+                Base.println(io, "Function uses the japi/jlcapi convention, which is not supported yet: ", LLVM.name(llvmf))
             else
                 Base.println(io, "args = ", args)
                 Base.println(io, "llvmf = ", string(llvmf))
@@ -1759,7 +2201,9 @@ function enzyme_custom_common_rev(
     res = LLVM.call!(B, LLVM.function_type(llvmf), llvmf, args)
     ncall = res
     debug_from_orig!(gutils, res, orig)
+
     callconv!(res, callconv(llvmf))
+
 
     hasNoRet = has_fn_attr(llvmf, EnumAttribute("noreturn"))
 
@@ -1767,7 +2211,81 @@ function enzyme_custom_common_rev(
         return tapeV
     end
 
-    if sret !== nothing
+    sret_union_tape = nothing
+    
+    if sret_union && forward
+
+        ShadT = RealRt
+        if width != 1
+            ShadT = NTuple{Int(width),RealRt}
+        end
+        ST = EnzymeRules.AugmentedReturn{
+            needsPrimal ? RealRt : Nothing,
+            needsShadowJL ? ShadT : Nothing,
+            TapeT,
+        }
+        if ST != EnzymeRules.augmented_rule_return_type(C, RT, TapeT)
+            throw(AssertionError("Unexpected augmented rule return computation\nST = $ST\nER = $(EnzymeRules.augmented_rule_return_type(C, RT, TapeT))\nC = $C\nRT = $RT\nTapeT = $TapeT"))
+        end
+        if !(aug_RT <: EnzymeRules.AugmentedReturnFlexShadow) && !(aug_RT <: EnzymeRules.AugmentedReturn{
+            needsPrimal ? RealRt : Nothing,
+            needsShadowJL ? ShadT : Nothing})
+
+            bt = GPUCompiler.backtrace(orig)
+            msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
+            emit_error(B, orig, (msg2, ami, world), AugmentedRuleReturnError{C, RT, aug_RT})
+            return tapeV
+        end
+
+        if ST != EnzymeRules.augmented_rule_return_type(C, RT, TapeT)
+            throw(AssertionError("Unexpected augmented rule return computation\nST = $ST\nER = $(EnzymeRules.augmented_rule_return_type(C, RT, TapeT))\nC = $C\nRT = $RT\nTapeT = $TapeT"))
+        end
+
+        cur = nothing
+        cur_size = nothing
+        cur_offset = nothing
+
+        counter = 1
+
+        idxv = extract_value!(B, res, 1)
+
+        function inner(@nospecialize(aug_RT::Type))
+            jlrettype = EnzymeRules.tape_type(aug_RT)
+            if cur_size == nothing
+                cur_size = sizeof(jlrettype)
+            elseif cur_size != sizeof(jlrettype)
+                same_size = false
+            end
+
+            if cur === nothing
+                cur = unsafe_to_llvm(B, jlrettype)
+                cur_size = LLVM.ConstantInt(sizeof(jlrettype))
+                cur_offset = LLVM.ConstantInt(fieldoffset(aug_RT, 3))
+            else
+                cmpv = icmp!(B, LLVM.API.LLVMIntEQ, idxv, LLVM.ConstantInt(value_type(idxv), counter))
+                cur = select!(B, cmpv, unsafe_to_llvm(B, jlrettype), cur)
+                cur_size = select!(B, cmpv, LLVM.ConstantInt(sizeof(jlrettype)), cur_size)
+                cur_offset = select!(B, cmpv, LLVM.ConstantInt(fieldoffset(aug_RT, 3)), cur_offset)
+            end
+
+            counter += 1
+            return
+        end
+        for_each_uniontype_small(inner, miRT)
+
+        isboxed = icmp!(B, LLVM.API.LLVMIntEQ, and!(B, idxv, LLVM.ConstantInt(value_type(idxv), 128)), LLVM.ConstantInt(value_type(idxv), 128))
+        cur = select!(B, isboxed, unsafe_to_llvm(B, UInt8), cur)
+        cur_size = select!(B, isboxed, LLVM.ConstantInt(sizeof(UInt8)), cur_size)
+
+        sret_union_tape = emit_allocobj!(B, cur, cur_size, false)
+        T_int8 = LLVM.Int8Type()
+        memcpy!(B, bitcast!(B, sret_union_tape, LLVM.PointerType(T_int8, Tracked)), 0, gep!(B, T_int8, bitcast!(B, sret, LLVM.PointerType(T_int8)), LLVM.Value[cur_offset]), 0, cur_size)
+
+        sret_union_tape = nthfield_if_byref!(B, isboxed, sret_union_tape, res)
+        
+        res = sret
+
+    elseif sret !== nothing
         sty = sret_ty(llvmf, 1+swiftself)
         if LLVM.version().major >= 12
             attr = TypeAttribute("sret", sty)
@@ -1779,9 +2297,17 @@ function enzyme_custom_common_rev(
             LLVM.API.LLVMAttributeIndex(1 + swiftself),
             attr,
         )
-        res = load!(B, sty, sret)
-        API.SetMustCache!(res)
+    	if returnRoots !== nothing
+    	    LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(2 + swiftself), StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1]))))
+    	end
+    	if returnRoots !== nothing && VERSION >= v"1.12"
+    	    res = recombine_value_ptr!(B, sty, sret, returnRoots; must_cache=true)
+    	else
+            res = load!(B, sty, sret, "rules_sret_not_nothing")
+            API.SetMustCache!(res)
+    	end
     end
+
     if swiftself
         attr = EnumAttribute("swiftself")
         LLVM.API.LLVMAddCallSiteAttribute(
@@ -1868,7 +2394,7 @@ function enzyme_custom_common_rev(
                 },
             )
             if StructTy != LLVM.VoidType()
-                load!(
+                lresV = load!(
                     B,
                     StructTy,
                     bitcast!(
@@ -1876,7 +2402,10 @@ function enzyme_custom_common_rev(
                         res,
                         LLVM.PointerType(StructTy, addrspace(value_type(res))),
                     ),
+                    "rules_nonvoid_struct"
                 )
+                API.SetMustCache!(lresV)
+                lresV
             else
                 res
             end
@@ -1888,9 +2417,19 @@ function enzyme_custom_common_rev(
         if needsPrimal
             @assert !isghostty(RealRt)
             normalV = extract_value!(B, resV, idx)
-            if get_return_info(RealRt)[2] !== nothing
-                val = new_from_original(gutils, operands(orig)[1])
-                store!(B, normalV, val)
+	        _, prim_sret, prim_roots = get_return_info(RealRt)
+            if prim_sret !== nothing
+                val = new_from_original(gutils, operands(orig)[1+orig_swiftself])
+		
+    		    if prim_roots !== nothing && VERSION >= v"1.12"
+                    extract_nonjlvalues_into!(B, value_type(normalV), val, normalV)
+
+                    rval = new_from_original(gutils, operands(orig)[2+orig_swiftself])
+
+        		    extract_roots_from_value!(B, normalV, rval)
+        		else
+                    store!(B, normalV, val)
+        		end
             else
                 @assert value_type(normalV) == value_type(orig)
                 normalV = normalV.ref
@@ -1901,19 +2440,52 @@ function enzyme_custom_common_rev(
             if needsShadowJL
                 @assert !isghostty(RealRt)
                 shadowV = extract_value!(B, resV, idx)
-                if get_return_info(RealRt)[2] !== nothing
-                    dval = invert_pointer(gutils, operands(orig)[1], B)
+	        _, prim_sret, prim_roots = get_return_info(RealRt)
+                if prim_sret !== nothing
+                    dval = if is_constant_value(gutils, operands(orig)[1+orig_swiftself])
+                        @assert prim_roots !== nothing && VERSION >= v"1.12"
+                        @assert !is_constant_value(gutils, operands(orig)[2+orig_swiftself])
+		    	nothing
+		    else
+			invert_pointer(gutils, operands(orig)[1+orig_swiftself], B)
+		    end
 
-                    for idx = 1:width
+		    droots = if prim_roots !== nothing && VERSION >= v"1.12"
+			@assert !is_constant_value(gutils, operands(orig)[2+orig_swiftself])
+                    	invert_pointer(gutils, operands(orig)[2+orig_swiftself], B)
+		    end
+
+		    for idx = 1:width
                         to_store =
                             (width == 1) ? shadowV : extract_value!(B, shadowV, idx - 1)
 
-                        store_ptr = (width == 1) ? dval : extract_value!(B, dval, idx - 1)
 
-                        store!(B, to_store, store_ptr)
+			if prim_roots !== nothing && VERSION >= v"1.12"
+			    if !is_constant_value(gutils, operands(orig)[1+orig_swiftself])
+			        store_ptr = (width == 1) ? dval : extract_value!(B, dval, idx - 1)
+				extract_nonjlvalues_into!(B, value_type(to_store), store_ptr, to_store)
+			    end
+
+                            rval = (width == 1) ? droots : extract_value!(B, droots, idx - 1)
+
+			    extract_roots_from_value!(B, to_store, rval)
+			else
+			    @assert dval !== nothing
+                            store_ptr = (width == 1) ? dval : extract_value!(B, dval, idx - 1)
+                            store!(B, to_store, store_ptr)
+			end
                     end
                     shadowV = C_NULL
                 else
+                    if value_type(shadowV) != shadowType && isabstracttype(RealRt)
+                        @assert value_type(shadowV) == T_prjlvalue
+                        shadowV_agg = UndefValue(shadowType)
+                        for i = 1:width
+                            elem = emit_nthfield!(B, shadowV, Int(i - 1))
+                            shadowV_agg = insert_value!(B, shadowV_agg, elem, Int(i - 1))
+                        end
+                        shadowV = shadowV_agg
+                    end
                     @assert value_type(shadowV) == shadowType
                     shadowV = shadowV.ref
                 end
@@ -1921,7 +2493,10 @@ function enzyme_custom_common_rev(
             end
         end
         if needsTape
-            tapeV0 = if abstract
+
+            tapeV0 = if sret_union
+                sret_union_tape
+            elseif abstract
                 emit_nthfield!(B, res, LLVM.ConstantInt(2))
             else
                 extract_value!(B, res, idx)
@@ -1989,7 +2564,7 @@ function enzyme_custom_common_rev(
             if width != 1
                 RefTy = NTuple{Int(width),RefTy}
             end
-            curs = load!(B, convert(LLVMType, RefTy), refal)
+            curs = load!(B, convert(LLVMType, RefTy), refal, "rules_mixed_prestore")
 
             for idx = 1:width
                 evp = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
@@ -1998,7 +2573,7 @@ function enzyme_custom_common_rev(
             end
         end
     end
-
+            
     if forward
         if shadowR != C_NULL && shadowV != C_NULL
             unsafe_store!(shadowR, shadowV)
@@ -2049,7 +2624,7 @@ end
     end
     non_rooting_use = false
     fop = called_operand(orig)::LLVM.Function
-    for (i, v) in enumerate(operands(orig)[1:end-1])
+    for (i, v) in enumerate(arg_operands_view(orig))
         if v == val
             if true || !has_arg_attr(fop, i, StringAttribute("enzymejl_returnRoots"))
                 non_rooting_use = true

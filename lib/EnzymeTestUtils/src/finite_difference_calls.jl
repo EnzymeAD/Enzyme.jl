@@ -71,7 +71,11 @@ function j′vp(fdm, f_vec, ȳ, x)
         end
     end
   end
-  mat = transpose(reduce(hcat, ẏs))
+  mat = if isempty(ẏs)
+          similar(x, 0, length(ȳ))
+        else
+          transpose(reduce(hcat, ẏs))
+        end
   result = zero(x)
   for i in 1:length(ȳ)
     tp = @inbounds ȳ[i] 

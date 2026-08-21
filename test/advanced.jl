@@ -546,6 +546,16 @@ end
     sqr(x) = x * x
     power(x, n) = x^n
 
+
+    function objective1(x)
+        objvar = power(x, 2)
+        return objvar
+    end
+
+    x0 = 2.1
+    res = Enzyme.jacobian(Forward, Const(Enzyme.gradient), Const(Reverse), Const(objective1), x0)
+    @test res[3][1] ≈ 2.0
+
     function objective(x)
         (x1, x2, x3, x4) = x
         objvar = -4 - -(((((((((((((sqr(x1) + sqr(x2)) + sqr(x3 + x4)) + x3) + sqr(sin(x3))) + sqr(x1) * sqr(x2)) + x4) + sqr(sin(x3))) + sqr(-1 + x4)) + sqr(sqr(x2))) + sqr(sqr(x3) + sqr(x1 + x4))) + sqr(((-4 + sqr(sin(x4))) + sqr(x2) * sqr(x3)) + x1)) + power(sin(x4), 4)))
@@ -740,7 +750,7 @@ end
         @inbounds w[1] * x[1]
     end
 
-    @static if VERSION < v"1.11-"
+    @static if VERSION < v"1.11-" || VERSION >= v"1.12"
         Enzyme.autodiff(Reverse, inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
 
         @test x ≈ [3.0]
@@ -762,7 +772,7 @@ end
         res
     end
 
-    @static if VERSION < v"1.11-"
+    @static if VERSION < v"1.11-" || VERSION >= v"1.12"
         dw = Enzyme.autodiff(Reverse, loss, Active, Active(1.0), Const(x), Const(false))[1]
 
     else
@@ -910,6 +920,21 @@ end
     @test 0.0 ≈ dout[]
     @test 0.0 ≈ dout2[]
 
+    function batch_active_ret(out, arg1, arg2)
+        N_TIME_STEPS = size(out, 1)
+        N_COLUMNS = size(out, 2)
+        for i in 1:N_TIME_STEPS
+            for j in 1:N_COLUMNS
+                prev = i == 1 ? 0.0 : out[i-1, j]
+                out[i, j] = prev * arg1 + arg2
+            end
+        end
+        return sum(view(out, N_TIME_STEPS, :))
+    end
+    out_b = zeros(4, 5)
+    dout_b = (Enzyme.make_zero(out_b), Enzyme.make_zero(out_b))
+    res_b = Enzyme.autodiff(Reverse, batch_active_ret, Active, BatchDuplicated(out_b, dout_b), Active(1.0), Active(2.0))
+    @test res_b == ((nothing, (60.0, 60.0), (20.0, 20.0)),)
 end
 
 function batchgf(out, args)
@@ -1026,7 +1051,8 @@ end
     )
 
     Enzyme.Compiler.runtime_generic_rev(
-        Val{(false, false, false)}, Val(false), Val(false), Val(2), Val((true, true, true)), augres[end],
+        Val{(false, false, false)}, Val(false), Val(false), Val(2), Val((true, true, true)),
+        Val(false), augres[end],
         ==, nothing, nothing,
         :foo, nothing, nothing,
         :bar, nothing, nothing
@@ -1321,11 +1347,16 @@ end
 
     f_union(cond, x) = cond ? x : 0
     g_union(cond, x) = f_union(cond, x) * x
-    if sizeof(Int) == sizeof(Int64)
-        @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, Const(true), Active(1.0))
-    else
-        @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, Const(true), Active(1.0f0))
+
+    # This only works as a test in < 1.12 as we actually optimize away the issue in later LLVM's
+    if VERSION < v"1.12"
+        if sizeof(Int) == sizeof(Int64)
+            @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, Const(true), Active(1.0))
+        else
+            @test_throws Enzyme.Compiler.IllegalTypeAnalysisException autodiff(Reverse, g_union, Active, Const(true), Active(1.0f0))
+        end
     end
+
     # TODO: Add test for NoShadowException
 end
 
@@ -1730,7 +1761,7 @@ mutable struct CuMemoryPool2
     handle::CUmemoryPool2
 end
 
-function ccall_macro_lower(func, rettype, types, args, nreq)
+function ccall_macro_lower(func, rettype, types, args, gcsafe_or_nreq...)
     # instead of re-using ccall or Expr(:foreigncall) to perform argument conversion,
     # we need to do so ourselves in order to insert a jl_gc_safe_enter|leave
     # just around the inner ccall
@@ -1800,4 +1831,71 @@ end
 
 @testset "Unused shadow phi rev" begin
     fwd, rev = Enzyme.autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(cual)}, Duplicated)
+end
+
+@enum MyEnum Default Success
+
+struct Sol
+    u::Vector{Float64}
+    retcode::MyEnum
+end
+
+mutable struct Integ
+    sol::Sol
+end
+
+@noinline function myinit(u0::Vector{Float64})
+    return Integ(Sol(u0, Default))
+end
+
+function g_enum_test(u0)
+    integ = myinit(u0)
+    return integ.sol
+end
+
+@testset "Enum Autodiff" begin
+    forward, reverse = Enzyme.autodiff_thunk(
+        Enzyme.ReverseSplitWithPrimal, Enzyme.Const{typeof(g_enum_test)}, Enzyme.Duplicated,
+        Enzyme.Duplicated{Vector{Float64}})
+
+    u0 = [1.0]
+    du0 = zero(u0)
+    tape, result, shadow_result = forward(Enzyme.Const(g_enum_test), Enzyme.Duplicated(copy(u0), du0))
+    shadow_result.u .= 1.0
+    reverse(Enzyme.Const(g_enum_test), Enzyme.Duplicated(copy(u0), du0), tape)
+    @test du0 == [1.0]
+end
+
+struct ResultOk{A}
+    x::A
+    ok::Bool
+end
+
+@noinline function result_ok_f1(x)
+    return ResultOk(x .* 1.0, true)
+end
+
+@noinline function result_ok_f2(x)
+    return ResultOk(x .* 2.0, true)
+end
+
+@noinline function result_ok_dispatch(x, flag)
+    res = if flag == 1
+        result_ok_f1(x)
+    else
+        result_ok_f2(x)
+    end
+    return res
+end
+
+function result_ok_caller(x, flag)
+    res = result_ok_dispatch(x, flag)
+    return sum(res.x)
+end
+
+@testset "Struct with bool field and dispatch" begin
+    x = [1.0, 2.0]
+    dx = [0.0, 0.0]
+    autodiff(Reverse, result_ok_caller, Duplicated(x, dx), Const(1))
+    @test dx ≈ [1.0, 1.0]
 end

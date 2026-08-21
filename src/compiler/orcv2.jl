@@ -170,7 +170,62 @@ function add_trampoline!(jd, (lljit, lctm, ism), entry, target)
     mu = LLVM.reexports(lctm, ism, jd, [alias])
     LLVM.define(jd, mu)
 
-    LLVM.lookup(lljit, entry)
+    LLVM.lookup(lljit, jd, entry)
+end
+
+function prepare!(mod)
+    # On Windows, LLVM's GlobalOpt demotes internal functions to `private` linkage,
+    # which emits no object symbol. Julia's per-symbol Win64 JIT unwind registrar
+    # (create_PRUNTIME_FUNCTION) then skips those functions, so their frames get no
+    # RUNTIME_FUNCTION and a fault (e.g. a GC safepoint) landing on one defeats
+    # Windows exception dispatch. Promote them back to `internal` here -- the last
+    # step before JIT emission, after all optimization -- so they keep a local
+    # symbol and get registered. See EnzymeAD/Enzyme.jl#3374.
+    if Sys.iswindows()
+        for f in functions(mod)
+            if !LLVM.isdeclaration(f) && LLVM.linkage(f) == LLVM.API.LLVMPrivateLinkage
+                LLVM.linkage!(f, LLVM.API.LLVMInternalLinkage)
+            end
+        end
+    end
+    for f in collect(functions(mod))
+        ptr = fix_ptr_lookup(LLVM.name(f))
+        if ptr === nothing
+            continue
+        end
+        ptr = reinterpret(UInt, ptr)
+        ptr = LLVM.ConstantInt(ptr)
+        ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.function_type(f)))
+        replace_uses!(f, ptr)
+        Compiler.eraseInst(mod, f)
+    end
+    for g in collect(globals(mod))
+        if !startswith(LLVM.name(g), "ejl_inserted\$")
+           continue
+        end
+        _, ogname, load1, initaddr = split(LLVM.name(g), "\$")
+
+        load1 = load1 == "true"
+            initaddr = parse(UInt, initaddr)
+        ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
+        if load1
+           ptr = Base.unsafe_load(ptr, :unordered)
+        end
+                
+        obj = Base.unsafe_pointer_to_objref(ptr)
+	
+        # Let's try a de-bind for 1.10 lux
+        if isa(obj, Core.Binding)
+           ptr = Compiler.unsafe_to_ptr(obj.value)
+        end
+
+        ptr = reinterpret(UInt, ptr)
+        ptr = LLVM.ConstantInt(ptr)
+        ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[])))
+        ptr = LLVM.const_addrspacecast(ptr, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10))
+        replace_uses!(g, ptr)
+        Compiler.eraseInst(mod, g)
+    end
 end
 
 function get_trampoline(job)
@@ -217,6 +272,7 @@ function get_trampoline(job)
                 Compiler.eraseInst(mod, other_func)
             end
 
+	    prepare!(mod)
             tsm = move_to_threadsafe(mod)
 
             il = LLVM.IRCompileLayer(lljit)
@@ -241,17 +297,7 @@ function get_trampoline(job)
 end
 
 function add!(mod)
-    for f in collect(functions(mod))
-        ptr = fix_ptr_lookup(LLVM.name(f))
-        if ptr === nothing
-            continue
-        end
-        ptr = reinterpret(UInt, ptr)
-        ptr = LLVM.ConstantInt(ptr)
-        ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.function_type(f)))
-        replace_uses!(f, ptr)
-        Compiler.eraseInst(mod, f)
-    end
+    prepare!(mod)
     lljit = jit[].jit
     jd = LLVM.JITDylib(lljit)
     tsm = move_to_threadsafe(mod)
@@ -260,7 +306,8 @@ function add!(mod)
 end
 
 function lookup(name)
-    LLVM.lookup(jit[].jit, name)
+    lljit = jit[].jit
+    LLVM.lookup(lljit, JITDylib(lljit), name)
 end
 
 end # module

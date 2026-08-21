@@ -68,6 +68,11 @@ const NoEffects = MemoryEffect(
     (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
     (MRI_NoModRef << getLocationPos(Other)),
 )
+const ReadArgMemWriteInaccessibleEffects = MemoryEffect(
+    (MRI_Ref << getLocationPos(ArgMem)) |
+    (MRI_Mod << getLocationPos(InaccessibleMem)) |
+    (MRI_NoModRef << getLocationPos(Other)),
+)
 
 # Get ModRefInfo for any location.
 function getModRef(effect::MemoryEffect, loc::IRMemLocation)::ModRefInfo
@@ -140,6 +145,15 @@ end
 Base.@assume_effects :removable :foldable :nothrow function is_noreturn(f::LLVM.Function)::Bool
     for attr in collect(function_attributes(f))
         if kind(attr) == kind(EnumAttribute("noreturn"))
+            return true
+        end
+    end
+    return false
+end
+
+Base.@assume_effects :removable :foldable :nothrow function is_nounwind(f::LLVM.Function)::Bool
+    for attr in collect(function_attributes(f))
+        if kind(attr) == kind(EnumAttribute("nounwind"))
             return true
         end
     end
@@ -294,8 +308,8 @@ function get_function!(
     return F, FT
 end
 
-function get_function!(@nospecialize(builderF), mod::LLVM.Module, name::String)
-    get_function!(mod, name, builderF())
+function get_function!(@nospecialize(builderF), mod::LLVM.Module, name::String, attrs::Vector{LLVM.Attribute} = LLVM.Attribute[])
+    get_function!(mod, name, builderF(), attrs)
 end
 
 T_ppjlvalue() = LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[])))
@@ -305,15 +319,16 @@ function declare_pgcstack!(mod::LLVM.Module)
         mod,
         "julia.get_pgcstack",
         LLVM.FunctionType(LLVM.PointerType(T_ppjlvalue())),
+        LLVM.Attribute[StringAttribute("enzyme_inactive"), StringAttribute("enzyme_no_escaping_allocation")]
     )
 end
 
-function emit_pgcstack(B::LLVM.IRBuilder)
+function emit_pgcstack(B::LLVM.IRBuilder, name::String="")
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
     func, fty = declare_pgcstack!(mod)
-    return call!(B, fty, func)
+    return call!(B, fty, func, LLVM.Value[], name)
 end
 
 function get_pgcstack(func::LLVM.Function)
@@ -344,12 +359,22 @@ function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing
         context(LLVM.parent(func))
         B = IRBuilder()
         entry_bb = first(blocks(func))
-        if !isempty(instructions(entry_bb))
-            position!(B, first(instructions(entry_bb)))
+	if PB !== nothing && LLVM.name(Base.position(PB)) == "allocsForInversion"
+	    B = PB
+	elseif !isempty(instructions(entry_bb))
+	    if PB === nothing || Base.position(PB) != entry_bb 
+		    position!(B, first(instructions(entry_bb)))
+	    else
+		    B = PB
+	    end
         else
-            position!(B, entry_bb)
+	    if PB === nothing || Base.position(PB) != entry_bb 
+               position!(B, entry_bb)
+	    else
+	       B = PB
+	    end
         end
-        emit_pgcstack(B)
+        emit_pgcstack(B, "newly_emitted_pgc_stack")
     else
         entry_bb = first(blocks(func))
         fst = first(instructions(entry_bb))
@@ -447,7 +472,6 @@ function unique_gcmarker!(func::LLVM.Function)
     if length(found) > 1
         for i = 2:length(found)
             LLVM.replace_uses!(found[i], found[1])
-            ops = LLVM.collect(operands(found[i]))
             eraseInst(entry_bb, found[i])
         end
     end

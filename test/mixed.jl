@@ -158,3 +158,19 @@ end
    @test rev(Const(literalrt_mixed), Active(3.1), (2.7, shad[][2]), tape)[1][1] ≈ 2 * x * 2.7 + 3 * x * x * 0.2
 end
 
+struct DMixedForTest
+    a::Vector{Float64}
+    b::Float64
+end
+
+function lp_mixed_for_test(d::DMixedForTest, x::AbstractVector{<:Real})
+    return d.a[1] * x[1]
+end
+
+@testset "Mixed activity with Base.Fix1" begin
+    dd = DMixedForTest([1.0], 0.0)
+    f(params) = Base.Fix1(lp_mixed_for_test, dd)(params)
+    res = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), f, [0.5])
+    @test res[1] ≈ [1.0]
+end
+

@@ -24,11 +24,11 @@ jobs:
         runs-on: ubuntu-latest
 
         steps:
-            - uses: actions/checkout@v5
-            - uses: julia-actions/setup-julia@v2
+            - uses: actions/checkout@v7
+            - uses: julia-actions/setup-julia@v3
               with:
                 version: "1.11"
-            - uses: julia-actions/cache@v2
+            - uses: julia-actions/cache@v3
             - name: Extract Package Name from Project.toml
               id: extract-package-name
               run: |
@@ -55,7 +55,7 @@ jobs:
                 mkdir -p plots
                 benchpkgplot ${{ steps.extract-package-name.outputs.package_name }} --rev="${{github.event.repository.default_branch}},${{github.event.pull_request.head.sha}}" --npart=10 --format=png --input-dir=results/ --output-dir=plots/
             - name: Upload plot as artifact
-              uses: actions/upload-artifact@v5
+              uses: actions/upload-artifact@v7
               id: artifact-upload-step
               with:
                 name: plots

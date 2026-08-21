@@ -6,6 +6,10 @@ end
 LLVM.@function_pass "jl-inst-simplify" JLInstSimplifyPass
 LLVM.@module_pass "preserve-nvvm" PreserveNVVMPass
 LLVM.@module_pass "preserve-nvvm-end" PreserveNVVMEndPass
+LLVM.@module_pass "simple-gvn" SimpleGVNPass
+LLVM.@module_pass "enzyme-fixup-julia" FixupJuliaCallingConventionPass
+LLVM.@module_pass "enzyme-fixup-julia-sret" FixupJuliaCallingConventionSRetPass
+LLVM.@module_pass "enzyme-fixup-batched-julia" FixupBatchedJuliaCallingConventionPass
 
 const RunAttributor = Ref(VERSION < v"1.12")
 
@@ -21,14 +25,20 @@ end
 
 EnzymeAttributorPass() = NewPMModulePass("enzyme_attributor", enzyme_attributor_pass!)
 ReinsertGCMarkerPass() = NewPMFunctionPass("reinsert_gcmarker", reinsert_gcmarker_pass!)
+RestoreAllocaType() = NewPMFunctionPass("restore_alloca_type", restore_alloca_type!)
 SafeAtomicToRegularStorePass() = NewPMFunctionPass("safe_atomic_to_regular_store", safe_atomic_to_regular_store!)
 Addr13NoAliasPass() = NewPMModulePass("addr13_noalias", addr13NoAlias)
-RewriteGenericMemoryPass() = NewPMModulePass("rewrite_generic_memory", rewrite_generic_memory!)
+RemoveAlwaysInlineRootsPass() = NewPMModulePass("remove_alwaysinline_roots", remove_alwaysinline_roots!)
 
-function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
+function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti=nothing)
     @dispose pb = NewPMPassBuilder() begin
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, Addr13NoAliasPass())
+        register!(pb, RestoreAllocaType())
+        register!(pb, RemoveAlwaysInlineRootsPass())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
@@ -47,9 +57,11 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 add!(fpm, SROAPass())
                 add!(fpm, MemCpyOptPass())
             end
+            add!(mpm, RemoveAlwaysInlineRootsPass())
             add!(mpm, AlwaysInlinerPass())
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, AllocOptPass())
+                add!(fpm, RestoreAllocaType())
             end
         end
         run!(pb, mod, tm)
@@ -58,6 +70,9 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     # Globalopt is separated as it can delete functions, which invalidates the Julia hardcoded pointers to
     # known functions
     @dispose pb = NewPMPassBuilder() begin
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
@@ -75,15 +90,17 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
 
     function middle_optimize!(second_stage=false)
     @dispose pb = NewPMPassBuilder() begin
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         registerEnzymeAndPassPipeline!(pb)
-        register!(pb, RewriteGenericMemoryPass())
+        register!(pb, RestoreAllocaType())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
             add!(aam, BasicAA())
         end
         add!(pb, NewPMModulePassManager()) do mpm
-            add!(mpm, RewriteGenericMemoryPass())
             add!(mpm, CPUFeaturesPass()) # why is this duplicated?
 
             add!(mpm, NewPMFunctionPassManager()) do fpm
@@ -100,6 +117,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 add!(fpm, ReassociatePass())
                 add!(fpm, EarlyCSEPass())
                 add!(fpm, AllocOptPass())
+                add!(fpm, RestoreAllocaType())
 
                 add!(fpm, NewPMLoopPassManager(use_memory_ssa=true)) do lpm
                     add!(lpm, LoopIdiomRecognizePass())
@@ -116,8 +134,10 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                     add!(lpm, IndVarSimplifyPass())
                     add!(lpm, LoopDeletionPass())
                 end
-                add!(fpm, LoopUnrollPass(opt_level=2)) # what opt level?
+		# todo peeling=false?
+                add!(fpm, LoopUnrollPass(opt_level=2, partial=false)) # what opt level?
                 add!(fpm, AllocOptPass())
+                add!(fpm, RestoreAllocaType())
                 add!(fpm, SROAPass())
                 add!(fpm, GVNPass())
 
@@ -132,6 +152,7 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
                 add!(fpm, JumpThreadingPass())
                 add!(fpm, DSEPass())
                 add!(fpm, AllocOptPass())
+                add!(fpm, RestoreAllocaType())
                 add!(fpm, SimplifyCFGPass())
 
 
@@ -172,6 +193,9 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
     # Globalopt is separated as it can delete functions, which invalidates the Julia hardcoded pointers to
     # known functions
     @dispose pb = NewPMPassBuilder() begin
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
@@ -185,9 +209,9 @@ function optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine)
         end
         run!(pb, mod, tm)
     end
-    
+
     run!(GCInvariantVerifierPass(strong=false), mod)
-    
+
     removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
     
     run!(GCInvariantVerifierPass(strong=false), mod)
@@ -215,7 +239,7 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         add!(fpm, DCEPass())
         add!(fpm, SROAPass())
     end
-
+    add!(mpm, RemoveAlwaysInlineRootsPass())
     add!(mpm, AlwaysInlinerPass())
 
     add!(mpm, NewPMFunctionPassManager()) do fpm
@@ -223,7 +247,8 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         # merging the `alloca` for the unboxed data and the `alloca` created by the `alloc_opt`
         # pass.
 
-        add!(fpm, AllocOptPass())
+        add!(fpm, AllocOptPass())        
+        add!(fpm, RestoreAllocaType())
         # consider AggressiveInstCombinePass at optlevel > 2
 
         add!(fpm, InstCombinePass())
@@ -241,6 +266,7 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         # Load forwarding above can expose allocations that aren't actually used
         # remove those before optimizing loops.
         add!(fpm, AllocOptPass())
+        add!(fpm, RestoreAllocaType())
 
         add!(fpm, NewPMLoopPassManager(use_memory_ssa=true)) do lpm
             add!(lpm, LoopRotatePass())
@@ -262,6 +288,7 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
 
         # Run our own SROA on heap objects before LLVM's
         add!(fpm, AllocOptPass())
+        add!(fpm, RestoreAllocaType())
         # Re-run SROA after loop-unrolling (useful for small loops that operate,
         # over the structure of an aggregate)
         add!(fpm, SROAPass())
@@ -283,7 +310,8 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
 
         # More dead allocation (store) deletion before loop optimization
         # consider removing this:
-        add!(fpm, AllocOptPass())
+        add!(fpm, AllocOptPass())        
+        add!(fpm, RestoreAllocaType())
 
         # see if all of the constant folding has exposed more loops
         # to simplification and deletion
@@ -301,12 +329,29 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
     end
 end
 
+if VERSION < v"1.14.0-DEV.61"
+    import Libdl
+    const RUN_ASAN_PASS = any(contains("libclang_rt.asan"), Libdl.dllist())
+end
+
 function addMachinePasses!(mpm::LLVM.NewPMPassManager)
     add!(mpm, NewPMFunctionPassManager()) do fpm
         if VERSION < v"1.12.0-DEV.1390"
             add!(fpm, CombineMulAddPass())
         end
         add!(fpm, DivRemPairsPass())
+        add!(fpm, AnnotationRemarksPass())
+    end
+    @static if VERSION >= v"1.14.0-DEV.61"
+        if Base.JLOptions().target_sanitize_address != 0
+            add!(mpm, AddressSanitizerPass())
+        end
+    else
+        if RUN_ASAN_PASS
+            add!(mpm, AddressSanitizerPass())
+        end
+    end
+    add!(mpm, NewPMFunctionPassManager()) do fpm
         add!(fpm, DemoteFloat16Pass())
         add!(fpm, GVNPass())              
     end
@@ -328,6 +373,10 @@ function addJuliaLegalizationPasses!(mpm::LLVM.NewPMPassManager, lower_intrinsic
             add!(fpm, LateLowerGCPass())
             if VERSION >= v"1.11.0-DEV.208"
                 add!(fpm, FinalLowerGCPass())
+            end
+            if VERSION >= v"1.13.0-DEV.321"
+                # after LateLowerGCPass so that all IPO is valid
+                add!(fpm, ExpandAtomicModifyPass())
             end
         end
         if VERSION < v"1.11.0-DEV.208"
@@ -362,17 +411,43 @@ end
 const DumpPreCallConv = Ref(false)
 const DumpPostCallConv = Ref(false)
 
-function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool = true)
+function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti=nothing)
     addr13NoAlias(mod)
+
     removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
+
+    memcpy_sret_split!(mod)
+    # if we did the move_sret_tofrom_roots, we will have loaded out of the sret, then stored into the rooted.
+    # we should forward the value we actually stored [fixing the sret to therefore be writeonly and also ensuring
+    # we can find the root store from the jlvaluet]
+    # Instcombine breaks apart struct stores into individual components
+    run!(InstCombinePass(), mod)
+    # GVN actually forwards
+    @dispose pb = NewPMPassBuilder() begin
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
+        registerEnzymeAndPassPipeline!(pb)
+    	add!(pb, SimpleGVNPass())
+        run!(pb, mod, tm)
+    end
+
     if DumpPreCallConv[]
 	    API.EnzymeDumpModuleRef(mod.ref)
     end
-    for f in collect(functions(mod))
-        API.EnzymeFixupJuliaCallingConvention(f)
-    end
-    for f in collect(functions(mod))
-        API.EnzymeFixupBatchedJuliaCallingConvention(f)
+
+    @dispose pb = NewPMPassBuilder() begin
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
+        registerEnzymeAndPassPipeline!(pb)
+        add!(pb, "enzyme-fixup-batched-julia")
+        if VERSION < v"1.12"
+            add!(pb, "enzyme-fixup-julia-sret")
+        else
+            add!(pb, "enzyme-fixup-julia")
+        end
+        run!(pb, mod, tm)
     end
     if DumpPostCallConv[]
 	    API.EnzymeDumpModuleRef(mod.ref)
@@ -400,16 +475,46 @@ function post_optimize!(mod::LLVM.Module, tm::LLVM.TargetMachine, machine::Bool 
             ),
         )
     end
+    return
+end
+
+function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, machine::Bool = true; callconv::Bool = true, tti=nothing)
+    if callconv
+        fixup_callconv!(mod, tm, tti)
+    end
+    
+    for f in functions(mod)
+        if isempty(blocks(f))
+            continue
+        end
+        # Before additional dead arg removal, get rid of the body of functions
+        # that we will retain the original calling convention for.
+        if startswith(LLVM.name(f), "ejlstr\$") || startswith(LLVM.name(f), "ejlptr\$")
+            Base.empty!(f)
+        end
+        
+        if has_fn_attr(f, StringAttribute("enzyme_preserve_primal"))
+            delete!(LLVM.function_attributes(f), StringAttribute("enzyme_preserve_primal"))
+        end
+    end
+
+    removeDeadArgs!(mod, tm, #=post_gc_fixup=#true)
+
     @dispose pb = NewPMPassBuilder() begin
+        if tti !== nothing
+            LLVM.target_transform_info!(pb, tti)
+        end
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, ReinsertGCMarkerPass())
         register!(pb, SafeAtomicToRegularStorePass())
+        register!(pb, RestoreAllocaType())
+        register!(pb, RemoveAlwaysInlineRootsPass())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
             add!(aam, BasicAA())
         end
-        add!(pb, NewPMModulePassManager()) do mpm
+        add!(pb, NewPMModulePassManager()) do mpm		
             addOptimizationPasses!(mpm)
             if machine
                 # TODO enable validate_return_roots

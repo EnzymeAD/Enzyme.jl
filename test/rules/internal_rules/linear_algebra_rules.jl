@@ -578,3 +578,29 @@ end
         end
     end
 end
+
+@testset "(matrix) det/logdet" begin
+    @testset "forward" begin
+        @testset for RT in (Const,DuplicatedNoNeed,Duplicated,),
+                     Tx in (Const,Duplicated,)
+            xr = [4.0 3.0; 2.0 1.0]
+            test_forward(LinearAlgebra.det, RT, (xr, Tx))
+
+            xc = ComplexF64[4.0+0.0im 3.0; 2.0-0.0im 1.0]
+            test_forward(LinearAlgebra.det, RT, (xc, Tx))
+            xc = ComplexF64[4.0+0.0im 0.0; 0.0-0.0im 1.0]
+            test_forward(LinearAlgebra.logdet, RT, (xc, Tx))
+        end
+    end
+    @testset "reverse" begin
+        @testset for RT in (Const, Active,), Tx in (Const, Duplicated,)
+            x = [4.0 3.0; 2.0 1.0]
+            test_reverse(LinearAlgebra.det, RT, (x, Tx))
+
+            x = ComplexF64[4.0+0.0im 3.0; 2.0-0.0im 1.0]
+            test_reverse(LinearAlgebra.det, RT, (x, Tx))
+            x = [4.0 0.0; 0.0 1.0]
+            test_reverse(LinearAlgebra.logdet, RT, (x, Tx))
+        end
+    end
+end

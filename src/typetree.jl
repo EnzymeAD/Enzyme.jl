@@ -65,6 +65,9 @@ end
 @inline function typetree_primitive(::Type{T}) where {T<:Integer}
     return API.DT_Integer
 end
+@inline function typetree_primitive(::Type{T}) where {T<:Enum}
+    return API.DT_Integer
+end
 @inline function typetree_primitive(::Type{Char})
     return API.DT_Integer
 end
@@ -77,6 +80,11 @@ end
 @inline function typetree_primitive(::Type{Float64})
     return API.DT_Double
 end
+@static if VERSION >= v"1.11-"
+    @inline function typetree_primitive(::Type{Core.BFloat16})
+        return API.DT_BFloat16
+    end
+end
 
 
 @static if VERSION >= v"1.11-"
@@ -88,7 +96,7 @@ end
 const TypeTreeEmptyPointers = (BigFloat, Any, Symbol, Union{})
 
 function get_offsets(@nospecialize(T::Type))
-    for sT in (Integer, TypeTreePrimitives...)
+    for sT in (Integer, Enum, TypeTreePrimitives...)
         if T <: sT
             return ((typetree_primitive(T), 0),)
         end
@@ -221,6 +229,9 @@ end
 function typetree_inner(::Type{<:Integer}, ctx, dl, seen::TypeTreeTable)
     return TypeTree(API.DT_Integer, -1, ctx)
 end
+function typetree_inner(::Type{<:Enum}, ctx, dl, seen::TypeTreeTable)
+    return TypeTree(API.DT_Integer, -1, ctx)
+end
 for sT in TypeTreePrimitives
     @eval function typetree_inner(::Type{$sT}, ctx, dl, seen::TypeTreeTable)
         return TypeTree($(typetree_primitive(sT)), -1, ctx)
@@ -291,11 +302,18 @@ else
         seen::TypeTreeTable,
     ) where {kind,T}
         tt = copy(typetree(Ptr{T}, ctx, dl, seen))
-        shift!(tt, dl, 0, sizeof(Int), sizeof(Csize_t))
 
+        if !allocatedinline(T)
+            st0 = TypeTree(API.DT_Pointer, -1, ctx)
+            only!(st0, -1)
+            merge!(tt, st0)
+        end 
+
+        shift!(tt, dl, 0, sizeof(Int), sizeof(Csize_t))
         for i = 0:(sizeof(Csize_t)-1)
             merge!(tt, TypeTree(API.DT_Integer, i, ctx))
         end
+
         return tt
     end
 
@@ -377,8 +395,21 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
     desc = Base.DataTypeFieldDesc(T)
 
     for f = 1:fieldcount(T)
-        offset = fieldoffset(T, f)
+        offset = Int(fieldoffset(T, f))
         subT = typed_fieldtype(T, f)
+
+        endbytes = offset + Int(desc[f].size)
+        nextbytes = if f == fieldcount(T)
+            Int(sizeof(T))
+        else
+            Int(fieldoffset(T, f+1))
+        end
+
+        # Fill in padding gaps with Anything, unless subT was an integer or Enum
+        padding_T = (subT <: Integer || subT <: Enum) ? API.DT_Integer : API.DT_Anything
+        for i = endbytes:(nextbytes-1)
+            merge!(tt, TypeTree(padding_T, i, ctx))
+        end
 
         if !desc[f].isptr && subT isa Union
             rmT = remove_nothing_from_union_type(subT)
@@ -414,6 +445,7 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
 
         merge!(tt, subtree)
     end
+
     canonicalize!(tt, sizeof(T), dl)
     return tt
 end

@@ -11,12 +11,12 @@ jobs:
   docs:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@v3
         with:
           version: '1.11'
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - run: |
           julia --color=yes --project=docs -e '
             using Pkg

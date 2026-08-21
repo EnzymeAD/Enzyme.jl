@@ -12,4 +12,5 @@ Random.seed!(0)
     include("generate_tangent.jl")
     include("test_forward.jl")
     include("test_reverse.jl")
+    include("test_fd.jl")
 end

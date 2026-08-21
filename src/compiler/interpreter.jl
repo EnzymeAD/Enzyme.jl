@@ -16,6 +16,7 @@ const HAS_INTEGRATED_CACHE = VERSION >= v"1.11.0-DEV.1552"
 
 import ..Enzyme
 import ..EnzymeRules
+import ..cached_has_frule, ..cached_has_rrule, ..cached_is_inactive
 
 @static if VERSION ≥ v"1.11.0-DEV.1498"
     import Core.Compiler: get_inference_world
@@ -62,7 +63,11 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
     method_table::Core.Compiler.MethodTableView
 
     # Cache of inference results for this particular interpreter
-    local_cache::Vector{InferenceResult}
+    local_cache::@static if isdefined(Core.Compiler, :InferenceCache)
+        Core.Compiler.InferenceCache
+    else
+        Vector{InferenceResult}
+    end
     # The world age we're working inside of
     world::UInt
 
@@ -81,26 +86,35 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
     handler::T
 end
 
+const SigCacheLock = ReentrantLock()
+const InterpreterLock = ReentrantLock()
 const SigCache = Dict{Tuple, Dict{UInt, Base.IdSet{Type}}}()
 function get_rule_signatures(f, TT, world)
-    subdict = if haskey(SigCache, (f, TT))
-       SigCache[(f, TT)]
-    else
-       tmp = Dict{UInt, Base.IdSet{Type}}()
-       SigCache[(f, TT)] = tmp
-       tmp
+    subdict = lock(SigCacheLock) do
+        if haskey(SigCache, (f, TT))
+           SigCache[(f, TT)]
+        else
+           tmp = Dict{UInt, Base.IdSet{Type}}()
+           SigCache[(f, TT)] = tmp
+           tmp
+        end
     end
-    if haskey(subdict, world)
-       return subdict[world]
+    
+    return lock(SigCacheLock) do
+        if haskey(subdict, world)
+           return subdict[world]
+        end
+        
+        fwdrules_meths = Base._methods(f, TT, -1, world)::Vector
+        sigs = Type[]
+        for rule in fwdrules_meths
+            push!(sigs, (rule::Core.MethodMatch).method.sig)
+        end
+        result = Base.IdSet{Type}(sigs)
+        
+        subdict[world] = result
+        return result
     end
-    fwdrules_meths = Base._methods(f, TT, -1, world)::Vector
-    sigs = Type[]
-    for rule in fwdrules_meths
-        push!(sigs, (rule::Core.MethodMatch).method.sig)
-    end
-    result = Base.IdSet{Type}(sigs)
-    subdict[world] = result
-    return result
 end
 
 function rule_sigs_equal(a, b)
@@ -142,42 +156,63 @@ function EnzymeInterpreter(
     @static if HAS_INTEGRATED_CACHE
 
     else
-        cache_or_token = cache_or_token::CodeCache
-        invalid = false
-        if forward_rules
-            fwdrules = get_rule_signatures(EnzymeRules.forward, Tuple{<:FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)
-            if !rule_sigs_equal(fwdrules, LastFwdWorld[])
-                LastFwdWorld[] = fwdrules
-                invalid = true
-            end
-        end
-        if reverse_rules
-            revrules = get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)
-            if !rule_sigs_equal(revrules, LastRevWorld[])
-                LastRevWorld[] = revrules
-                invalid = true
-            end
+        fwdrules = if forward_rules
+            get_rule_signatures(EnzymeRules.forward, Tuple{<:FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)
+        else
+            nothing
         end
 
-        if inactive_rules
-            inarules = get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)
-            if !rule_sigs_equal(inarules, LastInaWorld[])
-                LastInaWorld[] = inarules
-                invalid = true
-            end
+        revrules = if reverse_rules
+            get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)
+        else
+            nothing
         end
-        
-        if invalid
-            Base.empty!(cache_or_token)
+
+        inarules = if inactive_rules
+            get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)
+        else
+            nothing
+        end
+
+        cache_or_token = cache_or_token::CodeCache
+        invalid = false
+        lock(InterpreterLock) do
+            if forward_rules
+                if !rule_sigs_equal(fwdrules, LastFwdWorld[])
+                    LastFwdWorld[] = fwdrules
+                    invalid = true
+                end
+            end
+            if reverse_rules
+                if !rule_sigs_equal(revrules, LastRevWorld[])
+                    LastRevWorld[] = revrules
+                    invalid = true
+                end
+            end
+    
+            if inactive_rules
+                if !rule_sigs_equal(inarules, LastInaWorld[])
+                    LastInaWorld[] = inarules
+                    invalid = true
+                end
+            end
+            
+            if invalid
+                Base.empty!(cache_or_token)
+            end
         end
     end
 
     return EnzymeInterpreter(
         cache_or_token,
-	mt == nothing ? Core.Compiler.InternalMethodTable(world) : Core.Compiler.OverlayMethodTable(world, mt),
+    mt == nothing ? Core.Compiler.InternalMethodTable(world) : Core.Compiler.OverlayMethodTable(world, mt),
 
         # Initially empty cache
-        Vector{InferenceResult}(),
+        (@static if isdefined(Core.Compiler, :InferenceCache)
+            Core.Compiler.InferenceCache()
+        else
+            Vector{InferenceResult}()
+        end),
 
         # world age counter
         world,
@@ -297,6 +332,11 @@ function is_primitive_func(@nospecialize(TT))::Bool
        ft === typeof(Base.Threads.threading_run)
         return true
     end
+
+    if ft isa DataType && ft.name.name == Symbol("#do_ccall") && string(ft.name.module) == "FunctionWrappers"
+        return true
+    end
+
     return false
 end
 
@@ -367,11 +407,11 @@ end
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
     else
         method_table = Core.Compiler.method_table(interp)
-        if interp.inactive_rules && EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)
+        if interp.inactive_rules && cached_is_inactive(specTypes, interp.world, method_table)
             callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
-        elseif interp.forward_rules && EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)
+        elseif interp.forward_rules && cached_has_frule(specTypes, interp.world, method_table)
             callinfo = NoInlineCallInfo(callinfo, atype, :frule)
-        elseif interp.reverse_rules && EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table)
+        elseif interp.reverse_rules && cached_has_rrule(specTypes, interp.world, method_table)
             callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
         end
     end
@@ -624,6 +664,12 @@ end
 # 
 # @btime lindex_v2(idx, dst, src2)
 # # 1.617 μs (0 allocations: 0 bytes)
+@inline linear_getindex(b::Base.Broadcast.Extruded, i::Int) = linear_getindex(b.x, i)
+@inline linear_getindex(bc::Base.Broadcast.Broadcasted, i::Int) = bc.f(map(Base.Fix2(linear_getindex, i), bc.args)...)
+@inline linear_getindex(a::AbstractArray, i::Int) = @inbounds a[i]
+@inline linear_getindex(x::Number, i::Int) = x
+@inline linear_getindex(x::Ref, i::Int) = x[]
+
 @generated function lindex_v2(idx::BC2, dest, src, ::Val{Checked}=Val(true)) where {BC2, Checked}
     if BC2 <: Base.CartesianIndices
         nloops = BC2.parameters[1]
@@ -661,8 +707,9 @@ end
                     tmp = Base.udiv_int(tmp, $lim)
                 end)
             end
+            get_expr = quote @inbounds Base.Broadcast._broadcast_getindex(src, Base.CartesianIndex($(idxs...))) end
         else
-            idxs = [quote I+1 end]
+            get_expr = quote @inbounds linear_getindex(src, I+1) end
         end
 
         return quote
@@ -673,7 +720,7 @@ end
                     @inbounds while true
                         let tmp = I
                             $(lexprs...)
-                            @inbounds dest[I+1] = @inbounds Base.Broadcast._broadcast_getindex(src, Base.CartesianIndex($(idxs...)))
+                            @inbounds dest[I+1] = $get_expr
                         end
                         I += 1
                         if I == total
@@ -800,8 +847,8 @@ end
 # Override Base.copyto!(dest::AbstractArray, bc::Broadcasted{Nothing}) with
 #  a form which provides better analysis of loop indices
 @inline function override_bc_copyto!(dest::AbstractArray, bc::Base.Broadcast.Broadcasted{Nothing})
-	axdest = Base.axes(dest)
-	axbc = Base.axes(bc)
+    axdest = Base.axes(dest)
+    axbc = Base.axes(bc)
     axdest == axbc || Base.Broadcast.throwdm(axdest, axbc)
 
     if bc.args isa Tuple{AbstractArray}
@@ -826,20 +873,20 @@ end
     prev = nothing
     todo = Tuple{Expr, Type}[]
     for i in 1:length(x.parameters)
-	push!(todo, (:(x[$i]), x.parameters[i]))
+    push!(todo, (:(x[$i]), x.parameters[i]))
     end
     while length(todo) != 0
-	expr, ty = pop!(todo)
+    expr, ty = pop!(todo)
         if ty <: Number || ty <: Base.RefValue
             continue
         end
-	if ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing}
-	    for i in 1:length(ty.parameters[4].parameters)
-	       push!(todo, (:($expr.args[$i]), ty.parameters[4].parameters[i]))
-	    end
-	    continue
-	end
-	@assert ty <: AbstractArray
+    if ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing}
+        for i in 1:length(ty.parameters[4].parameters)
+           push!(todo, (:($expr.args[$i]), ty.parameters[4].parameters[i]))
+        end
+        continue
+    end
+    @assert ty <: AbstractArray
         if prev == nothing
             prev = quote
                 sz = size($expr)
@@ -857,10 +904,10 @@ end
         end
     end
     if result == :true
-	return quote
-	   Base.@_inline_meta
-   	   true
-  	end
+    return quote
+       Base.@_inline_meta
+       true
+    end
     end
     return quote
         Base.@_inline_meta
@@ -874,28 +921,28 @@ end
     prev = nothing
     todo = Tuple{Expr, Type}[]
     for i in 1:length(x.parameters)
-	push!(todo, (:(x[$i]), x.parameters[i]))
+    push!(todo, (:(x[$i]), x.parameters[i]))
     end
     while length(todo) != 0
-	expr, ty = pop!(todo)
+    expr, ty = pop!(todo)
         if ty <: Number || ty <: Base.RefValue
             continue
         end
-	if ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing}
-	    for i in 1:length(ty.parameters[4].parameters)
-	       push!(todo, (:($expr.args[$i]), ty.parameters[4].parameters[i]))
-	    end
-	    continue
-	end
-	@assert ty <: AbstractArray
-	return quote
-	    Base.@_inline_meta
-	    $expr
-	end
+    if ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing}
+        for i in 1:length(ty.parameters[4].parameters)
+           push!(todo, (:($expr.args[$i]), ty.parameters[4].parameters[i]))
+        end
+        continue
+    end
+    @assert ty <: AbstractArray
+    return quote
+        Base.@_inline_meta
+        $expr
+    end
     end
     return quote
         Base.@_inline_meta
-	throw(AssertionError("No array"))
+    throw(AssertionError("No array"))
     end
 end
 
@@ -919,6 +966,10 @@ end
 
 Base.@propagate_inbounds @inline overload_broadcast_getindex(A, I) = @inbounds A[I]
 
+macro simdloop()
+    Expr(:loopinfo, Symbol("julia.simdloop"), nothing)
+end
+
 struct OverrideBCMaterialize{ElType}
 end
 
@@ -929,11 +980,12 @@ end
     dest = @inline similar(bc, ElType)
     if same_sized(bc.args)
         # dest = @inline similar(first_array(bc.args), ElType)
-	@inbounds @simd for I in 1:length(bc)
-	    val = overload_broadcast_getindex(bc, I)
+    @inbounds for I in 1:length(bc)
+        val = overload_broadcast_getindex(bc, I)
             dest[I] = val
+        @simdloop
         end
-	return dest
+    return dest
     else
        # The existing code is rather slow for broadcast in practice: https://github.com/EnzymeAD/Enzyme.jl/issues/1434
        src = @inline Base.Broadcast.preprocess(nothing, bc)
@@ -951,19 +1003,60 @@ end
     v = op(init, y[1])
    
     if same_sized(itr.args)
-	@inbounds @simd for I in 2:length(itr)
-	    val = overload_broadcast_getindex(itr, I)
+    @inbounds for I in 2:length(itr)
+        val = overload_broadcast_getindex(itr, I)
             v = op(v, val)
+        @simdloop
         end
     else
-	while true
-	    y = iterate(itr, y[2])
-	    y === nothing && break
-	    v = op(v, y[1])
-	end
+    while true
+        y = iterate(itr, y[2])
+        y === nothing && break
+        v = op(v, y[1])
+    end
     end
     return v
 end
+
+@inline function override_bc_mapreduceimpl(f, op, A::Base.AbstractArrayOrBroadcasted,
+                                  ifirst::Integer, ilast::Integer, blksize::Int)
+    if ifirst == ilast
+        @inbounds a1 = A[ifirst]
+        return Base.mapreduce_first(f, op, a1)
+    else
+        # sequential portion
+        @inbounds a1 = A[ifirst]
+        v = f(a1)
+        for i = ifirst + 1 : ilast
+            @inbounds ai = A[i]
+            v = op(v, f(ai))
+        @simdloop
+        end
+        return v 
+    end
+end
+
+@inline function override_bc_mapreduce(f, op, ::Base.IndexLinear, A::Base.AbstractArrayOrBroadcasted)
+    inds = Base.LinearIndices(A)
+    n = length(inds)
+    if n == 0
+        return Base.mapreduce_empty_iter(f, op, A, Base.IteratorEltype(A))
+    elseif n == 1
+        @inbounds a1 = A[first(inds)]
+        return Base.mapreduce_first(f, op, a1)
+    else
+        @inbounds i = first(inds)
+        @inbounds a1 = A[i]
+        s = f(a1)
+        while i < last(inds) 
+            @inbounds Ai = A[i+=1]
+            s = op(s, f(Ai))
+        @simdloop
+        end
+        return s
+    end
+end
+
 
 struct MultiOp{Position, NumUsed, F1, F2}
     f1::F1
@@ -996,7 +1089,7 @@ end
        (!midnothing && Ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle})
         return all(Base.Fix2(bc_or_array_or_number_ty, midnothing), Ty.parameters[4].parameters)
     else
-	return Ty <: AbstractArray || Ty <: Number || Ty <: Base.RefValue
+    return Ty <: AbstractArray || Ty <: Number || Ty <: Base.RefValue
     end
 end
 
@@ -1005,7 +1098,7 @@ end
        (!midnothing && Ty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle})
         return any(Base.Fix2(has_array, midnothing), Ty.parameters[4].parameters)
     else
-	return Ty <: AbstractArray
+    return Ty <: AbstractArray
     end
 end
 
@@ -1025,23 +1118,155 @@ end
     end
 end
 
-
+if VERSION < v"1.12"
 ## Computation of inferred result type, for empty and concretely inferred cases only
-ty_broadcast_getindex_eltype(interp, bc::Type{<:Base.Broadcast.Broadcasted}) = ty_combine_eltypes(interp, bc.parameters[3], (bc.parameters[4].parameters...,))
-ty_broadcast_getindex_eltype(interp, A) = eltype(A)  # Tuple, Array, etc.
+ty_broadcast_getindex_eltype(state::NamedTuple, bc::Type{<:Base.Broadcast.Broadcasted}) = ty_combine_eltypes(state, bc.parameters[3], (bc.parameters[4].parameters...,))
+ty_broadcast_getindex_eltype(state::NamedTuple, A) = eltype(A)  # Tuple, Array, etc.
 
-ty_eltypes(interp, ::Tuple{}) = Tuple{}
-ty_eltypes(interp, t::Tuple{Any}) = Iterators.TupleOrBottom(ty_broadcast_getindex_eltype(interp, t[1]))
-ty_eltypes(interp, t::Tuple{Any,Any}) = Iterators.TupleOrBottom(ty_broadcast_getindex_eltype(interp, t[1]), ty_broadcast_getindex_eltype(interp, t[2]))
-ty_eltypes(interp, t::Tuple) = (TT = ty_eltypes(interp, Base.tail(t)); TT === Union{} ? Union{} : Iterators.TupleOrBottom(ty_broadcast_getindex_eltype(interp, t[1]), TT.parameters...))
-# eltypes(t::Tuple) = Iterators.TupleOrBottom(ntuple(i -> _broadcast_getindex_eltype(t[i]), Val(length(t)))...)
+ty_eltypes(state::NamedTuple, ::Tuple{}) = Tuple{}
+ty_eltypes(state::NamedTuple, t::Tuple{Any}) = Iterators.TupleOrBottom(ty_broadcast_getindex_eltype(state, t[1]))
+ty_eltypes(state::NamedTuple, t::Tuple{Any,Any}) = Iterators.TupleOrBottom(ty_broadcast_getindex_eltype(state, t[1]), ty_broadcast_getindex_eltype(state, t[2]))
+ty_eltypes(state::NamedTuple, t::Tuple) = (TT = ty_eltypes(state, Base.tail(t)); TT === Union{} ? Union{} : Iterators.TupleOrBottom(ty_broadcast_getindex_eltype(state, t[1]), TT.parameters...))
 
 # Inferred eltype of result of broadcast(f, args...)
-function ty_combine_eltypes(interp, f, args::Tuple)
-    argT = ty_eltypes(interp, args)
+function ty_combine_eltypes(state::NamedTuple, f, args::Tuple)
+    (; interp, sv, max_methods) = state
+    argT = ty_eltypes(state, args)
     argT === Union{} && return Union{}
-    preprom = Core.Compiler._return_type(interp, Tuple{f, argT.parameters...})
-    return Base.promote_typejoin_union(preprom)
+    preprom = abstract_call(
+        interp,
+        ArgInfo(nothing, Any[f, argT.parameters...]),
+        StmtInfo(true),
+        sv,
+        max_methods,
+    )
+    return Base.promote_typejoin_union(widenconst(preprom.rt))
+end
+else
+## Computation of inferred result type, for empty and concretely inferred cases only
+ty_broadcast_getindex_eltype(state::NamedTuple, bc::Type{<:Base.Broadcast.Broadcasted})::Core.Compiler.Future{Type} = ty_combine_eltypes(state, bc.parameters[3], (bc.parameters[4].parameters...,))
+ty_broadcast_getindex_eltype(state::NamedTuple, A)::Core.Compiler.Future{Type} = Core.Compiler.Future{Type}(eltype(A))  # Tuple, Array, etc.
+
+ty_eltypes(state::NamedTuple, ::Tuple{})::Core.Compiler.Future{Type} = Tuple{}
+function ty_eltypes(state::NamedTuple, t::Tuple{Any})::Core.Compiler.Future{Type}
+    retT = ty_broadcast_getindex_eltype(state, t[1])
+    (; interp, sv) = state
+    Core.Compiler.Future{Type}(retT, interp, sv) do retT, interp, sv
+        Iterators.TupleOrBottom(retT)
+    end
+end
+function ty_eltypes(state::NamedTuple, t::Tuple{Any,Any})::Core.Compiler.Future{Type}
+    retT1 = ty_broadcast_getindex_eltype(state, t[1])
+    retT2 = ty_broadcast_getindex_eltype(state, t[2])
+    (; interp, sv) = state
+    Core.Compiler.Future{Type}(isready(retT1) && isready(retT2), interp, sv) do interp, sv
+            Iterators.TupleOrBottom(retT1[], retT2[])
+    end
+end
+function ty_eltypes(state::NamedTuple, t::Tuple)::Core.Compiler.Future{Type}
+    TT = ty_eltypes(state, Base.tail(t))
+    (; interp, sv) = state
+    if TT === Union{}
+        Core.Compiler.Future{Type}{Union{}}
+    else
+        retT = ty_broadcast_getindex_eltype(state, t[1])
+        Core.Compiler.Future{Type}(isready(TT) && isready(retT), interp, sv) do interp, sv
+            Iterators.TupleOrBottom(retT[], TT[].parameters...)
+        end
+    end
+end
+
+# Inferred eltype of result of broadcast(f, args...)
+function ty_combine_eltypes(state::NamedTuple, f, args::Tuple)::Core.Compiler.Future{Type}
+    (; interp, sv, max_methods) = state
+    argT = ty_eltypes(state, args)
+    ret = Core.Compiler.Future{Type}()
+    function finish_abstract_call(interp, sv)
+        isready(argT) || return false
+        if argT[] == Union{}
+            ret[] = Union{}
+            return true
+        end
+        preprom = abstract_call(
+            interp,
+            ArgInfo(nothing, Any[f, argT[].parameters...]),
+            StmtInfo(true, false),
+            sv,
+            max_methods,
+        )
+        function continuation(interp, sv)
+            isready(preprom) || return false
+            retty = widenconst(preprom[].rt)
+            ret[] = Base.promote_typejoin_union(retty)
+            return true
+        end
+        continuation(interp, sv) || push!(sv.tasks, continuation)
+        return true
+    end
+    finish_abstract_call(interp, sv) || push!(sv.tasks, finish_abstract_call)
+    return ret
+end
+
+struct broadcast_rewriter
+    ret::Core.Compiler.Future{CallMeta}
+    ElType::Core.Compiler.Future{Type}
+    fargs::Vector{Any}
+    argtypes
+    si::StmtInfo
+    max_methods::Int
+    f::Any
+    arginfo::ArgInfo
+end
+function (bcr::broadcast_rewriter)(interp, sv)
+    (; ret, ElType, fargs, argtypes, si, max_methods, f, arginfo) = bcr
+    isready(ElType) || return false
+    ElType = ElType[]
+    local retFuture
+    if ElType !== Union{} && Base.isconcretetype(ElType)
+        fn2 = Enzyme.Compiler.Interpreter.OverrideBCMaterialize{ElType}()
+        arginfo2 = ArgInfo(
+            fargs isa Nothing ? nothing : [:(fn2), fargs[2:end]...],
+           [Core.Const(fn2), argtypes[2:end]...],
+        )
+        retFuture = Base.@invoke abstract_call_known(
+            interp::AbstractInterpreter,
+            fn2::Any,
+            arginfo2::ArgInfo,
+            si::StmtInfo,
+            sv::AbsIntState,
+            max_methods::Int,
+        )
+    else 
+        if interp.handler != nothing
+            return interp.handler(interp, f, arginfo, si, sv, max_methods)
+        end
+        retFuture = Base.@invoke abstract_call_known(
+            interp::AbstractInterpreter,
+            f::Any,
+            arginfo::ArgInfo,
+            si::StmtInfo,
+            sv::AbsIntState,
+            max_methods::Int,
+        )
+    end
+    
+    function continuation(interp, sv)
+        isready(retFuture) || return false
+        ret[] = retFuture[]
+        return true
+    end
+    continuation(interp, sv) || push!(sv.tasks, continuation)
+    return true
+end
+end
+
+struct FuncWrapperRewriter{Ret, ArgsT}
+end
+
+@inline function (fnwr::FuncWrapperRewriter{Ret, ArgsT})(f, args) where {Ret, ArgsT}
+    closure = f.obj[]
+    res = closure(args...)
+    return res::Ret
 end
 
 function abstract_call_known(
@@ -1088,30 +1313,33 @@ function abstract_call_known(
         end
     end
     
-    if interp.broadcast_rewrite
-        if f === Base.materialize && length(argtypes) == 2
-            bcty = widenconst(argtypes[2])
-    	    if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && bc_or_array_or_number_ty(bcty) && has_array(bcty)
-        		ElType = ty_broadcast_getindex_eltype(interp, bcty)
-        		if ElType !== Union{} && Base.isconcretetype(ElType)
-        		    fn2 = Enzyme.Compiler.Interpreter.OverrideBCMaterialize{ElType}()
-                    arginfo2 = ArgInfo(
-                        fargs isa Nothing ? nothing : [:(fn2), fargs[2:end]...],
-        	           [Core.Const(fn2), argtypes[2:end]...],
-                    )
-
-                    return Base.@invoke abstract_call_known(
-                        interp::AbstractInterpreter,
-                        fn2::Any,
-                        arginfo2::ArgInfo,
-                        si::StmtInfo,
-                        sv::AbsIntState,
-                        max_methods::Int,
-                    )
-                end
+    let ft = Core.Compiler.widenconst(argtypes[1])
+        if ft isa DataType && ft.name.name == Symbol("#do_ccall") && string(ft.name.module) == "FunctionWrappers"
+            ft2 = Core.Compiler.widenconst(argtypes[2])
+            # The FunctionWrapper type may be only partially known during
+            # abstract interpretation (a UnionAll), rewrite only fully
+            # determined calls:
+            if ft2 isa DataType && length(ft2.parameters) >= 2
+                Ret = ft2.parameters[1]
+                ArgsT = ft2.parameters[2]
+                arginfo2 = ArgInfo(
+                    fargs isa Nothing ? nothing :
+                    [:(FuncWrapperRewriter{Ret, ArgsT}), fargs[2:end]...],
+                    [Core.Const(FuncWrapperRewriter{Ret, ArgsT}()), argtypes[2:end]...],
+                )
+                return Base.@invoke abstract_call_known(
+                    interp::AbstractInterpreter,
+                    FuncWrapperRewriter{Ret, ArgsT}(),
+                    arginfo2::ArgInfo,
+                    si::StmtInfo,
+                    sv::AbsIntState,
+                    max_methods::Int,
+                )
             end
         end
+    end
 
+    if interp.broadcast_rewrite
         if f === Base.copyto! && length(argtypes) == 3
             # Ideally we just override uses of the AbstractArray base class, but
             # I don't know how to override the method in base, without accidentally overridding
@@ -1135,15 +1363,57 @@ function abstract_call_known(
                 )
             end
         end
+    
+    if f === Base.mapreduce_impl &&  length(argtypes) == 7
+            if widenconst(argtypes[4]) <: Array && 
+           widenconst(argtypes[5]) <: Integer &&
+           widenconst(argtypes[6]) <: Integer &&
+           widenconst(argtypes[7]) <: Int 
+                arginfo2 = ArgInfo(
+                    fargs isa Nothing ? nothing :
+                    [:(Enzyme.Compiler.Interpreter.override_bc_mapreduceimpl), fargs[2:end]...],
+                    [Core.Const(Enzyme.Compiler.Interpreter.override_bc_mapreduceimpl), argtypes[2:end]...],
+                )
+
+                return Base.@invoke abstract_call_known(
+                    interp::AbstractInterpreter,
+                    Enzyme.Compiler.Interpreter.override_bc_mapreduceimpl::Any,
+                    arginfo2::ArgInfo,
+                    si::StmtInfo,
+                    sv::AbsIntState,
+                    max_methods::Int,
+                )
+            end
+        end
+    
+    if f === Base._mapreduce &&  length(argtypes) == 5
+            if widenconst(argtypes[4]) <: Base.IndexLinear &&
+           widenconst(argtypes[5]) <: Array
+                arginfo2 = ArgInfo(
+                    fargs isa Nothing ? nothing :
+                    [:(Enzyme.Compiler.Interpreter.override_bc_mapreduce), fargs[2:end]...],
+                    [Core.Const(Enzyme.Compiler.Interpreter.override_bc_mapreduce), argtypes[2:end]...],
+                )
+
+                return Base.@invoke abstract_call_known(
+                    interp::AbstractInterpreter,
+                    Enzyme.Compiler.Interpreter.override_bc_mapreduce::Any,
+                    arginfo2::ArgInfo,
+                    si::StmtInfo,
+                    sv::AbsIntState,
+                    max_methods::Int,
+                )
+            end
+        end
        
-	if f === Base._foldl_impl &&  length(argtypes) == 4
-	    
-	    bcty = widenconst(argtypes[4])
+    if f === Base._foldl_impl &&  length(argtypes) == 4
+        
+        bcty = widenconst(argtypes[4])
 
 
             if widenconst(argtypes[3]) <: Base._InitialValue &&
-	       bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle} && ndims(bcty) >= 2 &&
-	       bc_or_array_or_number_ty(bcty, false) && has_array(bcty, false)
+           bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle} && ndims(bcty) >= 2 &&
+           bc_or_array_or_number_ty(bcty, false) && has_array(bcty, false)
            
                 arginfo2 = ArgInfo(
                     fargs isa Nothing ? nothing :
@@ -1185,10 +1455,47 @@ function abstract_call_known(
             )
         end
     end
+    if interp.broadcast_rewrite && f === Base.materialize && length(argtypes) == 2
+            bcty = widenconst(argtypes[2])
+            if Base.isconcretetype(bcty) && bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle, Nothing} && bc_or_array_or_number_ty(bcty) && has_array(bcty)
+                ElType = ty_broadcast_getindex_eltype((; interp, sv, max_methods), bcty)
+                if VERSION < v"1.12"
+                    if ElType !== Union{} && Base.isconcretetype(ElType)
+                        fn2 = Enzyme.Compiler.Interpreter.OverrideBCMaterialize{ElType}()
+                        arginfo2 = ArgInfo(
+                            fargs isa Nothing ? nothing : [:(fn2), fargs[2:end]...],
+                           [Core.Const(fn2), argtypes[2:end]...],
+                        )
 
+                        return Base.@invoke abstract_call_known(
+                            interp::AbstractInterpreter,
+                            fn2::Any,
+                            arginfo2::ArgInfo,
+                            si::StmtInfo,
+                            sv::AbsIntState,
+                            max_methods::Int,
+                        )
+                    end
+                else
+                    ret = Core.Compiler.Future{Core.Compiler.CallMeta}()
+                    bcr = broadcast_rewriter(
+                                ret,
+                                ElType,
+                                fargs,
+                                argtypes,
+                                si,
+                                max_methods,
+                                f,
+                                arginfo)
+                    bcr = bcr(interp, sv) || push!(sv.tasks, bcr)
+                    return ret
+                end
+            end
+        end
     if interp.handler != nothing
         return interp.handler(interp, f, arginfo, si, sv, max_methods)
     end
+    
     return Base.@invoke abstract_call_known(
         interp::AbstractInterpreter,
         f::Any,

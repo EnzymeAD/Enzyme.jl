@@ -62,6 +62,12 @@ export Tracked, Derived
 
 const captured_constants = Base.IdSet{Any}()
 
+function arg_operands_view(inst::LLVM.CallInst)
+    N_args = LLVM.API.LLVMGetNumArgOperands(inst)
+    return @view LLVM.operands(inst)[1:N_args]
+end
+
+
 function unsafe_nothing_to_llvm(mod::LLVM.Module)
     globs = LLVM.globals(mod)
     k = "jl_nothing"
@@ -92,7 +98,7 @@ end
 export unsafe_to_ptr
 
 # This mimicks literal_pointer_val / literal_pointer_val_slot
-function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))::LLVM.Value
+function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_not_exists::Union{String, Nothing}=nothing)::LLVM.Value
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
@@ -106,52 +112,65 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val))::LLVM.Value
             end
         end
     end
-
-    for (k, v) in Compiler.JuliaGlobalNameMap
-        if v === val
+    
+    function setup_global(k, v)
+	    k0 = k
             mod = LLVM.parent(LLVM.parent(LLVM.position(B)))
             globs = LLVM.globals(mod)
             if Base.haskey(globs, "ejl_" * k)
                 return globs["ejl_"*k]
             end
+        
+	force_inactive = false
+	if insert_name_if_not_exists isa String
+	    k = "inserted\$"*insert_name_if_not_exists
+            if !haskey(Compiler.JuliaEnzymeNameMap, k)
+		 Compiler.JuliaEnzymeNameMap[k] = val
+	    end
+	    # Since the legacy behavior was to force inactive for global constants, we retain that here (for now)
+	    force_inactive = true
+	end
+
+            if Base.haskey(globs, "ejl_" * k)
+                return globs["ejl_"*k]
+            end
+
             gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
 
             API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
-            if world isa UInt
+            inactive = force_inactive || Enzyme.Compiler.is_memory_instance(v)
+	    if !inactive && v isa Core.SimpleVector && length(v) == 0
+		inactive = true
+	    end
+	    if !inactive && world isa UInt
                 legal, jTy, byref = Compiler.abs_typeof(gv, true)
                 if legal
                     curent_bb = position(B)
                     fn = LLVM.parent(curent_bb)
-                    if Compiler.guaranteed_const_nongen(jTy, world)
-                        API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
-                    end
+		    state = Enzyme.Compiler.active_reg(jTy, world)
+		    inactive = state == Enzyme.Compiler.AnyState ||state == Enzyme.Compiler.ActiveState
                 end
             end
+	    if inactive
+		API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+	    end
             return gv
+    end
+
+    for (k, v) in Compiler.JuliaGlobalNameMap
+        if v === val
+	    return setup_global(k, v)
         end
     end
 
     for (k, v) in Compiler.JuliaEnzymeNameMap
         if v === val
-            mod = LLVM.parent(LLVM.parent(LLVM.position(B)))
-            globs = LLVM.globals(mod)
-            if Base.haskey(globs, "ejl_" * k)
-                return globs["ejl_"*k]
-            end
-            gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
-            API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
-            if world isa UInt
-                legal, jTy, byref = Compiler.abs_typeof(gv, true)
-                if legal
-                    curent_bb = position(B)
-                    fn = LLVM.parent(curent_bb)
-                    if Compiler.guaranteed_const_nongen(jTy, world)
-                        API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
-                    end
-                end
-            end
-            return gv
+	    return setup_global(k, v)
         end
+    end
+
+    if insert_name_if_not_exists !== nothing
+	return setup_global(insert_name_if_not_exists, val)
     end
 
     # XXX: This prevents code from being runtime relocatable
@@ -473,7 +492,7 @@ end
 
 @inline function typed_fieldtype(@nospecialize(T::Type), i::Int)::Type
     if T <: GenericMemoryRef && i == 1 || T <: GenericMemory && i == 2
-        if T <: GenericMemoryRef && i == 1 && is_memory_ref_field2_an_offset(T)
+        if T <: GenericMemoryRef && i == 1 && T isa DataType && is_memory_ref_field2_an_offset(T)
             Int
         else
             eT = eltype(T)
@@ -499,7 +518,7 @@ export typed_fieldcount
 export typed_fieldoffset
 
 # returns the inner type of an sret/enzyme_sret/enzyme_sret_v
-function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
+function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruction}=nothing, throw_error=true)::Union{Nothing, LLVM.LLVMType}
 
     vt = LLVM.value_type(LLVM.parameters(fn)[idx])
 
@@ -521,7 +540,7 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
             if !LLVM.is_opaque(vt)
                 @assert eltype(vt) == res
             end
-            return res
+            return res::LLVM.LLVMType
         end
 
         if ekind == "enzymejl_sret_union_bytes"
@@ -532,7 +551,7 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
             if !LLVM.is_opaque(vt)
                 @assert eltype(vt) == res
             end
-            return res
+            return res::LLVM.LLVMType
         end
 
         if ekind == "enzymejl_returnRoots"
@@ -545,18 +564,18 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
             if !LLVM.is_opaque(vt)
                 @assert eltype(vt) == res
             end
-            return res
+            return res::LLVM.LLVMType
         end
 
         if ekind == "enzyme_sret"
-	    ety = parse(UInt, LLVM.value(attr))
-	    ety = Base.reinterpret(LLVM.API.LLVMTypeRef, ety)
-	    ety = LLVM.LLVMType(ety)
+            ety = parse(UInt, LLVM.value(attr))
+            ety = Base.reinterpret(LLVM.API.LLVMTypeRef, ety)
+            ety = LLVM.LLVMType(ety)
             if !LLVM.is_opaque(vt)
-		@assert ety == eltype(vt)
+                @assert ety == eltype(vt) "Mismatched sret type $(string(fn))\nidx=$idx\nety ($(string(ety))) != eltype(vt) (vt = $(string(vt)))"
             end
         
-            return ety
+            return ety::LLVM.LLVMType
         end
 
         if ekind == "enzymejl_parmtype_ref"
@@ -575,13 +594,50 @@ function sret_ty(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
         if !LLVM.is_opaque(vt)
             @assert eltype(vt) == res
         end
-        return res
+        return res::LLVM.LLVMType
     end
 
-    throw(AssertionError("Function requesting sret type was not an sret\nidx=$idx\nfn=$(string(fn)) enzymejl_parmtype=$enzymejl_parmtype enzymejl_parmtype_ref=$enzymejl_parmtype_ref"))
+
+    if !throw_error
+        return nothing
+    end
+
+    mi, _ = Compiler.enzyme_custom_extract_mi(
+        fn,
+        false,
+    ) #=error=#
+    world = Compiler.enzyme_extract_world(fn)
+
+    msg = "Function requesting sret type was not an sret\n\nidx=$idx\nenzymejl_parmtype=$enzymejl_parmtype enzymejl_parmtype_ref=$enzymejl_parmtype_ref\n"
+    ir = string(fn)
+    bt = nothing
+    if btval !== nothing        
+        bt = GPUCompiler.backtrace(btval)
+    end
+    if mi !== nothing
+        throw(Compiler.EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world))
+    else
+        world = nothing
+        throw(Compiler.EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world))
+    end
 end
 
 export sret_ty
+
+function get_rooted_typ(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
+    for attr in collect(LLVM.parameter_attributes(fn, idx))
+        ekind = LLVM.kind(attr)
+
+        if ekind == "enzymejl_rooted_typ"
+            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(attr)))
+            return Base.unsafe_pointer_to_objref(ptr)
+        end
+    end
+
+    throw(AssertionError("Function requesting rooted type was not an sret\nidx=$idx\nfn=$(string(fn))"))
+end
+
+export get_rooted_typ
 
 function remove_nothing_from_union_type(@nospecialize(T::Type))::Type
     if T isa Union

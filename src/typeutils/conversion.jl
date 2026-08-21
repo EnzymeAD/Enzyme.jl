@@ -88,6 +88,11 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
     if tkind == LLVM.API.LLVMHalfTypeKind
         return Float16, false
     end
+    @static if isdefined(Core, :BFloat16)
+        if tkind == LLVM.API.LLVMBFloatTypeKind
+            return Core.BFloat16, false
+        end
+    end
     if tkind == LLVM.API.LLVMFloatTypeKind
         return Float32, false
     end
@@ -112,6 +117,9 @@ from_tape_type(::Type{T}) where {T<:AbstractFloat} = convert(LLVMType, T)
 from_tape_type(::Type{T}) where {T<:Integer} = convert(LLVMType, T)
 from_tape_type(::Type{NTuple{Size,T}}) where {Size,T} =
     LLVM.ArrayType(from_tape_type(T), Size)
+from_tape_type(::Type{Core.VecElement{T}}) where {T} = from_tape_type(T)
+from_tape_type(::Type{NTuple{Size,Core.VecElement{T}}}) where {Size,T} =
+    LLVM.VectorType(from_tape_type(T), Size)
 from_tape_type(::Type{Core.LLVMPtr{T,Addr}}) where {T,Addr} =
     LLVM.PointerType(from_tape_type(UInt8), Addr)
 # from_tape_type(::Type{Core.LLVMPtr{T, Addr}}, ctx) where {T, Addr} = LLVM.PointerType(from_tape_type(T, ctx), Addr)

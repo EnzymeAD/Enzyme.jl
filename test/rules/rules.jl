@@ -155,4 +155,85 @@ end
      @test res[1][2] ≈ 0.6 + 0.0im
 end
 
+struct TestSpace
+    dim::Int64
+    flag::Bool
+end
+
+struct TestTensor
+    space::TestSpace
+    data::Vector{Float64}
+end
+
+function test_trace!(dst::TestTensor, src::TestTensor, beta::Float64; kw=1)
+    dst.data .= dst.data .* beta
+    return nothing
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(test_trace!)},
+    RT::Type{<:Const},
+    dst::Annotation{TestTensor},
+    src::Annotation{TestTensor},
+    beta::Duplicated{Float64};
+    kw=1
+)
+    test_trace!(dst.val, src.val, beta.val; kw=kw)
+    return nothing
+end
+
+struct TestCallWithKWargs{K<:NamedTuple}
+    kwargs::K
+end
+
+function (f::TestCallWithKWargs)(func, args...)
+    func(args...; f.kwargs...)
+end
+
+@testset "Rooted constant with active non-rooted arg" begin
+    dst = TestTensor(TestSpace(2, true), [1.0, 2.0])
+    src = TestTensor(TestSpace(2, true), [3.0, 4.0])
+    beta = 2.0
+    dbeta = 1.0
+
+    if VERSION < v"1.13-"
+        # 1.13+ is smart enough to prove the first arg of the split convention is readnone and thus
+	# work without runtime activity
+        @test_throws Enzyme.Compiler.EnzymeRuntimeActivityError autodiff(
+            Forward,
+            TestCallWithKWargs((;)),
+            Const,
+            Const(test_trace!),
+            Const(dst),
+            Const(src),
+            Duplicated(beta, dbeta)
+        )
+    else
+        autodiff(
+            Forward,
+            TestCallWithKWargs((;)),
+            Const,
+            Const(test_trace!),
+            Const(dst),
+            Const(src),
+            Duplicated(beta, dbeta)
+        )
+        @test dst.data == [2.0, 4.0]
+    end
+    
+    dst = TestTensor(TestSpace(2, true), [1.0, 2.0])
+
+    autodiff(
+        set_runtime_activity(Forward),
+        TestCallWithKWargs((;)),
+        Const,
+        Const(test_trace!),
+        Const(dst),
+        Const(src),
+        Duplicated(beta, dbeta)
+    )
+    @test dst.data == [2.0, 4.0]
+end
+
 end # module ForwardRules

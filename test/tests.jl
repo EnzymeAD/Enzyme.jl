@@ -129,14 +129,14 @@ sqrtsumsq2(x) = (sum(abs2, x) * sum(abs2, x))
     end
     @test occursin("diffe", fn)
     # TODO we need to fix julia to remove unused bounds checks
-    # @test !occursin("aug",fn)
+    @test !occursin("aug",fn)
 
     fn = sprint() do io
         Enzyme.Compiler.enzyme_code_llvm(io, sumsq2, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module = true)
     end
     @test occursin("diffe", fn)
     # TODO we need to fix julia to remove unused bounds checks
-    # @test !occursin("aug",fn)
+    @test !occursin("aug",fn)
 
     fn = sprint() do io
         Enzyme.Compiler.enzyme_code_llvm(io, sumsin, Active, Tuple{Duplicated{Vector{Float64}}}; dump_module = true)
@@ -159,10 +159,10 @@ sqrtsumsq2(x) = (sum(abs2, x) * sum(abs2, x))
     #     println(fn)
     # end
     # TODO per system being run on the indexing in the mapreduce is broken
-    @test_broken count("call fastcc void @diffejulia__mapreduce", fn) == 1
+    @test count("call fastcc void @diffejulia__mapreduce", fn) <= 1
     # TODO we need to have enzyme circumvent the double pointer issue by also considering a broader
     # no memory overwritten state [in addition to the arg-based variant]
-    @test_broken !occursin("aug", fn)
+    @test !occursin("aug", fn)
 
     x = ones(100)
     dx = zeros(100)
@@ -244,6 +244,33 @@ end
     res = autodiff(set_runtime_activity(ForwardWithPrimal), rtg_f, Duplicated, Duplicated([0.2], [1.0]), Const(RTGData(3.14)))
     @test 3.14 ≈ res[2]
     @test 0.0 ≈ res[1]
+end
+
+mutable struct ZeroAllocCell
+    h::Matrix{Float32}
+end
+@noinline function (m::ZeroAllocCell)(x)
+    m.h .+= x
+    return nothing
+end
+function zero_alloc_loss_func(x, m, turns, t2)
+    val = 0.0f0
+    for i in 1:t2
+        for _ in 1:turns
+            m(x)
+        end
+        val += first(m.h)
+    end
+    return val
+end
+
+@testset "Zero-sized array allocation in nested loops" begin
+    m = ZeroAllocCell(ones(Float32, 2, 2))
+    x = 1.0f0
+    # This should not segfault or bus error when turns is 0 (i.e. zero-sized tape/cache allocation)
+    grads, val = Enzyme.autodiff(set_runtime_activity(ReverseWithPrimal), Const(zero_alloc_loss_func), Active,
+                                 Const(x), Duplicated(m, ZeroAllocCell(zeros(Float32, 2, 2))), Const(0), Const(2))
+    @test val ≈ 2.0f0
 end
 
 @inline function myquantile(v::AbstractVector, p::Real; alpha)
@@ -592,6 +619,29 @@ end
     f_x = zero.(y)
     Enzyme.autodiff(Reverse, f_exc, Duplicated(y, f_x))
     @test f_x ≈ [7.0 9.0; 11.0 13.0]
+
+    @testset "dsymm layout dimension verification" begin
+        function f_bug(x::Vector{Float64}, P::Matrix{Float64})
+            S = diagm(1.0 ./ x)
+            U = S * P
+            return tr(U' * U)
+        end
+        P_mat = [0.3 0.1; -0.2 0.4; 0.5 -0.3; 0.1 0.6; -0.4 0.2]
+        x_vec = [2.0, 2.0, 2.0, 2.0, 2.0]
+        dx1 = zeros(5)
+        Enzyme.autodiff(Reverse, f_bug, Active, Duplicated(copy(x_vec), dx1), Const(P_mat))
+        
+        # Finite difference for validation
+        h = 1e-7
+        f_val = f_bug(x_vec, P_mat)
+        fd = zeros(5)
+        for i in 1:5
+            x_plus = copy(x_vec)
+            x_plus[i] += h
+            fd[i] = (f_bug(x_plus, P_mat) - f_val) / h
+        end
+        @test dx1 ≈ fd rtol=1e-3
+    end
 end
 
 function indirectfltret(a)::DataType
@@ -1019,3 +1069,11 @@ end
 
     @test dM_sym ≈ [1.0 2.0 2.0 2.0; 2.0 1.0 2.0 2.0; 2.0 2.0 1.0 2.0; 2.0 2.0 2.0 1.0]
 end
+
+@testset "Symmetric ldiv padding" begin
+    A = [2.0 1.0; 1.0 3.0]
+    B = Symmetric([1.0 2.0; 2.0 4.0])
+    g = Enzyme.gradient(Reverse, (B, A_val) -> sum(cholesky(A_val) \ B), B, Const(A))[1]
+    @test g ≈ [0.4 0.6; 0.6 0.2]
+end
+

@@ -1,5 +1,6 @@
 repos:
   - repo: https://github.com/fredrikekre/runic-pre-commit
-    rev: v1.0.0
+    rev: v2.2.0
     hooks:
       - id: runic
+        args: ["--check", "--diff"]

@@ -6,7 +6,12 @@ lib/EnzymeCore/Manifest.toml
 /Manifest-v*.toml
 /test/Manifest.toml
 /docs/Manifest.toml
+/docs/Manifest-v*.toml
+/docs/**/Manifest.toml
 /docs/build/
 /docs/src/generated/
 test/integration/**/Manifest.toml
 .vscode
+.CondaPkg
+array.txt
+

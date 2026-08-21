@@ -1,6 +1,146 @@
 using CUDA
 using Enzyme
+using LinearAlgebra: mul!, dot, Symmetric
 using Test
+
+@testset "CUDA memory copies" begin
+    grad_roundtrip = function (to_gpu)
+        x = Float32[1, 2, 3]
+        dx = zeros(Float32, 3)
+        Enzyme.autodiff(
+            Reverse,
+            x -> sum(abs2, Array(to_gpu(x))),
+            Active,
+            Duplicated(x, dx),
+        )
+        return dx
+    end
+
+    @testset "device memory" begin
+        @test grad_roundtrip(x -> cu(x)) == Float32[2, 4, 6]
+    end
+
+    @testset "complex copies, $T" for T in (ComplexF32, ComplexF64)
+        n = 8
+        seed, prior = T(1 + 2im), T(10 - 3im)
+        copy_kernel = (dst, src) -> (copyto!(dst, src); nothing)
+
+        dev, hst = (v -> CuArray(v)), identity
+        directions = (
+            ("device to device", dev, dev),
+            ("host to device", dev, hst),
+            ("device to host", hst, dev),
+        )
+        @testset "$name" for (name, to_dst, to_src) in directions
+            src_vals = T[i + 2im * i for i in 1:n]
+            src = to_src(copy(src_vals))
+            dst = to_dst(zeros(T, n))
+            dsrc = to_src(fill(prior, n))
+            ddst = to_dst(fill(seed, n))
+
+            Enzyme.autodiff(
+                Reverse, Const(copy_kernel), Const,
+                Duplicated(dst, ddst), Duplicated(src, dsrc),
+            )
+            CUDA.synchronize()
+
+            @test Array(dst) == src_vals
+            @test Array(dsrc) == fill(prior + seed, n)
+            @test all(iszero, Array(ddst))
+        end
+
+        @testset "constant source" begin
+            src = CuArray(T[i + 2im * i for i in 1:n])
+            dst = CUDA.zeros(T, n)
+            ddst = CuArray(fill(seed, n))
+
+            Enzyme.autodiff(
+                Reverse, Const(copy_kernel), Const,
+                Duplicated(dst, ddst), Const(src),
+            )
+            CUDA.synchronize()
+
+            @test Array(dst) == Array(src)
+            @test all(iszero, Array(ddst))
+        end
+
+        @testset "batched" begin
+            src_vals = T[i + 2im * i for i in 1:n]
+            src = CuArray(copy(src_vals))
+            dst = CUDA.zeros(T, n)
+            dsrc = (CUDA.zeros(T, n), CUDA.zeros(T, n))
+            ddst = (CuArray(fill(seed, n)), CuArray(fill(2 * seed, n)))
+
+            Enzyme.autodiff(
+                Reverse, Const(copy_kernel), Const,
+                BatchDuplicated(dst, ddst), BatchDuplicated(src, dsrc),
+            )
+            CUDA.synchronize()
+
+            @test Array(dst) == src_vals
+            @test Array(dsrc[1]) == fill(seed, n)
+            @test Array(dsrc[2]) == fill(2 * seed, n)
+            @test all(all(iszero, Array(d)) for d in ddst)
+        end
+    end
+
+    @testset "pointer level, $R vs $C" for (R, C) in
+            ((Float32, ComplexF32), (Float64, ComplexF64))
+        ptr_copy = function (S)
+            n = 8
+            src = CuArray(S[i for i in 1:n])
+            dst = CUDA.zeros(S, n)
+            dsrc = CUDA.zeros(S, n)
+            ddst = CuArray(ones(S, n))
+            kernel = function (d, s)
+                GC.@preserve d s begin
+                    unsafe_copyto!(pointer(d), pointer(s), n)
+                end
+                return nothing
+            end
+            Enzyme.autodiff(
+                Reverse, Const(kernel), Const,
+                Duplicated(dst, ddst), Duplicated(src, dsrc),
+            )
+            CUDA.synchronize()
+            return (
+                copied = Array(dst) == Array(src),
+                src_shadow_zero = all(iszero, Array(dsrc)),
+                dst_shadow_zero = all(iszero, Array(ddst)),
+            )
+        end
+
+        @test ptr_copy(C) == ptr_copy(R)
+    end
+    @testset "unified memory" begin
+        @test grad_roundtrip(x -> cu(x; unified = true)) == Float32[2, 4, 6]
+    end
+    @testset "host memory" begin
+        @test grad_roundtrip(x -> cu(x; host = true)) == Float32[2, 4, 6]
+    end
+
+    x = CuArray(Float32[1, 2, 3])
+    original = copy(x)
+    dx = CUDA.zeros(Float32, 3)
+    Enzyme.autodiff(
+        Reverse,
+        x -> sum(abs2, Array(x)),
+        Active,
+        Duplicated(x, dx),
+    )
+    @test Array(x) == Array(original)
+    @test Array(dx) == 2 .* Array(x)
+
+    fill!(dx, 0)
+    Enzyme.autodiff(
+        Reverse,
+        x -> sum(abs2, Array(copy(x))),
+        Active,
+        Duplicated(x, dx),
+    )
+    @test Array(x) == Array(original)
+    @test Array(dx) == 2 .* Array(x)
+end
 
 function mul_kernel(A)
     i = threadIdx().x
@@ -192,4 +332,86 @@ end
     Enzyme.autodiff(Reverse, square!, BatchDuplicated(A, (dA, dA2)))
     @test all(dA .≈ (2:2:64))
     @test all(dA2 .≈ 3*(2:2:64))
+end
+
+#=
+The matmul/dot rules on a real backend, where they route through CUBLAS instead of
+the GPUArrays fallback kernels. This file also covers the allocating `A * B` and
+reductions over the result, neither of which works on JLArray (see
+test/ext/jlarrays.jl for why, and for the rest of the coverage).
+=#
+@testset "GPUArrays linalg rules" begin
+    cu(x) = CuArray(x)
+
+    # sum(A·B) seeds dC with ones, so dA = ones·B' and dB = A'·ones.
+    @testset "matmul reverse" begin
+        A0 = randn(Float32, 3, 4)
+        B0 = randn(Float32, 4, 2)
+        dA = cu(zero(A0))
+        dB = cu(zero(B0))
+        Enzyme.autodiff(Reverse, (A, B) -> sum(A * B), Active, Duplicated(cu(A0), dA), Duplicated(cu(B0), dB))
+        @test Array(dA) ≈ ones(Float32, 3, 2) * B0'
+        @test Array(dB) ≈ A0' * ones(Float32, 3, 2)
+    end
+
+    # `X` plain and transposed in one loss, so both cotangents accumulate into the
+    # same shadow. Checked against central differences.
+    @testset "composed transpose matmul" begin
+        X0 = randn(Float32, 6, 3)
+        β0 = randn(Float32, 3)
+        dX = cu(zero(X0))
+        dβ = cu(zero(β0))
+        Enzyme.autodiff(Reverse, (X, β) -> sum(transpose(X) * (X * β)), Active, Duplicated(cu(X0), dX), Duplicated(cu(β0), dβ))
+        ϵ = 1.0f-3
+        fdβ = map(eachindex(β0)) do i
+            βp = copy(β0); βp[i] += ϵ
+            βm = copy(β0); βm[i] -= ϵ
+            (sum(transpose(X0) * (X0 * βp)) - sum(transpose(X0) * (X0 * βm))) / (2ϵ)
+        end
+        @test Array(dβ) ≈ fdβ rtol = 1.0f-2
+    end
+
+    # 3-arg `mul!` on an explicit buffer, the path the JLArray tests use throughout.
+    @testset "mul! reverse (preallocated)" begin
+        A0 = randn(Float32, 3, 4)
+        B0 = randn(Float32, 4, 2)
+        dA = cu(zero(A0))
+        dB = cu(zero(B0))
+        function matmul!(C, A, B)
+            mul!(C, A, B)
+            return nothing
+        end
+        C = cu(zeros(Float32, 3, 2))
+        dC = cu(ones(Float32, 3, 2))
+        Enzyme.autodiff(Reverse, matmul!, Const, Duplicated(C, dC), Duplicated(cu(A0), dA), Duplicated(cu(B0), dB))
+        @test Array(dA) ≈ ones(Float32, 3, 2) * B0'
+        @test Array(dB) ≈ A0' * ones(Float32, 3, 2)
+    end
+
+    @testset "dot reverse" begin
+        a0 = randn(Float32, 8)
+        b0 = randn(Float32, 8)
+        da = cu(zero(a0))
+        db = cu(zero(b0))
+        Enzyme.autodiff(Reverse, (a, b) -> dot(a, b), Active, Duplicated(cu(a0), da), Duplicated(cu(b0), db))
+        @test Array(da) ≈ b0
+        @test Array(db) ≈ a0
+    end
+
+    # Symmetric/Hermitian operands aren't supported yet; the rule rejects them
+    # instead of returning the full matrix's cotangent.
+    @testset "Symmetric operand is rejected" begin
+        n = 4
+        X0 = randn(Float32, n, n)
+        dX = cu(zero(X0))
+        function matmul!(C, A, B)
+            mul!(C, A, B)
+            return nothing
+        end
+        @test_throws ArgumentError Enzyme.autodiff(
+            Reverse, matmul!, Const,
+            Duplicated(cu(zeros(Float32, n, 3)), cu(ones(Float32, n, 3))),
+            Duplicated(Symmetric(cu(X0), :U), Symmetric(dX, :U)), Const(cu(randn(Float32, n, 3))),
+        )
+    end
 end
