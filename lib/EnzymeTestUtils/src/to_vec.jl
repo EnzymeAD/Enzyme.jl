@@ -6,24 +6,28 @@ struct AliasDict{K,V} <: AbstractDict{K,V}
 end
 AliasDict() = AliasDict(IdDict(), IdDict{Tuple{UInt,Vararg{UInt}},Any}())
 
+aliasids(x) = nothing
+aliasids(x::Array) = Base.dataids(x)
+
 function Base.haskey(d::AliasDict, key)
     haskey(d.id_dict, key) && return true
-    key isa Array && haskey(d.dataids_dict, Base.dataids(key)) && return true
-    return false
+    ids = aliasids(key)
+    ids === nothing && return false
+    return haskey(d.dataids_dict, ids)
 end
 
-Base.getindex(d::AliasDict, key) = d.id_dict[key]
-function Base.getindex(d::AliasDict, key::Array)
+function Base.getindex(d::AliasDict, key)
     haskey(d.id_dict, key) && return d.id_dict[key]
-    dataids = Base.dataids(key)
-    return d.dataids_dict[dataids]
+    ids = aliasids(key)
+    ids === nothing && throw(KeyError(key))
+    return d.dataids_dict[ids]
 end
 
 function Base.setindex!(d::AliasDict, val, key)
     d.id_dict[key] = val
-    if key isa Array
-        dataids = Base.dataids(key)
-        d.dataids_dict[dataids] = val
+    ids = aliasids(key)
+    if ids !== nothing
+        d.dataids_dict[ids] = val
     end
     return d
 end
@@ -92,18 +96,22 @@ acopyto!(dst, src) = Base.copyto!(dst, src)
 function append_or_merge(prev::Union{Nothing, Tuple{AbstractVector, Bool}}, newv::AbstractVector)::Tuple{AbstractVector, Bool}
     if prev === nothing
         return (newv, false)
-    elseif prev[2] && eltype(newv) <: eltype(prev[1])
+    elseif isempty(newv)
+        return prev
+    elseif isempty(prev[1])
+        return (newv, false)
+    elseif prev[2] && prev[1] isa Array && newv isa Array && eltype(newv) <: eltype(prev[1])
         append!(prev[1], newv)
         return prev
     else
         ET2 = Base.promote_type(eltype(prev[1]), eltype(newv))
-        if prev[2] && ET2 == eltype(prev[1])
+        if prev[2] && prev[1] isa Array && newv isa Array && ET2 == eltype(prev[1])
             append!(prev[1], newv)
             return prev
         else
-            res = Vector{ET2}(undef, length(prev[1]) + length(newv))
+            res = similar(prev[1] isa Array ? newv : prev[1], ET2, length(prev[1]) + length(newv))
             acopyto!(@view(res[1:length(prev[1])]), prev[1])
-            acopyto!(@view(res[length(prev[1])+1:end]), newv)
+            acopyto!(@view(res[(length(prev[1]) + 1):end]), newv)
             return (res, true)
         end
     end
