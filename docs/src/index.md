@@ -182,11 +182,11 @@ julia> gradient(Forward, rosenbrock_inp, [1.0, 2.0])
 
 julia> gradient(ForwardWithPrimal, rosenbrock_inp, [1.0, 2.0])
 (derivs = ([-400.0, 200.0],), val = 100.0)
+```
 
-julia> # in forward mode, we can also optionally pass a chunk size
-       # to specify the number of derivatives computed simulateneously
-       # using vector forward mode
-       gradient(Forward, rosenbrock_inp, [1.0, 2.0]; chunk=Val(1))
+In forward mode, we can also optionally pass a chunk size to specify the number of derivatives computed simulateneously using vector forward mode.
+```jldoctest rosenbrock
+julia> gradient(Forward, rosenbrock_inp, [1.0, 2.0]; chunk=Val(1))
 ([-400.0, 200.0],)
 ```
 
@@ -318,26 +318,18 @@ One can also define certain arguments as not having a derivative via `@Constant`
 For more information see the [`EnzymeRules.@easy_rule`](@ref) documentation.
 
 ```jldoctest easyrules
-using Enzyme
+julia> using Enzyme
 
-function f(x, y)
-    return (x*x, cos(y) * x)
-end
+julia> f(x, y) = (x*x, cos(y) * x);
 
-Enzyme.EnzymeRules.@easy_rule(f(x,y),
-    # df1/dx, #df1/dy
-    (2*x, @Constant),
-    # df2/dx, #df2/dy
-    (cos(y), x * sin(y))
-)
+julia> Enzyme.EnzymeRules.@easy_rule(f(x,y),
+           (2*x, @Constant),        # df1/dx, #df1/dy
+           (cos(y), x * sin(y)),    # df2/dx, #df2/dy
+       )
 
-function g(x, y)
-    return f(x, y)[2]
-end
+julia> g(x, y) = f(x, y)[2];
 
-Enzyme.gradient(Reverse, g, 2.0, 3.0)
-
-# output
+julia> Enzyme.gradient(Reverse, g, 2.0, 3.0)
 (-0.9899924966004454, 0.2822400161197344)
 ```
 
@@ -350,37 +342,33 @@ Finally Enzyme supports general-purpose EnzymeRules. For a given function, one c
 Like before, Enzyme takes a specification of the function the rule applies to, and passes various configuration data for full user-level customization.
 
 ```jldoctest genrules
-using Enzyme
+julia> using Enzyme
 
-function mysin(x)
-    return sin(x)
-end
+julia> mysin(x) = sin(x);
 
-function Enzyme.EnzymeRules.forward(config, ::Const{typeof(mysin)}, ::Type, x)
-    # If we don't need the original result, let's avoid computing it (and print)
-    if !needs_primal(config)
-        println("Avoiding computing sin!")
-        return cos(x.val) * x.dval
-    else
-        println("Still computing sin")
-        return Duplicated(sin(x.val), cos(x.val) * x.dval)
-    end
-end
+julia> function Enzyme.EnzymeRules.forward(config, ::Const{typeof(mysin)}, ::Type, x)
+           # If we don't need the original result, let's avoid computing it (and print)
+           if !needs_primal(config)
+               println("Avoiding computing sin!")
+               return cos(x.val) * x.dval
+           else
+               println("Still computing sin")
+               return Duplicated(sin(x.val), cos(x.val) * x.dval)
+           end
+       end
 
-function mysquare(x)
-    y = mysin(x)
-    return y*y
-end
+julia> function mysquare(x)
+           y = mysin(x)
+           return y*y
+       end;
 
-# Prints "Avoiding computing sin!"
-Enzyme.gradient(Forward, mysin, 2.0);
-
-# Prints "Still computing sin =/" as d/dx sin(x)^2 = 2 * sin(x) * sin'(x)
-# so the original result is still needed
-Enzyme.gradient(Forward, mysquare, 2.0);
-
-# output
+julia> Enzyme.gradient(Forward, mysin, 2.0)
 Avoiding computing sin!
+(-0.4161468365471424,)
+
+julia> # Since d/dx sin(x)^2 = 2 * sin(x) * sin'(x)
+       # so the original result is still needed
+       Enzyme.gradient(Forward, mysquare, 2.0)
 Still computing sin
 (-0.7568024953079283,)
 ```
