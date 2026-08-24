@@ -1506,4 +1506,84 @@ function abstract_call_known(
     )
 end
 
+"""
+    HAS_INVOKE_RULES
+
+Whether custom rules can be called through their natively compiled
+`CodeInstance` instead of being codegen'd into the calling module; see
+`Enzyme.Compiler.invoke_codegen!`. Requires the Julia 1.12 runtime API:
+`jl_add_codeinst_to_jit` for handing an externally inferred `CodeInstance` to
+Julia's JIT, and `jl_read_codeinst_invoke` for reading back its specialized
+entry point.
+"""
+const HAS_INVOKE_RULES = VERSION >= v"1.12-"
+
+"""
+    InvokeRules
+
+Master switch for calling custom rules through their natively compiled
+`CodeInstance` (see `Enzyme.Compiler.invoke_codegen!`). Set to `false` to
+restore codegen'ing the rule body into the calling module via
+`nested_codegen!`.
+"""
+const InvokeRules = Ref(true)
+
+@inline invoke_rules_requested() = HAS_INVOKE_RULES && InvokeRules[]
+
+@static if HAS_INVOKE_RULES
+
+    """
+        add_codeinsts_to_jit!(interp, ci::CodeInstance)
+
+    Hand `ci` and its transitive `:invoke` callees, as inferred by `interp`, to Julia's
+    JIT (`jl_add_codeinst_to_jit`), so that reading `ci`'s entry point compiles it as
+    native code. Mirrors `Core.Compiler.add_codeinsts_to_jit!`, taking the sources from
+    `typeinf_code` (as `GPUCompiler.ci_cache_populate` does) rather than from a codegen
+    cache, which `EnzymeInterpreter` does not keep.
+    """
+    function add_codeinsts_to_jit!(@nospecialize(interp::EnzymeInterpreter), ci::Core.CodeInstance)
+        CC = Core.Compiler
+        workqueue = CC.CompilationQueue(; interp)
+        push!(workqueue, ci)
+        while !isempty(workqueue)
+            callee = pop!(workqueue)
+            CC.isinspected(workqueue, callee) && continue
+            CC.markinspected!(workqueue, callee)
+            CC.ci_has_invoke(callee) && continue
+            CC.use_const_api(callee) && continue
+            mi = CC.get_ci_mi(callee)
+            src = CC.typeinf_code(interp, mi, true)
+            src isa Core.CodeInfo || continue
+            CC.collectinvokes!(workqueue, src, CC.sptypes_from_meth_instance(mi))
+            if iszero(ccall(:jl_mi_cache_has_ci, Cint, (Any, Any), mi, callee))
+                # jl_add_codeinst_to_jit requires the CodeInstance to be rooted and cached
+                CC.code_cache(interp)[mi] = callee
+            end
+            ccall(:jl_add_codeinst_to_jit, Cvoid, (Any, Any), callee, src)
+        end
+        return nothing
+    end
+
+    """
+        codeinst_specptr(ci::CodeInstance)
+
+    Compile `ci` if needed and return its specialized-signature entry point, or
+    `C_NULL` if it has none (e.g. it only got a boxed `jl_fptr_args` entry).
+    """
+    function codeinst_specptr(ci::Core.CodeInstance)
+        specsigflags = Ref{UInt8}(0)
+        invoke = Ref{Ptr{Cvoid}}(C_NULL)
+        specptr = Ref{Ptr{Cvoid}}(C_NULL)
+        ccall(
+            :jl_read_codeinst_invoke, Cvoid,
+            (Any, Ptr{UInt8}, Ptr{Ptr{Cvoid}}, Ptr{Ptr{Cvoid}}, Cint),
+            ci, specsigflags, invoke, specptr, #= waitcompile =# 1
+        )
+        # bit 0: specptr is the specialized signature (rather than a jl_fptr_args entry)
+        (specsigflags[] & 0b1) == 0 && return C_NULL
+        return specptr[]
+    end
+
+end
+
 end
