@@ -43,11 +43,52 @@ end
     return (10 * 3 * xv^2 * dret.val,)
 end
 
+# an argument with both a tracked pointer and data, i.e. with inline roots on 1.12+
+struct Scale
+    v::Vector{Float64}
+    c::Float64
+end
+
+scale_dot(p::Scale, x) = p.c * p.v[1] * x
+
+@noinline function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfig, func::Const{typeof(scale_dot)}, ::Type{<:Active}, p::Const{Scale}, x::Active
+    )
+    primal = EnzymeRules.needs_primal(config) ? func.val(p.val, x.val) : nothing
+    return EnzymeRules.AugmentedReturn(primal, nothing, (p.val.c * p.val.v[1],))
+end
+
+@noinline function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfig, func::Const{typeof(scale_dot)}, dret::Active, tape, p::Const{Scale}, x::Active
+    )
+    return (nothing, 10 * tape[1] * dret.val)
+end
+
+function scale_twice(p, x)
+    y = scale_dot(p, x)
+    p.v[1] = 5.0
+    return y + scale_dot(p, x)
+end
+
+# in a loop, the roots of the overwritten argument come back from the tape
+function scale_loop(p, x)
+    s = 0.0
+    for i in 1:3
+        s += scale_dot(p, x)
+        p.v[1] += 1.0
+    end
+    return s
+end
+
 @testset "rule inlining annotations" begin
     for f in (cube_inline, cube_noinline, cube_default, cube_big)
         @test autodiff(ForwardWithPrimal, f, Duplicated(2.0, 1.0)) == (120.0, 8.0)
     end
     @test autodiff(Reverse, cube_noinline, Active(2.0))[1][1] == 120.0
+    # 10 * (2 * 3) + 10 * (2 * 5), with the argument overwritten between the two calls
+    @test autodiff(Reverse, scale_twice, Const(Scale([3.0], 2.0)), Active(1.5))[1][2] == 160.0
+    # 10 * 2 * (3 + 4 + 5)
+    @test autodiff(Reverse, scale_loop, Const(Scale([3.0], 2.0)), Active(1.5))[1][2] == 240.0
 
     @static if Enzyme.Compiler.Interpreter.HAS_INVOKE_RULES
         world = Base.get_world_counter()

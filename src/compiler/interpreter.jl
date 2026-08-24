@@ -450,14 +450,10 @@ function Core.Compiler.abstract_call_gf_by_type(
 end
 
 
-"""
-    HAS_INVOKE_CI_LOWERING
-
-Whether `invoke(f, ci::CodeInstance, args...)` is both understood by inference
-(`Core.Compiler.InvokeCICallInfo`, Julia 1.12+) and lowered by the inliner to a direct
-`:invoke` (Julia 1.13+). On 1.12 the inliner only lowers `Core.invoke` calls carrying an
-`InvokeCallInfo`, so such calls stay runtime `invoke` calls whatever inference says.
-"""
+# Whether `invoke(f, ci::CodeInstance, args...)` is both understood by inference
+# (`Core.Compiler.InvokeCICallInfo`, Julia 1.12+) and lowered by the inliner to a direct
+# `:invoke` (Julia 1.13+). On 1.12 the inliner only lowers `Core.invoke` calls carrying an
+# `InvokeCallInfo`, so such calls stay runtime `invoke` calls whatever inference says.
 const HAS_INVOKE_CI_LOWERING = isdefined(Core.Compiler, :InvokeCICallInfo) && VERSION >= v"1.13-"
 
 @static if HAS_INVOKE_CI_LOWERING
@@ -1559,16 +1555,11 @@ function abstract_call_known(
     )
 end
 
-"""
-    HAS_INVOKE_RULES
-
-Whether custom rules can be called through their natively compiled
-`CodeInstance` instead of being codegen'd into the calling module; see
-`Enzyme.Compiler.invoke_codegen!`. Requires the Julia 1.12 runtime API:
-`jl_add_codeinst_to_jit` for handing an externally inferred `CodeInstance` to
-Julia's JIT, and `jl_read_codeinst_invoke` for reading back its specialized
-entry point.
-"""
+# Whether custom rules can be called through their natively compiled CodeInstance instead
+# of being codegen'd into the calling module (see `Enzyme.Compiler.invoke_codegen!`).
+# Requires the Julia 1.12 runtime API: `jl_add_codeinst_to_jit` for handing an externally
+# inferred CodeInstance to Julia's JIT, and `jl_read_codeinst_invoke` for reading back its
+# specialized entry point.
 const HAS_INVOKE_RULES = VERSION >= v"1.12-"
 
 @static if HAS_INVOKE_RULES
