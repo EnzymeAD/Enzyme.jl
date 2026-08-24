@@ -140,7 +140,7 @@ end
 
     @testset "subarrays" begin
         x = randn(2, 3)
-        # note: bottom right 2x2 submatrix ommited from y but will be present in v
+        # note: bottom right 2x2 submatrix omitted from y but will be present in v
         y = @views (x[:, 1], x[1, :])
         test_to_vec(y)
         v, from_vec = to_vec(y)
