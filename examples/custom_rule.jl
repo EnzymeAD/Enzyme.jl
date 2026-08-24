@@ -286,6 +286,23 @@ EnzymeRules.inactive(::typeof(double), args...) = nothing
 
 autodiff(Forward, x -> x + double(x), Duplicated(2.0, 1.0)) # mathematically should be 3.0, inactive rule causes it to be 1.0
 
+# ## How rules are compiled
+
+# A rule is an ordinary Julia method, and how the derivative code reaches it follows the
+# method's inlining annotation, just as for a regular call:
+#
+# - a rule declared `@inline` has its LLVM IR emitted into the differentiated function and
+#   inlined there, so the optimizer sees through it. This is what you want for small rules
+#   such as the ones above, where the call itself would dominate.
+# - a rule declared `@noinline` is compiled once, natively, like any other Julia method, and
+#   the differentiated function calls that compiled code directly (Julia 1.12 and newer).
+#   Prefer this for large rules, or rules with a large callee graph: they are compiled
+#   once per session rather than once per differentiated function using them.
+# - an unannotated rule follows Julia's own inlining heuristics for that method, i.e. it is
+#   inlined if Julia would inline it and called otherwise.
+#
+# On Julia versions before 1.12 every rule is emitted into the differentiated function.
+
 # ## Testing our rules
 
 # We can test our rules using finite differences using [`EnzymeTestUtils.test_forward`](@ref)

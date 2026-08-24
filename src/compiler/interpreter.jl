@@ -1571,30 +1571,19 @@ entry point.
 """
 const HAS_INVOKE_RULES = VERSION >= v"1.12-"
 
-"""
-    InvokeRules
-
-Master switch for calling custom rules through their natively compiled
-`CodeInstance` (see `Enzyme.Compiler.invoke_codegen!`). Set to `false` to
-restore codegen'ing the rule body into the calling module via
-`nested_codegen!`.
-"""
-const InvokeRules = Ref(true)
-
-@inline invoke_rules_requested() = HAS_INVOKE_RULES && InvokeRules[]
-
 @static if HAS_INVOKE_RULES
 
     """
-        add_codeinsts_to_jit!(interp, ci::CodeInstance)
+        add_codeinsts_to_jit!(interp, ci::CodeInstance; root_src = nothing)
 
     Hand `ci` and its transitive `:invoke` callees, as inferred by `interp`, to Julia's
     JIT (`jl_add_codeinst_to_jit`), so that reading `ci`'s entry point compiles it as
     native code. Mirrors `Core.Compiler.add_codeinsts_to_jit!`, taking the sources from
     `typeinf_code` (as `GPUCompiler.ci_cache_populate` does) rather than from a codegen
-    cache, which `EnzymeInterpreter` does not keep.
+    cache, which `EnzymeInterpreter` does not keep; `root_src` supplies `ci`'s own source
+    when the caller already has it.
     """
-    function add_codeinsts_to_jit!(@nospecialize(interp::EnzymeInterpreter), ci::Core.CodeInstance)
+    function add_codeinsts_to_jit!(@nospecialize(interp::EnzymeInterpreter), ci::Core.CodeInstance; root_src::Union{Nothing, Core.CodeInfo} = nothing)
         CC = Core.Compiler
         workqueue = CC.CompilationQueue(; interp)
         push!(workqueue, ci)
@@ -1605,7 +1594,7 @@ const InvokeRules = Ref(true)
             CC.ci_has_invoke(callee) && continue
             CC.use_const_api(callee) && continue
             mi = CC.get_ci_mi(callee)
-            src = CC.typeinf_code(interp, mi, true)
+            src = callee === ci && root_src !== nothing ? root_src : CC.typeinf_code(interp, mi, true)
             src isa Core.CodeInfo || continue
             CC.collectinvokes!(workqueue, src, CC.sptypes_from_meth_instance(mi))
             if iszero(ccall(:jl_mi_cache_has_ci, Cint, (Any, Any), mi, callee))
@@ -1618,12 +1607,14 @@ const InvokeRules = Ref(true)
     end
 
     """
-        codeinst_specptr(ci::CodeInstance)
+        codeinst_entry(ci::CodeInstance) -> (specptr, invoke)
 
-    Compile `ci` if needed and return its specialized-signature entry point, or
-    `C_NULL` if it has none (e.g. it only got a boxed `jl_fptr_args` entry).
+    Compile `ci` if needed and return its entry points: the specialized-signature
+    one (`C_NULL` if it has none, e.g. because it only got a boxed `jl_fptr_args`
+    entry) and the boxed `invoke(F, args, nargs, ci)` one (`C_NULL` if it could
+    not be compiled at all).
     """
-    function codeinst_specptr(ci::Core.CodeInstance)
+    function codeinst_entry(ci::Core.CodeInstance)
         specsigflags = Ref{UInt8}(0)
         invoke = Ref{Ptr{Cvoid}}(C_NULL)
         specptr = Ref{Ptr{Cvoid}}(C_NULL)
@@ -1633,8 +1624,8 @@ const InvokeRules = Ref(true)
             ci, specsigflags, invoke, specptr, #= waitcompile =# 1
         )
         # bit 0: specptr is the specialized signature (rather than a jl_fptr_args entry)
-        (specsigflags[] & 0b1) == 0 && return C_NULL
-        return specptr[]
+        specialized = (specsigflags[] & 0b1) != 0
+        return (specialized ? specptr[] : C_NULL, invoke[])
     end
 
 end
