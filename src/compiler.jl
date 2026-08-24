@@ -1490,6 +1490,12 @@ function nested_codegen!(
     # Declare the function in mod so it can be called
     lfn = functions(otherMod)[entry]
     if alwaysinline
+        # A method declared `@noinline` carries the attribute; here it is inlined regardless.
+        LLVM.API.LLVMRemoveEnumAttributeAtIndex(
+            lfn,
+            reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
+            kind(EnumAttribute("noinline")),
+        )
         push!(function_attributes(lfn), EnumAttribute("alwaysinline"))
     end
 
@@ -1609,15 +1615,19 @@ function rule_specsig(mi::Core.MethodInstance, @nospecialize(RT::Type))
 end
 
 # The function `customrules.jl` calls a rule through, shaped like the codegen'd rule
-# function used to be: the specsig, swift calling convention, and the `enzymejl_mi` /
-# `enzymejl_rt` attributes the rule handlers read.
-function rule_function!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), name::String)::LLVM.Function
+# function used to be: the specsig, swift calling convention, the `enzymejl_mi` /
+# `enzymejl_rt` attributes the rule handlers read, and the per-parameter attributes
+# `prepare_llvm` gives every compiled function (`enzymejl_parmtype*`, and the
+# `enzymejl_rooted_typ` / `enzymejl_returnRoots` markers by which `fix_decayaddr!`
+# recognizes root-carrying arguments).
+function rule_function!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), name::String, world::UInt)::LLVM.Function
     retty, params, param_attrs = rule_specsig(mi, RT)
     fn = LLVM.Function(mod, name, LLVM.FunctionType(retty, params))
     callconv!(fn, LLVM.API.LLVMSwiftCallConv)
     fattrs = function_attributes(fn)
     push!(fattrs, StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))))
     push!(fattrs, StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(RT)))))
+    push!(fattrs, StringAttribute("enzymejl_world", string(world)))
     if RT === Union{}
         push!(fattrs, EnumAttribute("noreturn"))
     end
@@ -1626,11 +1636,30 @@ function rule_function!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize
             push!(parameter_attributes(fn, i), attr)
         end
     end
+
+    # Classifying the arguments against the derived signature also checks the two agree.
+    _, sret, returnRoots = get_return_info(RT)
+    jlargs = classify_arguments(mi.specTypes, LLVM.function_type(fn), sret !== nothing, returnRoots !== nothing, true, UInt64[], mi, world)
+    for arg in jlargs
+        if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
+            continue
+        end
+        pattrs = parameter_attributes(fn, arg.codegen.i)
+        push!(pattrs, StringAttribute("enzymejl_parmtype", string(convert(UInt, unsafe_to_pointer(arg.typ)))))
+        push!(pattrs, StringAttribute("enzymejl_parmtype_str", string(arg.typ)))
+        push!(pattrs, StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))))
+        if arg.rooted_typ !== nothing
+            push!(pattrs, StringAttribute("enzymejl_rooted_typ", string(convert(UInt, unsafe_to_pointer(arg.rooted_typ)))))
+        end
+    end
+    if returnRoots !== nothing
+        push!(parameter_attributes(fn, 2), StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots).parameters[1]))))
+    end
     return fn
 end
 
 """
-    declare_rule_specsig!(mod, mi, RT, specptr, name)
+    declare_rule_specsig!(mod, mi, RT, specptr, name, world)
 
 Declare in `mod` the natively compiled rule `mi` (return type `RT`, specialized
 entry point `specptr`) with the signature Julia's codegen gives it, see
@@ -1638,14 +1667,14 @@ entry point `specptr`) with the signature Julia's codegen gives it, see
 `enzymejl_needs_restoration`, which `restore_lookups` turns into the address
 once the calling module is final.
 """
-function declare_rule_specsig!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), specptr::Ptr{Cvoid}, name::String)::LLVM.Function
-    fn = rule_function!(mod, mi, RT, name)
+function declare_rule_specsig!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), specptr::Ptr{Cvoid}, name::String, world::UInt)::LLVM.Function
+    fn = rule_function!(mod, mi, RT, name, world)
     push!(function_attributes(fn), StringAttribute("enzymejl_needs_restoration", string(convert(UInt, specptr))))
     return fn
 end
 
 """
-    define_rule_jlcall!(mod, mi, RT, ci, invoke, name)
+    define_rule_jlcall!(mod, mi, RT, ci, invoke, name, world)
 
 For a rule whose `CodeInstance` `ci` got no specialized entry point, define in
 `mod` a function with the signature Julia's codegen would have given it (see
@@ -1659,7 +1688,7 @@ back, or split into the `sret` buffer and its return roots.
 Returns `nothing` for a small `Union` return, which the adapter does not
 handle.
 """
-function define_rule_jlcall!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), ci::Core.CodeInstance, invoke::Ptr{Cvoid}, name::String)::Union{Nothing, LLVM.Function}
+function define_rule_jlcall!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), ci::Core.CodeInstance, invoke::Ptr{Cvoid}, name::String, world::UInt)::Union{Nothing, LLVM.Function}
     T_int32 = LLVM.Int32Type()
     T_int64 = LLVM.Int64Type()
     T_jlvalue = LLVM.StructType(LLVMType[])
@@ -1672,7 +1701,7 @@ function define_rule_jlcall!(mod::LLVM.Module, mi::Core.MethodInstance, @nospeci
         return nothing
     end
 
-    fn = rule_function!(mod, mi, RT, name)
+    fn = rule_function!(mod, mi, RT, name, world)
     linkage!(fn, LLVM.API.LLVMInternalLinkage)
     push!(function_attributes(fn), EnumAttribute("alwaysinline"))
     fparams = collect(parameters(fn))
@@ -1820,9 +1849,9 @@ function invoke_codegen!(
 
     name = "ejl_rule_" * GPUCompiler.safe_name(string(funcspec.def.name)) * "_" * string(convert(UInt, pointer_from_objref(funcspec)))
     fn = if specptr != C_NULL
-        declare_rule_specsig!(mod, funcspec, ci.rettype, specptr, name)
+        declare_rule_specsig!(mod, funcspec, ci.rettype, specptr, name, world)
     elseif invoke != C_NULL
-        define_rule_jlcall!(mod, funcspec, ci.rettype, ci, invoke, name)
+        define_rule_jlcall!(mod, funcspec, ci.rettype, ci, invoke, name, world)
     else
         nothing
     end
