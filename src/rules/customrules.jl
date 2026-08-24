@@ -1151,7 +1151,7 @@ end
 
 
     enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
-    llvmf = nested_codegen!(enzyme_ctx, mode, mod, fmi, world, true)
+    llvmf = invoke_codegen!(enzyme_ctx, mode, mod, fmi, world, true)
 
     orig_swiftself = has_swiftself(LLVM.called_operand(orig))
 
@@ -1788,7 +1788,7 @@ function enzyme_custom_common_rev(
 
     if forward
         enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
-        llvmf = nested_codegen!(enzyme_ctx, mode, mod, ami, world, true)
+        llvmf = invoke_codegen!(enzyme_ctx, mode, mod, ami, world, true)
         @assert llvmf !== nothing
         rev_RT = nothing
         final_mi = ami
@@ -1832,7 +1832,7 @@ function enzyme_custom_common_rev(
         rmi = rmi::Core.MethodInstance
         rev_RT = rev_RT::Type
         enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
-        llvmf = nested_codegen!(enzyme_ctx, mode, mod, rmi, world, true)
+        llvmf = invoke_codegen!(enzyme_ctx, mode, mod, rmi, world, true)
         final_mi = rmi
     end
 
@@ -1975,13 +1975,21 @@ function enzyme_custom_common_rev(
                     extract_roots_from_value!(B, tape, tape_al)
                 end
 
-                al0 = al = emit_allocobj!(B, TapeT, "tape.$TapeT")
-                al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
-                store!(B, tape, al)
-                if tape_roots == 0 && any_jltypes(llty)
-                    emit_writebarrier!(B, get_julia_inner_types(B, al0, tape))
+                if tape_roots == 0 && !any_jltypes(llty)
+                    # The rule takes the tape by reference as readonly nocapture, so a
+                    # pointer-free tape can live in a stack slot.
+                    al = alloca!(alloctx, llty, "tape.$TapeT")
+                    store!(B, tape, al)
+                    tape = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
+                else
+                    al0 = al = emit_allocobj!(B, TapeT, "tape.$TapeT")
+                    al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
+                    store!(B, tape, al)
+                    if tape_roots == 0 && any_jltypes(llty)
+                        emit_writebarrier!(B, get_julia_inner_types(B, al0, tape))
+                    end
+                    tape = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
                 end
-                tape = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
             end
             insert!(args, tape_idx, tape)
             if tape_al !== nothing

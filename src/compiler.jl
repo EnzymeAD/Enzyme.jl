@@ -1467,7 +1467,7 @@ function nested_codegen!(
     end
 
     check_ir(interp, job, otherMod)
-            
+
     if DumpPreNestedOpt[]
 	API.EnzymeDumpModuleRef(otherMod.ref)
     end
@@ -1516,6 +1516,184 @@ function nested_codegen!(
 
     enzyme_context.nested_cache[cache_key] = LLVM.name(decl)
     return decl
+end
+
+@static if Interpreter.HAS_INVOKE_RULES
+
+"""
+    declare_rule_specsig!(mod, mi, RT, specptr, name)
+
+Declare in `mod` the natively compiled rule `mi` (return type `RT`, entry
+point `specptr`) with the signature Julia's codegen gives its specialized
+entry (`get_specsig_function`): `[sret][return roots][pgcstack] args...`, where
+
+- a return that deserves an `sret` is passed as a leading pointer carrying the
+  `sret` attribute (on 1.12+ the buffer holds the layout with tracked pointers
+  stripped, which travel through the return-roots pointer instead); a small
+  `Union` return instead takes its
+  byte buffer as leading pointer and returns `{boxed-or-null, selector}`; a
+  boxed return comes back as a tracked pointer; anything else is returned as
+  the value's LLVM type;
+- Julia's JIT compiles with `gcstack_arg` and the swift calling convention, so
+  the current `pgcstack` follows as a `swiftself` argument;
+- ghost and `Type{T}` arguments are omitted, boxed ones are tracked pointers,
+  aggregates go by reference in the derived address space (followed by their
+  inline roots on 1.12+), scalars by value.
+
+These are the same rules `classify_arguments`/`get_return_info` apply to every
+primal, and `enzyme_custom_setup_args` builds the rule arguments by them, so
+the declaration lines up with what `customrules.jl` passes. The declaration
+carries the `enzymejl_mi`/`enzymejl_rt` attributes the rule handlers read, and
+`enzymejl_needs_restoration`, which `restore_lookups` resolves to `specptr`
+once the calling module is final.
+"""
+function declare_rule_specsig!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), specptr::Ptr{Cvoid}, name::String)::LLVM.Function
+    T_void = LLVM.VoidType()
+    T_int8 = LLVM.Int8Type()
+    T_ptr = LLVM.PointerType(T_int8)
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_derived = LLVM.PointerType(T_jlvalue, Derived)
+
+    params = LLVMType[]
+    param_attrs = Vector{LLVM.Attribute}[]
+
+    rt, sret, returnRoots = get_return_info(RT)
+    if sret !== nothing
+        if is_sret_union(RT)
+            push!(params, T_ptr)
+            push!(param_attrs, LLVM.Attribute[StringAttribute("enzymejl_sret_union_bytes", string(union_alloca_type(RT)))])
+            retty = LLVM.StructType(LLVMType[T_prjlvalue, T_int8])
+        else
+            # As in Julia's codegen, the sret attribute carries the full type; the buffer
+            # itself holds the layout with tracked pointers stripped when there are roots,
+            # and `recombine_value_ptr!` reads the full type off the attribute.
+            sret_lty = convert(LLVMType, eltype(sret))
+            push!(params, T_ptr)
+            push!(param_attrs, LLVM.Attribute[TypeAttribute("sret", sret_lty), EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("noundef")])
+            if returnRoots !== nothing
+                push!(params, T_ptr)
+                push!(param_attrs, LLVM.Attribute[EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("noundef")])
+            end
+            retty = T_void
+        end
+    elseif rt === Nothing
+        retty = T_void
+    elseif rt === Any || GPUCompiler.deserves_retbox(RT)
+        retty = T_prjlvalue
+    else
+        retty = convert(LLVMType, rt)
+    end
+
+    push!(params, T_ptr)
+    push!(param_attrs, LLVM.Attribute[EnumAttribute("swiftself"), EnumAttribute("nonnull")])
+
+    for T in (mi.specTypes::DataType).parameters
+        if isghostty(T) || Core.Compiler.isconstType(T)
+            continue
+        end
+        lty = convert(LLVMType, T; allow_boxed = true)
+        if lty isa LLVM.PointerType
+            push!(params, lty)
+            push!(param_attrs, LLVM.Attribute[])
+        elseif lty isa LLVM.StructType || lty isa LLVM.ArrayType
+            push!(params, T_derived)
+            push!(param_attrs, LLVM.Attribute[EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("readonly")])
+            if inline_roots_type(T) != 0
+                push!(params, T_ptr)
+                push!(param_attrs, LLVM.Attribute[EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("readonly")])
+            end
+        else
+            push!(params, lty)
+            push!(param_attrs, LLVM.Attribute[])
+        end
+    end
+
+    fn = LLVM.Function(mod, name, LLVM.FunctionType(retty, params))
+    callconv!(fn, LLVM.API.LLVMSwiftCallConv)
+    fattrs = function_attributes(fn)
+    push!(fattrs, StringAttribute("enzymejl_needs_restoration", string(convert(UInt, specptr))))
+    push!(fattrs, StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))))
+    push!(fattrs, StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(RT)))))
+    if RT === Union{}
+        push!(fattrs, EnumAttribute("noreturn"))
+    end
+    for (i, attrs) in enumerate(param_attrs)
+        for attr in attrs
+            push!(parameter_attributes(fn, i), attr)
+        end
+    end
+    return fn
+end
+
+"""
+    invoke_codegen!(enzyme_context, mode, mod, funcspec, world, alwaysinline = false)
+
+Make the rule `funcspec` callable from `mod` without emitting its body into
+the module: infer it with the same interpreter that selected it, hand the
+resulting `CodeInstance` (and its callees) to Julia's JIT, and declare its
+specialized entry point in `mod` via `declare_rule_specsig!`. The rule is thus
+compiled once, natively, for the whole process, and called directly through
+its specsig — no boxing, no dispatch — while callers keep building arguments
+exactly as for a `nested_codegen!`'d rule.
+
+Falls back to `nested_codegen!` of the rule on Julia versions without the
+required runtime API (`Interpreter.HAS_INVOKE_RULES`), when
+`Interpreter.InvokeRules` is disabled, when precompiling, for non-host
+modules, or when the rule gets no specialized entry point.
+"""
+function invoke_codegen!(
+    enzyme_context::EnzymeContext,
+    mode::API.CDerivativeMode,
+    mod::LLVM.Module,
+    funcspec::Core.MethodInstance,
+    world::UInt,
+    alwaysinline::Bool=false,
+)
+    if !Interpreter.invoke_rules_requested() || !(funcspec.specTypes isa DataType) ||
+       Base.generating_output() || !startswith(LLVM.triple(mod), string(Sys.ARCH))
+        return nested_codegen!(enzyme_context, mode, mod, funcspec, world, alwaysinline)
+    end
+
+    if haskey(enzyme_context.nested_cache, funcspec)
+        fname = enzyme_context.nested_cache[funcspec]
+        if haskey(functions(mod), fname)
+            return functions(mod)[fname]
+        end
+    end
+
+    interp = primal_interp_world(mode == API.DEM_ForwardMode ? Forward : Reverse, world)
+    ci = Core.Compiler.typeinf_ext(interp, funcspec, Core.Compiler.SOURCE_MODE_NOT_REQUIRED)
+    if ci === nothing
+        return nested_codegen!(enzyme_context, mode, mod, funcspec, world, alwaysinline)
+    end
+    Interpreter.add_codeinsts_to_jit!(interp, ci)
+    specptr = Interpreter.codeinst_specptr(ci)
+    if specptr == C_NULL
+        return nested_codegen!(enzyme_context, mode, mod, funcspec, world, alwaysinline)
+    end
+
+    # The native code stays valid as long as its CodeInstance does.
+    push!(enzyme_context.edges, funcspec)
+    push!(enzyme_context.edges, ci)
+
+    name = "ejl_rule_" * GPUCompiler.safe_name(string(funcspec.def.name)) * "_" * string(convert(UInt, pointer_from_objref(funcspec)))
+    fn = declare_rule_specsig!(mod, funcspec, ci.rettype, specptr, name)
+    enzyme_context.nested_cache[funcspec] = name
+    return fn
+end
+
+else
+
+invoke_codegen!(
+    enzyme_context::EnzymeContext,
+    mode::API.CDerivativeMode,
+    mod::LLVM.Module,
+    funcspec::Core.MethodInstance,
+    world::UInt,
+    alwaysinline::Bool=false,
+) = nested_codegen!(enzyme_context, mode, mod, funcspec, world, alwaysinline)
+
 end
 
 function removed_ret_parms(orig::LLVM.CallInst)
