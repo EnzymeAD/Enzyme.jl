@@ -450,6 +450,39 @@ function Core.Compiler.abstract_call_gf_by_type(
 end
 
 
+"""
+    HAS_INVOKE_CI_LOWERING
+
+Whether `invoke(f, ci::CodeInstance, args...)` is both understood by inference
+(`Core.Compiler.InvokeCICallInfo`, Julia 1.12+) and lowered by the inliner to a direct
+`:invoke` (Julia 1.13+). On 1.12 the inliner only lowers `Core.invoke` calls carrying an
+`InvokeCallInfo`, so such calls stay runtime `invoke` calls whatever inference says.
+"""
+const HAS_INVOKE_CI_LOWERING = isdefined(Core.Compiler, :InvokeCICallInfo) && VERSION >= v"1.13-"
+
+@static if HAS_INVOKE_CI_LOWERING
+    """
+        invoked_ci_needs_rule(interp, ci::CodeInstance)::Bool
+
+    Whether the signature `invoke(f, ci, args...)` targets is one Enzyme has to see as a
+    call: a primitive, or one with an inactive, forward or reverse rule under `interp`.
+    """
+    function invoked_ci_needs_rule(@nospecialize(interp::EnzymeInterpreter), ci::Core.CodeInstance)::Bool
+        CC = Core.Compiler
+        abi = @static if isdefined(Core.Compiler, :get_ci_abi)
+            CC.get_ci_abi(ci)
+        else
+            CC.get_ci_mi(ci).specTypes
+        end
+        specTypes = simplify_kw(abi)
+        is_primitive_func(specTypes) && return true
+        method_table = CC.method_table(interp)
+        return (interp.inactive_rules && EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)) ||
+            (interp.forward_rules && EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)) ||
+            (interp.reverse_rules && EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table))
+    end
+end
+
 let # overload `inlining_policy`
     @static if VERSION ≥ v"1.11.0-DEV.879"
         sigs_ex = :(
@@ -1279,6 +1312,26 @@ function abstract_call_known(
 ) where Handler
 
     (; fargs, argtypes) = arginfo
+
+    @static if HAS_INVOKE_CI_LOWERING
+        # `invoke(f, ci::CodeInstance, args...)` is analyzed by `abstract_invoke`, which
+        # neither goes through `abstract_call_gf_by_type` (so the call would not get its
+        # rule marking) nor targets the CodeInstance Enzyme inferred for the signature (so
+        # its code would be emitted a second time, without the `enzymejl_mi` attributes the
+        # rule handlers key on). When the invoked signature has a rule, that rule defines
+        # the call's semantics regardless of which method the CodeInstance pinned, so
+        # analyze it as the ordinary call `f(args...)` instead.
+        if f === Core.invoke && length(argtypes) >= 3
+            citype = argtypes[3]
+            if citype isa Core.Const && citype.val isa Core.CodeInstance &&
+               invoked_ci_needs_rule(interp, citype.val)
+                argtypes′ = Core.Compiler.invoke_rewrite(argtypes)
+                fargs′ = fargs === nothing ? nothing : Core.Compiler.invoke_rewrite(fargs)
+                f′ = Core.Compiler.singleton_type(argtypes′[1])
+                return abstract_call_known(interp, f′, ArgInfo(fargs′, argtypes′), si, sv, get_max_methods(interp, f′, sv))
+            end
+        end
+    end
 
     if interp.within_autodiff_rewrite && f === Enzyme.within_autodiff
         if length(argtypes) != 1
