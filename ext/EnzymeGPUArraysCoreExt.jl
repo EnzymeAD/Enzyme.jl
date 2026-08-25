@@ -59,6 +59,21 @@ end
 @inline _isconst(config, x::Annotation) =
     EnzymeRules.runtime_activity(config) && x.dval === x.val
 
+# One value per batch element.
+@inline _bsplat(::Val{1}, v) = v
+@inline _bsplat(::Val{N}, v) where {N} = ntuple(Returns(v), Val(N))
+
+#=
+Shadow of the returned output argument. Enzyme asks for one whenever the caller
+gave the call an active return activity, which it does independently of the
+output's own activity: a dynamically dispatched `generic_matmatmul!` gets
+`Duplicated` guessed from its return type even with a `Const` C. A constant has
+no shadow of its own, and Enzyme's representation of one is the primal itself,
+which is what `_isconst` above recognizes.
+=#
+@inline _outshadow(_, out::Annotation) = out.dval
+@inline _outshadow(config, out::Const) = _bsplat(Val(width(config)), out.val)
+
 #=
 Augmented return for the rules here: output argument plus a tape. Enzyme checks
 the primal/shadow types, so get them from `augmented_rule_return_type`. Use the
@@ -68,7 +83,7 @@ the primal/shadow types, so get them from `augmented_rule_return_type`. Use the
 @inline function _augreturn(config, ::Type{RT}, out::Annotation, tape) where {RT}
     return augmented_rule_return_type(config, RT)(
         needs_primal(config) ? out.val : nothing,
-        needs_shadow(config) ? out.dval : nothing,
+        needs_shadow(config) ? _outshadow(config, out) : nothing,
         tape,
     )
 end

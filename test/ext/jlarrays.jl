@@ -1,5 +1,5 @@
 using Enzyme, Test, JLArrays
-using LinearAlgebra: mul!, dot, transpose, adjoint, Symmetric
+using LinearAlgebra: LinearAlgebra, mul!, dot, transpose, adjoint, Symmetric
 
 function jlres(x)
     2 * collect(x)
@@ -122,6 +122,53 @@ output and doesn't happen on CUDA.
             Const(jl(randn(k, n))),
         )
         @test all(collect(dA) .≈ 7.0)
+    end
+
+    #=
+    The same `Const` output, but with `generic_matmatmul!` reached through a
+    dynamic dispatch, which is what some GPUArrays versions emit out of `mul!`.
+    The call's return activity is then guessed from its return type alone:
+    `Duplicated`, whatever C's own activity is, so Enzyme asks the rule for the
+    shadow of a `Const` output.
+    =#
+    @testset "Const output buffer, dynamic dispatch" begin
+        @static if VERSION < v"1.12.0-DEV"
+            function dyn_gemm!(C, A, B)
+                return Base.inferencebarrier(LinearAlgebra.generic_matmatmul!)(
+                    C, 'N', 'N', A, B, LinearAlgebra.MulAddMul(true, false)
+                )
+            end
+        else
+            function dyn_gemm!(C, A, B)
+                return Base.inferencebarrier(LinearAlgebra.generic_matmatmul!)(
+                    C, 'N', 'N', A, B, true, false
+                )
+            end
+        end
+        function dyn_matmul!(C, A, B)
+            dyn_gemm!(C, A, B)
+            return nothing
+        end
+
+        m, k, n = 3, 4, 2
+        dA = jl(fill(7.0, m, k))
+        Enzyme.autodiff(
+            Reverse, dyn_matmul!, Const,
+            Const(jl(zeros(m, n))), Duplicated(jl(randn(m, k)), dA),
+            Const(jl(randn(k, n))),
+        )
+        @test all(collect(dA) .≈ 7.0)
+
+        # Same at width 2, where the shadow of the `Const` output is a tuple.
+        dA1 = jl(fill(7.0, m, k))
+        dA2 = jl(fill(-2.0, m, k))
+        Enzyme.autodiff(
+            Reverse, dyn_matmul!, Const,
+            Const(jl(zeros(m, n))),
+            BatchDuplicated(jl(randn(m, k)), (dA1, dA2)), Const(jl(randn(k, n))),
+        )
+        @test all(collect(dA1) .≈ 7.0)
+        @test all(collect(dA2) .≈ -2.0)
     end
 
     # The same operand plain and transposed, both products matrix-vector: two
