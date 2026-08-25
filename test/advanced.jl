@@ -1059,46 +1059,16 @@ end
     )
 end
 
-@testset "Batched active with runtime activity" begin
-    struct Inner
-        a::Float64
-        r::Tuple{UnitRange{Int64}}
+@testset "BatchDuplicated closure in generic call" begin
+    struct Cl
+        a::Vector{Float64}
     end
-    (t::Inner)(x) = fill(x[1], sum(length, t.r))
-    struct Outer
-        v::Vector{Inner}
-    end
-    function (t::Outer)(x::AbstractVector)
-        y = Vector{Float64}(undef, 2)
-        y[1] = t.v[1](x)[1]
-        y[2] = t.v[1](x)[1]
-        return y
-    end
-    outer = Outer([Inner(1.0, (1:1,))])
-    d_outer1 = Outer([Inner(0.0, (1:1,))])
-    d_outer2 = Outer([Inner(0.0, (1:1,))])
-    x = ones(2)
-    dx1 = zeros(2)
-    dx2 = zeros(2)
-
-    augres = Enzyme.Compiler.runtime_generic_augfwd(
-        Val{(true, true)},
-        Val(true), Val(false), Val(2),
-        Val((true, false)),
-        Val(Enzyme.Compiler.AnyArray(2 + Int(2))),
-        outer, d_outer1, d_outer2,
-        x, dx1, dx2,
-    )
-
-    Enzyme.Compiler.runtime_generic_rev(
-        Val{(true, true)},
-        Val(true), Val(false), Val(2),
-        Val((true, false)),
-        Val(false),
-        augres[end],
-        outer, d_outer1, d_outer2,
-        x, dx1, dx2,
-    )
+    (c::Cl)(x) = c.a[1] * x
+    caller(c, x) = Base.inferencebarrier(c)(x)::Float64
+    c = Cl([2.0])
+    d1 = Cl([0.0])
+    d2 = Cl([0.0])
+    Enzyme.autodiff(Reverse, caller, BatchDuplicated(c, (d1, d2)), Active(3.0))
 end
 
 @testset "Uncached batch sizes" begin
