@@ -1157,7 +1157,7 @@ end
 
     swiftself = has_swiftself(llvmf)
     if swiftself
-        pushfirst!(reinsert_gcmarker!(fn, B))
+        pushfirst!(args, reinsert_gcmarker!(fn, B))
     end
     _, sret, returnRoots0 = get_return_info(enzyme_custom_extract_mi(llvmf)[2])
     returnRoots = returnRoots0
@@ -1216,6 +1216,9 @@ end
     res = LLVM.call!(B, LLVM.function_type(llvmf), llvmf, args)
     debug_from_orig!(gutils, res, orig)
     callconv!(res, callconv(llvmf))
+    if swiftself
+        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1 + (sret !== nothing) + (returnRoots !== nothing)), EnumAttribute("swiftself"))
+    end
 
     hasNoRet = has_fn_attr(llvmf, EnumAttribute("noreturn"))
 
@@ -1230,9 +1233,9 @@ end
         else
             attr = EnumAttribute("sret")
         end
-        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1 + swiftself), attr)
+        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1), attr)
 	if returnRoots !== nothing
-	    LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(2 + swiftself), StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1]))))
+	    LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(2), StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1]))))
 	end
 
 	if returnRoots !== nothing && VERSION >= v"1.12"
@@ -1240,14 +1243,6 @@ end
 	else
 	   res = load!(B, sty, sret, "rules_sret_load_to_res")
 	end
-    end
-    if swiftself
-        attr = EnumAttribute("swiftself")
-        LLVM.API.LLVMAddCallSiteAttribute(
-            res,
-            LLVM.API.LLVMAttributeIndex(1 + (sret !== nothing)),
-            attr,
-        )
     end
 
     shadowV = C_NULL
@@ -2102,7 +2097,7 @@ function enzyme_custom_common_rev(
     end
 
     if swiftself
-        pushfirst!(reinsert_gcmarker!(fn, B))
+        pushfirst!(args, reinsert_gcmarker!(fn, B))
     end
 
     if sret !== nothing
@@ -2203,7 +2198,9 @@ function enzyme_custom_common_rev(
     debug_from_orig!(gutils, res, orig)
 
     callconv!(res, callconv(llvmf))
-
+    if swiftself
+        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1 + (sret !== nothing) + (returnRoots !== nothing)), EnumAttribute("swiftself"))
+    end
 
     hasNoRet = has_fn_attr(llvmf, EnumAttribute("noreturn"))
 
@@ -2286,7 +2283,7 @@ function enzyme_custom_common_rev(
         res = sret
 
     elseif sret !== nothing
-        sty = sret_ty(llvmf, 1+swiftself)
+        sty = sret_ty(llvmf, 1)
         if LLVM.version().major >= 12
             attr = TypeAttribute("sret", sty)
         else
@@ -2294,11 +2291,11 @@ function enzyme_custom_common_rev(
         end
         LLVM.API.LLVMAddCallSiteAttribute(
             res,
-            LLVM.API.LLVMAttributeIndex(1 + swiftself),
+            LLVM.API.LLVMAttributeIndex(1),
             attr,
         )
     	if returnRoots !== nothing
-    	    LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(2 + swiftself), StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1]))))
+    	    LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(2), StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1]))))
     	end
     	if returnRoots !== nothing && VERSION >= v"1.12"
     	    res = recombine_value_ptr!(B, sty, sret, returnRoots; must_cache=true)
@@ -2308,14 +2305,6 @@ function enzyme_custom_common_rev(
     	end
     end
 
-    if swiftself
-        attr = EnumAttribute("swiftself")
-        LLVM.API.LLVMAddCallSiteAttribute(
-            res,
-            LLVM.API.LLVMAttributeIndex(1 + (sret !== nothing) + (returnRoots !== nothing)),
-            attr,
-        )
-    end
 
     shadowV = C_NULL
     normalV = C_NULL
