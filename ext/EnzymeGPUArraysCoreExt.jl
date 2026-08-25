@@ -59,20 +59,30 @@ end
 @inline _isconst(config, x::Annotation) =
     EnzymeRules.runtime_activity(config) && x.dval === x.val
 
-# One value per batch element.
-@inline _bsplat(::Val{1}, v) = v
-@inline _bsplat(::Val{N}, v) where {N} = ntuple(Returns(v), Val(N))
+# A fresh zeroed buffer per batch element. A struct instead of a closure so
+# `ntuple` gets something concrete.
+struct _ZeroLike{V}
+    val::V
+end
+@inline (f::_ZeroLike)(::Int) = zero(f.val)
+@inline _bzeros(::Val{1}, v) = zero(v)
+@inline _bzeros(::Val{N}, v) where {N} = ntuple(_ZeroLike(v), Val(N))
 
 #=
 Shadow of the returned output argument. Enzyme asks for one whenever the caller
 gave the call an active return activity, which it does independently of the
 output's own activity: a dynamically dispatched `generic_matmatmul!` gets
-`Duplicated` guessed from its return type even with a `Const` C. A constant has
-no shadow of its own, and Enzyme's representation of one is the primal itself,
-which is what `_isconst` above recognizes.
+`Duplicated` guessed from its return type even with a `Const` C.
+
+A `Const` output has no shadow to hand back. Returning its primal would alias
+the two: the reverse pass of whatever consumes the returned value accumulates
+into the shadow, which would then silently corrupt the user's buffer, and every
+batch element would alias the same array. A constant's derivative is zero, so
+give each batch element its own zeroed buffer instead; the rule's own reverse
+returns early on a `Const` C (`_isconst` above) and never reads it.
 =#
 @inline _outshadow(_, out::Annotation) = out.dval
-@inline _outshadow(config, out::Const) = _bsplat(Val(width(config)), out.val)
+@inline _outshadow(config, out::Const) = _bzeros(Val(width(config)), out.val)
 
 #=
 Augmented return for the rules here: output argument plus a tape. Enzyme checks

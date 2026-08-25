@@ -169,6 +169,46 @@ output and doesn't happen on CUDA.
         )
         @test all(collect(dA1) .≈ 7.0)
         @test all(collect(dA2) .≈ -2.0)
+
+        #=
+        Now consume the returned value. `mul!(D, R, E)`'s reverse accumulates
+        into R's shadow, so that shadow must not be C itself: aliasing the two
+        would leave `dD·E'` in the user's `Const` buffer instead of `A·B`.
+        =#
+        function dyn_chain!(D, C, A, B, E)
+            R = dyn_gemm!(C, A, B)
+            mul!(D, R, E)
+            return nothing
+        end
+
+        q = 5
+        A0 = randn(m, k)
+        B0 = randn(k, n)
+        E0 = randn(n, q)
+        Cbuf = jl(zeros(m, n))
+        dA = jl(zeros(m, k))
+        Enzyme.autodiff(
+            Reverse, dyn_chain!, Const,
+            Duplicated(jl(zeros(m, q)), jl(ones(m, q))),
+            Const(Cbuf), Duplicated(jl(A0), dA), Const(jl(B0)), Const(jl(E0)),
+        )
+        @test collect(Cbuf) ≈ A0 * B0
+        # A `Const` C still blocks the pullback into A.
+        @test all(collect(dA) .≈ 0.0)
+
+        # Same at width 2, where each batch element needs its own shadow.
+        Cbuf2 = jl(zeros(m, n))
+        dA1b = jl(zeros(m, k))
+        dA2b = jl(zeros(m, k))
+        Enzyme.autodiff(
+            Reverse, dyn_chain!, Const,
+            BatchDuplicated(jl(zeros(m, q)), (jl(ones(m, q)), jl(fill(2.0, m, q)))),
+            Const(Cbuf2), BatchDuplicated(jl(A0), (dA1b, dA2b)),
+            Const(jl(B0)), Const(jl(E0)),
+        )
+        @test collect(Cbuf2) ≈ A0 * B0
+        @test all(collect(dA1b) .≈ 0.0)
+        @test all(collect(dA2b) .≈ 0.0)
     end
 
     # The same operand plain and transposed, both products matrix-vector: two
