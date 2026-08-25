@@ -281,7 +281,10 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
         TestCase(MvNormal([0.2, 0.3], Symmetric(Diagonal([0.5, 0.4]))), [-0.1, 0.05]),
         TestCase(MvNormal([0.2, 0.3], Diagonal([0.5, 0.4])), [-0.1, 0.05]),
         # TODO Broken tests, see https://github.com/EnzymeAD/Enzyme.jl/issues/1991
-        TestCase(MvNormal([-0.15], _pdmat([1.1]')), [-0.05]; broken=Forward),
+        TestCase(
+            MvNormal([-0.15], _pdmat([1.1]')), [-0.05];
+            broken = (VERSION < v"1.12" ? Forward : Neither)
+        ),
         TestCase(
             MvNormal([0.2, -0.15], _pdmat([1.0 0.9; 0.7 1.1])), [0.05, -0.05];
             broken=Forward
