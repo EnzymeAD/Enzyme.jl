@@ -55,6 +55,7 @@ jobs:
           - Flux
           - Lux
           - Oceananigans
+          - Reactant
           - SciML
           - KernelAbstractions
           - MatrixAlgebraKit

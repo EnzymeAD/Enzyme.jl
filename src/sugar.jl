@@ -500,6 +500,14 @@ end
 	res
 end
 
+@inline function tupstack(
+        data::Tuple{Vararg{A}},
+        outshape::Tuple{Vararg{Int}},
+        inshape::Tuple{Vararg{Int}},
+    ) where {A <: AbstractArray}
+    return reshape(stack(data), (outshape..., inshape...))
+end
+
 @inline specialize_output(output, input) = output
 
 """
