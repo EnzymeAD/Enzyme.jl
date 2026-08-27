@@ -3866,7 +3866,7 @@ function create_abi_wrapper(
                 twidth = if width == 1
                     1
                 else
-                    if returnPrimal && returnNum == count_Sret - 1
+                    if (rettype <: Const) && returnNum == 0
                         1
                     else
                         width
