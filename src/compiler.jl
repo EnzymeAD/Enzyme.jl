@@ -3894,7 +3894,7 @@ function create_abi_wrapper(
                     end
                 else
                     ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(twidth, SPT0)))
-                    for idx = t:width
+                    for idx in 1:twidth
                         pv = extract_value!(builder, eval, idx - 1)
                         pv0 = pv
                         pv = bitcast!(builder, pv, LLVM.PointerType(SPT0, addrspace(value_type(pv))))

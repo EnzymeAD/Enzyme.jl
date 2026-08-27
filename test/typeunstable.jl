@@ -330,3 +330,19 @@ unstable_batch_3425(p) = (y = unstable_tuple_3425(p); y[1]^2 + y[2]^2)
         end
     end
 end
+
+batched_uninferred_target(x) = (2 .* x,)
+batched_uninferred_return(x) = Base.invokelatest(batched_uninferred_target, x)
+
+@testset "Batched forward concrete annotation with uninferred return" begin
+    x = [1.0, 2.0]
+    dx1 = ones(2)
+    dx2 = fill(3.0, 2)
+    return_activity = BatchDuplicated{Tuple{Vector{Float64}}, 2}
+    result = Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Forward), Const(batched_uninferred_return),
+        return_activity, BatchDuplicated(x, (dx1, dx2))
+    )
+    @test result[1][1][1] == [2.0, 2.0]
+    @test result[1][2][1] == [6.0, 6.0]
+end
