@@ -898,6 +898,6 @@ pick_chunksize(::LargestChunk, a::AbstractArray) = Val(length(a))  # allows infe
 
 pick_chunksize(::AutoChunk, n::Integer) = Val(min(DEFAULT_CHUNK_SIZE, n))  # TODO: improve
 pick_chunksize(s::AutoChunk, a::AbstractArray) = pick_chunksize(s, length(a))
-pick_chunksize(::FixedChunk{C}, ::Union{Integer,AbstractArray}) where {C} = Val{C}()
+pick_chunksize(::FixedChunk{C}, ::Union{Integer, AbstractArray}) where {C} = Val{C}()
 
 end # module EnzymeCore

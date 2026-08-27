@@ -419,7 +419,7 @@ end
 const ExtendedChunkStrategy = Union{ChunkStrategy, Nothing, Val}
 
 # eats and returns a type because generated functions work on argument types
-get_strategy(chunk::Type{CS}) where {CS<:ChunkStrategy} = chunk
+get_strategy(chunk::Type{CS}) where {CS <: ChunkStrategy} = chunk
 
 function get_strategy(::Type{Nothing})
     Base.depwarn(
@@ -458,7 +458,7 @@ end
 @inline tupleconcat(x, y) = (x..., y...)
 @inline tupleconcat(x, y, z...) = (x..., tupleconcat(y, z...)...)
 
-@generated function create_shadows(chunk::ExtendedChunkStrategy, x::X, vargs::Vararg{Any,N}) where {X, N}
+@generated function create_shadows(chunk::ExtendedChunkStrategy, x::X, vargs::Vararg{Any, N}) where {X, N}
     chunk_strategy = get_strategy(chunk)
     args =  Union{Symbol,Expr}[:x]
     tys =  Type[X]
@@ -615,9 +615,9 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
     f::F,
     x::ty_0,
     args::Vararg{Any,N};
-    chunk::ExtendedChunkStrategy = LargestChunk(),
+        chunk::ExtendedChunkStrategy = LargestChunk(),
     shadows::ST = create_shadows(chunk, x, args...),
-) where {F, ReturnPrimal,ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero,ST, ty_0, N}
+    ) where {F, ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero, ST, ty_0, N}
 
     chunk_strategy = get_strategy(chunk)
 
@@ -828,10 +828,10 @@ end
     mode::ReverseMode{ReturnPrimal},
     RT::RType,
     n_outs::OutType,
-    chunk::ExtendedChunkStrategy,
+        chunk::ExtendedChunkStrategy,
     f::F,
     xs::Vararg{Any, Nargs}
-) where {ReturnPrimal,RType, F,Nargs,OutType}
+    ) where {ReturnPrimal, RType, F, Nargs, OutType}
     chunk_strategy = get_strategy(chunk)
     fty = if f <: Enzyme.Annotation
         f.parameters[1]
@@ -1256,8 +1256,8 @@ this function will retun an AbstractArray of shape `size(output)` of values of t
     f::F,
     xs::Vararg{Any, Nargs};
     n_outs::OutType = nothing,
-    chunk::ExtendedChunkStrategy = LargestChunk(),
-) where {F,Nargs, OutType}
+        chunk::ExtendedChunkStrategy = LargestChunk(),
+    ) where {F, Nargs, OutType}
 
     fty = if f <: Enzyme.Annotation
         f.parameters[1]
