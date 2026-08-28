@@ -4,14 +4,23 @@ using CUDA
 using Enzyme
 using Enzyme: EnzymeRules
 
-# Complex is handled here because the shadow operations are element-wise: zeroing is a
-# `memset` sized by `sizeof(T)`, and accumulation is a broadcast, both of which are
-# agnostic to the real/complex split.
+# The requirement of `T` is that all-bits-zero is a valid zero cotangent and that `+`
+# accumulates cotangents. This holds for floats, `Complex` of floats, and for isbits
+# structs built from them, including ones that mix floats with integers/`Bool`s.
+@inline function _check_shadow_eltype(::Type{T}) where {T}
+    isbitstype(T) || throw(ArgumentError(
+        "Enzyme's CUDA copy rules zero and accumulate shadows with a memset and a " *
+        "broadcast, which need an isbits element type, but got $T"))
+    return nothing
+end
+
 function _zero!(ptr::Ptr{T}, off::Integer, n::Integer) where {T}
+    _check_shadow_eltype(T)
     Base.Libc.memset(ptr + off * sizeof(T), 0, n * sizeof(T))
     return nothing
 end
 function _zero!(ptr::CuPtr{T}, off::Integer, n::Integer) where {T}
+    _check_shadow_eltype(T)
     bytes = reinterpret(CuPtr{UInt8}, ptr + off * sizeof(T))
     CUDA.memset(bytes, UInt8(0), n * sizeof(T))
     return nothing
