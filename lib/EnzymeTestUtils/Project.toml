@@ -20,19 +20,23 @@ EnzymeTestUtilsGPUArraysCoreExt = ["Enzyme", "GPUArraysCore"]
 
 [compat]
 ConstructionBase = "1.4.1"
+CUDA = "5, 6"
 Enzyme = "0.13.78"
 EnzymeCore = "0.5, 0.6, 0.7, 0.8"
 FiniteDifferences = "0.12.33"
 GPUArraysCore = "0.1.6, 0.2"
+JLArrays = "0.3"
 MetaTesting = "0.1"
 Quaternions = "0.7"
 julia = "1.10"
 
 [extras]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
+JLArrays = "27aeb0d3-9eb9-45fb-866b-73c2ecf80fcb"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 MetaTesting = "9e32d19f-1e4f-477a-8631-b16c78aa0f56"
 Quaternions = "94ee1d12-ae83-5a48-8b1c-48b8ff168ae0"
 
 [targets]
-test = ["LinearAlgebra", "MetaTesting", "Quaternions"]
+test = ["LinearAlgebra", "MetaTesting", "Quaternions", "CUDA", "JLArrays"]
