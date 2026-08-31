@@ -1229,6 +1229,10 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
             continue
         end
 
+        if has_fn_attr(f, StringAttribute(LOWERED_CONVENTION_ATTR_KIND))
+            continue
+        end
+
         llRT, sret, returnRoots = get_return_info(RT)
         retRemoved, parmsRemoved = removed_ret_parms(f)
 
@@ -1379,6 +1383,9 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
             continue
         end
         fn = functions(mod)[fname]
+        if has_fn_attr(fn, StringAttribute(LOWERED_CONVENTION_ATTR_KIND))
+            continue
+        end
         attributes = function_attributes(fn)
         mi = nothing
         RT = nothing
@@ -5208,6 +5215,7 @@ function lower_convention(
 
     mi, rt = enzyme_custom_extract_mi(entry_f)
     attributes = function_attributes(wrapper_f)
+    push!(attributes, StringAttribute(LOWERED_CONVENTION_ATTR_KIND))
     push!(
         attributes,
         StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))),
