@@ -7142,8 +7142,8 @@ function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module
     end
 
     # Now invoke the JIT
-    jitted_mod = JIT.add!(mod)
-    adjoint_addr = JIT.lookup(adjoint_name)
+    jit_dylib = JIT.add!(mod)
+    adjoint_addr = JIT.lookup(jit_dylib, adjoint_name)
 
     adjoint_ptr = pointer(adjoint_addr)
     if adjoint_ptr === C_NULL
@@ -7157,7 +7157,7 @@ function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module
     if primal_name isa Nothing
         primal_ptr = C_NULL
     else
-        primal_addr = JIT.lookup(primal_name)
+        primal_addr = JIT.lookup(jit_dylib, primal_name)
         primal_ptr = pointer(primal_addr)
         if primal_ptr === C_NULL
             throw(
