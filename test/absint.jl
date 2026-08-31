@@ -85,6 +85,22 @@ end
     @test grads_enzyme[] ≈ 1.0
 end
 
+function absint_kwargs_inner(; kwargs...)
+    columns = Any[]
+    for (kw, val) in kwargs
+        push!(columns, val)
+    end
+    return (columns[1]::Float64) * (columns[2]::Float64)
+end
+absint_kwargs(x) = absint_kwargs_inner(; x = x[1], y = x[2])
+
+@testset "Absint gep of non-constant index" begin
+    # iterating a Base.Pairs does a getfield of the keyword NamedTuple with a
+    # non-constant symbol, which julia lowers to a gep with a non-constant index
+    # into the (heterogeneous) Pairs struct. x/ref DataFrames' DataFrame(; kwargs...)
+    @test Enzyme.gradient(Reverse, absint_kwargs, [0.5, 2.0])[1] ≈ [2.0, 0.5]
+end
+
 @testset "Absint load of constantexpr gep HVP" begin
     @inline function mydouble(x)
         y = similar(x)
