@@ -2,6 +2,26 @@ struct BuiltinWrapper{F}
     f::F
 end
 
+# Native analysis decides whether a return is constant or no-need. Its Julia
+# type still decides how a differentiable value is represented.
+@inline function runtime_generic_return_activity(
+        ::Type{T},
+        ::Val{Activity},
+        mode::API.CDerivativeMode,
+    ) where {T, Activity}
+    if Activity == API.DFT_CONSTANT
+        return Const{T}
+    elseif Activity == API.DFT_OUT_DIFF
+        return Active{T}
+    end
+
+    annotation = guess_activity(T, mode)
+    if Activity == API.DFT_DUP_NONEED && annotation <: Duplicated
+        return DuplicatedNoNeed{T}
+    end
+    return annotation
+end
+
 @generated function (w::BuiltinWrapper{F})(args::Vararg{Any,N}) where {F, N}
    cargs = Expr[]
    for i in 1:N
@@ -303,13 +323,15 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes, dfns)
         end
         args = ($(wrapped...),)
 
-        # TODO: Annotation of return value
-        # tt0 = Tuple{$(primtypes...)}
         tt = Tuple{$(ElTypes...)}
         tt′ = Tuple{$(Types...)}
         FT = Core.Typeof(f)
         rt = Compiler.primal_return_type(Forward, FT, tt)
-        annotation = guess_activity(rt, API.DEM_ForwardMode)
+        annotation = runtime_generic_return_activity(
+            rt,
+            returnActivity,
+            API.DEM_ForwardMode,
+        )
 
         if annotation <: DuplicatedNoNeed
             annotation = Duplicated{rt}
@@ -361,6 +383,7 @@ function func_runtime_generic_fwd(N, Width)
     quote
         function runtime_generic_fwd(
             activity::Type{Val{ActivityTup}},
+                returnActivity::Val{ReturnActivity},
             runtimeActivity::Val{RuntimeActivity},
             strongZero::Val{StrongZero},
             width::Val{$Width},
@@ -368,7 +391,7 @@ function func_runtime_generic_fwd(N, Width)
             f::F,
             df::DF,
             $(allargs...),
-        ) where {ActivityTup,RuntimeActivity,StrongZero,ReturnType,F,DF,$(typeargs...)}
+            ) where {ActivityTup, ReturnActivity, RuntimeActivity, StrongZero, ReturnType, F, DF, $(typeargs...)}
             $body
         end
     end
@@ -376,6 +399,7 @@ end
 
 @generated function runtime_generic_fwd(
     activity::Type{Val{ActivityTup}},
+        returnActivity::Val{ReturnActivity},
     runtimeActivity::Val{RuntimeActivity},
     strongZero::Val{StrongZero},
     width::Val{Width},
@@ -383,7 +407,7 @@ end
     f::F,
     df::DF,
     allargs...,
-) where {ActivityTup,RuntimeActivity,StrongZero,Width,ReturnType,F,DF}
+    ) where {ActivityTup, ReturnActivity, RuntimeActivity, StrongZero, Width, ReturnType, F, DF}
     N = div(length(allargs) + 2, Width + 1) - 1
     _, _, primtypes, _, _, wrapped, _, _, _, dfns = setup_macro_wraps(true, N, Width, :allargs)
     return body_runtime_generic_fwd(N, Width, wrapped, primtypes, dfns)
@@ -522,9 +546,15 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs,
             tt = Tuple{$(ElTypes...)}
 
             rt = Compiler.primal_return_type(Reverse, FT, tt)
-            annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
+            annotation0 = runtime_generic_return_activity(
+                rt,
+                returnActivity,
+                API.DEM_ReverseModePrimal,
+            )
 
-            annotationA = if $Width != 1 && annotation0 <: Duplicated
+            annotationA = if $Width != 1 && annotation0 <: DuplicatedNoNeed
+                BatchDuplicatedNoNeed{rt, $Width}
+            elseif $Width != 1 && annotation0 <: Duplicated
                 BatchDuplicated{rt,$Width}
             elseif $Width != 1 && annotation0 <: MixedDuplicated
                 BatchMixedDuplicated{rt,$Width}
@@ -583,6 +613,7 @@ function func_runtime_generic_augfwd(N, Width)
     quote
         function runtime_generic_augfwd(
             activity::Type{Val{ActivityTup}},
+                returnActivity::Val{ReturnActivity},
             runtimeActivity::Val{RuntimeActivity},
             strongZero::Val{StrongZero},
             width::Val{$Width},
@@ -591,7 +622,7 @@ function func_runtime_generic_augfwd(N, Width)
             f::F,
             df::DF,
             $(allargs...),
-        )::ReturnType where {ActivityTup,MB,ReturnType,RuntimeActivity,StrongZero,F,DF,$(typeargs...)}
+            )::ReturnType where {ActivityTup, ReturnActivity, MB, ReturnType, RuntimeActivity, StrongZero, F, DF, $(typeargs...)}
             $body
         end
     end
@@ -599,6 +630,7 @@ end
 
 @generated function runtime_generic_augfwd(
     activity::Type{Val{ActivityTup}},
+        returnActivity::Val{ReturnActivity},
     runtimeActivity::Val{RuntimeActivity},
     strongZero::Val{StrongZero},
     width::Val{Width},
@@ -607,7 +639,7 @@ end
     f::F,
     df::DF,
     allargs...,
-)::ReturnType where {ActivityTup,MB,RuntimeActivity,StrongZero,Width,ReturnType,F,DF}
+    )::ReturnType where {ActivityTup, ReturnActivity, MB, RuntimeActivity, StrongZero, Width, ReturnType, F, DF}
     N = div(length(allargs) + 2, Width + 1) - 1
     _, _, primtypes, _, _, wrapped, _, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs)
@@ -757,9 +789,15 @@ function body_runtime_generic_rev(
             end
             tt = Tuple{$(ElTypes...)}
             rt = Compiler.primal_return_type(Reverse, FT, tt)
-            annotation0 = guess_activity(rt, API.DEM_ReverseModePrimal)
+            annotation0 = runtime_generic_return_activity(
+                rt,
+                returnActivity,
+                API.DEM_ReverseModePrimal,
+            )
 
-            annotation = if $Width != 1 && annotation0 <: Duplicated
+            annotation = if $Width != 1 && annotation0 <: DuplicatedNoNeed
+                BatchDuplicatedNoNeed{rt, $Width}
+            elseif $Width != 1 && annotation0 <: Duplicated
                 BatchDuplicated{rt,$Width}
             elseif $Width != 1 && annotation0 <: MixedDuplicated
                 BatchMixedDuplicated{rt, $Width}
@@ -822,6 +860,7 @@ function func_runtime_generic_rev(N, Width, Atomic)
     quote
         function runtime_generic_rev(
             activity::Type{Val{ActivityTup}},
+                returnActivity::Val{ReturnActivity},
             runtimeActivity::Val{RuntimeActivity},
             strongZero::Val{StrongZero},
             width::Val{$Width},
@@ -831,7 +870,7 @@ function func_runtime_generic_rev(N, Width, Atomic)
             f::F,
             df::DF,
             $(allargs...),
-        ) where {ActivityTup,RuntimeActivity,StrongZero,MB,TapeType,F,DF,$(typeargs...)}
+            ) where {ActivityTup, ReturnActivity, RuntimeActivity, StrongZero, MB, TapeType, F, DF, $(typeargs...)}
             $body
         end
     end
@@ -839,6 +878,7 @@ end
 
 @generated function runtime_generic_rev(
     activity::Type{Val{ActivityTup}},
+        returnActivity::Val{ReturnActivity},
     runtimeActivity::Val{RuntimeActivity},
     strongZero::Val{StrongZero},
     width::Val{Width},
@@ -848,7 +888,7 @@ end
     f::F,
     df::DF,
     allargs...,
-) where {ActivityTup,MB,RuntimeActivity,StrongZero,Width,Atomic,TapeType,F,DF}
+    ) where {ActivityTup, ReturnActivity, MB, RuntimeActivity, StrongZero, Width, Atomic, TapeType, F, DF}
     N = div(length(allargs) + 2, Width + 1) - 1
     _, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs)
@@ -1899,7 +1939,8 @@ function generic_setup(
     endcast = true,
     firstconst_after_tape = true,
     runtime_activity = true,
-    strong_zero = true
+        strong_zero = true,
+        return_activity = nothing,
 )
     width = get_width(gutils)
     mode = get_mode(gutils)
@@ -2024,6 +2065,9 @@ function generic_setup(
     if runtime_activity
         pushfirst!(vals, unsafe_to_llvm(B, Val(get_runtime_activity(gutils))))
     end
+    if return_activity !== nothing
+        pushfirst!(vals, unsafe_to_llvm(B, Val(return_activity)))
+    end
     etup0 = emit_tuple!(B, ActivityList)
     etup = emit_apply_type!(B, Base.Val, LLVM.Value[etup0])
     if isa(etup, LLVM.Instruction)
@@ -2091,7 +2135,8 @@ function common_generic_fwd(offset, B, orig, gutils, normalR, shadowR)
         gutils,
         offset,
         B,
-        false,
+        false;
+        return_activity = activep,
     ) #=start=#
     AT = LLVM.ArrayType(T_prjlvalue, 1 + Int(width))
     if unsafe_load(shadowR) != C_NULL
@@ -2170,7 +2215,8 @@ function common_generic_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
         gutils,
         offset,
         B,
-        false,
+        false;
+        return_activity = activep,
     ) #=start=#
     AT = LLVM.ArrayType(T_prjlvalue, 2 + Int(width))
 
@@ -2256,7 +2302,17 @@ function common_generic_rev(offset, B, orig, gutils, tape)::Cvoid
 
     @assert tape !== C_NULL
     width = get_width(gutils)
-    generic_setup(orig, runtime_generic_rev, Nothing, gutils, offset, B, true; tape) #=start=#
+    generic_setup(
+        orig,
+        runtime_generic_rev,
+        Nothing,
+        gutils,
+        offset,
+        B,
+        true;
+        tape,
+        return_activity = activep,
+    ) #=start=#
     return nothing
 end
 
@@ -2302,7 +2358,8 @@ function common_apply_latest_fwd(offset, B, orig, gutils, normalR, shadowR)
         gutils,
         offset + 1,
         B,
-        false,
+        false;
+        return_activity = activep,
     ) #=start=#
 
     if unsafe_load(shadowR) != C_NULL
@@ -2372,7 +2429,8 @@ function common_apply_latest_augfwd(offset, B, orig, gutils, normalR, shadowR, t
         gutils,
         offset + 1,
         B,
-        false,
+        false;
+        return_activity = activep,
     ) #=start=#
 
     if unsafe_load(shadowR) != C_NULL
@@ -2436,7 +2494,17 @@ function common_apply_latest_rev(offset, B, orig, gutils, tape)::Cvoid
     end
     if !is_constant_value(gutils, orig) || !is_constant_inst(gutils, orig)
         width = get_width(gutils)
-        generic_setup(orig, runtime_generic_rev, Nothing, gutils, offset + 1, B, true; tape) #=start=#
+        generic_setup(
+            orig,
+            runtime_generic_rev,
+            Nothing,
+            gutils,
+            offset + 1,
+            B,
+            true;
+            tape,
+            return_activity = activep,
+        ) #=start=#
     end
 
     return nothing
@@ -2788,7 +2856,8 @@ function common_invoke_fwd(offset, B, orig, gutils, normalR, shadowR)
         gutils,
         offset + 1,
         B,
-        false,
+        false;
+        return_activity = activep,
     ) #=start=#
     AT = LLVM.ArrayType(T_prjlvalue, 1 + Int(width))
 
@@ -2863,7 +2932,8 @@ function common_invoke_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
         gutils,
         offset + 1,
         B,
-        false,
+        false;
+        return_activity = activep,
     ) #=start=#
     AT = LLVM.ArrayType(T_prjlvalue, 2 + Int(width))
 
@@ -2929,7 +2999,17 @@ function common_invoke_rev(offset, B, orig, gutils, tape)
     end
 
     width = get_width(gutils)
-    generic_setup(orig, runtime_generic_rev, Nothing, gutils, offset + 1, B, true; tape) #=start=#
+    generic_setup(
+        orig,
+        runtime_generic_rev,
+        Nothing,
+        gutils,
+        offset + 1,
+        B,
+        true;
+        tape,
+        return_activity = activep,
+    ) #=start=#
 
     return nothing
 end
