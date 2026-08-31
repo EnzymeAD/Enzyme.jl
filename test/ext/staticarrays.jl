@@ -103,7 +103,9 @@ grad_forhess(x) = autodiff(Reverse, for_hess, Active, Active(x))[1][1]
 hess(x) = jacobian(Forward, grad_forhess, x)[1]
 
 @testset "StaticArrays hessian" begin
-    x = @SVector zeros(10)
-    res = [-2.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0; 0.0 -2.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0; 0.0 0.0 -2.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 -2.0 0.0 0.0 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0 -2.0 0.0 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0 0.0 -2.0 0.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0 0.0 0.0 -2.0 0.0 0.0 0.0; 0.0 0.0 0.0 0.0 0.0 0.0 0.0 -2.0 0.0 0.0; 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 -2.0 0.0; 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 -2.0]
+    # sum(tanh.(x)) has a diagonal hessian, with entries tanh''(xᵢ) = -2 tanh(xᵢ) (1 - tanh(xᵢ)^2)
+    x = @SVector fill(0.5, 10)
+    d = -2 * tanh(0.5) * (1 - tanh(0.5)^2)
+    res = [i == j ? d : 0.0 for i in 1:10, j in 1:10]
     @test jacobian(Forward, grad_forhess, x)[1] ≈ res
 end
