@@ -5935,6 +5935,20 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
                     end
                 end
             end
+            if !haskey(metadata(inst), "enzymejl_allocart")
+                # Julia gives a by-value read of an inline sub-object out of another object
+                # (`y = x.fld`) its own stack slot, which carries no type of its own. On 1.12+
+                # the words of such a slot which hold GC pointers are poisoned (memset 0xff /
+                # store -1) rather than stored, as the pointers are passed separately in the
+                # inline-roots array, so type analysis is left with holes exactly at the
+                # pointer fields and cannot type the poisoning memsets. Recover the slot's
+                # Julia type from the typed object its contents are copied out of.
+                RT = stack_slot_julia_type(inst)
+                if RT !== nothing
+                    metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
+                    metadata(inst)["enzymejl_allocart_name"] = MDNode(LLVM.Metadata[MDString(string(RT))])
+                end
+            end
         end
 
         if !API.HasFromStack(inst) &&

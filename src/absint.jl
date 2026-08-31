@@ -1081,3 +1081,139 @@ function abs_cstring(@nospecialize(arg::LLVM.Value))::Tuple{Bool, String}
         end
     return (false, "")
 end
+
+"""
+    julia_type_at_offset(T, offset, size)
+
+Return the Julia type of the inline sub-object of `T` which starts at byte `offset` within
+`T` and is `size` bytes long, or `nothing` if `T` contains no such sub-object.
+"""
+function julia_type_at_offset(
+        @nospecialize(T::Type),
+        offset::Int,
+        size::Int,
+    )::Union{Nothing, Type}
+    # Bounded since each step descends into a strictly smaller inline field.
+    for _ in 1:64
+        if !Base.isconcretetype(T)
+            return nothing
+        end
+        if offset == 0 && actual_size(T) == size
+            return T
+        end
+        # Descend into the unique inline field which fully contains [offset, offset+size).
+        found = false
+        for i in 1:typed_fieldcount(T)
+            ft = typed_fieldtype(T, i)
+            if isghostty(ft) || !Base.isconcretetype(ft) || !Base.allocatedinline(ft)
+                continue
+            end
+            fo = typed_fieldoffset(T, i)
+            if offset >= fo && offset + size <= fo + actual_size(ft)
+                T = ft
+                offset -= fo
+                found = true
+                break
+            end
+        end
+        if !found
+            return nothing
+        end
+    end
+    return nothing
+end
+
+"""
+    stack_slot_julia_type(inst)
+
+Recover the Julia type of a stack slot that Julia allocated for a by-value copy
+of an inline sub-object of some other object (`y = x.fld`), by looking at where the slot's
+contents are copied from. Returns `nothing` unless every copy into the slot agrees.
+
+Such slots carry no type information of their own, yet on Julia 1.12+ the words holding GC
+pointers are poisoned (`memset 0xff` / `store -1`) rather than stored, since the pointers
+themselves are passed separately in the inline-roots array. Type analysis therefore ends up
+with holes precisely at the pointer fields, and cannot type the poisoning memsets.
+"""
+function stack_slot_julia_type(inst::LLVM.AllocaInst)::Union{Nothing, Type}
+    at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(inst))
+    # An `[N x ptr addrspace(10)]` slot is an inline-roots array, not a value copy.
+    if CountTrackedPointers(at).count != 0
+        return nothing
+    end
+    dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst))))
+    asize = Int(LLVM.sizeof(dl, at))
+    if asize == 0
+        return nothing
+    end
+    res = nothing
+    offty = LLVM.IntType(8 * sizeof(Int))
+    memcpy_id = LLVM.Intrinsic("llvm.memcpy").id
+    memmove_id = LLVM.Intrinsic("llvm.memmove").id
+    todo = Tuple{LLVM.Value, Int}[(inst, 0)]
+    while length(todo) != 0
+        v, off = pop!(todo)
+        for use in LLVM.uses(v)
+            u = LLVM.user(use)
+            if isa(u, LLVM.BitCastInst) || isa(u, LLVM.AddrSpaceCastInst)
+                push!(todo, (u, off))
+                continue
+            end
+            if isa(u, LLVM.GetElementPtrInst) &&
+                    all(Base.Fix2(isa, LLVM.ConstantInt), operands(u)[2:end])
+                b = LLVM.IRBuilder()
+                position!(b, u)
+                off2 = API.EnzymeComputeByteOffsetOfGEP(b, u, offty)
+                if isa(off2, LLVM.ConstantInt)
+                    push!(todo, (u, off + convert(Int, off2)))
+                end
+                continue
+            end
+
+            srcptr = nothing
+            if isa(u, LLVM.StoreInst) && operands(u)[2] == v
+                val = operands(u)[1]
+                # Only raw-bits copies say anything about the slot's layout. A stored
+                # pointer means this is Julia's inline-roots array (or a similar list of
+                # roots), which holds the GC pointers of some other value rather than a
+                # copy of it, and whose offsets therefore say nothing about that value.
+                if isa(val, LLVM.LoadInst) && !isa(value_type(val), LLVM.PointerType)
+                    srcptr = operands(val)[1]
+                end
+            elseif isa(u, LLVM.CallInst) && length(operands(u)) >= 3 && operands(u)[1] == v
+                cfn = LLVM.called_operand(u)
+                if isa(cfn, LLVM.Function)
+                    intr = LLVM.API.LLVMGetIntrinsicID(cfn)
+                    if intr == memcpy_id || intr == memmove_id
+                        srcptr = operands(u)[2]
+                    end
+                end
+            end
+            if srcptr === nothing
+                continue
+            end
+
+            sbase, soff = get_base_and_offset(srcptr)
+            legal, sty, sbyref = abs_typeof(sbase)
+            if !legal ||
+                    !(sbyref == GPUCompiler.MUT_REF || sbyref == GPUCompiler.BITS_REF) ||
+                    !Base.isconcretetype(sty)
+                continue
+            end
+            delta = soff - off
+            if delta < 0
+                continue
+            end
+            cand = julia_type_at_offset(sty, delta, asize)
+            if cand === nothing
+                continue
+            end
+            if res === nothing
+                res = cand
+            elseif res != cand
+                return nothing
+            end
+        end
+    end
+    return res
+end

@@ -216,3 +216,39 @@ end
         @test Enzyme.gradient(set_runtime_activity(Reverse), absint_run_world, [1.0])[1] ≈ [3.0]
     end
 end
+
+struct TypeAtOffsetInner
+    p1::Vector{Float64}
+    p2::Vector{Float64}
+    b::Bool
+end
+
+struct TypeAtOffsetOuter
+    n::Int
+    o1::TypeAtOffsetInner
+    o2::TypeAtOffsetInner
+    tail::Vector{Float64}
+end
+
+mutable struct TypeAtOffsetBox
+    f::TypeAtOffsetOuter
+    u0::Vector{Float64}
+end
+
+@testset "julia_type_at_offset" begin
+    jtao = Enzyme.Compiler.julia_type_at_offset
+    # The whole object.
+    @test jtao(TypeAtOffsetOuter, 0, sizeof(TypeAtOffsetOuter)) === TypeAtOffsetOuter
+    # An inline field read out of a heap object, which is what Julia gives its own
+    # (otherwise untyped) stack slot on a by-value `x.fld`.
+    @test jtao(TypeAtOffsetBox, 0, sizeof(TypeAtOffsetOuter)) === TypeAtOffsetOuter
+    # A nested inline field.
+    o1 = fieldoffset(TypeAtOffsetOuter, 2)
+    @test jtao(TypeAtOffsetOuter, Int(o1), sizeof(TypeAtOffsetInner)) === TypeAtOffsetInner
+    @test jtao(TypeAtOffsetOuter, 0, sizeof(Int)) === Int
+    # Boxed fields are not inline, so nothing of theirs lives in the slot.
+    @test jtao(TypeAtOffsetOuter, Int(o1), sizeof(Int)) === nothing
+    # Ranges which do not line up with any inline sub-object.
+    @test jtao(TypeAtOffsetOuter, 1, sizeof(TypeAtOffsetOuter)) === nothing
+    @test jtao(TypeAtOffsetOuter, 0, sizeof(TypeAtOffsetOuter) + 8) === nothing
+end
