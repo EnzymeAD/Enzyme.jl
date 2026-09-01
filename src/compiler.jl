@@ -1490,7 +1490,8 @@ function nested_codegen!(
     # Declare the function in mod so it can be called
     lfn = functions(otherMod)[entry]
     if alwaysinline
-        # A method declared `@noinline` carries the attribute; here it is inlined regardless.
+        # A method declared `@noinline` carries the attribute. This path inlines the
+        # method regardless, and the two attributes must not appear together.
         LLVM.API.LLVMRemoveEnumAttributeAtIndex(
             lfn,
             reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
@@ -1526,361 +1527,467 @@ end
 
 @static if Interpreter.HAS_INVOKE_RULES
 
-"""
-    rule_specsig(mi, RT) -> (retty, params, param_attrs)
+    """
+        jit_gcstack_arg() -> Bool
 
-The signature Julia's codegen gives the specialized entry of the rule `mi`
-with return type `RT` (`get_specsig_function`): `[sret][return roots][pgcstack]
-args...`, where
+    Say if Julia's JIT passes the current `pgcstack` as an argument to compiled
+    code. The JIT compiles with the process-wide default codegen parameters
+    (`jl_default_cgparams`), whose `gcstack_arg` field controls this. Read that
+    field instead of assuming its default value. `Base.CodegenParams` mirrors
+    `jl_cgparams_t` field for field, which gives the field offset.
+    """
+    function jit_gcstack_arg()::Bool
+        off = fieldoffset(Base.CodegenParams, Base.fieldindex(Base.CodegenParams, :gcstack_arg))
+        return unsafe_load(Ptr{Cint}(cglobal(:jl_default_cgparams) + off)) != 0
+    end
 
-- a return that deserves an `sret` is passed as a leading pointer carrying the
-  `sret` attribute (on 1.12+ the buffer holds the layout with tracked pointers
-  stripped, which travel through the return-roots pointer instead); a small
-  `Union` return instead takes its byte buffer as leading pointer and returns
-  `{boxed-or-null, selector}`; a boxed return comes back as a tracked pointer;
-  anything else is returned as the value's LLVM type;
-- Julia's JIT compiles with `gcstack_arg` and the swift calling convention, so
-  the current `pgcstack` follows as a `swiftself` argument;
-- ghost and `Type{T}` arguments are omitted, boxed ones are tracked pointers,
-  aggregates go by reference in the derived address space (followed by their
-  inline roots on 1.12+), scalars by value.
+    """
+        jit_uses_swiftcc() -> Bool
 
-These are the same rules `classify_arguments`/`get_return_info` apply to every
-primal, and `enzyme_custom_setup_args` builds the rule arguments by them, so
-the signature lines up with what `customrules.jl` passes.
-"""
-function rule_specsig(mi::Core.MethodInstance, @nospecialize(RT::Type))
-    T_void = LLVM.VoidType()
-    T_int8 = LLVM.Int8Type()
-    T_ptr = LLVM.PointerType(T_int8)
-    T_jlvalue = LLVM.StructType(LLVMType[])
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-    T_derived = LLVM.PointerType(T_jlvalue, Derived)
+    Say if Julia's codegen uses the swift calling convention on this target. When
+    it does, and [`jit_gcstack_arg`](@ref) is set, the `pgcstack` parameter
+    carries the `swiftself` attribute. LLVM does not support the convention on
+    RISC-V, so Julia disables it there (`jl_codegen_params_t::use_swiftcc`).
+    """
+    jit_uses_swiftcc()::Bool = Sys.ARCH !== :riscv64
 
-    params = LLVMType[]
-    param_attrs = Vector{LLVM.Attribute}[]
+    """
+        rule_specsig(mi, RT; gcstack_arg = jit_gcstack_arg()) -> (retty, params, param_attrs)
 
-    rt, sret, returnRoots = get_return_info(RT)
-    if sret !== nothing
-        if is_sret_union(RT)
-            push!(params, T_ptr)
-            push!(param_attrs, LLVM.Attribute[StringAttribute("enzymejl_sret_union_bytes", string(union_alloca_type(RT)))])
-            retty = LLVM.StructType(LLVMType[T_prjlvalue, T_int8])
-        else
-            # As in Julia's codegen, the sret attribute carries the full type; the buffer
-            # itself holds the layout with tracked pointers stripped when there are roots,
-            # and `recombine_value_ptr!` reads the full type off the attribute.
-            sret_lty = convert(LLVMType, eltype(sret))
-            push!(params, T_ptr)
-            push!(param_attrs, LLVM.Attribute[TypeAttribute("sret", sret_lty), EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("noundef")])
-            if returnRoots !== nothing
+    Derive the signature Julia's codegen gives the specialized entry of the rule
+    `mi` with return type `RT` (`get_specsig_function`). The parameter order is
+    `[sret][return roots][pgcstack] args...`.
+
+    The return convention is:
+
+    - A return that deserves an `sret` becomes a leading pointer parameter with
+      the `sret` attribute. On 1.12+ that buffer holds the layout with the tracked
+      pointers stripped. The tracked pointers travel through the return-roots
+      pointer instead.
+    - A small `Union` return takes its byte buffer as the leading pointer
+      parameter. The function then returns `{boxed-or-null, selector}`.
+    - A boxed return comes back as a tracked pointer.
+    - Every other return comes back as the value's LLVM type.
+
+    When `gcstack_arg` is set, the current `pgcstack` follows as a `swiftself`
+    argument. The native call path requires [`jit_uses_swiftcc`](@ref), so the
+    attribute applies there. `nested_codegen!` compiles without `gcstack_arg`.
+    Callers pass `false` to model such a function.
+
+    The argument convention is: ghost and `Type{T}` arguments are omitted, boxed
+    arguments are tracked pointers, and scalars go by value. Aggregates go by
+    reference in the derived address space. On 1.12+ their inline roots follow as
+    a separate parameter.
+
+    `classify_arguments` and `get_return_info` apply the same rules to every
+    primal, and `enzyme_custom_setup_args` builds the rule arguments by them. The
+    signature therefore lines up with what `customrules.jl` passes.
+    """
+    function rule_specsig(mi::Core.MethodInstance, @nospecialize(RT::Type); gcstack_arg::Bool = jit_gcstack_arg())
+        T_void = LLVM.VoidType()
+        T_int8 = LLVM.Int8Type()
+        T_ptr = LLVM.PointerType(T_int8)
+        T_jlvalue = LLVM.StructType(LLVMType[])
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+        T_derived = LLVM.PointerType(T_jlvalue, Derived)
+
+        params = LLVMType[]
+        param_attrs = Vector{LLVM.Attribute}[]
+
+        rt, sret, returnRoots = get_return_info(RT)
+        if sret !== nothing
+            if is_sret_union(RT)
                 push!(params, T_ptr)
-                push!(param_attrs, LLVM.Attribute[EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("noundef")])
+                push!(param_attrs, LLVM.Attribute[StringAttribute("enzymejl_sret_union_bytes", string(union_alloca_type(RT)))])
+                retty = LLVM.StructType(LLVMType[T_prjlvalue, T_int8])
+            else
+                # As in Julia's codegen, the sret attribute carries the full type.
+                # When there are roots, the buffer itself holds the layout with the
+                # tracked pointers stripped. `recombine_value_ptr!` reads the full
+                # type off the attribute.
+                sret_lty = convert(LLVMType, eltype(sret))
+                push!(params, T_ptr)
+                push!(param_attrs, LLVM.Attribute[TypeAttribute("sret", sret_lty), EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("noundef")])
+                if returnRoots !== nothing
+                    push!(params, T_ptr)
+                    push!(param_attrs, LLVM.Attribute[EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("noundef")])
+                end
+                retty = T_void
             end
+        elseif rt === Nothing
             retty = T_void
-        end
-    elseif rt === Nothing
-        retty = T_void
-    elseif rt === Any || GPUCompiler.deserves_retbox(RT)
-        retty = T_prjlvalue
-    else
-        retty = convert(LLVMType, rt)
-    end
-
-    push!(params, T_ptr)
-    push!(param_attrs, LLVM.Attribute[EnumAttribute("swiftself"), EnumAttribute("nonnull")])
-
-    for T in (mi.specTypes::DataType).parameters
-        if isghostty(T) || Core.Compiler.isconstType(T)
-            continue
-        end
-        lty = convert(LLVMType, T; allow_boxed = true)
-        if lty isa LLVM.PointerType
-            push!(params, lty)
-            push!(param_attrs, LLVM.Attribute[])
-        elseif lty isa LLVM.StructType || lty isa LLVM.ArrayType
-            push!(params, T_derived)
-            push!(param_attrs, LLVM.Attribute[EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("readonly")])
-            if inline_roots_type(T) != 0
-                push!(params, T_ptr)
-                push!(param_attrs, LLVM.Attribute[EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("readonly")])
-            end
+        elseif rt === Any || GPUCompiler.deserves_retbox(RT)
+            retty = T_prjlvalue
         else
-            push!(params, lty)
-            push!(param_attrs, LLVM.Attribute[])
+            retty = convert(LLVMType, rt)
         end
-    end
 
-    return retty, params, param_attrs
-end
-
-# The function `customrules.jl` calls a rule through, shaped like the codegen'd rule
-# function used to be: the specsig, swift calling convention, the `enzymejl_mi` /
-# `enzymejl_rt` attributes the rule handlers read, and the per-parameter attributes
-# `prepare_llvm` gives every compiled function (`enzymejl_parmtype*`, and the
-# `enzymejl_rooted_typ` / `enzymejl_returnRoots` markers by which `fix_decayaddr!`
-# recognizes root-carrying arguments).
-function rule_function!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), name::String, world::UInt)::LLVM.Function
-    retty, params, param_attrs = rule_specsig(mi, RT)
-    fn = LLVM.Function(mod, name, LLVM.FunctionType(retty, params))
-    callconv!(fn, LLVM.API.LLVMSwiftCallConv)
-    fattrs = function_attributes(fn)
-    push!(fattrs, StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))))
-    push!(fattrs, StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(RT)))))
-    push!(fattrs, StringAttribute("enzymejl_world", string(world)))
-    if RT === Union{}
-        push!(fattrs, EnumAttribute("noreturn"))
-    end
-    for (i, attrs) in enumerate(param_attrs)
-        for attr in attrs
-            push!(parameter_attributes(fn, i), attr)
+        if gcstack_arg
+            push!(params, T_ptr)
+            push!(param_attrs, LLVM.Attribute[EnumAttribute("swiftself"), EnumAttribute("nonnull")])
         end
-    end
 
-    # Classifying the arguments against the derived signature also checks the two agree.
-    _, sret, returnRoots = get_return_info(RT)
-    jlargs = classify_arguments(mi.specTypes, LLVM.function_type(fn), sret !== nothing, returnRoots !== nothing, true, UInt64[], mi, world)
-    for arg in jlargs
-        if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
-            continue
+        for T in (mi.specTypes::DataType).parameters
+            if isghostty(T) || Core.Compiler.isconstType(T)
+                continue
+            end
+            lty = convert(LLVMType, T; allow_boxed = true)
+            if lty isa LLVM.PointerType
+                push!(params, lty)
+                push!(param_attrs, LLVM.Attribute[])
+            elseif lty isa LLVM.StructType || lty isa LLVM.ArrayType
+                push!(params, T_derived)
+                push!(param_attrs, LLVM.Attribute[EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("readonly")])
+                if inline_roots_type(T) != 0
+                    push!(params, T_ptr)
+                    push!(param_attrs, LLVM.Attribute[EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("readonly")])
+                end
+            else
+                push!(params, lty)
+                push!(param_attrs, LLVM.Attribute[])
+            end
         end
-        pattrs = parameter_attributes(fn, arg.codegen.i)
-        push!(pattrs, StringAttribute("enzymejl_parmtype", string(convert(UInt, unsafe_to_pointer(arg.typ)))))
-        push!(pattrs, StringAttribute("enzymejl_parmtype_str", string(arg.typ)))
-        push!(pattrs, StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))))
-        if arg.rooted_typ !== nothing
-            push!(pattrs, StringAttribute("enzymejl_rooted_typ", string(convert(UInt, unsafe_to_pointer(arg.rooted_typ)))))
+
+        return retty, params, param_attrs
+    end
+
+    # Create the function `customrules.jl` calls a rule through. It has the shape
+    # the codegen'd rule function used to have: the specsig, the swift calling
+    # convention, and the `enzymejl_mi` / `enzymejl_rt` attributes the rule handlers
+    # read. It also gets the per-parameter attributes `prepare_llvm` gives every
+    # compiled function: `enzymejl_parmtype*`, and the `enzymejl_rooted_typ` /
+    # `enzymejl_returnRoots` markers by which `fix_decayaddr!` recognizes
+    # root-carrying arguments.
+    function rule_function!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), name::String, world::UInt)::LLVM.Function
+        retty, params, param_attrs = rule_specsig(mi, RT)
+        fn = LLVM.Function(mod, name, LLVM.FunctionType(retty, params))
+        # Julia's codegen uses the swift calling convention only when the `pgcstack`
+        # parameter exists and the target supports the convention
+        # (`get_specsig_function`).
+        if jit_gcstack_arg() && jit_uses_swiftcc()
+            callconv!(fn, LLVM.API.LLVMSwiftCallConv)
         end
+        fattrs = function_attributes(fn)
+        push!(fattrs, StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))))
+        push!(fattrs, StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(RT)))))
+        push!(fattrs, StringAttribute("enzymejl_world", string(world)))
+        if RT === Union{}
+            push!(fattrs, EnumAttribute("noreturn"))
+        end
+        for (i, attrs) in enumerate(param_attrs)
+            for attr in attrs
+                push!(parameter_attributes(fn, i), attr)
+            end
+        end
+
+        # Classify the arguments against the derived signature. This also checks
+        # that the two agree.
+        _, sret, returnRoots = get_return_info(RT)
+        jlargs = classify_arguments(mi.specTypes, LLVM.function_type(fn), sret !== nothing, returnRoots !== nothing, true, UInt64[], mi, world)
+        for arg in jlargs
+            if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
+                continue
+            end
+            pattrs = parameter_attributes(fn, arg.codegen.i)
+            push!(pattrs, StringAttribute("enzymejl_parmtype", string(convert(UInt, unsafe_to_pointer(arg.typ)))))
+            push!(pattrs, StringAttribute("enzymejl_parmtype_str", string(arg.typ)))
+            push!(pattrs, StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))))
+            if arg.rooted_typ !== nothing
+                push!(pattrs, StringAttribute("enzymejl_rooted_typ", string(convert(UInt, unsafe_to_pointer(arg.rooted_typ)))))
+            end
+        end
+        if returnRoots !== nothing
+            push!(parameter_attributes(fn, 2), StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots).parameters[1]))))
+        end
+        return fn
     end
-    if returnRoots !== nothing
-        push!(parameter_attributes(fn, 2), StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots).parameters[1]))))
-    end
-    return fn
-end
 
-"""
-    declare_rule_specsig!(mod, mi, RT, specptr, name, world)
+    """
+        check_rule_specsig(llvmf, mi, RT)
 
-Declare in `mod` the natively compiled rule `mi` (return type `RT`, specialized
-entry point `specptr`) with the signature Julia's codegen gives it, see
-[`rule_specsig`](@ref). The entry point is embedded via
-`enzymejl_needs_restoration`, which `restore_lookups` turns into the address
-once the calling module is final.
-"""
-function declare_rule_specsig!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), specptr::Ptr{Cvoid}, name::String, world::UInt)::LLVM.Function
-    fn = rule_function!(mod, mi, RT, name, world)
-    push!(function_attributes(fn), StringAttribute("enzymejl_needs_restoration", string(convert(UInt, specptr))))
-    return fn
-end
+    Compare the signature of the emitted rule `llvmf` against the signature
+    [`rule_specsig`](@ref) derives for `mi` and `RT`. The comparison covers the
+    return type, the parameter types, and the ABI attributes `sret` and
+    `swiftself`. Throw an `AssertionError` on a mismatch. The other derived
+    attributes only aid optimization and are not compared.
 
-"""
-    define_rule_jlcall!(mod, mi, RT, ci, invoke, name, world)
-
-For a rule whose `CodeInstance` `ci` got no specialized entry point, define in
-`mod` a function with the signature Julia's codegen would have given it (see
-[`rule_specsig`](@ref)) whose body calls the `CodeInstance`'s boxed entry
-`invoke(F, args, nargs, ci)` instead — Enzyme's counterpart of Julia's
-`emit_specsig_to_fptr1`. Ghost and `Type{T}` arguments are materialized as
-literals, scalars and by-reference aggregates are copied into fresh boxes
-(recombined with their inline roots on 1.12+), and the boxed result is loaded
-back, or split into the `sret` buffer and its return roots.
-
-Returns `nothing` for a small `Union` return, which the adapter does not
-handle.
-"""
-function define_rule_jlcall!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), ci::Core.CodeInstance, invoke::Ptr{Cvoid}, name::String, world::UInt)::Union{Nothing, LLVM.Function}
-    T_int32 = LLVM.Int32Type()
-    T_int64 = LLVM.Int64Type()
-    T_jlvalue = LLVM.StructType(LLVMType[])
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-    T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
-    T_derived = LLVM.PointerType(T_jlvalue, Derived)
-
-    rt, sret, returnRoots = get_return_info(RT)
-    if sret !== nothing && is_sret_union(RT)
+    `nested_codegen!` compiles without `gcstack_arg`, so `llvmf` normally has no
+    `pgcstack` parameter. The derivation follows `has_swiftself(llvmf)`.
+    """
+    function check_rule_specsig(llvmf::LLVM.Function, mi::Core.MethodInstance, @nospecialize(RT::Type))
+        retty, params, param_attrs = rule_specsig(mi, RT; gcstack_arg = has_swiftself(llvmf))
+        ft = LLVM.function_type(llvmf)
+        ok = LLVM.return_type(ft) == retty && parameters(ft) == params
+        if ok
+            sretkind = kind(TypeAttribute("sret", LLVM.Int8Type()))
+            for (i, attrs) in enumerate(param_attrs)
+                actual = collect(parameter_attributes(llvmf, i))
+                for attr in attrs
+                    is_sret = attr isa TypeAttribute && kind(attr) == sretkind
+                    is_swiftself = attr isa EnumAttribute && kind(attr) == swiftself_kind
+                    if !is_sret && !is_swiftself
+                        continue
+                    end
+                    found = false
+                    for a in actual
+                        if is_sret && a isa TypeAttribute && kind(a) == sretkind && LLVM.value(a) == LLVM.value(attr)
+                            found = true
+                        elseif is_swiftself && a isa EnumAttribute && kind(a) == swiftself_kind
+                            found = true
+                        end
+                    end
+                    ok &= found
+                end
+            end
+        end
+        if !ok
+            msg = sprint() do io
+                println(io, "Enzyme: the emitted rule does not match the derived signature")
+                println(io, "mi = ", mi)
+                println(io, "emitted = ", string(ft))
+                println(io, "derived retty = ", string(retty))
+                println(io, "derived params = ", string.(params))
+            end
+            throw(AssertionError(msg))
+        end
         return nothing
     end
 
-    fn = rule_function!(mod, mi, RT, name, world)
-    linkage!(fn, LLVM.API.LLVMInternalLinkage)
-    push!(function_attributes(fn), EnumAttribute("alwaysinline"))
-    fparams = collect(parameters(fn))
-    nspecial = (sret !== nothing) + (returnRoots !== nothing)
+    """
+        declare_rule_specsig!(mod, mi, RT, specptr, name, world)
 
-    entry = BasicBlock(fn, "entry")
-    B = IRBuilder()
-    position!(B, entry)
+    Declare the natively compiled rule `mi` in `mod`. The rule has return type
+    `RT` and specialized entry point `specptr`. The declaration gets the signature
+    Julia's codegen gives the rule, see [`rule_specsig`](@ref). The entry point is
+    embedded via `enzymejl_needs_restoration`. `restore_lookups` turns that
+    attribute into the address once the calling module is final.
+    """
+    function declare_rule_specsig!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), specptr::Ptr{Cvoid}, name::String, world::UInt)::LLVM.Function
+        fn = rule_function!(mod, mi, RT, name, world)
+        push!(function_attributes(fn), StringAttribute("enzymejl_needs_restoration", string(convert(UInt, specptr))))
+        return fn
+    end
 
-    # the boxed entry point and the trampoline lowering `julia.call2(fptr, ci, F, args...)`
-    # into `fptr(F, args, nargs, ci)`
-    invoke_FT = LLVM.FunctionType(T_prjlvalue, LLVMType[T_prjlvalue, T_pprjlvalue, T_int32, T_prjlvalue])
-    invoke_fn = LLVM.Function(mod, name * ".invoke", invoke_FT)
-    push!(function_attributes(invoke_fn), StringAttribute("enzymejl_needs_restoration", string(convert(UInt, invoke))))
-    call2_fn, call2_FT = get_function!(mod, "julia.call2", LLVM.FunctionType(T_prjlvalue, LLVMType[LLVM.PointerType(invoke_FT), T_prjlvalue]; vararg = true))
+    """
+        define_rule_jlcall!(mod, mi, RT, ci, invoke, name, world)
 
-    F = nothing
-    argv = LLVM.Value[]
-    pi = nspecial + 2 # after the sret buffer and pgcstack
-    for (i, T) in enumerate((mi.specTypes::DataType).parameters)
-        val = if Core.Compiler.isconstType(T)
-            unsafe_to_llvm(B, T.parameters[1])
-        elseif isghostty(T)
-            Base.issingletontype(T) || return nothing
-            unsafe_to_llvm(B, T.instance)
-        else
-            param = fparams[pi]
-            pi += 1
-            lty = convert(LLVMType, T; allow_boxed = true)
-            if lty isa LLVM.PointerType
-                param
+    Define an adapter for a rule whose `CodeInstance` `ci` got no specialized
+    entry point. The adapter is a function in `mod` with the signature Julia's
+    codegen would have given the rule (see [`rule_specsig`](@ref)). Its body calls
+    the `CodeInstance`'s boxed entry `invoke(F, args, nargs, ci)` instead. This is
+    Enzyme's counterpart of Julia's `emit_specsig_to_fptr1`.
+
+    The body materializes ghost and `Type{T}` arguments as literals. It copies
+    scalars and by-reference aggregates into fresh boxes, and on 1.12+ recombines
+    the aggregates with their inline roots. It loads the boxed result back, or
+    splits it into the `sret` buffer and its return roots.
+
+    Returns `nothing` for a small `Union` return, which the adapter does not
+    handle.
+    """
+    function define_rule_jlcall!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), ci::Core.CodeInstance, invoke::Ptr{Cvoid}, name::String, world::UInt)::Union{Nothing, LLVM.Function}
+        T_int32 = LLVM.Int32Type()
+        T_int64 = LLVM.Int64Type()
+        T_jlvalue = LLVM.StructType(LLVMType[])
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+        T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
+        T_derived = LLVM.PointerType(T_jlvalue, Derived)
+
+        rt, sret, returnRoots = get_return_info(RT)
+        if sret !== nothing && is_sret_union(RT)
+            return nothing
+        end
+
+        fn = rule_function!(mod, mi, RT, name, world)
+        linkage!(fn, LLVM.API.LLVMInternalLinkage)
+        push!(function_attributes(fn), EnumAttribute("alwaysinline"))
+        fparams = collect(parameters(fn))
+        nspecial = (sret !== nothing) + (returnRoots !== nothing)
+
+        entry = BasicBlock(fn, "entry")
+        B = IRBuilder()
+        position!(B, entry)
+
+        # Declare the boxed entry point. The `julia.call2` trampoline lowers
+        # `julia.call2(fptr, ci, F, args...)` into `fptr(F, args, nargs, ci)`.
+        invoke_FT = LLVM.FunctionType(T_prjlvalue, LLVMType[T_prjlvalue, T_pprjlvalue, T_int32, T_prjlvalue])
+        invoke_fn = LLVM.Function(mod, name * ".invoke", invoke_FT)
+        push!(function_attributes(invoke_fn), StringAttribute("enzymejl_needs_restoration", string(convert(UInt, invoke))))
+        call2_fn, call2_FT = get_function!(mod, "julia.call2", LLVM.FunctionType(T_prjlvalue, LLVMType[LLVM.PointerType(invoke_FT), T_prjlvalue]; vararg = true))
+
+        F = nothing
+        argv = LLVM.Value[]
+        pi = nspecial + 1 + jit_gcstack_arg() # after the sret buffer and, if present, pgcstack
+        for (i, T) in enumerate((mi.specTypes::DataType).parameters)
+            val = if Core.Compiler.isconstType(T)
+                unsafe_to_llvm(B, T.parameters[1])
+            elseif isghostty(T)
+                Base.issingletontype(T) || return nothing
+                unsafe_to_llvm(B, T.instance)
             else
-                box = emit_allocobj!(B, T, "box.$T")
-                if (lty isa LLVM.StructType || lty isa LLVM.ArrayType) && inline_roots_type(T) != 0
-                    roots = fparams[pi]
-                    pi += 1
-                    store!(B, recombine_value_ptr!(B, lty, param, roots), box)
-                elseif lty isa LLVM.StructType || lty isa LLVM.ArrayType
-                    memcpy!(B, box, 0, param, 0, LLVM.ConstantInt(T_int64, sizeof(T)))
+                param = fparams[pi]
+                pi += 1
+                lty = convert(LLVMType, T; allow_boxed = true)
+                if lty isa LLVM.PointerType
+                    param
                 else
-                    store!(B, param, box)
+                    box = emit_allocobj!(B, T, "box.$T")
+                    if (lty isa LLVM.StructType || lty isa LLVM.ArrayType) && inline_roots_type(T) != 0
+                        roots = fparams[pi]
+                        pi += 1
+                        store!(B, recombine_value_ptr!(B, lty, param, roots), box)
+                    elseif lty isa LLVM.StructType || lty isa LLVM.ArrayType
+                        memcpy!(B, box, 0, param, 0, LLVM.ConstantInt(T_int64, sizeof(T)))
+                    else
+                        store!(B, param, box)
+                    end
+                    box
                 end
-                box
+            end
+            if i == 1
+                F = val
+            else
+                push!(argv, val)
             end
         end
-        if i == 1
-            F = val
+
+        res = call!(B, call2_FT, call2_fn, LLVM.Value[invoke_fn, unsafe_to_llvm(B, ci), F, argv...])
+
+        retty = LLVM.return_type(LLVM.function_type(fn))
+        if sret !== nothing && returnRoots !== nothing
+            sret_lty = convert(LLVMType, eltype(sret))
+            val = load!(B, sret_lty, addrspacecast!(B, res, T_derived), "unbox.$RT")
+            extract_nonjlvalues_into!(B, sret_lty, fparams[1], val)
+            extract_roots_from_value!(B, val, fparams[2])
+            ret!(B)
+        elseif sret !== nothing
+            memcpy!(B, fparams[1], 0, res, 0, LLVM.ConstantInt(T_int64, sizeof(eltype(sret))))
+            ret!(B)
+        elseif retty isa LLVM.VoidType
+            ret!(B)
+        elseif retty == T_prjlvalue
+            ret!(B, res)
         else
-            push!(argv, val)
+            ret!(B, load!(B, retty, addrspacecast!(B, res, T_derived), "unbox.$RT"))
         end
+        dispose(B)
+        return fn
     end
 
-    res = call!(B, call2_FT, call2_fn, LLVM.Value[invoke_fn, unsafe_to_llvm(B, ci), F, argv...])
+    """
+        rule_call_convention(src::Core.CodeInfo) -> Symbol
 
-    retty = LLVM.return_type(LLVM.function_type(fn))
-    if sret !== nothing && returnRoots !== nothing
-        sret_lty = convert(LLVMType, eltype(sret))
-        val = load!(B, sret_lty, addrspacecast!(B, res, T_derived), "unbox.$RT")
-        extract_nonjlvalues_into!(B, sret_lty, fparams[1], val)
-        extract_roots_from_value!(B, val, fparams[2])
-        ret!(B)
-    elseif sret !== nothing
-        memcpy!(B, fparams[1], 0, res, 0, LLVM.ConstantInt(T_int64, sizeof(eltype(sret))))
-        ret!(B)
-    elseif retty isa LLVM.VoidType
-        ret!(B)
-    elseif retty == T_prjlvalue
-        ret!(B, res)
-    else
-        ret!(B, load!(B, retty, addrspacecast!(B, res, T_derived), "unbox.$RT"))
-    end
-    dispose(B)
-    return fn
-end
+    Decide how a custom rule should be reached from the calling module. The
+    decision follows the rule's inlining annotation. An unannotated rule follows
+    Julia's own inlining heuristics, applied to its optimized source `src`.
 
-"""
-    rule_call_convention(src::Core.CodeInfo) -> Symbol
-
-How a custom rule should be reached from the calling module, decided from its
-inlining annotation and, failing that, from Julia's own inlining heuristics
-applied to its optimized source `src`: `:inline` — emit its IR into the calling
-module and always-inline it — for rules declared `@inline` and for unannotated
-rules Julia itself would inline; `:call` — call its natively compiled entry
-point — for rules declared `@noinline` and for the rest.
-"""
-function rule_call_convention(src::Core.CodeInfo)::Symbol
-    CC = Core.Compiler
-    CC.is_declared_noinline(src) && return :call
-    CC.is_declared_inline(src) && return :inline
-    return CC.is_inlineable(src) ? :inline : :call
-end
-
-"""
-    invoke_codegen!(enzyme_context, mode, mod, funcspec, world, alwaysinline = false)
-
-Make the rule `funcspec` callable from `mod`. Rules that should be inlined
-into the calling module (see [`rule_call_convention`](@ref)) are emitted into
-it by `nested_codegen!` and marked always-inline. The others are not emitted
-at all: the rule is inferred with the same interpreter that selected it, the
-resulting `CodeInstance` (and its callees) is handed to Julia's JIT, and its
-specialized entry point is declared in `mod` via `declare_rule_specsig!`. Such
-a rule is compiled once, natively, for the whole process, and called directly
-through its specsig — no boxing, no dispatch — while callers keep building
-arguments exactly as for a `nested_codegen!`'d rule. A rule whose
-`CodeInstance` got no specialized entry point is called through its boxed
-`invoke` entry instead, see [`define_rule_jlcall!`](@ref).
-
-The call ABI does not exist on Julia versions without the required runtime
-API (`Interpreter.HAS_INVOKE_RULES`), for non-host modules, or while
-precompiling (the entry points are process addresses); there every rule is
-emitted by `nested_codegen!`. Failing to compile or to call a rule natively
-is an error.
-"""
-function invoke_codegen!(
-    enzyme_context::EnzymeContext,
-    mode::API.CDerivativeMode,
-    mod::LLVM.Module,
-    funcspec::Core.MethodInstance,
-    world::UInt,
-    alwaysinline::Bool=false,
-)
-    if !(funcspec.specTypes isa DataType) || Base.generating_output() ||
-       !startswith(LLVM.triple(mod), string(Sys.ARCH))
-        return nested_codegen!(enzyme_context, mode, mod, funcspec, world, alwaysinline)
+    `:inline` means: emit the rule's IR into the calling module and always-inline
+    it. Rules declared `@inline`, and unannotated rules Julia itself would inline,
+    get this. `:call` means: call the rule's natively compiled entry point. Rules
+    declared `@noinline`, and the remaining unannotated rules, get this.
+    """
+    function rule_call_convention(src::Core.CodeInfo)::Symbol
+        CC = Core.Compiler
+        CC.is_declared_noinline(src) && return :call
+        CC.is_declared_inline(src) && return :inline
+        return CC.is_inlineable(src) ? :inline : :call
     end
 
-    if haskey(enzyme_context.nested_cache, funcspec)
-        fname = enzyme_context.nested_cache[funcspec]
-        if haskey(functions(mod), fname)
-            return functions(mod)[fname]
+    """
+        invoke_codegen!(enzyme_context, mode, mod, funcspec, world, alwaysinline = false)
+
+    Make the rule `funcspec` callable from `mod`. Rules that should be inlined
+    into the calling module (see [`rule_call_convention`](@ref)) are emitted into
+    it by `nested_codegen!` and marked always-inline. The other rules are not
+    emitted at all. Instead, the rule is inferred with the same interpreter that
+    selected it. The resulting `CodeInstance` and its callees are handed to
+    Julia's JIT, and `declare_rule_specsig!` declares its specialized entry point
+    in `mod`. Such a rule is compiled once, natively, for the whole process. Calls
+    go directly through its specsig, with no boxing and no dispatch, and callers
+    keep building arguments exactly as for a `nested_codegen!`'d rule. A rule
+    whose `CodeInstance` got no specialized entry point is called through its
+    boxed `invoke` entry instead, see [`define_rule_jlcall!`](@ref).
+
+    The call ABI does not exist in these cases: Julia versions without the
+    required runtime API (`Interpreter.HAS_INVOKE_RULES`), non-host modules,
+    targets without the swift calling convention (see [`jit_uses_swiftcc`](@ref)),
+    and precompilation (the entry points are process addresses). There every rule
+    is emitted by `nested_codegen!`. Failing to compile or to call a rule natively
+    is an error.
+    """
+    function invoke_codegen!(
+            enzyme_context::EnzymeContext,
+            mode::API.CDerivativeMode,
+            mod::LLVM.Module,
+            funcspec::Core.MethodInstance,
+            world::UInt,
+            alwaysinline::Bool = false,
+        )
+        # The rule handlers pass `pgcstack` only through a `swiftself` parameter.
+        # Without the swift calling convention that parameter does not exist, so
+        # the native call path is unavailable (see `jit_uses_swiftcc`).
+        if !(funcspec.specTypes isa DataType) || Base.generating_output() ||
+                !startswith(LLVM.triple(mod), string(Sys.ARCH)) ||
+                (jit_gcstack_arg() && !jit_uses_swiftcc())
+            return nested_codegen!(enzyme_context, mode, mod, funcspec, world, alwaysinline)
         end
-    end
 
-    interp = primal_interp_world(mode == API.DEM_ForwardMode ? Forward : Reverse, world)
-    ci = Core.Compiler.typeinf_ext(interp, funcspec, Core.Compiler.SOURCE_MODE_NOT_REQUIRED)
-    src = ci === nothing ? nothing : Core.Compiler.typeinf_code(interp, funcspec, true)
-    if !(src isa Core.CodeInfo)
-        throw(CallingConventionMismatchError{String}("Enzyme: failed to infer the custom rule $(funcspec)", funcspec, world))
-    end
-    if rule_call_convention(src) === :inline
-        return nested_codegen!(enzyme_context, mode, mod, funcspec, world, true)
-    end
-    Interpreter.add_codeinsts_to_jit!(interp, ci; root_src = src)
-    specptr, invoke = Interpreter.codeinst_entry(ci)
+        if haskey(enzyme_context.nested_cache, funcspec)
+            fname = enzyme_context.nested_cache[funcspec]
+            if haskey(functions(mod), fname)
+                return functions(mod)[fname]
+            end
+        end
 
-    name = "ejl_rule_" * GPUCompiler.safe_name(string(funcspec.def.name)) * "_" * string(convert(UInt, pointer_from_objref(funcspec)))
-    fn = if specptr != C_NULL
-        declare_rule_specsig!(mod, funcspec, ci.rettype, specptr, name, world)
-    elseif invoke != C_NULL
-        define_rule_jlcall!(mod, funcspec, ci.rettype, ci, invoke, name, world)
-    else
-        nothing
-    end
-    if fn === nothing
-        msg = if invoke == C_NULL
-            "Enzyme: Julia produced no entry point for the custom rule $(funcspec)"
+        interp = primal_interp_world(mode == API.DEM_ForwardMode ? Forward : Reverse, world)
+        ci = Core.Compiler.typeinf_ext(interp, funcspec, Core.Compiler.SOURCE_MODE_NOT_REQUIRED)
+        src = ci === nothing ? nothing : Core.Compiler.typeinf_code(interp, funcspec, true)
+        if !(src isa Core.CodeInfo)
+            throw(CallingConventionMismatchError{String}("Enzyme: failed to infer the custom rule $(funcspec)", funcspec, world))
+        end
+        if rule_call_convention(src) === :inline
+            llvmf = nested_codegen!(enzyme_context, mode, mod, funcspec, world, true)
+            # Keep the two signature derivations in agreement.
+            check_rule_specsig(llvmf, funcspec, ci.rettype)
+            return llvmf
+        end
+        Interpreter.add_codeinsts_to_jit!(interp, ci; root_src = src)
+        specptr, invoke = Interpreter.codeinst_entry(ci)
+
+        name = "ejl_rule_" * GPUCompiler.safe_name(string(funcspec.def.name)) * "_" * string(convert(UInt, pointer_from_objref(funcspec)))
+        fn = if specptr != C_NULL
+            declare_rule_specsig!(mod, funcspec, ci.rettype, specptr, name, world)
+        elseif invoke != C_NULL
+            define_rule_jlcall!(mod, funcspec, ci.rettype, ci, invoke, name, world)
         else
-            "Enzyme: the custom rule $(funcspec) has no specialized entry point and its return type $(ci.rettype) is not supported by the boxed call adapter"
+            nothing
         end
-        throw(CallingConventionMismatchError{String}(msg, funcspec, world))
-    end
+        if fn === nothing
+            msg = if invoke == C_NULL
+                "Enzyme: Julia produced no entry point for the custom rule $(funcspec)"
+            else
+                "Enzyme: the custom rule $(funcspec) has no specialized entry point and its return type $(ci.rettype) is not supported by the boxed call adapter"
+            end
+            throw(CallingConventionMismatchError{String}(msg, funcspec, world))
+        end
 
-    # The native code stays valid as long as its CodeInstance does.
-    push!(enzyme_context.edges, funcspec)
-    push!(enzyme_context.edges, ci)
-    enzyme_context.nested_cache[funcspec] = name
-    return fn
-end
+        # The native code stays valid as long as its CodeInstance does.
+        push!(enzyme_context.edges, funcspec)
+        push!(enzyme_context.edges, ci)
+        enzyme_context.nested_cache[funcspec] = name
+        return fn
+    end
 
 else
 
-invoke_codegen!(
-    enzyme_context::EnzymeContext,
-    mode::API.CDerivativeMode,
-    mod::LLVM.Module,
-    funcspec::Core.MethodInstance,
-    world::UInt,
-    alwaysinline::Bool=false,
-) = nested_codegen!(enzyme_context, mode, mod, funcspec, world, alwaysinline)
+    invoke_codegen!(
+        enzyme_context::EnzymeContext,
+        mode::API.CDerivativeMode,
+        mod::LLVM.Module,
+        funcspec::Core.MethodInstance,
+        world::UInt,
+        alwaysinline::Bool = false,
+    ) = nested_codegen!(enzyme_context, mode, mod, funcspec, world, alwaysinline)
 
 end
 
