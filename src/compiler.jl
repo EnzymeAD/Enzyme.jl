@@ -1525,17 +1525,21 @@ end
 
 @static if Interpreter.HAS_INVOKE_RULES
 
+    function read_jit_gcstack_arg()::Bool
+        off = fieldoffset(Base.CodegenParams, Base.fieldindex(Base.CodegenParams, :gcstack_arg))
+        return unsafe_load(Ptr{Cint}(cglobal(:jl_default_cgparams) + off)) != 0
+    end
+    const jit_gcstack_arg_once = Base.OncePerProcess{Bool}(read_jit_gcstack_arg)
+
     """
         jit_gcstack_arg() -> Bool
 
     Say if Julia's JIT passes `pgcstack` as an argument to compiled code. The
     JIT compiles with `jl_default_cgparams`, so read its `gcstack_arg` field.
-    The `Base.CodegenParams` mirror gives the field offset.
+    The `Base.CodegenParams` mirror gives the field offset. The value is a
+    process constant, so read it once and cache it.
     """
-    function jit_gcstack_arg()::Bool
-        off = fieldoffset(Base.CodegenParams, Base.fieldindex(Base.CodegenParams, :gcstack_arg))
-        return unsafe_load(Ptr{Cint}(cglobal(:jl_default_cgparams) + off)) != 0
-    end
+    jit_gcstack_arg()::Bool = jit_gcstack_arg_once()
 
     """
         jit_uses_swiftcc() -> Bool
