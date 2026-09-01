@@ -1783,8 +1783,9 @@ end
     result, either into the return value or into the `sret` buffer and its
     return roots.
 
-    Returns `nothing` for a small `Union` return, which the adapter does not
-    handle.
+    Returns `nothing`, before it changes `mod`, for the signatures the adapter
+    does not handle: a small `Union` return, and a ghost argument with no
+    singleton instance to materialize.
     """
     function define_rule_jlcall!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), ci::Core.CodeInstance, invoke::Ptr{Cvoid}, name::String, world::UInt)::Union{Nothing, LLVM.Function}
         T_int32 = LLVM.Int32Type()
@@ -1797,6 +1798,11 @@ end
         rt, sret, returnRoots = get_return_info(RT)
         if sret !== nothing && is_sret_union(RT)
             return nothing
+        end
+        for T in (mi.specTypes::DataType).parameters
+            if isghostty(T) && !Core.Compiler.isconstType(T) && !Base.issingletontype(T)
+                return nothing
+            end
         end
 
         fn = rule_function!(mod, mi, RT, name, world)
@@ -1823,7 +1829,6 @@ end
             val = if Core.Compiler.isconstType(T)
                 unsafe_to_llvm(B, T.parameters[1])
             elseif isghostty(T)
-                Base.issingletontype(T) || return nothing
                 unsafe_to_llvm(B, T.instance)
             else
                 param = fparams[pi]
@@ -1972,7 +1977,7 @@ end
             msg = if invoke == C_NULL
                 "Enzyme: Julia produced no entry point for the custom rule $(funcspec)"
             else
-                "Enzyme: the custom rule $(funcspec) has no specialized entry point and its return type $(ci.rettype) is not supported by the boxed call adapter"
+                "Enzyme: the custom rule $(funcspec) has no specialized entry point, and the boxed call adapter does not support its signature or its return type $(ci.rettype)"
             end
             throw(CallingConventionMismatchError{String}(msg, funcspec, world))
         end
