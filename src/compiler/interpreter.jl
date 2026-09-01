@@ -1562,8 +1562,16 @@ end
 # Say if custom rules can be called through their natively compiled CodeInstance
 # (see `Enzyme.Compiler.invoke_codegen!`). This needs two Julia 1.12 runtime
 # functions: `jl_add_codeinst_to_jit` to hand a CodeInstance to the JIT, and
-# `jl_read_codeinst_invoke` to read back its entry points.
-const HAS_INVOKE_RULES = VERSION >= v"1.12-"
+# `jl_read_codeinst_invoke` to read back its entry points. Also test for the
+# `Core.Compiler` internals the implementation uses. When a future Julia
+# renames one, the feature turns off cleanly instead of failing at the first
+# rule compilation.
+const HAS_INVOKE_RULES = VERSION >= v"1.12-" &&
+    isdefined(Core.Compiler, :CompilationQueue) &&
+    isdefined(Core.Compiler, :ci_has_invoke) &&
+    isdefined(Core.Compiler, :use_const_api) &&
+    isdefined(Core.Compiler, :collectinvokes!) &&
+    isdefined(Core.Compiler, :is_inlineable)
 
 @static if HAS_INVOKE_RULES
 
