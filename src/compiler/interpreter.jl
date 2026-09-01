@@ -1321,9 +1321,14 @@ function abstract_call_known(
             if citype isa Core.Const && citype.val isa Core.CodeInstance &&
                     invoked_ci_needs_rule(interp, citype.val)
                 argtypes′ = Core.Compiler.invoke_rewrite(argtypes)
-                fargs′ = fargs === nothing ? nothing : Core.Compiler.invoke_rewrite(fargs)
                 f′ = Core.Compiler.singleton_type(argtypes′[1])
-                return abstract_call_known(interp, f′, ArgInfo(fargs′, argtypes′), si, sv, get_max_methods(interp, f′, sv))
+                # `abstract_call_known` requires a known callee. A callee with
+                # no singleton type, for example a closure instance, keeps the
+                # `abstract_invoke` path below.
+                if f′ !== nothing
+                    fargs′ = fargs === nothing ? nothing : Core.Compiler.invoke_rewrite(fargs)
+                    return abstract_call_known(interp, f′, ArgInfo(fargs′, argtypes′), si, sv, get_max_methods(interp, f′, sv))
+                end
             end
         end
     end
