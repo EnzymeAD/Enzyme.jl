@@ -2,9 +2,10 @@ using Enzyme
 using Test
 using Enzyme.EnzymeRules
 
-# How a rule reaches the calling module follows its inlining annotation: `@inline` rules
-# are emitted into it and always-inlined, `@noinline` rules are called through their
-# natively compiled entry point, and unannotated rules follow Julia's inlining heuristics.
+# How a rule reaches the calling module follows its inlining annotation. `@inline` rules
+# are emitted into the calling module and always-inlined. `@noinline` rules are called
+# through their natively compiled entry point. Unannotated rules follow Julia's inlining
+# heuristics.
 
 cube_inline(x) = x^3
 cube_noinline(x) = x^3
@@ -23,7 +24,7 @@ function EnzymeRules.forward(config, ::Const{typeof(cube_default)}, ::Type{<:Dup
     return Duplicated(cube_default(x.val), 10 * 3 * x.val^2 * x.dval)
 end
 
-# large enough that Julia's heuristics would not inline it
+# This rule is too large for Julia's inlining heuristics.
 function EnzymeRules.forward(config, ::Const{typeof(cube_big)}, ::Type{<:Duplicated}, x::Duplicated)
     acc = 0.0
     for i in 1:64
@@ -43,7 +44,7 @@ end
     return (10 * 3 * xv^2 * dret.val,)
 end
 
-# an argument with both a tracked pointer and data, i.e. with inline roots on 1.12+
+# This argument holds both a tracked pointer and data. On 1.12+ it has inline roots.
 struct Scale
     v::Vector{Float64}
     c::Float64
@@ -70,7 +71,7 @@ function scale_twice(p, x)
     return y + scale_dot(p, x)
 end
 
-# in a loop, the roots of the overwritten argument come back from the tape
+# In a loop, the roots of the overwritten argument come back from the tape.
 function scale_loop(p, x)
     s = 0.0
     for i in 1:3
@@ -85,7 +86,7 @@ end
         @test autodiff(ForwardWithPrimal, f, Duplicated(2.0, 1.0)) == (120.0, 8.0)
     end
     @test autodiff(Reverse, cube_noinline, Active(2.0))[1][1] == 120.0
-    # 10 * (2 * 3) + 10 * (2 * 5), with the argument overwritten between the two calls
+    # 10 * (2 * 3) + 10 * (2 * 5). The argument is overwritten between the two calls.
     @test autodiff(Reverse, scale_twice, Const(Scale([3.0], 2.0)), Active(1.5))[1][2] == 160.0
     # 10 * 2 * (3 + 4 + 5)
     @test autodiff(Reverse, scale_loop, Const(Scale([3.0], 2.0)), Active(1.5))[1][2] == 240.0
