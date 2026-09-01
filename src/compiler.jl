@@ -1490,11 +1490,7 @@ function nested_codegen!(
     if alwaysinline
         # A method declared `@noinline` carries that attribute. Remove it: this
         # path always inlines, and `noinline` conflicts with `alwaysinline`.
-        LLVM.API.LLVMRemoveEnumAttributeAtIndex(
-            lfn,
-            reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
-            kind(EnumAttribute("noinline")),
-        )
+        delete!(function_attributes(lfn), EnumAttribute("noinline"))
         push!(function_attributes(lfn), EnumAttribute("alwaysinline"))
     end
 
@@ -1739,7 +1735,7 @@ end
         ft = LLVM.function_type(llvmf)
         ok = LLVM.return_type(ft) == retty && parameters(ft) == params
         if ok
-            sretkind = kind(TypeAttribute("sret", LLVM.Int8Type()))
+            sretkind = enum_attr_kind("sret")
             for (i, attrs) in enumerate(param_attrs)
                 actual = collect(parameter_attributes(llvmf, i))
                 for attr in attrs
