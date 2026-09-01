@@ -1697,9 +1697,11 @@ end
 
         # Classify the arguments to place the per-parameter attributes.
         # `classify_arguments` also asserts that the derived signature matches
-        # `mi.specTypes` as it walks them.
+        # `mi.specTypes` as it walks them. The signature has a `pgcstack`
+        # parameter only when the JIT passes one, so tell `classify_arguments`
+        # the same.
         _, sret, returnRoots = get_return_info(RT)
-        jlargs = classify_arguments(mi.specTypes, LLVM.function_type(fn), sret !== nothing, returnRoots !== nothing, true, UInt64[], mi, world)
+        jlargs = classify_arguments(mi.specTypes, LLVM.function_type(fn), sret !== nothing, returnRoots !== nothing, jit_gcstack_arg(), UInt64[], mi, world)
         for arg in jlargs
             if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
                 continue
