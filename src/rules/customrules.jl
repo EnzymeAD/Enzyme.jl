@@ -1977,17 +1977,12 @@ function enzyme_custom_common_rev(
                 if tape_roots != 0
                     tape_al = create_rooted_array(alloctx, tape_roots)
                     extract_roots_from_value!(B, tape, tape_al)
-                end
-
-                llty_foralloca = if tape_roots != 0
-                    strip_tracked_pointers(llty)
-                else
-                    llty
-                end
-                al = alloca!(alloctx, llty_foralloca, "tape.$TapeT")
-                if tape_roots != 0
+                    llty_foralloca = strip_tracked_pointers(llty)
+                    al = alloca!(alloctx, llty_foralloca, "tape.$TapeT")
                     extract_nonjlvalues_into!(B, llty, al, tape)
                 else
+                    llty_foralloca = llty
+                    al = alloca!(alloctx, llty, "tape.$TapeT")
                     store!(B, tape, al)
                 end
                 tape = addrspacecast!(B, al, LLVM.PointerType(llty_foralloca, Derived))
