@@ -1546,7 +1546,7 @@ end
     [`jit_gcstack_arg`](@ref) set, the `pgcstack` parameter gets the
     `swiftself` attribute.
     """
-    jit_uses_swiftcc()::Bool = Sys.ARCH !== :riscv64
+    jit_uses_swiftcc()::Bool = !startswith(string(Sys.ARCH), "riscv")
 
     """
         module_targets_host(mod) -> Bool
