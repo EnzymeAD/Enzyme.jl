@@ -66,6 +66,31 @@ using Enzyme, Test
 
     end
 
+    @testset "Explicit return activity" begin
+        f(x) = x[1] * x[2] + x[2]
+        x = [3.0, 5.0]
+
+        dx_bare, dx_explicit = zeros(2), zeros(2)
+        Enzyme.autodiff_deferred(Reverse, Const(f), Active, Duplicated(x, dx_bare))
+        Enzyme.autodiff_deferred(Reverse, Const(f), Active{Float64}, Duplicated(x, dx_explicit))
+        @test dx_bare == [5.0, 4.0]
+        @test dx_explicit == dx_bare
+
+        dx_bare, dx_explicit = zeros(2), zeros(2)
+        _, primal_bare = Enzyme.autodiff_deferred(
+            ReverseWithPrimal, Const(f), Active, Duplicated(x, dx_bare))
+        _, primal_explicit = Enzyme.autodiff_deferred(
+            ReverseWithPrimal, Const(f), Active{Float64}, Duplicated(x, dx_explicit))
+        @test primal_bare == 20.0
+        @test primal_explicit == primal_bare
+        @test dx_explicit == dx_bare
+
+        # A scalar argument, so the derivative comes back through the return value
+        g(y) = y * y
+        @test Enzyme.autodiff_deferred(Reverse, Const(g), Active{Float64}, Active(3.0))[1][1] ==
+              Enzyme.autodiff_deferred(Reverse, Const(g), Active, Active(3.0))[1][1] == 6.0
+    end
+
     @testset "Deferred upgrade" begin
         function gradsin(x)
             return gradient(Reverse, sin, x)[1]

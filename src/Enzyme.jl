@@ -732,7 +732,7 @@ code, as well as high-order differentiation.
         end
     else
         @assert A isa DataType
-        rt = A
+        rt = eltype(A)
         if rt == Union{}
 	    throw(ErrorException("Return type inferred to be Union{}. Giving up."))
         end
