@@ -618,17 +618,19 @@ end
 end
 
 @testset "hvcat_fill" begin
-    ar = Matrix{Float64}(undef, 2, 3)
-    dar = [1.0 2.0 3.0; 4.0 5.0 6.0]
+    if isdefined(Base, :hvcat_fill!)
+        ar = Matrix{Float64}(undef, 2, 3)
+        dar = [1.0 2.0 3.0; 4.0 5.0 6.0]
 
-    res = first(Enzyme.autodiff(Reverse, Base.hvcat_fill!, Const, Duplicated(ar, dar), Active((1, 2.2, 3, 4.4, 5, 6.6))))
+        res = first(Enzyme.autodiff(Reverse, Base.hvcat_fill!, Const, Duplicated(ar, dar), Active((1, 2.2, 3, 4.4, 5, 6.6))))
 
-    @test res[2][1] == 0
-    @test res[2][2] ≈ 2.0
-    @test res[2][3] ≈ 0
-    @test res[2][4] ≈ 4.0
-    @test res[2][5] ≈ 0
-    @test res[2][6] ≈ 6.0
+        @test res[2][1] == 0
+        @test res[2][2] ≈ 2.0
+        @test res[2][3] ≈ 0
+        @test res[2][4] ≈ 4.0
+        @test res[2][5] ≈ 0
+        @test res[2][6] ≈ 6.0
+    end
 end
 
 function named_deepcopy(x, nt)
