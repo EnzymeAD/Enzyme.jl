@@ -1594,6 +1594,13 @@ const HAS_INVOKE_RULES = VERSION >= v"1.12-" &&
             CC.markinspected!(workqueue, callee)
             CC.ci_has_invoke(callee) && continue
             CC.use_const_api(callee) && continue
+            # Only compile the root and the CodeInstances this interpreter
+            # inferred. A callee with a different owner, for example one the
+            # user pinned with `invoke(f, ci, args...)`, keeps its own source:
+            # installing `typeinf_code(interp, ...)` output there would make
+            # ordinary callers run code inferred with Enzyme's semantics.
+            # Julia's JIT calls such a callee through its own entry point.
+            callee === ci || callee.owner === CC.cache_owner(interp) || continue
             mi = CC.get_ci_mi(callee)
             src = callee === ci && root_src !== nothing ? root_src : CC.typeinf_code(interp, mi, true)
             src isa Core.CodeInfo || continue
