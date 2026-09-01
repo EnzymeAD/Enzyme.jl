@@ -1966,9 +1966,12 @@ end
 
         interp = primal_interp_world(mode == API.DEM_ForwardMode ? Forward : Reverse, world)
         ci = Core.Compiler.typeinf_ext(interp, funcspec, Core.Compiler.SOURCE_MODE_NOT_REQUIRED)
-        src = ci === nothing ? nothing : Core.Compiler.typeinf_code(interp, funcspec, true)
-        if !(src isa Core.CodeInfo)
+        if ci === nothing
             throw(CallingConventionMismatchError{String}("Enzyme: failed to infer the custom rule $(funcspec)", funcspec, world))
+        end
+        src = Core.Compiler.typeinf_code(interp, funcspec, true)
+        if !(src isa Core.CodeInfo)
+            throw(CallingConventionMismatchError{String}("Enzyme: failed to retrieve the source of the custom rule $(funcspec)", funcspec, world))
         end
         if rule_call_convention(src) === :inline
             llvmf = nested_codegen!(enzyme_context, mode, mod, funcspec, world, true)
