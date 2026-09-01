@@ -450,18 +450,20 @@ function Core.Compiler.abstract_call_gf_by_type(
 end
 
 
-# Whether `invoke(f, ci::CodeInstance, args...)` is both understood by inference
-# (`Core.Compiler.InvokeCICallInfo`, Julia 1.12+) and lowered by the inliner to a direct
-# `:invoke` (Julia 1.13+). On 1.12 the inliner only lowers `Core.invoke` calls carrying an
-# `InvokeCallInfo`, so such calls stay runtime `invoke` calls whatever inference says.
+# Say if inference understands `invoke(f, ci::CodeInstance, args...)`
+# (`Core.Compiler.InvokeCICallInfo`, Julia 1.12+) and the inliner lowers it to a direct
+# `:invoke` (Julia 1.13+). On 1.12 the inliner only lowers `Core.invoke` calls that carry
+# an `InvokeCallInfo`. There such calls stay runtime `invoke` calls, whatever inference
+# says.
 const HAS_INVOKE_CI_LOWERING = isdefined(Core.Compiler, :InvokeCICallInfo) && VERSION >= v"1.13-"
 
 @static if HAS_INVOKE_CI_LOWERING
     """
         invoked_ci_needs_rule(interp, ci::CodeInstance)::Bool
 
-    Whether the signature `invoke(f, ci, args...)` targets is one Enzyme has to see as a
-    call: a primitive, or one with an inactive, forward or reverse rule under `interp`.
+    Say if Enzyme has to see the signature `invoke(f, ci, args...)` targets as a call.
+    That holds for a primitive, and for a signature with an inactive, forward or reverse
+    rule under `interp`.
     """
     function invoked_ci_needs_rule(@nospecialize(interp::EnzymeInterpreter), ci::Core.CodeInstance)::Bool
         CC = Core.Compiler
@@ -1310,17 +1312,17 @@ function abstract_call_known(
     (; fargs, argtypes) = arginfo
 
     @static if HAS_INVOKE_CI_LOWERING
-        # `invoke(f, ci::CodeInstance, args...)` is analyzed by `abstract_invoke`, which
-        # neither goes through `abstract_call_gf_by_type` (so the call would not get its
-        # rule marking) nor targets the CodeInstance Enzyme inferred for the signature (so
-        # its code would be emitted a second time, without the `enzymejl_mi` attributes the
-        # rule handlers key on). When the invoked signature has a rule, that rule defines
-        # the call's semantics regardless of which method the CodeInstance pinned, so
-        # analyze it as the ordinary call `f(args...)` instead.
+        # `abstract_invoke` analyzes `invoke(f, ci::CodeInstance, args...)`. It does not
+        # go through `abstract_call_gf_by_type`, so the call would not get its rule
+        # marking. It also does not target the CodeInstance Enzyme inferred for the
+        # signature, so the code would be emitted a second time, without the `enzymejl_mi`
+        # attributes the rule handlers key on. When the invoked signature has a rule, that
+        # rule defines the call's semantics, whichever method the CodeInstance pinned.
+        # Thus analyze it as the ordinary call `f(args...)` instead.
         if f === Core.invoke && length(argtypes) >= 3
             citype = argtypes[3]
             if citype isa Core.Const && citype.val isa Core.CodeInstance &&
-               invoked_ci_needs_rule(interp, citype.val)
+                    invoked_ci_needs_rule(interp, citype.val)
                 argtypes′ = Core.Compiler.invoke_rewrite(argtypes)
                 fargs′ = fargs === nothing ? nothing : Core.Compiler.invoke_rewrite(fargs)
                 f′ = Core.Compiler.singleton_type(argtypes′[1])
@@ -1555,10 +1557,10 @@ function abstract_call_known(
     )
 end
 
-# Whether custom rules can be called through their natively compiled CodeInstance instead
+# Say if custom rules can be called through their natively compiled CodeInstance instead
 # of being codegen'd into the calling module (see `Enzyme.Compiler.invoke_codegen!`).
-# Requires the Julia 1.12 runtime API: `jl_add_codeinst_to_jit` for handing an externally
-# inferred CodeInstance to Julia's JIT, and `jl_read_codeinst_invoke` for reading back its
+# This requires the Julia 1.12 runtime API: `jl_add_codeinst_to_jit` hands an externally
+# inferred CodeInstance to Julia's JIT, and `jl_read_codeinst_invoke` reads back its
 # specialized entry point.
 const HAS_INVOKE_RULES = VERSION >= v"1.12-"
 
@@ -1568,11 +1570,11 @@ const HAS_INVOKE_RULES = VERSION >= v"1.12-"
         add_codeinsts_to_jit!(interp, ci::CodeInstance; root_src = nothing)
 
     Hand `ci` and its transitive `:invoke` callees, as inferred by `interp`, to Julia's
-    JIT (`jl_add_codeinst_to_jit`), so that reading `ci`'s entry point compiles it as
-    native code. Mirrors `Core.Compiler.add_codeinsts_to_jit!`, taking the sources from
-    `typeinf_code` (as `GPUCompiler.ci_cache_populate` does) rather than from a codegen
-    cache, which `EnzymeInterpreter` does not keep; `root_src` supplies `ci`'s own source
-    when the caller already has it.
+    JIT (`jl_add_codeinst_to_jit`). Reading `ci`'s entry point then compiles it as native
+    code. This mirrors `Core.Compiler.add_codeinsts_to_jit!`, but takes the sources from
+    `typeinf_code`, as `GPUCompiler.ci_cache_populate` does. A codegen cache is not
+    available, because `EnzymeInterpreter` does not keep one. `root_src` supplies `ci`'s
+    own source when the caller already has it.
     """
     function add_codeinsts_to_jit!(@nospecialize(interp::EnzymeInterpreter), ci::Core.CodeInstance; root_src::Union{Nothing, Core.CodeInfo} = nothing)
         CC = Core.Compiler
@@ -1600,10 +1602,11 @@ const HAS_INVOKE_RULES = VERSION >= v"1.12-"
     """
         codeinst_entry(ci::CodeInstance) -> (specptr, invoke)
 
-    Compile `ci` if needed and return its entry points: the specialized-signature
-    one (`C_NULL` if it has none, e.g. because it only got a boxed `jl_fptr_args`
-    entry) and the boxed `invoke(F, args, nargs, ci)` one (`C_NULL` if it could
-    not be compiled at all).
+    Compile `ci` if needed and return its two entry points. `specptr` is the
+    specialized-signature entry. It is `C_NULL` when `ci` has none, for example
+    because `ci` only got a boxed `jl_fptr_args` entry. `invoke` is the boxed
+    `invoke(F, args, nargs, ci)` entry. It is `C_NULL` when `ci` could not be
+    compiled at all.
     """
     function codeinst_entry(ci::Core.CodeInstance)
         specsigflags = Ref{UInt8}(0)
@@ -1614,7 +1617,8 @@ const HAS_INVOKE_RULES = VERSION >= v"1.12-"
             (Any, Ptr{UInt8}, Ptr{Ptr{Cvoid}}, Ptr{Ptr{Cvoid}}, Cint),
             ci, specsigflags, invoke, specptr, #= waitcompile =# 1
         )
-        # bit 0: specptr is the specialized signature (rather than a jl_fptr_args entry)
+        # Bit 0 says that specptr is the specialized-signature entry, not a
+        # jl_fptr_args entry.
         specialized = (specsigflags[] & 0b1) != 0
         return (specialized ? specptr[] : C_NULL, invoke[])
     end
