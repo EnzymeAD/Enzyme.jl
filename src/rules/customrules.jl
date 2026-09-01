@@ -1969,27 +1969,28 @@ function enzyme_custom_common_rev(
                 end
                 llty = convert(LLVMType, TapeT; allow_boxed = true)
 
+                # The rule takes the tape by reference as readonly nocapture. Thus the
+                # tape can go in a stack slot, as the arguments do above. On 1.12+ the
+                # tracked pointers travel through a rooted array instead, and the slot
+                # holds the layout with the pointer fields stripped.
                 tape_roots = inline_roots_type(TapeT)
                 if tape_roots != 0
                     tape_al = create_rooted_array(alloctx, tape_roots)
                     extract_roots_from_value!(B, tape, tape_al)
                 end
 
-                if tape_roots == 0 && !any_jltypes(llty)
-                    # The rule takes the tape by reference as readonly nocapture, so a
-                    # pointer-free tape can live in a stack slot.
-                    al = alloca!(alloctx, llty, "tape.$TapeT")
-                    store!(B, tape, al)
-                    tape = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
+                llty_foralloca = if tape_roots != 0
+                    strip_tracked_pointers(llty)
                 else
-                    al0 = al = emit_allocobj!(B, TapeT, "tape.$TapeT")
-                    al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
-                    store!(B, tape, al)
-                    if tape_roots == 0 && any_jltypes(llty)
-                        emit_writebarrier!(B, get_julia_inner_types(B, al0, tape))
-                    end
-                    tape = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
+                    llty
                 end
+                al = alloca!(alloctx, llty_foralloca, "tape.$TapeT")
+                if tape_roots != 0
+                    extract_nonjlvalues_into!(B, llty, al, tape)
+                else
+                    store!(B, tape, al)
+                end
+                tape = addrspacecast!(B, al, LLVM.PointerType(llty_foralloca, Derived))
             end
             insert!(args, tape_idx, tape)
             if tape_al !== nothing
