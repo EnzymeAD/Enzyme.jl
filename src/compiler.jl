@@ -1549,6 +1549,19 @@ end
     jit_uses_swiftcc()::Bool = Sys.ARCH !== :riscv64
 
     """
+        module_targets_host(mod) -> Bool
+
+    Say if `mod` targets the machine this process runs on. Compare the
+    architecture component of the module's target triple with the host triple
+    (`Sys.MACHINE`) and with `Sys.ARCH`. The two spellings can differ: Darwin
+    writes `arm64` where `Sys.ARCH` says `aarch64`.
+    """
+    function module_targets_host(mod::LLVM.Module)::Bool
+        arch = first(split(LLVM.triple(mod), '-'))
+        return arch == first(split(Sys.MACHINE, '-')) || arch == string(Sys.ARCH)
+    end
+
+    """
         rule_specsig(mi, RT; gcstack_arg = jit_gcstack_arg()) -> (retty, params, param_attrs)
 
     Derive the signature Julia's codegen (`get_specsig_function`) gives the
@@ -1937,7 +1950,7 @@ end
         # parameter. Without the swift calling convention there is no such
         # parameter, so use nested codegen (see `jit_uses_swiftcc`).
         if !(funcspec.specTypes isa DataType) || Base.generating_output() ||
-                !startswith(LLVM.triple(mod), string(Sys.ARCH)) ||
+                !module_targets_host(mod) ||
                 (jit_gcstack_arg() && !jit_uses_swiftcc())
             return nested_codegen!(enzyme_context, mode, mod, funcspec, world, alwaysinline)
         end
