@@ -1831,9 +1831,12 @@ end
                 param = fparams[pi]
                 pi += 1
                 lty = convert(LLVMType, T; allow_boxed = true)
-                if lty isa LLVM.PointerType
+                if lty isa LLVM.PointerType && addrspace(lty) == Tracked
+                    # A boxed argument is already a `jl_value_t*`.
                     param
                 else
+                    # Raw pointers (`Ptr{T}`), scalars, and by-reference
+                    # aggregates go into a fresh box.
                     box = emit_allocobj!(B, T, "box.$T")
                     if (lty isa LLVM.StructType || lty isa LLVM.ArrayType) && inline_roots_type(T) != 0
                         roots = fparams[pi]
