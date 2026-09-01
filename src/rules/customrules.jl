@@ -1969,9 +1969,9 @@ function enzyme_custom_common_rev(
                 end
                 llty = convert(LLVMType, TapeT; allow_boxed = true)
 
-                # The rule takes the tape by reference as readonly nocapture. Thus the
-                # tape can go in a stack slot, as the arguments do above. On 1.12+ the
-                # tracked pointers travel through a rooted array instead, and the slot
+                # The rule takes the tape by reference as readonly nocapture, so
+                # the tape goes in a stack slot, like every argument. On 1.12+
+                # the tracked pointers go through a rooted array, and the slot
                 # holds the layout with the pointer fields stripped.
                 tape_roots = inline_roots_type(TapeT)
                 if tape_roots != 0

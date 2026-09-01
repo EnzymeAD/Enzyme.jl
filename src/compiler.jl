@@ -1488,8 +1488,8 @@ function nested_codegen!(
     # Declare the function in mod so it can be called
     lfn = functions(otherMod)[entry]
     if alwaysinline
-        # A method declared `@noinline` carries the attribute. This path inlines the
-        # method regardless, and the two attributes must not appear together.
+        # A method declared `@noinline` carries that attribute. Remove it: this
+        # path always inlines, and `noinline` conflicts with `alwaysinline`.
         LLVM.API.LLVMRemoveEnumAttributeAtIndex(
             lfn,
             reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
@@ -1528,11 +1528,9 @@ end
     """
         jit_gcstack_arg() -> Bool
 
-    Say if Julia's JIT passes the current `pgcstack` as an argument to compiled
-    code. The JIT compiles with the process-wide default codegen parameters
-    (`jl_default_cgparams`), whose `gcstack_arg` field controls this. Read that
-    field instead of assuming its default value. `Base.CodegenParams` mirrors
-    `jl_cgparams_t` field for field, which gives the field offset.
+    Say if Julia's JIT passes `pgcstack` as an argument to compiled code. The
+    JIT compiles with `jl_default_cgparams`, so read its `gcstack_arg` field.
+    The `Base.CodegenParams` mirror gives the field offset.
     """
     function jit_gcstack_arg()::Bool
         off = fieldoffset(Base.CodegenParams, Base.fieldindex(Base.CodegenParams, :gcstack_arg))
@@ -1542,44 +1540,48 @@ end
     """
         jit_uses_swiftcc() -> Bool
 
-    Say if Julia's codegen uses the swift calling convention on this target. When
-    it does, and [`jit_gcstack_arg`](@ref) is set, the `pgcstack` parameter
-    carries the `swiftself` attribute. LLVM does not support the convention on
-    RISC-V, so Julia disables it there (`jl_codegen_params_t::use_swiftcc`).
+    Say if Julia's codegen uses the swift calling convention on this target.
+    LLVM does not support the convention on RISC-V, so Julia turns it off there
+    (`jl_codegen_params_t::use_swiftcc`). With the convention on, and
+    [`jit_gcstack_arg`](@ref) set, the `pgcstack` parameter gets the
+    `swiftself` attribute.
     """
     jit_uses_swiftcc()::Bool = Sys.ARCH !== :riscv64
 
     """
         rule_specsig(mi, RT; gcstack_arg = jit_gcstack_arg()) -> (retty, params, param_attrs)
 
-    Derive the signature Julia's codegen gives the specialized entry of the rule
-    `mi` with return type `RT` (`get_specsig_function`). The parameter order is
-    `[sret][return roots][pgcstack] args...`.
+    Derive the signature Julia's codegen (`get_specsig_function`) gives the
+    specialized entry of the rule `mi` with return type `RT`. The parameter
+    order is `[sret][return roots][pgcstack] args...`.
 
-    The return convention is:
+    The return:
 
     - A return that deserves an `sret` becomes a leading pointer parameter with
-      the `sret` attribute. On 1.12+ that buffer holds the layout with the tracked
-      pointers stripped. The tracked pointers travel through the return-roots
-      pointer instead.
-    - A small `Union` return takes its byte buffer as the leading pointer
-      parameter. The function then returns `{boxed-or-null, selector}`.
-    - A boxed return comes back as a tracked pointer.
-    - Every other return comes back as the value's LLVM type.
+      the `sret` attribute. On 1.12+ the buffer holds the layout with the
+      tracked pointers stripped, and the tracked pointers go through the
+      return-roots parameter.
+    - A small `Union` return gets its byte buffer as the leading pointer
+      parameter, and the function returns `{boxed-or-null, selector}`.
+    - A boxed return is a tracked pointer.
+    - Every other return keeps the value's LLVM type.
 
-    When `gcstack_arg` is set, the current `pgcstack` follows as a `swiftself`
-    argument. The native call path requires [`jit_uses_swiftcc`](@ref), so the
-    attribute applies there. `nested_codegen!` compiles without `gcstack_arg`.
-    Callers pass `false` to model such a function.
+    The arguments:
 
-    The argument convention is: ghost and `Type{T}` arguments are omitted, boxed
-    arguments are tracked pointers, and scalars go by value. Aggregates go by
-    reference in the derived address space. On 1.12+ their inline roots follow as
-    a separate parameter.
+    - Ghost and `Type{T}` arguments are omitted.
+    - Boxed arguments are tracked pointers.
+    - Aggregates go by reference in the derived address space. On 1.12+ a
+      pointer to their inline roots follows.
+    - Scalars go by value.
 
-    `classify_arguments` and `get_return_info` apply the same rules to every
-    primal, and `enzyme_custom_setup_args` builds the rule arguments by them. The
-    signature therefore lines up with what `customrules.jl` passes.
+    With `gcstack_arg` set, `pgcstack` follows the return parameters as a
+    `swiftself` parameter. The native call path requires
+    [`jit_uses_swiftcc`](@ref), so the attribute holds there. Pass `false` to
+    model a function compiled without it, as `nested_codegen!` emits.
+
+    `classify_arguments`, `get_return_info` and `enzyme_custom_setup_args`
+    follow the same rules, so the derived signature matches the arguments
+    `customrules.jl` passes.
     """
     function rule_specsig(mi::Core.MethodInstance, @nospecialize(RT::Type); gcstack_arg::Bool = jit_gcstack_arg())
         T_void = LLVM.VoidType()
@@ -1599,10 +1601,10 @@ end
                 push!(param_attrs, LLVM.Attribute[StringAttribute("enzymejl_sret_union_bytes", string(union_alloca_type(RT)))])
                 retty = LLVM.StructType(LLVMType[T_prjlvalue, T_int8])
             else
-                # As in Julia's codegen, the sret attribute carries the full type.
-                # When there are roots, the buffer itself holds the layout with the
-                # tracked pointers stripped. `recombine_value_ptr!` reads the full
-                # type off the attribute.
+                # As in Julia's codegen, the sret attribute carries the full type,
+                # and `recombine_value_ptr!` reads it from there. With return
+                # roots, the buffer holds the layout with the tracked pointers
+                # stripped.
                 sret_lty = convert(LLVMType, eltype(sret))
                 push!(params, T_ptr)
                 push!(param_attrs, LLVM.Attribute[TypeAttribute("sret", sret_lty), EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("noundef")])
@@ -1649,18 +1651,18 @@ end
         return retty, params, param_attrs
     end
 
-    # Create the function `customrules.jl` calls a rule through. It has the shape
-    # the codegen'd rule function used to have: the specsig, the swift calling
-    # convention, and the `enzymejl_mi` / `enzymejl_rt` attributes the rule handlers
-    # read. It also gets the per-parameter attributes `prepare_llvm` gives every
-    # compiled function: `enzymejl_parmtype*`, and the `enzymejl_rooted_typ` /
-    # `enzymejl_returnRoots` markers by which `fix_decayaddr!` recognizes
-    # root-carrying arguments.
+    # Create the function `customrules.jl` calls a rule through. Shape it like
+    # the codegen'd rule function it replaces: the specsig, the calling
+    # convention, and the `enzymejl_mi` / `enzymejl_rt` attributes the rule
+    # handlers read. Also add the per-parameter attributes `prepare_llvm` gives
+    # every compiled function (`enzymejl_parmtype*`, `enzymejl_rooted_typ`,
+    # `enzymejl_returnRoots`). `fix_decayaddr!` recognizes root-carrying
+    # arguments by those markers.
     function rule_function!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), name::String, world::UInt)::LLVM.Function
         retty, params, param_attrs = rule_specsig(mi, RT)
         fn = LLVM.Function(mod, name, LLVM.FunctionType(retty, params))
-        # Julia's codegen uses the swift calling convention only when the `pgcstack`
-        # parameter exists and the target supports the convention
+        # Julia's codegen uses the swift calling convention only when the
+        # `pgcstack` parameter exists and the target supports it
         # (`get_specsig_function`).
         if jit_gcstack_arg() && jit_uses_swiftcc()
             callconv!(fn, LLVM.API.LLVMSwiftCallConv)
@@ -1678,8 +1680,9 @@ end
             end
         end
 
-        # Classify the arguments against the derived signature. This also checks
-        # that the two agree.
+        # Classify the arguments to place the per-parameter attributes.
+        # `classify_arguments` also asserts that the derived signature matches
+        # `mi.specTypes` as it walks them.
         _, sret, returnRoots = get_return_info(RT)
         jlargs = classify_arguments(mi.specTypes, LLVM.function_type(fn), sret !== nothing, returnRoots !== nothing, true, UInt64[], mi, world)
         for arg in jlargs
@@ -1703,14 +1706,14 @@ end
     """
         check_rule_specsig(llvmf, mi, RT)
 
-    Compare the signature of the emitted rule `llvmf` against the signature
-    [`rule_specsig`](@ref) derives for `mi` and `RT`. The comparison covers the
-    return type, the parameter types, and the ABI attributes `sret` and
-    `swiftself`. Throw an `AssertionError` on a mismatch. The other derived
-    attributes only aid optimization and are not compared.
+    Throw an `AssertionError` when the signature of the emitted rule `llvmf`
+    differs from the one [`rule_specsig`](@ref) derives for `mi` and `RT`. The
+    comparison covers the return type, the parameter types, and the `sret` and
+    `swiftself` attributes. The other derived attributes only aid optimization
+    and are skipped.
 
-    `nested_codegen!` compiles without `gcstack_arg`, so `llvmf` normally has no
-    `pgcstack` parameter. The derivation follows `has_swiftself(llvmf)`.
+    `nested_codegen!` compiles without `gcstack_arg`, so the derivation takes
+    the presence of `pgcstack` from `has_swiftself(llvmf)`.
     """
     function check_rule_specsig(llvmf::LLVM.Function, mi::Core.MethodInstance, @nospecialize(RT::Type))
         retty, params, param_attrs = rule_specsig(mi, RT; gcstack_arg = has_swiftself(llvmf))
@@ -1754,11 +1757,10 @@ end
     """
         declare_rule_specsig!(mod, mi, RT, specptr, name, world)
 
-    Declare the natively compiled rule `mi` in `mod`. The rule has return type
-    `RT` and specialized entry point `specptr`. The declaration gets the signature
-    Julia's codegen gives the rule, see [`rule_specsig`](@ref). The entry point is
-    embedded via `enzymejl_needs_restoration`. `restore_lookups` turns that
-    attribute into the address once the calling module is final.
+    Declare the natively compiled rule `mi`, with return type `RT`, in `mod`,
+    with the signature [`rule_specsig`](@ref) derives. Store the entry point
+    `specptr` in the `enzymejl_needs_restoration` attribute. `restore_lookups`
+    turns that attribute into the address once the calling module is final.
     """
     function declare_rule_specsig!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), specptr::Ptr{Cvoid}, name::String, world::UInt)::LLVM.Function
         fn = rule_function!(mod, mi, RT, name, world)
@@ -1769,16 +1771,17 @@ end
     """
         define_rule_jlcall!(mod, mi, RT, ci, invoke, name, world)
 
-    Define an adapter for a rule whose `CodeInstance` `ci` got no specialized
-    entry point. The adapter is a function in `mod` with the signature Julia's
-    codegen would have given the rule (see [`rule_specsig`](@ref)). Its body calls
-    the `CodeInstance`'s boxed entry `invoke(F, args, nargs, ci)` instead. This is
-    Enzyme's counterpart of Julia's `emit_specsig_to_fptr1`.
+    Define an adapter in `mod` for a rule whose `CodeInstance` `ci` got no
+    specialized entry point. The adapter has the signature
+    [`rule_specsig`](@ref) derives, and its body calls the boxed entry
+    `invoke(F, args, nargs, ci)`. It is Enzyme's counterpart of Julia's
+    `emit_specsig_to_fptr1`.
 
-    The body materializes ghost and `Type{T}` arguments as literals. It copies
-    scalars and by-reference aggregates into fresh boxes, and on 1.12+ recombines
-    the aggregates with their inline roots. It loads the boxed result back, or
-    splits it into the `sret` buffer and its return roots.
+    The body materializes ghost and `Type{T}` arguments as constants. It copies
+    scalars and by-reference aggregates into fresh boxes. On 1.12+ it
+    recombines the aggregates with their inline roots first. It unboxes the
+    result, either into the return value or into the `sret` buffer and its
+    return roots.
 
     Returns `nothing` for a small `Union` return, which the adapter does not
     handle.
@@ -1875,14 +1878,12 @@ end
     """
         rule_call_convention(src::Core.CodeInfo) -> Symbol
 
-    Decide how a custom rule should be reached from the calling module. The
-    decision follows the rule's inlining annotation. An unannotated rule follows
-    Julia's own inlining heuristics, applied to its optimized source `src`.
-
-    `:inline` means: emit the rule's IR into the calling module and always-inline
-    it. Rules declared `@inline`, and unannotated rules Julia itself would inline,
-    get this. `:call` means: call the rule's natively compiled entry point. Rules
-    declared `@noinline`, and the remaining unannotated rules, get this.
+    Decide from the inlining annotation how a custom rule reaches the calling
+    module. `:inline` means: emit the rule's IR into the calling module and
+    always-inline it. `:call` means: call the rule's natively compiled entry
+    point. `@inline` rules get `:inline`, and `@noinline` rules get `:call`. An
+    unannotated rule gets `:inline` exactly when Julia would inline its
+    optimized source `src`.
     """
     function rule_call_convention(src::Core.CodeInfo)::Symbol
         CC = Core.Compiler
@@ -1894,24 +1895,27 @@ end
     """
         invoke_codegen!(enzyme_context, mode, mod, funcspec, world, alwaysinline = false)
 
-    Make the rule `funcspec` callable from `mod`. Rules that should be inlined
-    into the calling module (see [`rule_call_convention`](@ref)) are emitted into
-    it by `nested_codegen!` and marked always-inline. The other rules are not
-    emitted at all. Instead, the rule is inferred with the same interpreter that
-    selected it. The resulting `CodeInstance` and its callees are handed to
-    Julia's JIT, and `declare_rule_specsig!` declares its specialized entry point
-    in `mod`. Such a rule is compiled once, natively, for the whole process. Calls
-    go directly through its specsig, with no boxing and no dispatch, and callers
-    keep building arguments exactly as for a `nested_codegen!`'d rule. A rule
-    whose `CodeInstance` got no specialized entry point is called through its
-    boxed `invoke` entry instead, see [`define_rule_jlcall!`](@ref).
+    Make the rule `funcspec` callable from `mod`.
 
-    The call ABI does not exist in these cases: Julia versions without the
-    required runtime API (`Interpreter.HAS_INVOKE_RULES`), non-host modules,
-    targets without the swift calling convention (see [`jit_uses_swiftcc`](@ref)),
-    and precompilation (the entry points are process addresses). There every rule
-    is emitted by `nested_codegen!`. Failing to compile or to call a rule natively
-    is an error.
+    Rules with the `:inline` convention (see [`rule_call_convention`](@ref))
+    are emitted into `mod` by `nested_codegen!` and marked always-inline.
+
+    Rules with the `:call` convention are not emitted at all. The rule is
+    inferred with the same interpreter that selected it. The resulting
+    `CodeInstance` and its callees go to Julia's JIT, and
+    `declare_rule_specsig!` declares the specialized entry point in `mod`. Such
+    a rule is compiled once for the whole process and called directly through
+    its specsig, without boxing or dispatch. Callers build its arguments as for
+    an emitted rule. A rule whose `CodeInstance` got no specialized entry point
+    is called through its boxed `invoke` entry, see
+    [`define_rule_jlcall!`](@ref).
+
+    Every rule is emitted by `nested_codegen!` where the call ABI does not
+    exist: Julia without the 1.12 runtime API
+    (`Interpreter.HAS_INVOKE_RULES`), non-host modules, targets without the
+    swift calling convention ([`jit_uses_swiftcc`](@ref)), and precompilation
+    (the entry points are process addresses). Failing to compile or to call a
+    rule natively is an error.
     """
     function invoke_codegen!(
             enzyme_context::EnzymeContext,
@@ -1921,9 +1925,9 @@ end
             world::UInt,
             alwaysinline::Bool = false,
         )
-        # The rule handlers pass `pgcstack` only through a `swiftself` parameter.
-        # Without the swift calling convention that parameter does not exist, so
-        # the native call path is unavailable (see `jit_uses_swiftcc`).
+        # The rule handlers pass `pgcstack` only through a `swiftself`
+        # parameter. Without the swift calling convention there is no such
+        # parameter, so use nested codegen (see `jit_uses_swiftcc`).
         if !(funcspec.specTypes isa DataType) || Base.generating_output() ||
                 !startswith(LLVM.triple(mod), string(Sys.ARCH)) ||
                 (jit_gcstack_arg() && !jit_uses_swiftcc())
@@ -1945,7 +1949,8 @@ end
         end
         if rule_call_convention(src) === :inline
             llvmf = nested_codegen!(enzyme_context, mode, mod, funcspec, world, true)
-            # Keep the two signature derivations in agreement.
+            # Inlined rules do not use the derived signature. Check it against
+            # them anyway, so `rule_specsig` stays correct for every rule shape.
             check_rule_specsig(llvmf, funcspec, ci.rettype)
             return llvmf
         end
