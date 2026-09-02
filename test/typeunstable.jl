@@ -334,15 +334,30 @@ end
 batched_uninferred_target(x) = (2 .* x,)
 batched_uninferred_return(x) = Base.invokelatest(batched_uninferred_target, x)
 
-@testset "Batched forward concrete annotation with uninferred return" begin
+function batched_uninferred_setup()
     x = [1.0, 2.0]
-    dx1 = ones(2)
-    dx2 = fill(3.0, 2)
+    tangents = (ones(2), fill(3.0, 2))
     return_activity = BatchDuplicated{Tuple{Vector{Float64}}, 2}
+    return x, tangents, return_activity
+end
+
+@testset "Batched forward concrete annotation with uninferred return" begin
+    x, tangents, return_activity = batched_uninferred_setup()
     result = Enzyme.autodiff(
         Enzyme.set_runtime_activity(Forward), Const(batched_uninferred_return),
-        return_activity, BatchDuplicated(x, (dx1, dx2))
+        return_activity, BatchDuplicated(x, tangents)
     )
     @test result[1][1][1] == [2.0, 2.0]
     @test result[1][2][1] == [6.0, 6.0]
+end
+
+@testset "Batched forward-with-primal concrete annotation with uninferred return" begin
+    x, tangents, return_activity = batched_uninferred_setup()
+    result = Enzyme.autodiff(
+        Enzyme.set_runtime_activity(ForwardWithPrimal), Const(batched_uninferred_return),
+        return_activity, BatchDuplicated(x, tangents)
+    )
+    @test result[1][1][1] == [2.0, 2.0]
+    @test result[1][2][1] == [6.0, 6.0]
+    @test result[2][1] == [2.0, 4.0]
 end
