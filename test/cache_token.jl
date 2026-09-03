@@ -23,8 +23,8 @@ end
         world = Base.get_world_counter()
         for (mode, sugar) in ((API.DEM_ReverseModeCombined, Reverse), (API.DEM_ForwardMode, Forward))
             thunk_job, primal_job = token_jobs(mode, world)
-            thunk_token = GPUCompiler.ci_cache_token(thunk_job)
-            primal_token = GPUCompiler.ci_cache_token(primal_job)
+            thunk_token = Enzyme.Compiler.enzyme_cache_owner(thunk_job)
+            primal_token = Enzyme.Compiler.enzyme_cache_owner(primal_job)
             query_token = Enzyme.Compiler.primal_interp_world(sugar, world).token
             # Owners are matched with jl_egal, so `===` is exactly the comparison that matters.
             @test thunk_token === primal_token
@@ -34,6 +34,6 @@ end
         # Forward and reverse mode still get separate owners: rule inlining differs between them.
         rev_job, _ = token_jobs(API.DEM_ReverseModeCombined, world)
         fwd_job, _ = token_jobs(API.DEM_ForwardMode, world)
-        @test GPUCompiler.ci_cache_token(rev_job) !== GPUCompiler.ci_cache_token(fwd_job)
+        @test Enzyme.Compiler.enzyme_cache_owner(rev_job) !== Enzyme.Compiler.enzyme_cache_owner(fwd_job)
     end
 end
