@@ -2569,6 +2569,16 @@ function GPUCompiler.nest_params(params::AbstractEnzymeCompilerParams, parent::A
     )
 end
 
+# Backends define `method_table` for their own `CompilerJob{Target, Params}` (e.g. CUDA.jl
+# for `CompilerJob{PTXCompilerTarget, CUDACompilerParams}`). An Enzyme job wraps both the
+# target and the params, so that definition would not apply and the job would silently fall
+# back to the global method table, while the primal code emitted for it (see `codegen`)
+# is compiled under the backend's overlay table. Unwrap the job so both agree.
+function GPUCompiler.method_table(@nospecialize(job::CompilerJob{<:EnzymeTarget, <:EnzymeCompilerParams}))
+    primal_config = CompilerConfig(job.config; target = job.config.target.target, params = job.config.params.params)
+    return GPUCompiler.method_table(CompilerJob(job.source, primal_config, job.world))
+end
+
 struct UnknownTapeType end
 
 
