@@ -97,8 +97,8 @@ end
         function convention(f)
             TT = Tuple{C, Const{typeof(f)}, Type{Duplicated{Float64}}, Duplicated{Float64}}
             mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(EnzymeRules.forward), TT, world)
-            ci = Enzyme.Compiler.rule_codeinst(mi, world)
-            return Enzyme.Compiler.rule_call_convention(mi, ci)
+            ci = Enzyme.Compiler.codeinst(mi, world)
+            return Enzyme.Compiler.call_convention(mi, ci)
         end
         @test convention(cube_inline) === :inline
         @test convention(cube_noinline) === :call
@@ -150,7 +150,7 @@ end
 end
 
 # Signature shapes that Julia's specsig treats specially. Each shape has an
-# `@inline` rule, which `check_rule_specsig` compares against Julia's own codegen
+# `@inline` rule, which `check_specsig` compares against Julia's own codegen
 # of the rule, and a `@noinline` rule, which is called natively through the
 # derived signature.
 
@@ -402,7 +402,7 @@ end
         world = Base.get_world_counter()
         LLVM = Enzyme.Compiler.LLVM
         LLVM.Context() do ctx
-            kind = Enzyme.Compiler.rule_arg_kind
+            kind = Enzyme.Compiler.arg_kind
             @test kind(Nothing) === :ghost
             @test kind(Type{Float64}) === :ghost
             @test kind(Const{typeof(sin)}) === :ghost
@@ -422,20 +422,20 @@ end
 
             mod = LLVM.Module("test")
             LLVM.triple!(mod, Sys.MACHINE)
-            @test Enzyme.Compiler.native_rules_available(mod)
+            @test Enzyme.Compiler.native_invoke_available(mod)
 
             mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(all_boxed), Tuple{Any, Any, Any, Any}, world)
-            ci = Enzyme.Compiler.rule_codeinst(mi, world)
+            ci = Enzyme.Compiler.codeinst(mi, world)
             specptr, invoke = Enzyme.Compiler.Interpreter.codeinst_entry(ci)
             @test specptr == C_NULL
             @test invoke != C_NULL
-            @test Enzyme.Compiler.rule_call_convention(mi, ci) === :call
-            @test_throws Enzyme.Compiler.CallingConventionMismatchError Enzyme.Compiler.native_rule_codeinst(mod, mi, world)
+            @test Enzyme.Compiler.call_convention(mi, ci) === :call
+            @test_throws Enzyme.Compiler.CallingConventionMismatchError Enzyme.Compiler.native_codeinst(mod, mi, world)
 
             C = EnzymeRules.FwdConfig{true, true, 1, false, false}
             TT = Tuple{C, Const{typeof(cube_noinline)}, Type{Duplicated{Float64}}, Duplicated{Float64}}
             mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(EnzymeRules.forward), TT, world)
-            native = Enzyme.Compiler.native_rule_codeinst(mod, mi, world)
+            native = Enzyme.Compiler.native_codeinst(mod, mi, world)
             @test native !== nothing
             @test native[2] != C_NULL
         end

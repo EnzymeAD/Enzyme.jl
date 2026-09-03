@@ -229,15 +229,15 @@ function resolve_symbol_name(fn::String, file::String, ptr::Ptr{Cvoid})::Symbol
 end
 
 """
-    restore_native_rules!(mod::LLVM.Module)
+    restore_native_invokes!(mod::LLVM.Module)
 
-Bind the declarations of natively called rules in `mod` to their entry
-addresses. `restore_lookups(mod; native_rules = false)` skips them, so that
+Bind the declarations of natively called functions in `mod` to their entry
+addresses. `restore_lookups(mod; native_invokes = false)` skips them, so that
 the module can still be differentiated again while they are symbolic.
 """
-function restore_native_rules!(mod::LLVM.Module)::Nothing
+function restore_native_invokes!(mod::LLVM.Module)::Nothing
     T_size_t = convert(LLVM.LLVMType, Int)
-    marker = StringAttribute("enzymejl_native_rule")
+    marker = StringAttribute("enzymejl_native_invoke")
     for f in functions(mod)
         has_fn_attr(f, marker) || continue
         for fattr in collect(function_attributes(f))
@@ -258,15 +258,15 @@ function restore_native_rules!(mod::LLVM.Module)::Nothing
     return nothing
 end
 
-function restore_lookups(mod::LLVM.Module; native_rules::Bool = true)::Nothing
+function restore_lookups(mod::LLVM.Module; native_invokes::Bool = true)::Nothing
     T_size_t = convert(LLVM.LLVMType, Int)
-    native_rule = StringAttribute("enzymejl_native_rule")
+    native_invoke = StringAttribute("enzymejl_native_invoke")
     for f in functions(mod)
         nm = LLVM.name(f)
         if nm == "malloc" || nm == "free" || nm == "realloc" || nm == "calloc"
             continue
         end
-        if !native_rules && has_fn_attr(f, native_rule)
+        if !native_invokes && has_fn_attr(f, native_invoke)
             continue
         end
         for fattr in collect(function_attributes(f))

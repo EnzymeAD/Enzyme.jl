@@ -1736,7 +1736,7 @@ function enzyme_custom_common_rev(
 
     # The tape type comes from the augmented primal's return type. Take it
     # from the inference that produces the code `invoke_codegen!` calls.
-    aug_RT = native_rule_return_type(mod, ami, world)
+    aug_RT = native_return_type(mod, ami, world)
     if aug_RT === nothing
         aug_RT = return_type(interp, ami)
     end
@@ -1833,7 +1833,7 @@ function enzyme_custom_common_rev(
             rev_RT = Union{}
             applicablefn = false
         else
-            rev_RT = native_rule_return_type(mod, rmi, world)
+            rev_RT = native_return_type(mod, rmi, world)
             if rev_RT === nothing
                 rev_RT = return_type(interp, rmi)
             end
