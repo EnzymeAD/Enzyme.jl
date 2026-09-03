@@ -31,15 +31,6 @@ function copy_extension_attrs!(call::LLVM.CallInst, fn::LLVM.Function)
     return nothing
 end
 
-"""
-    CheckSpecsig
-
-When set, `prepare_llvm` compares the signature of every function Julia's
-codegen emitted against the one [`specsig`](@ref) derives (see
-[`check_emitted_specsig`](@ref)). Off by default; the test suite turns it on.
-"""
-const CheckSpecsig = Ref{Bool}(false)
-
 @static if Interpreter.HAS_INVOKE_RULES
 
     function read_jit_gcstack_arg()::Bool
@@ -374,9 +365,10 @@ const CheckSpecsig = Ref{Bool}(false)
     `mod` for the MethodInstance `mi` with return type `RT`, against the one
     [`specsig`](@ref) derives, and throw an `AssertionError` on a difference
     (see [`check_specsig`](@ref)). Only [`invoke_codegen!`](@ref) relies on
-    the derivation, but `prepare_llvm` checks every function Julia emits when
-    [`CheckSpecsig`](@ref) is set, as the test suite does, so the derivation
-    meets every signature shape the differentiated code contains.
+    the derivation, but `prepare_llvm` checks every function Julia emits, so
+    the derivation meets every signature shape the differentiated code
+    contains and a mismatch is reported where it arises rather than as
+    corruption at the first native call.
     """
     function check_emitted_specsig(mod::LLVM.Module, llvmf::LLVM.Function, mi::Core.MethodInstance, @nospecialize(RT::Type))
         (Interpreter.HAS_INVOKE_RULES && module_targets_host(mod)) || return nothing

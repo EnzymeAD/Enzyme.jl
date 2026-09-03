@@ -36,12 +36,7 @@ function test_worker(name)
     end
 end
 
-# Compare the signature of every function Julia emits against the one Enzyme
-# derives for natively called code, on every shape the tests contain.
-const init_code = quote
-    import Enzyme
-    Enzyme.Compiler.CheckSpecsig[] = true
-end
+const init_code = quote end
 
 @info "Testing against" Enzyme_jll.libEnzyme
 runtests(Enzyme, args; testsuite, init_code, test_worker)

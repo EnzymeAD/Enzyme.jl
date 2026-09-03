@@ -578,7 +578,7 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
 	   continue
 	end
 
-        if CheckSpecsig[] && fresh
+        if fresh
             check_emitted_specsig(mod, llvmfn, mi, RT)
         end
 
