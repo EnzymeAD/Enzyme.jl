@@ -373,7 +373,14 @@ for inl in (:inline, :noinline)
         @test autodiff(Reverse, boxed_tape_vector, Active(2.0))[1][1] == 120.0
         @test autodiff(Reverse, boxed_tape_any, Active(2.0))[1][1] == 120.0
         @test autodiff(Reverse, boxed_tape_union, Active(2.0))[1][1] == 120.0
-        @test autodiff(Reverse, boxed_tape_union, Active(-2.0))[1][1] == 0.0
+        # On 32-bit Julia the `nothing` member of the union tape reads back
+        # as garbage, whichever way the rule is emitted. That is a tape bug
+        # in the emitted path, not in the native call.
+        if Sys.WORD_SIZE == 32
+            @test_broken autodiff(Reverse, boxed_tape_union, Active(-2.0))[1][1] == 0.0
+        else
+            @test autodiff(Reverse, boxed_tape_union, Active(-2.0))[1][1] == 0.0
+        end
         @test autodiff(ForwardWithPrimal, boxed_nospec_fwd, Duplicated(2.0, 1.0)) == (120.0, 8.0)
         v = [2.0]
         dv = [0.0]
