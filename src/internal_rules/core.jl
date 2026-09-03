@@ -662,3 +662,112 @@ function EnzymeRules.reverse(
 ) where {RT,T}
     return (nothing,)
 end
+
+# Locks
+#
+# Taking or releasing a lock carries no derivative information, but the
+# region it protects is replayed in the reverse sweep, so the reverse pass must
+# hold the same lock over the same region.  The adjoint of `lock` is therefore
+# `unlock` and the adjoint of `unlock` is `lock`; `trylock` releases in the
+# reverse pass exactly when it acquired in the forward pass.  The shadow lock
+# is never touched.
+#
+# The closure-taking `lock(f, l)` / `trylock(f, l)` methods are deliberately
+# not matched, since `f` may be active; they reach these rules through the
+# inner single-argument calls.
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(Base.lock)},
+        ::Type{<:Const},
+        l::Annotation{<:Base.AbstractLock},
+    )
+    func.val(l.val)
+    return nothing
+end
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(Base.unlock)},
+        ::Type{<:Const},
+        l::Annotation{<:Base.AbstractLock},
+    )
+    func.val(l.val)
+    return nothing
+end
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(Base.trylock)},
+        ::Type{<:Const},
+        l::Annotation{<:Base.AbstractLock},
+    )
+    acquired = func.val(l.val)
+    return EnzymeRules.needs_primal(config) ? acquired : nothing
+end
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(Base.lock)},
+        ::Type{<:Const},
+        l::Annotation{<:Base.AbstractLock},
+    )
+    func.val(l.val)
+    return EnzymeRules.AugmentedReturn(nothing, nothing, nothing)
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfig,
+        ::Const{typeof(Base.lock)},
+        ::Type{<:Const},
+        ::Nothing,
+        l::Annotation{<:Base.AbstractLock},
+    )
+    Base.unlock(l.val)
+    return (nothing,)
+end
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(Base.unlock)},
+        ::Type{<:Const},
+        l::Annotation{<:Base.AbstractLock},
+    )
+    func.val(l.val)
+    return EnzymeRules.AugmentedReturn(nothing, nothing, nothing)
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfig,
+        ::Const{typeof(Base.unlock)},
+        ::Type{<:Const},
+        ::Nothing,
+        l::Annotation{<:Base.AbstractLock},
+    )
+    Base.lock(l.val)
+    return (nothing,)
+end
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(Base.trylock)},
+        ::Type{<:Const},
+        l::Annotation{<:Base.AbstractLock},
+    )
+    acquired = func.val(l.val)
+    primal = EnzymeRules.needs_primal(config) ? acquired : nothing
+    return EnzymeRules.AugmentedReturn(primal, nothing, acquired)
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfig,
+        ::Const{typeof(Base.trylock)},
+        ::Type{<:Const},
+        tape::Bool,
+        l::Annotation{<:Base.AbstractLock},
+    )
+    if tape
+        Base.unlock(l.val)
+    end
+    return (nothing,)
+end
