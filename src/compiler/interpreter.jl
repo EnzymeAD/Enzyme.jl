@@ -1559,60 +1559,39 @@ function abstract_call_known(
     )
 end
 
+# Say if the runtime exports the function that reads the entry points of a
+# CodeInstance. `ccall` would only fail at the first call.
+function has_jl_read_codeinst_invoke()::Bool
+    return try
+        cglobal(:jl_read_codeinst_invoke) != C_NULL
+    catch
+        false
+    end
+end
+
 # Say if custom rules can be called through their natively compiled CodeInstance
-# (see `Enzyme.Compiler.invoke_codegen!`). This needs two Julia 1.12 runtime
-# functions: `jl_add_codeinst_to_jit` to hand a CodeInstance to the JIT, and
-# `jl_read_codeinst_invoke` to read back its entry points. Also test for the
-# `Core.Compiler` internals the implementation uses. When a future Julia
-# renames one, the feature turns off cleanly instead of failing at the first
-# rule compilation.
+# (see `Enzyme.Compiler.invoke_codegen!`). This needs the Julia 1.12 compiler
+# entry point that infers a MethodInstance with a given interpreter and hands
+# the result to the JIT (`typeinf_ext_toplevel` with `SOURCE_MODE_ABI`), the
+# runtime function that reads back the entry points
+# (`jl_read_codeinst_invoke`), and the `Core.Compiler` internals the
+# implementation uses. When a future Julia renames one, the feature turns off
+# cleanly instead of failing at the first rule compilation.
 const HAS_INVOKE_RULES = VERSION >= v"1.12-" &&
-    isdefined(Core.Compiler, :CompilationQueue) &&
-    isdefined(Core.Compiler, :ci_has_invoke) &&
+    has_jl_read_codeinst_invoke() &&
+    isdefined(Core.Compiler, :NativeInterpreter) &&
+    isdefined(Core.Compiler, :SOURCE_MODE_ABI) &&
+    isdefined(Core.Compiler, :MaybeCompressed) &&
     isdefined(Core.Compiler, :use_const_api) &&
-    isdefined(Core.Compiler, :collectinvokes!) &&
-    isdefined(Core.Compiler, :is_inlineable)
+    isdefined(Core.Compiler, :is_inlineable) &&
+    isdefined(Core.Compiler, :is_declared_inline) &&
+    hasmethod(Core.Compiler.is_declared_inline, Tuple{Method}) &&
+    isdefined(Core.Compiler, :is_declared_noinline) &&
+    hasmethod(Core.Compiler.is_declared_noinline, Tuple{Method}) &&
+    isdefined(Core.Compiler, :typeinf_ext_toplevel) &&
+    hasmethod(Core.Compiler.typeinf_ext_toplevel, Tuple{Core.Compiler.AbstractInterpreter, Core.MethodInstance, UInt8})
 
 @static if HAS_INVOKE_RULES
-
-    """
-        add_codeinsts_to_jit!(interp, ci::CodeInstance; root_src = nothing)
-
-    Hand `ci` and its transitive `:invoke` callees, as inferred by `interp`, to Julia's
-    JIT (`jl_add_codeinst_to_jit`). Reading `ci`'s entry point then compiles it as
-    native code. This mirrors `Core.Compiler.add_codeinsts_to_jit!`, but takes each
-    source from `typeinf_code`, because `EnzymeInterpreter` keeps no codegen cache.
-    `root_src` supplies `ci`'s own source when the caller already has it.
-    """
-    function add_codeinsts_to_jit!(@nospecialize(interp::EnzymeInterpreter), ci::Core.CodeInstance; root_src::Union{Nothing, Core.CodeInfo} = nothing)
-        CC = Core.Compiler
-        workqueue = CC.CompilationQueue(; interp)
-        push!(workqueue, ci)
-        while !isempty(workqueue)
-            callee = pop!(workqueue)
-            CC.isinspected(workqueue, callee) && continue
-            CC.markinspected!(workqueue, callee)
-            CC.ci_has_invoke(callee) && continue
-            CC.use_const_api(callee) && continue
-            # Only compile the root and the CodeInstances this interpreter
-            # inferred. A callee with a different owner, for example one the
-            # user pinned with `invoke(f, ci, args...)`, keeps its own source:
-            # installing `typeinf_code(interp, ...)` output there would make
-            # ordinary callers run code inferred with Enzyme's semantics.
-            # Julia's JIT calls such a callee through its own entry point.
-            callee === ci || callee.owner === CC.cache_owner(interp) || continue
-            mi = CC.get_ci_mi(callee)
-            src = callee === ci && root_src !== nothing ? root_src : CC.typeinf_code(interp, mi, true)
-            src isa Core.CodeInfo || continue
-            CC.collectinvokes!(workqueue, src, CC.sptypes_from_meth_instance(mi))
-            if iszero(ccall(:jl_mi_cache_has_ci, Cint, (Any, Any), mi, callee))
-                # jl_add_codeinst_to_jit requires the CodeInstance to be rooted and cached
-                CC.code_cache(interp)[mi] = callee
-            end
-            ccall(:jl_add_codeinst_to_jit, Cvoid, (Any, Any), callee, src)
-        end
-        return nothing
-    end
 
     """
         codeinst_entry(ci::CodeInstance) -> (specptr, invoke)
@@ -1626,11 +1605,11 @@ const HAS_INVOKE_RULES = VERSION >= v"1.12-" &&
         specsigflags = Ref{UInt8}(0)
         invoke = Ref{Ptr{Cvoid}}(C_NULL)
         specptr = Ref{Ptr{Cvoid}}(C_NULL)
-        ccall(
-            :jl_read_codeinst_invoke, Cvoid,
-            (Any, Ptr{UInt8}, Ptr{Ptr{Cvoid}}, Ptr{Ptr{Cvoid}}, Cint),
-            ci, specsigflags, invoke, specptr, #= waitcompile =# 1
-        )
+        waitcompile = Cint(1)
+        @ccall jl_read_codeinst_invoke(
+            ci::Any, specsigflags::Ptr{UInt8}, invoke::Ptr{Ptr{Cvoid}},
+            specptr::Ptr{Ptr{Cvoid}}, waitcompile::Cint
+        )::Cvoid
         # Bit 0 says that specptr is the specialized-signature entry, not a
         # jl_fptr_args entry.
         specialized = (specsigflags[] & 0b1) != 0
