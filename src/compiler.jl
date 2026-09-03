@@ -208,9 +208,9 @@ if VERSION >= v"1.11.0-DEV.1552"
     @inline EnzymeCacheToken(method_table::Core.MethodTable, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
         EnzymeCacheToken(
         method_table,
-            is_forward ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.forward, Tuple{<:EnzymeCore.EnzymeRules.FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
-            is_reverse ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:EnzymeCore.EnzymeRules.RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
-            inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
+        is_forward ? (Interpreter.get_rule_signatures(EnzymeRules.forward, Interpreter.FWD_RULE_TT, world)...,) : nothing,
+        is_reverse ? (Interpreter.get_rule_signatures(EnzymeRules.augmented_primal, Interpreter.REV_RULE_TT, world)...,) : nothing,
+        inactive_rule ? (Interpreter.get_rule_signatures(EnzymeRules.inactive, Interpreter.ANY_RULE_TT, world)...,) : nothing
         )
 
     enzyme_cache_owner(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
@@ -649,91 +649,107 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
     return rewrite_abi_converter_calls!(mod)
 end
 
-const FRULE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
-const RRULE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
-const INACTIVE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
-const EASY_RULE_CACHE = Dict{Tuple{Type, UInt}, Bool}()
-const NOALIAS_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
+# Memoized rule queries. Each memo is keyed by the epoch of the rule family the query reads
+# (`Interpreter.rule_epoch`): the answer for a signature depends only on the rule methods
+# visible, so worlds that see the same methods share entries, and a new rule method (a new
+# epoch) retires the whole memo instead of leaving stale entries behind. The method table is
+# part of the key with its world stripped; as for the cache token, rule methods living in an
+# overlay table are not tracked.
+mutable struct RuleMemo
+    epoch::UInt
+    const entries::Dict{Tuple{Type, Any}, Bool}
+end
+RuleMemo() = RuleMemo(UInt(0), Dict{Tuple{Type, Any}, Bool}())
 
-function cached_has_easy_rule(specTypes::Type, world::UInt)
-    key = (specTypes, world)
-    val = get(EASY_RULE_CACHE, key, nothing)
+const RULE_MEMO_LOCK = ReentrantLock()
+const FRULE_MEMO = RuleMemo()
+const RRULE_MEMO = RuleMemo()
+const INACTIVE_MEMO = RuleMemo()
+const EASY_RULE_MEMO = RuleMemo()
+const NOALIAS_MEMO = RuleMemo()
+
+# When set, every memo hit is re-derived and compared against the stored answer.
+const CHECK_RULE_MEMO = Ref(false)
+
+memo_method_table(@nospecialize(mt)) = mt
+memo_method_table(mt::Core.Compiler.OverlayMethodTable) = mt.mt
+memo_method_table(::Core.Compiler.InternalMethodTable) = nothing
+memo_method_table(mt::Core.Compiler.CachedMethodTable) = memo_method_table(mt.table)
+
+function memo_get(memo::RuleMemo, epoch::UInt, key::Tuple{Type, Any})
+    lock(RULE_MEMO_LOCK)
+    try
+        if memo.epoch != epoch
+            empty!(memo.entries)
+            memo.epoch = epoch
+        end
+        return get(memo.entries, key, nothing)
+    finally
+        unlock(RULE_MEMO_LOCK)
+    end
+end
+
+function memo_set!(memo::RuleMemo, epoch::UInt, key::Tuple{Type, Any}, val::Bool)
+    lock(RULE_MEMO_LOCK)
+    try
+        # An epoch that moved on while the answer was computed already dropped the memo.
+        if memo.epoch == epoch
+            memo.entries[key] = val
+        end
+    finally
+        unlock(RULE_MEMO_LOCK)
+    end
+    return val
+end
+
+query_has_frule(specTypes::Type, world::UInt, @nospecialize(method_table)) =
+    EnzymeRules.has_frule_from_sig(specTypes; world, method_table)
+query_has_rrule(specTypes::Type, world::UInt, @nospecialize(method_table)) =
+    EnzymeRules.has_rrule_from_sig(specTypes; world, method_table)
+query_is_inactive(specTypes::Type, world::UInt, @nospecialize(method_table)) =
+    EnzymeRules.is_inactive_from_sig(specTypes; world, method_table)
+query_noalias(specTypes::Type, world::UInt, @nospecialize(method_table)) =
+    EnzymeRules.noalias_from_sig(specTypes; world, method_table)
+query_has_easy_rule(specTypes::Type, world::UInt, @nospecialize(method_table)) =
+    EnzymeRules.has_easy_rule_from_sig(specTypes; world)
+
+function cached_rule_query(
+        memo::RuleMemo, @nospecialize(rule), rule_tt::Type, @nospecialize(query),
+        specTypes::Type, world::UInt, @nospecialize(method_table)
+    )::Bool
+    epoch = Interpreter.rule_epoch(rule, rule_tt, world)
+    key = (specTypes, memo_method_table(method_table))
+    val = memo_get(memo, epoch, key)
     if val !== nothing
+        if CHECK_RULE_MEMO[]
+            fresh = query(specTypes, world, method_table)::Bool
+            fresh == val || error("stale rule memo for $specTypes: cached $val, recomputed $fresh")
+        end
         return val::Bool
     end
     func = specTypes.parameters[1]
-    if func isa Core.Builtin
-        EASY_RULE_CACHE[key] = false
-        return false
+    val = if func isa Core.Builtin
+        false
+    else
+        query(specTypes, world, method_table)::Bool
     end
-    res = EnzymeRules.has_easy_rule_from_sig(specTypes; world)
-    EASY_RULE_CACHE[key] = res
-    return res
+    return memo_set!(memo, epoch, key, val)
 end
 
-function cached_has_frule(specTypes::Type, world::UInt, method_table)
-    key = (specTypes, world, method_table)
-    val = get(FRULE_CACHE, key, nothing)
-    if val !== nothing
-        return val::Bool
-    end
-    func = specTypes.parameters[1]
-    if func isa Core.Builtin
-        FRULE_CACHE[key] = false
-        return false
-    end
-    res = EnzymeRules.has_frule_from_sig(specTypes; world, method_table)
-    FRULE_CACHE[key] = res
-    return res
-end
+cached_has_easy_rule(specTypes::Type, world::UInt) =
+    cached_rule_query(EASY_RULE_MEMO, EnzymeRules.has_easy_rule, Interpreter.ANY_RULE_TT, query_has_easy_rule, specTypes, world, nothing)
 
-function cached_has_rrule(specTypes::Type, world::UInt, method_table)
-    key = (specTypes, world, method_table)
-    val = get(RRULE_CACHE, key, nothing)
-    if val !== nothing
-        return val::Bool
-    end
-    func = specTypes.parameters[1]
-    if func isa Core.Builtin
-        RRULE_CACHE[key] = false
-        return false
-    end
-    res = EnzymeRules.has_rrule_from_sig(specTypes; world, method_table)
-    RRULE_CACHE[key] = res
-    return res
-end
+cached_has_frule(specTypes::Type, world::UInt, @nospecialize(method_table)) =
+    cached_rule_query(FRULE_MEMO, EnzymeRules.forward, Interpreter.FWD_RULE_TT, query_has_frule, specTypes, world, method_table)
 
-function cached_is_inactive(specTypes::Type, world::UInt, method_table)
-    key = (specTypes, world, method_table)
-    val = get(INACTIVE_CACHE, key, nothing)
-    if val !== nothing
-        return val::Bool
-    end
-    func = specTypes.parameters[1]
-    if func isa Core.Builtin
-        INACTIVE_CACHE[key] = false
-        return false
-    end
-    res = EnzymeRules.is_inactive_from_sig(specTypes; world, method_table)
-    INACTIVE_CACHE[key] = res
-    return res
-end
+cached_has_rrule(specTypes::Type, world::UInt, @nospecialize(method_table)) =
+    cached_rule_query(RRULE_MEMO, EnzymeRules.augmented_primal, Interpreter.REV_RULE_TT, query_has_rrule, specTypes, world, method_table)
 
-function cached_noalias(specTypes::Type, world::UInt, method_table)
-    key = (specTypes, world, method_table)
-    val = get(NOALIAS_CACHE, key, nothing)
-    if val !== nothing
-        return val::Bool
-    end
-    func = specTypes.parameters[1]
-    if func isa Core.Builtin
-        NOALIAS_CACHE[key] = false
-        return false
-    end
-    res = EnzymeRules.noalias_from_sig(specTypes; world, method_table)
-    NOALIAS_CACHE[key] = res
-    return res
-end
+cached_is_inactive(specTypes::Type, world::UInt, @nospecialize(method_table)) =
+    cached_rule_query(INACTIVE_MEMO, EnzymeRules.inactive, Interpreter.ANY_RULE_TT, query_is_inactive, specTypes, world, method_table)
+
+cached_noalias(specTypes::Type, world::UInt, @nospecialize(method_table)) =
+    cached_rule_query(NOALIAS_MEMO, EnzymeRules.noalias, Interpreter.ANY_RULE_TT, query_noalias, specTypes, world, method_table)
 
 include("compiler/optimize.jl")
 include("compiler/interpreter.jl")
