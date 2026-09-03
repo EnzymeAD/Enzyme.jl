@@ -345,7 +345,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     return errors
 end
 
-function try_replace_constant_load!(inst::LLVM.Instruction; check_mutability::Bool=true, do_replace::Bool=true)::LLVM.Value
+function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check_mutability::Bool = true, do_replace::Bool = true)::LLVM.Value
     if !(isa(value_type(inst), LLVM.PointerType) && addrspace(value_type(inst)) == Tracked)
         return inst
     end
