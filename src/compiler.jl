@@ -7591,37 +7591,7 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
     return ci
 end
 
-@eval @inline function thunk(
-    fakeworld::Val{0},
-    fa::Type{FA},
-    a::Type{A},
-    tt::Type{TT},
-    mode::Val{Mode},
-    width::Val{Width},
-    modifiedbetween::Val{ModifiedBetween},
-    returnprimal::Val{ReturnPrimal},
-    shadowinit::Val{ShadowInit},
-    abi::Type{ABI},
-    erriffuncwritten::Val{ErrIfFuncWritten},
-    runtimeactivity::Val{RuntimeActivity},
-    strongzero::Val{StrongZero}
-) where {
-    FA<:Annotation,
-    A<:Annotation,
-    TT,
-    Mode,
-    Width,
-    ModifiedBetween,
-    ReturnPrimal,
-    ShadowInit,
-    ABI,
-    ErrIfFuncWritten,
-    RuntimeActivity,
-    StrongZero
-}
-    $(Expr(:meta, :generated_only))
-    $(Expr(:meta, :generated, thunk_generator))
-end
+# The generated wrapper `thunk` is defined in src/late_generated.jl; see the note there.
 
 import GPUCompiler: deferred_codegen_jobs
 
@@ -7701,36 +7671,7 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
     return ci
 end
 
-@eval @inline function deferred_id_codegen(
-    fa::Type{FA},
-    a::Type{A},
-    tt::Type{TT},
-    mode::Val{Mode},
-    width::Val{Width},
-    modifiedbetween::Val{ModifiedBetween},
-    returnprimal::Val{ReturnPrimal},
-    shadowinit::Val{ShadowInit},
-    expectedtapetype::Type{ExpectedTapeType},
-    erriffuncwritten::Val{ErrIfFuncWritten},
-    runtimeactivity::Val{RuntimeActivity},
-    strongzero::Val{StrongZero}
-) where {
-    FA<:Annotation,
-    A<:Annotation,
-    TT,
-    Mode,
-    Width,
-    ModifiedBetween,
-    ReturnPrimal,
-    ShadowInit,
-    ExpectedTapeType,
-    ErrIfFuncWritten,
-    RuntimeActivity,
-    StrongZero
-}
-    $(Expr(:meta, :generated_only))
-    $(Expr(:meta, :generated, deferred_id_generator))
-end
+# The generated wrapper `deferred_id_codegen` is defined in src/late_generated.jl; see the note there.
 
 @inline function deferred_codegen(
     @nospecialize(fa::Type),

@@ -1596,6 +1596,7 @@ macro import_rrule(args...)
     return _import_rrule(args...)
 end
 
+include("late_generated.jl")
 include("precompile.jl")
 
 end # module
