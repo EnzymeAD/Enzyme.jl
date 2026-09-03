@@ -176,9 +176,18 @@ GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) 
 # GPUCompiler.isintrinsic(::CompilerJob{EnzymeTarget}, fn::String) = true
 # GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
 
-# TODO: encode debug build or not in the compiler job
-#       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
-GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
+# GPUCompiler 1.x names the runtime library per back-end; 2.x derives it from the cache owner.
+@static if isdefined(GPUCompiler, :runtime_slug)
+    # TODO: encode debug build or not in the compiler job
+    #       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
+    GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
+end
+
+# GPUCompiler 2.x moved the code-instance cache onto CompilerCaching.jl and renamed the hooks:
+# `ci_cache_token` became `cache_owner`, `ci_cache` (Julia 1.10) became `get_code_cache`, and
+# `compile_method_instance` drives inference through `drive_inference!`, which it only
+# provides for its own interpreter. Enzyme supports both majors.
+const HAS_GPUCOMPILER_2 = isdefined(GPUCompiler, :cache_owner)
 
 # provide a specific interpreter to use.
 if VERSION >= v"1.11.0-DEV.1552"
@@ -204,7 +213,7 @@ if VERSION >= v"1.11.0-DEV.1552"
             inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
         )
 
-    GPUCompiler.ci_cache_token(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+    enzyme_cache_owner(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
         EnzymeCacheToken(
         GPUCompiler.method_table(job),
             job.world,
@@ -213,9 +222,17 @@ if VERSION >= v"1.11.0-DEV.1552"
             true
         )
 
+    @static if HAS_GPUCOMPILER_2
+        GPUCompiler.cache_owner(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            enzyme_cache_owner(job)
+    else
+        GPUCompiler.ci_cache_token(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            enzyme_cache_owner(job)
+    end
+
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         Interpreter.EnzymeInterpreter(
-            GPUCompiler.ci_cache_token(job),
+        enzyme_cache_owner(job),
             GPUCompiler.method_table(job),
             job.world,
             job.config.params.mode,
@@ -236,8 +253,13 @@ else
         end
     end
 
-    GPUCompiler.ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        enzyme_ci_cache(job)
+    @static if HAS_GPUCOMPILER_2
+        GPUCompiler.get_code_cache(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            enzyme_ci_cache(job)
+    else
+        GPUCompiler.ci_cache(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            enzyme_ci_cache(job)
+    end
 
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         Interpreter.EnzymeInterpreter(
@@ -720,6 +742,32 @@ include("compiler/validation.jl")
 include("typeutils/inference.jl")
 
 import .Interpreter: isKWCallSignature
+
+# GPUCompiler 2.x's `compile_method_instance` drives inference through this hook, which
+# GPUCompiler only defines for its own `GPUInterpreter`.
+@static if HAS_GPUCOMPILER_2
+    @static if VERSION >= v"1.11.0-DEV.1552"
+        GPUCompiler.drive_inference!(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance) =
+            GPUCompiler.CompilerCaching.typeinf!(interp, mi)
+    else
+        # Mirrors the `CodeCache`-based implementation in GPUCompiler's deprecated.jl.
+        function GPUCompiler.drive_inference!(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance)
+            src = Core.Compiler.typeinf_ext_toplevel(interp, mi)
+            @assert src !== nothing "Inference of $mi failed"
+
+            # For const-return CIs the inference result wasn't recorded; set it from the
+            # returned source so callers re-using the CI don't need to re-infer.
+            wvc = Core.Compiler.WorldView(interp.code_cache, Core.Compiler.WorldRange(interp.world, interp.world))
+            if Core.Compiler.haskey(wvc, mi)
+                ci = Core.Compiler.getindex(wvc, mi)
+                if ci.inferred === nothing
+                    @atomic ci.inferred = src
+                end
+            end
+            return nothing
+        end
+    end
+end
 
 
 mutable struct HandlerState
@@ -6462,7 +6510,11 @@ end
 
     use_primal = mode == API.DEM_ReverseModePrimal
     entry = use_primal ? augmented_primalf : adjointf
-    return mod, (; adjointf, augmented_primalf, entry, compiled = meta.compiled, TapeType, edges)
+    # GPUCompiler 2.x: a device job compiled on behalf of a kernel (`toplevel = false`) leaves
+    # its Julia-value references symbolic; hand the records on so the kernel's compiler can
+    # resolve them after linking (`link_relocatable!`). Host jobs have already resolved them.
+    relocations = hasproperty(meta, :relocations) ? meta.relocations : nothing
+    return mod, (; adjointf, augmented_primalf, entry, compiled = meta.compiled, TapeType, edges, relocations)
 end
 
 # Compiler result

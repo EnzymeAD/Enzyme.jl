@@ -71,7 +71,11 @@ function reflect(
 
     job = get_job(func, A, types; optimize, kwargs...)
     # Codegen the primal function and all its dependency in one module
-    mod, meta = GPUCompiler.codegen(:llvm, job) #= validate=false =#
+    mod, meta = @static if isdefined(GPUCompiler, :codegen)
+        GPUCompiler.codegen(:llvm, job) #= validate=false =#
+    else
+        GPUCompiler.compile_unhooked(:llvm, job)
+    end
 
     if second_stage
         post_optimize!(mod, JIT.get_tm())
