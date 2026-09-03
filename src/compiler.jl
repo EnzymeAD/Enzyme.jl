@@ -555,6 +555,11 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
         returnRoots = returnRoots0 !== nothing
 
         attributes = function_attributes(llvmfn)
+        # A function that already carries `enzymejl_mi` is not this emission's
+        # output: a derivative embedded for nested differentiation may reuse
+        # the name of a fresh function, since Julia's function name counters
+        # restart per compilation.
+        fresh = !has_fn_attr(llvmfn, StringAttribute("enzymejl_mi"))
         push!(
             attributes,
             StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))),
@@ -570,6 +575,10 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
 	if startswith(LLVM.name(llvmfn), "japi3") || startswith(LLVM.name(llvmfn), "japi1") || startswith(LLVM.name(llvmfn), "jlcapi")
 	   continue
 	end
+
+        if CheckSpecsig[] && fresh
+            check_emitted_specsig(mod, llvmfn, mi, RT)
+        end
 
         if is_sret_union(RT)
             attr = StringAttribute("enzymejl_sret_union_bytes", string(union_alloca_type(RT)))

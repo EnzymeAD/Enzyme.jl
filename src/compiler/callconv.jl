@@ -31,6 +31,15 @@ function copy_extension_attrs!(call::LLVM.CallInst, fn::LLVM.Function)
     return nothing
 end
 
+"""
+    CheckSpecsig
+
+When set, `prepare_llvm` compares the signature of every function Julia's
+codegen emitted against the one [`specsig`](@ref) derives (see
+[`check_emitted_specsig`](@ref)). Off by default; the test suite turns it on.
+"""
+const CheckSpecsig = Ref{Bool}(false)
+
 @static if Interpreter.HAS_INVOKE_RULES
 
     function read_jit_gcstack_arg()::Bool
@@ -329,6 +338,9 @@ end
             msg = sprint() do io
                 println(io, "Enzyme: the emitted function does not match the derived signature")
                 println(io, "mi = ", mi)
+                println(io, "specTypes = ", mi.specTypes)
+                println(io, "RT = ", RT)
+                println(io, "function = ", LLVM.name(llvmf))
                 println(io, "emitted = ", string(ft))
                 println(io, "derived retty = ", string(retty))
                 println(io, "derived params = ", string.(params))
@@ -353,6 +365,24 @@ end
         # is compiled, and `materialize_native_invokes!` finds it by this marker.
         push!(function_attributes(fn), StringAttribute("enzymejl_native_invoke"))
         return fn
+    end
+
+    """
+        check_emitted_specsig(mod::LLVM.Module, llvmf::LLVM.Function, mi::MethodInstance, RT::Type)
+
+    Compare the signature of `llvmf`, which Julia's codegen just emitted into
+    `mod` for the MethodInstance `mi` with return type `RT`, against the one
+    [`specsig`](@ref) derives, and throw an `AssertionError` on a difference
+    (see [`check_specsig`](@ref)). Only [`invoke_codegen!`](@ref) relies on
+    the derivation, but `prepare_llvm` checks every function Julia emits when
+    [`CheckSpecsig`](@ref) is set, as the test suite does, so the derivation
+    meets every signature shape the differentiated code contains.
+    """
+    function check_emitted_specsig(mod::LLVM.Module, llvmf::LLVM.Function, mi::Core.MethodInstance, @nospecialize(RT::Type))
+        (Interpreter.HAS_INVOKE_RULES && module_targets_host(mod)) || return nothing
+        mi.specTypes isa DataType || return nothing
+        check_specsig(llvmf, mi, RT)
+        return nothing
     end
 
     """
@@ -643,6 +673,8 @@ else
     ) = nested_codegen!(enzyme_context, mode, mod, funcspec, world, alwaysinline)
 
     native_return_type(mod::LLVM.Module, mi::Core.MethodInstance, world::UInt) = nothing
+
+    check_emitted_specsig(mod::LLVM.Module, llvmf::LLVM.Function, mi::Core.MethodInstance, @nospecialize(RT::Type)) = nothing
 
     materialize_native_invokes!(enzyme_context::EnzymeContext, mode::API.CDerivativeMode, mod::LLVM.Module, world::UInt) = nothing
 
