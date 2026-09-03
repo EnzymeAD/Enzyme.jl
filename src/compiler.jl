@@ -2507,6 +2507,7 @@ for (k, v) in (
 end
 
 function __init__()
+    reset_session!()
     API.memmove_warning!(false)
     API.typeWarning!(false)
     API.EnzymeNonPower2Cache!(false)
@@ -7324,32 +7325,30 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
     return (mod, meta.edges, adjoint_name, primal_name, meta.TapeType, prepost)
 end
 
-const cache = Dict{UInt,CompileResult}()
+include("compiler/session.jl")
 
-const autodiff_cache = Dict{Ptr{Cvoid},Tuple{String, String}}()
-
-const cache_lock = ReentrantLock()
 @inline function cached_compilation(@nospecialize(job::CompilerJob))::CompileResult
     key = hash(job)
+    cache = THUNK_CACHE
 
     # NOTE: no use of lock(::Function)/@lock/get! to keep stack traces clean
-    lock(cache_lock)
+    lock(cache.lock)
     try
-        obj = get(cache, key, nothing)
+        obj = get(cache.thunks, key, nothing)
         if obj === nothing
             asm = _thunk(job)
             obj = _link(job, asm...)
             if obj.adjoint isa Ptr{Nothing}
-                autodiff_cache[obj.adjoint] = (asm[3], asm[6])
+                cache.by_ptr[obj.adjoint] = (asm[3], asm[6])
             end
             if obj.primal isa Ptr{Nothing} && asm[4] isa String
-                autodiff_cache[obj.primal] = (asm[4], asm[6])
+                cache.by_ptr[obj.primal] = (asm[4], asm[6])
             end
-            cache[key] = obj
+            cache.thunks[key] = obj
         end
         obj
     finally
-        unlock(cache_lock)
+        unlock(cache.lock)
     end
 end
 
