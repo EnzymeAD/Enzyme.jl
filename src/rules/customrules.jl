@@ -1610,6 +1610,44 @@ function sret_union_tape_type(@nospecialize(aug_RT))
     return Union{InnerTypes...}
 end
 
+"""
+    box_inline_union!(B, alloctx, val, offset, UT) -> LLVM.Value
+
+`val` is an aggregate that holds an isbits `Union` field of type `UT`
+inline at byte `offset`: the payload, then a selector byte with the 0-based
+index of the member in `Base.uniontypes` order. Return the selected member
+boxed, as a tracked pointer; a singleton member is its instance. The tape
+slot of a `Union` tape holds the union boxed, as `jl_type_to_llvm` declares
+it, and the reverse rule takes such a tape boxed too.
+"""
+function box_inline_union!(B::LLVM.IRBuilder, alloctx::LLVM.IRBuilder, val::LLVM.Value, offset::Int, @nospecialize(UT::Type))::LLVM.Value
+    T_int8 = LLVM.Int8Type()
+    T_int64 = LLVM.Int64Type()
+    slot = alloca!(alloctx, value_type(val), "union.tape")
+    store!(B, val, slot)
+    base = bitcast!(B, slot, LLVM.PointerType(T_int8))
+    payload = gep!(B, T_int8, base, LLVM.Value[LLVM.ConstantInt(T_int64, offset)])
+    selp = gep!(B, T_int8, base, LLVM.Value[LLVM.ConstantInt(T_int64, offset + union_alloca_type(UT))])
+    sel = load!(B, T_int8, selp, "union.tape.selector")
+    members = Base.uniontypes(UT)
+    boxed = LLVM.Value[]
+    for T in members
+        if Base.issingletontype(T)
+            push!(boxed, unsafe_to_llvm(B, T.instance))
+        else
+            box = emit_allocobj!(B, T, "union.tape.$T")
+            memcpy!(B, box, 0, payload, 0, LLVM.ConstantInt(T_int64, sizeof(T)))
+            push!(boxed, box)
+        end
+    end
+    result = boxed[end]
+    for k in (length(members) - 1):-1:1
+        is_k = icmp!(B, LLVM.API.LLVMIntEQ, sel, LLVM.ConstantInt(T_int8, k - 1))
+        result = select!(B, is_k, boxed[k], result)
+    end
+    return result
+end
+
 function nthfield_if_byref!(B, isboxed, sret_union_type, res) 
     mod = LLVM.parent(LLVM.parent(position(B)))
     
@@ -2250,6 +2288,12 @@ function enzyme_custom_common_rev(
         cur = nothing
         cur_size = nothing
         cur_offset = nothing
+        # A singleton tape, such as `nothing`, is its instance and must not
+        # be allocated: `tape === nothing` compares identities.
+        T_int1 = LLVM.Int1Type()
+        cur_singleton = nothing
+        cur_singleton_val = nothing
+        any_singleton = false
 
         counter = 1
 
@@ -2262,16 +2306,23 @@ function enzyme_custom_common_rev(
             elseif cur_size != sizeof(jlrettype)
                 same_size = false
             end
+            singleton = Base.issingletontype(jlrettype)
+            any_singleton |= singleton
+            singleton_val = unsafe_to_llvm(B, singleton ? jlrettype.instance : nothing)
 
             if cur === nothing
                 cur = unsafe_to_llvm(B, jlrettype)
                 cur_size = LLVM.ConstantInt(sizeof(jlrettype))
                 cur_offset = LLVM.ConstantInt(fieldoffset(aug_RT, 3))
+                cur_singleton = LLVM.ConstantInt(T_int1, singleton)
+                cur_singleton_val = singleton_val
             else
                 cmpv = icmp!(B, LLVM.API.LLVMIntEQ, idxv, LLVM.ConstantInt(value_type(idxv), counter))
                 cur = select!(B, cmpv, unsafe_to_llvm(B, jlrettype), cur)
                 cur_size = select!(B, cmpv, LLVM.ConstantInt(sizeof(jlrettype)), cur_size)
                 cur_offset = select!(B, cmpv, LLVM.ConstantInt(fieldoffset(aug_RT, 3)), cur_offset)
+                cur_singleton = select!(B, cmpv, LLVM.ConstantInt(T_int1, singleton), cur_singleton)
+                cur_singleton_val = select!(B, cmpv, singleton_val, cur_singleton_val)
             end
 
             counter += 1
@@ -2288,6 +2339,10 @@ function enzyme_custom_common_rev(
         memcpy!(B, bitcast!(B, sret_union_tape, LLVM.PointerType(T_int8, Tracked)), 0, gep!(B, T_int8, bitcast!(B, sret, LLVM.PointerType(T_int8)), LLVM.Value[cur_offset]), 0, cur_size)
 
         sret_union_tape = nthfield_if_byref!(B, isboxed, sret_union_tape, res)
+        if any_singleton
+            use_singleton = and!(B, cur_singleton, not!(B, isboxed))
+            sret_union_tape = select!(B, use_singleton, cur_singleton_val, sret_union_tape)
+        end
         
         res = sret
 
@@ -2496,6 +2551,9 @@ function enzyme_custom_common_rev(
                 sret_union_tape
             elseif abstract
                 emit_nthfield!(B, res, LLVM.ConstantInt(2))
+            elseif TapeT isa Union && Base.isbitsunion(TapeT)
+                # The struct holds the tape inline as payload and selector.
+                box_inline_union!(B, alloctx, res, Int(fieldoffset(aug_RT, 3)), TapeT)
             else
                 extract_value!(B, res, idx)
             end

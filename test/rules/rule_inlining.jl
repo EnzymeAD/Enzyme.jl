@@ -271,6 +271,8 @@ end
 boxed_tape_vector(x) = x^3
 boxed_tape_any(x) = x^3
 boxed_tape_union(x) = x^3
+boxed_tape_union2(x) = x^3
+boxed_tape_union3(x) = x^3
 boxed_nospec_fwd(x) = x^3
 boxed_nospec_rev(v) = v[1]^3
 boxed_mutable_payload(p::MParam, x) = p.c * x^3
@@ -329,6 +331,43 @@ for inl in (:inline, :noinline)
             end
         )
     )
+    # A `Union` tape with two members that carry data. The reverse rule
+    # tells them apart, so the selector must survive.
+    push!(
+        defs, :(
+            function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig, func::Const{typeof(boxed_tape_union2)}, ::Type{<:Active}, x::Active)
+                primal = EnzymeRules.needs_primal(config) ? func.val(x.val) : nothing
+                return EnzymeRules.AugmentedReturn(primal, nothing, x.val > 0 ? x.val : Float32(x.val))
+            end
+        )
+    )
+    push!(
+        defs, :(
+            function EnzymeRules.reverse(config::EnzymeRules.RevConfig, func::Const{typeof(boxed_tape_union2)}, dret::Active, tape, x::Active)
+                scale = tape isa Float32 ? 1 : 10
+                return (scale * 3 * Float64(tape)^2 * dret.val,)
+            end
+        )
+    )
+    # The same tape, with the augmented return typed explicitly, so the union
+    # is one field laid out inline: payload, then selector.
+    push!(
+        defs, :(
+            function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig, func::Const{typeof(boxed_tape_union3)}, ::Type{<:Active}, x::Active)
+                primal = EnzymeRules.needs_primal(config) ? func.val(x.val) : nothing
+                tape = x.val > 0 ? x.val : nothing
+                return EnzymeRules.AugmentedReturn{typeof(primal), Nothing, Union{Nothing, Float64}}(primal, nothing, tape)
+            end
+        )
+    )
+    push!(
+        defs, :(
+            function EnzymeRules.reverse(config::EnzymeRules.RevConfig, func::Const{typeof(boxed_tape_union3)}, dret::Active, tape, x::Active)
+                xv = tape === nothing ? 0.0 : tape
+                return (10 * 3 * xv^2 * dret.val,)
+            end
+        )
+    )
     # A `@nospecialize` annotation is boxed.
     push!(
         defs, :(
@@ -373,11 +412,11 @@ for inl in (:inline, :noinline)
         @test autodiff(Reverse, boxed_tape_vector, Active(2.0))[1][1] == 120.0
         @test autodiff(Reverse, boxed_tape_any, Active(2.0))[1][1] == 120.0
         @test autodiff(Reverse, boxed_tape_union, Active(2.0))[1][1] == 120.0
-        # The `nothing` member of the union tape reads back as garbage,
-        # whichever way the rule is emitted: the augmented primal boxes the
-        # singleton instead of handing back its instance. Exercise the path
-        # but do not assert the value, which the next PR fixes.
-        autodiff(Reverse, boxed_tape_union, Active(-2.0))
+        @test autodiff(Reverse, boxed_tape_union, Active(-2.0))[1][1] == 0.0
+        @test autodiff(Reverse, boxed_tape_union2, Active(2.0))[1][1] == 120.0
+        @test autodiff(Reverse, boxed_tape_union2, Active(-2.0))[1][1] == 12.0
+        @test autodiff(Reverse, boxed_tape_union3, Active(2.0))[1][1] == 120.0
+        @test autodiff(Reverse, boxed_tape_union3, Active(-2.0))[1][1] == 0.0
         @test autodiff(ForwardWithPrimal, boxed_nospec_fwd, Duplicated(2.0, 1.0)) == (120.0, 8.0)
         v = [2.0]
         dv = [0.0]
