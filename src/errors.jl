@@ -51,10 +51,7 @@ using InteractiveUtils
 function code_typed_helper(mi::Core.MethodInstance, world::UInt, mode::Enzyme.API.CDerivativeMode = Enzyme.API.DEM_ReverseModeCombined; interactive::Bool=false, kwargs...)
     CT = @static if VERSION >= v"1.11.0-DEV.1552"
         EnzymeCacheToken(
-            typeof(DefaultCompilerTarget()),
-            false,
-            GPUCompiler.GLOBAL_METHOD_TABLE, #=job.config.always_inline=#
-            EnzymeCompilerParams,
+            GPUCompiler.GLOBAL_METHOD_TABLE,
             world,
             mode == API.DEM_ForwardMode,
             mode != API.DEM_ForwardMode,

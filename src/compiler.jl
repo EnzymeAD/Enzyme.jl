@@ -182,18 +182,23 @@ GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
 
 # provide a specific interpreter to use.
 if VERSION >= v"1.11.0-DEV.1552"
+    # The owner of the CodeInstances produced by an `EnzymeInterpreter`, compared with
+    # `jl_egal`. It only carries the inputs that change what the interpreter infers: the
+    # method table, and the set of rules visible in the world for the mode in question.
+    # The compiler target and params types deliberately are not part of it: one `autodiff`
+    # call builds interpreters from several differently-typed jobs (the `EnzymeTarget`
+    # thunk job, the unwrapped primal job, `primal_interp_world`) that all infer the same
+    # way, and keying on those types made each of them re-infer the whole call graph.
     struct EnzymeCacheToken
-        target_type::Type
-        always_inline::Any
         method_table::Core.MethodTable
-        param_type::Type
         last_fwd_rule_world::Union{Nothing, Tuple}
         last_rev_rule_world::Union{Nothing, Tuple}
         last_ina_rule_world::Union{Nothing, Tuple}
     end
 
-    @inline EnzymeCacheToken(target_type::Type, always_inline::Any, method_table::Core.MethodTable, param_type::Type, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
-        EnzymeCacheToken(target_type, always_inline, method_table, param_type,
+    @inline EnzymeCacheToken(method_table::Core.MethodTable, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
+        EnzymeCacheToken(
+        method_table,
             is_forward ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.forward, Tuple{<:EnzymeCore.EnzymeRules.FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
             is_reverse ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:EnzymeCore.EnzymeRules.RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
             inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
@@ -201,10 +206,7 @@ if VERSION >= v"1.11.0-DEV.1552"
 
     GPUCompiler.ci_cache_token(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         EnzymeCacheToken(
-            typeof(job.config.target),
-            job.config.always_inline,
-            GPUCompiler.method_table(job),
-            typeof(job.config.params),
+        GPUCompiler.method_table(job),
             job.world,
             job.config.params.mode == API.DEM_ForwardMode,
             job.config.params.mode != API.DEM_ForwardMode,
