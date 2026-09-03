@@ -60,8 +60,6 @@ const Tracked = 10
 const Derived = 11
 export Tracked, Derived
 
-const captured_constants = Base.IdSet{Any}()
-
 function arg_operands_view(inst::LLVM.CallInst)
     N_args = LLVM.API.LLVMGetNumArgOperands(inst)
     return @view LLVM.operands(inst)[1:N_args]
@@ -82,18 +80,10 @@ function unsafe_nothing_to_llvm(mod::LLVM.Module)
     return gv
 end
 
+# The address of `val` as native code refers to it: the canonical instance rooted for the
+# lifetime of the process (a stable box for an immutable value).
 function unsafe_to_ptr(@nospecialize(val))
-    if !Base.ismutable(val)
-        val = Core.Box(val) # FIXME many objects could be leaked here
-        @assert Base.ismutable(val)
-        push!(captured_constants, val) # Globally root
-        ptr = unsafe_load(Base.reinterpret(Ptr{Ptr{Cvoid}}, Base.pointer_from_objref(val)))
-    else
-        @assert Base.ismutable(val)
-        push!(captured_constants, val) # Globally root
-        ptr = Base.pointer_from_objref(val)
-    end
-    return ptr
+    return Compiler.value_pointer(Compiler.root_value(val))
 end
 export unsafe_to_ptr
 
@@ -105,31 +95,17 @@ function setup_global(
         B::LLVM.IRBuilder,
         T_jlvalue::LLVM.StructType,
         world::Union{UInt, Nothing},
-        insert_name_if_not_exists::Union{String, Nothing},
-        k::String,
+        force_inactive::Bool,
+        gname::String,
         @nospecialize(val),
     )::LLVM.Value
     mod = LLVM.parent(LLVM.parent(LLVM.position(B)))
     globs = LLVM.globals(mod)
-    if Base.haskey(globs, "ejl_" * k)
-        return globs["ejl_" * k]
+    if Base.haskey(globs, gname)
+        return globs[gname]
     end
 
-    force_inactive = false
-    if insert_name_if_not_exists isa String
-        k = "inserted\$" * insert_name_if_not_exists
-        if !haskey(Compiler.JuliaEnzymeNameMap, k)
-            Compiler.JuliaEnzymeNameMap[k] = val
-        end
-        # Since the legacy behavior was to force inactive for global constants, we retain that here (for now)
-        force_inactive = true
-    end
-
-    if Base.haskey(globs, "ejl_" * k)
-        return globs["ejl_" * k]
-    end
-
-    gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
+    gv = LLVM.GlobalVariable(mod, T_jlvalue, gname, Tracked)
 
     API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
     inactive = force_inactive || Enzyme.Compiler.is_memory_instance(val)
@@ -149,11 +125,12 @@ function setup_global(
     return gv
 end
 
-# This mimicks literal_pointer_val / literal_pointer_val_slot
-function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_not_exists::Union{String, Nothing}=nothing)::LLVM.Value
+# This mimicks literal_pointer_val / literal_pointer_val_slot: the Julia object `val` as a
+# tracked pointer constant, always through a named global (see `compiler/relocation.jl`) so
+# that the module carries no address of this session. `force_inactive` marks the reference
+# inactive regardless of its type, the behavior kept for folded global constants.
+function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); force_inactive::Bool = false)::LLVM.Value
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
-    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-    T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
 
     world = nothing
     for fattr in collect(LLVM.function_attributes(LLVM.parent(LLVM.position(B))))
@@ -168,29 +145,17 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
 
     for (k, v) in Compiler.JuliaGlobalNameMap
         if v === val
-            return setup_global(B, T_jlvalue, world, insert_name_if_not_exists, k, val)
+            return setup_global(B, T_jlvalue, world, force_inactive, "ejl_" * k, val)
         end
     end
 
     for (k, v) in Compiler.JuliaEnzymeNameMap
         if v === val
-            return setup_global(B, T_jlvalue, world, insert_name_if_not_exists, k, val)
+            return setup_global(B, T_jlvalue, world, force_inactive, "ejl_" * k, val)
         end
     end
 
-    if insert_name_if_not_exists !== nothing
-        return setup_global(B, T_jlvalue, world, insert_name_if_not_exists, insert_name_if_not_exists, val)
-    end
-
-    # XXX: This prevents code from being runtime relocatable
-    #      We likely should emit global variables and use something
-    #      like `absolute_symbol_materialization` and write out cache-files
-    #      that have relocation tables.
-    ptr = unsafe_to_ptr(val)
-
-    fill_val = LLVM.ConstantInt(convert(UInt, ptr))
-    fill_val = LLVM.const_inttoptr(fill_val, T_prjlvalue_UT)
-    LLVM.const_addrspacecast(fill_val, T_prjlvalue)
+    return setup_global(B, T_jlvalue, world, force_inactive, Compiler.relocation_name(val), val)
 end
 export unsafe_to_llvm, unsafe_nothing_to_llvm
 

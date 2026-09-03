@@ -123,7 +123,10 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
                     return (true, v)
                 end
             end
-	    @assert !startswith(gname, "ejl_inserted") "Could not find ejl_inserted variable in map $gname"
+            found, v = relocation_value(gname)
+            if found
+                return (true, v)
+            end
         end
         if isa(ce, LLVM.LoadInst)
             gv = operands(ce)[1]
@@ -276,6 +279,10 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
             if gname == k || gname == "ejl_" * k
                 return (true, v)
             end
+        end
+        found, v = relocation_value(gname)
+        if found
+            return (true, v)
         end
     end
 
@@ -507,6 +514,10 @@ function abs_typeof(
                 if gname == "ejl_" * k
 		    return (true, Core.Typeof(unbind(v)), GPUCompiler.BITS_REF)
                 end
+            end
+            found, v = relocation_value(gname)
+            if found
+                return (true, Core.Typeof(v), GPUCompiler.BITS_REF)
             end
         end
         if isa(ce, LLVM.LoadInst)

@@ -163,25 +163,11 @@ function prepare!(mod)
         replace_uses!(f, ptr)
         Compiler.eraseInst(mod, f)
     end
+    # Bind the symbolic Julia value references (`compiler/relocation.jl`) to the objects'
+    # addresses in this process.
     for g in collect(globals(mod))
-        if !startswith(LLVM.name(g), "ejl_inserted\$")
-           continue
-        end
-        _, ogname, load1, initaddr = split(LLVM.name(g), "\$")
-
-        load1 = load1 == "true"
-            initaddr = parse(UInt, initaddr)
-        ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
-        if load1
-           ptr = Base.unsafe_load(ptr, :unordered)
-        end
-                
-        obj = Base.unsafe_pointer_to_objref(ptr)
-	
-        # Let's try a de-bind for 1.10 lux
-        if isa(obj, Core.Binding)
-           ptr = Compiler.unsafe_to_ptr(obj.value)
-        end
+        Compiler.is_relocation_name(LLVM.name(g)) || continue
+        ptr = Compiler.relocation_pointer(LLVM.name(g))
 
         ptr = reinterpret(UInt, ptr)
         ptr = LLVM.ConstantInt(ptr)
