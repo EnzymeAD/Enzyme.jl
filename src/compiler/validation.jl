@@ -396,6 +396,10 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
     if isa(addr, LLVM.GlobalVariable) && (haskey(metadata(addr), "julia.constgv") || !check_mutability)
         paddr = addr
         addr = LLVM.initializer(paddr)
+        # Folding needs the object's address. A GPUCompiler 2.x job compiled on behalf of a
+        # kernel (`toplevel = false`) keeps the slot symbolic until the kernel is linked, so
+        # there is none yet; the load stays a load.
+        addr === nothing && return inst
         gname = LLVM.name(paddr) * "\$false"
         addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
         originally_tracked = true
@@ -403,6 +407,8 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
         paddr = operands(addr)[1]
         if isa(paddr, LLVM.GlobalVariable) && (haskey(metadata(paddr), "julia.constgv") || !check_mutability)
             addr = LLVM.initializer(paddr)
+            # As above: an unresolved slot has no address to fold to.
+            addr === nothing && return inst
             gname = LLVM.name(paddr) * "\$true"
             base_addr, _ = get_base_and_offset(addr; offsetAllowed = true, inttoptr = false)
             originally_tracked = true
@@ -470,6 +476,29 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
         return newf
     end
     return inst
+end
+
+# The address a PLT stub's ccall cache slot `slot` (or the stub `stub` itself) already
+# carries as a constant, or `nothing` when the slot is still filled at runtime.
+function resolved_plt_address(slot::LLVM.GlobalVariable, stub::LLVM.Function)
+    addr = pointer_constant_value(LLVM.initializer(slot))
+    addr !== nothing && return addr
+    for bb in blocks(stub), inst in instructions(bb)
+        isa(inst, LLVM.ICmpInst) || continue
+        addr = pointer_constant_value(operands(inst)[1])
+        addr !== nothing && return addr
+    end
+    return nothing
+end
+
+function pointer_constant_value(@nospecialize(c))
+    c === nothing && return nothing
+    if isa(c, LLVM.ConstantExpr) && opcode(c) == LLVM.API.LLVMIntToPtr
+        c = operands(c)[1]
+    end
+    isa(c, LLVM.ConstantInt) || return nothing
+    v = convert(UInt, c)
+    return v == 0 ? nothing : v
 end
 
 function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, f::LLVM.Function, deletedfns::Vector{LLVM.Function}, mod::LLVM.Module)
@@ -570,7 +599,13 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                     end
                                 end
                             end
-                            if found == nothing
+                            # GPUCompiler 2.x may resolve the ccall cache slot before Enzyme
+                            # sees the module (`bake_relocations!`); optimization then folds
+                            # the lookup slow path away and the stub only compares the
+                            # resolved address. Take that address as the callee: the literal
+                            # call target is symbolized like any other below.
+                            resolved = found === nothing ? resolved_plt_address(opv, initfn) : nothing
+                            if found === nothing && resolved === nothing
                                 msg = sprint() do io::IO
                                     println(
                                         io,
@@ -584,6 +619,11 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                     println(io, "opv=", string(opv))
                                 end
                                 throw(AssertionError(msg))
+                            end
+
+                            if resolved !== nothing
+                                newf = LLVM.const_inttoptr(LLVM.ConstantInt(resolved), value_type(inst))
+                                @goto plt_resolved
                             end
 
                             legal1, arg1 = abs_cstring(operands(found)[1])
@@ -659,6 +699,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                 # metadata(newf)["enzymejl_flib"] = flib
                                 # metadata(newf)["enzymejl_flib"] = flib
                             end
+                            @label plt_resolved
                         end
 
                         if value_type(newf) != value_type(inst)
