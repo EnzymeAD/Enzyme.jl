@@ -1731,7 +1731,15 @@ function enzyme_custom_common_rev(
     interp = GPUCompiler.get_interpreter(
         CompilerJob(ami, CompilerConfig(target, params; kernel = false), world),
     )
-    aug_RT = return_type(interp, ami)
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+
+    # The tape type comes from the augmented primal's return type. Take it
+    # from the inference that produces the code `invoke_codegen!` calls.
+    aug_RT = native_rule_return_type(mod, ami, world)
+    if aug_RT === nothing
+        aug_RT = return_type(interp, ami)
+    end
+    aug_RT = aug_RT::Type
     if kwtup !== nothing && kwtup <: Duplicated
         mi, _ = enzyme_custom_extract_mi(orig)
         bt = GPUCompiler.backtrace(orig)
@@ -1778,8 +1786,6 @@ function enzyme_custom_common_rev(
     else
         TapeT = Any
     end
-    
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     llvmf = nothing
     applicablefn = true
@@ -1826,7 +1832,10 @@ function enzyme_custom_common_rev(
             rev_RT = Union{}
             applicablefn = false
         else
-            rev_RT = return_type(interp, rmi)
+            rev_RT = native_rule_return_type(mod, rmi, world)
+            if rev_RT === nothing
+                rev_RT = return_type(interp, rmi)
+            end
         end
         
         rmi = rmi::Core.MethodInstance

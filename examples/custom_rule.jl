@@ -301,6 +301,12 @@ autodiff(Forward, x -> x + double(x), Duplicated(2.0, 1.0)) # mathematically sho
 # - An unannotated rule follows Julia's own inlining heuristics for that method. It is
 #   inlined if Julia would inline it, and called otherwise.
 #
+# A rule that is called natively is compiled by Julia exactly as an ordinary call of it
+# would be, and shares that compiled code with ordinary callers. Inside such a rule
+# `within_autodiff()` returns `false` and `ignore_derivatives` is the identity, as in any
+# other Julia code. Inside a rule emitted into the differentiated function,
+# `within_autodiff()` returns `true`.
+#
 # On Julia versions before 1.12 every rule is emitted into the differentiated function.
 
 # ## Testing our rules
