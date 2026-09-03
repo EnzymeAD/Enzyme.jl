@@ -966,7 +966,7 @@ Make the derivative thunk compiled at `ptr` callable from `mod`, and return the
 function to call in its place.
 
 `cached_compilation` keeps the bitcode of every thunk it compiles in
-`autodiff_cache`, so that a later compilation which sees a call to the thunk's
+`THUNK_CACHE.by_ptr`, so that a later compilation which sees a call to the thunk's
 address can use its IR instead of calling an opaque pointer. That blob is a
 fixed serialization: every module it is linked into gets the very same symbol
 names for the Julia functions it carries. `compile_unhooked` links all the
@@ -985,7 +985,7 @@ is inlined and discarded just as a lone import was.
 """
 function import_cached_autodiff!(mod::LLVM.Module, ptr::Ptr{Cvoid}, FT::LLVM.FunctionType)
     enzyme_ctx = enzyme_context()
-    cached = autodiff_cache[ptr]
+    cached = THUNK_CACHE.by_ptr[ptr]
     pname = cached.entry
 
     if haskey(enzyme_ctx.imported_thunks, ptr)
@@ -1595,7 +1595,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             ptr_val = convert(Int, ptr_arg)
             ptr = Ptr{Cvoid}(ptr_val)
 
-            if haskey(autodiff_cache, ptr)
+            if haskey(THUNK_CACHE.by_ptr, ptr)
                 replaceWith = import_cached_autodiff!(
                     mod,
                     ptr,
