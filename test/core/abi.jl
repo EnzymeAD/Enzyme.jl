@@ -29,13 +29,13 @@ end
     
     @test () === autodiff(Forward, f, Const(nothing))
 
-    res = autodiff_deferred(Reverse, Const(f), Const, Const(nothing))
+    res = autodiff(Reverse, Const(f), Const, Const(nothing))
     @test res === ((nothing,),)
-    res = autodiff_deferred(Enzyme.set_abi(Reverse, NonGenABI), Const(f), Const, Const(nothing))
+    res = autodiff(Enzyme.set_abi(Reverse, NonGenABI), Const(f), Const, Const(nothing))
     @test res === ((nothing,),)
     
-    @test () === autodiff_deferred(Forward, Const(f), Const, Const(nothing))
-    @test () === autodiff_deferred(Enzyme.set_abi(Forward, NonGenABI), Const(f), Const, Const(nothing))
+    @test () === autodiff(Forward, Const(f), Const, Const(nothing))
+    @test () === autodiff(Enzyme.set_abi(Forward, NonGenABI), Const(f), Const, Const(nothing))
 
     # ConstType -> Type{Int}
     res = autodiff(Reverse, f, Const, Const(Int))
@@ -46,9 +46,9 @@ end
     @test res === ((nothing,),)
     @test () === autodiff(Forward, f, Const(Int))
 
-    res = autodiff_deferred(Reverse, Const(f), Const, Const(Int))
+    res = autodiff(Reverse, Const(f), Const, Const(Int))
     @test res === ((nothing,),)
-    @test () === autodiff_deferred(Forward, Const(f), Const, Const(Int))
+    @test () === autodiff(Forward, Const(f), Const, Const(Int))
 
     # Complex numbers
     @test_throws ErrorException autodiff(Reverse, f, Active, Active(1.5 + 0.7im))
@@ -66,7 +66,7 @@ end
     @test_throws ErrorException autodiff_deferred(Reverse, Const(f), Active, Active(1.5 + 0.7im))
     @test_throws ErrorException autodiff_deferred(ReverseHolomorphic, Const(f), Active, Active(1.5 + 0.7im))
 
-    cres,  = autodiff_deferred(Forward, Const(f), Duplicated, Duplicated(1.5 + 0.7im, 1.0+0im))
+    cres, = autodiff(Forward, Const(f), Duplicated, Duplicated(1.5 + 0.7im, 1.0 + 0im))
     @test cres ≈ 1.0 + 0.0im
 
     # Unused singleton argument
@@ -106,7 +106,7 @@ end
 
     x = [0.0]
     dx = [1.2]
-    autodiff_deferred(Reverse, Const(squareRetArray), Const, Duplicated(x, dx))
+    autodiff(Reverse, Const(squareRetArray), Const, Duplicated(x, dx))
 
     dx = [1.2]
     @test () === autodiff(Forward, squareRetArray, Const, Duplicated(x, dx))
@@ -122,7 +122,7 @@ end
     @test pair[1] ≈ 3.0
     @test pair[2] ≈ 2.0
 
-    pair = autodiff_deferred(Reverse, Const(mul), Active, Active(2.0), Active(3.0))[1]
+    pair = autodiff(Reverse, Const(mul), Active, Active(2.0), Active(3.0))[1]
     @test pair[1] ≈ 3.0
     @test pair[2] ≈ 2.0
     
@@ -131,7 +131,7 @@ end
     @test pair[2] ≈ 2.0
     @test orig ≈ 6.0
     
-    pair, orig = autodiff_deferred(ReverseWithPrimal, Const(mul), Active, Active(2.0), Active(3.0))
+    pair, orig = autodiff(ReverseWithPrimal, Const(mul), Active, Active(2.0), Active(3.0))
     @test pair[1] ≈ 3.0
     @test pair[2] ≈ 2.0
     @test orig ≈ 6.0
@@ -151,7 +151,7 @@ end
     
     res = Ref(3.0)
     dres = Ref(1.0)
-    pair, orig = autodiff_deferred(ReverseWithPrimal, Const(inplace), Const, Duplicated(res, dres))
+    pair, orig = autodiff(ReverseWithPrimal, Const(inplace), Const, Duplicated(res, dres))
     @test pair == (nothing,)
     @test res[] ≈ 6.0
     @test dres[] ≈ 2.0
@@ -172,7 +172,7 @@ end
 
     res = Ref(3.0)
     dres = Ref(1.0)
-    pair, orig = autodiff_deferred(ReverseWithPrimal, Const(inplace2), Const, Duplicated(res, dres))
+    pair, orig = autodiff(ReverseWithPrimal, Const(inplace2), Const, Duplicated(res, dres))
     @test pair == (nothing,)
     @test res[] ≈ 6.0
     @test dres[] ≈ 2.0
@@ -187,7 +187,7 @@ end
     # pair = first(autodiff(Forward, tup, Duplicated(3.14, 1.0)))
     # @test pair[1] ≈ 1.0
     # @test pair[2] ≈ 2.0
-    # pair = first(autodiff_deferred(Forward, tup, Duplicated(3.14, 1.0)))
+    # pair = first(autodiff(Forward, tup, Duplicated(3.14, 1.0)))
     # @test pair[1] ≈ 1.0
     # @test pair[2] ≈ 2.0
 
@@ -319,7 +319,7 @@ unstable_load(x) = Base.inferencebarrier(x)[1]
 
     x = [2.7]
     dx = [0.0]
-    Enzyme.autodiff_deferred(Reverse, Const(unstable_load), Active, Duplicated(x, dx))
+    Enzyme.autodiff(Reverse, Const(unstable_load), Active, Duplicated(x, dx))
     @test dx ≈ [1.0] 
 end
 
@@ -473,7 +473,7 @@ end
     @test r[2] ≈ 100.0
     @test r[1][1] ≈ -400.0
     @test r[1][2] ≈ 200.0
-    r = autodiff_deferred(ForwardWithPrimal, Const(rosenbrock_inp), Duplicated, BatchDuplicated(x, (dx_1, dx_2)))
+    r = autodiff(ForwardWithPrimal, Const(rosenbrock_inp), Duplicated, BatchDuplicated(x, (dx_1, dx_2)))
     @test r[2] ≈ 100.0
     @test r[1][1] ≈ -400.0
     @test r[1][2] ≈ 200.0
