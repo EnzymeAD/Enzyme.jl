@@ -385,8 +385,8 @@ end
 @static if Enzyme.Compiler.Interpreter.HAS_INVOKE_RULES
     # Julia compiles a function with the boxed `jl_fptr_args` ABI when every
     # argument is boxed and so is the return. No rule has that shape, so use a
-    # plain function to exercise the fallback.
-    all_boxed(a, b, c, d) = a
+    # plain function to exercise the error.
+    @noinline all_boxed(a, b, c, d) = a
 
     @testset "signature derivation" begin
         world = Base.get_world_counter()
@@ -419,8 +419,8 @@ end
             specptr, invoke = Enzyme.Compiler.Interpreter.codeinst_entry(ci)
             @test specptr == C_NULL
             @test invoke != C_NULL
-            @test Enzyme.Compiler.rule_call_convention(mi, ci) === :inline
-            @test Enzyme.Compiler.native_rule_codeinst(mod, mi, world) === nothing
+            @test Enzyme.Compiler.rule_call_convention(mi, ci) === :call
+            @test_throws Enzyme.Compiler.CallingConventionMismatchError Enzyme.Compiler.native_rule_codeinst(mod, mi, world)
 
             C = EnzymeRules.FwdConfig{true, true, 1, false, false}
             TT = Tuple{C, Const{typeof(cube_noinline)}, Type{Duplicated{Float64}}, Duplicated{Float64}}
