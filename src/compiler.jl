@@ -7702,6 +7702,8 @@ import GPUCompiler: deferred_codegen_jobs
 
 function deferred_id_codegen end
 
+include("compiler/deferred.jl")
+
 function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode}, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where N)), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ExpectedTapeType::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, StrongZero::Bool, @nospecialize(self), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(expectedtapetype::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type), @nospecialize(strongzero::Type))
     @nospecialize
     
@@ -7712,66 +7714,27 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
 
     stub = Core.GeneratedFunctionStub(identity, slotnames, Core.svec())
 
-    ft = eltype(FA)
-    primal_tt = Tuple{map(eltype, TT.parameters)...}
-    # look up the method match
-    
-    min_world = Ref{UInt}(typemin(UInt))
-    max_world = Ref{UInt}(typemax(UInt))
- 
-    mi = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
-    
-    mi === nothing && return stub(world, source, :(throw(MethodError($ft, $primal_tt, $world))))
-    
-    target = EnzymeTarget()
-    rt2 = if A isa UnionAll
-        rrt = primal_return_type_world(Mode == API.DEM_ForwardMode ? Forward : Reverse, world, mi)
-
-        # Don't error here but default to nothing return since in cuda context we don't use the device overrides
-        if rrt == Union{}
-            rrt = Nothing
+    spec = DeferredSpec(
+        FA, A, TT, Mode, Width, ModifiedBetween, ReturnPrimal, ShadowInit, ExpectedTapeType,
+        ErrIfFuncWritten, RuntimeActivity, StrongZero
+    )
+    job = deferred_job(spec, world)
+    if job === nothing
+        ft = eltype(FA)
+        primal_tt = Tuple{map(eltype, TT.parameters)...}
+        return stub(world, source, :(throw(MethodError($ft, $primal_tt, $world))))
+    elseif job isa String
+        return quote
+            error($job)
         end
-
-        if !(A <: Const) && guaranteed_const_nongen(rrt, world)
-            estr = "Return type `$rrt` not marked Const, but type is guaranteed to be constant"
-            return quote
-                error($estr)
-            end
-        end
-        instantiate_annotation(A, rrt, Width)
-    else
-        @assert A isa DataType
-        A
     end
 
-    params = EnzymeCompilerParams(
-        PrimalCompilerParams(Mode),
-        Tuple{FA,TT.parameters...},
-        Mode,
-        Width,
-        rt2,
-        true,
-        true,
-        ModifiedBetween,
-        ReturnPrimal,
-        ShadowInit,
-        ExpectedTapeType,
-        FFIABI,
-        ErrIfFuncWritten,
-        RuntimeActivity,
-        StrongZero
-    ) #=abiwrap=#
-    job =
-        Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false), world)
-
-    addr = get_trampoline(job)
-    id = Base.reinterpret(Int, pointer(addr))
-    deferred_codegen_jobs[id] = job
+    id = register_deferred!(spec, job)
 
     code = Any[Core.Compiler.ReturnNode(reinterpret(UInt, id))]
     ci = create_fresh_codeinfo(deferred_id_codegen, source, world, slotnames, code)
 
-    ci.edges = Any[mi]
+    ci.edges = Any[job.source]
 
     return ci
 end
@@ -7793,7 +7756,17 @@ end
     @nospecialize(strongzero::Val)
 )
     id = deferred_id_codegen(fa, a, tt, mode, width, modifiedbetween, returnprimal, shadowinit, expectedtapetype, erriffuncwritten, runtimeactivity, strongzero)
-    return _deferred_codegen_call(Val(id))
+    ptr = _deferred_codegen_call(Val(id))
+    # The job is registered under a twin id as well. In device code GPUCompiler's pass
+    # resolves both markers to the same function, so this comparison folds away before any
+    # later pass sees the function's address (GPUCompiler rewrites the signatures of
+    # functions using the kernel state and refuses uses other than calls and stores). On
+    # the host both markers reach GPUCompiler's identity stub and return their ids, which
+    # differ: the call runs natively, which is not supported.
+    if ptr != _deferred_codegen_call(Val(deferred_twin_id(id)))
+        throw(DeferredOnHostError())
+    end
+    return ptr
 end
 
 # `@generated` shell so the `ccall("extern deferred_codegen", …)` body
