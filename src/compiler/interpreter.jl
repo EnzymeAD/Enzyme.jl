@@ -454,7 +454,7 @@ end
 # inference (`InvokeCICallInfo`, Julia 1.12+) and lowers it to a direct `:invoke`
 # (Julia 1.13+). The 1.12 inliner lowers only `Core.invoke` calls with an
 # `InvokeCallInfo`, so there such calls stay runtime `invoke` calls.
-const HAS_INVOKE_CI_LOWERING = isdefined(Core.Compiler, :InvokeCICallInfo) && VERSION >= v"1.13-"
+const HAS_INVOKE_CI_LOWERING = VERSION >= v"1.13-"
 
 @static if HAS_INVOKE_CI_LOWERING
     """
@@ -1556,37 +1556,13 @@ function abstract_call_known(
     )
 end
 
-# Say if the runtime exports the function that reads the entry points of a
-# CodeInstance. `ccall` would only fail at the first call.
-function has_jl_read_codeinst_invoke()::Bool
-    return try
-        cglobal(:jl_read_codeinst_invoke) != C_NULL
-    catch
-        false
-    end
-end
-
 # Say if custom rules can be called through their natively compiled CodeInstance
-# (see `Enzyme.Compiler.invoke_codegen!`). This needs the Julia 1.12 compiler
-# entry point that infers a MethodInstance with a given interpreter and hands
-# the result to the JIT (`typeinf_ext_toplevel` with `SOURCE_MODE_ABI`), the
-# runtime function that reads back the entry points
-# (`jl_read_codeinst_invoke`), and the `Core.Compiler` internals the
-# implementation uses. When a future Julia renames one, the feature turns off
-# cleanly instead of failing at the first rule compilation.
-const HAS_INVOKE_RULES = VERSION >= v"1.12-" &&
-    has_jl_read_codeinst_invoke() &&
-    isdefined(Core.Compiler, :NativeInterpreter) &&
-    isdefined(Core.Compiler, :SOURCE_MODE_ABI) &&
-    isdefined(Core.Compiler, :MaybeCompressed) &&
-    isdefined(Core.Compiler, :use_const_api) &&
-    isdefined(Core.Compiler, :is_inlineable) &&
-    isdefined(Core.Compiler, :is_declared_inline) &&
-    hasmethod(Core.Compiler.is_declared_inline, Tuple{Method}) &&
-    isdefined(Core.Compiler, :is_declared_noinline) &&
-    hasmethod(Core.Compiler.is_declared_noinline, Tuple{Method}) &&
-    isdefined(Core.Compiler, :typeinf_ext_toplevel) &&
-    hasmethod(Core.Compiler.typeinf_ext_toplevel, Tuple{Core.Compiler.AbstractInterpreter, Core.MethodInstance, UInt8})
+# (see `Enzyme.Compiler.invoke_codegen!`). Julia 1.12 added the compiler entry
+# point that infers a MethodInstance with a given interpreter and hands the
+# result to the JIT (`typeinf_ext_toplevel` with `SOURCE_MODE_ABI`) and the
+# runtime function that reads back the entry points (`jl_read_codeinst_invoke`).
+# A Julia that renames one of them fails loudly at the first rule compilation.
+const HAS_INVOKE_RULES = VERSION >= v"1.12-"
 
 @static if HAS_INVOKE_RULES
 
