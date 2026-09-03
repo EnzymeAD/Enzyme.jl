@@ -228,11 +228,45 @@ function resolve_symbol_name(fn::String, file::String, ptr::Ptr{Cvoid})::Symbol
     return resolved == ptr ? (:match) : (:mismatch)
 end
 
-function restore_lookups(mod::LLVM.Module)::Nothing
+"""
+    restore_native_rules!(mod::LLVM.Module)
+
+Bind the declarations of natively called rules in `mod` to their entry
+addresses. `restore_lookups(mod; native_rules = false)` skips them, so that
+the module can still be differentiated again while they are symbolic.
+"""
+function restore_native_rules!(mod::LLVM.Module)::Nothing
     T_size_t = convert(LLVM.LLVMType, Int)
+    marker = StringAttribute("enzymejl_native_rule")
+    for f in functions(mod)
+        has_fn_attr(f, marker) || continue
+        for fattr in collect(function_attributes(f))
+            if isa(fattr, LLVM.StringAttribute) && kind(fattr) == "enzymejl_needs_restoration"
+                v = parse(UInt, LLVM.value(fattr))
+                replace_uses!(
+                    f,
+                    LLVM.Value(
+                        LLVM.API.LLVMConstIntToPtr(
+                            ConstantInt(T_size_t, convert(UInt, v)),
+                            value_type(f),
+                        ),
+                    ),
+                )
+            end
+        end
+    end
+    return nothing
+end
+
+function restore_lookups(mod::LLVM.Module; native_rules::Bool = true)::Nothing
+    T_size_t = convert(LLVM.LLVMType, Int)
+    native_rule = StringAttribute("enzymejl_native_rule")
     for f in functions(mod)
         nm = LLVM.name(f)
         if nm == "malloc" || nm == "free" || nm == "realloc" || nm == "calloc"
+            continue
+        end
+        if !native_rules && has_fn_attr(f, native_rule)
             continue
         end
         for fattr in collect(function_attributes(f))

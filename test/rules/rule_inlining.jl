@@ -145,3 +145,289 @@ end
         @test autodiff(ForwardWithPrimal, cube_within, Duplicated(2.0, 1.0)) == (120.0, 8.0)
     end
 end
+
+# Signature shapes that Julia's specsig treats specially. Each shape has an
+# `@inline` rule, which `check_rule_specsig` compares against Julia's own codegen
+# of the rule, and a `@noinline` rule, which is called natively through the
+# derived signature.
+
+# A struct with an uninitialized field is boxed by Julia's codegen even though
+# `jl_type_to_llvm` gives it a struct type.
+struct SUninit
+    x::Float64
+    v::Vector{Float64}
+    SUninit(x) = new(x)
+end
+
+# Small integers go in registers, extended to the register width.
+for (name, inl, tape, expected) in (
+        (:abi_uninit_inline, :inline, :(SUninit(x.val)), :(10 * 3 * tape.x^2 * dret.val)),
+        (:abi_uninit_noinline, :noinline, :(SUninit(x.val)), :(10 * 3 * tape.x^2 * dret.val)),
+        (:abi_u8_inline, :inline, :(UInt8(200)), :(Float64(tape) * dret.val)),
+        (:abi_u8_noinline, :noinline, :(UInt8(200)), :(Float64(tape) * dret.val)),
+        (:abi_i8_inline, :inline, :(Int8(-5)), :(Float64(tape) * dret.val)),
+        (:abi_i8_noinline, :noinline, :(Int8(-5)), :(Float64(tape) * dret.val)),
+        (:abi_bool_inline, :inline, :(true), :(Float64(tape) * dret.val)),
+        (:abi_bool_noinline, :noinline, :(true), :(Float64(tape) * dret.val)),
+    )
+    aug = :(
+        function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig, func::Const{typeof($name)}, ::Type{<:Active}, x::Active)
+            primal = EnzymeRules.needs_primal(config) ? func.val(x.val) : nothing
+            return EnzymeRules.AugmentedReturn(primal, nothing, $tape)
+        end
+    )
+    rev = :(
+        function EnzymeRules.reverse(config::EnzymeRules.RevConfig, func::Const{typeof($name)}, dret::Active, tape, x::Active)
+            return ($expected,)
+        end
+    )
+    mac = Symbol("@", inl)
+    line = LineNumberNode(@__LINE__, @__FILE__)
+    @eval begin
+        $name(x) = x^3
+        $(Expr(:macrocall, mac, line, aug))
+        $(Expr(:macrocall, mac, line, rev))
+    end
+end
+
+# A `Union` of ghosts is returned as its selector byte only.
+ghost_union_inline(x) = x > 0 ? nothing : missing
+ghost_union_noinline(x) = x > 0 ? nothing : missing
+@inline function EnzymeRules.forward(config, ::Const{typeof(ghost_union_inline)}, ::Type{<:Const}, x::Duplicated)
+    return x.val > 0 ? nothing : missing
+end
+@noinline function EnzymeRules.forward(config, ::Const{typeof(ghost_union_noinline)}, ::Type{<:Const}, x::Duplicated)
+    return x.val > 0 ? nothing : missing
+end
+use_ghost_inline(x) = ghost_union_inline(x) === nothing ? x * x : -x * x
+use_ghost_noinline(x) = ghost_union_noinline(x) === nothing ? x * x : -x * x
+
+@testset "specsig shapes" begin
+    for f in (abi_uninit_inline, abi_uninit_noinline)
+        @test autodiff(Reverse, f, Active(2.0))[1][1] == 120.0
+    end
+    for f in (abi_u8_inline, abi_u8_noinline)
+        @test autodiff(Reverse, f, Active(2.0))[1][1] == 200.0
+    end
+    for f in (abi_i8_inline, abi_i8_noinline)
+        @test autodiff(Reverse, f, Active(2.0))[1][1] == -5.0
+    end
+    for f in (abi_bool_inline, abi_bool_noinline)
+        @test autodiff(Reverse, f, Active(2.0))[1][1] == 1.0
+    end
+    for f in (use_ghost_inline, use_ghost_noinline)
+        @test autodiff(ForwardWithPrimal, f, Duplicated(2.0, 1.0)) == (4.0, 4.0)
+        @test autodiff(ForwardWithPrimal, f, Duplicated(-2.0, 1.0)) == (4.0, -4.0)
+    end
+end
+
+# A derivative that is differentiated again must differentiate through the
+# rules it calls, natively called ones included. These rules compute the primal
+# themselves, so the outer differentiation sees plain arithmetic in them: they
+# give 30 x^2, and the second derivative is 60 x.
+
+cube_nested(x) = x^3
+
+@noinline function EnzymeRules.forward(config, ::Const{typeof(cube_nested)}, ::Type{<:Duplicated}, x::Duplicated)
+    return Duplicated(x.val^3, 10 * 3 * x.val^2 * x.dval)
+end
+
+@noinline function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig, func::Const{typeof(cube_nested)}, ::Type{<:Active}, x::Active)
+    primal = EnzymeRules.needs_primal(config) ? x.val^3 : nothing
+    return EnzymeRules.AugmentedReturn(primal, nothing, (x.val,))
+end
+
+@noinline function EnzymeRules.reverse(config::EnzymeRules.RevConfig, func::Const{typeof(cube_nested)}, dret::Active, tape, x::Active)
+    (xv,) = tape
+    return (10 * 3 * xv^2 * dret.val,)
+end
+
+fwd_over(x) = autodiff(ForwardWithPrimal, Const(cube_nested), Duplicated(x, 1.0))[1]
+rev_over(x) = autodiff_deferred(Reverse, Const(cube_nested), Active, Active(x))[1][1]
+
+@testset "nested differentiation through natively called rules" begin
+    @test fwd_over(2.0) == 120.0
+    @test rev_over(2.0) == 120.0
+    # forward over forward, and reverse over forward
+    @test autodiff(Forward, fwd_over, Duplicated(2.0, 1.0))[1] ≈ 120.0
+    @test autodiff(Reverse, fwd_over, Active(2.0))[1][1] ≈ 120.0
+    # forward over reverse
+    @test autodiff(Forward, rev_over, Duplicated(2.0, 1.0))[1] ≈ 120.0
+end
+
+# Arguments Julia's codegen boxes: abstract types, mutable types and unions.
+# The annotations of a rule are immutable structs, so a rule always has an
+# unboxed argument, and Julia always gives it a specialized entry point.
+# Boxing shows up in the tape, in `@nospecialize` arguments, and in the payload
+# of an annotation.
+
+mutable struct MParam
+    c::Float64
+end
+
+boxed_tape_vector(x) = x^3
+boxed_tape_any(x) = x^3
+boxed_tape_union(x) = x^3
+boxed_nospec_fwd(x) = x^3
+boxed_nospec_rev(v) = v[1]^3
+boxed_mutable_payload(p::MParam, x) = p.c * x^3
+
+for inl in (:inline, :noinline)
+    mac = Symbol("@", inl)
+    line = LineNumberNode(@__LINE__, @__FILE__)
+    defs = Any[]
+    # A `Vector` tape is a boxed argument of the reverse rule.
+    push!(
+        defs, :(
+            function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig, func::Const{typeof(boxed_tape_vector)}, ::Type{<:Active}, x::Active)
+                primal = EnzymeRules.needs_primal(config) ? func.val(x.val) : nothing
+                return EnzymeRules.AugmentedReturn(primal, nothing, [x.val])
+            end
+        )
+    )
+    push!(
+        defs, :(
+            function EnzymeRules.reverse(config::EnzymeRules.RevConfig, func::Const{typeof(boxed_tape_vector)}, dret::Active, tape, x::Active)
+                return (10 * 3 * tape[1]^2 * dret.val,)
+            end
+        )
+    )
+    # An `Any` tape is boxed, and so are `@nospecialize` arguments.
+    push!(
+        defs, :(
+            function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig, func::Const{typeof(boxed_tape_any)}, ::Type{<:Active}, x::Active)
+                primal = EnzymeRules.needs_primal(config) ? func.val(x.val) : nothing
+                return EnzymeRules.AugmentedReturn{typeof(primal), Nothing, Any}(primal, nothing, x.val)
+            end
+        )
+    )
+    push!(
+        defs, :(
+            function EnzymeRules.reverse(config::EnzymeRules.RevConfig, func::Const{typeof(boxed_tape_any)}, @nospecialize(dret::Active), @nospecialize(tape), @nospecialize(x::Active))
+                xv = tape::Float64
+                return (10 * 3 * xv^2 * dret.val::Float64,)
+            end
+        )
+    )
+    # A `Union` tape is boxed.
+    push!(
+        defs, :(
+            function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig, func::Const{typeof(boxed_tape_union)}, ::Type{<:Active}, x::Active)
+                primal = EnzymeRules.needs_primal(config) ? func.val(x.val) : nothing
+                return EnzymeRules.AugmentedReturn(primal, nothing, x.val > 0 ? x.val : nothing)
+            end
+        )
+    )
+    push!(
+        defs, :(
+            function EnzymeRules.reverse(config::EnzymeRules.RevConfig, func::Const{typeof(boxed_tape_union)}, dret::Active, tape, x::Active)
+                xv = tape === nothing ? 0.0 : tape
+                return (10 * 3 * xv^2 * dret.val,)
+            end
+        )
+    )
+    # A `@nospecialize` annotation is boxed.
+    push!(
+        defs, :(
+            function EnzymeRules.forward(config, ::Const{typeof(boxed_nospec_fwd)}, ::Type{<:Duplicated}, @nospecialize(x::Duplicated))
+                xv = x.val::Float64
+                return Duplicated(xv^3, 10 * 3 * xv^2 * x.dval::Float64)
+            end
+        )
+    )
+    # Every non-ghost argument boxed, and a singleton return.
+    push!(
+        defs, :(
+            function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig, func::Const{typeof(boxed_nospec_rev)}, ::Type{<:Active}, @nospecialize(v::Duplicated))
+                val = (v.val::Vector{Float64})[1]
+                primal = EnzymeRules.needs_primal(config) ? val^3 : nothing
+                return EnzymeRules.AugmentedReturn(primal, nothing, val)
+            end
+        )
+    )
+    push!(
+        defs, :(
+            function EnzymeRules.reverse(config::EnzymeRules.RevConfig, func::Const{typeof(boxed_nospec_rev)}, @nospecialize(dret::Active), @nospecialize(tape), @nospecialize(v::Duplicated))
+                xv = tape::Float64
+                (v.dval::Vector{Float64})[1] += 10 * 3 * xv^2 * dret.val::Float64
+                return (nothing,)
+            end
+        )
+    )
+    # A mutable payload inside an annotation. The annotation itself goes by
+    # reference.
+    push!(
+        defs, :(
+            function EnzymeRules.forward(config, ::Const{typeof(boxed_mutable_payload)}, ::Type{<:Duplicated}, p::Const{MParam}, x::Duplicated)
+                return Duplicated(p.val.c * x.val^3, 10 * p.val.c * 3 * x.val^2 * x.dval)
+            end
+        )
+    )
+    for def in defs
+        @eval $(Expr(:macrocall, mac, line, def))
+    end
+    @eval @testset $("boxed arguments, $inl rules") begin
+        @test autodiff(Reverse, boxed_tape_vector, Active(2.0))[1][1] == 120.0
+        @test autodiff(Reverse, boxed_tape_any, Active(2.0))[1][1] == 120.0
+        @test autodiff(Reverse, boxed_tape_union, Active(2.0))[1][1] == 120.0
+        @test autodiff(Reverse, boxed_tape_union, Active(-2.0))[1][1] == 0.0
+        @test autodiff(ForwardWithPrimal, boxed_nospec_fwd, Duplicated(2.0, 1.0)) == (120.0, 8.0)
+        v = [2.0]
+        dv = [0.0]
+        autodiff(Reverse, boxed_nospec_rev, Active, Duplicated(v, dv))
+        @test dv == [120.0]
+        @test autodiff(ForwardWithPrimal, boxed_mutable_payload, Const(MParam(2.0)), Duplicated(2.0, 1.0)) == (240.0, 16.0)
+    end
+end
+
+# The signature derivation, and the fallback for code without a specialized
+# entry point.
+@static if Enzyme.Compiler.Interpreter.HAS_INVOKE_RULES
+    # Julia compiles a function with the boxed `jl_fptr_args` ABI when every
+    # argument is boxed and so is the return. No rule has that shape, so use a
+    # plain function to exercise the fallback.
+    all_boxed(a, b, c, d) = a
+
+    @testset "signature derivation" begin
+        world = Base.get_world_counter()
+        LLVM = Enzyme.Compiler.LLVM
+        LLVM.Context() do ctx
+            kind = Enzyme.Compiler.rule_arg_kind
+            @test kind(Nothing) === :ghost
+            @test kind(Type{Float64}) === :ghost
+            @test kind(Const{typeof(sin)}) === :ghost
+            @test kind(Float64) === :byval
+            @test kind(UInt8) === :byval
+            @test kind(Bool) === :byval
+            @test kind(Ptr{Float64}) === :byval
+            @test kind(Duplicated{Float64}) === :byref
+            @test kind(Tuple{Float64, Float64}) === :byref
+            @test kind(Duplicated{Vector{Float64}}) === :byref
+            @test kind(Any) === :boxed
+            @test kind(Vector{Float64}) === :boxed
+            @test kind(MParam) === :boxed
+            @test kind(Union{Nothing, Float64}) === :boxed
+            @test kind(SUninit) === :boxed
+            @test kind(Duplicated) === :boxed
+
+            mod = LLVM.Module("test")
+            LLVM.triple!(mod, Sys.MACHINE)
+            @test Enzyme.Compiler.native_rules_available(mod)
+
+            mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(all_boxed), Tuple{Any, Any, Any, Any}, world)
+            ci = Enzyme.Compiler.rule_codeinst(mi, world)
+            specptr, invoke = Enzyme.Compiler.Interpreter.codeinst_entry(ci)
+            @test specptr == C_NULL
+            @test invoke != C_NULL
+            @test Enzyme.Compiler.rule_call_convention(mi, ci) === :inline
+            @test Enzyme.Compiler.native_rule_codeinst(mod, mi, world) === nothing
+
+            C = EnzymeRules.FwdConfig{true, true, 1, false, false}
+            TT = Tuple{C, Const{typeof(cube_noinline)}, Type{Duplicated{Float64}}, Duplicated{Float64}}
+            mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(EnzymeRules.forward), TT, world)
+            native = Enzyme.Compiler.native_rule_codeinst(mod, mi, world)
+            @test native !== nothing
+            @test native[2] != C_NULL
+        end
+    end
+end

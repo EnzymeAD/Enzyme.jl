@@ -1216,6 +1216,7 @@ end
     res = LLVM.call!(B, LLVM.function_type(llvmf), llvmf, args)
     debug_from_orig!(gutils, res, orig)
     callconv!(res, callconv(llvmf))
+    copy_extension_attrs!(res, llvmf)
     if swiftself
         LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1 + (sret !== nothing) + (returnRoots !== nothing)), EnumAttribute("swiftself"))
     end
@@ -2211,6 +2212,7 @@ function enzyme_custom_common_rev(
     debug_from_orig!(gutils, res, orig)
 
     callconv!(res, callconv(llvmf))
+    copy_extension_attrs!(res, llvmf)
     if swiftself
         LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1 + (sret !== nothing) + (returnRoots !== nothing)), EnumAttribute("swiftself"))
     end
