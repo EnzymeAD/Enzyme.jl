@@ -174,9 +174,10 @@ end
         using Enzyme
         C = Enzyme.Compiler
         sizes = (length(C.THUNK_CACHE.thunks), length(C.THUNK_CACHE.by_ptr), length(C.THUNK_CACHE.tapes),
-                 length(C.FRULE_CACHE), length(C.RRULE_CACHE), length(C.INACTIVE_CACHE),
-                 length(C.EASY_RULE_CACHE), length(C.NOALIAS_CACHE),
-                 length(C.Interpreter.SigCache), length(C.ActivityCache),
+                 length(C.FRULE_MEMO.entries), length(C.RRULE_MEMO.entries),
+                 length(C.INACTIVE_MEMO.entries), length(C.EASY_RULE_MEMO.entries),
+                 length(C.NOALIAS_MEMO.entries), length(C.Interpreter.RULE_FAMILIES),
+                 length(C.ActivityCache),
                  length(C.ActivityMethodCache), Int(C.ActivityWorldCache[]),
                  length(C.JIT.hnd_string_map), length(C.JIT.hnd_int_map))
         print(sum(sizes), " ", Enzyme.autodiff(Reverse, x -> x * x, Active(4.0))[1][1])
