@@ -12,13 +12,17 @@ GPUCompiler.method_table(@nospecialize(job::CompilerJob{MTTestTarget, MTTestPara
 
 mt_test_fn(x::Float64) = x
 Base.Experimental.@overlay mt_test_table mt_test_fn(x::Float64) = "overlaid"
-# The overlay is picked up at call sites, so infer a caller.
-mt_test_caller(x::Float64) = mt_test_fn(x)
+# The overlay is picked up at call sites, so infer a caller. Use a separate caller per
+# job: before Julia 1.11 Enzyme keeps one global code cache per mode, shared across method
+# tables, so inferring the same method instance under both tables would reuse the first
+# result.
+mt_test_native_caller(x::Float64) = mt_test_fn(x)
+mt_test_overlay_caller(x::Float64) = mt_test_fn(x)
 
-function enzyme_job(inner_target, inner_params, mode, world)
-    mi = Enzyme.Compiler.my_methodinstance(Reverse, typeof(mt_test_caller), Tuple{Float64}, world)
+function enzyme_job(caller, inner_target, inner_params, mode, world)
+    mi = Enzyme.Compiler.my_methodinstance(Reverse, typeof(caller), Tuple{Float64}, world)
     params = EnzymeCompilerParams(
-        Tuple{Const{typeof(mt_test_caller)}, Active{Float64}}, mode, 1, Active{Float64},
+        Tuple{Const{typeof(caller)}, Active{Float64}}, mode, 1, Active{Float64},
         true, true, (false, false), false, false, UnknownTapeType, FFIABI, false, false, false,
     )
     target = GPUCompiler.nest_target(EnzymeTarget(), inner_target)
@@ -30,11 +34,11 @@ end
     world = Base.get_world_counter()
     mode = API.DEM_ReverseModeCombined
 
-    mi, native_job = enzyme_job(GPUCompiler.NativeCompilerTarget(), PrimalCompilerParams(mode), mode, world)
+    mi, native_job = enzyme_job(mt_test_native_caller, GPUCompiler.NativeCompilerTarget(), PrimalCompilerParams(mode), mode, world)
     @test GPUCompiler.method_table(native_job) === GPUCompiler.GLOBAL_METHOD_TABLE
     @test Enzyme.Compiler.return_type(GPUCompiler.get_interpreter(native_job), mi) === Float64
 
-    mi, backend_job = enzyme_job(MTTestTarget(), MTTestParams(), mode, world)
+    mi, backend_job = enzyme_job(mt_test_overlay_caller, MTTestTarget(), MTTestParams(), mode, world)
     @test backend_job.config.target isa EnzymeTarget{MTTestTarget}
     @test backend_job.config.params isa EnzymeCompilerParams{MTTestParams}
     @test GPUCompiler.method_table(backend_job) === mt_test_table
