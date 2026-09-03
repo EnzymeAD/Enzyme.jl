@@ -664,7 +664,7 @@ end
 
     function nested_df!(dx, x)
         make_zero!(dx)
-        autodiff_deferred(Reverse, Const(nested_f), Active, Duplicated(x, dx))
+        autodiff(Reverse, Const(nested_f), Active, Duplicated(x, dx))
         return nothing
     end
 
