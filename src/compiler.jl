@@ -1865,15 +1865,15 @@ end
     end
 
     """
-            native_rules_available(mod::LLVM.Module) -> Bool
+        native_rules_available(mod::LLVM.Module) -> Bool
 
-        Say if rules called from `mod` may be bound to natively compiled code (see
-        [`invoke_codegen!`](@ref)). That binds a process address, so not during
-        precompilation, and only for modules that target the host. The rule
-        handlers pass `pgcstack` only through a `swiftself` parameter, so the JIT
-        must use the swift calling convention when it passes one (see
-        [`jit_uses_swiftcc`](@ref)).
-        """
+    Say if rules called from `mod` may be bound to natively compiled code (see
+    [`invoke_codegen!`](@ref)). That binds a process address, so not during
+    precompilation, and only for modules that target the host. The rule
+    handlers pass `pgcstack` only through a `swiftself` parameter, so the JIT
+    must use the swift calling convention when it passes one (see
+    [`jit_uses_swiftcc`](@ref)).
+    """
     function native_rules_available(mod::LLVM.Module)::Bool
         return !Base.generating_output() && module_targets_host(mod) &&
             !(jit_gcstack_arg() && !jit_uses_swiftcc())
@@ -1897,25 +1897,28 @@ end
     end
 
     """
-            rule_call_convention(mi::MethodInstance, ci::CodeInstance) -> Symbol
+        rule_call_convention(mi::MethodInstance, ci::CodeInstance) -> Symbol
 
-        Decide from the inlining annotation how the rule `mi` reaches the calling
+    Decide from the inlining annotation how the rule `mi` reaches the calling
     module. `:inline` means: emit the rule's IR into the calling module and
     always-inline it. `:call` means: call the rule's natively compiled entry
     point. `@inline` rules get `:inline`, and `@noinline` rules get `:call`. An
-        unannotated rule gets `:inline` exactly when Julia would inline it, as
-        recorded on its native `CodeInstance` `ci` (see [`rule_codeinst`](@ref)):
-        the native compiler keeps the source of a method only when the method is
-        inlineable, and a constant result is always inlineable.
+    unannotated rule gets `:inline` exactly when Julia would inline it, as
+    recorded on its native `CodeInstance` `ci` (see [`rule_codeinst`](@ref)):
+    the native compiler keeps the source of a method only when the method is
+    inlineable. A rule with a constant result gets `:inline` whatever its
+    annotation, because Julia compiles no code for it.
     """
     function rule_call_convention(mi::Core.MethodInstance, ci::Core.CodeInstance)::Symbol
         CC = Core.Compiler
+        # A constant result has no code to call: Julia serves it through the
+        # constant-return trampoline, whatever the annotation says.
+        CC.use_const_api(ci) && return :inline
         method = mi.def
         if method isa Method
             CC.is_declared_noinline(method) && return :call
             CC.is_declared_inline(method) && return :inline
         end
-        CC.use_const_api(ci) && return :inline
         inferred = @atomic :monotonic ci.inferred
         inferred isa CC.MaybeCompressed && CC.is_inlineable(inferred) && return :inline
         return :call
@@ -1928,11 +1931,18 @@ end
     entry point when [`invoke_codegen!`](@ref) binds the rule, called from
     `mod`, to that code. Return `nothing` when it emits the rule with
     `nested_codegen!` instead: where native rules are unavailable (see
-    [`native_rules_available`](@ref)), for rules with the `:inline`
-    convention, for rules Julia compiled for a MethodInstance other than
-    `mi`, and for rules that Julia compiled without a specialized entry point
+    [`native_rules_available`](@ref)), and for rules with the `:inline`
+    convention.
+
+    Throw a `CallingConventionMismatchError` when Julia compiled the rule for
+    a MethodInstance other than `mi`, or without a specialized entry point
     (the boxed `jl_fptr_args` ABI, which Julia picks when every argument is
-    boxed and so is the return).
+    boxed and so is the return). The declaration is derived from
+    `mi.specTypes`, so the first would bind it to code with another
+    signature. Every rule takes an annotation, an immutable struct passed
+    unboxed, so Julia always gives a rule a specialized entry point. Neither
+    case is known to occur; an error reports the broken assumption instead
+    of hiding it.
     """
     function native_rule_codeinst(mod::LLVM.Module, mi::Core.MethodInstance, world::UInt)::Union{Nothing, Tuple{Core.CodeInstance, Ptr{Cvoid}}}
         (mi.specTypes isa DataType && native_rules_available(mod)) || return nothing
@@ -1942,14 +1952,12 @@ end
         # `@nospecialize` arguments widened) whose signature differs from
         # `mi.specTypes`, which the declaration is derived from.
         if Core.Compiler.get_ci_mi(ci) !== mi
-            @safe_debug "Custom rule compiled for a different MethodInstance, emitting it instead" mi
-            return nothing
+            throw(CallingConventionMismatchError{String}("Enzyme: Julia compiled the custom rule $(mi) for the MethodInstance $(Core.Compiler.get_ci_mi(ci)). This is not expected to happen, please report it.", mi, world))
         end
         rule_call_convention(mi, ci) === :call || return nothing
         specptr, _ = Interpreter.codeinst_entry(ci)
         if specptr == C_NULL
-            @safe_debug "Custom rule has no specialized entry point, emitting it instead" mi
-            return nothing
+            throw(CallingConventionMismatchError{String}("Enzyme: Julia compiled the custom rule $(mi) without a specialized entry point. This is not expected to happen, please report it.", mi, world))
         end
         return (ci, specptr)
     end
@@ -1976,33 +1984,34 @@ end
     Make the rule `funcspec` callable from `mod`.
 
     Rules with the `:inline` convention (see [`rule_call_convention`](@ref))
-        are emitted into `mod` by `nested_codegen!` and marked always-inline. Like
-        all code emitted into `mod`, they are inferred by `EnzymeInterpreter`.
+    are emitted into `mod` by `nested_codegen!` and marked always-inline. Like
+    all code emitted into `mod`, they are inferred by `EnzymeInterpreter`.
 
-        Rules with the `:call` convention are not emitted at all. Julia's native
-        interpreter infers the rule, exactly as an ordinary call of it would, and
-        Julia's JIT compiles the resulting `CodeInstance` and its callees (see
-        [`rule_codeinst`](@ref)). `declare_rule_specsig!` declares the specialized
-        entry point in `mod`, and `restore_lookups` binds the entry's address. Such
-        a rule is compiled once for the whole process, shares its `CodeInstance`s
-        and native code with ordinary callers, and is called directly through its
-        specsig, without boxing or dispatch. Callers build its arguments as for an
-        emitted rule. A rule whose `CodeInstance` got no specialized entry point is
-            emitted like an `:inline` rule (see [`native_rule_codeinst`](@ref)).
+    Rules with the `:call` convention are not emitted at all. Julia's native
+    interpreter infers the rule, exactly as an ordinary call of it would, and
+    Julia's JIT compiles the resulting `CodeInstance` and its callees (see
+    [`rule_codeinst`](@ref)). `declare_rule_specsig!` declares the specialized
+    entry point in `mod`, and `restore_lookups` binds the entry's address. Such
+    a rule is compiled once for the whole process, shares its `CodeInstance`s
+    and native code with ordinary callers, and is called directly through its
+    specsig, without boxing or dispatch. Callers build its arguments as for an
+    emitted rule. A rule that Julia compiled without a specialized entry
+    point, or for another MethodInstance, is an error (see
+    [`native_rule_codeinst`](@ref)).
 
-        The two interpreters must not mix. Code inferred by the native interpreter
-        has Julia's semantics: no call in it is marked for a rule,
-        `within_autodiff()` is `false`, and no Enzyme intrinsic (such as
-        `ignore_derivatives`) is left for the Enzyme pipeline to lower. Such code
-        is legal to *call*, because a rule body is primal code that Enzyme never
-        differentiates. It is not legal to emit into `mod`, where `check_ir`, the
-        rule handlers and the Enzyme pipeline expect `EnzymeInterpreter` output
-        and its `enzymejl_*` attributes. Hence a natively called rule reaches
-        `mod` only as a declaration bound to an address: it has no body that LLVM
+    The two interpreters must not mix. Code inferred by the native interpreter
+    has Julia's semantics: no call in it is marked for a rule,
+    `within_autodiff()` is `false`, and no Enzyme intrinsic (such as
+    `ignore_derivatives`) is left for the Enzyme pipeline to lower. Such code
+    is legal to *call*, because a rule body is primal code that Enzyme never
+    differentiates. It is not legal to emit into `mod`, where `check_ir`, the
+    rule handlers and the Enzyme pipeline expect `EnzymeInterpreter` output
+    and its `enzymejl_*` attributes. Hence a natively called rule reaches
+    `mod` only as a declaration bound to an address: it has no body that LLVM
             could inline. Conversely, code inferred by `EnzymeInterpreter` must not be
             handed to Julia's JIT: `within_autodiff()` is `true` there, so a rule body
             that calls `ignore_derivatives` emits a call to
-        `__enzyme_ignore_derivatives`, which only the Enzyme pipeline resolves.
+    `__enzyme_ignore_derivatives`, which only the Enzyme pipeline resolves.
 
             Nested differentiation is the exception to "never differentiates". When a
             derivative is differentiated again, its rule calls must be
@@ -2010,7 +2019,7 @@ end
             gives the declarations one before the outer differentiation runs.
 
     Every rule is emitted by `nested_codegen!` where the call ABI does not
-        exist (see [`native_rules_available`](@ref)) and on Julia without the 1.12
+    exist (see [`native_rules_available`](@ref)) and on Julia without the 1.12
             compiler API (`Interpreter.HAS_INVOKE_RULES`).
     """
     function invoke_codegen!(
