@@ -1253,10 +1253,6 @@ end
     end
 end
 
-const tape_cache = Dict{UInt,Type}()
-
-const tape_cache_lock = ReentrantLock()
-
 import .Compiler: remove_innerty, UnknownTapeType
 
 @inline function tape_type(
@@ -1318,8 +1314,8 @@ import .Compiler: remove_innerty, UnknownTapeType
         width,
         Compiler.remove_innerty(A),
         true,
-        false,
-        ModifiedBetweenT, #=abiwrap=#
+        false, #=abiwrap=#
+        ModifiedBetween,
         ReturnPrimal,
         false,
         Compiler.UnknownTapeType,
@@ -1338,12 +1334,13 @@ import .Compiler: remove_innerty, UnknownTapeType
 
 
     key = hash(parent_job, hash(job))
+    cache = Compiler.THUNK_CACHE
 
     # NOTE: no use of lock(::Function)/@lock/get! to keep stack traces clean
-    lock(tape_cache_lock)
+    lock(cache.lock)
 
     try
-        obj = get(tape_cache, key, nothing)
+        obj = get(cache.tapes, key, nothing)
         # If the tape is not cached, compile it
         if obj === nothing
 
@@ -1353,7 +1350,7 @@ import .Compiler: remove_innerty, UnknownTapeType
             try
                 _, meta = GPUCompiler.compile(:llvm, job)
                 obj = meta.TapeType
-                tape_cache[key] = obj
+                cache.tapes[key] = obj
 		obj
     	    finally
                 Compiler.deactivate(ctx)
@@ -1363,7 +1360,7 @@ import .Compiler: remove_innerty, UnknownTapeType
 	    obj
         end
     finally
-        unlock(tape_cache_lock)
+        unlock(cache.lock)
     end
 end
 
