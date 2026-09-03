@@ -307,6 +307,11 @@ autodiff(Forward, x -> x + double(x), Duplicated(2.0, 1.0)) # mathematically sho
 # other Julia code. Inside a rule emitted into the differentiated function,
 # `within_autodiff()` returns `true`.
 #
+# Nested differentiation, for example `autodiff(Forward, x -> autodiff(Reverse, f, Active(x))...)`,
+# differentiates the inner derivative, and with it the rules the inner derivative
+# calls. A natively called rule is emitted into the outer differentiated function for
+# that purpose, so both kinds of rules can be differentiated through.
+#
 # On Julia versions before 1.12 every rule is emitted into the differentiated function.
 
 # ## Testing our rules
