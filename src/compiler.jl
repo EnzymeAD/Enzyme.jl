@@ -274,6 +274,7 @@ end
 import GPUCompiler: @safe_debug, @safe_info, @safe_warn, @safe_error
 
 include("compiler/utils.jl")
+include("compiler/session.jl")
 
 include("compiler/orcv2.jl")
 
@@ -6536,19 +6537,12 @@ end
 end
 
 # Compiler result
-struct CompileResult{AT,PT}
-    adjoint::AT
-    primal::PT
-    TapeType::Type
-    edges::Vector{Any}
-end
-
 @inline (thunk::PrimalErrorThunk{PT,FA,RT,TT,Width,ReturnPrimal})(
     fn,
     args...,
 ) where {PT,FA,RT,TT,Width,ReturnPrimal} = enzyme_call(
     Val(false),
-    thunk.adjoint,
+    thunk_fptr(thunk.adjoint),
     PrimalErrorThunk{PT,FA,RT,TT,Width,ReturnPrimal},
     Val(Width),
     Val(ReturnPrimal),
@@ -6564,7 +6558,7 @@ end
     args...,
 ) where {PT,FA,Width,RT,TT,ReturnPrimal} = enzyme_call(
     Val(false),
-    thunk.adjoint,
+    thunk_fptr(thunk.adjoint),
     CombinedAdjointThunk{PT,FA,RT,TT,Width,ReturnPrimal},
     Val(Width),
     Val(ReturnPrimal),
@@ -6580,7 +6574,7 @@ end
     args...,
 ) where {PT,FA,Width,RT,TT,ReturnPrimal} = enzyme_call(
     Val(false),
-    thunk.adjoint,
+    thunk_fptr(thunk.adjoint),
     ForwardModeThunk{PT,FA,RT,TT,Width,ReturnPrimal},
     Val(Width),
     Val(ReturnPrimal),
@@ -6596,7 +6590,7 @@ end
     args...,
 ) where {PT,FA,Width,RT,TT,TapeT} = enzyme_call(
     Val(false),
-    thunk.adjoint,
+    thunk_fptr(thunk.adjoint),
     AdjointThunk{PT,FA,RT,TT,Width,TapeT},
     Val(Width),
     Val(false),
@@ -6612,7 +6606,7 @@ end
     args...,
 ) where {PT,FA,Width,RT,TT,TapeT} = enzyme_call(
     Val(true),
-    thunk.adjoint,
+    thunk_fptr(thunk.adjoint),
     AdjointThunk{PT,FA,RT,TT,Width,TapeT},
     Val(Width),
     Val(false),
@@ -6628,7 +6622,7 @@ end
     args...,
 ) where {PT,FA,Width,RT,TT,ReturnPrimal,TapeT} = enzyme_call(
     Val(false),
-    thunk.primal,
+    thunk_fptr(thunk.primal),
     AugmentedForwardThunk{PT,FA,RT,TT,Width,ReturnPrimal,TapeT},
     Val(Width),
     Val(ReturnPrimal),
@@ -6644,7 +6638,7 @@ end
     args...,
 ) where {PT,FA,Width,RT,TT,ReturnPrimal,TapeT} = enzyme_call(
     Val(true),
-    thunk.primal,
+    thunk_fptr(thunk.primal),
     AugmentedForwardThunk{PT,FA,RT,TT,Width,ReturnPrimal,TapeT},
     Val(Width),
     Val(ReturnPrimal),
@@ -7259,8 +7253,10 @@ function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module
             ),
         )
     end
+    adjoint = ThunkHandle(job.source, job.config, :adjoint)
+    bind_thunk!(adjoint, LinkedThunk(adjoint_ptr, SESSION_EPOCH[], adjoint_name, prepost))
     if primal_name isa Nothing
-        primal_ptr = C_NULL
+        primal = nothing
     else
         primal_addr = JIT.lookup(jit_dylib, primal_name)
         primal_ptr = pointer(primal_addr)
@@ -7272,10 +7268,93 @@ function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module
                 ),
             )
         end
+        primal = ThunkHandle(job.source, job.config, :primal)
+        bind_thunk!(primal, LinkedThunk(primal_ptr, SESSION_EPOCH[], primal_name, prepost))
     end
 
-    return CompileResult(adjoint_ptr, primal_ptr, TapeType, edges)
+    return CompileResult(adjoint, primal, TapeType, edges)
 end
+
+# Record the link of `h` for this session. While a package image is being generated the
+# handle may end up in that image, so the link is kept aside instead.
+function bind_thunk!(h::ThunkHandle, l::LinkedThunk)
+    if ccall(:jl_generating_output, Cint, ()) == 1
+        lock(THUNK_CACHE.lock)
+        try
+            THUNK_CACHE.session_links[h] = l
+        finally
+            unlock(THUNK_CACHE.lock)
+        end
+    else
+        @atomic h.linked = l
+    end
+    return l
+end
+
+# The link of `h` made in this session, or `nothing`.
+function current_link(h::ThunkHandle)::Union{Nothing, LinkedThunk}
+    l = @atomic h.linked
+    if l !== nothing && l.epoch == SESSION_EPOCH[]
+        return l
+    end
+    lock(THUNK_CACHE.lock)
+    try
+        l = get(THUNK_CACHE.session_links, h, nothing)
+        if l !== nothing && l.epoch == SESSION_EPOCH[]
+            return l
+        end
+    finally
+        unlock(THUNK_CACHE.lock)
+    end
+    return nothing
+end
+
+# The link of `h` in this session, compiling the thunk again if this session has none: the
+# handle came from a package image, or the session was reset.
+function linked_thunk!(h::ThunkHandle)::LinkedThunk
+    l = current_link(h)
+    l === nothing || return l
+    job = CompilerJob(h.mi, h.config, GPUCompiler.tls_world_age())
+    # Compile in a context of our own: a link may be requested from anywhere, including
+    # from inside another compilation (see `splice_thunk!`), whose context stays untouched.
+    ts_ctx = JuliaContext()
+    ctx = context(ts_ctx)
+    activate(ctx)
+    res = try
+        cached_compilation(job)
+    finally
+        deactivate(ctx)
+        dispose(ts_ctx)
+    end
+    other = h.which === :adjoint ? res.adjoint : res.primal
+    other isa ThunkHandle || throw(
+        GPUCompiler.InternalCompilerError(job, "Failed to relink Enzyme thunk, $(h.which) not found")
+    )
+    l = current_link(other)
+    l === nothing && throw(GPUCompiler.InternalCompilerError(job, "Enzyme thunk was compiled but not linked"))
+    return bind_thunk!(h, l)
+end
+
+"""
+    thunk_pointer(h::ThunkHandle) -> Ptr{Cvoid}
+
+The entry point of the thunk `h` in this session. Never inlined: when a call of it is
+differentiated, `check_ir` recognizes the call and binds the thunk statically instead.
+"""
+@noinline function thunk_pointer(h::ThunkHandle)::Ptr{Cvoid}
+    return linked_thunk!(h).ptr
+end
+
+# What a thunk object hands to `enzyme_call`: the entry point of a handle, the pointer of a
+# deferred thunk, or the inline module of an `InlineABI` thunk.
+@inline thunk_fptr(h::ThunkHandle) = thunk_pointer(h)
+@inline thunk_fptr(p::Ptr{Cvoid}) = p
+@inline thunk_fptr(v::Val) = v
+
+# Captured at load time: `check_ir` may run inside a generated function, where reflection
+# is not allowed.
+const THUNK_POINTER_METHOD = only(methods(thunk_pointer))
+thunk_pointer_method() = THUNK_POINTER_METHOD
 
 const DumpPrePostOpt = Ref(false)
 const DumpPostOpt = Ref(false)
@@ -7342,8 +7421,6 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
     return (mod, meta.edges, adjoint_name, primal_name, meta.TapeType, prepost)
 end
 
-include("compiler/session.jl")
-
 @inline function cached_compilation(@nospecialize(job::CompilerJob))::CompileResult
     key = hash(job)
     cache = THUNK_CACHE
@@ -7355,12 +7432,6 @@ include("compiler/session.jl")
         if obj === nothing
             asm = _thunk(job)
             obj = _link(job, asm...)
-            if obj.adjoint isa Ptr{Nothing}
-                cache.by_ptr[obj.adjoint] = (asm[3], asm[6])
-            end
-            if obj.primal isa Ptr{Nothing} && asm[4] isa String
-                cache.by_ptr[obj.primal] = (asm[4], asm[6])
-            end
             cache.thunks[key] = obj
         end
         obj
