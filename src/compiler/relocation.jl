@@ -115,6 +115,7 @@ function persistable(m::AbstractVector{<:Pair{String}})::Bool
         v = unbind(target)
         (
             v isa Type || v isa Symbol || v isa String || v isa Module || v isa Core.MethodInstance ||
+                v isa Core.CodeInstance ||
                 v isa Method || (isbits(v) && !(v isa Ptr))
         ) || return false
     end
