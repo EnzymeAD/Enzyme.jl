@@ -961,7 +961,8 @@ end
     import_cached_autodiff!(mod, ptr, FT)
 
 Make the derivative thunk compiled at `ptr` callable from `mod`, and return the
-function to call in its place.
+function to call in its place. `FT` is the type of the entry, `nothing` when the
+caller does not know it (a thunk call bound through its entry instance or handle).
 
 `cached_compilation` keeps the bitcode of every thunk it compiles in
 `autodiff_cache`, so that a later compilation which sees a call to the thunk's
@@ -981,7 +982,7 @@ for as long as those declarations do: `compile_unhooked` internalizes it again
 once every module is linked (see [`internalize_imported_thunks!`](@ref)), so it
 is inlined and discarded just as a lone import was.
 """
-function import_cached_autodiff!(mod::LLVM.Module, ptr::Ptr{Cvoid}, FT::LLVM.FunctionType)
+function import_cached_autodiff!(mod::LLVM.Module, ptr::Ptr{Cvoid}, FT::Union{Nothing, LLVM.FunctionType})
     enzyme_ctx = enzyme_context()
     cached = autodiff_cache[ptr]
     pname = cached.entry
@@ -989,6 +990,12 @@ function import_cached_autodiff!(mod::LLVM.Module, ptr::Ptr{Cvoid}, FT::LLVM.Fun
     if haskey(enzyme_ctx.imported_thunks, ptr)
         if haskey(functions(mod), pname)
             return functions(mod)[pname]
+        end
+        if FT === nothing
+            # The caller has no call to take the type from: read it off the blob.
+            pmod = parse(LLVM.Module, unsafe_wrap(Vector{UInt8}, cached.bitcode))
+            FT = LLVM.function_type(functions(pmod)[pname])
+            dispose(pmod)
         end
         decl, _ = get_function!(mod, pname, FT)
         while isa(decl, LLVM.ConstantExpr)
@@ -1050,6 +1057,44 @@ end
 import GPUCompiler:
     DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
+# The Julia object the argument of a thunk-entry call (`thunk_link!`, or `thunk_pointer` on
+# Julia 1.10 and 1.11) denotes: the thunk object is a compile-time constant of the caller,
+# so the argument is either that constant itself, or a load of one of its fields (the shape
+# the runtime rules produce), in which case the thunk object is returned. `inst` is the
+# call, used to compute constant-GEP offsets.
+function thunk_pointer_object(@nospecialize(v::LLVM.Value), inst::LLVM.Instruction, enzyme_ctx::EnzymeContext)
+    legal, obj = absint(v, enzyme_ctx)
+    legal && return (true, obj)
+    isa(v, LLVM.LoadInst) || return (false, nothing)
+    base, off = get_base_and_offset(operands(v)[1]; offsetAllowed = true, inttoptr = true, inst = inst)
+    if isa(base, LLVM.ConstantInt)
+        ptr = unsafe_load(Base.reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, base) + off))
+        ptr == C_NULL && return (false, nothing)
+        return (true, Base.unsafe_pointer_to_objref(ptr))
+    end
+    return absint(base, enzyme_ctx, false, true)
+end
+
+# The thunk entry (an instance, or a handle on Julia 1.10 and 1.11) a thunk-entry call's
+# argument denotes, or `nothing`.
+function thunk_entry_argument(@nospecialize(v::LLVM.Value), inst::LLVM.Instruction, enzyme_ctx::EnzymeContext)
+    legal, obj = thunk_pointer_object(v, inst, enzyme_ctx)
+    legal || return nothing
+    return thunk_entry_argument(obj)
+end
+
+# Whether `dest` is the slow path of a thunk call, whose argument names the thunk: the
+# outer function calls a compiled thunk through its entry point.
+function is_thunk_entry_call(dest::LLVM.Function)::Bool
+    mi, _ = enzyme_custom_extract_mi(dest, false)
+    mi isa Core.MethodInstance || return false
+    @static if HAS_CI_THUNKS
+        return mi.def === thunk_link_method()
+    else
+        return mi.def === thunk_pointer_method()
+    end
+end
+
 function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, inst::LLVM.CallInst, calls::Vector{LLVM.CallInst}, mod::LLVM.Module, enzyme_ctx::EnzymeContext)
     world = job.world
     method_table = Core.Compiler.method_table(interp)
@@ -1070,6 +1115,34 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
     if isa(dest, LLVM.Function)
         fn = LLVM.name(dest)
+
+        # The slow path of a thunk call (`thunk_link!` on an instance, `thunk_pointer` on a
+        # handle): the outer function calls a compiled thunk through its entry point. Bind
+        # it statically, so that the thunk's code is differentiated through rather than
+        # called as an opaque pointer. On 1.12+ the call sits behind a check of the
+        # instance's entry slot, and its result meets the loaded slot in a phi: that phi is
+        # the entry the call site uses, so it is bound too.
+        if is_thunk_entry_call(dest)
+            h = thunk_entry_argument(operands(inst)[1], inst, enzyme_ctx)
+            if h !== nothing
+                spliced = import_cached_autodiff!(mod, linked_thunk!(h).ptr, nothing)
+                T_ptr = value_type(inst)
+                repl = if T_ptr isa LLVM.PointerType
+                    LLVM.const_pointercast(spliced, T_ptr)
+                else
+                    LLVM.const_ptrtoint(spliced, T_ptr)
+                end
+                for u in collect(LLVM.uses(inst))
+                    phi = LLVM.user(u)
+                    phi isa LLVM.PHIInst || continue
+                    replace_uses!(phi, repl)
+                    LLVM.API.LLVMInstructionEraseFromParent(phi)
+                end
+                replace_uses!(inst, repl)
+                LLVM.API.LLVMInstructionEraseFromParent(inst)
+                return errors
+            end
+        end
 
         # some special handling for runtime functions that we don't implement
         if fn == "jl_get_binding_or_error"
