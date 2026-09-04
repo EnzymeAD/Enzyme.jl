@@ -485,8 +485,12 @@ function resolved_plt_address(slot::LLVM.GlobalVariable, stub::LLVM.Function)
     addr !== nothing && return addr
     for bb in blocks(stub), inst in instructions(bb)
         isa(inst, LLVM.ICmpInst) || continue
-        addr = pointer_constant_value(operands(inst)[1])
-        addr !== nothing && return addr
+        # The optimizer canonicalizes an `icmp` so that a constant operand is the right-hand
+        # one, so checking only the left-hand operand would never find the resolved address.
+        for op in operands(inst)
+            addr = pointer_constant_value(op)
+            addr !== nothing && return addr
+        end
     end
     return nothing
 end
