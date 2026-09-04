@@ -392,6 +392,36 @@ end
 import .EnzymeRules: FwdConfig, RevConfig, Annotation
 using Core.Compiler: ArgInfo, StmtInfo, AbsIntState
 
+"""
+    enzyme_call_kind(interp, specTypes) -> Union{Nothing, Symbol}
+
+Say how Enzyme handles a call of the signature `specTypes`, or `nothing` when
+it handles it like any other call:
+
+- `:primitive`: Enzyme differentiates the call itself ([`is_primitive_func`](@ref)).
+- `:alwaysinline`: the inliner must always inline it ([`is_alwaysinline_func`](@ref)).
+- `:inactive`, `:frule`, `:rrule`: the signature has a rule of that kind, and
+  `interp` has that kind of rule enabled.
+
+Every place that decides whether a call needs Enzyme's handling asks this, so
+that a call reaches the pipeline the same way whichever path inference took to
+it: `FutureCallinfoByType` for an ordinary call, and
+[`invoked_ci_needs_rule`](@ref) for `invoke(f, ci, args...)`.
+"""
+function enzyme_call_kind(@nospecialize(interp::EnzymeInterpreter), @nospecialize(specTypes))::Union{Nothing, Symbol}
+    is_primitive_func(specTypes) && return :primitive
+    is_alwaysinline_func(specTypes) && return :alwaysinline
+    method_table = Core.Compiler.method_table(interp)
+    if interp.inactive_rules && cached_is_inactive(specTypes, interp.world, method_table)
+        return :inactive
+    elseif interp.forward_rules && cached_has_frule(specTypes, interp.world, method_table)
+        return :frule
+    elseif interp.reverse_rules && cached_has_rrule(specTypes, interp.world, method_table)
+        return :rrule
+    end
+    return nothing
+end
+
 struct FutureCallinfoByType
     atype::Any
 end
@@ -399,21 +429,12 @@ end
 @inline function (closure::FutureCallinfoByType)(ret::Core.Compiler.CallMeta, @nospecialize(interp::AbstractInterpreter), sv::AbsIntState)
     atype = closure.atype
     callinfo = ret.info
-    specTypes = simplify_kw(atype)
 
-    if is_primitive_func(specTypes)
-        callinfo = NoInlineCallInfo(callinfo, atype, :primitive)
-    elseif is_alwaysinline_func(specTypes)
+    kind = enzyme_call_kind(interp, simplify_kw(atype))
+    if kind === :alwaysinline
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
-    else
-        method_table = Core.Compiler.method_table(interp)
-        if interp.inactive_rules && cached_is_inactive(specTypes, interp.world, method_table)
-            callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
-        elseif interp.forward_rules && cached_has_frule(specTypes, interp.world, method_table)
-            callinfo = NoInlineCallInfo(callinfo, atype, :frule)
-        elseif interp.reverse_rules && cached_has_rrule(specTypes, interp.world, method_table)
-            callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
-        end
+    elseif kind !== nothing
+        callinfo = NoInlineCallInfo(callinfo, atype, kind)
     end
     @static if VERSION ≥ v"1.11-"
         return Core.Compiler.CallMeta(ret.rt, ret.exct, ret.effects, callinfo)
@@ -460,8 +481,10 @@ const HAS_INVOKE_CI_LOWERING = VERSION >= v"1.13-"
     """
         invoked_ci_needs_rule(interp, ci::CodeInstance)::Bool
 
-    Say if the signature `invoke(f, ci, args...)` targets needs rule handling: it is a
-    primitive, or it has an inactive, forward or reverse rule under `interp`.
+    Say if the signature `invoke(f, ci, args...)` targets needs Enzyme's own call
+    handling: it is a primitive, or it has an inactive, forward or reverse rule
+    under `interp` (see [`enzyme_call_kind`](@ref)). An always-inlined signature
+    does not: the inliner gives it a body like any other call.
     """
     function invoked_ci_needs_rule(@nospecialize(interp::EnzymeInterpreter), ci::Core.CodeInstance)::Bool
         CC = Core.Compiler
@@ -470,12 +493,8 @@ const HAS_INVOKE_CI_LOWERING = VERSION >= v"1.13-"
         else
             CC.get_ci_mi(ci).specTypes
         end
-        specTypes = simplify_kw(abi)
-        is_primitive_func(specTypes) && return true
-        method_table = CC.method_table(interp)
-        return (interp.inactive_rules && EnzymeRules.is_inactive_from_sig(specTypes; world = interp.world, method_table)) ||
-            (interp.forward_rules && EnzymeRules.has_frule_from_sig(specTypes; world = interp.world, method_table)) ||
-            (interp.reverse_rules && EnzymeRules.has_rrule_from_sig(specTypes; world = interp.world, method_table))
+        kind = enzyme_call_kind(interp, simplify_kw(abi))
+        return kind !== nothing && kind !== :alwaysinline
     end
 end
 
