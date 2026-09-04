@@ -1151,12 +1151,12 @@ end
 
 
     enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
-    llvmf = nested_codegen!(enzyme_ctx, mode, mod, fmi, world, true)
+    llvmf = invoke_codegen!(enzyme_ctx, mode, mod, fmi, world, true)
 
     orig_swiftself = has_swiftself(LLVM.called_operand(orig))
 
-    swiftself = has_swiftself(llvmf)
-    if swiftself
+    gcstack_arg = has_gcstack_arg(llvmf)
+    if gcstack_arg
         pushfirst!(args, reinsert_gcmarker!(fn, B))
     end
     _, sret, returnRoots0 = get_return_info(enzyme_custom_extract_mi(llvmf)[2])
@@ -1216,9 +1216,7 @@ end
     res = LLVM.call!(B, LLVM.function_type(llvmf), llvmf, args)
     debug_from_orig!(gutils, res, orig)
     callconv!(res, callconv(llvmf))
-    if swiftself
-        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1 + (sret !== nothing) + (returnRoots !== nothing)), EnumAttribute("swiftself"))
-    end
+    copy_abi_attrs!(res, llvmf)
 
     hasNoRet = has_fn_attr(llvmf, EnumAttribute("noreturn"))
 
@@ -1731,7 +1729,15 @@ function enzyme_custom_common_rev(
     interp = GPUCompiler.get_interpreter(
         CompilerJob(ami, CompilerConfig(target, params; kernel = false), world),
     )
-    aug_RT = return_type(interp, ami)
+    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+
+    # The tape type comes from the augmented primal's return type. Take it
+    # from the inference that produces the code `invoke_codegen!` calls.
+    aug_RT = native_return_type(mod, ami, world)
+    if aug_RT === nothing
+        aug_RT = return_type(interp, ami)
+    end
+    aug_RT = aug_RT::Type
     if kwtup !== nothing && kwtup <: Duplicated
         mi, _ = enzyme_custom_extract_mi(orig)
         bt = GPUCompiler.backtrace(orig)
@@ -1778,8 +1784,6 @@ function enzyme_custom_common_rev(
     else
         TapeT = Any
     end
-    
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     llvmf = nothing
     applicablefn = true
@@ -1788,7 +1792,7 @@ function enzyme_custom_common_rev(
 
     if forward
         enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
-        llvmf = nested_codegen!(enzyme_ctx, mode, mod, ami, world, true)
+        llvmf = invoke_codegen!(enzyme_ctx, mode, mod, ami, world, true)
         @assert llvmf !== nothing
         rev_RT = nothing
         final_mi = ami
@@ -1826,13 +1830,16 @@ function enzyme_custom_common_rev(
             rev_RT = Union{}
             applicablefn = false
         else
-            rev_RT = return_type(interp, rmi)
+            rev_RT = native_return_type(mod, rmi, world)
+            if rev_RT === nothing
+                rev_RT = return_type(interp, rmi)
+            end
         end
         
         rmi = rmi::Core.MethodInstance
         rev_RT = rev_RT::Type
         enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
-        llvmf = nested_codegen!(enzyme_ctx, mode, mod, rmi, world, true)
+        llvmf = invoke_codegen!(enzyme_ctx, mode, mod, rmi, world, true)
         final_mi = rmi
     end
 
@@ -1884,7 +1891,7 @@ function enzyme_custom_common_rev(
     # end
 
     orig_swiftself = has_swiftself(LLVM.called_operand(orig))
-    swiftself = has_swiftself(llvmf)
+    gcstack_arg = has_gcstack_arg(llvmf)
 
     miRT = enzyme_custom_extract_mi(llvmf)[2]
     _, sret, returnRoots0 = get_return_info(miRT)
@@ -1923,7 +1930,7 @@ function enzyme_custom_common_rev(
             trueidx = tape_idx +
                 (sret !== nothing) +
                 (returnRoots !== nothing) +
-                swiftself
+                gcstack_arg
 
             if (RT <: Active)
                 trueidx += 1
@@ -1954,7 +1961,7 @@ function enzyme_custom_common_rev(
                         println(io, "miRT=", miRT)
                         println(io, "sret=", sret)
                         println(io, "returnRoots=", returnRoots)
-                        println(io, "swiftself=", swiftself)
+                        println(io, "gcstack_arg=", gcstack_arg)
                         println(io, "RT=", RT)
                         println(io, "rev_RT=", rev_RT)
                         println(io, "applicablefn=", applicablefn)
@@ -1969,19 +1976,23 @@ function enzyme_custom_common_rev(
                 end
                 llty = convert(LLVMType, TapeT; allow_boxed = true)
 
+                # The rule takes the tape by reference as readonly nocapture, so
+                # the tape goes in a stack slot, like every argument. On 1.12+
+                # the tracked pointers go through a rooted array, and the slot
+                # holds the layout with the pointer fields stripped.
                 tape_roots = inline_roots_type(TapeT)
                 if tape_roots != 0
                     tape_al = create_rooted_array(alloctx, tape_roots)
                     extract_roots_from_value!(B, tape, tape_al)
+                    llty_foralloca = strip_tracked_pointers(llty)
+                    al = alloca!(alloctx, llty_foralloca, "tape.$TapeT")
+                    extract_nonjlvalues_into!(B, llty, al, tape)
+                else
+                    llty_foralloca = llty
+                    al = alloca!(alloctx, llty, "tape.$TapeT")
+                    store!(B, tape, al)
                 end
-
-                al0 = al = emit_allocobj!(B, TapeT, "tape.$TapeT")
-                al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
-                store!(B, tape, al)
-                if tape_roots == 0 && any_jltypes(llty)
-                    emit_writebarrier!(B, get_julia_inner_types(B, al0, tape))
-                end
-                tape = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
+                tape = addrspacecast!(B, al, LLVM.PointerType(llty_foralloca, Derived))
             end
             insert!(args, tape_idx, tape)
             if tape_al !== nothing
@@ -2096,7 +2107,7 @@ function enzyme_custom_common_rev(
         end
     end
 
-    if swiftself
+    if gcstack_arg
         pushfirst!(args, reinsert_gcmarker!(fn, B))
     end
 
@@ -2198,9 +2209,7 @@ function enzyme_custom_common_rev(
     debug_from_orig!(gutils, res, orig)
 
     callconv!(res, callconv(llvmf))
-    if swiftself
-        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1 + (sret !== nothing) + (returnRoots !== nothing)), EnumAttribute("swiftself"))
-    end
+    copy_abi_attrs!(res, llvmf)
 
     hasNoRet = has_fn_attr(llvmf, EnumAttribute("noreturn"))
 

@@ -401,6 +401,42 @@ Base.@assume_effects :removable :foldable :nothrow function has_swiftself(fn::LL
     end
     return false
 end
+
+"""
+    gcstack_arg_index(fn::LLVM.Function) -> Int
+
+Give the index of the `pgcstack` parameter of `fn`, or `0` when `fn` has none.
+
+Julia's codegen marks that parameter `swiftself` where the target supports the
+swift calling convention, and turns the convention off where it does not
+(`jl_codegen_output_t::use_swiftcc`, false on RISC-V). Julia 1.13 also gives
+the parameter a `gcstack` string attribute, which `specsig` writes on every
+version. Hence recognize either mark.
+"""
+Base.@assume_effects :removable :foldable :nothrow function gcstack_arg_index(fn::LLVM.Function)::Int
+    for i in 1:length(LLVM.parameters(fn))
+        for attr in collect(LLVM.parameter_attributes(fn, i))
+            if attr isa LLVM.EnumAttribute
+                if kind(attr) == swiftself_kind
+                    return i
+                end
+            elseif attr isa LLVM.StringAttribute
+                if kind(attr) == "gcstack"
+                    return i
+                end
+            end
+        end
+    end
+    return 0
+end
+
+"""
+    has_gcstack_arg(fn::LLVM.Function) -> Bool
+
+Say if `fn` takes `pgcstack` as a parameter (see [`gcstack_arg_index`](@ref)).
+"""
+Base.@assume_effects :removable :foldable :nothrow has_gcstack_arg(fn::LLVM.Function)::Bool = gcstack_arg_index(fn) != 0
+
 Base.@assume_effects :removable :foldable :nothrow function has_fn_attr(fn::LLVM.Function, attr::LLVM.EnumAttribute)::Bool
     ekind = LLVM.kind(attr)
     for attr in collect(function_attributes(fn))

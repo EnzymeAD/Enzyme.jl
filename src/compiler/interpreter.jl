@@ -392,6 +392,36 @@ end
 import .EnzymeRules: FwdConfig, RevConfig, Annotation
 using Core.Compiler: ArgInfo, StmtInfo, AbsIntState
 
+"""
+    enzyme_call_kind(interp, specTypes) -> Union{Nothing, Symbol}
+
+Say how Enzyme handles a call of the signature `specTypes`, or `nothing` when
+it handles it like any other call:
+
+- `:primitive`: Enzyme differentiates the call itself (`is_primitive_func`).
+- `:alwaysinline`: the inliner must always inline it (`is_alwaysinline_func`).
+- `:inactive`, `:frule`, `:rrule`: the signature has a rule of that kind, and
+  `interp` has that kind of rule enabled.
+
+Every place that decides whether a call needs Enzyme's handling asks this, so
+that a call reaches the pipeline the same way whichever path inference took to
+it: `FutureCallinfoByType` for an ordinary call, and `invoked_ci_needs_rule`
+for `invoke(f, ci, args...)`.
+"""
+function enzyme_call_kind(@nospecialize(interp::EnzymeInterpreter), @nospecialize(specTypes))::Union{Nothing, Symbol}
+    is_primitive_func(specTypes) && return :primitive
+    is_alwaysinline_func(specTypes) && return :alwaysinline
+    method_table = Core.Compiler.method_table(interp)
+    if interp.inactive_rules && cached_is_inactive(specTypes, interp.world, method_table)
+        return :inactive
+    elseif interp.forward_rules && cached_has_frule(specTypes, interp.world, method_table)
+        return :frule
+    elseif interp.reverse_rules && cached_has_rrule(specTypes, interp.world, method_table)
+        return :rrule
+    end
+    return nothing
+end
+
 struct FutureCallinfoByType
     atype::Any
 end
@@ -399,21 +429,12 @@ end
 @inline function (closure::FutureCallinfoByType)(ret::Core.Compiler.CallMeta, @nospecialize(interp::AbstractInterpreter), sv::AbsIntState)
     atype = closure.atype
     callinfo = ret.info
-    specTypes = simplify_kw(atype)
 
-    if is_primitive_func(specTypes)
-        callinfo = NoInlineCallInfo(callinfo, atype, :primitive)
-    elseif is_alwaysinline_func(specTypes)
+    kind = enzyme_call_kind(interp, simplify_kw(atype))
+    if kind === :alwaysinline
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
-    else
-        method_table = Core.Compiler.method_table(interp)
-        if interp.inactive_rules && cached_is_inactive(specTypes, interp.world, method_table)
-            callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
-        elseif interp.forward_rules && cached_has_frule(specTypes, interp.world, method_table)
-            callinfo = NoInlineCallInfo(callinfo, atype, :frule)
-        elseif interp.reverse_rules && cached_has_rrule(specTypes, interp.world, method_table)
-            callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
-        end
+    elseif kind !== nothing
+        callinfo = NoInlineCallInfo(callinfo, atype, kind)
     end
     @static if VERSION ≥ v"1.11-"
         return Core.Compiler.CallMeta(ret.rt, ret.exct, ret.effects, callinfo)
@@ -449,6 +470,33 @@ function Core.Compiler.abstract_call_gf_by_type(
     return FutureCallinfoByType(atype)(ret, interp, sv)
 end
 
+
+# Say if the compiler both understands `invoke(f, ci::CodeInstance, args...)` during
+# inference (`InvokeCICallInfo`, Julia 1.12+) and lowers it to a direct `:invoke`
+# (Julia 1.13+). The 1.12 inliner lowers only `Core.invoke` calls with an
+# `InvokeCallInfo`, so there such calls stay runtime `invoke` calls.
+const HAS_INVOKE_CI_LOWERING = VERSION >= v"1.13-"
+
+@static if HAS_INVOKE_CI_LOWERING
+    """
+        invoked_ci_needs_rule(interp, ci::CodeInstance)::Bool
+
+    Say if the signature `invoke(f, ci, args...)` targets needs Enzyme's own call
+    handling: it is a primitive, or it has an inactive, forward or reverse rule
+    under `interp` (see `enzyme_call_kind`). An always-inlined signature does
+    not: the inliner gives it a body like any other call.
+    """
+    function invoked_ci_needs_rule(@nospecialize(interp::EnzymeInterpreter), ci::Core.CodeInstance)::Bool
+        CC = Core.Compiler
+        abi = @static if isdefined(Core.Compiler, :get_ci_abi)
+            CC.get_ci_abi(ci)
+        else
+            CC.get_ci_mi(ci).specTypes
+        end
+        kind = enzyme_call_kind(interp, simplify_kw(abi))
+        return kind !== nothing && kind !== :alwaysinline
+    end
+end
 
 let # overload `inlining_policy`
     @static if VERSION ≥ v"1.11.0-DEV.879"
@@ -1280,6 +1328,27 @@ function abstract_call_known(
 
     (; fargs, argtypes) = arginfo
 
+    @static if HAS_INVOKE_CI_LOWERING
+        # `abstract_invoke` handles `invoke(f, ci::CodeInstance, args...)`. It skips
+        # `abstract_call_gf_by_type`, so the call gets no rule marking. It also keeps
+        # the given CodeInstance instead of the one Enzyme inferred, so the code is
+        # emitted again, without the `enzymejl_mi` attributes the rule handlers read.
+        # A rule defines the call's semantics whichever method the CodeInstance
+        # pinned. Thus, when the signature has one, analyze the plain `f(args...)`.
+        if f === Core.invoke && length(argtypes) >= 3
+            citype = argtypes[3]
+            if citype isa Core.Const && citype.val isa Core.CodeInstance &&
+                    invoked_ci_needs_rule(interp, citype.val)
+                argtypes′ = Core.Compiler.invoke_rewrite(argtypes)
+                fargs′ = fargs === nothing ? nothing : Core.Compiler.invoke_rewrite(fargs)
+                # `abstract_call` handles a known callee and one without a
+                # singleton type, such as a callable struct or a closure
+                # instance, alike. Both reach `abstract_call_gf_by_type`.
+                return Core.Compiler.abstract_call(interp, ArgInfo(fargs′, argtypes′), si, sv)
+            end
+        end
+    end
+
     if interp.within_autodiff_rewrite && f === Enzyme.within_autodiff
         if length(argtypes) != 1
             @static if VERSION < v"1.11.0-"
@@ -1504,6 +1573,41 @@ function abstract_call_known(
         sv::AbsIntState,
         max_methods::Int,
     )
+end
+
+# Say if custom rules can be called through their natively compiled CodeInstance
+# (see `Enzyme.Compiler.invoke_codegen!`). Julia 1.12 added the compiler entry
+# point that infers a MethodInstance with a given interpreter and hands the
+# result to the JIT (`typeinf_ext_toplevel` with `SOURCE_MODE_ABI`) and the
+# runtime function that reads back the entry points (`jl_read_codeinst_invoke`).
+# A Julia that renames one of them fails loudly at the first rule compilation.
+const HAS_INVOKE_RULES = VERSION >= v"1.12-"
+
+@static if HAS_INVOKE_RULES
+
+    """
+        codeinst_entry(ci::CodeInstance) -> (specptr, invoke)
+
+    Compile `ci` if needed and return its two entry points. `specptr` is the
+    specialized-signature entry, or `C_NULL` when `ci` only got a boxed
+    `jl_fptr_args` entry. `invoke` is the boxed `invoke(F, args, nargs, ci)`
+    entry, or `C_NULL` when `ci` could not be compiled.
+    """
+    function codeinst_entry(ci::Core.CodeInstance)
+        specsigflags = Ref{UInt8}(0)
+        invoke = Ref{Ptr{Cvoid}}(C_NULL)
+        specptr = Ref{Ptr{Cvoid}}(C_NULL)
+        waitcompile = Cint(1)
+        @ccall jl_read_codeinst_invoke(
+            ci::Any, specsigflags::Ptr{UInt8}, invoke::Ptr{Ptr{Cvoid}},
+            specptr::Ptr{Ptr{Cvoid}}, waitcompile::Cint
+        )::Cvoid
+        # Bit 0 says that specptr is the specialized-signature entry, not a
+        # jl_fptr_args entry.
+        specialized = (specsigflags[] & 0b1) != 0
+        return (specialized ? specptr[] : C_NULL, invoke[])
+    end
+
 end
 
 end

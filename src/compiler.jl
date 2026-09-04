@@ -557,6 +557,11 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
         returnRoots = returnRoots0 !== nothing
 
         attributes = function_attributes(llvmfn)
+        # A function that already carries `enzymejl_mi` is not this emission's
+        # output: a derivative embedded for nested differentiation may reuse
+        # the name of a fresh function, since Julia's function name counters
+        # restart per compilation.
+        fresh = !has_fn_attr(llvmfn, StringAttribute("enzymejl_mi"))
         push!(
             attributes,
             StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))),
@@ -572,6 +577,10 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
 	if startswith(LLVM.name(llvmfn), "japi3") || startswith(LLVM.name(llvmfn), "japi1") || startswith(LLVM.name(llvmfn), "jlcapi")
 	   continue
 	end
+
+        if fresh
+            check_emitted_specsig(mod, llvmfn, mi, RT)
+        end
 
         if is_sret_union(RT)
             attr = StringAttribute("enzymejl_sret_union_bytes", string(union_alloca_type(RT)))
@@ -706,6 +715,7 @@ end
 
 include("compiler/optimize.jl")
 include("compiler/interpreter.jl")
+include("compiler/callconv.jl")
 include("compiler/validation.jl")
 include("typeutils/inference.jl")
 
@@ -1467,7 +1477,7 @@ function nested_codegen!(
     end
 
     check_ir(interp, job, otherMod)
-            
+
     if DumpPreNestedOpt[]
 	API.EnzymeDumpModuleRef(otherMod.ref)
     end
@@ -1490,6 +1500,9 @@ function nested_codegen!(
     # Declare the function in mod so it can be called
     lfn = functions(otherMod)[entry]
     if alwaysinline
+        # A method declared `@noinline` carries that attribute. Remove it: this
+        # path always inlines, and `noinline` conflicts with `alwaysinline`.
+        delete!(function_attributes(lfn), EnumAttribute("noinline"))
         push!(function_attributes(lfn), EnumAttribute("alwaysinline"))
     end
 
@@ -5559,6 +5572,10 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         permit_inlining!(f)
     end
 
+    # A derivative linked into this module as a deferred job calls its rules
+    # natively. Differentiating it again needs their bodies.
+    materialize_native_invokes!(enzyme_context, mode, mod, job.world)
+
     LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
         LLVM.add!(pb, LLVM.NewPMModulePassManager()) do mpm
@@ -5576,6 +5593,9 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     if DumpPostCheck[]
         API.EnzymeDumpModuleRef(mod.ref)
     end
+    # `check_ir` links in the derivatives that `enzyme_call` embeds. Their
+    # natively called rules need bodies too.
+    materialize_native_invokes!(enzyme_context, mode, mod, job.world)
 
     disableFallback = String[]
 
@@ -6409,8 +6429,11 @@ end
     end
 
     if !device_module
-        # Don't restore pointers when we are doing GPU compilation
-        restore_lookups(mod)
+        # Don't restore pointers when we are doing GPU compilation. The
+        # declarations of natively called rules stay symbolic until `_thunk`
+        # compiles the module, so that an outer differentiation can still
+        # recognize them (see `materialize_native_invokes!`).
+        restore_lookups(mod; native_invokes = false)
     end
 
     if !(primal_target isa GPUCompiler.NativeCompilerTarget)
@@ -7243,6 +7266,9 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
     else
         ""
     end
+    # The module string above keeps the rule declarations symbolic for nested
+    # differentiation; the compiled module binds them to their addresses.
+    restore_native_invokes!(mod)
     return (mod, meta.edges, adjoint_name, primal_name, meta.TapeType, prepost)
 end
 
