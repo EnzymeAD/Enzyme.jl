@@ -779,3 +779,23 @@ but finalizers are often used for resource management (like manually allocating 
 to the shadow object. Instead, we define finalizers to be inactive (contain no instructions that are relevant with respect to AD),
 yet we must attach them to the shadow object to release resources attached to them. 
 
+## Attributor pass
+
+Enzyme optionally runs an LLVM [Attributor](https://llvm.org/docs/AttributorProgressStatus.html) pass before differentiation. The Attributor infers function attributes (e.g. `readonly`, `nofree`, `nosync`) that allow Enzyme to avoid caching values that are provably unused in the reverse pass, potentially reducing memory usage and improving performance.
+
+The pass is disabled by default because it can interact poorly with Julia's GC and calling conventions on Julia 1.12 and later. It may still be useful on older Julia versions or in specific workloads.
+
+The setting is a compile-time preference (via [Preferences.jl](https://github.com/JuliaPackaging/Preferences.jl)) and requires restarting Julia after changing it.
+
+```julia
+using Enzyme
+
+# Check the current setting (false by default)
+Enzyme.run_attributor()
+
+# Enable the attributor pass
+Enzyme.set_run_attributor!(true)
+```
+
+See also [`run_attributor`](@ref) and [`set_run_attributor!`](@ref).
+
