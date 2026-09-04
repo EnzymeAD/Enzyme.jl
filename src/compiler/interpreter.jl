@@ -398,15 +398,15 @@ using Core.Compiler: ArgInfo, StmtInfo, AbsIntState
 Say how Enzyme handles a call of the signature `specTypes`, or `nothing` when
 it handles it like any other call:
 
-- `:primitive`: Enzyme differentiates the call itself ([`is_primitive_func`](@ref)).
-- `:alwaysinline`: the inliner must always inline it ([`is_alwaysinline_func`](@ref)).
+- `:primitive`: Enzyme differentiates the call itself (`is_primitive_func`).
+- `:alwaysinline`: the inliner must always inline it (`is_alwaysinline_func`).
 - `:inactive`, `:frule`, `:rrule`: the signature has a rule of that kind, and
   `interp` has that kind of rule enabled.
 
 Every place that decides whether a call needs Enzyme's handling asks this, so
 that a call reaches the pipeline the same way whichever path inference took to
-it: `FutureCallinfoByType` for an ordinary call, and
-[`invoked_ci_needs_rule`](@ref) for `invoke(f, ci, args...)`.
+it: `FutureCallinfoByType` for an ordinary call, and `invoked_ci_needs_rule`
+for `invoke(f, ci, args...)`.
 """
 function enzyme_call_kind(@nospecialize(interp::EnzymeInterpreter), @nospecialize(specTypes))::Union{Nothing, Symbol}
     is_primitive_func(specTypes) && return :primitive
@@ -483,8 +483,8 @@ const HAS_INVOKE_CI_LOWERING = VERSION >= v"1.13-"
 
     Say if the signature `invoke(f, ci, args...)` targets needs Enzyme's own call
     handling: it is a primitive, or it has an inactive, forward or reverse rule
-    under `interp` (see [`enzyme_call_kind`](@ref)). An always-inlined signature
-    does not: the inliner gives it a body like any other call.
+    under `interp` (see `enzyme_call_kind`). An always-inlined signature does
+    not: the inliner gives it a body like any other call.
     """
     function invoked_ci_needs_rule(@nospecialize(interp::EnzymeInterpreter), ci::Core.CodeInstance)::Bool
         CC = Core.Compiler
