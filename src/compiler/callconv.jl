@@ -11,19 +11,21 @@
 # needs from `materialize_native_invokes!`.
 
 """
-    copy_extension_attrs!(call::LLVM.CallInst, fn::LLVM.Function)
+    copy_abi_attrs!(call::LLVM.CallInst, fn::LLVM.Function)
 
-Copy the `zeroext` and `signext` parameter attributes of `fn` to the
-call site `call`. `restore_lookups` replaces the callee with a constant
-address, after which only the call site's attributes describe the
-extension the callee expects.
+Copy the `zeroext`, `signext` and `swiftself` parameter attributes of `fn` to
+the call site `call`. `restore_lookups` replaces the callee with a constant
+address, after which only the call site's attributes describe the convention
+the callee expects: the extension of a small integer argument, and the
+register `pgcstack` goes in. A target without the swift calling convention
+takes `pgcstack` as a plain parameter, which carries no attribute to copy.
 """
-function copy_extension_attrs!(call::LLVM.CallInst, fn::LLVM.Function)
+function copy_abi_attrs!(call::LLVM.CallInst, fn::LLVM.Function)
     zeroext = enum_attr_kind("zeroext")
     signext = enum_attr_kind("signext")
     for i in 1:length(parameters(fn))
         for attr in collect(parameter_attributes(fn, i))
-            if attr isa EnumAttribute && (kind(attr) == zeroext || kind(attr) == signext)
+            if attr isa EnumAttribute && (kind(attr) == zeroext || kind(attr) == signext || kind(attr) == swiftself_kind)
                 LLVM.API.LLVMAddCallSiteAttribute(call, LLVM.API.LLVMAttributeIndex(i), attr)
             end
         end
@@ -54,9 +56,11 @@ end
 
     Say if Julia's codegen uses the swift calling convention on this target.
     LLVM does not support the convention on RISC-V, so Julia turns it off there
-    (`jl_codegen_params_t::use_swiftcc`). With the convention on, and
+    (`jl_codegen_output_t::use_swiftcc`). With the convention on, and
     [`jit_gcstack_arg`](@ref) set, the `pgcstack` parameter gets the
-    `swiftself` attribute.
+    `swiftself` attribute; without it, `pgcstack` keeps its place in the
+    signature but carries no attribute and the function keeps the C calling
+    convention.
     """
     jit_uses_swiftcc()::Bool = !startswith(string(Sys.ARCH), "riscv")
 
@@ -99,10 +103,12 @@ end
       pointer to their inline roots follows.
     - Scalars go by value.
 
-    With `gcstack_arg` set, `pgcstack` follows the return parameters as a
-    `swiftself` parameter. The native call path requires
-    [`jit_uses_swiftcc`](@ref), so the attribute holds there. Pass `false` to
-    model a function compiled without it, as `nested_codegen!` emits.
+    With `gcstack_arg` set, `pgcstack` follows the return parameters, with the
+    `swiftself` attribute where [`jit_uses_swiftcc`](@ref) holds. It always
+    carries the `gcstack` string attribute, as Julia 1.13 writes, so that
+    [`gcstack_arg_index`](@ref) finds it on a target without the convention
+    too. Pass `false` to model a function compiled without `pgcstack`, as
+    `nested_codegen!` emits.
 
     `classify_arguments`, `get_return_info` and `enzyme_custom_setup_args`
     follow the same rules, so the derived signature matches the arguments
@@ -153,7 +159,11 @@ end
 
         if gcstack_arg
             push!(params, T_ptr)
-            push!(param_attrs, LLVM.Attribute[EnumAttribute("swiftself"), EnumAttribute("nonnull")])
+            attrs = LLVM.Attribute[StringAttribute("gcstack"), EnumAttribute("nonnull")]
+            if jit_uses_swiftcc()
+                pushfirst!(attrs, EnumAttribute("swiftself"))
+            end
+            push!(param_attrs, attrs)
         end
 
         for T in (mi.specTypes::DataType).parameters
@@ -297,10 +307,10 @@ end
     and are skipped.
 
     `nested_codegen!` compiles without `gcstack_arg`, so the derivation takes
-    the presence of `pgcstack` from `has_swiftself(llvmf)`.
+    the presence of `pgcstack` from [`has_gcstack_arg`](@ref).
     """
     function check_specsig(llvmf::LLVM.Function, mi::Core.MethodInstance, @nospecialize(RT::Type))
-        retty, params, param_attrs = specsig(mi, RT; gcstack_arg = has_swiftself(llvmf))
+        retty, params, param_attrs = specsig(mi, RT; gcstack_arg = has_gcstack_arg(llvmf))
         ft = LLVM.function_type(llvmf)
         ok = LLVM.return_type(ft) == retty && parameters(ft) == params
         if ok
@@ -382,14 +392,10 @@ end
 
     Say if functions called from `mod` may be bound to natively compiled code (see
     [`invoke_codegen!`](@ref)). That binds a process address, so not during
-    precompilation, and only for modules that target the host. The rule
-    handlers pass `pgcstack` only through a `swiftself` parameter, so the JIT
-    must use the swift calling convention when it passes one (see
-    [`jit_uses_swiftcc`](@ref)).
+    precompilation, and only for modules that target the host.
     """
     function native_invoke_available(mod::LLVM.Module)::Bool
-        return !Base.generating_output() && module_targets_host(mod) &&
-            !(jit_gcstack_arg() && !jit_uses_swiftcc())
+        return !Base.generating_output() && module_targets_host(mod)
     end
 
     """
@@ -610,15 +616,7 @@ end
 
             # Drop the `pgcstack` parameter when the emitted rule has none.
             fparams = collect(parameters(fn))
-            drop = 0
-            if has_swiftself(fn) && !has_swiftself(llvmf)
-                for i in 1:length(fparams)
-                    if any(a -> a isa EnumAttribute && kind(a) == swiftself_kind, collect(parameter_attributes(fn, i)))
-                        drop = i
-                        break
-                    end
-                end
-            end
+            drop = has_gcstack_arg(llvmf) ? 0 : gcstack_arg_index(fn)
             args = LLVM.Value[p for (i, p) in enumerate(fparams) if i != drop]
             lft = LLVM.function_type(llvmf)
             fretty = LLVM.return_type(LLVM.function_type(fn))

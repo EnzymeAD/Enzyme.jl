@@ -435,6 +435,18 @@ end
             native = Enzyme.Compiler.native_codeinst(mod, mi, world)
             @test native !== nothing
             @test native[2] != C_NULL
+
+            # The `pgcstack` parameter carries the `swiftself` attribute only
+            # where Julia's codegen uses the swift calling convention, and the
+            # `gcstack` attribute always, so `gcstack_arg_index` finds it on
+            # either target. `check_specsig` reads the parameter back from that
+            # mark, so it accepts the declaration it derived.
+            RT = native[1].rettype
+            decl = Enzyme.Compiler.specsig_function!(mod, mi, RT, "test_specsig_gcstack", world)
+            @test (Enzyme.Compiler.gcstack_arg_index(decl) != 0) == Enzyme.Compiler.jit_gcstack_arg()
+            @test Enzyme.Compiler.has_swiftself(decl) ==
+                (Enzyme.Compiler.jit_gcstack_arg() && Enzyme.Compiler.jit_uses_swiftcc())
+            @test Enzyme.Compiler.check_specsig(decl, mi, RT) === nothing
         end
     end
 end

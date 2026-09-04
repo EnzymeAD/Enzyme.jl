@@ -1155,8 +1155,8 @@ end
 
     orig_swiftself = has_swiftself(LLVM.called_operand(orig))
 
-    swiftself = has_swiftself(llvmf)
-    if swiftself
+    gcstack_arg = has_gcstack_arg(llvmf)
+    if gcstack_arg
         pushfirst!(args, reinsert_gcmarker!(fn, B))
     end
     _, sret, returnRoots0 = get_return_info(enzyme_custom_extract_mi(llvmf)[2])
@@ -1216,10 +1216,7 @@ end
     res = LLVM.call!(B, LLVM.function_type(llvmf), llvmf, args)
     debug_from_orig!(gutils, res, orig)
     callconv!(res, callconv(llvmf))
-    copy_extension_attrs!(res, llvmf)
-    if swiftself
-        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1 + (sret !== nothing) + (returnRoots !== nothing)), EnumAttribute("swiftself"))
-    end
+    copy_abi_attrs!(res, llvmf)
 
     hasNoRet = has_fn_attr(llvmf, EnumAttribute("noreturn"))
 
@@ -1894,7 +1891,7 @@ function enzyme_custom_common_rev(
     # end
 
     orig_swiftself = has_swiftself(LLVM.called_operand(orig))
-    swiftself = has_swiftself(llvmf)
+    gcstack_arg = has_gcstack_arg(llvmf)
 
     miRT = enzyme_custom_extract_mi(llvmf)[2]
     _, sret, returnRoots0 = get_return_info(miRT)
@@ -1933,7 +1930,7 @@ function enzyme_custom_common_rev(
             trueidx = tape_idx +
                 (sret !== nothing) +
                 (returnRoots !== nothing) +
-                swiftself
+                gcstack_arg
 
             if (RT <: Active)
                 trueidx += 1
@@ -1964,7 +1961,7 @@ function enzyme_custom_common_rev(
                         println(io, "miRT=", miRT)
                         println(io, "sret=", sret)
                         println(io, "returnRoots=", returnRoots)
-                        println(io, "swiftself=", swiftself)
+                        println(io, "gcstack_arg=", gcstack_arg)
                         println(io, "RT=", RT)
                         println(io, "rev_RT=", rev_RT)
                         println(io, "applicablefn=", applicablefn)
@@ -2110,7 +2107,7 @@ function enzyme_custom_common_rev(
         end
     end
 
-    if swiftself
+    if gcstack_arg
         pushfirst!(args, reinsert_gcmarker!(fn, B))
     end
 
@@ -2212,10 +2209,7 @@ function enzyme_custom_common_rev(
     debug_from_orig!(gutils, res, orig)
 
     callconv!(res, callconv(llvmf))
-    copy_extension_attrs!(res, llvmf)
-    if swiftself
-        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1 + (sret !== nothing) + (returnRoots !== nothing)), EnumAttribute("swiftself"))
-    end
+    copy_abi_attrs!(res, llvmf)
 
     hasNoRet = has_fn_attr(llvmf, EnumAttribute("noreturn"))
 
