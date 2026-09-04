@@ -7326,10 +7326,6 @@ end
     # Owner of an entry instance that Enzyme keeps to itself (every ABI but `InlineABI`).
     struct ThunkEntryOwner end
 
-    # Signature carrier: one method instance per thunk, distinguished by `Val{key}`.
-    enzyme_thunk_entry(::Val) = nothing
-    const THUNK_ENTRY_METHOD = only(methods(enzyme_thunk_entry))
-
     const CI_INVOKE_OFFSET = fieldoffset(Core.CodeInstance, Base.fieldindex(Core.CodeInstance, :invoke))
     const CI_SPECPTR_OFFSET = fieldoffset(Core.CodeInstance, Base.fieldindex(Core.CodeInstance, :specptr))
     const JL_FPTR_ARGS = Ref(C_NULL)
@@ -7349,10 +7345,7 @@ end
     # because these instances belong to `enzyme_thunk_entry`, a function of Enzyme's own that
     # nothing else dispatches to, reached solely through the entry Enzyme stored in it.
     function thunk_code_instance(key::UInt, native_owner::Bool)::Core.CodeInstance
-        mi = ccall(
-            :jl_specializations_get_linfo, Ref{Core.MethodInstance}, (Any, Any, Any),
-            THUNK_ENTRY_METHOD, Tuple{typeof(enzyme_thunk_entry), Val{key}}, Core.svec(),
-        )
+        mi = thunk_entry_mi(key)
         owner = native_owner ? nothing : ThunkEntryOwner()
         # Reuse the instance's own CodeInstance if one was already made for it.
         ci = isdefined(mi, :cache) ? mi.cache : nothing
@@ -7558,6 +7551,22 @@ end
 # emitted code for a given method instance.
 config_key(@nospecialize(job::CompilerJob))::UInt = hash(job.config.params)
 
+# Signature carrier: one method instance per differentiation, distinguished by `Val{key}`.
+# Enzyme's own results and entry points hang off instances of this function, which nothing
+# else dispatches to.
+enzyme_thunk_entry(::Val) = nothing
+const THUNK_ENTRY_METHOD = only(methods(enzyme_thunk_entry))
+
+function thunk_entry_mi(key::UInt)::Core.MethodInstance
+    return ccall(
+        :jl_specializations_get_linfo, Ref{Core.MethodInstance}, (Any, Any, Any),
+        THUNK_ENTRY_METHOD, Tuple{typeof(enzyme_thunk_entry), Val{key}}, Core.svec(),
+    )
+end
+
+# Identifies one differentiation: what is being differentiated and how.
+artifact_key(@nospecialize(job::CompilerJob))::UInt = hash(job.source.specTypes, config_key(job))
+
 # Link an artifact into this session's JIT, no compiler involved.
 function link_artifact!(@nospecialize(job::CompilerJob), art::ThunkArtifact)::CompileResult
     ts_ctx = JuliaContext()
@@ -7583,18 +7592,46 @@ end
 # The `EnzymeResults` attached to the primal-partition `CodeInstance` for `job`, or `nothing`
 # when there is no such CI or the runtime has no integrated cache (Julia 1.10, where
 # CompilerCaching is an empty shell). Results ride with the CI into a package image.
-@static if VERSION >= v"1.11.0-DEV.1552" && isdefined(GPUCompiler, :CompilerCaching) && isdefined(GPUCompiler.CompilerCaching, :CacheView)
+# Julia 1.12 and later. On 1.11 the integrated cache does not hold a `CodeInstance` of a
+# function of Enzyme's own -- the instance never reaches the method instance's cache, so
+# nothing is found again -- and the artifact tier is simply inactive there, as on 1.10.
+@static if VERSION >= v"1.12-" && isdefined(GPUCompiler, :CompilerCaching) && isdefined(GPUCompiler.CompilerCaching, :CacheView)
     const HAS_CI_RESULTS = true
+    results_cache(@nospecialize(job::CompilerJob)) =
+        GPUCompiler.CompilerCaching.CacheView{Any, EnzymeResults}(enzyme_cache_owner(job), job.world)
+
+    # The results attached to this differentiation, or `nothing` when this session has none
+    # that is still valid. They hang off a `CodeInstance` of Enzyme's own carrying the edges
+    # of the derivative, so that Julia invalidates them when anything the derivative was
+    # built from changes -- a custom rule in particular, whose redefinition leaves both the
+    # cache token (keyed on rule signatures) and the primal's own CodeInstance untouched.
     function enzyme_ci_results(@nospecialize(job::CompilerJob))::Union{Nothing, EnzymeResults}
         CC = GPUCompiler.CompilerCaching
-        view = CC.CacheView{Any, EnzymeResults}(enzyme_cache_owner(job), job.world)
-        ci = get(view, job.source, nothing)
+        cache = results_cache(job)
+        ci = get(cache, thunk_entry_mi(artifact_key(job)), nothing)
         ci === nothing && return nothing
-        return CC.results(EnzymeResults, ci)
+        return CC.results(cache, ci)
+    end
+
+    # As above, creating the instance (with `edges` as its dependencies) if there is none.
+    function enzyme_ci_results!(@nospecialize(job::CompilerJob), edges::Vector{Any})::Union{Nothing, EnzymeResults}
+        CC = GPUCompiler.CompilerCaching
+        cache = results_cache(job)
+        mi = thunk_entry_mi(artifact_key(job))
+        ci = get(cache, mi, nothing)
+        if ci === nothing
+            deps = CC.CompilationDependency[
+                e for e in edges if e isa Core.MethodInstance || e isa Core.CodeInstance
+            ]
+            ci = CC.create_ci(cache, mi; deps)
+            cache[mi] = ci
+        end
+        return CC.results(cache, ci)
     end
 else
     const HAS_CI_RESULTS = false
     enzyme_ci_results(@nospecialize(job::CompilerJob))::Union{Nothing, EnzymeResults} = nothing
+    enzyme_ci_results!(@nospecialize(job::CompilerJob), edges::Vector{Any})::Union{Nothing, EnzymeResults} = nothing
 end
 
 # The artifact stored for this codegen configuration on `res`, or `nothing`.
@@ -7634,8 +7671,9 @@ end
                 )
                 # Only a session-portable artifact is worth attaching to the CodeInstance
                 # (and serializing into a package image).
-                if res !== nothing && persist
-                    push!(res.entries, ck => art)
+                if persist
+                    attached = enzyme_ci_results!(job, asm[2])
+                    attached === nothing || push!(attached.entries, ck => art)
                 end
                 obj = _link(job, asm...)
             else

@@ -216,7 +216,9 @@ end
             (cur === nothing || LLVM.isnull(cur)) || continue
             gv = relocation_global!(mod, target.value)
             init = LLVM.const_addrspacecast(gv, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[])))
-            ty = LLVM.value_type(slot)
+            # The type of what the slot holds, not the slot's own pointer type: with typed
+            # pointers those differ, and an initializer of the wrong one is rejected.
+            ty = LLVM.global_value_type(slot)
             if LLVM.value_type(init) != ty
                 init = LLVM.const_pointercast(init, ty)
             end
