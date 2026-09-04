@@ -769,6 +769,34 @@ import .Interpreter: isKWCallSignature
     end
 end
 
+"""
+    resolve_relocations!(job, mod, meta)
+
+Resolve the Julia-value references of a freshly emitted primal module.
+
+GPUCompiler 2.x keeps those references symbolic — an `extinit` slot named after the value,
+with no initializer — and resolves them only for a toplevel job. A job compiled on behalf of
+another (`toplevel = false`), which is how a deferred derivative reaches Enzyme, would hand
+us those slots instead of addresses, and neither `absint` nor the shadow machinery can read
+one: the type argument of an allocation stops being statically known, and a constant global
+has no shadow. Resolve them here for the strategies whose addresses are session-local
+anyway, which is what a toplevel job would have done before we ever saw the module.
+
+A relocatable strategy (`:patch`, `:table`) deliberately has no address to substitute; such
+a module keeps its symbolic slots and the records travel on in `meta` for the linking job to
+lower. Nothing calls Enzyme that way yet.
+"""
+function resolve_relocations!(@nospecialize(job::CompilerJob), mod::LLVM.Module, meta)
+    @static if HAS_GPUCOMPILER_2
+        relocations = meta.relocations
+        if !isempty(relocations) && GPUCompiler.relocation_lowering(job) === :bake
+            GPUCompiler.prune_dead_relocations!(mod, relocations)
+            GPUCompiler.bake_relocations!(mod, relocations)
+        end
+    end
+    return nothing
+end
+
 
 mutable struct HandlerState
     primalf::Union{Nothing, LLVM.Function}
@@ -5612,6 +5640,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     # subsequent use of `mod` (e.g. `LLVM.context(mod)`) is a dynamic dispatch
     # through jl_apply_generic, which forces boxing and GC-rooting across it.
     mod = mod::LLVM.Module
+    resolve_relocations!(primal_job, mod, meta)
     edges = enzyme_context.edges
 
     primal_interp = GPUCompiler.get_interpreter(primal_job)
@@ -6510,9 +6539,10 @@ end
 
     use_primal = mode == API.DEM_ReverseModePrimal
     entry = use_primal ? augmented_primalf : adjointf
-    # GPUCompiler 2.x: a device job compiled on behalf of a kernel (`toplevel = false`) leaves
-    # its Julia-value references symbolic; hand the records on so the kernel's compiler can
-    # resolve them after linking (`link_relocatable!`). Host jobs have already resolved them.
+    # GPUCompiler 2.x: hand the relocation records on so that the job linking this module
+    # (`link_relocatable!`) can lower them. Under the `:bake` strategy they are already empty
+    # — either GPUCompiler resolved them for a toplevel job or `resolve_relocations!` did —
+    # and this is how a relocatable strategy's still-symbolic slots would travel.
     relocations = hasproperty(meta, :relocations) ? meta.relocations : nothing
     return mod, (; adjointf, augmented_primalf, entry, compiled = meta.compiled, TapeType, edges, relocations)
 end
