@@ -1420,6 +1420,121 @@ function nodecayed_phis!(mod::LLVM.Module)
     return nothing
 end
 
+function is_readonly_attr(attr::LLVM.Attribute)::Bool
+    k = kind(attr)
+    if k == kind(EnumAttribute("readonly")) || k == kind(EnumAttribute("readnone"))
+        return true
+    end
+    if LLVM.version().major > 15 && isa(attr, LLVM.EnumAttribute)
+        if k == kind(EnumAttribute("memory"))
+            return is_readonly(MemoryEffect(value(attr)))
+        end
+    end
+    return false
+end
+
+function is_sret_like_attr(attr::LLVM.Attribute)::Bool
+    sretkind = kind(
+        if LLVM.version().major >= 12
+            TypeAttribute("sret", LLVM.Int32Type())
+        else
+            EnumAttribute("sret")
+        end
+    )
+    k = kind(attr)
+    return k == sretkind ||
+        k == kind(StringAttribute("enzyme_sret")) ||
+        k == kind(StringAttribute("enzymejl_returnRoots")) ||
+        k == kind(StringAttribute("enzymejl_rooted_typ"))
+end
+
+"""
+    decay_args_readonly(st, fop, args)
+
+Whether the call `st` merely reads through each of the argument positions in
+`args`. That is the case when the position itself is marked `readonly` /
+`readnone`, or when the callee as a whole only reads memory -- which is how
+plain libcalls such as `memcmp` are annotated. Positions that carry an
+sret-like marker are never treated as read-only, since the callee writes the
+object back through them.
+"""
+function decay_args_readonly(
+        st::LLVM.CallInst,
+        @nospecialize(fop::LLVM.Value),
+        args::Vector{Int},
+    )::Bool
+    fn_readonly = false
+    for attr in collect(function_attributes(st))
+        if is_readonly_attr(attr)
+            fn_readonly = true
+            break
+        end
+    end
+    if !fn_readonly && isa(fop, LLVM.Function) && is_readonly(fop)
+        fn_readonly = true
+    end
+    for i in args
+        attrs = collect(argument_attributes(st, i))
+        if isa(fop, LLVM.Function)
+            append!(attrs, collect(parameter_attributes(fop, i)))
+        end
+        arg_readonly = fn_readonly
+        for attr in attrs
+            if is_sret_like_attr(attr)
+                return false
+            end
+            if is_readonly_attr(attr)
+                arg_readonly = true
+            end
+        end
+        if !arg_readonly
+            return false
+        end
+    end
+    return true
+end
+
+"""
+    legalize_readonly_decay!(st, inst, args)
+
+Rewrite the argument positions `args` of the read-only call `st`, all of which
+are the illegal `addrspace(10) -> addrspace(0)` cast `inst`, to use a legally
+derived pointer instead: decay to addrspace 11 and go through
+`julia.pointer_from_objref`, with the object gc-preserved across the call.
+Julia's late GC lowering understands that form; the raw cast it does not.
+"""
+function legalize_readonly_decay!(
+        st::LLVM.CallInst,
+        inst::LLVM.Instruction,
+        args::Vector{Int},
+    )
+    obj = operands(inst)[1]
+    nb = IRBuilder()
+    position!(nb, st)
+    token = emit_gc_preserve_begin(nb, LLVM.Value[obj])
+    derived = if LLVM.is_opaque(value_type(obj))
+        addrspacecast!(nb, obj, LLVM.PointerType(Derived))
+    else
+        T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+        addrspacecast!(
+            nb,
+            bitcast!(nb, obj, LLVM.PointerType(T_jlvalue, Tracked)),
+            LLVM.PointerType(T_jlvalue, Derived),
+        )
+    end
+    raw = emit_pointerfromobjref!(nb, derived)
+    if value_type(raw) != value_type(inst)
+        raw = bitcast!(nb, raw, value_type(inst))
+    end
+    for i in args
+        LLVM.API.LLVMSetOperand(st, i - 1, raw)
+    end
+    eb = IRBuilder()
+    position!(eb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
+    emit_gc_preserve_end(eb, token)
+    return nothing
+end
+
 function fix_decayaddr!(mod::LLVM.Module)
     for f in functions(mod)
         invalid = LLVM.Instruction[]
@@ -1440,8 +1555,20 @@ function fix_decayaddr!(mod::LLVM.Module)
 
         for inst in invalid
             temp = nothing
+            # A single user may consume `inst` in more than one operand, and the
+            # handlers below rewrite all of them at once. Snapshot the distinct
+            # users first so that detaching a use does not invalidate the
+            # iteration, and so that no user is visited twice.
+            seen = Set{LLVM.API.LLVMValueRef}()
+            users = LLVM.Value[]
             for u in LLVM.uses(inst)
-                st = LLVM.user(u)
+                user = LLVM.user(u)
+                if !(user.ref in seen)
+                    push!(seen, user.ref)
+                    push!(users, user)
+                end
+            end
+            for st in users
                 # Storing _into_ the decay addr is okay
                 # we just cannot store the decayed addr into
                 # somewhere
@@ -1590,6 +1717,22 @@ function fix_decayaddr!(mod::LLVM.Module)
                     LLVM.API.LLVMInstructionEraseFromParent(st)
                     continue
                 end
+
+                # An ordinary libcall such as `memcmp` is not an intrinsic that
+                # can be re-created over addrspace 10, and it has no sret to
+                # copy the object through either. Since it only reads through
+                # the pointer, hand it a legally derived one.
+                decay_args = Int[]
+                for (i, v) in enumerate(arg_operands_view(st))
+                    if v == inst
+                        push!(decay_args, i)
+                    end
+                end
+                if !isempty(decay_args) && decay_args_readonly(st, fop, decay_args)
+                    legalize_readonly_decay!(st, inst, decay_args)
+                    continue
+                end
+
                 mayread = false
                 maywrite = false
                 sret = true
