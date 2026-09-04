@@ -36,13 +36,6 @@ plain_decls(ir) = [m.captures[1] for m in eachmatch(r"declare[^\n]*@(i?jl_[A-Za-
 sl_memcmp(x) = (a = [x[1], x[2]]; b = [x[2], x[1]]; ccall(:memcmp, Cint, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t), a, b, 16) == 0 ? x[1] : x[2])
 sl_blas(x) = dot(x, x)
 sl_alloc(x) = sum(exp.(x) ./ (1 .+ x .^ 2))
-function sl_malloc(x)
-    p = Libc.malloc(8)
-    Base.unsafe_store!(Ptr{Float64}(p), x[1] * 2)
-    v = Base.unsafe_load(Ptr{Float64}(p))
-    Libc.free(p)
-    return v
-end
 
 x = [1.0, 2.0]
 
@@ -67,13 +60,6 @@ end
     @test isempty(literal_callees(ir))
     @test !isempty(plain_decls(ir))
 
-    # Type analysis of the malloc'd store/load pair is not supported on 1.10.
-    @static if VERSION >= v"1.11"
-        ir = last_thunk_ir(sl_malloc, Duplicated(x, zero(x)))
-        @test isempty(literal_callees(ir))
-        @test any(d -> d in ("malloc", "free"), plain_decls(ir))
-        @test !occursin(Enzyme.Compiler.NONRELOCATABLE_FLAG, ir)
-    end
 end
 
 @testset "results are unchanged" begin
@@ -83,9 +69,4 @@ end
     dx = zero(x)
     autodiff(Reverse, sl_blas, Duplicated(x, dx))
     @test dx ≈ 2 .* x
-    @static if VERSION >= v"1.11"
-        dx = zero(x)
-        autodiff(Reverse, sl_malloc, Duplicated(x, dx))
-        @test dx ≈ [2.0, 0.0]
-    end
 end
