@@ -109,15 +109,133 @@ function manifest(mod::LLVM.Module)
     return m
 end
 
+# An address baked into the code as an integer constant. Anything at or above this is taken
+# to be a pointer of this process rather than a genuine small integer.
+const MIN_BAKED_ADDRESS = UInt(1) << 16
+
+# Whether `v` is (or contains) an `inttoptr` of a process address.
+function has_baked_address(@nospecialize(v::LLVM.Value), seen::Base.IdSet{LLVM.Value})::Bool
+    isa(v, LLVM.ConstantExpr) || return false
+    v in seen && return false
+    push!(seen, v)
+    if opcode(v) == LLVM.API.LLVMIntToPtr
+        arg = operands(v)[1]
+        if isa(arg, LLVM.ConstantInt) && convert(UInt, arg) >= MIN_BAKED_ADDRESS
+            return true
+        end
+    end
+    for op in operands(v)
+        has_baked_address(op, seen) && return true
+    end
+    return false
+end
+
+"""
+    bakes_addresses(mod::LLVM.Module) -> Bool
+
+Whether `mod` refers to anything by an address of this process. Such a module cannot be
+reused by another session: the addresses are of Julia objects Julia's own codegen embedded
+(the `:bake` relocation strategy), of C functions no name could be found for, or of values
+folded from a constant. They are frequently on paths a happy-path test never runs, so this
+is checked rather than inferred.
+"""
+function bakes_addresses(mod::LLVM.Module)::Bool
+    seen = Base.IdSet{LLVM.Value}()
+    for g in globals(mod)
+        init = LLVM.initializer(g)
+        init === nothing || has_baked_address(init, seen) && return true
+    end
+    for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+        for op in operands(inst)
+            has_baked_address(op, seen) && return true
+        end
+    end
+    return false
+end
+
+# Whether a single value can be reconstructed in another process from its serialized form.
+function persistable_value(@nospecialize(v))::Bool
+    v = unbind(v)
+    return v isa Type || v isa Symbol || v isa String || v isa Module ||
+        v isa Core.MethodInstance || v isa Core.CodeInstance || v isa Method ||
+        (isbits(v) && !(v isa Ptr))
+end
+
 # Whether every target can be reconstructed in another process from its serialized form.
 function persistable(m::AbstractVector{<:Pair{String}})::Bool
     for (_, target) in m
-        v = unbind(target)
-        (
-            v isa Type || v isa Symbol || v isa String || v isa Module || v isa Core.MethodInstance ||
-                v isa Core.CodeInstance ||
-                v isa Method || (isbits(v) && !(v isa Ptr))
-        ) || return false
+        persistable_value(target) || return false
     end
     return true
+end
+
+# Adopting GPUCompiler's relocation metadata for the primal module.
+#
+# Julia's codegen refers to a Julia object through a word-sized slot global. GPUCompiler's
+# default `:bake` strategy fills that slot with the object's address, which puts an address
+# of this process into everything Enzyme emits. Enzyme asks for `:patch` instead
+# (`relocation_lowering`), which leaves the slots empty and hands back a manifest, and then
+# gives each slot an initializer that names the object (the `ejl_v_*` form of
+# `unsafe_to_llvm`) rather than an address. The slot and the loads through it are untouched,
+# so the shape Enzyme's activity and type analyses see is exactly the one they saw before;
+# only the address is gone. `JIT.prepare!` binds the name when the module is linked, and
+# `absint`/`try_replace_constant_load!` read the object back out of the registry so that
+# constant folding still works (see `relocation_slot_value`).
+@static if isdefined(GPUCompiler, :Relocations)
+
+    # The global whose *address* is the Julia object `val`, as `unsafe_to_llvm` emits it.
+    function relocation_global!(mod::LLVM.Module, @nospecialize(val))::LLVM.GlobalVariable
+        name = relocation_name(val)
+        globs = globals(mod)
+        haskey(globs, name) && return globs[name]
+        gv = LLVM.GlobalVariable(mod, LLVM.StructType(LLVM.LLVMType[]), name, Tracked)
+        API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
+        # Julia emits these slots only for compile-time-constant objects, which Enzyme has
+        # always treated as constants: the folded form in `try_replace_constant_load!` marks
+        # them inactive too. Without it a reference by name would ask for a shadow global
+        # that the primal has none of, where the address form asked for nothing.
+        API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+        return gv
+    end
+
+    """
+        adopt_relocations!(mod, relocations)
+
+    Point every relocation slot in `mod` at its Julia object by name instead of by address.
+    """
+    function adopt_relocations!(mod::LLVM.Module, relocations)::Nothing
+        relocations === nothing && return nothing
+        for rec in relocations.records
+            rec.kind === GPUCompiler.SlotSite || continue
+            target = rec.target
+            target isa GPUCompiler.JuliaValueRef || continue
+            globs = globals(mod)
+            haskey(globs, rec.name) || continue
+            slot = globs[rec.name]
+            cur = LLVM.initializer(slot)
+            (cur === nothing || LLVM.isnull(cur)) || continue
+            gv = relocation_global!(mod, target.value)
+            init = LLVM.const_addrspacecast(gv, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[])))
+            ty = LLVM.value_type(slot)
+            if LLVM.value_type(init) != ty
+                init = LLVM.const_pointercast(init, ty)
+            end
+            LLVM.initializer!(slot, init)
+            # linkage is left as codegen set it: the slot may be referenced from another
+            # module that Enzyme links in.
+        end
+        return nothing
+    end
+
+    # The Julia object a slot initialized by `adopt_relocations!` points at, or
+    # `(false, nothing)`: the initializer names the object instead of giving its address, so
+    # constant folding reads it out of the registry.
+    function relocation_slot_value(@nospecialize(init::LLVM.Value))::Tuple{Bool, Any}
+        gv, _ = get_base_and_offset(init; offsetAllowed = false, inttoptr = true)
+        isa(gv, LLVM.GlobalVariable) || return (false, nothing)
+        return relocation_value(LLVM.name(gv))
+    end
+else
+    adopt_relocations!(mod::LLVM.Module, relocations)::Nothing = nothing
+    relocation_slot_value(@nospecialize(init::LLVM.Value))::Tuple{Bool, Any} = (false, nothing)
 end
