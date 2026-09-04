@@ -86,3 +86,30 @@ end
         @test Enzyme.Compiler.absint_materialized_box(val) == (true, RelocConst{Float64}(0.0))
     end
 end
+
+# A derivative compiled on behalf of another job — `autodiff_deferred` reached from an outer
+# `autodiff` — is not a toplevel job, and GPUCompiler 2.x resolves a job's Julia-value
+# references only for toplevel ones. Enzyme resolves the rest itself; without that the type
+# argument of an allocation is a symbolic slot rather than a `DataType`, and the constant
+# globals reached from the deferred code have no shadow.
+@testset "deferred job sees resolved constants" begin
+    reloc_f(x) = sum(tanh, x)
+
+    function reloc_df!(dx, x)
+        make_zero!(dx)
+        autodiff_deferred(Reverse, Const(reloc_f), Active, Duplicated(x, dx))
+        return nothing
+    end
+
+    function reloc_hvp!(hv, v, x)
+        make_zero!(hv)
+        autodiff(Forward, reloc_df!, Const, Duplicated(make_zero(x), hv), Duplicated(x, v))
+        return nothing
+    end
+
+    x = [0.5]
+    v = [1.0]
+    hv = make_zero(v)
+    reloc_hvp!(hv, v, x)
+    @test hv ≈ [-2 * tanh(0.5) * sech(0.5)^2]
+end
