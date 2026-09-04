@@ -7240,38 +7240,45 @@ function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module
         )
     end
 
-    # Now invoke the JIT
-    jit_dylib = JIT.add!(mod)
-    adjoint_addr = JIT.lookup(jit_dylib, adjoint_name)
-
-    adjoint_ptr = pointer(adjoint_addr)
-    if adjoint_ptr === C_NULL
-        throw(
-            GPUCompiler.InternalCompilerError(
-                job,
-                "Failed to compile Enzyme thunk, adjoint not found",
-            ),
+    # The entry symbols may already be in the JIT: the same thunk is being linked again in a
+    # session that kept the ORC JIT but dropped its `ThunkCache` (a `reset_session!`), or two
+    # jobs share an entry. Adding the module again would duplicate the symbol, so reuse the
+    # existing definitions in that case; a fresh process has none and adds the module.
+    adjoint_ptr = JIT.lookup_or_null(adjoint_name)
+    if adjoint_ptr == C_NULL
+        JIT.add!(mod)
+        adjoint_ptr = pointer(JIT.lookup(adjoint_name))
+        adjoint_ptr == C_NULL && throw(
+            GPUCompiler.InternalCompilerError(job, "Failed to compile Enzyme thunk, adjoint not found"),
         )
     end
+    primal_ptr = if primal_name isa Nothing
+        C_NULL
+    else
+        p = pointer(JIT.lookup(primal_name))
+        p == C_NULL && throw(
+            GPUCompiler.InternalCompilerError(job, "Failed to compile Enzyme thunk, primal not found"),
+        )
+        p
+    end
+    return build_compile_result(job, adjoint_ptr, primal_ptr, adjoint_name, primal_name, TapeType, edges, prepost)
+end
+
+# Build a `CompileResult` of thunk handles from already-linked entry addresses.
+function build_compile_result(
+        @nospecialize(job::CompilerJob), adjoint_ptr::Ptr{Cvoid}, primal_ptr::Ptr{Cvoid},
+        adjoint_name::String, @nospecialize(primal_name::Union{String, Nothing}),
+        @nospecialize(TapeType), edges::Vector{Any}, prepost::String,
+    )
     adjoint = ThunkHandle(job.source, job.config, :adjoint)
     bind_thunk!(adjoint, LinkedThunk(adjoint_ptr, SESSION_EPOCH[], adjoint_name, prepost))
-    if primal_name isa Nothing
-        primal = nothing
+    primal = if primal_name isa Nothing
+        nothing
     else
-        primal_addr = JIT.lookup(jit_dylib, primal_name)
-        primal_ptr = pointer(primal_addr)
-        if primal_ptr === C_NULL
-            throw(
-                GPUCompiler.InternalCompilerError(
-                    job,
-                    "Failed to compile Enzyme thunk, primal not found",
-                ),
-            )
-        end
-        primal = ThunkHandle(job.source, job.config, :primal)
-        bind_thunk!(primal, LinkedThunk(primal_ptr, SESSION_EPOCH[], primal_name, prepost))
+        h = ThunkHandle(job.source, job.config, :primal)
+        bind_thunk!(h, LinkedThunk(primal_ptr, SESSION_EPOCH[], primal_name, prepost))
+        h
     end
-
     return CompileResult(adjoint, primal, TapeType, edges)
 end
 
@@ -7421,6 +7428,55 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
     return (mod, meta.edges, adjoint_name, primal_name, meta.TapeType, prepost)
 end
 
+# A codegen configuration key that is stable across sessions and package images (unlike a
+# world age or a pointer): everything in the compiler params, which fully determine the
+# emitted code for a given method instance.
+config_key(@nospecialize(job::CompilerJob))::UInt = hash(job.config.params)
+
+# Link an artifact into this session's JIT, no compiler involved.
+function link_artifact!(@nospecialize(job::CompilerJob), art::ThunkArtifact)::CompileResult
+    ts_ctx = JuliaContext()
+    ctx = context(ts_ctx)
+    activate(ctx)
+    try
+        # Re-establish the Julia value references the bitcode names (this session may not
+        # have emitted the module), then link as usual.
+        for (name, target) in art.manifest
+            register_relocation!(name, target)
+        end
+        mod = parse(LLVM.Module, MemoryBuffer(art.bitcode))
+        return _link(job, mod, art.edges, art.adjoint_name, art.primal_name, art.tape_type, art.prepost)
+    finally
+        deactivate(ctx)
+        dispose(ts_ctx)
+    end
+end
+
+# The `EnzymeResults` attached to the primal-partition `CodeInstance` for `job`, or `nothing`
+# when there is no such CI or the runtime has no integrated cache (Julia 1.10, where
+# CompilerCaching is an empty shell). Results ride with the CI into a package image.
+@static if VERSION >= v"1.11.0-DEV.1552" && isdefined(GPUCompiler, :CompilerCaching) && isdefined(GPUCompiler.CompilerCaching, :CacheView)
+    const HAS_CI_RESULTS = true
+    function enzyme_ci_results(@nospecialize(job::CompilerJob))::Union{Nothing, EnzymeResults}
+        CC = GPUCompiler.CompilerCaching
+        view = CC.CacheView{Any, EnzymeResults}(enzyme_cache_owner(job), job.world)
+        ci = get(view, job.source, nothing)
+        ci === nothing && return nothing
+        return CC.results(EnzymeResults, ci)
+    end
+else
+    const HAS_CI_RESULTS = false
+    enzyme_ci_results(@nospecialize(job::CompilerJob))::Union{Nothing, EnzymeResults} = nothing
+end
+
+# The artifact stored for this codegen configuration on `res`, or `nothing`.
+function find_artifact(res::EnzymeResults, ck::UInt)::Union{Nothing, ThunkArtifact}
+    for (k, art) in res.entries
+        k == ck && return art
+    end
+    return nothing
+end
+
 @inline function cached_compilation(@nospecialize(job::CompilerJob))::CompileResult
     key = hash(job)
     cache = THUNK_CACHE
@@ -7430,8 +7486,30 @@ end
     try
         obj = get(cache.thunks, key, nothing)
         if obj === nothing
-            asm = _thunk(job)
-            obj = _link(job, asm...)
+            # An artifact attached to the CodeInstance (possibly from a package image) lets a
+            # fresh session start the thunk without running enzyme-core again.
+            res = enzyme_ci_results(job)
+            ck = config_key(job)
+            art = res === nothing ? nothing : find_artifact(res, ck)
+            if art === nothing
+                asm = _thunk(job)
+                EMIT_COUNT[] += 1
+                mod = asm[1]
+                man = manifest(mod)
+                persist = persistable(man) && !haskey(LLVM.flags(mod), NONRELOCATABLE_FLAG)
+                art = ThunkArtifact(
+                    convert(Vector{UInt8}, convert(MemoryBuffer, mod)),
+                    asm[3], asm[4], asm[5], asm[2], asm[6], man, persist,
+                )
+                # Only a session-portable artifact is worth attaching to the CodeInstance
+                # (and serializing into a package image).
+                if res !== nothing && persist
+                    push!(res.entries, ck => art)
+                end
+                obj = _link(job, asm...)
+            else
+                obj = link_artifact!(job, art)
+            end
             cache.thunks[key] = obj
         end
         obj
