@@ -106,3 +106,58 @@ end
     compiled = joinpath(depot, "compiled", "v$(VERSION.major).$(VERSION.minor)")
     @test any(startswith(pkg), readdir(compiled))
 end
+
+# On Julia 1.12+ a compiled thunk's entry point is stored in the `specptr` of a
+# `CodeInstance` of `enzyme_thunk_entry`, found by a content-derived key, the same shape
+# Julia gives a natively compiled function.
+@testset "entry points live in CodeInstances" begin
+    C.HAS_CI_THUNKS || return
+    C.reset_session!()
+    @test autodiff(Reverse, th_sq, Active(3.0))[1][1] == 6.0
+    h = only(
+        hh for r in values(THUNK_CACHE.thunks) for hh in (r.adjoint, r.primal)
+            if hh isa C.ThunkHandle && hh.mi.specTypes.parameters[1] === typeof(th_sq)
+    )
+    l = C.current_link(h)
+    @test l.ci isa Core.CodeInstance
+    @test l.ci.specptr == l.ptr != C_NULL
+    @test l.ci.invoke != C_NULL          # jl_fptr_args, so the instance is callable
+    # The entry is Enzyme-owned: Julia never dispatches to it through `enzyme_thunk_entry`.
+    @test l.ci.owner isa C.ThunkEntryOwner
+    @test C.enzyme_thunk_entry(Val(UInt(0))) === nothing
+    @test C.thunk_pointer(h) == l.ptr
+    # The entry is published the way Julia publishes one, so the runtime's own reader
+    # returns it instead of waiting forever for the flag that says `invoke` and `specptr`
+    # agree (it spins on that flag whenever both are set).
+    flags = Ref{UInt8}(0)
+    invoke = Ref{Ptr{Cvoid}}(C_NULL)
+    specptr = Ref{Ptr{Cvoid}}(C_NULL)
+    @ccall jl_read_codeinst_invoke(
+        l.ci::Any, flags::Ptr{UInt8}, invoke::Ptr{Ptr{Cvoid}}, specptr::Ptr{Ptr{Cvoid}}, 0::Cint
+    )::Cvoid
+    @test specptr[] == l.ptr
+    @test flags[] & C.CI_INVOKE_MATCHES_SPECPTR != 0
+    # `invoke` is a real boxed-ABI wrapper: invoking the instance runs the thunk on boxed
+    # arguments and gives what a call of the thunk gives.
+    job = C.CompilerJob(h.mi, h.config, Base.get_world_counter())
+    key = C.thunk_entry_key(job, :adjoint)
+    expected = autodiff(Reverse, th_sq, Active(3.0))
+    @test Core.invoke(C.enzyme_thunk_entry, l.ci, Val(key), Const(th_sq), Active(3.0), 1.0) == expected
+
+    # The key is content-derived: the same thunk finds the same CodeInstance.
+    @test C.thunk_code_instance(key, job.world) === l.ci
+    @test C.thunk_entry_key(job, :primal) != key
+
+    # A new session reuses the instance and refreshes its entry point.
+    C.reset_session!()
+    @test autodiff(Reverse, th_sq, Active(5.0))[1][1] == 10.0
+    h2 = only(
+        hh for r in values(THUNK_CACHE.thunks) for hh in (r.adjoint, r.primal)
+            if hh isa C.ThunkHandle && hh.mi.specTypes.parameters[1] === typeof(th_sq)
+    )
+    l2 = C.current_link(h2)
+    @test l2.ci === l.ci
+    @test l2.ci.specptr == l2.ptr != C_NULL
+    @test Core.invoke(C.enzyme_thunk_entry, l2.ci, Val(key), Const(th_sq), Active(5.0), 1.0) ==
+        autodiff(Reverse, th_sq, Active(5.0))
+end

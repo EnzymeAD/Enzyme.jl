@@ -51,6 +51,10 @@ const EMIT_COUNT = Ref(0)
 # A compiled thunk entry point as linked into this session's JIT.
 struct LinkedThunk
     ptr::Ptr{Cvoid}
+    # On Julia 1.12+ the entry point lives in this `CodeInstance`'s `specptr` and `ptr` is a
+    # copy of it; `nothing` where the CodeInstance path is unavailable (see
+    # `thunk_code_instance`).
+    ci::Union{Nothing, Core.CodeInstance}
     epoch::UInt64
     # The symbol of the entry point and the module it was linked from (before
     # post-optimization), which nested differentiation splices into the outer module.
@@ -77,6 +81,9 @@ struct ThunkCache
     # Links made while generating a package image; they must not be stored on the handles,
     # which are serialized with the image.
     session_links::IdDict{ThunkHandle, LinkedThunk}
+    # The handle behind each entry-point CodeInstance linked in this session, for the boxed
+    # `invoke` wrapper of the instance (see `thunk_invoke_boxed`).
+    entry_handles::IdDict{Core.CodeInstance, ThunkHandle}
     tapes::Dict{UInt, Type}
     lock::ReentrantLock
 end
@@ -85,6 +92,7 @@ function ThunkCache()
     return ThunkCache(
         Dict{UInt, CompileResult}(),
         IdDict{ThunkHandle, LinkedThunk}(),
+        IdDict{Core.CodeInstance, ThunkHandle}(),
         Dict{UInt, Type}(),
         ReentrantLock(),
     )
@@ -108,6 +116,7 @@ function reset_session!()
     try
         empty!(THUNK_CACHE.thunks)
         empty!(THUNK_CACHE.session_links)
+        empty!(THUNK_CACHE.entry_handles)
         empty!(THUNK_CACHE.tapes)
     finally
         unlock(THUNK_CACHE.lock)

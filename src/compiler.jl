@@ -7301,15 +7301,150 @@ function build_compile_result(
         @nospecialize(TapeType), edges::Vector{Any}, prepost::String,
     )
     adjoint = ThunkHandle(job.source, job.config, :adjoint)
-    bind_thunk!(adjoint, LinkedThunk(adjoint_ptr, SESSION_EPOCH[], adjoint_name, prepost))
+    bind_thunk!(adjoint, LinkedThunk(adjoint_ptr, thunk_entry!(job, adjoint, adjoint_ptr), SESSION_EPOCH[], adjoint_name, prepost))
     primal = if primal_name isa Nothing
         nothing
     else
         h = ThunkHandle(job.source, job.config, :primal)
-        bind_thunk!(h, LinkedThunk(primal_ptr, SESSION_EPOCH[], primal_name, prepost))
+        bind_thunk!(h, LinkedThunk(primal_ptr, thunk_entry!(job, h, primal_ptr), SESSION_EPOCH[], primal_name, prepost))
         h
     end
     return CompileResult(adjoint, primal, TapeType, edges)
+end
+
+# Enzyme's derivative entry points as CodeInstances.
+#
+# A compiled thunk's entry point is stored in the `specptr` of a `CodeInstance` of the
+# synthetic function `enzyme_thunk_entry`, one per thunk, found by a content-derived key
+# (so the same thunk maps to the same method instance in any session). This is the same
+# shape Julia gives a natively compiled function, and the shape `bind_native_invokes!`
+# already reads for custom rules. The instance's `invoke` is a real boxed-ABI wrapper
+# (`thunk_invoke_boxed`), so `Core.invoke(enzyme_thunk_entry, ci, Val(key), fn, args...)`
+# runs the thunk on boxed arguments the way a call of any CodeInstance does.
+@static if VERSION >= v"1.12-"
+    const HAS_CI_THUNKS = true
+
+    # Owner of every entry instance. Julia's runtime only dispatches to, compiles, or reuses
+    # the code of instances under its own owner (`jl_rettype_inferred_native`,
+    # `jl_get_ci_equiv` both compare the owner), so an instance of Enzyme's is never
+    # reached through `enzyme_thunk_entry` itself, only through the entry Enzyme stored.
+    struct ThunkEntryOwner end
+
+    # Signature carrier: one method instance per thunk, distinguished by `Val{key}`.
+    enzyme_thunk_entry(::Val, args...) = nothing
+    const THUNK_ENTRY_METHOD = only(methods(enzyme_thunk_entry))
+
+
+    # The field that says whether `invoke` and `specptr` agree: `specsigflags` on 1.12,
+    # `flags` on 1.13. Bit 0b10 (`JL_CI_FLAGS_INVOKE_MATCHES_SPECPTR`) is the same on both.
+    const CI_FLAGS_FIELD = hasfield(Core.CodeInstance, :flags) ? :flags : :specsigflags
+    const CI_INVOKE_MATCHES_SPECPTR = UInt8(0b10)
+
+    # A key identifying this thunk across sessions: what it was compiled from, how, and which
+    # of the two entry points it is.
+    thunk_entry_key(@nospecialize(job::CompilerJob), which::Symbol)::UInt =
+        hash(which, hash(job.source.specTypes, config_key(job)))
+
+    # The `CodeInstance` holding the entry point for `key`, created (and rooted in the method
+    # instance's cache) on first use in this session, valid from `world` on. That is the
+    # job's world rather than the world counter: an entry is made from inside a generated
+    # function's generator, where the counter reads as "no world" (`~0`).
+    function thunk_code_instance(key::UInt, world::UInt)::Core.CodeInstance
+        mi = ccall(
+            :jl_specializations_get_linfo, Ref{Core.MethodInstance}, (Any, Any, Any),
+            THUNK_ENTRY_METHOD, Tuple{typeof(enzyme_thunk_entry), Val{key}, Vararg{Any}}, Core.svec(),
+        )
+        owner = ThunkEntryOwner()
+        # Reuse the instance's own CodeInstance if one was already made for it.
+        ci = isdefined(mi, :cache) ? mi.cache : nothing
+        while ci !== nothing
+            if ci.owner === owner && ci.max_world == typemax(UInt)
+                return ci
+            end
+            ci = isdefined(ci, :next) ? ci.next : nothing
+        end
+        ci = Core.CodeInstance(
+            mi, owner, Any, Any, nothing, nothing,
+            Int32(0), world, typemax(UInt), UInt32(0), nothing, nothing, Core.svec(),
+        )
+        ccall(:jl_mi_cache_insert, Cvoid, (Any, Any), mi, ci)
+        return ci
+    end
+
+    # The boxed-ABI wrapper of every entry instance, with the signature Julia gives an
+    # instance's `invoke` (`jl_callptr_t`): the function object, the boxed arguments, their
+    # count, and the instance. `Core.invoke(enzyme_thunk_entry, ci, Val(key), fn, args...)`
+    # lands here with `f = enzyme_thunk_entry` and `args = [Val(key), fn, args...]`. The
+    # marshalling to the entry's C ABI is the thunk object's own call (`enzyme_call`), so
+    # the wrapper rebuilds that object for the instance and calls it on the boxed arguments.
+    function thunk_invoke_boxed(@nospecialize(f), args::Ptr{Any}, nargs::UInt32, @nospecialize(ci))::Any
+        h = entry_handle(ci::Core.CodeInstance)
+        n = Int(nargs)
+        n >= 1 || throw(ArgumentError("Enzyme: a thunk entry takes at least its key"))
+        thunk_args = Vector{Any}(undef, n - 1)
+        for i in 2:n
+            thunk_args[i - 1] = unsafe_load(args, i)
+        end
+        return thunk_object(h)(thunk_args...)
+    end
+
+    thunk_invoke_pointer() = @cfunction(thunk_invoke_boxed, Any, (Any, Ptr{Any}, UInt32, Any))
+
+    # The handle behind `ci`, recorded when its entry was linked in this session.
+    function entry_handle(ci::Core.CodeInstance)::ThunkHandle
+        lock(THUNK_CACHE.lock)
+        try
+            h = get(THUNK_CACHE.entry_handles, ci, nothing)
+            h === nothing && error("Enzyme: this CodeInstance holds no thunk linked in this session")
+            return h
+        finally
+            unlock(THUNK_CACHE.lock)
+        end
+    end
+
+    # Store `ptr` as the entry point of `ci`, published the way Julia's JIT publishes one
+    # (`jl_compile_codeinst_now`): the entry first, then the `invoke` wrapper, then the
+    # flag saying the two agree. `jl_read_codeinst_invoke`, which every reader of an
+    # instance's entry in the runtime goes through, waits for that flag once it sees both
+    # pointers set; an instance published without it hangs such a reader forever. The
+    # entry is not a specialized signature of the instance's method (bit 0b01 stays clear),
+    # so a caller Julia compiles reaches it through `invoke` only, never by a direct call.
+    function set_thunk_entry!(ci::Core.CodeInstance, ptr::Ptr{Cvoid})
+        @atomic :release ci.specptr = ptr
+        @atomic :release ci.invoke = thunk_invoke_pointer()
+        Core.modifyfield!(ci, CI_FLAGS_FIELD, |, CI_INVOKE_MATCHES_SPECPTR, :release)
+        return ci
+    end
+
+    thunk_entry_pointer(ci::Core.CodeInstance)::Ptr{Cvoid} = ci.specptr
+else
+    const HAS_CI_THUNKS = false
+    thunk_entry_key(@nospecialize(job::CompilerJob), which::Symbol)::UInt = UInt(0)
+    thunk_code_instance(key::UInt, world::UInt) = nothing
+    set_thunk_entry!(ci, ptr::Ptr{Cvoid}) = ci
+    thunk_entry_pointer(::Nothing)::Ptr{Cvoid} = C_NULL
+end
+
+# The `CodeInstance` carrying the entry point of the thunk `h`, with `ptr` stored in it.
+function thunk_entry!(@nospecialize(job::CompilerJob), h::ThunkHandle, ptr::Ptr{Cvoid})
+    HAS_CI_THUNKS || return nothing
+    ci = thunk_code_instance(thunk_entry_key(job, h.which), job.world)
+    lock(THUNK_CACHE.lock)
+    try
+        THUNK_CACHE.entry_handles[ci] = h
+    finally
+        unlock(THUNK_CACHE.lock)
+    end
+    set_thunk_entry!(ci, ptr)
+    return ci
+end
+
+# The thunk object (the callable a user holds) whose entry point `h` is.
+function thunk_object(h::ThunkHandle)
+    job = CompilerJob(h.mi, h.config, GPUCompiler.tls_world_age())
+    objs = thunk_objects(compile_result!(job), job.config.params)
+    objs isa Tuple || return objs
+    return h.which === :primal ? objs[1] : objs[2]
 end
 
 # Record the link of `h` for this session. While a package image is being generated the
@@ -7346,23 +7481,28 @@ function current_link(h::ThunkHandle)::Union{Nothing, LinkedThunk}
     return nothing
 end
 
+# The compilation result of `job`, compiled and linked in this session if it is not yet.
+# Compiles in a context of our own: a link may be requested from anywhere, including from
+# inside another compilation (see `splice_thunk!`), whose context stays untouched.
+function compile_result!(@nospecialize(job::CompilerJob))::CompileResult
+    ts_ctx = JuliaContext()
+    ctx = context(ts_ctx)
+    activate(ctx)
+    return try
+        cached_compilation(job)
+    finally
+        deactivate(ctx)
+        dispose(ts_ctx)
+    end
+end
+
 # The link of `h` in this session, compiling the thunk again if this session has none: the
 # handle came from a package image, or the session was reset.
 function linked_thunk!(h::ThunkHandle)::LinkedThunk
     l = current_link(h)
     l === nothing || return l
     job = CompilerJob(h.mi, h.config, GPUCompiler.tls_world_age())
-    # Compile in a context of our own: a link may be requested from anywhere, including
-    # from inside another compilation (see `splice_thunk!`), whose context stays untouched.
-    ts_ctx = JuliaContext()
-    ctx = context(ts_ctx)
-    activate(ctx)
-    res = try
-        cached_compilation(job)
-    finally
-        deactivate(ctx)
-        dispose(ts_ctx)
-    end
+    res = compile_result!(job)
     other = h.which === :adjoint ? res.adjoint : res.primal
     other isa ThunkHandle || throw(
         GPUCompiler.InternalCompilerError(job, "Failed to relink Enzyme thunk, $(h.which) not found")
@@ -7379,7 +7519,12 @@ The entry point of the thunk `h` in this session. Never inlined: when a call of 
 differentiated, `check_ir` recognizes the call and binds the thunk statically instead.
 """
 @noinline function thunk_pointer(h::ThunkHandle)::Ptr{Cvoid}
-    return linked_thunk!(h).ptr
+    l = linked_thunk!(h)
+    ci = l.ci
+    # The entry point lives in the CodeInstance where there is one, read the way Julia reads
+    # a compiled function's entry; `ptr` is the fallback on versions without that path.
+    ci === nothing && return l.ptr
+    return thunk_entry_pointer(ci)
 end
 
 # What a thunk object hands to `enzyme_call`: the entry point of a handle, the pointer of a
@@ -7753,7 +7898,20 @@ end
             push!(edges, e)
         end
     end
-    if !run_enzyme
+    return thunk_objects(compile_result, params)
+end
+
+# The thunk objects for a compilation result: the callable(s) `thunkbase` hands out for a
+# job with `params`, a pair (augmented forward, adjoint) for split reverse mode and for a
+# primal that cannot be differentiated in reverse mode, a single thunk otherwise.
+function thunk_objects(compile_result::CompileResult, @nospecialize(params::EnzymeCompilerParams))
+    FA = params.TT.parameters[1]
+    TT = Tuple{params.TT.parameters[2:end]...}
+    rt2 = params.rt
+    width = params.width
+    ReturnPrimal = params.returnPrimal
+    Mode = params.mode
+    if !params.run_enzyme
         ErrT = PrimalErrorThunk{typeof(compile_result.adjoint),FA,rt2,TT,width,ReturnPrimal}
         if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
             return (ErrT(compile_result.adjoint), ErrT(compile_result.adjoint))
@@ -7766,7 +7924,7 @@ end
             typeof(compile_result.primal),
             FA,
             rt2,
-            Tuple{params.TT.parameters[2:end]...},
+            TT,
             width,
             ReturnPrimal,
             TapeType,
@@ -7775,7 +7933,7 @@ end
             typeof(compile_result.adjoint),
             FA,
             rt2,
-            Tuple{params.TT.parameters[2:end]...},
+            TT,
             width,
             TapeType,
         }
@@ -7785,7 +7943,7 @@ end
             typeof(compile_result.adjoint),
             FA,
             rt2,
-            Tuple{params.TT.parameters[2:end]...},
+            TT,
             width,
             ReturnPrimal,
         }
@@ -7795,7 +7953,7 @@ end
             typeof(compile_result.adjoint),
             FA,
             rt2,
-            Tuple{params.TT.parameters[2:end]...},
+            TT,
             width,
             ReturnPrimal,
         }
