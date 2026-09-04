@@ -455,6 +455,25 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
     if isa(addr, LLVM.GlobalVariable) && (haskey(metadata(addr), "julia.constgv") || !check_mutability)
         paddr = addr
         addr = LLVM.initializer(paddr)
+        # A slot `adopt_relocations!` made symbolic names its object instead of giving its
+        # address, so the object comes from the registry rather than from memory.
+        if addr !== nothing
+            found, obj = relocation_slot_value(addr)
+            if found
+                if check_mutability && isstructtype(Core.Typeof(obj)) && ismutable(obj) &&
+                        nameof(Core.Typeof(obj)) !== :GenericMemory
+                    return inst
+                end
+                b = IRBuilder()
+                position!(b, inst)
+                newf = unsafe_to_llvm(b, obj)
+                if do_replace
+                    replace_uses!(inst, newf)
+                    LLVM.API.LLVMInstructionEraseFromParent(inst)
+                end
+                return newf
+            end
+        end
         # Folding needs the object's address. A GPUCompiler 2.x job compiled on behalf of a
         # kernel (`toplevel = false`) keeps the slot symbolic until the kernel is linked, so
         # there is none yet; the load stays a load.

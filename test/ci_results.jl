@@ -55,6 +55,9 @@ end
         """
         module $pkg
         using Enzyme
+        # Refer to Julia objects by name, so the compiled thunk carries no address of the
+        # precompiling process and its artifact can be reused (see `SYMBOLIC_PRIMAL`).
+        Enzyme.Compiler.SYMBOLIC_PRIMAL[] = true
         f(x) = sin(x) * x
         grad(x) = Enzyme.autodiff(Reverse, f, Active(x))[1][1]
         const PRECOMPILED = grad(1.5)
@@ -64,6 +67,7 @@ end
     code = """
     pushfirst!(LOAD_PATH, $(repr(load_path)))
     using Enzyme, $pkg
+    Enzyme.Compiler.SYMBOLIC_PRIMAL[] = true
     Enzyme.Compiler.EMIT_COUNT[] = 0
     v = $pkg.grad(2.0)
     print(v, " ", Enzyme.Compiler.EMIT_COUNT[])

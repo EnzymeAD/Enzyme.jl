@@ -137,6 +137,30 @@ struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
     mode::API.CDerivativeMode
 end
 
+"""
+    SYMBOLIC_PRIMAL
+
+Whether the primal module refers to Julia objects by name instead of by address.
+
+With this set, GPUCompiler leaves Julia's value references as empty slots plus a manifest
+(`:patch`) and `adopt_relocations!` points each slot at its object by name, so the module
+carries no address of this process and its artifact can be reused by another session.
+
+Off by default: enzyme-core emits helper functions whose names embed the slot names, and
+GPUCompiler's `:patch` renames the slots to content-derived names, which leaves those
+helpers undefined at link time (a "Symbols not found" JIT error, then a segfault). Until
+that is resolved, the primal keeps Julia's baked addresses and `bakes_addresses` keeps the
+resulting artifacts out of the cross-session cache.
+"""
+const SYMBOLIC_PRIMAL = Ref(false)
+
+@static if isdefined(GPUCompiler, :Relocations)
+    GPUCompiler.relocation_lowering(
+        @nospecialize(job::CompilerJob{<:GPUCompiler.NativeCompilerTarget, <:PrimalCompilerParams})
+    ) = SYMBOLIC_PRIMAL[] ? :patch : :bake
+end
+
+
 function EnzymeCompilerParams(TT, mode, width, rt, run_enzyme, abiwrap,
                               modifiedBetween, returnPrimal, shadowInit,
                               expectedTapeType, ABI,
@@ -1517,7 +1541,10 @@ function nested_codegen!(
 
     GPUCompiler.prepare_job!(job)
     otherMod, meta = GPUCompiler.emit_llvm(job)
-    
+    # As in `compile_unhooked`: the module Julia hands back refers to objects through
+    # relocation slots, which must be pointed at their objects by name before it is used.
+    adopt_relocations!(otherMod::LLVM.Module, hasproperty(meta, :relocations) ? meta.relocations : nothing)
+
     interp = GPUCompiler.get_interpreter(job)
     prepare_llvm(interp, otherMod, job, meta)
 
@@ -5627,6 +5654,9 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     @safe_debug "Emit LLVM with" primal_job
     GPUCompiler.prepare_job!(primal_job)
     mod, meta = GPUCompiler.emit_llvm(primal_job)
+    # Julia's codegen refers to objects through relocation slots; turn them into Enzyme's
+    # symbolic references before anything else looks at the module.
+    adopt_relocations!(mod::LLVM.Module, hasproperty(meta, :relocations) ? meta.relocations : nothing)
     # `emit_llvm` is not concretely inferred, so without this assertion every
     # subsequent use of `mod` (e.g. `LLVM.context(mod)`) is a dynamic dispatch
     # through jl_apply_generic, which forces boxing and GC-rooting across it.
@@ -7594,7 +7624,10 @@ end
                 EMIT_COUNT[] += 1
                 mod = asm[1]
                 man = manifest(mod)
-                persist = persistable(man) && !haskey(LLVM.flags(mod), NONRELOCATABLE_FLAG)
+                # An address of this process anywhere in the module makes the artifact
+                # unusable by another session, whoever put it there.
+                persist = persistable(man) && !haskey(LLVM.flags(mod), NONRELOCATABLE_FLAG) &&
+                    !bakes_addresses(mod)
                 art = ThunkArtifact(
                     convert(Vector{UInt8}, convert(MemoryBuffer, mod)),
                     asm[3], asm[4], asm[5], asm[2], asm[6], man, persist,

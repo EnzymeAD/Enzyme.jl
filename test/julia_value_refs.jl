@@ -12,10 +12,14 @@ const THUNK_CACHE = C.THUNK_CACHE
 # for dynamic callees as the derivative runs, so there can be several), as kept for nested
 # differentiation. Only a first differentiation compiles anything.
 function thunk_irs(f, args...)
+    # A fresh session, and only this function's thunks: another test sharing the worker
+    # would otherwise leave thunks of its own in the cache.
+    Enzyme.Compiler.reset_session!()
     autodiff(Reverse, f, args...)
     irs = String[]
     for r in values(THUNK_CACHE.thunks), h in (r.adjoint, r.primal)
         h isa Enzyme.Compiler.ThunkHandle || continue
+        h.mi.specTypes.parameters[1] === typeof(f) || continue
         l = Enzyme.Compiler.current_link(h)
         l === nothing || push!(irs, l.modstr)
     end
