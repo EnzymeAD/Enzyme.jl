@@ -15,6 +15,39 @@ struct CompileResult{AT, PT}
     edges::Vector{Any}
 end
 
+# The session-portable product of differentiating one job: the post-optimized module as
+# bitcode, the entry symbols, the tape type, the invalidation edges, and (for nested
+# differentiation) the pre-optimization module string. Linking it (`link_artifact!`) needs
+# no compiler, only the JIT, so a fresh session can start a precompiled thunk from this
+# alone. `nothing` for the `InlineABI` mode, which carries its module in the thunk value.
+mutable struct ThunkArtifact
+    const bitcode::Vector{UInt8}
+    const adjoint_name::String
+    const primal_name::Union{Nothing, String}
+    const tape_type::Type
+    const edges::Vector{Any}
+    const prepost::String
+    # The Julia values the bitcode refers to symbolically (name => object), re-registered
+    # when the artifact is linked in another session (see `link_artifact!`).
+    const manifest::Vector{Pair{String, Any}}
+    # Whether the artifact is valid in another process: the manifest is reconstructible and
+    # no address of this session was baked into the bitcode.
+    const persistable::Bool
+end
+
+# The compilation results attached to a primal-partition `CodeInstance`: one artifact per
+# codegen configuration that reused that inference (keyed by `config_key`). On 1.11+ this
+# rides with the `CodeInstance`, including into a package image; a zero-arg constructor is
+# required for `CompilerCaching.results`.
+mutable struct EnzymeResults
+    const entries::Vector{Pair{UInt, ThunkArtifact}}
+    EnzymeResults() = new(Pair{UInt, ThunkArtifact}[])
+end
+
+# Counts calls to `emit` (a run of enzyme-core); tests assert a reloaded thunk does not
+# bump it.
+const EMIT_COUNT = Ref(0)
+
 # A compiled thunk entry point as linked into this session's JIT.
 struct LinkedThunk
     ptr::Ptr{Cvoid}

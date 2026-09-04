@@ -48,6 +48,22 @@ function relocation_name(@nospecialize(val))::String
     end
 end
 
+# Register `target` under a name computed elsewhere (e.g. from an artifact's manifest, in a
+# session that did not emit the module). Idempotent for an equal target.
+function register_relocation!(name::String, @nospecialize(target))
+    target = target isa Core.Binding ? target : root_value(unbind(target))
+    lock(RELOC_LOCK)
+    try
+        prev = get(RELOC_TARGETS, name, nothing)
+        if prev === nothing && !haskey(RELOC_TARGETS, name)
+            RELOC_TARGETS[name] = target
+        end
+    finally
+        unlock(RELOC_LOCK)
+    end
+    return name
+end
+
 is_relocation_name(gname::AbstractString) = startswith(gname, RELOC_PREFIX)
 
 # `(true, target)` for a registered global name, `(false, nothing)` otherwise.
