@@ -51,6 +51,10 @@ const EMIT_COUNT = Ref(0)
 # A compiled thunk entry point as linked into this session's JIT.
 struct LinkedThunk
     ptr::Ptr{Cvoid}
+    # On Julia 1.12+ the entry point lives in this `CodeInstance`'s `specptr` and `ptr` is a
+    # copy of it; `nothing` where the CodeInstance path is unavailable (see
+    # `thunk_code_instance`).
+    ci::Union{Nothing, Core.CodeInstance}
     epoch::UInt64
     # The symbol of the entry point and the module it was linked from (before
     # post-optimization), which nested differentiation splices into the outer module.
