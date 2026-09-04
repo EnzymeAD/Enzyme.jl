@@ -7271,15 +7271,104 @@ function build_compile_result(
         @nospecialize(TapeType), edges::Vector{Any}, prepost::String,
     )
     adjoint = ThunkHandle(job.source, job.config, :adjoint)
-    bind_thunk!(adjoint, LinkedThunk(adjoint_ptr, SESSION_EPOCH[], adjoint_name, prepost))
+    bind_thunk!(adjoint, LinkedThunk(adjoint_ptr, thunk_entry!(job, :adjoint, adjoint_ptr), SESSION_EPOCH[], adjoint_name, prepost))
     primal = if primal_name isa Nothing
         nothing
     else
         h = ThunkHandle(job.source, job.config, :primal)
-        bind_thunk!(h, LinkedThunk(primal_ptr, SESSION_EPOCH[], primal_name, prepost))
+        bind_thunk!(h, LinkedThunk(primal_ptr, thunk_entry!(job, :primal, primal_ptr), SESSION_EPOCH[], primal_name, prepost))
         h
     end
     return CompileResult(adjoint, primal, TapeType, edges)
+end
+
+# Enzyme's derivative entry points as CodeInstances.
+#
+# A compiled thunk's entry point is stored in the `specptr` of a `CodeInstance` of the
+# synthetic function `enzyme_thunk_entry`, one per thunk, found by a content-derived key
+# (so the same thunk maps to the same method instance in any session). This is the same
+# shape Julia gives a natively compiled function, and the shape `bind_native_invokes!`
+# already reads for custom rules; it also makes the entry reachable through `Core.invoke`
+# once an argument-ABI wrapper exists.
+@static if VERSION >= v"1.12-"
+    const HAS_CI_THUNKS = true
+
+    # Owner of an entry instance that Enzyme keeps to itself (every ABI but `InlineABI`).
+    struct ThunkEntryOwner end
+
+    # Signature carrier: one method instance per thunk, distinguished by `Val{key}`.
+    enzyme_thunk_entry(::Val) = nothing
+    const THUNK_ENTRY_METHOD = only(methods(enzyme_thunk_entry))
+
+    const CI_INVOKE_OFFSET = fieldoffset(Core.CodeInstance, Base.fieldindex(Core.CodeInstance, :invoke))
+    const CI_SPECPTR_OFFSET = fieldoffset(Core.CodeInstance, Base.fieldindex(Core.CodeInstance, :specptr))
+    const JL_FPTR_ARGS = Ref(C_NULL)
+
+    # A key identifying this thunk across sessions: what it was compiled from, how, and which
+    # of the two entry points it is.
+    thunk_entry_key(@nospecialize(job::CompilerJob), which::Symbol)::UInt =
+        hash(which, hash(job.source.specTypes, config_key(job)))
+
+    # The `CodeInstance` holding the entry point for `key`, created (and rooted in the method
+    # instance's cache) on first use in this session.
+    #
+    # `native_owner` claims Julia's own owner for the instance, so that Julia's compiler
+    # treats it as code it owns and may inline its body into a caller. That is what an
+    # `InlineABI` derivative is for, and it is only ever claimed for one: every other ABI
+    # keeps the instance under `ThunkEntryOwner`. Even for `InlineABI` the claim is contained,
+    # because these instances belong to `enzyme_thunk_entry`, a function of Enzyme's own that
+    # nothing else dispatches to, reached solely through the entry Enzyme stored in it.
+    function thunk_code_instance(key::UInt, native_owner::Bool)::Core.CodeInstance
+        mi = ccall(
+            :jl_specializations_get_linfo, Ref{Core.MethodInstance}, (Any, Any, Any),
+            THUNK_ENTRY_METHOD, Tuple{typeof(enzyme_thunk_entry), Val{key}}, Core.svec(),
+        )
+        owner = native_owner ? nothing : ThunkEntryOwner()
+        # Reuse the instance's own CodeInstance if one was already made for it.
+        ci = isdefined(mi, :cache) ? mi.cache : nothing
+        while ci !== nothing
+            if ci.owner === owner && ci.max_world == typemax(UInt)
+                return ci
+            end
+            ci = isdefined(ci, :next) ? ci.next : nothing
+        end
+        ci = Core.CodeInstance(
+            mi, owner, Nothing, Any, nothing, nothing,
+            Int32(0), Base.get_world_counter(), typemax(UInt), UInt32(0), nothing, nothing, Core.svec(),
+        )
+        ccall(:jl_mi_cache_insert, Cvoid, (Any, Any), mi, ci)
+        return ci
+    end
+
+    # Store `ptr` as the entry point of `ci`, in the order Julia uses: the entry first, then
+    # the `invoke` trampoline that reads it.
+    function set_thunk_entry!(ci::Core.CodeInstance, ptr::Ptr{Cvoid})
+        if JL_FPTR_ARGS[] == C_NULL
+            JL_FPTR_ARGS[] = unsafe_load(cglobal(:jl_fptr_args_addr, Ptr{Cvoid}))
+        end
+        base = Ptr{Ptr{Cvoid}}(pointer_from_objref(ci))
+        unsafe_store!(base + CI_SPECPTR_OFFSET, ptr)
+        unsafe_store!(base + CI_INVOKE_OFFSET, JL_FPTR_ARGS[])
+        return ci
+    end
+
+    thunk_entry_pointer(ci::Core.CodeInstance)::Ptr{Cvoid} = ci.specptr
+else
+    const HAS_CI_THUNKS = false
+    thunk_entry_key(@nospecialize(job::CompilerJob), which::Symbol)::UInt = UInt(0)
+    thunk_code_instance(key::UInt, native_owner::Bool) = nothing
+    set_thunk_entry!(ci, ptr::Ptr{Cvoid}) = ci
+    thunk_entry_pointer(::Nothing)::Ptr{Cvoid} = C_NULL
+end
+
+# The `CodeInstance` carrying the entry point of this thunk, with `ptr` stored in it.
+function thunk_entry!(@nospecialize(job::CompilerJob), which::Symbol, ptr::Ptr{Cvoid})
+    HAS_CI_THUNKS || return nothing
+    # Only an `InlineABI` derivative is handed to Julia as its own code (see
+    # `thunk_code_instance`); every other ABI keeps its entry instance Enzyme-owned.
+    ci = thunk_code_instance(thunk_entry_key(job, which), job.config.params.ABI <: InlineABI)
+    set_thunk_entry!(ci, ptr)
+    return ci
 end
 
 # Record the link of `h` for this session. While a package image is being generated the
@@ -7349,7 +7438,12 @@ The entry point of the thunk `h` in this session. Never inlined: when a call of 
 differentiated, `check_ir` recognizes the call and binds the thunk statically instead.
 """
 @noinline function thunk_pointer(h::ThunkHandle)::Ptr{Cvoid}
-    return linked_thunk!(h).ptr
+    l = linked_thunk!(h)
+    ci = l.ci
+    # The entry point lives in the CodeInstance where there is one, read the way Julia reads
+    # a compiled function's entry; `ptr` is the fallback on versions without that path.
+    ci === nothing && return l.ptr
+    return thunk_entry_pointer(ci)
 end
 
 # What a thunk object hands to `enzyme_call`: the entry point of a handle, the pointer of a
