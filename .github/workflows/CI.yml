@@ -45,6 +45,11 @@ jobs:
           - default
         assertions:
           - false
+        # A one-value dimension so that the `include:` entries below which only differ in
+        # `gpucompiler` overwrite a base value, and therefore add jobs instead of being
+        # merged into (and silently repurposing) the matching default combination.
+        gpucompiler:
+          - default
         libEnzyme: [local, packaged]
         exclude:
           - os: windows-latest
