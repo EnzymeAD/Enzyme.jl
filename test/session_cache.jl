@@ -10,29 +10,32 @@ session_sq(x) = x * x
     epoch = Enzyme.Compiler.SESSION_EPOCH[]
     @test isodd(epoch)
     @test isempty(THUNK_CACHE.thunks)
-    @test isempty(THUNK_CACHE.by_ptr)
+    @test isempty(THUNK_CACHE.session_links)
     @test isempty(THUNK_CACHE.tapes)
 
     @test autodiff(Reverse, session_sq, Active(3.0))[1][1] == 6.0
     n = length(THUNK_CACHE.thunks)
     @test n >= 1
-    # A JIT-linked thunk is findable by its function pointer.
-    @test length(THUNK_CACHE.by_ptr) >= 1
-    @test all(p -> p != C_NULL, keys(THUNK_CACHE.by_ptr))
+    # A compiled thunk is linked into this session's JIT.
+    for r in values(THUNK_CACHE.thunks)
+        l = Enzyme.Compiler.current_link(r.adjoint)
+        @test l !== nothing && l.ptr != C_NULL && l.epoch == epoch
+    end
 
     # Same job, same session: no new entry.
     @test autodiff(Reverse, session_sq, Active(4.0))[1][1] == 8.0
     @test length(THUNK_CACHE.thunks) == n
 
-    # A new session drops everything; new compilations land in the fresh cache. (The generated
-    # `thunk` method still returns the previously linked thunk for an already-seen signature, so
-    # the `Float64` call below does not repopulate the cache; a new signature does.)
+    # A new session drops everything; the already-seen signature is compiled and linked
+    # again on its next call (its thunk handle has no link in the new session), and a new
+    # signature lands in the fresh cache too.
     Enzyme.Compiler.reset_session!()
     @test Enzyme.Compiler.SESSION_EPOCH[] != epoch
     @test isempty(THUNK_CACHE.thunks)
     @test autodiff(Reverse, session_sq, Active(5.0))[1][1] == 10.0
-    @test autodiff(Reverse, session_sq, Active(5.0f0))[1][1] == 10.0f0
     @test length(THUNK_CACHE.thunks) == 1
+    @test autodiff(Reverse, session_sq, Active(5.0f0))[1][1] == 10.0f0
+    @test length(THUNK_CACHE.thunks) == 2
 end
 
 # Kernel-style signature, as KernelAbstractions' `EnzymeCore08Ext` uses `tape_type(job, …)`.

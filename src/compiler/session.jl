@@ -1,15 +1,49 @@
 # Session-scoped compilation state.
 #
 # Everything here is valid only within the current Julia process: JIT-linked `CompileResult`s
-# hold function pointers into Enzyme's ORC JIT, `by_ptr` maps those pointers back to the module
-# they were compiled from (used by `check_ir` to differentiate through a previously compiled
-# thunk), and `tapes` memoizes tape types per compiler job. None of it may survive into a package
+# hold the links of thunk entry points into Enzyme's ORC JIT, and `tapes` memoizes tape types
+# per compiler job. None of it may survive into a package
 # image, so `reset_session!` runs from `__init__` and at the end of the precompile workload.
 # Module-level caches that describe the current process belong here rather than in their own
 # `const Dict`s.
+# The result of compiling one differentiation job: the entry points (thunk handles for
+# `FFIABI`, inline modules for `InlineABI`), the tape type and the invalidation edges.
+struct CompileResult{AT, PT}
+    adjoint::AT
+    primal::PT
+    TapeType::Type
+    edges::Vector{Any}
+end
+
+# A compiled thunk entry point as linked into this session's JIT.
+struct LinkedThunk
+    ptr::Ptr{Cvoid}
+    epoch::UInt64
+    # The symbol of the entry point and the module it was linked from (before
+    # post-optimization), which nested differentiation splices into the outer module.
+    name::String
+    modstr::String
+end
+
+# What a thunk object holds in place of a function pointer: what it takes to compile (or
+# find) the entry point in any session, and the link of this session once it is known. A
+# thunk object is embedded as a constant in the generated `thunk` method's code, so it can
+# be loaded from a package image; `thunk_pointer` then compiles and links on first use.
+mutable struct ThunkHandle
+    const mi::Core.MethodInstance
+    const config::GPUCompiler.CompilerConfig
+    const which::Symbol   # :adjoint or :primal
+    @atomic linked::Union{Nothing, LinkedThunk}
+end
+
+ThunkHandle(mi::Core.MethodInstance, config::GPUCompiler.CompilerConfig, which::Symbol) =
+    ThunkHandle(mi, config, which, nothing)
+
 struct ThunkCache
     thunks::Dict{UInt, CompileResult}
-    by_ptr::Dict{Ptr{Cvoid}, Tuple{String, String}}
+    # Links made while generating a package image; they must not be stored on the handles,
+    # which are serialized with the image.
+    session_links::IdDict{ThunkHandle, LinkedThunk}
     tapes::Dict{UInt, Type}
     lock::ReentrantLock
 end
@@ -17,7 +51,7 @@ end
 function ThunkCache()
     return ThunkCache(
         Dict{UInt, CompileResult}(),
-        Dict{Ptr{Cvoid}, Tuple{String, String}}(),
+        IdDict{ThunkHandle, LinkedThunk}(),
         Dict{UInt, Type}(),
         ReentrantLock(),
     )
@@ -40,7 +74,7 @@ function reset_session!()
     lock(THUNK_CACHE.lock)
     try
         empty!(THUNK_CACHE.thunks)
-        empty!(THUNK_CACHE.by_ptr)
+        empty!(THUNK_CACHE.session_links)
         empty!(THUNK_CACHE.tapes)
     finally
         unlock(THUNK_CACHE.lock)
