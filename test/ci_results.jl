@@ -77,9 +77,10 @@ end
     val, emit = split(out)
     expected = cos(2.0) * 2.0 + sin(2.0)
     @test parse(Float64, val) ≈ expected
-    # Persistable artifacts need the symbolic primal, which comes next; what this guards
-    # is that loading the image and differentiating works at all (#1549).
-    @test parse(Int, emit) >= 0
+    # The artifact rides on the thunk's entry instance, whose signature names the package's
+    # function, so the image carries it and the reloaded thunk links from it without a run
+    # of enzyme-core.
+    @test parse(Int, emit) == 0
 end
 
 # A natively called custom rule (a `@noinline` rule, Julia 1.12+) is reached through its
