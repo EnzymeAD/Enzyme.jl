@@ -43,6 +43,13 @@ function absint_materialized_box(@nospecialize(arg::LLVM.Value))::Tuple{Bool, An
     if !isa(gv, LLVM.GlobalVariable) || !LLVM.isconstant(gv)
         return (false, nothing)
     end
+    # `materialize_box!` always names the replica `<slot>_box` (LLVM may append `.N` when
+    # linking modules). Requiring that keeps the header word below from being read out of an
+    # unrelated `{ integer, [n x i8] }` constant, where it would be dereferenced as a type
+    # pointer.
+    if !occursin(r"_box(\.[0-9]+)?$", LLVM.name(gv))
+        return (false, nothing)
+    end
     init = LLVM.initializer(gv)
     if init === nothing ||
             LLVM.API.LLVMGetValueKind(init) != LLVM.API.LLVMConstantStructValueKind
@@ -61,6 +68,13 @@ function absint_materialized_box(@nospecialize(arg::LLVM.Value))::Tuple{Bool, An
     payload = fields[hdr_idx + 1]
     payloadty = value_type(payload)
     if !isa(payloadty, LLVM.ArrayType) || eltype(payloadty) != LLVM.Int8Type()
+        return (false, nothing)
+    end
+    # LLVM canonicalizes an all-zero byte array to `zeroinitializer`, which is a
+    # `ConstantAggregateZero` rather than a `ConstantDataArray`. Asking such a constant for
+    # its elements through `LLVMGetElementAsConstant` is an invalid downcast (it segfaults),
+    # so decode the two representations separately.
+    if !isa(payload, LLVM.ConstantDataArray) && !isa(payload, LLVM.ConstantAggregateZero)
         return (false, nothing)
     end
 
@@ -82,11 +96,13 @@ function absint_materialized_box(@nospecialize(arg::LLVM.Value))::Tuple{Bool, An
     if n != Core.sizeof(T)
         return (false, nothing)
     end
-    bytes = Vector{UInt8}(undef, n)
-    for i in 1:n
-        el = LLVM.Value(LLVM.API.LLVMGetElementAsConstant(payload, Cuint(i - 1)))
-        isa(el, LLVM.ConstantInt) || return (false, nothing)
-        bytes[i] = convert(UInt8, el)
+    bytes = zeros(UInt8, n)
+    if isa(payload, LLVM.ConstantDataArray)
+        for i in 1:n
+            el = LLVM.Value(LLVM.API.LLVMGetElementAsConstant(payload, Cuint(i - 1)))
+            isa(el, LLVM.ConstantInt) || return (false, nothing)
+            bytes[i] = convert(UInt8, el)
+        end
     end
     obj = GC.@preserve bytes unsafe_load(Base.reinterpret(Ptr{T}, pointer(bytes)))
     return (true, obj)
