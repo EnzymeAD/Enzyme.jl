@@ -280,34 +280,11 @@ function symbolize_call_target!(mod::LLVM.Module, inst::LLVM.CallInst, fn::Strin
 end
 
 """
-    restore_native_invokes!(mod::LLVM.Module)
 
 Bind the declarations of natively called functions in `mod` to their entry
 addresses. `restore_lookups(mod; native_invokes = false)` skips them, so that
 the module can still be differentiated again while they are symbolic.
 """
-function restore_native_invokes!(mod::LLVM.Module)::Nothing
-    T_size_t = convert(LLVM.LLVMType, Int)
-    marker = StringAttribute("enzymejl_native_invoke")
-    for f in functions(mod)
-        has_fn_attr(f, marker) || continue
-        for fattr in collect(function_attributes(f))
-            if isa(fattr, LLVM.StringAttribute) && kind(fattr) == "enzymejl_needs_restoration"
-                v = parse(UInt, LLVM.value(fattr))
-                replace_uses!(
-                    f,
-                    LLVM.Value(
-                        LLVM.API.LLVMConstIntToPtr(
-                            ConstantInt(T_size_t, convert(UInt, v)),
-                            value_type(f),
-                        ),
-                    ),
-                )
-            end
-        end
-    end
-    return nothing
-end
 
 # Marks a module in which `restore_lookups` bound a callee to an address of this session.
 const NONRELOCATABLE_FLAG = "enzyme.nonrelocatable"
