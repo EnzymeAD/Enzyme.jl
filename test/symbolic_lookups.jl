@@ -8,11 +8,20 @@ using Enzyme, LinearAlgebra, Test
 
 const THUNK_CACHE = Enzyme.Compiler.THUNK_CACHE
 
-# The IR of the last thunk compiled, as kept for nested differentiation.
+# The modules of the thunks compiled for `f` in this session, as kept for nested differentiation.
+function thunk_modules(f)
+    irs = String[]
+    for e in Enzyme.Compiler.thunk_entries(f)
+        l = Enzyme.Compiler.thunk_link(e)
+        l === nothing || push!(irs, l.modstr)
+    end
+    return unique(irs)
+end
+
+# The IR of the thunk compiled for `f`.
 function last_thunk_ir(f, args...)
-    empty!(THUNK_CACHE.by_ptr)
     autodiff(Reverse, f, args...)
-    return first(values(THUNK_CACHE.by_ptr))[2]
+    return only(thunk_modules(f))
 end
 
 # A call whose callee is a literal address (opaque or typed pointers).

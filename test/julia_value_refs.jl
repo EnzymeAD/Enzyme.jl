@@ -12,9 +12,13 @@ const THUNK_CACHE = C.THUNK_CACHE
 # for dynamic callees as the derivative runs, so there can be several), as kept for nested
 # differentiation. Only a first differentiation compiles anything.
 function thunk_irs(f, args...)
-    empty!(THUNK_CACHE.by_ptr)
     autodiff(Reverse, f, args...)
-    return unique(map(last, values(THUNK_CACHE.by_ptr)))
+    irs = String[]
+    for e in Enzyme.Compiler.thunk_entries(f)
+        l = Enzyme.Compiler.thunk_link(e)
+        l === nothing || push!(irs, l.modstr)
+    end
+    return unique(irs)
 end
 
 value_globals(ir) = unique([m.captures[1] for m in eachmatch(r"@\"?(ejl_v_[0-9a-f_]+)", ir)])

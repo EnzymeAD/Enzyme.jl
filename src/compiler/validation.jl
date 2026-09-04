@@ -1059,6 +1059,80 @@ end
 import GPUCompiler:
     DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
+# The Julia object the argument of a thunk-entry call (`thunk_link!`, or `thunk_pointer` on
+# Julia 1.10 and 1.11) denotes: the thunk object is a compile-time constant of the caller,
+# so the argument is either that constant folded directly, or a load of one of its fields
+# from a constant slot (the shape the runtime rules produce). `inst` is the call, used to
+# compute constant-GEP offsets.
+function thunk_pointer_object(@nospecialize(v::LLVM.Value), inst::LLVM.Instruction)
+    legal, obj = absint(v)
+    legal && return (true, obj)
+    if isa(v, LLVM.LoadInst)
+        base, off = get_base_and_offset(operands(v)[1]; offsetAllowed = true, inttoptr = true, inst = inst)
+        if isa(base, LLVM.GlobalVariable) && haskey(metadata(base), "julia.constgv")
+            init = LLVM.initializer(base)
+            if init !== nothing
+                init, _ = get_base_and_offset(init; offsetAllowed = false, inttoptr = true)
+                isa(init, LLVM.ConstantInt) && (base = init)
+            end
+        end
+        if isa(base, LLVM.ConstantInt)
+            addr = convert(UInt, base) + off
+            ptr = unsafe_load(Base.reinterpret(Ptr{Ptr{Cvoid}}, addr))
+            ptr == C_NULL && return (false, nothing)
+            return (true, Base.unsafe_pointer_to_objref(ptr))
+        end
+    end
+    return (false, nothing)
+end
+
+# The thunk entry (an instance, or a handle on Julia 1.10 and 1.11) a thunk-entry call's
+# argument denotes, or `nothing`.
+function thunk_entry_argument(@nospecialize(v::LLVM.Value), inst::LLVM.Instruction)
+    legal, obj = thunk_pointer_object(v, inst)
+    legal || return nothing
+    return thunk_entry_argument(obj)
+end
+
+# Whether `dest` is the slow path of a thunk call, whose argument names the thunk: the
+# outer function calls a compiled thunk through its entry point.
+function is_thunk_entry_call(dest::LLVM.Function)::Bool
+    mi, _ = enzyme_custom_extract_mi(dest, false)
+    mi isa Core.MethodInstance || return false
+    @static if HAS_CI_THUNKS
+        return mi.def === thunk_link_method()
+    else
+        return mi.def === thunk_pointer_method()
+    end
+end
+
+# Link the module of the thunk `h` into `mod` and return its entry point, an always-inlined
+# internal function (the same thunk linked twice reuses the first copy).
+function splice_thunk!(mod::LLVM.Module, @nospecialize(h))::LLVM.Function
+    l = linked_thunk!(h)
+    pname = l.name
+    if haskey(functions(mod), pname)
+        return functions(mod)[pname]
+    end
+    pmod = parse(LLVM.Module, l.modstr)
+    @assert haskey(functions(pmod), pname)
+    for fn in functions(pmod)
+        if !isempty(LLVM.blocks(fn))
+            linkage!(fn, LLVM.name(fn) != pname ? LLVM.API.LLVMInternalLinkage : LLVM.API.LLVMExternalLinkage)
+        end
+    end
+    for glob in globals(pmod)
+        if LLVM.linkage(glob) == LLVM.API.LLVMExternalLinkage
+            LLVM.initializer!(glob, nothing)
+        end
+    end
+    LLVM.link!(mod, pmod)
+    replaceWith = functions(mod)[pname]
+    push!(function_attributes(replaceWith), EnumAttribute("alwaysinline"))
+    linkage!(replaceWith, LLVM.API.LLVMInternalLinkage)
+    return replaceWith
+end
+
 function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, inst::LLVM.CallInst, calls::Vector{LLVM.CallInst}, mod::LLVM.Module)
     world = job.world
     method_table = Core.Compiler.method_table(interp)
@@ -1079,6 +1153,34 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
     if isa(dest, LLVM.Function)
         fn = LLVM.name(dest)
+
+        # The slow path of a thunk call (`thunk_link!` on an instance, `thunk_pointer` on a
+        # handle): the outer function calls a compiled thunk through its entry point. Bind
+        # it statically, so that the thunk's code is differentiated through rather than
+        # called as an opaque pointer. On 1.12+ the call sits behind a check of the
+        # instance's entry slot, and its result meets the loaded slot in a phi: that phi is
+        # the entry the call site uses, so it is bound too.
+        if is_thunk_entry_call(dest)
+            h = thunk_entry_argument(operands(inst)[1], inst)
+            if h !== nothing
+                spliced = splice_thunk!(mod, h)
+                T_ptr = value_type(inst)
+                repl = if T_ptr isa LLVM.PointerType
+                    LLVM.const_pointercast(spliced, T_ptr)
+                else
+                    LLVM.const_ptrtoint(spliced, T_ptr)
+                end
+                for u in collect(LLVM.uses(inst))
+                    phi = LLVM.user(u)
+                    phi isa LLVM.PHIInst || continue
+                    replace_uses!(phi, repl)
+                    LLVM.API.LLVMInstructionEraseFromParent(phi)
+                end
+                replace_uses!(inst, repl)
+                LLVM.API.LLVMInstructionEraseFromParent(inst)
+                return errors
+            end
+        end
 
         # some special handling for runtime functions that we don't implement
         if fn == "jl_get_binding_or_error"
@@ -1601,36 +1703,6 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             end
             ptr_val = convert(Int, ptr_arg)
             ptr = Ptr{Cvoid}(ptr_val)
-
-            if haskey(THUNK_CACHE.by_ptr, ptr)
-                pname, pmod = THUNK_CACHE.by_ptr[ptr]
-
-                @assert !haskey(functions(mod), pname)
-
-                pmod = parse(LLVM.Module, pmod)
-
-                @assert haskey(functions(pmod), pname)
-
-                for fn in functions(pmod)
-                    if !isempty(LLVM.blocks(fn))
-                        linkage!(fn, LLVM.name(fn) != pname ? LLVM.API.LLVMInternalLinkage : LLVM.API.LLVMExternalLinkage)
-                    end
-                end
-
-                for glob in globals(pmod)
-                    if LLVM.linkage(glob) == LLVM.API.LLVMExternalLinkage
-                        LLVM.initializer!(glob, nothing)
-                    end
-                end
-
-                LLVM.link!(mod, pmod)
-
-                replaceWith = functions(mod)[pname]
-                push!(function_attributes(replaceWith), EnumAttribute("alwaysinline"))
-                linkage!(functions(mod)[pname], LLVM.API.LLVMInternalLinkage)
-                replace_uses!(ptr_arg, LLVM.const_pointercast(replaceWith, value_type(ptr_arg)))
-                return errors
-            end
 
             # look it up in the Julia JIT cache
             frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint), ptr, 0)
