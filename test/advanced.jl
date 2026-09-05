@@ -220,6 +220,19 @@ end
     @test autodiff(Reverse, f_dict, Duplicated(params, dparams), Active(5.0)) == ((nothing, 10.0),)
     @test dparams[:var] == 5.0
 
+    # A `String` key hashes through the `memhash_seed` ccall, so every dictionary operation
+    # here loads the symbol from a PLT stub. `check_ir` has to resolve each of those loads to
+    # the same declaration; resolving one to a bare address instead leaves Enzyme
+    # differentiating an anonymous call ("No create nofree of unknown value").
+    function f_strdict(x)
+        d = Dict{String, Float64}()
+        d["a"] = x
+        d["bb"] = 2 * x
+        return d["a"] + d["bb"]
+    end
+
+    @test autodiff(Reverse, f_strdict, Active, Active(3.0))[1][1] == 3.0
+
 
     mutable struct MD
         v::Float64

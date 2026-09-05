@@ -478,6 +478,21 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
     return inst
 end
 
+# The symbol a PLT stub `stub` tail-calls once its `ijl_load_and_lookup` has been folded
+# away, or `nothing` while the stub still performs the lookup (or the fold left the callee
+# unsymbolized). `FT` is the call signature the got is loaded for, which is what tells the
+# stub's own call apart from any other it makes.
+function resolved_plt_callee(stub::LLVM.Function, FT::LLVM.FunctionType)
+    for bb in blocks(stub), inst in instructions(bb)
+        isa(inst, LLVM.CallInst) || continue
+        called_type(inst) == FT || continue
+        callee = LLVM.called_operand(inst)
+        isa(callee, LLVM.Function) || continue
+        return callee
+    end
+    return nothing
+end
+
 # The address a PLT stub's ccall cache slot `slot` (or the stub `stub` itself) already
 # carries as a constant, or `nothing` when the slot is still filled at runtime.
 function resolved_plt_address(slot::LLVM.GlobalVariable, stub::LLVM.Function)
@@ -603,13 +618,22 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                     end
                                 end
                             end
-                            # GPUCompiler 2.x may resolve the ccall cache slot before Enzyme
-                            # sees the module (`bake_relocations!`); optimization then folds
-                            # the lookup slow path away and the stub only compares the
-                            # resolved address. Take that address as the callee: the literal
-                            # call target is symbolized like any other below.
-                            resolved = found === nothing ? resolved_plt_address(opv, initfn) : nothing
-                            if found === nothing && resolved === nothing
+                            # `check_ir!` folds an `ijl_load_and_lookup` as soon as it walks
+                            # the stub it sits in, which erases the lookup this rewrite reads
+                            # the library and symbol from. Whether that happens before or after
+                            # the got loads is just the order the module lists its functions in,
+                            # which GPUCompiler 2.x changed. The fold leaves a call to the same
+                            # symbol behind, so prefer its callee; that keeps every load of one
+                            # got resolving to the one declaration, whatever the order was.
+                            callee = found === nothing ? resolved_plt_callee(initfn, FT) : nothing
+                            # Failing that, the stub still compares against the resolved
+                            # address, which at least names the right code.
+                            resolved = if found === nothing && callee === nothing
+                                resolved_plt_address(opv, initfn)
+                            else
+                                nothing
+                            end
+                            if found === nothing && callee === nothing && resolved === nothing
                                 msg = sprint() do io::IO
                                     println(
                                         io,
@@ -623,6 +647,11 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                     println(io, "opv=", string(opv))
                                 end
                                 throw(AssertionError(msg))
+                            end
+
+                            if callee !== nothing
+                                newf = callee
+                                @goto plt_resolved
                             end
 
                             if resolved !== nothing
