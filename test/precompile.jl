@@ -28,18 +28,50 @@ function precompile_test_harness(f)
     return nothing
 end
 
+# Options under which Julia ignores the package images it has and compiles from source
+# instead. The test process may well be running under them, `--check-bounds=yes` and coverage
+# being what CI tests with, and `Base.julia_cmd` would pass them on to the children, where
+# they would leave nothing here testing what it says it does.
+function ignores_pkgimages(arg::AbstractString)
+    return startswith(arg, "--check-bounds") || startswith(arg, "--code-coverage") ||
+        startswith(arg, "--track-allocation") || startswith(arg, "--inline") ||
+        startswith(arg, "--pkgimages")
+end
+
+function child_julia_cmd()
+    exec = String[arg for arg in Base.julia_cmd().exec if !ignores_pkgimages(arg)]
+    push!(exec, "--pkgimages=yes")
+    return Cmd(exec)
+end
+
+# Each child reports first whether it does have package images, so that a child which never
+# loaded one cannot quietly stand in for one that did.
+const CHILD_PREAMBLE = """
+print(Int(Base.JLOptions().use_pkgimages), " ", Int(Base.JLOptions().code_coverage), " ")
+flush(stdout)
+"""
+
 function child_command(load_path, code)
     return addenv(
-        `$(Base.julia_cmd()) --project=$(Base.active_project()) --startup-file=no -e $code`,
+        `$(child_julia_cmd()) --project=$(Base.active_project()) --startup-file=no -e $code`,
         "JULIA_LOAD_PATH" => join([load_path, "@", "@v#.#", "@stdlib"], Sys.iswindows() ? ";" : ":"),
     )
 end
 
-# Run a child, and give back whether it exited cleanly along with what it printed.
+# Run a child, and give back whether it exited cleanly along with the fields it printed. The
+# preamble is flushed before anything else runs, so those two come back even from a child
+# that dies partway.
 function run_child(load_path, code)
     out = IOBuffer()
-    ok = success(pipeline(child_command(load_path, code); stdout = out, stderr = devnull))
-    return ok, String(take!(out))
+    ok = success(
+        pipeline(
+            child_command(load_path, CHILD_PREAMBLE * code);
+            stdout = out, stderr = devnull,
+        )
+    )
+    fields = split(String(take!(out)))
+    @test length(fields) >= 2 && fields[1] == "1" && fields[2] == "0"
+    return ok, fields[3:end]
 end
 
 const USES_AD = """
@@ -84,10 +116,10 @@ const fwd_at_3 = (cos(3.0) * 3.0 - sin(3.0)) / 3.0^2
 
         # The first child writes the image, the second loads it.
         for _ in 1:2
-            ok, out = run_child(load_path, code)
+            ok, fields = run_child(load_path, code)
             @test ok
             if ok
-                rev3, fwd3 = split(out)
+                rev3, fwd3 = fields
                 @test parse(Float64, rev3) ≈ rev_at_3
                 @test parse(Float64, fwd3) ≈ fwd_at_3
             end
@@ -106,10 +138,10 @@ end
         print(EnzymePrecompileAtBuild.PRECOMPILED[1], " ", EnzymePrecompileAtBuild.PRECOMPILED[2])
         """
         for _ in 1:2
-            ok, out = run_child(load_path, values_code)
+            ok, fields = run_child(load_path, values_code)
             @test ok
             if ok
-                rev2, fwd2 = split(out)
+                rev2, fwd2 = fields
                 @test parse(Float64, rev2) ≈ 3 * 2.0^2
                 @test parse(Float64, fwd2) ≈ (cos(2.0) * 2.0 - sin(2.0)) / 2.0^2
             end
@@ -122,10 +154,10 @@ end
         using Enzyme, EnzymePrecompileAtBuild
         print(EnzymePrecompileAtBuild.rev(3.0), " ", EnzymePrecompileAtBuild.fwd(3.0))
         """
-        ok, out = run_child(load_path, call_code)
+        ok, fields = run_child(load_path, call_code)
         @test_broken ok
         if ok
-            rev3, fwd3 = split(out)
+            rev3, fwd3 = fields
             @test parse(Float64, rev3) ≈ rev_at_3
             @test parse(Float64, fwd3) ≈ fwd_at_3
         end
@@ -149,10 +181,10 @@ end
                  length(C.JIT.hnd_string_map), length(C.JIT.hnd_int_map))
         print(sum(sizes), " ", Enzyme.autodiff(Reverse, x -> x * x, Active(4.0))[1][1])
         """
-        ok, out = run_child(load_path, code)
+        ok, fields = run_child(load_path, code)
         @test ok
         if ok
-            cached, grad = split(out)
+            cached, grad = fields
             # Nothing the session that built the image compiled or looked up is left.
             @test parse(Int, cached) == 0
             # And a session that starts from nothing differentiates.
@@ -170,13 +202,13 @@ end
                 getfield(Enzyme, n) isa Module]
         fns = [m.f for m in mods if isdefined(m, :f)]
         if isempty(fns)
-            print("no workload function")   # the workload stopped leaving one behind
+            print("none")   # the workload stopped leaving a function behind
         else
             print(Enzyme.autodiff(Reverse, first(fns), Active(2.0))[1][1])
         end
         """
-        ok, out = run_child(load_path, workload_code)
-        if ok && out == "no workload function"
+        ok, fields = run_child(load_path, workload_code)
+        if ok && fields == ["none"]
             @test_skip ok
         else
             @test_broken ok
