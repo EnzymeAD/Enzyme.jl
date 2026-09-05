@@ -1513,8 +1513,8 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             ptr_val = convert(Int, ptr_arg)
             ptr = Ptr{Cvoid}(ptr_val)
 
-            if haskey(autodiff_cache, ptr)
-                pname, pmod = autodiff_cache[ptr]
+            if haskey(THUNK_CACHE.by_ptr, ptr)
+                pname, pmod = THUNK_CACHE.by_ptr[ptr]
 
                 @assert !haskey(functions(mod), pname)
 
