@@ -174,9 +174,34 @@ end
 #   :match    — the name resolves to `ptr`
 #   :mismatch — the name resolves to a different pointer, so it is the wrong name for `ptr`
 #   :unknown  — the name could not be resolved
-function resolve_symbol_name(fn::String, file::String, ptr::Ptr{Cvoid})::Symbol
+# `resolve_symbol` also returns the library the verdict was reached in, as a string that
+# `jl_load_and_lookup` accepts, or `nothing`: it names the library of a symbolic
+# `ejlstr\$fn\$lib` declaration (see `symbolize_call_target!`).
+resolve_symbol_name(fn::String, file::String, ptr::Ptr{Cvoid})::Symbol = resolve_symbol(fn, file, ptr)[1]
+
+# The library containing `ptr`, as a string `jl_load_and_lookup` accepts, or `nothing`.
+function library_of(ptr::Ptr{Cvoid})::Union{Nothing, String}
+    @static if Sys.iswindows()
+        return nothing
+    else
+        info = Ref(DlInfo(C_NULL, C_NULL, C_NULL, C_NULL))
+        if ccall(:dladdr, Cint, (Ptr{Cvoid}, Ref{DlInfo}), ptr, info) != 0 &&
+                info[].fname != C_NULL
+            fname = unsafe_string(info[].fname)
+            lib = Libdl.dlopen(fname, Libdl.RTLD_LAZY | Libdl.RTLD_NOLOAD; throw_error = false)
+            if lib !== nothing
+                Libdl.dlclose(lib)
+                return fname
+            end
+        end
+        return nothing
+    end
+end
+
+function resolve_symbol(fn::String, file::String, ptr::Ptr{Cvoid})::Tuple{Symbol, Union{Nothing, String}}
     hnd = C_NULL
     needsclose = false
+    libname = nothing
     @static if Sys.iswindows()
         # GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT
         href = Ref{Ptr{Cvoid}}(C_NULL)
@@ -195,14 +220,12 @@ function resolve_symbol_name(fn::String, file::String, ptr::Ptr{Cvoid})::Symbol
         info = Ref(DlInfo(C_NULL, C_NULL, C_NULL, C_NULL))
         if ccall(:dladdr, Cint, (Ptr{Cvoid}, Ref{DlInfo}), ptr, info) != 0 &&
                 info[].fname != C_NULL
-            lib = Libdl.dlopen(
-                unsafe_string(info[].fname),
-                Libdl.RTLD_LAZY | Libdl.RTLD_NOLOAD;
-                throw_error = false,
-            )
+            fname = unsafe_string(info[].fname)
+            lib = Libdl.dlopen(fname, Libdl.RTLD_LAZY | Libdl.RTLD_NOLOAD; throw_error = false)
             if lib !== nothing
                 hnd = lib
                 needsclose = true
+                libname = fname
             end
         end
     end
@@ -213,19 +236,47 @@ function resolve_symbol_name(fn::String, file::String, ptr::Ptr{Cvoid})::Symbol
         if lib !== nothing
             hnd = lib
             needsclose = true
+            libname = file
         end
     end
     if hnd == C_NULL
-        return :unknown
+        return (:unknown, nothing)
     end
     resolved = Libdl.dlsym(hnd, fn; throw_error = false)
     if needsclose
         Libdl.dlclose(hnd)
     end
     if resolved === nothing
-        return :unknown
+        return (:unknown, libname)
     end
-    return resolved == ptr ? (:match) : (:mismatch)
+    return (resolved == ptr ? (:match) : (:mismatch), libname)
+end
+
+# Whether the process resolves the symbol `fn` to `ptr`: the same search the JIT runs for
+# an undefined symbol (libjulia, libc and every library loaded globally). Such a
+# declaration keeps its plain name, which is also what Enzyme's rules match on, and is
+# never bound to an address.
+process_resolves(fn::String, ptr::Ptr{Cvoid})::Bool = LLVM.find_symbol(fn) == ptr
+
+# Declare a symbolic callee for a call through the literal pointer `ptr` that
+# `jl_lookup_code_address`/`resolve_symbol` identified as `fn` in `lib`: an
+# `ejlstr\$fn\$lib` declaration, resolved with `jl_load_and_lookup` when the module is
+# linked (`JIT.fix_ptr_lookup`), carrying `enzyme_math = fn` so that Enzyme's rules see the
+# real name. This is the same form the `jl_load_and_lookup` handling above produces, and
+# it is what keeps the module free of this session's addresses.
+function symbolize_call_target!(mod::LLVM.Module, inst::LLVM.CallInst, fn::String, lib::String)
+    FT = LLVM.FunctionType(LLVM.API.LLVMGetCalledFunctionType(inst))
+    fused_name = "ejlstr\$$fn\$$lib"
+    newf, _ = get_function!(mod, fused_name, FT)
+    decl = newf
+    while isa(decl, LLVM.ConstantExpr)
+        decl = operands(decl)[1]
+    end
+    if !has_fn_attr(decl, StringAttribute("enzyme_math", fn))
+        push!(function_attributes(decl), StringAttribute("enzyme_math", fn))
+    end
+    LLVM.API.LLVMSetOperand(inst, LLVM.API.LLVMGetNumOperands(inst) - 1, newf)
+    return nothing
 end
 
 """
@@ -258,6 +309,17 @@ function restore_native_invokes!(mod::LLVM.Module)::Nothing
     return nothing
 end
 
+# Marks a module in which `restore_lookups` bound a callee to an address of this session.
+const NONRELOCATABLE_FLAG = "enzyme.nonrelocatable"
+
+function mark_nonrelocatable!(mod::LLVM.Module)
+    fl = LLVM.flags(mod)
+    if !haskey(fl, NONRELOCATABLE_FLAG)
+        fl[NONRELOCATABLE_FLAG, LLVM.API.LLVMModuleFlagBehaviorWarning] = Metadata(ConstantInt(Int32(1)))
+    end
+    return nothing
+end
+
 function restore_lookups(mod::LLVM.Module; native_invokes::Bool = true)::Nothing
     T_size_t = convert(LLVM.LLVMType, Int)
     native_invoke = StringAttribute("enzymejl_native_invoke")
@@ -273,6 +335,10 @@ function restore_lookups(mod::LLVM.Module; native_invokes::Bool = true)::Nothing
             if isa(fattr, LLVM.StringAttribute)
                 if kind(fattr) == "enzymejl_needs_restoration"
                     v = parse(UInt, LLVM.value(fattr))
+                    if !has_fn_attr(f, native_invoke) && process_resolves(nm, Ptr{Cvoid}(v))
+                        # The JIT resolves the name itself; leave it symbolic.
+                        continue
+                    end
                     replace_uses!(
                         f,
                         LLVM.Value(
@@ -282,6 +348,7 @@ function restore_lookups(mod::LLVM.Module; native_invokes::Bool = true)::Nothing
                             ),
                         ),
                     )
+                    mark_nonrelocatable!(mod)
                 end
             end
         end
@@ -310,17 +377,32 @@ function restore_lookups(mod::LLVM.Module; native_invokes::Bool = true)::Nothing
                     repf,
                 )
                 eraseInst(mod, f)
+            elseif process_resolves(k, v)
+                # The JIT resolves the name itself; leave it symbolic.
+                continue
             else
-                replace_uses!(
-                    f,
-                    LLVM.Value(
-                        LLVM.API.LLVMConstIntToPtr(
-                            ConstantInt(T_size_t, convert(UInt, v)),
-                            value_type(f),
+                lib = library_of(v)
+                if lib !== nothing
+                    # Resolved when the module is linked, like the `jl_load_and_lookup`
+                    # targets above: `ejlstr\$k\$lib`, carrying the real name for Enzyme's
+                    # rules.
+                    attrs = LLVM.Attribute[StringAttribute("enzyme_math", k)]
+                    repf, _ = get_function!(mod, "ejlstr\$$k\$$lib", LLVM.function_type(f), attrs)
+                    replace_uses!(f, repf)
+                    eraseInst(mod, f)
+                else
+                    replace_uses!(
+                        f,
+                        LLVM.Value(
+                            LLVM.API.LLVMConstIntToPtr(
+                                ConstantInt(T_size_t, convert(UInt, v)),
+                                value_type(f),
+                            ),
                         ),
-                    ),
-                )
-                eraseInst(mod, f)
+                    )
+                    eraseInst(mod, f)
+                    mark_nonrelocatable!(mod)
+                end
             end
         end
     end
@@ -1570,12 +1652,30 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         # Windows with `__gmpz_init2`/`__gmpz_set_si`). Drop names that
                         # provably belong to a different address. Curated `FFI.ptr_map`
                         # names are trusted as-is.
-                        if length(fn) > 0 && !haskey(FFI.ptr_map, ptr) &&
-                                resolve_symbol_name(fn, string(file), ptr) == :mismatch
+                        verdict, lib = if length(fn) > 0
+                            resolve_symbol(fn, string(file), ptr)
+                        else
+                            (:unknown, nothing)
+                        end
+                        if verdict == :mismatch && !haskey(FFI.ptr_map, ptr)
                             fn = ""
                         end
 
-                        if length(fn) > 0
+                        if length(fn) > 0 && process_resolves(fn, ptr)
+                            # Resolved by the JIT from the process: a plain declaration.
+                            mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
+                            newf, _ = get_function!(mod, fn, LLVM.FunctionType(LLVM.API.LLVMGetCalledFunctionType(inst)))
+                            LLVM.API.LLVMSetOperand(inst, LLVM.API.LLVMGetNumOperands(inst) - 1, newf)
+                            fn = ""
+                            lfn = nothing
+                        elseif length(fn) > 0 && lib !== nothing &&
+                                (verdict == :match || haskey(FFI.ptr_map, ptr))
+                            # The library is known and the name verified (or curated):
+                            # keep the reference symbolic instead of binding the address.
+                            symbolize_call_target!(LLVM.parent(LLVM.parent(LLVM.parent(inst))), inst, fn, lib)
+                            fn = ""
+                            lfn = nothing
+                        elseif length(fn) > 0
                             mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
                             lfn = LLVM.API.LLVMGetNamedFunction(mod, fn)
                             if lfn != C_NULL
