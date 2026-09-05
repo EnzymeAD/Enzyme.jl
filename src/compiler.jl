@@ -7302,6 +7302,65 @@ const cache_lock = ReentrantLock()
 end
 
 """
+    clear_caches!()
+
+Empty every cache Enzyme keeps in a global, dropping what this session compiled, looked up
+and rooted along with them.
+
+Nearly all of it means something only to the session that filled it. A `CompileResult` holds
+the address the JIT gave a thunk, `captured_constants` roots objects because their addresses
+were written into that code, the rule and activity memos are keyed on world ages, and the
+`jl_load_and_lookup` handles are ones this process opened. Anything outliving the session
+must not carry them, which is why Enzyme's precompile workload ends with this call: what it
+left behind would otherwise be serialized into Enzyme's package image and inherited, dead,
+by every session that loads it.
+
+This is meant for the end of precompilation and not for a live session. It hands back the
+thunks the JIT compiled and unroots the objects their code refers to by address, so a thunk
+still held anywhere is left pointing at objects that may now be collected.
+
+Caches filled by `__init__` rather than by compiling are left alone: they are rebuilt per
+session and so never reach an image.
+"""
+function clear_caches!()
+    # Thunks, held as the addresses the JIT gave them, and the objects rooted because those
+    # addresses were written into their code.
+    empty!(cache)
+    empty!(autodiff_cache)
+    empty!(Enzyme.tape_cache)
+    empty!(Enzyme.captured_constants)
+
+    # Which rules apply, memoized against the world the methods were read in.
+    empty!(FRULE_CACHE)
+    empty!(RRULE_CACHE)
+    empty!(INACTIVE_CACHE)
+    empty!(EASY_RULE_CACHE)
+    empty!(NOALIAS_CACHE)
+    empty!(Interpreter.SigCache)
+    Interpreter.LastFwdWorld[] = Base.IdSet{Type}()
+    Interpreter.LastRevWorld[] = Base.IdSet{Type}()
+    Interpreter.LastInaWorld[] = Base.IdSet{Type}()
+
+    # Activity, and the world its `inactive_type` methods were last checked in. Left set, it
+    # tells a later session its own worlds need no check.
+    empty!(ActivityCache)
+    empty!(ActivityMethodCache)
+    ActivityWorldCache[] = 0
+
+    # The library handles `ejlstr$` and `ejlptr$` symbols were resolved through.
+    empty!(JIT.hnd_string_map)
+    empty!(JIT.hnd_int_map)
+
+    @static if VERSION < v"1.11.0-DEV.1552"
+        # Inference results, kept by Enzyme itself on versions where Julia's own cache does
+        # not hold them. The `CodeInstance`s carry `invoke` and `specptr` addresses.
+        empty!(GLOBAL_FWD_CACHE.dict)
+        empty!(GLOBAL_REV_CACHE.dict)
+    end
+    return nothing
+end
+
+"""
     instantiate_annotation(A, rt, width)
 
 Fill in the free parameters of a (possibly partially applied) activity annotation
