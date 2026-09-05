@@ -7436,6 +7436,9 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
             end
             string(mod)
         end
+        # The string above keeps the rule declarations symbolic for nested differentiation;
+        # the compiled module calls them through their CodeInstances.
+        bind_native_invokes!(mod)
         if job.config.params.ABI <: FFIABI || job.config.params.ABI <: NonGenABI
             if DumpPrePostOpt[]
                 API.EnzymeDumpModuleRef(mod.ref)
@@ -7450,11 +7453,9 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         end
         mstr
     else
+        bind_native_invokes!(mod)
         ""
     end
-    # The module string above keeps the rule declarations symbolic for nested
-    # differentiation; the compiled module binds them to their addresses.
-    restore_native_invokes!(mod)
     return (mod, meta.edges, adjoint_name, primal_name, meta.TapeType, prepost)
 end
 
@@ -7473,6 +7474,9 @@ function link_artifact!(@nospecialize(job::CompilerJob), art::ThunkArtifact)::Co
         # have emitted the module), then link as usual.
         for (name, target) in art.manifest
             register_relocation!(name, target)
+            # A natively called rule loads its entry point from its CodeInstance at run time;
+            # make sure the instance is compiled in this session before that happens.
+            target isa Core.CodeInstance && ensure_native_compiled!(target)
         end
         mod = parse(LLVM.Module, MemoryBuffer(art.bitcode))
         return _link(job, mod, art.edges, art.adjoint_name, art.primal_name, art.tape_type, art.prepost)
