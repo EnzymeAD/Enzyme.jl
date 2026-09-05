@@ -192,6 +192,19 @@ function lookup(name)
     LLVM.lookup(lljit, JITDylib(lljit), name)
 end
 
+# The address of `name` if the JIT already defines it, else `C_NULL`. `LLVM.lookup` raises
+# on an undefined symbol, so probe through the C API and clear the error.
+function lookup_or_null(name)::Ptr{Cvoid}
+    lljit = jit[].jit
+    addr = Ref{LLVM.API.LLVMOrcJITTargetAddress}()
+    err = LLVM.API.JLJITLookup(lljit, addr, name, true)
+    if err != C_NULL
+        LLVM.API.LLVMConsumeError(err)
+        return C_NULL
+    end
+    return reinterpret(Ptr{Cvoid}, addr[] % UInt)
+end
+
 function lookup(jd::JITDylib, name)
     LLVM.lookup(jit[].jit, jd, name)
 end
