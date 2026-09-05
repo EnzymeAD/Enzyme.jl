@@ -121,6 +121,22 @@ include("jitrules.jl")
 include("typeunstablerules.jl")
 include("parallelrules.jl")
 
+"""
+    is_jlcall_abi_wrapper(F::LLVM.Function)::Bool
+
+Whether `F` is one of Julia's `japi1_*` entry points, i.e. a method instance compiled
+with the jlcall ABI (`jl_value_t *(f, args, nargs)`) rather than with a specsig. Julia
+emits those for method instances that have no specialized signature, such as the
+compilation signature of a varargs method.
+
+Enzyme has no derivative for that calling convention, but a `julia.call` of such a
+wrapper means `f(args...)` and lays its operands out exactly as a `jl_apply_generic`
+call does, so the generic (dynamic dispatch) path handles it verbatim.
+"""
+@inline function is_jlcall_abi_wrapper(F::LLVM.Function)::Bool
+    return startswith(LLVM.name(F), "japi1")
+end
+
 @register_fwd function jlcall_fwd(B, orig, gutils, normalR, shadowR)
     F = operands(orig)[1]
     if isa(F, LLVM.Function)
@@ -164,6 +180,9 @@ include("parallelrules.jl")
         end
         if has_fn_attr(F, StringAttribute("enzyme_inactive"))
             return true
+        end
+        if is_jlcall_abi_wrapper(F)
+            return common_generic_fwd(2, B, orig, gutils, normalR, shadowR)
         end
     end
 
@@ -259,6 +278,9 @@ end
         end
         if has_fn_attr(F, StringAttribute("enzyme_inactive"))
             return true
+        end
+        if is_jlcall_abi_wrapper(F)
+            return common_generic_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
     end
 
@@ -360,6 +382,10 @@ end
             return nothing
         end
         if has_fn_attr(F, StringAttribute("enzyme_inactive"))
+            return nothing
+        end
+        if is_jlcall_abi_wrapper(F)
+            common_generic_rev(2, B, orig, gutils, tape)
             return nothing
         end
     end
