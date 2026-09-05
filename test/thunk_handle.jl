@@ -106,3 +106,43 @@ end
     compiled = joinpath(depot, "compiled", "v$(VERSION.major).$(VERSION.minor)")
     @test any(startswith(pkg), readdir(compiled))
 end
+
+# On Julia 1.12+ a compiled thunk's entry point is stored in the `specptr` of a
+# `CodeInstance` of `enzyme_thunk_entry`, found by a content-derived key, the same shape
+# Julia gives a natively compiled function.
+@testset "entry points live in CodeInstances" begin
+    C.HAS_CI_THUNKS || return
+    C.reset_session!()
+    @test autodiff(Reverse, th_sq, Active(3.0))[1][1] == 6.0
+    h = only(
+        hh for r in values(THUNK_CACHE.thunks) for hh in (r.adjoint, r.primal)
+            if hh isa C.ThunkHandle && hh.mi.specTypes.parameters[1] === typeof(th_sq)
+    )
+    l = C.current_link(h)
+    @test l.ci isa Core.CodeInstance
+    @test l.ci.specptr == l.ptr != C_NULL
+    @test l.ci.invoke != C_NULL          # jl_fptr_args, so the instance is callable
+    # An FFIABI entry stays Enzyme-owned; only an `InlineABI` one claims Julia's native
+    # owner, so that Julia may inline its body into a caller.
+    @test l.ci.owner isa C.ThunkEntryOwner
+    @test C.thunk_code_instance(UInt(0), true).owner === nothing
+    @test C.enzyme_thunk_entry(Val(UInt(0))) === nothing
+    @test C.thunk_pointer(h) == l.ptr
+
+    # The key is content-derived: the same thunk finds the same CodeInstance.
+    job = C.CompilerJob(h.mi, h.config, Base.get_world_counter())
+    key = C.thunk_entry_key(job, :adjoint)
+    @test C.thunk_code_instance(key, false) === l.ci
+    @test C.thunk_entry_key(job, :primal) != key
+
+    # A new session reuses the instance and refreshes its entry point.
+    C.reset_session!()
+    @test autodiff(Reverse, th_sq, Active(5.0))[1][1] == 10.0
+    h2 = only(
+        hh for r in values(THUNK_CACHE.thunks) for hh in (r.adjoint, r.primal)
+            if hh isa C.ThunkHandle && hh.mi.specTypes.parameters[1] === typeof(th_sq)
+    )
+    l2 = C.current_link(h2)
+    @test l2.ci === l.ci
+    @test l2.ci.specptr == l2.ptr != C_NULL
+end
