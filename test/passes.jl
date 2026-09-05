@@ -505,3 +505,123 @@ end # VERSION >= v"1.12"
         end
     end
 end
+
+@testset "fix_decayaddr! readonly libcall" begin
+    @test @filecheck begin
+        # `memcmp` is neither an intrinsic that can be rebuilt over addrspace 10
+        # nor an sret call, but it only reads through its pointers, so each
+        # decayed argument becomes a gc-preserved `julia.pointer_from_objref`.
+        @check_label "@cmp"
+        @check "gc_preserve_begin"
+        @check "addrspacecast"
+        @check_same "addrspace(11)"
+        @check "julia.pointer_from_objref"
+        @check "gc_preserve_begin"
+        @check "julia.pointer_from_objref"
+        @check "@memcmp"
+        @check "gc_preserve_end"
+        @check "gc_preserve_end"
+        LLVM.Context() do ctx
+            mod = parse(
+                LLVM.Module, """
+                source_filename = "start"
+                target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+                target triple = "x86_64-linux-gnu"
+
+                declare i32 @memcmp(i8* nocapture, i8* nocapture, i64) #1
+
+                define i32 @cmp({} addrspace(10)* %a, {} addrspace(10)* %b, i64 %n) #0 {
+                top:
+                  %pa = addrspacecast {} addrspace(10)* %a to i8*
+                  %pb = addrspacecast {} addrspace(10)* %b to i8*
+                  %r = call i32 @memcmp(i8* %pa, i8* %pb, i64 %n)
+                  ret i32 %r
+                }
+
+                attributes #0 = { "enzymejl_world"="1" }
+                attributes #1 = { nounwind readonly }
+                """
+            )
+
+            Enzyme.Compiler.fix_decayaddr!(mod)
+            string(mod)
+        end
+    end
+end
+
+@testset "fix_decayaddr! non-readonly libcall still rejected" begin
+    # Guard against the read-only path swallowing calls that write through the
+    # decayed pointer: those still need an sret to copy the object back.
+    LLVM.Context() do ctx
+        mod = parse(
+            LLVM.Module, """
+            source_filename = "start"
+            target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+            target triple = "x86_64-linux-gnu"
+
+            declare void @scribble(i8*, i64) #1
+
+            define void @wr({} addrspace(10)* %a, i64 %n) #0 {
+            top:
+              %pa = addrspacecast {} addrspace(10)* %a to i8*
+              call void @scribble(i8* %pa, i64 %n)
+              ret void
+            }
+
+            attributes #0 = { "enzymejl_world"="1" }
+            attributes #1 = { nounwind }
+            """
+        )
+
+        @test_throws AssertionError Enzyme.Compiler.fix_decayaddr!(mod)
+    end
+end
+
+# `memory(argmem: read)` and opaque `ptr` syntax need LLVM 16+.
+@static if LLVM.version() >= v"16"
+    @testset "fix_decayaddr! bcmp as Julia emits it" begin
+        @test @filecheck begin
+            # What `===` on a large padding-free immutable actually lowers to:
+            # LLVM rewrites the `memcmp` to `bcmp` because only the zero test
+            # survives, annotates it `memory(argmem: read)`, and Julia hangs a
+            # `jl_roots` bundle off the call. The bundle must come through
+            # untouched -- only the argument operands get rewritten.
+            @check_label "@egal"
+            @check "gc_preserve_begin"
+            @check "julia.pointer_from_objref"
+            @check "gc_preserve_begin"
+            @check "julia.pointer_from_objref"
+            @check "@bcmp"
+            @check_same "jl_roots"
+            @check "gc_preserve_end"
+            @check "gc_preserve_end"
+            LLVM.Context() do ctx
+                mod = parse(
+                    LLVM.Module, """
+                    source_filename = "start"
+                    target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+                    target triple = "x86_64-linux-gnu"
+
+                    declare i32 @bcmp(ptr nocapture, ptr nocapture, i64) #1
+
+                    define i8 @egal(ptr addrspace(10) %a, ptr addrspace(10) %b) #0 {
+                    top:
+                      %pa = addrspacecast ptr addrspace(10) %a to ptr
+                      %pb = addrspacecast ptr addrspace(10) %b to ptr
+                      %c = call i32 @bcmp(ptr %pa, ptr %pb, i64 1488) [ "jl_roots"(ptr addrspace(10) %a, ptr addrspace(10) %b) ]
+                      %eq = icmp eq i32 %c, 0
+                      %r = zext i1 %eq to i8
+                      ret i8 %r
+                    }
+
+                    attributes #0 = { "enzymejl_world"="1" }
+                    attributes #1 = { nofree nounwind willreturn memory(argmem: read) }
+                    """
+                )
+
+                Enzyme.Compiler.fix_decayaddr!(mod)
+                string(mod)
+            end
+        end
+    end
+end
