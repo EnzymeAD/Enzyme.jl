@@ -550,7 +550,8 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
 
         b = IRBuilder()
         position!(b, inst)
-        newf = unsafe_to_llvm(b, obj0; insert_name_if_not_exists = gname)
+        # A folded global constant was always marked inactive; keep that.
+        newf = unsafe_to_llvm(b, obj0; force_inactive = gname isa String)
         if do_replace
             replace_uses!(inst, newf)
             LLVM.API.LLVMInstructionEraseFromParent(inst)
@@ -1255,7 +1256,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 fname = String(map(Base.Fix1(convert, UInt8), collect(fname)[1:(end - 1)]))
             end
 
-            # Julia 1.13+: fname is an ejl_inserted GlobalVariable holding a Julia Symbol.
+            # Julia 1.13+: fname is a named global standing for a Julia Symbol.
             if !isa(fname, String)
                 legal2, sym = absint(fname_llvm)
                 if legal2

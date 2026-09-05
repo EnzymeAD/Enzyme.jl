@@ -550,6 +550,7 @@ const JuliaEnzymeNameMap = Dict{String,Any}(
     "enz_non_scalar_return_exc" => EnzymeNonScalarReturnException,
 )
 
+include("compiler/relocation.jl")
 include("absint.jl")
 include("llvm/transforms.jl")
 include("llvm/passes.jl")
