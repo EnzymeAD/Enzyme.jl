@@ -1,3 +1,31 @@
+# Home of the C-callable trampolines that enzyme-core calls back into.
+#
+# `@register_aug` and friends pair every rule with a `<rule>_cfunc` shim, and
+# `register_llvm_rules` hands enzyme-core a `@cfunction` pointer to each of the
+# 115 shims. A `@cfunction` target must be compiled eagerly, and the shims call
+# their rule through an `@inline` boundary, so building them in `Compiler` drags
+# every rule body through inference and codegen while the package precompiles.
+# That is roughly 22 of the 33 seconds Enzyme spends precompiling its module
+# body, and it buys very little: the rules are ordinary Julia functions that
+# would be compiled on demand anyway, the first time a differentiation reaches
+# one.
+#
+# Defining the shims here instead leaves the `@inline` unresolved, so only the
+# shim itself is compiled ahead of time and each rule is compiled on first use,
+# at full optimization, in `Compiler` where it is defined. The shims themselves
+# are pure argument forwarding, so `optimize = 0` costs nothing measurable, and
+# the extra dynamic dispatch is one per call enzyme-core hands to a rule.
+module RuleTrampolines
+
+    Base.Experimental.@compiler_options compile = min optimize = 0 infer = false
+
+    import ...Compiler
+    import ..LLVM
+    import ..API
+    import ..GradientUtils
+
+end # module RuleTrampolines
+
 macro register_aug(expr)
     decl = string(expr.args[1])
     name = decl[1:prevind(decl, findfirst('(', decl))]
@@ -7,7 +35,7 @@ macro register_aug(expr)
 
     expr2 = :(@inline $expr)
     res = quote
-        function $cname(
+        @eval RuleTrampolines function $cname(
                 B::LLVM.API.LLVMBuilderRef,
                 OrigCI::LLVM.API.LLVMValueRef,
                 gutils::API.EnzymeGradientUtilsRef,
@@ -16,7 +44,7 @@ macro register_aug(expr)
                 tapeR::Ptr{LLVM.API.LLVMValueRef},
             )::UInt8
             return UInt8(
-                $name(
+                Compiler.$name(
                     LLVM.IRBuilder(B),
                     LLVM.CallInst(OrigCI),
                     GradientUtils(gutils),
@@ -39,13 +67,13 @@ macro register_rev(expr)
     cname = Symbol(cname)
     expr2 = :(@inline $expr)
     res = quote
-        function $cname(
+        @eval RuleTrampolines function $cname(
                 B::LLVM.API.LLVMBuilderRef,
                 OrigCI::LLVM.API.LLVMValueRef,
                 gutils::API.EnzymeGradientUtilsRef,
                 tape::LLVM.API.LLVMValueRef,
             )::Cvoid
-            $name(
+            Compiler.$name(
                 LLVM.IRBuilder(B),
                 LLVM.CallInst(OrigCI),
                 GradientUtils(gutils),
@@ -65,7 +93,7 @@ macro register_fwd(expr)
     cname = Symbol(cname)
     expr2 = :(@inline $expr)
     res = quote
-        function $cname(
+        @eval RuleTrampolines function $cname(
                 B::LLVM.API.LLVMBuilderRef,
                 OrigCI::LLVM.API.LLVMValueRef,
                 gutils::API.EnzymeGradientUtilsRef,
@@ -73,7 +101,7 @@ macro register_fwd(expr)
                 shadowR::Ptr{LLVM.API.LLVMValueRef},
             )::UInt8
             return UInt8(
-                $name(
+                Compiler.$name(
                     LLVM.IRBuilder(B),
                     LLVM.CallInst(OrigCI),
                     GradientUtils(gutils),
@@ -94,7 +122,7 @@ macro register_diffuse(expr)
     cname = Symbol(cname)
     expr2 = :(@inline $expr)
     res = quote
-        function $cname(
+        @eval RuleTrampolines function $cname(
                 OrigCI::LLVM.API.LLVMValueRef,
                 gutils::API.EnzymeGradientUtilsRef,
                 val::LLVM.API.LLVMValueRef,
@@ -102,7 +130,7 @@ macro register_diffuse(expr)
                 mode::API.CDerivativeMode,
                 useDefault::Ptr{UInt8},
             )::UInt8
-            res = $name(
+            res = Compiler.$name(
                 LLVM.CallInst(OrigCI),
                 GradientUtils(gutils),
                 LLVM.Value(val),
@@ -2188,7 +2216,7 @@ macro augfunc(f)
     cname = Symbol(string(f) * "_cfunc")
     return :(
         @cfunction(
-            $cname,
+            RuleTrampolines.$cname,
             UInt8,
             (
                 LLVM.API.LLVMBuilderRef,
@@ -2206,7 +2234,7 @@ macro revfunc(f)
     cname = Symbol(string(f) * "_cfunc")
     return :(
         @cfunction(
-            $cname,
+            RuleTrampolines.$cname,
             Cvoid,
             (
                 LLVM.API.LLVMBuilderRef,
@@ -2222,7 +2250,7 @@ macro fwdfunc(f)
     cname = Symbol(string(f) * "_cfunc")
     return :(
         @cfunction(
-            $cname,
+            RuleTrampolines.$cname,
             UInt8,
             (
                 LLVM.API.LLVMBuilderRef,
@@ -2239,7 +2267,7 @@ macro diffusefunc(f)
     cname = Symbol(string(f) * "_cfunc")
     return :(
         @cfunction(
-            Compiler.$cname,
+            RuleTrampolines.$cname,
             UInt8,
             (
                 LLVM.API.LLVMValueRef,
