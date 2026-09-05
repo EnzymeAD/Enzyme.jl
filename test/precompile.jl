@@ -6,6 +6,11 @@ using Enzyme, Test
 # session (EnzymeAD/Enzyme.jl#1549). What follows pins down which parts of that already work
 # and which do not: the `@test_broken` cases are what precompilation support has to fix, and
 # the plain `@test` cases are what it must not regress.
+#
+# One of them Enzyme can already keep out of an image, and does: the caches its own workload
+# fills are emptied before the image is written. What no cache can help with is an address
+# baked into code that was compiled during precompilation, which is what the remaining broken
+# cases are.
 
 # Write the packages into a directory of their own and put it first on the child's load
 # path. The depot is the one this test runs under, so the packages precompile next to the
@@ -129,28 +134,35 @@ end
 
 @testset "Enzyme's own precompilation" begin
     precompile_test_harness() do load_path
-        # Enzyme differentiates in its `@compile_workload`, and the cache that fills is a
-        # global of Enzyme's, so it is serialized into Enzyme's image along with the
-        # addresses that session's JIT handed out. Every session that loads Enzyme inherits
-        # them.
+        # Enzyme differentiates in its `@compile_workload`, and the caches that fills are
+        # globals of Enzyme's, so whatever is left in them is serialized into Enzyme's image
+        # along with the addresses that session's JIT handed out. `clear_caches!` at the end
+        # of the workload is what keeps them out of it.
         code = """
         using Enzyme
-        print(length(Enzyme.Compiler.cache), " ",
-              Enzyme.autodiff(Reverse, x -> x * x, Active(4.0))[1][1])
+        C = Enzyme.Compiler
+        sizes = (length(C.cache), length(C.autodiff_cache), length(Enzyme.tape_cache),
+                 length(C.FRULE_CACHE), length(C.RRULE_CACHE), length(C.INACTIVE_CACHE),
+                 length(C.EASY_RULE_CACHE), length(C.NOALIAS_CACHE),
+                 length(C.Interpreter.SigCache), length(C.ActivityCache),
+                 length(C.ActivityMethodCache), Int(C.ActivityWorldCache[]),
+                 length(C.JIT.hnd_string_map), length(C.JIT.hnd_int_map))
+        print(sum(sizes), " ", Enzyme.autodiff(Reverse, x -> x * x, Active(4.0))[1][1])
         """
         ok, out = run_child(load_path, code)
         @test ok
         if ok
             cached, grad = split(out)
-            # Differentiating something new is unaffected by what the cache was left holding.
+            # Nothing the session that built the image compiled or looked up is left.
+            @test parse(Int, cached) == 0
+            # And a session that starts from nothing differentiates.
             @test parse(Float64, grad) ≈ 8.0
-            # Nothing of the session that built the image should still be in the cache.
-            @test_broken parse(Int, cached) == 0
         end
 
-        # And they are reachable. The workload differentiates a function that stays in
-        # Enzyme, so asking for that same derivative in a fresh session finds the entry the
-        # image carries and calls where that code used to be.
+        # An emptied cache is not the whole of it. The workload differentiates a function
+        # that stays in Enzyme, and the thunk that call goes through was compiled while
+        # Enzyme precompiled, so Enzyme's own image bakes in an address of that session just
+        # as a package image does. Asking for that derivative again calls it.
         workload_code = """
         using Enzyme
         mods = [getfield(Enzyme, n) for n in names(Enzyme; all = true) if
