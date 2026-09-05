@@ -694,8 +694,10 @@ end
 """
     autodiff_deferred(::ReverseMode, f, Activity, args::Annotation...)
 
-Same as [`autodiff`](@ref) but uses deferred compilation to support usage in GPU
-code, as well as high-order differentiation.
+Same as [`autodiff`](@ref) but uses deferred compilation, for use inside GPU kernels.
+Calling it on the host throws `Enzyme.Compiler.DeferredOnHostError`; use `autodiff` there,
+including for higher-order differentiation, where Enzyme differentiates through nested
+`autodiff` calls directly.
 """
 @inline function autodiff_deferred(
     mode::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,RABI,Holomorphic,ErrIfFuncWritten},
@@ -830,8 +832,9 @@ end
 """
     autodiff_deferred(::ForwardMode, f, Activity, args::Annotation...)
 
-Same as `autodiff(::ForwardMode, f, Activity, args...)` but uses deferred compilation to support usage in GPU
-code, as well as high-order differentiation.
+Same as `autodiff(::ForwardMode, f, Activity, args...)` but uses deferred compilation, for
+use inside GPU kernels. Calling it on the host throws `Enzyme.Compiler.DeferredOnHostError`;
+use `autodiff` there, including for higher-order differentiation.
 """
 @inline function autodiff_deferred(
     mode::ForwardMode{ReturnPrimal,RABI,ErrIfFuncWritten,RuntimeActivity,StrongZero},
@@ -1382,13 +1385,12 @@ The reverse function will return the derivative of `Active` arguments, updating 
 arguments in place. The same arguments to the forward pass should be provided, followed by
 the adjoint of the return (if the return is active), and finally the tape from the forward pass.
 
-Example:
+Like [`autodiff_deferred`](@ref), this is for use inside GPU kernels; on the host it throws
+`Enzyme.Compiler.DeferredOnHostError`, and [`autodiff_thunk`](@ref) is the entry point.
 
-```jldoctest
+Example (inside a kernel):
 
-A = [2.2]; ∂A = zero(A)
-v = 3.3
-
+```julia
 function f(A, v)
     res = A[1] * v
     A[1] = 0
@@ -1400,12 +1402,6 @@ forward, reverse = autodiff_deferred_thunk(ReverseSplitWithPrimal, TapeType, Con
 
 tape, result, shadow_result  = forward(Const(f), Duplicated(A, ∂A), Active(v))
 _, ∂v = reverse(Const(f), Duplicated(A, ∂A), Active(v), 1.0, tape)[1]
-
-result, ∂v, ∂A
-
-# output
-
-(7.26, 2.2, [3.3])
 ```
 """
 @inline function autodiff_deferred_thunk(

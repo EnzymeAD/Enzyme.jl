@@ -1550,7 +1550,7 @@ end
 
     function f_gradient_deferred!(dx, x, tmp)
         dtmp = make_zero(tmp)
-        autodiff_deferred(Reverse, Const(f_ip), Active, Duplicated(x, dx), Duplicated(tmp, dtmp))
+        autodiff(Reverse, Const(f_ip), Active, Duplicated(x, dx), Duplicated(tmp, dtmp))
         return nothing
     end
 
