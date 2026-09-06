@@ -4,9 +4,10 @@ using CUDA
 using Enzyme
 using Enzyme: EnzymeRules
 
-# The requirement of `T` is that all-bits-zero is a valid zero cotangent and that `+`
-# accumulates cotangents. This holds for floats, `Complex` of floats, and for isbits
-# structs built from them, including ones that mix floats with integers/`Bool`s.
+# The requirement of `T` is that it is isbits, so that a shadow can be zeroed leaf by leaf
+# and accumulated with a broadcast, and that `+` adds cotangents. This holds for floats,
+# `Complex` of floats, and for isbits structs built from them, including ones that mix
+# floats with integers/`Bool`s.
 @inline function _check_shadow_eltype(::Type{T}) where {T}
     isbitstype(T) || throw(ArgumentError(
         "Enzyme's CUDA copy rules zero and accumulate shadows with a memset and a " *
@@ -14,15 +15,53 @@ using Enzyme: EnzymeRules
     return nothing
 end
 
+# All-bits-zero is the correct zero cotangent for a float, for `Complex` of floats and for
+# an isbits aggregate built only out of those, so those are zeroed with a memset. A type
+# with any other leaf - an index, a flag, an enum - is not, since only the differentiable
+# fields should be zeroed, so it takes the element-wise path below.
+@generated _memset_zeroable(::Type{T}) where {T} = _memset_zeroable_impl(T)
+
+function _memset_zeroable_impl(::Type{T}) where {T}
+    (T <: AbstractFloat || T <: Complex{<:AbstractFloat}) && return true
+    (isbitstype(T) && !isprimitivetype(T)) || return false
+    return all(_memset_zeroable_impl, fieldtypes(T))
+end
+
+# What `make_zero!` does, restricted to isbits data: zero the floating point leaves and
+# leave everything else as it is.
+@inline _shadow_zero(x::AbstractFloat) = zero(x)
+@inline _shadow_zero(x::Complex{<:AbstractFloat}) = zero(x)
+@inline _shadow_zero(x::Tuple) = map(_shadow_zero, x)
+@inline _shadow_zero(x::NamedTuple) = NamedTuple{keys(x)}(map(_shadow_zero, values(x)))
+@inline _shadow_zero(x) = _shadow_zero_fields(x)
+
+@generated function _shadow_zero_fields(x::T) where {T}
+    (isbitstype(T) && fieldcount(T) > 0) || return :x
+    return Expr(:new, T, (:(_shadow_zero(getfield(x, $i))) for i in 1:fieldcount(T))...)
+end
+
+@inline function _zero_elements!(arr)
+    arr .= _shadow_zero.(arr)
+    return nothing
+end
+
 function _zero!(ptr::Ptr{T}, off::Integer, n::Integer) where {T}
     _check_shadow_eltype(T)
-    Base.Libc.memset(ptr + off * sizeof(T), 0, n * sizeof(T))
+    if _memset_zeroable(T)
+        Base.Libc.memset(ptr + off * sizeof(T), 0, n * sizeof(T))
+    else
+        _zero_elements!(unsafe_wrap(Array, ptr + off * sizeof(T), n; own = false))
+    end
     return nothing
 end
 function _zero!(ptr::CuPtr{T}, off::Integer, n::Integer) where {T}
     _check_shadow_eltype(T)
-    bytes = reinterpret(CuPtr{UInt8}, ptr + off * sizeof(T))
-    CUDA.memset(bytes, UInt8(0), n * sizeof(T))
+    if _memset_zeroable(T)
+        bytes = reinterpret(CuPtr{UInt8}, ptr + off * sizeof(T))
+        CUDA.memset(bytes, UInt8(0), n * sizeof(T))
+    else
+        _zero_elements!(unsafe_wrap(CuArray, ptr + off * sizeof(T), n; own = false))
+    end
     return nothing
 end
 
