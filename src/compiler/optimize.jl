@@ -11,7 +11,8 @@ LLVM.@module_pass "enzyme-fixup-julia" FixupJuliaCallingConventionPass
 LLVM.@module_pass "enzyme-fixup-julia-sret" FixupJuliaCallingConventionSRetPass
 LLVM.@module_pass "enzyme-fixup-batched-julia" FixupBatchedJuliaCallingConventionPass
 
-const RunAttributor = Ref(VERSION < v"1.12")
+import ..Enzyme: run_attributor
+const RunAttributor = run_attributor()
 
 function enzyme_attributor_pass!(mod::LLVM.Module)
     ccall(
