@@ -796,4 +796,62 @@ end
     @test Enzyme.autodiff(Forward, isdefined_field_walk, Duplicated(2.0, 1.0)) == (2.0,)
 end
 
+# Forward-mode shadow propagation through make_zero's `seen` IdDict (the
+# `jl_eqtable_get` / `jl_eqtable_put` bookkeeping). make_zero uses `seen` to
+# dedup aliased mutable objects, so forward-over-reverse over an aliased value
+# exercises both builtins. They previously had erroring forward rules
+# ("Not yet implemented forward for jl_eqtable_get"); see EnzymeAD/Enzyme.jl#3135.
+function aliased_sumsq(x)
+    return sum(abs2, x[1]) + sum(abs2, x[2])
+end
+
+@testset "forward-over-reverse through make_zero seen IdDict (jl_eqtable)" begin
+    RA_R = set_runtime_activity(Reverse)
+    RA_F = set_runtime_activity(Forward)
+    a = [1.0, 2.0, 3.0]
+    x = Any[a, a]  # aliased -> make_zero recurses through the `seen` IdDict
+    # loss(a) = 2*sum(abs2, a); gradient = 4a; Hessian = 4I, so HVP in any
+    # direction d is 4d. Seed the same direction in both aliases.
+    seed(d) = Any[copy(d), copy(d)]
+    r1 = Enzyme.autodiff(
+        RA_F,
+        Const(y -> Enzyme.gradient(RA_R, aliased_sumsq, y)[1]),
+        Duplicated(x, seed([1.0, 0.0, 0.0])),
+    )
+    @test r1[1][1] ≈ [4.0, 0.0, 0.0]
+    @test r1[1][2] ≈ [4.0, 0.0, 0.0]
+
+    r2 = Enzyme.autodiff(
+        RA_F,
+        Const(y -> Enzyme.gradient(RA_R, aliased_sumsq, y)[1]),
+        Duplicated(x, seed([0.0, 1.0, 0.0])),
+    )
+    @test r2[1][1] ≈ [0.0, 4.0, 0.0]
+    @test r2[1][2] ≈ [0.0, 4.0, 0.0]
+end
+
+# The same `jl_eqtable_get` / `jl_eqtable_put` forward rules also enable plain
+# forward-mode differentiation through Dict/IdDict build + lookup. Forward mode
+# stores the tangent directly as the shadow value, so an active scalar value
+# (which the reverse rule rejects via `eqtable_shadow_active`) is fine here.
+function dict_build_lookup(x)
+    d = Dict{Int, Float64}()
+    d[1] = x
+    d[2] = 2x
+    return d[1] + d[2]  # = 3x
+end
+function iddict_build_lookup(x)
+    d = IdDict{Any, Float64}()
+    k1 = [1]
+    k2 = [2]
+    d[k1] = x
+    d[k2] = 3x
+    return d[k1] + d[k2]  # = 4x
+end
+
+@testset "forward-mode through Dict/IdDict (jl_eqtable)" begin
+    @test Enzyme.autodiff(Forward, dict_build_lookup, Duplicated(5.0, 1.0)) == (3.0,)
+    @test Enzyme.autodiff(Forward, iddict_build_lookup, Duplicated(2.0, 1.0)) == (4.0,)
+end
+
 end  # module MakeZeroTests
