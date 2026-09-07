@@ -1,16 +1,10 @@
 using Enzyme, Test
 
-# Enzyme keeps what it compiles in globals of its own, and a thunk is held as the address of
-# the code the JIT emitted for it. Neither survives the process that produced it, so a
-# package that differentiates while it precompiles writes an image that refers to a dead
-# session (EnzymeAD/Enzyme.jl#1549). What follows pins down which parts of that already work
-# and which do not: the `@test_broken` cases are what precompilation support has to fix, and
-# the plain `@test` cases are what it must not regress.
-#
-# One of them Enzyme can already keep out of an image, and does: the caches its own workload
-# fills are emptied before the image is written. What no cache can help with is an address
-# baked into code that was compiled during precompilation, which is what the remaining broken
-# cases are.
+# A thunk is held by its entry-point `CodeInstance` (a handle on Julia 1.10 and 1.11) rather
+# than by the address the JIT gave its code, so a package that differentiates while it
+# precompiles writes an image whose derivatives can be called again once it is loaded
+# (EnzymeAD/Enzyme.jl#1549): the thunk is linked again in the session that loads it. What
+# follows pins that down, along with the caches Enzyme's own workload leaves out of its image.
 
 # Write the packages into a directory of their own and put it first on the child's load
 # path. The depot is the one this test runs under, so the packages precompile next to the
@@ -147,15 +141,14 @@ end
             end
         end
 
-        # Differentiating again from a loaded image is what does not work yet. The thunk the
-        # package image refers to was compiled by the process that precompiled it, so the
-        # call goes to an address that means nothing here and the child dies on it.
+        # Differentiating again from a loaded image: the thunks the image refers to are held
+        # by their entry instances, which link them again in this session.
         call_code = """
         using Enzyme, EnzymePrecompileAtBuild
         print(EnzymePrecompileAtBuild.rev(3.0), " ", EnzymePrecompileAtBuild.fwd(3.0))
         """
         ok, fields = run_child(load_path, call_code)
-        @test_broken ok
+        @test ok
         if ok
             rev3, fwd3 = fields
             @test parse(Float64, rev3) ≈ rev_at_3
@@ -173,7 +166,8 @@ end
         code = """
         using Enzyme
         C = Enzyme.Compiler
-        sizes = (length(C.THUNK_CACHE.thunks), length(C.THUNK_CACHE.by_ptr), length(C.THUNK_CACHE.tapes),
+        sizes = (length(C.THUNK_CACHE.thunks), length(C.THUNK_CACHE.session_links),
+                 length(C.THUNK_CACHE.tapes),
                  length(C.FRULE_MEMO.entries), length(C.RRULE_MEMO.entries),
                  length(C.INACTIVE_MEMO.entries), length(C.EASY_RULE_MEMO.entries),
                  length(C.NOALIAS_MEMO.entries), length(C.Interpreter.RULE_FAMILIES),
@@ -193,9 +187,9 @@ end
         end
 
         # An emptied cache is not the whole of it. The workload differentiates a function
-        # that stays in Enzyme, and the thunk that call goes through was compiled while
-        # Enzyme precompiled, so Enzyme's own image bakes in an address of that session just
-        # as a package image does. Asking for that derivative again calls it.
+        # that stays in Enzyme, and the thunk that call goes through is held by its entry
+        # instance in Enzyme's own image, just as in a package image. Asking for that
+        # derivative again links it in this session.
         workload_code = """
         using Enzyme
         mods = [getfield(Enzyme, n) for n in names(Enzyme; all = true) if
@@ -212,7 +206,8 @@ end
         if ok && fields == ["none"]
             @test_skip ok
         else
-            @test_broken ok
+            @test ok
+            ok && @test parse(Float64, only(fields)) ≈ 4.0
         end
     end
 end
