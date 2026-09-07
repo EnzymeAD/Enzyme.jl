@@ -1,11 +1,21 @@
 steps:
-  - label: "CUDA Julia v{{matrix.version}}"
+  - label: "CUDA Julia v{{matrix.version}} - GPUCompiler {{matrix.gpucompiler}}"
     matrix:
       setup:
         version:
           - "1.10"
           - "1.11"
           - "1.12"
+        # The default resolution now picks GPUCompiler 2.x, and with it the CUDA release
+        # built against it; "1" pins the 1.x compatibility path instead.
+        gpucompiler:
+          - "default"
+          - "1"
+      adjustments:
+        - with:
+            version: "1.11"
+            gpucompiler: "1"
+          skip: "GPU runners are scarce; 1.10 and 1.12 cover GPUCompiler 1.x"
     plugins:
       - JuliaCI/julia#v1:
           version: "{{matrix.version}}"
@@ -20,7 +30,13 @@ steps:
           using Pkg
           pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
           Pkg.develop(pkgs)
-          Pkg.add(PackageSpec(; name="CUDA", version="6"))' || exit 3
+          specs = [PackageSpec(; name="CUDA", version="6")]
+          gpucompiler = "{{matrix.gpucompiler}}"
+          if gpucompiler != "default"
+              push!(specs, PackageSpec(; name="GPUCompiler", version=gpucompiler))
+          end
+          Pkg.add(specs)
+          Pkg.status()' || exit 3
 
       echo "+++ Run tests"
       julia --color=yes --code-coverage=@ test/cuda.jl
@@ -52,13 +68,21 @@ steps:
 #     env:
 #       JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
 # 
-  - label: "Metal Julia v{{matrix.version}}"
+  - label: "Metal Julia v{{matrix.version}} - GPUCompiler {{matrix.gpucompiler}}"
     matrix:
       setup:
         version:
           - "1.10"
           - "1.11"
           - "1.12"
+        gpucompiler:
+          - "default"
+          - "1"
+      adjustments:
+        - with:
+            version: "1.11"
+            gpucompiler: "1"
+          skip: "1.10 and 1.12 cover GPUCompiler 1.x"
     plugins:
       - JuliaCI/julia#v1:
           version: "{{matrix.version}}"
@@ -73,7 +97,13 @@ steps:
           using Pkg
           pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
           Pkg.develop(pkgs)
-          Pkg.add([PackageSpec(; name="Metal")])' || exit 3
+          specs = [PackageSpec(; name="Metal")]
+          gpucompiler = "{{matrix.gpucompiler}}"
+          if gpucompiler != "default"
+              push!(specs, PackageSpec(; name="GPUCompiler", version=gpucompiler))
+          end
+          Pkg.add(specs)
+          Pkg.status()' || exit 3
 
       echo "+++ Run tests"
       julia --color=yes --code-coverage=@ test/metal.jl
