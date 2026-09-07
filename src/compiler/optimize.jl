@@ -220,10 +220,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
     
     run!(GCInvariantVerifierPass(strong=false), mod)
     
-    # Interior pointers become Derived first so that the phi rewrite below only
-    # ever sees the canonical addrspacecast-then-GEP shape.
-    rederive_tracked_geps!(mod)
-    nodecayed_phis!(mod)
+    canonicalize_gc_pointers!(mod)
                 
     run!(GCInvariantVerifierPass(strong=false), mod)
 end

@@ -1774,6 +1774,18 @@ function rederive_tracked_geps!(mod::LLVM.Module)
     return nothing
 end
 
+# Bring the module's GC pointers into the shape Enzyme's tape can hold: every
+# addrspace(10) value is a whole object and every cached pointer is rooted.
+# `rederive_tracked_geps!` establishes the first, moving interior pointers (and
+# phis/selects of them) into the Derived address space; `nodecayed_phis!` then
+# rewrites every Derived phi as a whole-object phi plus a byte offset, so it has
+# to run second.
+function canonicalize_gc_pointers!(mod::LLVM.Module)
+    rederive_tracked_geps!(mod)
+    nodecayed_phis!(mod)
+    return nothing
+end
+
 function fix_decayaddr!(mod::LLVM.Module)
     for f in functions(mod)
         invalid = LLVM.Instruction[]
