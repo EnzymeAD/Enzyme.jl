@@ -396,6 +396,10 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
     if isa(addr, LLVM.GlobalVariable) && (haskey(metadata(addr), "julia.constgv") || !check_mutability)
         paddr = addr
         addr = LLVM.initializer(paddr)
+        # Folding needs the object's address. A GPUCompiler 2.x job compiled on behalf of a
+        # kernel (`toplevel = false`) keeps the slot symbolic until the kernel is linked, so
+        # there is none yet; the load stays a load.
+        addr === nothing && return inst
         gname = LLVM.name(paddr) * "\$false"
         addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
         originally_tracked = true
@@ -403,6 +407,8 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
         paddr = operands(addr)[1]
         if isa(paddr, LLVM.GlobalVariable) && (haskey(metadata(paddr), "julia.constgv") || !check_mutability)
             addr = LLVM.initializer(paddr)
+            # As above: an unresolved slot has no address to fold to.
+            addr === nothing && return inst
             gname = LLVM.name(paddr) * "\$true"
             base_addr, _ = get_base_and_offset(addr; offsetAllowed = true, inttoptr = false)
             originally_tracked = true
@@ -470,6 +476,131 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
         return newf
     end
     return inst
+end
+
+# The symbol a PLT stub `stub` tail-calls once its `ijl_load_and_lookup` has been folded
+# away, or `nothing` while the stub still performs the lookup (or the fold left the callee
+# unsymbolized). `FT` is the call signature the got is loaded for, which is what tells the
+# stub's own call apart from any other it makes.
+function resolved_plt_callee(stub::LLVM.Function, FT::LLVM.FunctionType)
+    for bb in blocks(stub), inst in instructions(bb)
+        isa(inst, LLVM.CallInst) || continue
+        called_type(inst) == FT || continue
+        callee = LLVM.called_operand(inst)
+        isa(callee, LLVM.Function) || continue
+        return callee
+    end
+    return nothing
+end
+
+# The address a PLT stub's ccall cache slot `slot` (or the stub `stub` itself) already
+# carries as a constant, or `nothing` when the slot is still filled at runtime.
+function resolved_plt_address(slot::LLVM.GlobalVariable, stub::LLVM.Function)
+    addr = pointer_constant_value(LLVM.initializer(slot))
+    addr !== nothing && return addr
+    for bb in blocks(stub), inst in instructions(bb)
+        isa(inst, LLVM.ICmpInst) || continue
+        # The optimizer canonicalizes an `icmp` so that a constant operand is the right-hand
+        # one, so checking only the left-hand operand would never find the resolved address.
+        for op in operands(inst)
+            addr = pointer_constant_value(op)
+            addr !== nothing && return addr
+        end
+    end
+    return nothing
+end
+
+function pointer_constant_value(@nospecialize(c))
+    c === nothing && return nothing
+    if isa(c, LLVM.ConstantExpr) && opcode(c) == LLVM.API.LLVMIntToPtr
+        c = operands(c)[1]
+    end
+    isa(c, LLVM.ConstantInt) || return nothing
+    v = convert(UInt, c)
+    return v == 0 ? nothing : v
+end
+
+# The function a PLT stub `initfn` resolves through its `ijl_load_and_lookup` call `found`:
+# the library's bitcode definition when there is one to import, otherwise a declaration named
+# for the symbol and the library (`ejlstr$`/`ejlptr$`) that `restore_lookups` binds later.
+function plt_lookup_function!(
+        mod::LLVM.Module, found::LLVM.CallInst, inst::LLVM.Instruction, fname::String,
+        FT::LLVM.FunctionType, fn_got::LLVM.GlobalVariable, initfn::LLVM.Function,
+        opv::LLVM.Value, imported::Set{String},
+    )
+    legal1, arg1 = abs_cstring(operands(found)[1])
+    if !legal1
+        arg1, _ = get_base_and_offset(operands(found)[1]; offsetAllowed = false, inttoptr = true)
+        if isa(arg1, LLVM.PointerNull)
+            arg1 = LLVM.ConstantInt(0)
+        elseif !isa(arg1, LLVM.ConstantInt)
+            msg = sprint() do io::IO
+                println(
+                    io,
+                    "Enzyme internal error unsupported got(arg1)",
+                )
+                println(io, "inst=", inst)
+                println(io, "fname=", fname)
+                println(io, "FT=", FT)
+                println(io, "fn_got=", fn_got)
+                println(io, "init=", string(initfn))
+                println(io, "opv=", string(opv))
+                println(io, "found=", string(found))
+                println(io, "arg1=", string(arg1))
+            end
+            throw(AssertionError(msg))
+        end
+
+        arg1 = reinterpret(Ptr{Cvoid}, convert(UInt, arg1))
+    end
+
+    legal2, fname = abs_cstring(operands(found)[2])
+    if !legal2
+        msg = sprint() do io::IO
+            println(
+                io,
+                "Enzyme internal error unsupported got(fname)",
+            )
+            println(io, "inst=", inst)
+            println(io, "fname=", fname)
+            println(io, "FT=", FT)
+            println(io, "fn_got=", fn_got)
+            println(io, "init=", string(initfn))
+            println(io, "opv=", string(opv))
+            println(io, "found=", string(found))
+            println(io, "fname=", string(operands(found)[2]))
+        end
+        throw(AssertionError(msg))
+    end
+
+    newf = nothing
+    if arg1 isa AbstractString
+        found, newf = try_import_llvmbc(mod, arg1, fname, imported)
+    end
+    if newf isa Nothing
+        fused_name = if arg1 isa AbstractString
+            "ejlstr\$$fname\$$arg1"
+        else
+            if arg1 == reinterpret(Ptr{Nothing}, UInt(0x03))
+                fname
+            else
+                arg1 = reinterpret(UInt, arg1)
+                "ejlptr\$$fname\$$arg1"
+            end
+        end
+
+        newf, _ = get_function!(mod, fused_name, FT)
+
+        while isa(newf, LLVM.ConstantExpr)
+            newf = operands(newf)[1]
+        end
+        push!(function_attributes(newf), StringAttribute("enzyme_math", fname))
+        push!(function_attributes(newf), StringAttribute(PRESERVEPRIMAL_ATTR_KIND, "*"))
+        # TODO we can make this relocatable if desired by having restore lookups re-create this got initializer/etc
+        # metadata(newf)["enzymejl_flib"] = flib
+        # metadata(newf)["enzymejl_flib"] = flib
+    end
+    return newf
 end
 
 function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, f::LLVM.Function, deletedfns::Vector{LLVM.Function}, mod::LLVM.Module)
@@ -570,7 +701,22 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                     end
                                 end
                             end
-                            if found == nothing
+                            # `check_ir!` folds an `ijl_load_and_lookup` as soon as it walks
+                            # the stub it sits in, which erases the lookup this rewrite reads
+                            # the library and symbol from. Whether that happens before or after
+                            # the got loads is just the order the module lists its functions in,
+                            # which GPUCompiler 2.x changed. The fold leaves a call to the same
+                            # symbol behind, so prefer its callee; that keeps every load of one
+                            # got resolving to the one declaration, whatever the order was.
+                            callee = found === nothing ? resolved_plt_callee(initfn, FT) : nothing
+                            # Failing that, the stub still compares against the resolved
+                            # address, which at least names the right code.
+                            resolved = if found === nothing && callee === nothing
+                                resolved_plt_address(opv, initfn)
+                            else
+                                nothing
+                            end
+                            if found === nothing && callee === nothing && resolved === nothing
                                 msg = sprint() do io::IO
                                     println(
                                         io,
@@ -586,78 +732,12 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                 throw(AssertionError(msg))
                             end
 
-                            legal1, arg1 = abs_cstring(operands(found)[1])
-                            if legal1
+                            newf = if callee !== nothing
+                                callee
+                            elseif resolved !== nothing
+                                LLVM.const_inttoptr(LLVM.ConstantInt(resolved), value_type(inst))
                             else
-                                arg1, _ = get_base_and_offset(operands(found)[1]; offsetAllowed = false, inttoptr = true)
-                                if isa(arg1, LLVM.PointerNull)
-                                    arg1 = LLVM.ConstantInt(0)
-                                elseif !isa(arg1, LLVM.ConstantInt)
-                                    msg = sprint() do io::IO
-                                        println(
-                                            io,
-                                            "Enzyme internal error unsupported got(arg1)",
-                                        )
-                                        println(io, "inst=", inst)
-                                        println(io, "fname=", fname)
-                                        println(io, "FT=", FT)
-                                        println(io, "fn_got=", fn_got)
-                                        println(io, "init=", string(initfn))
-                                        println(io, "opv=", string(opv))
-                                        println(io, "found=", string(found))
-                                        println(io, "arg1=", string(arg1))
-                                    end
-                                    throw(AssertionError(msg))
-                                end
-
-                                arg1 = reinterpret(Ptr{Cvoid}, convert(UInt, arg1))
-                            end
-
-                            legal2, fname = abs_cstring(operands(found)[2])
-                            if !legal2
-                                msg = sprint() do io::IO
-                                    println(
-                                        io,
-                                        "Enzyme internal error unsupported got(fname)",
-                                    )
-                                    println(io, "inst=", inst)
-                                    println(io, "fname=", fname)
-                                    println(io, "FT=", FT)
-                                    println(io, "fn_got=", fn_got)
-                                    println(io, "init=", string(initfn))
-                                    println(io, "opv=", string(opv))
-                                    println(io, "found=", string(found))
-                                    println(io, "fname=", string(operands(found)[2]))
-                                end
-                                throw(AssertionError(msg))
-                            end
-
-                            newf = nothing
-                            if arg1 isa AbstractString
-                                found, newf = try_import_llvmbc(mod, arg1, fname, imported)
-                            end
-                            if newf isa Nothing
-                                fused_name = if arg1 isa AbstractString
-                                    "ejlstr\$$fname\$$arg1"
-                                else
-                                    if arg1 == reinterpret(Ptr{Nothing}, UInt(0x03))
-                                        fname
-                                    else
-                                        arg1 = reinterpret(UInt, arg1)
-                                        "ejlptr\$$fname\$$arg1"
-                                    end
-                                end
-
-                                newf, _ = get_function!(mod, fused_name, FT)
-
-                                while isa(newf, LLVM.ConstantExpr)
-                                    newf = operands(newf)[1]
-                                end
-                                push!(function_attributes(newf), StringAttribute("enzyme_math", fname))
-                                push!(function_attributes(newf), StringAttribute(PRESERVEPRIMAL_ATTR_KIND, "*"))
-                                # TODO we can make this relocatable if desired by having restore lookups re-create this got initializer/etc
-                                # metadata(newf)["enzymejl_flib"] = flib
-                                # metadata(newf)["enzymejl_flib"] = flib
+                                plt_lookup_function!(mod, found, inst, fname, FT, fn_got, initfn, opv, imported)
                             end
                         end
 
