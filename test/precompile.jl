@@ -173,7 +173,7 @@ end
         code = """
         using Enzyme
         C = Enzyme.Compiler
-        sizes = (length(C.cache), length(C.autodiff_cache), length(Enzyme.tape_cache),
+        sizes = (length(C.THUNK_CACHE.thunks), length(C.THUNK_CACHE.by_ptr), length(C.THUNK_CACHE.tapes),
                  length(C.FRULE_CACHE), length(C.RRULE_CACHE), length(C.INACTIVE_CACHE),
                  length(C.EASY_RULE_CACHE), length(C.NOALIAS_CACHE),
                  length(C.Interpreter.SigCache), length(C.ActivityCache),
