@@ -7381,7 +7381,6 @@ end
     # reached through `enzyme_thunk_entry` itself, only through the entry Enzyme stored.
     struct ThunkEntryOwner end
 
-
     # The field that says whether `invoke` and `specptr` agree: `specsigflags` on 1.12,
     # `flags` on 1.13. Bit 0b10 (`JL_CI_FLAGS_INVOKE_MATCHES_SPECPTR`) is the same on both.
     const CI_FLAGS_FIELD = hasfield(Core.CodeInstance, :flags) ? :flags : :specsigflags

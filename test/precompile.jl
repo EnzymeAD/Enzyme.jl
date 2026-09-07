@@ -3,8 +3,8 @@ using Enzyme, Test
 # A thunk is held by its entry-point `CodeInstance` (a handle on Julia 1.10 and 1.11) rather
 # than by the address the JIT gave its code, so a package that differentiates while it
 # precompiles writes an image whose derivatives can be called again once it is loaded
-# (EnzymeAD/Enzyme.jl#1549): the thunk is linked again in the session that loads it. What
-# follows pins that down, along with the caches Enzyme's own workload leaves out of its image.
+# (EnzymeAD/Enzyme.jl#1549). On Julia 1.12+ the instance also carries the artifact the
+# thunk was compiled into, so the reloaded package links it without running enzyme-core.
 
 # Write the packages into a directory of their own and put it first on the child's load
 # path. The depot is the one this test runs under, so the packages precompile next to the
@@ -142,17 +142,25 @@ end
         end
 
         # Differentiating again from a loaded image: the thunks the image refers to are held
-        # by their entry instances, which link them again in this session.
+        # by handles, which compile and link them again in this session. The child also
+        # reports how many times enzyme-core ran while doing so.
         call_code = """
         using Enzyme, EnzymePrecompileAtBuild
-        print(EnzymePrecompileAtBuild.rev(3.0), " ", EnzymePrecompileAtBuild.fwd(3.0))
+        Enzyme.Compiler.EMIT_COUNT[] = 0
+        print(EnzymePrecompileAtBuild.rev(3.0), " ", EnzymePrecompileAtBuild.fwd(3.0), " ",
+              Enzyme.Compiler.EMIT_COUNT[])
         """
         ok, fields = run_child(load_path, call_code)
         @test ok
         if ok
-            rev3, fwd3 = fields
+            rev3, fwd3, emitted = fields
             @test parse(Float64, rev3) ≈ rev_at_3
             @test parse(Float64, fwd3) ≈ fwd_at_3
+            # The thunks come from the artifacts the image carries, with no run of
+            # enzyme-core, where the entry instances exist (Julia 1.12+).
+            if Enzyme.Compiler.HAS_CI_RESULTS
+                @test parse(Int, emitted) == 0
+            end
         end
     end
 end
@@ -162,7 +170,8 @@ end
         # Enzyme differentiates in its `@compile_workload`, and the caches that fills are
         # globals of Enzyme's, so whatever is left in them is serialized into Enzyme's image
         # along with the addresses that session's JIT handed out. `clear_caches!` at the end
-        # of the workload is what keeps them out of it.
+        # of the workload is what keeps them out of it, and a freshly loaded Enzyme starts a
+        # session of its own rather than the one that built the image.
         code = """
         using Enzyme
         C = Enzyme.Compiler
@@ -174,14 +183,16 @@ end
                  length(C.ActivityCache),
                  length(C.ActivityMethodCache), Int(C.ActivityWorldCache[]),
                  length(C.JIT.hnd_string_map), length(C.JIT.hnd_int_map))
-        print(sum(sizes), " ", Enzyme.autodiff(Reverse, x -> x * x, Active(4.0))[1][1])
+        print(sum(sizes), " ", Int(C.SESSION_EPOCH[] != 0), " ",
+              Enzyme.autodiff(Reverse, x -> x * x, Active(4.0))[1][1])
         """
         ok, fields = run_child(load_path, code)
         @test ok
         if ok
-            cached, grad = fields
+            cached, epoch_set, grad = fields
             # Nothing the session that built the image compiled or looked up is left.
             @test parse(Int, cached) == 0
+            @test epoch_set == "1"
             # And a session that starts from nothing differentiates.
             @test parse(Float64, grad) ≈ 8.0
         end
@@ -189,7 +200,7 @@ end
         # An emptied cache is not the whole of it. The workload differentiates a function
         # that stays in Enzyme, and the thunk that call goes through is held by its entry
         # instance in Enzyme's own image, just as in a package image. Asking for that
-        # derivative again links it in this session.
+        # derivative again links it from the artifact Enzyme's image carries.
         workload_code = """
         using Enzyme
         mods = [getfield(Enzyme, n) for n in names(Enzyme; all = true) if
@@ -199,7 +210,8 @@ end
         if isempty(fns)
             print("none")   # the workload stopped leaving a function behind
         else
-            print(Enzyme.autodiff(Reverse, first(fns), Active(2.0))[1][1])
+            Enzyme.Compiler.EMIT_COUNT[] = 0
+            print(Enzyme.autodiff(Reverse, first(fns), Active(2.0))[1][1], " ", Enzyme.Compiler.EMIT_COUNT[])
         end
         """
         ok, fields = run_child(load_path, workload_code)
@@ -207,7 +219,13 @@ end
             @test_skip ok
         else
             @test ok
-            ok && @test parse(Float64, only(fields)) ≈ 4.0
+            if ok
+                grad, emitted = fields
+                @test parse(Float64, grad) ≈ 4.0
+                if Enzyme.Compiler.HAS_CI_RESULTS
+                    @test parse(Int, emitted) == 0
+                end
+            end
         end
     end
 end
