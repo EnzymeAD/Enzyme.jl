@@ -23,7 +23,13 @@ end
 
         GPUCompiler.prepare_job!(job)
         mod, meta = GPUCompiler.emit_llvm(job)
-        
+        # This module is compiled by Julia's own JIT (through `llvmcall`), which cannot fill
+        # the relocation slots a primal job leaves symbolic for Enzyme's linker; bind them
+        # to their addresses here, as Julia's codegen would have.
+        if hasproperty(meta, :relocations) && meta.relocations !== nothing
+            GPUCompiler.bake_relocations!(mod, meta.relocations)
+        end
+
         copysetfn = meta.entry
         blk = first(LLVM.blocks(copysetfn))
         iter = LLVM.API.LLVMGetFirstInstruction(blk)

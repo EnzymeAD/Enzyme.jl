@@ -138,6 +138,27 @@ struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
     mode::API.CDerivativeMode
 end
 
+"""
+    SYMBOLIC_PRIMAL
+
+Whether the primal module refers to Julia objects by name instead of by address.
+
+With this set (the default), GPUCompiler leaves Julia's value references as empty slots plus
+a manifest (`:patch`) and `adopt_relocations!` replaces every load of a slot by the object's
+name, so the module carries no address of this process and its artifact can be reused by
+another session. Off, the primal keeps Julia's baked addresses (`:bake`) and
+`bakes_addresses` keeps the resulting artifacts out of the cross-session cache; kept as a
+switch for bisecting.
+"""
+const SYMBOLIC_PRIMAL = Ref(true)
+
+@static if isdefined(GPUCompiler, :Relocations)
+    GPUCompiler.relocation_lowering(
+        @nospecialize(job::CompilerJob{<:GPUCompiler.NativeCompilerTarget, <:PrimalCompilerParams})
+    ) = SYMBOLIC_PRIMAL[] ? :patch : :bake
+end
+
+
 function EnzymeCompilerParams(TT, mode, width, rt, run_enzyme, abiwrap,
                               modifiedBetween, returnPrimal, shadowInit,
                               expectedTapeType, ABI,
@@ -1546,7 +1567,10 @@ function nested_codegen!(
 
     GPUCompiler.prepare_job!(job)
     otherMod, meta = GPUCompiler.emit_llvm(job)
-    
+    # As in `compile_unhooked`: the module Julia hands back refers to objects through
+    # relocation slots, which must be pointed at their objects by name before it is used.
+    adopt_relocations!(otherMod::LLVM.Module, hasproperty(meta, :relocations) ? meta.relocations : nothing)
+
     interp = GPUCompiler.get_interpreter(job)
     prepare_llvm(interp, otherMod, job, meta)
 
@@ -5656,6 +5680,9 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     @safe_debug "Emit LLVM with" primal_job
     GPUCompiler.prepare_job!(primal_job)
     mod, meta = GPUCompiler.emit_llvm(primal_job)
+    # Julia's codegen refers to objects through relocation slots; turn them into Enzyme's
+    # symbolic references before anything else looks at the module.
+    adopt_relocations!(mod::LLVM.Module, hasproperty(meta, :relocations) ? meta.relocations : nothing)
     # `emit_llvm` is not concretely inferred, so without this assertion every
     # subsequent use of `mod` (e.g. `LLVM.context(mod)`) is a dynamic dispatch
     # through jl_apply_generic, which forces boxing and GC-rooting across it.
@@ -7752,7 +7779,7 @@ const DumpPrePostOpt = Ref(false)
 const DumpPostOpt = Ref(false)
 
 # actual compilation
-function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, String, Union{String, Nothing}, Type, String}
+function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, String, Union{String, Nothing}, Type, String, Bool}
     config = CompilerConfig(job.config; optimize=false)
     job = CompilerJob(job.source, config, job.world)
     mod, meta = compile(:llvm, job)
@@ -7771,6 +7798,11 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
         LLVM.run!(pm, mod)
     end
+
+    # Whether the module refers to anything by an address of this process, judged before
+    # the module string nested differentiation splices is taken: optimization may fold such
+    # an address away from the compiled code while the string still holds it.
+    relocatable = !bakes_addresses(mod)
 
     # Run post optimization pipeline
     prepost = if postopt
@@ -7811,7 +7843,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         bind_native_invokes!(mod)
         ""
     end
-    return (mod, meta.edges, adjoint_name, primal_name, meta.TapeType, prepost)
+    return (mod, meta.edges, adjoint_name, primal_name, meta.TapeType, prepost, relocatable)
 end
 
 # Link an artifact into this session's JIT, no compiler involved; `entries` are the
@@ -7864,7 +7896,10 @@ const HAS_CI_RESULTS = HAS_CI_THUNKS
                 EMIT_COUNT[] += 1
                 mod = asm[1]
                 man = manifest(mod)
-                persist = persistable(man) && !haskey(LLVM.flags(mod), NONRELOCATABLE_FLAG)
+                # An address of this process anywhere in the module makes the artifact
+                # unusable by another session, whoever put it there.
+                persist = asm[7] && persistable(man) && !haskey(LLVM.flags(mod), NONRELOCATABLE_FLAG) &&
+                    !bakes_addresses(mod)
                 art = ThunkArtifact(
                     convert(Vector{UInt8}, convert(MemoryBuffer, mod)),
                     asm[3], asm[4], asm[5], asm[2], asm[6], man, persist,
