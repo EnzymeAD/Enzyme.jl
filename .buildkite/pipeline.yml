@@ -28,14 +28,17 @@ steps:
       echo "--- Setup Julia packages"
       JULIA_PKG_PRECOMPILE_AUTO="false" julia --color=yes -e '
           using Pkg
-          pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
-          Pkg.develop(pkgs)
           specs = [PackageSpec(; name="CUDA", version="6")]
           gpucompiler = "{{matrix.gpucompiler}}"
           if gpucompiler != "default"
               push!(specs, PackageSpec(; name="GPUCompiler", version=gpucompiler))
           end
+          # Resolve the pin before developing Enzyme. The other order lets `develop`
+          # resolve GPUCompiler at its default and install 2.x, only for the pin to
+          # downgrade it again.
           Pkg.add(specs)
+          pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
+          Pkg.develop(pkgs)
           Pkg.status()' || exit 3
 
       echo "+++ Run tests"
@@ -95,14 +98,17 @@ steps:
       echo "--- Setup Julia packages"
       julia --color=yes -e '
           using Pkg
-          pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
-          Pkg.develop(pkgs)
           specs = [PackageSpec(; name="Metal")]
           gpucompiler = "{{matrix.gpucompiler}}"
           if gpucompiler != "default"
               push!(specs, PackageSpec(; name="GPUCompiler", version=gpucompiler))
           end
+          # Resolve the pin before developing Enzyme. The other order lets `develop`
+          # resolve GPUCompiler at its default and install 2.x, only for the pin to
+          # downgrade it again.
           Pkg.add(specs)
+          pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
+          Pkg.develop(pkgs)
           Pkg.status()' || exit 3
 
       echo "+++ Run tests"
