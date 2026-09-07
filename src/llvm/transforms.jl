@@ -1420,19 +1420,6 @@ function nodecayed_phis!(mod::LLVM.Module)
     return nothing
 end
 
-function is_readonly_attr(attr::LLVM.Attribute)::Bool
-    k = kind(attr)
-    if k == kind(EnumAttribute("readonly")) || k == kind(EnumAttribute("readnone"))
-        return true
-    end
-    if LLVM.version().major > 15 && isa(attr, LLVM.EnumAttribute)
-        if k == kind(EnumAttribute("memory"))
-            return is_readonly(MemoryEffect(value(attr)))
-        end
-    end
-    return false
-end
-
 function is_sret_like_attr(attr::LLVM.Attribute)::Bool
     sretkind = kind(
         if LLVM.version().major >= 12
@@ -1465,7 +1452,7 @@ function decay_args_readonly(
     )::Bool
     fn_readonly = false
     for attr in collect(function_attributes(st))
-        if is_readonly_attr(attr)
+        if is_readonly(attr)
             fn_readonly = true
             break
         end
@@ -1483,7 +1470,7 @@ function decay_args_readonly(
             if is_sret_like_attr(attr)
                 return false
             end
-            if is_readonly_attr(attr)
+            if is_readonly(attr)
                 arg_readonly = true
             end
         end

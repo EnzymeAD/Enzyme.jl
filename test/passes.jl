@@ -1,6 +1,7 @@
 using Enzyme, LLVM, Test
 using FileCheck
 import Libdl
+using InteractiveUtils: code_llvm
 
 
 @testset "Partial return preservation" begin
@@ -506,122 +507,150 @@ end # VERSION >= v"1.12"
     end
 end
 
-@testset "fix_decayaddr! readonly libcall" begin
-    @test @filecheck begin
-        # `memcmp` is neither an intrinsic that can be rebuilt over addrspace 10
-        # nor an sret call, but it only reads through its pointers, so each
-        # decayed argument becomes a gc-preserved `julia.pointer_from_objref`.
-        @check_label "@cmp"
-        @check "gc_preserve_begin"
-        @check "addrspacecast"
-        @check_same "addrspace(11)"
-        @check "julia.pointer_from_objref"
-        @check "gc_preserve_begin"
-        @check "julia.pointer_from_objref"
-        @check "@memcmp"
-        @check "gc_preserve_end"
-        @check "gc_preserve_end"
-        LLVM.Context() do ctx
-            mod = parse(
-                LLVM.Module, """
-                source_filename = "start"
-                target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
-                target triple = "x86_64-linux-gnu"
 
-                declare i32 @memcmp(i8* nocapture, i8* nocapture, i64) #1
+# --- fix_decayaddr! -----------------------------------------------------------
 
-                define i32 @cmp({} addrspace(10)* %a, {} addrspace(10)* %b, i64 %n) #0 {
-                top:
-                  %pa = addrspacecast {} addrspace(10)* %a to i8*
-                  %pb = addrspacecast {} addrspace(10)* %b to i8*
-                  %r = call i32 @memcmp(i8* %pa, i8* %pb, i64 %n)
-                  ret i32 %r
-                }
+struct DecayBig
+    x::NTuple{100, Float64}
+end
 
-                attributes #0 = { "enzymejl_world"="1" }
-                attributes #1 = { nounwind readonly }
-                """
-            )
+# `===` on a padding-free immutable this large lowers to `emit_bits_compare`,
+# which decays both operands through `julia.pointer_from_objref` and compares
+# them with `memcmp`; LLVM's `LibCallSimplifier::optimizeMemCmp` then rewrites
+# that to `bcmp`, since the result feeds nothing but an `icmp eq ..., 0`.
+# `@nospecialize` keeps the arguments boxed, so the operands are `addrspace(10)`
+# and the decay is the one `fix_decayaddr!` has to deal with.
+@noinline function decay_egal(@nospecialize(a), @nospecialize(b))
+    return (a::DecayBig) === (b::DecayBig)
+end
 
-            Enzyme.Compiler.fix_decayaddr!(mod)
-            string(mod)
+"""
+    decay_egal_module()
+
+The module Julia emits for [`decay_egal`](@ref), run through Enzyme's own
+pre-AD optimization pipeline. Everything the test relies on -- the libcall, its
+attributes, the `jl_roots` operand bundle -- comes from that emission rather
+than from hand-written IR.
+"""
+function decay_egal_module()
+    io = IOBuffer()
+    code_llvm(
+        io, decay_egal, Tuple{Any, Any};
+        raw = true, optimize = false, dump_module = true, debuginfo = :none,
+    )
+    mod = parse(LLVM.Module, String(take!(io)))
+    Enzyme.Compiler.optimize!(mod, Enzyme.Compiler.JIT.get_tm())
+    return mod
+end
+
+"The `memcmp` / `bcmp` call in `mod`, or `nothing` if there is none."
+function find_bits_compare(mod::LLVM.Module)
+    for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+        isa(inst, LLVM.CallInst) || continue
+        callee = LLVM.called_operand(inst)
+        isa(callee, LLVM.Function) || continue
+        if LLVM.name(callee) in ("bcmp", "memcmp")
+            return inst
         end
     end
+    return nothing
 end
 
-@testset "fix_decayaddr! non-readonly libcall still rejected" begin
-    # Guard against the read-only path swallowing calls that write through the
-    # decayed pointer: those still need an sret to copy the object back.
-    LLVM.Context() do ctx
-        mod = parse(
-            LLVM.Module, """
-            source_filename = "start"
-            target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
-            target triple = "x86_64-linux-gnu"
+"""
+    collapse_decay!(call)
 
-            declare void @scribble(i8*, i64) #1
-
-            define void @wr({} addrspace(10)* %a, i64 %n) #0 {
-            top:
-              %pa = addrspacecast {} addrspace(10)* %a to i8*
-              call void @scribble(i8* %pa, i64 %n)
-              ret void
-            }
-
-            attributes #0 = { "enzymejl_world"="1" }
-            attributes #1 = { nounwind }
-            """
+Rewrite each `julia.pointer_from_objref(addrspacecast p10 -> p11)` feeding
+`call` into the direct `addrspacecast p10 -> p0` it stands for, and return how
+many were rewritten. Neither Julia nor Enzyme's pre-AD pipeline forms that cast
+here -- it is what a later simplification of the two-step derivation leaves
+behind, and it is the input `fix_decayaddr!` has to repair.
+"""
+function collapse_decay!(call::LLVM.CallInst)
+    n = 0
+    for (i, arg) in enumerate(Enzyme.Compiler.arg_operands_view(call))
+        isa(arg, LLVM.CallInst) || continue
+        callee = LLVM.called_operand(arg)
+        (isa(callee, LLVM.Function) && LLVM.name(callee) == "julia.pointer_from_objref") ||
+            continue
+        src = operands(arg)[1]
+        isa(src, LLVM.AddrSpaceCastInst) || continue
+        obj = operands(src)[1]
+        LLVM.addrspace(value_type(obj)) == 10 || continue
+        b = LLVM.IRBuilder()
+        LLVM.position!(b, arg)
+        LLVM.API.LLVMSetOperand(
+            call, i - 1, LLVM.addrspacecast!(b, obj, value_type(arg))
         )
-
-        @test_throws AssertionError Enzyme.Compiler.fix_decayaddr!(mod)
+        isempty(LLVM.uses(arg)) && LLVM.erase!(arg)
+        n += 1
     end
+    return n
 end
 
-# `memory(argmem: read)` and opaque `ptr` syntax need LLVM 16+.
-@static if LLVM.version() >= v"16"
-    @testset "fix_decayaddr! bcmp as Julia emits it" begin
+"Strip every read-only marker from `call` and from the function it calls."
+function drop_readonly!(call::LLVM.CallInst)
+    callee = LLVM.called_operand(call)::LLVM.Function
+    for attrs in (LLVM.function_attributes(callee), LLVM.function_attributes(call))
+        for attr in collect(attrs)
+            if Enzyme.Compiler.is_readonly(attr)
+                delete!(attrs, attr)
+            end
+        end
+    end
+    return nothing
+end
+
+@testset "fix_decayaddr! read-only libcall" begin
+    LLVM.Context() do ctx
+        mod = decay_egal_module()
+        cmp = find_bits_compare(mod)
+        @test cmp !== nothing
+        # The callee has to be read-only for the rewrite below to apply at all;
+        # that is how Julia and LLVM annotate `memcmp` / `bcmp`.
+        @test Enzyme.Compiler.is_readonly(LLVM.called_operand(cmp)::LLVM.Function)
+        @test collapse_decay!(cmp) == 2
+
         @test @filecheck begin
-            # What `===` on a large padding-free immutable actually lowers to:
-            # LLVM rewrites the `memcmp` to `bcmp` because only the zero test
-            # survives, annotates it `memory(argmem: read)`, and Julia hangs a
-            # `jl_roots` bundle off the call. The bundle must come through
-            # untouched -- only the argument operands get rewritten.
-            @check_label "@egal"
+            # Each decayed argument becomes a gc-preserved
+            # `julia.pointer_from_objref`, which late GC lowering turns back
+            # into the cast that was there. The operand bundle is untouched --
+            # only the argument operands get rewritten.
+            @check_label "@julia_decay_egal"
             @check "gc_preserve_begin"
             @check "julia.pointer_from_objref"
             @check "gc_preserve_begin"
             @check "julia.pointer_from_objref"
-            @check "@bcmp"
+            @check "@{{(bcmp|memcmp)}}("
             @check_same "jl_roots"
             @check "gc_preserve_end"
             @check "gc_preserve_end"
-            LLVM.Context() do ctx
-                mod = parse(
-                    LLVM.Module, """
-                    source_filename = "start"
-                    target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
-                    target triple = "x86_64-linux-gnu"
+            Enzyme.Compiler.fix_decayaddr!(mod)
+            string(mod)
+        end
 
-                    declare i32 @bcmp(ptr nocapture, ptr nocapture, i64) #1
-
-                    define i8 @egal(ptr addrspace(10) %a, ptr addrspace(10) %b) #0 {
-                    top:
-                      %pa = addrspacecast ptr addrspace(10) %a to ptr
-                      %pb = addrspacecast ptr addrspace(10) %b to ptr
-                      %c = call i32 @bcmp(ptr %pa, ptr %pb, i64 1488) [ "jl_roots"(ptr addrspace(10) %a, ptr addrspace(10) %b) ]
-                      %eq = icmp eq i32 %c, 0
-                      %r = zext i1 %eq to i8
-                      ret i8 %r
-                    }
-
-                    attributes #0 = { "enzymejl_world"="1" }
-                    attributes #1 = { nofree nounwind willreturn memory(argmem: read) }
-                    """
+        # Nothing decays straight out of the tracked address space any more.
+        for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+            if isa(inst, LLVM.AddrSpaceCastInst)
+                @test !(
+                    LLVM.addrspace(value_type(operands(inst)[1])) == 10 &&
+                        LLVM.addrspace(value_type(inst)) == 0
                 )
-
-                Enzyme.Compiler.fix_decayaddr!(mod)
-                string(mod)
             end
         end
+    end
+end
+
+@testset "fix_decayaddr! non-read-only libcall still rejected" begin
+    # Guard against the read-only path swallowing calls that write through the
+    # decayed pointer: those still need an sret to copy the object back.
+    LLVM.Context() do ctx
+        mod = decay_egal_module()
+        cmp = find_bits_compare(mod)
+        @test cmp !== nothing
+        @test collapse_decay!(cmp) == 2
+        drop_readonly!(cmp)
+        @test !Enzyme.Compiler.is_readonly(LLVM.called_operand(cmp)::LLVM.Function)
+
+        @test_throws AssertionError Enzyme.Compiler.fix_decayaddr!(mod)
     end
 end
