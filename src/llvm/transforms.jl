@@ -1522,6 +1522,128 @@ function legalize_readonly_decay!(
     return nothing
 end
 
+function derived_pointer_type(@nospecialize(pty::LLVM.PointerType))
+    return LLVM.is_opaque(pty) ? LLVM.PointerType(Derived) : LLVM.PointerType(eltype(pty), Derived)
+end
+
+function copy_debuglocation!(B::LLVM.IRBuilder, inst::LLVM.Instruction)
+    loc = debuglocation(inst)
+    if loc === nothing
+        debuglocation!(B)
+    else
+        debuglocation!(B, loc)
+    end
+    return nothing
+end
+
+# Rewrite the users of `inst`, a Tracked (addrspace 10) interior pointer, to use
+# `derived`, the same address in the Derived (addrspace 11) address space. Casts
+# and GEPs chained off `inst` are rebuilt on top of `derived`; loads and stores
+# through it are redirected. Any other user keeps the Tracked value, so the
+# rewrite is always sound and merely best effort.
+function rederive_tracked_uses!(
+        B::LLVM.IRBuilder,
+        inst::LLVM.Instruction,
+        @nospecialize(derived::LLVM.Value),
+        dead::Vector{LLVM.Instruction},
+    )
+    users = LLVM.Value[LLVM.user(u) for u in LLVM.uses(inst)]
+    for user in users
+        if isa(user, LLVM.AddrSpaceCastInst) && addrspace(value_type(user)) == Derived
+            rep = derived
+            if value_type(rep) != value_type(user)
+                position!(B, user)
+                copy_debuglocation!(B, user)
+                rep = bitcast!(B, rep, value_type(user))
+            end
+            replace_uses!(user, rep)
+            push!(dead, user)
+        elseif isa(user, LLVM.BitCastInst)
+            position!(B, user)
+            copy_debuglocation!(B, user)
+            nbc = bitcast!(B, derived, derived_pointer_type(value_type(user)))
+            rederive_tracked_uses!(B, user, nbc, dead)
+            push!(dead, user)
+        elseif isa(user, LLVM.GetElementPtrInst) && operands(user)[1] == inst
+            rederive_tracked_gep!(B, user, derived, dead)
+        elseif isa(user, LLVM.LoadInst)
+            LLVM.API.LLVMSetOperand(user, 0, derived)
+        elseif isa(user, LLVM.StoreInst) && operands(user)[2] == inst && operands(user)[1] != inst
+            LLVM.API.LLVMSetOperand(user, 1, derived)
+        end
+    end
+    return nothing
+end
+
+# Rebuild `gep`, whose pointer operand is Tracked, on top of `derived` (the same
+# pointer in the Derived address space) and rewrite its users.
+function rederive_tracked_gep!(
+        B::LLVM.IRBuilder,
+        gep::LLVM.GetElementPtrInst,
+        @nospecialize(derived::LLVM.Value),
+        dead::Vector{LLVM.Instruction},
+    )
+    position!(B, gep)
+    copy_debuglocation!(B, gep)
+    srcty = LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(gep))
+    idxs = LLVM.Value[operands(gep)[i] for i in 2:length(operands(gep))]
+    ngep = if LLVM.API.LLVMIsInBounds(gep) != 0
+        inbounds_gep!(B, srcty, derived, idxs)
+    else
+        gep!(B, srcty, derived, idxs)
+    end
+    rederive_tracked_uses!(B, gep, ngep, dead)
+    push!(dead, gep)
+    return nothing
+end
+
+# Julia only ever forms a field or element address as an `addrspacecast` from
+# Tracked (addrspace 10) to Derived (addrspace 11) followed by a GEP in
+# addrspace 11. With typed pointers (LLVM <= 16, so Julia <= 1.11) InstCombine
+# rewrites `gep(addrspacecast(x))` into `addrspacecast(gep(x))`, which leaves the
+# interior pointer in the Tracked address space. Julia's GC lowering tolerates
+# that, but Enzyme may cache such a value on the tape, and the tape typing has
+# to treat every addrspace(10) pointer as a Julia object. The GC is then handed
+# a pointer into the middle of an object and corrupts it (#3532). Sink the
+# addrspacecast back above the GEP so that interior pointers are always Derived.
+function rederive_tracked_geps!(mod::LLVM.Module)
+    for f in functions(mod)
+        roots = LLVM.GetElementPtrInst[]
+        for bb in blocks(f), inst in instructions(bb)
+            isa(inst, LLVM.GetElementPtrInst) || continue
+            base = operands(inst)[1]
+            bty = value_type(base)
+            (isa(bty, LLVM.PointerType) && addrspace(bty) == Tracked) || continue
+            # GEPs and casts chained off another Tracked GEP are rewritten
+            # together with that root.
+            while isa(base, LLVM.BitCastInst)
+                base = operands(base)[1]
+            end
+            isa(base, LLVM.GetElementPtrInst) && continue
+            push!(roots, inst)
+        end
+        isempty(roots) && continue
+        dead = LLVM.Instruction[]
+        B = IRBuilder()
+        for gep in roots
+            position!(B, gep)
+            copy_debuglocation!(B, gep)
+            base = operands(gep)[1]
+            derived = addrspacecast!(B, base, derived_pointer_type(value_type(base)))
+            rederive_tracked_gep!(B, gep, derived, dead)
+        end
+        dispose(B)
+        # Users were pushed before the instructions they use, so this erases
+        # inner-most first; anything that still has a (non-rewritten) user stays.
+        for inst in dead
+            if LLVM.API.LLVMGetFirstUse(inst) == C_NULL
+                LLVM.API.LLVMInstructionEraseFromParent(inst)
+            end
+        end
+    end
+    return nothing
+end
+
 function fix_decayaddr!(mod::LLVM.Module)
     for f in functions(mod)
         invalid = LLVM.Instruction[]

@@ -673,3 +673,65 @@ end
         @test_throws AssertionError Enzyme.Compiler.fix_decayaddr!(mod)
     end
 end
+
+@testset "Tracked GEPs are re-derived" begin
+    # With typed pointers InstCombine turns `gep(addrspacecast(x))` into
+    # `addrspacecast(gep(x))`, leaving an interior pointer in addrspace 10.
+    # The pass must sink the cast back above the GEP chain (#3532).
+    @test @filecheck begin
+        @check_label "@load_field"
+        @check "addrspacecast"
+        @check_same "addrspace(11)"
+        @check "getelementptr inbounds i8"
+        @check_same "addrspace(11)"
+        @check_not "getelementptr inbounds i8, i8 addrspace(10)*"
+        @check_not "getelementptr inbounds i8, ptr addrspace(10)"
+        @check "load float"
+        @check_same "addrspace(11)"
+        @check_label "@store_field"
+        @check "addrspacecast"
+        @check_same "addrspace(11)"
+        @check "getelementptr inbounds i8"
+        @check_same "addrspace(11)"
+        @check "getelementptr inbounds i8"
+        @check_same "addrspace(11)"
+        @check_not "getelementptr inbounds i8, i8 addrspace(10)*"
+        @check_not "getelementptr inbounds i8, ptr addrspace(10)"
+        @check "store float %x"
+        @check_same "addrspace(11)"
+        LLVM.Context() do ctx
+            mod = parse(
+                LLVM.Module, """
+                source_filename = "start"
+                target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+                target triple = "x86_64-linux-gnu"
+
+                define float @load_field({} addrspace(10)* %obj) {
+                top:
+                  %a = bitcast {} addrspace(10)* %obj to i8 addrspace(10)*
+                  %b = getelementptr inbounds i8, i8 addrspace(10)* %a, i64 8
+                  %c = bitcast i8 addrspace(10)* %b to float addrspace(10)*
+                  %d = addrspacecast float addrspace(10)* %c to float addrspace(11)*
+                  %v = load float, float addrspace(11)* %d, align 8
+                  ret float %v
+                }
+
+                define void @store_field({} addrspace(10)* %obj, float %x) {
+                top:
+                  %a = bitcast {} addrspace(10)* %obj to i8 addrspace(10)*
+                  %b = getelementptr inbounds i8, i8 addrspace(10)* %a, i64 8
+                  %c = getelementptr inbounds i8, i8 addrspace(10)* %b, i64 4
+                  %d = bitcast i8 addrspace(10)* %c to float addrspace(10)*
+                  %e = addrspacecast float addrspace(10)* %d to float addrspace(11)*
+                  store float %x, float addrspace(11)* %e, align 4
+                  ret void
+                }
+                """
+            )
+
+            Enzyme.Compiler.rederive_tracked_geps!(mod)
+            LLVM.verify(mod)
+            string(mod)
+        end
+    end
+end
