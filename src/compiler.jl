@@ -1231,6 +1231,11 @@ end
 end
 
 function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLVM.Function}, job, edges, run_enzyme, mode::API.CDerivativeMode)::Tuple{Dict{String,LLVM.API.LLVMLinkage}, HandlerState}
+    # One memo table for the whole module: the argument and return types of
+    # its functions overlap heavily (the same model / array types recur in
+    # every kernel), and building a TypeTree walks the type's fields through
+    # the C API each time.
+    seen = TypeTreeTable()
 
     for f in functions(mod)
         if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1") || startswith(LLVM.name(f), "jlcapi")
@@ -1305,7 +1310,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
 
                 byref = arg.cc
 
-                rest = copy(typetree(arg.typ, ctx, dl))
+                rest = copy(typetree(arg.typ, ctx, dl, seen))
 
                 if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
                     # adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
@@ -1332,7 +1337,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
                 if !in(0, parmsRemoved)
                     @assert sret <: Ptr
                     sret_et = eltype(sret)
-                    rest = copy(typetree(sret_et, ctx, dl))
+                    rest = copy(typetree(sret_et, ctx, dl, seen))
                     shift!(rest, dl, 0, LLVM.sizeof(LLVM.DataLayout(dl), sret_ty(f, 1)), 0)
                     merge!(rest, TypeTree(API.DT_Pointer, ctx))
                     only!(rest, -1)
@@ -1357,7 +1362,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
                LLVM.return_type(LLVM.function_type(f)) != LLVM.VoidType()
                 @assert !retRemoved
                 rest = if llRT == Ptr{RT}
-                    typeTree = copy(typetree(RT, ctx, dl))
+                    typeTree = copy(typetree(RT, ctx, dl, seen))
                     merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
                     only!(typeTree, -1)
                     typeTree
