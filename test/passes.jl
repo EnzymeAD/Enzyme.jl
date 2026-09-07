@@ -1,7 +1,7 @@
 using Enzyme, LLVM, Test
 using FileCheck
 import Libdl
-using InteractiveUtils: code_llvm
+import GPUCompiler
 
 
 @testset "Partial return preservation" begin
@@ -531,14 +531,27 @@ The module Julia emits for [`decay_egal`](@ref), run through Enzyme's own
 pre-AD optimization pipeline. Everything the test relies on -- the libcall, its
 attributes, the `jl_roots` operand bundle -- comes from that emission rather
 than from hand-written IR.
+
+The module is generated straight into the active context, the same way
+Enzyme's compile pipeline does it, rather than being round-tripped through
+`code_llvm` text: Julia's own codegen context need not agree with a fresh
+one on typed vs. opaque pointers (it does not on 1.11), and the text form
+of the one cannot be parsed in the other.
 """
 function decay_egal_module()
-    io = IOBuffer()
-    code_llvm(
-        io, decay_egal, Tuple{Any, Any};
-        raw = true, optimize = false, dump_module = true, debuginfo = :none,
+    target = Enzyme.Compiler.DefaultCompilerTarget()
+    params = Enzyme.Compiler.PrimalCompilerParams(Enzyme.API.DEM_ForwardMode)
+    mi = Enzyme.Compiler.my_methodinstance(nothing, typeof(decay_egal), Tuple{Any, Any})
+    job = GPUCompiler.CompilerJob(
+        mi,
+        GPUCompiler.CompilerConfig(
+            target, params;
+            kernel = false, libraries = true, toplevel = true, optimize = false,
+            cleanup = false, only_entry = false, validate = false,
+        ),
     )
-    mod = parse(LLVM.Module, String(take!(io)))
+    GPUCompiler.prepare_job!(job)
+    mod, _ = GPUCompiler.emit_llvm(job)
     Enzyme.Compiler.optimize!(mod, Enzyme.Compiler.JIT.get_tm())
     return mod
 end
@@ -568,20 +581,26 @@ behind, and it is the input `fix_decayaddr!` has to repair.
 function collapse_decay!(call::LLVM.CallInst)
     n = 0
     for (i, arg) in enumerate(Enzyme.Compiler.arg_operands_view(call))
-        isa(arg, LLVM.CallInst) || continue
-        callee = LLVM.called_operand(arg)
+        # With typed pointers the `{}*` result is bitcast to `i8*` first; look
+        # through that to the derivation underneath.
+        pfo = isa(arg, LLVM.BitCastInst) ? operands(arg)[1] : arg
+        isa(pfo, LLVM.CallInst) || continue
+        callee = LLVM.called_operand(pfo)
         (isa(callee, LLVM.Function) && LLVM.name(callee) == "julia.pointer_from_objref") ||
             continue
-        src = operands(arg)[1]
+        src = operands(pfo)[1]
         isa(src, LLVM.AddrSpaceCastInst) || continue
         obj = operands(src)[1]
         LLVM.addrspace(value_type(obj)) == 10 || continue
         b = LLVM.IRBuilder()
-        LLVM.position!(b, arg)
+        LLVM.position!(b, call)
         LLVM.API.LLVMSetOperand(
             call, i - 1, LLVM.addrspacecast!(b, obj, value_type(arg))
         )
-        isempty(LLVM.uses(arg)) && LLVM.erase!(arg)
+        if arg != pfo && isempty(LLVM.uses(arg))
+            LLVM.erase!(arg)
+        end
+        isempty(LLVM.uses(pfo)) && LLVM.erase!(pfo)
         n += 1
     end
     return n
@@ -601,7 +620,7 @@ function drop_readonly!(call::LLVM.CallInst)
 end
 
 @testset "fix_decayaddr! read-only libcall" begin
-    LLVM.Context() do ctx
+    GPUCompiler.JuliaContext() do ctx
         mod = decay_egal_module()
         cmp = find_bits_compare(mod)
         @test cmp !== nothing
@@ -643,7 +662,7 @@ end
 @testset "fix_decayaddr! non-read-only libcall still rejected" begin
     # Guard against the read-only path swallowing calls that write through the
     # decayed pointer: those still need an sret to copy the object back.
-    LLVM.Context() do ctx
+    GPUCompiler.JuliaContext() do ctx
         mod = decay_egal_module()
         cmp = find_bits_compare(mod)
         @test cmp !== nothing
