@@ -550,6 +550,7 @@ const JuliaEnzymeNameMap = Dict{String,Any}(
     "enz_non_scalar_return_exc" => EnzymeNonScalarReturnException,
 )
 
+include("compiler/relocation.jl")
 include("absint.jl")
 include("llvm/transforms.jl")
 include("llvm/passes.jl")
@@ -7405,25 +7406,22 @@ Empty every cache Enzyme keeps in a global, dropping what this session compiled,
 and rooted along with them.
 
 Nearly all of it means something only to the session that filled it. A `CompileResult` holds
-the address the JIT gave a thunk, `captured_constants` roots objects because their addresses
-were written into that code, the rule and activity memos are keyed on world ages, and the
+the address the JIT gave a thunk, the rule and activity memos are keyed on rule-set epochs
+and world ages, and the
 `jl_load_and_lookup` handles are ones this process opened. Anything outliving the session
 must not carry them, which is why Enzyme's precompile workload ends with this call: what it
 left behind would otherwise be serialized into Enzyme's package image and inherited, dead,
 by every session that loads it.
 
-This is meant for the end of precompilation and not for a live session. It hands back the
-thunks the JIT compiled and unroots the objects their code refers to by address, so a thunk
-still held anywhere is left pointing at objects that may now be collected.
+This is meant for the end of precompilation and not for a live session: it starts a new
+session epoch, so every thunk held anywhere is linked again on its next use.
 
 Caches filled by `__init__` rather than by compiling are left alone: they are rebuilt per
 session and so never reach an image.
 """
 function clear_caches!()
-    # Thunks, held as the addresses the JIT gave them, and the objects rooted because those
-    # addresses were written into their code.
+    # Thunks, held as the links the JIT made for them in this session.
     reset_session!()
-    empty!(Enzyme.captured_constants)
 
     # Which rules apply, memoized against the rule-set epoch they were read in, and the rule
     # families those epochs were derived from.
