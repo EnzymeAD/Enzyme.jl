@@ -343,6 +343,10 @@ function get_pgcstack(func::LLVM.Function)
     return nothing
 end
 
+function is_cfunc_wrapper(func::LLVM.Function)::Bool
+    return startswith(LLVM.name(func), "jlcapi_")
+end
+
 function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing, LLVM.IRBuilder}) = nothing)
     for i in 1:length(LLVM.parameters(func))
         for attr in collect(LLVM.parameter_attributes(func, i))

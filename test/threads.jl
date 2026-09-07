@@ -175,3 +175,51 @@ end
     @test dq ≈ [1.0, 1.0]
 end
 
+#= Julia's `@cfunction` thunks stay callable from a thread Julia does not know
+about yet: the thunk null-checks the pgcstack and calls `jl_adopt_thread` before
+touching it. Enzyme used to hoist a `julia.get_pgcstack` into the entry block of
+those thunks, so the GC frame was pushed through the still-null pgcstack and the
+foreign thread died with a segfault. CUDA.jl reaches this by lazily spawning its
+nonblocking synchronization worker from inside differentiated code. =#
+const foreign_thread_calls = Threads.Atomic{Int}(0)
+
+function foreign_thread_worker(::Ptr{Cvoid})
+    # allocate, so that the thunk needs a GC frame in the first place
+    v = Base.inferencebarrier(Any[1, 2, 3])
+    Threads.atomic_add!(foreign_thread_calls, length(v)::Int)
+    return nothing
+end
+
+@noinline function run_on_foreign_thread(cb::Ptr{Cvoid})
+    tid = Ref{NTuple{32, UInt8}}(ntuple(Returns(UInt8(0)), Val(32)))
+    err = @ccall uv_thread_create(tid::Ptr{Cvoid}, cb::Ptr{Cvoid}, C_NULL::Ptr{Cvoid})::Cint
+    err == 0 || Base.uv_error("uv_thread_create", err)
+    # spin rather than join, so that this thread keeps hitting safepoints while
+    # the foreign one allocates
+    while foreign_thread_calls[] == 0
+        ccall(:jl_cpu_pause, Cvoid, ())
+        ccall(:jl_gc_safepoint, Cvoid, ())
+    end
+    @ccall uv_thread_join(tid::Ptr{Cvoid})::Cint
+    return nothing
+end
+
+# the `@cfunction` has to be created here, inside the differentiated code, so
+# that Enzyme rather than Julia emits the thunk
+function spawner(x)
+    run_on_foreign_thread(@cfunction(foreign_thread_worker, Cvoid, (Ptr{Cvoid},)))
+    return x * x
+end
+
+@testset "@cfunction thunk on a foreign thread" begin
+    @test spawner(3.0) == 9.0
+    @test foreign_thread_calls[] == 3
+
+    foreign_thread_calls[] = 0
+    @test autodiff(Forward, spawner, Duplicated(3.0, 1.0))[1] == 6.0
+    @test foreign_thread_calls[] == 3
+
+    foreign_thread_calls[] = 0
+    @test autodiff(ReverseWithPrimal, spawner, Active, Active(3.0))[2] == 9.0
+    @test foreign_thread_calls[] > 0
+end
