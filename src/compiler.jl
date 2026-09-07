@@ -751,6 +751,74 @@ function handleCustom(state::HandlerState, custom, k_name::String, llvmfn::LLVM.
     nothing
 end
 
+"""
+    delete_body!(f::LLVM.Function)
+
+Turn the definition `f` into a declaration, in place, so that the function
+object and every use of it stay valid.
+"""
+function delete_body!(f::LLVM.Function)
+    bbs = collect(blocks(f))
+    for bb in bbs, inst in collect(instructions(bb))
+        value_type(inst) == LLVM.VoidType() && continue
+        replace_uses!(inst, LLVM.UndefValue(value_type(inst)))
+    end
+    for bb in bbs
+        for inst in reverse(collect(instructions(bb)))
+            LLVM.API.LLVMInstructionEraseFromParent(inst)
+        end
+        LLVM.API.LLVMDeleteBasicBlock(bb)
+    end
+    # A declaration may carry at most one !dbg attachment; the definition's
+    # subprogram attachments are meaningless without a body anyway.
+    LLVM.API.LLVMGlobalEraseMetadata(f, LLVM.MD_dbg)
+    return nothing
+end
+
+"""
+    bind_rule_callee_to_native!(mod, llvmfn, mi, world, edges) -> Bool
+
+`llvmfn` carries a custom rule, so the differentiated code calls the rule and
+never the function itself. Its body, and the whole callee tree GPUCompiler
+emitted for it, reach the module only as dead code that `check_ir`,
+`set_module_types!`, type analysis and `optimize!` still walk. When Julia has
+native code for `mi` with the same specsig, drop the body and bind the
+declaration to that code, as `invoke_codegen!` does for `:call`-convention
+rules: any call Enzyme leaves as a plain primal call (all-constant arguments,
+the rule calling the primal) then goes to Julia's native code.
+"""
+const BIND_RULE_CALLEES = Ref(true)
+
+function bind_rule_callee_to_native!(mod::LLVM.Module, llvmfn::LLVM.Function, mi::Core.MethodInstance, world::UInt, edges::Vector)::Bool
+    BIND_RULE_CALLEES[] || return false
+    isempty(blocks(llvmfn)) && return false
+    native = try
+        native_codeinst(mod, mi, world)
+    catch err
+        err isa CallingConventionMismatchError || rethrow()
+        nothing
+    end
+    native === nothing && return false
+    ci, specptr = native
+    # The emitted signature comes from EnzymeInterpreter's inference; only bind
+    # when it agrees with the signature Julia's native code was compiled for.
+    try
+        check_specsig(llvmfn, mi, ci.rettype)
+    catch err
+        err isa AssertionError || rethrow()
+        return false
+    end
+    delete_body!(llvmfn)
+    attrs = function_attributes(llvmfn)
+    delete!(attrs, EnumAttribute("alwaysinline"))
+    push!(attrs, StringAttribute("enzymejl_needs_restoration", string(convert(UInt, specptr))))
+    push!(attrs, StringAttribute("enzymejl_native_invoke"))
+    # The native code stays valid as long as its CodeInstance does.
+    push!(edges, mi)
+    push!(edges, ci)
+    return true
+end
+
 function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, mode::API.CDerivativeMode, world::UInt, method_table, custom::Dict{String, LLVM.API.LLVMLinkage}, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type))::Nothing
     has_custom_rule = false
 
@@ -820,6 +888,11 @@ end
             "enzyme_custom",
             LLVM.Attribute[StringAttribute(PRESERVEPRIMAL_ATTR_KIND, "*")],
         )
+        if run_enzyme && llvmfn != state.primalf && bind_rule_callee_to_native!(mod, llvmfn, mi, world, edges)
+            # A declaration must keep external linkage when the original
+            # linkages are restored after the Enzyme pass.
+            custom[k_name] = LLVM.API.LLVMExternalLinkage
+        end
         return
     end
 
@@ -2464,6 +2537,7 @@ for (k, v) in (
 end
 
 function __init__()
+    BIND_RULE_CALLEES[] = get(ENV, "ENZYME_BIND_RULE_CALLEES", "1") != "0"
     API.memmove_warning!(false)
     API.typeWarning!(false)
     API.EnzymeNonPower2Cache!(false)
