@@ -267,7 +267,7 @@ for (DstArr, SrcArr) in ARRAY_COPY_DIRECTIONS
                         _accumulate!(@view(dsrc[soffs.val:soffs.val+n.val-1]),
                                      @view(ddest[doffs.val:doffs.val+n.val-1]))
                     end
-                    _zero!(pointer(ddest, doffs.val), 0, n.val)
+                    GC.@preserve ddest _zero!(pointer(ddest, doffs.val), 0, n.val)
                 end
             end
             return (nothing, nothing, nothing, nothing, nothing)
