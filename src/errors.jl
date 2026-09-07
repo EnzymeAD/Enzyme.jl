@@ -1065,19 +1065,18 @@ function julia_error(
                 end
             end
         elseif val isa LLVM.Function
-            # Need to convert function to string, since when the error is going to be printed
-            # the module might have been destroyed
-            ir = string(val)
+            ir = val
         elseif val isa LLVM.GlobalVariable
-            # Need to convert global to string, since when the error is going to be printed
-            # the module might have been destroyed
-            ir = string(val)
+            ir = val
         else
-            # Need to convert function to string, since when the error is going to be printed
-            # the module might have been destroyed
-            ir = string(parent_scope(val)::LLVM.Function)
+            ir = parent_scope(val)::LLVM.Function
         end
     end
+    # `ir` holds the value whose IR is reported. It is converted to a string,
+    # since when the error is printed the module might have been destroyed --
+    # but only on the paths below that actually report it: printing a whole
+    # function is expensive, and most calls here are recoverable warnings.
+    irstr() = ir === nothing ? nothing : string(ir)
 
     if errtype == API.ET_NoDerivative
         if occursin("No create nofree of empty function", msg) ||
@@ -1090,9 +1089,10 @@ function julia_error(
         if B != C_NULL
             B = IRBuilder(B)
             msg2 = sprint() do io
-                if ir !== nothing
+                scope = irstr()
+                if scope !== nothing
                     print(io, "Current scope: \n")
-                    print(io, ir)
+                    print(io, scope)
                 end
                 print(io, '\n', msg, '\n')
                 if bt !== nothing
@@ -1135,16 +1135,16 @@ function julia_error(
 
             return C_NULL
         end
-        throw(NoDerivativeException(msg, ir, bt))
+        throw(NoDerivativeException(msg, irstr(), bt))
     elseif errtype == API.ET_NoShadow
         gutils = GradientUtils(API.EnzymeGradientUtilsRef(data))
 
         msgN = sprint() do io::IO
             if isa(val, LLVM.Argument)
                 fn = parent_scope(val)::LLVM.Function
-                ir = string(LLVM.name(fn)) * string(function_type(fn))
+                scope = string(LLVM.name(fn)) * string(function_type(fn))
                 print(io, "Current scope: \n")
-                print(io, ir)
+                print(io, scope)
             end
 	    legal, obj = absint(val)
 	    if legal
@@ -1197,7 +1197,7 @@ function julia_error(
             ) #=error=#
             world = enzyme_extract_world(f)
         end
-        throw(IllegalTypeAnalysisException(msg, mi, world, sval, ir, bt))
+        throw(IllegalTypeAnalysisException(msg, mi, world, sval, irstr(), bt))
     elseif errtype == API.ET_NoType
         @assert B != C_NULL
         B = IRBuilder(B)
@@ -1209,9 +1209,10 @@ function julia_error(
 
         msg2 = sprint() do io::IO
             if !occursin("Cannot deduce single type of store", msg)
-                if ir !== nothing
+                scope = irstr()
+                if scope !== nothing
                     print(io, "Current scope: \n")
-                    print(io, ir)
+                    print(io, scope)
                 end
                 print(io, "\n Type analysis state: \n")
                 write(io, sval)
@@ -1254,7 +1255,7 @@ function julia_error(
         end
         return C_NULL
     elseif errtype == API.ET_IllegalFirstPointer
-        throw(IllegalFirstPointerException(msg, ir, bt))
+        throw(IllegalFirstPointerException(msg, irstr(), bt))
     elseif errtype == API.ET_NoAccumulate
         world = nothing
         mi = nothing
@@ -1276,10 +1277,10 @@ function julia_error(
         end
 
         err = if mi !== nothing
-            EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world)
+            EnzymeInternalError{Core.MethodInstance, UInt}(msg, irstr(), bt, mi, world)
         else
 	    world = nothing
-            EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world)
+            EnzymeInternalError{Nothing, Nothing}(msg, irstr(), bt, mi, world)
         end
         throw(err)
     elseif errtype == API.ET_InternalError || errtype == API.ET_ShowInternalError
@@ -1303,10 +1304,10 @@ function julia_error(
         end
 
         err = if mi !== nothing
-            EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world)
+            EnzymeInternalError{Core.MethodInstance, UInt}(msg, irstr(), bt, mi, world)
         else
 	    world = nothing
-            EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world)
+            EnzymeInternalError{Nothing, Nothing}(msg, irstr(), bt, mi, world)
         end
                             
         if errtype == API.ET_InternalError 
@@ -1368,7 +1369,7 @@ function julia_error(
             println(io, val)
             println(io, data2)
         end
-        throw(EnzymeInternalError(msg2, ir, bt))
+        throw(EnzymeInternalError(msg2, irstr(), bt))
     elseif errtype == API.ET_MixedActivityError
         data2 = LLVM.Value(data2)
         badval = nothing
