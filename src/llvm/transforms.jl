@@ -1536,19 +1536,35 @@ function copy_debuglocation!(B::LLVM.IRBuilder, inst::LLVM.Instruction)
     return nothing
 end
 
+# State for one function's worth of `rederive_tracked_geps!`.
+struct RederiveState
+    B::LLVM.IRBuilder
+    # Rewritten instructions, pushed after the instructions they use.
+    dead::Vector{LLVM.Instruction}
+    # Tracked interior value => the same address as a Derived value.
+    derived::Dict{LLVM.Value, LLVM.Value}
+    # Phis and selects that have a Tracked interior pointer as an input.
+    joins::Vector{LLVM.Instruction}
+end
+
 # Rewrite the users of `inst`, a Tracked (addrspace 10) interior pointer, to use
 # `derived`, the same address in the Derived (addrspace 11) address space. Casts
 # and GEPs chained off `inst` are rebuilt on top of `derived`; loads and stores
-# through it are redirected. Any other user keeps the Tracked value, so the
+# through it are redirected; phis and selects fed by it are queued for
+# `rederive_tracked_joins!`. Any other user keeps the Tracked value, so the
 # rewrite is always sound and merely best effort.
 function rederive_tracked_uses!(
-        B::LLVM.IRBuilder,
+        st::RederiveState,
         inst::LLVM.Instruction,
         @nospecialize(derived::LLVM.Value),
-        dead::Vector{LLVM.Instruction},
     )
+    B = st.B
+    st.derived[inst] = derived
     users = LLVM.Value[LLVM.user(u) for u in LLVM.uses(inst)]
     for user in users
+        # Already rebuilt from another input, e.g. the GEP feeding a loop phi's
+        # back edge when the phi itself is rewritten.
+        haskey(st.derived, user) && continue
         if isa(user, LLVM.AddrSpaceCastInst) && addrspace(value_type(user)) == Derived
             rep = derived
             if value_type(rep) != value_type(user)
@@ -1557,19 +1573,21 @@ function rederive_tracked_uses!(
                 rep = bitcast!(B, rep, value_type(user))
             end
             replace_uses!(user, rep)
-            push!(dead, user)
+            push!(st.dead, user)
         elseif isa(user, LLVM.BitCastInst)
             position!(B, user)
             copy_debuglocation!(B, user)
             nbc = bitcast!(B, derived, derived_pointer_type(value_type(user)))
-            rederive_tracked_uses!(B, user, nbc, dead)
-            push!(dead, user)
+            rederive_tracked_uses!(st, user, nbc)
+            push!(st.dead, user)
         elseif isa(user, LLVM.GetElementPtrInst) && operands(user)[1] == inst
-            rederive_tracked_gep!(B, user, derived, dead)
+            rederive_tracked_gep!(st, user, derived)
         elseif isa(user, LLVM.LoadInst)
             LLVM.API.LLVMSetOperand(user, 0, derived)
         elseif isa(user, LLVM.StoreInst) && operands(user)[2] == inst && operands(user)[1] != inst
             LLVM.API.LLVMSetOperand(user, 1, derived)
+        elseif isa(user, LLVM.PHIInst) || (isa(user, LLVM.SelectInst) && operands(user)[1] != inst)
+            push!(st.joins, user)
         end
     end
     return nothing
@@ -1578,11 +1596,11 @@ end
 # Rebuild `gep`, whose pointer operand is Tracked, on top of `derived` (the same
 # pointer in the Derived address space) and rewrite its users.
 function rederive_tracked_gep!(
-        B::LLVM.IRBuilder,
+        st::RederiveState,
         gep::LLVM.GetElementPtrInst,
         @nospecialize(derived::LLVM.Value),
-        dead::Vector{LLVM.Instruction},
     )
+    B = st.B
     position!(B, gep)
     copy_debuglocation!(B, gep)
     srcty = LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(gep))
@@ -1592,20 +1610,133 @@ function rederive_tracked_gep!(
     else
         gep!(B, srcty, derived, idxs)
     end
-    rederive_tracked_uses!(B, gep, ngep, dead)
-    push!(dead, gep)
+    rederive_tracked_uses!(st, gep, ngep)
+    push!(st.dead, gep)
+    return nothing
+end
+
+# The Derived counterpart of the Tracked value `v`, as an input of a phi or
+# select being rebuilt in `nty`. Values already rewritten reuse their Derived
+# form; anything else is a whole object and is cast where `v` flows in, i.e.
+# right before `at`.
+function rederive_tracked_input(
+        st::RederiveState,
+        @nospecialize(v::LLVM.Value),
+        nty::LLVM.PointerType,
+        at::LLVM.Instruction,
+    )
+    B = st.B
+    undeforpoison = isa(v, LLVM.UndefValue)
+    @static if LLVM.version() >= v"12"
+        undeforpoison |= isa(v, LLVM.PoisonValue)
+    end
+    undeforpoison && return LLVM.UndefValue(nty)
+    if haskey(st.derived, v)
+        dv = st.derived[v]
+        value_type(dv) == nty && return dv
+        position!(B, at)
+        copy_debuglocation!(B, at)
+        return bitcast!(B, dv, nty)
+    end
+    if isa(v, LLVM.Constant)
+        return const_addrspacecast(v, nty)
+    end
+    position!(B, at)
+    copy_debuglocation!(B, at)
+    if !LLVM.is_opaque(nty) && eltype(value_type(v)) != eltype(nty)
+        v = bitcast!(B, v, LLVM.PointerType(eltype(nty), Tracked))
+    end
+    return addrspacecast!(B, v, nty)
+end
+
+# Rebuild every queued phi/select of Tracked pointers, at least one of whose
+# inputs is an interior pointer, in the Derived address space. Rewriting the
+# users of the new join may queue further joins; a Derived phi is then turned
+# into a rooted base plus offset by `nodecayed_phis!`.
+function rederive_tracked_joins!(st::RederiveState)
+    B = st.B
+    seen = Set{LLVM.Instruction}()
+    while !isempty(st.joins)
+        join = pop!(st.joins)
+        join in seen && continue
+        push!(seen, join)
+        nty = derived_pointer_type(value_type(join))
+        position!(B, join)
+        copy_debuglocation!(B, join)
+        if isa(join, LLVM.PHIInst)
+            nphi = phi!(B, nty, "rederived." * LLVM.name(join))
+            # Make a self-referencing phi pick up its own replacement.
+            st.derived[join] = nphi
+            cache = Dict{Tuple{LLVM.Value, LLVM.BasicBlock}, LLVM.Value}()
+            for (v, bb) in LLVM.incoming(join)
+                key = (v, bb)
+                if !haskey(cache, key)
+                    cache[key] = rederive_tracked_input(st, v, nty, terminator(bb))
+                end
+                push!(LLVM.incoming(nphi), (cache[key], bb))
+            end
+            rederive_tracked_uses!(st, join, nphi)
+        else
+            tv = rederive_tracked_input(st, operands(join)[2], nty, join)
+            fv = rederive_tracked_input(st, operands(join)[3], nty, join)
+            position!(B, join)
+            copy_debuglocation!(B, join)
+            nsel = select!(B, operands(join)[1], tv, fv, "rederived." * LLVM.name(join))
+            rederive_tracked_uses!(st, join, nsel)
+        end
+        push!(st.dead, join)
+    end
+    return nothing
+end
+
+# Erase the rewritten instructions that no longer have users. Users were pushed
+# before the instructions they use, so one sweep erases inner-most first, but a
+# rewritten loop phi and the GEP feeding its back edge keep each other alive:
+# anything whose remaining users are all themselves dead is erased too.
+function erase_rederived!(dead::Vector{LLVM.Instruction})
+    remaining = LLVM.Instruction[]
+    for inst in dead
+        if LLVM.API.LLVMGetFirstUse(inst) == C_NULL
+            LLVM.API.LLVMInstructionEraseFromParent(inst)
+        else
+            push!(remaining, inst)
+        end
+    end
+    isempty(remaining) && return nothing
+    cycle = Set{LLVM.Instruction}(remaining)
+    changed = true
+    while changed
+        changed = false
+        for inst in remaining
+            inst in cycle || continue
+            for u in LLVM.uses(inst)
+                if !(LLVM.user(u) in cycle)
+                    delete!(cycle, inst)
+                    changed = true
+                    break
+                end
+            end
+        end
+    end
+    for inst in cycle
+        replace_uses!(inst, LLVM.UndefValue(value_type(inst)))
+    end
+    for inst in cycle
+        LLVM.API.LLVMInstructionEraseFromParent(inst)
+    end
     return nothing
 end
 
 # Julia only ever forms a field or element address as an `addrspacecast` from
 # Tracked (addrspace 10) to Derived (addrspace 11) followed by a GEP in
 # addrspace 11. With typed pointers (LLVM <= 16, so Julia <= 1.11) InstCombine
-# rewrites `gep(addrspacecast(x))` into `addrspacecast(gep(x))`, which leaves the
-# interior pointer in the Tracked address space. Julia's GC lowering tolerates
-# that, but Enzyme may cache such a value on the tape, and the tape typing has
-# to treat every addrspace(10) pointer as a Julia object. The GC is then handed
-# a pointer into the middle of an object and corrupts it (#3532). Sink the
-# addrspacecast back above the GEP so that interior pointers are always Derived.
+# rewrites `gep(addrspacecast(x))` into `addrspacecast(gep(x))`, and likewise
+# hoists the cast out of phis and selects, which leaves the interior pointer in
+# the Tracked address space. Julia's GC lowering tolerates that, but Enzyme may
+# cache such a value on the tape, and the tape typing has to treat every
+# addrspace(10) pointer as a Julia object. The GC is then handed a pointer into
+# the middle of an object and corrupts it (#3532). Sink the addrspacecast back
+# above the GEP so that interior pointers are always Derived.
 function rederive_tracked_geps!(mod::LLVM.Module)
     for f in functions(mod)
         roots = LLVM.GetElementPtrInst[]
@@ -1623,23 +1754,22 @@ function rederive_tracked_geps!(mod::LLVM.Module)
             push!(roots, inst)
         end
         isempty(roots) && continue
-        dead = LLVM.Instruction[]
-        B = IRBuilder()
+        st = RederiveState(
+            IRBuilder(),
+            LLVM.Instruction[],
+            Dict{LLVM.Value, LLVM.Value}(),
+            LLVM.Instruction[],
+        )
         for gep in roots
-            position!(B, gep)
-            copy_debuglocation!(B, gep)
+            position!(st.B, gep)
+            copy_debuglocation!(st.B, gep)
             base = operands(gep)[1]
-            derived = addrspacecast!(B, base, derived_pointer_type(value_type(base)))
-            rederive_tracked_gep!(B, gep, derived, dead)
+            derived = addrspacecast!(st.B, base, derived_pointer_type(value_type(base)))
+            rederive_tracked_gep!(st, gep, derived)
         end
-        dispose(B)
-        # Users were pushed before the instructions they use, so this erases
-        # inner-most first; anything that still has a (non-rewritten) user stays.
-        for inst in dead
-            if LLVM.API.LLVMGetFirstUse(inst) == C_NULL
-                LLVM.API.LLVMInstructionEraseFromParent(inst)
-            end
-        end
+        rederive_tracked_joins!(st)
+        dispose(st.B)
+        erase_rederived!(st.dead)
     end
     return nothing
 end
