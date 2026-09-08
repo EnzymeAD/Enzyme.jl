@@ -333,7 +333,22 @@ end
 
 function get_pgcstack(func::LLVM.Function)
     entry_bb = first(blocks(func))
-    pgcstack_func = declare_pgcstack!(LLVM.parent(func))
+    mod = LLVM.parent(func)
+    pgcstack_func, _ = declare_pgcstack!(mod)
+
+    # A @cfunction wrapper fetches its pgcstack with julia.get_pgcstack_or_new,
+    # which adopts the calling thread when it is not a Julia thread yet. It has
+    # to stay the first getter of the entry block: FinalLowerGC roots the GC
+    # frame in whichever getter comes first, and a plain getter placed ahead of
+    # the adopting one dereferences a NULL pgcstack on a foreign thread.
+    if haskey(functions(mod), "julia.get_pgcstack_or_new")
+        or_new = functions(mod)["julia.get_pgcstack_or_new"]
+        for I in instructions(entry_bb)
+            if I isa LLVM.CallInst && called_operand(I) == or_new
+                return I
+            end
+        end
+    end
 
     for I in instructions(entry_bb)
         if I isa LLVM.CallInst && called_operand(I) == pgcstack_func
@@ -497,7 +512,7 @@ end
 
 function unique_gcmarker!(func::LLVM.Function)
     entry_bb = first(blocks(func))
-    pgcstack_func = declare_pgcstack!(LLVM.parent(func))
+    pgcstack_func, _ = declare_pgcstack!(LLVM.parent(func))
 
     found = LLVM.CallInst[]
     for I in instructions(entry_bb)
