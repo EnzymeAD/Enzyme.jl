@@ -104,7 +104,7 @@ export unsafe_to_ptr
 function setup_global(
         B::LLVM.IRBuilder,
         T_jlvalue::LLVM.StructType,
-        world::Union{UInt, Nothing},
+        world::UInt,
         insert_name_if_not_exists::Union{String, Nothing},
         k::String,
         @nospecialize(val),
@@ -136,7 +136,7 @@ function setup_global(
     if !inactive && val isa Core.SimpleVector && length(val) == 0
         inactive = true
     end
-    if !inactive && world isa UInt
+    if !inactive
         legal, jTy, byref = Compiler.abs_typeof(gv, true)
         if legal
             state = Enzyme.Compiler.active_reg(jTy, world)
@@ -150,21 +150,10 @@ function setup_global(
 end
 
 # This mimicks literal_pointer_val / literal_pointer_val_slot
-function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_not_exists::Union{String, Nothing}=nothing)::LLVM.Value
+function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val), world::UInt; insert_name_if_not_exists::Union{String, Nothing} = nothing)::LLVM.Value
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
-
-    world = nothing
-    for fattr in collect(LLVM.function_attributes(LLVM.parent(LLVM.position(B))))
-        if isa(fattr, LLVM.StringAttribute)
-            if LLVM.kind(fattr) == "enzymejl_world"
-                world = parse(UInt, LLVM.value(fattr))
-                break
-            end
-        end
-    end
-    
 
     for (k, v) in Compiler.JuliaGlobalNameMap
         if v === val
@@ -194,12 +183,12 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
 end
 export unsafe_to_llvm, unsafe_nothing_to_llvm
 
-function makeInstanceOf(B::LLVM.IRBuilder, @nospecialize(T::Type))
+function makeInstanceOf(B::LLVM.IRBuilder, @nospecialize(T::Type), world::UInt)
     if !Core.Compiler.isconstType(T)
         throw(AssertionError("Tried to make instance of non constant type $T"))
     end
     @assert T <: Type
-    return unsafe_to_llvm(B, T.parameters[1])
+    return unsafe_to_llvm(B, T.parameters[1], world)
 end
 
 export makeInstanceOf
@@ -615,7 +604,6 @@ function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruc
         fn,
         false,
     ) #=error=#
-    world = Compiler.enzyme_extract_world(fn)
 
     msg = "Function requesting sret type was not an sret\n\nidx=$idx\nenzymejl_parmtype=$enzymejl_parmtype enzymejl_parmtype_ref=$enzymejl_parmtype_ref\n"
     ir = string(fn)
@@ -624,7 +612,7 @@ function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruc
         bt = GPUCompiler.backtrace(btval)
     end
     if mi !== nothing
-        throw(Compiler.EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world))
+        throw(Compiler.EnzymeInternalError{Core.MethodInstance, Nothing}(msg, ir, bt, mi, nothing))
     else
         world = nothing
         throw(Compiler.EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world))

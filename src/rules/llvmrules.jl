@@ -202,14 +202,14 @@ include("parallelrules.jl")
         err = emit_error(
             B,
             orig,
-            ("Enzyme: jl_call calling convention not implemented in forward for " * string(orig), mi, world),
+            ("Enzyme: jl_call calling convention not implemented in forward for " * string(orig), mi, world), enzyme_context(gutils).world,
             EnzymeRuntimeExceptionMI
         )
     else
         err = emit_error(
             B,
             orig,
-            "Enzyme: jl_call calling convention not implemented in forward for " * string(orig),
+            "Enzyme: jl_call calling convention not implemented in forward for " * string(orig), enzyme_context(gutils).world,
             EnzymeRuntimeException
         )
     end
@@ -296,14 +296,14 @@ end
         err = emit_error(
             B,
             orig,
-            ("Enzyme: jl_call calling convention not implemented in aug_forward for " * string(orig), mi, world),
+            ("Enzyme: jl_call calling convention not implemented in aug_forward for " * string(orig), mi, world), enzyme_context(gutils).world,
             EnzymeRuntimeExceptionMI
         )
     else
         err = emit_error(
             B,
             orig,
-            "Enzyme: jl_call calling convention not implemented in aug_forward for " * string(orig),
+            "Enzyme: jl_call calling convention not implemented in aug_forward for " * string(orig), enzyme_context(gutils).world,
             EnzymeRuntimeException
         )
     end
@@ -397,14 +397,14 @@ end
         err = emit_error(
             B,
             orig,
-            ("Enzyme: jl_call calling convention not implemented in reverse for " * string(orig), mi, world),
+            ("Enzyme: jl_call calling convention not implemented in reverse for " * string(orig), mi, world), enzyme_context(gutils).world,
             EnzymeRuntimeExceptionMI
         )
     else
         err = emit_error(
             B,
             orig,
-            "Enzyme: jl_call calling convention not implemented in reverse for " * string(orig),
+            "Enzyme: jl_call calling convention not implemented in reverse for " * string(orig), enzyme_context(gutils).world,
             EnzymeRuntimeException
         )
     end
@@ -493,12 +493,12 @@ end
     return nothing
 end
 
-function post_arraycopy_makezero(B, callv, _, _)
-    emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, Enzyme.make_zero!), callv])
+function post_arraycopy_makezero(B, callv, _, _, world::UInt)
+    emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, Enzyme.make_zero!, world), callv])
     return nothing
 end
 
-function post_arraycopy_memset(B, callv, _, _)
+function post_arraycopy_memset(B, callv, _, _, world::UInt)
     i8 = LLVM.IntType(8)
     algn = 0
 
@@ -597,7 +597,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = noth
         emit_error(
             B,
             orig,
-            "Enzyme: Unknown concrete type in arraycopy_common. tt: " * string(tt) * " " * string(orig) * " " * string(abs_typeof(orig)),
+            "Enzyme: Unknown concrete type in arraycopy_common. tt: " * string(tt) * " " * string(orig) * " " * string(abs_typeof(orig)), enzyme_context(gutils).world,
         )
         return nothing
     end
@@ -632,7 +632,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = noth
     end
 
     elSize = if memory
-        get_memory_elsz(B0, actualOp)
+        get_memory_elsz(B0, actualOp, enzyme_context(gutils).world)
     else
         get_array_elsz(B0, actualOp)
     end
@@ -641,7 +641,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = noth
 
     if len == nothing
         if memory
-            len = get_memory_len(B0, actualOp)
+            len = get_memory_len(B0, actualOp, enzyme_context(gutils).world)
         else
             len = get_array_len(B0, actualOp)
         end
@@ -819,10 +819,10 @@ end
     return nothing
 end
 
-function post_genericmemcpy_memset(B, callv, args, _)
+function post_genericmemcpy_memset(B, callv, args, _, world::UInt)
     _, _, len = args
 
-    elSize = get_memory_elsz(B, callv)
+    elSize = get_memory_elsz(B, callv, world)
     elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
     length = LLVM.mul!(B, len, elSize)
 
@@ -944,10 +944,10 @@ end
             false,
         ) #=lookup=#
         if is_constant_value(gutils, origops[1])
-            emit_error(B, orig, "ijl_genericmemory_slice memory argument (1st arg) was constant but return was active")
+            emit_error(B, orig, "ijl_genericmemory_slice memory argument (1st arg) was constant but return was active", enzyme_context(gutils).world)
         end
         if is_constant_value(gutils, origops[2])
-            emit_error(B, orig, "ijl_genericmemory_slice ptr argument (2nd arg) was constant but return was active")
+            emit_error(B, orig, "ijl_genericmemory_slice ptr argument (2nd arg) was constant but return was active", enzyme_context(gutils).world)
         end
         if get_runtime_activity(gutils)
             prev = new_from_original(gutils, orig)
@@ -992,7 +992,7 @@ end
     if unsafe_load(shadowR) != C_NULL
         origops = LLVM.operands(orig)
         if is_constant_value(gutils, origops[2])
-            emit_error(B, orig, "Enzyme: reshape array has active return, but inactive input")
+            emit_error(B, orig, "Enzyme: reshape array has active return, but inactive input", enzyme_context(gutils).world)
         end
 
         width = get_width(gutils)
@@ -1045,10 +1045,10 @@ end
 
     origops = LLVM.operands(orig)
     if is_constant_value(gutils, origops[1])
-        emit_error(B, orig, "Enzyme: gcloaded has active return, but inactive input(1)")
+        emit_error(B, orig, "Enzyme: gcloaded has active return, but inactive input(1)", enzyme_context(gutils).world)
     end
     if is_constant_value(gutils, origops[2])
-        emit_error(B, orig, "Enzyme: gcloaded has active return, but inactive input(2)")
+        emit_error(B, orig, "Enzyme: gcloaded has active return, but inactive input(2)", enzyme_context(gutils).world)
     end
 
     width = get_width(gutils)
@@ -1139,14 +1139,14 @@ end
     TT = tape_type(flt)
 
     if width == 1
-        obj = emit_allocobj!(B, Base.RefValue{TT})
+        obj = emit_allocobj!(B, Base.RefValue{TT}, enzyme_context(gutils).world)
         o2 = bitcast!(B, obj, LLVM.PointerType(flt, addrspace(value_type(obj))))
         store!(B, ConstantFP(flt, 0.0), o2)
         shadowres = obj
     else
         shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, flt)))
         for idx in 1:width
-            obj = emit_allocobj!(B, Base.RefValue{TT})
+            obj = emit_allocobj!(B, Base.RefValue{TT}, enzyme_context(gutils).world)
             o2 = bitcast!(B, obj, LLVM.PointerType(flt, addrspace(value_type(obj))))
             store!(B, ConstantFP(flt, 0.0), o2)
             shadowres = insert_value!(B, shadowres, obj, idx - 1)
@@ -1203,7 +1203,7 @@ end
         return true
     end
 
-    err = emit_error(B, orig, "Enzyme: Not yet implemented forward for jl_eqtable_get")
+    err = emit_error(B, orig, "Enzyme: Not yet implemented forward for jl_eqtable_get", enzyme_context(gutils).world)
 
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
@@ -1284,7 +1284,7 @@ end
                 " dflt " *
                 string(absint(origdflt)) *
                 " " *
-                string(abs_typeof(origdflt, true)),
+                string(abs_typeof(origdflt, true)), enzyme_context(gutils).world,
         )
     end
 
@@ -1326,10 +1326,10 @@ end
 
     newvals = API.CValueType[API.VT_Shadow, API.VT_Primal, API.VT_Shadow]
 
-    function post_err_if_active(B, cal, args)
+    function post_err_if_active(B, cal, args, world::UInt)
         emit_apply_generic!(
             B,
-            LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, cal)],
+            LLVM.Value[unsafe_to_llvm(B, error_if_active, world), emit_jltypeof!(B, cal, world)],
         )
     end
 
@@ -1360,7 +1360,7 @@ end
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    err = emit_error(B, orig, "Enzyme: Not yet implemented forward for jl_eqtable_put")
+    err = emit_error(B, orig, "Enzyme: Not yet implemented forward for jl_eqtable_put", enzyme_context(gutils).world)
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
 
@@ -1382,11 +1382,11 @@ end
     return false
 end
 
-function eqtable_shadow_active(B, args)
+function eqtable_shadow_active(B, args, world::UInt)
     _, _, shadowval, _ = args
     emit_apply_generic!(
         B,
-        LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, shadowval)],
+        LLVM.Value[unsafe_to_llvm(B, error_if_active, world), emit_jltypeof!(B, shadowval, world)],
     )
     return nothing
 end
@@ -1468,7 +1468,7 @@ end
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    err = emit_error(B, orig, "Enzyme: Not yet implemented forward for jl_idtable_rehash")
+    err = emit_error(B, orig, "Enzyme: Not yet implemented forward for jl_idtable_rehash", enzyme_context(gutils).world)
 
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
@@ -1498,7 +1498,7 @@ end
     err = emit_error(
         B,
         orig,
-        "Enzyme: Not yet implemented augmented forward for jl_idtable_rehash",
+        "Enzyme: Not yet implemented augmented forward for jl_idtable_rehash", enzyme_context(gutils).world,
     )
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
@@ -1522,7 +1522,7 @@ end
 end
 
 @register_rev function idtablerehash_rev(B, orig, gutils, tape)
-    emit_error(B, orig, "Enzyme: Not yet implemented reverse for jl_idtable_rehash")
+    emit_error(B, orig, "Enzyme: Not yet implemented reverse for jl_idtable_rehash", enzyme_context(gutils).world)
     return nothing
 end
 
@@ -1551,7 +1551,7 @@ end
     return false
 end
 
-function pre_shadow_array_grow!(B, args)
+function pre_shadow_array_grow!(B, args, world::UInt)
     anti, inc = args
 
     idx = get_array_nrows(B, anti)
@@ -1559,7 +1559,7 @@ function pre_shadow_array_grow!(B, args)
     return idx
 end
 
-function post_shadow_array_grow!(B, _, args, pre)
+function post_shadow_array_grow!(B, _, args, pre, world::UInt)
     al = 0
     anti, inc = args
 
@@ -1848,7 +1848,7 @@ end
     legal, dest_ty, _ = abs_typeof(first(operands(orig)))
 
     if !legal
-        emit_error(B, orig, "Enzyme: could not deduce element type of value within generic_memory_copyto of " * string(first(operands(orig))) * " within " * string(orig))
+        emit_error(B, orig, "Enzyme: could not deduce element type of value within generic_memory_copyto of " * string(first(operands(orig))) * " within " * string(orig), enzyme_context(gutils).world)
     else
         dest_ty = Vector{Any}
     end
@@ -1857,7 +1857,7 @@ end
 
     world = enzyme_context(gutils).world
     if !guaranteed_nonactive(ET, world)
-        emit_error(B, orig, "Enzyme: element type $ET of generic_memory_copyto is potentially active ($reg) and not presently supported")
+        emit_error(B, orig, "Enzyme: element type $ET of generic_memory_copyto is potentially active ($reg) and not presently supported", enzyme_context(gutils).world)
     end
 
     args = LLVM.Value[]
@@ -1955,7 +1955,7 @@ end
 
 @register_fwd function jl_unhandled_fwd(B, orig, gutils, normalR, shadowR)
     newo = new_from_original(gutils, orig)
-    err = emit_error(B, orig, "Enzyme: unhandled forward for " * string(LLVM.called_operand(orig)))
+    err = emit_error(B, orig, "Enzyme: unhandled forward for " * string(LLVM.called_operand(orig)), enzyme_context(gutils).world)
     API.moveBefore(newo, err, C_NULL)
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
@@ -2005,7 +2005,7 @@ end
     err = emit_error(
         B,
         orig,
-        "Enzyme: unhandled forward for jl_get_binding_or_error",
+        "Enzyme: unhandled forward for jl_get_binding_or_error", enzyme_context(gutils).world,
         EnzymeRuntimeException,
         cmp
     )
@@ -2055,7 +2055,7 @@ end
         return nothing
     end
 
-    emit_error(B, orig, "Enzyme: unhandled reverse for jl_get_binding_or_error")
+    emit_error(B, orig, "Enzyme: unhandled reverse for jl_get_binding_or_error", enzyme_context(gutils).world)
     return nothing
 end
 
@@ -2066,7 +2066,7 @@ end
     err = emit_error(
         B,
         orig,
-        "Enzyme: unhandled forward for jl_gc_add_finalizer_th or jl_gc_add_ptr_finalizer",
+        "Enzyme: unhandled forward for jl_gc_add_finalizer_th or jl_gc_add_ptr_finalizer", enzyme_context(gutils).world,
     )
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
@@ -2094,7 +2094,7 @@ end
     err = emit_error(
         B,
         orig,
-        "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th",
+        "Enzyme: unhandled augmented forward for jl_gc_add_finalizer_th", enzyme_context(gutils).world,
     )
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
@@ -2135,7 +2135,7 @@ end
     err = emit_error(
         B,
         orig,
-        "There is a known issue in GPUCompiler.jl which is preventing higher-order AD of this code.\nPlease see https://github.com/JuliaGPU/GPUCompiler.jl/issues/629 for more information and to alert the GPUCompiler authors of your use case and need.",
+        "There is a known issue in GPUCompiler.jl which is preventing higher-order AD of this code.\nPlease see https://github.com/JuliaGPU/GPUCompiler.jl/issues/629 for more information and to alert the GPUCompiler authors of your use case and need.", enzyme_context(gutils).world,
     )
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
@@ -2163,7 +2163,7 @@ end
     err = emit_error(
         B,
         orig,
-        "There is a known issue in GPUCompiler.jl which is preventing higher-order AD of this code.\nPlease see https://github.com/JuliaGPU/GPUCompiler.jl/issues/629 for more information and to alert the GPUCompiler authors of your use case and need.",
+        "There is a known issue in GPUCompiler.jl which is preventing higher-order AD of this code.\nPlease see https://github.com/JuliaGPU/GPUCompiler.jl/issues/629 for more information and to alert the GPUCompiler authors of your use case and need.", enzyme_context(gutils).world,
     )
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)

@@ -48,6 +48,12 @@ end
 
 using InteractiveUtils
 
+# Errors raised from module-level passes carry no world: show the code in the
+# current one.
+function code_typed_helper(mi::Core.MethodInstance, ::Nothing, args...; kwargs...)
+    return code_typed_helper(mi, Base.get_world_counter(), args...; kwargs...)
+end
+
 function code_typed_helper(mi::Core.MethodInstance, world::UInt, mode::Enzyme.API.CDerivativeMode = Enzyme.API.DEM_ReverseModeCombined; interactive::Bool=false, kwargs...)
     CT = @static if VERSION >= v"1.11.0-DEV.1552"
         EnzymeCacheToken(
@@ -1110,7 +1116,11 @@ function julia_error(
             end
 
             mi = nothing
-            world = nothing
+            # `data` is the `GradientUtils` when the error is raised while
+            # differentiating a function, and null from the batching, truncation
+            # and tracing entry points.
+            world = data == C_NULL ? callback_world() :
+                enzyme_context(GradientUtils(API.EnzymeGradientUtilsRef(data))).world
 
             if isa(val, LLVM.Instruction)
                 f = LLVM.parent(LLVM.parent(val))::LLVM.Function
@@ -1118,19 +1128,17 @@ function julia_error(
                     f,
                     false,
                 ) #=error=#
-                world = enzyme_extract_world(f)
             elseif isa(val, LLVM.Argument)
                 f = parent_scope(val)::LLVM.Function
                 mi, rt = enzyme_custom_extract_mi(
                     f,
                     false,
                 ) #=error=#
-                world = enzyme_extract_world(f)
             end
             if mi !== nothing
-                emit_error(B, nothing, (msg2, mi, world), EnzymeNoDerivativeError{Core.MethodInstance, UInt}, data2)
+                emit_error(B, nothing, (msg2, mi, world), world, EnzymeNoDerivativeError{Core.MethodInstance, UInt}, data2)
             else
-                emit_error(B, nothing, msg2, EnzymeNoDerivativeError{Nothing, Nothing}, data2)
+                emit_error(B, nothing, msg2, world, EnzymeNoDerivativeError{Nothing, Nothing}, data2)
             end
 
             return C_NULL
@@ -1138,6 +1146,7 @@ function julia_error(
         throw(NoDerivativeException(msg, irstr(), bt))
     elseif errtype == API.ET_NoShadow
         gutils = GradientUtils(API.EnzymeGradientUtilsRef(data))
+        world = enzyme_context(gutils).world
 
         msgN = sprint() do io::IO
             if isa(val, LLVM.Argument)
@@ -1171,7 +1180,7 @@ function julia_error(
                 println(io)
             end
         end
-        emit_error(IRBuilder(B), nothing, msgN, EnzymeNoShadowError)
+        emit_error(IRBuilder(B), nothing, msgN, world, EnzymeNoShadowError)
         return LLVM.null(get_shadow_type(gutils, value_type(val))).ref
     elseif errtype == API.ET_IllegalTypeAnalysis
         data = API.EnzymeTypeAnalyzerRef(data)
@@ -1245,9 +1254,9 @@ function julia_error(
             ) #=error=#
         end
         if mi !== nothing
-            emit_error(B, nothing, (msg2, mi, world), EnzymeNoTypeError{Core.MethodInstance, UInt})
+            emit_error(B, nothing, (msg2, mi, world), world, EnzymeNoTypeError{Core.MethodInstance, UInt})
         else
-            emit_error(B, nothing, msg2, EnzymeNoTypeError{Nothing, Nothing})
+            emit_error(B, nothing, msg2, world, EnzymeNoTypeError{Nothing, Nothing})
         end
         return C_NULL
     elseif errtype == API.ET_IllegalFirstPointer
@@ -1262,18 +1271,16 @@ function julia_error(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
         elseif isa(val, LLVM.Argument)
             f = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
         end
 
         err = if mi !== nothing
-            EnzymeInternalError{Core.MethodInstance, UInt}(msg, irstr(), bt, mi, world)
+            EnzymeInternalError{Core.MethodInstance, Nothing}(msg, irstr(), bt, mi, nothing)
         else
 	    world = nothing
             EnzymeInternalError{Nothing, Nothing}(msg, irstr(), bt, mi, world)
@@ -1289,18 +1296,16 @@ function julia_error(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
         elseif isa(val, LLVM.Argument)
             f = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
         end
 
         err = if mi !== nothing
-            EnzymeInternalError{Core.MethodInstance, UInt}(msg, irstr(), bt, mi, world)
+            EnzymeInternalError{Core.MethodInstance, Nothing}(msg, irstr(), bt, mi, nothing)
         else
 	    world = nothing
             EnzymeInternalError{Nothing, Nothing}(msg, irstr(), bt, mi, world)
@@ -1485,9 +1490,9 @@ end
                     if width == 1
                         if mode == API.DEM_ForwardMode
                             instance = make_zero(obj)
-                            return unsafe_to_llvm(prevbb, instance)
+                                return unsafe_to_llvm(prevbb, instance, enzyme_context(gutils).world)
                         else
-                            res = emit_allocobj!(prevbb, Base.RefValue{TT}) 
+                                res = emit_allocobj!(prevbb, Base.RefValue{TT}, enzyme_context(gutils).world)
 			    T_int8 = LLVM.Int8Type() 
 			    T_size_t = convert(LLVM.LLVMType, UInt)
 			    LLVM.memset!(prevbb, bitcast!(prevbb, res, LLVM.PointerType(T_int8, 10)),  LLVM.ConstantInt(T_int8, 0), LLVM.ConstantInt(T_size_t, sizeof(TT)), 0)
@@ -1501,9 +1506,9 @@ end
                         for idx = 1:width
                             res = if mode == API.DEM_ForwardMode
                                 instance = make_zero(obj)
-                                unsafe_to_llvm(prevbb, instance)
+                                    unsafe_to_llvm(prevbb, instance, enzyme_context(gutils).world)
                             else
-                                sres = emit_allocobj!(prevbb, Base.RefValue{TT})
+                                    sres = emit_allocobj!(prevbb, Base.RefValue{TT}, enzyme_context(gutils).world)
 			        T_int8 = LLVM.Int8Type() 
 			        T_size_t = convert(LLVM.LLVMType, UInt)
 			        LLVM.memset!(prevbb, bitcast!(prevbb, sres, LLVM.PointerType(T_int8, 10)),  LLVM.ConstantInt(T_int8, 0), LLVM.ConstantInt(T_size_t, sizeof(TT)), 0)
@@ -1823,9 +1828,9 @@ end
         mode = Enzyme.API.DEM_ReverseModeCombined
 
         if mi !== nothing
-            emit_error(b, nothing, (msg2, mi, world), EnzymeRuntimeActivityError{Cstring, Core.MethodInstance, UInt})
+            emit_error(b, nothing, (msg2, mi, world), enzyme_context(gutils).world, EnzymeRuntimeActivityError{Cstring, Core.MethodInstance, UInt})
         else
-            emit_error(b, nothing, msg2, EnzymeRuntimeActivityError{Cstring, Nothing, Nothing})
+            emit_error(b, nothing, msg2, enzyme_context(gutils).world, EnzymeRuntimeActivityError{Cstring, Nothing, Nothing})
         end
         return C_NULL
     elseif errtype == API.ET_GetIndexError
@@ -1840,7 +1845,7 @@ end
                 println(io)
             end
         end
-        emit_error(B, nothing, msg5)
+        emit_error(B, nothing, msg5, enzyme_context(gutils).world)
         return C_NULL
     end
     throw(AssertionError("Unknown errtype"))

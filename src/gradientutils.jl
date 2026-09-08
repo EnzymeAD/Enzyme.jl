@@ -1,4 +1,5 @@
-import LLVM: refcheck
+import LLVM: refcheck, BasicBlock, EnumAttribute, IRBuilder, blocks, br!, call!,
+    function_attributes, icmp!, linkage!, parameters, position!, ret!, value_type
 import GPUCompiler
 LLVM.@checked struct GradientUtils
     ref::API.EnzymeGradientUtilsRef
@@ -106,7 +107,7 @@ function set_reverse_block!(gutils::GradientUtils, block::LLVM.BasicBlock)
     return API.EnzymeGradientUtilsSetReverseBlock(gutils, block)
 end
 
-function get_or_insert_conditional_execute!(fn::LLVM.Function, forward_tys::Vector{LLVM.LLVMType}, name_key::String; force_run=false, need_result=true, preprocess=nothing, postprocess=nothing, postprocess_const=nothing, cmpidx::Int = 1)
+function get_or_insert_conditional_execute!(fn::LLVM.Function, forward_tys::Vector{LLVM.LLVMType}, name_key::String, world::UInt; force_run = false, need_result = true, preprocess = nothing, postprocess = nothing, postprocess_const = nothing, cmpidx::Int = 1)
     FT0 = LLVM.function_type(fn)
     ptys = copy(forward_tys)
     insert!(ptys, 1, ptys[cmpidx])
@@ -138,7 +139,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function, forward_tys::Vect
         newname = newname * name_key * "."
     end
     newname = newname * LLVM.name(fn)
-    cfn, _ = get_function!(mod, newname, FT)
+    cfn, _ = Compiler.get_function!(mod, newname, FT)
     if isempty(blocks(cfn))
         linkage!(cfn, LLVM.API.LLVMInternalLinkage)
         let builder = IRBuilder()
@@ -154,7 +155,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function, forward_tys::Vect
 
             if force_run
                 if preprocess !== nothing
-                    ppr = preprocess(builder, args)
+                    ppr = preprocess(builder, args, world)
                 end
                 res = call!(builder, FT0, fn, rparms)
                 LLVM.callconv!(res, LLVM.callconv(fn))
@@ -167,13 +168,13 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function, forward_tys::Vect
 
             if !force_run
                 if preprocess !== nothing
-                    ppr = preprocess(builder, rparms)
+                    ppr = preprocess(builder, rparms, world)
                 end
                 res = call!(builder, FT0, fn, rparms)
                 LLVM.callconv!(res, LLVM.callconv(fn))
             end
             if postprocess !== nothing
-                postprocess(builder, res, rparms, ppr)
+                postprocess(builder, res, rparms, ppr, world)
             end
             if void_rt
                 ret!(builder)
@@ -183,7 +184,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function, forward_tys::Vect
 
             position!(builder, bad)
             if postprocess_const !== nothing
-                postprocess_const(builder, res, rparms, ppr)
+                postprocess_const(builder, res, rparms, ppr, world)
                 if void_rt
                     ret!(builder)
                 else
@@ -287,7 +288,7 @@ function call_same_with_inverted_arg_if_active!(
         insert!(args, 1, newval)
     end
     prefn = LLVM.called_operand(orig)::LLVM.Function
-    condfn = get_or_insert_conditional_execute!(prefn, forward_tys, name_key; force_run, preprocess, postprocess, postprocess_const, need_result, cmpidx)
+    condfn = get_or_insert_conditional_execute!(prefn, forward_tys, name_key, enzyme_context(gutils).world; force_run, preprocess, postprocess, postprocess_const, need_result, cmpidx)
 
     res = LLVM.Value(
         API.EnzymeGradientUtilsCallWithInvertedBundles(
@@ -336,7 +337,7 @@ function batch_call_same_with_inverted_arg_if_active!(
 
     width = get_width(gutils)
 
-    void_rt = LLVM.value_type(orig) ==LLVM.VoidType()
+    void_rt = LLVM.value_type(orig) == LLVM.VoidType()
     shadow = if !void_rt && need_result
         ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, LLVM.value_type(orig)))
         LLVM.UndefValue(ST)::LLVM.Value

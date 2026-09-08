@@ -379,7 +379,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     return errors
 end
 
-function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check_mutability::Bool = true, do_replace::Bool = true)::LLVM.Value
+function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check_mutability::Bool = true, do_replace::Bool = true, world::UInt)::LLVM.Value
     if !(isa(value_type(inst), LLVM.PointerType) && addrspace(value_type(inst)) == Tracked)
         return inst
     end
@@ -462,7 +462,7 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
 
         b = IRBuilder()
         position!(b, inst)
-        newf = unsafe_to_llvm(b, obj0; insert_name_if_not_exists = gname)
+        newf = unsafe_to_llvm(b, obj0, world; insert_name_if_not_exists = gname)
         if do_replace
             replace_uses!(inst, newf)
             LLVM.API.LLVMInstructionEraseFromParent(inst)
@@ -482,7 +482,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             inst = LLVM.Instruction(iter)
             iter = LLVM.API.LLVMGetNextInstruction(iter)
 
-            if try_replace_constant_load!(inst; check_mutability=true, do_replace=true) != inst
+            if try_replace_constant_load!(inst; check_mutability = true, do_replace = true, world = job.world) != inst
                 continue
             end
             if isa(inst, LLVM.CallInst)
@@ -958,7 +958,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
             op1 = operands(inst)[1]
             if isa(op1, LLVM.Instruction)
-                op1 = try_replace_constant_load!(op1; check_mutability=false, do_replace=false)
+                op1 = try_replace_constant_load!(op1; check_mutability = false, do_replace = false, world = job.world)
             end
             arg1, _ = get_base_and_offset(op1; offsetAllowed = false, inttoptr = true)
             if isa(arg1, LLVM.ConstantInt)
@@ -1070,7 +1070,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             @assert length(ops) == 2
             flib = ops[1]
             if isa(flib, LLVM.Instruction)
-                flib = try_replace_constant_load!(flib; check_mutability=false, do_replace=false)
+                flib = try_replace_constant_load!(flib; check_mutability = false, do_replace = false, world = job.world)
             end
             if isa(flib, LLVM.ConstantExpr) || isa(flib, LLVM.GlobalVariable)
                 legal, flib2 = absint(flib)
@@ -1695,7 +1695,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world
                     LLVM.API.LLVMSetOperand(
                         cur,
                         2,
-                        unsafe_to_llvm(LLVM.IRBuilder(cur), NTy),
+                        unsafe_to_llvm(LLVM.IRBuilder(cur), NTy, world),
                     )
                 end
                 continue

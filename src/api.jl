@@ -1384,7 +1384,7 @@ function EnzymeTypeAnalyzerToString(typeanalyzer)
 end
 
 function EnzymeTypeAnalyzerGetLogic(typeanalyzer)
-    ccall(
+    return ccall(
         (:EnzymeTypeAnalyzerGetLogic, libEnzyme),
         EnzymeLogicRef,
         (EnzymeTypeAnalyzerRef,),

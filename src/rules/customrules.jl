@@ -389,7 +389,7 @@ function enzyme_custom_setup_args(
             if B !== nothing
                 if Core.Compiler.isconstType(arg.typ) &&
                    !Core.Compiler.isconstType(Const{arg.typ})
-                    val = unsafe_to_llvm(B, arg.typ.parameters[1])
+                    val = unsafe_to_llvm(B, arg.typ.parameters[1], enzyme_context(gutils).world)
                     roots_val = nothing
                     push_box_for_argument!(alloctx, B, Const{arg.typ}, val, roots_val, arg, args, uncacheable, true, val, nothing)
                 else
@@ -440,7 +440,7 @@ function enzyme_custom_setup_args(
 Custom rule for method argument $arg_idx of type $(arg.typ) has constant non-rooted types ($(tuple_non_rooted_types(arg.typ))) but active rooted types ($(tuple_rooted_types(arg.typ))).
 """
                         msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
-                        emit_error(B, orig, (msg2, mi, world), CallingConventionMismatchError{Cstring})
+                        emit_error(B, orig, (msg2, mi, world), enzyme_context(gutils).world, CallingConventionMismatchError{Cstring})
                         return args, activity, (overwritten...,), actives, kwtup, mixeds, byval_tapes
                     else
                         throw(AssertionError("v1 roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ)) non_rooted_types=$(non_rooted_types(arg.typ))"))
@@ -468,7 +468,7 @@ To fix this, either:
   b) Enable runtime activity on the autodiff mode, e.g.: autodiff(set_runtime_activity(Forward), ...).
 """
                             msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
-                            emit_error(B, orig, (msg2, mi, world), EnzymeRuntimeActivityError{Cstring, Core.MethodInstance, UInt})
+                            emit_error(B, orig, (msg2, mi, world), enzyme_context(gutils).world, EnzymeRuntimeActivityError{Cstring, Core.MethodInstance, UInt})
                             return args, activity, (overwritten...,), actives, kwtup, mixeds, byval_tapes
                         else
                             throw(AssertionError("roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ)) non_rooted_types=$(non_rooted_types(arg.typ))"))
@@ -484,7 +484,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
   - Rooted types: $(tuple_rooted_types(arg.typ))
 """
                         msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
-                        emit_error(B, orig, (msg2, mi, world), CallingConventionMismatchError{Cstring})
+                        emit_error(B, orig, (msg2, mi, world), enzyme_context(gutils).world, CallingConventionMismatchError{Cstring})
                         return args, activity, (overwritten...,), actives, kwtup, mixeds, byval_tapes
                     else
                         throw(AssertionError("roots_activep ($roots_activep) != activep ($activep) arg.typ=$(arg.typ) equivalent_rooted_type=$(equivalent_rooted_type(arg.typ)) non_rooted_types=$(non_rooted_types(arg.typ))"))
@@ -543,7 +543,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                                 val = recombine_value!(B, val, roots_val)
                             else
                                 # Roots are not overwritten, put placeholder valid GC value
-                                val = nullify_rooted_values!(B, val)
+                                val = nullify_rooted_values!(B, val, enzyme_context(gutils).world)
                             end
                         end
  
@@ -718,7 +718,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                         ld = load!(B, iarty, ogval, "rules_ival_load")
                         metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
 			if roots_op !== nothing
-                            ld = nullify_rooted_values!(B, ld)
+                            ld = nullify_rooted_values!(B, ld, enzyme_context(gutils).world)
                         end
                         ld
                     else
@@ -794,7 +794,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                             ld = load!(B, iarty, ogval, "rules_bitsref_nonmixed")
                             metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
 			    if roots_op !== nothing
-                                ld = nullify_rooted_values!(B, ld)
+                                ld = nullify_rooted_values!(B, ld, enzyme_context(gutils).world)
                             end
                             ld
                         else
@@ -822,7 +822,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                                         if uncacheable[arg.codegen.i + 1] != 0
                                             ld0 = recombine_value!(B, ld0, local_shadow_root)
                                         else
-                                            ld0 = nullify_rooted_values!(B, ld0)
+                                            ld0 = nullify_rooted_values!(B, ld0, enzyme_context(gutils).world)
                                         end
                                     end
                                     push!(byval_tapes, ld0)
@@ -843,7 +843,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                                     if uncacheable[arg.codegen.i + 1] != 0
                                         ld0 = recombine_value!(B, ld0, local_shadow_root)
                                     else
-                                        ld0 = nullify_rooted_values!(B, ld0)
+                                        ld0 = nullify_rooted_values!(B, ld0, enzyme_context(gutils).world)
                                     end
                                 end
                                 ld0
@@ -907,7 +907,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                     end
                     llrty = convert(LLVMType, RefTy)
                     RefTy = Base.RefValue{RefTy}
-                    refal0 = refal = emit_allocobj!(B, RefTy, "mixed.$RefTy")
+                    refal0 = refal = emit_allocobj!(B, RefTy, enzyme_context(gutils).world, "mixed.$RefTy")
                     refal = bitcast!(
                         B,
                         refal,
@@ -1056,7 +1056,7 @@ Custom rule for method return value of type $(RealRt) has mismatch between retur
   - Rooted types: $(tuple_rooted_types(RealRt))
 """
 		        msg2 = msg_info * "\n" * sprint(Base.Fix2(Base.show_backtrace, bt))
-		        emit_error(B, orig, (msg2, mi, world), CallingConventionMismatchError{Cstring})
+                    emit_error(B, orig, (msg2, mi, world), enzyme_context(gutils).world, CallingConventionMismatchError{Cstring})
 		        return false
 		    else
 			throw("Returned roots_activep ($roots_activep) != activep ($activep) arg.typ=$(RealRt) equivalent_rooted_type=$(equivalent_rooted_type(RealRt)) non_rooted_types=$(non_rooted_types(RealRt))")
@@ -1082,7 +1082,7 @@ Custom rule for method return value of type $(RealRt) has mismatch between retur
             emit_error(
                 B,
                 orig,
-                (msg2, mi, world),
+                (msg2, mi, world), enzyme_context(gutils).world,
                 MixedReturnException{RealRt}
             )
         end
@@ -1138,7 +1138,7 @@ end
 
         bt = GPUCompiler.backtrace(orig)
         msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
-        emit_error(B, orig, (msg2, mi, world), NonConstantKeywordArgException)
+        emit_error(B, orig, (msg2, mi, world), enzyme_context(gutils).world, NonConstantKeywordArgException)
         return false
     end
     
@@ -1199,7 +1199,7 @@ end
             end
             Base.show_backtrace(io, bt)
         end
-        emit_error(B, orig, (msg2, fmi, world), CallingConventionMismatchError{Cstring})
+        emit_error(B, orig, (msg2, fmi, world), enzyme_context(gutils).world, CallingConventionMismatchError{Cstring})
         return false
     end
 
@@ -1252,7 +1252,7 @@ end
         emit_error(
             B,
             orig,
-            (msg2, fmi, world),
+            (msg2, fmi, world), enzyme_context(gutils).world,
             ForwardRuleReturnError{C, RT, fwd_RT}
         )
         return false
@@ -1607,7 +1607,7 @@ function sret_union_tape_type(@nospecialize(aug_RT))
 end
 
 """
-    box_inline_union!(B, alloctx, val, offset, UT) -> LLVM.Value
+    box_inline_union!(B, alloctx, val, offset, UT, world) -> LLVM.Value
 
 `val` is an aggregate that holds an isbits `Union` field of type `UT`
 inline at byte `offset`: the payload, then a selector byte with the 0-based
@@ -1616,7 +1616,7 @@ boxed, as a tracked pointer; a singleton member is its instance. The tape
 slot of a `Union` tape holds the union boxed, as `jl_type_to_llvm` declares
 it, and the reverse rule takes such a tape boxed too.
 """
-function box_inline_union!(B::LLVM.IRBuilder, alloctx::LLVM.IRBuilder, val::LLVM.Value, offset::Int, @nospecialize(UT::Type))::LLVM.Value
+function box_inline_union!(B::LLVM.IRBuilder, alloctx::LLVM.IRBuilder, val::LLVM.Value, offset::Int, @nospecialize(UT::Type), world::UInt)::LLVM.Value
     T_int8 = LLVM.Int8Type()
     T_int64 = LLVM.Int64Type()
     slot = alloca!(alloctx, value_type(val), "union.tape")
@@ -1629,9 +1629,9 @@ function box_inline_union!(B::LLVM.IRBuilder, alloctx::LLVM.IRBuilder, val::LLVM
     boxed = LLVM.Value[]
     for T in members
         if Base.issingletontype(T)
-            push!(boxed, unsafe_to_llvm(B, T.instance))
+            push!(boxed, unsafe_to_llvm(B, T.instance, world))
         else
-            box = emit_allocobj!(B, T, "union.tape.$T")
+            box = emit_allocobj!(B, T, world, "union.tape.$T")
             memcpy!(B, box, 0, payload, 0, LLVM.ConstantInt(T_int64, sizeof(T)))
             push!(boxed, box)
         end
@@ -1777,7 +1777,7 @@ function enzyme_custom_common_rev(
         mi, _ = enzyme_custom_extract_mi(orig)
         bt = GPUCompiler.backtrace(orig)
         msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
-        emit_error(B, orig, (msg2, mi, world), NonConstantKeywordArgException)
+        emit_error(B, orig, (msg2, mi, world), enzyme_context(gutils).world, NonConstantKeywordArgException)
         return C_NULL
     end
 
@@ -2055,14 +2055,14 @@ function enzyme_custom_common_rev(
                 llety = convert(LLVMType, eltype(RT); allow_boxed = true)
         	if active_roots != 0
 		   msg2 = "Unimplemented in 1.12 (use 1.10 or 1.11): Active Return with rooted types, RT=$RT"
-		   emit_error(B, orig, (msg2, final_mi, world), CallingConventionMismatchError{Cstring})
+                    emit_error(B, orig, (msg2, final_mi, world), enzyme_context(gutils).world, CallingConventionMismatchError{Cstring})
 		   return tapeV
 		end
 		@assert !is_constant_value(gutils,  operands(orig)[1+!isghostty(funcTy)+orig_swiftself]) "Handle constant RT, but active roots"
 		ptr_val = invert_pointer(gutils, operands(orig)[1+!isghostty(funcTy)+orig_swiftself], B)
            
 		if active_roots != 0
-		    ptr_val = nullify_rooted_values!(ptr_val, B) # TODO this should be fwdB
+                    ptr_val = nullify_rooted_values!(ptr_val, B, enzyme_context(gutils).world) # TODO this should be fwdB
 		    @assert !is_constant_value(gutils,  operands(orig)[1+!isghostty(funcTy)+orig_swiftself+1])
 		    roots_ty = convert(LLVMType, AnyArray(width * active_roots))
 		    ral = create_rooted_array(alloctx, width * active_roots)
@@ -2088,7 +2088,7 @@ function enzyme_custom_common_rev(
                 end
             end
 
-            al0 = al = emit_allocobj!(B, nRT, "activeRT.$RT")
+            al0 = al = emit_allocobj!(B, nRT, enzyme_context(gutils).world, "activeRT.$RT")
             al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             al = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
 
@@ -2191,7 +2191,7 @@ function enzyme_custom_common_rev(
             end
             Base.show_backtrace(io, bt)
         end
-        emit_error(B, orig, (msg2, final_mi, world), CallingConventionMismatchError{Cstring})
+        emit_error(B, orig, (msg2, final_mi, world), enzyme_context(gutils).world, CallingConventionMismatchError{Cstring})
         return tapeV
     end
 
@@ -2274,7 +2274,7 @@ function enzyme_custom_common_rev(
 
             bt = GPUCompiler.backtrace(orig)
             msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
-            emit_error(B, orig, (msg2, ami, world), AugmentedRuleReturnError{C, RT, aug_RT})
+            emit_error(B, orig, (msg2, ami, world), enzyme_context(gutils).world, AugmentedRuleReturnError{C, RT, aug_RT})
             return tapeV
         end
 
@@ -2305,17 +2305,17 @@ function enzyme_custom_common_rev(
             end
             singleton = Base.issingletontype(jlrettype)
             any_singleton |= singleton
-            singleton_val = unsafe_to_llvm(B, singleton ? jlrettype.instance : nothing)
+            singleton_val = unsafe_to_llvm(B, singleton ? jlrettype.instance : nothing, world)
 
             if cur === nothing
-                cur = unsafe_to_llvm(B, jlrettype)
+                cur = unsafe_to_llvm(B, jlrettype, world)
                 cur_size = LLVM.ConstantInt(sizeof(jlrettype))
                 cur_offset = LLVM.ConstantInt(fieldoffset(aug_RT, 3))
                 cur_singleton = LLVM.ConstantInt(T_int1, singleton)
                 cur_singleton_val = singleton_val
             else
                 cmpv = icmp!(B, LLVM.API.LLVMIntEQ, idxv, LLVM.ConstantInt(value_type(idxv), counter))
-                cur = select!(B, cmpv, unsafe_to_llvm(B, jlrettype), cur)
+                cur = select!(B, cmpv, unsafe_to_llvm(B, jlrettype, world), cur)
                 cur_size = select!(B, cmpv, LLVM.ConstantInt(sizeof(jlrettype)), cur_size)
                 cur_offset = select!(B, cmpv, LLVM.ConstantInt(fieldoffset(aug_RT, 3)), cur_offset)
                 cur_singleton = select!(B, cmpv, LLVM.ConstantInt(T_int1, singleton), cur_singleton)
@@ -2328,7 +2328,7 @@ function enzyme_custom_common_rev(
         for_each_uniontype_small(inner, miRT)
 
         isboxed = icmp!(B, LLVM.API.LLVMIntEQ, and!(B, idxv, LLVM.ConstantInt(value_type(idxv), 128)), LLVM.ConstantInt(value_type(idxv), 128))
-        cur = select!(B, isboxed, unsafe_to_llvm(B, UInt8), cur)
+        cur = select!(B, isboxed, unsafe_to_llvm(B, UInt8, world), cur)
         cur_size = select!(B, isboxed, LLVM.ConstantInt(sizeof(UInt8)), cur_size)
 
         sret_union_tape = emit_allocobj!(B, cur, cur_size, false)
@@ -2390,7 +2390,7 @@ function enzyme_custom_common_rev(
 
             bt = GPUCompiler.backtrace(orig)
             msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
-            emit_error(B, orig, (msg2, ami, world), AugmentedRuleReturnError{C, RT, aug_RT})
+            emit_error(B, orig, (msg2, ami, world), world, AugmentedRuleReturnError{C, RT, aug_RT})
             return tapeV
         end
 
@@ -2407,7 +2407,7 @@ function enzyme_custom_common_rev(
                         " flex shadow ABI return type mismatch, expected " *
                         string(ST) *
                         " found " *
-                        string(aug_RT),
+                            string(aug_RT), world,
                     )
                     return tapeV
                 end
@@ -2550,7 +2550,7 @@ function enzyme_custom_common_rev(
                 emit_nthfield!(B, res, LLVM.ConstantInt(2))
             elseif TapeT isa Union && Base.isbitsunion(TapeT)
                 # The struct holds the tape inline as payload and selector.
-                box_inline_union!(B, alloctx, res, Int(fieldoffset(aug_RT, 3)), TapeT)
+                box_inline_union!(B, alloctx, res, Int(fieldoffset(aug_RT, 3)), TapeT, world)
             else
                 extract_value!(B, res, idx)
             end
@@ -2569,7 +2569,7 @@ function enzyme_custom_common_rev(
         if rev_RT != ST
             bt = GPUCompiler.backtrace(orig)
             msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
-            emit_error(B, orig, (msg2, rmi, world), ReverseRuleReturnError{C, Tuple{activity[2+isKWCall:end]...,}, rev_RT})
+            emit_error(B, orig, (msg2, rmi, world), world, ReverseRuleReturnError{C, Tuple{activity[(2 + isKWCall):end]...}, rev_RT})
             return tapeV
         end
         if length(actives) >= 1 &&

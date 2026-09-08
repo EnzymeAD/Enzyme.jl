@@ -61,7 +61,7 @@ function emit_allocobj!(
 
     return call!(B, alty, alloc_obj, LLVM.Value[ct, Size, tag], name)
 end
-function emit_allocobj!(B::LLVM.IRBuilder, @nospecialize(T::DataType), name::String = "")
+function emit_allocobj!(B::LLVM.IRBuilder, @nospecialize(T::DataType), world::UInt, name::String = "")
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -71,7 +71,7 @@ function emit_allocobj!(B::LLVM.IRBuilder, @nospecialize(T::DataType), name::Str
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
     # Obtain tag
-    tag = unsafe_to_llvm(B, T)
+    tag = unsafe_to_llvm(B, T, world)
 
     T_size_t = convert(LLVM.LLVMType, UInt)
     Size = LLVM.ConstantInt(T_size_t, sizeof(T))
@@ -147,8 +147,8 @@ function emit_jl_isa!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospec
     call!(B, FT, fn, LLVM.Value[val, ty])
 end
 
-function emit_jl_isa!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospecialize(ty::Type))::LLVM.Value
-    emit_jl_isa!(B, val, unsafe_to_llvm(B, ty))
+function emit_jl_isa!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospecialize(ty::Type), world::UInt)::LLVM.Value
+    return emit_jl_isa!(B, val, unsafe_to_llvm(B, ty, world))
 end
 
 function emit_getfield!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), @nospecialize(fld::LLVM.Value))::LLVM.Value
@@ -219,7 +219,7 @@ function emit_jl_throw!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM
     return cb
 end
 
-function emit_conditional_throw!(B::LLVM.IRBuilder, @nospecialize(cond::LLVM.Value), @nospecialize(errty::Type), @nospecialize(str::LLVM.Value))::LLVM.Value
+function emit_conditional_throw!(B::LLVM.IRBuilder, @nospecialize(cond::LLVM.Value), @nospecialize(errty::Type), @nospecialize(str::LLVM.Value), world::UInt)::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -244,7 +244,7 @@ function emit_conditional_throw!(B::LLVM.IRBuilder, @nospecialize(cond::LLVM.Val
 	 br!(builder, rcond, errb, exitb)
          position!(builder, errb)
 
-        err = emit_allocobj!(builder, errty)
+        err = emit_allocobj!(builder, errty, world)
         err2 = bitcast!(builder, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
         err2 = addrspacecast!(builder, err2, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), Derived))
         store!(builder, rstr, err2)
@@ -395,7 +395,7 @@ function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nosp
                 return val
             end
         end
-        return emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, load_if_mixed), new_from_original(gutils, oval), val]) 
+        return emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, load_if_mixed, enzyme_context(gutils).world), new_from_original(gutils, oval), val])
     end
     if !guaranteed_nonactive(TT, world)
         legal2, TT2, _ = abs_typeof(val)
@@ -440,11 +440,11 @@ function byref_from_val_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nosp
         if legal && active_reg(TT, world) == AnyState
             return val
         end
-        return emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, ref_if_mixed), val]) 
+        return emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, ref_if_mixed, enzyme_context(gutils).world), val])
     end
     
     if !guaranteed_nonactive(TT, world)
-        obj = emit_allocobj!(B, Base.RefValue{TT})
+        obj = emit_allocobj!(B, Base.RefValue{TT}, enzyme_context(gutils).world)
         lty = convert(LLVMType, TT)
         ld = load!(B, lty, bitcast!(B, val, LLVM.PointerType(lty, addrspace(value_type(val)))))
         store!(B, ld, bitcast!(B, obj, LLVM.PointerType(lty, addrspace(value_type(val)))))
@@ -455,7 +455,7 @@ function byref_from_val_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nosp
     end
 end
 
-function emit_apply_type!(B::LLVM.IRBuilder, @nospecialize(Ty::Type), args::Vector{LLVM.Value})::LLVM.Value
+function emit_apply_type!(B::LLVM.IRBuilder, @nospecialize(Ty::Type), args::Vector{LLVM.Value}, world::UInt)::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -473,7 +473,7 @@ function emit_apply_type!(B::LLVM.IRBuilder, @nospecialize(Ty::Type), args::Vect
     end
 
     if legal
-        return unsafe_to_llvm(B, Ty{found...})
+        return unsafe_to_llvm(B, Ty{found...}, world)
     end
 
     T_jlvalue = LLVM.StructType(LLVMType[])
@@ -497,7 +497,7 @@ function emit_apply_type!(B::LLVM.IRBuilder, @nospecialize(Ty::Type), args::Vect
     nargs = Vector{LLVM.Value}(undef, 3+length(args))
     nargs[1] = f_apply_type
     nargs[2] = LLVM.PointerNull(T_prjlvalue)
-    nargs[3] = unsafe_to_llvm(B, Ty)
+    nargs[3] = unsafe_to_llvm(B, Ty, world)
     for (i, v) in enumerate(args)
         nargs[3+i] = v
     end
@@ -510,7 +510,7 @@ function emit_apply_type!(B::LLVM.IRBuilder, @nospecialize(Ty::Type), args::Vect
     return tag
 end
 
-function emit_tuple!(B::LLVM.IRBuilder, args::Vector{LLVM.Value})::LLVM.Value
+function emit_tuple!(B::LLVM.IRBuilder, args::Vector{LLVM.Value}, world::UInt)::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -528,7 +528,7 @@ function emit_tuple!(B::LLVM.IRBuilder, args::Vector{LLVM.Value})::LLVM.Value
     end
 
     if legal
-        return unsafe_to_llvm(B, (found...,))
+        return unsafe_to_llvm(B, (found...,), world)
     end
 
     T_jlvalue = LLVM.StructType(LLVMType[])
@@ -564,14 +564,14 @@ function emit_tuple!(B::LLVM.IRBuilder, args::Vector{LLVM.Value})::LLVM.Value
     return tag
 end
 
-function emit_jltypeof!(B::LLVM.IRBuilder, @nospecialize(arg::LLVM.Value))::LLVM.Value
+function emit_jltypeof!(B::LLVM.IRBuilder, @nospecialize(arg::LLVM.Value), world::UInt)::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
 
     legal, val, byref = abs_typeof(arg)
     if legal
-        return unsafe_to_llvm(B, val)
+        return unsafe_to_llvm(B, val, world)
     end
 
     T_jlvalue = LLVM.StructType(LLVMType[])
@@ -579,6 +579,87 @@ function emit_jltypeof!(B::LLVM.IRBuilder, @nospecialize(arg::LLVM.Value))::LLVM
     FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue]; vararg = true)
     fn, _ = get_function!(mod, "jl_typeof", FT)
     call!(B, FT, fn, [arg])
+end
+
+function emit_methodinstance!(B::LLVM.IRBuilder, @nospecialize(func), args::Vector{LLVM.Value}, world::UInt)::LLVM.Value
+    curent_bb = position(B)
+    fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(fn)
+
+    sizeT = convert(LLVMType, Csize_t)
+    psizeT = LLVM.PointerType(sizeT)
+
+    primalvaltys = LLVM.Value[unsafe_to_llvm(B, Core.Typeof(func), world)]
+    for a in args
+        push!(primalvaltys, emit_jltypeof!(B, a, world))
+    end
+
+    meth = only(methods(func))
+    tag = emit_apply_type!(B, Tuple, primalvaltys, world)
+
+    #    TT = meth.sig
+    #    while TT isa UnionAll
+    #        TT = TT.body
+    #    end
+    #    parms = TT.parameters
+    #
+    #    tosv = primalvaltys
+    #    if length(parms) > 0 && typeof(parms[end]) == Core.TypeofVararg
+    #        tosv = LLVM.Value[tosv[1:length(parms)-1]..., emit_apply_type!(B, Tuple, tosv[length(parms):end])]
+    #    end
+    #    sv = emit_svec!(B, tosv[2:end])
+    #
+
+    meth = unsafe_to_llvm(B, meth, world)
+
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    worlds, FT = get_function!(
+        mod,
+        "jl_gf_invoke_lookup_worlds",
+        LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue, sizeT, psizeT, psizeT]),
+    )
+    EB = LLVM.IRBuilder()
+    position!(EB, first(LLVM.instructions(LLVM.entry(fn))))
+    minworld = alloca!(EB, sizeT)
+    maxworld = alloca!(EB, sizeT)
+    store!(B, LLVM.ConstantInt(sizeT, 0), minworld)
+    store!(B, LLVM.ConstantInt(sizeT, -1), maxworld)
+    methodmatch = call!(
+        B,
+        FT,
+        worlds,
+        LLVM.Value[
+            tag,
+            unsafe_to_llvm(B, nothing, world),
+            LLVM.ConstantInt(sizeT, world),
+            minworld,
+            maxworld,
+        ],
+    )
+    # emit_jl!(B, methodmatch)
+    # emit_jl!(B, emit_jltypeof!(B, methodmatch))
+    offset = 1
+    AT = LLVM.ArrayType(T_prjlvalue, offset + 1)
+    methodmatch = addrspacecast!(B, methodmatch, LLVM.PointerType(T_jlvalue, Derived))
+    methodmatch = bitcast!(B, methodmatch, LLVM.PointerType(AT, Derived))
+    gep = LLVM.inbounds_gep!(
+        B,
+        AT,
+        methodmatch,
+        LLVM.Value[LLVM.ConstantInt(0), LLVM.ConstantInt(offset)],
+    )
+    sv = LLVM.load!(B, T_prjlvalue, gep)
+
+    fn, FT = get_function!(
+        mod,
+        "jl_specializations_get_linfo",
+        LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue, T_prjlvalue]),
+    )
+
+    mi = call!(B, FT, fn, [meth, tag, sv])
+
+    return mi
 end
 
 
@@ -833,8 +914,8 @@ function emit_type_layout_elsz!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value)
 	return load!(B, i32, lty)
 end
 
-function get_memory_elsz(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
-    ty = emit_jltypeof!(B, array)
+function get_memory_elsz(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value), world::UInt)
+    ty = emit_jltypeof!(B, array, world)
     return emit_type_layout_elsz!(B, ty)
 end
 
@@ -879,7 +960,7 @@ function get_array_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
     return LLVM.load!(B, sizeT, v)
 end
 
-function get_memory_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
+function get_memory_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value), world::UInt)
     if isa(array, LLVM.CallInst)
         fn = LLVM.called_operand(array)
         nm = ""
@@ -900,7 +981,7 @@ function get_memory_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
 	    )
 	        # This is number of bytes not number of elements
 		res = get_memory_size(B, array)
-		es = get_memory_elsz(B, array)
+            es = get_memory_elsz(B, array, world)
 		return udiv!(B, res, es)
         end
     end
@@ -942,7 +1023,7 @@ function get_memory_nbytes(B::LLVM.IRBuilder, memty::Type{<:Memory}, nel::LLVM.V
 end
 end
 
-function get_memory_nbytes(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
+function get_memory_nbytes(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value), world::UInt)
     if isa(array, LLVM.CallInst)
         fn = LLVM.called_operand(array)
         nm = ""
@@ -958,7 +1039,7 @@ function get_memory_nbytes(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
 		return res
         end
     end
-    nel = get_memory_len(B, array)
+    nel = get_memory_len(B, array, world)
     legal, memty = abs_typeof(array)
     @assert legal
     return get_memory_nbytes(B, memty, nel)
@@ -1045,7 +1126,7 @@ function emit_printf(B::LLVM.IRBuilder, string::String, v::LLVM.Value...)
     call!(B, LLVM.function_type(exc), exc, args)
 end
 
-function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.Instruction}), string::Union{String, LLVM.Value, Tuple{String, Core.MethodInstance, UInt}}, @nospecialize(errty::Type) = EnzymeRuntimeException, @nospecialize(cond::Union{Nothing, LLVM.Value}) = nothing)
+function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.Instruction}), string::Union{String, LLVM.Value, Tuple{String, Core.MethodInstance, UInt}}, world::UInt, @nospecialize(errty::Type) = EnzymeRuntimeException, @nospecialize(cond::Union{Nothing, LLVM.Value}) = nothing)
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -1109,15 +1190,15 @@ function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.I
 	    if string isa Tuple
 	       errty = errty.name.wrapper{Nothing, Nothing}
 	    end
-            emit_conditional_throw!(B, cond, errty, stringv)
+            emit_conditional_throw!(B, cond, errty, stringv, world)
     	else
-            err = emit_allocobj!(B, errty)
+            err = emit_allocobj!(B, errty, world)
             err2 = bitcast!(B, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
             err2 = addrspacecast!(B, err2, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), Derived))
             store!(B, stringv, err2)
 	    if string isa Tuple
 	       g1 = LLVM.inbounds_gep!(B, LLVM.PointerType(LLVM.Int8Type()), err2, [LLVM.ConstantInt(1)])
-	       ts = unsafe_to_llvm(B, string[2])
+                ts = unsafe_to_llvm(B, string[2], world)
 	       g1 = LLVM.bitcast!(B, g1, LLVM.PointerType(value_type(ts), Derived))
 	       store!(B, ts, g1)
 	       g2 = LLVM.inbounds_gep!(B, LLVM.PointerType(LLVM.Int8Type()), err2, [LLVM.ConstantInt(2)])

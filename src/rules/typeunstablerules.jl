@@ -562,7 +562,7 @@ function common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
             " " *
             string(abs_partial) *
             " " *
-            string([v for v in origops[offset+1:end]]),
+                string([v for v in origops[(offset + 1):end]]), enzyme_context(gutils).world,
         )
     end
 
@@ -879,7 +879,7 @@ end
             B,
             orig,
             "Enzyme: Not yet implemented, mixed activity for jl_new_struct_t" *
-            string(orig),
+                string(orig), enzyme_context(gutils).world,
         )
     end
 
@@ -929,7 +929,7 @@ end
             B,
             orig,
             "Enzyme: Not yet implemented, mixed activity for jl_new_struct_t" *
-            string(orig),
+                string(orig), enzyme_context(gutils).world,
         )
     end
 
@@ -1069,12 +1069,12 @@ end
 
     if torun
         vals = LLVM.Value[
-            unsafe_to_llvm(B, runtime_newstructt_rev),
-            unsafe_to_llvm(B, Val(Int(width))),
+            unsafe_to_llvm(B, runtime_newstructt_rev, enzyme_context(gutils).world),
+            unsafe_to_llvm(B, Val(Int(width)), enzyme_context(gutils).world),
         ]
 
         if legal
-            push!(vals, unsafe_to_llvm(B, Nothing))
+            push!(vals, unsafe_to_llvm(B, Nothing, enzyme_context(gutils).world))
         else
             push!(vals, lookup_value(gutils, new_from_original(gutils, operands(orig)[1]), B))
         end
@@ -1514,20 +1514,20 @@ function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, ta
     end
 
     AA = Val(AnyArray(Int(width)))
-    vals = LLVM.Value[unsafe_to_llvm(B, AA)]
+    vals = LLVM.Value[unsafe_to_llvm(B, AA, enzyme_context(gutils).world)]
     push!(vals, inps[1])
 
     sym = new_from_original(gutils, ops[3])
-    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym])
+    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym], enzyme_context(gutils).world)
     push!(vals, sym)
 
-    push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, ops[2]))))
+    push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, ops[2])), enzyme_context(gutils).world))
 
     for v in inps[2:end]
         push!(vals, v)
     end
 
-    pushfirst!(vals, unsafe_to_llvm(B, rt_jl_getfield_aug))
+    pushfirst!(vals, unsafe_to_llvm(B, rt_jl_getfield_aug, enzyme_context(gutils).world))
 
     cal = emit_apply_generic!(B, vals)
 
@@ -1615,16 +1615,16 @@ function common_jl_getfield_rev(offset, B, orig, gutils, tape)
 
     sym = new_from_original(gutils, ops[3])
     sym = lookup_value(gutils, sym, B)
-    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym])
+    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym], enzyme_context(gutils).world)
     push!(vals, sym)
 
-    push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, ops[2]))))
+    push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, ops[2])), enzyme_context(gutils).world))
 
     for v in inps[2:end]
         push!(vals, v)
     end
 
-    pushfirst!(vals, unsafe_to_llvm(B, rt_jl_getfield_rev))
+    pushfirst!(vals, unsafe_to_llvm(B, rt_jl_getfield_rev, enzyme_context(gutils).world))
 
     cal = emit_apply_generic!(B, vals)
 
@@ -1708,22 +1708,22 @@ end
     end
 
     AA = Val(AnyArray(Int(width)))
-    vals = LLVM.Value[unsafe_to_llvm(B, AA)]
+    vals = LLVM.Value[unsafe_to_llvm(B, AA, enzyme_context(gutils).world)]
     push!(vals, inps[1])
 
     sym = new_from_original(gutils, operands(orig)[2])
     sym = (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(B, sym)
-    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym])
+    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym], enzyme_context(gutils).world)
     push!(vals, sym)
 
     # TODO properly handle runtime activity here
-    push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, operands(orig)[1]))))
+    push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, operands(orig)[1])), enzyme_context(gutils).world))
 
     for v in inps[2:end]
         push!(vals, v)
     end
 
-    pushfirst!(vals, unsafe_to_llvm(B, idx_jl_getfield_aug))
+    pushfirst!(vals, unsafe_to_llvm(B, idx_jl_getfield_aug, enzyme_context(gutils).world))
 
     cal = emit_apply_generic!(B, vals)
 
@@ -1812,16 +1812,16 @@ end
     sym = new_from_original(gutils, operands(orig)[2])
     sym = lookup_value(gutils, sym, B)
     sym = (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(B, sym)
-    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym])
+    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym], enzyme_context(gutils).world)
     push!(vals, sym)
 
-    push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, operands(orig)[1]))))
+    push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, operands(orig)[1])), enzyme_context(gutils).world))
 
     for v in inps[2:end]
         push!(vals, v)
     end
 
-    pushfirst!(vals, unsafe_to_llvm(B, idx_jl_getfield_rev))
+    pushfirst!(vals, unsafe_to_llvm(B, idx_jl_getfield_rev, enzyme_context(gutils).world))
 
     cal = emit_apply_generic!(B, vals)
 
@@ -1960,14 +1960,14 @@ function common_setfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR
             vals = LLVM.Value[
                 (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx - 1),
                 new_from_original(gutils, origops[3]),
-                unsafe_to_llvm(B, Val(is_constant_value(gutils, origops[4]))),
+                unsafe_to_llvm(B, Val(is_constant_value(gutils, origops[4])), enzyme_context(gutils).world),
                 new_from_original(gutils, origops[4]),
-                is_constant_value(gutils, origops[4]) ? unsafe_to_llvm(B, nothing) :
+                is_constant_value(gutils, origops[4]) ? unsafe_to_llvm(B, nothing, enzyme_context(gutils).world) :
                 ((width == 1) ? shadowval : extract_value!(B, shadowval, idx - 1)),
             ]
 
             # TODO handle runtime activity
-            pushfirst!(vals, unsafe_to_llvm(B, rt_jl_setfield_aug))
+            pushfirst!(vals, unsafe_to_llvm(B, rt_jl_setfield_aug, enzyme_context(gutils).world))
 
             cal = emit_apply_generic!(B, vals)
 
@@ -2002,9 +2002,9 @@ function common_setfield_rev(offset, B, orig, gutils, tape)
                     B,
                 ),
                 lookup_value(gutils, new_from_original(gutils, origops[3]), B),
-                unsafe_to_llvm(B, Val(is_constant_value(gutils, origops[4]))),
+                unsafe_to_llvm(B, Val(is_constant_value(gutils, origops[4])), enzyme_context(gutils).world),
                 lookup_value(gutils, new_from_original(gutils, origops[4]), B),
-                is_constant_value(gutils, origops[4]) ? unsafe_to_llvm(B, nothing) :
+                is_constant_value(gutils, origops[4]) ? unsafe_to_llvm(B, nothing, enzyme_context(gutils).world) :
                 lookup_value(
                     gutils,
                     ((width == 1) ? shadowval : extract_value!(B, shadowval, idx - 1)),
@@ -2012,7 +2012,7 @@ function common_setfield_rev(offset, B, orig, gutils, tape)
                 ),
             ]
 
-            pushfirst!(vals, unsafe_to_llvm(B, rt_jl_setfield_rev))
+            pushfirst!(vals, unsafe_to_llvm(B, rt_jl_setfield_rev, enzyme_context(gutils).world))
 
             cal = emit_apply_generic!(B, vals)
 
@@ -2076,8 +2076,8 @@ function common_f_svec_ref_fwd(offset, B, orig, gutils, normalR, shadowR)
             emit_apply_generic!(
                 B,
                 LLVM.Value[
-                    unsafe_to_llvm(B, error_if_differentiable),
-                    emit_jltypeof!(B, cal),
+                    unsafe_to_llvm(B, error_if_differentiable, enzyme_context(gutils).world),
+                    emit_jltypeof!(B, cal, enzyme_context(gutils).world),
                 ],
             )
         end
@@ -2107,8 +2107,8 @@ function common_f_svec_ref_fwd(offset, B, orig, gutils, normalR, shadowR)
                 emit_apply_generic!(
                     B,
                     LLVM.Value[
-                        unsafe_to_llvm(B, error_if_differentiable),
-                        emit_jltypeof!(B, cal),
+                        unsafe_to_llvm(B, error_if_differentiable, enzyme_context(gutils).world),
+                        emit_jltypeof!(B, cal, enzyme_context(gutils).world),
                     ],
                 )
             end
@@ -2158,7 +2158,7 @@ function common_f_svec_ref_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
         callconv!(cal, callconv(orig))
 
 
-        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, errfn), emit_jltypeof!(B, cal)])
+        emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, errfn, enzyme_context(gutils).world), emit_jltypeof!(B, cal, enzyme_context(gutils).world)])
         cal
     else
         ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
@@ -2183,7 +2183,7 @@ function common_f_svec_ref_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
             callconv!(cal, callconv(orig))
             emit_apply_generic!(
                 B,
-                LLVM.Value[unsafe_to_llvm(B, errfn), emit_jltypeof!(B, cal)],
+                LLVM.Value[unsafe_to_llvm(B, errfn, enzyme_context(gutils).world), emit_jltypeof!(B, cal, enzyme_context(gutils).world)],
             )
             shadow = insert_value!(B, shadow, cal, j - 1)
         end
@@ -2203,7 +2203,7 @@ function common_finalizer_fwd(offset, B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    err = emit_error(B, orig, "Enzyme: unhandled forward for jl_f_finalizer")
+    err = emit_error(B, orig, "Enzyme: unhandled forward for jl_f_finalizer", enzyme_context(gutils).world)
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
     normal =
@@ -2227,7 +2227,7 @@ function common_finalizer_augfwd(offset, B, orig, gutils, normalR, shadowR, tape
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    err = emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_f_finalizer")
+    err = emit_error(B, orig, "Enzyme: unhandled augmented forward for jl_f_finalizer", enzyme_context(gutils).world)
     newo = new_from_original(gutils, orig)
     API.moveBefore(newo, err, B)
     normal =

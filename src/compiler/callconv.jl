@@ -262,7 +262,6 @@ end
         fattrs = function_attributes(fn)
         push!(fattrs, StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))))
         push!(fattrs, StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(RT)))))
-        push!(fattrs, StringAttribute("enzymejl_world", string(world)))
         if RT === Union{}
             push!(fattrs, EnumAttribute("noreturn"))
         end

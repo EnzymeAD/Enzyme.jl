@@ -474,11 +474,11 @@ end
             end
 
         else
-            v = makeInstanceOf(B, ppfuncT)
+            v = makeInstanceOf(B, ppfuncT, enzyme_context(gutils).world)
         end
 
         if refed
-            val0 = val = emit_allocobj!(B, pfuncT)
+            val0 = val = emit_allocobj!(B, pfuncT, enzyme_context(gutils).world)
             val = bitcast!(B, val, LLVM.PointerType(pllty, addrspace(value_type(val))))
             val = addrspacecast!(B, val, LLVM.PointerType(pllty, Derived)) 
 
@@ -561,7 +561,7 @@ end
             end
 
             if refed
-                dval0 = dval = emit_allocobj!(B, dpfuncT)
+                dval0 = dval = emit_allocobj!(B, dpfuncT, enzyme_context(gutils).world)
                 dval =
                     bitcast!(B, dval, LLVM.PointerType(spllty, addrspace(value_type(dval))))
                 dval = addrspacecast!(B, dval, LLVM.PointerType(spllty, Derived))
@@ -779,7 +779,7 @@ end
     world = enzyme_context(gutils).world
 
     vals = LLVM.Value[
-        unsafe_to_llvm(B, runtime_newtask_fwd),
+        unsafe_to_llvm(B, runtime_newtask_fwd, enzyme_context(gutils).world),
         new_from_original(gutils, operands(orig)[1]),
         invert_pointer(gutils, operands(orig)[1], B),
         new_from_original(gutils, operands(orig)[2]),
@@ -787,9 +787,9 @@ end
             B,
             new_from_original(gutils, operands(orig)[3]),
         ),
-        unsafe_to_llvm(B, Val(get_runtime_activity(gutils))),
-        unsafe_to_llvm(B, Val(get_strong_zero(gutils))),
-        unsafe_to_llvm(B, Val(width)),
+        unsafe_to_llvm(B, Val(get_runtime_activity(gutils)), enzyme_context(gutils).world),
+        unsafe_to_llvm(B, Val(get_strong_zero(gutils)), enzyme_context(gutils).world),
+        unsafe_to_llvm(B, Val(width), enzyme_context(gutils).world),
     ]
 
     ntask = emit_apply_generic!(B, vals)
@@ -833,7 +833,7 @@ end
     world = enzyme_context(gutils).world
 
     vals = LLVM.Value[
-        unsafe_to_llvm(B, runtime_newtask_augfwd),
+        unsafe_to_llvm(B, runtime_newtask_augfwd, enzyme_context(gutils).world),
         new_from_original(gutils, operands(orig)[1]),
         invert_pointer(gutils, operands(orig)[1], B),
         new_from_original(gutils, operands(orig)[2]),
@@ -841,10 +841,10 @@ end
             B,
             new_from_original(gutils, operands(orig)[3]),
         ),
-        unsafe_to_llvm(B, Val(get_runtime_activity(gutils))),
-        unsafe_to_llvm(B, Val(get_strong_zero(gutils))),
-        unsafe_to_llvm(B, Val(width)),
-        unsafe_to_llvm(B, Val(ModifiedBetween)),
+        unsafe_to_llvm(B, Val(get_runtime_activity(gutils)), enzyme_context(gutils).world),
+        unsafe_to_llvm(B, Val(get_strong_zero(gutils)), enzyme_context(gutils).world),
+        unsafe_to_llvm(B, Val(width), enzyme_context(gutils).world),
+        unsafe_to_llvm(B, Val(ModifiedBetween), enzyme_context(gutils).world),
     ]
 
     ntask = emit_apply_generic!(B, vals)
@@ -972,7 +972,7 @@ end
         emit_error(
             B,
             orig,
-            "Enzyme: could not find jl_wait fn to create shadow of jl_enq_work",
+            "Enzyme: could not find jl_wait fn to create shadow of jl_enq_work", enzyme_context(gutils).world,
         )
         return nothing
     end
@@ -1035,7 +1035,7 @@ end
         emit_error(
             B,
             orig,
-            "Enzyme: could not find jl_enq_work fn to create shadow of wait",
+            "Enzyme: could not find jl_enq_work fn to create shadow of wait", enzyme_context(gutils).world,
         )
         return nothing
     end
