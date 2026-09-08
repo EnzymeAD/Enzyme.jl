@@ -1,5 +1,5 @@
 
-function julia_activity_rule(f::LLVM.Function, world, method_table)
+function julia_activity_rule(f::LLVM.Function, world::UInt, method_table)
     if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1") || startswith(LLVM.name(f), "jlcapi")
         return
     end
