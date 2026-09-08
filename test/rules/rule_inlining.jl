@@ -481,7 +481,7 @@ end
             # either target. `check_specsig` reads the parameter back from that
             # mark, so it accepts the declaration it derived.
             RT = native[1].rettype
-            decl = Enzyme.Compiler.specsig_function!(mod, mi, RT, "test_specsig_gcstack", world)
+            decl = Enzyme.Compiler.specsig_function!(Enzyme.EnzymeContext(world), mod, mi, RT, "test_specsig_gcstack", world)
             @test (Enzyme.Compiler.gcstack_arg_index(decl) != 0) == Enzyme.Compiler.jit_gcstack_arg()
             @test Enzyme.Compiler.has_swiftself(decl) ==
                 (Enzyme.Compiler.jit_gcstack_arg() && Enzyme.Compiler.jit_uses_swiftcc())

@@ -138,12 +138,19 @@ mutable struct EnzymeContext
     edges::Vector{Any}
     nested_cache::Dict{Core.MethodInstance, String}
     mi_cache::Dict{String, Tuple{Core.MethodInstance, Any}}
+    # The Julia type, calling convention and rooted type of each parameter of an emitted
+    # function, by the id in its `enzymejl_parm_id` attribute: what the `enzymejl_parmtype*`
+    # attributes encode as addresses, kept as values so they need no address of this
+    # process. The id travels with the parameter through renames, argument removal and
+    # module links, where a name-and-index key would not.
+    param_types::Dict{UInt64, Tuple{Any, UInt, Any}}
     EnzymeContext(world::Integer) = new(
         world,
         LLVM.Module[],
         Any[],
         Dict{Core.MethodInstance, String}(),
-        Dict{String, Tuple{Core.MethodInstance, Any}}()
+        Dict{String, Tuple{Core.MethodInstance, Any}}(),
+        Dict{UInt64, Tuple{Any, UInt, Any}}(),
     )
 end
 

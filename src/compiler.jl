@@ -1304,6 +1304,7 @@ function set_module_types!(enzyme_context::EnzymeContext, interp, mod::LLVM.Modu
                     parameter_attributes(f, arg.codegen.i),
                     StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))),
                 )
+                record_param_type!(enzyme_context, f, arg.codegen.i, arg.typ, arg.cc, arg.rooted_typ)
 		if arg.rooted_typ !== nothing
 			push!(
 			    parameter_attributes(f, arg.codegen.i),
@@ -2677,6 +2678,44 @@ function enzyme_custom_extract_mi(orig::LLVM.Function, error::Bool = true)
         GPUCompiler.@safe_error "Enzyme: Custom handler, could not find mi", orig
     end
     return mi, RT
+end
+
+# Record what the `enzymejl_parmtype*` attributes of parameter `idx` of `fn` say, as values
+# in the context's side table (see `EnzymeContext.param_types`).
+# Parameter ids are process-unique so a table entry can never be claimed by a parameter
+# emitted in another context.
+const PARM_ID = Threads.Atomic{UInt64}(0)
+
+parm_attributes(fn::LLVM.Function, idx::Int) = idx == 0 ? return_attributes(fn) : parameter_attributes(fn, idx)
+
+# Record the Julia type, calling convention and rooted type of parameter `idx` of `fn`
+# (0 for the return value) in the context's side table, and tag the parameter with the
+# table key.
+function record_param_type!(enzyme_context::EnzymeContext, fn::LLVM.Function, idx::Int, @nospecialize(typ), cc, @nospecialize(rooted))
+    id = Threads.atomic_add!(PARM_ID, UInt64(1)) + 1
+    enzyme_context.param_types[id] = (typ, UInt(cc), rooted)
+    push!(parm_attributes(fn, idx), StringAttribute("enzymejl_parm_id", string(id)))
+    return nothing
+end
+
+function enzyme_parm_id(fn::LLVM.Function, idx::Int)::Union{UInt64, Nothing}
+    for attr in collect(parm_attributes(fn, idx))
+        if isa(attr, LLVM.StringAttribute) && kind(attr) == "enzymejl_parm_id"
+            return parse(UInt64, LLVM.value(attr))
+        end
+    end
+    return nothing
+end
+
+# The Julia type and calling convention of parameter `idx` of `fn`, from the context's side
+# table when the parameter was recorded there, else from its address-valued attributes.
+function enzyme_extract_parm_type(enzyme_context::EnzymeContext, fn::LLVM.Function, idx::Int, error::Bool = true)
+    id = enzyme_parm_id(fn, idx)
+    if id !== nothing
+        entry = get(enzyme_context.param_types, id, nothing)
+        entry === nothing || return (entry[1], GPUCompiler.ArgumentCC(entry[2]))
+    end
+    return enzyme_extract_parm_type(fn, idx, error)
 end
 
 function enzyme_extract_parm_type(fn::LLVM.Function, idx::Int, error::Bool = true)
@@ -4963,6 +5002,7 @@ function lower_convention(
                         string(UInt(GPUCompiler.BITS_VALUE)),
                     ),
                 )
+                record_param_type!(enzyme_context, wrapper_f, wrapper_idx - 1, arg.typ, GPUCompiler.BITS_VALUE, arg.rooted_typ)
 		if arg.rooted_typ !== nothing
                 push!(
 		    parameter_attributes(wrapper_f, wrapper_idx - 1),
@@ -5000,6 +5040,7 @@ function lower_convention(
                         string(UInt(GPUCompiler.BITS_REF)),
                     ),
                 )
+                record_param_type!(enzyme_context, wrapper_f, wrapper_idx - 1, arg.typ, GPUCompiler.BITS_REF, arg.rooted_typ)
 		if arg.rooted_typ !== nothing
                 push!(
                     parameter_attributes(wrapper_f, wrapper_idx - 1),
@@ -5133,6 +5174,7 @@ function lower_convention(
                         string(UInt(GPUCompiler.BITS_REF)),
                     ),
                 )
+                record_param_type!(enzyme_context, wrapper_f, 0, actualRetType, GPUCompiler.BITS_REF, nothing)
             end
         elseif sret
             if sretPtr === nothing
@@ -5166,6 +5208,7 @@ function lower_convention(
                         string(UInt(GPUCompiler.BITS_REF)),
                     ),
                 )
+                record_param_type!(enzyme_context, wrapper_f, 0, actualRetType, GPUCompiler.BITS_REF, nothing)
 		res = load!(builder, RT, sretPtr)
 		@static if VERSION >= v"1.12"
             	   if returnRoots
@@ -5208,6 +5251,7 @@ function lower_convention(
                         string(UInt(GPUCompiler.BITS_VALUE)),
                     ),
                 )
+                record_param_type!(enzyme_context, wrapper_f, 0, expected_RT, GPUCompiler.BITS_VALUE, nothing)
                 ty = emit_jltypeof!(builder, res, world)
                 cmp = icmp!(builder, LLVM.API.LLVMIntEQ, ty, unsafe_to_llvm(builder, expected_RT, world))
                 cmpret = BasicBlock(wrapper_f, "ret")
@@ -5257,6 +5301,7 @@ function lower_convention(
                         string(UInt(GPUCompiler.BITS_REF)),
                     ),
                 )
+                record_param_type!(enzyme_context, wrapper_f, 0, actualRetType, GPUCompiler.BITS_REF, nothing)
                 ret!(builder, res)
             end
         end
