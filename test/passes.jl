@@ -800,25 +800,28 @@ top:
         @check_same "addrspace(11)"
         @check "getelementptr inbounds i8"
         @check_same "addrspace(11)"
-        @check_not "phi {{.*}}addrspace(10)"
         @check "phi {{.*}}addrspace(11)"
+        # Every replacement is built in front of the value it replaces, so a
+        # Tracked leftover shows up *after* its Derived counterpart: the region
+        # that has to stay clear is the one between the new phi and the load.
+        @check_not "phi {{.*}}addrspace(10)"
         @check "load float"
         @check_same "addrspace(11)"
         @check_label "@loop"
         @check "addrspacecast"
         @check_same "addrspace(11)"
-        @check_not "phi {{.*}}addrspace(10)"
         @check "phi {{.*}}addrspace(11)"
+        @check_not "phi {{.*}}addrspace(10)"
         @check "load float"
         @check_same "addrspace(11)"
         @check "getelementptr inbounds float"
         @check_same "addrspace(11)"
         @check_not "getelementptr inbounds float"
         @check_label "@sel"
-        @check_not "select i1 %c, i8 addrspace(10)*"
-        @check_not "select i1 %c, ptr addrspace(10)"
         @check "select i1 %c"
         @check_same "addrspace(11)"
+        @check_not "select i1 %c, i8 addrspace(10)*"
+        @check_not "select i1 %c, ptr addrspace(10)"
         @check "load float"
         @check_same "addrspace(11)"
         LLVM.Context() do ctx
@@ -849,6 +852,108 @@ top:
             mod = parse(LLVM.Module, rederive_joins_ir)
             Enzyme.Compiler.rederive_tracked_geps!(mod)
             Enzyme.Compiler.nodecayed_phis!(mod)
+            LLVM.verify(mod)
+            string(mod)
+        end
+    end
+end
+
+# The rewrite is best effort, and tidy about what it leaves: one cast per base,
+# placed at the base rather than at each use, nothing left behind where a field
+# address turns out to have no user it can rewrite, and inactive functions
+# untouched -- `nodecayed_phis!` skips those, so a Derived pointer created here
+# would never be rooted.
+const rederive_placement_ir = """
+source_filename = "start"
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+target triple = "x86_64-linux-gnu"
+
+declare void @use(i8 addrspace(10)*)
+
+define void @only_unhandled({} addrspace(10)* %obj) {
+top:
+  %a = bitcast {} addrspace(10)* %obj to i8 addrspace(10)*
+  %g = getelementptr inbounds i8, i8 addrspace(10)* %a, i64 8
+  call void @use(i8 addrspace(10)* %g)
+  ret void
+}
+
+define float @many_fields({} addrspace(10)* %obj) {
+top:
+  %a = bitcast {} addrspace(10)* %obj to i8 addrspace(10)*
+  %g1 = getelementptr inbounds i8, i8 addrspace(10)* %a, i64 8
+  %c1 = bitcast i8 addrspace(10)* %g1 to float addrspace(10)*
+  %d1 = addrspacecast float addrspace(10)* %c1 to float addrspace(11)*
+  %v1 = load float, float addrspace(11)* %d1, align 4
+  %g2 = getelementptr inbounds i8, i8 addrspace(10)* %a, i64 16
+  %c2 = bitcast i8 addrspace(10)* %g2 to float addrspace(10)*
+  %d2 = addrspacecast float addrspace(10)* %c2 to float addrspace(11)*
+  %v2 = load float, float addrspace(11)* %d2, align 4
+  %s = fadd float %v1, %v2
+  ret float %s
+}
+
+define float @in_loop({} addrspace(10)* %obj, i64 %n) {
+top:
+  %a = bitcast {} addrspace(10)* %obj to float addrspace(10)*
+  br label %body
+body:
+  %i = phi i64 [ 0, %top ], [ %i1, %body ]
+  %acc = phi float [ 0.0, %top ], [ %acc1, %body ]
+  %g = getelementptr inbounds float, float addrspace(10)* %a, i64 %i
+  %d = addrspacecast float addrspace(10)* %g to float addrspace(11)*
+  %v = load float, float addrspace(11)* %d, align 4
+  %acc1 = fadd float %acc, %v
+  %i1 = add i64 %i, 1
+  %cmp = icmp eq i64 %i1, %n
+  br i1 %cmp, label %exit, label %body
+exit:
+  ret float %acc1
+}
+
+define void @inactive_fn({} addrspace(10)* %obj) #0 {
+top:
+  %a = bitcast {} addrspace(10)* %obj to i8 addrspace(10)*
+  %g = getelementptr inbounds i8, i8 addrspace(10)* %a, i64 8
+  %c = bitcast i8 addrspace(10)* %g to float addrspace(10)*
+  %d = addrspacecast float addrspace(10)* %c to float addrspace(11)*
+  store float 1.0, float addrspace(11)* %d, align 4
+  ret void
+}
+
+attributes #0 = { "enzyme_inactive" }
+"""
+
+@testset "Re-derived pointers are placed and cleaned up" begin
+    @test @filecheck begin
+        # A field address whose only user is a call keeps its Tracked form, and
+        # the Derived replacement built for it is erased again.
+        @check_label "@only_unhandled"
+        @check_not "addrspace(11)"
+        @check "call void @use"
+        # One cast serves both field addresses ...
+        @check_label "@many_fields"
+        @check "addrspacecast"
+        @check_same "addrspace(11)"
+        @check_not "addrspacecast"
+        @check "ret float"
+        # ... and it is placed at the object, not inside the loop.
+        @check_label "@in_loop"
+        @check "addrspacecast"
+        @check_same "addrspace(11)"
+        @check "br label %body"
+        @check_not "addrspacecast"
+        @check "ret float"
+        # An inactive function is left exactly as it was.
+        @check_label "@inactive_fn"
+        @check "getelementptr inbounds i8"
+        @check_same "addrspace(10)"
+        @check "addrspacecast"
+        @check_same "addrspace(11)"
+        @check "store float"
+        LLVM.Context() do ctx
+            mod = parse(LLVM.Module, rederive_placement_ir)
+            Enzyme.Compiler.rederive_tracked_geps!(mod)
             LLVM.verify(mod)
             string(mod)
         end

@@ -1107,6 +1107,58 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
     end
 end
 
+# Whether the GC-pointer canonicalization passes leave `f` alone: Enzyme never
+# differentiates a function that is inactive, or whose return value and
+# parameters all are, so rewriting its pointers is pointless churn. Both halves
+# of `canonicalize_gc_pointers!` have to agree on this, or one leaves behind
+# Derived phis that the other never roots.
+function skip_gc_canonicalization(f::LLVM.Function)::Bool
+    for attr in collect(function_attributes(f))
+        if !isa(attr, LLVM.StringAttribute)
+            continue
+        end
+        if kind(attr) == "enzyme_inactive"
+            return true
+        end
+    end
+
+    inactiveRet = LLVM.return_type(LLVM.function_type(f)) == LLVM.VoidType()
+
+    for attr in collect(return_attributes(f))
+        if !isa(attr, LLVM.StringAttribute)
+            continue
+        end
+        if kind(attr) == "enzyme_inactive"
+            inactiveRet = true
+            break
+        end
+    end
+
+    if inactiveRet
+        # NOTE: `length` rather than `eachindex`, so this looks at the last
+        # parameter only. Kept as-is because it is what `nodecayed_phis!` has
+        # always done, and the two passes have to skip the same functions.
+        for idx in length(collect(parameters(f)))
+            inactiveParm = false
+            for attr in collect(parameter_attributes(f, idx))
+                if !isa(attr, LLVM.StringAttribute)
+                    continue
+                end
+                if kind(attr) == "enzyme_inactive"
+                    inactiveParm = true
+                    break
+                end
+            end
+            if !inactiveParm
+                inactiveRet = false
+                break
+            end
+        end
+    end
+
+    return inactiveRet
+end
+
 function nodecayed_phis!(mod::LLVM.Module)
     # Simple handler to fix addrspace 11
     #complex handler for addrspace 13, which itself comes from a load of an
@@ -1114,59 +1166,7 @@ function nodecayed_phis!(mod::LLVM.Module)
     ctx = LLVM.context(mod)
     for f in functions(mod)
 
-        guaranteedInactive = false
-
-        for attr in collect(function_attributes(f))
-            if !isa(attr, LLVM.StringAttribute)
-                continue
-            end
-            if kind(attr) == "enzyme_inactive"
-                guaranteedInactive = true
-                break
-            end
-        end
-
-        if guaranteedInactive
-            continue
-        end
-
-
-        entry_ft = LLVM.function_type(f)
-
-        RT = LLVM.return_type(entry_ft)
-        inactiveRet = RT == LLVM.VoidType()
-
-        for attr in collect(return_attributes(f))
-            if !isa(attr, LLVM.StringAttribute)
-                continue
-            end
-            if kind(attr) == "enzyme_inactive"
-                inactiveRet = true
-                break
-            end
-        end
-
-        if inactiveRet
-            for idx in length(collect(parameters(f)))
-                inactiveParm = false
-                for attr in collect(parameter_attributes(f, idx))
-                    if !isa(attr, LLVM.StringAttribute)
-                        continue
-                    end
-                    if kind(attr) == "enzyme_inactive"
-                        inactiveParm = true
-                        break
-                    end
-                end
-                if !inactiveParm
-                    inactiveRet = false
-                    break
-                end
-            end
-            if inactiveRet
-                continue
-            end
-        end
+        skip_gc_canonicalization(f) && continue
 
         offty = LLVM.IntType(8 * sizeof(Int))
         i8 = LLVM.IntType(8)
@@ -1538,13 +1538,59 @@ end
 
 # State for one function's worth of `rederive_tracked_geps!`.
 struct RederiveState
+    f::LLVM.Function
     B::LLVM.IRBuilder
     # Rewritten instructions, pushed after the instructions they use.
     dead::Vector{LLVM.Instruction}
+    # Instructions the rewrite created.
+    created::Set{LLVM.Instruction}
     # Tracked interior value => the same address as a Derived value.
     derived::Dict{LLVM.Value, LLVM.Value}
+    # Tracked whole object => its Derived cast, placed at the object's definition.
+    bases::Dict{LLVM.Value, LLVM.Value}
     # Phis and selects that have a Tracked interior pointer as an input.
     joins::Vector{LLVM.Instruction}
+end
+
+# Record an instruction the rewrite created, so that it can be erased again if
+# it turns out to have no users. What a build returns is not always a fresh
+# instruction: the builder folds a no-op cast to its operand, and a cast of a
+# constant to a constant expression.
+function record_created!(st::RederiveState, @nospecialize(v::LLVM.Value))
+    if isa(v, LLVM.Instruction)
+        push!(st.created, v)
+    end
+    return v
+end
+
+# The Derived counterpart of the whole object `v`, cast once and placed at the
+# definition of `v` rather than at each use, so that several field addresses off
+# one object share a cast and no cast is stranded inside a loop that `v` is
+# invariant of. Returns `nothing` when there is no such point, i.e. when `v` is
+# defined by a terminator, and the caller then casts at the use instead.
+function derived_base!(st::RederiveState, @nospecialize(v::LLVM.Value))
+    cached = get(st.bases, v, nothing)
+    cached === nothing || return cached
+    at = if isa(v, LLVM.Instruction)
+        LLVM.API.LLVMGetNextInstruction(v)
+    else
+        LLVM.API.LLVMGetFirstInstruction(first(blocks(st.f)))
+    end
+    # A phi has to stay first in its block, so skip past the whole run of them.
+    while at != C_NULL && isa(LLVM.Instruction(at), LLVM.PHIInst)
+        at = LLVM.API.LLVMGetNextInstruction(LLVM.Instruction(at))
+    end
+    at == C_NULL && return nothing
+    B = st.B
+    position!(B, LLVM.Instruction(at))
+    if isa(v, LLVM.Instruction)
+        copy_debuglocation!(B, v)
+    else
+        debuglocation!(B)
+    end
+    cast = record_created!(st, addrspacecast!(B, v, derived_pointer_type(value_type(v))))
+    st.bases[v] = cast
+    return cast
 end
 
 # Rewrite the users of `inst`, a Tracked (addrspace 10) interior pointer, to use
@@ -1560,6 +1606,10 @@ function rederive_tracked_uses!(
     )
     B = st.B
     st.derived[inst] = derived
+    # A cast of `inst` made earlier, while `inst` still looked like a whole
+    # object, is superseded by `derived` below and must not be handed out again.
+    cached = get(st.bases, inst, nothing)
+    cached === nothing || delete!(st.bases, inst)
     users = LLVM.Value[LLVM.user(u) for u in LLVM.uses(inst)]
     for user in users
         # Already rebuilt from another input, e.g. the GEP feeding a loop phi's
@@ -1570,14 +1620,14 @@ function rederive_tracked_uses!(
             if value_type(rep) != value_type(user)
                 position!(B, user)
                 copy_debuglocation!(B, user)
-                rep = bitcast!(B, rep, value_type(user))
+                rep = record_created!(st, bitcast!(B, rep, value_type(user)))
             end
             replace_uses!(user, rep)
             push!(st.dead, user)
         elseif isa(user, LLVM.BitCastInst)
             position!(B, user)
             copy_debuglocation!(B, user)
-            nbc = bitcast!(B, derived, derived_pointer_type(value_type(user)))
+            nbc = record_created!(st, bitcast!(B, derived, derived_pointer_type(value_type(user))))
             rederive_tracked_uses!(st, user, nbc)
             push!(st.dead, user)
         elseif isa(user, LLVM.GetElementPtrInst) && operands(user)[1] == inst
@@ -1610,6 +1660,7 @@ function rederive_tracked_gep!(
     else
         gep!(B, srcty, derived, idxs)
     end
+    record_created!(st, ngep)
     rederive_tracked_uses!(st, gep, ngep)
     push!(st.dead, gep)
     return nothing
@@ -1617,8 +1668,8 @@ end
 
 # The Derived counterpart of the Tracked value `v`, as an input of a phi or
 # select being rebuilt in `nty`. Values already rewritten reuse their Derived
-# form; anything else is a whole object and is cast where `v` flows in, i.e.
-# right before `at`.
+# form; anything else is a whole object and is cast at its definition, or right
+# before `at` (where `v` flows in) when it has no such point.
 function rederive_tracked_input(
         st::RederiveState,
         @nospecialize(v::LLVM.Value),
@@ -1631,22 +1682,25 @@ function rederive_tracked_input(
         undeforpoison |= isa(v, LLVM.PoisonValue)
     end
     undeforpoison && return LLVM.UndefValue(nty)
-    if haskey(st.derived, v)
-        dv = st.derived[v]
+    dv = if haskey(st.derived, v)
+        st.derived[v]
+    elseif isa(v, LLVM.Constant)
+        return const_addrspacecast(v, nty)
+    else
+        derived_base!(st, v)
+    end
+    if dv !== nothing
         value_type(dv) == nty && return dv
         position!(B, at)
         copy_debuglocation!(B, at)
-        return bitcast!(B, dv, nty)
-    end
-    if isa(v, LLVM.Constant)
-        return const_addrspacecast(v, nty)
+        return record_created!(st, bitcast!(B, dv, nty))
     end
     position!(B, at)
     copy_debuglocation!(B, at)
     if !LLVM.is_opaque(nty) && eltype(value_type(v)) != eltype(nty)
-        v = bitcast!(B, v, LLVM.PointerType(eltype(nty), Tracked))
+        v = record_created!(st, bitcast!(B, v, LLVM.PointerType(eltype(nty), Tracked)))
     end
-    return addrspacecast!(B, v, nty)
+    return record_created!(st, addrspacecast!(B, v, nty))
 end
 
 # Rebuild every queued phi/select of Tracked pointers, at least one of whose
@@ -1665,6 +1719,7 @@ function rederive_tracked_joins!(st::RederiveState)
         copy_debuglocation!(B, join)
         if isa(join, LLVM.PHIInst)
             nphi = phi!(B, nty, "rederived." * LLVM.name(join))
+            record_created!(st, nphi)
             # Make a self-referencing phi pick up its own replacement.
             st.derived[join] = nphi
             cache = Dict{Tuple{LLVM.Value, LLVM.BasicBlock}, LLVM.Value}()
@@ -1682,6 +1737,7 @@ function rederive_tracked_joins!(st::RederiveState)
             position!(B, join)
             copy_debuglocation!(B, join)
             nsel = select!(B, operands(join)[1], tv, fv, "rederived." * LLVM.name(join))
+            record_created!(st, nsel)
             rederive_tracked_uses!(st, join, nsel)
         end
         push!(st.dead, join)
@@ -1689,13 +1745,22 @@ function rederive_tracked_joins!(st::RederiveState)
     return nothing
 end
 
-# Erase the rewritten instructions that no longer have users. Users were pushed
-# before the instructions they use, so one sweep erases inner-most first, but a
+# Erase what the rewrite left behind: the originals it replaced, and the
+# replacements that ended up with no users of their own, e.g. the cast of a base
+# whose only field access turned out to be unrewritable. Users were pushed
+# before the instructions they use, so one sweep usually suffices, but a
 # rewritten loop phi and the GEP feeding its back edge keep each other alive:
-# anything whose remaining users are all themselves dead is erased too.
-function erase_rederived!(dead::Vector{LLVM.Instruction})
+# anything whose remaining users are all themselves being erased goes too.
+function erase_rederived!(st::RederiveState)
+    todo = LLVM.Instruction[]
+    seen = Set{LLVM.Instruction}()
+    for inst in Iterators.flatten((st.dead, st.created))
+        inst in seen && continue
+        push!(seen, inst)
+        push!(todo, inst)
+    end
     remaining = LLVM.Instruction[]
-    for inst in dead
+    for inst in todo
         if LLVM.API.LLVMGetFirstUse(inst) == C_NULL
             LLVM.API.LLVMInstructionEraseFromParent(inst)
         else
@@ -1739,6 +1804,7 @@ end
 # above the GEP so that interior pointers are always Derived.
 function rederive_tracked_geps!(mod::LLVM.Module)
     for f in functions(mod)
+        skip_gc_canonicalization(f) && continue
         roots = LLVM.GetElementPtrInst[]
         for bb in blocks(f), inst in instructions(bb)
             isa(inst, LLVM.GetElementPtrInst) || continue
@@ -1755,29 +1821,37 @@ function rederive_tracked_geps!(mod::LLVM.Module)
         end
         isempty(roots) && continue
         st = RederiveState(
+            f,
             IRBuilder(),
             LLVM.Instruction[],
+            Set{LLVM.Instruction}(),
+            Dict{LLVM.Value, LLVM.Value}(),
             Dict{LLVM.Value, LLVM.Value}(),
             LLVM.Instruction[],
         )
         for gep in roots
-            position!(st.B, gep)
-            copy_debuglocation!(st.B, gep)
             base = operands(gep)[1]
-            derived = addrspacecast!(st.B, base, derived_pointer_type(value_type(base)))
+            derived = derived_base!(st, base)
+            if derived === nothing
+                position!(st.B, gep)
+                copy_debuglocation!(st.B, gep)
+                derived = record_created!(st, addrspacecast!(st.B, base, derived_pointer_type(value_type(base))))
+            end
             rederive_tracked_gep!(st, gep, derived)
         end
         rederive_tracked_joins!(st)
         dispose(st.B)
-        erase_rederived!(st.dead)
+        erase_rederived!(st)
     end
     return nothing
 end
 
-# Bring the module's GC pointers into the shape Enzyme's tape can hold: every
-# addrspace(10) value is a whole object and every cached pointer is rooted.
-# `rederive_tracked_geps!` establishes the first, moving interior pointers (and
-# phis/selects of them) into the Derived address space; `nodecayed_phis!` then
+# Bring the module's GC pointers closer to the shape Enzyme's tape can hold:
+# interior addrspace(10) pointers become Derived, and Derived phis become a
+# whole object plus an offset. `rederive_tracked_geps!` does the first, moving
+# interior pointers (and the phis and selects of them) into the Derived address
+# space as far as their users allow -- one consumed by something the rewrite
+# does not model, such as a call, keeps its Tracked form. `nodecayed_phis!` then
 # rewrites every Derived phi as a whole-object phi plus a byte offset, so it has
 # to run second.
 function canonicalize_gc_pointers!(mod::LLVM.Module)
