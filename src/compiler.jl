@@ -5429,7 +5429,7 @@ function lower_convention(
         LLVM.run!(pb, mod)
     end
 
-    ModulePassManager() do pm
+    @dispose pm = ModulePassManager() begin
         LLVM.run!(pm, mod)
     end
     if haskey(globals(mod), "llvm.used")
@@ -7231,7 +7231,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         primal_name = nothing
     end
 
-    LLVM.ModulePassManager() do pm
+    LLVM.@dispose pm = LLVM.ModulePassManager() begin
         add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
         LLVM.run!(pm, mod)
     end
