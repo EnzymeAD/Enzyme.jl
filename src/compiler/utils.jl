@@ -160,6 +160,30 @@ Base.@assume_effects :removable :foldable :nothrow function is_nounwind(f::LLVM.
     return false
 end
 
+"""
+    is_readonly(attr::LLVM.Attribute)::Bool
+
+Whether `attr` on its own establishes that the function or argument position it
+is attached to is only read from. That is `readonly` / `readnone`, and on LLVM
+16+ a `memory` effect whose modref is read-only.
+"""
+Base.@assume_effects :removable :foldable :nothrow function is_readonly(attr::LLVM.Attribute)::Bool
+    if kind(attr) == kind(EnumAttribute("readonly"))
+        return true
+    end
+    if kind(attr) == kind(EnumAttribute("readnone"))
+        return true
+    end
+    if LLVM.version().major > 15 && isa(attr, LLVM.EnumAttribute)
+        if kind(attr) == kind(EnumAttribute("memory"))
+            if is_readonly(MemoryEffect(value(attr)))
+                return true
+            end
+        end
+    end
+    return false
+end
+
 Base.@assume_effects :removable :foldable :nothrow function is_readonly(f::LLVM.Function)::Bool
     intr = LLVM.API.LLVMGetIntrinsicID(f)
     if intr == LLVM.Intrinsic("llvm.lifetime.start").id
@@ -176,18 +200,8 @@ Base.@assume_effects :removable :foldable :nothrow function is_readonly(f::LLVM.
         return true
     end
     for attr in collect(function_attributes(f))
-        if kind(attr) == kind(EnumAttribute("readonly"))
+        if is_readonly(attr)
             return true
-        end
-        if kind(attr) == kind(EnumAttribute("readnone"))
-            return true
-        end
-        if LLVM.version().major > 15
-            if kind(attr) == kind(EnumAttribute("memory"))
-                if is_readonly(MemoryEffect(value(attr)))
-                    return true
-                end
-            end
         end
     end
     return false
