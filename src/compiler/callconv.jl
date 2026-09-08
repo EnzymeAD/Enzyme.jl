@@ -549,7 +549,7 @@ end
             alwaysinline::Bool = false,
         )
         if !(funcspec.specTypes isa DataType) || !native_invoke_available(mod)
-            return nested_codegen!(enzyme_context, mode, mod, funcspec, world, alwaysinline)
+            return nested_codegen!(enzyme_context, mode, mod, funcspec, alwaysinline)
         end
 
         if haskey(enzyme_context.nested_cache, funcspec)
@@ -561,7 +561,7 @@ end
 
         native = native_codeinst(mod, funcspec, world)
         if native === nothing
-            llvmf = nested_codegen!(enzyme_context, mode, mod, funcspec, world, true)
+            llvmf = nested_codegen!(enzyme_context, mode, mod, funcspec, true)
             # Emitted rules do not use the derived signature. Check it against
             # them anyway, so `specsig` stays correct for every rule shape.
             # `EnzymeInterpreter` inferred the emitted rule, so take the return
@@ -603,7 +603,7 @@ end
             isdeclaration(fn) || continue
             has_fn_attr(fn, marker) || continue
             mi, RT = enzyme_custom_extract_mi(fn)
-            llvmf = nested_codegen!(enzyme_context, mode, mod, mi, world, true)
+            llvmf = nested_codegen!(enzyme_context, mode, mod, mi, true)
             check_specsig(llvmf, mi, enzyme_custom_extract_mi(llvmf)[2])
             # `nested_codegen!` defers linking the emitted module until after
             # the differentiation. The body is needed before it.
@@ -660,7 +660,7 @@ else
         funcspec::Core.MethodInstance,
         world::UInt,
         alwaysinline::Bool = false,
-    ) = nested_codegen!(enzyme_context, mode, mod, funcspec, world, alwaysinline)
+    ) = nested_codegen!(enzyme_context, mode, mod, funcspec, alwaysinline)
 
     native_return_type(mod::LLVM.Module, mi::Core.MethodInstance, world::UInt) = nothing
 
