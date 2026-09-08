@@ -7248,7 +7248,12 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
                     end
                 end
             end
-            string(mod)
+            # Kept for nested differentiation (see autodiff_cache); bitcode
+            # is far cheaper to write than textual IR and parses faster.
+            buf = convert(MemoryBuffer, mod)
+            bytes = convert(Vector{UInt8}, buf)
+            dispose(buf)
+            String(bytes)
         end
         if job.config.params.ABI <: FFIABI || job.config.params.ABI <: NonGenABI
             if DumpPrePostOpt[]
@@ -7274,6 +7279,7 @@ end
 
 const cache = Dict{UInt,CompileResult}()
 
+# adjoint/primal pointer => (function name, bitcode of the pre-post-optimization module)
 const autodiff_cache = Dict{Ptr{Cvoid},Tuple{String, String}}()
 
 const cache_lock = ReentrantLock()

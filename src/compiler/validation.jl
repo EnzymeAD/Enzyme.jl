@@ -1444,7 +1444,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
                 @assert !haskey(functions(mod), pname)
 
-                pmod = parse(LLVM.Module, pmod)
+                pmod = parse(LLVM.Module, unsafe_wrap(Vector{UInt8}, pmod))
 
                 @assert haskey(functions(pmod), pname)
 
