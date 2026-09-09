@@ -516,7 +516,9 @@ export typed_fieldcount
 export typed_fieldoffset
 
 # returns the inner type of an sret/enzyme_sret/enzyme_sret_v
-function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruction}=nothing, throw_error=true)::Union{Nothing, LLVM.LLVMType}
+# `world` is only used to build the error thrown when `throw_error` is set; callers
+# get it from the `EnzymeContext` (or `CompilerJob`) they are running under.
+function sret_ty(fn::LLVM.Function, idx::Int, world::UInt, btval::Union{Nothing, LLVM.Instruction}=nothing, throw_error=true)::Union{Nothing, LLVM.LLVMType}
 
     vt = LLVM.value_type(LLVM.parameters(fn)[idx])
 
@@ -612,10 +614,9 @@ function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruc
         bt = GPUCompiler.backtrace(btval)
     end
     if mi !== nothing
-        throw(Compiler.EnzymeInternalError{Core.MethodInstance, Nothing}(msg, ir, bt, mi, nothing))
+        throw(Compiler.EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world))
     else
-        world = nothing
-        throw(Compiler.EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world))
+        throw(Compiler.EnzymeInternalError{Nothing, UInt}(msg, ir, bt, mi, world))
     end
 end
 

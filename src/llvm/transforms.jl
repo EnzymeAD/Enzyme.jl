@@ -719,6 +719,7 @@ struct NoDecayedPhiState
     addr::Int
     offty::LLVM.IntegerType
     ctx::LLVM.Context
+    world::UInt                 # world of the job being compiled (for error reporting)
     f::LLVM.Function
     inst::LLVM.PHIInst          # the phi whose incoming value is being analyzed (for error reporting)
     v0::LLVM.Value              # that incoming value, before any rewriting (for error reporting)
@@ -1078,9 +1079,9 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
             bt = GPUCompiler.backtrace(st.inst)
             mi, _ = Compiler.enzyme_custom_extract_mi(st.f, false) #=error=#
             if mi !== nothing
-                throw(EnzymeInternalError{Core.MethodInstance, Nothing}(msg, string(st.f), bt, mi, nothing))
+                throw(EnzymeInternalError{Core.MethodInstance, UInt}(msg, string(st.f), bt, mi, st.world))
             else
-                throw(EnzymeInternalError{Nothing, Nothing}(msg, string(st.f), bt, mi, nothing))
+                throw(EnzymeInternalError{Nothing, UInt}(msg, string(st.f), bt, mi, st.world))
             end
         end
         return select!(b, operands(v)[1], lhs_v, rhs_v),
@@ -1099,13 +1100,13 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
     bt = GPUCompiler.backtrace(st.inst)
     mi, _ = Compiler.enzyme_custom_extract_mi(st.f, false) #=error=#
     if mi !== nothing
-        throw(EnzymeInternalError{Core.MethodInstance, Nothing}(msg, string(st.f), bt, mi, nothing))
+        throw(EnzymeInternalError{Core.MethodInstance, UInt}(msg, string(st.f), bt, mi, st.world))
     else
-        throw(EnzymeInternalError{Nothing, Nothing}(msg, string(st.f), bt, mi, nothing))
+        throw(EnzymeInternalError{Nothing, UInt}(msg, string(st.f), bt, mi, st.world))
     end
 end
 
-function nodecayed_phis!(mod::LLVM.Module)
+function nodecayed_phis!(mod::LLVM.Module, world::UInt)
     # Simple handler to fix addrspace 11
     #complex handler for addrspace 13, which itself comes from a load of an
     # addrspace 10
@@ -1326,7 +1327,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                         position!(b, terminator(pb))
 
 			phicache = Dict{LLVM.PHIInst, Tuple{LLVM.PHIInst, LLVM.PHIInst}}()
-                        st = NoDecayedPhiState(addr, offty, ctx, f, inst, v0, nextvs, goffsets, phicache)
+                        st = NoDecayedPhiState(addr, offty, ctx, world, f, inst, v0, nextvs, goffsets, phicache)
                         v, offset, hadload = nodecayed_getparent(st, b, v, LLVM.ConstantInt(offty, 0), false)
 
                         if addr == 13
@@ -1520,7 +1521,7 @@ function legalize_readonly_decay!(
     return nothing
 end
 
-function fix_decayaddr!(mod::LLVM.Module)
+function fix_decayaddr!(mod::LLVM.Module, world::UInt)
     for f in functions(mod)
         invalid = LLVM.Instruction[]
         for bb in blocks(f), inst in instructions(bb)
@@ -1735,15 +1736,15 @@ function fix_decayaddr!(mod::LLVM.Module)
                         t_sret = false
                         for a in collect(parameter_attributes(fop, i))
                             if kind(a) == sretkind
-				sret_elty = sret_ty(fop, i)
+				sret_elty = sret_ty(fop, i, world)
                                 t_sret = true
                             end
                             if kind(a) == kind(StringAttribute("enzyme_sret"))
-				sret_elty = sret_ty(fop, i)
+				sret_elty = sret_ty(fop, i, world)
                                 t_sret = true
                             end
                             if kind(a) == kind(StringAttribute("enzymejl_returnRoots"))
-				sret_elty = sret_ty(fop, i)
+				sret_elty = sret_ty(fop, i, world)
                                 t_sret = true
                             end
                             if kind(a) == kind(StringAttribute("enzymejl_rooted_typ"))
@@ -2124,7 +2125,7 @@ function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
     return true
 end
 
-function propagate_returned!(mod::LLVM.Module)
+function propagate_returned!(mod::LLVM.Module, world::UInt)
     globs = LLVM.GlobalVariable[]
     for g in globals(mod)
         if linkage(g) == LLVM.API.LLVMInternalLinkage ||
@@ -2285,7 +2286,7 @@ function propagate_returned!(mod::LLVM.Module)
                         end
                         
                         argeltype = if has_use
-                            argeltype0 = sret_ty(fn, i, #=btval=#nothing, #=throw_error=#false)
+                            argeltype0 = sret_ty(fn, i, world, #=btval=#nothing, #=throw_error=#false)
                             if argeltype0 === nothing
                                 illegalUse = true
                             end
@@ -2806,7 +2807,7 @@ function checkNoAssumeFalse(mod::LLVM.Module, shouldshow::Bool = false)
     end
 end
 
-function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, post_gc_fixup::Bool)
+function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, world::UInt, post_gc_fixup::Bool)
     # We need to run globalopt first. This is because remove dead args will otherwise
     # take internal functions and replace their args with undef. Then on LLVM up to 
     # and including 12 (but fixed 13+), Attributor will incorrectly change functions that
@@ -2991,7 +2992,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
                     kind(attr) == kind(StringAttribute("enzyme_sret")) ||
                     kind(attr) == kind(StringAttribute("enzyme_sret_v"))
                 ) for attr in attrs
-               ) && any_jltypes(sret_ty(fn, idx))
+               ) && any_jltypes(sret_ty(fn, idx, world))
                 for u in LLVM.uses(fn)
                     u = LLVM.user(u)
                     if isa(u, LLVM.ConstantExpr)
@@ -3046,7 +3047,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
             call!(B, funcT, func, LLVM.Value[p for p in parameters(fn)])
         end
     end
-    propagate_returned!(mod)
+    propagate_returned!(mod, world)
     LLVM.@dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
 		register!(pb, RestoreAllocaType())
@@ -3062,7 +3063,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
         end
         LLVM.run!(pb, mod)
     end
-    propagate_returned!(mod)
+    propagate_returned!(mod, world)
     pre_attr!(mod, RunAttributor[])
     if RunAttributor[]
         API.EnzymeDetectReadonlyOrThrow(mod)
@@ -3074,7 +3075,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
             LLVM.run!(pb, mod)
         end
     end
-    propagate_returned!(mod)
+    propagate_returned!(mod, world)
     LLVM.@dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, EnzymeAttributorPass())
@@ -3098,7 +3099,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
     end
     API.EnzymeDetectReadonlyOrThrow(mod)
     post_attr!(mod, RunAttributor[])
-    propagate_returned!(mod)
+    propagate_returned!(mod, world)
     
     for u in LLVM.uses(rwfunc)
         u = LLVM.user(u)

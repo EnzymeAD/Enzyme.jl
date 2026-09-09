@@ -48,7 +48,7 @@ import GPUCompiler
                 """
             )
 
-            Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), false)
+            Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), Base.get_world_counter(), false)
             string(mod)
         end
     end
@@ -95,7 +95,7 @@ end
                 """
             )
 
-            Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), false)
+            Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), Base.get_world_counter(), false)
             string(mod)
         end
     end
@@ -132,7 +132,7 @@ end
                 """
             )
 
-            Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), true)
+            Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), Base.get_world_counter(), true)
             string(mod)
         end
     end
@@ -165,7 +165,7 @@ end
                 """
             )
 
-            Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), false)
+            Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), Base.get_world_counter(), false)
             string(mod)
         end
     end
@@ -199,7 +199,7 @@ end
                 """
             )
 
-            Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), false)
+            Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), Base.get_world_counter(), false)
             string(mod)
         end
     end
@@ -501,9 +501,84 @@ end # VERSION >= v"1.12"
                 """
             )
 
-            Enzyme.Compiler.nodecayed_phis!(mod)
+            Enzyme.Compiler.nodecayed_phis!(mod, Base.get_world_counter())
             string(mod)
         end
+    end
+end
+
+
+# `nodecayed_getparent` and `sret_ty` used to read the world off an LLVM function
+# attribute; they now take it from their caller, which holds the `EnzymeContext` (or
+# `CompilerJob`) of the job being compiled. The world has to reach the thrown
+# `EnzymeInternalError` so that `code_typed(err)` can look the method instance up.
+@testset "compile-time errors carry the caller's world" begin
+    world = UInt(0xdeadbeef)
+
+    LLVM.Context() do ctx
+        # A phi whose incoming value comes out of an opaque call has no addrspace(10)
+        # parent to walk back to, so `nodecayed_getparent` gives up and throws.
+        mod = parse(
+            LLVM.Module, """
+            source_filename = "start"
+            target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+            target triple = "x86_64-linux-gnu"
+
+            declare i8 addrspace(11)* @unknown()
+
+            define i8 @kernel(i1 %cond, i8 addrspace(11)* %g) {
+            top:
+              br i1 %cond, label %ok, label %guard
+
+            ok:
+              %u = call i8 addrspace(11)* @unknown()
+              br label %merge
+
+            guard:
+              %gep = getelementptr inbounds i8, i8 addrspace(11)* %g, i64 8
+              br label %merge
+
+            merge:
+              %p = phi i8 addrspace(11)* [ %u, %ok ], [ %gep, %guard ]
+              %ld = load i8, i8 addrspace(11)* %p, align 1
+              ret i8 %ld
+            }
+            """
+        )
+        err = try
+            Enzyme.Compiler.nodecayed_phis!(mod, world)
+            nothing
+        catch e
+            e
+        end
+        @test err isa Enzyme.Compiler.EnzymeInternalError
+        @test err.world == world
+    end
+
+    LLVM.Context() do ctx
+        # No sret/enzyme_sret/enzymejl_parmtype attribute on the parameter.
+        mod = parse(
+            LLVM.Module, """
+            source_filename = "start"
+            target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+            target triple = "x86_64-linux-gnu"
+
+            define void @nosret({ i64, i64 }* %out) {
+            top:
+              ret void
+            }
+            """
+        )
+        fn = functions(mod)["nosret"]
+        @test Enzyme.Compiler.sret_ty(fn, 1, world, nothing, false) === nothing
+        err = try
+            Enzyme.Compiler.sret_ty(fn, 1, world)
+            nothing
+        catch e
+            e
+        end
+        @test err isa Enzyme.Compiler.EnzymeInternalError
+        @test err.world == world
     end
 end
 
@@ -552,7 +627,7 @@ function decay_egal_module()
     )
     GPUCompiler.prepare_job!(job)
     mod, _ = GPUCompiler.emit_llvm(job)
-    Enzyme.Compiler.optimize!(mod, Enzyme.Compiler.JIT.get_tm())
+    Enzyme.Compiler.optimize!(mod, Enzyme.Compiler.JIT.get_tm(), Base.get_world_counter())
     return mod
 end
 
@@ -643,7 +718,7 @@ end
             @check_same "jl_roots"
             @check "gc_preserve_end"
             @check "gc_preserve_end"
-            Enzyme.Compiler.fix_decayaddr!(mod)
+            Enzyme.Compiler.fix_decayaddr!(mod, Base.get_world_counter())
             string(mod)
         end
 
@@ -670,6 +745,6 @@ end
         drop_readonly!(cmp)
         @test !Enzyme.Compiler.is_readonly(LLVM.called_operand(cmp)::LLVM.Function)
 
-        @test_throws AssertionError Enzyme.Compiler.fix_decayaddr!(mod)
+        @test_throws AssertionError Enzyme.Compiler.fix_decayaddr!(mod, Base.get_world_counter())
     end
 end

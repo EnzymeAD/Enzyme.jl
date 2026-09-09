@@ -1338,7 +1338,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
                     @assert sret <: Ptr
                     sret_et = eltype(sret)
                     rest = copy(typetree(sret_et, ctx, dl, seen))
-                    shift!(rest, dl, 0, LLVM.sizeof(LLVM.DataLayout(dl), sret_ty(f, 1)), 0)
+                    shift!(rest, dl, 0, LLVM.sizeof(LLVM.DataLayout(dl), sret_ty(f, 1, world)), 0)
                     merge!(rest, TypeTree(API.DT_Pointer, ctx))
                     only!(rest, -1)
                     push!(
@@ -1493,7 +1493,7 @@ function nested_codegen!(
     set_module_types!(interp, otherMod, nothing, job, edges, run_enzyme, mode)
 
     # Apply first stage of optimization's so that this module is at the same stage as `mod`
-    optimize!(otherMod, JIT.get_tm())
+    optimize!(otherMod, JIT.get_tm(), world)
     
     if DumpPostNestedOpt[]
 	API.EnzymeDumpModuleRef(otherMod.ref)
@@ -3085,7 +3085,7 @@ function _enzyme!(
         run!(pb, mod)
     end
     run!(DCEPass(), mod)
-    fix_decayaddr!(mod)
+    fix_decayaddr!(mod, enzyme_context.world)
     adjointf = adjointf == nothing ? nothing : functions(mod)[adjointfname]
     augmented_primalf =
         augmented_primalf == nothing ? nothing : functions(mod)[augmented_primalfname]
@@ -4799,7 +4799,7 @@ function lower_convention(
             if !in(0, parmsRemoved)
                 sretPtr = alloca!(
                     builder,
-                    sret_ty(entry_f, 1),
+                    sret_ty(entry_f, 1, world),
                     "innersret",
                 )
                 ctx = LLVM.context(entry_f)
@@ -4816,7 +4816,7 @@ function lower_convention(
             if returnRoots && !in(1, parmsRemoved)
                 retRootPtr = alloca!(
                     builder,
-                    sret_ty(entry_f, 1+sret),
+                    sret_ty(entry_f, 1+sret, world),
                     "innerreturnroots",
                 )
                 # retRootPtr = alloca!(builder, parameters(wrapper_f)[1])
@@ -5844,7 +5844,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     end
 
     # Run early pipeline
-    optimize!(mod, target_machine, target_info)
+    optimize!(mod, target_machine, enzyme_context.world, target_info)
 
     if process_module
         GPUCompiler.optimize_module!(primal_job, mod)
@@ -6433,7 +6433,7 @@ end
     if !(primal_target isa GPUCompiler.NativeCompilerTarget)
         reinsert_gcmarker!(adjointf)
         augmented_primalf !== nothing && reinsert_gcmarker!(augmented_primalf)
-        post_optimize!(mod, target_machine, false; tti=target_info) #=machine=#
+        post_optimize!(mod, target_machine, enzyme_context.world, false; tti=target_info) #=machine=#
     end
 
     adjointf = functions(mod)[adjointf_name]
@@ -7230,7 +7230,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         mstr = if job.config.params.ABI <: InlineABI
             ""
         else
-            fixup_callconv!(mod, JIT.get_tm())
+            fixup_callconv!(mod, JIT.get_tm(), job.world)
             for f in functions(mod)
                 for i in 1:length(parameters(f))
                     for a in collect(parameter_attributes(f, i))
@@ -7253,12 +7253,12 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
             if DumpPrePostOpt[]
                 API.EnzymeDumpModuleRef(mod.ref)
             end
-            post_optimize!(mod, JIT.get_tm(); callconv=false)
+            post_optimize!(mod, JIT.get_tm(), job.world; callconv=false)
             if DumpPostOpt[]
                 API.EnzymeDumpModuleRef(mod.ref)
             end
         else
-            propagate_returned!(mod)
+            propagate_returned!(mod, job.world)
             Compiler.JIT.prepare!(mod)
         end
         mstr

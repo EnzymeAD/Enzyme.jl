@@ -1224,7 +1224,7 @@ end
     end
 
     if sret !== nothing
-        sty = sret_ty(llvmf, 1)
+        sty = sret_ty(llvmf, 1, world)
         if LLVM.version().major >= 12
             attr = TypeAttribute("sret", sty)
         else
@@ -2344,7 +2344,7 @@ function enzyme_custom_common_rev(
         res = sret
 
     elseif sret !== nothing
-        sty = sret_ty(llvmf, 1)
+        sty = sret_ty(llvmf, 1, world)
         if LLVM.version().major >= 12
             attr = TypeAttribute("sret", sty)
         else

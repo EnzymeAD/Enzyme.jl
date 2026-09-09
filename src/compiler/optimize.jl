@@ -30,7 +30,7 @@ SafeAtomicToRegularStorePass() = NewPMFunctionPass("safe_atomic_to_regular_store
 Addr13NoAliasPass() = NewPMModulePass("addr13_noalias", addr13NoAlias)
 RemoveAlwaysInlineRootsPass() = NewPMModulePass("remove_alwaysinline_roots", remove_alwaysinline_roots!)
 
-function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti=nothing)
+function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, world::UInt, tti=nothing)
     @dispose pb = NewPMPassBuilder() begin
         if tti !== nothing
             LLVM.target_transform_info!(pb, tti)
@@ -212,7 +212,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
 
     run!(GCInvariantVerifierPass(strong=false), mod)
 
-    removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
+    removeDeadArgs!(mod, tm, world, #=post_gc_fixup=#false)
     
     run!(GCInvariantVerifierPass(strong=false), mod)
 
@@ -220,7 +220,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
     
     run!(GCInvariantVerifierPass(strong=false), mod)
     
-    nodecayed_phis!(mod)
+    nodecayed_phis!(mod, world)
                 
     run!(GCInvariantVerifierPass(strong=false), mod)
 end
@@ -411,10 +411,10 @@ end
 const DumpPreCallConv = Ref(false)
 const DumpPostCallConv = Ref(false)
 
-function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti=nothing)
+function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, world::UInt, tti=nothing)
     addr13NoAlias(mod)
 
-    removeDeadArgs!(mod, tm, #=post_gc_fixup=#false)
+    removeDeadArgs!(mod, tm, world, #=post_gc_fixup=#false)
 
     memcpy_sret_split!(mod)
     # if we did the move_sret_tofrom_roots, we will have loaded out of the sret, then stored into the rooted.
@@ -478,9 +478,9 @@ function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
     return
 end
 
-function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, machine::Bool = true; callconv::Bool = true, tti=nothing)
+function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, world::UInt, machine::Bool = true; callconv::Bool = true, tti=nothing)
     if callconv
-        fixup_callconv!(mod, tm, tti)
+        fixup_callconv!(mod, tm, world, tti)
     end
     
     for f in functions(mod)
@@ -498,7 +498,7 @@ function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}
         end
     end
 
-    removeDeadArgs!(mod, tm, #=post_gc_fixup=#true)
+    removeDeadArgs!(mod, tm, world, #=post_gc_fixup=#true)
 
     @dispose pb = NewPMPassBuilder() begin
         if tti !== nothing
