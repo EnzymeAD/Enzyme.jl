@@ -141,18 +141,22 @@ The state one differentiation of one module accumulates: the modules
 `CodeInstance` must depend on, and the cache of already emitted nested
 functions.
 
-A context belongs to a single `compile_unhooked` invocation. It is not passed
-as an argument: `compile_unhooked` binds it to the [`ENZYME_CONTEXT`](@ref)
-scoped value for the duration of the compilation, and everything running under
-it -- the rule handlers Enzyme calls back into, in particular -- reaches it
-with [`enzyme_context`](@ref). A nested compilation binds its own context,
-which the outer one gets back when the nested compilation returns.
+A context belongs to a single `compile_unhooked` invocation, and holds the
+world age that compilation runs in. It is not passed as an argument:
+`compile_unhooked` binds it to the [`ENZYME_CONTEXT`](@ref) scoped value for
+the duration of the compilation, and everything running under it -- the rule
+handlers Enzyme calls back into, in particular -- reaches it with
+[`enzyme_context`](@ref) and [`enzyme_world`](@ref). A nested compilation binds
+its own context, which the outer one gets back when the nested compilation
+returns.
 """
 mutable struct EnzymeContext
+    world::UInt
     modules_to_link::Vector{LLVM.Module}
     edges::Vector{Any}
     nested_cache::Dict{Core.MethodInstance, String}
-    EnzymeContext() = new(
+    EnzymeContext(world::Integer) = new(
+        world,
         LLVM.Module[],
         Any[],
         Dict{Core.MethodInstance, String}()
@@ -178,6 +182,28 @@ function enzyme_context()
         error("Enzyme: no EnzymeContext is active; this must be called during a compilation")
     end
     return ENZYME_CONTEXT[]
+end
+
+"""
+    enzyme_world()
+
+The world age the compilation running in the current dynamic scope was entered
+with, that is, the world every method lookup Enzyme makes for it must use. It
+is an error to call this outside of a compilation.
+"""
+enzyme_world()::UInt = enzyme_context().world
+
+"""
+    enzyme_world_if_active()
+
+[`enzyme_world`](@ref), or `nothing` when no compilation is running in the
+current dynamic scope. For code that must not fail when it cannot find a world,
+such as the construction of an error message, and for the LLVM passes that run
+after a compilation has already returned its module.
+"""
+function enzyme_world_if_active()::Union{Nothing, UInt}
+    isassigned(ENZYME_CONTEXT) || return nothing
+    return ENZYME_CONTEXT[].world
 end
 
 include("logic.jl")

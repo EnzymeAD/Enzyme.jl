@@ -386,7 +386,7 @@ function load_if_mixed(oval::OT, val::VT) where {OT, VT}
 end
 
 function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nospecialize(oval::LLVM.Value), @nospecialize(val::LLVM.Value))::LLVM.Value
-    world = enzyme_extract_world(LLVM.parent(position(B)))
+    world = enzyme_world()
     legal, TT, _ = abs_typeof(oval)
     if !legal
         legal, TT, _ = abs_typeof(oval, true)
@@ -433,7 +433,7 @@ end
 end
 
 function byref_from_val_if_mixed(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM.Value
-    world = enzyme_extract_world(LLVM.parent(position(B)))
+    world = enzyme_world()
     legal, TT, _ = abs_typeof(val)
     if !legal
         legal, TT, _ = abs_typeof(val, true)
@@ -586,7 +586,7 @@ function emit_methodinstance!(B::LLVM.IRBuilder, @nospecialize(func), args::Vect
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
 
-    world = enzyme_extract_world(fn)
+    world = enzyme_world()
 
     sizeT = convert(LLVMType, Csize_t)
     psizeT = LLVM.PointerType(sizeT)

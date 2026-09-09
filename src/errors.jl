@@ -1118,14 +1118,14 @@ function julia_error(
                     f,
                     false,
                 ) #=error=#
-                world = enzyme_extract_world(f)
+                world = enzyme_world()
             elseif isa(val, LLVM.Argument)
                 f = parent_scope(val)::LLVM.Function
                 mi, rt = enzyme_custom_extract_mi(
                     f,
                     false,
                 ) #=error=#
-                world = enzyme_extract_world(f)
+                world = enzyme_world()
             end
             if mi !== nothing
                 emit_error(B, nothing, (msg2, mi, world), EnzymeNoDerivativeError{Core.MethodInstance, UInt}, data2)
@@ -1188,14 +1188,14 @@ function julia_error(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         elseif isa(val, LLVM.Argument)
             f = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         end
         throw(IllegalTypeAnalysisException(msg, mi, world, sval, irstr(), bt))
     elseif errtype == API.ET_NoType
@@ -1239,14 +1239,14 @@ function julia_error(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         elseif isa(val, LLVM.Argument)
             f = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         end
         if mi !== nothing
             emit_error(B, nothing, (msg2, mi, world), EnzymeNoTypeError{Core.MethodInstance, UInt})
@@ -1266,14 +1266,14 @@ function julia_error(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         elseif isa(val, LLVM.Argument)
             f = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         end
 
         err = if mi !== nothing
@@ -1293,14 +1293,14 @@ function julia_error(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         elseif isa(val, LLVM.Argument)
             f = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         end
 
         err = if mi !== nothing
@@ -1378,7 +1378,7 @@ function julia_error(
         seen = Dict{LLVM.Value,LLVM.Value}()
         illegal = false
         created = LLVM.Instruction[]
-        world = enzyme_extract_world(LLVM.parent(position(IRBuilder(B))))
+        world = enzyme_world()
         width = get_width(gutils)
         function make_batched(@nospecialize(cur::LLVM.Value), B::LLVM.IRBuilder)::LLVM.Value
             if width == 1
@@ -1815,14 +1815,14 @@ end
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         elseif isa(val, LLVM.Argument)
             f = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         end
         mode = Enzyme.API.DEM_ReverseModeCombined
 
