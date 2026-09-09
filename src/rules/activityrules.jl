@@ -49,7 +49,7 @@ function julia_activity_rule(enzyme_context::EnzymeContext, f::LLVM.Function, wo
 
             op_idx = arg.codegen.i
 
-            typ, _ = enzyme_extract_parm_type(f, arg.codegen.i)
+            typ, _ = enzyme_extract_parm_type(enzyme_context, f, arg.codegen.i)
             @assert typ == arg.typ
 
 	    if (kwarg_inactive && arg.arg_i == 2) || guaranteed_const_nongen(arg.typ, world) || (arg.rooted_typ !== nothing && guaranteed_const_nongen(arg.rooted_typ, world))

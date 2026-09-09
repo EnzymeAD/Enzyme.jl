@@ -250,7 +250,7 @@ end
     # every compiled function (`enzymejl_parmtype*`, `enzymejl_rooted_typ`,
     # `enzymejl_returnRoots`). `fix_decayaddr!` recognizes root-carrying
     # arguments by those markers.
-    function specsig_function!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), name::String, world::UInt)::LLVM.Function
+    function specsig_function!(enzyme_context::EnzymeContext, mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), name::String, world::UInt)::LLVM.Function
         retty, params, param_attrs = specsig(mi, RT)
         fn = LLVM.Function(mod, name, LLVM.FunctionType(retty, params))
         # Julia's codegen uses the swift calling convention only when the
@@ -262,6 +262,7 @@ end
         fattrs = function_attributes(fn)
         push!(fattrs, StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))))
         push!(fattrs, StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(RT)))))
+        enzyme_context.mi_cache[name] = (mi, RT)
         if RT === Union{}
             push!(fattrs, EnumAttribute("noreturn"))
         end
@@ -286,6 +287,7 @@ end
             push!(pattrs, StringAttribute("enzymejl_parmtype", string(convert(UInt, unsafe_to_pointer(arg.typ)))))
             push!(pattrs, StringAttribute("enzymejl_parmtype_str", string(arg.typ)))
             push!(pattrs, StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))))
+            record_param_type!(enzyme_context, fn, arg.codegen.i, arg.typ, arg.cc, arg.rooted_typ)
             if arg.rooted_typ !== nothing
                 push!(pattrs, StringAttribute("enzymejl_rooted_typ", string(convert(UInt, unsafe_to_pointer(arg.rooted_typ)))))
             end
@@ -351,15 +353,15 @@ end
     end
 
     """
-        declare_native!(mod, mi, RT, specptr, name, world)
+                declare_native!(enzyme_context, mod, mi, RT, specptr, name, world)
 
     Declare the natively compiled function `mi`, with return type `RT`, in `mod`,
     with the signature [`specsig`](@ref) derives. Store the entry point
     `specptr` in the `enzymejl_needs_restoration` attribute. `restore_lookups`
     turns that attribute into the address once the calling module is final.
     """
-    function declare_native!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), specptr::Ptr{Cvoid}, name::String, world::UInt)::LLVM.Function
-        fn = specsig_function!(mod, mi, RT, name, world)
+    function declare_native!(enzyme_context::EnzymeContext, mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), specptr::Ptr{Cvoid}, name::String, world::UInt)::LLVM.Function
+        fn = specsig_function!(enzyme_context, mod, mi, RT, name, world)
         push!(function_attributes(fn), StringAttribute("enzymejl_needs_restoration", string(convert(UInt, specptr))))
         # `restore_lookups` leaves the declaration symbolic until the module
         # is compiled, and `materialize_native_invokes!` finds it by this marker.
@@ -571,7 +573,7 @@ end
         ci, specptr = native
 
         name = "ejl_enzyme_" * GPUCompiler.safe_name(string(funcspec.def.name)) * "_" * string(convert(UInt, pointer_from_objref(funcspec)))
-        fn = declare_native!(mod, funcspec, ci.rettype, specptr, name, world)
+        fn = declare_native!(enzyme_context, mod, funcspec, ci.rettype, specptr, name, world)
 
         # The native code stays valid as long as its CodeInstance does.
         push!(enzyme_context.edges, funcspec)

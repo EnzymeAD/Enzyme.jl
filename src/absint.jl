@@ -1034,7 +1034,8 @@ function abs_typeof(
     if isa(arg, LLVM.Argument)
         f = LLVM.Function(LLVM.API.LLVMGetParamParent(arg))
         idx = only([i for (i, v) in enumerate(LLVM.parameters(f)) if v == arg])
-        typ, byref = enzyme_extract_parm_type(f, idx, false) #=error=#
+        typ, byref = enzyme_context === nothing ? enzyme_extract_parm_type(f, idx, false) :
+            enzyme_extract_parm_type(enzyme_context, f, idx, false) #=error=#
         if typ !== nothing
             return (true, typ, byref)
         end
