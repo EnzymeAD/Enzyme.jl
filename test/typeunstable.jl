@@ -309,6 +309,13 @@ end
         Enzyme.Const(loss_setproperty_mwe),
         Enzyme.Duplicated([0.5], [1.0]),
     ) == (1.0,)
+
+    result = Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Enzyme.Forward),
+        Enzyme.Const(loss_setproperty_mwe),
+        Enzyme.BatchDuplicated([0.5], ([1.0], [2.0])),
+    )
+    @test Tuple(result[1]) == (1.0, 2.0)
 end
 
 # Issue 3425: an `Active` return whose inferred type is abstract routes combined
