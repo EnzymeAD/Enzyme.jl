@@ -74,7 +74,7 @@ function reflect(
     mod, meta = GPUCompiler.codegen(:llvm, job) #= validate=false =#
 
     if second_stage
-        post_optimize!(mod, JIT.get_tm(), job.world)
+        post_optimize!(mod, JIT.get_tm(), meta.enzyme_context)
     end
 
     llvmf = meta.adjointf

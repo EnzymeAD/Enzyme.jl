@@ -411,7 +411,8 @@ end
 const DumpPreCallConv = Ref(false)
 const DumpPostCallConv = Ref(false)
 
-function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, world::UInt, tti=nothing)
+function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enzyme_context::EnzymeContext, tti=nothing)
+    world = enzyme_context.world
     addr13NoAlias(mod)
 
     removeDeadArgs!(mod, tm, world, #=post_gc_fixup=#false)
@@ -442,12 +443,18 @@ function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
         end
         registerEnzymeAndPassPipeline!(pb)
         add!(pb, "enzyme-fixup-batched-julia")
-        if VERSION < v"1.12"
-            add!(pb, "enzyme-fixup-julia-sret")
-        else
-            add!(pb, "enzyme-fixup-julia")
-        end
         run!(pb, mod, tm)
+    end
+
+    # The Julia calling-convention fixup can reach the error handler; run it
+    # through the module entry point with the request's context so those errors
+    # carry the world, rather than the context-less named pass.
+    GC.@preserve enzyme_context begin
+        API.EnzymeFixupJuliaCallingConventionModule(
+            mod,
+            VERSION < v"1.12",
+            Base.pointer_from_objref(enzyme_context),
+        )
     end
     if DumpPostCallConv[]
 	    API.EnzymeDumpModuleRef(mod.ref)
@@ -478,9 +485,10 @@ function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
     return
 end
 
-function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, world::UInt, machine::Bool = true; callconv::Bool = true, tti=nothing)
+function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enzyme_context::EnzymeContext, machine::Bool = true; callconv::Bool = true, tti=nothing)
+    world = enzyme_context.world
     if callconv
-        fixup_callconv!(mod, tm, world, tti)
+        fixup_callconv!(mod, tm, enzyme_context, tti)
     end
     
     for f in functions(mod)

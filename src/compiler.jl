@@ -1577,6 +1577,7 @@ is the source of unexpected `NaN`s. Off by default.
 const CheckNan = Ref(false)
 
 function julia_sanitize(
+    context::Ptr{Cvoid},
     orig::LLVM.API.LLVMValueRef,
     val::LLVM.API.LLVMValueRef,
     B::LLVM.API.LLVMBuilderRef,
@@ -1616,7 +1617,7 @@ function julia_sanitize(
 
                 position!(builder, bad)
 
-                emit_error(builder, nothing, sval, callback_world(), EnzymeNoDerivativeError{Nothing, Nothing})
+                emit_error(builder, nothing, sval, enzyme_context(context).world, EnzymeNoDerivativeError{Nothing, Nothing})
                 unreachable!(builder)
                 dispose(builder)
             end
@@ -1989,6 +1990,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
 end
 
 function julia_allocator(
+    context::Ptr{Cvoid},
     B::LLVM.API.LLVMBuilderRef,
     LLVMType::LLVM.API.LLVMTypeRef,
     Count::LLVM.API.LLVMValueRef,
@@ -2000,10 +2002,10 @@ function julia_allocator(
     Count = LLVM.Value(Count)
     AlignedSize = LLVM.Value(AlignedSize)
     LLVMType = LLVM.LLVMType(LLVMType)
-    return julia_allocator(B, LLVMType, Count, AlignedSize, IsDefault, ZI)
+    return julia_allocator(enzyme_context(context).world, B, LLVMType, Count, AlignedSize, IsDefault, ZI)
 end
 
-function fixup_return(B::LLVM.API.LLVMBuilderRef, retval::LLVM.API.LLVMValueRef)
+function fixup_return(context::Ptr{Cvoid}, B::LLVM.API.LLVMBuilderRef, retval::LLVM.API.LLVMValueRef)
     B = LLVM.IRBuilder(B)
 
     func = LLVM.parent(position(B))
@@ -2020,7 +2022,7 @@ function fixup_return(B::LLVM.API.LLVMBuilderRef, retval::LLVM.API.LLVMValueRef)
     if isa(ty, LLVM.StructType)
         elems = LLVM.elements(ty)
         if length(elems) == 2 && elems[1] == T_prjlvalue
-            fill_val = unsafe_to_llvm(B, nothing, callback_world())
+            fill_val = unsafe_to_llvm(B, nothing, enzyme_context(context).world)
             prev = extract_value!(B, retval, 0)
             eq = icmp!(B, LLVM.API.LLVMIntEQ, prev, LLVM.null(T_prjlvalue))
             retval = select!(B, eq, insert_value!(B, retval, fill_val, 0), retval)
@@ -2246,7 +2248,7 @@ function zero_allocation(
     ).ref
 end
 
-function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMType), @nospecialize(Count::LLVM.Value), @nospecialize(AlignedSize::LLVM.Value), IsDefault::UInt8, ZI::Ptr{LLVM.API.LLVMValueRef})
+function julia_allocator(world::UInt, B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMType), @nospecialize(Count::LLVM.Value), @nospecialize(AlignedSize::LLVM.Value), IsDefault::UInt8, ZI::Ptr{LLVM.API.LLVMValueRef})
     func = LLVM.parent(position(B))
     mod = LLVM.parent(func)
 
@@ -2266,7 +2268,7 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
         if esizeof(TT) != convert(Int, AlignedSize)
             GPUCompiler.@safe_error "Enzyme aligned size and Julia size disagree" AlignedSize =
                 convert(Int, AlignedSize) esizeof(TT) fieldtypes(TT) LLVMType=strip(string(LLVMType))
-            emit_error(B, nothing, "Enzyme: Tape allocation failed.", callback_world()) # TODO: Pick appropriate orig
+            emit_error(B, nothing, "Enzyme: Tape allocation failed.", world) # TODO: Pick appropriate orig
             return LLVM.API.LLVMValueRef(LLVM.UndefValue(LLVMType).ref)
         end
         @assert esizeof(TT) == convert(Int, AlignedSize)
@@ -2278,13 +2280,13 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
                 GPUCompiler.@safe_error "Size of Enzyme tape is incorrect. Please report this issue" ETT sizeof(
                     ETT,
                 ) TargetSize = N * convert(Int, AlignedSize) LLVMType
-                emit_error(B, nothing, "Enzyme: Tape allocation failed.", callback_world()) # TODO: Pick appropriate orig
+                emit_error(B, nothing, "Enzyme: Tape allocation failed.", world) # TODO: Pick appropriate orig
 
                 return LLVM.API.LLVMValueRef(LLVM.UndefValue(LLVMType).ref)
             end
 
             # Obtain tag
-            tag = unsafe_to_llvm(B, ETT, callback_world())
+            tag = unsafe_to_llvm(B, ETT, world)
         else
             if sizeof(Int) == sizeof(Int64)
                 boxed_count = emit_box_int64!(B, Count)
@@ -2293,7 +2295,7 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
                 Count = trunc!(B, Count, T_size_t)
                 boxed_count = emit_box_int32!(B, Count)
             end
-            tag = emit_apply_type!(B, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(B, TT, callback_world())], callback_world())
+            tag = emit_apply_type!(B, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(B, TT, world)], world)
         end
 
         # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
@@ -2471,6 +2473,7 @@ function __init__()
             julia_error,
             LLVM.API.LLVMValueRef,
             (
+                Ptr{Cvoid},
                 Cstring,
                 LLVM.API.LLVMValueRef,
                 API.ErrorType,
@@ -2485,6 +2488,7 @@ function __init__()
             julia_sanitize,
             LLVM.API.LLVMValueRef,
             (
+                Ptr{Cvoid},
                 LLVM.API.LLVMValueRef,
                 LLVM.API.LLVMValueRef,
                 LLVM.API.LLVMBuilderRef,
@@ -2511,6 +2515,7 @@ function __init__()
             julia_allocator,
             LLVM.API.LLVMValueRef,
             (
+                Ptr{Cvoid},
                 LLVM.API.LLVMBuilderRef,
                 LLVM.API.LLVMTypeRef,
                 LLVM.API.LLVMValueRef,
@@ -2546,7 +2551,7 @@ function __init__()
         @cfunction(
             fixup_return,
             LLVM.API.LLVMValueRef,
-            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)
+            (Ptr{Cvoid}, LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef)
         )
     )
     API.EnzymeSetUndefinedValueForType(
@@ -2664,22 +2669,7 @@ const DumpPreEnzyme = Ref(false)
 const DumpPostEnzyme = Ref(false)
 const DumpPostWrap = Ref(false)
 
-# Enzyme's C callbacks (julia_allocator, fixup_return, julia_sanitize, and the error
-# handler when it is handed no GradientUtils) have no context argument. enzyme! publishes
-# the job's world in task-local storage for the duration of the C++ call; they read it here.
-function callback_world()::UInt
-    world = get(task_local_storage(), :enzyme_callback_world, nothing)
-    world === nothing && error("Enzyme: callback_world() called outside of enzyme!")
-    return world::UInt
-end
-
-function enzyme!(enzyme_context::EnzymeContext, job::CompilerJob, args...)
-    return task_local_storage(:enzyme_callback_world, job.world) do
-        _enzyme!(enzyme_context, job, args...)
-    end
-end
-
-function _enzyme!(
+function enzyme!(
     enzyme_context::EnzymeContext,
     job::CompilerJob,
     interp,
@@ -6433,7 +6423,7 @@ end
     if !(primal_target isa GPUCompiler.NativeCompilerTarget)
         reinsert_gcmarker!(adjointf)
         augmented_primalf !== nothing && reinsert_gcmarker!(augmented_primalf)
-        post_optimize!(mod, target_machine, enzyme_context.world, false; tti=target_info) #=machine=#
+        post_optimize!(mod, target_machine, enzyme_context, false; tti=target_info) #=machine=#
     end
 
     adjointf = functions(mod)[adjointf_name]
@@ -6456,7 +6446,7 @@ end
 
     use_primal = mode == API.DEM_ReverseModePrimal
     entry = use_primal ? augmented_primalf : adjointf
-    return mod, (; adjointf, augmented_primalf, entry, compiled = meta.compiled, TapeType, edges)
+    return mod, (; adjointf, augmented_primalf, entry, compiled = meta.compiled, TapeType, edges, enzyme_context)
 end
 
 # Compiler result
@@ -7230,7 +7220,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         mstr = if job.config.params.ABI <: InlineABI
             ""
         else
-            fixup_callconv!(mod, JIT.get_tm(), job.world)
+            fixup_callconv!(mod, JIT.get_tm(), meta.enzyme_context)
             for f in functions(mod)
                 for i in 1:length(parameters(f))
                     for a in collect(parameter_attributes(f, i))
@@ -7253,7 +7243,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
             if DumpPrePostOpt[]
                 API.EnzymeDumpModuleRef(mod.ref)
             end
-            post_optimize!(mod, JIT.get_tm(), job.world; callconv=false)
+            post_optimize!(mod, JIT.get_tm(), meta.enzyme_context; callconv=false)
             if DumpPostOpt[]
                 API.EnzymeDumpModuleRef(mod.ref)
             end

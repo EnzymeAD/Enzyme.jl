@@ -25,6 +25,10 @@ function enzyme_context(logic::Logic)
     return logic.ctx::EnzymeContext
 end
 
+# The context Enzyme hands back to a callback is the pointer we installed on the
+# logic with `LogicSetExternalContext`, i.e. a pointer to the `EnzymeContext`.
+enzyme_context(ptr::Ptr{Cvoid}) = unsafe_pointer_to_objref(ptr)::EnzymeContext
+
 LLVM.@checked struct TypeAnalyzer
     ref::API.EnzymeTypeAnalyzerRef
 end

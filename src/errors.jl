@@ -1024,6 +1024,7 @@ parent_scope(val::LLVM.Argument, depth = 0) =
     parent_scope(LLVM.Function(LLVM.API.LLVMGetParamParent(val)), depth + 1)
 
 function julia_error(
+    context::Ptr{Cvoid},
     cstr::Cstring,
     val::LLVM.API.LLVMValueRef,
     errtype::API.ErrorType,
@@ -1032,7 +1033,7 @@ function julia_error(
     B::LLVM.API.LLVMBuilderRef,
 )::LLVM.API.LLVMValueRef
     msg = Base.unsafe_string(cstr)
-    julia_error(msg, val, errtype, data, data2, B)
+    julia_error(msg, val, errtype, data, data2, B, context)
 end
 
 function julia_error(
@@ -1042,6 +1043,7 @@ function julia_error(
     data::Ptr{Cvoid},
     data2::LLVM.API.LLVMValueRef,
     B::LLVM.API.LLVMBuilderRef,
+    context::Ptr{Cvoid} = C_NULL,
 )::LLVM.API.LLVMValueRef
     bt = nothing
     ir = nothing
@@ -1119,7 +1121,7 @@ function julia_error(
             # `data` is the `GradientUtils` when the error is raised while
             # differentiating a function, and null from the batching, truncation
             # and tracing entry points.
-            world = data == C_NULL ? callback_world() :
+            world = data == C_NULL ? enzyme_context(context).world :
                 enzyme_context(GradientUtils(API.EnzymeGradientUtilsRef(data))).world
 
             if isa(val, LLVM.Instruction)

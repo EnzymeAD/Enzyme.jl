@@ -1455,6 +1455,20 @@ function EnzymeSetFixupReturn(handler)
     unsafe_store!(ptr, handler)
 end
 
+# Run the Julia calling-convention fixup over `mod`, handing it the external
+# context so the error handler it may reach recovers the world. Replaces the
+# named `enzyme-fixup-julia`/`-sret` passes, which pass a null context.
+function EnzymeFixupJuliaCallingConventionModule(mod, sret_jlvalue::Bool, ctx::Ptr{Cvoid})
+    ccall(
+        (:EnzymeFixupJuliaCallingConventionModule, libEnzyme),
+        Cvoid,
+        (LLVM.API.LLVMModuleRef, UInt8, Ptr{Cvoid}),
+        mod,
+        sret_jlvalue,
+        ctx,
+    )
+end
+
 function EnzymeHasCustomAllocatorSupport()
     try
         EnzymeSetCustomAllocator(C_NULL)
