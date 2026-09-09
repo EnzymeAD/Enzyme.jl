@@ -25,7 +25,8 @@ end
     grid = RectilinearGrid(size=128, z=(-64, 64), topology=(Flat, Flat, Bounded))
     vitd = VerticallyImplicitTimeDiscretization()
     closure = ScalarDiffusivity(vitd; ν)
-    m = HydrostaticFreeSurfaceModel(; grid, closure, coriolis=FPlane(f=1e-4),
+    m = HydrostaticFreeSurfaceModel(
+        grid; closure, coriolis = FPlane(f = 1.0e-4),
         tracers=:b, buoyancy=BuoyancyTracer())
 
     N² = 1e-6
