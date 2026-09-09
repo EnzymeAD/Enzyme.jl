@@ -70,7 +70,7 @@ function array_shadow_handler(
     arlen = nothing
 
     nbytes = if memory
-        get_memory_nbytes(b, anti)
+        get_memory_nbytes(b, anti, enzyme_context(gutils).world)
     else
         arlen = get_array_len(b, anti)
     	tot = LLVM.mul!(b, arlen, LLVM.ConstantInt(LLVM.value_type(arlen), elsz, false))

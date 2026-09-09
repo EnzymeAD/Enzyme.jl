@@ -1913,7 +1913,7 @@ function generic_setup(
     ActivityList = LLVM.Value[]
 
     @assert ops_count != 0
-    fill_val = unsafe_to_llvm(B, nothing)
+    fill_val = unsafe_to_llvm(B, nothing, enzyme_context(gutils).world)
 
     vals = LLVM.Value[]
 
@@ -1940,7 +1940,7 @@ function generic_setup(
         active = !is_constant_value(gutils, op)
 
         if !active
-            push!(ActivityList, unsafe_to_llvm(B, false))
+            push!(ActivityList, unsafe_to_llvm(B, false, enzyme_context(gutils).world))
         else
             inverted = invert_pointer(gutils, op, B)
             if lookup
@@ -1957,12 +1957,12 @@ function generic_setup(
                     select!(
                         B,
                         icmp!(B, LLVM.API.LLVMIntNE, val, inv_0),
-                        unsafe_to_llvm(B, true),
-                        unsafe_to_llvm(B, false),
+                        unsafe_to_llvm(B, true, enzyme_context(gutils).world),
+                        unsafe_to_llvm(B, false, enzyme_context(gutils).world),
                     ),
                 )
             else
-                push!(ActivityList, unsafe_to_llvm(B, true))
+                push!(ActivityList, unsafe_to_llvm(B, true, enzyme_context(gutils).world))
             end
         end
 
@@ -1990,7 +1990,7 @@ function generic_setup(
             pushfirst!(vals, tape)
         end
     else
-        pushfirst!(vals, unsafe_to_llvm(B, Val(ReturnType)))
+        pushfirst!(vals, unsafe_to_llvm(B, Val(ReturnType), enzyme_context(gutils).world))
     end
 
     if firstconst && firstconst_after_tape
@@ -2012,26 +2012,26 @@ function generic_setup(
             push!(ModifiedBetween, uncacheable[(start-1)+idx] != 0)
         end
         if func == runtime_generic_rev
-            pushfirst!(vals, unsafe_to_llvm(B, Val(get_atomic_add(gutils))))
+            pushfirst!(vals, unsafe_to_llvm(B, Val(get_atomic_add(gutils)), enzyme_context(gutils).world))
         end
-        pushfirst!(vals, unsafe_to_llvm(B, Val((ModifiedBetween...,))))
+        pushfirst!(vals, unsafe_to_llvm(B, Val((ModifiedBetween...,)), enzyme_context(gutils).world))
     end
 
-    pushfirst!(vals, unsafe_to_llvm(B, Val(Int(width))))
+    pushfirst!(vals, unsafe_to_llvm(B, Val(Int(width)), enzyme_context(gutils).world))
     if strong_zero
-        pushfirst!(vals, unsafe_to_llvm(B, Val(get_strong_zero(gutils))))
+        pushfirst!(vals, unsafe_to_llvm(B, Val(get_strong_zero(gutils)), enzyme_context(gutils).world))
     end
     if runtime_activity
-        pushfirst!(vals, unsafe_to_llvm(B, Val(get_runtime_activity(gutils))))
+        pushfirst!(vals, unsafe_to_llvm(B, Val(get_runtime_activity(gutils)), enzyme_context(gutils).world))
     end
-    etup0 = emit_tuple!(B, ActivityList)
-    etup = emit_apply_type!(B, Base.Val, LLVM.Value[etup0])
+    etup0 = emit_tuple!(B, ActivityList, enzyme_context(gutils).world)
+    etup = emit_apply_type!(B, Base.Val, LLVM.Value[etup0], enzyme_context(gutils).world)
     if isa(etup, LLVM.Instruction)
         @assert length(collect(LLVM.uses(etup0))) == 1
     end
     pushfirst!(vals, etup)
 
-    pushfirst!(vals, unsafe_to_llvm(B, func))
+    pushfirst!(vals, unsafe_to_llvm(B, func, enzyme_context(gutils).world))
 
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
@@ -2223,7 +2223,7 @@ end
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
 
     if conv != 37
-        emit_error(B, orig, "Unexpected calling conv, got $conv, for $(string(orig))")
+        emit_error(B, orig, "Unexpected calling conv, got $conv, for $(string(orig))", enzyme_context(gutils).world)
 
         if !is_constant_value(gutils, orig)
             width = get_width(gutils)
@@ -2265,7 +2265,7 @@ end
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
 
     if conv != 37
-        emit_error(B, orig, "Unexpected calling conv, got $conv, for $(string(orig))")
+        emit_error(B, orig, "Unexpected calling conv, got $conv, for $(string(orig))", enzyme_context(gutils).world)
         return nothing
     end
 
@@ -2614,7 +2614,7 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
         B,
         orig,
         "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate " *
-        string((v, v2, isiter, istup, length(operands(orig)), offset + 4)),
+            string((v, v2, isiter, istup, length(operands(orig)), offset + 4)), enzyme_context(gutils).world,
     )
 
     return false
@@ -2716,7 +2716,7 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
         B,
         orig,
         "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate " *
-        string((v, v2, isiter, istup, length(operands(orig)), offset + 4)),
+            string((v, v2, isiter, istup, length(operands(orig)), offset + 4)), enzyme_context(gutils).world,
     )
 
     unsafe_store!(
