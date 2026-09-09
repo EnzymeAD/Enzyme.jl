@@ -18,7 +18,7 @@ function julia_activity_rule(f::LLVM.Function, method_table)
     if mi.specTypes.parameters[end] === Vararg{Any}
         return
     end
-    world = enzyme_extract_world(f)
+    world = enzyme_world()
 
     jlargs = classify_arguments(
         mi.specTypes,
