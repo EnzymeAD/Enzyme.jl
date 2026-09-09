@@ -1119,18 +1119,21 @@ function julia_error(
             # `data` is the `GradientUtils` when the error is raised while
             # differentiating a function, and null from the batching, truncation
             # and tracing entry points.
-            world = data == C_NULL ? callback_world() :
-                enzyme_context(GradientUtils(API.EnzymeGradientUtilsRef(data))).world
+            ctx = data == C_NULL ? nothing :
+                enzyme_context(GradientUtils(API.EnzymeGradientUtilsRef(data)))
+            world = ctx === nothing ? callback_world() : ctx.world
 
             if isa(val, LLVM.Instruction)
                 f = LLVM.parent(LLVM.parent(val))::LLVM.Function
                 mi, rt = enzyme_custom_extract_mi(
+                    ctx,
                     f,
                     false,
                 ) #=error=#
             elseif isa(val, LLVM.Argument)
                 f = parent_scope(val)::LLVM.Function
                 mi, rt = enzyme_custom_extract_mi(
+                    ctx,
                     f,
                     false,
                 ) #=error=#
@@ -1155,7 +1158,7 @@ function julia_error(
                 print(io, "Current scope: \n")
                 print(io, scope)
             end
-	    legal, obj = absint(val)
+            legal, obj = absint(val, false, false, false, enzyme_context(gutils))
 	    if legal
 		obj0 = obj
 		obj = unbind(obj)
@@ -1189,17 +1192,20 @@ function julia_error(
         API.EnzymeStringFree(ip)
 
         mi = nothing
-        world = enzyme_context(TypeAnalyzer(data)).world
+        ctx = enzyme_context(TypeAnalyzer(data))
+        world = ctx.world
 
         if isa(val, LLVM.Instruction)
             f = LLVM.parent(LLVM.parent(val))::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
+                ctx,
                 f,
                 false,
             ) #=error=#
         elseif isa(val, LLVM.Argument)
             f = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
+                ctx,
                 f,
                 false,
             ) #=error=#
@@ -1231,24 +1237,28 @@ function julia_error(
                 println(io)
             end
             pscope = parent_scope(val)::LLVM.Function
-            mi, rt = enzyme_custom_extract_mi(pscope, false) #=error=#
+            ctx = enzyme_context(TypeAnalyzer(data))
+            mi, rt = enzyme_custom_extract_mi(ctx, pscope, false) #=error=#
             if mi !== nothing
                 println(io, "within ", mi)
             end
         end
 	    
         mi = nothing
-        world = enzyme_context(TypeAnalyzer(data)).world
+        ctx = enzyme_context(TypeAnalyzer(data))
+        world = ctx.world
 
         if isa(val, LLVM.Instruction)
             f = LLVM.parent(LLVM.parent(val))::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
+                ctx,
                 f,
                 false,
             ) #=error=#
         elseif isa(val, LLVM.Argument)
             f = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
+                ctx,
                 f,
                 false,
             ) #=error=#
@@ -1476,7 +1486,7 @@ end
                     return make_batched(ncur, prevbb)
                 end
 
-                legal2, obj = absint(cur)
+                legal2, obj = absint(cur, false, false, false, enzyme_context(gutils))
 		obj0 = obj
                 # Only do so for the immediate operand/etc to a phi, since otherwise we will make multiple
                 if legal2
@@ -1776,6 +1786,7 @@ end
         end
         if LLVM.API.LLVMIsAReturnInst(val) != C_NULL
             mi, rt = enzyme_custom_extract_mi(
+                enzyme_context(gutils),
                 LLVM.parent(LLVM.parent(val))::LLVM.Function,
                 false,
             ) #=error=#
@@ -1808,22 +1819,22 @@ end
         end
         
         mi = nothing
-        world = nothing
+        world = enzyme_context(gutils).world
 
         if isa(val, LLVM.Instruction)
             f = LLVM.parent(LLVM.parent(val))::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
+                enzyme_context(gutils),
                 f,
                 false,
             ) #=error=#
-            world = enzyme_context(gutils).world
         elseif isa(val, LLVM.Argument)
             f = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
+                enzyme_context(gutils),
                 f,
                 false,
             ) #=error=#
-            world = enzyme_context(gutils).world
         end
         mode = Enzyme.API.DEM_ReverseModeCombined
 

@@ -1518,7 +1518,7 @@ function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, ta
     push!(vals, inps[1])
 
     sym = new_from_original(gutils, ops[3])
-    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym], enzyme_context(gutils).world)
+    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym], enzyme_context(gutils).world, enzyme_context(gutils))
     push!(vals, sym)
 
     push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, ops[2])), enzyme_context(gutils).world))
@@ -1615,7 +1615,7 @@ function common_jl_getfield_rev(offset, B, orig, gutils, tape)
 
     sym = new_from_original(gutils, ops[3])
     sym = lookup_value(gutils, sym, B)
-    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym], enzyme_context(gutils).world)
+    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym], enzyme_context(gutils).world, enzyme_context(gutils))
     push!(vals, sym)
 
     push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, ops[2])), enzyme_context(gutils).world))
@@ -1713,7 +1713,7 @@ end
 
     sym = new_from_original(gutils, operands(orig)[2])
     sym = (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(B, sym)
-    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym], enzyme_context(gutils).world)
+    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym], enzyme_context(gutils).world, enzyme_context(gutils))
     push!(vals, sym)
 
     # TODO properly handle runtime activity here
@@ -1812,7 +1812,7 @@ end
     sym = new_from_original(gutils, operands(orig)[2])
     sym = lookup_value(gutils, sym, B)
     sym = (sizeof(Int) == sizeof(Int64) ? emit_box_int64! : emit_box_int32!)(B, sym)
-    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym], enzyme_context(gutils).world)
+    sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym], enzyme_context(gutils).world, enzyme_context(gutils))
     push!(vals, sym)
 
     push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, operands(orig)[1])), enzyme_context(gutils).world))
