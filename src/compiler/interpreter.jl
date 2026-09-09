@@ -1166,6 +1166,42 @@ end
     end
 end
 
+# Element types of the broadcast arguments, queried strictly one after the other
+# (Julia >= 1.12 only; the fields hold `Core.Compiler.Future{Type}`s).
+#
+# Querying a nested `Broadcasted` argument runs its function through
+# `abstract_call`, which may push a new inference frame under `sv` and hand back
+# a pending `Future`. Issuing the query for the next argument before that frame
+# has finished leaves two live sibling frames under `sv`. Julia's own inference
+# never does that: it waits for each edge before starting the next one. Since
+# Julia 1.13 `merge_call_chain!` walks `cycle_parent` from the caller up to the
+# frame that closes a cycle, and a sibling is not on that path, so a call from
+# the second sibling back into the first fails with
+# `TypeError: typeassert expected InferenceState, got Nothing`
+# (broadcasting `g.(h.(x), k.(x))` where `k` calls `h`, e.g. in Comrade).
+# Julia 1.12 silently mislabelled the cycle instead.
+mutable struct SequentialEltypes
+    const state::NamedTuple
+    const args::Tuple
+    const eltypes::Vector{Any}
+    const ret::Any
+    pending::Any
+end
+
+function (se::SequentialEltypes)(interp, sv)
+    while true
+        isready(se.pending) || return false
+        push!(se.eltypes, se.pending[])
+        i = length(se.eltypes) + 1
+        if i > length(se.args)
+            se.ret[] = Iterators.TupleOrBottom(se.eltypes...)
+            return true
+        end
+        se.pending = ty_broadcast_getindex_eltype(se.state, se.args[i])
+    end
+    return
+end
+
 if VERSION < v"1.12"
 ## Computation of inferred result type, for empty and concretely inferred cases only
 ty_broadcast_getindex_eltype(state::NamedTuple, bc::Type{<:Base.Broadcast.Broadcasted}) = ty_combine_eltypes(state, bc.parameters[3], (bc.parameters[4].parameters...,))
@@ -1195,34 +1231,19 @@ else
 ty_broadcast_getindex_eltype(state::NamedTuple, bc::Type{<:Base.Broadcast.Broadcasted})::Core.Compiler.Future{Type} = ty_combine_eltypes(state, bc.parameters[3], (bc.parameters[4].parameters...,))
 ty_broadcast_getindex_eltype(state::NamedTuple, A)::Core.Compiler.Future{Type} = Core.Compiler.Future{Type}(eltype(A))  # Tuple, Array, etc.
 
-ty_eltypes(state::NamedTuple, ::Tuple{})::Core.Compiler.Future{Type} = Tuple{}
-function ty_eltypes(state::NamedTuple, t::Tuple{Any})::Core.Compiler.Future{Type}
-    retT = ty_broadcast_getindex_eltype(state, t[1])
-    (; interp, sv) = state
-    Core.Compiler.Future{Type}(retT, interp, sv) do retT, interp, sv
-        Iterators.TupleOrBottom(retT)
+    ty_eltypes(state::NamedTuple, ::Tuple{})::Core.Compiler.Future{Type} = Tuple{}
+    function ty_eltypes(state::NamedTuple, t::Tuple)::Core.Compiler.Future{Type}
+        (; interp, sv) = state
+        se = SequentialEltypes(
+            state,
+            t,
+            Any[],
+            Core.Compiler.Future{Type}(),
+            ty_broadcast_getindex_eltype(state, t[1]),
+        )
+        se(interp, sv) || push!(sv.tasks, se)
+        return se.ret
     end
-end
-function ty_eltypes(state::NamedTuple, t::Tuple{Any,Any})::Core.Compiler.Future{Type}
-    retT1 = ty_broadcast_getindex_eltype(state, t[1])
-    retT2 = ty_broadcast_getindex_eltype(state, t[2])
-    (; interp, sv) = state
-    Core.Compiler.Future{Type}(isready(retT1) && isready(retT2), interp, sv) do interp, sv
-            Iterators.TupleOrBottom(retT1[], retT2[])
-    end
-end
-function ty_eltypes(state::NamedTuple, t::Tuple)::Core.Compiler.Future{Type}
-    TT = ty_eltypes(state, Base.tail(t))
-    (; interp, sv) = state
-    if TT === Union{}
-        Core.Compiler.Future{Type}{Union{}}
-    else
-        retT = ty_broadcast_getindex_eltype(state, t[1])
-        Core.Compiler.Future{Type}(isready(TT) && isready(retT), interp, sv) do interp, sv
-            Iterators.TupleOrBottom(retT[], TT[].parameters...)
-        end
-    end
-end
 
 # Inferred eltype of result of broadcast(f, args...)
 function ty_combine_eltypes(state::NamedTuple, f, args::Tuple)::Core.Compiler.Future{Type}

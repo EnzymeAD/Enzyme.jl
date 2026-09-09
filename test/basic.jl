@@ -855,3 +855,24 @@ end
     @test res_vector !== nothing
 end
 
+# Two broadcast arguments whose element-type queries each spawn an inference
+# frame, with the second callee calling back into the first. On Julia 1.13 the
+# broadcast rewrite used to die in `Compiler.merge_call_chain!` with
+# `TypeError: typeassert expected InferenceState, got Nothing` (Comrade
+# integration test, #3545).
+bc_sibling_h(x) = x * 2
+bc_sibling_k(x) = bc_sibling_h(x) + 1
+bc_sibling_g(a, b) = a + b
+bc_sibling_f(x) = sum(bc_sibling_g.(bc_sibling_h.(x), bc_sibling_k.(x)))
+
+bc_mutual_h(x) = x > 0 ? x * 2 : bc_mutual_k(-x)
+bc_mutual_k(x) = x < 0 ? bc_mutual_h(-x) : x + 1
+bc_mutual_f(x) = sum(bc_sibling_g.(bc_mutual_h.(x), bc_mutual_k.(x)))
+
+@testset "Broadcast eltype inference with sibling frames" begin
+    @test Enzyme.gradient(Reverse, bc_sibling_f, [1.0, 2.0])[1] ≈ [4.0, 4.0]
+    @test Enzyme.gradient(Forward, bc_sibling_f, [1.0, 2.0])[1] ≈ [4.0, 4.0]
+    @test Enzyme.gradient(Reverse, bc_mutual_f, [1.0, 2.0])[1] ≈ [3.0, 3.0]
+    @test Enzyme.gradient(Forward, bc_mutual_f, [1.0, 2.0])[1] ≈ [3.0, 3.0]
+end
+
