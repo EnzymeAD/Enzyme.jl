@@ -335,6 +335,17 @@ function check_ir(interp, @nospecialize(job::CompilerJob), mod::LLVM.Module)
     end
 end
 
+is_plt_stub(f::LLVM.Function) = startswith(LLVM.name(f), "jlplt_")
+
+# The functions of `mod` in the order `check_ir!` must walk them: PLT stubs last. Rewriting a
+# load of a stub's got reads the library and symbol out of the `ijl_load_and_lookup` call in
+# the stub, and walking the stub itself folds that call away. GPUCompiler 1.x happened to
+# list the stubs after their users; 2.x lists them first.
+function check_ir_functions(mod::LLVM.Module)
+    fns = collect(functions(mod))
+    return vcat(filter(!is_plt_stub, fns), filter(is_plt_stub, fns))
+end
+
 function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, mod::LLVM.Module)
     imported = Set(String[])
     if haskey(functions(mod), "malloc")
@@ -355,7 +366,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     Compiler.rewrite_ccalls!(mod)
 
     del = LLVM.Function[]
-    for f in collect(functions(mod))
+    for f in check_ir_functions(mod)
         if in(f, del)
             continue
         end
@@ -366,7 +377,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     end
 
     del = LLVM.Function[]
-    for f in collect(functions(mod))
+    for f in check_ir_functions(mod)
         if in(f, del)
             continue
         end

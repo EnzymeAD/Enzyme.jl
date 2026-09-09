@@ -315,13 +315,26 @@ function square!(x)
     return nothing
 end
 
+#=
+CUDACore 6.3 replaced the `@cuda` host launch path and did not port its Enzyme rules with
+it. 6.2 expanded `@cuda` to a `HostKernel` functor call, which CUDACore's `EnzymeCoreExt`
+hooks to build the meta augmented-forward/reverse device kernels; 6.3 goes through
+`compile_and_launch`/`KernelCall` and never calls the functor, so Enzyme differentiates the
+launch bookkeeping itself and reports a spurious activity mismatch. Both `autodiff` calls
+below throw, so the `@test`s wrap them rather than sitting after them.
+https://github.com/EnzymeAD/Enzyme.jl/issues/3540
+=#
+const KERNEL_LAUNCH_RULES_MISSING = isdefined(CUDA.CUDACore, :compile_and_launch)
+
 @testset "Reverse Kernel" begin
     A = CUDA.rand(64)
     dA = CUDA.ones(64)
     A .= (1:1:64)
     dA .= 1
-    Enzyme.autodiff(Reverse, square!, Duplicated(A, dA))
-    @test all(dA .≈ (2:2:128))
+    @test begin
+        Enzyme.autodiff(Reverse, square!, Duplicated(A, dA))
+        all(dA .≈ (2:2:128))
+    end broken = KERNEL_LAUNCH_RULES_MISSING
 
     A = CUDA.rand(32)
     dA = CUDA.ones(32)
@@ -329,9 +342,10 @@ end
     A .= (1:1:32)
     dA .= 1
     dA2 .= 3
-    Enzyme.autodiff(Reverse, square!, BatchDuplicated(A, (dA, dA2)))
-    @test all(dA .≈ (2:2:64))
-    @test all(dA2 .≈ 3*(2:2:64))
+    @test begin
+        Enzyme.autodiff(Reverse, square!, BatchDuplicated(A, (dA, dA2)))
+        all(dA .≈ (2:2:64)) && all(dA2 .≈ 3 * (2:2:64))
+    end broken = KERNEL_LAUNCH_RULES_MISSING
 end
 
 #=
