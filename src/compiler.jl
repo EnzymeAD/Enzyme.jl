@@ -18,6 +18,8 @@ import Enzyme:
     EnzymeContext,
     ENZYME_CONTEXT,
     enzyme_context,
+    enzyme_world,
+    enzyme_world_if_active,
     TypeTree,
     typetree,
     TypeTreeTable,
@@ -536,17 +538,13 @@ include("llvm/transforms.jl")
 include("llvm/passes.jl")
 include("typeutils/make_zero.jl")
 
-function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type), world::UInt)
-    funcspec = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, typeof(f), tt, world)
-    return nested_codegen!(mode, mod, funcspec, world)
+function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type))
+    funcspec = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, typeof(f), tt, enzyme_world())
+    return nested_codegen!(mode, mod, funcspec)
 end
 
 
 function prepare_llvm(interp, mod::LLVM.Module, job, meta)
-    for f in functions(mod)
-        attributes = function_attributes(f)
-        push!(attributes, StringAttribute("enzymejl_world", string(job.world)))
-    end
     for (mi, k) in meta.compiled
         k_name = GPUCompiler.safe_name(k.specfunc)
         if !haskey(functions(mod), k_name)
@@ -1264,7 +1262,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
             continue
         end
 
-        world = enzyme_extract_world(f)
+        world = enzyme_world()
 
         jlargs = classify_arguments(
             mi.specTypes,
@@ -1430,10 +1428,10 @@ function nested_codegen!(
     mode::API.CDerivativeMode,
     mod::LLVM.Module,
     funcspec::Core.MethodInstance,
-    world::UInt,
     alwaysinline::Bool=false,
 )
     enzyme_ctx = enzyme_context()
+    world = enzyme_ctx.world
     cache_key = funcspec
     if haskey(enzyme_ctx.nested_cache, cache_key)
         fname = enzyme_ctx.nested_cache[cache_key]
@@ -1923,9 +1921,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
     if mode == API.DEM_ReverseModePrimal ||
        mode == API.DEM_ReverseModeGradient ||
        mode == API.DEM_ReverseModeCombined
-        fn = LLVM.parent(LLVM.parent(V))
-        world = enzyme_extract_world(fn)
-        if !guaranteed_nonactive(Ty, world)
+        if !guaranteed_nonactive(Ty, enzyme_world())
             B = LLVM.IRBuilder()
             position!(B, V)
             operands(V)[3] = unsafe_to_llvm(B, Base.RefValue{Ty})
@@ -2609,17 +2605,6 @@ struct UnknownTapeType end
 # Enzyme compiler step
 ##
 
-function enzyme_extract_world(fn::LLVM.Function)::UInt
-    for fattr in collect(function_attributes(fn))
-        if isa(fattr, LLVM.StringAttribute)
-            if kind(fattr) == "enzymejl_world"
-                return parse(UInt, LLVM.value(fattr))
-            end
-        end
-    end
-    throw(AssertionError("Enzyme: could not find world in $(string(fn))"))
-end
-
 function enzyme_custom_extract_mi(orig::LLVM.CallInst, error::Bool = true)
     operand = LLVM.called_operand(orig)
     if isa(operand, LLVM.Function)
@@ -2700,7 +2685,6 @@ function enzyme!(
     if DumpPreEnzyme[]
         API.EnzymeDumpModuleRef(mod.ref)
     end
-    world = job.world
     rt = job.config.params.rt
     runtimeActivity = job.config.params.runtimeActivity
     strongZero = job.config.params.strongZero
@@ -2911,7 +2895,6 @@ function enzyme!(
                 width,
                 returnPrimal,
                 shadow_init,
-                world,
                 interp,
                 runtimeActivity,
             )
@@ -2953,7 +2936,6 @@ function enzyme!(
                 width,
                 false,
                 shadow_init,
-                world,
                 interp,
                 runtimeActivity
             ) #=returnPrimal=#
@@ -2994,7 +2976,6 @@ function enzyme!(
                 width,
                 returnPrimal,
                 shadow_init,
-                world,
                 interp,
                 runtimeActivity
             )
@@ -3039,7 +3020,6 @@ function enzyme!(
                 width,
                 returnPrimal,
                 shadow_init,
-                world,
                 interp,
                 runtimeActivity
             )
@@ -3121,10 +3101,10 @@ function create_abi_wrapper(
     width::Int,
     returnPrimal::Bool,
     shadow_init::Bool,
-    world::UInt,
     interp,
     runtime_activity::Bool
 )
+    world = enzyme_world()
     is_adjoint = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModeCombined
     is_split = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModePrimal
     needs_tape = Mode == API.DEM_ReverseModeGradient
@@ -3436,12 +3416,6 @@ function create_abi_wrapper(
     realparms = LLVM.Value[]
     i = 1
 
-    for attr in collect(function_attributes(enzymefn))
-        if kind(attr) == "enzymejl_world"
-            push!(function_attributes(llvm_f), attr)
-        end
-    end
-
     if returnRoots
         sret = params[i]
         i += 1
@@ -3636,7 +3610,7 @@ function create_abi_wrapper(
 	    end
             Func = get_func(T)
             funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, Func, Tuple{}, world)
-            llvmf = nested_codegen!(Mode, mod, funcspec, world)
+            llvmf = nested_codegen!(Mode, mod, funcspec)
             push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
             Func_RT = return_type(interp, funcspec)
             @assert Func_RT == NTuple{width,T′}
@@ -4703,12 +4677,6 @@ function lower_convention(
         end
     end
 
-    for attr in collect(function_attributes(entry_f))
-        if kind(attr) == "enzymejl_world"
-            push!(function_attributes(wrapper_f), attr)
-        end
-    end
-
     seen = TypeTreeTable()
     # emit IR performing the "conversions"
     let builder = IRBuilder()
@@ -5507,7 +5475,7 @@ end
 function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     # Every compilation runs under its own context; a nested compilation gets
     # its own and hands the outer one back when it returns.
-    return @with ENZYME_CONTEXT => EnzymeContext() begin
+    return @with ENZYME_CONTEXT => EnzymeContext(job.world) begin
         compile_unhooked_impl(output, job)
     end
 end
@@ -5582,7 +5550,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
 
     # A derivative linked into this module as a deferred job calls its rules
     # natively. Differentiating it again needs their bodies.
-    materialize_native_invokes!(mode, mod, job.world)
+    materialize_native_invokes!(mode, mod)
 
     LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
@@ -5603,7 +5571,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     end
     # `check_ir` links in the derivatives that `enzyme_call` embeds. Their
     # natively called rules need bodies too.
-    materialize_native_invokes!(mode, mod, job.world)
+    materialize_native_invokes!(mode, mod)
 
     disableFallback = String[]
 
@@ -5785,7 +5753,6 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
             dispose(builder)
         end
         attributes = function_attributes(wrapper_f)
-        push!(attributes, StringAttribute("enzymejl_world", string(job.world)))
         push!(
             attributes,
             StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))),
@@ -6380,7 +6347,7 @@ end
             fname = String(name) * pf
             if haskey(functions(mod), fname)
                 funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, fnty, Tuple{JT}, job.world)
-                llvmf = nested_codegen!(mode, mod, funcspec, job.world)
+                llvmf = nested_codegen!(mode, mod, funcspec)
 
                 llvmf = LLVM.name(llvmf)
 

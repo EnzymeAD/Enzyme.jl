@@ -344,7 +344,7 @@ function enzyme_custom_setup_args(
     position!(alloctx, LLVM.BasicBlock(API.EnzymeGradientUtilsAllocationBlock(gutils)))
 
     ofn = LLVM.parent(LLVM.parent(orig))
-    world = enzyme_extract_world(ofn)
+    world = enzyme_world()
 
     jlargs = classify_arguments(
         mi.specTypes,
@@ -989,7 +989,7 @@ function enzyme_custom_setup_ret(
     width = get_width(gutils)
     mode = get_mode(gutils)
 
-    world = enzyme_extract_world(LLVM.parent(LLVM.parent(orig)))
+    world = enzyme_world()
 
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
@@ -1128,7 +1128,7 @@ end
 
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
-    world = enzyme_extract_world(fn)
+    world = enzyme_world()
 
     # TODO: don't inject the code multiple times for multiple calls
 
@@ -1150,7 +1150,7 @@ end
     width = get_width(gutils)
 
 
-    llvmf = invoke_codegen!(mode, mod, fmi, world, true)
+    llvmf = invoke_codegen!(mode, mod, fmi, true)
 
     orig_swiftself = has_swiftself(LLVM.called_operand(orig))
 
@@ -1433,7 +1433,7 @@ end
     end
 
     fn = LLVM.parent(LLVM.parent(orig))
-    world = enzyme_extract_world(fn)
+    world = enzyme_world()
 
     C = EnzymeRules.RevConfig{
         Bool(needsPrimal),
@@ -1548,7 +1548,7 @@ end
     TT = Tuple{tt...}
 
     fn = LLVM.parent(LLVM.parent(orig))
-    world = enzyme_extract_world(fn)
+    world = enzyme_world()
     @safe_debug "Trying to apply custom forward rule" TT isKWCall
         
     functy = if isKWCall
@@ -1574,7 +1574,7 @@ end
 
 @inline function has_easy_rule_from_call(orig::LLVM.CallInst, gutils::GradientUtils)::Bool
     fn = LLVM.parent(LLVM.parent(orig))
-    world = enzyme_extract_world(fn)
+    world = enzyme_world()
     mi, RealRt = enzyme_custom_extract_mi(orig)
     specTypes = Interpreter.simplify_kw(mi.specTypes)
     return EnzymeRules.has_easy_rule_from_sig(specTypes; world)
@@ -1756,7 +1756,7 @@ function enzyme_custom_common_rev(
 
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
-    world = enzyme_extract_world(fn)
+    world = enzyme_world()
 
     mode = get_mode(gutils)
 
@@ -1828,7 +1828,7 @@ function enzyme_custom_common_rev(
     final_mi = nothing
 
     if forward
-        llvmf = invoke_codegen!(mode, mod, ami, world, true)
+        llvmf = invoke_codegen!(mode, mod, ami, true)
         @assert llvmf !== nothing
         rev_RT = nothing
         final_mi = ami
@@ -1874,7 +1874,7 @@ function enzyme_custom_common_rev(
         
         rmi = rmi::Core.MethodInstance
         rev_RT = rev_RT::Type
-        llvmf = invoke_codegen!(mode, mod, rmi, world, true)
+        llvmf = invoke_codegen!(mode, mod, rmi, true)
         final_mi = rmi
     end
 

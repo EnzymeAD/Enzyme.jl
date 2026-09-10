@@ -197,7 +197,7 @@ include("parallelrules.jl")
 
     pf = LLVM.parent(LLVM.parent(orig))::LLVM.Function
     mi, _ = enzyme_custom_extract_mi(pf, false) #=error=#
-    world = enzyme_extract_world(pf)
+    world = enzyme_world()
 
     if mi !== nothing
         err = emit_error(
@@ -292,7 +292,7 @@ end
 
     pf = LLVM.parent(LLVM.parent(orig))::LLVM.Function
     mi, _ = enzyme_custom_extract_mi(pf, false) #=error=#
-    world = enzyme_extract_world(pf)
+    world = enzyme_world()
 
     if mi !== nothing
         err = emit_error(
@@ -394,7 +394,7 @@ end
 
     pf = LLVM.parent(LLVM.parent(orig))::LLVM.Function
     mi, _ = enzyme_custom_extract_mi(pf, false) #=error=#
-    world = enzyme_extract_world(pf)
+    world = enzyme_world()
 
     if mi !== nothing
         err = emit_error(
@@ -1859,7 +1859,7 @@ end
     ET = eltype(dest_ty)
 
     fn = LLVM.parent(LLVM.parent(orig))
-    world = enzyme_extract_world(fn)
+    world = enzyme_world()
     if !guaranteed_nonactive(ET, world)
         emit_error(B, orig, "Enzyme: element type $ET of generic_memory_copyto is potentially active ($reg) and not presently supported")
     end

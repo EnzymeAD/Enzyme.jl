@@ -225,7 +225,7 @@ end
     e_tt = Tuple{Const{Int}}
     modifiedBetween = (mode != API.DEM_ForwardMode, false)
 
-    world = enzyme_extract_world(LLVM.parent(position(B)))
+    world = enzyme_world()
 
     pfuncT = funcT
 
@@ -639,8 +639,7 @@ end
 
     tt = Tuple{thunkTy,dfuncT,Bool}
     mode = get_mode(gutils)
-    world = enzyme_extract_world(LLVM.parent(position(B)))
-    entry = nested_codegen!(mode, mod, runtime_pfor_fwd, tt, world)
+    entry = nested_codegen!(mode, mod, runtime_pfor_fwd, tt)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
     pval = functions(mod)[sname]
@@ -687,8 +686,7 @@ end
         Bool,
     }
     mode = get_mode(gutils)
-    world = enzyme_extract_world(LLVM.parent(position(B)))
-    entry = nested_codegen!(mode, mod, runtime_pfor_augfwd, tt, world)
+    entry = nested_codegen!(mode, mod, runtime_pfor_augfwd, tt)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
     pval = functions(mod)[sname]
@@ -724,7 +722,6 @@ end
 
 @register_rev function threadsfor_rev(B, orig, gutils, tape)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    world = enzyme_extract_world(LLVM.parent(position(B)))
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return
     end
@@ -747,7 +744,7 @@ end
         Bool,
     }
     mode = get_mode(gutils)
-    entry = nested_codegen!(mode, mod, runtime_pfor_rev, tt, world)
+    entry = nested_codegen!(mode, mod, runtime_pfor_rev, tt)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
     pval = functions(mod)[sname]
@@ -776,7 +773,6 @@ end
     width = get_width(gutils)
     mode = get_mode(gutils)
 
-    world = enzyme_extract_world(LLVM.parent(position(B)))
 
     vals = LLVM.Value[
         unsafe_to_llvm(B, runtime_newtask_fwd),
@@ -830,7 +826,6 @@ end
     uncacheable = get_uncacheable(gutils, orig)
     ModifiedBetween = (uncacheable[1] != 0,)
 
-    world = enzyme_extract_world(LLVM.parent(position(B)))
 
     vals = LLVM.Value[
         unsafe_to_llvm(B, runtime_newtask_augfwd),

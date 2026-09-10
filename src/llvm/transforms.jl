@@ -1077,8 +1077,8 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
             end
             bt = GPUCompiler.backtrace(st.inst)
             mi, _ = Compiler.enzyme_custom_extract_mi(st.f, false) #=error=#
-            world = Compiler.enzyme_extract_world(st.f)
-            if mi !== nothing
+            world = enzyme_world_if_active()
+            if mi !== nothing && world !== nothing
                 throw(EnzymeInternalError{Core.MethodInstance, UInt}(msg, string(st.f), bt, mi, world))
             else
                 throw(EnzymeInternalError{Nothing, Nothing}(msg, string(st.f), bt, mi, nothing))
@@ -1099,8 +1099,8 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
     end
     bt = GPUCompiler.backtrace(st.inst)
     mi, _ = Compiler.enzyme_custom_extract_mi(st.f, false) #=error=#
-    world = Compiler.enzyme_extract_world(st.f)
-    if mi !== nothing
+    world = enzyme_world_if_active()
+    if mi !== nothing && world !== nothing
         throw(EnzymeInternalError{Core.MethodInstance, UInt}(msg, string(st.f), bt, mi, world))
     else
         throw(EnzymeInternalError{Nothing, Nothing}(msg, string(st.f), bt, mi, nothing))
