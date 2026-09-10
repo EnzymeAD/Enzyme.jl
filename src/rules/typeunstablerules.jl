@@ -1840,25 +1840,10 @@ end
 end
 
 function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
-    normal =
-        (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        width = get_width(gutils)
-        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-        for idx = 1:width
-            if width == 1
-                shadowres = normal
-            else
-                shadowres = insert_value!(B, shadowres, normal, idx - 1)
-            end
-        end
-        unsafe_store!(shadowR, shadowres.ref)
-    end
-
     origops = @view operands(orig)[offset:end]
-    if !is_constant_value(gutils, origops[4])
-        width = get_width(gutils)
+    width = get_width(gutils)
 
+    if !is_constant_value(gutils, origops[4])
         shadowout = invert_pointer(gutils, origops[4], B)
 
         shadowin = if !is_constant_value(gutils, origops[2])
@@ -1896,9 +1881,53 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
             need_result = false
         ) #=lookup=#
     end
+
+    # `setfield!(obj, fld, val)` returns `val`, so the shadow of the result is
+    # the shadow of the stored value -- not the primal result.
+    if shadowR != C_NULL && !is_constant_value(gutils, orig)
+        shadowres = if !is_constant_value(gutils, origops[4])
+            invert_pointer(gutils, origops[4], B)
+        elseif !get_runtime_activity(gutils)
+            estr =
+                "Mismatched activity for: " *
+                string(orig) *
+                " const stored value " *
+                string(origops[4]) *
+                ", differentiable return"
+            eres = julia_error(
+                estr,
+                orig.ref,
+                API.ET_MixedActivityError,
+                gutils.ref,
+                origops[4].ref,
+                B.ref,
+            )
+            if eres != C_NULL
+                LLVM.Value(eres)
+            else
+                invert_pointer(gutils, origops[4], B)
+            end
+        else
+            # Under runtime activity a constant stored value has the primal as
+            # its own shadow.
+            normal = new_from_original(gutils, orig)
+            if width == 1
+                normal
+            else
+                res = UndefValue(
+                    LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
+                )
+                position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
+                for idx in 1:width
+                    res = insert_value!(B, res, normal, idx - 1)
+                end
+                res
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
+    end
     return false
 end
-
 
 function rt_jl_setfield_aug(dptr::T, idx, ::Val{isconst}, val, dval) where {T,isconst}
     RT = Core.Typeof(val)
@@ -1926,11 +1955,19 @@ function rt_jl_setfield_rev(dptr::T, idx, ::Val{isconst}, val, dval) where {T,is
 end
 
 function common_setfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
+    origops = @view operands(orig)[offset:end]
+    width = get_width(gutils)
 
+    # TODO: `setfield!(obj, fld, val)` returns `val`, so the shadow of the result
+    # ought to be the shadow of the stored value rather than the primal result
+    # (this is what makes reverse mode drop the derivative flowing through a used
+    # `setproperty!` return, cf. https://github.com/EnzymeAD/Enzyme.jl/issues/3555).
+    # Returning the shadow of `val` here additionally requires Enzyme's
+    # `cacheForReverse` to accept a shadow return that is not an `Instruction`
+    # (the shadow of `val` may be a shadow argument), so it is left as-is for now.
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
-        width = get_width(gutils)
         shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
         for idx = 1:width
             if width == 1
@@ -1942,13 +1979,11 @@ function common_setfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR
         unsafe_store!(shadowR, shadowres.ref)
     end
 
-    origops = @view operands(orig)[offset:end]
     if !is_constant_value(gutils, origops[2])
-        width = get_width(gutils)
 
         shadowstruct = invert_pointer(gutils, origops[2], B)
 
-        shadowval = if !is_constant_value(gutils, origops[2])
+        shadowval = if !is_constant_value(gutils, origops[4])
             invert_pointer(gutils, origops[4], B)
         else
             nothing
@@ -1985,7 +2020,7 @@ function common_setfield_rev(offset, B, orig, gutils, tape)
 
         shadowstruct = invert_pointer(gutils, origops[2], B)
 
-        shadowval = if !is_constant_value(gutils, origops[2])
+        shadowval = if !is_constant_value(gutils, origops[4])
             invert_pointer(gutils, origops[4], B)
         else
             nothing
