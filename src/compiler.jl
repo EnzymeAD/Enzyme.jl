@@ -737,6 +737,62 @@ mutable struct HandlerState
 end
 
 
+# Enzyme's allocation forwarding analysis (`GradientUtils::computeForwardingProperties`)
+# classifies a caller-side buffer that is only ever passed as a `writeonly` sret /
+# return-roots argument as having a "backwards-only" shadow: the shadow buffer is
+# then not materialized in the augmented forward pass (its uses are replaced by
+# `jl_nothing`) and is instead re-created from scratch in the reverse pass.
+# That is sound for Enzyme-generated code, which never writes shadow data into
+# such a buffer during the forward pass, but not for custom rules: the augmented
+# forward pass of a rule returning by sret (see `enzyme_custom_augfwd`) stores the
+# rule-provided shadow into the shadow of that buffer. Drop the write-only
+# markers from these parameters so that the shadow buffer is kept alive in the
+# forward pass and cached for the reverse pass.
+function strip_writeonly_from_sret!(llvmfn::LLVM.Function)
+    sretkind = LLVM.kind(LLVM.TypeAttribute("sret", LLVM.Int32Type()))
+    writeonlykind = LLVM.kind(LLVM.EnumAttribute("writeonly"))
+    readnonekind = LLVM.kind(LLVM.EnumAttribute("readnone"))
+    for i in 1:length(LLVM.parameters(llvmfn))
+        is_ret_ptr = false
+        for attr in collect(LLVM.parameter_attributes(llvmfn, i))
+            ekind = LLVM.kind(attr)
+            if ekind == sretkind ||
+                    ekind == "enzymejl_returnRoots" ||
+                    ekind == "enzymejl_sret_union_bytes"
+                is_ret_ptr = true
+                break
+            end
+        end
+        if !is_ret_ptr
+            continue
+        end
+        idx = LLVM.API.LLVMAttributeIndex(i)
+        for k in (writeonlykind, readnonekind)
+            LLVM.API.LLVMRemoveEnumAttributeAtIndex(llvmfn, idx, k)
+            for u in LLVM.uses(llvmfn)
+                c = LLVM.user(u)
+                if !isa(c, LLVM.CallInst)
+                    continue
+                end
+                if LLVM.called_operand(c) != llvmfn
+                    continue
+                end
+                LLVM.API.LLVMRemoveCallSiteEnumAttribute(c, idx, k)
+            end
+        end
+    end
+    return nothing
+end
+
+function strip_writeonly_from_sret!(mod::LLVM.Module)
+    for f in functions(mod)
+        if has_fn_attr(f, StringAttribute("enzyme_math", "enzyme_custom"))
+            strip_writeonly_from_sret!(f)
+        end
+    end
+    return nothing
+end
+
 function handleCustom(state::HandlerState, custom, k_name::String, llvmfn::LLVM.Function, name::String, attrs::Vector{LLVM.Attribute} = LLVM.Attribute[], setlink::Bool = true, noinl::Bool = true)
     attributes = function_attributes(llvmfn)
     custom[k_name] = linkage(llvmfn)
@@ -6269,6 +6325,7 @@ end
         memcpy_alloca_to_loadstore(mod)
         force_recompute!(mod)
         API.EnzymeDetectReadonlyOrThrow(mod)
+        strip_writeonly_from_sret!(mod)
 
         adjointf, augmented_primalf, TapeType = enzyme!(
             job,
