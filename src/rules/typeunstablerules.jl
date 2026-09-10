@@ -1882,8 +1882,6 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
         ) #=lookup=#
     end
 
-    # `setfield!(obj, fld, val)` returns `val`, so the shadow of the result is
-    # the shadow of the stored value -- not the primal result.
     if shadowR != C_NULL && !is_constant_value(gutils, orig)
         shadowres = if !is_constant_value(gutils, origops[4])
             invert_pointer(gutils, origops[4], B)
@@ -1908,8 +1906,6 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
                 invert_pointer(gutils, origops[4], B)
             end
         else
-            # Under runtime activity a constant stored value has the primal as
-            # its own shadow.
             normal = new_from_original(gutils, orig)
             if width == 1
                 normal
@@ -1958,13 +1954,6 @@ function common_setfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR
     origops = @view operands(orig)[offset:end]
     width = get_width(gutils)
 
-    # TODO: `setfield!(obj, fld, val)` returns `val`, so the shadow of the result
-    # ought to be the shadow of the stored value rather than the primal result
-    # (this is what makes reverse mode drop the derivative flowing through a used
-    # `setproperty!` return, cf. https://github.com/EnzymeAD/Enzyme.jl/issues/3555).
-    # Returning the shadow of `val` here additionally requires Enzyme's
-    # `cacheForReverse` to accept a shadow return that is not an `Instruction`
-    # (the shadow of `val` may be a shadow argument), so it is left as-is for now.
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing

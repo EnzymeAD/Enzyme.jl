@@ -311,11 +311,6 @@ end
     ) == (1.0,)
 end
 
-# Issue 3555: `setfield!(obj, fld, val)` returns `val`, so the shadow of a
-# type-unstable `setproperty!` whose return value is used must be the shadow of
-# `val`, not the primal result.  Returning the primal made width 1 silently
-# wrong and, at width >= 2, built the `[N x ptr]` shadow out of the primal call
-# before that call was emitted ("Instruction does not dominate all uses").
 mutable struct SetpropertyRetBox3555
     u::Vector{Float64}
     t::Float64
@@ -325,8 +320,8 @@ end
 
 function loss_3555(v::Vector{Float64})
     b = SetpropertyRetBox3555(zeros(length(v)), 0.0)
-    r = setit_3555!(b, :u, v)  # r === v
-    return sum(r) + sum(b.u)   # == 2 * sum(v)
+    r = setit_3555!(b, :u, v)
+    return sum(r) + sum(b.u)
 end
 
 @testset "Issue 3555 forward type-unstable setproperty! with used return" begin
