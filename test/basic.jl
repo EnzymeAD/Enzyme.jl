@@ -855,3 +855,40 @@ end
     @test res_vector !== nothing
 end
 
+
+# On Julia 1.11 the address of `m.ts.dt` is formed as a GEP on the tracked
+# pointer; with runtime activity Enzyme caches that interior pointer on the tape,
+# which must not be handed to the GC as an object (#3532).
+mutable struct GCStepper3532
+    ms::Int
+    dt::Float32
+end
+mutable struct GCModel3532
+    x::Vector{Float32}
+    ts::GCStepper3532
+end
+@noinline function step3532!(y, m::GCModel3532)
+    (; dt) = m.ts
+    x = m.x
+    for i in eachindex(y)
+        y[i] += dt * 2.0f0 * x[i] + 1.0f0
+    end
+    return nothing
+end
+function run3532!(y, m::GCModel3532)
+    step3532!(y, m)
+    GC.gc()
+    return nothing
+end
+
+@testset "Interior pointer cached on the tape (#3532)" begin
+    n = 128
+    m = GCModel3532(rand(Float32, n), GCStepper3532(10_800_000, 10800.0f0))
+    dm = make_zero(m)
+    y = zeros(Float32, n)
+    dy = ones(Float32, n)
+    autodiff(set_runtime_activity(Reverse), run3532!, Const, Duplicated(y, dy), Duplicated(m, dm))
+    @test m.ts.ms == 10_800_000
+    @test dm.ts.dt ≈ 2 * sum(m.x)
+    @test dm.x ≈ fill(2 * 10800.0f0, n)
+end

@@ -220,7 +220,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
     
     run!(GCInvariantVerifierPass(strong=false), mod)
     
-    nodecayed_phis!(mod)
+    canonicalize_gc_pointers!(mod)
                 
     run!(GCInvariantVerifierPass(strong=false), mod)
 end
