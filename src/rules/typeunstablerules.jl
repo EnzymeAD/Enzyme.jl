@@ -1895,8 +1895,6 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
         ) #=lookup=#
     end
 
-    # `setfield!(obj, fld, val)` returns `val`, so the shadow of the result is
-    # the shadow of the stored value -- not the primal result.
     if shadowR != C_NULL && !is_constant_value(gutils, orig)
         shadowres = if !is_constant_value(gutils, origops[4])
             invert_pointer(gutils, origops[4], B)
@@ -1923,8 +1921,6 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
                 invert_pointer(gutils, origops[4], B)
             end
         else
-            # Under runtime activity a constant stored value has the primal as
-            # its own shadow.
             normal = new_from_original(gutils, orig)
             if width == 1
                 normal
@@ -1943,6 +1939,7 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
     end
     return false
 end
+
 
 function rt_jl_setfield_aug(dptr::T, idx, ::Val{isconst}, val, dval) where {T,isconst}
     RT = Core.Typeof(val)
@@ -1984,29 +1981,7 @@ function common_setfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR
     origops = @view operands(orig)[offset:end]
     width = get_width(gutils)
 
-    # TODO: `setfield!(obj, fld, val)` returns `val`, so the shadow of the result
-    # ought to be the shadow of the stored value rather than the primal result
-    # (this is what makes reverse mode drop the derivative flowing through a used
-    # `setproperty!` return, cf. https://github.com/EnzymeAD/Enzyme.jl/issues/3555).
-    # Returning the shadow of `val` here additionally requires Enzyme's
-    # `cacheForReverse` to accept a shadow return that is not an `Instruction`
-    # (the shadow of `val` may be a shadow argument), so it is left as-is for now.
-    normal =
-        (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-        for idx = 1:width
-            if width == 1
-                shadowres = normal
-            else
-                shadowres = insert_value!(B, shadowres, normal, idx - 1)
-            end
-        end
-        unsafe_store!(shadowR, shadowres.ref)
-    end
-
     if !is_constant_value(gutils, origops[2])
-
         shadowstruct = invert_pointer(gutils, origops[2], B)
 
         shadowval = if !is_constant_value(gutils, origops[4])
@@ -2036,6 +2011,27 @@ function common_setfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR
         end
     end
 
+    if unsafe_load(shadowR) != C_NULL
+        shadowres = if !is_constant_value(gutils, origops[4])
+            invert_pointer(gutils, origops[4], B)
+        else
+            normal = new_from_original(gutils, orig)
+            if width == 1
+                normal
+            else
+                res = UndefValue(
+                    LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
+                )
+                position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
+                for idx in 1:width
+                    res = insert_value!(B, res, normal, idx - 1)
+                end
+                res
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
+    end
+
     return false
 end
 
@@ -2055,15 +2051,18 @@ function common_setfield_rev(offset, B, orig, gutils, tape)
             nothing
         end
 
+        symval = lookup_value(gutils, new_from_original(gutils, origops[3]), B)
+        primalval = lookup_value(gutils, new_from_original(gutils, origops[4]), B)
+
         mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
         # TODO handle runtime activity
         for idx = 1:width
             vals = LLVM.Value[
                 (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx - 1),
-                lookup_value(gutils, new_from_original(gutils, origops[3]), B),
+                symval,
                 unsafe_to_llvm(B, Val(is_constant_value(gutils, origops[4]))),
-                lookup_value(gutils, new_from_original(gutils, origops[4]), B),
+                primalval,
                 is_constant_value(gutils, origops[4]) ? unsafe_to_llvm(B, nothing) :
                 ((width == 1) ? shadowval : extract_value!(B, shadowval, idx - 1)),
             ]
