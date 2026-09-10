@@ -352,10 +352,20 @@ function EnzymeRules.reverse(
     rtact = EnzymeRules.runtime_activity(config)
     if EnzymeRules.needs_shadow(config)
         if EnzymeRules.width(config) == 1
-            accumulate_into(x.dval, IdDict(), shadow, x.val, Val(rtact))
+            if x isa MixedDuplicated
+                # The shadow of a mixed argument is boxed; accumulate into the
+                # boxed value and write the (possibly re-created) result back.
+                x.dval[] = accumulate_into(x.dval[], IdDict(), shadow, x.val, Val(rtact))[1]
+            else
+                accumulate_into(x.dval, IdDict(), shadow, x.val, Val(rtact))
+            end
         else
-            for i = 1:EnzymeRules.width(config)
-                accumulate_into(x.dval[i], IdDict(), shadow[i], x.val, Val(rtact))
+            for i in 1:EnzymeRules.width(config)
+                if x isa BatchMixedDuplicated
+                    x.dval[i][] = accumulate_into(x.dval[i][], IdDict(), shadow[i], x.val, Val(rtact))[1]
+                else
+                    accumulate_into(x.dval[i], IdDict(), shadow[i], x.val, Val(rtact))
+                end
             end
         end
     end
