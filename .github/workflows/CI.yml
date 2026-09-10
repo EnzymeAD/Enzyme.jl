@@ -102,7 +102,7 @@ jobs:
         if: ${{ matrix.assertions }}
         with:
           repository: 'JuliaLang/julia'
-          ref: ${{ matrix.version == '1.12' && 'v1.12.6' || format('release-{0}', matrix.version) }}
+          ref: ${{ format('release-{0}', matrix.version) }}
           path: 'julia'
       - name: Compile Julia
         if: ${{ matrix.assertions }}
