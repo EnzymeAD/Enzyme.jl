@@ -323,9 +323,15 @@ hooks to build the meta augmented-forward/reverse device kernels; 6.3 goes throu
 launch bookkeeping itself and reports a spurious activity mismatch. Both `autodiff` calls
 below throw, so the `@test`s wrap them rather than sitting after them.
 https://github.com/EnzymeAD/Enzyme.jl/issues/3540
+
+Ask EnzymeRules whether that launch entry point has a reverse rule rather than testing the
+CUDACore version: once the rules are ported these tests unbreak on their own. The
+`isdefined` guards only establish that this is the 6.3-style launch path at all -- CUDA 5.x
+has no `CUDACore`, and 6.2 has no `compile_and_launch`.
 =#
 const KERNEL_LAUNCH_RULES_MISSING =
-    isdefined(CUDA, :CUDACore) && isdefined(CUDA.CUDACore, :compile_and_launch)
+    isdefined(CUDA, :CUDACore) && isdefined(CUDA.CUDACore, :compile_and_launch) &&
+    !EnzymeRules.has_rrule_from_sig(Tuple{typeof(CUDA.CUDACore.compile_and_launch), Vararg{Any}})
 
 @testset "Reverse Kernel" begin
     A = CUDA.rand(64)

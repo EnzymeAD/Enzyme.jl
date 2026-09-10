@@ -6,8 +6,9 @@ steps:
           - "1.10"
           - "1.11"
           - "1.12"
-        # The default resolution now picks GPUCompiler 2.x, and with it the CUDA release
-        # built against it; "1" pins the 1.x compatibility path instead.
+        # The default resolution picks GPUCompiler 2.x, and with it CUDA 6.3, whose
+        # CUDACore requires it. "1" pins the 1.x compatibility path instead, which backs
+        # CUDA down to 6.2, the last release that resolves against GPUCompiler 1.
         gpucompiler:
           - "default"
           - "1"
@@ -33,21 +34,14 @@ steps:
           if gpucompiler != "default"
               push!(specs, PackageSpec(; name="GPUCompiler", version=gpucompiler))
           end
-          # Resolve the pin before developing Enzyme. The other order lets `develop`
-          # resolve GPUCompiler at its default and install 2.x, only for the pin to
-          # downgrade it again.
           Pkg.add(specs)
+          # A version bound handed to `add` is not recorded anywhere, so the re-resolve
+          # `Pkg.develop` triggers below would be free to upgrade back to the default.
+          # Pin instead; `pin` only accepts direct dependencies, hence the `add` above.
+          gpucompiler == "default" || Pkg.pin("GPUCompiler")
           pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
           Pkg.develop(pkgs)
-          Pkg.status()
-          # `Pkg.develop` re-resolves and nothing forces it to keep the pin; fail loudly
-          # rather than let this job silently duplicate the default-resolution one.
-          # (No Julia string interpolation here: buildkite would eat the dollar sign.)
-          if gpucompiler != "default"
-              v = Pkg.dependencies()[Base.UUID("61eb1bfa-7361-4325-ad38-22787b887f55")].version
-              v < VersionNumber(parse(Int, gpucompiler) + 1) ||
-                  error(string("GPUCompiler pin did not hold, resolved ", v))
-          end' || exit 3
+          Pkg.status()' || exit 3
 
       echo "+++ Run tests"
       julia --color=yes --code-coverage=@ test/cuda.jl
@@ -111,21 +105,14 @@ steps:
           if gpucompiler != "default"
               push!(specs, PackageSpec(; name="GPUCompiler", version=gpucompiler))
           end
-          # Resolve the pin before developing Enzyme. The other order lets `develop`
-          # resolve GPUCompiler at its default and install 2.x, only for the pin to
-          # downgrade it again.
           Pkg.add(specs)
+          # A version bound handed to `add` is not recorded anywhere, so the re-resolve
+          # `Pkg.develop` triggers below would be free to upgrade back to the default.
+          # Pin instead; `pin` only accepts direct dependencies, hence the `add` above.
+          gpucompiler == "default" || Pkg.pin("GPUCompiler")
           pkgs = [PackageSpec(; path) for path in (".", "lib/EnzymeCore", "lib/EnzymeTestUtils")]
           Pkg.develop(pkgs)
-          Pkg.status()
-          # `Pkg.develop` re-resolves and nothing forces it to keep the pin; fail loudly
-          # rather than let this job silently duplicate the default-resolution one.
-          # (No Julia string interpolation here: buildkite would eat the dollar sign.)
-          if gpucompiler != "default"
-              v = Pkg.dependencies()[Base.UUID("61eb1bfa-7361-4325-ad38-22787b887f55")].version
-              v < VersionNumber(parse(Int, gpucompiler) + 1) ||
-                  error(string("GPUCompiler pin did not hold, resolved ", v))
-          end' || exit 3
+          Pkg.status()' || exit 3
 
       echo "+++ Run tests"
       julia --color=yes --code-coverage=@ test/metal.jl
