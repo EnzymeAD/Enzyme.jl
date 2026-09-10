@@ -674,10 +674,48 @@ end
     end
 end
 
+# Run the GC-pointer canonicalization over `ir` and hand the result to FileCheck.
+function rederive_module_str(ir::String; nodecayed::Bool = false)
+    return LLVM.Context() do ctx
+        mod = parse(LLVM.Module, ir)
+        Enzyme.Compiler.rederive_tracked_geps!(mod)
+        nodecayed && Enzyme.Compiler.nodecayed_phis!(mod)
+        LLVM.verify(mod)
+        string(mod)
+    end
+end
+
+# With typed pointers InstCombine turns `gep(addrspacecast(x))` into
+# `addrspacecast(gep(x))`, leaving an interior pointer in addrspace 10.
+# The pass must sink the cast back above the GEP chain (#3532).
+const rederive_geps_ir = """
+source_filename = "start"
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+target triple = "x86_64-linux-gnu"
+
+define float @load_field({} addrspace(10)* %obj) {
+top:
+  %a = bitcast {} addrspace(10)* %obj to i8 addrspace(10)*
+  %b = getelementptr inbounds i8, i8 addrspace(10)* %a, i64 8
+  %c = bitcast i8 addrspace(10)* %b to float addrspace(10)*
+  %d = addrspacecast float addrspace(10)* %c to float addrspace(11)*
+  %v = load float, float addrspace(11)* %d, align 8
+  ret float %v
+}
+
+define void @store_field({} addrspace(10)* %obj, float %x) {
+top:
+  %a = bitcast {} addrspace(10)* %obj to i8 addrspace(10)*
+  %b = getelementptr inbounds i8, i8 addrspace(10)* %a, i64 8
+  %c = getelementptr inbounds i8, i8 addrspace(10)* %b, i64 4
+  %d = bitcast i8 addrspace(10)* %c to float addrspace(10)*
+  %e = addrspacecast float addrspace(10)* %d to float addrspace(11)*
+  store float %x, float addrspace(11)* %e, align 4
+  ret void
+}
+"""
+
 @testset "Tracked GEPs are re-derived" begin
-    # With typed pointers InstCombine turns `gep(addrspacecast(x))` into
-    # `addrspacecast(gep(x))`, leaving an interior pointer in addrspace 10.
-    # The pass must sink the cast back above the GEP chain (#3532).
     @test @filecheck begin
         @check_label "@load_field"
         @check "addrspacecast"
@@ -699,40 +737,7 @@ end
         @check_not "getelementptr inbounds i8, ptr addrspace(10)"
         @check "store float %x"
         @check_same "addrspace(11)"
-        LLVM.Context() do ctx
-            mod = parse(
-                LLVM.Module, """
-                source_filename = "start"
-                target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
-                target triple = "x86_64-linux-gnu"
-
-                define float @load_field({} addrspace(10)* %obj) {
-                top:
-                  %a = bitcast {} addrspace(10)* %obj to i8 addrspace(10)*
-                  %b = getelementptr inbounds i8, i8 addrspace(10)* %a, i64 8
-                  %c = bitcast i8 addrspace(10)* %b to float addrspace(10)*
-                  %d = addrspacecast float addrspace(10)* %c to float addrspace(11)*
-                  %v = load float, float addrspace(11)* %d, align 8
-                  ret float %v
-                }
-
-                define void @store_field({} addrspace(10)* %obj, float %x) {
-                top:
-                  %a = bitcast {} addrspace(10)* %obj to i8 addrspace(10)*
-                  %b = getelementptr inbounds i8, i8 addrspace(10)* %a, i64 8
-                  %c = getelementptr inbounds i8, i8 addrspace(10)* %b, i64 4
-                  %d = bitcast i8 addrspace(10)* %c to float addrspace(10)*
-                  %e = addrspacecast float addrspace(10)* %d to float addrspace(11)*
-                  store float %x, float addrspace(11)* %e, align 4
-                  ret void
-                }
-                """
-            )
-
-            Enzyme.Compiler.rederive_tracked_geps!(mod)
-            LLVM.verify(mod)
-            string(mod)
-        end
+        rederive_module_str(rederive_geps_ir)
     end
 end
 
@@ -824,12 +829,7 @@ top:
         @check_not "select i1 %c, ptr addrspace(10)"
         @check "load float"
         @check_same "addrspace(11)"
-        LLVM.Context() do ctx
-            mod = parse(LLVM.Module, rederive_joins_ir)
-            Enzyme.Compiler.rederive_tracked_geps!(mod)
-            LLVM.verify(mod)
-            string(mod)
-        end
+        rederive_module_str(rederive_joins_ir)
     end
 
     # The Derived phis are then rooted by nodecayed_phis!: a phi of the whole
@@ -848,13 +848,7 @@ top:
         @check_not "phi {{.*}}addrspace"
         @check "load float"
         @check_same "addrspace(11)"
-        LLVM.Context() do ctx
-            mod = parse(LLVM.Module, rederive_joins_ir)
-            Enzyme.Compiler.rederive_tracked_geps!(mod)
-            Enzyme.Compiler.nodecayed_phis!(mod)
-            LLVM.verify(mod)
-            string(mod)
-        end
+        rederive_module_str(rederive_joins_ir, nodecayed = true)
     end
 end
 
@@ -951,11 +945,6 @@ attributes #0 = { "enzyme_inactive" }
         @check "addrspacecast"
         @check_same "addrspace(11)"
         @check "store float"
-        LLVM.Context() do ctx
-            mod = parse(LLVM.Module, rederive_placement_ir)
-            Enzyme.Compiler.rederive_tracked_geps!(mod)
-            LLVM.verify(mod)
-            string(mod)
-        end
+        rederive_module_str(rederive_placement_ir)
     end
 end
