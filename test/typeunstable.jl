@@ -311,6 +311,48 @@ end
     ) == (1.0,)
 end
 
+# Issue 3555: `setfield!(obj, fld, val)` returns `val`, so the shadow of a
+# type-unstable `setproperty!` whose return value is used must be the shadow of
+# `val`, not the primal result.  Returning the primal made width 1 silently
+# wrong and, at width >= 2, built the `[N x ptr]` shadow out of the primal call
+# before that call was emitted ("Instruction does not dominate all uses").
+mutable struct SetpropertyRetBox3555
+    u::Vector{Float64}
+    t::Float64
+end
+
+@noinline setit_3555!(b::SetpropertyRetBox3555, name::Symbol, v) = setproperty!(b, name, v)
+
+function loss_3555(v::Vector{Float64})
+    b = SetpropertyRetBox3555(zeros(length(v)), 0.0)
+    r = setit_3555!(b, :u, v)  # r === v
+    return sum(r) + sum(b.u)   # == 2 * sum(v)
+end
+
+@testset "Issue 3555 forward type-unstable setproperty! with used return" begin
+    v = [1.0, 2.0]
+
+    @test Enzyme.autodiff(
+        Enzyme.Forward,
+        Enzyme.Const(loss_3555),
+        Enzyme.Duplicated(copy(v), [1.0, 0.0]),
+    )[1] ≈ 2.0
+
+    @test Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Enzyme.Forward),
+        Enzyme.Const(loss_3555),
+        Enzyme.Duplicated(copy(v), [1.0, 0.0]),
+    )[1] ≈ 2.0
+
+    res = Enzyme.autodiff(
+        Enzyme.Forward,
+        Enzyme.Const(loss_3555),
+        Enzyme.BatchDuplicated(copy(v), ([1.0, 0.0], [0.0, 1.0])),
+    )[1]
+    @test res[1] ≈ 2.0
+    @test res[2] ≈ 2.0
+end
+
 # Issue 3425: an `Active` return whose inferred type is abstract routes combined
 # reverse mode through the split (augmented forward + adjoint) path.  For a batched
 # call the return annotation handed to that path must carry the batch width,
