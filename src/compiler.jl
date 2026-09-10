@@ -16,6 +16,8 @@ import Enzyme:
     eltype,
     API,
     EnzymeContext,
+    ENZYME_CONTEXT,
+    enzyme_context,
     TypeTree,
     typetree,
     TypeTreeTable,
@@ -35,6 +37,7 @@ import Enzyme:
     arg_operands_view
 
 using Enzyme
+using ScopedValues: @with
 
 import EnzymeCore
 import EnzymeCore: EnzymeRules, ABI, FFIABI, DefaultABI
@@ -533,9 +536,9 @@ include("llvm/transforms.jl")
 include("llvm/passes.jl")
 include("typeutils/make_zero.jl")
 
-function nested_codegen!(enzyme_context::EnzymeContext, mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type), world::UInt)
+function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type), world::UInt)
     funcspec = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, typeof(f), tt, world)
-    nested_codegen!(enzyme_context, mode, mod, funcspec, world)
+    return nested_codegen!(mode, mod, funcspec, world)
 end
 
 
@@ -1424,20 +1427,20 @@ const DumpPreNestedOpt = Ref(false)
 const DumpPostNestedOpt = Ref(false)
 
 function nested_codegen!(
-    enzyme_context::EnzymeContext,
     mode::API.CDerivativeMode,
     mod::LLVM.Module,
     funcspec::Core.MethodInstance,
     world::UInt,
     alwaysinline::Bool=false,
 )
+    enzyme_ctx = enzyme_context()
     cache_key = funcspec
-    if haskey(enzyme_context.nested_cache, cache_key)
-        fname = enzyme_context.nested_cache[cache_key]
+    if haskey(enzyme_ctx.nested_cache, cache_key)
+        fname = enzyme_ctx.nested_cache[cache_key]
         if haskey(functions(mod), fname)
             return functions(mod)[fname]
         end
-        for m in enzyme_context.modules_to_link
+        for m in enzyme_ctx.modules_to_link
             if haskey(functions(m), fname)
                 return functions(m)[fname]
             end
@@ -1466,7 +1469,7 @@ function nested_codegen!(
         permit_inlining!(f)
     end
 
-    edges = enzyme_context.edges
+    edges = enzyme_ctx.edges
     push!(edges, funcspec)
 
     LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
@@ -1500,7 +1503,7 @@ function nested_codegen!(
     end
     
     # 4) Record module to link
-    push!(enzyme_context.modules_to_link, otherMod)
+    push!(enzyme_ctx.modules_to_link, otherMod)
 
     # Declare the function in mod so it can be called
     lfn = functions(otherMod)[entry]
@@ -1532,7 +1535,7 @@ function nested_codegen!(
         push!(return_attributes(decl), attr)
     end
 
-    enzyme_context.nested_cache[cache_key] = LLVM.name(decl)
+    enzyme_ctx.nested_cache[cache_key] = LLVM.name(decl)
     return decl
 end
 
@@ -2677,7 +2680,6 @@ const DumpPostEnzyme = Ref(false)
 const DumpPostWrap = Ref(false)
 
 function enzyme!(
-    enzyme_context::EnzymeContext,
     job::CompilerJob,
     interp,
     mod::LLVM.Module,
@@ -2830,8 +2832,7 @@ function enzyme!(
         convert(API.CDIFFE_TYPE, rt)
     end
 
-    GC.@preserve enzyme_context begin
-    LLVM.@dispose logic  = Logic(enzyme_context) begin
+    LLVM.@dispose logic = Logic() begin
 
     TA = TypeAnalysis(logic)
 
@@ -2901,7 +2902,6 @@ function enzyme!(
 
         if wrap
             augmented_primalf = create_abi_wrapper(
-                enzyme_context,
                 augmented_primalf,
                 TT,
                 rt,
@@ -2944,7 +2944,6 @@ function enzyme!(
         ) #=atomicAdd=#
         if wrap
             adjointf = create_abi_wrapper(
-                enzyme_context,
                 adjointf,
                 TT,
                 rt,
@@ -2986,7 +2985,6 @@ function enzyme!(
         augmented_primalf = nothing
         if wrap
             adjointf = create_abi_wrapper(
-                enzyme_context,
                 adjointf,
                 TT,
                 rt,
@@ -3032,7 +3030,6 @@ function enzyme!(
         if wrap
             pf = adjointf
             adjointf = create_abi_wrapper(
-                enzyme_context,
                 adjointf,
                 TT,
                 rt,
@@ -3096,7 +3093,6 @@ function enzyme!(
 
     return adjointf, augmented_primalf, TapeType
     end # @dispose logic
-    end # GC.preserve enzyme_context
 end
 
 function get_subprogram(f::LLVM.Function)
@@ -3116,7 +3112,6 @@ function set_subprogram!(f::LLVM.Function, sp)
 end
 
 function create_abi_wrapper(
-    enzyme_context::EnzymeContext,
     enzymefn::LLVM.Function,
     @nospecialize(TT::Type),
     @nospecialize(rettype::Type),
@@ -3641,7 +3636,7 @@ function create_abi_wrapper(
 	    end
             Func = get_func(T)
             funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, Func, Tuple{}, world)
-            llvmf = nested_codegen!(enzyme_context, Mode, mod, funcspec, world)
+            llvmf = nested_codegen!(Mode, mod, funcspec, world)
             push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
             Func_RT = return_type(interp, funcspec)
             @assert Func_RT == NTuple{width,T′}
@@ -5510,13 +5505,21 @@ function link_split_existing!(mod::LLVM.Module, newmod::LLVM.Module)
 end
 
 function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeTarget})
+    # Every compilation runs under its own context; a nested compilation gets
+    # its own and hands the outer one back when it returns.
+    return @with ENZYME_CONTEXT => EnzymeContext() begin
+        compile_unhooked_impl(output, job)
+    end
+end
+
+function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     @assert output == :llvm
     
     config = job.config
 
     params = config.params
 
-    enzyme_context = EnzymeContext()
+    enzyme_ctx = enzyme_context()
 
     expectedTapeType = params.expectedTapeType
     mode = params.mode
@@ -5569,7 +5572,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     # subsequent use of `mod` (e.g. `LLVM.context(mod)`) is a dynamic dispatch
     # through jl_apply_generic, which forces boxing and GC-rooting across it.
     mod = mod::LLVM.Module
-    edges = enzyme_context.edges
+    edges = enzyme_ctx.edges
 
     primal_interp = GPUCompiler.get_interpreter(primal_job)
     prepare_llvm(primal_interp, mod, primal_job, meta)
@@ -5579,7 +5582,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
 
     # A derivative linked into this module as a deferred job calls its rules
     # natively. Differentiating it again needs their bodies.
-    materialize_native_invokes!(enzyme_context, mode, mod, job.world)
+    materialize_native_invokes!(mode, mod, job.world)
 
     LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
@@ -5600,7 +5603,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     end
     # `check_ir` links in the derivatives that `enzyme_call` embeds. Their
     # natively called rules need bodies too.
-    materialize_native_invokes!(enzyme_context, mode, mod, job.world)
+    materialize_native_invokes!(mode, mod, job.world)
 
     disableFallback = String[]
 
@@ -6268,7 +6271,6 @@ end
         API.EnzymeDetectReadonlyOrThrow(mod)
 
         adjointf, augmented_primalf, TapeType = enzyme!(
-            enzyme_context,
             job,
 	    interp,
             mod,
@@ -6288,10 +6290,10 @@ end
         )
 
         # Link deferred modules
-        for otherMod in enzyme_context.modules_to_link
+        for otherMod in enzyme_ctx.modules_to_link
             link_split_existing!(mod, otherMod)
         end
-        empty!(enzyme_context.modules_to_link)
+        empty!(enzyme_ctx.modules_to_link)
         toremove = String[]
         # Inline the wrapper
         for f in functions(mod)
@@ -6378,15 +6380,15 @@ end
             fname = String(name) * pf
             if haskey(functions(mod), fname)
                 funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, fnty, Tuple{JT}, job.world)
-                llvmf = nested_codegen!(enzyme_context, mode, mod, funcspec, job.world)
+                llvmf = nested_codegen!(mode, mod, funcspec, job.world)
 
                 llvmf = LLVM.name(llvmf)
 
                 # Link deferred modules generated by fnsToInject
-                for otherMod in enzyme_context.modules_to_link
+                for otherMod in enzyme_ctx.modules_to_link
                     link_split_existing!(mod, otherMod)
                 end
-                empty!(enzyme_context.modules_to_link)
+                empty!(enzyme_ctx.modules_to_link)
 
                 llvmf = functions(mod)[llvmf]
 

@@ -124,6 +124,7 @@ export EnzymeRules
 include("pmap.jl")
 
 import LLVM
+using ScopedValues: ScopedValue, @with
 include("api.jl")
 
 Base.convert(::Type{API.CDerivativeMode}, ::ReverseMode) = API.DEM_ReverseModeCombined
@@ -132,6 +133,21 @@ Base.convert(::Type{API.CDerivativeMode}, ::ForwardMode) = API.DEM_ForwardMode
 
 function guess_activity end
 
+"""
+    EnzymeContext
+
+The state one differentiation of one module accumulates: the modules
+`nested_codegen!` emitted and has yet to link, the edges the resulting
+`CodeInstance` must depend on, and the cache of already emitted nested
+functions.
+
+A context belongs to a single `compile_unhooked` invocation. It is not passed
+as an argument: `compile_unhooked` binds it to the [`ENZYME_CONTEXT`](@ref)
+scoped value for the duration of the compilation, and everything running under
+it -- the rule handlers Enzyme calls back into, in particular -- reaches it
+with [`enzyme_context`](@ref). A nested compilation binds its own context,
+which the outer one gets back when the nested compilation returns.
+"""
 mutable struct EnzymeContext
     modules_to_link::Vector{LLVM.Module}
     edges::Vector{Any}
@@ -141,6 +157,27 @@ mutable struct EnzymeContext
         Any[],
         Dict{Core.MethodInstance, String}()
     )
+end
+
+"""
+    ENZYME_CONTEXT
+
+The [`EnzymeContext`](@ref) of the compilation running in the current dynamic
+scope. Bound by `compile_unhooked`; read with [`enzyme_context`](@ref).
+"""
+const ENZYME_CONTEXT = ScopedValue{EnzymeContext}()
+
+"""
+    enzyme_context()
+
+Return the [`EnzymeContext`](@ref) of the compilation running in the current
+dynamic scope. It is an error to call this outside of a compilation.
+"""
+function enzyme_context()
+    if !isassigned(ENZYME_CONTEXT)
+        error("Enzyme: no EnzymeContext is active; this must be called during a compilation")
+    end
+    return ENZYME_CONTEXT[]
 end
 
 include("logic.jl")
