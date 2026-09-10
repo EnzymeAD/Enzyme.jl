@@ -346,6 +346,40 @@ end
     )[1]
     @test res[1] ≈ 2.0
     @test res[2] ≈ 2.0
+
+    dv = zeros(2)
+    Enzyme.autodiff(Reverse, Enzyme.Const(loss_3555), Active, Duplicated(copy(v), dv))
+    @test dv ≈ [2.0, 2.0]
+
+    dv1 = zeros(2)
+    dv2 = zeros(2)
+    Enzyme.autodiff(
+        Reverse, Enzyme.Const(loss_3555), Active, BatchDuplicated(copy(v), (dv1, dv2))
+    )
+    @test dv1 ≈ [2.0, 2.0]
+    @test dv2 ≈ [2.0, 2.0]
+end
+
+function loss_3555_retonly(v::Vector{Float64})
+    b = SetpropertyRetBox3555(zeros(length(v)), 0.0)
+    r = setit_3555!(b, :u, v)
+    return sum(r)
+end
+
+@testset "Issue 3555 reverse type-unstable setproperty! with used return" begin
+    v = [1.0, 2.0]
+
+    @test Enzyme.autodiff(
+        Enzyme.Forward,
+        Enzyme.Const(loss_3555_retonly),
+        Enzyme.Duplicated(copy(v), [1.0, 0.0]),
+    )[1] ≈ 1.0
+
+    dv = zeros(2)
+    Enzyme.autodiff(
+        Reverse, Enzyme.Const(loss_3555_retonly), Active, Duplicated(copy(v), dv)
+    )
+    @test dv ≈ [1.0, 1.0]
 end
 
 # Issue 3425: an `Active` return whose inferred type is abstract routes combined
