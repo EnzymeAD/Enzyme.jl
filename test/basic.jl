@@ -1,5 +1,6 @@
 using Enzyme
 using Statistics
+using Random
 using Test
 
 include("common.jl")
@@ -876,3 +877,19 @@ bc_mutual_f(x) = sum(bc_sibling_g.(bc_mutual_h.(x), bc_mutual_k.(x)))
     @test Enzyme.gradient(Forward, bc_mutual_f, [1.0, 2.0])[1] ≈ [3.0, 3.0]
 end
 
+
+# Issue #2464: `uv_random` (behind `Random.RandomDevice` and `UUIDs.uuid4`) must be
+# known to be inactive and not to free memory, otherwise reverse mode fails with
+# "No create nofree of empty function (uv_random)".
+function rand_device(x::Float64, out::Vector{UInt64})
+    out[1] = rand(Random.RandomDevice(), UInt64)
+    return x * 2.0
+end
+
+@static if VERSION >= v"1.11"
+    @testset "uv_random via RandomDevice" begin
+        out = [UInt64(0)]
+        @test Enzyme.autodiff(Forward, rand_device, Duplicated(2.0, 1.0), Const(out)) == (2.0,)
+        @test Enzyme.autodiff(Reverse, rand_device, Active(2.0), Const(out)) == ((2.0, nothing),)
+    end
+end
