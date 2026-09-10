@@ -324,7 +324,8 @@ launch bookkeeping itself and reports a spurious activity mismatch. Both `autodi
 below throw, so the `@test`s wrap them rather than sitting after them.
 https://github.com/EnzymeAD/Enzyme.jl/issues/3540
 =#
-const KERNEL_LAUNCH_RULES_MISSING = isdefined(CUDA.CUDACore, :compile_and_launch)
+const KERNEL_LAUNCH_RULES_MISSING =
+    isdefined(CUDA, :CUDACore) && isdefined(CUDA.CUDACore, :compile_and_launch)
 
 @testset "Reverse Kernel" begin
     A = CUDA.rand(64)

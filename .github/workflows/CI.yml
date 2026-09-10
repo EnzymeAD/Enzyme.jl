@@ -168,6 +168,16 @@ jobs:
         id: buildpkg
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+      # `Pkg.develop`/`Pkg.instantiate` above re-resolve, and nothing forces them to keep
+      # the pin. Fail loudly rather than let this job silently duplicate the 2.x one.
+      - name: Check GPUCompiler pin held
+        if: ${{ matrix.gpucompiler == '1' }}
+        shell: julia --color=yes --project=. {0}
+        run: |
+          using GPUCompiler
+          v = pkgversion(GPUCompiler)
+          @info "Resolved GPUCompiler" v
+          v < v"2" || error("GPUCompiler pin did not hold: resolved $v")
       - name: "Set test arguments"
         shell: bash
         run: |

@@ -770,7 +770,7 @@ import .Interpreter: isKWCallSignature
 end
 
 """
-    resolve_relocations!(mod, meta)
+    resolve_relocations!(job, mod, meta)
 
 Resolve the Julia-value references of a freshly emitted primal module to their host
 addresses, the shape GPUCompiler 1.x always produced.
@@ -781,10 +781,23 @@ behalf of another (`toplevel = false`), which is how a deferred derivative reach
 hands us the slots unresolved, and neither `absint` nor the shadow machinery can read one:
 the type argument of an allocation stops being statically known, and a constant global has
 no shadow. Relocatable derivative modules are left to later changes.
+
+Baking is only correct for a back-end whose `relocation_lowering` is `:bake`: the words
+written in are addresses in this process. A `:patch` or `:table` back-end deliberately
+keeps them symbolic (its code runs elsewhere, or the module outlives the session), so
+refuse rather than silently stamp host addresses into it.
 """
-function resolve_relocations!(mod::LLVM.Module, meta)
+function resolve_relocations!(@nospecialize(job::CompilerJob), mod::LLVM.Module, meta)
     @static if HAS_GPUCOMPILER_2
         if !isempty(meta.relocations)
+            strategy = GPUCompiler.relocation_lowering(job)
+            if strategy !== :bake
+                error(
+                    "Enzyme cannot yet differentiate a module with :$strategy relocation " *
+                        "lowering: resolving its Julia-value references would bake " *
+                        "host-process addresses into code that does not run in this process."
+                )
+            end
             GPUCompiler.prune_dead_relocations!(mod, meta.relocations)
             GPUCompiler.bake_relocations!(mod, meta.relocations)
         end
@@ -5640,7 +5653,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     # subsequent use of `mod` (e.g. `LLVM.context(mod)`) is a dynamic dispatch
     # through jl_apply_generic, which forces boxing and GC-rooting across it.
     mod = mod::LLVM.Module
-    resolve_relocations!(mod, meta)
+    resolve_relocations!(primal_job, mod, meta)
     edges = enzyme_context.edges
 
     primal_interp = GPUCompiler.get_interpreter(primal_job)
@@ -6541,7 +6554,11 @@ end
     entry = use_primal ? augmented_primalf : adjointf
     # GPUCompiler 2.x links a deferred job's module with `link_relocatable!`, which reads the
     # relocation records off this tuple; `resolve_relocations!` has already emptied them.
-    relocations = hasproperty(meta, :relocations) ? meta.relocations : nothing
+    relocations = @static if HAS_GPUCOMPILER_2
+        meta.relocations
+    else
+        nothing
+    end
     return mod, (; adjointf, augmented_primalf, entry, compiled = meta.compiled, TapeType, edges, relocations)
 end
 
