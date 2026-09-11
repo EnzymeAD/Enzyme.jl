@@ -139,9 +139,16 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
 
                 if legal
                     res = Ty{found...}
+                    # A `Vararg` must not be wrapped in a `UnionAll` directly (deprecated),
+                    # so build the binding environment around a `Tuple` and rewrap `res`
+                    # into it. `rewrap_unionall` dispatches on `Core.TypeofVararg` and
+                    # pushes the bindings into the element type, leaving the `Vararg`
+                    # itself unwrapped; for every other `Ty` it is the plain loop.
+                    env = Tuple{res}
                     for u in unionalls
-                        res = UnionAll(u, res)
+                        env = UnionAll(u, env)
                     end
+                    res = Base.rewrap_unionall(res, env)
                     return (true, res)
                 end
             end
