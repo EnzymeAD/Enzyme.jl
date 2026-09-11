@@ -1,6 +1,7 @@
 using Enzyme
 using Statistics
 using Random
+using UUIDs
 using Test
 
 include("common.jl")
@@ -892,4 +893,19 @@ end
         @test Enzyme.autodiff(Forward, rand_device, Duplicated(2.0, 1.0), Const(out)) == (2.0,)
         @test Enzyme.autodiff(Reverse, rand_device, Active(2.0), Const(out)) == ((2.0, nothing),)
     end
+end
+
+# Issue #2464: `uuid4()` masks a `UInt128` with the RFC 4122 version/variant
+# constant, which does not fit in 64 bits. Type analysis used to sign-extend it
+# and abort the process (fixed in EnzymeAD/Enzyme#3205, Enzyme_jll 0.0.293).
+function make_uuid4(x::Float64, out::Vector{UUIDs.UUID})
+    out[1] = UUIDs.uuid4()
+    return x * 2.0
+end
+
+@testset "uuid4 i128 mask" begin
+    out = [UUIDs.UUID(0)]
+    @test Enzyme.autodiff(Forward, make_uuid4, Duplicated(2.0, 1.0), Const(out)) == (2.0,)
+    @test out[1] != UUIDs.UUID(0)
+    @test Enzyme.autodiff(Reverse, make_uuid4, Active(2.0), Const(out)) == ((2.0, nothing),)
 end
