@@ -132,6 +132,46 @@ end
     @test dx == (1.0, ((0.0, 0.0), (0.0, 0.0)))
 end
 
+struct ResultOk{A <: AbstractArray}
+    x::A
+    ok::Bool
+end
+@noinline scale_ok(v::Vector{Float64}) = ResultOk(v .* 2, true)
+f_sret_roots_struct(v) = sum(scale_ok(v).x)
+
+@noinline scale_sum(v::Vector{Float64}) = (v .* 2, sum(v))
+f_sret_roots_tuple(v) = last(scale_sum(v))
+f_sret_roots_tuple_arr(v) = sum(first(scale_sum(v)))
+
+struct TwoRooted{A, B}
+    a::A
+    b::B
+    n::Int
+    s::Float64
+end
+@noinline two_rooted(v::Vector{Float64}) = TwoRooted(v .* 2, v .* 3, length(v), sum(v))
+f_sret_roots_two(v) = sum(two_rooted(v).a) + sum(two_rooted(v).b)
+
+# A return value that needs both an `sret` buffer and a `returnRoots` array: Julia 1.12+
+# leaves the GC-tracked slots of the buffer undefined and passes those pointers through
+# the roots array only, spelling the write of the remaining inline data as one untyped
+# memcpy. `fixup_1p12_sret!` has to split that memcpy so the undefined bytes never reach
+# the tracked slots (#3566).
+@testset "Sret With ReturnRoots" begin
+    for (f, expected) in (
+            (f_sret_roots_struct, [2.0, 2.0, 2.0]),
+            (f_sret_roots_tuple, [1.0, 1.0, 1.0]),
+            (f_sret_roots_tuple_arr, [2.0, 2.0, 2.0]),
+            (f_sret_roots_two, [5.0, 5.0, 5.0]),
+        )
+        v = [1.0, 2.0, 3.0]
+        dv = zero(v)
+        Enzyme.autodiff(Reverse, f, Active, Duplicated(v, dv))
+        @test dv ≈ expected
+        @test Enzyme.autodiff(Forward, f, Duplicated(v, [1.0, 0.0, 0.0]))[1] ≈ expected[1]
+    end
+end
+
 const M_test = [1.0 0.2 0.0; 0.0 1.0 0.1; 0.3 0.0 1.0]
 inner_test(t) = sum((M_test * t) .^ 2)
 g_test(p) = sum(Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), inner_test, p)[1])

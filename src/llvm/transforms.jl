@@ -253,6 +253,25 @@ function rewrite_ccalls!(mod::LLVM.Module)
     end
 end
 
+"""
+    fixup_1p12_sret!(f::LLVM.Function)
+
+Rewrite the untyped store of a return value that needs both an `sret` buffer and a
+`returnRoots` array into field-wise stores that skip the GC-tracked slots.
+
+Julia 1.12 changed the convention for such a return: the callee writes the tracked
+pointers only into `returnRoots` and leaves the corresponding slots of the `sret`
+buffer undefined, so a caller has to recombine the two halves (which is what
+[`recombine_value!`](@ref) does). Codegen spells the write of the remaining, inline
+data as a single untyped `llvm.memcpy` out of an `[N x i64]` alloca, which also
+drags the undefined bytes into the tracked slots -- and Enzyme would then take those
+for live `jlvalue`s. Replacing the memcpy with stores of just the untracked fields
+keeps the tracked slots alone, matching what the convention promises the caller.
+
+The rewrite is keyed on the ABI actually present in the IR rather than on a version
+bound: it only fires for a `memcpy` whose destination parameter carries an `sret`
+attribute for exactly `RT`.
+"""
 function fixup_1p12_sret!(f::LLVM.Function)
     if VERSION < v"1.12"
         return
@@ -268,10 +287,16 @@ function fixup_1p12_sret!(f::LLVM.Function)
         return
     end
 
+    lltype = convert(LLVMType, RT)
+
+    # Bail out if parameter 1 is not the `sret` buffer holding an `RT`, i.e. if the
+    # calling convention is not the one this rewrite knows about.
+    if sret_ty(f, 1, #=btval=# nothing, #=throw_error=# false) != lltype
+        return
+    end
+
     dl = datalayout(LLVM.parent(f))
 
-    @assert VERSION < v"1.13"
-    #TODO for 1.13 fixup this
     torep = LLVM.Instruction[]
     for u in LLVM.uses(parameters(f)[1])
         ci = LLVM.user(u)
@@ -287,7 +312,6 @@ function fixup_1p12_sret!(f::LLVM.Function)
     end
 
     if length(torep) > 0
-	lltype = convert(LLVMType, RT)
         sz = LLVM.sizeof(dl, lltype)
         for ci in torep
             cst = operands(ci)[3]::LLVM.ConstantInt
