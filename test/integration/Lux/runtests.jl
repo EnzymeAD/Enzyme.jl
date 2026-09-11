@@ -1,4 +1,4 @@
-using Enzyme, Lux, Zygote, Test, NNlib, StableRNGs, ComponentArrays
+using Enzyme, Lux, Zygote, Test, NNlib, Optimisers, StableRNGs, ComponentArrays
 using LuxTestUtils: check_approx
 
 generic_loss_function(model, x, ps, st) = sum(abs2, first(model(x, ps, st)))
@@ -127,4 +127,21 @@ end
         ps, st = Lux.setup(StableRNG(12345), model)
         test_enzyme_gradients(model, x, ComponentArray(ps), st)
     end
+end
+
+# https://github.com/EnzymeAD/Enzyme.jl/issues/2788: the two `Dense` layers make
+# LuxLib's rule run twice, with different argument activities, so it is emitted
+# into two deferred modules. Both used to import the same cached thunk of the
+# activation's derivative, giving each module a definition of the activation's
+# out-of-line `sin`; linking the second one then failed with "symbol multiply
+# defined". `sin` is an activation Lux does not fuse into the matmul loop, which
+# is what leaves it out of line.
+@testset "Issue #2788: cached thunk imported into two deferred modules" begin
+    rng = StableRNG(0)
+    X, Y = rand(rng, Float32, 10, 24), rand(rng, Float32, 1, 24)
+    model = Chain(Dense(10, 10, sin), Dense(10, 1, sin))
+    ps, st = Lux.setup(rng, model)
+    ts = Training.TrainState(model, ps, st, Optimisers.AdamW())
+    _, loss, _, _ = Training.single_train_step!(AutoEnzyme(), MSELoss(), (X, Y), ts)
+    @test isfinite(loss)
 end

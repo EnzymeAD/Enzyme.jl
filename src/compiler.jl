@@ -6445,6 +6445,10 @@ end
 
     API.EnzymeReplaceFunctionImplementation(mod)
 
+    # Every deferred module is linked by now, so nothing declares the entry of
+    # an imported cached thunk any more.
+    internalize_imported_thunks!(mod)
+
     for (fname, lnk) in custom
         haskey(functions(mod), fname) || continue
         f = functions(mod)[fname]

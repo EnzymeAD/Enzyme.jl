@@ -893,6 +893,93 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
     return true, replaceWith
 end
 
+"""
+    import_cached_autodiff!(mod, ptr, FT)
+
+Make the derivative thunk compiled at `ptr` callable from `mod`, and return the
+function to call in its place.
+
+`cached_compilation` keeps the bitcode of every thunk it compiles in
+`autodiff_cache`, so that a later compilation which sees a call to the thunk's
+address can use its IR instead of calling an opaque pointer. That blob is a
+fixed serialization: every module it is linked into gets the very same symbol
+names for the Julia functions it carries. `compile_unhooked` links all the
+modules `nested_codegen!` emitted into one module, so two of them importing the
+same blob define those symbols twice and `LLVM.link!` rejects the second one
+("symbol multiply defined", EnzymeAD/Enzyme.jl#2788). The names collide even
+though nothing else does, because they were minted once, when the thunk was
+compiled, and are replayed verbatim on every import.
+
+Import the blob once per compilation instead. The first module to need it gets
+the definitions; every later one gets a declaration of the entry, which the
+final link binds to that single definition. The entry stays externally visible
+for as long as those declarations do: `compile_unhooked` internalizes it again
+once every module is linked (see [`internalize_imported_thunks!`](@ref)), so it
+is inlined and discarded just as a lone import was.
+"""
+function import_cached_autodiff!(mod::LLVM.Module, ptr::Ptr{Cvoid}, FT::LLVM.FunctionType)
+    enzyme_ctx = enzyme_context()
+    pname, bitcode = autodiff_cache[ptr]
+
+    if haskey(enzyme_ctx.imported_thunks, ptr)
+        if haskey(functions(mod), pname)
+            return functions(mod)[pname]
+        end
+        decl, _ = get_function!(mod, pname, FT)
+        while isa(decl, LLVM.ConstantExpr)
+            decl = operands(decl)[1]
+        end
+        return decl
+    end
+
+    @assert !haskey(functions(mod), pname) || isdeclaration(functions(mod)[pname])
+    pmod = parse(LLVM.Module, unsafe_wrap(Vector{UInt8}, bitcode))
+    @assert haskey(functions(pmod), pname)
+
+    # Everything the blob carries besides the entry is internal, so that a
+    # second blob carrying the same Julia function does not collide with it.
+    for fn in functions(pmod)
+        if !isempty(LLVM.blocks(fn))
+            linkage!(fn, LLVM.name(fn) != pname ? LLVM.API.LLVMInternalLinkage : LLVM.API.LLVMExternalLinkage)
+        end
+    end
+
+    for glob in globals(pmod)
+        if LLVM.linkage(glob) == LLVM.API.LLVMExternalLinkage
+            LLVM.initializer!(glob, nothing)
+        end
+    end
+
+    LLVM.link!(mod, pmod)
+
+    replaceWith = functions(mod)[pname]
+    push!(function_attributes(replaceWith), EnumAttribute("alwaysinline"))
+    enzyme_ctx.imported_thunks[ptr] = pname
+    return replaceWith
+end
+
+"""
+    internalize_imported_thunks!(mod)
+
+Undo the external linkage [`import_cached_autodiff!`](@ref) gave the entry of
+every cached thunk this compilation imported.
+
+The entry is externally visible only so that the modules which did not import
+the blob can declare it and have the final link bind them to the one
+definition. Once `mod` holds every such module, nothing outside it refers to
+the entry any more, and leaving it visible would keep a copy of the thunk that
+`post_optimize!` may neither inline nor drop.
+"""
+function internalize_imported_thunks!(mod::LLVM.Module)
+    for pname in values(enzyme_context().imported_thunks)
+        haskey(functions(mod), pname) || continue
+        fn = functions(mod)[pname]
+        isempty(LLVM.blocks(fn)) && continue
+        linkage!(fn, LLVM.API.LLVMInternalLinkage)
+    end
+    return nothing
+end
+
 import GPUCompiler:
     DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
@@ -1440,31 +1527,11 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             ptr = Ptr{Cvoid}(ptr_val)
 
             if haskey(autodiff_cache, ptr)
-                pname, pmod = autodiff_cache[ptr]
-
-                @assert !haskey(functions(mod), pname)
-
-                pmod = parse(LLVM.Module, unsafe_wrap(Vector{UInt8}, pmod))
-
-                @assert haskey(functions(pmod), pname)
-
-                for fn in functions(pmod)
-                    if !isempty(LLVM.blocks(fn))
-                        linkage!(fn, LLVM.name(fn) != pname ? LLVM.API.LLVMInternalLinkage : LLVM.API.LLVMExternalLinkage)
-                    end
-                end
-
-                for glob in globals(pmod)
-                    if LLVM.linkage(glob) == LLVM.API.LLVMExternalLinkage
-                        LLVM.initializer!(glob, nothing)
-                    end
-                end
-
-                LLVM.link!(mod, pmod)
-
-                replaceWith = functions(mod)[pname]
-                push!(function_attributes(replaceWith), EnumAttribute("alwaysinline"))
-                linkage!(functions(mod)[pname], LLVM.API.LLVMInternalLinkage)
+                replaceWith = import_cached_autodiff!(
+                    mod,
+                    ptr,
+                    LLVM.FunctionType(LLVM.API.LLVMGetCalledFunctionType(inst)),
+                )
                 replace_uses!(ptr_arg, LLVM.const_pointercast(replaceWith, value_type(ptr_arg)))
                 return errors
             end
