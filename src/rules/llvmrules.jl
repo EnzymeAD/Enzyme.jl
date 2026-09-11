@@ -244,6 +244,16 @@ include("parallelrules.jl")
     return false
 end
 
+@register_diffuse function jlcall_diffuse(orig::LLVM.CallInst, gutils::GradientUtils, @nospecialize(val::LLVM.Value), isshadow::Bool, mode::API.CDerivativeMode)
+    F = operands(orig)[1]
+    if isa(F, LLVM.Function)
+        if in(LLVM.name(F), ("ijl_f_getfield", "jl_f_getfield"))
+            return common_jl_getfield_diffuse(2, orig, gutils, val, isshadow, mode)
+        end
+    end
+    return (false, true)
+end
+
 @register_aug function jlcall_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
     F = operands(orig)[1]
     if isa(F, LLVM.Function)
@@ -2286,6 +2296,12 @@ end
         "enzyme_custom",
         @diffusefunc(enzyme_custom_diffuse)
     )
+    for nm in ("julia.call", "julia.call2")
+        API.EnzymeRegisterDiffUseCallHandler(nm, @diffusefunc(jlcall_diffuse))
+    end
+    for nm in ("jl_f_getfield", "ijl_f_getfield")
+        API.EnzymeRegisterDiffUseCallHandler(nm, @diffusefunc(jl_getfield_diffuse))
+    end
     register_handler!(
         ("julia.call",),
         @augfunc(jlcall_augfwd),
