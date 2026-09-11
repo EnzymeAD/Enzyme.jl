@@ -4,16 +4,64 @@ using CUDA
 using Enzyme
 using Enzyme: EnzymeRules
 
-# Complex is handled here because the shadow operations are element-wise: zeroing is a
-# `memset` sized by `sizeof(T)`, and accumulation is a broadcast, both of which are
-# agnostic to the real/complex split.
-function _zero!(ptr::Ptr{T}, off::Integer, n::Integer) where {T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
-    Base.Libc.memset(ptr + off * sizeof(T), 0, n * sizeof(T))
+# The requirement of `T` is that it is isbits, so that a shadow can be zeroed leaf by leaf
+# and accumulated with a broadcast, and that `+` adds cotangents. This holds for floats,
+# `Complex` of floats, and for isbits structs built from them, including ones that mix
+# floats with integers/`Bool`s.
+@inline function _check_shadow_eltype(::Type{T}) where {T}
+    isbitstype(T) || throw(ArgumentError(
+        "Enzyme's CUDA copy rules zero and accumulate shadows with a memset and a " *
+        "broadcast, which need an isbits element type, but got $T"))
     return nothing
 end
-function _zero!(ptr::CuPtr{T}, off::Integer, n::Integer) where {T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
-    bytes = reinterpret(CuPtr{UInt8}, ptr + off * sizeof(T))
-    CUDA.memset(bytes, UInt8(0), n * sizeof(T))
+
+# All-bits-zero is the correct zero cotangent for a float, for `Complex` of floats and for
+# an isbits aggregate built only out of those, so those are zeroed with a memset. A type
+# with any other leaf - an index, a flag, an enum - is not, since only the differentiable
+# fields should be zeroed, so it takes the element-wise path below.
+@generated _memset_zeroable(::Type{T}) where {T} = _memset_zeroable_impl(T)
+
+function _memset_zeroable_impl(::Type{T}) where {T}
+    (T <: AbstractFloat || T <: Complex{<:AbstractFloat}) && return true
+    (isbitstype(T) && !isprimitivetype(T)) || return false
+    return all(_memset_zeroable_impl, fieldtypes(T))
+end
+
+# What `make_zero!` does, restricted to isbits data: zero the floating point leaves and
+# leave everything else as it is.
+@inline _shadow_zero(x::AbstractFloat) = zero(x)
+@inline _shadow_zero(x::Complex{<:AbstractFloat}) = zero(x)
+@inline _shadow_zero(x::Tuple) = map(_shadow_zero, x)
+@inline _shadow_zero(x::NamedTuple) = NamedTuple{keys(x)}(map(_shadow_zero, values(x)))
+@inline _shadow_zero(x) = _shadow_zero_fields(x)
+
+@generated function _shadow_zero_fields(x::T) where {T}
+    (isbitstype(T) && fieldcount(T) > 0) || return :x
+    return Expr(:new, T, (:(_shadow_zero(getfield(x, $i))) for i in 1:fieldcount(T))...)
+end
+
+@inline function _zero_elements!(arr)
+    arr .= _shadow_zero.(arr)
+    return nothing
+end
+
+function _zero!(ptr::Ptr{T}, off::Integer, n::Integer) where {T}
+    _check_shadow_eltype(T)
+    if _memset_zeroable(T)
+        Base.Libc.memset(ptr + off * sizeof(T), 0, n * sizeof(T))
+    else
+        _zero_elements!(unsafe_wrap(Array, ptr + off * sizeof(T), n; own = false))
+    end
+    return nothing
+end
+function _zero!(ptr::CuPtr{T}, off::Integer, n::Integer) where {T}
+    _check_shadow_eltype(T)
+    if _memset_zeroable(T)
+        bytes = reinterpret(CuPtr{UInt8}, ptr + off * sizeof(T))
+        CUDA.memset(bytes, UInt8(0), n * sizeof(T))
+    else
+        _zero_elements!(unsafe_wrap(CuArray, ptr + off * sizeof(T), n; own = false))
+    end
     return nothing
 end
 
@@ -67,6 +115,15 @@ end
 
 @inline function _shadow(x, config, batch)
     return EnzymeRules.width(config) == 1 ? x.dval : x.dval[batch]
+end
+
+# With `set_runtime_activity` Enzyme hands a rule a `Duplicated` whose shadow is the primal
+# itself, for a value it could not prove inactive statically. Accumulating a cotangent into
+# such a shadow, or zeroing it, writes to the primal data.
+@inline function _active_shadow(x, config, batch)
+    x isa Const && return nothing
+    dval = _shadow(x, config, batch)
+    return dval === x.val ? nothing : dval
 end
 
 # This rule should _NOT_ be needed. Without it there appears to be
@@ -148,14 +205,13 @@ for (DstPtr, SrcPtr) in PTR_COPY_DIRECTIONS
 		src::Annotation{<:$SrcPtr{T}},
                 n::Const;
                 kwargs...,
-            ) where {RT, T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
+            ) where {RT, T}
             if !(dest isa Const)
                 for batch in 1:EnzymeRules.width(config)
-                    ddest = _shadow(dest, config, batch)
-		    if !(src isa Const)
-			dsrc = _shadow(src, config, batch)
-    			_accumulate!(dsrc, 0, ddest, 0, n.val)
-                    end
+                    ddest = _active_shadow(dest, config, batch)
+                    isnothing(ddest) && continue
+                    dsrc = _active_shadow(src, config, batch)
+                    isnothing(dsrc) || _accumulate!(dsrc, 0, ddest, 0, n.val)
                     _zero!(ddest, 0, n.val)
                 end
             end
@@ -180,7 +236,7 @@ for (DstArr, SrcArr) in ARRAY_COPY_DIRECTIONS
 		doffs::Const,
 		src::Annotation{<:$SrcArr{T}},
 		soffs::Const,
-                n::Const) where {RT, T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
+                n::Const) where {RT, T}
             func.val(dest.val, doffs.val, src.val, soffs.val, n.val)
             primal = EnzymeRules.needs_primal(config) ? dest.val : nothing
             shadow = if !(RT <: Const) && EnzymeRules.needs_shadow(config) &&
@@ -201,15 +257,17 @@ for (DstArr, SrcArr) in ARRAY_COPY_DIRECTIONS
 		doffs::Const,
 		src::Annotation{<:$SrcArr{T}},
 		soffs::Const,
-                n::Const) where {RT, T <: Union{AbstractFloat, Complex{<:AbstractFloat}}}
+                n::Const) where {RT, T}
             if !(dest isa Const)
                 for batch in 1:EnzymeRules.width(config)
-                    ddest = _shadow(dest, config, batch)
-		    if !(src isa Const)
-			dsrc = _shadow(src, config, batch)
-			_accumulate!(@view(dsrc[soffs.val:soffs.val+n.val-1]), @view(ddest[doffs.val:doffs.val+n.val-1]))
+                    ddest = _active_shadow(dest, config, batch)
+                    isnothing(ddest) && continue
+                    dsrc = _active_shadow(src, config, batch)
+                    if !isnothing(dsrc)
+                        _accumulate!(@view(dsrc[soffs.val:soffs.val+n.val-1]),
+                                     @view(ddest[doffs.val:doffs.val+n.val-1]))
                     end
-		    _zero!(pointer(ddest, doffs.val), 0, n.val)
+                    GC.@preserve ddest _zero!(pointer(ddest, doffs.val), 0, n.val)
                 end
             end
             return (nothing, nothing, nothing, nothing, nothing)

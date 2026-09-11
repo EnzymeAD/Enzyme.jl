@@ -3,6 +3,14 @@ using Enzyme
 using LinearAlgebra: mul!, dot, Symmetric
 using Test
 
+# A shadow element that mixes a cotangent with a field that is not one
+struct IndexedVal
+    idx::Int32
+    val::Float64
+end
+
+Base.:+(a::IndexedVal, b::IndexedVal) = IndexedVal(a.idx, a.val + b.val)
+
 @testset "CUDA memory copies" begin
     grad_roundtrip = function (to_gpu)
         x = Float32[1, 2, 3]
@@ -111,6 +119,29 @@ using Test
         end
 
         @test ptr_copy(C) == ptr_copy(R)
+    end
+    @testset "shadow with a non-differentiable field" begin
+        # Only the differentiable part of a shadow is zeroed once its cotangent has been
+        #   consumed: an index is not a cotangent, and `make_zero!` leaves it alone
+        n = 4
+        copy_kernel = (dst, src) -> (copyto!(dst, src); nothing)
+        src = CuArray([IndexedVal(Int32(i), Float64(i)) for i in 1:n])
+        dst = CuArray([IndexedVal(Int32(0), 0.0) for _ in 1:n])
+        dsrc = CuArray([IndexedVal(Int32(10 + i), 0.0) for i in 1:n])
+        ddst = CuArray([IndexedVal(Int32(20 + i), Float64(i)) for i in 1:n])
+
+        Enzyme.autodiff(
+            Reverse, Const(copy_kernel), Const,
+            Duplicated(dst, ddst), Duplicated(src, dsrc),
+        )
+        CUDA.synchronize()
+
+        hsrc, hdst = Array(dsrc), Array(ddst)
+        # The cotangent moved from the destination to the source
+        @test [x.val for x in hsrc] == Float64.(1:n)
+        # The destination cotangent was consumed, but the index was left as it was
+        @test all(iszero, [x.val for x in hdst])
+        @test [Int(x.idx) for x in hdst] == 20 .+ collect(1:n)
     end
     @testset "unified memory" begin
         @test grad_roundtrip(x -> cu(x; unified = true)) == Float32[2, 4, 6]
