@@ -138,8 +138,8 @@ function guess_activity end
 
 The state one differentiation of one module accumulates: the modules
 `nested_codegen!` emitted and has yet to link, the edges the resulting
-`CodeInstance` must depend on, and the cache of already emitted nested
-functions.
+`CodeInstance` must depend on, the cache of already emitted nested
+functions, and the cached thunks already imported into one of those modules.
 
 A context belongs to a single `compile_unhooked` invocation. It is not passed
 as an argument: `compile_unhooked` binds it to the [`ENZYME_CONTEXT`](@ref)
@@ -152,10 +152,12 @@ mutable struct EnzymeContext
     modules_to_link::Vector{LLVM.Module}
     edges::Vector{Any}
     nested_cache::Dict{Core.MethodInstance, String}
+    imported_thunks::Dict{Ptr{Cvoid}, String}
     EnzymeContext() = new(
         LLVM.Module[],
         Any[],
-        Dict{Core.MethodInstance, String}()
+        Dict{Core.MethodInstance, String}(),
+        Dict{Ptr{Cvoid}, String}()
     )
 end
 
