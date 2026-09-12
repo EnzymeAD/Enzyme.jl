@@ -673,3 +673,73 @@ end
         @test_throws AssertionError Enzyme.Compiler.fix_decayaddr!(mod)
     end
 end
+
+@testset "addrspace(11) argument phis are left alone" begin
+    # LLVM 20 strength-reduces loop indices into pointer induction variables, so a
+    # loop over an addrspace(11) argument (an SVector passed by reference) becomes
+    # `phi [ %arg, %top ], [ gep(%inv, %iv), %latch ]` with a non-constant GEP index.
+    # There is no addrspace(10) object to root such a phi with; `nodecayed_phis!`
+    # must skip it instead of failing in `nodecayed_getparent`.
+    @test @filecheck begin
+        @check_not "nodecayed."
+        @check_label "define double @loop"
+        @check "%p = phi"
+        @check_label "define double @sel"
+        @check "%p = phi"
+        LLVM.Context() do ctx
+            mod = parse(
+                LLVM.Module, """
+                define double @loop(double addrspace(11)* %arg, i64 %n) {
+                top:
+                  %inv = getelementptr double, double addrspace(11)* %arg, i64 -1
+                  br label %loop
+
+                loop:
+                  %p = phi double addrspace(11)* [ %arg, %top ], [ %gep, %latch ]
+                  %iv = phi i64 [ 1, %top ], [ %ivnext, %latch ]
+                  %acc = phi double [ 0.0, %top ], [ %accnext, %latch ]
+                  %v = load double, double addrspace(11)* %p, align 8
+                  %accnext = fadd double %acc, %v
+                  %done = icmp eq i64 %iv, %n
+                  br i1 %done, label %exit, label %latch
+
+                latch:
+                  %ivnext = add i64 %iv, 1
+                  %gep = getelementptr double, double addrspace(11)* %inv, i64 %ivnext
+                  br label %loop
+
+                exit:
+                  ret double %accnext
+                }
+
+                define double @sel(double addrspace(11)* %a, double addrspace(11)* %b, i1 %c, i64 %n) {
+                top:
+                  %b1 = getelementptr double, double addrspace(11)* %b, i64 1
+                  %s = select i1 %c, double addrspace(11)* %a, double addrspace(11)* %b1
+                  br label %loop
+
+                loop:
+                  %p = phi double addrspace(11)* [ %s, %top ], [ %gep, %latch ]
+                  %iv = phi i64 [ 1, %top ], [ %ivnext, %latch ]
+                  %acc = phi double [ 0.0, %top ], [ %accnext, %latch ]
+                  %v = load double, double addrspace(11)* %p, align 8
+                  %accnext = fadd double %acc, %v
+                  %done = icmp eq i64 %iv, %n
+                  br i1 %done, label %exit, label %latch
+
+                latch:
+                  %ivnext = add i64 %iv, 1
+                  %gep = getelementptr double, double addrspace(11)* %p, i64 %ivnext
+                  br label %loop
+
+                exit:
+                  ret double %accnext
+                }
+                """
+            )
+
+            Enzyme.Compiler.nodecayed_phis!(mod)
+            string(mod)
+        end
+    end
+end
