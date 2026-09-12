@@ -4236,6 +4236,16 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
 	return val
 end
 
+"""
+    nullify_rooted_values!(builder, sret)
+
+Return the value `sret` with every GC-tracked field replaced by a null reference.
+
+Used where only the inline data of a value is wanted, and the tracked fields are
+either held elsewhere (in a `returnRoots` array, see [`extract_roots_from_value!`](@ref))
+or known not to be needed, so that leaving the original pointers in place would
+root objects that must not be kept alive.
+"""
 function nullify_rooted_values!(builder::LLVM.IRBuilder, sret::LLVM.Value)
    jltype = value_type(sret)
    tracked = CountTrackedPointers(jltype)
@@ -4245,6 +4255,23 @@ function nullify_rooted_values!(builder::LLVM.IRBuilder, sret::LLVM.Value)
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, nothing, NullifySRetValue)
 end
 
+"""
+    recombine_value!(builder, sret, roots; must_cache=false)
+
+Rebuild a whole return value from the two halves the `sret`/`returnRoots` calling
+convention splits it into.
+
+A callee returning a type with both GC-tracked and inline fields writes the tracked
+pointers into the `returnRoots` array and the remaining data into the `sret` buffer,
+leaving the tracked slots of `sret` undefined. `sret` here is the *value* already
+loaded out of that buffer and `roots` the pointer to the root array; the tracked
+fields are loaded from `roots` and inserted back into their slots, and the completed
+value is returned. This is the inverse of [`extract_roots_from_value!`](@ref); see
+[`recombine_value_ptr!`](@ref) for the variant that takes `sret` as a pointer.
+
+`must_cache` marks the loads from `roots` as must-cache, for a caller that needs the
+recombined value to survive into the reverse pass.
+"""
 function recombine_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM.Value; must_cache::Bool=false)::LLVM.Value
    jltype = value_type(sret)
    tracked = CountTrackedPointers(jltype)
@@ -4254,6 +4281,15 @@ function recombine_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, RootPointerToSRetValue; must_cache)
 end
 
+"""
+    recombine_value_ptr!(builder, jltype, sret, roots; must_cache=false)
+
+Like [`recombine_value!`](@ref), but loads the inline half out of the `sret` buffer
+rather than taking it as an already-loaded value.
+
+Both `sret` and `roots` are pointers; a fresh `jltype` value is built by loading the
+untracked fields from `sret` and the tracked ones from `roots`.
+"""
 function recombine_value_ptr!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value, roots::LLVM.Value; must_cache::Bool=false)::LLVM.Value
    tracked = CountTrackedPointers(jltype)
    @assert tracked.count > 0
@@ -4262,6 +4298,16 @@ function recombine_value_ptr!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sr
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, RootAndSRetPointerToValue; must_cache)
 end
 
+"""
+    extract_roots_from_value!(builder, sret, roots)
+
+Store the GC-tracked fields of the value `sret` into the `returnRoots` array `roots`,
+which must have room for `CountTrackedPointers(value_type(sret)).count` entries.
+
+This is the split [`recombine_value!`](@ref) undoes: a caller that needs to hand a
+value on through the `sret`/`returnRoots` convention writes the tracked pointers here
+and the inline data into the `sret` buffer separately.
+"""
 function extract_roots_from_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM.Value)
    jltype = value_type(sret)
    tracked = CountTrackedPointers(jltype)
