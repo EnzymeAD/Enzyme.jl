@@ -205,6 +205,62 @@ end
     end
 end
 
+@testset "import_cached_autodiff!" begin
+    LLVM.Context() do ctx
+        # A cached thunk's bitcode carries the Julia functions it calls. Two
+        # modules importing it would both define `@julia_shared`, and
+        # `compile_unhooked` links every deferred module into one (#2788), so
+        # the blob must be imported once and declared everywhere else.
+        blob = parse(
+            LLVM.Module,
+            """
+            define i64 @thunk(i64 %x) {
+              %r = call i64 @julia_shared(i64 %x)
+              ret i64 %r
+            }
+            define i64 @julia_shared(i64 %x) {
+              %r = add i64 %x, 1
+              ret i64 %r
+            }
+            """,
+        )
+        buf = convert(LLVM.MemoryBuffer, blob)
+        bitcode = String(convert(Vector{UInt8}, buf))
+        dispose(buf)
+
+        ptr = reinterpret(Ptr{Cvoid}, UInt(0x2788))
+        Enzyme.Compiler.autodiff_cache[ptr] = ("thunk", bitcode)
+        try
+            Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT =>
+                    Enzyme.Compiler.EnzymeContext() begin
+                FT = LLVM.FunctionType(LLVM.Int64Type(), [LLVM.Int64Type()])
+
+                first_mod = LLVM.Module("first")
+                imported = Enzyme.Compiler.import_cached_autodiff!(first_mod, ptr, FT)
+                @test !LLVM.isdeclaration(imported)
+                # Externally visible, so the modules that only declare the entry
+                # bind to this definition when everything is linked together.
+                @test LLVM.linkage(imported) == LLVM.API.LLVMExternalLinkage
+                @test haskey(LLVM.functions(first_mod), "julia_shared")
+
+                second_mod = LLVM.Module("second")
+                declared = Enzyme.Compiler.import_cached_autodiff!(second_mod, ptr, FT)
+                @test LLVM.isdeclaration(declared)
+                # The blob is not imported a second time, so nothing it carries
+                # is defined twice.
+                @test !haskey(LLVM.functions(second_mod), "julia_shared")
+
+                LLVM.link!(first_mod, second_mod)
+                Enzyme.Compiler.internalize_imported_thunks!(first_mod)
+                @test LLVM.linkage(LLVM.functions(first_mod)["thunk"]) ==
+                    LLVM.API.LLVMInternalLinkage
+            end
+        finally
+            delete!(Enzyme.Compiler.autodiff_cache, ptr)
+        end
+    end
+end
+
 @testset "link_split_existing!" begin
     LLVM.Context() do ctx
         # Test 1: Differing definitions are preserved as distinct internal specializations
