@@ -16,9 +16,11 @@ The AbstractGPUArray matmul/dot rules. JLArray is a CPU-backed AbstractGPUArray,
 so it hits the same LinearAlgebra entry points a real backend does, no device
 needed.
 
-The rules sit on `generic_matmatmul!` / `generic_matvecmul!`, so these tests call
-`mul!` into an explicit buffer and seed the output shadow with ones, which is what
-`sum(C)` would hand back. A reduction can't be used instead: `mapreducedim!` over
+The rules sit on the storage-level product LinearAlgebra hands GPU arrays to
+(`generic_matmatmul!` / `generic_matvecmul!` before Julia 1.13, the `mul!` methods
+taking wrapper chars from then on), so these tests call `mul!` into an explicit
+buffer and seed the output shadow with ones, which is what `sum(C)` would hand
+back. A reduction can't be used instead: `mapreducedim!` over
 a JLArray doesn't differentiate yet (LLVM verifier error out of
 `EnzymeCreateAugmentedPrimal`), and `dot` on GPUArrays infers as `Any`, so nesting
 it asks the rule for a scalar's shadow.
@@ -125,7 +127,7 @@ output and doesn't happen on CUDA.
     end
 
     # The same operand plain and transposed, both products matrix-vector: two
-    # passes through `generic_matvecmul!`, tA = 'N' then 'T'.
+    # passes through the matvec entry point, tA = 'N' then 'T'.
     @testset "matvec reverse with transpose" begin
         X0 = randn(6, 3)
         β0 = randn(3)
