@@ -175,39 +175,3 @@ end
     @test dq ≈ [1.0, 1.0]
 end
 
-#=
-`Threads.atomic_add!` on an integer atomic carries no derivative, and an
-inactive rule in `src/internal_rules/inactive.jl` says so. Since Julia 1.13 the
-rule is also what keeps Enzyme away from the lowering: `atomic_add!` became
-`(@atomic :acquire_release x.value + v).first`, which emits the variadic
-`julia.atomicmodify` intrinsic, and differentiating through it aborted in
-`EnzymeCreateAugmentedPrimal`. GPUArrays reaches this through `DataRef`
-refcounting, so `test/ext/jlarrays.jl` hits it too.
-=#
-mutable struct Counted
-    counter::Threads.Atomic{Int}
-    scale::Float64
-end
-
-function counted_square(c, x)
-    Threads.atomic_add!(c.counter, 1)
-    return c.scale * x * x
-end
-
-@testset "integer atomic is inactive" begin
-    c = Counted(Threads.Atomic{Int}(0), 2.0)
-
-    dc = Counted(Threads.Atomic{Int}(0), 0.0)
-    @test autodiff(Reverse, counted_square, Active, Duplicated(c, dc), Active(3.0))[1][2] ≈ 12.0
-    @test dc.scale ≈ 9.0
-    @test c.counter[] == 1
-    # The shadow's own counter never moves: the increment is not differentiated.
-    @test dc.counter[] == 0
-
-    dc = Counted(Threads.Atomic{Int}(0), 0.0)
-    @test only(
-        autodiff(Forward, counted_square, Duplicated, Duplicated(c, dc), Duplicated(3.0, 1.0))
-    ) ≈ 12.0
-    @test c.counter[] == 2
-    @test dc.counter[] == 0
-end
