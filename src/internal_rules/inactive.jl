@@ -57,6 +57,37 @@ end
 function EnzymeRules.inactive(::typeof(Base.Threads.nthreads), args...)
     return nothing
 end
+
+#=
+An atomic over an integer never carries a derivative, so the read-modify-write
+has nothing to differentiate. Saying so explicitly also keeps Enzyme away from
+how these lower: since Julia 1.13 `Threads.atomic_add!` and friends are
+`(@atomic :acquire_release x.value + v).first` rather than an `llvmcall`, which
+emits the variadic `julia.atomicmodify` intrinsic. Enzyme's C++ side treats that
+declaration as an ordinary subfunction to recurse into and aborts, because a
+variadic callee's `arg_size()` does not match the call's operand count:
+
+    Assertion `nowrite_shadows.size() == todiff->arg_size()' failed.
+
+Marking the wrappers inactive blocks the inlining that would otherwise bury the
+intrinsic in a caller, so Enzyme never sees it. GPUArrays reaches this through
+`DataRef` refcounting: `copy(::DataRef)` retains, which bumps a
+`Threads.Atomic{Int}`.
+
+Atomics over floating-point values are deliberately not listed: those do
+accumulate derivatives and need real handling, not an inactive marker.
+=#
+for op in (
+        :atomic_add!, :atomic_sub!, :atomic_and!, :atomic_or!,
+        :atomic_xor!, :atomic_nand!, :atomic_max!, :atomic_min!,
+    )
+    @eval function EnzymeRules.inactive(
+            ::typeof(Base.Threads.$op), ::Base.Threads.Atomic{<:Integer}, ::Integer
+        )
+        return nothing
+    end
+end
+
 function EnzymeRules.inactive(::typeof(Base.eps), args...)
     return nothing
 end
