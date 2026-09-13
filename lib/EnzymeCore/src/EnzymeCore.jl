@@ -832,4 +832,68 @@ end
 
 Combined(mode::ReverseMode) = mode
 
+"""
+    as_forward(::Mode)
+
+Turn a [`ReverseMode`](@ref) or [`ReverseModeSplit`](@ref) object into a [`ForwardMode`](@ref) object while preserving as many of the settings as possible.
+Settings that do not exist in forward mode (e.g. `Holomorphic` and the split-specific parameters) are dropped.
+
+This function acts as the identity on a [`ForwardMode`](@ref).
+
+See also [`as_reverse`](@ref).
+"""
+function as_forward(
+        ::ReverseMode{
+            ReturnPrimal,
+            RuntimeActivity,
+            StrongZero,
+            ABI,
+            Holomorphic,
+            ErrIfFuncWritten,
+        },
+    ) where {
+        ReturnPrimal,
+        RuntimeActivity,
+        StrongZero,
+        ABI,
+        Holomorphic,
+        ErrIfFuncWritten,
+    }
+    return ForwardMode{ReturnPrimal, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero}()
+end
+
+as_forward(mode::ReverseModeSplit) = as_forward(Combined(mode))
+as_forward(mode::ForwardMode) = mode
+
+"""
+    as_reverse(::Mode)
+
+Turn a [`ForwardMode`](@ref) object into a [`ReverseMode`](@ref) object while preserving as many of the settings as possible.
+Settings that do not exist in forward mode (e.g. `Holomorphic`) are set to their default values.
+
+This function acts as the identity on a [`ReverseMode`](@ref) or [`ReverseModeSplit`](@ref).
+
+See also [`as_forward`](@ref).
+"""
+function as_reverse(
+        ::ForwardMode{
+            ReturnPrimal,
+            ABI,
+            ErrIfFuncWritten,
+            RuntimeActivity,
+            StrongZero,
+        },
+    ) where {
+        ReturnPrimal,
+        ABI,
+        ErrIfFuncWritten,
+        RuntimeActivity,
+        StrongZero,
+    }
+    return ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, false, ErrIfFuncWritten}()
+end
+
+as_reverse(mode::ReverseMode) = mode
+as_reverse(mode::ReverseModeSplit) = mode
+
 end # module EnzymeCore
