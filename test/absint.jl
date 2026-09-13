@@ -131,9 +131,18 @@ end
     x = [3.0, 5.0]
     dx_batch = ([1.0, 0.0], [0.0, 1.0])
     c = [0.0]
-    res = h(x, c, dx_batch)
-    @test res[1][1] ≈ [4.0, 0.0]
-    @test res[1][2] ≈ [0.0, 0.0]
+    @static if VERSION < v"1.13-"
+        res = h(x, c, dx_batch)
+        @test res[1][1] ≈ [4.0, 0.0]
+        @test res[1][2] ≈ [0.0, 0.0]
+    else
+        # Enzyme loses the TypeTree of a cached loop index during nested AD.
+        # https://github.com/EnzymeAD/Enzyme.jl/issues/3472
+        @test_broken begin
+            res = h(x, c, dx_batch)
+            res[1][1] ≈ [4.0, 0.0] && res[1][2] ≈ [0.0, 0.0]
+        end
+    end
 end
 
 struct AbsintNode
