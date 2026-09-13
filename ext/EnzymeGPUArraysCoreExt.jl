@@ -99,12 +99,31 @@ end
 # Materialized `conj`. No-op for real eltypes.
 @inline _conj(X) = eltype(X) <: Real ? X : conj.(X)
 
+#=
+The storage-level products these rules attach to, and that the reverse pass
+calls back into. Julia below 1.13 routes GPU arrays through the non-public
+`generic_matmatmul!`/`generic_matvecmul!`; JuliaLang/LinearAlgebra.jl#1671
+superseded both with `mul!` methods taking the same leading wrapper chars.
+GPUArrays overloads whichever pair its Julia version uses and stops forwarding
+the old names at the same boundary (see the `VERSION < v"1.13.0-rc4"` blocks in
+its src/host/linalg.jl), so the cutoff here has to be the same one: rules left
+on `generic_matmatmul!` would silently stop firing and Enzyme would descend into
+the backend kernels instead.
+=#
+@static if VERSION < v"1.13.0-rc4"
+    const _matmat_entry = LinearAlgebra.generic_matmatmul!
+    const _matvec_entry = LinearAlgebra.generic_matvecmul!
+else
+    const _matmat_entry = LinearAlgebra.mul!
+    const _matvec_entry = LinearAlgebra.mul!
+end
+
 @static if VERSION < v"1.12.0-DEV"
     @inline _gemm!(C, tA::AbstractChar, tB::AbstractChar, A, B, α::Number, β::Number) =
-        LinearAlgebra.generic_matmatmul!(C, tA, tB, A, B, LinearAlgebra.MulAddMul(α, β))
+        _matmat_entry(C, tA, tB, A, B, LinearAlgebra.MulAddMul(α, β))
 else
     @inline _gemm!(C, tA::AbstractChar, tB::AbstractChar, A, B, α::Number, β::Number) =
-        LinearAlgebra.generic_matmatmul!(C, tA, tB, A, B, α, β)
+        _matmat_entry(C, tA, tB, A, B, α, β)
 end
 
 # `mul!` and `*` unwrap each operand and pass a char saying how to read the bare
@@ -139,10 +158,10 @@ end
 #=
 `dX += factor · op(L, fL) · op(R, fR)`, projected back through `tX`, the op on the
 operand being written to. Both matmul cotangents have this shape (`dC·op(B)'` for
-the left operand, `op(A)'·dC` for the right), so both go through
-`generic_matmatmul!` with β = 1, which accumulates in place with no temporary and
-takes `factor` as α. Undoing `tX` rewrites the product instead of transposing the
-result, so the operands swap.
+the left operand, `op(A)'·dC` for the right), so both go through `_gemm!` with
+β = 1, which accumulates in place with no temporary and takes `factor` as α.
+Undoing `tX` rewrites the product instead of transposing the result, so the
+operands swap.
 =#
 function _pullback!(dX, tX::AbstractChar, L, fL, R, fR, factor)
     kind = uppercase(tX)
@@ -159,8 +178,8 @@ function _pullback!(dX, tX::AbstractChar, L, fL, R, fR, factor)
 end
 
 #=
-    generic_matmatmul!(C, tA, tB, A, B, α, β)    C = α·op(A)·op(B) + β·C₀
-    generic_matvecmul!(y, tA, A, x, α, β)        y = α·op(A)·x + β·y₀
+    _matmat_entry(C, tA, tB, A, B, α, β)    C = α·op(A)·op(B) + β·C₀
+    _matvec_entry(y, tA, A, x, α, β)        y = α·op(A)·x + β·y₀
 
 Every rectangular GPU matmul goes through these, from `*` or 3-/5-arg `mul!`, on
 CUBLAS or on the GPUArrays fallback kernels. One rule each covers plain,
@@ -263,7 +282,7 @@ end
 
     function EnzymeRules.augmented_primal(
             config::RevConfig,
-            func::Const{typeof(LinearAlgebra.generic_matmatmul!)},
+            func::Const{typeof(_matmat_entry)},
             ::Type{RT},
             C::Annotation{<:AbstractGPUVecOrMat},
             tA::Const{<:AbstractChar},
@@ -285,7 +304,7 @@ end
 
     function EnzymeRules.reverse(
             config::RevConfig,
-            func::Const{typeof(LinearAlgebra.generic_matmatmul!)},
+            func::Const{typeof(_matmat_entry)},
             ::Type{RT},
             tape,
             C::Annotation{<:AbstractGPUVecOrMat},
@@ -307,7 +326,7 @@ end
 
     function EnzymeRules.augmented_primal(
             config::RevConfig,
-            func::Const{typeof(LinearAlgebra.generic_matvecmul!)},
+            func::Const{typeof(_matvec_entry)},
             ::Type{RT},
             y::Annotation{<:AbstractGPUVector},
             tA::Const{<:AbstractChar},
@@ -328,7 +347,7 @@ end
 
     function EnzymeRules.reverse(
             config::RevConfig,
-            func::Const{typeof(LinearAlgebra.generic_matvecmul!)},
+            func::Const{typeof(_matvec_entry)},
             ::Type{RT},
             tape,
             y::Annotation{<:AbstractGPUVector},
@@ -351,7 +370,7 @@ else
 
     function EnzymeRules.augmented_primal(
             config::RevConfig,
-            func::Const{typeof(LinearAlgebra.generic_matmatmul!)},
+            func::Const{typeof(_matmat_entry)},
             ::Type{RT},
             C::Annotation{<:AbstractGPUVecOrMat},
             tA::Const{<:AbstractChar},
@@ -374,7 +393,7 @@ else
 
     function EnzymeRules.reverse(
             config::RevConfig,
-            func::Const{typeof(LinearAlgebra.generic_matmatmul!)},
+            func::Const{typeof(_matmat_entry)},
             ::Type{RT},
             tape,
             C::Annotation{<:AbstractGPUVecOrMat},
@@ -394,7 +413,7 @@ else
 
     function EnzymeRules.augmented_primal(
             config::RevConfig,
-            func::Const{typeof(LinearAlgebra.generic_matvecmul!)},
+            func::Const{typeof(_matvec_entry)},
             ::Type{RT},
             y::Annotation{<:AbstractGPUVector},
             tA::Const{<:AbstractChar},
@@ -416,7 +435,7 @@ else
 
     function EnzymeRules.reverse(
             config::RevConfig,
-            func::Const{typeof(LinearAlgebra.generic_matvecmul!)},
+            func::Const{typeof(_matvec_entry)},
             ::Type{RT},
             tape,
             y::Annotation{<:AbstractGPUVector},
