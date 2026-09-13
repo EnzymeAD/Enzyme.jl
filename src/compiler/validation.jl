@@ -354,26 +354,35 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     end
     Compiler.rewrite_ccalls!(mod)
 
-    del = LLVM.Function[]
-    for f in collect(functions(mod))
-        if in(f, del)
-            continue
-        end
-        check_ir!(interp, job, errors, imported, f, del, mod)
-    end
-    for d in del
-        LLVM.API.LLVMDeleteFunction(d)
-    end
+    emitted = Dict{Core.MethodInstance, LLVM.Function}()
+    while true
+        n_emitted = length(emitted)
 
-    del = LLVM.Function[]
-    for f in collect(functions(mod))
-        if in(f, del)
-            continue
+        del = LLVM.Function[]
+        for f in collect(functions(mod))
+            if in(f, del)
+                continue
+            end
+            check_ir!(interp, job, errors, imported, f, del, mod, emitted)
         end
-        check_ir!(interp, job, errors, imported, f, del, mod)
-    end
-    for d in del
-        LLVM.API.LLVMDeleteFunction(d)
+        for d in del
+            LLVM.API.LLVMDeleteFunction(d)
+        end
+
+        del = LLVM.Function[]
+        for f in collect(functions(mod))
+            if in(f, del)
+                continue
+            end
+            check_ir!(interp, job, errors, imported, f, del, mod, emitted)
+        end
+        for d in del
+            LLVM.API.LLVMDeleteFunction(d)
+        end
+
+        # Resolving an indirect call can link new functions into the module;
+        # their own calls need processing too.
+        length(emitted) == n_emitted && break
     end
 
     return errors
@@ -472,7 +481,286 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
     return inst
 end
 
-function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, f::LLVM.Function, deletedfns::Vector{LLVM.Function}, mod::LLVM.Module)
+"""
+    mi_from_code_address(ptr) -> MethodInstance or nothing
+
+Find the Julia `MethodInstance` whose compiled code contains the address
+`ptr`, or `nothing` when `ptr` is not Julia JIT code.
+"""
+function mi_from_code_address(ptr::Ptr{Cvoid})::Union{Nothing, Core.MethodInstance}
+    ptr == C_NULL && return nothing
+    frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint), ptr, 0)
+    for frame in frames
+        linfo = frame[4]
+        fromC = frame[5]
+        if linfo isa Core.CodeInstance && !fromC
+            return Core.Compiler.get_ci_mi(linfo)
+        elseif linfo isa Core.MethodInstance && !fromC
+            return linfo
+        end
+    end
+    return nothing
+end
+
+"""
+    emit_mi_into_module!(interp, job, mod, mi) -> LLVM.Function or nothing
+
+Emit the specialized entry point of `mi` into `mod` and return it. Used to
+give indirect calls to JIT-compiled Julia code (e.g. an `OpaqueClosure`'s
+`specptr`) a body Enzyme can differentiate.
+
+`GPUCompiler.compile_method_instance` refuses to emit `mi`s whose method is
+only valid from `typemax(UInt)`, which is exactly how Julia marks opaque
+closure methods. This mirrors it on the `jl_emit_native` path, which takes
+already-inferred `(CodeInstance, CodeInfo)` pairs and has no world check.
+The inference still runs under `interp`, so calls inside the emitted body
+keep Enzyme's call-site markers.
+"""
+@static if VERSION >= v"1.12.0-DEV.1823"
+    function emit_mi_into_module!(interp, @nospecialize(job::CompilerJob), mod::LLVM.Module, mi::Core.MethodInstance)::Union{LLVM.Function, Nothing}
+        cache = Core.Compiler.code_cache(interp)
+        populated = GPUCompiler.ci_cache_populate(interp, cache, mi, job.world, job.world)
+        codeinfos = Any[]
+        for (ci, src) in populated
+            push!(codeinfos, ci)
+            push!(codeinfos, src)
+        end
+        isempty(codeinfos) && return nothing
+
+        cgparams = (;
+            track_allocations = false,
+            code_coverage = false,
+            prefer_specsig = true,
+            gnu_pubnames = false,
+            debug_info_kind = Cint(GPUCompiler.llvm_debug_info(job)),
+            safepoint_on_entry = GPUCompiler.can_safepoint(job),
+            gcstack_arg = false,
+        )
+        @static if v"1.12.0-DEV.2126" <= VERSION < v"1.13-" || VERSION >= v"1.13.0-DEV.285"
+            cgparams = (; force_emit_all = true, cgparams...)
+        end
+        params = Base.CodegenParams(; cgparams...)
+
+        ts_mod = LLVM.ThreadSafeModule("enzyme_emit")
+        ts_mod() do tmod
+            triple!(tmod, triple(mod))
+            datalayout!(tmod, datalayout(mod))
+            flags(tmod)["Dwarf Version", LLVM.API.LLVMModuleFlagBehaviorWarning] =
+                Metadata(ConstantInt(GPUCompiler.dwarf_version(job.config.target)))
+            flags(tmod)["Debug Info Version", LLVM.API.LLVMModuleFlagBehaviorWarning] =
+                Metadata(ConstantInt(GPUCompiler.DEBUG_METADATA_VERSION()))
+        end
+
+        native_code = @ccall jl_emit_native(
+            codeinfos::Vector{Any},
+            ts_mod::LLVM.API.LLVMOrcThreadSafeModuleRef,
+            Ref(params)::Ptr{Base.CodegenParams},
+            false::Cint,
+        )::Ptr{Cvoid}
+        native_code == C_NULL && return nothing
+
+        llvm_mod_ref = ccall(
+            :jl_get_llvm_module,
+            LLVM.API.LLVMOrcThreadSafeModuleRef,
+            (Ptr{Cvoid},),
+            native_code,
+        )
+        llvm_mod_ref == C_NULL && return nothing
+
+        entry_ci = codeinfos[1]::Core.CodeInstance
+        llvm_func_idx = Ref{Int32}(-1)
+        llvm_specfunc_idx = Ref{Int32}(-1)
+        ccall(
+            :jl_get_function_id,
+            Nothing,
+            (Ptr{Cvoid}, Any, Ptr{Int32}, Ptr{Int32}),
+            native_code,
+            entry_ci,
+            llvm_func_idx,
+            llvm_specfunc_idx,
+        )
+        llvm_specfunc_idx[] < 1 && return nothing
+        specfunc_ref = ccall(
+            :jl_get_llvm_function,
+            LLVM.API.LLVMValueRef,
+            (Ptr{Cvoid}, UInt32),
+            native_code,
+            llvm_specfunc_idx[] - 1,
+        )
+        specfunc_ref == C_NULL && return nothing
+        entry_name = LLVM.name(LLVM.Function(specfunc_ref))
+
+        emitted_mod = nothing
+        LLVM.ThreadSafeModule(llvm_mod_ref)() do m
+            emitted_mod = m
+            # Bind globals Julia emitted without an initializer.
+            @static if VERSION >= v"1.13.0-DEV.623"
+                num_gvars = Ref{Csize_t}(0)
+                @ccall jl_get_llvm_gvs(
+                    native_code::Ptr{Cvoid}, num_gvars::Ptr{Csize_t}, C_NULL::Ptr{Cvoid},
+                )::Nothing
+                gvs = Vector{Ptr{LLVM.API.LLVMOpaqueValue}}(undef, num_gvars[])
+                @ccall jl_get_llvm_gvs(
+                    native_code::Ptr{Cvoid}, num_gvars::Ptr{Csize_t},
+                    gvs::Ptr{LLVM.API.LLVMOpaqueValue},
+                )::Nothing
+                inits = Vector{Ptr{Cvoid}}(undef, num_gvars[])
+                @ccall jl_get_llvm_gv_inits(
+                    native_code::Ptr{Cvoid}, num_gvars::Ptr{Csize_t}, inits::Ptr{Cvoid},
+                )::Nothing
+                for (gv_ref, init) in zip(gvs, inits)
+                    gv = GlobalVariable(gv_ref)
+                    if LLVM.isnull(initializer(gv))
+                        initializer!(gv, const_inttoptr(ConstantInt(Int64(init)), value_type(initializer(gv))))
+                    end
+                end
+            elseif VERSION >= v"1.12.0-DEV.1703" && GPUCompiler.HAS_LLVM_GVS_GLOBALS
+                num_gvars = Ref{Csize_t}(0)
+                @ccall jl_get_llvm_gvs(
+                    native_code::Ptr{Cvoid}, num_gvars::Ptr{Csize_t}, C_NULL::Ptr{Cvoid},
+                )::Nothing
+                gvs = Vector{Ptr{LLVM.API.LLVMOpaqueValue}}(undef, num_gvars[])
+                @ccall jl_get_llvm_gvs_globals(
+                    native_code::Ptr{Cvoid}, num_gvars::Ptr{Csize_t},
+                    gvs::Ptr{LLVM.API.LLVMOpaqueValue},
+                )::Nothing
+                inits = Vector{Ptr{Cvoid}}(undef, num_gvars[])
+                @ccall jl_get_llvm_gvs(
+                    native_code::Ptr{Cvoid}, num_gvars::Ptr{Csize_t}, inits::Ptr{Cvoid},
+                )::Nothing
+                for (gv_ref, init) in zip(gvs, inits)
+                    gv = GlobalVariable(gv_ref)
+                    if LLVM.isnull(initializer(gv))
+                        initializer!(gv, const_inttoptr(ConstantInt(Int64(init)), value_type(initializer(gv))))
+                    end
+                end
+            end
+        end
+
+        fname = "ejl_oc_" * safe_name(entry_name) * "_" * string(convert(UInt, pointer_from_objref(mi)))
+        marker = StringAttribute("enzymejl_emitted")
+        for f in functions(emitted_mod)
+            isdeclaration(f) && continue
+            push!(function_attributes(f), marker)
+        end
+        entry_fn = functions(emitted_mod)[entry_name]
+        name!(entry_fn, fname)
+
+        # The linker drops source definitions that cannot be referenced from the
+        # destination, so internalize and erase only after linking.
+        link_split_existing!(mod, emitted_mod)
+        for f in collect(functions(mod))
+            isdeclaration(f) && continue
+            has_fn_attr(f, marker) || continue
+            delete!(function_attributes(f), marker)
+            if startswith(LLVM.name(f), "jfptr_")
+                erase!(f)
+            else
+                linkage!(f, LLVM.API.LLVMInternalLinkage)
+            end
+        end
+        fns = functions(mod)
+        return haskey(fns, fname) ? fns[fname] : nothing
+    end
+else
+    emit_mi_into_module!(interp, @nospecialize(job::CompilerJob), mod::LLVM.Module, mi::Core.MethodInstance) = nothing
+end
+
+"""
+    resolve_indirect_callee!(interp, job, mod, inst, dest, emitted) -> LLVM.Value
+
+Recover the callee of an indirect `call`/`invoke`/`callbr` when it is Julia
+JIT code: a call through an `OpaqueClosure`'s `specptr`, or any call through
+a constant pointer `jl_lookup_code_address` resolves to a `CodeInstance`.
+Emits the callee's `MethodInstance` into `mod` (cached in `emitted`) and
+returns the `LLVM.Function` to call. Returns `dest` unchanged when the
+callee cannot be recovered, preserving the caller's fallback behavior.
+"""
+function resolve_indirect_callee!(interp, @nospecialize(job::CompilerJob), mod::LLVM.Module, inst::LLVM.CallInst, @nospecialize(dest::LLVM.Value), emitted::Dict{Core.MethodInstance, LLVM.Function})::LLVM.Value
+    # Chase the callee through inttoptr/bitcast to a constant code address,
+    # dereferencing a load only when its address is itself constant (a
+    # `julia.constgv` global or a literal pointer).
+    base, off = get_base_and_offset(dest; offsetAllowed = true, inttoptr = true)
+    addr = nothing
+    if isa(base, LLVM.LoadInst)
+        pbase, poff = get_base_and_offset(operands(base)[1]; offsetAllowed = true, inttoptr = true)
+        paddr = nothing
+        if isa(pbase, LLVM.ConstantInt)
+            paddr = convert(UInt, pbase) + poff
+        elseif isa(pbase, LLVM.GlobalVariable) && haskey(metadata(pbase), "julia.constgv")
+            init = LLVM.initializer(pbase)
+            if init !== nothing
+                ibase, ioff = get_base_and_offset(init; offsetAllowed = true, inttoptr = true)
+                if isa(ibase, LLVM.ConstantInt)
+                    paddr = convert(UInt, ibase) + ioff + poff
+                end
+            end
+        end
+        if paddr !== nothing
+            lt = value_type(base)
+            if isa(lt, LLVM.PointerType) ||
+                    (isa(lt, LLVM.IntegerType) && LLVM.API.LLVMGetIntTypeWidth(lt) == 64)
+                val = unsafe_load(Ptr{UInt64}(paddr))
+                val != 0 && (addr = val)
+            end
+        end
+    elseif isa(base, LLVM.ConstantInt)
+        addr = convert(UInt, base) + off
+    end
+
+    ptr = addr === nothing ? nothing : reinterpret(Ptr{Cvoid}, addr)
+    mi = nothing
+    if ptr !== nothing
+        mi = mi_from_code_address(ptr)
+    end
+
+    # An opaque closure call passes the closure object as its first
+    # argument, which pins down the code pointer when the chase above could
+    # not resolve it.
+    if ptr === nothing
+        args = arg_operands_view(inst)
+        if length(args) >= 1
+            legal, obj = absint(args[1])
+            if legal && obj isa Core.OpaqueClosure
+                specptr = getfield(obj, :specptr)
+                if specptr != C_NULL
+                    mi = mi_from_code_address(specptr)
+                end
+                if mi === nothing
+                    spec = obj.source.specializations
+                    if spec isa Core.MethodInstance
+                        mi = spec
+                    end
+                end
+            end
+        end
+    end
+
+    if mi === nothing || !(mi.def isa Method)
+        return dest
+    end
+
+    llvmf = get(emitted, mi, nothing)
+    if llvmf === nothing
+        llvmf = emit_mi_into_module!(interp, job, mod, mi)
+        if llvmf === nothing
+            return dest
+        end
+        emitted[mi] = llvmf
+        if isassigned(ENZYME_CONTEXT)
+            push!(ENZYME_CONTEXT[].edges, mi)
+        end
+    end
+
+    if LLVM.function_type(llvmf) != called_type(inst)
+        return dest
+    end
+
+    LLVM.API.LLVMSetOperand(inst, LLVM.API.LLVMGetNumOperands(inst) - 1, llvmf)
+    return llvmf
+end
+
+function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, f::LLVM.Function, deletedfns::Vector{LLVM.Function}, mod::LLVM.Module, emitted::Dict{Core.MethodInstance, LLVM.Function})
     calls = LLVM.CallInst[]
     isInline = API.EnzymeGetCLBool(cglobal((:EnzymeInline, API.libEnzyme))) != 0
     mod = LLVM.parent(f)
@@ -482,7 +770,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             inst = LLVM.Instruction(iter)
             iter = LLVM.API.LLVMGetNextInstruction(iter)
 
-            if try_replace_constant_load!(inst; check_mutability=true, do_replace=true) != inst
+            if try_replace_constant_load!(inst; check_mutability = true, do_replace = true) != inst
                 continue
             end
             if isa(inst, LLVM.CallInst)
@@ -713,7 +1001,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
     while length(calls) > 0
         inst = pop!(calls)
-        check_ir!(interp, job, errors, imported, inst, calls, mod)
+        check_ir!(interp, job, errors, imported, inst, calls, mod, emitted)
     end
 
     return errors
@@ -983,7 +1271,7 @@ end
 import GPUCompiler:
     DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
-function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, inst::LLVM.CallInst, calls::Vector{LLVM.CallInst}, mod::LLVM.Module)
+function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, inst::LLVM.CallInst, calls::Vector{LLVM.CallInst}, mod::LLVM.Module, emitted::Dict{Core.MethodInstance, LLVM.Function})
     world = job.world
     method_table = Core.Compiler.method_table(interp)
     bt = backtrace(inst)
@@ -999,6 +1287,10 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     end
     if isa(dest, LLVM.ConstantExpr) && opcode(dest) == LLVM.API.LLVMIntToPtr && isa(operands(dest)[1], LLVM.ConstantExpr) && opcode(operands(dest)[1]) == LLVM.API.LLVMPtrToInt
         dest = operands(operands(dest)[1])[1]
+    end
+
+    if !isa(dest, LLVM.Function) && !isa(dest, InlineAsm)
+        dest = resolve_indirect_callee!(interp, job, mod, inst, dest, emitted)
     end
 
     if isa(dest, LLVM.Function)
@@ -1045,7 +1337,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
             op1 = operands(inst)[1]
             if isa(op1, LLVM.Instruction)
-                op1 = try_replace_constant_load!(op1; check_mutability=false, do_replace=false)
+                op1 = try_replace_constant_load!(op1; check_mutability = false, do_replace = false)
             end
             arg1, _ = get_base_and_offset(op1; offsetAllowed = false, inttoptr = true)
             if isa(arg1, LLVM.ConstantInt)
@@ -1157,7 +1449,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             @assert length(ops) == 2
             flib = ops[1]
             if isa(flib, LLVM.Instruction)
-                flib = try_replace_constant_load!(flib; check_mutability=false, do_replace=false)
+                flib = try_replace_constant_load!(flib; check_mutability = false, do_replace = false)
             end
             if isa(flib, LLVM.ConstantExpr) || isa(flib, LLVM.GlobalVariable)
                 legal, flib2 = absint(flib)
