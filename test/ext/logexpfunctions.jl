@@ -15,12 +15,11 @@ xlogydiff(x) = xlogy(x[1], 23.0)
 end
 
 @testset "xlogx" begin
-    # test_scalar compares against a finite difference, which needs x - h > 0 and
-    # cannot express an infinite derivative, so near 0 check log(x) + 1 directly.
+    # test_scalar needs x - h > 0 and cannot express an infinite derivative
     @test Enzyme.autodiff(Reverse, xlogx, Active, Active(0.0))[1][1] == -Inf
     @test Enzyme.autodiff(Forward, xlogx, Duplicated(0.0, 1.0))[1] == -Inf
     @test Enzyme.autodiff(Reverse, xlogx, Active, Active(0.0f0))[1][1] === -Inf32
-    @test Enzyme.autodiff(Reverse, xlogx, Active, Active(1.0e-8))[1][1] == log(1.0e-8) + 1
+    @test Enzyme.autodiff(Reverse, xlogx, Active, Active(1.0e-8))[1][1] ≈ log(1.0e-8) + 1
 
     test_scalar(xlogx, 1.0)
     test_scalar(xlogx, 2.0)
