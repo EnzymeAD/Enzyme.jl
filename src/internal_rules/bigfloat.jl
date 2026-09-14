@@ -34,7 +34,7 @@ end
 function EnzymeRules.augmented_primal(
     config::EnzymeRules.RevConfig,
     Ty::Const{Type{BigFloat}},
-    RT::Type{<:Union{DuplicatedNoNeed,Duplicated,BatchDuplicated,BatchDuplicatedNoNeed}},
+    RT::Type{<:Union{DuplicatedNoNeed,Duplicated,BatchDuplicated,BatchDuplicatedNoNeed}};
     kwargs...,
 )
     primal = if EnzymeRules.needs_primal(config)
@@ -61,7 +61,7 @@ function EnzymeRules.reverse(
     config::EnzymeRules.RevConfig,
     Ty::Const{Type{BigFloat}},
     RT::Type{<:Union{DuplicatedNoNeed,Duplicated,BatchDuplicated,BatchDuplicatedNoNeed}},
-    tape,
+    tape;
     kwargs...,
 )
     return ()
@@ -83,3 +83,4 @@ EnzymeRules.@easy_rule(Base.inv(a::BigFloat), (-(one(a)/a^2),))
 EnzymeRules.@easy_rule(Base.sin(a::BigFloat), (cos(a),))
 EnzymeRules.@easy_rule(Base.cos(a::BigFloat), (-sin(a),))
 EnzymeRules.@easy_rule(Base.tan(a::BigFloat), (one(a) + Ω^2,))
+EnzymeRules.@easy_rule(Base.zero(a::Type{BigFloat}), (0,))

@@ -124,6 +124,7 @@ export EnzymeRules
 include("pmap.jl")
 
 import LLVM
+using ScopedValues: ScopedValue, @with
 include("api.jl")
 
 Base.convert(::Type{API.CDerivativeMode}, ::ReverseMode) = API.DEM_ReverseModeCombined
@@ -132,15 +133,53 @@ Base.convert(::Type{API.CDerivativeMode}, ::ForwardMode) = API.DEM_ForwardMode
 
 function guess_activity end
 
+"""
+    EnzymeContext
+
+The state one differentiation of one module accumulates: the modules
+`nested_codegen!` emitted and has yet to link, the edges the resulting
+`CodeInstance` must depend on, the cache of already emitted nested
+functions, and the cached thunks already imported into one of those modules.
+
+A context belongs to a single `compile_unhooked` invocation. It is not passed
+as an argument: `compile_unhooked` binds it to the [`ENZYME_CONTEXT`](@ref)
+scoped value for the duration of the compilation, and everything running under
+it -- the rule handlers Enzyme calls back into, in particular -- reaches it
+with [`enzyme_context`](@ref). A nested compilation binds its own context,
+which the outer one gets back when the nested compilation returns.
+"""
 mutable struct EnzymeContext
     modules_to_link::Vector{LLVM.Module}
     edges::Vector{Any}
     nested_cache::Dict{Core.MethodInstance, String}
+    imported_thunks::Dict{Ptr{Cvoid}, String}
     EnzymeContext() = new(
         LLVM.Module[],
         Any[],
-        Dict{Core.MethodInstance, String}()
+        Dict{Core.MethodInstance, String}(),
+        Dict{Ptr{Cvoid}, String}()
     )
+end
+
+"""
+    ENZYME_CONTEXT
+
+The [`EnzymeContext`](@ref) of the compilation running in the current dynamic
+scope. Bound by `compile_unhooked`; read with [`enzyme_context`](@ref).
+"""
+const ENZYME_CONTEXT = ScopedValue{EnzymeContext}()
+
+"""
+    enzyme_context()
+
+Return the [`EnzymeContext`](@ref) of the compilation running in the current
+dynamic scope. It is an error to call this outside of a compilation.
+"""
+function enzyme_context()
+    if !isassigned(ENZYME_CONTEXT)
+        error("Enzyme: no EnzymeContext is active; this must be called during a compilation")
+    end
+    return ENZYME_CONTEXT[]
 end
 
 include("logic.jl")
@@ -424,7 +463,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
                     #=ShadowInit=#true
                 }(),
                 FA,
-                Duplicated{rt},
+                width == 1 ? Duplicated{rt} : BatchDuplicated{rt, width},
                 (tt′).parameters...
             )
             res = forward(f, args...)
@@ -756,13 +795,15 @@ code, as well as high-order differentiation.
                     ErrIfFuncWritten,
                     #=ShadowInit=#true
                 }()
-            TapeType = tape_type(rs, FA, Duplicated{rt},
+            rt_annotation = width == 1 ? Duplicated{rt} : BatchDuplicated{rt, width}
+            TapeType = tape_type(
+                rs, FA, rt_annotation,
                 (tt′).parameters...)
             forward, adjoint = autodiff_deferred_thunk(
                 rs,
                 TapeType,
                 FA,
-                Duplicated{rt},
+                rt_annotation,
                 (tt′).parameters...
             )
             res = forward(f, args...)
@@ -1594,6 +1635,7 @@ macro import_rrule(args...)
     return _import_rrule(args...)
 end
 
+include("late_generated.jl")
 include("precompile.jl")
 
 end # module

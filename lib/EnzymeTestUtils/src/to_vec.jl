@@ -28,7 +28,7 @@ function Base.setindex!(d::AliasDict, val, key)
     return d
 end
 
-const ElementType = Base.IEEEFloat # , Complex{<:Base.IEEEFloat}}
+const ElementType = Union{Base.IEEEFloat, BigFloat} # , Complex{<:Base.IEEEFloat}}
 
 # alternative to FiniteDifferences.to_vec to use Enzyme's semantics for arrays instead of
 # ChainRules': Enzyme treats tangents of AbstractArrays the same as tangents of any other

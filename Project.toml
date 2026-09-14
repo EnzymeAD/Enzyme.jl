@@ -1,7 +1,7 @@
 name = "Enzyme"
 uuid = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 authors = ["William Moses <wmoses@mit.edu>", "Valentin Churavy <vchuravy@mit.edu>"]
-version = "0.13.195"
+version = "0.13.204"
 
 [deps]
 CEnum = "fa961155-64e5-5f13-b03f-caf6b980ea82"
@@ -17,6 +17,7 @@ PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 Preferences = "21216c6a-2e73-6563-6e65-726566657250"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+ScopedValues = "7e506255-f358-4e82-b7e4-beb19740aa63"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 
 [weakdeps]
@@ -47,7 +48,7 @@ CEnum = "0.4, 0.5"
 ChainRulesCore = "1.13"
 CUDA = "5, 6"
 EnzymeCore = "0.8.21"
-Enzyme_jll = "0.0.289"
+Enzyme_jll = "0.0.293"
 GPUArraysCore = "0.1.6, 0.2"
 GPUCompiler = "1.6.2"
 LLVM = "9.10"
@@ -56,6 +57,9 @@ ObjectFile = "0.4, 0.5"
 OrderedCollections = "1, 2"
 PrecompileTools = "1"
 Preferences = "1.5.2"
+# 1.6.2 is the first release whose Julia 1.10 backport reads a scoped value
+# that has no default correctly.
+ScopedValues = "1.6.2"
 SparseArrays = "1"
 SpecialFunctions = "2.2"
 StaticArrays = "1"

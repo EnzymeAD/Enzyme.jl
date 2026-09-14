@@ -392,6 +392,36 @@ end
 import .EnzymeRules: FwdConfig, RevConfig, Annotation
 using Core.Compiler: ArgInfo, StmtInfo, AbsIntState
 
+"""
+    enzyme_call_kind(interp, specTypes) -> Union{Nothing, Symbol}
+
+Say how Enzyme handles a call of the signature `specTypes`, or `nothing` when
+it handles it like any other call:
+
+- `:primitive`: Enzyme differentiates the call itself (`is_primitive_func`).
+- `:alwaysinline`: the inliner must always inline it (`is_alwaysinline_func`).
+- `:inactive`, `:frule`, `:rrule`: the signature has a rule of that kind, and
+  `interp` has that kind of rule enabled.
+
+Every place that decides whether a call needs Enzyme's handling asks this, so
+that a call reaches the pipeline the same way whichever path inference took to
+it: `FutureCallinfoByType` for an ordinary call, and `invoked_ci_needs_rule`
+for `invoke(f, ci, args...)`.
+"""
+function enzyme_call_kind(@nospecialize(interp::EnzymeInterpreter), @nospecialize(specTypes))::Union{Nothing, Symbol}
+    is_primitive_func(specTypes) && return :primitive
+    is_alwaysinline_func(specTypes) && return :alwaysinline
+    method_table = Core.Compiler.method_table(interp)
+    if interp.inactive_rules && cached_is_inactive(specTypes, interp.world, method_table)
+        return :inactive
+    elseif interp.forward_rules && cached_has_frule(specTypes, interp.world, method_table)
+        return :frule
+    elseif interp.reverse_rules && cached_has_rrule(specTypes, interp.world, method_table)
+        return :rrule
+    end
+    return nothing
+end
+
 struct FutureCallinfoByType
     atype::Any
 end
@@ -399,21 +429,12 @@ end
 @inline function (closure::FutureCallinfoByType)(ret::Core.Compiler.CallMeta, @nospecialize(interp::AbstractInterpreter), sv::AbsIntState)
     atype = closure.atype
     callinfo = ret.info
-    specTypes = simplify_kw(atype)
 
-    if is_primitive_func(specTypes)
-        callinfo = NoInlineCallInfo(callinfo, atype, :primitive)
-    elseif is_alwaysinline_func(specTypes)
+    kind = enzyme_call_kind(interp, simplify_kw(atype))
+    if kind === :alwaysinline
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
-    else
-        method_table = Core.Compiler.method_table(interp)
-        if interp.inactive_rules && cached_is_inactive(specTypes, interp.world, method_table)
-            callinfo = NoInlineCallInfo(callinfo, atype, :inactive)
-        elseif interp.forward_rules && cached_has_frule(specTypes, interp.world, method_table)
-            callinfo = NoInlineCallInfo(callinfo, atype, :frule)
-        elseif interp.reverse_rules && cached_has_rrule(specTypes, interp.world, method_table)
-            callinfo = NoInlineCallInfo(callinfo, atype, :rrule)
-        end
+    elseif kind !== nothing
+        callinfo = NoInlineCallInfo(callinfo, atype, kind)
     end
     @static if VERSION ≥ v"1.11-"
         return Core.Compiler.CallMeta(ret.rt, ret.exct, ret.effects, callinfo)
@@ -449,6 +470,33 @@ function Core.Compiler.abstract_call_gf_by_type(
     return FutureCallinfoByType(atype)(ret, interp, sv)
 end
 
+
+# Say if the compiler both understands `invoke(f, ci::CodeInstance, args...)` during
+# inference (`InvokeCICallInfo`, Julia 1.12+) and lowers it to a direct `:invoke`
+# (Julia 1.13+). The 1.12 inliner lowers only `Core.invoke` calls with an
+# `InvokeCallInfo`, so there such calls stay runtime `invoke` calls.
+const HAS_INVOKE_CI_LOWERING = VERSION >= v"1.13-"
+
+@static if HAS_INVOKE_CI_LOWERING
+    """
+        invoked_ci_needs_rule(interp, ci::CodeInstance)::Bool
+
+    Say if the signature `invoke(f, ci, args...)` targets needs Enzyme's own call
+    handling: it is a primitive, or it has an inactive, forward or reverse rule
+    under `interp` (see `enzyme_call_kind`). An always-inlined signature does
+    not: the inliner gives it a body like any other call.
+    """
+    function invoked_ci_needs_rule(@nospecialize(interp::EnzymeInterpreter), ci::Core.CodeInstance)::Bool
+        CC = Core.Compiler
+        abi = @static if isdefined(Core.Compiler, :get_ci_abi)
+            CC.get_ci_abi(ci)
+        else
+            CC.get_ci_mi(ci).specTypes
+        end
+        kind = enzyme_call_kind(interp, simplify_kw(abi))
+        return kind !== nothing && kind !== :alwaysinline
+    end
+end
 
 let # overload `inlining_policy`
     @static if VERSION ≥ v"1.11.0-DEV.879"
@@ -1118,6 +1166,42 @@ end
     end
 end
 
+# Element types of the broadcast arguments, queried strictly one after the other
+# (Julia >= 1.12 only; the fields hold `Core.Compiler.Future{Type}`s).
+#
+# Querying a nested `Broadcasted` argument runs its function through
+# `abstract_call`, which may push a new inference frame under `sv` and hand back
+# a pending `Future`. Issuing the query for the next argument before that frame
+# has finished leaves two live sibling frames under `sv`. Julia's own inference
+# never does that: it waits for each edge before starting the next one. Since
+# Julia 1.13 `merge_call_chain!` walks `cycle_parent` from the caller up to the
+# frame that closes a cycle, and a sibling is not on that path, so a call from
+# the second sibling back into the first fails with
+# `TypeError: typeassert expected InferenceState, got Nothing`
+# (broadcasting `g.(h.(x), k.(x))` where `k` calls `h`, e.g. in Comrade).
+# Julia 1.12 silently mislabelled the cycle instead.
+mutable struct SequentialEltypes
+    const state::NamedTuple
+    const args::Tuple
+    const eltypes::Vector{Any}
+    const ret::Any
+    pending::Any
+end
+
+function (se::SequentialEltypes)(interp, sv)
+    while true
+        isready(se.pending) || return false
+        push!(se.eltypes, se.pending[])
+        i = length(se.eltypes) + 1
+        if i > length(se.args)
+            se.ret[] = Iterators.TupleOrBottom(se.eltypes...)
+            return true
+        end
+        se.pending = ty_broadcast_getindex_eltype(se.state, se.args[i])
+    end
+    return
+end
+
 if VERSION < v"1.12"
 ## Computation of inferred result type, for empty and concretely inferred cases only
 ty_broadcast_getindex_eltype(state::NamedTuple, bc::Type{<:Base.Broadcast.Broadcasted}) = ty_combine_eltypes(state, bc.parameters[3], (bc.parameters[4].parameters...,))
@@ -1147,34 +1231,19 @@ else
 ty_broadcast_getindex_eltype(state::NamedTuple, bc::Type{<:Base.Broadcast.Broadcasted})::Core.Compiler.Future{Type} = ty_combine_eltypes(state, bc.parameters[3], (bc.parameters[4].parameters...,))
 ty_broadcast_getindex_eltype(state::NamedTuple, A)::Core.Compiler.Future{Type} = Core.Compiler.Future{Type}(eltype(A))  # Tuple, Array, etc.
 
-ty_eltypes(state::NamedTuple, ::Tuple{})::Core.Compiler.Future{Type} = Tuple{}
-function ty_eltypes(state::NamedTuple, t::Tuple{Any})::Core.Compiler.Future{Type}
-    retT = ty_broadcast_getindex_eltype(state, t[1])
-    (; interp, sv) = state
-    Core.Compiler.Future{Type}(retT, interp, sv) do retT, interp, sv
-        Iterators.TupleOrBottom(retT)
+    ty_eltypes(state::NamedTuple, ::Tuple{})::Core.Compiler.Future{Type} = Tuple{}
+    function ty_eltypes(state::NamedTuple, t::Tuple)::Core.Compiler.Future{Type}
+        (; interp, sv) = state
+        se = SequentialEltypes(
+            state,
+            t,
+            Any[],
+            Core.Compiler.Future{Type}(),
+            ty_broadcast_getindex_eltype(state, t[1]),
+        )
+        se(interp, sv) || push!(sv.tasks, se)
+        return se.ret
     end
-end
-function ty_eltypes(state::NamedTuple, t::Tuple{Any,Any})::Core.Compiler.Future{Type}
-    retT1 = ty_broadcast_getindex_eltype(state, t[1])
-    retT2 = ty_broadcast_getindex_eltype(state, t[2])
-    (; interp, sv) = state
-    Core.Compiler.Future{Type}(isready(retT1) && isready(retT2), interp, sv) do interp, sv
-            Iterators.TupleOrBottom(retT1[], retT2[])
-    end
-end
-function ty_eltypes(state::NamedTuple, t::Tuple)::Core.Compiler.Future{Type}
-    TT = ty_eltypes(state, Base.tail(t))
-    (; interp, sv) = state
-    if TT === Union{}
-        Core.Compiler.Future{Type}{Union{}}
-    else
-        retT = ty_broadcast_getindex_eltype(state, t[1])
-        Core.Compiler.Future{Type}(isready(TT) && isready(retT), interp, sv) do interp, sv
-            Iterators.TupleOrBottom(retT[], TT[].parameters...)
-        end
-    end
-end
 
 # Inferred eltype of result of broadcast(f, args...)
 function ty_combine_eltypes(state::NamedTuple, f, args::Tuple)::Core.Compiler.Future{Type}
@@ -1279,6 +1348,27 @@ function abstract_call_known(
 ) where Handler
 
     (; fargs, argtypes) = arginfo
+
+    @static if HAS_INVOKE_CI_LOWERING
+        # `abstract_invoke` handles `invoke(f, ci::CodeInstance, args...)`. It skips
+        # `abstract_call_gf_by_type`, so the call gets no rule marking. It also keeps
+        # the given CodeInstance instead of the one Enzyme inferred, so the code is
+        # emitted again, without the `enzymejl_mi` attributes the rule handlers read.
+        # A rule defines the call's semantics whichever method the CodeInstance
+        # pinned. Thus, when the signature has one, analyze the plain `f(args...)`.
+        if f === Core.invoke && length(argtypes) >= 3
+            citype = argtypes[3]
+            if citype isa Core.Const && citype.val isa Core.CodeInstance &&
+                    invoked_ci_needs_rule(interp, citype.val)
+                argtypes′ = Core.Compiler.invoke_rewrite(argtypes)
+                fargs′ = fargs === nothing ? nothing : Core.Compiler.invoke_rewrite(fargs)
+                # `abstract_call` handles a known callee and one without a
+                # singleton type, such as a callable struct or a closure
+                # instance, alike. Both reach `abstract_call_gf_by_type`.
+                return Core.Compiler.abstract_call(interp, ArgInfo(fargs′, argtypes′), si, sv)
+            end
+        end
+    end
 
     if interp.within_autodiff_rewrite && f === Enzyme.within_autodiff
         if length(argtypes) != 1
@@ -1504,6 +1594,41 @@ function abstract_call_known(
         sv::AbsIntState,
         max_methods::Int,
     )
+end
+
+# Say if custom rules can be called through their natively compiled CodeInstance
+# (see `Enzyme.Compiler.invoke_codegen!`). Julia 1.12 added the compiler entry
+# point that infers a MethodInstance with a given interpreter and hands the
+# result to the JIT (`typeinf_ext_toplevel` with `SOURCE_MODE_ABI`) and the
+# runtime function that reads back the entry points (`jl_read_codeinst_invoke`).
+# A Julia that renames one of them fails loudly at the first rule compilation.
+const HAS_INVOKE_RULES = VERSION >= v"1.12-"
+
+@static if HAS_INVOKE_RULES
+
+    """
+        codeinst_entry(ci::CodeInstance) -> (specptr, invoke)
+
+    Compile `ci` if needed and return its two entry points. `specptr` is the
+    specialized-signature entry, or `C_NULL` when `ci` only got a boxed
+    `jl_fptr_args` entry. `invoke` is the boxed `invoke(F, args, nargs, ci)`
+    entry, or `C_NULL` when `ci` could not be compiled.
+    """
+    function codeinst_entry(ci::Core.CodeInstance)
+        specsigflags = Ref{UInt8}(0)
+        invoke = Ref{Ptr{Cvoid}}(C_NULL)
+        specptr = Ref{Ptr{Cvoid}}(C_NULL)
+        waitcompile = Cint(1)
+        @ccall jl_read_codeinst_invoke(
+            ci::Any, specsigflags::Ptr{UInt8}, invoke::Ptr{Ptr{Cvoid}},
+            specptr::Ptr{Ptr{Cvoid}}, waitcompile::Cint
+        )::Cvoid
+        # Bit 0 says that specptr is the specialized-signature entry, not a
+        # jl_fptr_args entry.
+        specialized = (specsigflags[] & 0b1) != 0
+        return (specialized ? specptr[] : C_NULL, invoke[])
+    end
+
 end
 
 end

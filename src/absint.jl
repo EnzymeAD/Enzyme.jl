@@ -139,9 +139,16 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
 
                 if legal
                     res = Ty{found...}
+                    # A `Vararg` must not be wrapped in a `UnionAll` directly (deprecated),
+                    # so build the binding environment around a `Tuple` and rewrap `res`
+                    # into it. `rewrap_unionall` dispatches on `Core.TypeofVararg` and
+                    # pushes the bindings into the element type, leaving the `Vararg`
+                    # itself unwrapped; for every other `Ty` it is the plain loop.
+                    env = Tuple{res}
                     for u in unionalls
-                        res = UnionAll(u, res)
+                        env = UnionAll(u, env)
                     end
+                    res = Base.rewrap_unionall(res, env)
                     return (true, res)
                 end
             end
@@ -898,7 +905,10 @@ function abs_typeof(
     end
 
     if isa(arg, LLVM.GetElementPtrInst) && !all(Base.Fix2(isa, LLVM.ConstantInt), operands(arg)[2:end])
-        base = operands(arg)[1]
+        # The pointer being indexed may itself be a constant-offset gep off of the
+        # typed base (e.g. after licm hoists the `-sizeof(T)` memoryref adjustment
+        # out of the loop), so look through any such constant offsets here.
+        base, base_offset = get_base_and_offset(operands(arg)[1])
         legal, typ, byref = abs_typeof(base, partial, seenphis)
         if legal && byref == GPUCompiler.BITS_VALUE && typ <: Ptr && Base.isconcretetype(typ)
             etyp = eltype(typ)
@@ -939,8 +949,10 @@ function abs_typeof(
                         if isa(offset_0_val, LLVM.ConstantInt) && isa(offset_1_val, LLVM.ConstantInt)
                             C = convert(Int, offset_0_val)
                             stride = convert(Int, offset_1_val) - C
-                            
-                            if C % sz == 0
+
+                            # C and base_offset must each individually be a multiple of
+                            # the element size, they cannot be combined to form one.
+                            if C % sz == 0 && base_offset % sz == 0
                                 is_multiple = false
                                 if stride % sz == 0
                                     is_multiple = true

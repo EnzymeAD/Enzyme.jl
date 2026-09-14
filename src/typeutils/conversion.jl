@@ -88,6 +88,11 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
     if tkind == LLVM.API.LLVMHalfTypeKind
         return Float16, false
     end
+    @static if isdefined(Core, :BFloat16)
+        if tkind == LLVM.API.LLVMBFloatTypeKind
+            return Core.BFloat16, false
+        end
+    end
     if tkind == LLVM.API.LLVMFloatTypeKind
         return Float32, false
     end

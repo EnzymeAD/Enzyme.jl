@@ -1059,6 +1059,18 @@ end
     )
 end
 
+@testset "BatchDuplicated closure in generic call" begin
+    struct Cl
+        a::Vector{Float64}
+    end
+    (c::Cl)(x) = c.a[1] * x
+    caller(c, x) = Base.inferencebarrier(c)(x)::Float64
+    c = Cl([2.0])
+    d1 = Cl([0.0])
+    d2 = Cl([0.0])
+    Enzyme.autodiff(Reverse, caller, BatchDuplicated(c, (d1, d2)), Active(3.0))
+end
+
 @testset "Uncached batch sizes" begin
     genericsin(x) = Base.invokelatest(sin, x)
     res = Enzyme.autodiff(Forward, genericsin, BatchDuplicated(2.0, NTuple{10, Float64}((Float64(i) for i in 1:10))))[1]

@@ -1038,14 +1038,6 @@ function FreeLogic(logic)
     ccall((:FreeEnzymeLogic, libEnzyme), Cvoid, (EnzymeLogicRef,), logic)
 end
 
-function LogicSetExternalContext(logic, ctx)
-    ccall((:EnzymeLogicSetExternalContext, libEnzyme), Cvoid, (EnzymeLogicRef, Ptr{Cvoid}), logic, ctx)
-end
-
-function LogicGetExternalContext(logic)
-    ccall((:EnzymeLogicGetExternalContext, libEnzyme), Ptr{Cvoid}, (EnzymeLogicRef,), logic)
-end
-
 function EnzymeExtractReturnInfo(ret, data, existed)
     @assert length(data) == length(existed)
     ccall(

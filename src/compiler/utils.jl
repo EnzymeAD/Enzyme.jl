@@ -160,6 +160,30 @@ Base.@assume_effects :removable :foldable :nothrow function is_nounwind(f::LLVM.
     return false
 end
 
+"""
+    is_readonly(attr::LLVM.Attribute)::Bool
+
+Whether `attr` on its own establishes that the function or argument position it
+is attached to is only read from. That is `readonly` / `readnone`, and on LLVM
+16+ a `memory` effect whose modref is read-only.
+"""
+Base.@assume_effects :removable :foldable :nothrow function is_readonly(attr::LLVM.Attribute)::Bool
+    if kind(attr) == kind(EnumAttribute("readonly"))
+        return true
+    end
+    if kind(attr) == kind(EnumAttribute("readnone"))
+        return true
+    end
+    if LLVM.version().major > 15 && isa(attr, LLVM.EnumAttribute)
+        if kind(attr) == kind(EnumAttribute("memory"))
+            if is_readonly(MemoryEffect(value(attr)))
+                return true
+            end
+        end
+    end
+    return false
+end
+
 Base.@assume_effects :removable :foldable :nothrow function is_readonly(f::LLVM.Function)::Bool
     intr = LLVM.API.LLVMGetIntrinsicID(f)
     if intr == LLVM.Intrinsic("llvm.lifetime.start").id
@@ -176,18 +200,8 @@ Base.@assume_effects :removable :foldable :nothrow function is_readonly(f::LLVM.
         return true
     end
     for attr in collect(function_attributes(f))
-        if kind(attr) == kind(EnumAttribute("readonly"))
+        if is_readonly(attr)
             return true
-        end
-        if kind(attr) == kind(EnumAttribute("readnone"))
-            return true
-        end
-        if LLVM.version().major > 15
-            if kind(attr) == kind(EnumAttribute("memory"))
-                if is_readonly(MemoryEffect(value(attr)))
-                    return true
-                end
-            end
         end
     end
     return false
@@ -333,7 +347,22 @@ end
 
 function get_pgcstack(func::LLVM.Function)
     entry_bb = first(blocks(func))
-    pgcstack_func = declare_pgcstack!(LLVM.parent(func))
+    mod = LLVM.parent(func)
+    pgcstack_func, _ = declare_pgcstack!(mod)
+
+    # A @cfunction wrapper fetches its pgcstack with julia.get_pgcstack_or_new,
+    # which adopts the calling thread when it is not a Julia thread yet. It has
+    # to stay the first getter of the entry block: FinalLowerGC roots the GC
+    # frame in whichever getter comes first, and a plain getter placed ahead of
+    # the adopting one dereferences a NULL pgcstack on a foreign thread.
+    if haskey(functions(mod), "julia.get_pgcstack_or_new")
+        or_new = functions(mod)["julia.get_pgcstack_or_new"]
+        for I in instructions(entry_bb)
+            if I isa LLVM.CallInst && called_operand(I) == or_new
+                return I
+            end
+        end
+    end
 
     for I in instructions(entry_bb)
         if I isa LLVM.CallInst && called_operand(I) == pgcstack_func
@@ -401,6 +430,42 @@ Base.@assume_effects :removable :foldable :nothrow function has_swiftself(fn::LL
     end
     return false
 end
+
+"""
+    gcstack_arg_index(fn::LLVM.Function) -> Int
+
+Give the index of the `pgcstack` parameter of `fn`, or `0` when `fn` has none.
+
+Julia's codegen marks that parameter `swiftself` where the target supports the
+swift calling convention, and turns the convention off where it does not
+(`jl_codegen_output_t::use_swiftcc`, false on RISC-V). Julia 1.13 also gives
+the parameter a `gcstack` string attribute, which `specsig` writes on every
+version. Hence recognize either mark.
+"""
+Base.@assume_effects :removable :foldable :nothrow function gcstack_arg_index(fn::LLVM.Function)::Int
+    for i in 1:length(LLVM.parameters(fn))
+        for attr in collect(LLVM.parameter_attributes(fn, i))
+            if attr isa LLVM.EnumAttribute
+                if kind(attr) == swiftself_kind
+                    return i
+                end
+            elseif attr isa LLVM.StringAttribute
+                if kind(attr) == "gcstack"
+                    return i
+                end
+            end
+        end
+    end
+    return 0
+end
+
+"""
+    has_gcstack_arg(fn::LLVM.Function) -> Bool
+
+Say if `fn` takes `pgcstack` as a parameter (see [`gcstack_arg_index`](@ref)).
+"""
+Base.@assume_effects :removable :foldable :nothrow has_gcstack_arg(fn::LLVM.Function)::Bool = gcstack_arg_index(fn) != 0
+
 Base.@assume_effects :removable :foldable :nothrow function has_fn_attr(fn::LLVM.Function, attr::LLVM.EnumAttribute)::Bool
     ekind = LLVM.kind(attr)
     for attr in collect(function_attributes(fn))
@@ -461,7 +526,7 @@ end
 
 function unique_gcmarker!(func::LLVM.Function)
     entry_bb = first(blocks(func))
-    pgcstack_func = declare_pgcstack!(LLVM.parent(func))
+    pgcstack_func, _ = declare_pgcstack!(LLVM.parent(func))
 
     found = LLVM.CallInst[]
     for I in instructions(entry_bb)

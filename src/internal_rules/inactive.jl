@@ -2,6 +2,9 @@
 function EnzymeRules.inactive(::typeof(Base.CoreLogging.handle_message_nothrow), args...)
     return nothing
 end
+function EnzymeRules.inactive(::typeof(LinearAlgebra.norm_recursive_check), args...)
+    return nothing
+end
 end
 function EnzymeRules.inactive(::typeof(Base.CoreLogging.logmsg_code), args...)
     return nothing
@@ -136,6 +139,17 @@ function EnzymeRules.inactive_noinl(::typeof(Base.signature_type), args...)
     return nothing
 end
 function EnzymeRules.inactive_noinl(::typeof(Base.methods), args...) 
+    return nothing
+end
+function EnzymeRules.inactive_noinl(::typeof(Base.fieldnames), args...) 
+    return nothing
+end
+
+# Querying a lock never mutates it and never carries derivative information.
+# `lock`, `unlock` and `trylock` are not inactive: the reverse sweep of a
+# locked region must itself hold the lock, so they get proper rules in
+# core.jl that run `unlock` as the adjoint of `lock` and vice versa.
+function EnzymeRules.inactive_noinl(::typeof(Base.islocked), ::Base.AbstractLock)
     return nothing
 end
 

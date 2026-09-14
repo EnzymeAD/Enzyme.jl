@@ -149,7 +149,7 @@ function move_to_threadsafe(ir)
     buf = convert(MemoryBuffer, ir)
 
     # 2. deserialize and wrap by a ThreadSafeModule
-    return ThreadSafeContext() do ctx
+    return @dispose ctx = ThreadSafeContext() begin
         mod = parse(LLVM.Module, buf)
         ThreadSafeModule(mod)
     end
@@ -302,12 +302,16 @@ function add!(mod)
     jd = LLVM.JITDylib(lljit)
     tsm = move_to_threadsafe(mod)
     LLVM.add!(lljit, jd, tsm)
-    return nothing
+    return jd
 end
 
 function lookup(name)
     lljit = jit[].jit
     LLVM.lookup(lljit, JITDylib(lljit), name)
+end
+
+function lookup(jd::JITDylib, name)
+    LLVM.lookup(jit[].jit, jd, name)
 end
 
 end # module

@@ -16,6 +16,8 @@ import Enzyme:
     eltype,
     API,
     EnzymeContext,
+    ENZYME_CONTEXT,
+    enzyme_context,
     TypeTree,
     typetree,
     TypeTreeTable,
@@ -35,6 +37,7 @@ import Enzyme:
     arg_operands_view
 
 using Enzyme
+using ScopedValues: @with
 
 import EnzymeCore
 import EnzymeCore: EnzymeRules, ABI, FFIABI, DefaultABI
@@ -182,18 +185,23 @@ GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
 
 # provide a specific interpreter to use.
 if VERSION >= v"1.11.0-DEV.1552"
+    # The owner of the CodeInstances produced by an `EnzymeInterpreter`, compared with
+    # `jl_egal`. It only carries the inputs that change what the interpreter infers: the
+    # method table, and the set of rules visible in the world for the mode in question.
+    # The compiler target and params types deliberately are not part of it: one `autodiff`
+    # call builds interpreters from several differently-typed jobs (the `EnzymeTarget`
+    # thunk job, the unwrapped primal job, `primal_interp_world`) that all infer the same
+    # way, and keying on those types made each of them re-infer the whole call graph.
     struct EnzymeCacheToken
-        target_type::Type
-        always_inline::Any
         method_table::Core.MethodTable
-        param_type::Type
         last_fwd_rule_world::Union{Nothing, Tuple}
         last_rev_rule_world::Union{Nothing, Tuple}
         last_ina_rule_world::Union{Nothing, Tuple}
     end
 
-    @inline EnzymeCacheToken(target_type::Type, always_inline::Any, method_table::Core.MethodTable, param_type::Type, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
-        EnzymeCacheToken(target_type, always_inline, method_table, param_type,
+    @inline EnzymeCacheToken(method_table::Core.MethodTable, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
+        EnzymeCacheToken(
+        method_table,
             is_forward ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.forward, Tuple{<:EnzymeCore.EnzymeRules.FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
             is_reverse ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:EnzymeCore.EnzymeRules.RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
             inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
@@ -201,10 +209,7 @@ if VERSION >= v"1.11.0-DEV.1552"
 
     GPUCompiler.ci_cache_token(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         EnzymeCacheToken(
-            typeof(job.config.target),
-            job.config.always_inline,
-            GPUCompiler.method_table(job),
-            typeof(job.config.params),
+        GPUCompiler.method_table(job),
             job.world,
             job.config.params.mode == API.DEM_ForwardMode,
             job.config.params.mode != API.DEM_ForwardMode,
@@ -531,9 +536,9 @@ include("llvm/transforms.jl")
 include("llvm/passes.jl")
 include("typeutils/make_zero.jl")
 
-function nested_codegen!(enzyme_context::EnzymeContext, mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type), world::UInt)
+function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type), world::UInt)
     funcspec = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, typeof(f), tt, world)
-    nested_codegen!(enzyme_context, mode, mod, funcspec, world)
+    return nested_codegen!(mode, mod, funcspec, world)
 end
 
 
@@ -555,6 +560,11 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
         returnRoots = returnRoots0 !== nothing
 
         attributes = function_attributes(llvmfn)
+        # A function that already carries `enzymejl_mi` is not this emission's
+        # output: a derivative embedded for nested differentiation may reuse
+        # the name of a fresh function, since Julia's function name counters
+        # restart per compilation.
+        fresh = !has_fn_attr(llvmfn, StringAttribute("enzymejl_mi"))
         push!(
             attributes,
             StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))),
@@ -570,6 +580,10 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
 	if startswith(LLVM.name(llvmfn), "japi3") || startswith(LLVM.name(llvmfn), "japi1") || startswith(LLVM.name(llvmfn), "jlcapi")
 	   continue
 	end
+
+        if fresh
+            check_emitted_specsig(mod, llvmfn, mi, RT)
+        end
 
         if is_sret_union(RT)
             attr = StringAttribute("enzymejl_sret_union_bytes", string(union_alloca_type(RT)))
@@ -704,6 +718,7 @@ end
 
 include("compiler/optimize.jl")
 include("compiler/interpreter.jl")
+include("compiler/callconv.jl")
 include("compiler/validation.jl")
 include("typeutils/inference.jl")
 
@@ -1219,6 +1234,11 @@ end
 end
 
 function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLVM.Function}, job, edges, run_enzyme, mode::API.CDerivativeMode)::Tuple{Dict{String,LLVM.API.LLVMLinkage}, HandlerState}
+    # One memo table for the whole module: the argument and return types of
+    # its functions overlap heavily (the same model / array types recur in
+    # every kernel), and building a TypeTree walks the type's fields through
+    # the C API each time.
+    seen = TypeTreeTable()
 
     for f in functions(mod)
         if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1") || startswith(LLVM.name(f), "jlcapi")
@@ -1293,7 +1313,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
 
                 byref = arg.cc
 
-                rest = copy(typetree(arg.typ, ctx, dl))
+                rest = copy(typetree(arg.typ, ctx, dl, seen))
 
                 if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
                     # adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
@@ -1320,7 +1340,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
                 if !in(0, parmsRemoved)
                     @assert sret <: Ptr
                     sret_et = eltype(sret)
-                    rest = copy(typetree(sret_et, ctx, dl))
+                    rest = copy(typetree(sret_et, ctx, dl, seen))
                     shift!(rest, dl, 0, LLVM.sizeof(LLVM.DataLayout(dl), sret_ty(f, 1)), 0)
                     merge!(rest, TypeTree(API.DT_Pointer, ctx))
                     only!(rest, -1)
@@ -1345,7 +1365,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
                LLVM.return_type(LLVM.function_type(f)) != LLVM.VoidType()
                 @assert !retRemoved
                 rest = if llRT == Ptr{RT}
-                    typeTree = copy(typetree(RT, ctx, dl))
+                    typeTree = copy(typetree(RT, ctx, dl, seen))
                     merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
                     only!(typeTree, -1)
                     typeTree
@@ -1407,20 +1427,20 @@ const DumpPreNestedOpt = Ref(false)
 const DumpPostNestedOpt = Ref(false)
 
 function nested_codegen!(
-    enzyme_context::EnzymeContext,
     mode::API.CDerivativeMode,
     mod::LLVM.Module,
     funcspec::Core.MethodInstance,
     world::UInt,
     alwaysinline::Bool=false,
 )
+    enzyme_ctx = enzyme_context()
     cache_key = funcspec
-    if haskey(enzyme_context.nested_cache, cache_key)
-        fname = enzyme_context.nested_cache[cache_key]
+    if haskey(enzyme_ctx.nested_cache, cache_key)
+        fname = enzyme_ctx.nested_cache[cache_key]
         if haskey(functions(mod), fname)
             return functions(mod)[fname]
         end
-        for m in enzyme_context.modules_to_link
+        for m in enzyme_ctx.modules_to_link
             if haskey(functions(m), fname)
                 return functions(m)[fname]
             end
@@ -1449,7 +1469,7 @@ function nested_codegen!(
         permit_inlining!(f)
     end
 
-    edges = enzyme_context.edges
+    edges = enzyme_ctx.edges
     push!(edges, funcspec)
 
     LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
@@ -1465,7 +1485,7 @@ function nested_codegen!(
     end
 
     check_ir(interp, job, otherMod)
-            
+
     if DumpPreNestedOpt[]
 	API.EnzymeDumpModuleRef(otherMod.ref)
     end
@@ -1483,11 +1503,14 @@ function nested_codegen!(
     end
     
     # 4) Record module to link
-    push!(enzyme_context.modules_to_link, otherMod)
+    push!(enzyme_ctx.modules_to_link, otherMod)
 
     # Declare the function in mod so it can be called
     lfn = functions(otherMod)[entry]
     if alwaysinline
+        # A method declared `@noinline` carries that attribute. Remove it: this
+        # path always inlines, and `noinline` conflicts with `alwaysinline`.
+        delete!(function_attributes(lfn), EnumAttribute("noinline"))
         push!(function_attributes(lfn), EnumAttribute("alwaysinline"))
     end
 
@@ -1512,7 +1535,7 @@ function nested_codegen!(
         push!(return_attributes(decl), attr)
     end
 
-    enzyme_context.nested_cache[cache_key] = LLVM.name(decl)
+    enzyme_ctx.nested_cache[cache_key] = LLVM.name(decl)
     return decl
 end
 
@@ -2569,6 +2592,16 @@ function GPUCompiler.nest_params(params::AbstractEnzymeCompilerParams, parent::A
     )
 end
 
+# Backends define `method_table` for their own `CompilerJob{Target, Params}` (e.g. CUDA.jl
+# for `CompilerJob{PTXCompilerTarget, CUDACompilerParams}`). An Enzyme job wraps both the
+# target and the params, so that definition would not apply and the job would silently fall
+# back to the global method table, while the primal code emitted for it (see `codegen`)
+# is compiled under the backend's overlay table. Unwrap the job so both agree.
+function GPUCompiler.method_table(@nospecialize(job::CompilerJob{<:EnzymeTarget, <:EnzymeCompilerParams}))
+    primal_config = CompilerConfig(job.config; target = job.config.target.target, params = job.config.params.params)
+    return GPUCompiler.method_table(CompilerJob(job.source, primal_config, job.world))
+end
+
 struct UnknownTapeType end
 
 
@@ -2647,7 +2680,6 @@ const DumpPostEnzyme = Ref(false)
 const DumpPostWrap = Ref(false)
 
 function enzyme!(
-    enzyme_context::EnzymeContext,
     job::CompilerJob,
     interp,
     mod::LLVM.Module,
@@ -2800,8 +2832,7 @@ function enzyme!(
         convert(API.CDIFFE_TYPE, rt)
     end
 
-    GC.@preserve enzyme_context begin
-    LLVM.@dispose logic  = Logic(enzyme_context) begin
+    LLVM.@dispose logic = Logic() begin
 
     TA = TypeAnalysis(logic)
 
@@ -2871,7 +2902,6 @@ function enzyme!(
 
         if wrap
             augmented_primalf = create_abi_wrapper(
-                enzyme_context,
                 augmented_primalf,
                 TT,
                 rt,
@@ -2914,7 +2944,6 @@ function enzyme!(
         ) #=atomicAdd=#
         if wrap
             adjointf = create_abi_wrapper(
-                enzyme_context,
                 adjointf,
                 TT,
                 rt,
@@ -2956,7 +2985,6 @@ function enzyme!(
         augmented_primalf = nothing
         if wrap
             adjointf = create_abi_wrapper(
-                enzyme_context,
                 adjointf,
                 TT,
                 rt,
@@ -3002,7 +3030,6 @@ function enzyme!(
         if wrap
             pf = adjointf
             adjointf = create_abi_wrapper(
-                enzyme_context,
                 adjointf,
                 TT,
                 rt,
@@ -3066,7 +3093,6 @@ function enzyme!(
 
     return adjointf, augmented_primalf, TapeType
     end # @dispose logic
-    end # GC.preserve enzyme_context
 end
 
 function get_subprogram(f::LLVM.Function)
@@ -3086,7 +3112,6 @@ function set_subprogram!(f::LLVM.Function, sp)
 end
 
 function create_abi_wrapper(
-    enzyme_context::EnzymeContext,
     enzymefn::LLVM.Function,
     @nospecialize(TT::Type),
     @nospecialize(rettype::Type),
@@ -3279,6 +3304,18 @@ function create_abi_wrapper(
         end
         # shadow return
         if existed[3] != 0
+            # A non-batch activity describes a single shadow, so it is only legal at
+            # width one; a batch activity must agree with the width it was built for.
+            if rettype <: Duplicated ||
+                    rettype <: DuplicatedNoNeed ||
+                    rettype <: MixedDuplicated
+                @assert width == 1
+            elseif rettype <: BatchDuplicated ||
+                    rettype <: BatchDuplicatedNoNeed ||
+                    rettype <: BatchDuplicatedFunc ||
+                    rettype <: BatchMixedDuplicated
+                @assert width == batch_size(rettype)
+            end
             if rettype <: Duplicated ||
                rettype <: DuplicatedNoNeed ||
                rettype <: BatchDuplicated ||
@@ -3599,7 +3636,7 @@ function create_abi_wrapper(
 	    end
             Func = get_func(T)
             funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, Func, Tuple{}, world)
-            llvmf = nested_codegen!(enzyme_context, Mode, mod, funcspec, world)
+            llvmf = nested_codegen!(Mode, mod, funcspec, world)
             push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
             Func_RT = return_type(interp, funcspec)
             @assert Func_RT == NTuple{width,T′}
@@ -3882,7 +3919,7 @@ function create_abi_wrapper(
                     end
                 else
                     ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(twidth, SPT0)))
-                    for idx = t:width
+                    for idx in 1:twidth
                         pv = extract_value!(builder, eval, idx - 1)
                         pv0 = pv
                         pv = bitcast!(builder, pv, LLVM.PointerType(SPT0, addrspace(value_type(pv))))
@@ -4199,6 +4236,16 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
 	return val
 end
 
+"""
+    nullify_rooted_values!(builder, sret)
+
+Return the value `sret` with every GC-tracked field replaced by a null reference.
+
+Used where only the inline data of a value is wanted, and the tracked fields are
+either held elsewhere (in a `returnRoots` array, see [`extract_roots_from_value!`](@ref))
+or known not to be needed, so that leaving the original pointers in place would
+root objects that must not be kept alive.
+"""
 function nullify_rooted_values!(builder::LLVM.IRBuilder, sret::LLVM.Value)
    jltype = value_type(sret)
    tracked = CountTrackedPointers(jltype)
@@ -4208,6 +4255,23 @@ function nullify_rooted_values!(builder::LLVM.IRBuilder, sret::LLVM.Value)
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, nothing, NullifySRetValue)
 end
 
+"""
+    recombine_value!(builder, sret, roots; must_cache=false)
+
+Rebuild a whole return value from the two halves the `sret`/`returnRoots` calling
+convention splits it into.
+
+A callee returning a type with both GC-tracked and inline fields writes the tracked
+pointers into the `returnRoots` array and the remaining data into the `sret` buffer,
+leaving the tracked slots of `sret` undefined. `sret` here is the *value* already
+loaded out of that buffer and `roots` the pointer to the root array; the tracked
+fields are loaded from `roots` and inserted back into their slots, and the completed
+value is returned. This is the inverse of [`extract_roots_from_value!`](@ref); see
+[`recombine_value_ptr!`](@ref) for the variant that takes `sret` as a pointer.
+
+`must_cache` marks the loads from `roots` as must-cache, for a caller that needs the
+recombined value to survive into the reverse pass.
+"""
 function recombine_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM.Value; must_cache::Bool=false)::LLVM.Value
    jltype = value_type(sret)
    tracked = CountTrackedPointers(jltype)
@@ -4217,6 +4281,15 @@ function recombine_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, RootPointerToSRetValue; must_cache)
 end
 
+"""
+    recombine_value_ptr!(builder, jltype, sret, roots; must_cache=false)
+
+Like [`recombine_value!`](@ref), but loads the inline half out of the `sret` buffer
+rather than taking it as an already-loaded value.
+
+Both `sret` and `roots` are pointers; a fresh `jltype` value is built by loading the
+untracked fields from `sret` and the tracked ones from `roots`.
+"""
 function recombine_value_ptr!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value, roots::LLVM.Value; must_cache::Bool=false)::LLVM.Value
    tracked = CountTrackedPointers(jltype)
    @assert tracked.count > 0
@@ -4225,6 +4298,16 @@ function recombine_value_ptr!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sr
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, RootAndSRetPointerToValue; must_cache)
 end
 
+"""
+    extract_roots_from_value!(builder, sret, roots)
+
+Store the GC-tracked fields of the value `sret` into the `returnRoots` array `roots`,
+which must have room for `CountTrackedPointers(value_type(sret)).count` entries.
+
+This is the split [`recombine_value!`](@ref) undoes: a caller that needs to hand a
+value on through the `sret`/`returnRoots` convention writes the tracked pointers here
+and the inline data into the `sret` buffer separately.
+"""
 function extract_roots_from_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM.Value)
    jltype = value_type(sret)
    tracked = CountTrackedPointers(jltype)
@@ -5387,7 +5470,7 @@ function lower_convention(
         LLVM.run!(pb, mod)
     end
 
-    ModulePassManager() do pm
+    @dispose pm = ModulePassManager() begin
         LLVM.run!(pm, mod)
     end
     if haskey(globals(mod), "llvm.used")
@@ -5468,13 +5551,21 @@ function link_split_existing!(mod::LLVM.Module, newmod::LLVM.Module)
 end
 
 function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeTarget})
+    # Every compilation runs under its own context; a nested compilation gets
+    # its own and hands the outer one back when it returns.
+    return @with ENZYME_CONTEXT => EnzymeContext() begin
+        compile_unhooked_impl(output, job)
+    end
+end
+
+function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     @assert output == :llvm
     
     config = job.config
 
     params = config.params
 
-    enzyme_context = EnzymeContext()
+    enzyme_ctx = enzyme_context()
 
     expectedTapeType = params.expectedTapeType
     mode = params.mode
@@ -5523,13 +5614,21 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     @safe_debug "Emit LLVM with" primal_job
     GPUCompiler.prepare_job!(primal_job)
     mod, meta = GPUCompiler.emit_llvm(primal_job)
-    edges = enzyme_context.edges
+    # `emit_llvm` is not concretely inferred, so without this assertion every
+    # subsequent use of `mod` (e.g. `LLVM.context(mod)`) is a dynamic dispatch
+    # through jl_apply_generic, which forces boxing and GC-rooting across it.
+    mod = mod::LLVM.Module
+    edges = enzyme_ctx.edges
 
     primal_interp = GPUCompiler.get_interpreter(primal_job)
     prepare_llvm(primal_interp, mod, primal_job, meta)
     for f in functions(mod)
         permit_inlining!(f)
     end
+
+    # A derivative linked into this module as a deferred job calls its rules
+    # natively. Differentiating it again needs their bodies.
+    materialize_native_invokes!(mode, mod, job.world)
 
     LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
@@ -5548,6 +5647,9 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     if DumpPostCheck[]
         API.EnzymeDumpModuleRef(mod.ref)
     end
+    # `check_ir` links in the derivatives that `enzyme_call` embeds. Their
+    # natively called rules need bodies too.
+    materialize_native_invokes!(mode, mod, job.world)
 
     disableFallback = String[]
 
@@ -6215,7 +6317,6 @@ end
         API.EnzymeDetectReadonlyOrThrow(mod)
 
         adjointf, augmented_primalf, TapeType = enzyme!(
-            enzyme_context,
             job,
 	    interp,
             mod,
@@ -6235,10 +6336,10 @@ end
         )
 
         # Link deferred modules
-        for otherMod in enzyme_context.modules_to_link
+        for otherMod in enzyme_ctx.modules_to_link
             link_split_existing!(mod, otherMod)
         end
-        empty!(enzyme_context.modules_to_link)
+        empty!(enzyme_ctx.modules_to_link)
         toremove = String[]
         # Inline the wrapper
         for f in functions(mod)
@@ -6325,15 +6426,15 @@ end
             fname = String(name) * pf
             if haskey(functions(mod), fname)
                 funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, fnty, Tuple{JT}, job.world)
-                llvmf = nested_codegen!(enzyme_context, mode, mod, funcspec, job.world)
+                llvmf = nested_codegen!(mode, mod, funcspec, job.world)
 
                 llvmf = LLVM.name(llvmf)
 
                 # Link deferred modules generated by fnsToInject
-                for otherMod in enzyme_context.modules_to_link
+                for otherMod in enzyme_ctx.modules_to_link
                     link_split_existing!(mod, otherMod)
                 end
-                empty!(enzyme_context.modules_to_link)
+                empty!(enzyme_ctx.modules_to_link)
 
                 llvmf = functions(mod)[llvmf]
 
@@ -6343,6 +6444,10 @@ end
     end
 
     API.EnzymeReplaceFunctionImplementation(mod)
+
+    # Every deferred module is linked by now, so nothing declares the entry of
+    # an imported cached thunk any more.
+    internalize_imported_thunks!(mod)
 
     for (fname, lnk) in custom
         haskey(functions(mod), fname) || continue
@@ -6381,8 +6486,11 @@ end
     end
 
     if !device_module
-        # Don't restore pointers when we are doing GPU compilation
-        restore_lookups(mod)
+        # Don't restore pointers when we are doing GPU compilation. The
+        # declarations of natively called rules stay symbolic until `_thunk`
+        # compiles the module, so that an outer differentiation can still
+        # recognize them (see `materialize_native_invokes!`).
+        restore_lookups(mod; native_invokes = false)
     end
 
     if !(primal_target isa GPUCompiler.NativeCompilerTarget)
@@ -6888,8 +6996,10 @@ const DumpLLVMCall = Ref(false)
                 push!(sret_types, Nothing)
             end
             if rettype <: Duplicated || rettype <: DuplicatedNoNeed
+                @assert width == 1
                 push!(sret_types, jlRT)
             elseif rettype <: MixedDuplicated
+                @assert width == 1
                 rty = if Base.isconcretetype(jlRT)
                     Base.RefValue{jlRT}
                 else
@@ -6897,8 +7007,10 @@ const DumpLLVMCall = Ref(false)
                 end
                 push!(sret_types, rty)
             elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
+                @assert width == batch_size(rettype)
                 push!(sret_types, AnonymousStruct(NTuple{width,jlRT}))
             elseif rettype <: BatchMixedDuplicated
+                @assert width == batch_size(rettype)
                 rty = if Base.isconcretetype(jlRT)
                     Base.RefValue{jlRT}
                 else
@@ -7122,8 +7234,8 @@ function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module
     end
 
     # Now invoke the JIT
-    jitted_mod = JIT.add!(mod)
-    adjoint_addr = JIT.lookup(adjoint_name)
+    jit_dylib = JIT.add!(mod)
+    adjoint_addr = JIT.lookup(jit_dylib, adjoint_name)
 
     adjoint_ptr = pointer(adjoint_addr)
     if adjoint_ptr === C_NULL
@@ -7137,7 +7249,7 @@ function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module
     if primal_name isa Nothing
         primal_ptr = C_NULL
     else
-        primal_addr = JIT.lookup(primal_name)
+        primal_addr = JIT.lookup(jit_dylib, primal_name)
         primal_ptr = pointer(primal_addr)
         if primal_ptr === C_NULL
             throw(
@@ -7171,7 +7283,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         primal_name = nothing
     end
 
-    LLVM.ModulePassManager() do pm
+    LLVM.@dispose pm = LLVM.ModulePassManager() begin
         add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
         LLVM.run!(pm, mod)
     end
@@ -7193,7 +7305,12 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
                     end
                 end
             end
-            string(mod)
+            # Kept for nested differentiation (see autodiff_cache); bitcode
+            # is far cheaper to write than textual IR and parses faster.
+            buf = convert(MemoryBuffer, mod)
+            bytes = convert(Vector{UInt8}, buf)
+            dispose(buf)
+            String(bytes)
         end
         if job.config.params.ABI <: FFIABI || job.config.params.ABI <: NonGenABI
             if DumpPrePostOpt[]
@@ -7211,11 +7328,15 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
     else
         ""
     end
+    # The module string above keeps the rule declarations symbolic for nested
+    # differentiation; the compiled module binds them to their addresses.
+    restore_native_invokes!(mod)
     return (mod, meta.edges, adjoint_name, primal_name, meta.TapeType, prepost)
 end
 
 const cache = Dict{UInt,CompileResult}()
 
+# adjoint/primal pointer => (function name, bitcode of the pre-post-optimization module)
 const autodiff_cache = Dict{Ptr{Cvoid},Tuple{String, String}}()
 
 const cache_lock = ReentrantLock()
@@ -7240,6 +7361,96 @@ const cache_lock = ReentrantLock()
         obj
     finally
         unlock(cache_lock)
+    end
+end
+
+"""
+    clear_caches!()
+
+Empty every cache Enzyme keeps in a global, dropping what this session compiled, looked up
+and rooted along with them.
+
+Nearly all of it means something only to the session that filled it. A `CompileResult` holds
+the address the JIT gave a thunk, `captured_constants` roots objects because their addresses
+were written into that code, the rule and activity memos are keyed on world ages, and the
+`jl_load_and_lookup` handles are ones this process opened. Anything outliving the session
+must not carry them, which is why Enzyme's precompile workload ends with this call: what it
+left behind would otherwise be serialized into Enzyme's package image and inherited, dead,
+by every session that loads it.
+
+This is meant for the end of precompilation and not for a live session. It hands back the
+thunks the JIT compiled and unroots the objects their code refers to by address, so a thunk
+still held anywhere is left pointing at objects that may now be collected.
+
+Caches filled by `__init__` rather than by compiling are left alone: they are rebuilt per
+session and so never reach an image.
+"""
+function clear_caches!()
+    # Thunks, held as the addresses the JIT gave them, and the objects rooted because those
+    # addresses were written into their code.
+    empty!(cache)
+    empty!(autodiff_cache)
+    empty!(Enzyme.tape_cache)
+    empty!(Enzyme.captured_constants)
+
+    # Which rules apply, memoized against the world the methods were read in.
+    empty!(FRULE_CACHE)
+    empty!(RRULE_CACHE)
+    empty!(INACTIVE_CACHE)
+    empty!(EASY_RULE_CACHE)
+    empty!(NOALIAS_CACHE)
+    empty!(Interpreter.SigCache)
+    Interpreter.LastFwdWorld[] = Base.IdSet{Type}()
+    Interpreter.LastRevWorld[] = Base.IdSet{Type}()
+    Interpreter.LastInaWorld[] = Base.IdSet{Type}()
+
+    # Activity, and the world its `inactive_type` methods were last checked in. Left set, it
+    # tells a later session its own worlds need no check.
+    empty!(ActivityCache)
+    empty!(ActivityMethodCache)
+    ActivityWorldCache[] = 0
+
+    # The library handles `ejlstr$` and `ejlptr$` symbols were resolved through.
+    empty!(JIT.hnd_string_map)
+    empty!(JIT.hnd_int_map)
+
+    @static if VERSION < v"1.11.0-DEV.1552"
+        # Inference results, kept by Enzyme itself on versions where Julia's own cache does
+        # not hold them. The `CodeInstance`s carry `invoke` and `specptr` addresses.
+        empty!(GLOBAL_FWD_CACHE.dict)
+        empty!(GLOBAL_REV_CACHE.dict)
+    end
+    return nothing
+end
+
+"""
+    instantiate_annotation(A, rt, width)
+
+Fill in the free parameters of a (possibly partially applied) activity annotation
+`A` with element type `rt` and batch width `width`.
+
+The batch annotations take a second parameter carrying the batch width. Applying
+only `A{rt}` to them leaves that parameter free, and a subsequent `A{rt}` binds the
+*element type* to it, yielding an annotation whose `batch_size` is a type rather
+than the width. Filling both explicitly keeps `batch_size(A) == width`, which the
+shadow-return ABI in `create_abi_wrapper` and `enzyme_call` asserts.
+"""
+@inline function instantiate_annotation(
+        @nospecialize(A::Type{<:Annotation}),
+        @nospecialize(rt::Type),
+        width::Int,
+    )
+    A isa UnionAll || return A
+    return if A <: BatchDuplicated
+        BatchDuplicated{rt, width}
+    elseif A <: BatchDuplicatedNoNeed
+        BatchDuplicatedNoNeed{rt, width}
+    elseif A <: BatchDuplicatedFunc
+        BatchDuplicatedFunc{rt, width}
+    elseif A <: BatchMixedDuplicated
+        BatchMixedDuplicated{rt, width}
+    else
+        A{rt}
     end
 end
 
@@ -7307,7 +7518,7 @@ end
     rt2 = if !run_enzyme
         Const{rrt}
     elseif A2 isa UnionAll
-        A2{rrt}
+        instantiate_annotation(A2, rrt, width)
     else
         @assert A isa DataType
         # Can we relax this condition?
@@ -7540,37 +7751,7 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
     return ci
 end
 
-@eval @inline function thunk(
-    fakeworld::Val{0},
-    fa::Type{FA},
-    a::Type{A},
-    tt::Type{TT},
-    mode::Val{Mode},
-    width::Val{Width},
-    modifiedbetween::Val{ModifiedBetween},
-    returnprimal::Val{ReturnPrimal},
-    shadowinit::Val{ShadowInit},
-    abi::Type{ABI},
-    erriffuncwritten::Val{ErrIfFuncWritten},
-    runtimeactivity::Val{RuntimeActivity},
-    strongzero::Val{StrongZero}
-) where {
-    FA<:Annotation,
-    A<:Annotation,
-    TT,
-    Mode,
-    Width,
-    ModifiedBetween,
-    ReturnPrimal,
-    ShadowInit,
-    ABI,
-    ErrIfFuncWritten,
-    RuntimeActivity,
-    StrongZero
-}
-    $(Expr(:meta, :generated_only))
-    $(Expr(:meta, :generated, thunk_generator))
-end
+# The generated wrapper `thunk` is defined in src/late_generated.jl; see the note there.
 
 import GPUCompiler: deferred_codegen_jobs
 
@@ -7612,7 +7793,7 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
                 error($estr)
             end
         end
-        A{rrt}
+        instantiate_annotation(A, rrt, Width)
     else
         @assert A isa DataType
         A
@@ -7650,36 +7831,7 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
     return ci
 end
 
-@eval @inline function deferred_id_codegen(
-    fa::Type{FA},
-    a::Type{A},
-    tt::Type{TT},
-    mode::Val{Mode},
-    width::Val{Width},
-    modifiedbetween::Val{ModifiedBetween},
-    returnprimal::Val{ReturnPrimal},
-    shadowinit::Val{ShadowInit},
-    expectedtapetype::Type{ExpectedTapeType},
-    erriffuncwritten::Val{ErrIfFuncWritten},
-    runtimeactivity::Val{RuntimeActivity},
-    strongzero::Val{StrongZero}
-) where {
-    FA<:Annotation,
-    A<:Annotation,
-    TT,
-    Mode,
-    Width,
-    ModifiedBetween,
-    ReturnPrimal,
-    ShadowInit,
-    ExpectedTapeType,
-    ErrIfFuncWritten,
-    RuntimeActivity,
-    StrongZero
-}
-    $(Expr(:meta, :generated_only))
-    $(Expr(:meta, :generated, deferred_id_generator))
-end
+# The generated wrapper `deferred_id_codegen` is defined in src/late_generated.jl; see the note there.
 
 @inline function deferred_codegen(
     @nospecialize(fa::Type),

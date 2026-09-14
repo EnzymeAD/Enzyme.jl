@@ -21,10 +21,7 @@ function primal_interp_world(
 
     CT = @static if VERSION >= v"1.11.0-DEV.1552"
         EnzymeCacheToken(
-            typeof(DefaultCompilerTarget()),
-            false,
-            GPUCompiler.GLOBAL_METHOD_TABLE, #=job.config.always_inline=#
-            EnzymeCompilerParams,
+            GPUCompiler.GLOBAL_METHOD_TABLE,
             world,
             false,
             true,
@@ -45,10 +42,7 @@ function primal_interp_world(
 
     CT = @static if VERSION >= v"1.11.0-DEV.1552"
         EnzymeCacheToken(
-            typeof(DefaultCompilerTarget()),
-            false,
-            GPUCompiler.GLOBAL_METHOD_TABLE, #=job.config.always_inline=#
-            EnzymeCompilerParams,
+            GPUCompiler.GLOBAL_METHOD_TABLE,
             world,
             true,
             false,
@@ -133,8 +127,5 @@ function primal_return_type_generator(world::UInt, source, self, @nospecialize(m
     return ci
 end
 
-@eval Base.@assume_effects :removable :foldable :nothrow @inline function primal_return_type(mode::Mode, ft::Type, tt::Type)
-    $(Expr(:meta, :generated_only))
-    $(Expr(:meta, :generated, primal_return_type_generator))
-end
+# The generated wrapper `primal_return_type` is defined in src/late_generated.jl; see the note there.
 

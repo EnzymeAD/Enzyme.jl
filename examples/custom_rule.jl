@@ -286,6 +286,34 @@ EnzymeRules.inactive(::typeof(double), args...) = nothing
 
 autodiff(Forward, x -> x + double(x), Duplicated(2.0, 1.0)) # mathematically should be 3.0, inactive rule causes it to be 1.0
 
+# ## How rules are compiled
+
+# A rule is an ordinary Julia method. How the derivative code reaches it follows the
+# method's inlining annotation, just as for a regular call:
+#
+# - A rule declared `@inline` has its LLVM IR emitted into the differentiated function
+#   and inlined there, so the optimizer sees through it. Choose this for small rules
+#   such as the ones above, where the call itself would dominate.
+# - A rule declared `@noinline` is compiled once, natively, like any other Julia method.
+#   The differentiated function calls that compiled code directly (Julia 1.12 and newer).
+#   Choose this for large rules, and for rules with a large callee graph. Such rules are
+#   compiled once per session, not once per differentiated function that uses them.
+# - An unannotated rule follows Julia's own inlining heuristics for that method. It is
+#   inlined if Julia would inline it, and called otherwise.
+#
+# A rule that is called natively is compiled by Julia exactly as an ordinary call of it
+# would be, and shares that compiled code with ordinary callers. Inside such a rule
+# `within_autodiff()` returns `false` and `ignore_derivatives` is the identity, as in any
+# other Julia code. Inside a rule emitted into the differentiated function,
+# `within_autodiff()` returns `true`.
+#
+# Nested differentiation, for example `autodiff(Forward, x -> autodiff(Reverse, f, Active(x))...)`,
+# differentiates the inner derivative, and with it the rules the inner derivative
+# calls. A natively called rule is emitted into the outer differentiated function for
+# that purpose, so both kinds of rules can be differentiated through.
+#
+# On Julia versions before 1.12 every rule is emitted into the differentiated function.
+
 # ## Testing our rules
 
 # We can test our rules using finite differences using [`EnzymeTestUtils.test_forward`](@ref)

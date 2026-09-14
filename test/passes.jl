@@ -1,175 +1,263 @@
 using Enzyme, LLVM, Test
 using FileCheck
 import Libdl
+import GPUCompiler
 
 
 @testset "Partial return preservation" begin
-    LLVM.Context() do ctx
-        mod = parse(LLVM.Module, """
-        source_filename = "start"
-        target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
-        target triple = "x86_64-linux-gnu"
+    @test @filecheck begin
+        # Both stores into the freshly allocated struct must be preserved.
+        # Match without spelling out the pointer type so this works under both
+        # opaque (`ptr addrspace(10)`) and typed (`{} addrspace(10)*`) pointers.
+        @check_label "@inner"
+        @check "store atomic"
+        @check_same "%v1"
+        @check "store atomic"
+        @check_same "%v2"
+        LLVM.Context() do ctx
+            mod = parse(
+                LLVM.Module, """
+                source_filename = "start"
+                target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+                target triple = "x86_64-linux-gnu"
 
-        declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj({}**, i64, {} addrspace(10)*) local_unnamed_addr #5
+                declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj({}**, i64, {} addrspace(10)*) local_unnamed_addr #5
 
-        define internal fastcc nonnull {} addrspace(10)* @inner({} addrspace(10)* %v1, {} addrspace(10)* %v2) {
-        top:
-          %newstruct = call noalias nonnull dereferenceable(16) {} addrspace(10)* @julia.gc_alloc_obj({}** null, i64 16, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 129778359735376 to {}*) to {} addrspace(10)*)) #30
-          %a31 = addrspacecast {} addrspace(10)* %newstruct to {} addrspace(10)* addrspace(11)*
-          %a32 = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %a31, i64 1
-          store atomic {} addrspace(10)* %v1, {} addrspace(10)* addrspace(11)* %a31 release, align 8
-          %a33 = addrspacecast {} addrspace(10)* %newstruct to i8 addrspace(11)*
-          %a34 = getelementptr inbounds i8, i8 addrspace(11)* %a33, i64 8
-          %a35 = bitcast i8 addrspace(11)* %a34 to {} addrspace(10)* addrspace(11)*
-          store atomic {} addrspace(10)* %v2, {} addrspace(10)* addrspace(11)* %a35 release, align 8
-          ret {} addrspace(10)* %newstruct
-        }
+                define internal fastcc nonnull {} addrspace(10)* @inner({} addrspace(10)* %v1, {} addrspace(10)* %v2) {
+                top:
+                  %newstruct = call noalias nonnull dereferenceable(16) {} addrspace(10)* @julia.gc_alloc_obj({}** null, i64 16, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 129778359735376 to {}*) to {} addrspace(10)*)) #30
+                  %a31 = addrspacecast {} addrspace(10)* %newstruct to {} addrspace(10)* addrspace(11)*
+                  %a32 = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %a31, i64 1
+                  store atomic {} addrspace(10)* %v1, {} addrspace(10)* addrspace(11)* %a31 release, align 8
+                  %a33 = addrspacecast {} addrspace(10)* %newstruct to i8 addrspace(11)*
+                  %a34 = getelementptr inbounds i8, i8 addrspace(11)* %a33, i64 8
+                  %a35 = bitcast i8 addrspace(11)* %a34 to {} addrspace(10)* addrspace(11)*
+                  store atomic {} addrspace(10)* %v2, {} addrspace(10)* addrspace(11)* %a35 release, align 8
+                  ret {} addrspace(10)* %newstruct
+                }
 
-        define {} addrspace(10)* @caller({} addrspace(10)* %v1, {} addrspace(10)* %v2) {
-        top:
-          %ac = call fastcc nonnull {} addrspace(10)* @inner({} addrspace(10)* %v1, {} addrspace(10)* %v2)
-          %b = addrspacecast {} addrspace(10)* %ac to {} addrspace(10)* addrspace(11)*
-          %c = load atomic {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %b unordered, align 8
-          ret {} addrspace(10)* %c
-        }
+                define {} addrspace(10)* @caller({} addrspace(10)* %v1, {} addrspace(10)* %v2) {
+                top:
+                  %ac = call fastcc nonnull {} addrspace(10)* @inner({} addrspace(10)* %v1, {} addrspace(10)* %v2)
+                  %b = addrspacecast {} addrspace(10)* %ac to {} addrspace(10)* addrspace(11)*
+                  %c = load atomic {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %b unordered, align 8
+                  ret {} addrspace(10)* %c
+                }
 
-        attributes #5 = { inaccessiblememonly mustprogress nofree nounwind willreturn allockind("alloc,uninitialized") allocsize(1) "enzyme_no_escaping_allocation" "enzymejl_world"="31504" }
-        """)
+                attributes #5 = { inaccessiblememonly mustprogress nofree nounwind willreturn allockind("alloc,uninitialized") allocsize(1) "enzyme_no_escaping_allocation" "enzymejl_world"="31504" }
+                """
+            )
 
-        Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), false)
-        
-        callfn = LLVM.functions(mod)["inner"]
-        @test length(collect(filter(Base.Fix2(isa, LLVM.StoreInst), collect(instructions(first(blocks(callfn))))))) == 2
+            Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), false)
+            string(mod)
+        end
     end
 end
 
 
 @testset "Dead return removal" begin
-    LLVM.Context() do ctx
-        mod = parse(LLVM.Module, """
-        source_filename = "start"
-        target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
-        target triple = "x86_64-linux-gnu"
+    @test @filecheck begin
+        # The call to the (now dead) callee is removed, leaving only `ret void`,
+        # and the callee itself is deleted from the module.
+        @check_label "define void @caller"
+        @check_next "top:"
+        @check_next "ret void"
+        @check_not "@julia_MyPrognosticVars_161"
+        LLVM.Context() do ctx
+            mod = parse(
+                LLVM.Module, """
+                source_filename = "start"
+                target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+                target triple = "x86_64-linux-gnu"
 
-        declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj({}**, i64, {} addrspace(10)*) local_unnamed_addr #5
+                declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj({}**, i64, {} addrspace(10)*) local_unnamed_addr #5
 
-        define internal fastcc nonnull {} addrspace(10)* @julia_MyPrognosticVars_161({} addrspace(10)* %v1, {} addrspace(10)* %v2) {
-        top:
-          %newstruct = call noalias nonnull dereferenceable(16) {} addrspace(10)* @julia.gc_alloc_obj({}** null, i64 16, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 129778359735376 to {}*) to {} addrspace(10)*)) #30
-          %a31 = addrspacecast {} addrspace(10)* %newstruct to {} addrspace(10)* addrspace(11)*
-          %a32 = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %a31, i64 1
-          store atomic {} addrspace(10)* %v1, {} addrspace(10)* addrspace(11)* %a31 release, align 8
-          %a33 = addrspacecast {} addrspace(10)* %newstruct to i8 addrspace(11)*
-          %a34 = getelementptr inbounds i8, i8 addrspace(11)* %a33, i64 8
-          %a35 = bitcast i8 addrspace(11)* %a34 to {} addrspace(10)* addrspace(11)*
-          store atomic {} addrspace(10)* %v2, {} addrspace(10)* addrspace(11)* %a35 release, align 8
-          ret {} addrspace(10)* %newstruct
-        }
+                define internal fastcc nonnull {} addrspace(10)* @julia_MyPrognosticVars_161({} addrspace(10)* %v1, {} addrspace(10)* %v2) {
+                top:
+                  %newstruct = call noalias nonnull dereferenceable(16) {} addrspace(10)* @julia.gc_alloc_obj({}** null, i64 16, {} addrspace(10)* addrspacecast ({}* inttoptr (i64 129778359735376 to {}*) to {} addrspace(10)*)) #30
+                  %a31 = addrspacecast {} addrspace(10)* %newstruct to {} addrspace(10)* addrspace(11)*
+                  %a32 = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %a31, i64 1
+                  store atomic {} addrspace(10)* %v1, {} addrspace(10)* addrspace(11)* %a31 release, align 8
+                  %a33 = addrspacecast {} addrspace(10)* %newstruct to i8 addrspace(11)*
+                  %a34 = getelementptr inbounds i8, i8 addrspace(11)* %a33, i64 8
+                  %a35 = bitcast i8 addrspace(11)* %a34 to {} addrspace(10)* addrspace(11)*
+                  store atomic {} addrspace(10)* %v2, {} addrspace(10)* addrspace(11)* %a35 release, align 8
+                  ret {} addrspace(10)* %newstruct
+                }
 
-        define void @caller({} addrspace(10)* %v1, {} addrspace(10)* %v2) {
-        top:
-          %ac = call fastcc nonnull {} addrspace(10)* @julia_MyPrognosticVars_161({} addrspace(10)* %v1, {} addrspace(10)* %v2)
-          ret void
-        }
+                define void @caller({} addrspace(10)* %v1, {} addrspace(10)* %v2) {
+                top:
+                  %ac = call fastcc nonnull {} addrspace(10)* @julia_MyPrognosticVars_161({} addrspace(10)* %v1, {} addrspace(10)* %v2)
+                  ret void
+                }
 
-        attributes #5 = { inaccessiblememonly mustprogress nofree nounwind willreturn allockind("alloc,uninitialized") allocsize(1) "enzyme_no_escaping_allocation" "enzymejl_world"="31504" }
-        """)
+                attributes #5 = { inaccessiblememonly mustprogress nofree nounwind willreturn allockind("alloc,uninitialized") allocsize(1) "enzyme_no_escaping_allocation" "enzymejl_world"="31504" }
+                """
+            )
 
-        Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), false)
-        callfn = LLVM.functions(mod)["caller"]
-        @test length(collect(instructions(first(blocks(callfn))))) == 1
+            Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), false)
+            string(mod)
+        end
     end
 end
 
 @testset "Return roots preservation" begin
-    LLVM.Context() do ctx
-        mod = parse(LLVM.Module, """
-        define private void @julia_dims_4189({ double, {} addrspace(10)*, {} addrspace(10)* }* sret({ double, {} addrspace(10)*, {} addrspace(10)* }) %res, [2 x {} addrspace(10)*]* "enzymejl_returnRoots"="2", double addrspace(11)* %data) #0 {
-        top:
-          %val = load double, double addrspace(11)* %data, align 8
-          store { double, {} addrspace(10)*, {} addrspace(10)* } zeroinitializer, { double, {} addrspace(10)*, {} addrspace(10)* }* %res
-          ret void
-        }
+    @test @filecheck begin
+        # The dead `%data` argument is dropped from the call, but the `sret` and
+        # `enzymejl_returnRoots` arguments must be preserved (roots last).
+        @check_label "define void @caller"
+        @check "call void @julia_dims_4189"
+        @check_same "sret"
+        @check_same "enzymejl_returnRoots"
+        @check_same "%roots)"
+        LLVM.Context() do ctx
+            mod = parse(
+                LLVM.Module, """
+                define private void @julia_dims_4189({ double, {} addrspace(10)*, {} addrspace(10)* }* sret({ double, {} addrspace(10)*, {} addrspace(10)* }) %res, [2 x {} addrspace(10)*]* "enzymejl_returnRoots"="2", double addrspace(11)* %data) #0 {
+                top:
+                  %val = load double, double addrspace(11)* %data, align 8
+                  store { double, {} addrspace(10)*, {} addrspace(10)* } zeroinitializer, { double, {} addrspace(10)*, {} addrspace(10)* }* %res
+                  ret void
+                }
 
-        define void @caller({} addrspace(10)* %v1, {} addrspace(10)* %v2, double addrspace(11)* %data) {
-        top:
-          %sret = alloca { double, {} addrspace(10)*, {} addrspace(10)* }
-          %roots = alloca [2 x {} addrspace(10)*]
-          call void @julia_dims_4189({ double, {} addrspace(10)*, {} addrspace(10)* }* sret({ double, {} addrspace(10)*, {} addrspace(10)* }) %sret, [2 x {} addrspace(10)*]* "enzymejl_returnRoots"="2" %roots, double addrspace(11)* %data)
-          ret void
-        }
+                define void @caller({} addrspace(10)* %v1, {} addrspace(10)* %v2, double addrspace(11)* %data) {
+                top:
+                  %sret = alloca { double, {} addrspace(10)*, {} addrspace(10)* }
+                  %roots = alloca [2 x {} addrspace(10)*]
+                  call void @julia_dims_4189({ double, {} addrspace(10)*, {} addrspace(10)* }* sret({ double, {} addrspace(10)*, {} addrspace(10)* }) %sret, [2 x {} addrspace(10)*]* "enzymejl_returnRoots"="2" %roots, double addrspace(11)* %data)
+                  ret void
+                }
 
-        attributes #0 = { nofree nosync nounwind willreturn noinline "enzyme_inactive" }
-        """)
+                attributes #0 = { nofree nosync nounwind willreturn noinline "enzyme_inactive" }
+                """
+            )
 
-        Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), true)
-        
-        caller = LLVM.functions(mod)["caller"]
-        
-        insts = collect(instructions(first(blocks(caller))))
-        calls = collect(filter(i -> isa(i, LLVM.CallInst), insts))
-        
-        @test length(calls) == 1
-        if length(calls) == 1
-            call = calls[1]
-            @test length(operands(call)) == 3 # 2 arg (sret + roots) + called function
+            Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), true)
+            string(mod)
         end
     end
 end
 
 @testset "Recursively dead function removal" begin
-    LLVM.Context() do ctx
-        mod = parse(LLVM.Module, """
-        source_filename = "start"
-        target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
-        target triple = "x86_64-linux-gnu"
+    @test @filecheck begin
+        # Both the recursive function and its callee are dead and must be removed.
+        @check_not "@dead_recursive_fn"
+        @check_not "@dead_callee"
+        LLVM.Context() do ctx
+            mod = parse(
+                LLVM.Module, """
+                source_filename = "start"
+                target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+                target triple = "x86_64-linux-gnu"
 
-        define internal fastcc void @dead_callee(i32* nocapture %arg) {
-        top:
-          %val = load i32, i32* %arg, align 4
-          ret void
-        }
+                define internal fastcc void @dead_callee(i32* nocapture %arg) {
+                top:
+                  %val = load i32, i32* %arg, align 4
+                  ret void
+                }
 
-        define internal fastcc void @dead_recursive_fn(i32* %arg) {
-        top:
-          call fastcc void @dead_recursive_fn(i32* %arg)
-          call fastcc void @dead_callee(i32* %arg)
-          ret void
-        }
-        """)
+                define internal fastcc void @dead_recursive_fn(i32* %arg) {
+                top:
+                  call fastcc void @dead_recursive_fn(i32* %arg)
+                  call fastcc void @dead_callee(i32* %arg)
+                  ret void
+                }
+                """
+            )
 
-        Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), false)
-        
-        @test !haskey(LLVM.functions(mod), "dead_recursive_fn")
-        @test !haskey(LLVM.functions(mod), "dead_callee")
+            Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), false)
+            string(mod)
+        end
     end
 end
 
 @testset "Mismatched calling convention/function type DAE safety" begin
+    @test @filecheck begin
+        # The call site bitcasts the callee to a mismatched function type, so DAE
+        # must leave the callee untouched: both of its arguments are preserved.
+        @check "define internal fastcc void @callee("
+        @check_same "%arg1"
+        @check_same "%arg2"
+        LLVM.Context() do ctx
+            mod = parse(
+                LLVM.Module, """
+                source_filename = "start"
+                target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+                target triple = "x86_64-linux-gnu"
+
+                define internal fastcc void @callee(i32* %arg1, i32* %arg2) {
+                top:
+                  store i32 42, i32* %arg1, align 4
+                  ret void
+                }
+
+                define void @caller(i32 addrspace(10)* %arg1, i32 addrspace(10)* %arg2) {
+                top:
+                  call fastcc void (i32 addrspace(10)*, i32 addrspace(10)*) bitcast (void (i32*, i32*)* @callee to void (i32 addrspace(10)*, i32 addrspace(10)*)*)(i32 addrspace(10)* %arg1, i32 addrspace(10)* %arg2)
+                  ret void
+                }
+                """
+            )
+
+            Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), false)
+            string(mod)
+        end
+    end
+end
+
+@testset "import_cached_autodiff!" begin
     LLVM.Context() do ctx
-        mod = parse(LLVM.Module, """
-        source_filename = "start"
-        target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
-        target triple = "x86_64-linux-gnu"
+        # A cached thunk's bitcode carries the Julia functions it calls. Two
+        # modules importing it would both define `@julia_shared`, and
+        # `compile_unhooked` links every deferred module into one (#2788), so
+        # the blob must be imported once and declared everywhere else.
+        blob = parse(
+            LLVM.Module,
+            """
+            define i64 @thunk(i64 %x) {
+              %r = call i64 @julia_shared(i64 %x)
+              ret i64 %r
+            }
+            define i64 @julia_shared(i64 %x) {
+              %r = add i64 %x, 1
+              ret i64 %r
+            }
+            """,
+        )
+        buf = convert(LLVM.MemoryBuffer, blob)
+        bitcode = String(convert(Vector{UInt8}, buf))
+        dispose(buf)
 
-        define internal fastcc void @callee(i32* %arg1, i32* %arg2) {
-        top:
-          store i32 42, i32* %arg1, align 4
-          ret void
-        }
+        ptr = reinterpret(Ptr{Cvoid}, UInt(0x2788))
+        Enzyme.Compiler.autodiff_cache[ptr] = ("thunk", bitcode)
+        try
+            Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT =>
+                    Enzyme.Compiler.EnzymeContext() begin
+                FT = LLVM.FunctionType(LLVM.Int64Type(), [LLVM.Int64Type()])
 
-        define void @caller(i32 addrspace(10)* %arg1, i32 addrspace(10)* %arg2) {
-        top:
-          call fastcc void (i32 addrspace(10)*, i32 addrspace(10)*) bitcast (void (i32*, i32*)* @callee to void (i32 addrspace(10)*, i32 addrspace(10)*)*)(i32 addrspace(10)* %arg1, i32 addrspace(10)* %arg2)
-          ret void
-        }
-        """)
+                first_mod = LLVM.Module("first")
+                imported = Enzyme.Compiler.import_cached_autodiff!(first_mod, ptr, FT)
+                @test !LLVM.isdeclaration(imported)
+                # Externally visible, so the modules that only declare the entry
+                # bind to this definition when everything is linked together.
+                @test LLVM.linkage(imported) == LLVM.API.LLVMExternalLinkage
+                @test haskey(LLVM.functions(first_mod), "julia_shared")
 
-        Enzyme.Compiler.removeDeadArgs!(mod, Enzyme.Compiler.JIT.get_tm(), false)
-        
-        @test haskey(LLVM.functions(mod), "callee")
-        callee = LLVM.functions(mod)["callee"]
-        @test length(LLVM.parameters(callee)) == 2
+                second_mod = LLVM.Module("second")
+                declared = Enzyme.Compiler.import_cached_autodiff!(second_mod, ptr, FT)
+                @test LLVM.isdeclaration(declared)
+                # The blob is not imported a second time, so nothing it carries
+                # is defined twice.
+                @test !haskey(LLVM.functions(second_mod), "julia_shared")
+
+                LLVM.link!(first_mod, second_mod)
+                Enzyme.Compiler.internalize_imported_thunks!(first_mod)
+                @test LLVM.linkage(LLVM.functions(first_mod)["thunk"]) ==
+                    LLVM.API.LLVMInternalLinkage
+            end
+        finally
+            delete!(Enzyme.Compiler.autodiff_cache, ptr)
+        end
     end
 end
 
@@ -406,3 +494,238 @@ end
     end
 
 end # VERSION >= v"1.12"
+
+# An addrspace(11) phi with argument-derived and poison incomings must be skipped by
+# the `all_args` prefilter; the rewriter cannot handle a bare addrspace(11) argument.
+@testset "nodecayed_phis! addrspace(11) phi with poison incoming" begin
+    @test @filecheck begin
+        # incomings: gep(arg, 8) and poison
+        @check_label "@kernel_gep"
+        @check_not "nodecayed"
+        @check "phi"
+        @check_same "addrspace(11)"
+        @check_same "%gep"
+        @check_same "poison"
+        # zero-offset variant: the argument itself and poison
+        @check_label "@kernel_direct"
+        @check_not "nodecayed"
+        @check "phi"
+        @check_same "addrspace(11)"
+        @check_same "%q"
+        @check_same "poison"
+        LLVM.Context() do ctx
+            mod = parse(
+                LLVM.Module, """
+                source_filename = "start"
+                target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+                target triple = "x86_64-linux-gnu"
+
+                define i8 @kernel_gep(i1 %cond, i8 addrspace(11)* %g) #0 {
+                top:
+                  br i1 %cond, label %ok, label %guard
+
+                ok:
+                  %gep = getelementptr inbounds i8, i8 addrspace(11)* %g, i64 8
+                  br label %merge
+
+                guard:
+                  br label %merge
+
+                merge:
+                  %p = phi i8 addrspace(11)* [ %gep, %ok ], [ poison, %guard ]
+                  %ld = load i8, i8 addrspace(11)* %p, align 1
+                  ret i8 %ld
+                }
+
+                define i8 @kernel_direct(i1 %cond, i8 addrspace(11)* %q) #0 {
+                top:
+                  br i1 %cond, label %ok2, label %guard2
+
+                ok2:
+                  br label %merge2
+
+                guard2:
+                  br label %merge2
+
+                merge2:
+                  %p2 = phi i8 addrspace(11)* [ %q, %ok2 ], [ poison, %guard2 ]
+                  %ld2 = load i8, i8 addrspace(11)* %p2, align 1
+                  ret i8 %ld2
+                }
+
+                attributes #0 = { "enzymejl_world"="1" }
+                """
+            )
+
+            Enzyme.Compiler.nodecayed_phis!(mod)
+            string(mod)
+        end
+    end
+end
+
+
+# --- fix_decayaddr! -----------------------------------------------------------
+
+struct DecayBig
+    x::NTuple{100, Float64}
+end
+
+# `===` on a padding-free immutable this large lowers to `emit_bits_compare`,
+# which decays both operands through `julia.pointer_from_objref` and compares
+# them with `memcmp`; LLVM's `LibCallSimplifier::optimizeMemCmp` then rewrites
+# that to `bcmp`, since the result feeds nothing but an `icmp eq ..., 0`.
+# `@nospecialize` keeps the arguments boxed, so the operands are `addrspace(10)`
+# and the decay is the one `fix_decayaddr!` has to deal with.
+@noinline function decay_egal(@nospecialize(a), @nospecialize(b))
+    return (a::DecayBig) === (b::DecayBig)
+end
+
+"""
+    decay_egal_module()
+
+The module Julia emits for [`decay_egal`](@ref), run through Enzyme's own
+pre-AD optimization pipeline. Everything the test relies on -- the libcall, its
+attributes, the `jl_roots` operand bundle -- comes from that emission rather
+than from hand-written IR.
+
+The module is generated straight into the active context, the same way
+Enzyme's compile pipeline does it, rather than being round-tripped through
+`code_llvm` text: Julia's own codegen context need not agree with a fresh
+one on typed vs. opaque pointers (it does not on 1.11), and the text form
+of the one cannot be parsed in the other.
+"""
+function decay_egal_module()
+    target = Enzyme.Compiler.DefaultCompilerTarget()
+    params = Enzyme.Compiler.PrimalCompilerParams(Enzyme.API.DEM_ForwardMode)
+    mi = Enzyme.Compiler.my_methodinstance(nothing, typeof(decay_egal), Tuple{Any, Any})
+    job = GPUCompiler.CompilerJob(
+        mi,
+        GPUCompiler.CompilerConfig(
+            target, params;
+            kernel = false, libraries = true, toplevel = true, optimize = false,
+            cleanup = false, only_entry = false, validate = false,
+        ),
+    )
+    GPUCompiler.prepare_job!(job)
+    mod, _ = GPUCompiler.emit_llvm(job)
+    Enzyme.Compiler.optimize!(mod, Enzyme.Compiler.JIT.get_tm())
+    return mod
+end
+
+"The `memcmp` / `bcmp` call in `mod`, or `nothing` if there is none."
+function find_bits_compare(mod::LLVM.Module)
+    for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+        isa(inst, LLVM.CallInst) || continue
+        callee = LLVM.called_operand(inst)
+        isa(callee, LLVM.Function) || continue
+        if LLVM.name(callee) in ("bcmp", "memcmp")
+            return inst
+        end
+    end
+    return nothing
+end
+
+"""
+    collapse_decay!(call)
+
+Rewrite each `julia.pointer_from_objref(addrspacecast p10 -> p11)` feeding
+`call` into the direct `addrspacecast p10 -> p0` it stands for, and return how
+many were rewritten. Neither Julia nor Enzyme's pre-AD pipeline forms that cast
+here -- it is what a later simplification of the two-step derivation leaves
+behind, and it is the input `fix_decayaddr!` has to repair.
+"""
+function collapse_decay!(call::LLVM.CallInst)
+    n = 0
+    for (i, arg) in enumerate(Enzyme.Compiler.arg_operands_view(call))
+        # With typed pointers the `{}*` result is bitcast to `i8*` first; look
+        # through that to the derivation underneath.
+        pfo = isa(arg, LLVM.BitCastInst) ? operands(arg)[1] : arg
+        isa(pfo, LLVM.CallInst) || continue
+        callee = LLVM.called_operand(pfo)
+        (isa(callee, LLVM.Function) && LLVM.name(callee) == "julia.pointer_from_objref") ||
+            continue
+        src = operands(pfo)[1]
+        isa(src, LLVM.AddrSpaceCastInst) || continue
+        obj = operands(src)[1]
+        LLVM.addrspace(value_type(obj)) == 10 || continue
+        b = LLVM.IRBuilder()
+        LLVM.position!(b, call)
+        LLVM.API.LLVMSetOperand(
+            call, i - 1, LLVM.addrspacecast!(b, obj, value_type(arg))
+        )
+        if arg != pfo && isempty(LLVM.uses(arg))
+            LLVM.erase!(arg)
+        end
+        isempty(LLVM.uses(pfo)) && LLVM.erase!(pfo)
+        n += 1
+    end
+    return n
+end
+
+"Strip every read-only marker from `call` and from the function it calls."
+function drop_readonly!(call::LLVM.CallInst)
+    callee = LLVM.called_operand(call)::LLVM.Function
+    for attrs in (LLVM.function_attributes(callee), LLVM.function_attributes(call))
+        for attr in collect(attrs)
+            if Enzyme.Compiler.is_readonly(attr)
+                delete!(attrs, attr)
+            end
+        end
+    end
+    return nothing
+end
+
+@testset "fix_decayaddr! read-only libcall" begin
+    GPUCompiler.JuliaContext() do ctx
+        mod = decay_egal_module()
+        cmp = find_bits_compare(mod)
+        @test cmp !== nothing
+        # The callee has to be read-only for the rewrite below to apply at all;
+        # that is how Julia and LLVM annotate `memcmp` / `bcmp`.
+        @test Enzyme.Compiler.is_readonly(LLVM.called_operand(cmp)::LLVM.Function)
+        @test collapse_decay!(cmp) == 2
+
+        @test @filecheck begin
+            # Each decayed argument becomes a gc-preserved
+            # `julia.pointer_from_objref`, which late GC lowering turns back
+            # into the cast that was there. The operand bundle is untouched --
+            # only the argument operands get rewritten.
+            @check_label "@julia_decay_egal"
+            @check "gc_preserve_begin"
+            @check "julia.pointer_from_objref"
+            @check "gc_preserve_begin"
+            @check "julia.pointer_from_objref"
+            @check "@{{(bcmp|memcmp)}}("
+            @check_same "jl_roots"
+            @check "gc_preserve_end"
+            @check "gc_preserve_end"
+            Enzyme.Compiler.fix_decayaddr!(mod)
+            string(mod)
+        end
+
+        # Nothing decays straight out of the tracked address space any more.
+        for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+            if isa(inst, LLVM.AddrSpaceCastInst)
+                @test !(
+                    LLVM.addrspace(value_type(operands(inst)[1])) == 10 &&
+                        LLVM.addrspace(value_type(inst)) == 0
+                )
+            end
+        end
+    end
+end
+
+@testset "fix_decayaddr! non-read-only libcall still rejected" begin
+    # Guard against the read-only path swallowing calls that write through the
+    # decayed pointer: those still need an sret to copy the object back.
+    GPUCompiler.JuliaContext() do ctx
+        mod = decay_egal_module()
+        cmp = find_bits_compare(mod)
+        @test cmp !== nothing
+        @test collapse_decay!(cmp) == 2
+        drop_readonly!(cmp)
+        @test !Enzyme.Compiler.is_readonly(LLVM.called_operand(cmp)::LLVM.Function)
+
+        @test_throws AssertionError Enzyme.Compiler.fix_decayaddr!(mod)
+    end
+end

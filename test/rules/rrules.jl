@@ -520,4 +520,55 @@ end
     @test dX ≈ grad_expected
 end
 
+uninferred_fun(p) = Base.inferencebarrier((p[1], p[2]))
+
+function augmented_primal(
+        config::RevConfig, ::Const{typeof(uninferred_fun)}, ::Type{RT},
+        p::Annotation
+    ) where {RT}
+    res = uninferred_fun(p.val)
+    shadow = if !needs_shadow(config)
+        nothing
+    elseif width(config) == 1
+        Ref(zero.(res))
+    else
+        ntuple(_ -> Ref(zero.(res)), Val(width(config)))
+    end
+    tape = shadow
+    return augmented_rule_return_type(config, RT){typeof(tape)}(
+        needs_primal(config) ? res : nothing, shadow, tape
+    )
+end
+
+function reverse(
+        config::RevConfig, ::Const{typeof(uninferred_fun)}, dret, tape,
+        p::Annotation
+    )
+    w = width(config)
+    for b in 1:w
+        seed = if dret isa Active
+            dret.val
+        elseif dret isa Tuple
+            dret[b].val
+        else
+            s = w == 1 ? tape : tape[b]
+            s isa Base.RefValue ? s[] : s
+        end
+        tgt = w == 1 ? p.dval : p.dval[b]
+        tgt[1] += seed[1]
+        tgt[2] += seed[2]
+    end
+    return (nothing,)
+end
+
+uninferred_outer(p) = (y = uninferred_fun(p); y[1]^2 + y[2]^2)
+
+@testset "BatchDuplicated with custom reverse rule and Any return type" begin
+    p = [1.0, 2.0]
+    d1, d2 = zero(p), zero(p)
+    Enzyme.autodiff(Enzyme.Reverse, uninferred_outer, Enzyme.Active, Enzyme.BatchDuplicated(p, (d1, d2)))
+    @test d1 ≈ [2.0, 4.0]
+    @test d2 ≈ [2.0, 4.0]
+end
+
 end # ReverseRules

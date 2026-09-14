@@ -310,3 +310,39 @@ end
         Enzyme.Duplicated([0.5], [1.0]),
     ) == (1.0,)
 end
+
+# Issue 3425: an `Active` return whose inferred type is abstract routes combined
+# reverse mode through the split (augmented forward + adjoint) path.  For a batched
+# call the return annotation handed to that path must carry the batch width,
+# otherwise the caller-side ABI reserves a single shadow slot while the generated
+# adjoint writes `width` of them, smashing the caller's gcframe.
+@noinline unstable_tuple_3425(p) = Base.inferencebarrier((p[1], p[2]))
+unstable_batch_3425(p) = (y = unstable_tuple_3425(p); y[1]^2 + y[2]^2)
+
+@testset "Issue 3425 batched abstract active return" begin
+    p = [1.0, 2.0]
+    for width in 1:3
+        dps = Tuple([zero(p) for _ in 1:width])
+        arg = width == 1 ? Duplicated(p, dps[1]) : BatchDuplicated(p, dps)
+        Enzyme.autodiff(Reverse, unstable_batch_3425, Active, arg)
+        for dp in dps
+            @test dp ≈ [2.0, 4.0]
+        end
+    end
+end
+
+batched_uninferred_target(x) = (2 .* x,)
+batched_uninferred_return(x) = Base.invokelatest(batched_uninferred_target, x)
+
+@testset "Batched forward concrete annotation with uninferred return" begin
+    x = [1.0, 2.0]
+    dx1 = ones(2)
+    dx2 = fill(3.0, 2)
+    return_activity = BatchDuplicated{Tuple{Vector{Float64}}, 2}
+    result = Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Forward), Const(batched_uninferred_return),
+        return_activity, BatchDuplicated(x, (dx1, dx2))
+    )
+    @test result[1][1][1] == [2.0, 2.0]
+    @test result[1][2][1] == [6.0, 6.0]
+end

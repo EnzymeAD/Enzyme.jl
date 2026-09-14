@@ -35,6 +35,7 @@ jobs:
           - '1.10'
           - '1.11'
           - '1.12'
+          - '1.13'
         os:
           - ubuntu-24.04
           - macOS-latest
@@ -96,11 +97,12 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
+          include-all-prereleases: true
       - uses: actions/checkout@v7
         if: ${{ matrix.assertions }}
         with:
           repository: 'JuliaLang/julia'
-          ref: ${{ matrix.version == '1.12' && 'v1.12.6' || matrix.version == '1.10' && 'backports-release-1.10' || format('release-{0}', matrix.version) }}
+          ref: ${{ format('release-{0}', matrix.version) }}
           path: 'julia'
       - name: Compile Julia
         if: ${{ matrix.assertions }}
@@ -108,7 +110,12 @@ jobs:
           sed -i.bak 's/exit 2/exit 0/g' julia/deps/tools/jlchecksum
           make -C julia -j $(nproc) FORCE_ASSERTIONS=1 LLVM_ASSERTIONS=1 JULIA_PRECOMPILE=0
           echo $PWD/julia/usr/bin >> $GITHUB_PATH
-      - uses: julia-actions/cache@v3
+
+      - uses: julia-actions/cache@v3.2.0
+        with:
+          gcp-bucket: ${{ (contains(matrix.os, 'linux') && 'enzyme-ci-transient' ) || '' }}
+          key-prefix: enzymejl/
+
       - name: add EnzymeCore EnzymeTestUtils
         shell: julia --color=yes --project=. {0}
         run: |
@@ -174,6 +181,7 @@ jobs:
           - '1.10'
           - '1.11'
           - '1.12'
+          - '1.13'
         os:
           - ubuntu-latest
         arch:
@@ -185,7 +193,11 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - uses: julia-actions/cache@v3
+          include-all-prereleases: true
+      - uses: julia-actions/cache@v3.2.0
+        with:
+          gcp-bucket: ${{ (contains(matrix.os, 'linux') && 'enzyme-ci-transient' ) || '' }}
+          key-prefix: enzymejl-etu/
       - name: setup EnzymeTestUtils
         shell: julia --color=yes {0}
         id: setup_testutils
@@ -223,6 +235,7 @@ jobs:
           - '1.10'
           - '1.11'
           - '1.12'
+          - '1.13'
         os:
           - ubuntu-latest
         arch:
@@ -234,7 +247,12 @@ jobs:
         with:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
-      - uses: julia-actions/cache@v3
+          include-all-prereleases: true
+      - uses: julia-actions/cache@v3.2.0
+        with:
+          gcp-bucket: ${{ (contains(matrix.os, 'linux') && 'enzyme-ci-transient' ) || '' }}
+          key-prefix: enzymejl-ecore/
+
       - name: setup EnzymeCore
         shell: julia --color=yes {0}
         id: setup_testutils

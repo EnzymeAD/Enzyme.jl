@@ -253,6 +253,25 @@ function rewrite_ccalls!(mod::LLVM.Module)
     end
 end
 
+"""
+    fixup_1p12_sret!(f::LLVM.Function)
+
+Rewrite the untyped store of a return value that needs both an `sret` buffer and a
+`returnRoots` array into field-wise stores that skip the GC-tracked slots.
+
+Julia 1.12 changed the convention for such a return: the callee writes the tracked
+pointers only into `returnRoots` and leaves the corresponding slots of the `sret`
+buffer undefined, so a caller has to recombine the two halves (which is what
+[`recombine_value!`](@ref) does). Codegen spells the write of the remaining, inline
+data as a single untyped `llvm.memcpy` out of an `[N x i64]` alloca, which also
+drags the undefined bytes into the tracked slots -- and Enzyme would then take those
+for live `jlvalue`s. Replacing the memcpy with stores of just the untracked fields
+keeps the tracked slots alone, matching what the convention promises the caller.
+
+The rewrite is keyed on the ABI actually present in the IR rather than on a version
+bound: it only fires for a `memcpy` whose destination parameter carries an `sret`
+attribute for exactly `RT`.
+"""
 function fixup_1p12_sret!(f::LLVM.Function)
     if VERSION < v"1.12"
         return
@@ -268,10 +287,16 @@ function fixup_1p12_sret!(f::LLVM.Function)
         return
     end
 
+    lltype = convert(LLVMType, RT)
+
+    # Bail out if parameter 1 is not the `sret` buffer holding an `RT`, i.e. if the
+    # calling convention is not the one this rewrite knows about.
+    if sret_ty(f, 1, #=btval=# nothing, #=throw_error=# false) != lltype
+        return
+    end
+
     dl = datalayout(LLVM.parent(f))
 
-    @assert VERSION < v"1.13"
-    #TODO for 1.13 fixup this
     torep = LLVM.Instruction[]
     for u in LLVM.uses(parameters(f)[1])
         ci = LLVM.user(u)
@@ -287,7 +312,6 @@ function fixup_1p12_sret!(f::LLVM.Function)
     end
 
     if length(torep) > 0
-	lltype = convert(LLVMType, RT)
         sz = LLVM.sizeof(dl, lltype)
         for ci in torep
             cst = operands(ci)[3]::LLVM.ConstantInt
@@ -711,6 +735,402 @@ end
 
 # If there is a phi node of a decayed value, Enzyme may need to cache it
 # Here we force all decayed pointer phis to first addrspace from 10
+# State shared by every level of the `nodecayed_getparent` recursion below. It used to be
+# captured by a closure defined inside `nodecayed_phis!`; as a closure its type embedded all of
+# these and the ~200-line recursive body cost ~0.6 s to compile on the first `autodiff` of a
+# session, outside of anything the precompile workload can cover.
+struct NoDecayedPhiState
+    addr::Int
+    offty::LLVM.IntegerType
+    ctx::LLVM.Context
+    f::LLVM.Function
+    inst::LLVM.PHIInst          # the phi whose incoming value is being analyzed (for error reporting)
+    v0::LLVM.Value              # that incoming value, before any rewriting (for error reporting)
+    nextvs::Dict{LLVM.PHIInst, LLVM.PHIInst}
+    goffsets::Dict{LLVM.PHIInst, LLVM.PHIInst}
+    phicache::Dict{LLVM.PHIInst, Tuple{LLVM.PHIInst, LLVM.PHIInst}}
+end
+
+# Walk `v` back to its addrspace-10 parent, returning (parent, byte offset, hasload).
+function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecialize(v::LLVM.Value), @nospecialize(offset::LLVM.Value), hasload::Bool)::Tuple{LLVM.Value, LLVM.Value, Bool}
+    if st.addr == 11 && addrspace(value_type(v)) == 10
+        return v, offset, hasload
+    end
+    if st.addr == 13 && hasload && addrspace(value_type(v)) == 10
+        return v, offset, hasload
+    end
+
+    if st.addr == 13  && !hasload
+        if isa(v, LLVM.LoadInst)
+            v2, o2, hl2 = nodecayed_getparent(st, b, operands(v)[1], LLVM.ConstantInt(st.offty, 0), true)
+            @static if VERSION < v"1.11-"
+            else
+                @assert offset == LLVM.ConstantInt(st.offty, 0)
+                return v2, o2, true
+            end
+
+            rhs = LLVM.ConstantInt(st.offty, 0)
+            if o2 != rhs
+                msg = sprint() do io::IO
+                    println(
+                        io,
+                        "Enzyme internal error addr13 load doesn't keep offset 0",
+                    )
+                    println(io, "v=", string(v))
+                    println(io, "v2=", string(v2))
+                    println(io, "o2=", string(o2))
+                    println(io, "hl2=", string(hl2))
+                    println(io, "st.offty=", string(st.offty))
+                    println(io, "rhs=", string(rhs))
+                end
+                throw(AssertionError(msg))
+            end
+            return v2, offset, true
+        end
+        if isa(v, LLVM.CallInst)
+            cf = LLVM.called_operand(v)
+            if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded"
+                ld = operands(v)[2]
+                ld0, o0, ol0 = nodecayed_getparent(st, b, ld, LLVM.ConstantInt(st.offty, 0), hasload)
+                v2 = ld0
+                # v2, o2, hl2 = nodecayed_getparent(st, b, operands(ld)[1], LLVM.ConstantInt(st.offty, 0), true)
+
+                rhs = LLVM.ConstantInt(st.offty, sizeof(Int))
+                o2 = o0
+
+                base_2, off_2 = get_base_and_offset(v2)
+                base_1, off_1 = get_base_and_offset(operands(v)[1])
+
+                if o2 == rhs && base_1 == base_2 && off_1 == off_2
+                    return operands(v)[1], offset, true
+                end
+
+                pty = TypeTree(API.DT_Pointer, LLVM.context(ld))
+                only!(pty, -1)
+                rhs = ptrtoint!(b, get_memory_data(b, operands(v)[1]), st.offty)
+                metadata(rhs)["enzyme_type"] = to_md(pty, st.ctx)
+                lhs = ptrtoint!(b, operands(v)[2], st.offty)
+                metadata(rhs)["enzyme_type"] = to_md(pty, st.ctx)
+                off2 = nuwsub!(b, lhs, rhs)
+                ity = TypeTree(API.DT_Integer, LLVM.context(ld))
+                only!(ity, -1)
+                metadata(off2)["enzyme_type"] = to_md(ity, st.ctx)
+                add = nuwadd!(b, offset, off2)
+                metadata(add)["enzyme_type"] = to_md(ity, st.ctx)
+                return operands(v)[1], add, true
+            end
+        end
+    end
+
+    if st.addr == 13 && isa(v, LLVM.ConstantExpr)
+        if opcode(v) == LLVM.API.LLVMAddrSpaceCast
+            v2 = operands(v)[1]
+            if addrspace(value_type(v2)) == 0
+                if st.addr == 13 && isa(v, LLVM.ConstantExpr)
+                    PT = if LLVM.is_opaque(value_type(v))
+                        LLVM.PointerType(10)
+                    else
+                        LLVM.PointerType(eltype(value_type(v)), 10)
+                    end
+                    v2 = const_addrspacecast(
+                        operands(v)[1],
+                        PT
+                    )
+                    return v2, offset, hasload
+                end
+            end
+        end
+    end
+
+    if isa(v, LLVM.ConstantExpr)
+        if opcode(v) == LLVM.API.LLVMAddrSpaceCast
+            v2 = operands(v)[1]
+            if addrspace(value_type(v2)) == 10
+                return v2, offset, hasload
+            end
+            if addrspace(value_type(v2)) == 0
+                if st.addr == 11
+                    PT = if LLVM.is_opaque(value_type(v))
+                        LLVM.PointerType(10)
+                    else
+                        LLVM.PointerType(eltype(value_type(v)), 10)
+                    end
+                    v2 = const_addrspacecast(
+                        v2,
+                        PT
+                    )
+                    return v2, offset, hasload
+                end
+            end
+            if LLVM.isnull(v2)
+                PT = if LLVM.is_opaque(value_type(v))
+                    LLVM.PointerType(10)
+                else
+                    LLVM.PointerType(eltype(value_type(v)), 10)
+                end
+                v2 = const_addrspacecast(
+                    v2,
+                    PT
+                )
+                return v2, offset, hasload
+            end
+        end
+        if opcode(v) == LLVM.API.LLVMBitCast
+            preop = operands(v)[1]
+            while isa(preop, LLVM.ConstantExpr) && opcode(preop) == LLVM.API.LLVMBitCast
+                preop = operands(preop)[1]
+            end
+            v2, offset, skipload =
+                nodecayed_getparent(st, b, preop, offset, hasload)
+            v2 = const_bitcast(
+                v2,
+                LLVM.PointerType(
+                    eltype(value_type(v)),
+                    addrspace(value_type(v2)),
+                ),
+            )
+            @assert eltype(value_type(v2)) == eltype(value_type(v))
+            return v2, offset, skipload
+        end
+
+        if opcode(v) == LLVM.API.LLVMGetElementPtr
+            v2, offset, skipload =
+                nodecayed_getparent(st, b, operands(v)[1], offset, hasload)
+            offset = const_add(
+                offset,
+                API.EnzymeComputeByteOffsetOfGEP(b, v, st.offty),
+            )
+            if !LLVM.is_opaque(value_type(v))
+                v2 = const_bitcast(
+                    v2,
+                    LLVM.PointerType(
+                        eltype(value_type(v)),
+                        addrspace(value_type(v2)),
+                    ),
+                )
+                @assert eltype(value_type(v2)) == eltype(value_type(v))
+            end
+            return v2, offset, skipload
+        end
+
+    end
+
+    if isa(v, LLVM.AddrSpaceCastInst)
+        if addrspace(value_type(operands(v)[1])) == 0
+            PT = if LLVM.is_opaque(value_type(v))
+                LLVM.PointerType(10)
+            else
+                LLVM.PointerType(eltype(value_type(v)), 10)
+            end
+            v2 = addrspacecast!(
+                b,
+                operands(v)[1],
+                PT
+            )
+            return v2, offset, hasload
+        end
+        nv, noffset, nhasload =
+            nodecayed_getparent(st, b, operands(v)[1], offset, hasload)
+        if !is_opaque(value_type(nv)) && eltype(value_type(nv)) != eltype(value_type(v))
+            nv = bitcast!(
+                b,
+                nv,
+                LLVM.PointerType(
+                    eltype(value_type(v)),
+                    addrspace(value_type(nv)),
+                ),
+            )
+        end
+        return nv, noffset, nhasload
+    end
+
+    if isa(v, LLVM.BitCastInst)
+        preop = operands(v)[1]
+        while isa(preop, LLVM.BitCastInst)
+            preop = operands(preop)[1]
+        end
+        v2, offset, skipload =
+            nodecayed_getparent(st, b, preop, offset, hasload)
+        v2 = bitcast!(
+            b,
+            v2,
+            LLVM.PointerType(
+                eltype(value_type(v)),
+                addrspace(value_type(v2)),
+            ),
+        )
+        @assert eltype(value_type(v2)) == eltype(value_type(v))
+        return v2, offset, skipload
+    end
+
+    if isa(v, LLVM.GetElementPtrInst) && all(
+            x -> (isa(x, LLVM.ConstantInt) && convert(Int, x) == 0),
+            operands(v)[2:end],
+        )
+        v2, offset, skipload =
+            nodecayed_getparent(st, b, operands(v)[1], offset, hasload)
+        if !LLVM.is_opaque(value_type(v))
+            v2 = bitcast!(
+                b,
+                v2,
+                LLVM.PointerType(
+                    eltype(value_type(v)),
+                    addrspace(value_type(v2)),
+                ),
+            )
+        end
+        @assert eltype(value_type(v2)) == eltype(value_type(v))
+        return v2, offset, skipload
+    end
+
+    if isa(v, LLVM.GetElementPtrInst)
+        v2, offset, skipload =
+            nodecayed_getparent(st, b, operands(v)[1], offset, hasload)
+        offset = nuwadd!(
+            b,
+            offset,
+            API.EnzymeComputeByteOffsetOfGEP(b, v, st.offty),
+        )
+        if !LLVM.is_opaque(value_type(v2))
+            v2 = bitcast!(
+                b,
+                v2,
+                LLVM.PointerType(
+                    eltype(value_type(v)),
+                    addrspace(value_type(v2)),
+                ),
+            )
+            @assert eltype(value_type(v2)) == eltype(value_type(v))
+        end
+        return v2, offset, skipload
+    end
+
+    undeforpoison = isa(v, LLVM.UndefValue)
+    @static if LLVM.version() >= v"12"
+        undeforpoison |= isa(v, LLVM.PoisonValue)
+    end
+    if undeforpoison
+        PT = if LLVM.is_opaque(value_type(v))
+            LLVM.PointerType(10)
+        else
+            LLVM.PointerType(eltype(value_type(v)), 10)
+        end
+        return LLVM.UndefValue(PT), offset, st.addr == 13
+    end
+
+    if isa(v, LLVM.PHIInst) && !hasload && haskey(st.goffsets, v)
+        offset = nuwadd!(b, offset, st.goffsets[v])
+        nv = st.nextvs[v]
+        return nv, offset, st.addr == 13
+    end
+
+    @static if VERSION < v"1.11-"
+    else
+        if st.addr == 13 && isa(v, LLVM.PHIInst)
+            if haskey(st.phicache, v)
+                return (st.phicache[v]..., hasload)
+            end
+            vs = Union{LLVM.Value, Nothing}[]
+            offs = Union{LLVM.Value, Nothing}[]
+            blks = LLVM.BasicBlock[]
+
+            B = LLVM.IRBuilder()
+            position!(B, v)
+
+            sPT = if !LLVM.is_opaque(value_type(v))
+                LLVM.PointerType(eltype(value_type(v)), 10)
+            else
+                LLVM.PointerType(10)
+            end
+            vphi = phi!(B, sPT, "nondecay.vphi." * LLVM.name(v))
+            ophi = phi!(B, value_type(offset), "nondecay.ophi" * LLVM.name(v))
+            st.phicache[v] = (vphi, ophi)
+
+            bbcache = Dict{BasicBlock, Value}()
+            for (vt, bb) in LLVM.incoming(v)
+                b2 = IRBuilder()
+                position!(b2, terminator(bb))
+                v2, o2, hl2 = nodecayed_getparent(st, b2, vt, offset, hasload)
+                if value_type(v2) != sPT
+                    if haskey(bbcache, bb)
+                        v2 = bbcache[bb]
+                    else
+                        v2 = bitcast!(b2, v2, sPT)
+                        bbcache[bb] = v2
+                    end
+                end
+
+                @assert sPT == value_type(v2)
+                push!(vs, v2)
+                @assert value_type(offset) == value_type(o2)
+                push!(offs, o2)
+                push!(blks, bb)
+            end
+
+            append!(incoming(ophi), collect(zip(offs, blks)))
+
+            append!(incoming(vphi), collect(zip(vs, blks)))
+
+            return vphi, ophi, hasload
+        end
+    end
+
+    if isa(v, LLVM.SelectInst)
+        lhs_v, lhs_offset, lhs_skipload =
+            nodecayed_getparent(st, b, operands(v)[2], offset, hasload)
+        rhs_v, rhs_offset, rhs_skipload =
+            nodecayed_getparent(st, b, operands(v)[3], offset, hasload)
+        if value_type(lhs_v) != value_type(rhs_v) ||
+                value_type(lhs_offset) != value_type(rhs_offset) ||
+                lhs_skipload != rhs_skipload
+            msg = sprint() do io
+                println(
+                    io,
+                    "Could not analyze [select] garbage collection behavior of",
+                )
+                println(io, " st.v0: ", string(st.v0))
+                println(io, " v: ", string(v))
+                println(io, " offset: ", string(offset))
+                println(io, " hasload: ", string(hasload))
+                println(io, " lhs_v", lhs_v)
+                println(io, " rhs_v", rhs_v)
+                println(io, " lhs_offset", lhs_offset)
+                println(io, " rhs_offset", rhs_offset)
+                println(io, " lhs_skipload", lhs_skipload)
+                println(io, " rhs_skipload", rhs_skipload)
+            end
+            bt = GPUCompiler.backtrace(st.inst)
+            mi, _ = Compiler.enzyme_custom_extract_mi(st.f, false) #=error=#
+            world = Compiler.enzyme_extract_world(st.f)
+            if mi !== nothing
+                throw(EnzymeInternalError{Core.MethodInstance, UInt}(msg, string(st.f), bt, mi, world))
+            else
+                throw(EnzymeInternalError{Nothing, Nothing}(msg, string(st.f), bt, mi, nothing))
+            end
+        end
+        return select!(b, operands(v)[1], lhs_v, rhs_v),
+            select!(b, operands(v)[1], lhs_offset, rhs_offset),
+            lhs_skipload
+    end
+
+    msg = sprint() do io
+        println(io, "Could not analyze garbage collection behavior of")
+        println(io, " st.inst: ", string(st.inst))
+        println(io, " st.v0: ", string(st.v0))
+        println(io, " v: ", string(v))
+        println(io, " offset: ", string(offset))
+        println(io, " hasload: ", string(hasload))
+    end
+    bt = GPUCompiler.backtrace(st.inst)
+    mi, _ = Compiler.enzyme_custom_extract_mi(st.f, false) #=error=#
+    world = Compiler.enzyme_extract_world(st.f)
+    if mi !== nothing
+        throw(EnzymeInternalError{Core.MethodInstance, UInt}(msg, string(st.f), bt, mi, world))
+    else
+        throw(EnzymeInternalError{Nothing, Nothing}(msg, string(st.f), bt, mi, nothing))
+    end
+end
+
 function nodecayed_phis!(mod::LLVM.Module)
     # Simple handler to fix addrspace 11
     #complex handler for addrspace 13, which itself comes from a load of an
@@ -818,6 +1238,14 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 end
                                 continue
                             end
+                            undeforpoison = isa(base, LLVM.UndefValue)
+                            @static if LLVM.version() >= v"12"
+                                undeforpoison |= isa(base, LLVM.PoisonValue)
+                            end
+                            if undeforpoison
+                                # undef/poison incomings impose no GC constraint
+                                continue
+                            end
                             all_args = false
                             break
                         end
@@ -843,6 +1271,14 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 for (v, _) in LLVM.incoming(base)
                                     push!(addrtodo, v)
                                 end
+                                continue
+                            end
+                            undeforpoison = isa(base, LLVM.UndefValue)
+                            @static if LLVM.version() >= v"12"
+                                undeforpoison |= isa(base, LLVM.PoisonValue)
+                            end
+                            if undeforpoison
+                                # undef/poison constrains neither base nor offset
                                 continue
                             end
 			    if offset === nothing
@@ -911,390 +1347,13 @@ function nodecayed_phis!(mod::LLVM.Module)
                         end
 
                         v0 = v
-			@inline function getparent(b::LLVM.IRBuilder, @nospecialize(v::LLVM.Value), @nospecialize(offset::LLVM.Value), hasload::Bool, phicache::Dict{LLVM.PHIInst, Tuple{LLVM.PHIInst, LLVM.PHIInst}})
-                            if addr == 11 && addrspace(value_type(v)) == 10
-                                return v, offset, hasload
-                            end
-                            if addr == 13 && hasload && addrspace(value_type(v)) == 10
-                                return v, offset, hasload
-                            end
-
-                            if addr == 13  && !hasload
-                                if isa(v, LLVM.LoadInst)
-                                    v2, o2, hl2 = getparent(b, operands(v)[1], LLVM.ConstantInt(offty, 0), true, phicache)
-                                    @static if VERSION < v"1.11-"
-                                    else
-                                        @assert offset == LLVM.ConstantInt(offty, 0)
-                                        return v2, o2, true
-                                    end
-
-                                    rhs = LLVM.ConstantInt(offty, 0) 
-                                    if o2 != rhs
-                                        msg = sprint() do io::IO
-                                            println(
-                                                io,
-                                                "Enzyme internal error addr13 load doesn't keep offset 0",
-                                            )
-                                            println(io, "v=", string(v))
-                                            println(io, "v2=", string(v2))
-                                            println(io, "o2=", string(o2))
-                                            println(io, "hl2=", string(hl2))
-                                            println(io, "offty=", string(offty))
-                                            println(io, "rhs=", string(rhs))
-                                        end
-                                        throw(AssertionError(msg))
-                                    end
-                                    return v2, offset, true
-                                end
-                                if isa(v, LLVM.CallInst)
-                                    cf = LLVM.called_operand(v)
-                                    if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded"
-                                        ld = operands(v)[2]
-                                        ld0, o0, ol0 =  getparent(b, ld, LLVM.ConstantInt(offty, 0), hasload, phicache)
-                                        v2 = ld0
-                                        # v2, o2, hl2 = getparent(b, operands(ld)[1], LLVM.ConstantInt(offty, 0), true)
-
-                                        rhs = LLVM.ConstantInt(offty, sizeof(Int))
-                                        o2 = o0
-
-                                            base_2, off_2 = get_base_and_offset(v2)
-                                            base_1, off_1 = get_base_and_offset(operands(v)[1])
-
-                                            if o2 == rhs && base_1 == base_2 && off_1 == off_2
-                                                return operands(v)[1], offset, true
-                                            end
-
-                                            pty = TypeTree(API.DT_Pointer, LLVM.context(ld))
-                                            only!(pty, -1)
-                                            rhs = ptrtoint!(b, get_memory_data(b, operands(v)[1]), offty)
-                                            metadata(rhs)["enzyme_type"] = to_md(pty, ctx)
-                                            lhs = ptrtoint!(b, operands(v)[2], offty)
-                                            metadata(rhs)["enzyme_type"] = to_md(pty, ctx)
-                                            off2 = nuwsub!(b, lhs, rhs)
-                                            ity = TypeTree(API.DT_Integer, LLVM.context(ld))
-                                            only!(ity, -1)
-                                            metadata(off2)["enzyme_type"] = to_md(ity, ctx)
-                                            add = nuwadd!(b, offset, off2)
-                                            metadata(add)["enzyme_type"] = to_md(ity, ctx)
-                                            return operands(v)[1], add, true
-                                    end
-                                end
-                            end
-
-                            if addr == 13 && isa(v, LLVM.ConstantExpr)
-                                if opcode(v) == LLVM.API.LLVMAddrSpaceCast
-                                    v2 = operands(v)[1]
-                                    if addrspace(value_type(v2)) == 0
-                                        if addr == 13 && isa(v, LLVM.ConstantExpr)
-					    PT = if LLVM.is_opaque(value_type(v))
-						LLVM.PointerType(10)
-					    else
-						LLVM.PointerType(eltype(value_type(v)), 10)
-					    end
-                                            v2 = const_addrspacecast(
-                                                operands(v)[1],
-                                                PT
-                                            )
-                                            return v2, offset, hasload
-                                        end
-                                    end
-                                end
-                            end
-
-                            if isa(v, LLVM.ConstantExpr)
-                                if opcode(v) == LLVM.API.LLVMAddrSpaceCast
-                                    v2 = operands(v)[1]
-                                    if addrspace(value_type(v2)) == 10
-                                        return v2, offset, hasload
-                                    end
-                                    if addrspace(value_type(v2)) == 0
-                                        if addr == 11
-					    PT = if LLVM.is_opaque(value_type(v))
-						LLVM.PointerType(10)
-					    else
-						LLVM.PointerType(eltype(value_type(v)), 10)
-					    end
-                                            v2 = const_addrspacecast(
-                                                v2,
-                                                PT
-                                            )
-                                            return v2, offset, hasload
-                                        end
-                                    end
-                                    if LLVM.isnull(v2)
-					PT = if LLVM.is_opaque(value_type(v))
-					   LLVM.PointerType(10)
-				        else
-					   LLVM.PointerType(eltype(value_type(v)), 10)
-				        end
-                                        v2 = const_addrspacecast(
-                                            v2,
-                                            PT
-                                        )
-                                        return v2, offset, hasload
-                                    end
-                                end
-                                if opcode(v) == LLVM.API.LLVMBitCast
-                                    preop = operands(v)[1]
-                                    while isa(preop, LLVM.ConstantExpr) && opcode(preop) == LLVM.API.LLVMBitCast
-                                        preop = operands(preop)[1]
-                                    end
-                                    v2, offset, skipload =
-                                        getparent(b, preop, offset, hasload, phicache)
-                                    v2 = const_bitcast(
-                                        v2,
-                                        LLVM.PointerType(
-                                            eltype(value_type(v)),
-                                            addrspace(value_type(v2)),
-                                        ),
-                                    )
-                                    @assert eltype(value_type(v2)) == eltype(value_type(v))
-                                    return v2, offset, skipload
-                                end
-                                
-                                if opcode(v) == LLVM.API.LLVMGetElementPtr
-                                    v2, offset, skipload =
-                                        getparent(b, operands(v)[1], offset, hasload, phicache)
-                                    offset = const_add(
-                                        offset,
-                                        API.EnzymeComputeByteOffsetOfGEP(b, v, offty),
-                                    )
-				    if !LLVM.is_opaque(value_type(v))
-                                    v2 = const_bitcast(
-                                        v2,
-                                        LLVM.PointerType(
-                                            eltype(value_type(v)),
-                                            addrspace(value_type(v2)),
-                                        ),
-                                    )
-                                    @assert eltype(value_type(v2)) == eltype(value_type(v))
-				    end
-                                    return v2, offset, skipload
-                                end
-
-                            end
-
-                            if isa(v, LLVM.AddrSpaceCastInst)
-                                if addrspace(value_type(operands(v)[1])) == 0
-					PT = if LLVM.is_opaque(value_type(v))
-					   LLVM.PointerType(10)
-				        else
-					   LLVM.PointerType(eltype(value_type(v)), 10)
-				        end
-                                    v2 = addrspacecast!(
-                                        b,
-                                        operands(v)[1],
-                                        PT
-                                    )
-                                    return v2, offset, hasload
-                                end
-                                nv, noffset, nhasload =
-                                    getparent(b, operands(v)[1], offset, hasload, phicache)
-                                if !is_opaque(value_type(nv)) && eltype(value_type(nv)) != eltype(value_type(v))
-                                    nv = bitcast!(
-                                        b,
-                                        nv,
-                                        LLVM.PointerType(
-                                            eltype(value_type(v)),
-                                            addrspace(value_type(nv)),
-                                        ),
-                                    )
-                                end
-                                return nv, noffset, nhasload
-                            end
-
-                            if isa(v, LLVM.BitCastInst)
-                                preop = operands(v)[1]
-                                while isa(preop, LLVM.BitCastInst)
-                                    preop = operands(preop)[1]
-                                end
-                                v2, offset, skipload =
-                                    getparent(b, preop, offset, hasload, phicache)
-                                v2 = bitcast!(
-                                    b,
-                                    v2,
-                                    LLVM.PointerType(
-                                        eltype(value_type(v)),
-                                        addrspace(value_type(v2)),
-                                    ),
-                                )
-                                @assert eltype(value_type(v2)) == eltype(value_type(v))
-                                return v2, offset, skipload
-                            end
-
-                            if isa(v, LLVM.GetElementPtrInst) && all(
-                                x -> (isa(x, LLVM.ConstantInt) && convert(Int, x) == 0),
-                                operands(v)[2:end],
-                            )
-                                v2, offset, skipload =
-                                    getparent(b, operands(v)[1], offset, hasload, phicache)
-				    if !LLVM.is_opaque(value_type(v))
-					    v2 = bitcast!(
-					    b,
-					    v2,
-					    LLVM.PointerType(
-						eltype(value_type(v)),
-						addrspace(value_type(v2)),
-					    ),
-					)
-				    end
-                                @assert eltype(value_type(v2)) == eltype(value_type(v))
-                                return v2, offset, skipload
-                            end
-
-                            if isa(v, LLVM.GetElementPtrInst)
-                                v2, offset, skipload =
-                                    getparent(b, operands(v)[1], offset, hasload, phicache)
-                                offset = nuwadd!(
-                                    b,
-                                    offset,
-                                    API.EnzymeComputeByteOffsetOfGEP(b, v, offty),
-                                )
-                                if !LLVM.is_opaque(value_type(v2))
-                                    v2 = bitcast!(
-                                        b,
-                                        v2,
-                                        LLVM.PointerType(
-                                            eltype(value_type(v)),
-                                            addrspace(value_type(v2)),
-                                        ),
-                                    )
-                                    @assert eltype(value_type(v2)) == eltype(value_type(v))
-                                end
-                                return v2, offset, skipload
-                            end
-
-                            undeforpoison = isa(v, LLVM.UndefValue)
-                            @static if LLVM.version() >= v"12"
-                                undeforpoison |= isa(v, LLVM.PoisonValue)
-                            end
-                            if undeforpoison
-				PT = if LLVM.is_opaque(value_type(v))
-				   LLVM.PointerType(10)
-				else
-				   LLVM.PointerType(eltype(value_type(v)), 10)
-				end
-				return LLVM.UndefValue(PT), offset, addr == 13
-                            end
-
-                            if isa(v, LLVM.PHIInst) && !hasload && haskey(goffsets, v)
-                                offset = nuwadd!(b, offset, goffsets[v])
-                                nv = nextvs[v]
-                                return nv, offset, addr == 13
-                            end
-                            
-                            @static if VERSION < v"1.11-"
-                            else
-                            if addr == 13 && isa(v, LLVM.PHIInst)
-				if haskey(phicache, v)
-				   return (phicache[v]..., hasload)
-				end
-                                vs = Union{LLVM.Value, Nothing}[]
-                                offs = Union{LLVM.Value, Nothing}[]
-                                blks = LLVM.BasicBlock[]
-                                
-                                B = LLVM.IRBuilder()
-                                position!(B, v)
-
-                                sPT = if !LLVM.is_opaque(value_type(v))
-                                    LLVM.PointerType(eltype(value_type(v)), 10)
-                                else
-                                    LLVM.PointerType(10)
-                                end
-                                vphi = phi!(B, sPT, "nondecay.vphi."*LLVM.name(v))
-                                ophi = phi!(B, value_type(offset), "nondecay.ophi"*LLVM.name(v))
-				phicache[v] = (vphi, ophi)
-
-                                bbcache = Dict{BasicBlock, Value}()
-                                for (vt, bb) in LLVM.incoming(v) 
-                                    b2 = IRBuilder()
-                                    position!(b2, terminator(bb))
-                                    v2, o2, hl2 = getparent(b2, vt, offset, hasload, phicache)
-                                    if value_type(v2) != sPT
-                                        if haskey(bbcache, bb)
-                                            v2 = bbcache[bb]
-                                        else
-                                            v2 = bitcast!(b2, v2, sPT)
-                                            bbcache[bb] = v2
-                                        end
-                                    end
-
-                                    @assert sPT == value_type(v2)
-                                    push!(vs, v2)
-                                    @assert value_type(offset) == value_type(o2)
-                                    push!(offs, o2)
-                                    push!(blks, bb)
-                                end
-
-                                append!(incoming(ophi), collect(zip(offs, blks)))
-                                                    
-                                append!(incoming(vphi), collect(zip(vs, blks)))
-
-                                return vphi, ophi, hasload
-                            end
-                            end
-
-                            if isa(v, LLVM.SelectInst)
-                                lhs_v, lhs_offset, lhs_skipload =
-                                    getparent(b, operands(v)[2], offset, hasload, phicache)
-                                rhs_v, rhs_offset, rhs_skipload =
-                                    getparent(b, operands(v)[3], offset, hasload, phicache)
-                                if value_type(lhs_v) != value_type(rhs_v) ||
-                                   value_type(lhs_offset) != value_type(rhs_offset) ||
-                                   lhs_skipload != rhs_skipload
-                                    msg = sprint() do io
-                                        println(
-                                            io,
-                                            "Could not analyze [select] garbage collection behavior of",
-                                        )
-                                        println(io, " v0: ", string(v0))
-                                        println(io, " v: ", string(v))
-                                        println(io, " offset: ", string(offset))
-                                        println(io, " hasload: ", string(hasload))
-                                        println(io, " lhs_v", lhs_v)
-                                        println(io, " rhs_v", rhs_v)
-                                        println(io, " lhs_offset", lhs_offset)
-                                        println(io, " rhs_offset", rhs_offset)
-                                        println(io, " lhs_skipload", lhs_skipload)
-                                        println(io, " rhs_skipload", rhs_skipload)
-                                    end
-                                    bt = GPUCompiler.backtrace(inst)
-				    mi, _ = Compiler.enzyme_custom_extract_mi(f, false) #=error=#
-			            world = Compiler.enzyme_extract_world(f)
-				    if mi !== nothing
-				        throw(EnzymeInternalError{Core.MethodInstance, UInt}(msg, string(f), bt, mi, world))
-				    else
-				        throw(EnzymeInternalError{Nothing, Nothing}(msg, string(f), bt, mi, nothing))
-				    end
-                                end
-                                return select!(b, operands(v)[1], lhs_v, rhs_v),
-                                select!(b, operands(v)[1], lhs_offset, rhs_offset),
-                                lhs_skipload
-                            end
-
-                            msg = sprint() do io
-                                println(io, "Could not analyze garbage collection behavior of")
-                                println(io, " inst: ", string(inst))
-                                println(io, " v0: ", string(v0))
-                                println(io, " v: ", string(v))
-                                println(io, " offset: ", string(offset))
-                                println(io, " hasload: ", string(hasload))
-                            end
-                            bt = GPUCompiler.backtrace(inst)
-			    mi, _ = Compiler.enzyme_custom_extract_mi(f, false) #=error=#
-			    world = Compiler.enzyme_extract_world(f)
-			    if mi !== nothing
-			        throw(EnzymeInternalError{Core.MethodInstance, UInt}(msg, string(f), bt, mi, world))
-			    else
-			        throw(EnzymeInternalError{Nothing, Nothing}(msg, string(f), bt, mi, nothing))
-			    end
-                        end
                     
                         b = IRBuilder()
                         position!(b, terminator(pb))
 
 			phicache = Dict{LLVM.PHIInst, Tuple{LLVM.PHIInst, LLVM.PHIInst}}()
-                        v, offset, hadload = getparent(b, v, LLVM.ConstantInt(offty, 0), false, phicache)
+                        st = NoDecayedPhiState(addr, offty, ctx, f, inst, v0, nextvs, goffsets, phicache)
+                        v, offset, hadload = nodecayed_getparent(st, b, v, LLVM.ConstantInt(offty, 0), false)
 
                         if addr == 13
                             @assert hadload
@@ -1385,6 +1444,108 @@ function nodecayed_phis!(mod::LLVM.Module)
     return nothing
 end
 
+function is_sret_like_attr(attr::LLVM.Attribute)::Bool
+    sretkind = kind(
+        if LLVM.version().major >= 12
+            TypeAttribute("sret", LLVM.Int32Type())
+        else
+            EnumAttribute("sret")
+        end
+    )
+    k = kind(attr)
+    return k == sretkind ||
+        k == kind(StringAttribute("enzyme_sret")) ||
+        k == kind(StringAttribute("enzymejl_returnRoots")) ||
+        k == kind(StringAttribute("enzymejl_rooted_typ"))
+end
+
+"""
+    decay_args_readonly(st, fop, args)
+
+Whether the call `st` merely reads through each of the argument positions in
+`args`. That is the case when the position itself is marked `readonly` /
+`readnone`, or when the callee as a whole only reads memory -- which is how
+plain libcalls such as `memcmp` are annotated. Positions that carry an
+sret-like marker are never treated as read-only, since the callee writes the
+object back through them.
+"""
+function decay_args_readonly(
+        st::LLVM.CallInst,
+        @nospecialize(fop::LLVM.Value),
+        args::Vector{Int},
+    )::Bool
+    fn_readonly = false
+    for attr in collect(function_attributes(st))
+        if is_readonly(attr)
+            fn_readonly = true
+            break
+        end
+    end
+    if !fn_readonly && isa(fop, LLVM.Function) && is_readonly(fop)
+        fn_readonly = true
+    end
+    for i in args
+        attrs = collect(argument_attributes(st, i))
+        if isa(fop, LLVM.Function)
+            append!(attrs, collect(parameter_attributes(fop, i)))
+        end
+        arg_readonly = fn_readonly
+        for attr in attrs
+            if is_sret_like_attr(attr)
+                return false
+            end
+            if is_readonly(attr)
+                arg_readonly = true
+            end
+        end
+        if !arg_readonly
+            return false
+        end
+    end
+    return true
+end
+
+"""
+    legalize_readonly_decay!(st, inst, args)
+
+Rewrite the argument positions `args` of the read-only call `st`, all of which
+are the illegal `addrspace(10) -> addrspace(0)` cast `inst`, to use a legally
+derived pointer instead: decay to addrspace 11 and go through
+`julia.pointer_from_objref`, with the object gc-preserved across the call.
+Julia's late GC lowering understands that form; the raw cast it does not.
+"""
+function legalize_readonly_decay!(
+        st::LLVM.CallInst,
+        inst::LLVM.Instruction,
+        args::Vector{Int},
+    )
+    obj = operands(inst)[1]
+    nb = IRBuilder()
+    position!(nb, st)
+    token = emit_gc_preserve_begin(nb, LLVM.Value[obj])
+    derived = if LLVM.is_opaque(value_type(obj))
+        addrspacecast!(nb, obj, LLVM.PointerType(Derived))
+    else
+        T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+        addrspacecast!(
+            nb,
+            bitcast!(nb, obj, LLVM.PointerType(T_jlvalue, Tracked)),
+            LLVM.PointerType(T_jlvalue, Derived),
+        )
+    end
+    raw = emit_pointerfromobjref!(nb, derived)
+    if value_type(raw) != value_type(inst)
+        raw = bitcast!(nb, raw, value_type(inst))
+    end
+    for i in args
+        LLVM.API.LLVMSetOperand(st, i - 1, raw)
+    end
+    eb = IRBuilder()
+    position!(eb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
+    emit_gc_preserve_end(eb, token)
+    return nothing
+end
+
 function fix_decayaddr!(mod::LLVM.Module)
     for f in functions(mod)
         invalid = LLVM.Instruction[]
@@ -1405,8 +1566,20 @@ function fix_decayaddr!(mod::LLVM.Module)
 
         for inst in invalid
             temp = nothing
+            # A single user may consume `inst` in more than one operand, and the
+            # handlers below rewrite all of them at once. Snapshot the distinct
+            # users first so that detaching a use does not invalidate the
+            # iteration, and so that no user is visited twice.
+            seen = Set{LLVM.API.LLVMValueRef}()
+            users = LLVM.Value[]
             for u in LLVM.uses(inst)
-                st = LLVM.user(u)
+                user = LLVM.user(u)
+                if !(user.ref in seen)
+                    push!(seen, user.ref)
+                    push!(users, user)
+                end
+            end
+            for st in users
                 # Storing _into_ the decay addr is okay
                 # we just cannot store the decayed addr into
                 # somewhere
@@ -1555,6 +1728,22 @@ function fix_decayaddr!(mod::LLVM.Module)
                     LLVM.API.LLVMInstructionEraseFromParent(st)
                     continue
                 end
+
+                # An ordinary libcall such as `memcmp` is not an intrinsic that
+                # can be re-created over addrspace 10, and it has no sret to
+                # copy the object through either. Since it only reads through
+                # the pointer, hand it a legally derived one.
+                decay_args = Int[]
+                for (i, v) in enumerate(arg_operands_view(st))
+                    if v == inst
+                        push!(decay_args, i)
+                    end
+                end
+                if !isempty(decay_args) && decay_args_readonly(st, fop, decay_args)
+                    legalize_readonly_decay!(st, inst, decay_args)
+                    continue
+                end
+
                 mayread = false
                 maywrite = false
                 sret = true

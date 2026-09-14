@@ -1,5 +1,7 @@
 using Enzyme
 using Statistics
+using Random
+using UUIDs
 using Test
 
 include("common.jl")
@@ -618,17 +620,19 @@ end
 end
 
 @testset "hvcat_fill" begin
-    ar = Matrix{Float64}(undef, 2, 3)
-    dar = [1.0 2.0 3.0; 4.0 5.0 6.0]
+    if isdefined(Base, :hvcat_fill!)
+        ar = Matrix{Float64}(undef, 2, 3)
+        dar = [1.0 2.0 3.0; 4.0 5.0 6.0]
 
-    res = first(Enzyme.autodiff(Reverse, Base.hvcat_fill!, Const, Duplicated(ar, dar), Active((1, 2.2, 3, 4.4, 5, 6.6))))
+        res = first(Enzyme.autodiff(Reverse, Base.hvcat_fill!, Const, Duplicated(ar, dar), Active((1, 2.2, 3, 4.4, 5, 6.6))))
 
-    @test res[2][1] == 0
-    @test res[2][2] ≈ 2.0
-    @test res[2][3] ≈ 0
-    @test res[2][4] ≈ 4.0
-    @test res[2][5] ≈ 0
-    @test res[2][6] ≈ 6.0
+        @test res[2][1] == 0
+        @test res[2][2] ≈ 2.0
+        @test res[2][3] ≈ 0
+        @test res[2][4] ≈ 4.0
+        @test res[2][5] ≈ 0
+        @test res[2][6] ≈ 6.0
+    end
 end
 
 function named_deepcopy(x, nt)
@@ -853,3 +857,55 @@ end
     @test res_vector !== nothing
 end
 
+# Two broadcast arguments whose element-type queries each spawn an inference
+# frame, with the second callee calling back into the first. On Julia 1.13 the
+# broadcast rewrite used to die in `Compiler.merge_call_chain!` with
+# `TypeError: typeassert expected InferenceState, got Nothing` (Comrade
+# integration test, #3545).
+bc_sibling_h(x) = x * 2
+bc_sibling_k(x) = bc_sibling_h(x) + 1
+bc_sibling_g(a, b) = a + b
+bc_sibling_f(x) = sum(bc_sibling_g.(bc_sibling_h.(x), bc_sibling_k.(x)))
+
+bc_mutual_h(x) = x > 0 ? x * 2 : bc_mutual_k(-x)
+bc_mutual_k(x) = x < 0 ? bc_mutual_h(-x) : x + 1
+bc_mutual_f(x) = sum(bc_sibling_g.(bc_mutual_h.(x), bc_mutual_k.(x)))
+
+@testset "Broadcast eltype inference with sibling frames" begin
+    @test Enzyme.gradient(Reverse, bc_sibling_f, [1.0, 2.0])[1] ≈ [4.0, 4.0]
+    @test Enzyme.gradient(Forward, bc_sibling_f, [1.0, 2.0])[1] ≈ [4.0, 4.0]
+    @test Enzyme.gradient(Reverse, bc_mutual_f, [1.0, 2.0])[1] ≈ [3.0, 3.0]
+    @test Enzyme.gradient(Forward, bc_mutual_f, [1.0, 2.0])[1] ≈ [3.0, 3.0]
+end
+
+
+# Issue #2464: `uv_random` (behind `Random.RandomDevice` and `UUIDs.uuid4`) must be
+# known to be inactive and not to free memory, otherwise reverse mode fails with
+# "No create nofree of empty function (uv_random)".
+function rand_device(x::Float64, out::Vector{UInt64})
+    out[1] = rand(Random.RandomDevice(), UInt64)
+    return x * 2.0
+end
+
+@static if VERSION >= v"1.11"
+    @testset "uv_random via RandomDevice" begin
+        out = [UInt64(0)]
+        @test Enzyme.autodiff(Forward, rand_device, Duplicated(2.0, 1.0), Const(out)) == (2.0,)
+        @test Enzyme.autodiff(Reverse, rand_device, Active(2.0), Const(out)) == ((2.0, nothing),)
+    end
+end
+
+# Issue #2464: `uuid4()` masks a `UInt128` with the RFC 4122 version/variant
+# constant, which does not fit in 64 bits. Type analysis used to sign-extend it
+# and abort the process (fixed in EnzymeAD/Enzyme#3205, Enzyme_jll 0.0.293).
+function make_uuid4(x::Float64, out::Vector{UUIDs.UUID})
+    out[1] = UUIDs.uuid4()
+    return x * 2.0
+end
+
+@testset "uuid4 i128 mask" begin
+    out = [UUIDs.UUID(0)]
+    @test Enzyme.autodiff(Forward, make_uuid4, Duplicated(2.0, 1.0), Const(out)) == (2.0,)
+    @test out[1] != UUIDs.UUID(0)
+    @test Enzyme.autodiff(Reverse, make_uuid4, Active(2.0), Const(out)) == ((2.0, nothing),)
+end

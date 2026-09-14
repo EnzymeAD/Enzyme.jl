@@ -80,6 +80,11 @@ end
 @inline function typetree_primitive(::Type{Float64})
     return API.DT_Double
 end
+@static if VERSION >= v"1.11-"
+    @inline function typetree_primitive(::Type{Core.BFloat16})
+        return API.DT_BFloat16
+    end
+end
 
 
 @static if VERSION >= v"1.11-"
