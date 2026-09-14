@@ -125,3 +125,83 @@ end
         test_scalar(p -> first(SpecialFunctions.beta_inc_inv(a, b, p)), p)
     end
 end
+
+# x/ref: https://github.com/EnzymeAD/Enzyme.jl/issues/3580
+@testset "incomplete gamma: shape and rate partials" begin
+    # 2a integer and a <= x takes gamma_inc_fsum, where a is only a loop count
+    for a in (0.5, 1.0, 1.5, 2.0)
+        test_scalar(a -> first(SpecialFunctions.gamma_inc(a, 2.0)), a)
+        test_scalar(a -> last(SpecialFunctions.gamma_inc(a, 2.0)), a)
+    end
+
+    # neighbouring shapes, unaffected by that branch
+    for a in (0.25, 1.25)
+        test_scalar(a -> first(SpecialFunctions.gamma_inc(a, 2.0)), a)
+    end
+
+    # x partial, on both outputs
+    for x in (0.5, 2.0, 5.0)
+        test_scalar(x -> first(SpecialFunctions.gamma_inc(1.0, x)), x)
+        test_scalar(x -> last(SpecialFunctions.gamma_inc(2.5, x)), x)
+    end
+
+    # tolerances set by the Float32 finite difference, as for logabsgamma above
+    test_scalar(a -> first(SpecialFunctions.gamma_inc(a, 2.0f0)), 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
+    test_scalar(x -> first(SpecialFunctions.gamma_inc(1.0f0, x)), 2.0f0; rtol = 1.0e-5, atol = 1.0e-5)
+
+    # ind only sets the primal's accuracy target
+    da2 = Enzyme.autodiff(Reverse, a -> first(SpecialFunctions.gamma_inc(a, 2.0)), Active, Active(1.0))[1][1]
+    da3 = Enzyme.autodiff(Reverse, a -> first(SpecialFunctions.gamma_inc(a, 2.0, 1)), Active, Active(1.0))[1][1]
+    @test da3 == da2
+
+    # d/da log(Q) down the right tail, references at 1024-bit precision
+    dlogQ_da(k, x) = autodiff(
+        Reverse, t -> log(last(SpecialFunctions.gamma_inc(t, x))), Active, Active(k)
+    )[1][1]
+
+    @test isapprox(dlogQ_da(10.0, 30.0), 1.1935552300070054; rtol = 1.0e-14)
+    @test isapprox(dlogQ_da(10.0, 33.0), 1.283815721530926; rtol = 1.0e-14)
+    @test isapprox(dlogQ_da(10.0, 40.0), 1.4679114736958756; rtol = 1.0e-14)
+    @test isapprox(dlogQ_da(10.0, 60.0), 1.8617089624951197; rtol = 1.0e-14)
+    @test isapprox(dlogQ_da(10.0, 80.0), 2.1441192460521554; rtol = 1.0e-14)
+    @test isapprox(dlogQ_da(1.0, 40.0), 4.290499234095098; rtol = 1.0e-14)
+    @test isapprox(dlogQ_da(2.0, 40.0), 3.2910805852369234; rtol = 1.0e-14)
+    @test isapprox(dlogQ_da(5.0, 50.0), 2.42711839097637; rtol = 1.0e-14)
+    @test isapprox(dlogQ_da(100.0, 170.0), 0.5490554382301781; rtol = 1.0e-14)
+
+    # dP/da is -dQ/da on the upper branch
+    dP_da(k, x) = autodiff(
+        Reverse, t -> first(SpecialFunctions.gamma_inc(t, x)), Active, Active(k)
+    )[1][1]
+    @test isapprox(dP_da(10.0, 60.0), -5.308677545135539e-16; rtol = 1.0e-14)
+    @test isapprox(dP_da(5.0, 50.0), -1.3227071908086808e-16; rtol = 1.0e-14)
+
+    # Float32 widens to Float64 and narrows back
+    @test isapprox(dlogQ_da(10.0f0, 40.0f0), 1.4679115f0; rtol = 2 * eps(Float32))
+
+    # primal Q underflows here, so dQ/da is rebuilt in log space
+    dQa_sub = autodiff(
+        Reverse, t -> last(SpecialFunctions.gamma_inc(t, 745.5)), Active, Active(1.0)
+    )[1][1]
+    @test 0.0 < dQa_sub < 1.0e-322
+
+    # either side of the x = a + 1 branch boundary
+    for a in (0.5, 2.0, 10.0, 100.0)
+        lo, hi = dP_da(a, prevfloat(a + 1.0)), dP_da(a, a + 1.0)
+        @test isapprox(lo, hi; rtol = 1.0e-12)
+    end
+
+    # x = 0: P(a, 0) = 0, so the shape partial is zero. The x partial is the
+    # Gamma(a, 1) density there, which diverges for a < 1 and is not asserted.
+    for a in (0.5, 1.0, 2.0)
+        @test autodiff(
+            Reverse, t -> first(SpecialFunctions.gamma_inc(t, 0.0)), Active, Active(a)
+        )[1][1] == 0.0
+    end
+    @test autodiff(
+        Reverse, x -> first(SpecialFunctions.gamma_inc(2.0, x)), Active, Active(0.0)
+    )[1][1] == 0.0
+    @test autodiff(
+        Reverse, x -> first(SpecialFunctions.gamma_inc(1.0, x)), Active, Active(0.0)
+    )[1][1] == 1.0
+end
