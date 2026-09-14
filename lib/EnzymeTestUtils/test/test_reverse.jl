@@ -16,6 +16,38 @@ function f_kwargs_rev!(x; kwargs...)
     return nothing
 end
 
+# Function with a scratch buffer that the rule mutates only during AD.
+# The primal does not touch `scratch`, so the rule's scribble would normally fail
+# the post-call mutation check unless `ignore_const_checks=true`.
+f_const_scratch_rev(x, scratch) = sum(abs2, x)
+
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.RevConfigWidth{1},
+    func::Const{typeof(f_const_scratch_rev)},
+    RT::Type{<:Union{Const,Active}},
+    x::Union{Const,Duplicated},
+    scratch::Const,
+)
+    scratch.val .= x.val  # AD-only scribble on Const scratch buffer
+    primal = EnzymeRules.needs_primal(config) ? func.val(x.val, scratch.val) : nothing
+    tape = copy(x.val)
+    return EnzymeRules.AugmentedReturn(primal, nothing, tape)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfigWidth{1},
+    func::Const{typeof(f_const_scratch_rev)},
+    dret::Union{Active,Type{<:Const}},
+    tape,
+    x::Union{Const,Duplicated},
+    scratch::Const,
+)
+    if !(x isa Const) && dret isa Active
+        x.dval .+= 2 .* dret.val .* tape
+    end
+    return (nothing, nothing)
+end
+
 function EnzymeRules.augmented_primal(
     config::EnzymeRules.RevConfigWidth{1},
     func::Const{typeof(f_kwargs_rev)},
@@ -231,6 +263,23 @@ end
             @test fails() do
                 test_reverse(f_kwargs_rev!, Const, (x, Tx); fkwargs)
             end
+        end
+    end
+
+    @testset "ignore_const_checks" begin
+        x = randn(3)
+        scratch = zeros(3)
+        @test fails() do
+            test_reverse(f_const_scratch_rev, Active, (x, Duplicated), (scratch, Const))
+        end
+        @test !fails() do
+            test_reverse(
+                f_const_scratch_rev,
+                Active,
+                (x, Duplicated),
+                (scratch, Const);
+                ignore_const_checks=true,
+            )
         end
     end
 
