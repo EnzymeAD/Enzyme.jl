@@ -179,18 +179,19 @@ GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) 
 # GPUCompiler.isintrinsic(::CompilerJob{EnzymeTarget}, fn::String) = true
 # GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
 
+# GPUCompiler 2.x moved the code-instance cache onto CompilerCaching.jl and renamed the hooks:
+# `ci_cache_token` became `cache_owner`, `ci_cache` (Julia 1.10) became `get_code_cache`,
+# `runtime_slug` and `codegen` are gone, and `compile_method_instance` drives inference
+# through `drive_inference!`, which it only provides for its own interpreter. Enzyme supports
+# both majors; every version split below keys on this one probe.
+const HAS_GPUCOMPILER_2 = isdefined(GPUCompiler, :cache_owner)
+
 # GPUCompiler 1.x names the runtime library per back-end; 2.x derives it from the cache owner.
-@static if isdefined(GPUCompiler, :runtime_slug)
+@static if !HAS_GPUCOMPILER_2
     # TODO: encode debug build or not in the compiler job
     #       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
     GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
 end
-
-# GPUCompiler 2.x moved the code-instance cache onto CompilerCaching.jl and renamed the hooks:
-# `ci_cache_token` became `cache_owner`, `ci_cache` (Julia 1.10) became `get_code_cache`, and
-# `compile_method_instance` drives inference through `drive_inference!`, which it only
-# provides for its own interpreter. Enzyme supports both majors.
-const HAS_GPUCOMPILER_2 = isdefined(GPUCompiler, :cache_owner)
 
 # provide a specific interpreter to use.
 if VERSION >= v"1.11.0-DEV.1552"
@@ -753,14 +754,15 @@ import .Interpreter: isKWCallSignature
         GPUCompiler.drive_inference!(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance) =
             GPUCompiler.CompilerCaching.typeinf!(interp, mi)
     else
-        # Mirrors the `CodeCache`-based implementation in GPUCompiler's deprecated.jl.
+        # Mirrors GPUCompiler's own `CodeCache`-based `drive_inference!` (jlgen.jl), which
+        # is typed on `GPUInterpreter` and therefore cannot be reused for ours.
         function GPUCompiler.drive_inference!(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance)
             src = Core.Compiler.typeinf_ext_toplevel(interp, mi)
             @assert src !== nothing "Inference of $mi failed"
 
             # For const-return CIs the inference result wasn't recorded; set it from the
             # returned source so callers re-using the CI don't need to re-infer.
-            wvc = Core.Compiler.WorldView(interp.code_cache, Core.Compiler.WorldRange(interp.world, interp.world))
+            wvc = Core.Compiler.code_cache(interp)
             if Core.Compiler.haskey(wvc, mi)
                 ci = Core.Compiler.getindex(wvc, mi)
                 if ci.inferred === nothing

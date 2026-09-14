@@ -134,15 +134,6 @@ jobs:
           gcp-bucket: ${{ (contains(matrix.os, 'linux') && 'enzyme-ci-transient' ) || '' }}
           key-prefix: enzymejl/
 
-      - name: Pin GPUCompiler to v1
-        if: ${{ matrix.gpucompiler == '1' }}
-        shell: julia --color=yes --project=. {0}
-        run: |
-          using Pkg
-          Pkg.add(PackageSpec(; name = "GPUCompiler", version = "1"))
-          Pkg.status()
-        env:
-          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
       - name: add EnzymeCore EnzymeTestUtils
         shell: julia --color=yes --project=. {0}
         run: |
@@ -152,6 +143,23 @@ jobs:
         if: ${{ matrix.version == '1.10' }}
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+      # After the develop step: on 1.10 `[sources]` is ignored, so resolving the project
+      # before EnzymeCore is developed needs a registered EnzymeCore that satisfies the
+      # compat, which a same-PR EnzymeCore bump does not have yet.
+      - name: Pin GPUCompiler to v1
+        if: ${{ matrix.gpucompiler == '1' }}
+        shell: julia --color=yes --project=. {0}
+        run: |
+          using Pkg
+          # A version bound handed to `add` is not recorded anywhere, so a later resolve
+          # would be free to upgrade back to 2.x. Pin instead; `pin` only accepts direct
+          # dependencies, hence the `add` first.
+          Pkg.add(PackageSpec(; name = "GPUCompiler", version = "1"))
+          Pkg.pin("GPUCompiler")
+          Pkg.status()
+        env:
+          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+          JULIA_PKG_PRECOMPILE_AUTO: "false"
       - name: Build libEnzyme
         if: ${{ matrix.libEnzyme == 'local' && matrix.os != 'macOS-latest'}}
         id: build_libenzyme
@@ -170,8 +178,8 @@ jobs:
         id: buildpkg
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
-      # `Pkg.develop`/`Pkg.instantiate` above re-resolve, and nothing forces them to keep
-      # the pin. Fail loudly rather than let this job silently duplicate the 2.x one.
+      # `julia-buildpkg` re-resolves; the manifest pin should hold it to 1.x, but fail
+      # loudly rather than let this job silently duplicate the 2.x one.
       - name: Check GPUCompiler pin held
         if: ${{ matrix.gpucompiler == '1' }}
         shell: julia --color=yes --project=. {0}
