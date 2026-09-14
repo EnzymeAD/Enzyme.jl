@@ -14,8 +14,7 @@ xlogydiff(x) = xlogy(x[1], 23.0)
     @test grad_reverse[1] ≈ [log(23.0)] 
 end
 
-# ∂/∂x was 0 at x == 0, where the primal's iszero(x) branch returns a constant
-# x/ref: https://github.com/EnzymeAD/Enzyme.jl/issues/3579
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3579
 @testset "LogExpFunctions xlog1py and xexpy" begin
     test_scalar(x -> xlog1py(x, -0.5), 0.0)
     test_scalar(x -> xlog1py(x, -0.5), 1.0)
