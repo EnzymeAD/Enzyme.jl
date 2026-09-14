@@ -3084,6 +3084,37 @@ function enzyme!(
     end
     run!(DCEPass(), mod)
     fix_decayaddr!(mod)
+
+    # `CreateAugmentedPrimal` and `CreatePrimalAndGradient` cache per call site: the key
+    # carries `overwritten_args` and `subsequent_calls_may_write`, which the uncacheable
+    # analysis derives from where the call sits in its parent. One callee reached from two
+    # call sites that differ only in those fields therefore gets two adjoints, and those
+    # two can come out identical -- on a compressible-atmosphere model whose `_time_step!`
+    # calls `_update_state!` four times, the last of them with nothing writing after it,
+    # 43% of the resulting 1.6M-instruction module was one such duplicated pair, live and
+    # surviving into the module that is JIT'd.
+    #
+    # Merging them here costs 0.41s on that module and takes its time to first gradient
+    # down 12.6%. It has to run on AD's own output: the same pass placed later, in
+    # `_thunk` or inside `removeDeadArgs!`, merges nothing on the same functions.
+    #
+    # The entry points are looked up by name immediately below, so stop MergeFunctions
+    # from replacing either of them outright -- with external linkage it leaves a thunk
+    # behind and the name survives.
+    let saved = Tuple{LLVM.Function, LLVM.API.LLVMLinkage}[]
+        for nm in (adjointfname, augmented_primalfname)
+            nm === nothing && continue
+            haskey(functions(mod), nm) || continue
+            f = functions(mod)[nm]
+            push!(saved, (f, linkage(f)))
+            linkage!(f, LLVM.API.LLVMExternalLinkage)
+        end
+        run!(MergeFunctionsPass(), mod)
+        for (f, lk) in saved
+            linkage!(f, lk)
+        end
+    end
+
     adjointf = adjointf == nothing ? nothing : functions(mod)[adjointfname]
     augmented_primalf =
         augmented_primalf == nothing ? nothing : functions(mod)[augmented_primalfname]
