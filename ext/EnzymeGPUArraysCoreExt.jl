@@ -46,6 +46,72 @@ end
     end
 end
 
+#=
+`make_zero`/`make_zero!` are defined element-wise, which would require scalar
+indexing on a GPU array, so zero the array in bulk instead. That is only
+equivalent to the element-wise definition when every part of the element type is
+a float, which covers `Float32`, `ComplexF64`, `SVector{3,Float64}` etc. For
+other element types the element-wise definition is run on a host copy instead.
+=#
+@inline _float_only(::Type{FT}) where {FT <: AbstractFloat} = true
+@inline _float_only(::Type{Complex{FT}}) where {FT <: AbstractFloat} = true
+@inline _float_only(::Type{FT}) where {FT} =
+    isbitstype(FT) && fieldcount(FT) > 0 && all(_float_only, fieldtypes(FT))
+@inline _bulk_zeroable(::Type{FT}) where {FT} =
+    _float_only(FT) && hasmethod(Base.zero, Tuple{Type{FT}})
+
+# An element type that is not `_bulk_zeroable` can still have float content that
+# has to be zeroed, e.g. any struct mixing floats with flags or indices.
+@inline function _make_zero_via_host(
+        prev::AT, ::Val{copy_if_inactive}
+    ) where {copy_if_inactive, AT <: AbstractGPUArray}
+    zeroed = map(Array(prev)) do x
+        EnzymeCore.make_zero(Core.Typeof(x), IdDict(), x, Val(copy_if_inactive))
+    end
+    newa = similar(prev)
+    copyto!(newa, zeroed)
+    return newa::AT
+end
+
+@inline function EnzymeCore.make_zero(x::AbstractGPUArray{FT}) where {FT}
+    if !_bulk_zeroable(FT)
+        return _make_zero_via_host(x, Val(false))
+    end
+    return Base.zero(x)
+end
+
+@inline function EnzymeCore.make_zero(
+        ::Type{AT},
+        seen::IdDict,
+        prev::AT,
+        ::Val{copy_if_inactive} = Val(false),
+    )::AT where {copy_if_inactive, FT, AT <: AbstractGPUArray{FT}}
+    if haskey(seen, prev)
+        return seen[prev]
+    end
+    newa = _bulk_zeroable(FT) ? Base.zero(prev) :
+        _make_zero_via_host(prev, Val(copy_if_inactive))
+    seen[prev] = newa
+    return newa
+end
+
+@inline function EnzymeCore.make_zero!(
+        prev::AbstractGPUArray{FT}, seen::ST
+    )::Nothing where {FT, ST}
+    if !isnothing(seen)
+        if prev in seen
+            return nothing
+        end
+        push!(seen, prev)
+    end
+    if _bulk_zeroable(FT)
+        fill!(prev, zero(FT))
+    else
+        copyto!(prev, map(EnzymeCore.make_zero, Array(prev)))
+    end
+    return nothing
+end
+
 @inline _bget(x, ::Val{1}, ::Int) = x
 @inline _bget(x, ::Val{N}, i::Int) where {N} = x[i]
 
@@ -508,6 +574,129 @@ function EnzymeRules.reverse(
         end
     end
     return (nothing, nothing)
+end
+
+#=
+`fill!(A, x)` writes one scalar into every entry, so the derivative is `dA .= dx`
+going forward and `dx += sum(dA)` coming back, with `dA` zeroed once read: the
+call overwrites `A`, so whatever cotangent `A` carried in is consumed here.
+
+Without a rule Enzyme descends into the backend fill, which on CUDA is a `memset`
+it cannot differentiate. An integer element type carries no cotangent; its shadow
+is only cleared so it can't feed junk into a later read.
+=#
+const _FillEltype = Union{AbstractFloat, Complex{<:AbstractFloat}, Integer}
+
+# Whether an element type takes a cotangent at all.
+@inline _fill_active(::Type{<:Union{AbstractFloat, Complex{<:AbstractFloat}}}) = true
+@inline _fill_active(::Type) = false
+
+# `sum(dAᵢ)` as a `T`: batch element `i`'s share of dx. A struct instead of a
+# closure so `ntuple` gets something concrete.
+struct _FillCotangent{T, W, D}
+    dvals::D
+end
+@inline _FillCotangent{T}(::Val{W}, dvals::D) where {T, W, D} =
+    _FillCotangent{T, W, D}(dvals)
+@inline (f::_FillCotangent{T, W})(i::Int) where {T, W} =
+    T(Enzyme._project(T, sum(_bget(f.dvals, Val(W), i))))::T
+
+# Same shape rules as `_dscalar`: bare at width 1, an N-tuple when batched.
+@inline _dfill(w::Val{1}, ::Type{T}, dvals) where {T} = _FillCotangent{T}(w, dvals)(1)
+@inline _dfill(w::Val{N}, ::Type{T}, dvals) where {N, T} =
+    ntuple(_FillCotangent{T}(w, dvals), Val(N))
+
+# Writes `val` into every shadow of `A`. Used to seed the shadow in forward mode
+# and to clear it in reverse.
+@inline function _fill_shadows!(config, A::Annotation, val)
+    N = width(config)
+    ntuple(Val(N)) do i
+        Base.@_inline_meta
+        fill!(_bget(A.dval, Val(N), i), val)
+        nothing
+    end
+    return nothing
+end
+
+function EnzymeRules.forward(
+        config,
+        ofn::Const{typeof(Base.fill!)},
+        ::Type{RT},
+        A::Annotation{<:AbstractGPUArray{T}},
+        x::Annotation,
+    ) where {RT, T <: _FillEltype}
+    if !(A isa DuplicatedNoNeed || A isa BatchDuplicatedNoNeed)
+        ofn.val(A.val, x.val)
+    end
+
+    if !_isconst(config, A)
+        if x isa Const
+            _fill_shadows!(config, A, zero(T))
+        else
+            N = width(config)
+            ntuple(Val(N)) do i
+                Base.@_inline_meta
+                fill!(_bget(A.dval, Val(N), i), _bget(x.dval, Val(N), i))
+                nothing
+            end
+        end
+    end
+
+    return if needs_primal(config) && needs_shadow(config)
+        A
+    elseif needs_shadow(config)
+        A.dval
+    elseif needs_primal(config)
+        A.val
+    else
+        nothing
+    end
+end
+
+function EnzymeRules.augmented_primal(
+        config::RevConfig,
+        ofn::Const{typeof(Base.fill!)},
+        ::Type{RT},
+        A::Annotation{<:AbstractGPUArray{T}},
+        x::Annotation,
+    ) where {RT, T <: _FillEltype}
+    ofn.val(A.val, x.val)
+
+    # An inactive element type gets no reverse pass to clear its shadow.
+    if !_fill_active(T) && !_isconst(config, A)
+        _fill_shadows!(config, A, zero(T))
+    end
+
+    return EnzymeRules.AugmentedReturn(
+        needs_primal(config) ? A.val : nothing,
+        needs_shadow(config) ? A.dval : nothing,
+        nothing,
+    )
+end
+
+function EnzymeRules.reverse(
+        config::RevConfig,
+        ofn::Const{typeof(Base.fill!)},
+        ::Type{RT},
+        tape,
+        A::Annotation{<:AbstractGPUArray{T}},
+        x::Annotation{T2},
+    ) where {RT, T <: _FillEltype, T2}
+    a_const = _isconst(config, A)
+
+    dx = if !(x isa Active)
+        nothing
+    elseif a_const || !_fill_active(T)
+        _dzero(Val(width(config)), T2)
+    else
+        _dfill(Val(width(config)), T2, A.dval)
+    end
+
+    if _fill_active(T) && !a_const
+        _fill_shadows!(config, A, zero(T))
+    end
+
+    return (nothing, dx)
 end
 
 end # module
