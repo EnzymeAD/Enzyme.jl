@@ -733,6 +733,59 @@ function memcpy_sret_split!(mod::LLVM.Module)
     end
 end
 
+# Root object of a derived pointer for the purpose of deciding whether an addrspace(11) phi
+# needs an addrspace(10) parent. Unlike `get_base_and_offset` this also looks through GEPs with
+# non-constant indices: LLVM 20 (Julia 1.13) strength-reduces loop indices into pointer
+# induction variables (`%invariant.gep = gep i8 %arg, -8` + `gep double %invariant.gep, %iv`),
+# and the byte offset is irrelevant for the rooting question.
+function nodecayed_root(@nospecialize(v::LLVM.Value))::LLVM.Value
+    base, _ = get_base_and_offset(v)
+    while isa(base, LLVM.GetElementPtrInst)
+        base, _ = get_base_and_offset(operands(base)[1])
+    end
+    return base
+end
+
+# True if every value flowing into the addrspace(11) phi `inst` (through phis and selects) is
+# derived from an addrspace(11) argument, undef or poison. Such a phi has no addrspace(10)
+# object to root it and is left untouched by `nodecayed_phis!`.
+function nodecayed_all_args(inst::LLVM.PHIInst)::Bool
+    addrtodo = LLVM.Value[inst]
+    seen = Set{LLVM.Value}()
+    while length(addrtodo) != 0
+        v = pop!(addrtodo)
+        base = nodecayed_root(v)
+        if in(base, seen)
+            continue
+        end
+        push!(seen, base)
+        if isa(base, LLVM.Argument) && addrspace(value_type(base)) == 11
+            continue
+        end
+        if isa(base, LLVM.PHIInst)
+            for (iv, _) in LLVM.incoming(base)
+                push!(addrtodo, iv)
+            end
+            continue
+        end
+        if isa(base, LLVM.SelectInst)
+            push!(addrtodo, operands(base)[2])
+            push!(addrtodo, operands(base)[3])
+            continue
+        end
+        undeforpoison = isa(base, LLVM.UndefValue)
+        @static if LLVM.version() >= v"12"
+            undeforpoison |= isa(base, LLVM.PoisonValue)
+        end
+        if undeforpoison
+            # undef/poison incomings impose no GC constraint
+            continue
+        end
+        return false
+    end
+    return true
+end
+
 # If there is a phi node of a decayed value, Enzyme may need to cache it
 # Here we force all decayed pointer phis to first addrspace from 10
 # State shared by every level of the `nodecayed_getparent` recursion below. It used to be
@@ -1217,87 +1270,8 @@ function nodecayed_phis!(mod::LLVM.Module)
                     if addrspace(ty) != addr
                         continue
                     end
-                    if addr == 11
-                        all_args = true
-                        addrtodo = Value[inst]
-                        seen = Set{LLVM.Value}()
-
-                        while length(addrtodo) != 0
-                            v = pop!(addrtodo)
-                            base, _ = get_base_and_offset(v; offsetAllowed=false)
-                            if in(base, seen)
-                                continue
-                            end
-                            push!(seen, base)
-                            if isa(base, LLVM.Argument) && addrspace(value_type(base)) == 11
-                                continue
-                            end
-                            if isa(base, LLVM.PHIInst)
-                                for (v, _) in LLVM.incoming(base)
-                                    push!(addrtodo, v)
-                                end
-                                continue
-                            end
-                            undeforpoison = isa(base, LLVM.UndefValue)
-                            @static if LLVM.version() >= v"12"
-                                undeforpoison |= isa(base, LLVM.PoisonValue)
-                            end
-                            if undeforpoison
-                                # undef/poison incomings impose no GC constraint
-                                continue
-                            end
-                            all_args = false
-                            break
-                        end
-                        if all_args
-                            continue
-                        end
-
-                        all_args = true
-                        addrtodo = Value[inst]
-                        seen = Set{LLVM.Value}()
-
-                        offset = nothing
-
-                        while length(addrtodo) != 0
-                            v = pop!(addrtodo)
-                            base, toffset = get_base_and_offset(v)
-
-                            if in(base, seen)
-                                continue
-                            end
-                            push!(seen, base)		
-                            if isa(base, LLVM.PHIInst)
-                                for (v, _) in LLVM.incoming(base)
-                                    push!(addrtodo, v)
-                                end
-                                continue
-                            end
-                            undeforpoison = isa(base, LLVM.UndefValue)
-                            @static if LLVM.version() >= v"12"
-                                undeforpoison |= isa(base, LLVM.PoisonValue)
-                            end
-                            if undeforpoison
-                                # undef/poison constrains neither base nor offset
-                                continue
-                            end
-			    if offset === nothing
-                                offset = toffset
-                            else
-                                if offset != toffset
-                                    all_args = false
-                                    break
-                                end
-                            end
-                            if isa(base, LLVM.Argument) && addrspace(value_type(base)) == 11
-                                continue
-                            end
-                            all_args = false
-                            break
-                        end
-                        if all_args
-                            continue
-                        end
+                    if addr == 11 && nodecayed_all_args(inst)
+                        continue
                     end
 
                     push!(todo, inst)
