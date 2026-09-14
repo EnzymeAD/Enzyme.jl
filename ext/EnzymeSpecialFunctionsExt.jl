@@ -120,8 +120,12 @@ function _dan_dp(p::T, q::T, f::T, n::Int) where {T<:AbstractFloat}
 end
 
 function _da1_dq(p::T, q::T, f::T) where {T<:AbstractFloat}
-    # ∂a₁/∂q
-    return _a1fun(p, q, f) / (q - 1)
+    # ∂a₁/∂q avoiding the removable singularity at q == 1, where a₁ vanishes
+    # and the naive a₁/(q-1) is 0/0. Writing a₁ = (x/(1-x)) * (q-1)/(p+1) with
+    # (x/(1-x)) = p*f/q leaves (q-1) as the only q-dependent factor.
+    # x/ref: https://github.com/EnzymeAD/Enzyme.jl/issues/3581
+    pfq = (p * f) / q
+    return pfq / (p + 1)
 end
 
 
