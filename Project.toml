@@ -46,7 +46,10 @@ ADTypes = "1"
 BFloat16s = "0.4, 0.5, 0.6"
 CEnum = "0.4, 0.5"
 ChainRulesCore = "1.13"
-CUDA = "5, 6"
+# 6.3 is skipped: it routed `@cuda` through `compile_and_launch` without porting CUDACore's
+# Enzyme launch rules, so no kernel launch is differentiable on it. 6.2 launches through the
+# `HostKernel` functor and 6.4 through `kernel_pipeline`, both of which the rules hook.
+CUDA = "5, 6.0 - 6.2, 6.4"
 EnzymeCore = "0.8.21"
 Enzyme_jll = "0.0.293"
 GPUArraysCore = "0.1.6, 0.2"

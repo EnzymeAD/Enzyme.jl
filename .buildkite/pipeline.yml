@@ -7,9 +7,10 @@ steps:
           - "1.11"
           - "1.12"
           - "1.13"
-        # The default resolution picks GPUCompiler 2.x, and with it CUDA 6.3 or newer,
-        # whose CUDACore requires it. "1" pins the 1.x compatibility path instead, which
-        # backs CUDA down to 6.2, the last release that resolves against GPUCompiler 1.
+        # The default resolution picks GPUCompiler 2.x, and with it CUDA 6.4 or newer
+        # (Project.toml skips 6.3), whose CUDACore requires it. "1" pins the 1.x
+        # compatibility path instead, which backs CUDA down to 6.2, the last release that
+        # resolves against GPUCompiler 1.
         gpucompiler:
           - "default"
           - "1"
