@@ -65,3 +65,20 @@ end
     @test g ≈ [3.0, 2.0]
 end
 
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3551
+# A call to a const opaque closure lowers to an indirect call through the
+# closure's specptr; Enzyme must recover the callee to differentiate it.
+const oc_nocapture = Base.Experimental.@opaque (x::Float64) -> 3x
+g_oc_nocapture(x) = oc_nocapture(x)
+
+const oc_capture = let c = 4.0
+    Base.Experimental.@opaque (x::Float64) -> c * x
+end
+g_oc_capture(x) = oc_capture(x)
+
+@testset "opaque closure calls" begin
+    @test g_oc_nocapture(2.0) == 6.0
+    @test autodiff(Reverse, g_oc_nocapture, Active, Active(2.0))[1][1] == 3.0
+    @test g_oc_capture(2.0) == 8.0
+    @test autodiff(Reverse, g_oc_capture, Active, Active(2.0))[1][1] == 4.0
+end
