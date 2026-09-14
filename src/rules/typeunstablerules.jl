@@ -1839,6 +1839,38 @@ end
     common_jl_getfield_rev(1, B, orig, gutils, tape)
 end
 
+"""
+    common_jl_getfield_diffuse(offset, orig, gutils, val, isshadow, mode)
+
+`common_jl_getfield_rev` calls `invert_pointer` on the object it reads from and
+then `lookup_value` on the result, so that shadow is consumed by the reverse
+pass. Enzyme's differential use analysis cannot see inside an LLVM rule, so
+without this handler it can conclude that the shadow is dead, erase the
+placeholder the rule already consumed, and fail with "Erased value with a use".
+"""
+function common_jl_getfield_diffuse(
+        offset,
+        @nospecialize(orig::LLVM.CallInst),
+        gutils::GradientUtils,
+        @nospecialize(val::LLVM.Value),
+        isshadow::Bool,
+        mode::API.CDerivativeMode,
+    )
+    # Only the shadow query is affected; let the default logic answer the rest.
+    if !isshadow || is_constant_value(gutils, orig)
+        return (false, true)
+    end
+    ops = @view operands(orig)[offset:end]
+    if length(ops) >= 2 && val == ops[2] && !is_constant_value(gutils, ops[2])
+        return (true, false)
+    end
+    return (false, true)
+end
+
+@register_diffuse function jl_getfield_diffuse(orig::LLVM.CallInst, gutils::GradientUtils, @nospecialize(val::LLVM.Value), isshadow::Bool, mode::API.CDerivativeMode)
+    return common_jl_getfield_diffuse(1, orig, gutils, val, isshadow, mode)
+end
+
 function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
