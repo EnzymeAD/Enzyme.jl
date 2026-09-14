@@ -101,12 +101,15 @@ end
     )
     # Rationale for a,b values:
     # - <1: 0.4, 0.6 to stress small-parameter power series branches.
-    # - Near 1: 0.9, 1.1 to test branch boundaries and continuity across a≈1, b≈1.
+    # - Near 1: 0.9, 1.0, 1.1 to test branch boundaries and continuity across a≈1, b≈1.
+    #   Exactly 1 is a removable singularity in the CF derivative coefficients, where the
+    #   partial in that shape used to come back NaN.
+    #   x/ref: https://github.com/EnzymeAD/Enzyme.jl/issues/3581
     # - Moderate: 2.5, 5.0 where multiple algorithm choices engage based on x and bx.
     # - Large (≥15, ≥40) to drive large-parameter regimes: 16.0, 45.0.
     # - Very large (≫100): 100.5, 150.0 to ensure symmetric vs asymmetric asymptotics are exercised when λ
     #   is small/large, and continued fractions are robust for large shapes.
-    ab = (0.4, 0.6, 0.9, 1.1, 2.5, 5.0, 16.0, 45.0, 100.5, 150.0)
+    ab = (0.4, 0.6, 0.9, 1.0, 1.1, 2.5, 5.0, 16.0, 45.0, 100.5, 150.0)
 
     # 3-argument beta_inc(a,b,x)
     for a in ab, b in ab, x in test_points
