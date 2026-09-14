@@ -342,8 +342,12 @@ is_plt_stub(f::LLVM.Function) = startswith(LLVM.name(f), "jlplt_")
 # the stub, and walking the stub itself folds that call away. GPUCompiler 1.x happened to
 # list the stubs after their users; 2.x lists them first.
 function check_ir_functions(mod::LLVM.Module)
-    fns = collect(functions(mod))
-    return vcat(filter(!is_plt_stub, fns), filter(is_plt_stub, fns))
+    main = LLVM.Function[]
+    stubs = LLVM.Function[]
+    for f in functions(mod)
+        push!(is_plt_stub(f) ? stubs : main, f)
+    end
+    return append!(main, stubs)
 end
 
 function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, mod::LLVM.Module)
