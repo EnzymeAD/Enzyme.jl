@@ -789,20 +789,24 @@ no shadow. Relocatable derivative modules are left to later changes.
 
 Baking is only correct for a back-end whose `relocation_lowering` is `:bake`: the words
 written in are addresses in this process. A `:patch` or `:table` back-end deliberately
-keeps them symbolic (its code runs elsewhere, or the module outlives the session), so
-refuse rather than silently stamp host addresses into it.
+keeps them symbolic (its code runs elsewhere, or the module outlives the session), so for
+those the records are left untouched: `link_relocatable!` carries them into the job that
+requested the derivative, which lowers them with its own strategy. Codegen emits a slot for
+every Julia value it touches (intrinsic bindings, `llvmcall` strings, `nothing`), and all
+of those are dead once the module is optimized, so an ordinary kernel differentiates; a
+derivative whose analysis does need one of the values remains unsupported on such a
+back-end.
+
+The strategy is asked of a `kernel = true` flavour of the job: a deferred derivative is
+linked into the kernel that requested it, and a back-end whose strategy depends on
+`kernel` (Metal answers `:table` for kernels only) would otherwise report `:bake` for the
+non-kernel primal job Enzyme holds and let host addresses into a persisted kernel.
 """
 function resolve_relocations!(@nospecialize(job::CompilerJob), mod::LLVM.Module, meta)
     @static if HAS_GPUCOMPILER_2
-        if !isempty(meta.relocations)
-            strategy = GPUCompiler.relocation_lowering(job)
-            if strategy !== :bake
-                error(
-                    "Enzyme cannot yet differentiate a module with :$strategy relocation " *
-                        "lowering: resolving its Julia-value references would bake " *
-                        "host-process addresses into code that does not run in this process."
-                )
-            end
+        isempty(meta.relocations) && return nothing
+        kernel_job = CompilerJob(job; config = CompilerConfig(job.config; kernel = true))
+        if GPUCompiler.relocation_lowering(kernel_job) === :bake
             GPUCompiler.prune_dead_relocations!(mod, meta.relocations)
             GPUCompiler.bake_relocations!(mod, meta.relocations)
         end
@@ -6607,7 +6611,8 @@ end
     use_primal = mode == API.DEM_ReverseModePrimal
     entry = use_primal ? augmented_primalf : adjointf
     # GPUCompiler 2.x links a deferred job's module with `link_relocatable!`, which reads the
-    # relocation records off this tuple; `resolve_relocations!` has already emptied them.
+    # relocation records off this tuple: `resolve_relocations!` emptied them for a `:bake`
+    # back-end and left them for the requesting job's own lowering otherwise.
     relocations = @static if HAS_GPUCOMPILER_2
         meta.relocations
     else
