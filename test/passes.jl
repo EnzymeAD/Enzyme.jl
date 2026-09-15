@@ -232,7 +232,7 @@ end
         Enzyme.Compiler.autodiff_cache[ptr] = ("thunk", bitcode)
         try
             Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT =>
-                    Enzyme.Compiler.EnzymeContext() begin
+                    Enzyme.Compiler.EnzymeContext(GPUCompiler.tls_world_age()) begin
                 FT = LLVM.FunctionType(LLVM.Int64Type(), [LLVM.Int64Type()])
 
                 first_mod = LLVM.Module("first")
