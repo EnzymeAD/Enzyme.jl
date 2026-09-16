@@ -155,16 +155,7 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
 
-    world = nothing
-    for fattr in collect(LLVM.function_attributes(LLVM.parent(LLVM.position(B))))
-        if isa(fattr, LLVM.StringAttribute)
-            if LLVM.kind(fattr) == "enzymejl_world"
-                world = parse(UInt, LLVM.value(fattr))
-                break
-            end
-        end
-    end
-    
+    world = enzyme_world_if_active()
 
     for (k, v) in Compiler.JuliaGlobalNameMap
         if v === val
@@ -615,7 +606,7 @@ function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruc
         fn,
         false,
     ) #=error=#
-    world = Compiler.enzyme_extract_world(fn)
+    world = enzyme_world_if_active()
 
     msg = "Function requesting sret type was not an sret\n\nidx=$idx\nenzymejl_parmtype=$enzymejl_parmtype enzymejl_parmtype_ref=$enzymejl_parmtype_ref\n"
     ir = string(fn)
@@ -623,11 +614,10 @@ function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruc
     if btval !== nothing        
         bt = GPUCompiler.backtrace(btval)
     end
-    if mi !== nothing
+    if mi !== nothing && world !== nothing
         throw(Compiler.EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world))
     else
-        world = nothing
-        throw(Compiler.EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world))
+        throw(Compiler.EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, nothing, nothing))
     end
 end
 
