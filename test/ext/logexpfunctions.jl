@@ -14,7 +14,6 @@ xlogydiff(x) = xlogy(x[1], 23.0)
     @test grad_reverse[1] ≈ [log(23.0)] 
 end
 
-# https://github.com/EnzymeAD/Enzyme.jl/issues/3583
 @testset "logistic" begin
     test_scalar(logistic, 0.3)
     test_scalar(logistic, 800.0)
