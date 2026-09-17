@@ -145,7 +145,7 @@ function EnzymeRules.reverse(
     kwargs...,
 )
     # the integer argument carries no derivative
-    return ntuple(i -> nothing, Val(1 + length(rs)))
+    return ntuple(Returns(nothing), Val(1 + length(rs)))
 end
 
 EnzymeRules.@easy_rule(+(a::BigFloat, b::Number), (1,1))
