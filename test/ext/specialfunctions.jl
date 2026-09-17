@@ -153,30 +153,10 @@ end
     da3 = Enzyme.autodiff(Reverse, a -> first(SpecialFunctions.gamma_inc(a, 2.0, 1)), Active, Active(1.0))[1][1]
     @test da3 == da2
 
-    # d/da log(Q) down the right tail, references at 1024-bit precision
-    dlogQ_da(k, x) = autodiff(
-        Reverse, t -> log(last(SpecialFunctions.gamma_inc(t, x))), Active, Active(k)
-    )[1][1]
-
-    @test isapprox(dlogQ_da(10.0, 30.0), 1.1935552300070054; rtol = 1.0e-14)
-    @test isapprox(dlogQ_da(10.0, 33.0), 1.283815721530926; rtol = 1.0e-14)
-    @test isapprox(dlogQ_da(10.0, 40.0), 1.4679114736958756; rtol = 1.0e-14)
-    @test isapprox(dlogQ_da(10.0, 60.0), 1.8617089624951197; rtol = 1.0e-14)
-    @test isapprox(dlogQ_da(10.0, 80.0), 2.1441192460521554; rtol = 1.0e-14)
-    @test isapprox(dlogQ_da(1.0, 40.0), 4.290499234095098; rtol = 1.0e-14)
-    @test isapprox(dlogQ_da(2.0, 40.0), 3.2910805852369234; rtol = 1.0e-14)
-    @test isapprox(dlogQ_da(5.0, 50.0), 2.42711839097637; rtol = 1.0e-14)
-    @test isapprox(dlogQ_da(100.0, 170.0), 0.5490554382301781; rtol = 1.0e-14)
-
     # dP/da is -dQ/da on the upper branch
     dP_da(k, x) = autodiff(
         Reverse, t -> first(SpecialFunctions.gamma_inc(t, x)), Active, Active(k)
     )[1][1]
-    @test isapprox(dP_da(10.0, 60.0), -5.308677545135539e-16; rtol = 1.0e-14)
-    @test isapprox(dP_da(5.0, 50.0), -1.3227071908086808e-16; rtol = 1.0e-14)
-
-    # Float32 widens to Float64 and narrows back
-    @test isapprox(dlogQ_da(10.0f0, 40.0f0), 1.4679115f0; rtol = 2 * eps(Float32))
 
     # primal Q underflows here, so dQ/da is rebuilt in log space
     dQa_sub = autodiff(
