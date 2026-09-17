@@ -60,7 +60,6 @@ end
         if x isa Real
             test_scalar((y) -> SpecialFunctions.besselyx(2, y), x)
             test_scalar((y) -> SpecialFunctions.besselkx(2, y), x)
-            # https://github.com/EnzymeAD/Enzyme.jl/issues/3585
             test_scalar((y) -> SpecialFunctions.besselk(2, y), x)
         end
 
