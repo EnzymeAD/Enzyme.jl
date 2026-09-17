@@ -414,9 +414,6 @@ Enzyme.EnzymeRules.@easy_rule(
 # branchy primal out of the tape entirely.
 
 function _gamma_inc_clamp_iter(n::T) where {T <: AbstractFloat}
-    # Shared floor and ceiling for the two budgets below. The 1e6 ceiling holds the
-    # worst case to ~3 ms and binds above a ≈ 1.5e10, beyond which each routine
-    # reports non-convergence rather than truncating silently.
     isfinite(n) || return 1000
     n <= 1000 && return 1000
     n >= 1_000_000 && return 1_000_000
@@ -426,18 +423,14 @@ end
 function _gamma_inc_series_maxiter(x::T) where {T <: AbstractFloat}
     # tₙ falls off like xⁿ/n!, so n log n ≳ log(1/eps) terms are needed where x is
     # small, and sqrt(2 x log(1/eps)) near x ≈ a, where the decay is slowest. Linear
-    # plus square root covers both. Measured need against this budget: 23 terms at
-    # a = 1, x = 2 and 2556 at a = x = 1e5 in Float64, 196 and 12125 at 1024 bits.
+    # plus square root covers both.
     L = max(-log(eps(T)), one(T))
     return _gamma_inc_clamp_iter(L + 3 * sqrt(2 * x * L) / 2 + 50)
 end
 
 function _gamma_inc_cf_maxiter(x::T) where {T <: AbstractFloat}
     # The continued fraction's error falls like exp(-4 sqrt(n x)), so it needs about
-    # log(1/eps)² / (16 x) terms where x is small — 80 in Float64 and 28532 at 1024
-    # bits for x = 1.1, against 74 and 28561 predicted — and O(√x) near x ≈ a, where
-    # that estimate no longer binds (422 at a = x = 1e5). This branch only runs for
-    # x ≥ a + 1 > 1, so the reciprocal term cannot run away.
+    # log(1/eps)² / (16 x) terms where x is small
     L = max(-log(eps(T)), one(T))
     return _gamma_inc_clamp_iter(L * L / (16 * x) + 3 * sqrt(2 * x * L) / 2 + 50)
 end
@@ -456,7 +449,6 @@ function _dlogP_da_series(a::T, x::T) where {T <: AbstractFloat}
     # side by side and the quotient is formed once at the end. Writing the same
     # derivative as log(x) P - Σ tₙ ψ(a+n+1) instead, the form AS 187 states, would
     # subtract two sums of size O(log x) and lose every digit of a small result.
-    # Costs ~3 ns a term: 0.47 μs at a = x = 100, 7.6 μs at 1e5, 71 μs at 1e7.
     t = one(T)
     dt = zero(T)
     s = one(T)
@@ -474,8 +466,6 @@ function _dlogP_da_series(a::T, x::T) where {T <: AbstractFloat}
             break
         end
     end
-    # The budget is sized to the series, so exhausting it means the sum was
-    # truncated; report that as NaN rather than returning a silently short sum.
     converged || return (T(NaN), T(NaN))
     return (log(x) - digamma(a + one(T)) + ds / s, log(s))
 end
@@ -485,9 +475,7 @@ function _dlogQ_da_cf(a::T, x::T) where {T <: AbstractFloat}
     # continued fraction with aᵢ = -i(i-a) and bᵢ = x + 2i + 1 - a, hence
     # ∂log Q/∂a = log x - ψ(a) + h'/h. Lentz builds h as a product of factors dᵢcᵢ,
     # so h'/h is the sum of their logarithmic derivatives and h itself is never
-    # differentiated. ∂aᵢ/∂a = i and ∂bᵢ/∂a = -1 drive both. The fraction is
-    # slowest just above the boundary, 47 terms and 0.78 μs at a = 1, x = 2, and needs
-    # under 20 anywhere down the tail, 0.24 μs at a = 10, x = 60 and at a = 1, x = 1e6.
+    # differentiated. ∂aᵢ/∂a = i and ∂bᵢ/∂a = -1 drive both.
     tiny = floatmin(T) / eps(T)
     b = x + one(T) - a
     c = inv(tiny)
@@ -515,8 +503,6 @@ function _dlogQ_da_cf(a::T, x::T) where {T <: AbstractFloat}
         dlogdel = dlogd + dlogc
         h *= del
         dlogh += dlogdel
-        # The value and its derivative are converged separately: del → 1 alone does
-        # not mean the logarithmic derivative has stopped moving.
         if abs(del - one(T)) <= eps(T) && abs(dlogdel) <= eps(T) * (abs(dlogh) + one(T))
             converged = true
             break

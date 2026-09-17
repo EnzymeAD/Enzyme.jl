@@ -126,7 +126,6 @@ end
     end
 end
 
-# x/ref: https://github.com/EnzymeAD/Enzyme.jl/issues/3580
 @testset "incomplete gamma: shape and rate partials" begin
     # 2a integer and a <= x takes gamma_inc_fsum, where a is only a loop count
     for a in (0.5, 1.0, 1.5, 2.0)
