@@ -700,10 +700,10 @@ function abs_typeof(
             end
             if !Base.allocatedinline(typ) && cholmod_exception
                 shouldLoad = false
-                offset %= sizeof(Int)
+                offset = Base.mod(offset, sizeof(Int))
             else
                 sz = max(1, actual_size(ET))
-                offset %= sz
+                offset = Base.mod(offset, sz)
             end
         end
 
