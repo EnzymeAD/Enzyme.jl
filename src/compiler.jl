@@ -6111,7 +6111,11 @@ end
                         if sz_et > 0
                             jTy = ET
                             byref = GPUCompiler.MUT_REF
-                            offset = offset % sz_et
+                            # The offset can be negative when LLVM folds an
+                            # element stride into the base and subtracts the
+                            # remainder (e.g. `base + 72*i - 64`), so reduce it
+                            # into [0, sz_et) rather than keeping its sign.
+                            offset = Base.mod(offset, sz_et)
                         end
                     end
                 end
@@ -6129,7 +6133,7 @@ end
                     )
 
 			 size = Compiler.datatype_layoutsize(jTy)
-                        if offset < size && isa(sz, LLVM.ConstantInt) && size - offset >= convert(Int, sz)
+                        if 0 <= offset < size && isa(sz, LLVM.ConstantInt) && size - offset >= convert(Int, sz)
                             lim = convert(Int, sz)
                             md = to_fullmd(jTy, offset, lim)
                             @assert byref == GPUCompiler.BITS_REF ||
