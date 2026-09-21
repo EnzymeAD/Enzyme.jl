@@ -7215,7 +7215,15 @@ const DumpLLVMCall = Ref(false)
         else
             ret!(builder)
         end
-        reinsert_gcmarker!(llvm_f)
+        # Julia inlines this function into its caller. On 1.13 the caller takes its
+        # pgcstack as an argument, and the GC frame lowering prefers a
+        # `julia.get_pgcstack` call in the entry block over that argument, pushing the
+        # GC frame after the call. An inlined marker thus leaves every safepoint
+        # before it without the caller's roots, so only keep it if it is needed.
+        pgcstack = reinsert_gcmarker!(llvm_f)
+        if pgcstack isa LLVM.CallInst && isempty(LLVM.uses(pgcstack))
+            LLVM.API.LLVMInstructionEraseFromParent(pgcstack)
+        end
 
 	Enzyme.Compiler.JIT.prepare!(mod)
 	if DumpLLVMCall[]

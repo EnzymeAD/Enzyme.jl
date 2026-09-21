@@ -1,4 +1,4 @@
-using Enzyme, Test
+using Enzyme, Test, InteractiveUtils
 using Enzyme: EnzymeRules
 
 @noinline function force_stup(A)
@@ -387,4 +387,26 @@ f_mutunion(x) = (m = dispatch(x); m.u[1]^2)
 
 @testset "Typed Alloca restore_alloca_type! with Any field" begin
     @test Enzyme.gradient(Enzyme.Reverse, f_mutunion, 3.0)[1] ≈ 6.0
+end
+
+f_pgcstack_marker(x) = x[1] * x[1]
+
+function caller_pgcstack_marker(x)
+    dx = zero(x)
+    Enzyme.autodiff(Enzyme.Reverse, f_pgcstack_marker, Active, Duplicated(x, dx))
+    return dx
+end
+
+@testset "No unused pgcstack marker in the llvmcall" begin
+    # Julia inlines the llvmcall of `enzyme_call` into its caller. On 1.13 a
+    # `julia.get_pgcstack` call in the caller's entry block delays the push of its GC
+    # frame until after that call, which left `dx` unrooted during the preceding safepoints.
+    ir = sprint() do io
+        InteractiveUtils.code_llvm(
+            io, caller_pgcstack_marker, Tuple{Vector{Float64}};
+            raw = true, optimize = false, dump_module = true
+        )
+    end
+    @test !occursin("newly_emitted_pgc_stack", ir)
+    @test caller_pgcstack_marker([3.0]) ≈ [6.0]
 end
