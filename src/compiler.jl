@@ -7224,6 +7224,11 @@ const DumpLLVMCall = Ref(false)
         if pgcstack isa LLVM.CallInst && isempty(LLVM.uses(pgcstack))
             LLVM.API.LLVMInstructionEraseFromParent(pgcstack)
         end
+        # The same holds for the code of an `InlineABI` thunk, which is linked in above
+        # and needs its pgcstack to allocate.
+        @static if VERSION >= v"1.13-"
+            detach_pgcstack_markers!(mod)
+        end
 
 	Enzyme.Compiler.JIT.prepare!(mod)
 	if DumpLLVMCall[]

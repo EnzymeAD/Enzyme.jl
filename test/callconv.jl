@@ -410,3 +410,49 @@ end
     @test !occursin("newly_emitted_pgc_stack", ir)
     @test caller_pgcstack_marker([3.0]) ≈ [6.0]
 end
+
+f_gcframe_alloc(x) = sum(abs2, x .* 2.0)
+
+@noinline zero_gcframe(x) = zero(x)
+
+# Collect, then hand the freed cells to arrays of the same size.
+@noinline function gc_and_refill(x)
+    GC.gc(true)
+    keep = Vector{Float64}[]
+    for _ in 1:10_000
+        push!(keep, fill(NaN, length(x)))
+    end
+    return keep
+end
+
+function caller_gcframe(x)
+    dx = zero_gcframe(x)
+    keep = gc_and_refill(x)
+    Enzyme.autodiff(Enzyme.Reverse, f_gcframe_alloc, Active, Duplicated(x, dx))
+    return dx, keep
+end
+
+function caller_gcframe_inline(x)
+    dx = zero_gcframe(x)
+    keep = gc_and_refill(x)
+    Enzyme.autodiff(
+        Enzyme.set_abi(Enzyme.Reverse, Enzyme.InlineABI),
+        f_gcframe_alloc,
+        Active,
+        Duplicated(x, dx),
+    )
+    return dx, keep
+end
+
+@testset "Caller roots survive a GC before the llvmcall" begin
+    # The callers are a single block, so the code that Julia inlines from the llvmcall
+    # lands in their entry block. With `InlineABI` that code allocates, and needs a
+    # pgcstack of its own.
+    for caller in (caller_gcframe, caller_gcframe_inline)
+        for _ in 1:5
+            dx, keep = caller([1.0, 2.0])
+            @test dx == [8.0, 16.0]
+            @test all(k -> all(isnan, k), keep)
+        end
+    end
+end

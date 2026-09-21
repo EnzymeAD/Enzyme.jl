@@ -373,14 +373,11 @@ function get_pgcstack(func::LLVM.Function)
 end
 
 function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing, LLVM.IRBuilder}) = nothing)
-    for i in 1:length(LLVM.parameters(func))
-        for attr in collect(LLVM.parameter_attributes(func, i))
-            if attr isa LLVM.EnumAttribute
-                if kind(attr) == swiftself_kind
-                    return parameters(func)[i]
-                end
-            end
-        end
+    # Julia marks the pgcstack parameter `swiftself` only where the target has the swift
+    # calling convention, so also accept the `gcstack` attribute.
+    gcstack_idx = gcstack_arg_index(func)
+    if gcstack_idx != 0
+        return parameters(func)[gcstack_idx]
     end
 
     pgs = get_pgcstack(func)
@@ -412,6 +409,44 @@ function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing
         end
         pgs
     end
+end
+
+"""
+    detach_pgcstack_markers!(mod::LLVM.Module)
+
+Make every `alwaysinline` function of `mod` fetch its pgcstack with a call to
+`jl_get_pgcstack` instead of the `julia.get_pgcstack` intrinsic.
+
+This is for code that Julia inlines into one of its own functions, as with an llvmcall.
+On 1.13 such a function takes its pgcstack as a parameter, yet Julia's GC lowering still
+prefers a `julia.get_pgcstack` call of the entry block, and pushes the GC frame after it.
+An inlined intrinsic thus leaves every earlier safepoint of the caller without its roots.
+"""
+function detach_pgcstack_markers!(mod::LLVM.Module)
+    if !haskey(functions(mod), "julia.get_pgcstack")
+        return
+    end
+    marker = functions(mod)["julia.get_pgcstack"]
+    FT = LLVM.function_type(marker)
+    alwaysinline = EnumAttribute("alwaysinline", 0)
+    B = IRBuilder()
+    for fn in functions(mod)
+        if LLVM.isdeclaration(fn) || !has_fn_attr(fn, alwaysinline)
+            continue
+        end
+        for bb in blocks(fn), inst in collect(instructions(bb))
+            if !(inst isa LLVM.CallInst) || called_operand(inst) != marker
+                continue
+            end
+            getter, _ = get_function!(mod, "ijl_get_pgcstack", FT)
+            position!(B, inst)
+            pgcstack = call!(B, FT, getter, LLVM.Value[])
+            replace_uses!(inst, pgcstack)
+            LLVM.API.LLVMInstructionEraseFromParent(inst)
+        end
+    end
+    dispose(B)
+    return
 end
 
 @inline enum_attr_kind(kind::String) = LLVM.API.LLVMGetEnumAttributeKindForName(kind, Csize_t(length(kind)))
