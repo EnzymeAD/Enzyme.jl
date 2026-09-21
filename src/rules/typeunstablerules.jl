@@ -446,7 +446,7 @@ set_fn_max_args(runtime_tuple_rev)
 function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
     width = get_width(gutils)
 
-    world = enzyme_extract_world(LLVM.parent(position(B)))
+    world = enzyme_world()
 
     @assert is_constant_value(gutils, operands(orig)[offset])
     ops = @view arg_operands_view(orig)[offset+1:end]
@@ -960,7 +960,7 @@ end
         unsafe_store!(tapeR, shadowres.ref)
     else
         @assert legal
-        world = enzyme_extract_world(LLVM.parent(position(B)))
+        world = enzyme_world()
         if !guaranteed_nonactive(TT, world)
             unsafe_store!(tapeR, shadowres.ref)
         end
@@ -1061,7 +1061,7 @@ end
     torun = false
     if legal
         @assert legal
-        world = enzyme_extract_world(LLVM.parent(position(B)))
+        world = enzyme_world()
         torun = !guaranteed_nonactive(TT, world)
     else
         torun = true
