@@ -413,14 +413,14 @@ Enzyme.EnzymeRules.@easy_rule(
 # primal returns exactly zero. Supplying the partials analytically keeps the
 # branchy primal out of the tape entirely.
 
-function _gamma_inc_clamp_iter(n::T) where {T <: AbstractFloat}
+@inline function _gamma_inc_clamp_iter(n::T) where {T <: AbstractFloat}
     isfinite(n) || return 1000
     n <= 1000 && return 1000
     n >= 1_000_000 && return 1_000_000
     return ceil(Int, n)
 end
 
-function _gamma_inc_series_maxiter(x::T) where {T <: AbstractFloat}
+@inline function _gamma_inc_series_maxiter(x::T) where {T <: AbstractFloat}
     # tₙ falls off like xⁿ/n!, so n log n ≳ log(1/eps) terms are needed where x is
     # small, and sqrt(2 x log(1/eps)) near x ≈ a, where the decay is slowest. Linear
     # plus square root covers both.
@@ -428,21 +428,21 @@ function _gamma_inc_series_maxiter(x::T) where {T <: AbstractFloat}
     return _gamma_inc_clamp_iter(L + 3 * sqrt(2 * x * L) / 2 + 50)
 end
 
-function _gamma_inc_cf_maxiter(x::T) where {T <: AbstractFloat}
+@inline function _gamma_inc_cf_maxiter(x::T) where {T <: AbstractFloat}
     # The continued fraction's error falls like exp(-4 sqrt(n x)), so it needs about
     # log(1/eps)² / (16 x) terms where x is small
     L = max(-log(eps(T)), one(T))
     return _gamma_inc_clamp_iter(L * L / (16 * x) + 3 * sqrt(2 * x * L) / 2 + 50)
 end
 
-function _signed_exp(logmag::T, g::T) where {T <: AbstractFloat}
+@inline function _signed_exp(logmag::T, g::T) where {T <: AbstractFloat}
     # exp(logmag) * g, formed in log space so it survives an exp() that would have
     # underflowed on its own. Used only once the primal ratio it scales has gone.
     iszero(g) && return zero(T)
     return copysign(exp(logmag + log(abs(g))), g)
 end
 
-function _dlogP_da_series(a::T, x::T) where {T <: AbstractFloat}
+@inline function _dlogP_da_series(a::T, x::T) where {T <: AbstractFloat}
     # DLMF 8.7.1: P(a,x) = x^a e^{-x} / Γ(a+1) Σ_{n≥0} tₙ with t₀ = 1 and
     # tₙ = tₙ₋₁ x/(a+n), hence ∂log P/∂a = log x - ψ(a+1) + s'/s. Differentiating the
     # recurrence gives t'ₙ = (t'ₙ₋₁ - tₙ₋₁/(a+n)) x/(a+n), so s and s' accumulate
@@ -470,7 +470,7 @@ function _dlogP_da_series(a::T, x::T) where {T <: AbstractFloat}
     return (log(x) - digamma(a + one(T)) + ds / s, log(s))
 end
 
-function _dlogQ_da_cf(a::T, x::T) where {T <: AbstractFloat}
+@inline function _dlogQ_da_cf(a::T, x::T) where {T <: AbstractFloat}
     # DLMF 8.9.2 by modified Lentz: Q(a,x) = x^a e^{-x} / Γ(a) h, where h is the
     # continued fraction with aᵢ = -i(i-a) and bᵢ = x + 2i + 1 - a, hence
     # ∂log Q/∂a = log x - ψ(a) + h'/h. Lentz builds h as a product of factors dᵢcᵢ,
@@ -512,12 +512,12 @@ function _dlogQ_da_cf(a::T, x::T) where {T <: AbstractFloat}
     return (log(x) - digamma(a) + dlogh, log(h))
 end
 
-function _gamma_inc_grad(a::Real, x::Real, P::Real, Q::Real)
+@inline function _gamma_inc_grad(a::Real, x::Real, P::Real, Q::Real)
     T = float(promote_type(typeof(a), typeof(x), typeof(P), typeof(Q)))
     return _gamma_inc_grad(T(a), T(x), T(P), T(Q))
 end
 
-function _gamma_inc_grad(a::T, x::T, P::T, Q::T) where {T <: Union{Float16, Float32}}
+@inline function _gamma_inc_grad(a::T, x::T, P::T, Q::T) where {T <: Union{Float16, Float32}}
     # Both branches accumulate O(√x) terms, so at reduced precision the accumulated
     # rounding dominates long before the series converges. Widen, compute, narrow:
     # this is what the primal itself does (`SpecialFunctions._gamma_inc` defers
@@ -526,7 +526,7 @@ function _gamma_inc_grad(a::T, x::T, P::T, Q::T) where {T <: Union{Float16, Floa
     return (T(dPa), T(dQa), T(dx))
 end
 
-function _gamma_inc_grad(a::T, x::T, P::T, Q::T) where {T <: AbstractFloat}
+@inline function _gamma_inc_grad(a::T, x::T, P::T, Q::T) where {T <: AbstractFloat}
     # P(a,0) = 0 and Q(a,0) = 1 for every a, so both a-partials vanish there, while
     # ∂P/∂x = x^{a-1} e^{-x} / Γ(a) tends to Inf, 1 or 0 as a falls below, equals,
     # or exceeds 1.
