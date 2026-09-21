@@ -6078,7 +6078,7 @@ end
                         if sz_et > 0
                             jTy = ET
                             byref = GPUCompiler.MUT_REF
-                            offset = offset % sz_et
+                            offset = Base.mod(offset, sz_et)
                         end
                     end
                 end
