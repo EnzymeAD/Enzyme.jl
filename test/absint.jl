@@ -216,3 +216,42 @@ end
         @test Enzyme.gradient(set_runtime_activity(Reverse), absint_run_world, [1.0])[1] ≈ [3.0]
     end
 end
+
+struct PaddedMixed
+    data::Vector{Float64}
+    sp::Tuple{Int, Bool}
+end
+
+@inline function absint_copy_zip(A)
+    dst = similar(A)
+    @inbounds for (i, a) in zip(eachindex(dst), A)
+        dst[i] = a
+    end
+    return dst
+end
+
+function absint_padded_copies!(out, v)
+    src = [PaddedMixed(v .* i, (i, isodd(i))) for i in 1:3]
+    out[1] = absint_copy_zip(src)
+    out[2] = absint_copy_zip(src)
+    s = 0.0
+    for m in out[1]
+        s += sum(m.data)
+    end
+    for m in out[2]
+        s += sum(m.data)
+    end
+    return s
+end
+
+@testset "Absint negative offset memcpy into array of padded structs" begin
+    v = [1.0, 2.0, 3.0]
+    dv = zero(v)
+    out = Vector{Vector{PaddedMixed}}(undef, 2)
+    dout = Vector{Vector{PaddedMixed}}(undef, 2)
+    autodiff(Reverse, absint_padded_copies!, Active, Duplicated(out, dout), Duplicated(v, dv))
+    @test dv ≈ [12.0, 12.0, 12.0]
+    for k in 1:2
+        @test [m.sp for m in dout[k]] == [m.sp for m in out[k]]
+    end
+end
