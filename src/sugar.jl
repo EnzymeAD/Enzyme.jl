@@ -109,6 +109,10 @@ end
         LLVM.ret!(builder, obj)
 	
         Compiler.reinsert_gcmarker!(llvm_f)
+        # Julia inlines this function into its caller, see `enzyme_call`.
+        @static if VERSION >= v"1.13-"
+            Compiler.detach_pgcstack_markers!(mod)
+        end
 	Compiler.JIT.prepare!(mod)
 
         string(mod)

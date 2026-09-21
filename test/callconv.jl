@@ -444,6 +444,14 @@ function caller_gcframe_inline(x)
     return dx, keep
 end
 
+@noinline copy_gcframe(x) = copy(x)
+
+function caller_gcframe_onehot(x)
+    y = copy_gcframe(x)
+    keep = gc_and_refill(x)
+    return y, keep, Enzyme.onehot(x)
+end
+
 @testset "Caller roots survive a GC before the llvmcall" begin
     # The callers are a single block, so the code that Julia inlines from the llvmcall
     # lands in their entry block. With `InlineABI` that code allocates, and needs a
@@ -454,5 +462,12 @@ end
             @test dx == [8.0, 16.0]
             @test all(k -> all(isnan, k), keep)
         end
+    end
+    # `onehot` allocates its result in an llvmcall of its own.
+    for _ in 1:5
+        y, keep, oh = caller_gcframe_onehot([1.0, 2.0])
+        @test y == [1.0, 2.0]
+        @test all(k -> all(isnan, k), keep)
+        @test oh == ([1.0, 0.0], [0.0, 1.0])
     end
 end
