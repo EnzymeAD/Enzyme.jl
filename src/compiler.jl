@@ -6096,7 +6096,8 @@ end
                     )
 
 			 size = Compiler.datatype_layoutsize(jTy)
-                        if 0 <= offset < size && isa(sz, LLVM.ConstantInt) && size - offset >= convert(Int, sz)
+                        @assert offset >= 0 
+                        if offset < size && isa(sz, LLVM.ConstantInt) && size - offset >= convert(Int, sz)
                             lim = convert(Int, sz)
                             md = to_fullmd(jTy, offset, lim)
                             @assert byref == GPUCompiler.BITS_REF ||
