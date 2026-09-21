@@ -216,7 +216,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
     
     run!(GCInvariantVerifierPass(strong=false), mod)
 
-    API.EnzymeDetectReadonlyOrThrow(mod)
+    detect_readonly_or_throw!(mod)
     
     run!(GCInvariantVerifierPass(strong=false), mod)
     

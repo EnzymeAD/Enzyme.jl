@@ -2976,6 +2976,79 @@ function checkNoAssumeFalse(mod::LLVM.Module, shouldshow::Bool = false)
     end
 end
 
+function fake_read_function!(mod::LLVM.Module)
+    funcT = LLVM.FunctionType(LLVM.VoidType(), LLVMType[], vararg = true)
+    attrs = if LLVM.version().major <= 15
+        LLVM.Attribute[
+            EnumAttribute("readonly"),
+            EnumAttribute("nofree"),
+            EnumAttribute("argmemonly"),
+        ]
+    else
+        LLVM.Attribute[EnumAttribute("memory", ReadOnlyArgMemEffects.data), EnumAttribute("nofree")]
+    end
+    rfunc, _ = get_function!(mod, "llvm.enzymefakeread", funcT, attrs)
+    return funcT, rfunc
+end
+
+function is_custom_rule_function(fn::LLVM.Function)
+    for attr in collect(function_attributes(fn))
+        if attr isa LLVM.StringAttribute && kind(attr) == "enzyme_math"
+            return LLVM.value(attr) == "enzyme_custom"
+        end
+    end
+    return false
+end
+
+# A custom rule replaces the body of the function it is defined for, and may read
+# arguments which that body never touches (for example a `Const` argument carrying
+# metadata for the rule). Attribute inference only sees the primal body, and would
+# mark such a pointer argument `readnone`, both on the function with the rule and,
+# transitively, on its callers. Enzyme is then free to pass an undefined value
+# (`jl_nothing`) for that argument when calling the derivative of such a caller.
+# Add a fake read of all pointer arguments, to be removed once inference has run.
+function fake_read_pointer_args!(fn::LLVM.Function, funcT::LLVM.FunctionType, rfunc::LLVM.Function)
+    ptrs = LLVM.Value[p for p in parameters(fn) if isa(value_type(p), LLVM.PointerType)]
+    if isempty(ptrs)
+        return nothing
+    end
+    B = IRBuilder()
+    position!(B, first(instructions(first(blocks(fn)))))
+    cl = call!(B, funcT, rfunc, ptrs)
+    for i in 1:length(ptrs)
+        LLVM.API.LLVMAddCallSiteAttribute(
+            cl,
+            LLVM.API.LLVMAttributeIndex(i),
+            EnumAttribute("nocapture"),
+        )
+    end
+    return nothing
+end
+
+function erase_fake_function!(mod::LLVM.Module, func::LLVM.Function)
+    for u in LLVM.uses(func)
+        u = LLVM.user(u)
+        eraseInst(LLVM.parent(u), u)
+    end
+    eraseInst(mod, func)
+    return nothing
+end
+
+# `API.EnzymeDetectReadonlyOrThrow`, but treating the arguments of functions with
+# a custom rule as read, see `fake_read_pointer_args!`.
+function detect_readonly_or_throw!(mod::LLVM.Module)
+    funcT, rfunc = fake_read_function!(mod)
+    for fn in functions(mod)
+        if isempty(blocks(fn)) || !is_custom_rule_function(fn)
+            continue
+        end
+        fake_read_pointer_args!(fn, funcT, rfunc)
+    end
+    API.EnzymeDetectReadonlyOrThrow(mod)
+    erase_fake_function!(mod, rfunc)
+    return nothing
+end
+
 function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, post_gc_fixup::Bool)
     # We need to run globalopt first. This is because remove dead args will otherwise
     # take internal functions and replace their args with undef. Then on LLVM up to 
@@ -3214,6 +3287,9 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
             B = IRBuilder()
             position!(B, first(instructions(first(blocks(fn)))))
             call!(B, funcT, func, LLVM.Value[p for p in parameters(fn)])
+            if is_custom_rule_function(fn)
+                fake_read_pointer_args!(fn, funcT, rfunc)
+            end
         end
     end
     propagate_returned!(mod)
