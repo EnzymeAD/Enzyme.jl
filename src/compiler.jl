@@ -775,6 +775,33 @@ import .Interpreter: isKWCallSignature
 end
 
 """
+    record_julia_values!(ctx, meta)
+
+Remember which Julia value each global slot of a freshly emitted module refers to.
+
+GPUCompiler 2.x reports them as relocation records, one per `extinit` slot and keyed by the
+name of the slot. They are the authoritative answer to "which object is this global?", and
+unlike an address decoded from an initializer they exist on every back-end: a `:patch` or
+`:table` one never has an address in its IR (see [`resolve_relocations!`](@ref)). `absint`
+and `abs_typeof` read the table through [`julia_value_of_slot`](@ref). Holding the values in
+the context also keeps them rooted for the duration of the compilation.
+
+This must run before [`resolve_relocations!`](@ref), which consumes the records it bakes.
+GPUCompiler 1.x has no such records; the table stays empty and every lookup misses.
+"""
+function record_julia_values!(ctx::EnzymeContext, meta)
+    @static if HAS_GPUCOMPILER_2
+        for rec in meta.relocations.records
+            rec.kind === GPUCompiler.SlotSite || continue
+            target = rec.target
+            target isa GPUCompiler.JuliaValueRef || continue
+            ctx.julia_values[rec.name] = target.value
+        end
+    end
+    return nothing
+end
+
+"""
     resolve_relocations!(job, mod, meta)
 
 Resolve the Julia-value references of a freshly emitted primal module to their host
@@ -793,9 +820,11 @@ keeps them symbolic (its code runs elsewhere, or the module outlives the session
 those the records are left untouched: `link_relocatable!` carries them into the job that
 requested the derivative, which lowers them with its own strategy. Codegen emits a slot for
 every Julia value it touches (intrinsic bindings, `llvmcall` strings, `nothing`), and all
-of those are dead once the module is optimized, so an ordinary kernel differentiates; a
-derivative whose analysis does need one of the values remains unsupported on such a
-back-end.
+of those are dead once the module is optimized, so an ordinary kernel differentiates.
+Analysis still sees through a symbolic slot, because `absint` and `abs_typeof` resolve it
+from the table [`record_julia_values!`](@ref) built; what remains unsupported on such a
+back-end is a derivative that needs the *address*: the shadow of a constant global, or
+`try_replace_constant_load!` folding the load.
 
 The strategy is asked of a `kernel = true` flavour of the job: a deferred derivative is
 linked into the kernel that requested it, and a back-end whose strategy depends on
@@ -5708,6 +5737,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     # subsequent use of `mod` (e.g. `LLVM.context(mod)`) is a dynamic dispatch
     # through jl_apply_generic, which forces boxing and GC-rooting across it.
     mod = mod::LLVM.Module
+    record_julia_values!(enzyme_ctx, meta)
     resolve_relocations!(primal_job, mod, meta)
     edges = enzyme_ctx.edges
 

@@ -13,40 +13,80 @@ function unbind(@nospecialize(val))
    end
 end
 
+# The value of the well-known Julia global called `gname`, if it is one.
+function julia_global(gname::AbstractString)::Union{Some{Any}, Nothing}
+    return haskey(JuliaGlobalNameMap, gname) ? Some{Any}(JuliaGlobalNameMap[gname]) : nothing
+end
+
+# The value of the global called `gname` that Enzyme inserted itself, if it is one.
+function enzyme_global(gname::AbstractString)::Union{Some{Any}, Nothing}
+    return haskey(JuliaEnzymeNameMap, gname) ? Some{Any}(JuliaEnzymeNameMap[gname]) : nothing
+end
+
+# Enzyme's own globals carry an `ejl_` prefix that the keys of the name maps lack.
+function strip_ejl(gname::String)::Union{SubString{String}, Nothing}
+    return startswith(gname, "ejl_") ? SubString(gname, 5) : nothing
+end
+
+# The object a tracked pointer to the global `gv` stands for: a well-known Julia global, or
+# one Enzyme inserted.
+function named_global(gv::LLVM.GlobalVariable)::Union{Some{Any}, Nothing}
+    gname = LLVM.name(gv)
+    found = julia_global(gname)
+    found === nothing || return found
+    stripped = strip_ejl(gname)
+    if stripped !== nothing
+        found = enzyme_global(stripped)
+        found === nothing || return found
+    end
+    @assert !startswith(gname, "ejl_inserted") "Could not find ejl_inserted variable in map $gname"
+    return nothing
+end
+
+"""
+    julia_value_of_slot(gv)
+
+The Julia value a load of the global slot `gv` yields, as recorded by the compilation in
+flight (`record_julia_values!`), or `nothing` if it has no record of the slot.
+
+This is the preferred source: it is what codegen itself said the slot refers to, it does
+not depend on the address of the value having been written into the IR (which GPUCompiler
+2.x only does for a `:bake` back-end), and the value is rooted by the context. Outside of a
+compilation, and on GPUCompiler 1.x, there is no table and the caller falls back to decoding
+the initializer with [`slot_initializer_address`](@ref).
+"""
+function julia_value_of_slot(gv::LLVM.GlobalVariable)::Union{Some{Any}, Nothing}
+    isassigned(ENZYME_CONTEXT) || return nothing
+    values = ENZYME_CONTEXT[].julia_values
+    isempty(values) && return nothing
+    gname = LLVM.name(gv)
+    return haskey(values, gname) ? Some{Any}(values[gname]) : nothing
+end
+
+# The address the load `load` of the global `gv` yields, read out of the initializer, if
+# nothing but loads touches the global; `load` itself otherwise.
+function slot_initializer_address(gv::LLVM.GlobalVariable, load::LLVM.LoadInst)::LLVM.Value
+    init = LLVM.initializer(gv)
+    init === nothing && return load
+    for u in LLVM.uses(gv)
+        isa(LLVM.user(u), LLVM.LoadInst) || return load
+    end
+    return get_base_and_offset(init; offsetAllowed = false, inttoptr = true)[1]
+end
+
 function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked::Bool=false, typetag::Bool=false)::Tuple{Bool, Any}
     if (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)) || (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Derived)) || istracked
         ce, _ = get_base_and_offset(arg; offsetAllowed = false, inttoptr = true)
         if isa(ce, GlobalVariable)
-            gname = LLVM.name(ce)
-            for (k, v) in JuliaGlobalNameMap
-                if gname == k
-                    return (true, v)
-                end
-            end
-            for (k, v) in JuliaEnzymeNameMap
-                if gname == "ejl_" * k
-                    return (true, v)
-                end
-            end
-	    @assert !startswith(gname, "ejl_inserted") "Could not find ejl_inserted variable in map $gname"
+            found = named_global(ce)
+            found === nothing || return (true, something(found))
         end
         if isa(ce, LLVM.LoadInst)
             gv = operands(ce)[1]
             if isa(gv, LLVM.GlobalVariable)
-                init = LLVM.initializer(gv)
-                if init !== nothing
-                    just_load = true
-                    for u in LLVM.uses(gv)
-                        u = LLVM.user(u)
-                        if !isa(u, LLVM.LoadInst)
-                            just_load = false
-                            break
-                        end
-                    end
-                    if just_load
-                        ce, _ = get_base_and_offset(init; offsetAllowed = false, inttoptr = true)
-                    end
-                end
+                found = julia_value_of_slot(gv)
+                found === nothing || return (true, something(found))
+                ce = slot_initializer_address(gv, ce)
             end
         end
         if isa(ce, LLVM.ConstantInt)
@@ -175,15 +215,16 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
 
     if isa(arg, GlobalVariable)
         gname = LLVM.name(arg)
-        for (k, v) in JuliaGlobalNameMap
-            if gname == "ejl_" * k
-                return (true, v)
-            end
+        stripped = strip_ejl(gname)
+        if stripped !== nothing
+            found = julia_global(stripped)
+            found === nothing || return (true, something(found))
         end
-        for (k, v) in JuliaEnzymeNameMap
-            if gname == k || gname == "ejl_" * k
-                return (true, v)
-            end
+        found = enzyme_global(gname)
+        found === nothing || return (true, something(found))
+        if stripped !== nothing
+            found = enzyme_global(stripped)
+            found === nothing || return (true, something(found))
         end
     end
 
@@ -192,12 +233,10 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
         ptr = operands(arg)[1]
         ce, _ = get_base_and_offset(ptr; offsetAllowed = false, inttoptr = true)
         if isa(ce, GlobalVariable)
-            gname = LLVM.name(ce)
-            for (k, v) in JuliaGlobalNameMap
-                if gname == k
-                    return (true, v)
-                end
-            end
+            found = julia_value_of_slot(ce)
+            found === nothing || return (true, something(found))
+            found = julia_global(LLVM.name(ce))
+            found === nothing || return (true, something(found))
         end
         if isa(ce, LLVM.ConstantInt)
             ptr = unsafe_load(reinterpret(Ptr{Ptr{Cvoid}}, convert(UInt, ce)))
@@ -404,36 +443,22 @@ function abs_typeof(
     )::Union{Tuple{Bool, Type, GPUCompiler.ArgumentCC}, Tuple{Bool, Nothing, Nothing}}
     if (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)) || (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Derived))
         ce, _ = get_base_and_offset(arg; offsetAllowed = false, inttoptr = true)
-	if isa(ce, GlobalVariable)
+        if isa(ce, GlobalVariable)
             gname = LLVM.name(ce)
-            for (k, v) in JuliaGlobalNameMap
-                if gname == k
-                    return (true, Core.Typeof(v), GPUCompiler.BITS_REF)
-                end
-            end
-            for (k, v) in JuliaEnzymeNameMap
-                if gname == "ejl_" * k
-		    return (true, Core.Typeof(unbind(v)), GPUCompiler.BITS_REF)
-                end
+            found = julia_global(gname)
+            found === nothing || return (true, Core.Typeof(something(found)), GPUCompiler.BITS_REF)
+            stripped = strip_ejl(gname)
+            if stripped !== nothing
+                found = enzyme_global(stripped)
+                found === nothing || return (true, Core.Typeof(unbind(something(found))), GPUCompiler.BITS_REF)
             end
         end
         if isa(ce, LLVM.LoadInst)
             gv = operands(ce)[1]
             if isa(gv, LLVM.GlobalVariable)
-                init = LLVM.initializer(gv)
-                if init !== nothing
-                    just_load = true
-                    for u in LLVM.uses(gv)
-                        u = LLVM.user(u)
-                        if !isa(u, LLVM.LoadInst)
-                            just_load = false
-                            break
-                        end
-                    end
-                    if just_load
-                        ce, _ = get_base_and_offset(init; offsetAllowed = false, inttoptr = true)
-                    end
-                end
+                found = julia_value_of_slot(gv)
+                found === nothing || return (true, Core.Typeof(something(found)), GPUCompiler.BITS_REF)
+                ce = slot_initializer_address(gv, ce)
             end
         end
         if isa(ce, LLVM.ConstantInt)
@@ -668,12 +693,10 @@ function abs_typeof(
     if isa(arg, LLVM.LoadInst)
         ce, _ = get_base_and_offset(operands(arg)[1]; offsetAllowed = false, inttoptr = true)
         if isa(ce, GlobalVariable)
-            gname = LLVM.name(ce)
-            for (k, v) in JuliaGlobalNameMap
-                if gname == k
-                    return (true, Core.Typeof(v), GPUCompiler.BITS_REF)
-                end
-            end
+            found = julia_value_of_slot(ce)
+            found === nothing || return (true, Core.Typeof(something(found)), GPUCompiler.BITS_REF)
+            found = julia_global(LLVM.name(ce))
+            found === nothing || return (true, Core.Typeof(something(found)), GPUCompiler.BITS_REF)
         end
         larg, offset = get_base_and_offset(operands(arg)[1])
         legal, typ, byref = abs_typeof(larg, false, seenphis)
