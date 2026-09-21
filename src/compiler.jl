@@ -6445,7 +6445,7 @@ end
         erase_memcpy_from_undef!(mod)
         memcpy_alloca_to_loadstore(mod, job.world)
         force_recompute!(mod)
-        API.EnzymeDetectReadonlyOrThrow(mod)
+        detect_readonly_or_throw!(mod)
 
         adjointf, augmented_primalf, TapeType = enzyme!(
             job,
