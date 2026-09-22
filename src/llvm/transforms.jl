@@ -312,10 +312,13 @@ function fixup_1p12_sret!(f::LLVM.Function)
     end
 
     if length(torep) > 0
+        # The memcpy covers the full layout up to Julia 1.13.0 and only the data
+        # half, without the trailing tracked slots, since 1.13.1.
         sz = LLVM.sizeof(dl, lltype)
+        split_sz = split_value_size(dl, lltype)
         for ci in torep
             cst = operands(ci)[3]::LLVM.ConstantInt
-            if convert(UInt, cst) != sz
+            if convert(UInt, cst) != sz && convert(UInt, cst) != split_sz
                 continue
             end
             B = LLVM.IRBuilder()
@@ -325,6 +328,218 @@ function fixup_1p12_sret!(f::LLVM.Function)
         end
     end
     return
+end
+
+"""
+    unfold_root_phi_loads!(f::LLVM.Function) -> Bool
+
+Turn a load through a phi of root-array pointers back into a phi of loads.
+
+Julia 1.13.1+ keeps the inline GC roots of a split value lazily, as a pointer
+into whatever roots array already holds them (`jl_gc_roots_t`), so the roots a
+phi merges may be loaded right in its predecessors: from the roots argument of the
+function on one edge, from a local roots alloca on another. LLVM's instcombine
+then folds that phi of loads into one load of a `phi ptr` of the arrays. Enzyme
+promotes every alloca of the augmented primal to a heap allocation and cannot
+push that address-space change through a phi whose other operands are not
+allocas ("Illegal address space propagation"). Sinking the load back into the
+predecessors gives the alloca only plain loads again.
+
+Only rewrite what is certainly equivalent: a `phi ptr` in address space 0 with an
+alloca among its incoming values, whose users are all non-atomic loads of tracked
+pointers in its own block that no memory write precedes. Each load is re-created
+before the terminator of every predecessor; on an edge whose predecessor has other
+successors that is a speculative load, so it is only done for an alloca-backed
+pointer, which is always dereferenceable.
+"""
+function unfold_root_phi_loads!(f::LLVM.Function)::Bool
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    changed = false
+    for bb in blocks(f)
+        for phi in collect(instructions(bb))
+            isa(phi, LLVM.PHIInst) || continue
+            pty = value_type(phi)
+            (isa(pty, LLVM.PointerType) && LLVM.addrspace(pty) == 0) || continue
+
+            incs = collect(incoming(phi))
+            any(((v, _),) -> isa(underlying_alloca(v), LLVM.AllocaInst), incs) || continue
+
+            # The users: loads of tracked pointers in this block, directly or
+            # through a GEP with constant indices, before any write.
+            accesses = Tuple{LLVM.LoadInst, Union{Nothing, LLVM.GetElementPtrInst}}[]
+            ok = true
+            for u in LLVM.uses(phi)
+                inst = LLVM.user(u)
+                if isa(inst, LLVM.GetElementPtrInst) && LLVM.parent(inst) == bb &&
+                   operands(inst)[1] == phi && all(isa(op, LLVM.ConstantInt) for op in operands(inst)[2:end])
+                    for u2 in LLVM.uses(inst)
+                        ld = LLVM.user(u2)
+                        if !root_load_in(ld, inst, bb, T_prjlvalue)
+                            ok = false
+                            break
+                        end
+                        push!(accesses, (ld, inst))
+                    end
+                elseif root_load_in(inst, phi, bb, T_prjlvalue)
+                    push!(accesses, (inst, nothing))
+                else
+                    ok = false
+                end
+                ok || break
+            end
+            (ok && !isempty(accesses)) || continue
+            for inst in instructions(bb)
+                may_write_memory(inst) || continue
+                # A write before one of the loads could change what they read.
+                if any(((ld, _),) -> precedes(inst, ld), accesses)
+                    ok = false
+                end
+                break
+            end
+            ok || continue
+
+            # A speculative load is only safe from an alloca.
+            for (v, pred) in incs
+                nsucc = length(collect(successors(terminator(pred))))
+                if nsucc != 1 && !isa(underlying_alloca(v), LLVM.AllocaInst)
+                    ok = false
+                    break
+                end
+            end
+            ok || continue
+
+            builder = LLVM.IRBuilder()
+            for (ld, gep) in accesses
+                newphi = let
+                    position!(builder, phi)
+                    phi!(builder, T_prjlvalue, LLVM.name(ld))
+                end
+                done = Dict{LLVM.BasicBlock, LLVM.LoadInst}()
+                for (v, pred) in incs
+                    nld = get!(done, pred) do
+                        position!(builder, terminator(pred))
+                        ptr = v
+                        if gep !== nothing
+                            elty = LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(gep))
+                            inds = LLVM.Value[op for op in operands(gep)[2:end]]
+                            ptr = if Bool(LLVM.API.LLVMIsInBounds(gep))
+                                inbounds_gep!(builder, elty, v, inds)
+                            else
+                                gep!(builder, elty, v, inds)
+                            end
+                        end
+                        nld = load!(builder, T_prjlvalue, ptr)
+                        alignment!(nld, alignment(ld))
+                        copy_metadata!(nld, ld)
+                        nld
+                    end
+                    push!(incoming(newphi), (nld, pred))
+                end
+                # Memory metadata such as `!tbaa` is not allowed on a phi.
+                for k in ("enzyme_type", "enzyme_inactive", "enzyme_active")
+                    if haskey(metadata(ld), k)
+                        metadata(newphi)[k] = metadata(ld)[k]
+                    end
+                end
+                replace_uses!(ld, newphi)
+                LLVM.erase!(ld)
+            end
+            for (_, gep) in accesses
+                if gep !== nothing && isempty(collect(LLVM.uses(gep)))
+                    LLVM.erase!(gep)
+                end
+            end
+            @assert isempty(collect(LLVM.uses(phi)))
+            LLVM.erase!(phi)
+            dispose(builder)
+            changed = true
+        end
+    end
+    return changed
+end
+
+"""
+    root_load_in(inst, ptr, bb, T_prjlvalue)
+
+Whether `inst` is a plain (non-volatile, non-atomic) load of a tracked pointer
+from `ptr`, placed in the block `bb`.
+"""
+function root_load_in(@nospecialize(inst::LLVM.Value), @nospecialize(ptr::LLVM.Value), bb::LLVM.BasicBlock, T_prjlvalue::LLVM.LLVMType)::Bool
+    return isa(inst, LLVM.LoadInst) && LLVM.parent(inst) == bb &&
+           operands(inst)[1] == ptr && value_type(inst) == T_prjlvalue &&
+           !Bool(LLVM.API.LLVMGetVolatile(inst)) &&
+           LLVM.API.LLVMGetOrdering(inst) == LLVM.API.LLVMAtomicOrderingNotAtomic
+end
+
+"""
+    may_write_memory(inst)
+
+Whether the instruction `inst` may write memory: a store, a call, a fence, an
+atomic read-modify-write, or a volatile or atomic load.
+"""
+function may_write_memory(inst::LLVM.Instruction)::Bool
+    op = opcode(inst)
+    if op == LLVM.API.LLVMStore || op == LLVM.API.LLVMCall || op == LLVM.API.LLVMInvoke ||
+       op == LLVM.API.LLVMCallBr || op == LLVM.API.LLVMFence || op == LLVM.API.LLVMAtomicRMW ||
+       op == LLVM.API.LLVMAtomicCmpXchg
+        return true
+    end
+    if op == LLVM.API.LLVMLoad
+        return Bool(LLVM.API.LLVMGetVolatile(inst)) ||
+               LLVM.API.LLVMGetOrdering(inst) != LLVM.API.LLVMAtomicOrderingNotAtomic
+    end
+    return false
+end
+
+"""
+    underlying_alloca(v)
+
+The value `v` addresses through in-bounds GEPs and pointer casts.
+"""
+function underlying_alloca(@nospecialize(v::LLVM.Value))::LLVM.Value
+    while true
+        if isa(v, LLVM.GetElementPtrInst) || isa(v, LLVM.BitCastInst) || isa(v, LLVM.AddrSpaceCastInst)
+            v = operands(v)[1]
+        elseif isa(v, LLVM.ConstantExpr) && (opcode(v) == LLVM.API.LLVMGetElementPtr || opcode(v) == LLVM.API.LLVMBitCast || opcode(v) == LLVM.API.LLVMAddrSpaceCast)
+            v = operands(v)[1]
+        else
+            return v
+        end
+    end
+end
+
+"""
+    precedes(a, b)
+
+Whether instruction `a` comes before `b` in their common basic block.
+"""
+function precedes(a::LLVM.Instruction, b::LLVM.Instruction)::Bool
+    @assert LLVM.parent(a) == LLVM.parent(b)
+    for inst in instructions(LLVM.parent(a))
+        inst == a && return true
+        inst == b && return false
+    end
+    return false
+end
+
+"""
+    copy_metadata!(dst, src)
+
+Attach every metadata node of the instruction `src`, except its debug location,
+to `dst`.
+"""
+function copy_metadata!(dst::LLVM.Instruction, src::LLVM.Instruction)
+    num = Ref{Csize_t}()
+    entries = LLVM.API.LLVMInstructionGetAllMetadataOtherThanDebugLoc(src, num)
+    ctx = LLVM.context(src)
+    for i in 1:num[]
+        kind = LLVM.API.LLVMValueMetadataEntriesGetKind(entries, i - 1)
+        md = LLVM.API.LLVMValueMetadataEntriesGetMetadata(entries, i - 1)
+        LLVM.API.LLVMSetMetadata(dst, kind, LLVM.API.LLVMMetadataAsValue(ctx, md))
+    end
+    num[] > 0 && LLVM.API.LLVMDisposeValueMetadataEntries(entries)
+    return nothing
 end
 
 """

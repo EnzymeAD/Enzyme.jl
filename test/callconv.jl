@@ -172,6 +172,55 @@ f_sret_roots_two(v) = sum(two_rooted(v).a) + sum(two_rooted(v).b)
     end
 end
 
+# A layout whose GC-tracked pointers sit at its very end. Since Julia 1.13.1
+# (JuliaLang/julia#60388) the data half of such a value -- the buffer behind the
+# by-reference argument pointer, or the `sret` buffer next to `returnRoots` -- is
+# shrink-wrapped to the bytes before the trailing pointers. Enzyme's type trees,
+# and the loads and stores it emits for those buffers, must stop there too.
+struct TrailingRoots
+    x::Float64
+    v::Vector{Float64}
+end
+@noinline trailing_arg(s::TrailingRoots, y) = s.x * s.v[1] * y
+f_trailing_arg(v, y) = trailing_arg(TrailingRoots(2.0 * y, v), y)
+
+@noinline trailing_nt_arg(t) = t.a * t.b[1]
+f_trailing_nt_arg(v, a) = trailing_nt_arg((a = a, b = v, c = "str"))
+
+@noinline trailing_ret(v) = TrailingRoots(sum(v), v .* 2)
+f_trailing_ret(v) = trailing_ret(v).x + sum(trailing_ret(v).v)
+
+@noinline function rec_trailing_ret(v, n)
+    n == 0 && return TrailingRoots(sum(v), v .* 2)
+    r = rec_trailing_ret(v, n - 1)
+    return TrailingRoots(2 * r.x, r.v)
+end
+
+@testset "Split layout with trailing roots" begin
+    v = [1.0, 2.0, 3.0]
+    dv = zero(v)
+    _, dy = Enzyme.autodiff(Reverse, f_trailing_arg, Active, Duplicated(v, dv), Active(3.0))[1]
+    @test dv ≈ [18.0, 0.0, 0.0]
+    @test dy ≈ 12.0
+    @test Enzyme.autodiff(Forward, f_trailing_arg, Duplicated(v, [1.0, 0.0, 0.0]), Const(3.0))[1] ≈ 18.0
+
+    dv = zero(v)
+    _, da = Enzyme.autodiff(Reverse, f_trailing_nt_arg, Active, Duplicated(v, dv), Active(3.0))[1]
+    @test dv ≈ [3.0, 0.0, 0.0]
+    @test da ≈ 1.0
+
+    dv = zero(v)
+    Enzyme.autodiff(Reverse, f_trailing_ret, Active, Duplicated(v, dv))
+    @test dv ≈ [3.0, 3.0, 3.0]
+    @test Enzyme.autodiff(Forward, f_trailing_ret, Duplicated(v, [1.0, 0.0, 0.0]))[1] ≈ 3.0
+
+    # The differentiated function itself returns through `sret`/`returnRoots` and
+    # calls itself, so its own call sites go through the recombined convention.
+    res = Enzyme.autodiff(Forward, rec_trailing_ret, Duplicated(v, [1.0, 0.0, 0.0]), Const(2))[1]
+    @test res.x ≈ 4.0
+    @test res.v ≈ [2.0, 0.0, 0.0]
+end
+
 const M_test = [1.0 0.2 0.0; 0.0 1.0 0.1; 0.3 0.0 1.0]
 inner_test(t) = sum((M_test * t) .^ 2)
 g_test(p) = sum(Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), inner_test, p)[1])
