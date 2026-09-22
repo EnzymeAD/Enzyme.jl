@@ -302,6 +302,11 @@ end
 
 Core.Compiler.method_table(@nospecialize(interp::EnzymeInterpreter)) = interp.method_table
 
+# For varargs (and other) call sites the signature that is compiled and executed differs
+# from the signature known at the call site. Infer that compilation signature as well, as
+# the native interpreter does, so codegen finds it in our cache instead of re-inferring it.
+Core.Compiler.infer_compilation_signature(@nospecialize(::EnzymeInterpreter)) = true
+
 function is_alwaysinline_func(@nospecialize(TT))::Bool
     isa(TT, DataType) || return false
     @static if VERSION ≥ v"1.11-"
