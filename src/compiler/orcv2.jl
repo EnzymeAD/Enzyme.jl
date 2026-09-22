@@ -68,6 +68,98 @@ function fix_ptr_lookup(name)
     return nothing
 end
 
+# Everything the lazy body of an `ejlstr$`/`ejlptr$` declaration points at by address: the
+# library and symbol name passed to `jl_load_and_lookup`, its library handle cache, and the
+# slot the resolved pointer is cached in. Kept rooted in `lazy_bindings` for as long as code
+# that embeds these addresses may run.
+struct LazyBinding
+    lib::Union{String, Ptr{Cchar}}
+    fname::String
+    hnd::Ref{Ptr{Cvoid}}
+    sym::Ref{Ptr{Cvoid}}
+end
+
+const lazy_bindings = Dict{String, LazyBinding}()
+const lazy_bindings_lock = ReentrantLock()
+
+function lazy_binding(name)
+    startswith(name, "ejlstr\$") || startswith(name, "ejlptr\$") || return nothing
+    return lock(lazy_bindings_lock) do
+        get!(lazy_bindings, name) do
+            _, fname, arg1 = split(name, "\$")
+            if startswith(name, "ejlstr\$")
+                lib = String(arg1)
+                hnd = get!(() -> Ref{Ptr{Cvoid}}(C_NULL), hnd_string_map, lib)
+            else
+                addr = parse(Int, arg1)
+                hnd = get!(() -> Ref{Ptr{Cvoid}}(C_NULL), hnd_int_map, addr)
+                lib = reinterpret(Ptr{Cchar}, addr)
+            end
+            LazyBinding(lib, String(fname), hnd, Ref{Ptr{Cvoid}}(C_NULL))
+        end
+    end
+end
+
+# Give the declaration `f` of a lazily bound `ccall` target a body that resolves the symbol
+# the first time it is called and caches the pointer, as Julia's own codegen does for a
+# `ccall`. Resolving it here instead would throw for a symbol the library lacks even when
+# the call can never run.
+function lazy_ccall_body!(f::LLVM.Function, b::LazyBinding)
+    FT = LLVM.function_type(f)
+    T_ptr = LLVM.PointerType(LLVM.Int8Type())
+    addr(p) = LLVM.const_inttoptr(LLVM.ConstantInt(reinterpret(UInt, p)), T_ptr)
+
+    lib = b.lib isa String ? pointer(b.lib) : b.lib
+    slot = addr(Base.unsafe_convert(Ptr{Ptr{Cvoid}}, b.sym))
+    T_lookup = LLVM.FunctionType(T_ptr, LLVM.LLVMType[T_ptr, T_ptr, T_ptr])
+    lookup = LLVM.const_inttoptr(
+        LLVM.ConstantInt(reinterpret(UInt, cglobal(:jl_load_and_lookup))),
+        LLVM.PointerType(T_lookup),
+    )
+
+    LLVM.linkage!(f, LLVM.API.LLVMInternalLinkage)
+    entry = LLVM.BasicBlock(f, "entry")
+    resolve = LLVM.BasicBlock(f, "resolve")
+    call = LLVM.BasicBlock(f, "call")
+    LLVM.@dispose builder = LLVM.IRBuilder() begin
+        LLVM.position!(builder, entry)
+        cached = LLVM.load!(builder, T_ptr, slot)
+        LLVM.ordering!(cached, LLVM.API.LLVMAtomicOrderingAcquire)
+        LLVM.alignment!(cached, sizeof(Ptr{Cvoid}))
+        isnull = LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, cached, LLVM.null(T_ptr))
+        LLVM.br!(builder, isnull, resolve, call)
+
+        LLVM.position!(builder, resolve)
+        resolved = LLVM.call!(builder, T_lookup, lookup,
+            LLVM.Value[addr(lib), addr(pointer(b.fname)), addr(Base.unsafe_convert(Ptr{Ptr{Cvoid}}, b.hnd))])
+        st = LLVM.store!(builder, resolved, slot)
+        LLVM.ordering!(st, LLVM.API.LLVMAtomicOrderingRelease)
+        LLVM.alignment!(st, sizeof(Ptr{Cvoid}))
+        LLVM.br!(builder, call)
+
+        LLVM.position!(builder, call)
+        target = LLVM.phi!(builder, T_ptr)
+        append!(LLVM.incoming(target), [(cached, entry), (resolved, resolve)])
+        res = LLVM.call!(builder, FT, target, collect(LLVM.parameters(f)))
+        LLVM.callconv!(res, LLVM.callconv(f))
+        # Forward the ABI attributes (`sret`, `byval`, ...) the declaration carried.
+        for i in 1:length(LLVM.parameters(FT))
+            for attr in collect(LLVM.parameter_attributes(f, i))
+                push!(LLVM.argument_attributes(res, i), attr)
+            end
+        end
+        for attr in collect(LLVM.return_attributes(f))
+            push!(LLVM.return_attributes(res), attr)
+        end
+        if LLVM.return_type(FT) == LLVM.VoidType()
+            LLVM.ret!(builder)
+        else
+            LLVM.ret!(builder, res)
+        end
+    end
+    return f
+end
+
 function define_absolute_symbol(jd, name)
     ptr = LLVM.find_symbol(name)
     if ptr !== C_NULL
@@ -189,10 +281,15 @@ function prepare!(mod)
         end
     end
     for f in collect(functions(mod))
-        ptr = fix_ptr_lookup(LLVM.name(f))
-        if ptr === nothing
+        LLVM.isdeclaration(f) || continue
+        binding = lazy_binding(LLVM.name(f))
+        binding === nothing && continue
+        if !LLVM.isvararg(LLVM.function_type(f))
+            lazy_ccall_body!(f, binding)
             continue
         end
+        # A varargs body cannot forward its arguments, so resolve those eagerly.
+        ptr = fix_ptr_lookup(LLVM.name(f))
         ptr = reinterpret(UInt, ptr)
         ptr = LLVM.ConstantInt(ptr)
         ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.function_type(f)))
