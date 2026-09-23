@@ -673,6 +673,18 @@ function emit_writebarrier!(B::LLVM.IRBuilder, T::Vector{LLVM.Value})
 end
 
 
+# Cast `ptr` to a pointer to `ST`, for a GEP into the fields of `ST`. Julia does not allow
+# a GEP on a GC-tracked pointer. Thus, a tracked pointer also gets a cast to the derived
+# address space.
+function struct_ptr!(B::LLVM.IRBuilder, @nospecialize(ptr::LLVM.Value), @nospecialize(ST::LLVM.LLVMType))
+    as = LLVM.addrspace(LLVM.value_type(ptr))
+    ptr = LLVM.pointercast!(B, ptr, LLVM.PointerType(ST, as))
+    if as == Tracked
+        ptr = LLVM.addrspacecast!(B, ptr, LLVM.PointerType(ST, Derived))
+    end
+    return ptr
+end
+
 function get_array_struct()
     @static if VERSION < v"1.11-"
         # JL_EXTENSION typedef struct {
@@ -770,11 +782,7 @@ end
 
 function get_memory_data(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
     mty = get_memory_struct()
-    array = LLVM.pointercast!(
-        B,
-        array,
-        LLVM.PointerType(mty, LLVM.addrspace(LLVM.value_type(array))),
-    )
+    array = struct_ptr!(B, array, mty)
     v = inbounds_gep!(
         B,
         mty,
@@ -863,11 +871,7 @@ end
 function get_array_elsz(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
     ST = get_array_struct()
     elsz = LLVM.IntType(16)
-    array = LLVM.pointercast!(
-        B,
-        array,
-        LLVM.PointerType(ST, LLVM.addrspace(LLVM.value_type(array))),
-    )
+    array = struct_ptr!(B, array, ST)
     v = inbounds_gep!(
         B,
         ST,
@@ -888,7 +892,7 @@ function emit_layout_of_type!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value))
 	@assert !isa(ty, LLVM.ConstantExpr)
 	@assert !isa(ty, LLVM.Constant)
 	dt = get_datatype_struct()
-	lty = bitcast!(B, ty, LLVM.PointerType(dt, addrspace(value_type(ty))))
+    lty = struct_ptr!(B, ty, dt)
 	layoutp = inbounds_gep!(B, dt, lty, 
         LLVM.Value[LLVM.ConstantInt(Int32(0)), LLVM.ConstantInt(Int32(5))],
 	)
@@ -946,11 +950,7 @@ function get_array_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
         end
     end
     ST = get_array_struct()
-    array = LLVM.pointercast!(
-        B,
-        array,
-        LLVM.PointerType(ST, LLVM.addrspace(LLVM.value_type(array))),
-    )
+    array = struct_ptr!(B, array, ST)
     v = inbounds_gep!(
         B,
         ST,
@@ -987,11 +987,7 @@ function get_memory_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
         end
     end
     ST = get_memory_struct()
-    array = LLVM.pointercast!(
-        B,
-        array,
-        LLVM.PointerType(ST, LLVM.addrspace(LLVM.value_type(array))),
-    )
+    array = struct_ptr!(B, array, ST)
     v = inbounds_gep!(
         B,
         ST,
@@ -1048,11 +1044,7 @@ end
 
 function get_array_nrows(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
     ST = get_array_struct()
-    array = LLVM.pointercast!(
-        B,
-        array,
-        LLVM.PointerType(ST, LLVM.addrspace(LLVM.value_type(array))),
-    )
+    array = struct_ptr!(B, array, ST)
     v = inbounds_gep!(
         B,
         ST,
