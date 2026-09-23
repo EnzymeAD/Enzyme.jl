@@ -6074,7 +6074,7 @@ end
                 if legal && byref == GPUCompiler.BITS_VALUE && jTy <: Ptr
                     ET = eltype(jTy)
                     if Base.isconcretetype(ET)
-		        sz_et = actual_size(ET)
+                        sz_et = actual_size(ET)
                         if sz_et > 0
                             jTy = ET
                             byref = GPUCompiler.MUT_REF
@@ -6096,6 +6096,7 @@ end
                     )
 
 			 size = Compiler.datatype_layoutsize(jTy)
+                        @assert offset >= 0 
                         if offset < size && isa(sz, LLVM.ConstantInt) && size - offset >= convert(Int, sz)
                             lim = convert(Int, sz)
                             md = to_fullmd(jTy, offset, lim)
