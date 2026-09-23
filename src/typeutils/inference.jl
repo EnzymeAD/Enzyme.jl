@@ -21,7 +21,7 @@ function primal_interp_world(
 
     CT = @static if VERSION >= v"1.11.0-DEV.1552"
         EnzymeCacheToken(
-            GPUCompiler.GLOBAL_METHOD_TABLE,
+            (GPUCompiler.GLOBAL_METHOD_TABLE,),
             world,
             false,
             true,
@@ -42,7 +42,7 @@ function primal_interp_world(
 
     CT = @static if VERSION >= v"1.11.0-DEV.1552"
         EnzymeCacheToken(
-            GPUCompiler.GLOBAL_METHOD_TABLE,
+            (GPUCompiler.GLOBAL_METHOD_TABLE,),
             world,
             true,
             false,

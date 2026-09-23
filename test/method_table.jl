@@ -48,6 +48,42 @@ end
     # Inference under the Enzyme job now sees the backend's overlay, as the primal job does.
     @test Enzyme.Compiler.return_type(interp, mi) === String
     @static if VERSION >= v"1.11.0-DEV.1552"
-        @test GPUCompiler.ci_cache_token(backend_job).method_table === mt_test_table
+        @test GPUCompiler.ci_cache_token(backend_job).method_tables === (mt_test_table,)
+    end
+end
+
+# A pretend backend that, like OpenCL.jl, stacks a shared method table underneath its own,
+# by defining `method_table_view`.
+struct MTStackTarget <: GPUCompiler.AbstractCompilerTarget end
+struct MTStackParams <: GPUCompiler.AbstractCompilerParams end
+Base.Experimental.@MethodTable(mt_shared_table)
+GPUCompiler.method_table(@nospecialize(job::CompilerJob{MTStackTarget, MTStackParams})) = mt_test_table
+GPUCompiler.method_table_view(@nospecialize(job::CompilerJob{MTStackTarget, MTStackParams})) =
+    GPUCompiler.StackedMethodTable(job.world, mt_test_table, mt_shared_table)
+
+mt_shared_fn(x::Float64) = x
+Base.Experimental.@overlay mt_shared_table mt_shared_fn(x::Float64) = "shared"
+mt_test_stacked_caller(x::Float64) = (mt_test_fn(x), mt_shared_fn(x))
+
+@testset "method_table_view forwards through EnzymeTarget" begin
+    world = Base.get_world_counter()
+    mode = API.DEM_ReverseModeCombined
+
+    mi, job = enzyme_job(mt_test_stacked_caller, MTStackTarget(), MTStackParams(), mode, world)
+    @test GPUCompiler.method_table_view(job) isa GPUCompiler.StackedMethodTable
+
+    # Inference under the Enzyme job sees both the backend's and the shared overlay.
+    interp = GPUCompiler.get_interpreter(job)
+    @test Core.Compiler.method_table(interp) isa GPUCompiler.StackedMethodTable
+    @test Enzyme.Compiler.return_type(interp, mi) === Tuple{String, String}
+
+    @static if VERSION >= v"1.11.0-DEV.1552"
+        # The cache token covers the whole stack, so it differs from that of a backend that
+        # only uses the same main table.
+        token = GPUCompiler.ci_cache_token(job)
+        @test token.method_tables === (mt_test_table, mt_shared_table)
+        @test Core.Compiler.cache_owner(interp) === token
+        _, other_job = enzyme_job(mt_test_overlay_caller, MTTestTarget(), MTTestParams(), mode, world)
+        @test token !== GPUCompiler.ci_cache_token(other_job)
     end
 end
