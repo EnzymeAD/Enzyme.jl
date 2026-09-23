@@ -1500,7 +1500,7 @@ nested_dup_inner(Ws, x) = first(autodiff(Forward, nested_const_net, Duplicated(W
     Ws = ([0.3 -0.7; 0.5 0.2], [-0.4 0.6; 0.1 0.8])
     x = [0.9, -0.3]
 
-    function fd(l, i, j; h = 1e-6)
+    function fd(l, i, j; h = 1.0e-6)
         p = deepcopy(Ws); p[1][i, j] += h
         m = deepcopy(Ws); m[1][i, j] -= h
         return (l(p, x) - l(m, x)) / 2h
@@ -1513,8 +1513,8 @@ nested_dup_inner(Ws, x) = first(autodiff(Forward, nested_const_net, Duplicated(W
     autodiff(Reverse, nested_dup_inner, Active, Duplicated(Ws, dWs_dup), Duplicated(x, zero(x)))
     @test dWs_const[1] ≈ dWs_dup[1]
     @test dWs_const[2] ≈ dWs_dup[2]
-    @test dWs_const[1][1, 1] ≈ fd(nested_const_inner, 1, 1) rtol = 1e-4
-    @test dWs_const[1][2, 1] ≈ fd(nested_const_inner, 2, 1) rtol = 1e-4
+    @test dWs_const[1][1, 1] ≈ fd(nested_const_inner, 1, 1) rtol = 1.0e-4
+    @test dWs_const[1][2, 1] ≈ fd(nested_const_inner, 2, 1) rtol = 1.0e-4
 
     # forward over forward
     tWs = make_zero(Ws)
@@ -1522,7 +1522,7 @@ nested_dup_inner(Ws, x) = first(autodiff(Forward, nested_const_net, Duplicated(W
     d_const = first(autodiff(Forward, nested_const_inner, Duplicated(Ws, tWs), Duplicated(x, zero(x))))
     d_dup = first(autodiff(Forward, nested_dup_inner, Duplicated(Ws, tWs), Duplicated(x, zero(x))))
     @test d_const ≈ d_dup
-    @test d_const ≈ fd(nested_const_inner, 1, 1) rtol = 1e-4
+    @test d_const ≈ fd(nested_const_inner, 1, 1) rtol = 1.0e-4
 end
 
 catsin(x::Number) = hcat(sin.(x .* [1, 2]))
