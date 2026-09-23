@@ -89,6 +89,72 @@ nfields(Type::LLVM.VectorType) = size(Type)
 nfields(Type::LLVM.ArrayType) = length(Type)
 nfields(Type::LLVM.PointerType) = 1
 
+"""
+    tracked_pointer_offsets!(offs, dl, T, base=0)
+
+Append to `offs` the byte offset, relative to `base`, of every GC-tracked pointer
+leaf of the LLVM type `T` in layout order.
+"""
+function tracked_pointer_offsets!(offs::Vector{Int}, dl::LLVM.DataLayout, @nospecialize(T::LLVM.LLVMType), base::Int = 0)
+    if isa(T, LLVM.PointerType)
+        if isSpecialPtr(T)
+            push!(offs, base)
+        end
+    elseif isa(T, LLVM.StructType)
+        for (i, ElT) in enumerate(LLVM.elements(T))
+            tracked_pointer_offsets!(offs, dl, ElT, base + Int(LLVM.offsetof(dl, T, i - 1)))
+        end
+    elseif isa(T, LLVM.ArrayType) || isa(T, LLVM.VectorType)
+        ElT = eltype(T)
+        esz = LLVM.sizeof(dl, ElT)
+        for i in 0:(length(T)-1)
+            tracked_pointer_offsets!(offs, dl, ElT, base + i * esz)
+        end
+    end
+    return offs
+end
+
+"""
+    split_value_size(dl, T) -> Int
+
+Size in bytes of the data half of a value of LLVM type `T` when Julia keeps it on
+the stack split into inline data and GC roots (`split_value_size` in
+`cgutils.cpp`).
+
+Up to Julia 1.13.0 the data half kept the full layout, with the tracked slots left
+undefined. Since 1.13.1 (JuliaLang/julia#60388) codegen shrink-wraps it: pointer
+words at the very end of the layout are dropped, while interior pointer slots stay
+as padding so the offsets of the remaining fields are unchanged. The buffer behind
+the by-reference pointer of an argument with inline roots, and the stack copy a
+`new` makes of such a value, are only this many bytes; a callee may not describe
+or touch more. An `sret` buffer is not affected: its parameter is still declared
+`dereferenceable` for the full layout and callers allocate it whole, only the
+memcpy that fills it may stop short (see `fixup_1p12_sret!`).
+"""
+function split_value_size(dl::LLVM.DataLayout, @nospecialize(T::LLVM.LLVMType))::Int
+    size = LLVM.sizeof(dl, T)
+    if !shrinks_split_values()
+        return size
+    end
+    offs = tracked_pointer_offsets!(Int[], dl, T)
+    for off in Iterators.reverse(offs)
+        if off + sizeof(Ptr{Cvoid}) == size
+            size = off
+        else
+            break
+        end
+    end
+    return size
+end
+
+"""
+    shrinks_split_values() -> Bool
+
+Whether this Julia trims trailing tracked pointers from the data half of a split
+value (see [`split_value_size`](@ref)).
+"""
+shrinks_split_values() = VERSION >= v"1.13.1-DEV" 
+
 function strip_tracked_pointers(@nospecialize(T::LLVM.LLVMType))
     if !any_jltypes(T)
         return T

@@ -502,6 +502,39 @@ Base.@assume_effects :removable :foldable :nothrow function has_arg_attr(fn::LLV
     return false
 end
 
+"""
+    precedes(a, b)
+
+Whether instruction `a` comes before `b` in their common basic block.
+"""
+function precedes(a::LLVM.Instruction, b::LLVM.Instruction)::Bool
+    @assert LLVM.parent(a) == LLVM.parent(b)
+    for inst in instructions(LLVM.parent(a))
+        inst == a && return true
+        inst == b && return false
+    end
+    return false
+end
+
+"""
+    copy_metadata!(dst, src)
+
+Attach every metadata node of the instruction `src`, except its debug location,
+to `dst`.
+"""
+function copy_metadata!(dst::LLVM.Instruction, src::LLVM.Instruction)
+    num = Ref{Csize_t}()
+    entries = LLVM.API.LLVMInstructionGetAllMetadataOtherThanDebugLoc(src, num)
+    ctx = LLVM.context(src)
+    for i in 1:num[]
+        kind = LLVM.API.LLVMValueMetadataEntriesGetKind(entries, i - 1)
+        md = LLVM.API.LLVMValueMetadataEntriesGetMetadata(entries, i - 1)
+        LLVM.API.LLVMSetMetadata(dst, kind, LLVM.API.LLVMMetadataAsValue(ctx, md))
+    end
+    num[] > 0 && LLVM.API.LLVMDisposeValueMetadataEntries(entries)
+    return nothing
+end
+
 function eraseInst(bb::LLVM.BasicBlock, @nospecialize(inst::LLVM.Instruction))
     @static if isdefined(LLVM, Symbol("erase!"))
         LLVM.erase!(inst)

@@ -1318,7 +1318,16 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
                     # object passing this in by ref isnt a {[-1]:Pointer, [-1,-1]:Int}
                     # aka the next field after this in the bigger object isn't guaranteed to also be the same.
                     if allocatedinline(arg.typ)
-                        shift!(rest, dl, 0, sizeof(arg.typ), 0)
+                        # An aggregate with inline roots is passed as a pointer to its
+                        # data half only, whose buffer since Julia 1.13.1 omits the
+                        # trailing tracked slots (`split_value_size`). Bound the type
+                        # tree by that buffer, not by the full layout.
+                        sz = if byref == GPUCompiler.BITS_REF && inline_roots_type(arg.typ) != 0
+                            split_value_size(LLVM.DataLayout(dl), convert(LLVMType, arg.typ))
+                        else
+                            sizeof(arg.typ)
+                        end
+                        shift!(rest, dl, 0, sz, 0)
                     end
                     merge!(rest, TypeTree(API.DT_Pointer, ctx))
                     only!(rest, -1)
@@ -4063,6 +4072,7 @@ end
     RootPointerToSRetPointer = 3,
     NullifySRetValue = 4,
     RootAndSRetPointerToValue = 5,
+    ValueToSRetAndRootPointers = 6,
    )
 
 function to_llvm(lst::Vector{Cuint})
@@ -4099,7 +4109,9 @@ function create_rooted_array(builder::LLVM.IRBuilder, array_ty::LLVM.ArrayType, 
     return create_rooted_array(builder, length(array_ty), name)
 end
     
-function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value, root_ty::LLVM.LLVMType, rootRet::Union{LLVM.Value, Nothing}, direction::SRetRootMovement; must_cache::Bool = false)
+function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value, root_ty::LLVM.LLVMType, rootRet::Union{LLVM.Value, Nothing}, direction::SRetRootMovement; must_cache::Bool = false, dst::Union{LLVM.Value, Nothing} = nothing)
+        # For `ValueToSRetAndRootPointers`, `sret` is the value and `dst` the buffer.
+        @assert (dst !== nothing) == (direction == ValueToSRetAndRootPointers)
         count = 0
         todo = Tuple{Vector{Cuint},LLVM.LLVMType}[(
 	    Cuint[],
@@ -4117,13 +4129,13 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
 	# aka bfs/etc
         while length(todo) != 0
             path, ty = popfirst!(todo)
-            if !any_jltypes(ty) && direction != RootAndSRetPointerToValue
+            if !any_jltypes(ty) && direction != RootAndSRetPointerToValue && direction != ValueToSRetAndRootPointers
                 continue
             end
 
             if isa(ty, LLVM.PointerType) && any_jltypes(ty)
 
-        		if direction == SRetPointerToRootPointer || direction == SRetValueToRootPointer || direction == RootPointerToSRetPointer || direction == RootPointerToSRetValue || direction == RootAndSRetPointerToValue
+        		if direction == SRetPointerToRootPointer || direction == SRetValueToRootPointer || direction == RootPointerToSRetPointer || direction == RootPointerToSRetValue || direction == RootAndSRetPointerToValue || direction == ValueToSRetAndRootPointers
                           T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
                           T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
                           loc = inbounds_gep!(
@@ -4141,7 +4153,7 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
 		                API.SetMustCache!(outloc)
 			    end
                             store!(builder, outloc, loc)
-        		elseif direction == SRetValueToRootPointer
+        		elseif direction == SRetValueToRootPointer || direction == ValueToSRetAndRootPointers
         		    outloc = Enzyme.API.e_extract_value!(builder, sret, path)
                             store!(builder, outloc, loc)
         		elseif direction == RootPointerToSRetValue || direction == RootAndSRetPointerToValue
@@ -4197,6 +4209,9 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
 			API.SetMustCache!(outloc)
 		    end
         	    val = Enzyme.API.e_insert_value!(builder, val, outloc, path)
+	    elseif direction == ValueToSRetAndRootPointers
+		    outloc = inbounds_gep!(builder, jltype, dst, to_llvm(path))
+		    store!(builder, Enzyme.API.e_extract_value!(builder, sret, path), outloc)
 	    end
         end
 
@@ -4253,6 +4268,37 @@ function recombine_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM
    @assert !tracked.all "Not tracked.all, jltype ($(string(jltype)))"
    root_ty = convert(LLVMType, AnyArray(Int(tracked.count)))
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, RootPointerToSRetValue; must_cache)
+end
+
+"""
+    roots_follow(args, ai, removedRoots) -> Bool
+
+Whether the classified argument after `args[ai]` carries the inline roots of
+`args[ai]` and is folded back into it (`removedRoots`), so that `args[ai]` is
+handled through its data pointer rather than loaded whole.
+"""
+function roots_follow(args, ai::Int, removedRoots)::Bool
+    ai < length(args) || return false
+    nxt = args[ai+1]
+    return nxt.rooted_typ !== nothing && nxt.rooted_arg_i == args[ai].arg_i && nxt.arg_i in removedRoots
+end
+
+"""
+    split_value_into!(builder, val, sret, roots)
+
+Store the value `val` through the `sret`/`returnRoots` convention: its GC-tracked
+fields into the `roots` array and every other field into the `sret` buffer, leaving
+the tracked slots of the buffer alone, as a caller reads them from `roots` only.
+The inverse of [`recombine_value_ptr!`](@ref).
+"""
+function split_value_into!(builder::LLVM.IRBuilder, val::LLVM.Value, sret::LLVM.Value, roots::LLVM.Value)
+   jltype = value_type(val)
+   tracked = CountTrackedPointers(jltype)
+   @assert tracked.count > 0
+   @assert !tracked.all "Not tracked.all, jltype ($(string(jltype)))"
+   root_ty = convert(LLVMType, AnyArray(Int(tracked.count)))
+   move_sret_tofrom_roots!(builder, jltype, val, root_ty, roots, ValueToSRetAndRootPointers; dst=sret)
+   return nothing
 end
 
 """
@@ -4739,11 +4785,15 @@ function lower_convention(
             if swiftself
                 push!(nops, ops[1+sret+returnRoots])
             end
-            for arg in args
+            for (ai, arg) in enumerate(args)
                 parm = ops[arg.codegen.i]
 		if arg.arg_i in removedRoots
 		    if arg.rooted_arg_i in loweredArgs
-		        nops[end] = recombine_value!(builder, nops[end], parm)
+		        # `nops[end]` is the pointer to the data half of the argument
+		        # (see `roots_follow` below); rebuild the value from it and
+		        # the roots `parm` field by field, which never reads the
+		        # tracked slots a Julia 1.13.1+ data buffer omits.
+		        nops[end] = recombine_value_ptr!(builder, convert(LLVMType, arg.rooted_typ), nops[end], parm)
 		    elseif arg.rooted_arg_i in raisedArgs
                 jltype = convert(LLVMType, arg.rooted_typ)
                 tracked = CountTrackedPointers(jltype)
@@ -4757,7 +4807,11 @@ function lower_convention(
 		elseif (arg.arg_i) in removedRoots && (arg.rooted_arg_i in loweredArgs || arg)
 		    continue
 		elseif arg.arg_i in loweredArgs
-                    push!(nops, load!(builder, convert(LLVMType, arg.typ), parm))
+		    if roots_follow(args, ai, removedRoots)
+		        push!(nops, parm)
+		    else
+                        push!(nops, load!(builder, convert(LLVMType, arg.typ), parm))
+		    end
                 elseif arg.arg_i in raisedArgs
                     obj = emit_allocobj!(builder, arg.typ, "raisedArg")
                     bc = bitcast!(
@@ -4785,7 +4839,15 @@ function lower_convention(
                 if !LLVM.is_opaque(value_type(ops[1]))
                     @assert value_type(res) == eltype(value_type(ops[1]))
                 end
-                store!(builder, res, ops[1])
+                if returnRoots && VERSION >= v"1.12"
+                    # Since Julia 1.12 the caller reads the tracked pointers from
+                    # its `returnRoots` array and only the remaining data from the
+                    # `sret` buffer; a plain store of the whole value would leave
+                    # the array unset. Before 1.12 the buffer holds the whole value.
+                    split_value_into!(builder, res, ops[1], ops[2])
+                else
+                    store!(builder, res, ops[1])
+                end
             else
                 LLVM.replace_uses!(ci, res)
             end
@@ -5876,6 +5938,14 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
 
     if process_module
         GPUCompiler.optimize_module!(primal_job, mod)
+    end
+
+    # The Julia pipeline above folds a phi of loaded roots into a load through a
+    # phi of the root arrays; undo that before Enzyme promotes the allocas among
+    # them (see `unfold_root_phi_loads!`).
+    for f in functions(mod)
+        isempty(blocks(f)) && continue
+        unfold_root_phi_loads!(f)
     end
 
     for name in ("gpu_report_exception", "report_exception")
