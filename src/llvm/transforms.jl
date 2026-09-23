@@ -363,7 +363,7 @@ function unfold_root_phi_loads!(f::LLVM.Function)::Bool
             (isa(pty, LLVM.PointerType) && LLVM.addrspace(pty) == 0) || continue
 
             incs = collect(incoming(phi))
-            any(((v, _),) -> isa(underlying_alloca(v), LLVM.AllocaInst), incs) || continue
+            any(((v, _),) -> isa(first(get_base_and_offset(v)), LLVM.AllocaInst), incs) || continue
 
             # The users: loads of tracked pointers in this block, directly or
             # through a GEP with constant indices, before any write.
@@ -390,7 +390,7 @@ function unfold_root_phi_loads!(f::LLVM.Function)::Bool
             end
             (ok && !isempty(accesses)) || continue
             for inst in instructions(bb)
-                may_write_memory(inst) || continue
+                mayWriteToMemory(inst) || continue
                 # A write before one of the loads could change what they read.
                 if any(((ld, _),) -> precedes(inst, ld), accesses)
                     ok = false
@@ -402,7 +402,7 @@ function unfold_root_phi_loads!(f::LLVM.Function)::Bool
             # A speculative load is only safe from an alloca.
             for (v, pred) in incs
                 nsucc = length(collect(successors(terminator(pred))))
-                if nsucc != 1 && !isa(underlying_alloca(v), LLVM.AllocaInst)
+                if nsucc != 1 && !isa(first(get_base_and_offset(v)), LLVM.AllocaInst)
                     ok = false
                     break
                 end
@@ -467,79 +467,8 @@ from `ptr`, placed in the block `bb`.
 """
 function root_load_in(@nospecialize(inst::LLVM.Value), @nospecialize(ptr::LLVM.Value), bb::LLVM.BasicBlock, T_prjlvalue::LLVM.LLVMType)::Bool
     return isa(inst, LLVM.LoadInst) && LLVM.parent(inst) == bb &&
-           operands(inst)[1] == ptr && value_type(inst) == T_prjlvalue &&
-           !Bool(LLVM.API.LLVMGetVolatile(inst)) &&
-           LLVM.API.LLVMGetOrdering(inst) == LLVM.API.LLVMAtomicOrderingNotAtomic
-end
-
-"""
-    may_write_memory(inst)
-
-Whether the instruction `inst` may write memory: a store, a call, a fence, an
-atomic read-modify-write, or a volatile or atomic load.
-"""
-function may_write_memory(inst::LLVM.Instruction)::Bool
-    op = opcode(inst)
-    if op == LLVM.API.LLVMStore || op == LLVM.API.LLVMCall || op == LLVM.API.LLVMInvoke ||
-       op == LLVM.API.LLVMCallBr || op == LLVM.API.LLVMFence || op == LLVM.API.LLVMAtomicRMW ||
-       op == LLVM.API.LLVMAtomicCmpXchg
-        return true
-    end
-    if op == LLVM.API.LLVMLoad
-        return Bool(LLVM.API.LLVMGetVolatile(inst)) ||
-               LLVM.API.LLVMGetOrdering(inst) != LLVM.API.LLVMAtomicOrderingNotAtomic
-    end
-    return false
-end
-
-"""
-    underlying_alloca(v)
-
-The value `v` addresses through in-bounds GEPs and pointer casts.
-"""
-function underlying_alloca(@nospecialize(v::LLVM.Value))::LLVM.Value
-    while true
-        if isa(v, LLVM.GetElementPtrInst) || isa(v, LLVM.BitCastInst) || isa(v, LLVM.AddrSpaceCastInst)
-            v = operands(v)[1]
-        elseif isa(v, LLVM.ConstantExpr) && (opcode(v) == LLVM.API.LLVMGetElementPtr || opcode(v) == LLVM.API.LLVMBitCast || opcode(v) == LLVM.API.LLVMAddrSpaceCast)
-            v = operands(v)[1]
-        else
-            return v
-        end
-    end
-end
-
-"""
-    precedes(a, b)
-
-Whether instruction `a` comes before `b` in their common basic block.
-"""
-function precedes(a::LLVM.Instruction, b::LLVM.Instruction)::Bool
-    @assert LLVM.parent(a) == LLVM.parent(b)
-    for inst in instructions(LLVM.parent(a))
-        inst == a && return true
-        inst == b && return false
-    end
-    return false
-end
-
-"""
-    copy_metadata!(dst, src)
-
-Attach every metadata node of the instruction `src`, except its debug location,
-to `dst`.
-"""
-function copy_metadata!(dst::LLVM.Instruction, src::LLVM.Instruction)
-    num = Ref{Csize_t}()
-    entries = LLVM.API.LLVMInstructionGetAllMetadataOtherThanDebugLoc(src, num)
-    ctx = LLVM.context(src)
-    for i in 1:num[]
-        kind = LLVM.API.LLVMValueMetadataEntriesGetKind(entries, i - 1)
-        md = LLVM.API.LLVMValueMetadataEntriesGetMetadata(entries, i - 1)
-        LLVM.API.LLVMSetMetadata(dst, kind, LLVM.API.LLVMMetadataAsValue(ctx, md))
-    end
-    num[] > 0 && LLVM.API.LLVMDisposeValueMetadataEntries(entries)
-    return nothing
+        operands(inst)[1] == ptr && value_type(inst) == T_prjlvalue &&
+        !Bool(LLVM.API.LLVMGetVolatile(inst)) && !LLVM.is_atomic(inst)
 end
 
 """
