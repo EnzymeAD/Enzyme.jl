@@ -125,9 +125,11 @@ end
 #     argument that is passed by value (such as our tuple of layers) and indexed with
 #     a runtime index (the loop in `mlp`) is treated as inactive by the *outer* pass as
 #     well, which silently zeroes the gradient of the Laplacian term. See
-#     [EnzymeAD/Enzyme.jl#3617](https://github.com/EnzymeAD/Enzyme.jl/issues/3617).
-#     Passing `Duplicated(θ, make_zero(θ))` sidesteps this. The gradient below was
-#     checked against finite differences.
+#     [EnzymeAD/Enzyme.jl#3617](https://github.com/EnzymeAD/Enzyme.jl/issues/3617);
+#     a fix is proposed in
+#     [EnzymeAD/Enzyme.jl#3625](https://github.com/EnzymeAD/Enzyme.jl/pull/3625).
+#     Passing `Duplicated(θ, make_zero(θ))` sidesteps this on released versions. The
+#     gradient below was checked against finite differences.
 
 # The PDE operators, right-hand sides and the exact solution. The parameter slot of
 # `ustar` carries `(c, r)` so it can be fed through the same `laplacian` helper.
