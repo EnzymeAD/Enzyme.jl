@@ -253,6 +253,44 @@ end
     # @test dpar[:sub].d[:a].v ≈ 1.0
 end
 
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3042
+const IDDICT_3042 = IdDict{Any, Any}()
+iddict_delete_3042(x) = (delete!(IDDICT_3042, :k); x[1] * x[2])
+# `GPUArraysCore.allowscalar(f)` sets task-local storage like this
+tls_3042(x) = task_local_storage(() -> x[1] * x[2], :enzyme_test_3042, true)
+
+@testset "IdDict pop! and delete!" begin
+    for mode in (Reverse, set_runtime_activity(Reverse))
+        x = [3.0, 4.0]
+        dx = zeros(2)
+        autodiff(mode, iddict_delete_3042, Active, Duplicated(x, dx))
+        @test dx == [4.0, 3.0]
+    end
+
+    x = [3.0, 4.0]
+    dx = zeros(2)
+    autodiff(set_runtime_activity(Reverse), tls_3042, Active, Duplicated(x, dx))
+    @test dx == [4.0, 3.0]
+
+    function iddict_pop(d, x)
+        d[:a] = x
+        return sum(abs2, pop!(d, :a))
+    end
+    d = IdDict{Symbol, Vector{Float64}}()
+    dd = IdDict{Symbol, Vector{Float64}}()
+    x = [1.0, 2.0]
+    dx = zeros(2)
+    autodiff(Reverse, iddict_pop, Active, Duplicated(d, dd), Duplicated(x, dx))
+    @test dx == [2.0, 4.0]
+    @test isempty(d)
+    @test isempty(dd)
+
+    iddict_pop_default(d, x) = sum(abs2, pop!(d, :missing, x))
+    dx = zeros(2)
+    autodiff(Reverse, iddict_pop_default, Active, Duplicated(d, dd), Duplicated(x, dx))
+    @test dx == [2.0, 4.0]
+end
+
 
 const julia_typed_pointers = GPUCompiler.JuliaContext() do ctx
     GPUCompiler.supports_typed_pointers(ctx)

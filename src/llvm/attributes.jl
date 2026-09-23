@@ -224,6 +224,10 @@ const nofreefns = Set{String}((
     "cuCtxGetId",
     "cuDeviceGetName",
     "ijl_eqtable_get",
+    "jl_eqtable_put",
+    "ijl_eqtable_put",
+    "jl_eqtable_pop",
+    "ijl_eqtable_pop",
     "cuCtxGetApiVersion",
     "cuCtxSetCurrent",
     # make_zero / make_zero! shadow-init bookkeeping (IdDict/IdSet seen-table queries)
@@ -1130,8 +1134,8 @@ function annotate!(mod::LLVM.Module)
         end
     end
     
-    # Key of jl_eqtable_get/put is inactive, definitionally
-    for fname in ("jl_eqtable_put", "ijl_eqtable_put")
+    # Key of jl_eqtable_get/put/pop is inactive, definitionally
+    for fname in ("jl_eqtable_put", "ijl_eqtable_put", "jl_eqtable_pop", "ijl_eqtable_pop")
         if haskey(funcs, fname)
             for fn in funcs[fname]
                 push!(parameter_attributes(fn, 2), LLVM.StringAttribute("enzyme_inactive"))
