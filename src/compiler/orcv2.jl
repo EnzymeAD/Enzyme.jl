@@ -49,25 +49,6 @@ end
 const hnd_string_map = Dict{String, Ref{Ptr{Cvoid}}}()
 const hnd_int_map = Dict{Int, Ref{Ptr{Cvoid}}}()
 
-function fix_ptr_lookup(name)
-    if startswith(name, "ejlstr\$") || startswith(name, "ejlptr\$")
-        _, fname, arg1 = split(name, "\$")
-        if startswith(name, "ejlstr\$")
-            hnd_cache = get!(hnd_string_map, arg1) do
-                Ref{Ptr{Cvoid}}(C_NULL)
-            end
-        else
-            arg1 =  parse(Int, arg1)
-            hnd_cache = get!(hnd_int_map, arg1) do
-                Ref{Ptr{Cvoid}}(C_NULL)
-            end
-            arg1 = reinterpret(Ptr{Cchar}, arg1)
-        end
-        return @ccall jl_load_and_lookup(arg1::Cstring, fname::Cstring, hnd_cache::Ptr{Cvoid})::Ptr{Cvoid}
-    end
-    return nothing
-end
-
 # Everything the lazy body of an `ejlstr$`/`ejlptr$` declaration points at by address: the
 # library and symbol name passed to `jl_load_and_lookup`, its library handle cache, and the
 # slot the resolved pointer is cached in. Kept rooted in `lazy_bindings` for as long as code
@@ -100,6 +81,8 @@ function lazy_binding(name)
     end
 end
 
+const_ptr(p::Ptr, T::LLVM.LLVMType) = LLVM.const_inttoptr(LLVM.ConstantInt(reinterpret(UInt, p)), T)
+
 # Give the declaration `f` of a lazily bound `ccall` target a body that resolves the symbol
 # the first time it is called and caches the pointer, as Julia's own codegen does for a
 # `ccall`. Resolving it here instead would throw for a symbol the library lacks even when
@@ -107,10 +90,12 @@ end
 function lazy_ccall_body!(f::LLVM.Function, b::LazyBinding)
     FT = LLVM.function_type(f)
     T_ptr = LLVM.PointerType(LLVM.Int8Type())
-    addr(p) = LLVM.const_inttoptr(LLVM.ConstantInt(reinterpret(UInt, p)), T_ptr)
+    # Julia 1.10 and 1.11 use typed pointers: the slot must be an `i8**` and the callee a
+    # pointer to `FT`, else the verifier rejects the module.
+    T_pptr = LLVM.PointerType(T_ptr)
 
     lib = b.lib isa String ? pointer(b.lib) : b.lib
-    slot = addr(Base.unsafe_convert(Ptr{Ptr{Cvoid}}, b.sym))
+    slot = const_ptr(Base.unsafe_convert(Ptr{Ptr{Cvoid}}, b.sym), T_pptr)
     T_lookup = LLVM.FunctionType(T_ptr, LLVM.LLVMType[T_ptr, T_ptr, T_ptr])
     lookup = LLVM.const_inttoptr(
         LLVM.ConstantInt(reinterpret(UInt, cglobal(:jl_load_and_lookup))),
@@ -131,7 +116,12 @@ function lazy_ccall_body!(f::LLVM.Function, b::LazyBinding)
 
         LLVM.position!(builder, resolve)
         resolved = LLVM.call!(builder, T_lookup, lookup,
-            LLVM.Value[addr(lib), addr(pointer(b.fname)), addr(Base.unsafe_convert(Ptr{Ptr{Cvoid}}, b.hnd))])
+            LLVM.Value[
+                const_ptr(lib, T_ptr),
+                const_ptr(pointer(b.fname), T_ptr),
+                const_ptr(Base.unsafe_convert(Ptr{Ptr{Cvoid}}, b.hnd), T_ptr),
+            ]
+        )
         st = LLVM.store!(builder, resolved, slot)
         LLVM.ordering!(st, LLVM.API.LLVMAtomicOrderingRelease)
         LLVM.alignment!(st, sizeof(Ptr{Cvoid}))
@@ -140,7 +130,8 @@ function lazy_ccall_body!(f::LLVM.Function, b::LazyBinding)
         LLVM.position!(builder, call)
         target = LLVM.phi!(builder, T_ptr)
         append!(LLVM.incoming(target), [(cached, entry), (resolved, resolve)])
-        res = LLVM.call!(builder, FT, target, collect(LLVM.parameters(f)))
+        callee = LLVM.bitcast!(builder, target, LLVM.PointerType(FT))
+        res = LLVM.call!(builder, FT, callee, collect(LLVM.parameters(f)))
         LLVM.callconv!(res, LLVM.callconv(f))
         # Forward the ABI attributes (`sret`, `byval`, ...) the declaration carried.
         for i in 1:length(LLVM.parameters(FT))
@@ -289,7 +280,9 @@ function prepare!(mod)
             continue
         end
         # A varargs body cannot forward its arguments, so resolve those eagerly.
-        ptr = fix_ptr_lookup(LLVM.name(f))
+        ptr = @ccall jl_load_and_lookup(
+            binding.lib::Ptr{Cchar}, binding.fname::Cstring, binding.hnd::Ptr{Ptr{Cvoid}}
+        )::Ptr{Cvoid}
         ptr = reinterpret(UInt, ptr)
         ptr = LLVM.ConstantInt(ptr)
         ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.function_type(f)))
