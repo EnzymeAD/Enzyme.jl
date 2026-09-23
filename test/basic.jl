@@ -721,6 +721,21 @@ end
     @test res ≈ 1.0
 end
 
+# A derivative compiled into another one refers to the Dict's fields by their literal addresses.
+# Folding those loads would keep the memories the Dict had at compile time.
+const GLOB_DICT_NESTED = Dict{Int, Float64}()
+f_glob_dict_nested(x) = x^2 * get(GLOB_DICT_NESTED, 1, 1.0)
+df_glob_dict_nested(x) = autodiff_deferred(Reverse, Const(f_glob_dict_nested), Active, Active(x))[1][1]
+
+@testset "Global Dict that grows after a nested derivative is compiled" begin
+    @test autodiff(Forward, df_glob_dict_nested, Duplicated(3.0, 1.0))[1] ≈ 2.0
+    # enough entries for the Dict to replace its memories on every Julia version
+    for k in 1:100
+        GLOB_DICT_NESTED[k] = 2.0
+    end
+    @test autodiff(Forward, df_glob_dict_nested, Duplicated(3.0, 1.0))[1] ≈ 4.0
+end
+
 using LinearAlgebra
 
 struct WrapJ11{T, V}
