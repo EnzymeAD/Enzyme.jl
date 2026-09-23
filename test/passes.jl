@@ -835,11 +835,14 @@ end
     # There is no addrspace(10) object to root such a phi with; `nodecayed_phis!`
     # must skip it instead of failing in `nodecayed_getparent`.
     @test @filecheck begin
-        @check_not "nodecayed."
         @check_label "define double @loop"
+        @check_not "nodecayed."
         @check "%p = phi"
+        @check_not "nodecayed."
         @check_label "define double @sel"
+        @check_not "nodecayed."
         @check "%p = phi"
+        @check_not "nodecayed."
         LLVM.Context() do ctx
             mod = parse(
                 LLVM.Module, """
