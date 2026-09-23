@@ -21,6 +21,7 @@ examples = Pair{String,String}[
     "Basics" => "autodiff"
     "Box model" => "box"
     "Custom rules" => "custom_rule"
+    "Physics-informed neural network" => "pinn"
 ]
 
 for (_, name) in examples
