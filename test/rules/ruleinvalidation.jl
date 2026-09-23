@@ -48,7 +48,14 @@ for m in methods(inactive, Tuple{typeof(issue696),Vararg{Any}})
     Base.delete_method(m)
 end
 
-@test_broken autodiff(Forward, issue696, Duplicated(1.0, 1.0))[1] ≈ 2.0
-@test_broken autodiff(Forward, call_issue696, Duplicated(1.0, 1.0))[1] ≈ 2.0
+# Deleting the `inactive` method invalidates its callers only since Julia 1.13.1
+# (JuliaLang/julia#63227).
+if VERSION >= v"1.13.1-DEV"
+    @test autodiff(Forward, issue696, Duplicated(1.0, 1.0))[1] ≈ 2.0
+    @test autodiff(Forward, call_issue696, Duplicated(1.0, 1.0))[1] ≈ 2.0
+else
+    @test_broken autodiff(Forward, issue696, Duplicated(1.0, 1.0))[1] ≈ 2.0
+    @test_broken autodiff(Forward, call_issue696, Duplicated(1.0, 1.0))[1] ≈ 2.0
+end
 
 end # module

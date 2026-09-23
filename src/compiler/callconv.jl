@@ -262,7 +262,6 @@ end
         fattrs = function_attributes(fn)
         push!(fattrs, StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))))
         push!(fattrs, StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(RT)))))
-        push!(fattrs, StringAttribute("enzymejl_world", string(world)))
         if RT === Union{}
             push!(fattrs, EnumAttribute("noreturn"))
         end
@@ -497,7 +496,7 @@ end
     end
 
     """
-        invoke_codegen!(mode, mod, funcspec, world, alwaysinline = false)
+        invoke_codegen!(mode, mod, funcspec, alwaysinline = false)
 
     Make the rule `funcspec` callable from `mod`.
 
@@ -544,14 +543,14 @@ end
             mode::API.CDerivativeMode,
             mod::LLVM.Module,
             funcspec::Core.MethodInstance,
-            world::UInt,
             alwaysinline::Bool = false,
         )
         if !(funcspec.specTypes isa DataType) || !native_invoke_available(mod)
-            return nested_codegen!(mode, mod, funcspec, world, alwaysinline)
+            return nested_codegen!(mode, mod, funcspec, alwaysinline)
         end
 
         enzyme_ctx = enzyme_context()
+        world = enzyme_ctx.world
         if haskey(enzyme_ctx.nested_cache, funcspec)
             fname = enzyme_ctx.nested_cache[funcspec]
             if haskey(functions(mod), fname)
@@ -561,7 +560,7 @@ end
 
         native = native_codeinst(mod, funcspec, world)
         if native === nothing
-            llvmf = nested_codegen!(mode, mod, funcspec, world, true)
+            llvmf = nested_codegen!(mode, mod, funcspec, true)
             # Emitted rules do not use the derived signature. Check it against
             # them anyway, so `specsig` stays correct for every rule shape.
             # `EnzymeInterpreter` inferred the emitted rule, so take the return
@@ -582,7 +581,7 @@ end
     end
 
     """
-        materialize_native_invokes!(mode, mod, world)
+        materialize_native_invokes!(mode, mod)
 
     Give every natively called function that `mod` declares a body, so that
     the differentiation of `mod` can differentiate through it.
@@ -597,14 +596,15 @@ end
     always-inline wrapper that forwards to it. The wrapper drops the
     `pgcstack` parameter when the emitted rule takes none.
     """
-    function materialize_native_invokes!(mode::API.CDerivativeMode, mod::LLVM.Module, world::UInt)
+    function materialize_native_invokes!(mode::API.CDerivativeMode, mod::LLVM.Module)
         enzyme_ctx = enzyme_context()
+        world = enzyme_ctx.world
         marker = StringAttribute("enzymejl_native_invoke")
         for fn in collect(functions(mod))
             isdeclaration(fn) || continue
             has_fn_attr(fn, marker) || continue
             mi, RT = enzyme_custom_extract_mi(fn)
-            llvmf = nested_codegen!(mode, mod, mi, world, true)
+            llvmf = nested_codegen!(mode, mod, mi, true)
             check_specsig(llvmf, mi, enzyme_custom_extract_mi(llvmf)[2])
             # `nested_codegen!` defers linking the emitted module until after
             # the differentiation. The body is needed before it.
@@ -658,14 +658,13 @@ else
         mode::API.CDerivativeMode,
         mod::LLVM.Module,
         funcspec::Core.MethodInstance,
-        world::UInt,
         alwaysinline::Bool = false,
-    ) = nested_codegen!(mode, mod, funcspec, world, alwaysinline)
+    ) = nested_codegen!(mode, mod, funcspec, alwaysinline)
 
     native_return_type(mod::LLVM.Module, mi::Core.MethodInstance, world::UInt) = nothing
 
     check_emitted_specsig(mod::LLVM.Module, llvmf::LLVM.Function, mi::Core.MethodInstance, @nospecialize(RT::Type)) = nothing
 
-    materialize_native_invokes!(mode::API.CDerivativeMode, mod::LLVM.Module, world::UInt) = nothing
+    materialize_native_invokes!(mode::API.CDerivativeMode, mod::LLVM.Module) = nothing
 
 end

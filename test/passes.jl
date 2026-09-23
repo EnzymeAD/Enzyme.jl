@@ -232,7 +232,7 @@ end
         Enzyme.Compiler.autodiff_cache[ptr] = ("thunk", bitcode)
         try
             Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT =>
-                    Enzyme.Compiler.EnzymeContext() begin
+                    Enzyme.Compiler.EnzymeContext(GPUCompiler.tls_world_age()) begin
                 FT = LLVM.FunctionType(LLVM.Int64Type(), [LLVM.Int64Type()])
 
                 first_mod = LLVM.Module("first")
@@ -727,5 +727,103 @@ end
         @test !Enzyme.Compiler.is_readonly(LLVM.called_operand(cmp)::LLVM.Function)
 
         @test_throws AssertionError Enzyme.Compiler.fix_decayaddr!(mod)
+    end
+end
+
+# --- unfold_root_phi_loads! ---------------------------------------------------
+
+function root_phi_addrspaces(f::LLVM.Function)
+    spaces = Int[]
+    for bb in blocks(f), inst in instructions(bb)
+        if isa(inst, LLVM.PHIInst)
+            push!(spaces, Int(LLVM.addrspace(value_type(inst))))
+        end
+    end
+    return spaces
+end
+
+@testset "unfold_root_phi_loads!" begin
+    LLVM.Context() do ctx
+        mod = parse(
+            LLVM.Module, """
+            source_filename = "start"
+            target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+            target triple = "x86_64-linux-gnu"
+
+            define {} addrspace(10)* @diamond(i1 %cond, {} addrspace(10)** %arg) {
+            top:
+              %roots = alloca [2 x {} addrspace(10)*], align 8
+              %r = bitcast [2 x {} addrspace(10)*]* %roots to {} addrspace(10)**
+              br i1 %cond, label %a, label %b
+
+            a:
+              br label %merge
+
+            b:
+              br label %merge
+
+            merge:
+              %p = phi {} addrspace(10)** [ %r, %a ], [ %arg, %b ]
+              %ld = load {} addrspace(10)*, {} addrspace(10)** %p, align 8
+              ret {} addrspace(10)* %ld
+            }
+
+            define {} addrspace(10)* @selfref(i1 %cond) {
+            top:
+              %roots = alloca [2 x {} addrspace(10)*], align 8
+              %r = bitcast [2 x {} addrspace(10)*]* %roots to {} addrspace(10)**
+              br label %header
+
+            header:
+              %p = phi {} addrspace(10)** [ %r, %top ], [ %p, %latch ]
+              %ld = load {} addrspace(10)*, {} addrspace(10)** %p, align 8
+              br i1 %cond, label %latch, label %exit
+
+            latch:
+              br label %header
+
+            exit:
+              ret {} addrspace(10)* %ld
+            }
+
+            define {} addrspace(10)* @selfref_gep(i1 %cond) {
+            top:
+              %roots = alloca [2 x {} addrspace(10)*], align 8
+              %r = bitcast [2 x {} addrspace(10)*]* %roots to {} addrspace(10)**
+              br label %header
+
+            header:
+              %p = phi {} addrspace(10)** [ %r, %top ], [ %g, %latch ]
+              %g = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)** %p, i64 1
+              %ld = load {} addrspace(10)*, {} addrspace(10)** %g, align 8
+              br i1 %cond, label %latch, label %exit
+
+            latch:
+              br label %header
+
+            exit:
+              ret {} addrspace(10)* %ld
+            }
+            """
+        )
+
+        # The pass replaces the phi of root-array pointers with a phi of loads.
+        diamond = functions(mod)["diamond"]
+        @test root_phi_addrspaces(diamond) == [0]
+        @test Enzyme.Compiler.unfold_root_phi_loads!(diamond)
+        @test root_phi_addrspaces(diamond) == [10]
+
+        # The phi gets a value from its own block, and that value is the phi.
+        # The pass must not change this function.
+        selfref = functions(mod)["selfref"]
+        @test !Enzyme.Compiler.unfold_root_phi_loads!(selfref)
+        @test root_phi_addrspaces(selfref) == [0]
+
+        # The same, but the value from its own block is a GEP of the phi.
+        selfref_gep = functions(mod)["selfref_gep"]
+        @test !Enzyme.Compiler.unfold_root_phi_loads!(selfref_gep)
+        @test root_phi_addrspaces(selfref_gep) == [0]
+
+        @test LLVM.verify(mod) === nothing
     end
 end
