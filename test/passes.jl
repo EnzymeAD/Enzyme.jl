@@ -827,3 +827,51 @@ end
         @test LLVM.verify(mod) === nothing
     end
 end
+
+@static if VERSION >= v"1.11-"
+    # Build `f(nel)`, which allocates a `MT` with `jl_alloc_genericmemory_unchecked` as
+    # Julia does, and returns what `get_memory_len` gives for the allocation. The length
+    # store is added only if `store_len` is true.
+    function memory_len_of_unchecked_alloc(MT, nel, nbytes; store_len = false)
+        return LLVM.Context() do ctx
+            mod = LLVM.Module("memory_len")
+            T_prjlvalue = LLVM.PointerType(LLVM.StructType(LLVMType[]), Enzyme.Compiler.Tracked)
+            T_size = LLVM.IntType(8 * sizeof(Csize_t))
+            T_pint8 = LLVM.PointerType(LLVM.Int8Type())
+            alloc_ty = LLVM.FunctionType(T_prjlvalue, [T_pint8, T_size, T_prjlvalue])
+            alloc = LLVM.Function(mod, "ijl_alloc_genericmemory_unchecked", alloc_ty)
+            fn = LLVM.Function(mod, "f", LLVM.FunctionType(T_size, [T_size]))
+            LLVM.IRBuilder() do B
+                position!(B, LLVM.BasicBlock(fn, "top"))
+                tag = Enzyme.Compiler.unsafe_to_llvm(B, MT)
+                mem = call!(B, alloc_ty, alloc, LLVM.Value[LLVM.null(T_pint8), LLVM.ConstantInt(T_size, nbytes), tag])
+                if store_len
+                    T_psize = LLVM.PointerType(T_size, Enzyme.Compiler.Derived)
+                    len_field = addrspacecast!(B, bitcast!(B, mem, LLVM.PointerType(T_size, Enzyme.Compiler.Tracked)), T_psize)
+                    store!(B, LLVM.parameters(fn)[1], len_field)
+                end
+                len = Enzyme.Compiler.get_memory_len(B, mem)
+                ret!(B, len)
+                if len isa LLVM.ConstantInt
+                    return convert(Int, len)
+                end
+                return len == LLVM.parameters(fn)[1] ? :stored_len : string(len)
+            end
+        end
+    end
+
+    @testset "get_memory_len of jl_alloc_genericmemory_unchecked" begin
+        # The size argument is in bytes, so the element count comes from the element size.
+        @test memory_len_of_unchecked_alloc(Memory{Float64}, 5, 5 * 8) == 5
+        @test memory_len_of_unchecked_alloc(Memory{UInt8}, 7, 7) == 7
+        @test memory_len_of_unchecked_alloc(Memory{NTuple{3, Float32}}, 4, 4 * 12) == 4
+        # Boxed elements are pointers.
+        @test memory_len_of_unchecked_alloc(Memory{Any}, 3, 3 * sizeof(Ptr{Cvoid})) == 3
+        # An isbits union has one extra selector byte for each element.
+        @test memory_len_of_unchecked_alloc(Memory{Union{Nothing, Float64}}, 4, 4 * 8 + 4) == 4
+        # Zero-size elements have no bytes, so the length comes from the store that
+        # Julia adds after the call.
+        @test memory_len_of_unchecked_alloc(Memory{Nothing}, 6, 0; store_len = true) == :stored_len
+        @test_throws AssertionError memory_len_of_unchecked_alloc(Memory{Nothing}, 6, 0)
+    end
+end
