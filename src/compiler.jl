@@ -6213,6 +6213,8 @@ end
                     else
                         operands(inst)[3]
                     end
+                # A pointer to elements of type ET: the copy may span several.
+                elements = false
                 if legal && byref == GPUCompiler.BITS_VALUE && jTy <: Ptr
                     ET = eltype(jTy)
                     if Base.isconcretetype(ET)
@@ -6221,6 +6223,7 @@ end
                             jTy = ET
                             byref = GPUCompiler.MUT_REF
                             offset = Base.mod(offset, sz_et)
+                            elements = fieldcount(ET) > 0 && Base.allocatedinline(ET)
                         end
                     end
                 end
@@ -6248,6 +6251,13 @@ end
 			elseif byref == GPUCompiler.BITS_VALUE && jTy <: Ptr && eltype(jTy) == Any
 			    # Todo generalize this
                             md = to_fullmd(job.world, jTy, 0, sizeof(Ptr{Cvoid}))
+                            metadata(inst)["enzyme_truetype"] = md
+                        elseif elements && offset < size && isa(sz, LLVM.ConstantInt)
+                            # The elements of a struct type follow each other. Type
+                            # analysis only knows the layout of the first one, so
+                            # it would copy the fields of the others as whatever
+                            # comes first, e.g. floats as integers.
+                            md = to_fullmd(job.world, jTy, offset, convert(Int, sz), size)
                             metadata(inst)["enzyme_truetype"] = md
                         end
                     end

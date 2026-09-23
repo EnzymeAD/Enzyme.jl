@@ -146,16 +146,20 @@ function get_offsets(@nospecialize(T::Type))
 end
 
 """
-    to_fullmd(world, T, offset, lim)
+    to_fullmd(world, T, offset, lim, period = 0)
 
-Construct the full type metadata of `T` for the bytes from `offset` to `lim`.
+Construct the full type metadata of `T` for the bytes from `offset` to `lim`. With `period > 0`, the bytes hold
+consecutive values of type `T` that are `period` bytes apart.
 
 Packages can add methods to `get_offsets`. Thus `to_fullmd` calls `get_offsets` in `world`.
 See [`typetree_in_world`](@ref).
 """
-function to_fullmd(world::UInt, @nospecialize(T::Type), offset::Int, lim::Int)
+function to_fullmd(world::UInt, @nospecialize(T::Type), offset::Int, lim::Int, period::Int = 0)
     mds = LLVM.Metadata[]
     offs = Core._call_in_world_total(world, get_offsets, T)
+    if period > 0
+        offs = [(sT, sO + k * period) for k in 0:((offset + lim - 1) ÷ period) for (sT, sO) in offs]
+    end
 
     minoff = -1
     for (sT, sO) in offs

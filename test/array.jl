@@ -323,3 +323,35 @@ end
 
     # TODO test for batch and reverse
 end
+
+@static if VERSION >= v"1.11-"
+    struct MovedM
+        a::Float64
+        n::Int
+    end
+
+    @testset "Moving several elements of a Vector of structs" begin
+        # A copy of constant size through a pointer to structs spans several of them. Type
+        # analysis knows the layout of the first one only, and learns the others through the
+        # copy itself, by its shift. With a shift of two elements it missed every other one.
+        msum(w) = sum(k * w[k].a for k in eachindex(w))
+        # The cotangent of the input's element k: the weights of the positions it ends up at.
+        function moved(op!, n)
+            t = [MovedM(k, 0) for k in 1:n]
+            op!(t)
+            want = zeros(n)
+            for (pos, e) in enumerate(t)
+                want[Int(e.a)] += pos
+            end
+            return want
+        end
+        # deleteat! of two elements in the first half moves the elements before them up by two.
+        for (op!, n) in ((v -> deleteat!(v, 4:5), 12), (v -> deleteat!(v, 5:6), 16), (v -> unsafe_copyto!(v, 3, v, 1, 4), 8))
+            v = [MovedM(k, k) for k in 1:n]
+            dv = [MovedM(0.0, 0) for k in 1:n]
+            dm = dv.ref
+            autodiff(Reverse, (v, op!) -> (op!(v); msum(v)), Active, Duplicated(v, dv), Const(op!))
+            @test [memoryref(dm, k)[].a for k in 1:n] == moved(op!, n)
+        end
+    end
+end
