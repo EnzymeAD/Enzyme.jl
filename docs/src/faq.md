@@ -319,7 +319,7 @@ catch err; showerror(stderr, err); end  #hide
 
 Enzyme provides a nice utility `Enzyme.make_zero` which takes a data structure and constructs a deepcopy of the data structure with all of the floats set to zero and non-differentiable types like Symbols set to their primal value. If Enzyme gets into such a "Mismatched activity" situation where it needs to return a differentiable data structure from a constant variable, it could try to resolve this situation by constructing a new shadow data structure, such as with `Enzyme.make_zero`. However, this still can lead to incorrect results. In the case of `h` above, suppose that `active_var` and `constant_var` are both arrays, which are mutable (aka in-place) data types. This means that the return of `h` is going to either be `result = [active_var, active_var]` or `result = [constant_var, constant_var]`.  Thus an update to `result[1][1]` would also change `result[2][1]` since `result[1]` and `result[2]` are the same array. 
 
-If one created a new zero'd copy of each return from `g`, this would mean that the derivative `dresult` would have one copy made for the first element, and a second copy made for the second element. This could lead to incorrect results, and is unfortunately not a general resolution. However, for non-mutable variables (e.g. like floats) or non-differrentiable types (e.g. like Symbols) this problem can never arise.
+If one created a new zero'd copy of each return from `g`, this would mean that the derivative `dresult` would have one copy made for the first element, and a second copy made for the second element. This could lead to incorrect results, and is unfortunately not a general resolution. However, for non-mutable variables (e.g. like floats) or non-differentiable types (e.g. like `Symbol`s) this problem can never arise.
 
 Instead, Enzyme has a special mode known as "Runtime Activity" which can handle these types of situations. It can come with a minor performance reduction, and is therefore off by default. It can be enabled with by setting runtime activity to true in a desired differentiation mode.
 
@@ -333,11 +333,12 @@ Generally, the preferred solution to these type of activity unstable codes shoul
 dout, out = Enzyme.autodiff(Enzyme.set_runtime_activity(ForwardWithPrimal), g, Const(condition), Duplicated(x, dx), Const(y))
 ```
 
-However, care must be taken to check derivative aliasing afterwards:
+!!! warning
+  If using runtime activity, care **must** be taken to check derivative aliasing afterwards:
 
-```@example runtime
-dout === out  # if true and pointer-like, the actual derivative is zero 
-```
+  ```@example runtime
+  dout === out  # if true and pointer-like, the actual derivative is zero 
+  ```
 
 ## Mixed activity
 
