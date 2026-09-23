@@ -4580,6 +4580,39 @@ function copy_struct_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, dst::
     return nothing
 end
 
+# `lower_convention` restates the `Const` annotations of the autodiff call being
+# compiled as `!enzyme_inactive` metadata on the stack slots it creates for
+# by-value arguments and for the sret. That tag only describes the derivative
+# order this compilation takes: Enzyme reads it while differentiating, but
+# leaves it on the derivative it emits, and nested differentiation (see
+# `autodiff_cache`) differentiates that derivative again with its own
+# activities. A slot the inner order tagged inactive then has every load
+# treated as constant by the outer order, which silently zeroes the gradient
+# (EnzymeAD/Enzyme.jl#3617). The operand marks the tag as belonging to the
+# order being compiled, so that `strip_order_activity_hints!` can drop it once
+# Enzyme has consumed it. Tags without the mark, such as the ones derived from
+# a guaranteed-constant Julia type, hold at every order and stay.
+const ORDER_ACTIVITY_HINT = "enzymejl_current_order"
+
+order_activity_hint() = MDNode(LLVM.Metadata[MDString(ORDER_ACTIVITY_HINT)])
+
+function is_order_activity_hint(md::LLVM.Metadata)
+    isa(md, MDNode) || return false
+    ops = operands(md)
+    return length(ops) == 1 && isa(ops[1], MDString) &&
+           convert(String, ops[1]) == ORDER_ACTIVITY_HINT
+end
+
+function strip_order_activity_hints!(mod::LLVM.Module)
+    for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+        md = metadata(inst)
+        haskey(md, "enzyme_inactive") || continue
+        if is_order_activity_hint(md["enzyme_inactive"])
+            delete!(md, "enzyme_inactive")
+        end
+    end
+end
+
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(
     @nospecialize(functy::Type),
@@ -4886,7 +4919,7 @@ function lower_convention(
                 )
                 ctx = LLVM.context(entry_f)
                 if RetActivity <: Const
-                    metadata(sretPtr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
+                    metadata(sretPtr)["enzyme_inactive"] = order_activity_hint()
                 end
         
                 typeTree = copy(typetree(actualRetType, ctx, dl, seen))
@@ -4918,7 +4951,7 @@ function lower_convention(
 		root_ty = convert(LLVMType, arg.typ)
 		ptr = create_rooted_array(builder, root_ty, LLVM.name(parm)*".innerparm")
                 if TT !== nothing && TT.parameters[arg.arg_jl_i] <: Const
-                    metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
+                    metadata(ptr)["enzyme_inactive"] = order_activity_hint()
                 end
                 
                 ctx = LLVM.context(entry_f)
@@ -4966,7 +4999,7 @@ function lower_convention(
 
                 ptr = alloca!(builder, elty_foralloca, LLVM.name(parm) * ".innerparm")
                 if TT !== nothing && TT.parameters[arg.arg_jl_i] <: Const
-                    metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
+                    metadata(ptr)["enzyme_inactive"] = order_activity_hint()
                 end
                 ctx = LLVM.context(entry_f)
         
@@ -6372,6 +6405,9 @@ end
             boxedArgs,
 	    removedRoots,
         )
+        # Enzyme has taken this order's derivative; the activity hints that
+        # described it must not reach an outer differentiation of the result.
+        strip_order_activity_hints!(mod)
 
         # Link deferred modules
         for otherMod in enzyme_ctx.modules_to_link
