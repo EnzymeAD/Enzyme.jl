@@ -136,7 +136,7 @@ const LastInaWorld = Ref(Base.IdSet{Type}())
 
 function EnzymeInterpreter(
     cache_or_token,
-    mt::Union{Nothing,Core.MethodTable,Core.Compiler.MethodTableView},
+    mt::Union{Nothing, Core.MethodTable, Core.Compiler.MethodTableView},
     world::UInt,
     forward_rules::Bool,
     reverse_rules::Bool,
@@ -239,7 +239,7 @@ end
 
 EnzymeInterpreter(
     cache_or_token,
-    mt::Union{Nothing,Core.MethodTable,Core.Compiler.MethodTableView},
+    mt::Union{Nothing, Core.MethodTable, Core.Compiler.MethodTableView},
     world::UInt,
     mode::API.CDerivativeMode,
     inactive_rules::Bool,
