@@ -517,6 +517,54 @@ function precedes(a::LLVM.Instruction, b::LLVM.Instruction)::Bool
 end
 
 """
+    is_undef_or_poison(v::LLVM.Value) -> Bool
+
+Whether `v` is an undef or a poison value. In LLVM.jl, `PoisonValue` is not a subtype
+of `UndefValue`, thus this function checks for the two types.
+"""
+function is_undef_or_poison(@nospecialize(v::LLVM.Value))::Bool
+    return isa(v, LLVM.UndefValue) || isa(v, LLVM.PoisonValue)
+end
+
+"""
+    undef_or_poison_like(v::LLVM.Value, ty::LLVM.LLVMType) -> LLVM.Value
+
+The poison value of type `ty` if `v` is poison. Otherwise, the undef value of type `ty`.
+"""
+function undef_or_poison_like(@nospecialize(v::LLVM.Value), @nospecialize(ty::LLVM.LLVMType))::LLVM.Value
+    isa(v, LLVM.PoisonValue) && return LLVM.PoisonValue(ty)
+    return LLVM.UndefValue(ty)
+end
+
+"""
+    is_speculatable_load(v::LLVM.Value, sz::Int) -> Bool
+
+Whether a load of `sz` bytes from `v` is safe on all paths, also on paths that did not
+load from `v` before. This is true for an alloca, for a global, and for an argument
+with a `dereferenceable` attribute that covers the load.
+"""
+function is_speculatable_load(@nospecialize(v::LLVM.Value), sz::Int)::Bool
+    base, off = get_base_and_offset(v)
+    off >= 0 || return false
+    if isa(base, LLVM.AllocaInst) || isa(base, LLVM.GlobalVariable)
+        return true
+    end
+    if isa(base, LLVM.Argument)
+        f = LLVM.Function(LLVM.API.LLVMGetParamParent(base))
+        derefkind = kind(EnumAttribute("dereferenceable", 0))
+        for (idx, arg) in enumerate(parameters(f))
+            arg == base || continue
+            for attr in collect(parameter_attributes(f, idx))
+                if isa(attr, EnumAttribute) && kind(attr) == derefkind
+                    return off + sz <= LLVM.value(attr)
+                end
+            end
+        end
+    end
+    return false
+end
+
+"""
     copy_metadata!(dst, src)
 
 Attach every metadata node of the instruction `src`, except its debug location,

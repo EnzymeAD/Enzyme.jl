@@ -924,61 +924,13 @@ function nodecayed_all_args(inst::LLVM.PHIInst)::Bool
             push!(addrtodo, operands(base)[3])
             continue
         end
-        undeforpoison = isa(base, LLVM.UndefValue)
-        @static if LLVM.version() >= v"12"
-            undeforpoison |= isa(base, LLVM.PoisonValue)
-        end
-        if undeforpoison
+        if is_undef_or_poison(base)
             # undef/poison incomings impose no GC constraint
             continue
         end
         return false
     end
     return true
-end
-
-function nodecayed_undef_or_poison(@nospecialize(v::LLVM.Value))::Bool
-    isa(v, LLVM.UndefValue) && return true
-    @static if LLVM.version() >= v"12"
-        isa(v, LLVM.PoisonValue) && return true
-    end
-    return false
-end
-
-# The undef or poison value of type `ty`. It is poison if `v` is poison.
-function nodecayed_undef_like(@nospecialize(v::LLVM.Value), @nospecialize(ty::LLVM.LLVMType))::LLVM.Value
-    @static if LLVM.version() >= v"12"
-        isa(v, LLVM.PoisonValue) && return LLVM.PoisonValue(ty)
-    end
-    return LLVM.UndefValue(ty)
-end
-
-"""
-    nodecayed_can_speculate(v::LLVM.Value, sz::Int) -> Bool
-
-Whether a load of `sz` bytes from `v` is safe on all paths, also on paths that did not
-load from `v` before. This is true for an alloca, for a global, and for an argument
-with a `dereferenceable` attribute that covers the load.
-"""
-function nodecayed_can_speculate(@nospecialize(v::LLVM.Value), sz::Int)::Bool
-    base, off = get_base_and_offset(v)
-    off >= 0 || return false
-    if isa(base, LLVM.AllocaInst) || isa(base, LLVM.GlobalVariable)
-        return true
-    end
-    if isa(base, LLVM.Argument)
-        f = LLVM.Function(LLVM.API.LLVMGetParamParent(base))
-        derefkind = kind(EnumAttribute("dereferenceable", 0))
-        for (idx, arg) in enumerate(parameters(f))
-            arg == base || continue
-            for attr in collect(parameter_attributes(f, idx))
-                if isa(attr, EnumAttribute) && kind(attr) == derefkind
-                    return off + sz <= LLVM.value(attr)
-                end
-            end
-        end
-    end
-    return false
 end
 
 """
@@ -1004,7 +956,7 @@ The function changes a phi only if all of these conditions are true:
 - All users of the phi are non-volatile, non-atomic loads in the block of the phi.
 - No call and no memory write comes before one of these loads in the block.
 - The load is safe on each edge from a predecessor with more than one successor (see
-  `nodecayed_can_speculate`). On such an edge, the new load is speculative.
+  `is_speculatable_load`). On such an edge, the new load is speculative.
 """
 function unfold_derived_phi_loads!(f::LLVM.Function)::Bool
     dl = datalayout(LLVM.parent(f))
@@ -1018,7 +970,7 @@ function unfold_derived_phi_loads!(f::LLVM.Function)::Bool
             incs = collect(incoming(phi))
             # An undef or poison incoming value has no offset. It does not make the
             # offsets different.
-            offsets = Int[last(get_base_and_offset(v)) for (v, _) in incs if !nodecayed_undef_or_poison(v)]
+            offsets = Int[last(get_base_and_offset(v)) for (v, _) in incs if !is_undef_or_poison(v)]
             (isempty(offsets) || all(==(offsets[1]), offsets)) && continue
 
             loads = LLVM.LoadInst[]
@@ -1053,10 +1005,10 @@ function unfold_derived_phi_loads!(f::LLVM.Function)::Bool
             ok || continue
 
             for (v, pred) in incs
-                nodecayed_undef_or_poison(v) && continue
+                is_undef_or_poison(v) && continue
                 length(collect(successors(terminator(pred)))) == 1 && continue
                 for ld in loads
-                    if !nodecayed_can_speculate(v, Int(LLVM.sizeof(dl, value_type(ld))))
+                    if !is_speculatable_load(v, Int(LLVM.sizeof(dl, value_type(ld))))
                         ok = false
                         break
                     end
@@ -1072,8 +1024,8 @@ function unfold_derived_phi_loads!(f::LLVM.Function)::Bool
                 done = Dict{LLVM.BasicBlock, LLVM.LoadInst}()
                 for (v, pred) in incs
                     # A load from an undef or poison pointer gives an undef or poison value.
-                    if nodecayed_undef_or_poison(v)
-                        push!(incoming(newphi), (nodecayed_undef_like(v, value_type(ld)), pred))
+                    if is_undef_or_poison(v)
+                        push!(incoming(newphi), (undef_or_poison_like(v, value_type(ld)), pred))
                         continue
                     end
                     nld = get(done, pred, nothing)
@@ -1378,11 +1330,7 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
         return v2, offset, skipload
     end
 
-    undeforpoison = isa(v, LLVM.UndefValue)
-    @static if LLVM.version() >= v"12"
-        undeforpoison |= isa(v, LLVM.PoisonValue)
-    end
-    if undeforpoison
+    if is_undef_or_poison(v)
         PT = if LLVM.is_opaque(value_type(v))
             LLVM.PointerType(10)
         else
