@@ -302,6 +302,55 @@ end # call_ddense
     call_ddense()
 end
 
+# CUDA.jl implements the math functions with libdevice, `__nv_<name>` (Float64) and `__nv_<name>f`
+# (Float32).
+function math!(y, x, f)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    @inbounds y[i] = f(x[i])
+    return nothing
+end
+
+function ∇math!(y, ȳ, x, x̄, f)
+    Enzyme.autodiff_deferred(Reverse, Const(math!), Const, Duplicated(y, ȳ), Duplicated(x, x̄), Const(f))
+    return nothing
+end
+
+function fwd_math!(y, ẏ, x, ẋ, f)
+    Enzyme.autodiff_deferred(Forward, Const(math!), Const, Duplicated(y, ẏ), Duplicated(x, ẋ), Const(f))
+    return nothing
+end
+
+function cuda_math_gradient(f, x)
+    T, N = eltype(x), length(x)
+    y_d, x̄_d = CUDA.zeros(T, N), CUDA.zeros(T, N)
+    CUDA.@sync @cuda threads = N ∇math!(y_d, CUDA.ones(T, N), CuArray(x), x̄_d, f)
+    return Array(y_d), Array(x̄_d)
+end
+
+function cuda_math_tangent(f, x)
+    T, N = eltype(x), length(x)
+    ẏ_d = CUDA.zeros(T, N)
+    CUDA.@sync @cuda threads = N fwd_math!(CUDA.zeros(T, N), ẏ_d, CuArray(x), CUDA.ones(T, N), f)
+    return Array(ẏ_d)
+end
+
+# `sincos` is `__nv_sincos(x, s, c)` (`__nv_sincosf` in Float32), which writes both results through
+# pointers. libEnzyme has no rule for that form: Enzyme.jl splits the call into `__nv_sin` and
+# `__nv_cos` (`split_gpu_sincos!`).
+@testset "CUDA sincos $T" for T in (Float32, Float64)
+    x = collect(range(T(0.1), T(0.9); length = 256))
+    cpu_gradient(f, x) = Enzyme.autodiff(Reverse, f, Active, Active(x))[1][1]
+    @testset "$name" for (name, f) in (
+            ("sincos", x -> sum(sincos(x))),
+            ("sincos (cos only)", x -> last(sincos(x))),
+        )
+        y, x̄ = cuda_math_gradient(f, x)
+        @test y ≈ f.(x)
+        @test x̄ ≈ cpu_gradient.(f, x)
+        @test cuda_math_tangent(f, x) ≈ cpu_gradient.(f, x)
+    end
+end
+
 function square_kernel!(x)
     i = threadIdx().x
     x[i] *= x[i]

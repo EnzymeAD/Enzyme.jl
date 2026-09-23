@@ -48,3 +48,57 @@ end
     @test Array(B̄_d) ≈ B̄
 
 end
+
+# Metal.jl implements the Float32 math functions with Metal's library, `air.<name>.f32`
+# (`air.fast_<name>.f32` under `@fastmath`).
+function math!(y, x, f)
+    i = Metal.thread_position_in_grid_1d()
+    @inbounds y[i] = f(x[i])
+    return nothing
+end
+
+function ∇math!(y, ȳ, x, x̄, f)
+    Enzyme.autodiff_deferred(Reverse, Const(math!), Const, Duplicated(y, ȳ), Duplicated(x, x̄), Const(f))
+    return nothing
+end
+
+function fwd_math!(y, ẏ, x, ẋ, f)
+    Enzyme.autodiff_deferred(Forward, Const(math!), Const, Duplicated(y, ẏ), Duplicated(x, ẋ), Const(f))
+    return nothing
+end
+
+function metal_math_gradient(f, x)
+    N = length(x)
+    x_d = MtlArray(x)
+    y_d = Metal.zeros(Float32, N)
+    x̄_d = Metal.zeros(Float32, N)
+    Metal.@sync @metal threads = N ∇math!(y_d, Metal.ones(Float32, N), x_d, x̄_d, f)
+    return Array(y_d), Array(x̄_d)
+end
+
+function metal_math_tangent(f, x)
+    N = length(x)
+    ẏ_d = Metal.zeros(Float32, N)
+    Metal.@sync @metal threads = N fwd_math!(Metal.zeros(Float32, N), ẏ_d, MtlArray(x), Metal.ones(Float32, N), f)
+    return Array(ẏ_d)
+end
+
+cpu_gradient(f, x) = Enzyme.autodiff(Reverse, f, Active, Active(x))[1][1]
+
+# `sincos` is `air.sincos.f32`, which returns the sine and writes the cosine through a pointer.
+# libEnzyme has no rule for that form: Enzyme.jl splits the call into `air.sin.f32` and
+# `air.cos.f32` (`split_gpu_sincos!`).
+@testset "Metal sincos" begin
+    x = collect(range(0.1f0, 0.9f0; length = 256))
+    @testset "$name" for (name, f, rtol) in (
+            ("sincos", x -> sum(sincos(x)), sqrt(eps(Float32))),
+            ("sincos (cos only)", x -> last(sincos(x)), sqrt(eps(Float32))),
+            # Metal's fast variants trade accuracy for speed
+            ("fastmath sincos", x -> sum(@fastmath(sincos(x))), 1.0f-3),
+        )
+        y, x̄ = metal_math_gradient(f, x)
+        @test isapprox(y, f.(x); rtol)
+        @test isapprox(x̄, cpu_gradient.(f, x); rtol)
+        @test isapprox(metal_math_tangent(f, x), cpu_gradient.(f, x); rtol)
+    end
+end

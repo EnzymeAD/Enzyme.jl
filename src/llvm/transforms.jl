@@ -3367,6 +3367,84 @@ function replace_builtin_fptr!(mod::LLVM.Module)
     return changed
 end
 
+"""
+    split_gpu_sincos!(target, mod)
+
+Replace every call to a GPU `sincos` in `mod` by calls to the matching `sin` and `cos`, which
+libEnzyme differentiates. libEnzyme has no rule for a math function that returns a result
+through a pointer argument ("No augmented forward pass found"; for CUDA's `sincospi`, an abort
+in type analysis):
+
+- Metal: `air.sincos.f32(x, c)` and `air.fast_sincos.f32(x, c)` return the sine and write the
+  cosine through `c`;
+- CUDA: `__nv_sincos(x, s, c)`, `__nv_sincospi(x, s, c)` and their Float32 forms (`f` suffix)
+  write both results through pointers.
+
+The differentiated kernel evaluates sine and cosine with two calls instead of one.
+"""
+function split_gpu_sincos!(target, mod::LLVM.Module)
+    # (sincos, sin, cos, element type, whether the sine is returned rather than stored)
+    forms = if target isa GPUCompiler.MetalCompilerTarget
+        (
+            ("air.sincos.f32", "air.sin.f32", "air.cos.f32", LLVM.FloatType(), true),
+            ("air.fast_sincos.f32", "air.fast_sin.f32", "air.fast_cos.f32", LLVM.FloatType(), true),
+        )
+    elseif target isa GPUCompiler.PTXCompilerTarget
+        (
+            ("__nv_sincos", "__nv_sin", "__nv_cos", LLVM.DoubleType(), false),
+            ("__nv_sincosf", "__nv_sinf", "__nv_cosf", LLVM.FloatType(), false),
+            ("__nv_sincospi", "__nv_sinpi", "__nv_cospi", LLVM.DoubleType(), false),
+            ("__nv_sincospif", "__nv_sinpif", "__nv_cospif", LLVM.FloatType(), false),
+        )
+    else
+        return nothing
+    end
+    for (sincos_name, sin_name, cos_name, T, sin_returned) in forms
+        haskey(functions(mod), sincos_name) || continue
+        sincos_f = functions(mod)[sincos_name]
+        isempty(blocks(sincos_f)) || continue
+        FT = LLVM.FunctionType(T, [T])
+        sin_f, _ = get_function!(mod, sin_name, FT)
+        cos_f, _ = get_function!(mod, cos_name, FT)
+        for u in collect(LLVM.uses(sincos_f))
+            call = LLVM.user(u)
+            if !isa(call, LLVM.CallInst) || LLVM.called_operand(call) != sincos_f
+                continue
+            end
+            args = arguments(call)
+            # positioning at `call` also gives the new instructions its debug location
+            B = LLVM.IRBuilder()
+            position!(B, call)
+            s = call!(B, FT, sin_f, LLVM.Value[args[1]])
+            c = call!(B, FT, cos_f, LLVM.Value[args[1]])
+            if sin_returned
+                store!(B, c, sincos_out_ptr!(B, args[2], T))
+                replace_uses!(call, s)
+            else
+                store!(B, s, sincos_out_ptr!(B, args[2], T))
+                store!(B, c, sincos_out_ptr!(B, args[3], T))
+            end
+            dispose(B)
+            LLVM.erase!(call)
+        end
+        isempty(LLVM.uses(sincos_f)) && LLVM.erase!(sincos_f)
+    end
+    return nothing
+end
+
+# The address that `split_gpu_sincos!` stores a result to. With typed pointers (Julia 1.10 and 1.11),
+# CUDA.jl's `ccall` passes the output pointers of `__nv_sincos` as `i64`, and a pointer argument
+# may point to another element type.
+function sincos_out_ptr!(B::LLVM.IRBuilder, p::LLVM.Value, T::LLVM.LLVMType)
+    pt = value_type(p)
+    if pt isa LLVM.IntegerType
+        return inttoptr!(B, p, LLVM.PointerType(T))
+    elseif !LLVM.is_opaque(pt) && eltype(pt) != T
+        return bitcast!(B, p, LLVM.PointerType(T, LLVM.addrspace(pt)))
+    end
+    return p
+end
+
 function get_callee(inst::LLVM.CallInst)
     fn = called_operand(inst)
     while true

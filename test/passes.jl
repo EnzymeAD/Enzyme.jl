@@ -205,6 +205,118 @@ end
     end
 end
 
+@testset "split_gpu_sincos!" begin
+    # Metal's and CUDA's sincos return results through pointers, a form libEnzyme has no rule
+    # for, so they are split into sin and cos before AD. The split runs before PreserveNVVM,
+    # which tags the new declarations (`implements`): that is how the `llvm.cos`/`llvm.sin`
+    # calls of the derivative are mapped back to the GPU library after AD.
+    function strattr(f, k)
+        a = [x for x in collect(function_attributes(f)) if x isa LLVM.StringAttribute && kind(x) == k]
+        return isempty(a) ? nothing : value(only(a))
+    end
+    insts(f) = [i for bb in blocks(f) for i in instructions(bb)]
+    callees(f) = [LLVM.name(called_operand(i)) for i in insts(f) if i isa LLVM.CallInst]
+    stored(f) = [(LLVM.name(called_operand(operands(i)[1])), LLVM.name(operands(i)[2])) for i in insts(f) if i isa LLVM.StoreInst]
+    preserve_nvvm!(mod) = LLVM.@dispose pb = LLVM.NewPMPassBuilder() begin
+        Enzyme.Compiler.registerEnzymeAndPassPipeline!(pb)
+        LLVM.add!(pb, LLVM.NewPMModulePassManager()) do mpm
+            LLVM.add!(mpm, Enzyme.Compiler.PreserveNVVMPass())
+        end
+        LLVM.run!(pb, mod)
+    end
+
+    @testset "CUDA" begin
+        LLVM.Context() do ctx
+            ir = """
+            declare void @__nv_sincos(double, double*, double*)
+            declare void @__nv_sincosf(float, float*, float*)
+            declare void @__nv_sincospi(double, double*, double*)
+            define void @kernel(double %x, float %y, double* %s, double* %c, float* %sf, float* %cf, double* %sp, double* %cp) {
+              call void @__nv_sincos(double %x, double* %s, double* %c)
+              call void @__nv_sincosf(float %y, float* %sf, float* %cf)
+              call void @__nv_sincospi(double %x, double* %sp, double* %cp)
+              ret void
+            }"""
+            mod = parse(LLVM.Module, ir)
+            Enzyme.Compiler.split_gpu_sincos!(GPUCompiler.PTXCompilerTarget(; cap = v"7.0"), mod)
+            fs = functions(mod)
+            @test !any(n -> haskey(fs, n), ("__nv_sincos", "__nv_sincosf", "__nv_sincospi"))
+            k = fs["kernel"]
+            @test callees(k) == ["__nv_sin", "__nv_cos", "__nv_sinf", "__nv_cosf", "__nv_sinpi", "__nv_cospi"]
+            @test stored(k) == [
+                ("__nv_sin", "s"), ("__nv_cos", "c"), ("__nv_sinf", "sf"), ("__nv_cosf", "cf"),
+                ("__nv_sinpi", "sp"), ("__nv_cospi", "cp"),
+            ]
+            verify(mod)
+            preserve_nvvm!(mod)
+            @test strattr(fs["__nv_cos"], "implements") == "llvm.cos.f64"
+            @test strattr(fs["__nv_sinf"], "enzyme_math") == "sinf"
+        end
+    end
+
+    @testset "CUDA, output pointers as integers" begin
+        # With typed pointers (Julia 1.10 and 1.11), CUDA.jl's `ccall` passes the output
+        # pointers as `i64`; each result is stored through a pointer cast from its integer.
+        LLVM.Context() do ctx
+            ir = """
+            declare void @__nv_sincosf(float, i64, i64)
+            define void @kernel(float %y, i64 %s, i64 %c) {
+              call void @__nv_sincosf(float %y, i64 %s, i64 %c)
+              ret void
+            }"""
+            mod = parse(LLVM.Module, ir)
+            Enzyme.Compiler.split_gpu_sincos!(GPUCompiler.PTXCompilerTarget(; cap = v"7.0"), mod)
+            k = functions(mod)["kernel"]
+            @test callees(k) == ["__nv_sinf", "__nv_cosf"]
+            address(i) = (p = operands(i)[2]; p isa LLVM.IntToPtrInst ? LLVM.name(operands(p)[1]) : nothing)
+            @test [address(i) for i in insts(k) if i isa LLVM.StoreInst] == ["s", "c"]
+            verify(mod)
+        end
+    end
+
+    @testset "Metal" begin
+        LLVM.Context() do ctx
+            ir = """
+            declare float @air.sincos.f32(float, float*)
+            declare float @air.fast_sincos.f32(float, float*)
+            define float @kernel(float %x, float* %c, float* %fc) {
+              %s = call float @air.sincos.f32(float %x, float* %c)
+              %fs = call float @air.fast_sincos.f32(float %s, float* %fc)
+              ret float %fs
+            }"""
+            mod = parse(LLVM.Module, ir)
+            target = GPUCompiler.MetalCompilerTarget(; macos = v"13.0", air = v"2.4", metal = v"3.0")
+            Enzyme.Compiler.split_gpu_sincos!(target, mod)
+            fs = functions(mod)
+            @test !haskey(fs, "air.sincos.f32") && !haskey(fs, "air.fast_sincos.f32")
+            k = fs["kernel"]
+            @test callees(k) == ["air.sin.f32", "air.cos.f32", "air.fast_sin.f32", "air.fast_cos.f32"]
+            # the sine is returned, the cosine stored
+            @test stored(k) == [("air.cos.f32", "c"), ("air.fast_cos.f32", "fc")]
+            ret = only(i for i in insts(k) if i isa LLVM.RetInst)
+            @test LLVM.name(called_operand(operands(ret)[1])) == "air.fast_sin.f32"
+            verify(mod)
+            # libEnzyme differentiates air.sin/air.cos by name (its AIR CallPatterns); whether
+            # PreserveNVVM tags them depends on the libEnzyme version, so the ordering is only
+            # checked for CUDA above
+        end
+    end
+
+    @testset "other targets" begin
+        LLVM.Context() do ctx
+            ir = """
+            declare void @__nv_sincos(double, double*, double*)
+            define void @f(double %x, double* %s, double* %c) {
+              call void @__nv_sincos(double %x, double* %s, double* %c)
+              ret void
+            }"""
+            mod = parse(LLVM.Module, ir)
+            Enzyme.Compiler.split_gpu_sincos!(GPUCompiler.NativeCompilerTarget(), mod)
+            @test callees(functions(mod)["f"]) == ["__nv_sincos"]
+        end
+    end
+end
+
 @testset "import_cached_autodiff!" begin
     LLVM.Context() do ctx
         # A cached thunk's bitcode carries the Julia functions it calls. Two

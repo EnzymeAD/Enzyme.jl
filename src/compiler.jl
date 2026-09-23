@@ -5731,6 +5731,9 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     # natively. Differentiating it again needs their bodies.
     materialize_native_invokes!(mode, mod)
 
+    # Before PreserveNVVM, so that it also tags the `sin` and `cos` declarations of the split.
+    split_gpu_sincos!(primal_target, mod)
+
     LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
         LLVM.add!(pb, LLVM.NewPMModulePassManager()) do mpm
