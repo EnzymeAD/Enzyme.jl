@@ -2491,7 +2491,7 @@ function propagate_returned!(mod::LLVM.Module)
                                 break
                             end
                             op_i = operands(un)[i]
-                            if !isa(op_i, LLVM.AllocaInst) && !isa(op_i, LLVM.UndefValue) && !isa(op_i, LLVM.PoisonValue)
+                            if !isa(op_i, LLVM.AllocaInst) && !is_undef_or_poison(op_i)
                                 illegalUse = true
                                 break
                             end
@@ -2613,7 +2613,7 @@ function propagate_returned!(mod::LLVM.Module)
                                 break
                             end
                             op_i = operands(un)[i]
-                            if isa(op_i, LLVM.UndefValue) || isa(op_i, LLVM.PoisonValue)
+                            if is_undef_or_poison(op_i)
                                 continue
                             end
                             if op_i == arg
