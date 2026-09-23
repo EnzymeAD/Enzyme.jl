@@ -1543,10 +1543,7 @@ end
             if isa(cur, LLVM.PointerNull)
                 return make_batched(ncur, prevbb)
             end
-            if isa(cur, LLVM.UndefValue)
-                return make_batched(ncur, prevbb)
-            end
-            if isa(cur, LLVM.PoisonValue)
+            if is_undef_or_poison(cur)
                 return make_batched(ncur, prevbb)
             end
             if isa(cur, LLVM.ConstantAggregateZero)
