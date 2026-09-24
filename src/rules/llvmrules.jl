@@ -642,20 +642,14 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = noth
 
     elSize = LLVM.zext!(B0, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
 
-    if len == nothing
-        if memory
-            len = get_memory_len(B0, actualOp)
-        else
-            len = get_array_len(B0, actualOp)
-        end
-    elseif !fwd
-        # len = lookup_value(gutils, len, B)
-    end
-
-    if memory
-        length = LLVM.mul!(B0, len, elSize)
+    # The number of bytes to copy
+    length = if len != nothing
+        LLVM.mul!(B0, len, elSize)
+    elseif memory
+        # An unchecked memory allocation gets the number of bytes and not the length.
+        get_memory_nbytes(B0, actualOp)
     else
-        length = LLVM.mul!(B0, len, elSize)
+        LLVM.mul!(B0, get_array_len(B0, actualOp), elSize)
     end
 
     isVolatile = LLVM.ConstantInt(LLVM.IntType(1), 0)

@@ -827,3 +827,35 @@ end
         @test LLVM.verify(mod) === nothing
     end
 end
+
+@static if VERSION >= v"1.11-"
+    # Build a function that allocates a `MT` with `jl_alloc_genericmemory_unchecked` as Julia
+    # does, and call `getter` on the allocation.
+    function unchecked_alloc_query(getter, MT, nbytes)
+        return LLVM.Context() do ctx
+            mod = LLVM.Module("memory_len")
+            T_prjlvalue = LLVM.PointerType(LLVM.StructType(LLVMType[]), Enzyme.Compiler.Tracked)
+            T_size = LLVM.IntType(8 * sizeof(Csize_t))
+            T_pint8 = LLVM.PointerType(LLVM.Int8Type())
+            alloc_ty = LLVM.FunctionType(T_prjlvalue, [T_pint8, T_size, T_prjlvalue])
+            alloc = LLVM.Function(mod, "ijl_alloc_genericmemory_unchecked", alloc_ty)
+            fn = LLVM.Function(mod, "f", LLVM.FunctionType(T_size))
+            LLVM.IRBuilder() do B
+                position!(B, LLVM.BasicBlock(fn, "top"))
+                tag = Enzyme.Compiler.unsafe_to_llvm(B, MT)
+                mem = call!(B, alloc_ty, alloc, LLVM.Value[LLVM.null(T_pint8), LLVM.ConstantInt(T_size, nbytes), tag])
+                res = getter(B, mem)
+                ret!(B, res)
+                return convert(Int, res::LLVM.ConstantInt)
+            end
+        end
+    end
+
+    @testset "jl_alloc_genericmemory_unchecked" begin
+        # The size argument is the number of bytes.
+        @test unchecked_alloc_query(Enzyme.Compiler.get_memory_nbytes, Memory{Float64}, 5 * 8) == 5 * 8
+        @test unchecked_alloc_query(Enzyme.Compiler.get_memory_nbytes, Memory{Nothing}, 0) == 0
+        # Julia stores the length only after the call, so get_memory_len cannot get it.
+        @test_throws AssertionError unchecked_alloc_query(Enzyme.Compiler.get_memory_len, Memory{Float64}, 5 * 8)
+    end
+end

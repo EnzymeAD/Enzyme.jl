@@ -980,10 +980,10 @@ function get_memory_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
 	     "jl_alloc_genericmemory_unchecked",
 	     "ijl_alloc_genericmemory_unchecked",
 	    )
-	        # This is number of bytes not number of elements
-		res = get_memory_size(B, array)
-		es = get_memory_elsz(B, array)
-		return udiv!(B, res, es)
+            # The size argument is the number of bytes, not the number of elements.
+            # Julia stores the length only after this call, so a load gives an undefined value.
+            # Use `get_memory_nbytes` for this allocation.
+            throw(AssertionError("Enzyme: cannot get the length of $(string(array)). Use get_memory_nbytes."))
         end
     end
     ST = get_memory_struct()
@@ -1002,7 +1002,7 @@ end
 # nel - number of elements
 #
 @static if VERSION >= v"1.11" 
-function get_memory_nbytes(B::LLVM.IRBuilder, memty::Type{<:Memory}, nel::LLVM.Value)
+    function get_memory_nbytes(B::LLVM.IRBuilder, memty::Type{<:GenericMemory}, nel::LLVM.Value)
     elsz = LLVM.ConstantInt(Compiler.datatype_layoutsize(memty))
     isboxed = Base.datatype_arrayelem(memty) == 1
     isunion = Base.datatype_arrayelem(memty) == 2
@@ -1038,7 +1038,12 @@ function get_memory_nbytes(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
     end
     nel = get_memory_len(B, array)
     legal, memty = abs_typeof(array)
-    @assert legal
+    if !legal
+        # The type is not known at compile time, so use the element size of the runtime type.
+        # This size does not include the selector bytes of an isbits union.
+        elsz = LLVM.zext!(B, get_memory_elsz(B, array), value_type(nel))
+        return LLVM.mul!(B, nel, elsz)
+    end
     return get_memory_nbytes(B, memty, nel)
 end
 
