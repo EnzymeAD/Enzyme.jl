@@ -315,8 +315,7 @@ end
     fB = _opflags(tB)
     a_const = _isconst(config, A)
     b_const = _isconst(config, B)
-    return ntuple(Val(N)) do i
-        Base.@_inline_meta
+    for i in 1:N
         dC = _bget(C.dval, Val(N), i)
         if !a_const
             _pullback!(_bget(A.dval, Val(N), i), tA, dC, (false, false), Bval, _adjop(fB), αc)
@@ -326,7 +325,6 @@ end
         end
         # Skip the scale at β = 1; it would be a no-op kernel.
         isone(βc) || (dC .*= βc)
-        nothing
     end
 
     return (dα, dβ)
