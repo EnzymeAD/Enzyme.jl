@@ -99,3 +99,13 @@ end
     @test Enzyme.Compiler.active_reg(Reactant.TracedRArray{Float64, 1}, Base.get_world_counter()) == Enzyme.Compiler.DupState
     @test Enzyme.Compiler.active_reg(Reactant.TracedRArray{Int, 1}, Base.get_world_counter()) == Enzyme.Compiler.AnyState
 end
+
+# A pointer type from a package, with a method for `is_mutable_array` (for example, in a
+# package extension). These methods are newer than the generator of `active_reg_nothrow`.
+primitive type ExtDevPtr{T} 64 end
+Base.eltype(::Type{<:ExtDevPtr{T}}) where {T} = T
+Enzyme.Compiler.is_mutable_array(::Type{<:ExtDevPtr}) = true
+
+@testset "is_mutable_array methods from a newer world" begin
+    @test Enzyme.Compiler.active_reg_nothrow(ExtDevPtr{Float64}) == Enzyme.Compiler.DupState
+end

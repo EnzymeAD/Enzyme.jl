@@ -87,6 +87,14 @@ end
 @inline is_vararg_tup(x) = false
 @inline is_vararg_tup(::Type{Tuple{Vararg{T2}}}) where {T2} = true
 
+"""
+    is_mutable_array(T::Type)::Bool
+
+Return `true` if `T` refers to mutable memory of elements of type `eltype(T)`, as an `Array`
+does. The activity of `T` then comes from `eltype(T)`. A package can add methods for its
+array or pointer types, for example in a package extension. Enzyme calls this function in
+the world of the compilation.
+"""
 Base.@nospecializeinfer @inline function is_mutable_array(@nospecialize(T::Type))
     if T <: Array
         return true
@@ -98,10 +106,6 @@ Base.@nospecializeinfer @inline function is_mutable_array(@nospecialize(T::Type)
         if hasproperty(T, :name) && hasproperty(T.name, :module)
             mod = T.name.module
             if nameof(mod) === :Reactant && (T.name.name == :ConcretePJRTArray || T.name.name == :ConcreteIFRTArray || T.name.name == :TracedRArray)
-                return true
-            end
-            if nameof(mod) in (:CUDA, :CUDACore) &&
-                    T.name.name in (:CuRefValue, :CuPtr, :CuArrayPtr)
                 return true
             end
         end
@@ -199,7 +203,8 @@ Base.@nospecializeinfer @inline function active_reg_inner(
         return ActiveState
     end
 
-    if is_mutable_array(T)
+    # Use _call_in_world_total to see the methods that packages add.
+    if Core._call_in_world_total(world, is_mutable_array, T)
         if justActive
             return AnyState
         end
@@ -413,27 +418,32 @@ const ActivityCache = Dict{Tuple{Type, Bool, Bool, Bool}, ActivityState}()
 const ActivityWorldCache = Ref(0)
 
 const ActivityMethodCache = Core.MethodMatch[]
+
+# The signatures of the functions that packages can add methods to, and that change the
+# result of `active_reg`.
+const ActivityHookSigs = (
+    Tuple{typeof(EnzymeRules.inactive_type), Type},
+    Tuple{typeof(is_mutable_array), Type},
+)
+
 # given the current worldage of compilation, check if there are any methods 
-# of inactive_type which may invalidate the cache, and if so clear it. 
+# of the activity hooks which may invalidate the cache, and if so clear it.
 function check_activity_cache_invalidations(world::UInt)
     # We've already guaranteed that this world doesn't have any stale caches
     if world <= ActivityWorldCache[]
         return
     end
 
-    invalid = true
-
-    tt = Tuple{typeof(EnzymeRules.inactive_type), Type}
-
-    matches = Base._methods_by_ftype(tt, -1, world)
-    if matches === nothing
-        @assert ActivityCache.size() == 0
-        return
-    end
-
     methods = Core.MethodMatch[]
-    for match in matches::Vector
-        push!(methods, match::Core.MethodMatch)
+    for tt in ActivityHookSigs
+        matches = Base._methods_by_ftype(tt, -1, world)
+        if matches === nothing
+            @assert ActivityCache.size() == 0
+            return
+        end
+        for match in matches::Vector
+            push!(methods, match::Core.MethodMatch)
+        end
     end
 
     if methods == ActivityMethodCache
@@ -473,8 +483,9 @@ function active_reg_nothrow_generator(world::UInt, source::Union{Method, LineNum
     ci = create_fresh_codeinfo(active_reg_nothrow, source, world, slotnames, code)
     
     ci.edges = Any[]
-    inactive_type_sig = Tuple{typeof(EnzymeRules.inactive_type), Type}
-    add_edge!(ci.edges, inactive_type_sig)
+    for sig in ActivityHookSigs
+        add_edge!(ci.edges, sig)
+    end
 
     return ci
 end
