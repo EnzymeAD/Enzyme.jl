@@ -118,6 +118,18 @@ else
     const _matvec_entry = LinearAlgebra.mul!
 end
 
+# Back-ends may still overload the pre-1.13 names on 1.13: cuBLAS routes `mul!` of
+# `CuArray`s through `generic_matmatmul_wrapper!` straight into its own
+# `generic_matmatmul!`, never reaching the `mul!` methods above. Attach the rules to
+# both names so they fire whichever one the back-end overloads.
+@static if VERSION < v"1.13.0-rc4"
+    const _MatmatEntry = typeof(_matmat_entry)
+    const _MatvecEntry = typeof(_matvec_entry)
+else
+    const _MatmatEntry = Union{typeof(LinearAlgebra.mul!), typeof(LinearAlgebra.generic_matmatmul!)}
+    const _MatvecEntry = Union{typeof(LinearAlgebra.mul!), typeof(LinearAlgebra.generic_matvecmul!)}
+end
+
 @static if VERSION < v"1.12.0-DEV"
     @inline _gemm!(C, tA::AbstractChar, tB::AbstractChar, A, B, α::Number, β::Number) =
         _matmat_entry(C, tA, tB, A, B, LinearAlgebra.MulAddMul(α, β))
@@ -370,7 +382,7 @@ else
 
     function EnzymeRules.augmented_primal(
             config::RevConfig,
-            func::Const{typeof(_matmat_entry)},
+            func::Const{<:_MatmatEntry},
             ::Type{RT},
             C::Annotation{<:AbstractGPUVecOrMat},
             tA::Const{<:AbstractChar},
@@ -393,7 +405,7 @@ else
 
     function EnzymeRules.reverse(
             config::RevConfig,
-            func::Const{typeof(_matmat_entry)},
+            func::Const{<:_MatmatEntry},
             ::Type{RT},
             tape,
             C::Annotation{<:AbstractGPUVecOrMat},
@@ -413,7 +425,7 @@ else
 
     function EnzymeRules.augmented_primal(
             config::RevConfig,
-            func::Const{typeof(_matvec_entry)},
+            func::Const{<:_MatvecEntry},
             ::Type{RT},
             y::Annotation{<:AbstractGPUVector},
             tA::Const{<:AbstractChar},
@@ -435,7 +447,7 @@ else
 
     function EnzymeRules.reverse(
             config::RevConfig,
-            func::Const{typeof(_matvec_entry)},
+            func::Const{<:_MatvecEntry},
             ::Type{RT},
             tape,
             y::Annotation{<:AbstractGPUVector},
