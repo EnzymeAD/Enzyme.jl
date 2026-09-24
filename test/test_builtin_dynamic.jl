@@ -15,7 +15,7 @@ module TestBuiltinDynamic
     end
 
     function run_test()
-        @testset "Builtin dynamic dispatch runtime AD" begin
+        return @testset "Builtin dynamic dispatch runtime AD" begin
             obj = MyStructBuiltinDynamic(2.0)
             d_obj = MyStructBuiltinDynamic(0.0)
             autodiff(Reverse, loss_builtin_dynamic, Duplicated(obj, d_obj))

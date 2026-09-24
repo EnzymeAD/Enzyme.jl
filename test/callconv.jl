@@ -2,7 +2,7 @@ using Enzyme, Test
 using Enzyme: EnzymeRules
 
 @noinline function force_stup(A)
-    A11 = A[];
+    A11 = A[]
     return (A11, 0.0)
 end
 
@@ -11,9 +11,9 @@ end
 
     A11 = Aelements[1]
 
-    unsafe_store!(y, A11*A11)
+    unsafe_store!(y, A11 * A11)
 
-    nothing
+    return nothing
 end
 
 function f_exc(x)
@@ -27,11 +27,11 @@ function f_exc(x)
 end
 
 @testset "No JLValueT Calling Conv" begin
-	y = Ref(1.0)
-	f_x = make_zero(y)
-	Enzyme.autodiff(Reverse, f_exc, Duplicated(y, f_x))
+    y = Ref(1.0)
+    f_x = make_zero(y)
+    Enzyme.autodiff(Reverse, f_exc, Duplicated(y, f_x))
 
-	@test f_x[] ≈ 4.0
+    @test f_x[] ≈ 4.0
 end
 
 struct Inner
@@ -81,7 +81,7 @@ end
     @test dy ≈ 6.0
 end
 
-struct MyFill{T,A}
+struct MyFill{T, A}
     val::T
     axes::A
 end
@@ -91,8 +91,8 @@ struct MyTrnc
 end
 @noinline function trnc(l::Float64)
     # Call a C function from libc that takes a double and returns a double to block constprop
-	lcdf = ccall("extern sin", llvmcall, Float64, (Float64,), l)
-    MyTrnc(lcdf, lcdf)
+    lcdf = ccall("extern sin", llvmcall, Float64, (Float64,), l)
+    return MyTrnc(lcdf, lcdf)
 end
 @noinline function lpdf(dists::MyFill, x::Vector{Float64})
     sz = length(dists.axes)
@@ -267,13 +267,13 @@ EnzymeRules.inactive(::typeof(getindices_callconv), args...) = nothing
 end
 
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.RevConfigWidth,
-    func::Const{typeof(my_nuft_callconv!)},
-    ::Type{<:Const},
-    out::EnzymeRules.Annotation,
-    A::EnzymeRules.Annotation,
-    b::EnzymeRules.Annotation,
-)
+        config::EnzymeRules.RevConfigWidth,
+        func::Const{typeof(my_nuft_callconv!)},
+        ::Type{<:Const},
+        out::EnzymeRules.Annotation,
+        A::EnzymeRules.Annotation,
+        b::EnzymeRules.Annotation,
+    )
     primal = EnzymeRules.needs_primal(config) ? out.val : nothing
     shadow = EnzymeRules.needs_shadow(config) ? out.dval : nothing
     func.val(out.val, A.val, b.val)
@@ -281,14 +281,14 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfigWidth,
-    ::Const{typeof(my_nuft_callconv!)},
-    ::Type{RT},
-    tape,
-    out::EnzymeRules.Annotation,
-    A::EnzymeRules.Annotation,
-    b::EnzymeRules.Annotation,
-) where {RT}
+        config::EnzymeRules.RevConfigWidth,
+        ::Const{typeof(my_nuft_callconv!)},
+        ::Type{RT},
+        tape,
+        out::EnzymeRules.Annotation,
+        A::EnzymeRules.Annotation,
+        b::EnzymeRules.Annotation,
+    ) where {RT}
     b.dval .+= out.dval .* A.val.b
     fill!(out.dval, 0)
     return (nothing, nothing, nothing)
@@ -379,7 +379,7 @@ end
 
 mutable struct MutableUnion
     u::Vector{Float64}
-    conv::Union{Nothing,Bool}     # Union{Nothing,Int} triggers it too; a plain Bool does NOT
+    conv::Union{Nothing, Bool}     # Union{Nothing,Int} triggers it too; a plain Bool does NOT
 end
 @noinline dispatch(x)::MutableUnion = Base.inferencebarrier(MutableUnion([x], nothing))   # runtime dispatch required
 

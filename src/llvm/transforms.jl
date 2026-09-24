@@ -1,5 +1,5 @@
 function restore_alloca_type!(f::LLVM.Function)
-    replaceAndErase = Tuple{LLVM.AllocaInst,LLVMType}[]
+    replaceAndErase = Tuple{LLVM.AllocaInst, LLVMType}[]
     dl = datalayout(LLVM.parent(f))
     for bb in blocks(f), inst in instructions(bb)
         if isa(inst, LLVM.AllocaInst)
@@ -9,10 +9,10 @@ function restore_alloca_type!(f::LLVM.Function)
                 ptr = reinterpret(Ptr{Cvoid}, parse(UInt, mds))
                 RT = Base.unsafe_pointer_to_objref(ptr)
                 if RT isa Union
-		   continue
-		end
-		at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(inst))
-		lrt = struct_to_llvm(RT)
+                    continue
+                end
+                at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(inst))
+                lrt = struct_to_llvm(RT)
                 if at == lrt
                     continue
                 end
@@ -26,49 +26,49 @@ function restore_alloca_type!(f::LLVM.Function)
             end
         end
     end
-   
+
     if length(replaceAndErase) == 0
-	    return false
-  end
+        return false
+    end
 
     for (al, lrt) in replaceAndErase
         at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(al))
-	tracked_lrt = CountTrackedPointers(lrt).count
-	tracked_at  = CountTrackedPointers(at).count 
+        tracked_lrt = CountTrackedPointers(lrt).count
+        tracked_at = CountTrackedPointers(at).count
         if tracked_lrt != 0 && tracked_at == 0
             lrt2 = strip_tracked_pointers(lrt)
             @assert LLVM.sizeof(dl, lrt2) == LLVM.sizeof(dl, lrt)
             lrt = lrt2
-	    tracked_lrt = CountTrackedPointers(lrt).count
-	    if tracked_lrt != 0
-	    ccall(:jl_, Cvoid, (Any,), ("BAD1", string(al), string(lrt), tracked_lrt))
-		    throw(AssertionError("tracked_lrt ($tracked_lrt) != 0, $(string(lrt))"))
-	    end
+            tracked_lrt = CountTrackedPointers(lrt).count
+            if tracked_lrt != 0
+                ccall(:jl_, Cvoid, (Any,), ("BAD1", string(al), string(lrt), tracked_lrt))
+                throw(AssertionError("tracked_lrt ($tracked_lrt) != 0, $(string(lrt))"))
+            end
         end
-	if tracked_lrt != tracked_at
-	    ccall(:jl_, Cvoid, (Any,), ("BAD2", string(al), string(lrt), tracked_lrt))
-	    throw(AssertionError("tracked_lrt ($tracked_lrt) != tracked_at ($tracked_at), at=$(string(at)), lrt=$(string(lrt)) al=$(string(al))"))
-	end
+        if tracked_lrt != tracked_at
+            ccall(:jl_, Cvoid, (Any,), ("BAD2", string(al), string(lrt), tracked_lrt))
+            throw(AssertionError("tracked_lrt ($tracked_lrt) != tracked_at ($tracked_at), at=$(string(at)), lrt=$(string(lrt)) al=$(string(al))"))
+        end
         b = IRBuilder()
         position!(b, al)
         al2 = alloca!(b, lrt)
         cst = al2
         if value_type(cst) != value_type(al)
             cst = bitcast!(b, cst, value_type(al))
-        end        
-	API.EnzymeCopyMetadata(al2, al)
-	API.EnzymeCopyAlignment(al2, al)
-	API.EnzymeTakeName(al2, al)
+        end
+        API.EnzymeCopyMetadata(al2, al)
+        API.EnzymeCopyAlignment(al2, al)
+        API.EnzymeTakeName(al2, al)
         LLVM.replace_uses!(al, cst)
         LLVM.API.LLVMInstructionEraseFromParent(al)
     end
-	return true
+    return true
 end
 
 # Rewrite calls with "jl_roots" to only have the jl_value_t attached and not  { { {} addrspace(10)*, [1 x [2 x i64]], i64, i64 }, [2 x i64] } %unbox110183_replacementA
 function rewrite_ccalls!(mod::LLVM.Module)
     for f in collect(functions(mod))
-        replaceAndErase = Tuple{Instruction,Instruction}[]
+        replaceAndErase = Tuple{Instruction, Instruction}[]
         for bb in blocks(f), inst in instructions(bb)
             if isa(inst, LLVM.CallInst)
                 fn = called_operand(inst)
@@ -119,13 +119,13 @@ function rewrite_ccalls!(mod::LLVM.Module)
                             )
                         end
                         for idx in [
-                            LLVM.API.LLVMAttributeFunctionIndex,
-                            LLVM.API.LLVMAttributeReturnIndex,
-                            [
-                                LLVM.API.LLVMAttributeIndex(i) for
-                                i = 1:(length(arguments(inst)))
-                            ]...,
-                        ]
+                                LLVM.API.LLVMAttributeFunctionIndex,
+                                LLVM.API.LLVMAttributeReturnIndex,
+                                [
+                                    LLVM.API.LLVMAttributeIndex(i) for
+                                        i in 1:(length(arguments(inst)))
+                                ]...,
+                            ]
                             idx = reinterpret(LLVM.API.LLVMAttributeIndex, idx)
                             count = LLVM.API.LLVMGetCallSiteAttributeCount(inst, idx)
                             Attrs = Base.unsafe_convert(
@@ -133,7 +133,7 @@ function rewrite_ccalls!(mod::LLVM.Module)
                                 Libc.malloc(sizeof(LLVM.API.LLVMAttributeRef) * count),
                             )
                             LLVM.API.LLVMGetCallSiteAttributes(inst, idx, Attrs)
-                            for j = 1:count
+                            for j in 1:count
                                 LLVM.API.LLVMAddCallSiteAttribute(
                                     newinst,
                                     idx,
@@ -217,13 +217,13 @@ function rewrite_ccalls!(mod::LLVM.Module)
                         prevname,
                     )
                     for idx in [
-                        LLVM.API.LLVMAttributeFunctionIndex,
-                        LLVM.API.LLVMAttributeReturnIndex,
-                        [
-                            LLVM.API.LLVMAttributeIndex(i) for
-                            i = 1:(length(arguments(inst)))
-                        ]...,
-                    ]
+                            LLVM.API.LLVMAttributeFunctionIndex,
+                            LLVM.API.LLVMAttributeReturnIndex,
+                            [
+                                LLVM.API.LLVMAttributeIndex(i) for
+                                    i in 1:(length(arguments(inst)))
+                            ]...,
+                        ]
                         idx = reinterpret(LLVM.API.LLVMAttributeIndex, idx)
                         count = LLVM.API.LLVMGetCallSiteAttributeCount(inst, idx)
                         Attrs = Base.unsafe_convert(
@@ -231,7 +231,7 @@ function rewrite_ccalls!(mod::LLVM.Module)
                             Libc.malloc(sizeof(LLVM.API.LLVMAttributeRef) * count),
                         )
                         LLVM.API.LLVMGetCallSiteAttributes(inst, idx, Attrs)
-                        for j = 1:count
+                        for j in 1:count
                             LLVM.API.LLVMAddCallSiteAttribute(
                                 newinst,
                                 idx,
@@ -251,6 +251,7 @@ function rewrite_ccalls!(mod::LLVM.Module)
             LLVM.API.LLVMInstructionEraseFromParent(inst)
         end
     end
+    return
 end
 
 """
@@ -372,7 +373,7 @@ function unfold_root_phi_loads!(f::LLVM.Function)::Bool
             for u in LLVM.uses(phi)
                 inst = LLVM.user(u)
                 if isa(inst, LLVM.GetElementPtrInst) && LLVM.parent(inst) == bb &&
-                   operands(inst)[1] == phi && all(isa(op, LLVM.ConstantInt) for op in operands(inst)[2:end])
+                        operands(inst)[1] == phi && all(isa(op, LLVM.ConstantInt) for op in operands(inst)[2:end])
                     for u2 in LLVM.uses(inst)
                         ld = LLVM.user(u2)
                         if !root_load_in(ld, inst, bb, T_prjlvalue)
@@ -528,55 +529,56 @@ end
 
 function force_recompute!(mod::LLVM.Module)
     for f in functions(mod), bb in blocks(f)
-    iter = LLVM.API.LLVMGetFirstInstruction(bb)
-    while iter != C_NULL
-        inst = LLVM.Instruction(iter)
-        iter = LLVM.API.LLVMGetNextInstruction(iter)
-        if isa(inst, LLVM.LoadInst)
-            has_loaded = false
-            for u in LLVM.uses(inst)
-                v = LLVM.user(u)
-                if isa(v, LLVM.CallInst)
-                    cf = LLVM.called_operand(v)
-                    if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded" && operands(v)[2] == inst
-                        has_loaded = true
-                        break
+        iter = LLVM.API.LLVMGetFirstInstruction(bb)
+        while iter != C_NULL
+            inst = LLVM.Instruction(iter)
+            iter = LLVM.API.LLVMGetNextInstruction(iter)
+            if isa(inst, LLVM.LoadInst)
+                has_loaded = false
+                for u in LLVM.uses(inst)
+                    v = LLVM.user(u)
+                    if isa(v, LLVM.CallInst)
+                        cf = LLVM.called_operand(v)
+                        if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded" && operands(v)[2] == inst
+                            has_loaded = true
+                            break
+                        end
                     end
-                end
-                if isa(v, LLVM.BitCastInst)
-                    for u2 in LLVM.uses(v)
-                        v2 = LLVM.user(u2)
-                        if isa(v2, LLVM.CallInst)
-                            cf = LLVM.called_operand(v2)
-                            if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded" && operands(v2)[2] == v
-                                has_loaded = true
-                                break
+                    if isa(v, LLVM.BitCastInst)
+                        for u2 in LLVM.uses(v)
+                            v2 = LLVM.user(u2)
+                            if isa(v2, LLVM.CallInst)
+                                cf = LLVM.called_operand(v2)
+                                if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded" && operands(v2)[2] == v
+                                    has_loaded = true
+                                    break
+                                end
                             end
                         end
                     end
                 end
+                if has_loaded
+                    metadata(inst)["enzyme_nocache"] = MDNode(LLVM.Metadata[])
+                end
             end
-            if has_loaded
-                metadata(inst)["enzyme_nocache"] = MDNode(LLVM.Metadata[])
-            end
-        end
-        if isa(inst, LLVM.CallInst)
-            cf = LLVM.called_operand(inst)
-            if isa(cf, LLVM.Function)
-                if LLVM.name(cf) == "llvm.julia.gc_preserve_begin"
-                    has_use = false
-                    for u2 in LLVM.uses(inst)
-                        has_use = true
-                        break
-                    end
-                    if !has_use
-                        eraseInst(bb, inst)
+            if isa(inst, LLVM.CallInst)
+                cf = LLVM.called_operand(inst)
+                if isa(cf, LLVM.Function)
+                    if LLVM.name(cf) == "llvm.julia.gc_preserve_begin"
+                        has_use = false
+                        for u2 in LLVM.uses(inst)
+                            has_use = true
+                            break
+                        end
+                        if !has_use
+                            eraseInst(bb, inst)
+                        end
                     end
                 end
             end
         end
     end
-    end
+    return
 end
 
 function permit_inlining!(f::LLVM.Function)
@@ -600,6 +602,7 @@ function permit_inlining!(f::LLVM.Function)
             end
         end
     end
+    return
 end
 
 function addNA(@nospecialize(inst::LLVM.Instruction), @nospecialize(node::LLVM.Metadata), MD::LLVM.MDKind)
@@ -610,7 +613,7 @@ function addNA(@nospecialize(inst::LLVM.Instruction), @nospecialize(node::LLVM.M
     else
         next = LLVM.MDNode(Metadata[node])
     end
-    setindex!(md, next, MD)
+    return setindex!(md, next, MD)
 end
 
 function addr13NoAlias(mod::LLVM.Module)
@@ -645,7 +648,7 @@ end
 #  % a = alloca
 #  ...
 #  memref(cast(%a), %b, constant size == sizeof(a))
-#   
+#
 #  turn this into load/store, as this is more
 #  amenable to caching analysis infrastructure
 function memcpy_alloca_to_loadstore(mod::LLVM.Module)
@@ -660,7 +663,7 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
                 if !isa(alloca, LLVM.AllocaInst)
                     continue
                 end
-                todo = Tuple{LLVM.Instruction,LLVM.Value}[(alloca, alloca)]
+                todo = Tuple{LLVM.Instruction, LLVM.Value}[(alloca, alloca)]
                 copy = nothing
                 legal = true
                 elty = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(alloca))
@@ -668,8 +671,8 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
                 while length(todo) > 0
                     cur, prev = pop!(todo)
                     if isa(cur, LLVM.AllocaInst) ||
-                       isa(cur, LLVM.AddrSpaceCastInst) ||
-                       isa(cur, LLVM.BitCastInst)
+                            isa(cur, LLVM.AddrSpaceCastInst) ||
+                            isa(cur, LLVM.BitCastInst)
                         for u in LLVM.uses(cur)
                             u = LLVM.user(u)
                             push!(todo, (u, cur))
@@ -677,7 +680,7 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
                         continue
                     end
                     if isa(cur, LLVM.CallInst) &&
-                       isa(LLVM.called_operand(cur), LLVM.Function)
+                            isa(LLVM.called_operand(cur), LLVM.Function)
                         intr = LLVM.API.LLVMGetIntrinsicID(LLVM.called_operand(cur))
                         if intr == LLVM.Intrinsic("llvm.lifetime.start").id
                             push!(lifetimestarts, cur)
@@ -689,8 +692,8 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
                         if intr == LLVM.Intrinsic("llvm.memcpy").id
                             sz = operands(cur)[3]
                             if operands(cur)[1] == prev &&
-                               isa(sz, LLVM.ConstantInt) &&
-                               convert(Int, sz) == sizeof(dl, elty)
+                                    isa(sz, LLVM.ConstantInt) &&
+                                    convert(Int, sz) == sizeof(dl, elty)
                                 if copy === nothing || copy == cur
                                     copy = cur
                                     continue
@@ -704,15 +707,15 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
                         continue
                     end
                     if isa(cur, LLVM.CallInst) &&
-                       isa(LLVM.called_operand(cur), LLVM.Function)
+                            isa(LLVM.called_operand(cur), LLVM.Function)
                         legalc = true
                         for (i, ci) in enumerate(arg_operands_view(cur))
                             if ci == prev
                                 nocapture = false
                                 readonly = false
                                 for a in collect(
-                                    parameter_attributes(LLVM.called_operand(cur), i),
-                                )
+                                        parameter_attributes(LLVM.called_operand(cur), i),
+                                    )
                                     if kind(a) == READONLY_ATTR_KIND
                                         readonly = true
                                     end
@@ -755,41 +758,41 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
                         bitcast!(B, src, LLVM.PointerType(elty, addrspace(value_type(src))))
 
                     src = load!(B, elty, src)
-        
-		    T_jlvalue = LLVM.StructType(LLVMType[])
-        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-        
-            	    legal, source_typ, byref = abs_typeof(src)
+
+                    T_jlvalue = LLVM.StructType(LLVMType[])
+                    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+
+                    legal, source_typ, byref = abs_typeof(src)
                     codegen_typ = value_type(src)
-		    if legal
-			if codegen_typ isa LLVM.PointerType || codegen_typ isa LLVM.IntegerType
-			else
-			    @assert byref == GPUCompiler.BITS_VALUE
-			    source_typ
-			end
+                    if legal
+                        if codegen_typ isa LLVM.PointerType || codegen_typ isa LLVM.IntegerType
+                        else
+                            @assert byref == GPUCompiler.BITS_VALUE
+                            source_typ
+                        end
 
-			ec = typetree(source_typ, ctx, string(dl), seen)
-			if byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF
-			    ec = copy(ec)
-			    merge!(ec, TypeTree(API.DT_Pointer, ctx))
-			    only!(ec, -1)
-			end
-			    metadata(src)["enzyme_type"] = to_md(ec, ctx)
-			    metadata(src)["enzymejl_source_type_$(source_typ)"] = MDNode(LLVM.Metadata[])
-			    metadata(src)["enzymejl_byref_$(byref)"] = MDNode(LLVM.Metadata[])
-		    
-	@static if VERSION < v"1.11-"
-	else    
-			    legal2, obj = absint(src)
-			    if legal2 && is_memory_instance(unbind(obj)) 
-				metadata(src)["nonnull"] = MDNode(LLVM.Metadata[])
-			    end
-	end
+                        ec = typetree(source_typ, ctx, string(dl), seen)
+                        if byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF
+                            ec = copy(ec)
+                            merge!(ec, TypeTree(API.DT_Pointer, ctx))
+                            only!(ec, -1)
+                        end
+                        metadata(src)["enzyme_type"] = to_md(ec, ctx)
+                        metadata(src)["enzymejl_source_type_$(source_typ)"] = MDNode(LLVM.Metadata[])
+                        metadata(src)["enzymejl_byref_$(byref)"] = MDNode(LLVM.Metadata[])
 
-		      elseif codegen_typ == T_prjlvalue
-			    metadata(src)["enzyme_type"] =
-				to_md(typetree(Ptr{Cvoid}, ctx, dl, seen), ctx)
-		    end
+                        @static if VERSION < v"1.11-"
+                        else
+                            legal2, obj = absint(src)
+                            if legal2 && is_memory_instance(unbind(obj))
+                                metadata(src)["nonnull"] = MDNode(LLVM.Metadata[])
+                            end
+                        end
+
+                    elseif codegen_typ == T_prjlvalue
+                        metadata(src)["enzyme_type"] =
+                            to_md(typetree(Ptr{Cvoid}, ctx, dl, seen), ctx)
+                    end
                     FT = LLVM.FunctionType(
                         LLVM.VoidType(),
                         [LLVM.IntType(64), value_type(dst0)],
@@ -813,68 +816,72 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
             end
         end
     end
+    return
 end
 
 # Split a memcpy into an sret with jlvaluet into individual load/stores
 function memcpy_sret_split!(mod::LLVM.Module)
     dl = datalayout(mod)
     ctx = context(mod)
-	    sretkind = LLVM.kind(if LLVM.version().major >= 12
-                LLVM.TypeAttribute("sret", LLVM.Int32Type())
-            else
-                LLVM.EnumAttribute("sret")
-            end)
+    sretkind = LLVM.kind(
+        if LLVM.version().major >= 12
+            LLVM.TypeAttribute("sret", LLVM.Int32Type())
+        else
+            LLVM.EnumAttribute("sret")
+        end
+    )
     for f in functions(mod)
 
         if length(blocks(f)) == 0
-	    continue
-	end
-	if length(parameters(f)) == 0
-	    continue
-	end
-	sty = nothing
-	for attr in collect(LLVM.parameter_attributes(f, 1))
-	    if LLVM.kind(attr) == sretkind
-		 sty = LLVM.value(attr)
-		 break
-	    end
-	end
-	if sty === nothing
-	    continue
-	end
-	tracked = CountTrackedPointers(sty)
-	if tracked.all || tracked.count == 0
-	    continue
-	end
-	todo = LLVM.CallInst[]
-	for bb in blocks(f)
+            continue
+        end
+        if length(parameters(f)) == 0
+            continue
+        end
+        sty = nothing
+        for attr in collect(LLVM.parameter_attributes(f, 1))
+            if LLVM.kind(attr) == sretkind
+                sty = LLVM.value(attr)
+                break
+            end
+        end
+        if sty === nothing
+            continue
+        end
+        tracked = CountTrackedPointers(sty)
+        if tracked.all || tracked.count == 0
+            continue
+        end
+        todo = LLVM.CallInst[]
+        for bb in blocks(f)
             for cur in instructions(bb)
-                    if isa(cur, LLVM.CallInst) &&
-                       isa(LLVM.called_operand(cur), LLVM.Function)
-                        intr = LLVM.API.LLVMGetIntrinsicID(LLVM.called_operand(cur))
-			if intr == LLVM.Intrinsic("llvm.memcpy").id
-			    dst, _ = get_base_and_offset(operands(cur)[1]; offsetAllowed = false)
-			    if isa(dst, LLVM.Argument) && parameters(f)[1] == dst
-			    if isa(operands(cur)[3], LLVM.ConstantInt) && LLVM.sizeof(dl, sty) == convert(Int, operands(cur)[3])
-				push!(todo, cur)
-			    end
-			    end
+                if isa(cur, LLVM.CallInst) &&
+                        isa(LLVM.called_operand(cur), LLVM.Function)
+                    intr = LLVM.API.LLVMGetIntrinsicID(LLVM.called_operand(cur))
+                    if intr == LLVM.Intrinsic("llvm.memcpy").id
+                        dst, _ = get_base_and_offset(operands(cur)[1]; offsetAllowed = false)
+                        if isa(dst, LLVM.Argument) && parameters(f)[1] == dst
+                            if isa(operands(cur)[3], LLVM.ConstantInt) && LLVM.sizeof(dl, sty) == convert(Int, operands(cur)[3])
+                                push!(todo, cur)
+                            end
                         end
                     end
-	    end
-	end
-	for cur in todo
-	      B = IRBuilder()
-	      position!(B, cur)
-	      dst, _ = get_base_and_offset(operands(cur)[1]; offsetAllowed = false)
-	      src, _ = get_base_and_offset(operands(cur)[2]; offsetAllowed = false)
-	      if !LLVM.is_opaque(value_type(dst)) && eltype(value_type(dst)) != eltype(value_type(src))
-	          src = pointercast!(B, src, LLVM.PointerType(eltype(value_type(dst)), addrspace(value_type(src))), "memcpy_sret_split_pointercast")
-	      end
-	      copy_struct_into!(B, sty, dst, src, VERSION < v"1.12")
-	      LLVM.API.LLVMInstructionEraseFromParent(cur)
+                end
+            end
+        end
+        for cur in todo
+            B = IRBuilder()
+            position!(B, cur)
+            dst, _ = get_base_and_offset(operands(cur)[1]; offsetAllowed = false)
+            src, _ = get_base_and_offset(operands(cur)[2]; offsetAllowed = false)
+            if !LLVM.is_opaque(value_type(dst)) && eltype(value_type(dst)) != eltype(value_type(src))
+                src = pointercast!(B, src, LLVM.PointerType(eltype(value_type(dst)), addrspace(value_type(src))), "memcpy_sret_split_pointercast")
+            end
+            copy_struct_into!(B, sty, dst, src, VERSION < v"1.12")
+            LLVM.API.LLVMInstructionEraseFromParent(cur)
         end
     end
+    return
 end
 
 # If there is a phi node of a decayed value, Enzyme may need to cache it
@@ -1341,9 +1348,9 @@ function nodecayed_phis!(mod::LLVM.Module)
 
         for addr in (11, 13)
 
-            nextvs = Dict{LLVM.PHIInst,LLVM.PHIInst}()
+            nextvs = Dict{LLVM.PHIInst, LLVM.PHIInst}()
             mtodo = Vector{LLVM.PHIInst}[]
-            goffsets = Dict{LLVM.PHIInst,LLVM.PHIInst}()
+            goffsets = Dict{LLVM.PHIInst, LLVM.PHIInst}()
             nonphis = LLVM.Instruction[]
             anyV = false
             for bb in blocks(f)
@@ -1368,7 +1375,7 @@ function nodecayed_phis!(mod::LLVM.Module)
 
                         while length(addrtodo) != 0
                             v = pop!(addrtodo)
-                            base, _ = get_base_and_offset(v; offsetAllowed=false)
+                            base, _ = get_base_and_offset(v; offsetAllowed = false)
                             if in(base, seen)
                                 continue
                             end
@@ -1410,7 +1417,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                             if in(base, seen)
                                 continue
                             end
-                            push!(seen, base)		
+                            push!(seen, base)
                             if isa(base, LLVM.PHIInst)
                                 for (v, _) in LLVM.incoming(base)
                                     push!(addrtodo, v)
@@ -1425,7 +1432,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                                 # undef/poison constrains neither base nor offset
                                 continue
                             end
-			    if offset === nothing
+                            if offset === nothing
                                 offset = toffset
                             else
                                 if offset != toffset
@@ -1474,8 +1481,8 @@ function nodecayed_phis!(mod::LLVM.Module)
                     else
                         LLVM.StructType(LLVM.LLVMType[])
                     end
-                    nvs = Tuple{LLVM.Value,LLVM.BasicBlock}[]
-                    offsets = Tuple{LLVM.Value,LLVM.BasicBlock}[]
+                    nvs = Tuple{LLVM.Value, LLVM.BasicBlock}[]
+                    offsets = Tuple{LLVM.Value, LLVM.BasicBlock}[]
                     for (v, pb) in LLVM.incoming(inst)
                         done = false
                         for ((nv, pb0), (offset, pb1)) in zip(nvs, offsets)
@@ -1491,11 +1498,11 @@ function nodecayed_phis!(mod::LLVM.Module)
                         end
 
                         v0 = v
-                    
+
                         b = IRBuilder()
                         position!(b, terminator(pb))
 
-			phicache = Dict{LLVM.PHIInst, Tuple{LLVM.PHIInst, LLVM.PHIInst}}()
+                        phicache = Dict{LLVM.PHIInst, Tuple{LLVM.PHIInst, LLVM.PHIInst}}()
                         st = NoDecayedPhiState(addr, offty, ctx, f, inst, v0, nextvs, goffsets, phicache)
                         v, offset, hadload = nodecayed_getparent(st, b, v, LLVM.ConstantInt(offty, 0), false)
 
@@ -1513,7 +1520,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                         push!(nvs, (v, pb))
                         push!(offsets, (offset, pb))
                     end
-                        
+
                     nb = IRBuilder()
                     position!(nb, nonphi)
 
@@ -1730,9 +1737,9 @@ function fix_decayaddr!(mod::LLVM.Module)
                 if isa(st, LLVM.StoreInst)
                     if operands(st)[2] == inst
                         LLVM.API.LLVMSetOperand(st, 2 - 1, operands(inst)[1])
-                    	nb = IRBuilder()
-			position!(nb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
-                    	julia_post_cache_store(st.ref, nb.ref, reinterpret(Ptr{UInt64}, C_NULL))
+                        nb = IRBuilder()
+                        position!(nb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
+                        julia_post_cache_store(st.ref, nb.ref, reinterpret(Ptr{UInt64}, C_NULL))
                         continue
                     end
                 end
@@ -1741,50 +1748,50 @@ function fix_decayaddr!(mod::LLVM.Module)
                     continue
                 end
 
-		if isa(st, LLVM.GetElementPtrInst)
-		    legal = true
-		    torem = LLVM.Instruction[]
-		    for u in LLVM.uses(st)
-			st2 = LLVM.user(u)
-			# Storing _into_ the decay addr is okay
-			# we just cannot store the decayed addr into
-			# somewhere
-			if isa(st2, LLVM.StoreInst)
-			    if operands(st2)[2] == st
-				push!(torem, st2)
-				continue
-			    end
-			end
-			if isa(st2, LLVM.LoadInst)
-			     push!(torem, st2)
-			    continue
-			end
-			legal = false
-		    end
-		    if legal
-			B = IRBuilder()
-			position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
-            op1 = operands(inst)[1]
-            cst = addrspacecast!(B, op1, LLVM.is_opaque(value_type(op1)) ? LLVM.PointerType(Derived) : LLVM.PointerType(eltype(value_type(op1))))
-		       gep2 = gep!(B, LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(st)), cst, operands(st)[2:end])
-		       for st2 in torem
-                	    if isa(st2, LLVM.StoreInst)
-			        LLVM.API.LLVMSetOperand(st2, 2 - 1, gep2)
-				nb = IRBuilder()
-				position!(nb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st2)))
-				julia_post_cache_store(st2.ref, nb.ref, reinterpret(Ptr{UInt64}, C_NULL))
-				continue
-			    end
-			    if isa(st2, LLVM.LoadInst)
-				    LLVM.API.LLVMSetOperand(st2, 1 - 1, gep2)
-				    continue
-			    end
+                if isa(st, LLVM.GetElementPtrInst)
+                    legal = true
+                    torem = LLVM.Instruction[]
+                    for u in LLVM.uses(st)
+                        st2 = LLVM.user(u)
+                        # Storing _into_ the decay addr is okay
+                        # we just cannot store the decayed addr into
+                        # somewhere
+                        if isa(st2, LLVM.StoreInst)
+                            if operands(st2)[2] == st
+                                push!(torem, st2)
+                                continue
+                            end
+                        end
+                        if isa(st2, LLVM.LoadInst)
+                            push!(torem, st2)
+                            continue
+                        end
+                        legal = false
+                    end
+                    if legal
+                        B = IRBuilder()
+                        position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st)))
+                        op1 = operands(inst)[1]
+                        cst = addrspacecast!(B, op1, LLVM.is_opaque(value_type(op1)) ? LLVM.PointerType(Derived) : LLVM.PointerType(eltype(value_type(op1))))
+                        gep2 = gep!(B, LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(st)), cst, operands(st)[2:end])
+                        for st2 in torem
+                            if isa(st2, LLVM.StoreInst)
+                                LLVM.API.LLVMSetOperand(st2, 2 - 1, gep2)
+                                nb = IRBuilder()
+                                position!(nb, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(st2)))
+                                julia_post_cache_store(st2.ref, nb.ref, reinterpret(Ptr{UInt64}, C_NULL))
+                                continue
+                            end
+                            if isa(st2, LLVM.LoadInst)
+                                LLVM.API.LLVMSetOperand(st2, 1 - 1, gep2)
+                                continue
+                            end
 
-		       end
-                       LLVM.API.LLVMInstructionEraseFromParent(st)
-		       continue
-		    end
-		end
+                        end
+                        LLVM.API.LLVMInstructionEraseFromParent(st)
+                        continue
+                    end
+                end
 
                 # if isa(st, LLVM.InsertValueInst)
                 #    if operands(st)[1] == inst
@@ -1819,10 +1826,10 @@ function fix_decayaddr!(mod::LLVM.Module)
                 intr = LLVM.API.LLVMGetIntrinsicID(fop)
 
                 if intr == LLVM.Intrinsic("llvm.memcpy").id ||
-                   intr == LLVM.Intrinsic("llvm.memmove").id ||
-                   intr == LLVM.Intrinsic("llvm.memset").id
+                        intr == LLVM.Intrinsic("llvm.memmove").id ||
+                        intr == LLVM.Intrinsic("llvm.memset").id
                     newvs = LLVM.Value[]
-		    for (i, v) in enumerate(arg_operands_view(st))
+                    for (i, v) in enumerate(arg_operands_view(st))
                         if v == inst
                             LLVM.API.LLVMSetOperand(st, i - 1, operands(inst)[1])
                             push!(newvs, operands(inst)[1])
@@ -1842,13 +1849,13 @@ function fix_decayaddr!(mod::LLVM.Module)
                     end
 
                     for idx in [
-                        LLVM.API.LLVMAttributeFunctionIndex,
-                        LLVM.API.LLVMAttributeReturnIndex,
-                        [
-                            LLVM.API.LLVMAttributeIndex(i) for
-                            i = 1:(length(operands(st))-1)
-                        ]...,
-                    ]
+                            LLVM.API.LLVMAttributeFunctionIndex,
+                            LLVM.API.LLVMAttributeReturnIndex,
+                            [
+                                LLVM.API.LLVMAttributeIndex(i) for
+                                    i in 1:(length(operands(st)) - 1)
+                            ]...,
+                        ]
                         idx = reinterpret(LLVM.API.LLVMAttributeIndex, idx)
                         count = LLVM.API.LLVMGetCallSiteAttributeCount(st, idx)
 
@@ -1857,7 +1864,7 @@ function fix_decayaddr!(mod::LLVM.Module)
                             Libc.malloc(sizeof(LLVM.API.LLVMAttributeRef) * count),
                         )
                         LLVM.API.LLVMGetCallSiteAttributes(st, idx, Attrs)
-                        for j = 1:count
+                        for j in 1:count
                             LLVM.API.LLVMAddCallSiteAttribute(
                                 newi,
                                 idx,
@@ -1891,13 +1898,15 @@ function fix_decayaddr!(mod::LLVM.Module)
                 mayread = false
                 maywrite = false
                 sret = true
-		sret_elty = nothing
-                sretkind = kind(if LLVM.version().major >= 12
-                    TypeAttribute("sret", LLVM.Int32Type())
-                else
-                    EnumAttribute("sret")
-                end)
-		for (i, v) in enumerate(arg_operands_view(st))
+                sret_elty = nothing
+                sretkind = kind(
+                    if LLVM.version().major >= 12
+                        TypeAttribute("sret", LLVM.Int32Type())
+                    else
+                        EnumAttribute("sret")
+                    end
+                )
+                for (i, v) in enumerate(arg_operands_view(st))
                     if v == inst
                         readnone = false
                         readonly = false
@@ -1905,19 +1914,19 @@ function fix_decayaddr!(mod::LLVM.Module)
                         t_sret = false
                         for a in collect(parameter_attributes(fop, i))
                             if kind(a) == sretkind
-				sret_elty = sret_ty(fop, i)
+                                sret_elty = sret_ty(fop, i)
                                 t_sret = true
                             end
                             if kind(a) == kind(StringAttribute("enzyme_sret"))
-				sret_elty = sret_ty(fop, i)
+                                sret_elty = sret_ty(fop, i)
                                 t_sret = true
                             end
                             if kind(a) == kind(StringAttribute("enzymejl_returnRoots"))
-				sret_elty = sret_ty(fop, i)
+                                sret_elty = sret_ty(fop, i)
                                 t_sret = true
                             end
                             if kind(a) == kind(StringAttribute("enzymejl_rooted_typ"))
-			        sret_elty = convert(LLVMType, AnyArray(Int(CountTrackedPointers(get_rooted_typ(fop, i)).count)))
+                                sret_elty = convert(LLVMType, AnyArray(Int(CountTrackedPointers(get_rooted_typ(fop, i)).count)))
                                 t_sret = true
                             end
                             # if kind(a) == kind(StringAttribute("enzyme_sret_v"))
@@ -1955,10 +1964,10 @@ function fix_decayaddr!(mod::LLVM.Module)
                         println(io, "st=", string(st))
                         println(io, "fop=", string(fop))
                     end
-    		    throw(AssertionError(msg))
+                    throw(AssertionError(msg))
                 end
 
-		@assert sret_elty !== nothing
+                @assert sret_elty !== nothing
                 if temp === nothing
                     nb = IRBuilder()
                     position!(nb, first(instructions(first(blocks(f)))))
@@ -1990,48 +1999,48 @@ end
 
 function pre_attr!(mod::LLVM.Module, run_attr)
     if run_attr
-	    for fn in functions(mod)
-		if isempty(blocks(fn))
-		    continue
-		end
-		attrs = collect(function_attributes(fn))
-		prevent = any(
-		    kind(attr) == PRESERVEPRIMAL_ATTR_KIND for attr in attrs
-		)
-		if !prevent
-		    continue
-		end
-        
-		if linkage(fn) == LLVM.API.LLVMInternalLinkage
-		    push!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_internal"))
-		    linkage!(fn, LLVM.API.LLVMExternalLinkage)
-		end
-        
-		if linkage(fn) == LLVM.API.LLVMPrivateLinkage
-		    push!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_private"))
-		    linkage!(fn, LLVM.API.LLVMExternalLinkage)
-		end
-		continue
+        for fn in functions(mod)
+            if isempty(blocks(fn))
+                continue
+            end
+            attrs = collect(function_attributes(fn))
+            prevent = any(
+                kind(attr) == PRESERVEPRIMAL_ATTR_KIND for attr in attrs
+            )
+            if !prevent
+                continue
+            end
 
-		if !has_fn_attr(fn, EnumAttribute("noinline"))
-		    push!(LLVM.function_attributes(fn), EnumAttribute("noinline"))
-		    push!(LLVM.function_attributes(fn), StringAttribute("remove_noinline"))
-		end
-		
-		if !has_fn_attr(fn, EnumAttribute("optnone"))
-		    push!(LLVM.function_attributes(fn), EnumAttribute("optnone"))
-		    push!(LLVM.function_attributes(fn), StringAttribute("remove_optnone"))
-		end
-	    end
+            if linkage(fn) == LLVM.API.LLVMInternalLinkage
+                push!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_internal"))
+                linkage!(fn, LLVM.API.LLVMExternalLinkage)
+            end
+
+            if linkage(fn) == LLVM.API.LLVMPrivateLinkage
+                push!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_private"))
+                linkage!(fn, LLVM.API.LLVMExternalLinkage)
+            end
+            continue
+
+            if !has_fn_attr(fn, EnumAttribute("noinline"))
+                push!(LLVM.function_attributes(fn), EnumAttribute("noinline"))
+                push!(LLVM.function_attributes(fn), StringAttribute("remove_noinline"))
+            end
+
+            if !has_fn_attr(fn, EnumAttribute("optnone"))
+                push!(LLVM.function_attributes(fn), EnumAttribute("optnone"))
+                push!(LLVM.function_attributes(fn), StringAttribute("remove_optnone"))
+            end
+        end
     end
     return nothing
-    
+
     for fn in collect(functions(mod))
         if isempty(blocks(fn))
             continue
         end
         if linkage(fn) != LLVM.API.LLVMInternalLinkage &&
-           linkage(fn) != LLVM.API.LLVMPrivateLinkage
+                linkage(fn) != LLVM.API.LLVMPrivateLinkage
             continue
         end
 
@@ -2053,27 +2062,27 @@ end
 
 function post_attr!(mod::LLVM.Module, run_attr)
     if run_attr
-	    for fn in functions(mod)
-		if has_fn_attr(fn, StringAttribute("restorelinkage_internal"))
-		    delete!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_internal"))
-		    linkage!(fn, LLVM.API.LLVMInternalLinkage)
-		end
-		
-		if has_fn_attr(fn, StringAttribute("restorelinkage_private"))
-		    delete!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_private"))
-		    linkage!(fn, LLVM.API.LLVMPrivateLinkage)
-		end
+        for fn in functions(mod)
+            if has_fn_attr(fn, StringAttribute("restorelinkage_internal"))
+                delete!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_internal"))
+                linkage!(fn, LLVM.API.LLVMInternalLinkage)
+            end
 
-		if has_fn_attr(fn, StringAttribute("remove_noinline"))
-		    delete!(LLVM.function_attributes(fn), EnumAttribute("noinline"))
-		    delete!(LLVM.function_attributes(fn), StringAttribute("remove_noinline"))
-		end
-		
-		if has_fn_attr(fn, StringAttribute("remove_optnone"))
-		    delete!(LLVM.function_attributes(fn), EnumAttribute("optnone"))
-		    delete!(LLVM.function_attributes(fn), StringAttribute("remove_optnone"))
-		end
-	    end
+            if has_fn_attr(fn, StringAttribute("restorelinkage_private"))
+                delete!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_private"))
+                linkage!(fn, LLVM.API.LLVMPrivateLinkage)
+            end
+
+            if has_fn_attr(fn, StringAttribute("remove_noinline"))
+                delete!(LLVM.function_attributes(fn), EnumAttribute("noinline"))
+                delete!(LLVM.function_attributes(fn), StringAttribute("remove_noinline"))
+            end
+
+            if has_fn_attr(fn, StringAttribute("remove_optnone"))
+                delete!(LLVM.function_attributes(fn), EnumAttribute("optnone"))
+                delete!(LLVM.function_attributes(fn), StringAttribute("remove_optnone"))
+            end
+        end
     end
     return nothing
 end
@@ -2081,7 +2090,7 @@ end
 function prop_global!(g::LLVM.GlobalVariable)
     newfns = String[]
     changed = false
-    todo = Tuple{Vector{Cuint},LLVM.Value}[]
+    todo = Tuple{Vector{Cuint}, LLVM.Value}[]
     for u in LLVM.uses(g)
         u = LLVM.user(u)
         push!(todo, (Cuint[], u))
@@ -2105,11 +2114,11 @@ function prop_global!(g::LLVM.GlobalVariable)
                     end
                 end
             end
-	    if value_type(var) != value_type(res)
-		al = alloca!(B, value_type(res))
-		store!(B, res, al)
-		res = load!(B, value_type(var), al)
-	    end
+            if value_type(var) != value_type(res)
+                al = alloca!(B, value_type(res))
+                store!(B, res, al)
+                res = load!(B, value_type(var), al)
+            end
             replace_uses!(var, res)
             eraseInst(LLVM.parent(var), var)
             continue
@@ -2138,9 +2147,11 @@ function prop_global!(g::LLVM.GlobalVariable)
                             (
                                 vcat(
                                     path,
-                                    collect((
-                                        convert(Cuint, v) for v in operands(var)[3:end]
-                                    )),
+                                    collect(
+                                        (
+                                            convert(Cuint, v) for v in operands(var)[3:end]
+                                        )
+                                    ),
                                 ),
                                 u,
                             ),
@@ -2184,7 +2195,7 @@ function mayWriteToMemory(@nospecialize(inst::LLVM.Instruction); err_is_readonly
             Libc.malloc(sizeof(LLVM.API.LLVMAttributeRef) * count),
         )
         LLVM.API.LLVMGetCallSiteAttributes(inst, idx, Attrs)
-        for j = 1:count
+        for j in 1:count
             attr = LLVM.Attribute(unsafe_load(Attrs, j))
             if kind(attr) == READNONE_ATTR_KIND
                 return false
@@ -2298,7 +2309,7 @@ function propagate_returned!(mod::LLVM.Module)
     globs = LLVM.GlobalVariable[]
     for g in globals(mod)
         if linkage(g) == LLVM.API.LLVMInternalLinkage ||
-           linkage(g) == LLVM.API.LLVMPrivateLinkage
+                linkage(g) == LLVM.API.LLVMPrivateLinkage
             if !isconstant(g)
                 continue
             end
@@ -2316,7 +2327,7 @@ function propagate_returned!(mod::LLVM.Module)
                 push!(next, f)
             end
         end
-        tofinalize = Tuple{LLVM.Function,Bool,Vector{Int64}}[]
+        tofinalize = Tuple{LLVM.Function, Bool, Vector{Int64}}[]
         for fn in functions(mod)
             if isempty(blocks(fn))
                 continue
@@ -2325,264 +2336,264 @@ function propagate_returned!(mod::LLVM.Module)
                 changed = true
             end
             has_user = false
-	    for u in LLVM.uses(fn)
-		has_user = true
-		break
-	    end
+            for u in LLVM.uses(fn)
+                has_user = true
+                break
+            end
             attrs = collect(function_attributes(fn))
             prevent = any(
                 kind(attr) == PRESERVEPRIMAL_ATTR_KIND for
-                attr in attrs
+                    attr in attrs
             )
-            # if any(kind(attr) == kind(EnumAttribute("noinline")) for attr in attrs) 
+            # if any(kind(attr) == kind(EnumAttribute("noinline")) for attr in attrs)
             #     continue
             # end
             argn = nothing
             toremove = Int64[]
-	    # Don't bother with functions we're about to delete anyways
-	    if has_user
-            for (i, arg) in enumerate(parameters(fn))
-                if any(
-                    kind(attr) == RETURNED_ATTR_KIND for
-                    attr in collect(parameter_attributes(fn, i))
-                )
-                    argn = i
-                end
-
-                # remove unused sret-like
-                if !prevent &&
-                   (
-                       linkage(fn) == LLVM.API.LLVMInternalLinkage ||
-                       linkage(fn) == LLVM.API.LLVMPrivateLinkage
-                   ) &&
-                   any(
-                       kind(attr) == NOCAPTURE_ATTR_KIND for
-                       attr in collect(parameter_attributes(fn, i))
-                   )
-                    val = nothing
-                    illegalUse = false
-                    torem = LLVM.Instruction[]
-
-                    for u in LLVM.uses(fn)
-                        un = LLVM.user(u)
-                        if !isa(un, LLVM.CallInst)
-                            illegalUse = true
-                            break
-                        end
-                        if LLVM.called_type(un) != LLVM.function_type(fn)
-                            illegalUse = true
-                            break
-                        end
-                        bad = false
-                        for op in arg_operands_view(un)
-                            if op == fn
-                                bad = true
-                                break
-                            end
-                        end
-                        if bad
-                            illegalUse = true
-                            break
-                        end
-                        op_i = operands(un)[i]
-                        if !isa(op_i, LLVM.AllocaInst) && !isa(op_i, LLVM.UndefValue) && !isa(op_i, LLVM.PoisonValue)
-                            illegalUse = true
-                            break
-                        end
-                        seenfn = false
-                        todo = LLVM.Instruction[]
-                        if isa(op_i, LLVM.AllocaInst)
-			for u2 in LLVM.uses(op_i)
-                            un2 = LLVM.user(u2)
-                            push!(todo, un2)
-                        end
-			end
-                        while length(todo) > 0
-                            un2 = pop!(todo)
-                            if isa(un2, LLVM.BitCastInst)
-                                push!(torem, un2)
-                                for u3 in LLVM.uses(un2)
-                                    un3 = LLVM.user(u3)
-                                    push!(todo, un3)
-                                end
-                                continue
-                            end
-                            if isa(un2, LLVM.GetElementPtrInst)
-                                push!(torem, un2)
-                                for u3 in LLVM.uses(un2)
-                                    un3 = LLVM.user(u3)
-                                    push!(todo, un3)
-                                end
-                                continue
-                            end
-                            if !isa(un2, LLVM.CallInst)
-                                illegalUse = true
-                                break
-                            end
-                            ff = LLVM.called_operand(un2)
-                            if !isa(ff, LLVM.Function)
-                                illegalUse = true
-                                break
-                            end
-                            if un2 == un && !seenfn
-                                seenfn = true
-                                continue
-                            end
-                            intr = LLVM.API.LLVMGetIntrinsicID(ff)
-                            if intr == LLVM.Intrinsic("llvm.lifetime.start").id
-                                push!(torem, un2)
-                                continue
-                            end
-                            if intr == LLVM.Intrinsic("llvm.lifetime.end").id
-                                push!(torem, un2)
-                                continue
-                            end
-                            if LLVM.name(ff) != "llvm.enzyme.sret_use"
-                                illegalUse = true
-                                break
-                            end
-                            push!(torem, un2)
-                        end
-                        if illegalUse
-                            break
-                        end
+            # Don't bother with functions we're about to delete anyways
+            if has_user
+                for (i, arg) in enumerate(parameters(fn))
+                    if any(
+                            kind(attr) == RETURNED_ATTR_KIND for
+                                attr in collect(parameter_attributes(fn, i))
+                        )
+                        argn = i
                     end
-                    if !illegalUse
-                        has_use = false
-                        for _ in LLVM.uses(arg)
-                            has_use = true
-                            break
-                        end
-                        
-                        argeltype = if has_use
-                            argeltype0 = sret_ty(fn, i, #=btval=#nothing, #=throw_error=#false)
-                            if argeltype0 === nothing
-                                illegalUse = true
-                            end
-                            argeltype0
-                        end
-                        if !illegalUse
-                            for c in reverse(torem)
-                                eraseInst(LLVM.parent(c), c)
-                            end
-                            if has_use
-                                B = IRBuilder()
-                                position!(B, first(instructions(first(blocks(fn)))))
-                                al = alloca!(B, argeltype)
-                                if value_type(al) != value_type(arg)
-                                    al = addrspacecast!(B, al, value_type(arg))
-                                end
-                                LLVM.replace_uses!(arg, al)
-                            end
-                        end
-                    end
-                end
 
-                # interprocedural const prop from callers of arg
-                if !prevent && (
-                    linkage(fn) == LLVM.API.LLVMInternalLinkage ||
-                    linkage(fn) == LLVM.API.LLVMPrivateLinkage
-                )
-                    val = nothing
-                    illegalUse = false
-                    for u in LLVM.uses(fn)
-                        un = LLVM.user(u)
-                        if !isa(un, LLVM.CallInst)
-                            illegalUse = true
-                            break
-                        end
-                        if LLVM.called_type(un) != LLVM.function_type(fn)
-                            illegalUse = true
-                            break
-                        end
-                        bad = false
-                        for op in arg_operands_view(un)
-                            if op == fn
-                                bad = true
+                    # remove unused sret-like
+                    if !prevent &&
+                            (
+                            linkage(fn) == LLVM.API.LLVMInternalLinkage ||
+                                linkage(fn) == LLVM.API.LLVMPrivateLinkage
+                        ) &&
+                            any(
+                            kind(attr) == NOCAPTURE_ATTR_KIND for
+                                attr in collect(parameter_attributes(fn, i))
+                        )
+                        val = nothing
+                        illegalUse = false
+                        torem = LLVM.Instruction[]
+
+                        for u in LLVM.uses(fn)
+                            un = LLVM.user(u)
+                            if !isa(un, LLVM.CallInst)
+                                illegalUse = true
                                 break
                             end
-                        end
-                        if bad
-                            illegalUse = true
-                            break
-                        end
-                        op_i = operands(un)[i]
-                        if isa(op_i, LLVM.UndefValue) || isa(op_i, LLVM.PoisonValue)
-                            continue
-                        end
-                        if op_i == arg
-                            continue
-                        end
-                        if isa(op_i, LLVM.Constant)
-                            if val === nothing
-                                val = op_i
-                            else
-                                if val != op_i
-                                    illegalUse = true
+                            if LLVM.called_type(un) != LLVM.function_type(fn)
+                                illegalUse = true
+                                break
+                            end
+                            bad = false
+                            for op in arg_operands_view(un)
+                                if op == fn
+                                    bad = true
                                     break
                                 end
                             end
-                            continue
-                        end
-                        illegalUse = true
-                        break
-                    end
-                    if !illegalUse
-                        if val === nothing
-                            val = LLVM.UndefValue(value_type(arg))
-                        end
-                        for u in LLVM.uses(arg)
-                            u = LLVM.user(u)
-                            if isa(u, LLVM.CallInst)
-                                f2 = LLVM.called_operand(u)
-                                if isa(f2, LLVM.Function)
-                                    push!(next, LLVM.name(f2))
+                            if bad
+                                illegalUse = true
+                                break
+                            end
+                            op_i = operands(un)[i]
+                            if !isa(op_i, LLVM.AllocaInst) && !isa(op_i, LLVM.UndefValue) && !isa(op_i, LLVM.PoisonValue)
+                                illegalUse = true
+                                break
+                            end
+                            seenfn = false
+                            todo = LLVM.Instruction[]
+                            if isa(op_i, LLVM.AllocaInst)
+                                for u2 in LLVM.uses(op_i)
+                                    un2 = LLVM.user(u2)
+                                    push!(todo, un2)
                                 end
                             end
-                            changed = true
+                            while length(todo) > 0
+                                un2 = pop!(todo)
+                                if isa(un2, LLVM.BitCastInst)
+                                    push!(torem, un2)
+                                    for u3 in LLVM.uses(un2)
+                                        un3 = LLVM.user(u3)
+                                        push!(todo, un3)
+                                    end
+                                    continue
+                                end
+                                if isa(un2, LLVM.GetElementPtrInst)
+                                    push!(torem, un2)
+                                    for u3 in LLVM.uses(un2)
+                                        un3 = LLVM.user(u3)
+                                        push!(todo, un3)
+                                    end
+                                    continue
+                                end
+                                if !isa(un2, LLVM.CallInst)
+                                    illegalUse = true
+                                    break
+                                end
+                                ff = LLVM.called_operand(un2)
+                                if !isa(ff, LLVM.Function)
+                                    illegalUse = true
+                                    break
+                                end
+                                if un2 == un && !seenfn
+                                    seenfn = true
+                                    continue
+                                end
+                                intr = LLVM.API.LLVMGetIntrinsicID(ff)
+                                if intr == LLVM.Intrinsic("llvm.lifetime.start").id
+                                    push!(torem, un2)
+                                    continue
+                                end
+                                if intr == LLVM.Intrinsic("llvm.lifetime.end").id
+                                    push!(torem, un2)
+                                    continue
+                                end
+                                if LLVM.name(ff) != "llvm.enzyme.sret_use"
+                                    illegalUse = true
+                                    break
+                                end
+                                push!(torem, un2)
+                            end
+                            if illegalUse
+                                break
+                            end
                         end
-                        LLVM.replace_uses!(arg, val)
+                        if !illegalUse
+                            has_use = false
+                            for _ in LLVM.uses(arg)
+                                has_use = true
+                                break
+                            end
+
+                            argeltype = if has_use
+                                argeltype0 = sret_ty(fn, i, #=btval=# nothing, #=throw_error=# false)
+                                if argeltype0 === nothing
+                                    illegalUse = true
+                                end
+                                argeltype0
+                            end
+                            if !illegalUse
+                                for c in reverse(torem)
+                                    eraseInst(LLVM.parent(c), c)
+                                end
+                                if has_use
+                                    B = IRBuilder()
+                                    position!(B, first(instructions(first(blocks(fn)))))
+                                    al = alloca!(B, argeltype)
+                                    if value_type(al) != value_type(arg)
+                                        al = addrspacecast!(B, al, value_type(arg))
+                                    end
+                                    LLVM.replace_uses!(arg, al)
+                                end
+                            end
+                        end
+                    end
+
+                    # interprocedural const prop from callers of arg
+                    if !prevent && (
+                            linkage(fn) == LLVM.API.LLVMInternalLinkage ||
+                                linkage(fn) == LLVM.API.LLVMPrivateLinkage
+                        )
+                        val = nothing
+                        illegalUse = false
+                        for u in LLVM.uses(fn)
+                            un = LLVM.user(u)
+                            if !isa(un, LLVM.CallInst)
+                                illegalUse = true
+                                break
+                            end
+                            if LLVM.called_type(un) != LLVM.function_type(fn)
+                                illegalUse = true
+                                break
+                            end
+                            bad = false
+                            for op in arg_operands_view(un)
+                                if op == fn
+                                    bad = true
+                                    break
+                                end
+                            end
+                            if bad
+                                illegalUse = true
+                                break
+                            end
+                            op_i = operands(un)[i]
+                            if isa(op_i, LLVM.UndefValue) || isa(op_i, LLVM.PoisonValue)
+                                continue
+                            end
+                            if op_i == arg
+                                continue
+                            end
+                            if isa(op_i, LLVM.Constant)
+                                if val === nothing
+                                    val = op_i
+                                else
+                                    if val != op_i
+                                        illegalUse = true
+                                        break
+                                    end
+                                end
+                                continue
+                            end
+                            illegalUse = true
+                            break
+                        end
+                        if !illegalUse
+                            if val === nothing
+                                val = LLVM.UndefValue(value_type(arg))
+                            end
+                            for u in LLVM.uses(arg)
+                                u = LLVM.user(u)
+                                if isa(u, LLVM.CallInst)
+                                    f2 = LLVM.called_operand(u)
+                                    if isa(f2, LLVM.Function)
+                                        push!(next, LLVM.name(f2))
+                                    end
+                                end
+                                changed = true
+                            end
+                            LLVM.replace_uses!(arg, val)
+                        end
+                    end
+
+                    # see if there are no users of the value (excluding recursive/return)
+                    if !prevent
+                        baduse = false
+                        for u in LLVM.uses(arg)
+                            u = LLVM.user(u)
+                            if argn == i && LLVM.API.LLVMIsAReturnInst(u) != C_NULL
+                                continue
+                            end
+                            if !isa(u, LLVM.CallInst)
+                                baduse = true
+                                break
+                            end
+                            if LLVM.called_operand(u) != fn
+                                baduse = true
+                                break
+                            end
+                            for (si, op) in enumerate(operands(u))
+                                if si == i
+                                    continue
+                                end
+                                if op == arg
+                                    baduse = true
+                                    break
+                                end
+                            end
+                            if baduse
+                                break
+                            end
+                        end
+                        if !baduse
+                            push!(toremove, i - 1)
+                        end
                     end
                 end
-                
-		# see if there are no users of the value (excluding recursive/return)
-                if !prevent
-			baduse = false
-			for u in LLVM.uses(arg)
-			    u = LLVM.user(u)
-			    if argn == i && LLVM.API.LLVMIsAReturnInst(u) != C_NULL
-				continue
-			    end
-			    if !isa(u, LLVM.CallInst)
-				baduse = true
-				break
-			    end
-			    if LLVM.called_operand(u) != fn
-				baduse = true
-				break
-			    end
-			    for (si, op) in enumerate(operands(u))
-				if si == i
-				    continue
-				end
-				if op == arg
-				    baduse = true
-				    break
-				end
-			    end
-			    if baduse
-				break
-			    end
-			end
-			if !baduse
-			    push!(toremove, i - 1)
-			end
-		end
             end
-	    end
             illegalUse = !(
                 linkage(fn) == LLVM.API.LLVMInternalLinkage ||
-                linkage(fn) == LLVM.API.LLVMPrivateLinkage
+                    linkage(fn) == LLVM.API.LLVMPrivateLinkage
             )
             hasAnyUse = false
             for u in LLVM.uses(fn)
@@ -2595,28 +2606,28 @@ function propagate_returned!(mod::LLVM.Module)
                     illegalUse = true
                     continue
                 end
-                        bad = false
-                        for op in arg_operands_view(un)
-                            if op == fn
-                                bad = true
-                                break
-                            end
-                        end
-                        if bad
-                            illegalUse = true
-                            continue
-                        end
-                        if argn !== nothing
-                            hasUse = false
-                            for u2 in LLVM.uses(un)
-                                hasUse = true
-                                break
-                            end
-                            if hasUse
-                                changed = true
-                                push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
-                                LLVM.replace_uses!(un, operands(un)[argn])
-                            end
+                bad = false
+                for op in arg_operands_view(un)
+                    if op == fn
+                        bad = true
+                        break
+                    end
+                end
+                if bad
+                    illegalUse = true
+                    continue
+                end
+                if argn !== nothing
+                    hasUse = false
+                    for u2 in LLVM.uses(un)
+                        hasUse = true
+                        break
+                    end
+                    if hasUse
+                        changed = true
+                        push!(next, LLVM.name(LLVM.parent(LLVM.parent(un))))
+                        LLVM.replace_uses!(un, operands(un)[argn])
+                    end
                 else
                     for u in LLVM.uses(un)
                         u = LLVM.user(u)
@@ -2633,8 +2644,8 @@ function propagate_returned!(mod::LLVM.Module)
             end
             #if the function return has no users whatsoever, remove it
             if argn === nothing &&
-               !hasAnyUse &&
-               LLVM.return_type(LLVM.function_type(fn)) != LLVM.VoidType()
+                    !hasAnyUse &&
+                    LLVM.return_type(LLVM.function_type(fn)) != LLVM.VoidType()
                 argn = -1
             end
             if argn === nothing && length(toremove) == 0
@@ -2653,22 +2664,22 @@ function propagate_returned!(mod::LLVM.Module)
             delete_writes_into_removed_args(fn, toremove, keepret)
             nm = LLVM.name(fn)
             #try
-                nfn = LLVM.Function(
-                    API.EnzymeCloneFunctionWithoutReturnOrArgs(fn, keepret, toremove),
-                )
-                for u in LLVM.uses(fn)
-                    un = LLVM.user(u)
-                    push!(todo, un)
+            nfn = LLVM.Function(
+                API.EnzymeCloneFunctionWithoutReturnOrArgs(fn, keepret, toremove),
+            )
+            for u in LLVM.uses(fn)
+                un = LLVM.user(u)
+                push!(todo, un)
+            end
+            for un in todo
+                md = metadata(un)
+                if !keepret && haskey(md, LLVM.MD_range)
+                    delete!(md, LLVM.MD_range)
                 end
-                for un in todo
-                    md = metadata(un)
-                    if !keepret && haskey(md, LLVM.MD_range)
-                        delete!(md, LLVM.MD_range)
-                    end
-                    API.EnzymeSetCalledFunction(un, nfn, toremove)
-                end
-                eraseInst(mod, fn)
-                changed = true
+                API.EnzymeSetCalledFunction(un, nfn, toremove)
+            end
+            eraseInst(mod, fn)
+            changed = true
             # catch e
             #    break
             #end
@@ -2680,7 +2691,7 @@ function propagate_returned!(mod::LLVM.Module)
             for name in next
                 fn = functions(mod)[name]
                 if linkage(fn) == LLVM.API.LLVMInternalLinkage ||
-                   linkage(fn) == LLVM.API.LLVMPrivateLinkage
+                        linkage(fn) == LLVM.API.LLVMPrivateLinkage
                     has_external_user = false
                     for u in LLVM.uses(fn)
                         user_inst = LLVM.user(u)
@@ -2704,6 +2715,7 @@ function propagate_returned!(mod::LLVM.Module)
             end
         end
     end
+    return
 end
 
 function delete_writes_into_removed_args(fn::LLVM.Function, toremove::Vector{Int64}, keepret::Bool)
@@ -2731,8 +2743,8 @@ function delete_writes_into_removed_args(fn::LLVM.Function, toremove::Vector{Int
                 end
             end
             if isa(cur, LLVM.GetElementPtrInst) ||
-               isa(cur, LLVM.BitCastInst) ||
-               isa(cur, LLVM.AddrSpaceCastInst)
+                    isa(cur, LLVM.BitCastInst) ||
+                    isa(cur, LLVM.AddrSpaceCastInst)
                 for opv in LLVM.uses(cur)
                     u = LLVM.user(opv)
                     push!(todorep, (u, cur))
@@ -2744,7 +2756,7 @@ function delete_writes_into_removed_args(fn::LLVM.Function, toremove::Vector{Int
                 if cf == fn
                     baduse = false
                     for (i, v) in enumerate(operands(cur))
-                        if i-1 in toremove
+                        if i - 1 in toremove
                             continue
                         end
                         if v == cval
@@ -2759,10 +2771,11 @@ function delete_writes_into_removed_args(fn::LLVM.Function, toremove::Vector{Int
             if !keepret && LLVM.API.LLVMIsAReturnInst(cur) != C_NULL
                 LLVM.API.LLVMSetOperand(cur, 0, LLVM.UndefValue(value_type(cval)))
                 continue
-	        end
+            end
             throw(AssertionError("Deleting argument with an unknown dependency, $(string(cur)) uses $(string(cval))"))
         end
     end
+    return
 end
 
 function validate_return_roots!(mod::LLVM.Module)
@@ -2772,11 +2785,13 @@ function validate_return_roots!(mod::LLVM.Module)
         enzyme_srets_v = Int[]
         rroots = Int[]
         rroots_v = Int[]
-        sretkind = kind(if LLVM.version().major >= 12
-            TypeAttribute("sret", LLVM.Int32Type())
-        else
-            EnumAttribute("sret")
-        end)
+        sretkind = kind(
+            if LLVM.version().major >= 12
+                TypeAttribute("sret", LLVM.Int32Type())
+            else
+                EnumAttribute("sret")
+            end
+        )
         for (i, a) in enumerate(parameters(f))
             for attr in collect(parameter_attributes(f, i))
                 if isa(attr, StringAttribute)
@@ -2802,13 +2817,13 @@ function validate_return_roots!(mod::LLVM.Module)
             @assert enzyme_srets[1] == 1
             VT = LLVM.VoidType()
             if length(enzyme_srets) == 1 &&
-               LLVM.return_type(LLVM.function_type(f)) == VT &&
-               length(enzyme_srets_v) == 0
+                    LLVM.return_type(LLVM.function_type(f)) == VT &&
+                    length(enzyme_srets_v) == 0
                 # Upgrading to sret requires writeonly
                 if !any(
-                    kind(attr) == kind(EnumAttribute("writeonly")) for
-                    attr in collect(parameter_attributes(f, 1))
-                )
+                        kind(attr) == kind(EnumAttribute("writeonly")) for
+                            attr in collect(parameter_attributes(f, 1))
+                    )
                     msg = sprint() do io::IO
                         println(io, "Enzyme internal error (not writeonly sret)")
                         println(io, string(f))
@@ -2933,6 +2948,7 @@ function validate_return_roots!(mod::LLVM.Module)
             @assert false
         end
     end
+    return
 end
 
 function checkNoAssumeFalse(mod::LLVM.Module, shouldshow::Bool = false)
@@ -2961,7 +2977,7 @@ function checkNoAssumeFalse(mod::LLVM.Module, shouldshow::Bool = false)
             end
             if isa(op, LLVM.ICmpInst)
                 if predicate_int(op) == LLVM.API.LLVMIntNE &&
-                   operands(op)[1] == operands(op)[2]
+                        operands(op)[1] == operands(op)[2]
                     msg = sprint() do io
                         println(io, "Enzyme Internal Error: non-icmp assume condition")
                         println(io, "mod=", string(mod))
@@ -2974,11 +2990,12 @@ function checkNoAssumeFalse(mod::LLVM.Module, shouldshow::Bool = false)
             end
         end
     end
+    return
 end
 
 function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, post_gc_fixup::Bool)
     # We need to run globalopt first. This is because remove dead args will otherwise
-    # take internal functions and replace their args with undef. Then on LLVM up to 
+    # take internal functions and replace their args with undef. Then on LLVM up to
     # and including 12 (but fixed 13+), Attributor will incorrectly change functions that
     # call code with undef to become unreachable, even when there exist other valid
     # callsites. See: https://godbolt.org/z/9Y3Gv6q5M
@@ -3085,24 +3102,26 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
                         EnumAttribute("nocapture"),
                     )
                 end
-            end 
+            end
         end
 
-        sretkind = LLVM.kind(if LLVM.version().major >= 12
-            LLVM.TypeAttribute("sret", LLVM.Int32Type())
-        else
-            LLVM.EnumAttribute("sret")
-        end)
-            
+        sretkind = LLVM.kind(
+            if LLVM.version().major >= 12
+                LLVM.TypeAttribute("sret", LLVM.Int32Type())
+            else
+                LLVM.EnumAttribute("sret")
+            end
+        )
+
         # Ensure that interprocedural optimizations do not delete the use of gc sret or returnRoots, this will only occur on 2.
         if post_gc_fixup
             for idx in (1, 2)
                 if length(collect(parameters(fn))) >= idx && any(
-                    (
-                        
-                        ( kind(attr) == sretkind && any_jltypes(LLVM.value(attr))) ||
-                        kind(attr) == kind(StringAttribute("enzymejl_returnRoots"))
-                    ) for attr in collect(parameter_attributes(fn, idx))
+                        (
+
+                            (kind(attr) == sretkind && any_jltypes(LLVM.value(attr))) ||
+                                kind(attr) == kind(StringAttribute("enzymejl_returnRoots"))
+                        ) for attr in collect(parameter_attributes(fn, idx))
                     )
                     if !isempty(blocks(fn))
                         B = IRBuilder()
@@ -3123,9 +3142,9 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
                             # TODO investigate if the inttoptr store that comes from reference caller poses an issue.
                             continue
                             msg = sprint() do io
-                            println(io, "Unknown user of fn: ", string(u))
-                            println(io, "fn: ", string(fn))
-                            println(io, "mod: ", string(LLVM.parent(fn)))
+                                println(io, "Unknown user of fn: ", string(u))
+                                println(io, "fn: ", string(fn))
+                                println(io, "mod: ", string(LLVM.parent(fn)))
                             end
                             throw(AssertionError(msg))
                         end
@@ -3156,35 +3175,35 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
             end
             attrs = collect(parameter_attributes(fn, idx))
             if any(
-                (
-                    kind(attr) == sretkind ||
-                    kind(attr) == kind(StringAttribute("enzyme_sret")) ||
-                    kind(attr) == kind(StringAttribute("enzyme_sret_v"))
-                ) for attr in attrs
-               ) && any_jltypes(sret_ty(fn, idx))
+                    (
+                        kind(attr) == sretkind ||
+                            kind(attr) == kind(StringAttribute("enzyme_sret")) ||
+                            kind(attr) == kind(StringAttribute("enzyme_sret_v"))
+                    ) for attr in attrs
+                ) && any_jltypes(sret_ty(fn, idx))
                 for u in LLVM.uses(fn)
                     u = LLVM.user(u)
                     if isa(u, LLVM.ConstantExpr)
-			for u in LLVM.uses(u)
-			   u = LLVM.user(u)
-			    if !isa(u, LLVM.CallInst)
-				continue
-			    end
-			    @assert isa(u, LLVM.CallInst)
-			    B = IRBuilder()
-			    nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
-			    position!(B, nextInst)
-			    inp = operands(u)[idx]
-			    cl = call!(B, funcT, sfunc, LLVM.Value[inp])
-			    if isa(value_type(inp), LLVM.PointerType)
-				LLVM.API.LLVMAddCallSiteAttribute(
-				    cl,
-				    LLVM.API.LLVMAttributeIndex(1),
-				    EnumAttribute("nocapture"),
-				)
-			    end
-			end
-			continue
+                        for u in LLVM.uses(u)
+                            u = LLVM.user(u)
+                            if !isa(u, LLVM.CallInst)
+                                continue
+                            end
+                            @assert isa(u, LLVM.CallInst)
+                            B = IRBuilder()
+                            nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(u))
+                            position!(B, nextInst)
+                            inp = operands(u)[idx]
+                            cl = call!(B, funcT, sfunc, LLVM.Value[inp])
+                            if isa(value_type(inp), LLVM.PointerType)
+                                LLVM.API.LLVMAddCallSiteAttribute(
+                                    cl,
+                                    LLVM.API.LLVMAttributeIndex(1),
+                                    EnumAttribute("nocapture"),
+                                )
+                            end
+                        end
+                        continue
                     end
                     if !isa(u, LLVM.CallInst)
                         continue
@@ -3219,7 +3238,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
     propagate_returned!(mod)
     LLVM.@dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
-		register!(pb, RestoreAllocaType())
+        register!(pb, RestoreAllocaType())
         add!(pb, NewPMModulePassManager()) do mpm
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, InstCombinePass())
@@ -3248,7 +3267,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
     LLVM.@dispose pb = NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, EnzymeAttributorPass())
-		register!(pb, RestoreAllocaType())
+        register!(pb, RestoreAllocaType())
         add!(pb, NewPMModulePassManager()) do mpm
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, InstCombinePass())
@@ -3269,7 +3288,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
     API.EnzymeDetectReadonlyOrThrow(mod)
     post_attr!(mod, RunAttributor[])
     propagate_returned!(mod)
-    
+
     for u in LLVM.uses(rwfunc)
         u = LLVM.user(u)
         eraseInst(LLVM.parent(u), u)
@@ -3294,7 +3313,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
         u = LLVM.user(u)
         eraseInst(LLVM.parent(u), u)
     end
-    eraseInst(mod, func)
+    return eraseInst(mod, func)
 end
 
 function safe_atomic_to_regular_store!(f::LLVM.Function)
@@ -3321,7 +3340,7 @@ function replace_builtin_fptr!(mod::LLVM.Module)
     jl_get_builtin_fptr_fn = functions(mod)["jl_get_builtin_fptr"]
 
     to_replace_fptr = Tuple{LLVM.CallInst, LLVM.Value}[]
-    
+
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, 10)
     T_pprjlvalue = LLVM.PointerType(T_prjlvalue)
@@ -3349,7 +3368,7 @@ function replace_builtin_fptr!(mod::LLVM.Module)
                             end
                             # Declare / Get the function
                             builtin_fn, _ = get_function!(mod, builtin_c_name, generic_FT)
-                            
+
                             # Cast fptr itself for any remaining uses
                             casted_val = builtin_fn
                             if value_type(builtin_fn) != value_type(inst)
@@ -3403,23 +3422,23 @@ function remove_alwaysinline_roots!(mod::LLVM.Module)
         if isempty(blocks(f))
             continue
         end
-        
+
         B = IRBuilder()
         to_rewrite = []
-        
+
         for bb in blocks(f), inst in instructions(bb)
             if isa(inst, LLVM.CallInst)
                 callee = get_callee(inst)
                 if callee !== nothing && isa(callee, LLVM.Function) && has_fn_attr(callee, EnumAttribute("alwaysinline"))
                     has_roots = false
                     roots = LLVM.Value[]
-                    
+
                     other_bundles = if !isdefined(LLVM, :OperandBundleDef)
                         OperandBundle[]
                     else
                         OperandBundleDef[]
                     end
-                    
+
                     for bunduse in operand_bundles(inst)
                         if isdefined(LLVM, :OperandBundleDef)
                             bund_def = LLVM.OperandBundleDef(bunduse)
@@ -3442,21 +3461,21 @@ function remove_alwaysinline_roots!(mod::LLVM.Module)
                             end
                         end
                     end
-                    
+
                     if has_roots
                         push!(to_rewrite, (inst, roots, other_bundles))
                     end
                 end
             end
         end
-        
+
         for (inst, roots, other_bundles) in to_rewrite
             position!(B, inst)
             token = emit_gc_preserve_begin(B, roots)
-            
+
             prevname = LLVM.name(inst)
             LLVM.name!(inst, "")
-            
+
             newinst = call!(
                 B,
                 called_type(inst),
@@ -3465,15 +3484,15 @@ function remove_alwaysinline_roots!(mod::LLVM.Module)
                 other_bundles,
                 prevname,
             )
-            
+
             for idx in [
-                LLVM.API.LLVMAttributeFunctionIndex,
-                LLVM.API.LLVMAttributeReturnIndex,
-                [
-                    LLVM.API.LLVMAttributeIndex(i) for
-                    i = 1:(length(arguments(inst)))
-                ]...,
-            ]
+                    LLVM.API.LLVMAttributeFunctionIndex,
+                    LLVM.API.LLVMAttributeReturnIndex,
+                    [
+                        LLVM.API.LLVMAttributeIndex(i) for
+                            i in 1:(length(arguments(inst)))
+                    ]...,
+                ]
                 idx = reinterpret(LLVM.API.LLVMAttributeIndex, idx)
                 count = LLVM.API.LLVMGetCallSiteAttributeCount(inst, idx)
                 Attrs = Base.unsafe_convert(
@@ -3481,7 +3500,7 @@ function remove_alwaysinline_roots!(mod::LLVM.Module)
                     Libc.malloc(sizeof(LLVM.API.LLVMAttributeRef) * count),
                 )
                 LLVM.API.LLVMGetCallSiteAttributes(inst, idx, Attrs)
-                for j = 1:count
+                for j in 1:count
                     LLVM.API.LLVMAddCallSiteAttribute(
                         newinst,
                         idx,
@@ -3492,9 +3511,9 @@ function remove_alwaysinline_roots!(mod::LLVM.Module)
             end
             API.EnzymeCopyMetadata(newinst, inst)
             callconv!(newinst, callconv(inst))
-            
+
             emit_gc_preserve_end(B, token)
-            
+
             replace_uses!(inst, newinst)
             LLVM.erase!(inst)
             changed = true
@@ -3546,7 +3565,7 @@ function is_nothing_val(val::LLVM.Value)
     if evaluates_to_nothing(val)
         return true
     end
-    
+
     ptr = val
     while is_cast(ptr)
         ptr = operands(ptr)[1]
@@ -3560,13 +3579,13 @@ function replace_nothing_loads!(mod::LLVM.Module)
         if isempty(blocks(f))
             continue
         end
-        
+
         to_replace = LLVM.Instruction[]
         for bb in blocks(f), inst in instructions(bb)
             if is_nothing_val(inst)
                 push!(to_replace, inst)
             end
-            
+
             for (idx, op) in enumerate(operands(inst))
                 if !isa(op, LLVM.Instruction) && is_nothing_val(op)
                     replacement = ejl_nothing
@@ -3577,11 +3596,11 @@ function replace_nothing_loads!(mod::LLVM.Module)
                             replacement = LLVM.const_bitcast(ejl_nothing, value_type(op))
                         end
                     end
-                    LLVM.API.LLVMSetOperand(inst, idx-1, replacement)
+                    LLVM.API.LLVMSetOperand(inst, idx - 1, replacement)
                 end
             end
         end
-        
+
         for inst in to_replace
             replacement = ejl_nothing
             if value_type(ejl_nothing) != value_type(inst)
@@ -3591,14 +3610,15 @@ function replace_nothing_loads!(mod::LLVM.Module)
                     replacement = LLVM.const_bitcast(ejl_nothing, value_type(inst))
                 end
             end
-            
+
             LLVM.replace_uses!(inst, replacement)
         end
-        
+
         for inst in to_replace
             if isempty(LLVM.uses(inst))
                 LLVM.API.LLVMInstructionEraseFromParent(inst)
             end
         end
     end
+    return
 end
