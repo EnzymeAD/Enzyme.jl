@@ -3399,18 +3399,29 @@ function split_gpu_sincos!(target, mod::LLVM.Module)
     else
         return nothing
     end
+    # A definition is split as well: a top-level compilation (e.g. `tape_type` for a kernel) has linked
+    # libdevice, whose `__nv_sincos` body libEnzyme cannot differentiate (inline assembly).
     for (sincos_name, sin_name, cos_name, T, sin_returned) in forms
         haskey(functions(mod), sincos_name) || continue
         sincos_f = functions(mod)[sincos_name]
-        isempty(blocks(sincos_f)) || continue
         FT = LLVM.FunctionType(T, [T])
         sin_f, _ = get_function!(mod, sin_name, FT)
         cos_f, _ = get_function!(mod, cos_name, FT)
-        for u in collect(LLVM.uses(sincos_f))
-            call = LLVM.user(u)
-            if !isa(call, LLVM.CallInst) || LLVM.called_operand(call) != sincos_f
-                continue
+        calls = LLVM.CallInst[]
+        for u in LLVM.uses(sincos_f)
+            user = LLVM.user(u)
+            if user isa LLVM.CallInst && LLVM.called_operand(user) == sincos_f
+                push!(calls, user)
+            elseif user isa LLVM.ConstantExpr && opcode(user) == LLVM.API.LLVMBitCast
+                # typed pointers: once libdevice is linked, CUDA.jl's declaration (pointers as `i64`)
+                # calls the definition through a cast
+                for u2 in LLVM.uses(user)
+                    call = LLVM.user(u2)
+                    call isa LLVM.CallInst && LLVM.called_operand(call) == user && push!(calls, call)
+                end
             end
+        end
+        for call in calls
             args = arguments(call)
             # positioning at `call` also gives the new instructions its debug location
             B = LLVM.IRBuilder()

@@ -351,6 +351,24 @@ end
     end
 end
 
+# `tape_type` with a CUDA parent job, as KernelAbstractions' reverse rule calls it, compiles the
+# derivative as a top-level job, which links libdevice before differentiation: `__nv_sincos` is then a
+# definition, and must still be split (its body has inline assembly, an abort in type analysis).
+function sincos_store!(x, y)
+    s, c = sincos(y[1])
+    x[1] = s * c
+    return nothing
+end
+@testset "tape_type with a CUDA parent job, $T" for T in (Float32, Float64)
+    job = Enzyme.EnzymeCore.compiler_job_from_backend(CUDA.CUDABackend(), typeof(() -> return), Tuple{})
+    mode = ReverseSplitModified(ReverseSplitWithPrimal, Val((true, true, true)))
+    TT = Enzyme.tape_type(
+        job, mode, Const{typeof(sincos_store!)}, Const{Nothing},
+        Duplicated{CuDeviceVector{T, 1}}, Duplicated{CuDeviceVector{T, 1}}
+    )
+    @test TT isa Type
+end
+
 function square_kernel!(x)
     i = threadIdx().x
     x[i] *= x[i]

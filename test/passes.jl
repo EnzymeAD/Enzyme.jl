@@ -274,6 +274,61 @@ end
         end
     end
 
+    @testset "CUDA, libdevice linked" begin
+        # A top-level compilation (`tape_type` for a kernel, for example) links libdevice
+        # before AD, so `__nv_sincos` has a body there. It is split all the same: libEnzyme
+        # can't differentiate that body, whose argument reduction uses inline assembly.
+        LLVM.Context() do ctx
+            ir = """
+            declare double @__nv_sin(double)
+            declare double @__nv_cos(double)
+            define void @__nv_sincos(double %x, double* %s, double* %c) {
+              %sv = call double @__nv_sin(double %x)
+              store double %sv, double* %s
+              %cv = call double @__nv_cos(double %x)
+              store double %cv, double* %c
+              ret void
+            }
+            define void @kernel(double %x, double* %s, double* %c) {
+              call void @__nv_sincos(double %x, double* %s, double* %c)
+              ret void
+            }"""
+            mod = parse(LLVM.Module, ir)
+            Enzyme.Compiler.split_gpu_sincos!(GPUCompiler.PTXCompilerTarget(; cap = v"7.0"), mod)
+            k = functions(mod)["kernel"]
+            @test callees(k) == ["__nv_sin", "__nv_cos"]
+            @test stored(k) == [("__nv_sin", "s"), ("__nv_cos", "c")]
+            @test !haskey(functions(mod), "__nv_sincos")
+            verify(mod)
+        end
+    end
+
+    @testset "CUDA, libdevice linked, called through a cast" begin
+        # With typed pointers, linking libdevice turns CUDA.jl's declaration (pointers as `i64`)
+        # into a `bitcast` of libdevice's definition, which the call goes through. With opaque
+        # pointers, the same IR is a direct call.
+        LLVM.Context() do ctx
+            ir = """
+            declare double @__nv_sin(double)
+            declare double @__nv_cos(double)
+            define void @__nv_sincos(double %x, double* %s, double* %c) {
+              %sv = call double @__nv_sin(double %x)
+              store double %sv, double* %s
+              %cv = call double @__nv_cos(double %x)
+              store double %cv, double* %c
+              ret void
+            }
+            define void @kernel(double %x, i64 %s, i64 %c) {
+              call void bitcast (void (double, double*, double*)* @__nv_sincos to void (double, i64, i64)*)(double %x, i64 %s, i64 %c)
+              ret void
+            }"""
+            mod = parse(LLVM.Module, ir)
+            Enzyme.Compiler.split_gpu_sincos!(GPUCompiler.PTXCompilerTarget(; cap = v"7.0"), mod)
+            @test callees(functions(mod)["kernel"]) == ["__nv_sin", "__nv_cos"]
+            verify(mod)
+        end
+    end
+
     @testset "Metal" begin
         LLVM.Context() do ctx
             ir = """
