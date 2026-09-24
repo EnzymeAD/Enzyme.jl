@@ -1,0 +1,5 @@
+# Run `git config blame.ignoreRevsFile .git-blame-ignore-revs` to use locally.
+# GitHub picks this file up automatically.
+
+# Runic formatting of files not touched by open PRs
+a9dd0b6b232254a8c357da4360ab40ce48f5505a
