@@ -181,9 +181,19 @@ GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) 
 # GPUCompiler.isintrinsic(::CompilerJob{EnzymeTarget}, fn::String) = true
 # GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
 
-# TODO: encode debug build or not in the compiler job
-#       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
-GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
+# GPUCompiler 2.x moved the code-instance cache onto CompilerCaching.jl and renamed the hooks:
+# `ci_cache_token` became `cache_owner`, `ci_cache` (Julia 1.10) became `get_code_cache`,
+# `runtime_slug` and `codegen` are gone, and `compile_method_instance` drives inference
+# through `drive_inference!`, which it only provides for its own interpreter. Enzyme supports
+# both majors; every version split below keys on this one probe.
+const HAS_GPUCOMPILER_2 = isdefined(GPUCompiler, :cache_owner)
+
+# GPUCompiler 1.x names the runtime library per back-end; 2.x derives it from the cache owner.
+@static if !HAS_GPUCOMPILER_2
+    # TODO: encode debug build or not in the compiler job
+    #       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
+    GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
+end
 
 # provide a specific interpreter to use.
 if VERSION >= v"1.11.0-DEV.1552"
@@ -209,7 +219,7 @@ if VERSION >= v"1.11.0-DEV.1552"
             inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
         )
 
-    GPUCompiler.ci_cache_token(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+    enzyme_cache_owner(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
         EnzymeCacheToken(
         GPUCompiler.method_table(job),
             job.world,
@@ -218,9 +228,17 @@ if VERSION >= v"1.11.0-DEV.1552"
             true
         )
 
+    @static if HAS_GPUCOMPILER_2
+        GPUCompiler.cache_owner(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            enzyme_cache_owner(job)
+    else
+        GPUCompiler.ci_cache_token(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            enzyme_cache_owner(job)
+    end
+
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         Interpreter.EnzymeInterpreter(
-            GPUCompiler.ci_cache_token(job),
+        enzyme_cache_owner(job),
             GPUCompiler.method_table(job),
             job.world,
             job.config.params.mode,
@@ -241,8 +259,13 @@ else
         end
     end
 
-    GPUCompiler.ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        enzyme_ci_cache(job)
+    @static if HAS_GPUCOMPILER_2
+        GPUCompiler.get_code_cache(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            enzyme_ci_cache(job)
+    else
+        GPUCompiler.ci_cache(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            enzyme_ci_cache(job)
+    end
 
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         Interpreter.EnzymeInterpreter(
@@ -721,6 +744,73 @@ include("compiler/validation.jl")
 include("typeutils/inference.jl")
 
 import .Interpreter: isKWCallSignature
+
+# GPUCompiler 2.x's `compile_method_instance` drives inference through this hook, which
+# GPUCompiler only defines for its own `GPUInterpreter`.
+@static if HAS_GPUCOMPILER_2
+    @static if VERSION >= v"1.11.0-DEV.1552"
+        GPUCompiler.drive_inference!(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance) =
+            GPUCompiler.CompilerCaching.typeinf!(interp, mi)
+    else
+        # Mirrors GPUCompiler's own `CodeCache`-based `drive_inference!` (jlgen.jl), which
+        # is typed on `GPUInterpreter` and therefore cannot be reused for ours.
+        function GPUCompiler.drive_inference!(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance)
+            src = Core.Compiler.typeinf_ext_toplevel(interp, mi)
+            @assert src !== nothing "Inference of $mi failed"
+
+            # For const-return CIs the inference result wasn't recorded; set it from the
+            # returned source so callers re-using the CI don't need to re-infer.
+            wvc = Core.Compiler.code_cache(interp)
+            if Core.Compiler.haskey(wvc, mi)
+                ci = Core.Compiler.getindex(wvc, mi)
+                if ci.inferred === nothing
+                    @atomic ci.inferred = src
+                end
+            end
+            return nothing
+        end
+    end
+end
+
+"""
+    resolve_relocations!(job, mod, meta)
+
+Resolve the Julia-value references of a freshly emitted primal module to their host
+addresses, the shape GPUCompiler 1.x always produced.
+
+GPUCompiler 2.x keeps those references symbolic — an `extinit` slot named after the value,
+with no initializer — and resolves them itself only for a toplevel job. A job compiled on
+behalf of another (`toplevel = false`), which is how a deferred derivative reaches Enzyme,
+hands us the slots unresolved, and neither `absint` nor the shadow machinery can read one:
+the type argument of an allocation stops being statically known, and a constant global has
+no shadow. Relocatable derivative modules are left to later changes.
+
+Baking is only correct for a back-end whose `relocation_lowering` is `:bake`: the words
+written in are addresses in this process. A `:patch` or `:table` back-end deliberately
+keeps them symbolic (its code runs elsewhere, or the module outlives the session), so for
+those the records are left untouched: `link_relocatable!` carries them into the job that
+requested the derivative, which lowers them with its own strategy. Codegen emits a slot for
+every Julia value it touches (intrinsic bindings, `llvmcall` strings, `nothing`), and all
+of those are dead once the module is optimized, so an ordinary kernel differentiates; a
+derivative whose analysis does need one of the values remains unsupported on such a
+back-end.
+
+The strategy is asked of a `kernel = true` flavour of the job: a deferred derivative is
+linked into the kernel that requested it, and a back-end whose strategy depends on
+`kernel` (Metal answers `:table` for kernels only) would otherwise report `:bake` for the
+non-kernel primal job Enzyme holds and let host addresses into a persisted kernel.
+"""
+function resolve_relocations!(@nospecialize(job::CompilerJob), mod::LLVM.Module, meta)
+    @static if HAS_GPUCOMPILER_2
+        isempty(meta.relocations) && return nothing
+        kernel_job = CompilerJob(job; config = CompilerConfig(job.config; kernel = true))
+        if GPUCompiler.relocation_lowering(kernel_job) === :bake
+            GPUCompiler.prune_dead_relocations!(mod, meta.relocations)
+            GPUCompiler.bake_relocations!(mod, meta.relocations)
+        end
+    end
+    return nothing
+end
 
 
 mutable struct HandlerState
@@ -5648,6 +5738,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     # subsequent use of `mod` (e.g. `LLVM.context(mod)`) is a dynamic dispatch
     # through jl_apply_generic, which forces boxing and GC-rooting across it.
     mod = mod::LLVM.Module
+    resolve_relocations!(primal_job, mod, meta)
     edges = enzyme_ctx.edges
 
     primal_interp = GPUCompiler.get_interpreter(primal_job)
@@ -6557,7 +6648,15 @@ end
 
     use_primal = mode == API.DEM_ReverseModePrimal
     entry = use_primal ? augmented_primalf : adjointf
-    return mod, (; adjointf, augmented_primalf, entry, compiled = meta.compiled, TapeType, edges)
+    # GPUCompiler 2.x links a deferred job's module with `link_relocatable!`, which reads the
+    # relocation records off this tuple: `resolve_relocations!` emptied them for a `:bake`
+    # back-end and left them for the requesting job's own lowering otherwise.
+    relocations = @static if HAS_GPUCOMPILER_2
+        meta.relocations
+    else
+        nothing
+    end
+    return mod, (; adjointf, augmented_primalf, entry, compiled = meta.compiled, TapeType, edges, relocations)
 end
 
 # Compiler result
