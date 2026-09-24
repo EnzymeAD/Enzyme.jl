@@ -1399,7 +1399,12 @@ import .Compiler: remove_innerty, UnknownTapeType
         params = GPUCompiler.nest_params(params, parent_job.config.params)
     end
 
-    job = GPUCompiler.CompilerJob(mi, GPUCompiler.CompilerConfig(target, params; kernel = false))
+    # With a parent job, the tape belongs to a derivative that the parent compiles as a deferred job
+    # (`autodiff_deferred_thunk` in a kernel), i.e. not top-level: no target libraries are linked
+    # before differentiation (on CUDA, libdevice's `__nv_*` bodies), so the tape type must come from
+    # the same, non-top-level compilation.
+    config = GPUCompiler.CompilerConfig(target, params; kernel = false, toplevel = parent_job === nothing)
+    job = GPUCompiler.CompilerJob(mi, config)
 
 
     key = hash(parent_job, hash(job))
