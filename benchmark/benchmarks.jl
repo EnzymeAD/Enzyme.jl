@@ -34,7 +34,6 @@ SUITE["basics"]["make_zero"]["struct"] = @benchmarkable Enzyme.make_zero($x)
 SUITE["basics"]["remake_zero!"]["struct"] = @benchmarkable Enzyme.remake_zero!(dx) setup = (dx = Enzyme.make_zero(x))
 
 
-
 @noinline function sass(σ, x)
     z = σ / x
     return z
@@ -44,7 +43,7 @@ end
     broadcasted = Broadcast.broadcasted(sass, dist, x)
     lp = sum(Broadcast.instantiate(broadcasted))
     res[] = lp
-    nothing
+    return nothing
 end
 
 function multidim_sum_bcast(dist, y)
@@ -63,5 +62,3 @@ y2d = rand(10, 4);
 dist2d = fill(10.0, 10, 4);
 
 SUITE["fold_broadcast"]["multidim_sum_bcast"]["2D"] = @benchmarkable Enzyme.gradient(set_runtime_activity(Reverse), multidim_sum_bcast, Const($dist2d), $y2d)
-
-

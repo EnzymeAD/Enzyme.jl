@@ -52,7 +52,7 @@ end
 
 function byref(f, out, args...)
     out[] = f(args...)
-    nothing
+    return nothing
 end
 
 @testset "Reverse EasyRule mysin" begin
@@ -166,7 +166,7 @@ end
 @testset "Reverse EasyRule mytup" begin
     calls[] = 0
 
-    res = autodiff(Reverse, byref, Const(mytup), DuplicatedNoNeed(Ref((0.0,0.0)), Ref((1.2, 2.7))), Active(2.0), Active(3.1))
+    res = autodiff(Reverse, byref, Const(mytup), DuplicatedNoNeed(Ref((0.0, 0.0)), Ref((1.2, 2.7))), Active(2.0), Active(3.1))
     @test res[1][3] ≈ 1.2 * exp(2.0)
     @test res[1][4] ≈ 2.7 * 0.123456
     @test calls[] == 1

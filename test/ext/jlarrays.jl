@@ -2,7 +2,7 @@ using Enzyme, Test, JLArrays
 using LinearAlgebra: mul!, dot, transpose, adjoint, Symmetric
 
 function jlres(x)
-    2 * collect(x)
+    return 2 * collect(x)
 end
 
 @testset "JLArrays" begin

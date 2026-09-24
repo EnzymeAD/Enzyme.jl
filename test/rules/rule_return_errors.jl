@@ -8,7 +8,7 @@ import .EnzymeRules: forward, augmented_primal, reverse
 
 function f_kw(out)
     out[1] *= 2
-    nothing
+    return nothing
 end
 
 function forward(config, ::Const{typeof(f_kw)}, ::Type{<:Const}, x::Duplicated)
@@ -28,7 +28,7 @@ end
 
 function g_kw(out)
     out[1] *= 2
-    nothing
+    return nothing
 end
 
 function augmented_primal(config, ::Const{typeof(g_kw)}, ::Type{<:Const}, x::Duplicated)
@@ -60,4 +60,3 @@ end
 end
 
 end # RuleReturnErrors
-
