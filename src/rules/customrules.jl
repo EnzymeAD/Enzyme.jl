@@ -541,7 +541,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                         if roots_op != nothing
                             if uncacheable[arg.codegen.i + 1] != 0
                                 # Roots are overwritten, recombine with root
-                                val = recombine_value!(B, val, roots_val)
+                                val = recombine_value!(B, val, roots_val; must_cache = true)
                             else
                                 # Roots are not overwritten, put placeholder valid GC value
                                 val = nullify_rooted_values!(B, val)
@@ -559,7 +559,17 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                         push!(byval_tapes, val)
 
                         if roots_val !== nothing
-                            roots_val = lookup_value(gutils, roots_val, B)
+                            if uncacheable[arg.codegen.i + 1] != 0
+                                # The roots were overwritten, so the forward pass recombined
+                                # them into the cached value. Rebuild the roots array from
+                                # that cached value rather than reading the live roots
+                                # memory, which by now holds whatever was last stored there
+                                # (e.g. the final iteration of a loop).
+                                roots_val = create_rooted_array(alloctx, roots, "roots_op_from_tape_")
+                                extract_roots_from_value!(B, val, roots_val)
+                            else
+                                roots_val = lookup_value(gutils, roots_val, B)
+                            end
                         end
                     end
                 end
@@ -756,7 +766,47 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                         end
                     else
                         roots_ival0 = invert_pointer(gutils, roots_op, B)
-                        if reverse
+                        if uncacheable[arg.codegen.i + 1] != 0
+                            # The shadow roots live in memory that is overwritten after
+                            # this call (e.g. a stack slot reused by every loop
+                            # iteration), so cache their contents in the forward pass
+                            # and rebuild the roots array from the tape in the reverse
+                            # pass. Otherwise the rule would see whatever was stored
+                            # there last, not the roots of this call.
+                            if !reverse
+                                sroot_cache = if width == 1
+                                    ld = load!(B, root_ty, roots_ival0, "rules_shadow_roots_cache")
+                                    metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                                    ld
+                                else
+                                    b_ival = UndefValue(LLVM.ArrayType(root_ty, Int(width)))
+                                    for idx in 1:width
+                                        ld = load!(B, root_ty, extract_value!(B, roots_ival0, idx - 1), "rules_shadow_roots_cache")
+                                        metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                                        b_ival = insert_value!(B, b_ival, ld, idx - 1)
+                                    end
+                                    b_ival
+                                end
+                                push!(byval_tapes, sroot_cache)
+                            else
+                                @assert tape isa LLVM.Value
+                                sroot_cache = extract_value!(B, tape, length(byval_tapes), "shadow_roots_cache_extract_")
+                                push!(byval_tapes, sroot_cache)
+                                if width == 1
+                                    al = create_rooted_array(alloctx, roots, "shadow_roots_from_tape_")
+                                    store!(B, sroot_cache, al)
+                                    roots_ival0 = al
+                                else
+                                    b_ival = UndefValue(value_type(roots_ival0))
+                                    for idx in 1:width
+                                        al = create_rooted_array(alloctx, roots, "shadow_roots_from_tape_")
+                                        store!(B, extract_value!(B, sroot_cache, idx - 1), al)
+                                        b_ival = insert_value!(B, b_ival, al, idx - 1)
+                                    end
+                                    roots_ival0 = b_ival
+                                end
+                            end
+                        elseif reverse
                             roots_ival0 = lookup_value(gutils, roots_ival0, B)
                         end
                         roots_ival0
@@ -821,7 +871,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                                     metadata(ld0)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                                     if roots_op != nothing
                                         if uncacheable[arg.codegen.i + 1] != 0
-                                            ld0 = recombine_value!(B, ld0, local_shadow_root)
+                                            ld0 = recombine_value!(B, ld0, local_shadow_root; must_cache = true)
                                         else
                                             ld0 = nullify_rooted_values!(B, ld0)
                                         end
