@@ -185,25 +185,41 @@ GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) 
 #       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
 GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
 
+# The method tables a method table view looks up methods in, in order of priority. Unlike
+# the view, which is bound to a world, this identifies the lookup across worlds and
+# sessions, as required for a cache token. Back-ends can stack method tables in their
+# `GPUCompiler.method_table_view`, so the view has to be considered and not just
+# `GPUCompiler.method_table`: jobs with the same main table but different stacks would
+# otherwise share inference results.
+method_tables(::Core.Compiler.InternalMethodTable) = ()
+method_tables(view::Core.Compiler.OverlayMethodTable) = (view.mt,)
+method_tables(view::GPUCompiler.StackedMethodTable) = (view.mt, method_tables(view.parent)...)
+@static if isdefined(Core.Compiler, :CachedMethodTable)
+    method_tables(view::Core.Compiler.CachedMethodTable) = method_tables(view.table)
+end
+# other views are specific to a world, so only share inference results within that world
+method_tables(@nospecialize(view::Core.Compiler.MethodTableView)) = (view,)
+
 # provide a specific interpreter to use.
 if VERSION >= v"1.11.0-DEV.1552"
     # The owner of the CodeInstances produced by an `EnzymeInterpreter`, compared with
     # `jl_egal`. It only carries the inputs that change what the interpreter infers: the
-    # method table, and the set of rules visible in the world for the mode in question.
+    # method tables it looks up methods in (see `method_tables`), and the set of rules
+    # visible in the world for the mode in question.
     # The compiler target and params types deliberately are not part of it: one `autodiff`
     # call builds interpreters from several differently-typed jobs (the `EnzymeTarget`
     # thunk job, the unwrapped primal job, `primal_interp_world`) that all infer the same
     # way, and keying on those types made each of them re-infer the whole call graph.
     struct EnzymeCacheToken
-        method_table::Core.MethodTable
+        method_tables::Tuple
         last_fwd_rule_world::Union{Nothing, Tuple}
         last_rev_rule_world::Union{Nothing, Tuple}
         last_ina_rule_world::Union{Nothing, Tuple}
     end
 
-    @inline EnzymeCacheToken(method_table::Core.MethodTable, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
+    @inline EnzymeCacheToken(method_tables::Tuple, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
         EnzymeCacheToken(
-        method_table,
+        method_tables,
             is_forward ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.forward, Tuple{<:EnzymeCore.EnzymeRules.FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
             is_reverse ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:EnzymeCore.EnzymeRules.RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
             inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
@@ -211,7 +227,7 @@ if VERSION >= v"1.11.0-DEV.1552"
 
     GPUCompiler.ci_cache_token(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         EnzymeCacheToken(
-        GPUCompiler.method_table(job),
+        method_tables(GPUCompiler.method_table_view(job)),
             job.world,
             job.config.params.mode == API.DEM_ForwardMode,
             job.config.params.mode != API.DEM_ForwardMode,
@@ -221,7 +237,7 @@ if VERSION >= v"1.11.0-DEV.1552"
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         Interpreter.EnzymeInterpreter(
             GPUCompiler.ci_cache_token(job),
-            GPUCompiler.method_table(job),
+            GPUCompiler.method_table_view(job),
             job.world,
             job.config.params.mode,
             true
@@ -247,7 +263,7 @@ else
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         Interpreter.EnzymeInterpreter(
             enzyme_ci_cache(job),
-            GPUCompiler.method_table(job),
+            GPUCompiler.method_table_view(job),
             job.world,
             job.config.params.mode,
             true
@@ -2597,15 +2613,20 @@ function GPUCompiler.nest_params(params::AbstractEnzymeCompilerParams, parent::A
     )
 end
 
-# Backends define `method_table` for their own `CompilerJob{Target, Params}` (e.g. CUDA.jl
-# for `CompilerJob{PTXCompilerTarget, CUDACompilerParams}`). An Enzyme job wraps both the
-# target and the params, so that definition would not apply and the job would silently fall
-# back to the global method table, while the primal code emitted for it (see `codegen`)
-# is compiled under the backend's overlay table. Unwrap the job so both agree.
-function GPUCompiler.method_table(@nospecialize(job::CompilerJob{<:EnzymeTarget, <:EnzymeCompilerParams}))
+# Backends define `method_table` and `method_table_view` for their own
+# `CompilerJob{Target, Params}` (e.g. CUDA.jl for
+# `CompilerJob{PTXCompilerTarget, CUDACompilerParams}`). An Enzyme job wraps both the
+# target and the params, so those definitions would not apply and the job would silently
+# fall back to the global method table, while the primal code emitted for it (see
+# `codegen`) is compiled under the backend's overlay table(s). Unwrap the job so both agree.
+function unwrap_enzyme_job(@nospecialize(job::CompilerJob{<:EnzymeTarget, <:EnzymeCompilerParams}))
     primal_config = CompilerConfig(job.config; target = job.config.target.target, params = job.config.params.params)
-    return GPUCompiler.method_table(CompilerJob(job.source, primal_config, job.world))
+    return CompilerJob(job.source, primal_config, job.world)
 end
+GPUCompiler.method_table(@nospecialize(job::CompilerJob{<:EnzymeTarget, <:EnzymeCompilerParams})) =
+    GPUCompiler.method_table(unwrap_enzyme_job(job))
+GPUCompiler.method_table_view(@nospecialize(job::CompilerJob{<:EnzymeTarget, <:EnzymeCompilerParams})) =
+    GPUCompiler.method_table_view(unwrap_enzyme_job(job))
 
 struct UnknownTapeType end
 
