@@ -4580,6 +4580,48 @@ function copy_struct_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, dst::
     return nothing
 end
 
+# The operand of an `!enzyme_inactive` tag records why Enzyme.jl made the
+# instruction inactive. Enzyme only checks that the tag is present.
+#
+# - `INACTIVE_GUARANTEED_CONST`: the Julia type of the value cannot hold
+#   derivative data. This is true at every derivative order.
+# - `INACTIVE_FROM_ACTIVITY`: `lower_convention` restates a `Const` annotation
+#   of the autodiff call being compiled on the stack slot it creates for a
+#   by-value argument or for the sret. This is only valid for the current compilation.
+#   Enzyme leaves the tag on the derivative it emits, and
+#   nested differentiation (see `autodiff_cache`) differentiates that
+#   derivative again with its own activities. If the tag stays, the outer differentiation
+#   treats every load of the slot as constant and silently zeroes the gradient
+#   (EnzymeAD/Enzyme.jl#3617). `strip_activity_inactive_md!` removes these tags
+#   after `enzyme!` has consumed them.
+#
+# A tag without an operand (for example one set by Enzyme itself) is treated
+# like `INACTIVE_GUARANTEED_CONST` and stays.
+const INACTIVE_GUARANTEED_CONST = "guaranteed_const"
+const INACTIVE_FROM_ACTIVITY = "activity_derived"
+
+inactive_md(reason::String) = MDNode(LLVM.Metadata[MDString(reason)])
+
+function inactive_reason(md::LLVM.Metadata)
+    isa(md, MDNode) || return nothing
+    ops = operands(md)
+    (length(ops) == 1 && isa(ops[1], MDString)) || return nothing
+    return convert(String, ops[1])
+end
+
+function strip_activity_inactive_md!(mod::LLVM.Module)
+    # This also finds copies Enzyme made of a tag (for example onto the heap
+    # allocation that replaces a stack slot, see `enzyme_fromstack`).
+    for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+        md = metadata(inst)
+        haskey(md, "enzyme_inactive") || continue
+        if inactive_reason(md["enzyme_inactive"]) == INACTIVE_FROM_ACTIVITY
+            delete!(md, "enzyme_inactive")
+        end
+    end
+    return
+end
+
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(
     @nospecialize(functy::Type),
@@ -4886,7 +4928,7 @@ function lower_convention(
                 )
                 ctx = LLVM.context(entry_f)
                 if RetActivity <: Const
-                    metadata(sretPtr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
+                    metadata(sretPtr)["enzyme_inactive"] = inactive_md(INACTIVE_FROM_ACTIVITY)
                 end
         
                 typeTree = copy(typetree(actualRetType, ctx, dl, seen))
@@ -4918,7 +4960,7 @@ function lower_convention(
 		root_ty = convert(LLVMType, arg.typ)
 		ptr = create_rooted_array(builder, root_ty, LLVM.name(parm)*".innerparm")
                 if TT !== nothing && TT.parameters[arg.arg_jl_i] <: Const
-                    metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
+                    metadata(ptr)["enzyme_inactive"] = inactive_md(INACTIVE_FROM_ACTIVITY)
                 end
                 
                 ctx = LLVM.context(entry_f)
@@ -4966,7 +5008,7 @@ function lower_convention(
 
                 ptr = alloca!(builder, elty_foralloca, LLVM.name(parm) * ".innerparm")
                 if TT !== nothing && TT.parameters[arg.arg_jl_i] <: Const
-                    metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
+                    metadata(ptr)["enzyme_inactive"] = inactive_md(INACTIVE_FROM_ACTIVITY)
                 end
                 ctx = LLVM.context(entry_f)
         
@@ -6203,7 +6245,7 @@ end
                 StringAttribute("enzyme_inactive"),
             )
         else
-            metadata(inst)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
+            metadata(inst)["enzyme_inactive"] = inactive_md(INACTIVE_GUARANTEED_CONST)
         end
     end
 
@@ -6372,6 +6414,8 @@ end
             boxedArgs,
 	    removedRoots,
         )
+        # The activity hints that must not reach an outer differentiation of the result.
+        strip_activity_inactive_md!(mod)
 
         # Link deferred modules
         for otherMod in enzyme_ctx.modules_to_link

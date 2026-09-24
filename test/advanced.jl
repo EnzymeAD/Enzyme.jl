@@ -1483,6 +1483,48 @@ end
     @test autodiff(Forward, (x, y) -> autodiff(Forward, Const(tonest), Duplicated(x, 1.0), Const(y))[1], Const(1.0), Duplicated(2.0, 1.0))[1] ≈ 2.0
 end
 
+# EnzymeAD/Enzyme.jl#3617: an argument that is `Const` for the inner call is
+# still active for the outer derivative. The runtime index keeps the tuple's
+# stack copy, which the inner compile tags inactive, alive into the outer pass.
+function nested_const_net(Ws, x)
+    h = x
+    for i in 1:length(Ws)
+        h = tanh.(Ws[i] * h)
+    end
+    return sum(h)
+end
+nested_const_inner(Ws, x) = first(autodiff(Forward, nested_const_net, Const(Ws), Duplicated(x, ones(2))))
+nested_dup_inner(Ws, x) = first(autodiff(Forward, nested_const_net, Duplicated(Ws, make_zero(Ws)), Duplicated(x, ones(2))))
+
+@testset "Nested AD: inner Const argument is active for the outer derivative" begin
+    Ws = ([0.3 -0.7; 0.5 0.2], [-0.4 0.6; 0.1 0.8])
+    x = [0.9, -0.3]
+
+    function fd(l, i, j; h = 1.0e-6)
+        p = deepcopy(Ws); p[1][i, j] += h
+        m = deepcopy(Ws); m[1][i, j] -= h
+        return (l(p, x) - l(m, x)) / 2h
+    end
+
+    # reverse over forward
+    dWs_const = make_zero(Ws)
+    autodiff(Reverse, nested_const_inner, Active, Duplicated(Ws, dWs_const), Duplicated(x, zero(x)))
+    dWs_dup = make_zero(Ws)
+    autodiff(Reverse, nested_dup_inner, Active, Duplicated(Ws, dWs_dup), Duplicated(x, zero(x)))
+    @test dWs_const[1] ≈ dWs_dup[1]
+    @test dWs_const[2] ≈ dWs_dup[2]
+    @test dWs_const[1][1, 1] ≈ fd(nested_const_inner, 1, 1) rtol = 1.0e-4
+    @test dWs_const[1][2, 1] ≈ fd(nested_const_inner, 2, 1) rtol = 1.0e-4
+
+    # forward over forward
+    tWs = make_zero(Ws)
+    tWs[1][1, 1] = 1.0
+    d_const = first(autodiff(Forward, nested_const_inner, Duplicated(Ws, tWs), Duplicated(x, zero(x))))
+    d_dup = first(autodiff(Forward, nested_dup_inner, Duplicated(Ws, tWs), Duplicated(x, zero(x))))
+    @test d_const ≈ d_dup
+    @test d_const ≈ fd(nested_const_inner, 1, 1) rtol = 1.0e-4
+end
+
 catsin(x::Number) = hcat(sin.(x .* [1, 2]))
 
 function inner_reverse(x)
