@@ -28,7 +28,7 @@ end
 @inline function Enzyme.onehot(x::AbstractGPUArray)
     # Enzyme.onehot_internal(Enzyme.zerosetfn, x, 0, length(x))
     N = length(x)
-    ntuple(Val(N)) do i
+    return ntuple(Val(N)) do i
         Base.@_inline_meta
         res = zero(x)
         @allowscalar @inbounds res[i] = 1
@@ -38,7 +38,7 @@ end
 
 @inline function onehot(x::AbstractArray, start::Int, endl::Int)
     # Enzyme.onehot_internal(Enzyme.zerosetfn, x, start-1, endl-start+1)
-    ntuple(Val(endl - start + 1)) do i
+    return ntuple(Val(endl - start + 1)) do i
         Base.@_inline_meta
         res = zero(x)
         @allowscalar @inbounds res[i + start - 1] = 1
@@ -64,7 +64,12 @@ other element types the element-wise definition is run on a host copy instead.
 # has to be zeroed, e.g. any struct mixing floats with flags or indices.
 @inline function _make_zero_via_host(
         prev::AT, ::Val{copy_if_inactive}
-    ) where {copy_if_inactive, AT <: AbstractGPUArray}
+    ) where {copy_if_inactive, FT, AT <: AbstractGPUArray{FT}}
+    # Like `Array`: an inactive element type has nothing to zero, so return the
+    # input (or a copy) and skip the host round-trip.
+    if Enzyme.Compiler.guaranteed_const(FT)
+        return copy_if_inactive ? copy(prev)::AT : prev
+    end
     zeroed = map(Array(prev)) do x
         EnzymeCore.make_zero(Core.Typeof(x), IdDict(), x, Val(copy_if_inactive))
     end
@@ -106,7 +111,7 @@ end
     end
     if _bulk_zeroable(FT)
         fill!(prev, zero(FT))
-    else
+    elseif !Enzyme.Compiler.guaranteed_const(FT)
         copyto!(prev, map(EnzymeCore.make_zero, Array(prev)))
     end
     return nothing
@@ -310,7 +315,7 @@ end
     fB = _opflags(tB)
     a_const = _isconst(config, A)
     b_const = _isconst(config, B)
-    ntuple(Val(N)) do i
+    return ntuple(Val(N)) do i
         Base.@_inline_meta
         dC = _bget(C.dval, Val(N), i)
         if !a_const
@@ -610,7 +615,7 @@ end
 # and to clear it in reverse.
 @inline function _fill_shadows!(config, A::Annotation, val)
     N = width(config)
-    ntuple(Val(N)) do i
+    return ntuple(Val(N)) do i
         Base.@_inline_meta
         fill!(_bget(A.dval, Val(N), i), val)
         nothing

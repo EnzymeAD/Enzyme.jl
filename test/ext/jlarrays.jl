@@ -2,7 +2,7 @@ using Enzyme, Test, JLArrays
 using LinearAlgebra: mul!, dot, transpose, adjoint, Symmetric
 
 function jlres(x)
-    2 * collect(x)
+    return 2 * collect(x)
 end
 
 @testset "JLArrays" begin
@@ -334,6 +334,14 @@ Enzyme descends into the backend reduction kernel, which aborts on a JLArray.
         @test res[2] ≈ 3.0
     end
 
+    # `init` is a constant offset, so it must not appear in the tangent.
+    @testset "forward, init" begin
+        suminit(x) = sum(x; init = 5.0)
+        dx = jl([1.0, 1.0, 0.0, 0.0])
+        res = only(Enzyme.autodiff(Forward, suminit, Duplicated, Duplicated(jl(x0), dx)))
+        @test res ≈ 2.0
+    end
+
     # `sum` of a complex array is complex, so take a real loss off it; each
     # entry's cotangent is then 1.
     @testset "complex eltype" begin
@@ -385,6 +393,14 @@ otherwise.
 
         Enzyme.make_zero!(p)
         @test collect(p) == [MixedField(0.0, 7), MixedField(0.0, 9)]
+    end
+
+    # Like `Array`: an inactive element type is returned as is.
+    @testset "inactive eltype" begin
+        idx = jl([1, 2, 3])
+        @test Enzyme.make_zero(idx) === idx
+        Enzyme.make_zero!(idx)
+        @test collect(idx) == [1, 2, 3]
     end
 
     # Two references to the same array have to come back as one zeroed array.

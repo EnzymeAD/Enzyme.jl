@@ -31,6 +31,24 @@ kernel.
 # one `Active` holding a tuple.
 @inline _dret(dres, w::Val, i::Int) = _bget(dres, w, i).val
 
+# True when an operand takes no cotangent: `Const`, or a runtime-activity shadow
+# that aliases the primal. Writing to the latter would clobber the primal.
+@inline _isconst(_, ::Const) = true
+@inline _isconst(config, x::Annotation) =
+    EnzymeRules.runtime_activity(config) && x.dval === x.val
+
+# The `init` for a reduction over shadows. `init` is a constant offset of the
+# primal, so its derivative is zero.
+@inline _dinit(::Nothing) = nothing
+@inline _dinit(init) = zero(init)
+
+# The tangent of `_mapreduce` for one batch element.
+@inline function _mapreduce_shadow(config, ofn, f, op, A, dA, dims, init)
+    res = ofn.val(f.val, op.val, dA; dims, init = _dinit(init))
+    # A shadow that aliases its primal holds primal values, not a tangent.
+    return _isconst(config, A) ? zero(res) : res
+end
+
 #=
 `mapreducedim!(identity, add_sum, R, A; init)` writes `sum(A)` over the reduced
 dims into `R`. `init` has no default here on purpose: GPUArrays only passes it
@@ -56,17 +74,20 @@ function EnzymeRules.forward(
         ofn.val(f.val, op.val, R.val, A.val; init)
     end
 
-    if !(R isa Const)
+    if !_isconst(config, R)
         N = width(config)
         ntuple(Val(N)) do i
             Base.@_inline_meta
             dR = _bget(R.dval, Val(N), i)
             # A `Const` input contributes nothing, and `init` means `R`'s prior
             # contents don't either, so the output shadow is zero.
-            if A isa Const
+            if _isconst(config, A)
                 Base.fill!(dR, zero(T))
             else
-                ofn.val(f.val, op.val, dR, _bget(A.dval, Val(N), i); init)
+                ofn.val(
+                    f.val, op.val, dR, _bget(A.dval, Val(N), i);
+                    init = _dinit(init),
+                )
             end
             nothing
         end
@@ -111,14 +132,19 @@ function EnzymeRules.reverse(
         A::Annotation;
         init,
     ) where {RT, T}
-    if !(A isa Const) && !(R isa Const)
+    if !_isconst(config, R)
+        a_const = _isconst(config, A)
         N = width(config)
         ntuple(Val(N)) do i
             Base.@_inline_meta
             dR = _bget(R.dval, Val(N), i)
             # Each entry of `A` feeds exactly one entry of `R`, so the cotangent
             # broadcasts back along the reduced dims.
-            _bget(A.dval, Val(N), i) .+= dR
+            if !a_const
+                _bget(A.dval, Val(N), i) .+= dR
+            end
+            # `init` overwrites `R`, so its cotangent is consumed here even
+            # when `A` is constant.
             Base.fill!(dR, zero(T))
             nothing
         end
@@ -145,23 +171,25 @@ function EnzymeRules.forward(
     return if needs_primal(config) && needs_shadow(config)
         primal = ofn.val(f.val, op.val, A.val; dims, init)
         if N == 1
-            Duplicated(primal, ofn.val(f.val, op.val, A.dval; dims, init))
+            Duplicated(
+                primal, _mapreduce_shadow(config, ofn, f, op, A, A.dval, dims, init),
+            )
         else
             BatchDuplicated(
                 primal,
                 ntuple(Val(N)) do i
                     Base.@_inline_meta
-                    ofn.val(f.val, op.val, A.dval[i]; dims, init)
+                    _mapreduce_shadow(config, ofn, f, op, A, A.dval[i], dims, init)
                 end
             )
         end
     elseif needs_shadow(config)
         if N == 1
-            ofn.val(f.val, op.val, A.dval; dims, init)
+            _mapreduce_shadow(config, ofn, f, op, A, A.dval, dims, init)
         else
             ntuple(Val(N)) do i
                 Base.@_inline_meta
-                ofn.val(f.val, op.val, A.dval[i]; dims, init)
+                _mapreduce_shadow(config, ofn, f, op, A, A.dval[i], dims, init)
             end
         end
     elseif needs_primal(config)
@@ -199,7 +227,7 @@ function EnzymeRules.reverse(
         dims::D,
         init,
     ) where {T, D}
-    if !(A isa Const) && !(dres isa Const)
+    if !_isconst(config, A) && !(dres isa Const)
         N = width(config)
         ntuple(Val(N)) do i
             Base.@_inline_meta
