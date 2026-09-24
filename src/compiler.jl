@@ -4587,18 +4587,18 @@ end
 #   derivative data. This is true at every derivative order.
 # - `INACTIVE_FROM_ACTIVITY`: `lower_convention` restates a `Const` annotation
 #   of the autodiff call being compiled on the stack slot it creates for a
-#   by-value argument or for the sret. This is only true for the order this
-#   compilation takes. Enzyme leaves the tag on the derivative it emits, and
+#   by-value argument or for the sret. This is only valid for the current compilation.
+#   Enzyme leaves the tag on the derivative it emits, and
 #   nested differentiation (see `autodiff_cache`) differentiates that
-#   derivative again with its own activities. If the tag stays, the outer order
+#   derivative again with its own activities. If the tag stays, the outer differentiation
 #   treats every load of the slot as constant and silently zeroes the gradient
 #   (EnzymeAD/Enzyme.jl#3617). `strip_activity_inactive_md!` removes these tags
 #   after `enzyme!` has consumed them.
 #
 # A tag without an operand (for example one set by Enzyme itself) is treated
 # like `INACTIVE_GUARANTEED_CONST` and stays.
-const INACTIVE_GUARANTEED_CONST = "enzymejl_guaranteed_const"
-const INACTIVE_FROM_ACTIVITY = "enzymejl_from_activity"
+const INACTIVE_GUARANTEED_CONST = "guaranteed_const"
+const INACTIVE_FROM_ACTIVITY = "activity_derived"
 
 inactive_md(reason::String) = MDNode(LLVM.Metadata[MDString(reason)])
 
@@ -6414,8 +6414,7 @@ end
             boxedArgs,
 	    removedRoots,
         )
-        # Enzyme has taken this order's derivative; the activity hints that
-        # described it must not reach an outer differentiation of the result.
+        # The activity hints that must not reach an outer differentiation of the result.
         strip_activity_inactive_md!(mod)
 
         # Link deferred modules
