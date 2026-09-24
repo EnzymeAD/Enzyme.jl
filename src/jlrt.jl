@@ -981,19 +981,9 @@ function get_memory_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
 	     "ijl_alloc_genericmemory_unchecked",
 	    )
             # The size argument is the number of bytes, not the number of elements.
-            # Julia stores the length only after this call, so do not load it.
-            legal, memty = abs_typeof(array)
-            nel = nothing
-            if legal
-                nel = get_memory_nel(B, memty, operands(array)[2])
-            end
-            if nel === nothing
-                nel = find_memory_len_store(array)
-            end
-            if nel === nothing
-                throw(AssertionError("Enzyme: cannot find the length of $(string(array))"))
-            end
-            return nel
+            # Julia stores the length only after this call, so a load gives an undefined value.
+            # Use `get_memory_nbytes` for this allocation.
+            throw(AssertionError("Enzyme: cannot get the length of $(string(array)). Use get_memory_nbytes."))
         end
     end
     ST = get_memory_struct()
@@ -1016,7 +1006,7 @@ end
 # nel - number of elements
 #
 @static if VERSION >= v"1.11" 
-function get_memory_nbytes(B::LLVM.IRBuilder, memty::Type{<:Memory}, nel::LLVM.Value)
+    function get_memory_nbytes(B::LLVM.IRBuilder, memty::Type{<:GenericMemory}, nel::LLVM.Value)
     elsz = LLVM.ConstantInt(Compiler.datatype_layoutsize(memty))
     isboxed = Base.datatype_arrayelem(memty) == 1
     isunion = Base.datatype_arrayelem(memty) == 2
@@ -1032,60 +1022,6 @@ function get_memory_nbytes(B::LLVM.IRBuilder, memty::Type{<:Memory}, nel::LLVM.V
     end
     return nbytes
 end
-
-    # The inverse of `get_memory_nbytes`: get the number of elements from the number of bytes.
-    # Returns `nothing` if the elements have no size, because then the number of bytes does
-    # not give the number of elements.
-    function get_memory_nel(B::LLVM.IRBuilder, memty::Type{<:Memory}, nbytes::LLVM.Value)
-        elsz = Compiler.datatype_layoutsize(memty)
-        isboxed = Base.datatype_arrayelem(memty) == 1
-        isunion = Base.datatype_arrayelem(memty) == 2
-
-        if isboxed
-            elsz = sizeof(Ptr{Cvoid})
-        end
-        if isunion
-            # each isbits union memory element has an extra byte, stored at m->ptr + m->length
-            elsz += 1
-        end
-        if elsz == 0
-            return nothing
-        end
-        return LLVM.udiv!(B, nbytes, LLVM.ConstantInt(value_type(nbytes), elsz))
-    end
-end
-
-# Find the value that Julia stores into the length field of the memory `mem`, which it
-# does after the call to `jl_alloc_genericmemory_unchecked`. The length is the first field,
-# so look through casts and GEPs with zero offsets. Returns `nothing` if there is no store.
-function find_memory_len_store(@nospecialize(mem::LLVM.Value))
-    sizeT = LLVM.IntType(8 * sizeof(Csize_t))
-    todo = LLVM.Value[mem]
-    while !isempty(todo)
-        cur = pop!(todo)
-        for u in LLVM.uses(cur)
-            user = LLVM.user(u)
-            if user isa LLVM.StoreInst
-                if operands(user)[2] == cur && value_type(operands(user)[1]) == sizeT
-                    return operands(user)[1]
-                end
-            elseif user isa LLVM.AddrSpaceCastInst || user isa LLVM.BitCastInst
-                push!(todo, user)
-            elseif user isa LLVM.GetElementPtrInst
-                zero_offset = true
-                for idx in operands(user)[2:end]
-                    if !(idx isa LLVM.ConstantInt && convert(Int, idx) == 0)
-                        zero_offset = false
-                        break
-                    end
-                end
-                if zero_offset
-                    push!(todo, user)
-                end
-            end
-        end
-    end
-    return nothing
 end
 
 function get_memory_nbytes(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
@@ -1106,7 +1042,12 @@ function get_memory_nbytes(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
     end
     nel = get_memory_len(B, array)
     legal, memty = abs_typeof(array)
-    @assert legal
+    if !legal
+        # The type is not known at compile time, so use the element size of the runtime type.
+        # This size does not include the selector bytes of an isbits union.
+        elsz = LLVM.zext!(B, get_memory_elsz(B, array), value_type(nel))
+        return LLVM.mul!(B, nel, elsz)
+    end
     return get_memory_nbytes(B, memty, nel)
 end
 
