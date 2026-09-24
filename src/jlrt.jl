@@ -851,10 +851,13 @@ function get_datatype_struct()
     #     uint16_t isidentityfree:1; // whether this type or any object reachable through its fields has non-content-based identity
     #     uint16_t smalltag:6; // whether this type has a small-tag optimization
     # } jl_datatype_t;
-	jlvaluet = LLVM.PointerType(LLVM.StructType(LLVMType[]), 10)
-	i32 = LLVM.IntType(32)
-	i16 = LLVM.IntType(16)
-	return LLVM.StructType([jlvaluet, jlvaluet, jlvaluet, jlvaluet, jlvaluet, jlvaluet, i32, i16]; packed = true)
+    jlvaluet = LLVM.PointerType(LLVM.StructType(LLVMType[]), 10)
+    # The layout field points to memory that the GC does not manage.
+    # Thus it is a pointer in address space 0 and not in address space 10.
+    lptr = LLVM.PointerType(get_layout_struct())
+    i32 = LLVM.IntType(32)
+    i16 = LLVM.IntType(16)
+    return LLVM.StructType([jlvaluet, jlvaluet, jlvaluet, jlvaluet, jlvaluet, lptr, i32, i16]; packed = true)
 end
 
 function get_array_data(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
@@ -882,24 +885,24 @@ function get_array_elsz(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
 end
 
 function emit_layout_of_type!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value))
-	legal, JTy = absint(ty)
-	ls = get_layout_struct()
-	lptr = LLVM.PointerType(ls, 10)
-	if legal
-		JTy = unbind(JTy)
-		return LLVM.const_inttoptr(LLVM.ConstantInt(Base.reinterpret(UInt, JTy.layout)), lptr)
-	end
-	@assert !isa(ty, LLVM.ConstantExpr)
-	@assert !isa(ty, LLVM.Constant)
-	dt = get_datatype_struct()
+    legal, JTy = absint(ty)
+    # The layout is not a GC object. Do not use address space 10 for it,
+    # because LateLowerGCFrame then puts the pointer in a GC frame slot
+    # and the GC writes mark bits before the layout.
+    lptr = LLVM.PointerType(get_layout_struct())
+    if legal
+        JTy = unbind(JTy)
+        return LLVM.const_inttoptr(LLVM.ConstantInt(Base.reinterpret(UInt, JTy.layout)), lptr)
+    end
+    @assert !isa(ty, LLVM.ConstantExpr)
+    @assert !isa(ty, LLVM.Constant)
+    dt = get_datatype_struct()
     lty = struct_ptr!(B, ty, dt)
-	layoutp = inbounds_gep!(B, dt, lty, 
+    layoutp = inbounds_gep!(
+        B, dt, lty,
         LLVM.Value[LLVM.ConstantInt(Int32(0)), LLVM.ConstantInt(Int32(5))],
-	)
-	jlvaluet = LLVM.PointerType(LLVM.StructType(LLVMType[]), 10)
-	layout = load!(B, jlvaluet, layoutp)
-    layout = bitcast!(B, layout, lptr)
-	return layout
+    )
+    return load!(B, lptr, layoutp)
 end
 
 function emit_type_layout_elsz!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value))
