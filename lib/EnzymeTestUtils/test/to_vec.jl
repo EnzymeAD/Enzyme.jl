@@ -172,4 +172,24 @@ end
             @test Base.dataids(y2.a) == Base.dataids(y2.b)
         end
     end
+
+    @testset "cyclic data structures" begin
+        mutable struct Node
+            val::Float64
+            next::Node
+            Node(val) = new(val)
+        end
+        node1 = Node(1.0)
+        node2 = Node(2.0)
+        node1.next = node2
+        node2.next = node1
+
+        test_to_vec(node1)
+        v, from_vec = to_vec(node1)
+        @test v == [1.0, 2.0]
+        node1_new = from_vec([10.0, 20.0])
+        @test node1_new.val == 10.0
+        @test node1_new.next.val == 20.0
+        @test node1_new.next.next === node1_new
+    end
 end

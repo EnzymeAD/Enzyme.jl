@@ -144,6 +144,7 @@ function to_vec(x::Array, seen_vecs::AliasDict)
     if has_seen || is_const
         x_vec = Float32[]
     else
+        seen_vecs[x] = Float32[]
         x_vecs = nothing
         from_vecs = []
         subvec_inds = UnitRange{Int}[]
@@ -170,6 +171,7 @@ function to_vec(x::Array, seen_vecs::AliasDict)
         has_seen && return reshape(seen_xs[x], size(x))
         is_const && return x
         x_new = typeof(x)(undef, size(x))
+        seen_xs[x] = x_new
         k = 1
         for i in eachindex(x)
             isassigned(x, i) || continue
@@ -177,7 +179,6 @@ function to_vec(x::Array, seen_vecs::AliasDict)
             x_new[i] = xi
             k += 1
         end
-        seen_xs[x] = x_new
         return x_new
     end
     return x_vec, Array_from_vec
@@ -192,6 +193,7 @@ function to_vec(x::GenericMemory, seen_vecs::AliasDict)
     if has_seen || is_const
         x_vec = Float32[]
     else
+        seen_vecs[x] = Float32[]
         from_vecs = []
         subvec_inds = UnitRange{Int}[]
         l = 0
@@ -218,6 +220,7 @@ function to_vec(x::GenericMemory, seen_vecs::AliasDict)
         has_seen && return reshape(seen_xs[x], size(x))
         is_const && return x
         x_new = typeof(x)(undef, size(x))
+        seen_xs[x] = x_new
         k = 1
         for i in eachindex(x)
             isassigned(x, i) || continue
@@ -225,7 +228,6 @@ function to_vec(x::GenericMemory, seen_vecs::AliasDict)
             x_new[i] = xi
             k += 1
         end
-        seen_xs[x] = x_new
         return x_new
     end
     return x_vec, Memory_from_vec
@@ -308,6 +310,9 @@ function to_vec(x::RT, seen_vecs::AliasDict) where {RT}
     else
         @assert !Base.isabstracttype(RT)
         @assert Base.isconcretetype(RT)
+        if ismutable(x)
+            seen_vecs[x] = Float32[]
+        end
         nf = fieldcount(RT)
         flds = Vector{Any}(undef, nf)
         for i in 1:nf
@@ -329,9 +334,10 @@ function to_vec(x::RT, seen_vecs::AliasDict) where {RT}
         end
         has_seen && return seen_xs[x]
         (is_const || nf == 0) && return x
-        flds_new = fields_from_vec(x_vec_new, seen_xs)
         if ismutable(x)
             x_new = ccall(:jl_new_struct_uninit, Any, (Any,), RT)
+            seen_xs[x] = x_new
+            flds_new = fields_from_vec(x_vec_new, seen_xs)
             for i in 1:nf
                 if isdefined(x, i)
                     xi = flds_new[i]
@@ -339,10 +345,8 @@ function to_vec(x::RT, seen_vecs::AliasDict) where {RT}
                 end
             end
         else
+            flds_new = fields_from_vec(x_vec_new, seen_xs)
             x_new = ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), RT, flds_new, nf)
-        end
-        if ismutable(x)
-            seen_xs[x] = x_new
         end
         return x_new
     end
