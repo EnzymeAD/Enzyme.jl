@@ -3,16 +3,16 @@ import EnzymeCore.EnzymeRules: FwdConfig, RevConfig, forward, augmented_primal, 
 
 function has_frule_from_sig(@nospecialize(interp::Core.Compiler.AbstractInterpreter),
     @nospecialize(TT::Type), sv::Core.Compiler.AbsIntState, partialedge::Bool=true)::Bool
-    ft, tt = _annotate_tt(TT)
-    TT = Tuple{<:FwdConfig,<:Annotation{ft},Type{<:Annotation},tt...}
+    ft, tt, tvars = _annotate_tt(TT)
+    TT = foldr(UnionAll, tvars; init=Tuple{<:FwdConfig,<:Annotation{ft},Type{<:Annotation},tt...})
     fwd_sig = Tuple{typeof(EnzymeRules.forward), <:EnzymeRules.FwdConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
     return isapplicable(interp, forward, TT, sv, fwd_sig)
 end
 
 function has_rrule_from_sig(@nospecialize(interp::Core.Compiler.AbstractInterpreter),
     @nospecialize(TT::Type), sv::Core.Compiler.AbsIntState, partialedge::Bool=true)::Bool
-    ft, tt = _annotate_tt(TT)
-    TT = Tuple{<:RevConfig,<:Annotation{ft},Type{<:Annotation},tt...}
+    ft, tt, tvars = _annotate_tt(TT)
+    TT = foldr(UnionAll, tvars; init=Tuple{<:RevConfig,<:Annotation{ft},Type{<:Annotation},tt...})
     rev_sig = Tuple{typeof(EnzymeRules.augmented_primal), <:EnzymeRules.RevConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
     return isapplicable(interp, augmented_primal, TT, sv, rev_sig)
 end
