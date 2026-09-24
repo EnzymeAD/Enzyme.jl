@@ -52,22 +52,25 @@ _fd_forward(fdm, f, ::Type{<:Const}, y, activities) = ()
 function multi_tovec(active_return, vals)
     if active_return
         v0, v1 = vals[1], Base.tail(vals)
-        res = vcat(to_vec(v0)[1], to_vec(v1)[1])
+        res = append_or_merge(append_or_merge(nothing, to_vec(v0)[1]), to_vec(v1)[1])[1]
         return res
     else
         to_vec(vals)[1]
     end
 end
 
+_host_vec(x) = Array(x)
+
 function j′vp(fdm, f_vec, ȳ, x)
-  ẏs = map(eachindex(x)) do n
-    return fdm(zero(eltype(x))) do ε
-        xn = x[n]
+  xh = _host_vec(x)
+  ẏs = map(eachindex(xh)) do n
+    return fdm(zero(eltype(xh))) do ε
+        xn = xh[n]
         try
-            x[n] = xn + ε
-            return copy(f_vec(x))  # copy required incase `f(x)` returns something that aliases `x`
+            xh[n] = xn + ε
+            return copy(f_vec(xh))  # copy required incase `f(x)` returns something that aliases `x`
         finally
-            x[n] = xn  # Can't do `x[n] -= ϵ` as floating-point math is not associative
+            xh[n] = xn  # Can't do `x[n] -= ϵ` as floating-point math is not associative
         end
     end
   end
@@ -76,9 +79,10 @@ function j′vp(fdm, f_vec, ȳ, x)
         else
           transpose(reduce(hcat, ẏs))
         end
+  ȳh = _host_vec(ȳ)
   result = zero(x)
   for i in 1:length(ȳ)
-    tp = @inbounds ȳ[i] 
+    tp = @inbounds ȳh[i]
     if isfinite(tp) && !iszero(tp)
       result .+= mat[:, i] .* tp
     end
