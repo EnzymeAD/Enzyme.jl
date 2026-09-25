@@ -182,6 +182,35 @@ end
     @test dA ≈ [0.0, 1.0, 6.0, 1.0]
 end
 
+# The trailing `Int` gets `enzyme_inactive`. `nodecayed_phis!` must still rewrite the decayed
+# phi, since `knots` is active.
+@testset "No Decayed / GC with a trailing inactive argument" begin
+    @noinline function deduplicate_knots_n!(knots, k::Int)
+        last_knot = first(knots)
+        for i in eachindex(knots)
+            if i == 1
+                continue
+            end
+            if knots[i] == last_knot
+                @warn knots[i]
+                @inbounds knots[i] *= knots[i] + (k - 2)
+            else
+                last_knot = @inbounds knots[i]
+            end
+        end
+    end
+
+    function cost_n(C::Vector{Float64})
+        deduplicate_knots_n!(C, length(C) - 2)
+        @inbounds C[1] = 0
+        return nothing
+    end
+    A = Float64[1, 3, 3, 7]
+    dA = Float64[1, 1, 1, 1]
+    @test_warn "3.0" autodiff(Reverse, cost_n, Const, Duplicated(A, dA))
+    @test dA ≈ [0.0, 1.0, 6.0, 1.0]
+end
+
 @testset "Split GC" begin
     @noinline function bmat(x)
         data = [x]
