@@ -372,6 +372,39 @@ end
     @test all(dA2 .≈ 3*(2:2:64))
 end
 
+# 3-point stencil: every thread reads its neighbours, so the adjoint of thread `i` adds into
+# x̄[i-1], x̄[i] and x̄[i+1], concurrently with its neighbours. Enzyme has to accumulate these
+# with atomic adds on device memory. (The same test as "Metal stencil adjoint" in metal.jl.)
+function stencil!(y, x)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if 2 <= i <= length(x) - 1
+        @inbounds y[i] = x[i - 1] - 2.0f0 * x[i] + x[i + 1] * x[i + 1]
+    end
+    return nothing
+end
+
+function ∇stencil!(y, ȳ, x, x̄)
+    Enzyme.autodiff_deferred(Reverse, Const(stencil!), Const, Duplicated(y, ȳ), Duplicated(x, x̄))
+    return nothing
+end
+
+@testset "CUDA stencil adjoint" begin
+    N = 1024
+    x = Float32[sin(i) for i in 1:N]
+    ȳ = Float32[cos(i) for i in 1:N]
+    x̄ = zeros(Float32, N)
+    for i in 2:(N - 1)
+        x̄[i - 1] += ȳ[i]
+        x̄[i] -= 2 * ȳ[i]
+        x̄[i + 1] += 2 * x[i + 1] * ȳ[i]
+    end
+
+    x_d = CuArray(x)
+    x̄_d = CUDA.zeros(Float32, N)
+    CUDA.@sync @cuda threads = 256 blocks = cld(N, 256) ∇stencil!(CUDA.zeros(Float32, N), CuArray(ȳ), x_d, x̄_d)
+    @test Array(x̄_d) ≈ x̄
+end
+
 #=
 The matmul/dot rules on a real backend, where they route through CUBLAS instead of
 the GPUArrays fallback kernels. This file also covers the allocating `A * B` and
