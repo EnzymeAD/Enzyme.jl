@@ -30,11 +30,20 @@ SafeAtomicToRegularStorePass() = NewPMFunctionPass("safe_atomic_to_regular_store
 Addr13NoAliasPass() = NewPMModulePass("addr13_noalias", addr13NoAlias)
 RemoveAlwaysInlineRootsPass() = NewPMModulePass("remove_alwaysinline_roots", remove_alwaysinline_roots!)
 
-function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti = nothing)
+# `Base.fma` asks `julia.cpu.have_fma.*` whether the hardware fuses a multiply-add. Julia's
+# `CPUFeaturesPass` answers from the module's triple and says no for every GPU triple, so on a GPU
+# `fma` fell back to its emulation, which computes in Float64. For a module emitted for a GPU,
+# GPUCompiler's pass answers for the job's target instead (`have_fma`).
+cpu_features_pass(job) = job === nothing ? CPUFeaturesPass() : GPUCompiler.GPULowerCPUFeaturesPass(job)
+# GPUCompiler's pass is written in Julia, so each pass builder that runs it has to register it first
+register_cpu_features!(pb, job) = job === nothing || register!(pb, GPUCompiler.GPULowerCPUFeaturesPass(job))
+
+function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti = nothing; job = nothing)
     @dispose pb = NewPMPassBuilder() begin
         if tti !== nothing
             LLVM.target_transform_info!(pb, tti)
         end
+        register_cpu_features!(pb, job)
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, Addr13NoAliasPass())
         register!(pb, RestoreAllocaType())
@@ -52,7 +61,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
                 add!(fpm, SimplifyCFGPass())
                 add!(fpm, DCEPass())
             end
-            add!(mpm, CPUFeaturesPass())
+            add!(mpm, cpu_features_pass(job))
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, SROAPass())
                 add!(fpm, MemCpyOptPass())
@@ -73,13 +82,14 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
         if tti !== nothing
             LLVM.target_transform_info!(pb, tti)
         end
+        register_cpu_features!(pb, job)
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
             add!(aam, BasicAA())
         end
         add!(pb, NewPMModulePassManager()) do mpm
-            add!(mpm, CPUFeaturesPass()) # why is this duplicated?
+            add!(mpm, cpu_features_pass(job)) # why is this duplicated?
             add!(mpm, GlobalOptPass())
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, GVNPass())
@@ -93,6 +103,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
             if tti !== nothing
                 LLVM.target_transform_info!(pb, tti)
             end
+            register_cpu_features!(pb, job)
             registerEnzymeAndPassPipeline!(pb)
             register!(pb, RestoreAllocaType())
             add!(pb, NewPMAAManager()) do aam
@@ -101,7 +112,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
                 add!(aam, BasicAA())
             end
             add!(pb, NewPMModulePassManager()) do mpm
-                add!(mpm, CPUFeaturesPass()) # why is this duplicated?
+                add!(mpm, cpu_features_pass(job)) # why is this duplicated?
 
                 add!(mpm, NewPMFunctionPassManager()) do fpm
                     add!(fpm, InstCombinePass())
