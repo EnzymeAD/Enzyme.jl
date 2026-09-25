@@ -145,9 +145,17 @@ function get_offsets(@nospecialize(T::Type))
     return results
 end
 
-function to_fullmd(@nospecialize(T::Type), offset::Int, lim::Int)
+"""
+    to_fullmd(world, T, offset, lim)
+
+Construct the full type metadata of `T` for the bytes from `offset` to `lim`.
+
+Packages can add methods to `get_offsets`. Thus `to_fullmd` calls `get_offsets` in `world`.
+See [`typetree_in_world`](@ref).
+"""
+function to_fullmd(world::UInt, @nospecialize(T::Type), offset::Int, lim::Int)
     mds = LLVM.Metadata[]
-    offs = get_offsets(T)
+    offs = Core._call_in_world_total(world, get_offsets, T)
 
     minoff = -1
     for (sT, sO) in offs
@@ -224,6 +232,23 @@ function typetree(@nospecialize(T::Type), ctx, dl, seen = TypeTreeTable())
         seen[T] = tree
     end
     return tree::TypeTree
+end
+
+"""
+    typetree_in_world(world, T, ctx, dl, seen=TypeTreeTable())
+
+Call [`typetree`](@ref) in `world`, usually the world of the compilation.
+
+Packages can add methods to `typetree_inner` (for example, in a package extension). The
+compiler runs in a generator, in the world in which Enzyme defined the generated function.
+That world is older than the world of these methods. Thus plain dispatch does not find them.
+
+In a generator, `Base.invoke_in_world` does not change the world. Thus use
+`Core._call_in_world_total`, which changes the world also in a generator. The recursive
+calls to `typetree` in `typetree_inner` then also dispatch in `world`.
+"""
+function typetree_in_world(world::UInt, @nospecialize(T::Type), ctx, dl, seen::TypeTreeTable = TypeTreeTable())
+    return Core._call_in_world_total(world, typetree, T, ctx, dl, seen)::TypeTree
 end
 
 function typetree_inner(::Type{<:Integer}, ctx, dl, seen::TypeTreeTable)

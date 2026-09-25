@@ -651,7 +651,7 @@ end
 #
 #  turn this into load/store, as this is more
 #  amenable to caching analysis infrastructure
-function memcpy_alloca_to_loadstore(mod::LLVM.Module)
+function memcpy_alloca_to_loadstore(mod::LLVM.Module, world::UInt)
     dl = datalayout(mod)
     ctx = context(mod)
     seen = TypeTreeTable()
@@ -771,7 +771,7 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
                             source_typ
                         end
 
-                        ec = typetree(source_typ, ctx, string(dl), seen)
+                        ec = typetree_in_world(world, source_typ, ctx, string(dl), seen)
                         if byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF
                             ec = copy(ec)
                             merge!(ec, TypeTree(API.DT_Pointer, ctx))
@@ -791,7 +791,7 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module)
 
                     elseif codegen_typ == T_prjlvalue
                         metadata(src)["enzyme_type"] =
-                            to_md(typetree(Ptr{Cvoid}, ctx, dl, seen), ctx)
+                            to_md(typetree_in_world(world, Ptr{Cvoid}, ctx, dl, seen), ctx)
                     end
                     FT = LLVM.FunctionType(
                         LLVM.VoidType(),
