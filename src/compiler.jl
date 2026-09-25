@@ -7175,7 +7175,12 @@ const DumpLLVMCall = Ref(false)
             returnRoots = deserves_rooting(jltype)
         end
 
-        if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
+        # With `InlineABI` the code of the thunk is linked in below, and Julia inlines it into
+        # the caller. That code needs a pgcstack, so take the one of the caller as an argument.
+        inline_abi = GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT)
+        if inline_abi
+            pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}))
+        else
             pushfirst!(llvmtys, convert(LLVMType, PT))
         end
 
@@ -7197,9 +7202,11 @@ const DumpLLVMCall = Ref(false)
         position!(builder, entry)
         callparams = collect(LLVM.Value, parameters(llvm_f))
 
-        if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
-            lfn = callparams[1]
-            deleteat!(callparams, 1)
+        if inline_abi
+            # The pgcstack, which `use_gcstack_arg!` hands to the code of the thunk.
+            pgcstack = popfirst!(callparams)
+        else
+            lfn = popfirst!(callparams)
         end
 
         if returnRoots
@@ -7247,7 +7254,7 @@ const DumpLLVMCall = Ref(false)
             end
         end
 
-        if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
+        if !inline_abi
             FT = LLVM.FunctionType(
                 returnRoots ? T_void : T_ret,
                 [value_type(x) for x in callparams],
@@ -7261,6 +7268,8 @@ const DumpLLVMCall = Ref(false)
             submod = parse(LLVM.Module, String(submod))
             LLVM.link!(mod, submod)
             lfn = functions(mod)[String(subname)]
+            # Only this function calls the thunk, so the inliner can drop it afterwards.
+            linkage!(lfn, LLVM.API.LLVMInternalLinkage)
             FT = LLVM.function_type(lfn)
         end
 
@@ -7288,7 +7297,12 @@ const DumpLLVMCall = Ref(false)
         else
             ret!(builder)
         end
-        reinsert_gcmarker!(llvm_f)
+        # Julia inlines this function into its caller. A `julia.get_pgcstack` call in it
+        # would delay the push of the caller's GC frame on 1.13 (see `use_gcstack_arg!`).
+        # Without `InlineABI` this function needs no pgcstack, since the thunk gets its own.
+        if inline_abi
+            use_gcstack_arg!(llvm_f, pgcstack)
+        end
 
 	Enzyme.Compiler.JIT.prepare!(mod)
 	if DumpLLVMCall[]
@@ -7323,7 +7337,8 @@ const DumpLLVMCall = Ref(false)
             Base.llvmcall(
                 ($ir, $fn),
                 $combinedReturn,
-                Tuple{$(types...)},
+                Tuple{Ptr{Cvoid}, $(types...)},
+                current_pgcstack(),
                 $(ccexprs...),
             )
         end

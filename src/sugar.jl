@@ -50,7 +50,9 @@ end
         ity = convert(LLVM.LLVMType, Int)
         jlvaluet = convert(LLVM.LLVMType, T; allow_boxed=true)
 
-        FT = LLVM.FunctionType(jlvaluet,  LLVM.LLVMType[jlvaluet, ity, ity])
+        # Julia inlines this function into its caller, whose pgcstack it takes as an
+        # argument to allocate the result (see `Compiler.use_gcstack_arg!`).
+        FT = LLVM.FunctionType(jlvaluet, LLVM.LLVMType[convert(LLVM.LLVMType, Ptr{Cvoid}), jlvaluet, ity, ity])
         llvm_f = LLVM.Function(mod, "f", FT)
         push!(LLVM.function_attributes(llvm_f), LLVM.EnumAttribute("alwaysinline", 0))
 
@@ -62,7 +64,7 @@ end
         builder = LLVM.IRBuilder()
         entry = LLVM.BasicBlock(llvm_f, "entry")
         LLVM.position!(builder, entry)
-        inp, lstart, len = collect(LLVM.Value, LLVM.parameters(llvm_f))
+        pgcstack, inp, lstart, len = collect(LLVM.Value, LLVM.parameters(llvm_f))
 
         boxed_count = if sizeof(Int) == sizeof(Int64)
             Compiler.emit_box_int64!(builder, len)
@@ -108,7 +110,7 @@ end
         LLVM.position!(builder, exit)
         LLVM.ret!(builder, obj)
 	
-        Compiler.reinsert_gcmarker!(llvm_f)
+        Compiler.use_gcstack_arg!(llvm_f, pgcstack)
 	Compiler.JIT.prepare!(mod)
 
         string(mod)
@@ -118,7 +120,8 @@ end
         Base.llvmcall(
             ($ir, "f"),
             Tuple{Vararg{T}},
-            Tuple{T, Int, Int},
+            Tuple{Ptr{Cvoid}, T, Int, Int},
+            Compiler.current_pgcstack(),
             x,
             startv,
             lengthv

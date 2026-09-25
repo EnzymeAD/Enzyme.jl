@@ -1,4 +1,4 @@
-using Enzyme, Test
+using Enzyme, Test, InteractiveUtils
 using Enzyme: EnzymeRules
 
 @noinline function force_stup(A)
@@ -387,4 +387,105 @@ f_mutunion(x) = (m = dispatch(x); m.u[1]^2)
 
 @testset "Typed Alloca restore_alloca_type! with Any field" begin
     @test Enzyme.gradient(Enzyme.Reverse, f_mutunion, 3.0)[1] ≈ 6.0
+end
+
+f_pgcstack_marker(x) = x[1] * x[1]
+
+function caller_pgcstack_marker(x)
+    dx = zero(x)
+    Enzyme.autodiff(Enzyme.Reverse, f_pgcstack_marker, Active, Duplicated(x, dx))
+    return dx
+end
+
+function caller_pgcstack_marker_inline(x)
+    dx = zero(x)
+    Enzyme.autodiff(
+        Enzyme.set_abi(Enzyme.Reverse, Enzyme.InlineABI),
+        f_pgcstack_marker,
+        Active,
+        Duplicated(x, dx),
+    )
+    return dx
+end
+
+caller_pgcstack_marker_onehot(x) = Enzyme.onehot(x)
+
+@testset "No pgcstack marker in the llvmcalls" begin
+    # Julia inlines an llvmcall into its caller. On 1.13 a `julia.get_pgcstack` call in
+    # the caller's entry block delays the push of its GC frame until after that call,
+    # which left `dx` unrooted during the preceding safepoints.
+    for caller in (caller_pgcstack_marker, caller_pgcstack_marker_inline, caller_pgcstack_marker_onehot)
+        ir = sprint() do io
+            InteractiveUtils.code_llvm(
+                io, caller, Tuple{Vector{Float64}};
+                raw = true, optimize = false, dump_module = true
+            )
+        end
+        # Enzyme names the `julia.get_pgcstack` calls it emits `newly_emitted_pgc_stack`.
+        @test !occursin(r"newly_emitted_pgc_stack\S* = call", ir)
+    end
+    @test caller_pgcstack_marker([3.0]) ≈ [6.0]
+    @test caller_pgcstack_marker_inline([3.0]) ≈ [6.0]
+    @test caller_pgcstack_marker_onehot([3.0]) == ([1.0],)
+end
+
+f_gcframe_alloc(x) = sum(abs2, x .* 2.0)
+
+@noinline zero_gcframe(x) = zero(x)
+
+# Collect, then hand the freed cells to arrays of the same size.
+@noinline function gc_and_refill(x)
+    GC.gc(true)
+    keep = Vector{Float64}[]
+    for _ in 1:10_000
+        push!(keep, fill(NaN, length(x)))
+    end
+    return keep
+end
+
+function caller_gcframe(x)
+    dx = zero_gcframe(x)
+    keep = gc_and_refill(x)
+    Enzyme.autodiff(Enzyme.Reverse, f_gcframe_alloc, Active, Duplicated(x, dx))
+    return dx, keep
+end
+
+function caller_gcframe_inline(x)
+    dx = zero_gcframe(x)
+    keep = gc_and_refill(x)
+    Enzyme.autodiff(
+        Enzyme.set_abi(Enzyme.Reverse, Enzyme.InlineABI),
+        f_gcframe_alloc,
+        Active,
+        Duplicated(x, dx),
+    )
+    return dx, keep
+end
+
+@noinline copy_gcframe(x) = copy(x)
+
+function caller_gcframe_onehot(x)
+    y = copy_gcframe(x)
+    keep = gc_and_refill(x)
+    return y, keep, Enzyme.onehot(x)
+end
+
+@testset "Caller roots survive a GC before the llvmcall" begin
+    # The callers are a single block, so the code that Julia inlines from the llvmcall
+    # lands in their entry block. With `InlineABI` that code allocates with the pgcstack
+    # the caller passes to the llvmcall.
+    for caller in (caller_gcframe, caller_gcframe_inline)
+        for _ in 1:5
+            dx, keep = caller([1.0, 2.0])
+            @test dx == [8.0, 16.0]
+            @test all(k -> all(isnan, k), keep)
+        end
+    end
+    # `onehot` allocates its result in an llvmcall of its own.
+    for _ in 1:5
+        y, keep, oh = caller_gcframe_onehot([1.0, 2.0])
+        @test y == [1.0, 2.0]
+        @test all(k -> all(isnan, k), keep)
+        @test oh == ([1.0, 0.0], [0.0, 1.0])
+    end
 end
