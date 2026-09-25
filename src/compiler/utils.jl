@@ -426,7 +426,8 @@ Give the pgcstack of the running task, for an llvmcall that takes it as an argum
 
 Julia computes `current_task()` from the pgcstack of the function that this is inlined into
 (on 1.13 that is the `"gcstack"` argument of the function). So the function gets no
-`julia.get_pgcstack` call from this.
+`julia.get_pgcstack` call from this. An llvmcall of `julia.get_pgcstack` would not do: Julia
+inlines it where it is called, which is the problem that [`use_gcstack_arg!`](@ref) avoids.
 """
 @inline current_pgcstack() = pointer_from_objref(current_task()) + task_gcstack_offset()
 
