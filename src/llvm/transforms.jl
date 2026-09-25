@@ -937,6 +937,40 @@ function nodecayed_all_args(inst::LLVM.PHIInst)::Bool
     return true
 end
 
+# True for a bitcast, addrspacecast or GEP (instruction or constant expression).
+function nodecayed_is_cast_or_gep(@nospecialize(v::LLVM.Value))::Bool
+    if isa(v, LLVM.BitCastInst) || isa(v, LLVM.AddrSpaceCastInst) || isa(v, LLVM.GetElementPtrInst)
+        return true
+    end
+    if isa(v, LLVM.ConstantExpr)
+        op = opcode(v)
+        return op == LLVM.API.LLVMBitCast || op == LLVM.API.LLVMAddrSpaceCast ||
+            op == LLVM.API.LLVMGetElementPtr
+    end
+    return false
+end
+
+# True if the data pointer `ld` of a `julia.gc_loaded` call is (a cast or GEP of) a load from (a
+# cast or GEP of) an addrspace(10) object, or of a constant addrspace(0) pointer. Only then can
+# `nodecayed_getparent` walk it back to an object, which is what its fast path compares against
+# the object operand of the call.
+function nodecayed_gc_loaded_data_is_field_load(@nospecialize(ld::LLVM.Value))::Bool
+    while nodecayed_is_cast_or_gep(ld)
+        ld = operands(ld)[1]
+    end
+    isa(ld, LLVM.LoadInst) || return false
+    ptr = operands(ld)[1]
+    while addrspace(value_type(ptr)) != 10
+        nodecayed_is_cast_or_gep(ptr) || return false
+        if isa(ptr, LLVM.ConstantExpr) && opcode(ptr) == LLVM.API.LLVMAddrSpaceCast &&
+                addrspace(value_type(operands(ptr)[1])) == 0
+            return true
+        end
+        ptr = operands(ptr)[1]
+    end
+    return true
+end
+
 # If there is a phi node of a decayed value, Enzyme may need to cache it
 # Here we force all decayed pointer phis to first addrspace from 10
 # State shared by every level of the `nodecayed_getparent` recursion below. It used to be
@@ -995,18 +1029,25 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
             cf = LLVM.called_operand(v)
             if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded"
                 ld = operands(v)[2]
-                ld0, o0, ol0 = nodecayed_getparent(st, b, ld, LLVM.ConstantInt(st.offty, 0), hasload)
-                v2 = ld0
-                # v2, o2, hl2 = nodecayed_getparent(st, b, operands(ld)[1], LLVM.ConstantInt(st.offty, 0), true)
+                # Fast path: the data pointer is the load of the `data` field of the object
+                # operand itself, so no extra offset is needed. Walking `ld` back is only done to
+                # detect this, and can only succeed for a field load of an addrspace(10) object.
+                # Any other data pointer (e.g. a phi of loads, or a pointer that Enzyme cached in
+                # the tape of a split reverse pass: `extractvalue %tapeArg`) goes to the generic
+                # path below, which needs only the object operand (#3329).
+                if nodecayed_gc_loaded_data_is_field_load(ld)
+                    ld0, o0, ol0 = nodecayed_getparent(st, b, ld, LLVM.ConstantInt(st.offty, 0), hasload)
+                    v2 = ld0
 
-                rhs = LLVM.ConstantInt(st.offty, sizeof(Int))
-                o2 = o0
+                    rhs = LLVM.ConstantInt(st.offty, sizeof(Int))
+                    o2 = o0
 
-                base_2, off_2 = get_base_and_offset(v2)
-                base_1, off_1 = get_base_and_offset(operands(v)[1])
+                    base_2, off_2 = get_base_and_offset(v2)
+                    base_1, off_1 = get_base_and_offset(operands(v)[1])
 
-                if o2 == rhs && base_1 == base_2 && off_1 == off_2
-                    return operands(v)[1], offset, true
+                    if o2 == rhs && base_1 == base_2 && off_1 == off_2
+                        return operands(v)[1], offset, true
+                    end
                 end
 
                 pty = TypeTree(API.DT_Pointer, LLVM.context(ld))
