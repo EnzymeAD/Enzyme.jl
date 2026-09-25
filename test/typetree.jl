@@ -179,7 +179,7 @@ end
     $(Expr(:meta, :generated, ext_typetree_generator))
 end
 
-primitive type ExtPtr 64 end
+primitive type ExtPtr Sys.WORD_SIZE end
 function Enzyme.typetree_inner(::Type{ExtPtr}, ctx, dl, seen::Enzyme.Compiler.TypeTreeTable)
     return Enzyme.typetree_inner(Ptr{Float64}, ctx, dl, seen)
 end
