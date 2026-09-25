@@ -49,23 +49,106 @@ end
 const hnd_string_map = Dict{String, Ref{Ptr{Cvoid}}}()
 const hnd_int_map = Dict{Int, Ref{Ptr{Cvoid}}}()
 
-function fix_ptr_lookup(name)
-    if startswith(name, "ejlstr\$") || startswith(name, "ejlptr\$")
-        _, fname, arg1 = split(name, "\$")
-        if startswith(name, "ejlstr\$")
-            hnd_cache = get!(hnd_string_map, arg1) do
-                Ref{Ptr{Cvoid}}(C_NULL)
+# Everything the lazy body of an `ejlstr$`/`ejlptr$` declaration points at by address: the
+# library and symbol name passed to `jl_load_and_lookup`, its library handle cache, and the
+# slot the resolved pointer is cached in. Kept rooted in `lazy_bindings` for as long as code
+# that embeds these addresses may run.
+struct LazyBinding
+    lib::Union{String, Ptr{Cchar}}
+    fname::String
+    hnd::Ref{Ptr{Cvoid}}
+    sym::Ref{Ptr{Cvoid}}
+end
+
+const lazy_bindings = Dict{String, LazyBinding}()
+const lazy_bindings_lock = ReentrantLock()
+
+function lazy_binding(name)
+    startswith(name, "ejlstr\$") || startswith(name, "ejlptr\$") || return nothing
+    return lock(lazy_bindings_lock) do
+        get!(lazy_bindings, name) do
+            _, fname, arg1 = split(name, "\$")
+            if startswith(name, "ejlstr\$")
+                lib = String(arg1)
+                hnd = get!(() -> Ref{Ptr{Cvoid}}(C_NULL), hnd_string_map, lib)
+            else
+                addr = parse(Int, arg1)
+                hnd = get!(() -> Ref{Ptr{Cvoid}}(C_NULL), hnd_int_map, addr)
+                lib = reinterpret(Ptr{Cchar}, addr)
             end
-        else
-            arg1 =  parse(Int, arg1)
-            hnd_cache = get!(hnd_int_map, arg1) do
-                Ref{Ptr{Cvoid}}(C_NULL)
-            end
-            arg1 = reinterpret(Ptr{Cchar}, arg1)
+            LazyBinding(lib, String(fname), hnd, Ref{Ptr{Cvoid}}(C_NULL))
         end
-        return @ccall jl_load_and_lookup(arg1::Cstring, fname::Cstring, hnd_cache::Ptr{Cvoid})::Ptr{Cvoid}
     end
-    return nothing
+end
+
+const_ptr(p::Ptr, T::LLVM.LLVMType) = LLVM.const_inttoptr(LLVM.ConstantInt(reinterpret(UInt, p)), T)
+
+# Give the declaration `f` of a lazily bound `ccall` target a body that resolves the symbol
+# the first time it is called and caches the pointer, as Julia's own codegen does for a
+# `ccall`. Resolving it here instead would throw for a symbol the library lacks even when
+# the call can never run.
+function lazy_ccall_body!(f::LLVM.Function, b::LazyBinding)
+    FT = LLVM.function_type(f)
+    T_ptr = LLVM.PointerType(LLVM.Int8Type())
+    # Julia 1.10 and 1.11 use typed pointers: the slot must be an `i8**` and the callee a
+    # pointer to `FT`, else the verifier rejects the module.
+    T_pptr = LLVM.PointerType(T_ptr)
+
+    lib = b.lib isa String ? pointer(b.lib) : b.lib
+    slot = const_ptr(Base.unsafe_convert(Ptr{Ptr{Cvoid}}, b.sym), T_pptr)
+    T_lookup = LLVM.FunctionType(T_ptr, LLVM.LLVMType[T_ptr, T_ptr, T_ptr])
+    lookup = LLVM.const_inttoptr(
+        LLVM.ConstantInt(reinterpret(UInt, cglobal(:jl_load_and_lookup))),
+        LLVM.PointerType(T_lookup),
+    )
+
+    LLVM.linkage!(f, LLVM.API.LLVMInternalLinkage)
+    entry = LLVM.BasicBlock(f, "entry")
+    resolve = LLVM.BasicBlock(f, "resolve")
+    call = LLVM.BasicBlock(f, "call")
+    LLVM.@dispose builder = LLVM.IRBuilder() begin
+        LLVM.position!(builder, entry)
+        cached = LLVM.load!(builder, T_ptr, slot)
+        LLVM.ordering!(cached, LLVM.API.LLVMAtomicOrderingAcquire)
+        LLVM.alignment!(cached, sizeof(Ptr{Cvoid}))
+        isnull = LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, cached, LLVM.null(T_ptr))
+        LLVM.br!(builder, isnull, resolve, call)
+
+        LLVM.position!(builder, resolve)
+        resolved = LLVM.call!(builder, T_lookup, lookup,
+            LLVM.Value[
+                const_ptr(lib, T_ptr),
+                const_ptr(pointer(b.fname), T_ptr),
+                const_ptr(Base.unsafe_convert(Ptr{Ptr{Cvoid}}, b.hnd), T_ptr),
+            ]
+        )
+        st = LLVM.store!(builder, resolved, slot)
+        LLVM.ordering!(st, LLVM.API.LLVMAtomicOrderingRelease)
+        LLVM.alignment!(st, sizeof(Ptr{Cvoid}))
+        LLVM.br!(builder, call)
+
+        LLVM.position!(builder, call)
+        target = LLVM.phi!(builder, T_ptr)
+        append!(LLVM.incoming(target), [(cached, entry), (resolved, resolve)])
+        callee = LLVM.bitcast!(builder, target, LLVM.PointerType(FT))
+        res = LLVM.call!(builder, FT, callee, collect(LLVM.parameters(f)))
+        LLVM.callconv!(res, LLVM.callconv(f))
+        # Forward the ABI attributes (`sret`, `byval`, ...) the declaration carried.
+        for i in 1:length(LLVM.parameters(FT))
+            for attr in collect(LLVM.parameter_attributes(f, i))
+                push!(LLVM.argument_attributes(res, i), attr)
+            end
+        end
+        for attr in collect(LLVM.return_attributes(f))
+            push!(LLVM.return_attributes(res), attr)
+        end
+        if LLVM.return_type(FT) == LLVM.VoidType()
+            LLVM.ret!(builder)
+        else
+            LLVM.ret!(builder, res)
+        end
+    end
+    return f
 end
 
 function define_absolute_symbol(jd, name)
@@ -189,10 +272,17 @@ function prepare!(mod)
         end
     end
     for f in collect(functions(mod))
-        ptr = fix_ptr_lookup(LLVM.name(f))
-        if ptr === nothing
+        LLVM.isdeclaration(f) || continue
+        binding = lazy_binding(LLVM.name(f))
+        binding === nothing && continue
+        if !LLVM.isvararg(LLVM.function_type(f))
+            lazy_ccall_body!(f, binding)
             continue
         end
+        # A varargs body cannot forward its arguments, so resolve those eagerly.
+        ptr = @ccall jl_load_and_lookup(
+            binding.lib::Ptr{Cchar}, binding.fname::Cstring, binding.hnd::Ptr{Ptr{Cvoid}}
+        )::Ptr{Cvoid}
         ptr = reinterpret(UInt, ptr)
         ptr = LLVM.ConstantInt(ptr)
         ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.function_type(f)))

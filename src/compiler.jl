@@ -7521,9 +7521,11 @@ function clear_caches!()
     empty!(ActivityMethodCache)
     ActivityWorldCache[] = 0
 
-    # The library handles `ejlstr$` and `ejlptr$` symbols were resolved through.
+    # The library handles `ejlstr$` and `ejlptr$` symbols were resolved through, and the
+    # pointer slots their lazy bodies cache the resolved symbol in.
     empty!(JIT.hnd_string_map)
     empty!(JIT.hnd_int_map)
+    empty!(JIT.lazy_bindings)
 
     @static if VERSION < v"1.11.0-DEV.1552"
         # Inference results, kept by Enzyme itself on versions where Julia's own cache does

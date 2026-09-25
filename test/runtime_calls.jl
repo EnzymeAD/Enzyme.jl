@@ -65,3 +65,12 @@ end
     @test g ≈ [3.0, 2.0]
 end
 
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3618
+# A `ccall` binding is resolved when the call first runs, so a symbol the library lacks is
+# fine on a path that is never taken.
+missing_ccall(i) = ccall((:enzyme_no_such_symbol_3618, Base.libm_name), Cint, (Cint,), i)
+missing_ccall_branch(x) = x > 1e10 ? x * missing_ccall(Cint(0)) : x * x
+@testset "Lazy ccall binding" begin
+    @test autodiff(Reverse, missing_ccall_branch, Active, Active(3.0))[1][1] == 6.0
+    @test autodiff(Forward, missing_ccall_branch, Duplicated(3.0, 1.0))[1] == 6.0
+end
