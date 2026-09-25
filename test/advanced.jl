@@ -1525,6 +1525,66 @@ nested_dup_inner(Ws, x) = first(autodiff(Forward, nested_const_net, Duplicated(W
     @test d_const ≈ fd(nested_const_inner, 1, 1) rtol = 1.0e-4
 end
 
+# The function argument of the inner call can carry the same activity hint:
+# it is `Const` for the inner call, which is the default for sugar such as
+# `Enzyme.hvp`, while the outer call differentiates the data it captures.
+struct NestedConstNet{T}
+    Ws::T
+end
+(n::NestedConstNet)(x) = nested_const_net(n.Ws, x)
+nested_const_closure(Ws) = x -> nested_const_net(Ws, x)
+
+# Scalar loops, so that the inner reverse pass needs neither BLAS nor
+# broadcast materialization.
+function nested_const_scalar(Ws, x)
+    s = zero(eltype(x))
+    for i in 1:length(Ws)
+        w = Ws[i]
+        for j in eachindex(x)
+            s += tanh(w[j] * x[j])
+        end
+    end
+    return s
+end
+nested_const_scalar_closure(Ws) = x -> nested_const_scalar(Ws, x)
+
+nested_const_f_fwd(f, x) = first(autodiff(Forward, Const(f), Duplicated(x, ones(length(x)))))
+function nested_const_f_rev(f, x)
+    dx = zero(x)
+    autodiff(Reverse, Const(f), Active, Duplicated(x, dx))
+    return sum(dx)
+end
+# `hvp` needs its function argument to be read-only, so the captured data is immutable.
+nested_const_hvp(Ws, x) = sum(Enzyme.hvp(nested_const_scalar_closure(Ws), x, ones(length(x))))
+
+@testset "Nested AD: inner Const function capturing active data" begin
+    x = [0.9, -0.3]
+    Wm = ([0.3 -0.7; 0.5 0.2], [-0.4 0.6; 0.1 0.8])
+    Wv = ([0.3, -0.7], [-0.4, 0.6])
+    function fd(inner, f, i; h = 1.0e-6)
+        p = deepcopy(f); p.Ws[1][i] += h
+        m = deepcopy(f); m.Ws[1][i] -= h
+        return (inner(p, x) - inner(m, x)) / 2h
+    end
+
+    for (inner, f) in (
+            (nested_const_f_fwd, NestedConstNet(deepcopy(Wm))),
+            (nested_const_f_fwd, nested_const_closure(deepcopy(Wm))),
+            (nested_const_f_rev, nested_const_scalar_closure(deepcopy(Wv))),
+        )
+        df = make_zero(f)
+        autodiff(Reverse, inner, Active, Duplicated(f, df), Duplicated(x, zero(x)))
+        @test df.Ws[1][1] ≈ fd(inner, f, 1) rtol = 1.0e-4
+        @test df.Ws[1][2] ≈ fd(inner, f, 2) rtol = 1.0e-4
+    end
+
+    Wt = ((0.3, -0.7), (-0.4, 0.6))
+    dWt = first(autodiff(Reverse, nested_const_hvp, Active, Active(Wt), Duplicated(x, zero(x))))[1]
+    h = 1.0e-6
+    fd_hvp = (nested_const_hvp(((0.3 + h, -0.7), Wt[2]), x) - nested_const_hvp(((0.3 - h, -0.7), Wt[2]), x)) / 2h
+    @test dWt[1][1] ≈ fd_hvp rtol = 1.0e-4
+end
+
 catsin(x::Number) = hcat(sin.(x .* [1, 2]))
 
 function inner_reverse(x)
