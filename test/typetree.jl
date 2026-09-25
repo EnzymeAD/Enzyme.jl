@@ -163,14 +163,14 @@ end
 # A generator runs in the world in which its generated function was defined. Enzyme's
 # `thunk` generator thus cannot see methods that packages add to `typetree_inner` or
 # `get_offsets` later (for example, in a package extension). This generator is defined
-# before the methods for `ExtPtr` below, and calls `typetree` in the same way as Enzyme.
+# before the methods for `ExtPtr` below, and gives its `world` to Enzyme in the same way as
+# the compiler.
 function ext_typetree_generator(world::UInt, source, @nospecialize(self), @nospecialize(T::Type))
     @nospecialize
     T = T.parameters[1]
     stub = Core.GeneratedFunctionStub(identity, Core.svec(Symbol("#self#"), :T), Core.svec())
-    tt, md = Enzyme.Compiler.@with Enzyme.ENZYME_CONTEXT => Enzyme.EnzymeContext(world) begin
-        string(typetree(T, ctx, dl)), string(Enzyme.to_fullmd(T, 0, sizeof(T)))
-    end
+    tt = string(Enzyme.typetree_in_world(world, T, ctx, dl))
+    md = string(Enzyme.to_fullmd(world, T, 0, sizeof(T)))
     return stub(world, source, :(return ($tt, $md)))
 end
 
@@ -188,5 +188,11 @@ Enzyme.get_offsets(::Type{ExtPtr}) = ((Enzyme.API.DT_Pointer, 0),)
 @testset "typetree methods from a newer world" begin
     tt, md = ext_typetree(ExtPtr)
     @test tt == "{[-1]:Pointer, [-1,-1]:Float@double}"
+    @test occursin("Pointer", md)
+
+    # `typetree_inner` for a tuple calls `typetree` for each field. These calls must also
+    # find the methods for `ExtPtr`.
+    tt, md = ext_typetree(Tuple{Float64, ExtPtr})
+    @test tt == "{[0]:Float@double, [8]:Pointer, [8,-1]:Float@double}"
     @test occursin("Pointer", md)
 end
