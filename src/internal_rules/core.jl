@@ -154,6 +154,16 @@ function EnzymeRules.forward(
 end
 
 function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(Base.deepcopy)},
+        ::Type{<:Const},
+        x::Const,
+    )
+    primal = func.val(x.val)
+    return EnzymeRules.needs_primal(config) ? primal : nothing
+end
+
+function EnzymeRules.forward(
     config::EnzymeRules.FwdConfig,
     func::Const{typeof(Base.deepcopy)},
     ::Type{<:Duplicated},
