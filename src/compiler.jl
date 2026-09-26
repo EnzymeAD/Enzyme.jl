@@ -305,6 +305,13 @@ const known_ops = Dict{DataType,Tuple{Symbol,Int,Union{Nothing,Tuple{Symbol,Data
     typeof(Base.expm1) => (:expm1, 1, nothing),
     typeof(Base.exp10) => (:exp10, 1, nothing),
     typeof(Base.FastMath.exp_fast) => (:exp, 1, nothing),
+    typeof(Base.FastMath.exp2_fast) => (:exp2, 1, nothing),
+    typeof(Base.FastMath.exp10_fast) => (:exp10, 1, nothing),
+    # the implementations the FastMath versions forward to manipulate the float's bits,
+    # which Enzyme cannot differentiate; in GPU kernels only these may be left after inlining
+    typeof(Base.Math.exp_fast) => (:exp, 1, nothing),
+    typeof(Base.Math.exp2_fast) => (:exp2, 1, nothing),
+    typeof(Base.Math.exp10_fast) => (:exp10, 1, nothing),
     typeof(Base.log) => (:log, 1, nothing),
     typeof(Base.FastMath.log) => (:log, 1, nothing),
     typeof(Base.log1p) => (:log1p, 1, nothing),
