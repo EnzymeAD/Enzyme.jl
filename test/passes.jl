@@ -900,3 +900,72 @@ end
         end
     end
 end
+
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3329
+# In forward-over-reverse, the outer compile runs `nodecayed_phis!` over the inner reverse pass.
+# There, a loop-carried `julia.gc_loaded` pointer is rebuilt as a phi whose loop-entry incoming
+# takes its data pointer from the tape (`extractvalue %tapeArg`), not from a load of the object.
+# The data pointer must not need to be walked back to a parent; the object operand suffices.
+@static if VERSION >= v"1.11-"
+    @testset "nodecayed_phis! addrspace(13) phi of gc_loaded with tape data pointer" begin
+        @test @filecheck begin
+            @check_label "define double @tape_gc_loaded"
+            @check "%nodecayed.p = phi"
+            @check_same "[ %obj, %top ]"
+            @check_same "[ %obj2, %other ]"
+            @check_same "[ %obj3, %fast ]"
+            # the `data` field load of the object itself keeps the fast path: no extra offset
+            @check "%nodecayedoff.p = phi i64"
+            @check_same "[ 0, %fast ]"
+            @check "@julia.gc_loaded"
+            @check_same "%nodecayed.p"
+            @check_not "%p = phi"
+            @check "ret double"
+            LLVM.Context() do ctx
+                mod = parse(
+                    LLVM.Module, """
+                    source_filename = "start"
+                    target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+                    target triple = "x86_64-linux-gnu"
+
+                    declare {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)*, {} addrspace(10)**)
+
+                    define double @tape_gc_loaded({ {} addrspace(10)*, {} addrspace(10)** } %tapeArg, {} addrspace(10)* %arr, {} addrspace(10)* %obj2, {} addrspace(10)* %obj3, i8 %c) #0 {
+                    top:
+                      %obj = extractvalue { {} addrspace(10)*, {} addrspace(10)** } %tapeArg, 0
+                      %data = extractvalue { {} addrspace(10)*, {} addrspace(10)** } %tapeArg, 1
+                      %a = call {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* %obj, {} addrspace(10)** %data)
+                      switch i8 %c, label %merge [ i8 1, label %other
+                                                   i8 2, label %fast ]
+
+                    fast:
+                      %obj3d = addrspacecast {} addrspace(10)* %obj3 to {} addrspace(10)** addrspace(11)*
+                      %obj3p = getelementptr inbounds {} addrspace(10)**, {} addrspace(10)** addrspace(11)* %obj3d, i64 1
+                      %data3 = load {} addrspace(10)**, {} addrspace(10)** addrspace(11)* %obj3p, align 8
+                      %f = call {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* %obj3, {} addrspace(10)** %data3)
+                      br label %merge
+
+                    other:
+                      %arr11 = addrspacecast {} addrspace(10)* %arr to {} addrspace(10)** addrspace(11)*
+                      %data2 = load {} addrspace(10)**, {} addrspace(10)** addrspace(11)* %arr11, align 8
+                      %b = call {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* %obj2, {} addrspace(10)** %data2)
+                      br label %merge
+
+                    merge:
+                      %p = phi {} addrspace(10)* addrspace(13)* [ %a, %top ], [ %b, %other ], [ %f, %fast ]
+                      %d = bitcast {} addrspace(10)* addrspace(13)* %p to double addrspace(13)*
+                      %v = load double, double addrspace(13)* %d, align 8
+                      ret double %v
+                    }
+
+                    attributes #0 = { "enzymejl_world"="1" }
+                    """
+                )
+
+                Enzyme.Compiler.nodecayed_phis!(mod)
+                @test LLVM.verify(mod) === nothing
+                string(mod)
+            end
+        end
+    end
+end
