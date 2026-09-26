@@ -225,7 +225,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
     return run!(GCInvariantVerifierPass(strong = false), mod)
 end
 
-function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
+function addOptimizationPasses!(mpm::LLVM.NewPMPassManager; vectorize::Bool = true)
     add!(mpm, NewPMFunctionPassManager()) do fpm
         add!(fpm, ReinsertGCMarkerPass())
     end
@@ -322,9 +322,9 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         end
         add!(fpm, InstCombinePass())
         add!(fpm, JLInstSimplifyPass())
-        add!(fpm, LoopVectorizePass())
+        vectorize && add!(fpm, LoopVectorizePass())
         add!(fpm, SimplifyCFGPass())
-        add!(fpm, SLPVectorizerPass())
+        vectorize && add!(fpm, SLPVectorizerPass())
         add!(fpm, ADCEPass())
     end
 end
@@ -480,7 +480,7 @@ function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
     return
 end
 
-function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, machine::Bool = true; callconv::Bool = true, tti = nothing)
+function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, machine::Bool = true; callconv::Bool = true, tti = nothing, vectorize::Bool = true)
     if callconv
         fixup_callconv!(mod, tm, tti)
     end
@@ -517,7 +517,7 @@ function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}
             add!(aam, BasicAA())
         end
         add!(pb, NewPMModulePassManager()) do mpm
-            addOptimizationPasses!(mpm)
+            addOptimizationPasses!(mpm; vectorize)
             if machine
                 # TODO enable validate_return_roots
                 # validate_return_roots!(mod)

@@ -453,3 +453,19 @@ test/ext/jlarrays.jl for why, and for the rest of the coverage).
         )
     end
 end
+
+# The twin of "Metal reverse mode through a 4-D CartesianIndices" in metal.jl: the same kernel's derivative on CUDA,
+# where GPUCompiler's `can_vectorize` decides whether the module is vectorized after differentiation.
+function cartesian4_cuda!(A)
+    I = CartesianIndices(size(A))[threadIdx().x]
+    A[I] = 2.0f0 * A[I]
+    return nothing
+end
+∇cartesian4_cuda!(A, Ā) = (autodiff_deferred(Reverse, Const(cartesian4_cuda!), Const, Duplicated(A, Ā)); nothing)
+
+@testset "CUDA reverse mode through a 4-D CartesianIndices" begin
+    A = CUDA.rand(Float32, 2, 2, 2, 2)
+    Ā = CUDA.ones(Float32, 2, 2, 2, 2)
+    @cuda threads = 16 ∇cartesian4_cuda!(A, Ā)
+    @test all(==(2.0f0), Array(Ā))
+end
