@@ -87,3 +87,20 @@ end
     @test Array(B̄_d) ≈ B̄
 
 end
+
+# Indexing through the `CartesianIndices` of a 4-D array computes its `length`, the product of the four sizes. After
+# differentiation, Enzyme ran LLVM's vectorizers on the kernel, which GPUCompiler doesn't do for Metal, and the SLP
+# vectorizer turned that product into `llvm.vector.reduce.mul.v4i64`, which Apple's back-end can't compile.
+function cartesian4!(A)
+    I = CartesianIndices(size(A))[Metal.thread_position_in_grid_1d()]
+    A[I] = 2.0f0 * A[I]
+    return nothing
+end
+∇cartesian4!(A, Ā) = (autodiff_deferred(Reverse, Const(cartesian4!), Const, Duplicated(A, Ā)); nothing)
+
+@testset "Metal reverse mode through a 4-D CartesianIndices" begin
+    A = MtlArray(rand(Float32, 2, 2, 2, 2))
+    Ā = Metal.ones(Float32, 2, 2, 2, 2)
+    @metal threads = 16 ∇cartesian4!(A, Ā)
+    @test all(==(2.0f0), Array(Ā))
+end

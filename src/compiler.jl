@@ -6608,7 +6608,8 @@ end
     if !(primal_target isa GPUCompiler.NativeCompilerTarget)
         reinsert_gcmarker!(adjointf)
         augmented_primalf !== nothing && reinsert_gcmarker!(augmented_primalf)
-        post_optimize!(mod, target_machine, false; tti=target_info) #=machine=#
+        # vectorize only where GPUCompiler does: Metal, for one, can't compile the vector reductions the SLP vectorizer forms
+        post_optimize!(mod, target_machine, false; tti = target_info, vectorize = GPUCompiler.can_vectorize(primal_job)) #=machine=#
     end
 
     adjointf = functions(mod)[adjointf_name]
