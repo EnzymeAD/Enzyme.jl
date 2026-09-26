@@ -17,7 +17,7 @@ structured_randn!(A::Diagonal) = (randn!(MatrixAlgebraKit.diagview(A)); return A
 instantiate_matrix(::Type{T}, size) where {T <: Number} = randn(rng, T, size)
 instantiate_matrix(::Type{AT}, size) where {AT <: Diagonal} = Diagonal(randn(rng, eltype(AT), size))
 
-@testset "lq" for T in (Float64, ComplexF64), sz in ((19, 17), (19, 19), (19, 23)) 
+@testset "lq" for T in (Float64, ComplexF64), sz in ((19, 17), (19, 19), (19, 23))
     A = instantiate_matrix(T, sz)
     m, n = sz
     atol = m * n * precision(T)
@@ -40,7 +40,7 @@ instantiate_matrix(::Type{AT}, size) where {AT <: Diagonal} = Diagonal(randn(rng
     end
 end
 
-@testset "qr" for T in (Float64, ComplexF64), sz in ((19, 17), (19, 19), (19, 23)) 
+@testset "qr" for T in (Float64, ComplexF64), sz in ((19, 17), (19, 19), (19, 23))
     A = instantiate_matrix(T, sz)
     alg = MatrixAlgebraKit.select_algorithm(qr_compact, A)
     m, n = sz
@@ -51,7 +51,7 @@ end
     MatrixAlgebraKit.remove_lq_gauge_dependence!(ΔQR..., A, QR...)
     test_reverse(qr_compact, Duplicated, (A, Duplicated), (alg, Const); atol, rtol, output_tangent = ΔQR)
     test_reverse(call_and_zero!, Duplicated, (qr_compact!, Const), (A, Duplicated), (alg, Const); atol, rtol, output_tangent = ΔQR)
-    
+
     if sz[1] == sz[2]
         A = instantiate_matrix(Diagonal{T}, sz)
         alg = MatrixAlgebraKit.select_algorithm(qr_compact, A)
@@ -63,7 +63,7 @@ end
     end
 end
 
-@testset "svd" for T in (Float64, ComplexF64), sz in ((19, 17), (19, 19), (19, 23)) 
+@testset "svd" for T in (Float64, ComplexF64), sz in ((19, 17), (19, 19), (19, 23))
     A = instantiate_matrix(T, sz)
     m, n = sz
     atol = m * n * precision(T)

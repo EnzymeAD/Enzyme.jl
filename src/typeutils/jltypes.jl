@@ -219,7 +219,7 @@ function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nos
 		    last_cc = GPUCompiler.BITS_VALUE
         elseif llvm_source_typ isa LLVM.PointerType
             if llvm_source_typ != codegen_typ
-                throw(AssertionError("Mismatch codegen type llvm_source_typ=$(string(llvm_source_typ)) codegen_typ=$(string(codegen_typ)) source_i=$source_i source_sig=$source_sig, source_typ=$source_typ, codegen_i=$codegen_i, codegen_types=$(string(codegen_ft))"))
+                throw(AssertionError("Mismatch codegen type llvm_source_typ=$(string(llvm_source_typ)) codegen_typ=$(string(codegen_typ)) source_i=$source_i source_sig=$source_sig, source_typ=$source_typ, codegen_i=$codegen_i, codegen_types=$(string(codegen_types))"))
             end
             push!(
                 args,

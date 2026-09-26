@@ -4,6 +4,19 @@ using CUDA
 using Enzyme
 using Enzyme: EnzymeRules
 
+# A CuPtr is a device address. Use the type tree of a Ptr for it. Type analysis then knows
+# that integer arithmetic on a CuPtr is pointer arithmetic. On Julia 1.13, LLVM folds
+# `CuPtr + n` into an `add i64`. Without this type tree, Enzyme cannot differentiate that add.
+function Enzyme.typetree_inner(::Type{CuPtr{T}}, ctx, dl, seen::Enzyme.Compiler.TypeTreeTable) where {T}
+    return Enzyme.typetree_inner(Ptr{T}, ctx, dl, seen)
+end
+
+# Device pointers and device references refer to mutable device memory. Their activity
+# comes from their element type, as for an Array. `CuRefValue` is not public, and it is in
+# CUDACore on CUDA 6 and in CUDA on CUDA 5. `parentmodule(CuPtr)` is that module.
+const CuRefValue = parentmodule(CuPtr).CuRefValue
+Enzyme.Compiler.is_mutable_array(::Type{<:Union{CuPtr, CuArrayPtr, CuRefValue}}) = true
+
 # Complex is handled here because the shadow operations are element-wise: zeroing is a
 # `memset` sized by `sizeof(T)`, and accumulation is a broadcast, both of which are
 # agnostic to the real/complex split.
