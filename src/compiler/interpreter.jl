@@ -227,7 +227,12 @@ function EnzymeInterpreter(
 
         # parameters for inference and optimization
         parms,
-        OptimizationParams(),
+        # Keep `:invoke`s on the fully specialized signature. With the default
+        # compile signature a non-inlined callee that only passes a function along
+        # (e.g. `Base._mapreduce_dim(f, op, ...)` under `sum(log, x)`) is widened to
+        # `f::Function`, so codegen emits a boxed `jl_invoke` that Enzyme can only
+        # differentiate through the slow runtime-generic path.
+        OptimizationParams(; compilesig_invokes = false),
         forward_rules::Bool,
         reverse_rules::Bool,
         inactive_rules::Bool,
