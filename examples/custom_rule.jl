@@ -163,6 +163,11 @@ g(y, x) = f(y, x)^2 # function to differentiate
 @show autodiff(Forward, g, Const(y), Duplicated(x, dx)) # derivative of g w.r.t. x[1], with y annotated Const
 @show autodiff(Forward, g, Const(y), Const(x)); # derivative of g w.r.t. x[1], with x and y annotated Const
 
+# !!! warning "Runtime activity aliases an inactive argument's shadow to its primal"
+#     The `x isa Const` test above is not the whole test under [runtime activity](@ref faq-runtime-activity), where an argument that is inactive at run time is passed with its shadow aliased to its primal.
+#     A rule reading `x.dval` then reads the primal rather than a tangent and adds it to the derivative, giving a result that is finite, plausible and wrong.
+#     The full test is `x isa Const || (EnzymeRules.runtime_activity(config) && x.dval === x.val)`, which is the check Enzyme's own `mul!` rules make (see `src/internal_rules/linalg.jl`).
+
 # Note that there are also exist batched duplicated annotations for forward mode, namely [`BatchDuplicated`](@ref)
 # and [`BatchDuplicatedNoNeed`](@ref), which are not covered in this tutorial.
 
@@ -230,6 +235,11 @@ end
 # * We zero-out `y`'s shadow.  This is because `y` is overwritten within `f`, so there is no derivative w.r.t. to the `y` that was originally inputted.
 # * Finally, since all derivatives are accumulated *in place* (in the shadows of the [`Duplicated`](@ref) arguments), these derivatives must not be communicated via the return value.
 #   Hence, we return `(nothing, nothing)`. If, instead, one of our arguments was annotated as [`Active`](@ref), we would have to provide its derivative at the corresponding index in the tuple returned.
+
+# !!! warning "`Active` does not mean the caller wants that derivative"
+#     [`Active`](@ref) means only that Enzyme could not prove the argument inactive, and activity analysis over-approximates.
+#     The same fixed value can reach a rule as [`Const`](@ref) from one call site and as [`Active`](@ref) from another, so a rule that refuses or errors because an argument is `Active` will reject correct user code depending only on how the call is wrapped.
+#     Forward mode is different, since shadows there are values and `iszero(x.dval)` is an exact test.
 
 # Finally, let's see our reverse rule in action!
 
