@@ -48,12 +48,15 @@ end
 # `fma` fell back to its emulation, which computes in Float64. For a module that does not target
 # the host, GPUCompiler's pass answers for the job's target instead (`have_fma`).
 # `device_job` is the job for such a module, or `nothing`.
+# Before GPUCompiler 1.23 the pass took no job and read it from a global that only GPUCompiler's own
+# driver sets, so there every module keeps Julia's answer.
+const HAS_JOB_CPU_FEATURES = pkgversion(GPUCompiler) >= v"1.23"
 cpu_features_pass(device_job) = device_job === nothing ? CPUFeaturesPass() : GPUCompiler.GPULowerCPUFeaturesPass(device_job)
 # GPUCompiler's pass is written in Julia, so each pass builder that runs it has to register it first
 register_cpu_features!(pb, device_job) = device_job === nothing || register!(pb, GPUCompiler.GPULowerCPUFeaturesPass(device_job))
 
 function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, job::CompilerJob, tti = nothing)
-    device_job = module_targets_host(mod) ? nothing : job
+    device_job = HAS_JOB_CPU_FEATURES && !module_targets_host(mod) ? job : nothing
     @dispose pb = NewPMPassBuilder() begin
         if tti !== nothing
             LLVM.target_transform_info!(pb, tti)

@@ -140,8 +140,8 @@ end
 
 # `Base.fma` calls `julia.cpu.have_fma.*`. In a module emitted for a GPU, `optimize!` answers it for
 # the job's target (GPUCompiler's pass), not with Julia's CPU pass, which says no for every GPU
-# triple and so made `fma` fall back to its Float64 emulation.
-@testset "have_fma in a module for a GPU, $name" for (name, triple, target) in (
+# triple and so made `fma` fall back to its Float64 emulation. Needs GPUCompiler 1.23.
+Enzyme.Compiler.HAS_JOB_CPU_FEATURES && @testset "have_fma in a module for a GPU, $name" for (name, triple, target) in (
         ("Metal", "air64-apple-macosx13.0.0", GPUCompiler.MetalCompilerTarget(; macos = v"13.0", air = v"2.4", metal = v"3.0")),
         ("PTX", "nvptx64-nvidia-cuda", GPUCompiler.PTXCompilerTarget(; cap = v"7.0", ptx = v"7.8")),
     )
