@@ -1466,6 +1466,142 @@ end
     return nothing
 end
 
+@register_fwd function eqtablepop_fwd(B, orig, gutils, normalR, shadowR)
+    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+        return true
+    end
+    err = emit_error(B, orig, "Enzyme: Not yet implemented forward for jl_eqtable_pop")
+    newo = new_from_original(gutils, orig)
+    API.moveBefore(newo, err, B)
+
+    normal =
+        (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
+    if shadowR != C_NULL && normal !== nothing
+        width = get_width(gutils)
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        for idx in 1:width
+            if width == 1
+                shadowres = normal
+            else
+                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
+    end
+
+    return false
+end
+
+# Pops the key from the shadow table too, so the shadow table keeps the same keys
+# as the primal one, and returns the popped shadow value.
+@register_aug function eqtablepop_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+        return true
+    end
+
+    mode = get_mode(gutils)
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    API.EnzymeGradientUtilsGetReturnDiffeType(
+        gutils,
+        orig,
+        needsPrimalP,
+        needsShadowP,
+        mode,
+    )
+    need_result = needsShadowP[] != 0
+
+    width = get_width(gutils)
+
+    origh, origkey, origdflt, origfound = arg_operands_view(orig)
+
+    # A constant table has no shadow table to pop from.
+    if is_constant_value(gutils, origh)
+        if need_result
+            err = emit_error(
+                B,
+                orig,
+                "Enzyme: Not yet implemented constant table in jl_eqtable_pop " *
+                    string(origh) *
+                    " " *
+                    string(orig),
+            )
+            normal = new_from_original(gutils, orig)
+            API.moveBefore(normal, err, B)
+            shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+            for idx in 1:width
+                if width == 1
+                    shadowres = normal
+                else
+                    shadowres = insert_value!(B, shadowres, normal, idx - 1)
+                end
+            end
+            unsafe_store!(shadowR, shadowres.ref)
+        end
+        return false
+    end
+
+    shadowh = invert_pointer(gutils, origh, B)
+
+    shadowdflt = if is_constant_value(gutils, origdflt)
+        shadowdflt2 = julia_error(
+            Base.unsafe_convert(
+                Cstring,
+                "Mixed activity for default of jl_eqtable_pop " *
+                    string(orig) *
+                    " " *
+                    string(origdflt),
+            ),
+            orig.ref,
+            API.ET_MixedActivityError,
+            gutils.ref,
+            origdflt.ref,
+            B.ref,
+        )
+        if shadowdflt2 != C_NULL
+            LLVM.Value(shadowdflt2)
+        else
+            nop = new_from_original(gutils, origdflt)
+            if width == 1
+                nop
+            else
+                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(nop)))
+                shadowm = LLVM.UndefValue(ST)
+                for j in 1:width
+                    shadowm = insert_value!(B, shadowm, nop, j - 1)
+                end
+                shadowm
+            end
+        end
+    else
+        invert_pointer(gutils, origdflt, B)
+    end
+
+    newvals = API.CValueType[API.VT_Shadow, API.VT_Primal, API.VT_Shadow, API.VT_None]
+
+    # `found` is only read by the primal code, so the shadow call doesn't set it.
+    newops = LLVM.Value[
+        shadowh,
+        new_from_original(gutils, origkey),
+        shadowdflt,
+        LLVM.null(value_type(origfound)),
+    ]
+
+    shadowres = batch_call_same_with_inverted_arg_if_active!(
+        B, gutils, orig, newops, newvals, false, "eqtablepop";
+        need_result
+    )
+
+    if need_result
+        unsafe_store!(shadowR, shadowres.ref)
+    end
+    return false
+end
+
+@register_rev function eqtablepop_rev(B, orig, gutils, tape)
+    return nothing
+end
+
 
 @register_fwd function idtablerehash_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
@@ -2417,6 +2553,12 @@ end
         @augfunc(eqtableput_augfwd),
         @revfunc(eqtableput_rev),
         @fwdfunc(eqtableput_fwd),
+    )
+    register_handler!(
+        ("jl_eqtable_pop", "ijl_eqtable_pop"),
+        @augfunc(eqtablepop_augfwd),
+        @revfunc(eqtablepop_rev),
+        @fwdfunc(eqtablepop_fwd),
     )
     register_handler!(
         ("jl_idtable_rehash", "ijl_idtable_rehash"),
