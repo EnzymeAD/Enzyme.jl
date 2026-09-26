@@ -900,3 +900,109 @@ end
         end
     end
 end
+
+@testset "nodecayed_phis! loads through a phi of fields at different offsets" begin
+    # LLVM 20 (Julia 1.13) merges the loads of a data pointer from an `Array` (offset 0)
+    # and from a `Memory` (offset 8) into one load through a phi of the two field
+    # addresses. `nodecayed_phis!` must load in each predecessor and make a phi of the
+    # loaded values. A phi of objects and a phi of offsets causes illegal type analysis.
+    @test @filecheck begin
+        @check_label "define i8 @merge"
+        @check_not "nodecayed"
+        @check "%data = phi"
+        @check_not "nodecayed"
+        @check_label "define i8 @merge_poison"
+        @check_not "nodecayed"
+        @check "%data = phi"
+        @check_same "poison"
+        @check_not "nodecayed"
+        @check_label "define i8 @store_first"
+        @check "nodecayedoff."
+        @check_label "define i8 @not_dereferenceable"
+        @check "nodecayedoff."
+        LLVM.Context() do ctx
+            mod = parse(
+                LLVM.Module, """
+                define i8 @merge(i8* addrspace(10)* nonnull align 8 dereferenceable(24) %arr, i8* addrspace(10)* nonnull %mem, i1 %c) {
+                top:
+                  %ap = addrspacecast i8* addrspace(10)* %arr to i8* addrspace(11)*
+                  br i1 %c, label %copy, label %merge
+
+                copy:
+                  %m11 = addrspacecast i8* addrspace(10)* %mem to i8* addrspace(11)*
+                  %mp = getelementptr inbounds i8*, i8* addrspace(11)* %m11, i64 1
+                  br label %merge
+
+                merge:
+                  %p = phi i8* addrspace(11)* [ %mp, %copy ], [ %ap, %top ]
+                  %data = load i8*, i8* addrspace(11)* %p, align 8
+                  %v = load i8, i8* %data, align 1
+                  ret i8 %v
+                }
+
+                define i8 @merge_poison(i8* addrspace(10)* nonnull align 8 dereferenceable(24) %arr, i8* addrspace(10)* nonnull %mem, i1 %c, i1 %d) {
+                top:
+                  %ap = addrspacecast i8* addrspace(10)* %arr to i8* addrspace(11)*
+                  br i1 %c, label %copy, label %other
+
+                other:
+                  br i1 %d, label %merge, label %bad
+
+                bad:
+                  br label %merge
+
+                copy:
+                  %m11 = addrspacecast i8* addrspace(10)* %mem to i8* addrspace(11)*
+                  %mp = getelementptr inbounds i8*, i8* addrspace(11)* %m11, i64 1
+                  br label %merge
+
+                merge:
+                  %p = phi i8* addrspace(11)* [ %mp, %copy ], [ %ap, %other ], [ poison, %bad ]
+                  %data = load i8*, i8* addrspace(11)* %p, align 8
+                  %v = load i8, i8* %data, align 1
+                  ret i8 %v
+                }
+
+                define i8 @store_first(i8* addrspace(10)* nonnull align 8 dereferenceable(24) %arr, i8* addrspace(10)* nonnull %mem, i1 %c, i8* %q) {
+                top:
+                  %ap = addrspacecast i8* addrspace(10)* %arr to i8* addrspace(11)*
+                  br i1 %c, label %copy, label %merge
+
+                copy:
+                  %m11 = addrspacecast i8* addrspace(10)* %mem to i8* addrspace(11)*
+                  %mp = getelementptr inbounds i8*, i8* addrspace(11)* %m11, i64 1
+                  br label %merge
+
+                merge:
+                  %p = phi i8* addrspace(11)* [ %mp, %copy ], [ %ap, %top ]
+                  store i8* %q, i8* addrspace(11)* %p, align 8
+                  %data = load i8*, i8* addrspace(11)* %p, align 8
+                  %v = load i8, i8* %data, align 1
+                  ret i8 %v
+                }
+
+                define i8 @not_dereferenceable(i8* addrspace(10)* nonnull %arr, i8* addrspace(10)* nonnull %mem, i1 %c) {
+                top:
+                  %ap = addrspacecast i8* addrspace(10)* %arr to i8* addrspace(11)*
+                  br i1 %c, label %copy, label %merge
+
+                copy:
+                  %m11 = addrspacecast i8* addrspace(10)* %mem to i8* addrspace(11)*
+                  %mp = getelementptr inbounds i8*, i8* addrspace(11)* %m11, i64 1
+                  br label %merge
+
+                merge:
+                  %p = phi i8* addrspace(11)* [ %mp, %copy ], [ %ap, %top ]
+                  %data = load i8*, i8* addrspace(11)* %p, align 8
+                  %v = load i8, i8* %data, align 1
+                  ret i8 %v
+                }
+                """
+            )
+
+            Enzyme.Compiler.nodecayed_phis!(mod)
+            @test LLVM.verify(mod) === nothing
+            string(mod)
+        end
+    end
+end

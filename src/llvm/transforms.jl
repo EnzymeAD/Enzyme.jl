@@ -924,17 +924,138 @@ function nodecayed_all_args(inst::LLVM.PHIInst)::Bool
             push!(addrtodo, operands(base)[3])
             continue
         end
-        undeforpoison = isa(base, LLVM.UndefValue)
-        @static if LLVM.version() >= v"12"
-            undeforpoison |= isa(base, LLVM.PoisonValue)
-        end
-        if undeforpoison
+        if is_undef_or_poison(base)
             # undef/poison incomings impose no GC constraint
             continue
         end
         return false
     end
     return true
+end
+
+"""
+    unfold_derived_phi_loads!(f::LLVM.Function) -> Bool
+
+Change a load through a phi of derived pointers into a phi of loads.
+
+Since LLVM 20 (Julia 1.13), the optimizer can merge loads of the same field from
+different objects. It makes one load through a phi of the field addresses. If the
+objects have different types, the field can be at a different offset in each object.
+For example, the data pointer of an `Array` is at offset 0. The data pointer of a
+`Memory` is at offset 8.
+
+`nodecayed_phis!` changes a phi of derived pointers into a phi of base objects and a
+phi of offsets. Type analysis cannot connect each offset to its base object. It gives
+the type at each offset to each base object, and this causes an illegal type analysis.
+A phi of the loaded values has one type only, thus this function moves each load back
+into the predecessors.
+
+The function changes a phi only if all of these conditions are true:
+- The phi is a pointer in addrspace(11), and its incoming values have different
+  constant offsets. Undef and poison incoming values do not count.
+- All users of the phi are non-volatile, non-atomic loads in the block of the phi.
+- No call and no memory write comes before one of these loads in the block.
+- The load is safe on each edge from a predecessor with more than one successor (see
+  `is_speculatable_load`). On such an edge, the new load is speculative.
+"""
+function unfold_derived_phi_loads!(f::LLVM.Function)::Bool
+    dl = datalayout(LLVM.parent(f))
+    changed = false
+    for bb in blocks(f)
+        for phi in collect(instructions(bb))
+            isa(phi, LLVM.PHIInst) || break
+            pty = value_type(phi)
+            (isa(pty, LLVM.PointerType) && addrspace(pty) == Derived) || continue
+
+            incs = collect(incoming(phi))
+            # An undef or poison incoming value has no offset. It does not make the
+            # offsets different.
+            offsets = Int[last(get_base_and_offset(v)) for (v, _) in incs if !is_undef_or_poison(v)]
+            (isempty(offsets) || all(==(offsets[1]), offsets)) && continue
+
+            loads = LLVM.LoadInst[]
+            ok = true
+            for u in LLVM.uses(phi)
+                ld = LLVM.user(u)
+                if isa(ld, LLVM.LoadInst) && LLVM.parent(ld) == bb && operands(ld)[1] == phi &&
+                        !Bool(LLVM.API.LLVMGetVolatile(ld)) && !LLVM.is_atomic(ld)
+                    push!(loads, ld)
+                else
+                    ok = false
+                    break
+                end
+            end
+            (ok && !isempty(loads)) || continue
+
+            # A call or a write before a load can change the value that the load reads,
+            # or it can prevent the load.
+            pending = Set{LLVM.Instruction}(loads)
+            for inst in instructions(bb)
+                isempty(pending) && break
+                if inst in pending
+                    delete!(pending, inst)
+                    continue
+                end
+                isa(inst, LLVM.PHIInst) && continue
+                if isa(inst, LLVM.CallInst) || mayWriteToMemory(inst)
+                    ok = false
+                    break
+                end
+            end
+            ok || continue
+
+            for (v, pred) in incs
+                is_undef_or_poison(v) && continue
+                length(collect(successors(terminator(pred)))) == 1 && continue
+                for ld in loads
+                    if !is_speculatable_load(v, Int(LLVM.sizeof(dl, value_type(ld))))
+                        ok = false
+                        break
+                    end
+                end
+                ok || break
+            end
+            ok || continue
+
+            builder = IRBuilder()
+            for ld in loads
+                position!(builder, phi)
+                newphi = phi!(builder, value_type(ld))
+                done = Dict{LLVM.BasicBlock, LLVM.LoadInst}()
+                for (v, pred) in incs
+                    # A load from an undef or poison pointer gives an undef or poison value.
+                    if is_undef_or_poison(v)
+                        push!(incoming(newphi), (undef_or_poison_like(v, value_type(ld)), pred))
+                        continue
+                    end
+                    nld = get(done, pred, nothing)
+                    if nld === nothing
+                        position!(builder, terminator(pred))
+                        nld = load!(builder, value_type(ld), v)
+                        alignment!(nld, alignment(ld))
+                        copy_metadata!(nld, ld)
+                        done[pred] = nld
+                    end
+                    push!(incoming(newphi), (nld, pred))
+                end
+                # Memory metadata such as `!tbaa` is not allowed on a phi.
+                for k in ("enzyme_type", "enzyme_inactive", "enzyme_active")
+                    if haskey(metadata(ld), k)
+                        metadata(newphi)[k] = metadata(ld)[k]
+                    end
+                end
+                ldname = LLVM.name(ld)
+                replace_uses!(ld, newphi)
+                LLVM.erase!(ld)
+                LLVM.name!(newphi, ldname)
+            end
+            @assert isempty(collect(LLVM.uses(phi)))
+            LLVM.erase!(phi)
+            dispose(builder)
+            changed = true
+        end
+    end
+    return changed
 end
 
 # If there is a phi node of a decayed value, Enzyme may need to cache it
@@ -1209,11 +1330,7 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
         return v2, offset, skipload
     end
 
-    undeforpoison = isa(v, LLVM.UndefValue)
-    @static if LLVM.version() >= v"12"
-        undeforpoison |= isa(v, LLVM.PoisonValue)
-    end
-    if undeforpoison
+    if is_undef_or_poison(v)
         PT = if LLVM.is_opaque(value_type(v))
             LLVM.PointerType(10)
         else
@@ -1395,6 +1512,10 @@ function nodecayed_phis!(mod::LLVM.Module)
                 continue
             end
         end
+
+        # Do this before the rewrite below. That rewrite gives a phi of objects of different
+        # types and a phi of their offsets, and type analysis cannot use that combination.
+        unfold_derived_phi_loads!(f)
 
         offty = LLVM.IntType(8 * sizeof(Int))
         i8 = LLVM.IntType(8)
@@ -2370,7 +2491,7 @@ function propagate_returned!(mod::LLVM.Module)
                                 break
                             end
                             op_i = operands(un)[i]
-                            if !isa(op_i, LLVM.AllocaInst) && !isa(op_i, LLVM.UndefValue) && !isa(op_i, LLVM.PoisonValue)
+                            if !isa(op_i, LLVM.AllocaInst) && !is_undef_or_poison(op_i)
                                 illegalUse = true
                                 break
                             end
@@ -2492,7 +2613,7 @@ function propagate_returned!(mod::LLVM.Module)
                                 break
                             end
                             op_i = operands(un)[i]
-                            if isa(op_i, LLVM.UndefValue) || isa(op_i, LLVM.PoisonValue)
+                            if is_undef_or_poison(op_i)
                                 continue
                             end
                             if op_i == arg

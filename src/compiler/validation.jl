@@ -1769,11 +1769,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world
             end
         end
 
-        undefpoisonornull = isa(cur, LLVM.UndefValue) || isa(cur, LLVM.PointerNull)
-        @static if LLVM.version() >= v"12"
-            undefpoisonornull |= isa(cur, LLVM.PoisonValue)
-        end
-        if undefpoisonornull
+        if is_undef_or_poison(cur) || isa(cur, LLVM.PointerNull)
             continue
         end
 
