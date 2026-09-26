@@ -2,6 +2,39 @@ using Metal
 using Enzyme
 using Test
 
+# 3-point stencil: every thread reads its neighbours, so the adjoint of thread `i` adds into
+# x̄[i-1], x̄[i] and x̄[i+1], concurrently with its neighbours. Enzyme has to accumulate these
+# with atomic adds on device memory.
+function stencil!(y, x)
+    i = Metal.thread_position_in_grid_1d()
+    if 2 <= i <= length(x) - 1
+        @inbounds y[i] = x[i - 1] - 2.0f0 * x[i] + x[i + 1] * x[i + 1]
+    end
+    return nothing
+end
+
+function ∇stencil!(y, ȳ, x, x̄)
+    Enzyme.autodiff_deferred(Reverse, Const(stencil!), Const, Duplicated(y, ȳ), Duplicated(x, x̄))
+    return nothing
+end
+
+@testset "Metal stencil adjoint" begin
+    N = 1024
+    x = Float32[sin(i) for i in 1:N]
+    ȳ = Float32[cos(i) for i in 1:N]
+    x̄ = zeros(Float32, N)
+    for i in 2:(N - 1)
+        x̄[i - 1] += ȳ[i]
+        x̄[i] -= 2 * ȳ[i]
+        x̄[i + 1] += 2 * x[i + 1] * ȳ[i]
+    end
+
+    x_d = MtlArray(x)
+    x̄_d = Metal.zeros(Float32, N)
+    Metal.@sync @metal threads = 256 groups = cld(N, 256) ∇stencil!(Metal.zeros(Float32, N), MtlArray(ȳ), x_d, x̄_d)
+    @test Array(x̄_d) ≈ x̄
+end
+
 function fun_cpu!(A, B, a)
     for ix in axes(A, 1)
         A[ix] += a * B[ix] * Float32(100.65)
