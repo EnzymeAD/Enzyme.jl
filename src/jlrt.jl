@@ -1136,9 +1136,6 @@ function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.I
     end
 
     ct = if occursin("ptx", LLVM.triple(mod)) || occursin("amdgcn", LLVM.triple(mod))
-	if string isa Tuple
-	    errty = errty.name.wrapper{Nothing, Nothing}
-	end
         vt = LLVM.VoidType()
         ptr = convert(LLVMType, Ptr{Cvoid})
 
@@ -1184,7 +1181,9 @@ function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.I
     else
     	if cond !== nothing
 	    if string isa Tuple
-	       errty = errty.name.wrapper{Nothing, Nothing}
+                # the conditional throw only stores the message: use the error type's variant without
+                # method instance and world (`{Nothing, Nothing}`), or the message-only type if it has none
+                errty = errty.name.wrapper isa UnionAll ? errty.name.wrapper{Nothing, Nothing} : EnzymeRuntimeException
 	    end
             emit_conditional_throw!(B, cond, errty, stringv)
     	else
