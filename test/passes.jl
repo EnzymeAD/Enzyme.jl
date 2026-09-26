@@ -138,6 +138,32 @@ end
     end
 end
 
+# `Base.fma` calls `julia.cpu.have_fma.*`. In a module emitted for a GPU, `optimize!` answers it for
+# the job's target (GPUCompiler's pass), not with Julia's CPU pass, which says no for every GPU
+# triple and so made `fma` fall back to its Float64 emulation.
+@testset "have_fma in a module for a GPU, $name" for (name, triple, target) in (
+        ("Metal", "air64-apple-macosx13.0.0", GPUCompiler.MetalCompilerTarget(; macos = v"13.0", air = v"2.4", metal = v"3.0")),
+        ("PTX", "nvptx64-nvidia-cuda", GPUCompiler.PTXCompilerTarget(; cap = v"7.0", ptx = v"7.8")),
+    )
+    ir = """
+    target triple = "$triple"
+    declare i1 @julia.cpu.have_fma.f32()
+    define i1 @f() {
+    top:
+      %r = call i1 @julia.cpu.have_fma.f32()
+      ret i1 %r
+    }"""
+    mi = GPUCompiler.methodinstance(typeof(identity), Tuple{Nothing})
+    params = Enzyme.Compiler.PrimalCompilerParams(Enzyme.API.DEM_ForwardMode)
+    job = GPUCompiler.CompilerJob(mi, GPUCompiler.CompilerConfig(target, params; kernel = false))
+    LLVM.Context() do ctx
+        mod = parse(LLVM.Module, ir)
+        Enzyme.Compiler.optimize!(mod, nothing, job)
+        ret = only(i for bb in blocks(functions(mod)["f"]) for i in instructions(bb) if i isa LLVM.RetInst)
+        @test convert(Bool, operands(ret)[1])
+    end
+end
+
 @testset "Recursively dead function removal" begin
     @test @filecheck begin
         # Both the recursive function and its callee are dead and must be removed.
@@ -608,7 +634,7 @@ function decay_egal_module()
     )
     GPUCompiler.prepare_job!(job)
     mod, _ = GPUCompiler.emit_llvm(job)
-    Enzyme.Compiler.optimize!(mod, Enzyme.Compiler.JIT.get_tm())
+    Enzyme.Compiler.optimize!(mod, Enzyme.Compiler.JIT.get_tm(), job)
     return mod
 end
 

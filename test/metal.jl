@@ -64,6 +64,32 @@ function ∇_fun_gpu!(A_d, Ā_d, B_d, B̄_d, a)
     return nothing
 end
 
+# `Base.fma` asks `julia.cpu.have_fma` whether the device fuses a multiply-add. Answered for the
+# host it was no, and the Float64 fallback (`fma_emulated`) doesn't compile for Metal. Metal.jl's
+# `expm1` calls `fma` too.
+function fma_gpu!(y, x, f)
+    i = Metal.thread_position_in_grid_1d()
+    @inbounds y[i] = f(x[i])
+    return nothing
+end
+
+function ∇fma_gpu!(y, ȳ, x, x̄, f)
+    Enzyme.autodiff_deferred(Reverse, Const(fma_gpu!), Const, Duplicated(y, ȳ), Duplicated(x, x̄), Const(f))
+    return nothing
+end
+
+@testset "Metal fma" begin
+    x = Float32[0.1, 0.5, 1.5, 2.0]
+    @testset "$name" for (name, f, df) in (
+            ("fma", v -> fma(v, 2.0f0, 1.0f0), v -> 2.0f0),
+            ("expm1", expm1, exp),
+        )
+        x̄ = Metal.zeros(Float32, 4)
+        @metal threads = 4 ∇fma_gpu!(Metal.zeros(Float32, 4), Metal.ones(Float32, 4), MtlArray(x), x̄, f)
+        @test Array(x̄) ≈ df.(x)
+    end
+end
+
 @testset "Metal autodiff" begin
     N = 16
 
