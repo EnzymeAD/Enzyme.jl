@@ -1915,7 +1915,14 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
 		   
 		   arg = operands(arg)[3]
 
-	           if isa(arg, LLVM.CallInst)
+                ntuple = abs_ntuple_type(arg)
+                if ntuple !== nothing
+                    Ty = ntuple[2]
+                    # count should represent {the total size in bytes, the aligned size of each element}
+                    alignsize = LLVM.ConstantInt(value_type(totalsize), Base.aligned_sizeof(Ty))
+                    count = (totalsize, alignsize)
+                    has = true
+                elseif isa(arg, LLVM.CallInst)
 			fn = LLVM.called_operand(arg)
 			nm = ""
 			if isa(fn, LLVM.Function)
@@ -2326,14 +2333,11 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
             # Obtain tag
             tag = unsafe_to_llvm(B, ETT)
         else
-            if sizeof(Int) == sizeof(Int64)
-                boxed_count = emit_box_int64!(B, Count)
-            else
-                T_size_t = convert(LLVM.LLVMType, Int)
+            T_size_t = convert(LLVM.LLVMType, Int)
+            if value_type(Count) != T_size_t
                 Count = trunc!(B, Count, T_size_t)
-                boxed_count = emit_box_int32!(B, Count)
             end
-            tag = emit_apply_type!(B, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(B, TT)])
+            tag = emit_ntuple_type!(B, Count, TT)
         end
 
         # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914

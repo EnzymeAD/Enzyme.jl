@@ -455,6 +455,34 @@ function byref_from_val_if_mixed(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Valu
     end
 end
 
+"""
+    emit_ntuple_type!(B, count, T) -> LLVM.Value
+
+Emit the type `NTuple{count, T}` for a runtime `count::Int` as
+`jl_apply_tuple_type(jl_svec_fill(count, T))`. This finds the interned type
+several times faster than `jl_f_apply_type(NTuple, count, T)`, which first
+instantiates the `NTuple` `UnionAll`. `abs_ntuple_type` recognizes the result.
+"""
+function emit_ntuple_type!(B::LLVM.IRBuilder, @nospecialize(count::LLVM.Value), @nospecialize(T::Type))::LLVM.Value
+    mod = LLVM.parent(LLVM.parent(position(B)))
+
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_size = convert(LLVMType, Int)
+
+    svec_fill, svec_fill_FT = get_function!(mod, "ijl_svec_fill", LLVM.FunctionType(T_prjlvalue, [T_size, T_prjlvalue]))
+    params = call!(B, svec_fill_FT, svec_fill, LLVM.Value[count, unsafe_to_llvm(B, T)])
+    @static if VERSION >= v"1.11"
+        # The tape element type `T` is a valid type parameter, so skip the check.
+        T_int32 = LLVM.Int32Type()
+        apply_tuple, apply_tuple_FT = get_function!(mod, "ijl_apply_tuple_type", LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_int32]))
+        return call!(B, apply_tuple_FT, apply_tuple, LLVM.Value[params, LLVM.ConstantInt(T_int32, 0)])
+    else
+        apply_tuple, apply_tuple_FT = get_function!(mod, "ijl_apply_tuple_type", LLVM.FunctionType(T_prjlvalue, [T_prjlvalue]))
+        return call!(B, apply_tuple_FT, apply_tuple, LLVM.Value[params])
+    end
+end
+
 function emit_apply_type!(B::LLVM.IRBuilder, @nospecialize(Ty::Type), args::Vector{LLVM.Value})::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
