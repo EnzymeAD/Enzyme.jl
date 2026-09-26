@@ -20,12 +20,9 @@ The rules sit on the storage-level product LinearAlgebra hands GPU arrays to
 (`generic_matmatmul!` / `generic_matvecmul!` before Julia 1.13, the `mul!` methods
 taking wrapper chars from then on), so these tests call `mul!` into an explicit
 buffer and seed the output shadow with ones, which is what `sum(C)` would hand
-back. A reduction can't be used instead: `mapreducedim!` over
-a JLArray doesn't differentiate yet (LLVM verifier error out of
-`EnzymeCreateAugmentedPrimal`), and `dot` on GPUArrays infers as `Any`, so nesting
-it asks the rule for a scalar's shadow.
+back.
 
-The allocating `A * B` isn't tested here either. The shadow of the array `similar`
+The allocating `A * B` isn't tested here. The shadow of the array `similar`
 returns is never zeroed for an AbstractGPUArray, so the reverse pass reads junk
 instead of the incoming cotangent. That affects any rule with a freshly allocated
 output and doesn't happen on CUDA.
@@ -293,5 +290,215 @@ output and doesn't happen on CUDA.
             Duplicated(jl(zeros(n, 3)), jl(ones(n, 3))),
             Duplicated(Symmetric(jl(X0), :U), Symmetric(dX, :U)), Const(jl(randn(n, 3))),
         )
+    end
+end
+
+#=
+The AbstractGPUArray reduction rules. `sum`/`mapreduce` over a GPU array goes
+through `GPUArrays._mapreduce`, which allocates the output and fills it with
+`GPUArrays.mapreducedim!`; both have rules in EnzymeGPUArraysExt. Without them
+Enzyme descends into the backend reduction kernel, which aborts on a JLArray.
+=#
+@testset "GPUArrays reduction rules" begin
+    jl(x) = JLArray(x)
+    x0 = [1.0, 2.0, 3.0, 4.0]
+    scaled(x) = 3.0 * sum(x)
+
+    @testset "reverse" begin
+        dx = jl(zeros(4))
+        Enzyme.autodiff(Reverse, scaled, Active, Duplicated(jl(x0), dx))
+        @test collect(dx) ≈ fill(3.0, 4)
+    end
+
+    @testset "reverse, batched" begin
+        d1, d2 = jl(zeros(4)), jl(zeros(4))
+        Enzyme.autodiff(Reverse, scaled, Active, BatchDuplicated(jl(x0), (d1, d2)))
+        @test collect(d1) ≈ fill(3.0, 4)
+        @test collect(d2) ≈ fill(3.0, 4)
+    end
+
+    @testset "forward" begin
+        dx = jl([1.0, 1.0, 0.0, 0.0])
+        res = only(Enzyme.autodiff(Forward, scaled, Duplicated, Duplicated(jl(x0), dx)))
+        @test res ≈ 6.0
+    end
+
+    @testset "forward, batched" begin
+        seeds = (jl([1.0, 0.0, 0.0, 0.0]), jl([0.0, 1.0, 0.0, 0.0]))
+        res = only(
+            Enzyme.autodiff(
+                Forward, scaled, BatchDuplicated, BatchDuplicated(jl(x0), seeds),
+            )
+        )
+        @test res[1] ≈ 3.0
+        @test res[2] ≈ 3.0
+    end
+
+    # `init` is a constant offset, so it must not appear in the tangent.
+    @testset "forward, init" begin
+        suminit(x) = sum(x; init = 5.0)
+        dx = jl([1.0, 1.0, 0.0, 0.0])
+        res = only(Enzyme.autodiff(Forward, suminit, Duplicated, Duplicated(jl(x0), dx)))
+        @test res ≈ 2.0
+    end
+
+    # `sum` of a complex array is complex, so take a real loss off it; each
+    # entry's cotangent is then 1.
+    @testset "complex eltype" begin
+        realsum(x) = real(sum(x))
+        c0 = ComplexF64[1 + 2im, 3 - 1im]
+        dc = jl(zeros(ComplexF64, 2))
+        Enzyme.autodiff(Reverse, realsum, Active, Duplicated(jl(c0), dc))
+        @test collect(dc) ≈ fill(complex(1.0), 2)
+    end
+end
+
+# A float alongside a field that carries no derivative, so the bulk path can't
+# be used and `make_zero` has to go through the host.
+struct MixedField
+    x::Float64
+    i::Int
+end
+
+#=
+`make_zero`/`make_zero!` are defined element-wise, which would need scalar
+indexing on a GPU array, so EnzymeGPUArraysCoreExt zeroes in bulk when every
+part of the element type is a float and falls back to a host round-trip
+otherwise.
+=#
+@testset "GPUArrays make_zero" begin
+    jl(x) = JLArray(x)
+
+    @testset "bulk path" begin
+        x = jl([1.0, 2.0, 3.0])
+        z = Enzyme.make_zero(x)
+        @test z isa JLArray{Float64, 1}
+        @test collect(z) == zeros(3)
+        # the input is left alone
+        @test collect(x) == [1.0, 2.0, 3.0]
+
+        c = jl(ComplexF64[1 + 2im, 3 - 1im])
+        @test collect(Enzyme.make_zero(c)) == zeros(ComplexF64, 2)
+
+        Enzyme.make_zero!(x)
+        @test collect(x) == zeros(3)
+    end
+
+    @testset "host path" begin
+        p = jl([MixedField(1.0, 7), MixedField(2.0, 9)])
+        z = Enzyme.make_zero(p)
+        @test z isa JLArray{MixedField, 1}
+        # only the float part is zeroed
+        @test collect(z) == [MixedField(0.0, 7), MixedField(0.0, 9)]
+
+        Enzyme.make_zero!(p)
+        @test collect(p) == [MixedField(0.0, 7), MixedField(0.0, 9)]
+    end
+
+    # Like `Array`: an inactive element type is returned as is.
+    @testset "inactive eltype" begin
+        idx = jl([1, 2, 3])
+        @test Enzyme.make_zero(idx) === idx
+        Enzyme.make_zero!(idx)
+        @test collect(idx) == [1, 2, 3]
+    end
+
+    # Two references to the same array have to come back as one zeroed array.
+    @testset "aliasing" begin
+        x = jl([1.0, 2.0])
+        za, zb = Enzyme.make_zero((x, x))
+        @test za === zb
+        @test collect(za) == zeros(2)
+    end
+end
+
+#=
+The AbstractGPUArray `fill!` rule. Without it Enzyme descends into the backend
+fill kernel, which a JLArray can't differentiate (KernelAbstractions has no
+`mkcontext` for the JL backend under Enzyme) and which is an opaque `memset` on
+CUDA.
+=#
+@testset "GPUArrays fill! rules" begin
+    jl(x) = JLArray(x)
+
+    function fillsum(A, x)
+        fill!(A, x)
+        return sum(A)
+    end
+
+    function fillonly(A, x)
+        fill!(A, x)
+        return nothing
+    end
+
+    # every entry of `A` is `x`, so d(sum(A))/dx is `length(A)`
+    @testset "reverse" begin
+        dA = jl(zeros(5))
+        res = Enzyme.autodiff(
+            Reverse, fillsum, Active, Duplicated(jl(zeros(5)), dA), Active(3.0),
+        )
+        @test res[1][2] ≈ 5.0
+        # `fill!` overwrites `A`, so its shadow is consumed
+        @test collect(dA) == zeros(5)
+    end
+
+    @testset "reverse, scaled" begin
+        scaledfill(A, x) = 2.0 * fillsum(A, x)
+        res = Enzyme.autodiff(
+            Reverse, scaledfill, Active, Duplicated(jl(zeros(5)), jl(zeros(5))),
+            Active(1.5),
+        )
+        @test res[1][2] ≈ 10.0
+    end
+
+    @testset "reverse, batched" begin
+        seeds = (jl(zeros(4)), jl(zeros(4)))
+        res = Enzyme.autodiff(
+            Reverse, fillsum, Active, BatchDuplicated(jl(zeros(4)), seeds), Active(1.0),
+        )
+        @test res[1][2] == (4.0, 4.0)
+    end
+
+    @testset "forward" begin
+        dA = jl(zeros(3))
+        Enzyme.autodiff(
+            Forward, fillonly, Const, Duplicated(jl(zeros(3)), dA), Duplicated(2.0, 1.0),
+        )
+        @test collect(dA) ≈ ones(3)
+    end
+
+    # a `Const` fill value leaves no derivative behind, so the shadow is cleared
+    # rather than left holding whatever it had
+    @testset "forward, constant fill value" begin
+        dA = jl(ones(3))
+        Enzyme.autodiff(
+            Forward, fillonly, Const, Duplicated(jl(zeros(3)), dA), Const(2.0),
+        )
+        @test collect(dA) == zeros(3)
+    end
+
+    @testset "Float32" begin
+        dA = jl(zeros(Float32, 6))
+        res = Enzyme.autodiff(
+            Reverse, fillsum, Active, Duplicated(jl(zeros(Float32, 6)), dA),
+            Active(1.0f0),
+        )
+        @test res[1][2] isa Float32
+        @test res[1][2] ≈ 6.0f0
+    end
+
+    # CUDA's rule stopped at the memset-compatible element types, so neither
+    # Float64 above nor complex here was covered before.
+    @testset "complex eltype" begin
+        function realfillsum(A, x)
+            fill!(A, x)
+            return real(sum(A))
+        end
+        dA = jl(zeros(ComplexF64, 4))
+        res = Enzyme.autodiff(
+            Reverse, realfillsum, Active, Duplicated(jl(zeros(ComplexF64, 4)), dA),
+            Active(1.0 + 0im),
+        )
+        @test res[1][2] ≈ 4.0 + 0im
     end
 end
