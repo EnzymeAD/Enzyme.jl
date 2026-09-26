@@ -1938,7 +1938,20 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
 					has = true
 				end
 			    end
-			end
+                        elseif nm == "jl_apply_generic" || nm == "ijl_apply_generic"
+                            # The tag of a tape allocation of run-time length, `runtime_tape_type(n, T)`
+                            # (see `julia_allocator`): the elements are of type `T`.
+                            legal, F = absint(operands(arg)[index], partial)
+                            if legal && unbind(F) === runtime_tape_type
+                                legal, Ty = absint(operands(arg)[index + 2])
+                                Ty = unbind(Ty)
+                                if legal
+                                    alignsize = LLVM.ConstantInt(value_type(totalsize), Base.aligned_sizeof(Ty))
+                                    count = (totalsize, alignsize)
+                                    has = true
+                                end
+                            end
+                        end
 	            end
 		end
             end
@@ -2279,6 +2292,22 @@ function zero_allocation(
     ).ref
 end
 
+# The type of a tape allocation of `n` elements of type `T`, for a count only known at run time.
+# Applying `NTuple{n,T}` fills and hashes `n` type parameters before it finds the interned type,
+# so it would cost O(n) on every allocation.
+const RUNTIME_TAPE_TYPES = Dict{Tuple{Int, Any}, DataType}()
+const RUNTIME_TAPE_TYPES_LOCK = ReentrantLock()
+function runtime_tape_type(n::Int, @nospecialize(T))
+    return @lock RUNTIME_TAPE_TYPES_LOCK begin
+        TT = get(RUNTIME_TAPE_TYPES, (n, T), nothing)
+        if TT === nothing
+            TT = NTuple{n, T}
+            RUNTIME_TAPE_TYPES[(n, T)] = TT
+        end
+        TT
+    end
+end
+
 function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMType), @nospecialize(Count::LLVM.Value), @nospecialize(AlignedSize::LLVM.Value), IsDefault::UInt8, ZI::Ptr{LLVM.API.LLVMValueRef})
     func = LLVM.parent(position(B))
     mod = LLVM.parent(func)
@@ -2326,7 +2355,7 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
                 Count = trunc!(B, Count, T_size_t)
                 boxed_count = emit_box_int32!(B, Count)
             end
-            tag = emit_apply_type!(B, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(B, TT)])
+            tag = emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, runtime_tape_type), boxed_count, unsafe_to_llvm(B, TT)])
         end
 
         # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914

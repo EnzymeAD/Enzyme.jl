@@ -1734,6 +1734,30 @@ end
 
 end
 
+dynfill!(a) = (fill!(a, 0.0f0); nothing)
+function dynfill_forward_bytes(fwd, n)
+    a = ones(Float32, n); da = ones(Float32, n)
+    fwd(Const(dynfill!), Duplicated(a, da))
+    return @allocated fwd(Const(dynfill!), Duplicated(a, da))
+end
+
+@testset "Dynamic tape of Julia objects" begin
+    # On Julia 1.12 and 1.13, the tape of `fill!` with a literal keeps the shadow's `Memory` once per
+    # element: Julia objects in an allocation whose length is only known at run time. (On 1.10 and
+    # 1.11 it keeps it once, so there the test only checks the results.)
+    fwd, rev = autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(dynfill!)}, Const, Duplicated{Vector{Float32}})
+    for n in (3, 1000, 3)
+        a = ones(Float32, n); da = ones(Float32, n)
+        tape = fwd(Const(dynfill!), Duplicated(a, da))[1]
+        GC.gc()
+        rev(Const(dynfill!), Duplicated(a, da), tape)
+        @test all(iszero, a) && all(iszero, da)
+    end
+    # No more than the tape itself: its type is not rebuilt, at O(n), on every allocation.
+    n = 100_000
+    @test dynfill_forward_bytes(fwd, n) <= 12n
+end
+
 @testset "Static activity" begin
     struct Test2{T}
         obs::T
