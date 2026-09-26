@@ -250,7 +250,8 @@ end
 end
 
 # `Base.fma` asks `julia.cpu.have_fma` whether the device fuses a multiply-add (see "Metal fma" in
-# metal.jl). CUDA.jl calls libdevice's `__nv_fma` directly, and `expm1` goes through `fma` as well.
+# metal.jl). CUDA.jl overrides `fma` and `expm1` with libdevice's `__nv_fma` and `__nv_expm1`, so
+# these kernels don't reach `julia.cpu.have_fma`; they check that differentiating them still works.
 function fma_gpu!(y, x, f)
     i = threadIdx().x
     @inbounds y[i] = f(x[i])

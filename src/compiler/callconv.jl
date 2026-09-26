@@ -65,19 +65,6 @@ end
     jit_uses_swiftcc()::Bool = !startswith(string(Sys.ARCH), "riscv")
 
     """
-        module_targets_host(mod) -> Bool
-
-    Say if `mod` targets the machine this process runs on. Compare the
-    architecture component of the module's target triple with the host triple
-    (`Sys.MACHINE`) and with `Sys.ARCH`. The two spellings can differ: Darwin
-    writes `arm64` where `Sys.ARCH` says `aarch64`.
-    """
-    function module_targets_host(mod::LLVM.Module)::Bool
-        arch = first(split(LLVM.triple(mod), '-'))
-        return arch == first(split(Sys.MACHINE, '-')) || arch == string(Sys.ARCH)
-    end
-
-    """
         specsig(mi, RT; gcstack_arg = jit_gcstack_arg()) -> (retty, params, param_attrs)
 
     Derive the signature Julia's codegen (`get_specsig_function`) gives the

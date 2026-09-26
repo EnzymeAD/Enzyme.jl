@@ -156,13 +156,11 @@ end
     mi = GPUCompiler.methodinstance(typeof(identity), Tuple{Nothing})
     params = Enzyme.Compiler.PrimalCompilerParams(Enzyme.API.DEM_ForwardMode)
     job = GPUCompiler.CompilerJob(mi, GPUCompiler.CompilerConfig(target, params; kernel = false))
-    for (j, answer) in ((job, true), (nothing, false))
-        LLVM.Context() do ctx
-            mod = parse(LLVM.Module, ir)
-            Enzyme.Compiler.optimize!(mod, nothing; job = j)
-            ret = only(i for bb in blocks(functions(mod)["f"]) for i in instructions(bb) if i isa LLVM.RetInst)
-            @test convert(Bool, operands(ret)[1]) == answer
-        end
+    LLVM.Context() do ctx
+        mod = parse(LLVM.Module, ir)
+        Enzyme.Compiler.optimize!(mod, nothing, job)
+        ret = only(i for bb in blocks(functions(mod)["f"]) for i in instructions(bb) if i isa LLVM.RetInst)
+        @test convert(Bool, operands(ret)[1])
     end
 end
 
@@ -636,7 +634,7 @@ function decay_egal_module()
     )
     GPUCompiler.prepare_job!(job)
     mod, _ = GPUCompiler.emit_llvm(job)
-    Enzyme.Compiler.optimize!(mod, Enzyme.Compiler.JIT.get_tm())
+    Enzyme.Compiler.optimize!(mod, Enzyme.Compiler.JIT.get_tm(), job)
     return mod
 end
 

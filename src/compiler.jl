@@ -1527,7 +1527,7 @@ function nested_codegen!(
     set_module_types!(interp, otherMod, nothing, job, edges, run_enzyme, mode)
 
     # Apply first stage of optimization's so that this module is at the same stage as `mod`
-    optimize!(otherMod, JIT.get_tm())
+    optimize!(otherMod, JIT.get_tm(), job)
     
     if DumpPostNestedOpt[]
 	API.EnzymeDumpModuleRef(otherMod.ref)
@@ -6006,7 +6006,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     end
 
     # Run early pipeline
-    optimize!(mod, target_machine, target_info; job = device_module ? primal_job : nothing)
+    optimize!(mod, target_machine, primal_job, target_info)
 
     if process_module
         GPUCompiler.optimize_module!(primal_job, mod)

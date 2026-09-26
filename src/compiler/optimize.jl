@@ -30,20 +30,35 @@ SafeAtomicToRegularStorePass() = NewPMFunctionPass("safe_atomic_to_regular_store
 Addr13NoAliasPass() = NewPMModulePass("addr13_noalias", addr13NoAlias)
 RemoveAlwaysInlineRootsPass() = NewPMModulePass("remove_alwaysinline_roots", remove_alwaysinline_roots!)
 
+"""
+    module_targets_host(mod) -> Bool
+
+Say if `mod` targets the machine this process runs on. Compare the
+architecture component of the module's target triple with the host triple
+(`Sys.MACHINE`) and with `Sys.ARCH`. The two spellings can differ: Darwin
+writes `arm64` where `Sys.ARCH` says `aarch64`.
+"""
+function module_targets_host(mod::LLVM.Module)::Bool
+    arch = first(split(LLVM.triple(mod), '-'))
+    return arch == first(split(Sys.MACHINE, '-')) || arch == string(Sys.ARCH)
+end
+
 # `Base.fma` asks `julia.cpu.have_fma.*` whether the hardware fuses a multiply-add. Julia's
 # `CPUFeaturesPass` answers from the module's triple and says no for every GPU triple, so on a GPU
-# `fma` fell back to its emulation, which computes in Float64. For a module emitted for a GPU,
-# GPUCompiler's pass answers for the job's target instead (`have_fma`).
-cpu_features_pass(job) = job === nothing ? CPUFeaturesPass() : GPUCompiler.GPULowerCPUFeaturesPass(job)
+# `fma` fell back to its emulation, which computes in Float64. For a module that does not target
+# the host, GPUCompiler's pass answers for the job's target instead (`have_fma`).
+# `device_job` is the job for such a module, or `nothing`.
+cpu_features_pass(device_job) = device_job === nothing ? CPUFeaturesPass() : GPUCompiler.GPULowerCPUFeaturesPass(device_job)
 # GPUCompiler's pass is written in Julia, so each pass builder that runs it has to register it first
-register_cpu_features!(pb, job) = job === nothing || register!(pb, GPUCompiler.GPULowerCPUFeaturesPass(job))
+register_cpu_features!(pb, device_job) = device_job === nothing || register!(pb, GPUCompiler.GPULowerCPUFeaturesPass(device_job))
 
-function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti = nothing; job = nothing)
+function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, job::CompilerJob, tti = nothing)
+    device_job = module_targets_host(mod) ? nothing : job
     @dispose pb = NewPMPassBuilder() begin
         if tti !== nothing
             LLVM.target_transform_info!(pb, tti)
         end
-        register_cpu_features!(pb, job)
+        register_cpu_features!(pb, device_job)
         registerEnzymeAndPassPipeline!(pb)
         register!(pb, Addr13NoAliasPass())
         register!(pb, RestoreAllocaType())
@@ -61,7 +76,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
                 add!(fpm, SimplifyCFGPass())
                 add!(fpm, DCEPass())
             end
-            add!(mpm, cpu_features_pass(job))
+            add!(mpm, cpu_features_pass(device_job))
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, SROAPass())
                 add!(fpm, MemCpyOptPass())
@@ -82,14 +97,14 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
         if tti !== nothing
             LLVM.target_transform_info!(pb, tti)
         end
-        register_cpu_features!(pb, job)
+        register_cpu_features!(pb, device_job)
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
             add!(aam, BasicAA())
         end
         add!(pb, NewPMModulePassManager()) do mpm
-            add!(mpm, cpu_features_pass(job)) # why is this duplicated?
+            add!(mpm, cpu_features_pass(device_job)) # why is this duplicated?
             add!(mpm, GlobalOptPass())
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, GVNPass())
@@ -103,7 +118,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
             if tti !== nothing
                 LLVM.target_transform_info!(pb, tti)
             end
-            register_cpu_features!(pb, job)
+            register_cpu_features!(pb, device_job)
             registerEnzymeAndPassPipeline!(pb)
             register!(pb, RestoreAllocaType())
             add!(pb, NewPMAAManager()) do aam
@@ -112,7 +127,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
                 add!(aam, BasicAA())
             end
             add!(pb, NewPMModulePassManager()) do mpm
-                add!(mpm, cpu_features_pass(job)) # why is this duplicated?
+                add!(mpm, cpu_features_pass(device_job)) # why is this duplicated?
 
                 add!(mpm, NewPMFunctionPassManager()) do fpm
                     add!(fpm, InstCombinePass())
