@@ -455,6 +455,146 @@ function byref_from_val_if_mixed(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Valu
     end
 end
 
+# Largest `count` for which `define_ntuple_type!` builds `NTuple{count, T}`
+# from a stack array; larger counts go through a heap-allocated svec.
+const NTUPLE_TYPE_STACK_SIZE = 64
+
+"""
+    declare_ntuple_type!(mod::LLVM.Module)
+
+Declare `julia.enzyme.ntuple_type(T, count)`, which returns `NTuple{count, T}`.
+It stays a bare declaration while Enzyme differentiates, including in the
+module kept for nested differentiation, so that no optimization drops its
+constant `T` argument and `abs_ntuple_type` can always recover `T`.
+`define_ntuple_type!` gives it a body after differentiation.
+"""
+function declare_ntuple_type!(mod::LLVM.Module)
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_size = convert(LLVMType, Int)
+    FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_size])
+    # The result depends only on the arguments and is interned, so the call can be
+    # treated as readnone, which also lets LLVM CSE it and hoist it out of loops.
+    memory = if LLVM.version().major <= 15
+        EnumAttribute("readnone", 0)
+    else
+        EnumAttribute("memory", NoEffects.data)
+    end
+    fn, _ = get_function!(
+        mod, "julia.enzyme.ntuple_type", FT,
+        LLVM.Attribute[
+            memory,
+            EnumAttribute("nounwind", 0),
+            StringAttribute("enzyme_inactive"),
+            StringAttribute("enzyme_no_escaping_allocation"),
+        ]
+    )
+    if isa(fn, LLVM.Function) && isempty(collect(parameter_attributes(fn, 1)))
+        push!(parameter_attributes(fn, 1), EnumAttribute("nocapture", 0))
+        push!(parameter_attributes(fn, 1), EnumAttribute("readonly", 0))
+    end
+    return fn, FT
+end
+
+"""
+    define_ntuple_type!(mod::LLVM.Module)
+
+Give `julia.enzyme.ntuple_type`, if `mod` declares it, an `alwaysinline` body.
+For `count <= NTUPLE_TYPE_STACK_SIZE` it fills a stack array with `T` and calls
+`jl_apply_tuple_type_v`; otherwise it calls
+`jl_apply_tuple_type(jl_svec_fill(count, T))`. Both find the interned type
+several times faster than `jl_f_apply_type(NTuple, count, T)`, which first
+instantiates the `NTuple` `UnionAll`. Call this once differentiation is done,
+after the module for nested differentiation has been saved.
+"""
+function define_ntuple_type!(mod::LLVM.Module)
+    haskey(functions(mod), "julia.enzyme.ntuple_type") || return
+    fn = functions(mod)["julia.enzyme.ntuple_type"]
+    isempty(blocks(fn)) || return
+
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_pjlvalue = LLVM.PointerType(T_jlvalue)
+    T_size = convert(LLVMType, Int)
+
+    linkage!(fn, LLVM.API.LLVMInternalLinkage)
+    push!(function_attributes(fn), EnumAttribute("alwaysinline", 0))
+
+    let builder = IRBuilder()
+        entry = BasicBlock(fn, "entry")
+        prefill = BasicBlock(fn, "prefill")
+        loop = BasicBlock(fn, "fill")
+        stack = BasicBlock(fn, "stack")
+        heap = BasicBlock(fn, "heap")
+        eltype, n = collect(parameters(fn))
+
+        position!(builder, entry)
+        br!(builder, icmp!(builder, LLVM.API.LLVMIntULE, n, LLVM.ConstantInt(T_size, NTUPLE_TYPE_STACK_SIZE)), prefill, heap)
+
+        position!(builder, prefill)
+        # `T` is a type, which is never freed, so the untracked slots need no rooting
+        # of their own; `T` itself is rooted across the call by `jl_roots`.
+        buf = array_alloca!(builder, T_pjlvalue, n, "ntuple_params")
+        raw = emit_pointerfromobjref!(builder, addrspacecast!(builder, eltype, LLVM.PointerType(T_jlvalue, Derived)))
+        br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, n, LLVM.ConstantInt(T_size, 0)), stack, loop)
+
+        position!(builder, loop)
+        idx = LLVM.phi!(builder, T_size, "idx")
+        store!(builder, raw, inbounds_gep!(builder, T_pjlvalue, buf, LLVM.Value[idx]))
+        next = add!(builder, idx, LLVM.ConstantInt(T_size, 1))
+        append!(LLVM.incoming(idx), [(LLVM.ConstantInt(T_size, 0), prefill), (next, loop)])
+        br!(builder, icmp!(builder, LLVM.API.LLVMIntULT, next, n), loop, stack)
+
+        position!(builder, stack)
+        memory = if LLVM.version().major <= 15
+            EnumAttribute("inaccessiblemem_or_argmemonly", 0)
+        else
+            EnumAttribute("memory", ReadArgMemReadWriteInaccessibleEffects.data)
+        end
+        apply_tuple_v, apply_tuple_v_FT = get_function!(
+            mod, "ijl_apply_tuple_type_v", LLVM.FunctionType(T_prjlvalue, [LLVM.PointerType(T_pjlvalue), T_size]),
+            LLVM.Attribute[memory, EnumAttribute("nounwind", 0)]
+        )
+        if isa(apply_tuple_v, LLVM.Function) && isempty(collect(parameter_attributes(apply_tuple_v, 1)))
+            push!(parameter_attributes(apply_tuple_v, 1), EnumAttribute("readonly", 0))
+            push!(parameter_attributes(apply_tuple_v, 1), EnumAttribute("nocapture", 0))
+        end
+        roots = if isdefined(LLVM, :OperandBundleDef)
+            [LLVM.OperandBundleDef("jl_roots", LLVM.Value[eltype])]
+        else
+            [LLVM.OperandBundle("jl_roots", LLVM.Value[eltype])]
+        end
+        ret!(builder, call!(builder, apply_tuple_v_FT, apply_tuple_v, LLVM.Value[buf, n], roots))
+
+        position!(builder, heap)
+        svec_fill, svec_fill_FT = get_function!(mod, "ijl_svec_fill", LLVM.FunctionType(T_prjlvalue, [T_size, T_prjlvalue]))
+        params = call!(builder, svec_fill_FT, svec_fill, LLVM.Value[n, eltype])
+        tag = @static if VERSION >= v"1.11"
+            # The tape element type `T` is a valid type parameter, so skip the check.
+            T_int32 = LLVM.Int32Type()
+            apply_tuple, apply_tuple_FT = get_function!(mod, "ijl_apply_tuple_type", LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_int32]))
+            call!(builder, apply_tuple_FT, apply_tuple, LLVM.Value[params, LLVM.ConstantInt(T_int32, 0)])
+        else
+            apply_tuple, apply_tuple_FT = get_function!(mod, "ijl_apply_tuple_type", LLVM.FunctionType(T_prjlvalue, [T_prjlvalue]))
+            call!(builder, apply_tuple_FT, apply_tuple, LLVM.Value[params])
+        end
+        ret!(builder, tag)
+        dispose(builder)
+    end
+    return
+end
+
+"""
+    emit_ntuple_type!(B, count, T) -> LLVM.Value
+
+Emit the type `NTuple{count, T}` for a runtime `count::Int` as a call to
+`julia.enzyme.ntuple_type` (see `declare_ntuple_type!` and `define_ntuple_type!`).
+"""
+function emit_ntuple_type!(B::LLVM.IRBuilder, @nospecialize(count::LLVM.Value), @nospecialize(T::Type))::LLVM.Value
+    fn, FT = declare_ntuple_type!(LLVM.parent(LLVM.parent(position(B))))
+    return call!(B, FT, fn, LLVM.Value[unsafe_to_llvm(B, T), count])
+end
+
 function emit_apply_type!(B::LLVM.IRBuilder, @nospecialize(Ty::Type), args::Vector{LLVM.Value})::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)

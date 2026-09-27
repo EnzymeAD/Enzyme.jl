@@ -481,6 +481,7 @@ function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
 end
 
 function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, machine::Bool = true; callconv::Bool = true, tti = nothing)
+    define_ntuple_type!(mod)
     if callconv
         fixup_callconv!(mod, tm, tti)
     end
