@@ -543,7 +543,7 @@ function typeof_guards(term::LLVM.Instruction)
             v === nothing && continue
             T = guard_type(a)
             T === nothing && continue
-            succs = collect(successors(term))
+            succs = successors(term)
             succs[1] != succs[2] || break
             eq, ne = pred == LLVM.API.LLVMIntEQ ? (succs[1], succs[2]) : (succs[2], succs[1])
             push!(guards, (v, T, eq))
@@ -553,7 +553,7 @@ function typeof_guards(term::LLVM.Instruction)
     elseif isa(term, LLVM.SwitchInst)
         v = typeof_operand(operands(term)[1])
         v === nothing && return guards
-        succs = collect(successors(term))
+        succs = successors(term)
         # operands: condition, default, then a (value, destination) pair per case
         for i in 2:length(succs)
             T = guard_type(operands(term)[2 * i - 1])
@@ -584,7 +584,7 @@ function refine_union_splits!(f::LLVM.Function, ctx, dl, seen::TypeTreeTable)::B
         term === nothing && continue
         for (v, T, dest) in typeof_guards(term)
             # Only a block this check alone leads to is known to have passed it.
-            length(collect(predecessors(dest))) == 1 || continue
+            length(predecessors(dest)) == 1 || continue
             push!(guards, (term, v, T, dest))
         end
     end
