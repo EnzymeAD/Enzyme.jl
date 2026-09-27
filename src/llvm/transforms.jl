@@ -1647,16 +1647,22 @@ function legalize_readonly_decay!(
     obj = operands(inst)[1]
     nb = IRBuilder()
     position!(nb, st)
-    token = emit_gc_preserve_begin(nb, LLVM.Value[obj])
-    derived = if LLVM.is_opaque(value_type(obj))
-        addrspacecast!(nb, obj, LLVM.PointerType(Derived))
+    if addrspace(value_type(obj)) == Derived
+        # Already derived: preserve the tracked object it points into.
+        token = emit_gc_preserve_begin(nb, LLVM.Value[decay_tracked_base(obj)])
+        derived = obj
     else
-        T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
-        addrspacecast!(
-            nb,
-            bitcast!(nb, obj, LLVM.PointerType(T_jlvalue, Tracked)),
-            LLVM.PointerType(T_jlvalue, Derived),
-        )
+        token = emit_gc_preserve_begin(nb, LLVM.Value[obj])
+        derived = if LLVM.is_opaque(value_type(obj))
+            addrspacecast!(nb, obj, LLVM.PointerType(Derived))
+        else
+            T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+            addrspacecast!(
+                nb,
+                bitcast!(nb, obj, LLVM.PointerType(T_jlvalue, Tracked)),
+                LLVM.PointerType(T_jlvalue, Derived),
+            )
+        end
     end
     raw = emit_pointerfromobjref!(nb, derived)
     if value_type(raw) != value_type(inst)
@@ -1671,6 +1677,23 @@ function legalize_readonly_decay!(
     return nothing
 end
 
+# The tracked (addrspace 10) object a derived pointer points into, or
+# `nothing` if it does not trace back to one through GEPs and casts.
+function decay_tracked_base(@nospecialize(v::LLVM.Value))
+    while true
+        if addrspace(value_type(v)) == Tracked
+            return v
+        end
+        if isa(v, LLVM.GetElementPtrInst) ||
+           isa(v, LLVM.BitCastInst) ||
+           isa(v, LLVM.AddrSpaceCastInst)
+            v = operands(v)[1]
+            continue
+        end
+        return nothing
+    end
+end
+
 function fix_decayaddr!(mod::LLVM.Module)
     for f in functions(mod)
         invalid = LLVM.Instruction[]
@@ -1680,10 +1703,19 @@ function fix_decayaddr!(mod::LLVM.Module)
             end
             prety = value_type(operands(inst)[1])
             postty = value_type(inst)
-            if addrspace(prety) != 10
+            if addrspace(postty) != 0
                 continue
             end
-            if addrspace(postty) != 0
+            # When Enzyme moves a stack allocation to the GC heap, it casts a
+            # derived pointer into the new object back to addrspace 0 for call
+            # operands. Since Julia 1.13.1 codegen passes a pointer into a
+            # `returnRoots` buffer on as another call's roots argument, which
+            # yields such a cast.
+            if addrspace(prety) == Derived
+                if decay_tracked_base(operands(inst)[1]) === nothing
+                    continue
+                end
+            elseif addrspace(prety) != Tracked
                 continue
             end
             push!(invalid, inst)
