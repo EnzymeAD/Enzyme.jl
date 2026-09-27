@@ -1669,19 +1669,27 @@ function route_abstract_invokes!(ir::Core.Compiler.IRCode)
 end
 
 @static if VERSION < v"1.12-"
-function Core.Compiler.optimize(interp::EnzymeInterpreter, opt::Core.Compiler.OptimizationState, caller::Core.Compiler.InferenceResult)
-    ir = Core.Compiler.run_passes_ipo_safe(opt.src, opt, caller)
-    route_abstract_invokes!(ir)
-    Core.Compiler.ipo_dataflow_analysis!(interp, ir, caller)
-    return Core.Compiler.finish(interp, opt, ir, caller)
-end
+    function Core.Compiler.optimize(interp::EnzymeInterpreter, opt::Core.Compiler.OptimizationState, caller::Core.Compiler.InferenceResult)
+        ir = Core.Compiler.run_passes_ipo_safe(opt.src, opt, caller)
+        route_abstract_invokes!(ir)
+        Core.Compiler.ipo_dataflow_analysis!(interp, ir, caller)
+        return Core.Compiler.finish(interp, opt, ir, caller)
+    end
+elseif VERSION < v"1.13-"
+    function Core.Compiler.optimize(interp::EnzymeInterpreter, opt::Core.Compiler.OptimizationState, caller::Core.Compiler.InferenceResult)
+        ir = Core.Compiler.run_passes_ipo_safe(opt.src, opt)
+        route_abstract_invokes!(ir)
+        Core.Compiler.ipo_dataflow_analysis!(interp, opt, ir, caller)
+        return Core.Compiler.finish(interp, opt, ir, caller)
+    end
 else
-function Core.Compiler.optimize(interp::EnzymeInterpreter, opt::Core.Compiler.OptimizationState, caller::Core.Compiler.InferenceResult)
-    ir = Core.Compiler.run_passes_ipo_safe(opt.src, opt)
-    route_abstract_invokes!(ir)
-    Core.Compiler.ipo_dataflow_analysis!(interp, opt, ir, caller)
-    return Core.Compiler.finish(interp, opt, ir, caller)
-end
+    function Core.Compiler.optimize(interp::EnzymeInterpreter, opt::Core.Compiler.OptimizationState, caller::Core.Compiler.InferenceResult)
+        ir = Core.Compiler.run_passes_ipo_safe(opt.src, opt)
+        route_abstract_invokes!(ir)
+        Core.Compiler.ipo_dataflow_analysis!(interp, opt, ir, caller)
+        Core.Compiler.finishopt!(interp, opt, ir)
+        return nothing
+    end
 end
 
 end
