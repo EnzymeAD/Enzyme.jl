@@ -458,7 +458,10 @@ function get_return_info(
         else
             rt = Any
         end
-    elseif jlrettype <: Tuple && in(Any, jlrettype.parameters)
+    elseif jlrettype <: Tuple && (!isa(jlrettype, DataType) || in(Any, jlrettype.parameters))
+        # A tuple that is not fully concrete (a UnionAll such as
+        # `Tuple{Vararg{Any, N}} where N`, or one with an `Any` element) is
+        # returned boxed.
         rt = Any
     elseif !GPUCompiler.deserves_retbox(jlrettype)
         lRT = convert(LLVMType, jlrettype)
