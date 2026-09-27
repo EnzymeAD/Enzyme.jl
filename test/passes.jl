@@ -975,6 +975,10 @@ end
         @check "nodecayedoff."
         @check_label "define i8 @not_dereferenceable"
         @check "nodecayedoff."
+        @check_label "define i8 @merge_global"
+        @check_not "nodecayed"
+        @check "%data = phi"
+        @check_not "nodecayed"
         LLVM.Context() do ctx
             mod = parse(
                 LLVM.Module, """
@@ -1048,6 +1052,23 @@ end
 
                 merge:
                   %p = phi i8* addrspace(11)* [ %mp, %copy ], [ %ap, %top ]
+                  %data = load i8*, i8* addrspace(11)* %p, align 8
+                  %v = load i8, i8* %data, align 1
+                  ret i8 %v
+                }
+
+                @g = global [3 x i8*] zeroinitializer
+
+                define i8 @merge_global(i8* addrspace(10)* nonnull align 8 dereferenceable(24) %arr, i1 %c) {
+                top:
+                  %ap = addrspacecast i8* addrspace(10)* %arr to i8* addrspace(11)*
+                  br i1 %c, label %empty, label %merge
+
+                empty:
+                  br label %merge
+
+                merge:
+                  %p = phi i8* addrspace(11)* [ getelementptr inbounds (i8*, i8* addrspace(11)* addrspacecast (i8** getelementptr inbounds ([3 x i8*], [3 x i8*]* @g, i64 0, i64 0) to i8* addrspace(11)*), i64 1), %empty ], [ %ap, %top ]
                   %data = load i8*, i8* addrspace(11)* %p, align 8
                   %v = load i8, i8* %data, align 1
                   ret i8 %v

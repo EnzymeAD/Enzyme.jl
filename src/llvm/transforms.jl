@@ -969,8 +969,9 @@ function unfold_derived_phi_loads!(f::LLVM.Function)::Bool
 
             incs = collect(incoming(phi))
             # An undef or poison incoming value has no offset. It does not make the
-            # offsets different.
-            offsets = Int[last(get_base_and_offset(v)) for (v, _) in incs if !is_undef_or_poison(v)]
+            # offsets different. Pass `inst` so that the offset of a constant-expression
+            # GEP (for example, into a global) is computed too.
+            offsets = Int[last(get_base_and_offset(v; inst = terminator(pred))) for (v, pred) in incs if !is_undef_or_poison(v)]
             (isempty(offsets) || all(==(offsets[1]), offsets)) && continue
 
             loads = LLVM.LoadInst[]
@@ -1008,7 +1009,7 @@ function unfold_derived_phi_loads!(f::LLVM.Function)::Bool
                 is_undef_or_poison(v) && continue
                 length(collect(successors(terminator(pred)))) == 1 && continue
                 for ld in loads
-                    if !is_speculatable_load(v, Int(LLVM.sizeof(dl, value_type(ld))))
+                    if !is_speculatable_load(v, Int(LLVM.sizeof(dl, value_type(ld))), terminator(pred))
                         ok = false
                         break
                     end

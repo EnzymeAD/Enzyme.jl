@@ -611,17 +611,25 @@ function undef_or_poison_like(@nospecialize(v::LLVM.Value), @nospecialize(ty::LL
 end
 
 """
-    is_speculatable_load(v::LLVM.Value, sz::Int) -> Bool
+    is_speculatable_load(v::LLVM.Value, sz::Int, inst::LLVM.Instruction) -> Bool
 
-Whether a load of `sz` bytes from `v` is safe on all paths, also on paths that did not
-load from `v` before. This is true for an alloca, for a global, and for an argument
-with a `dereferenceable` attribute that covers the load.
+Whether a load of `sz` bytes from `v` at `inst` is safe on all paths, also on paths that
+did not load from `v` before. This is true for a static alloca and for a global whose
+size covers the load, and for an argument with a `dereferenceable` attribute that covers
+the load.
 """
-function is_speculatable_load(@nospecialize(v::LLVM.Value), sz::Int)::Bool
-    base, off = get_base_and_offset(v)
+function is_speculatable_load(@nospecialize(v::LLVM.Value), sz::Int, inst::LLVM.Instruction)::Bool
+    base, off = get_base_and_offset(v; inst)
     off >= 0 || return false
-    if isa(base, LLVM.AllocaInst) || isa(base, LLVM.GlobalVariable)
-        return true
+    dl = datalayout(LLVM.parent(LLVM.parent(LLVM.parent(inst))))
+    if isa(base, LLVM.AllocaInst)
+        cnt = operands(base)[1]
+        isa(cnt, LLVM.ConstantInt) || return false
+        at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(base))
+        return off + sz <= convert(Int, cnt) * Int(LLVM.sizeof(dl, at))
+    end
+    if isa(base, LLVM.GlobalVariable)
+        return off + sz <= Int(LLVM.sizeof(dl, LLVM.global_value_type(base)))
     end
     if isa(base, LLVM.Argument)
         f = LLVM.Function(LLVM.API.LLVMGetParamParent(base))
