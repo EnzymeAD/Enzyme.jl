@@ -396,8 +396,13 @@ function unfold_root_phi_loads!(f::LLVM.Function)::Bool
             # in this block after the phi, and none in a load's own block before it.
             for inst in instructions(bb)
                 mayWriteToMemory(inst) || continue
-                if any(((ld, _),) -> LLVM.parent(ld) != bb || precedes(inst, ld), accesses)
-                    ok = false
+                # The first write in this block: a load in a successor, or
+                # after it in this block, may read what it wrote.
+                for (ld, _) in accesses
+                    if LLVM.parent(ld) != bb || precedes(inst, ld)
+                        ok = false
+                        break
+                    end
                 end
                 break
             end
