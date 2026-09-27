@@ -883,6 +883,62 @@ end
     end
 end
 
+@testset "unfold_root_phi_loads! speculative loads" begin
+    LLVM.Context() do ctx
+        mod = parse(
+            LLVM.Module, """
+            source_filename = "start"
+            target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+            target triple = "x86_64-linux-gnu"
+
+            define {} addrspace(10)* @cond_deref(i1 %cond, {} addrspace(10)** dereferenceable(16) %arg) {
+            top:
+              %roots = alloca [2 x {} addrspace(10)*], align 8
+              %r = bitcast [2 x {} addrspace(10)*]* %roots to {} addrspace(10)**
+              br i1 %cond, label %a, label %merge
+
+            a:
+              br label %merge
+
+            merge:
+              %p = phi {} addrspace(10)** [ %r, %a ], [ %arg, %top ]
+              %ld = load {} addrspace(10)*, {} addrspace(10)** %p, align 8
+              ret {} addrspace(10)* %ld
+            }
+
+            define {} addrspace(10)* @cond_noderef(i1 %cond, {} addrspace(10)** %arg) {
+            top:
+              %roots = alloca [2 x {} addrspace(10)*], align 8
+              %r = bitcast [2 x {} addrspace(10)*]* %roots to {} addrspace(10)**
+              br i1 %cond, label %a, label %merge
+
+            a:
+              br label %merge
+
+            merge:
+              %p = phi {} addrspace(10)** [ %r, %a ], [ %arg, %top ]
+              %ld = load {} addrspace(10)*, {} addrspace(10)** %p, align 8
+              ret {} addrspace(10)* %ld
+            }
+            """
+        )
+
+        # The edge from `top` is speculative. The load from `%arg` is safe because
+        # `%arg` is dereferenceable.
+        cond_deref = functions(mod)["cond_deref"]
+        @test Enzyme.Compiler.unfold_root_phi_loads!(cond_deref)
+        @test root_phi_addrspaces(cond_deref) == [10]
+
+        # The same, but `%arg` is not dereferenceable. The pass must not change this
+        # function.
+        cond_noderef = functions(mod)["cond_noderef"]
+        @test !Enzyme.Compiler.unfold_root_phi_loads!(cond_noderef)
+        @test root_phi_addrspaces(cond_noderef) == [0]
+
+        @test LLVM.verify(mod) === nothing
+    end
+end
+
 @testset "addrspace(11) argument phis are left alone" begin
     # LLVM 20 strength-reduces loop indices into pointer induction variables, so a
     # loop over an addrspace(11) argument (an SVector passed by reference) becomes
@@ -951,6 +1007,133 @@ end
             )
 
             Enzyme.Compiler.nodecayed_phis!(mod)
+            string(mod)
+        end
+    end
+end
+
+@testset "nodecayed_phis! loads through a phi of fields at different offsets" begin
+    # LLVM 20 (Julia 1.13) merges the loads of a data pointer from an `Array` (offset 0)
+    # and from a `Memory` (offset 8) into one load through a phi of the two field
+    # addresses. `nodecayed_phis!` must load in each predecessor and make a phi of the
+    # loaded values. A phi of objects and a phi of offsets causes illegal type analysis.
+    @test @filecheck begin
+        @check_label "define i8 @merge"
+        @check_not "nodecayed"
+        @check "%data = phi"
+        @check_not "nodecayed"
+        @check_label "define i8 @merge_poison"
+        @check_not "nodecayed"
+        @check "%data = phi"
+        @check_same "poison"
+        @check_not "nodecayed"
+        @check_label "define i8 @store_first"
+        @check "nodecayedoff."
+        @check_label "define i8 @not_dereferenceable"
+        @check "nodecayedoff."
+        @check_label "define i8 @merge_global"
+        @check_not "nodecayed"
+        @check "%data = phi"
+        @check_not "nodecayed"
+        LLVM.Context() do ctx
+            mod = parse(
+                LLVM.Module, """
+                define i8 @merge(i8* addrspace(10)* nonnull align 8 dereferenceable(24) %arr, i8* addrspace(10)* nonnull %mem, i1 %c) {
+                top:
+                  %ap = addrspacecast i8* addrspace(10)* %arr to i8* addrspace(11)*
+                  br i1 %c, label %copy, label %merge
+
+                copy:
+                  %m11 = addrspacecast i8* addrspace(10)* %mem to i8* addrspace(11)*
+                  %mp = getelementptr inbounds i8*, i8* addrspace(11)* %m11, i64 1
+                  br label %merge
+
+                merge:
+                  %p = phi i8* addrspace(11)* [ %mp, %copy ], [ %ap, %top ]
+                  %data = load i8*, i8* addrspace(11)* %p, align 8
+                  %v = load i8, i8* %data, align 1
+                  ret i8 %v
+                }
+
+                define i8 @merge_poison(i8* addrspace(10)* nonnull align 8 dereferenceable(24) %arr, i8* addrspace(10)* nonnull %mem, i1 %c, i1 %d) {
+                top:
+                  %ap = addrspacecast i8* addrspace(10)* %arr to i8* addrspace(11)*
+                  br i1 %c, label %copy, label %other
+
+                other:
+                  br i1 %d, label %merge, label %bad
+
+                bad:
+                  br label %merge
+
+                copy:
+                  %m11 = addrspacecast i8* addrspace(10)* %mem to i8* addrspace(11)*
+                  %mp = getelementptr inbounds i8*, i8* addrspace(11)* %m11, i64 1
+                  br label %merge
+
+                merge:
+                  %p = phi i8* addrspace(11)* [ %mp, %copy ], [ %ap, %other ], [ poison, %bad ]
+                  %data = load i8*, i8* addrspace(11)* %p, align 8
+                  %v = load i8, i8* %data, align 1
+                  ret i8 %v
+                }
+
+                define i8 @store_first(i8* addrspace(10)* nonnull align 8 dereferenceable(24) %arr, i8* addrspace(10)* nonnull %mem, i1 %c, i8* %q) {
+                top:
+                  %ap = addrspacecast i8* addrspace(10)* %arr to i8* addrspace(11)*
+                  br i1 %c, label %copy, label %merge
+
+                copy:
+                  %m11 = addrspacecast i8* addrspace(10)* %mem to i8* addrspace(11)*
+                  %mp = getelementptr inbounds i8*, i8* addrspace(11)* %m11, i64 1
+                  br label %merge
+
+                merge:
+                  %p = phi i8* addrspace(11)* [ %mp, %copy ], [ %ap, %top ]
+                  store i8* %q, i8* addrspace(11)* %p, align 8
+                  %data = load i8*, i8* addrspace(11)* %p, align 8
+                  %v = load i8, i8* %data, align 1
+                  ret i8 %v
+                }
+
+                define i8 @not_dereferenceable(i8* addrspace(10)* nonnull %arr, i8* addrspace(10)* nonnull %mem, i1 %c) {
+                top:
+                  %ap = addrspacecast i8* addrspace(10)* %arr to i8* addrspace(11)*
+                  br i1 %c, label %copy, label %merge
+
+                copy:
+                  %m11 = addrspacecast i8* addrspace(10)* %mem to i8* addrspace(11)*
+                  %mp = getelementptr inbounds i8*, i8* addrspace(11)* %m11, i64 1
+                  br label %merge
+
+                merge:
+                  %p = phi i8* addrspace(11)* [ %mp, %copy ], [ %ap, %top ]
+                  %data = load i8*, i8* addrspace(11)* %p, align 8
+                  %v = load i8, i8* %data, align 1
+                  ret i8 %v
+                }
+
+                @g = global [3 x i8*] zeroinitializer
+
+                define i8 @merge_global(i8* addrspace(10)* nonnull align 8 dereferenceable(24) %arr, i1 %c) {
+                top:
+                  %ap = addrspacecast i8* addrspace(10)* %arr to i8* addrspace(11)*
+                  br i1 %c, label %empty, label %merge
+
+                empty:
+                  br label %merge
+
+                merge:
+                  %p = phi i8* addrspace(11)* [ getelementptr inbounds (i8*, i8* addrspace(11)* addrspacecast (i8** getelementptr inbounds ([3 x i8*], [3 x i8*]* @g, i64 0, i64 0) to i8* addrspace(11)*), i64 1), %empty ], [ %ap, %top ]
+                  %data = load i8*, i8* addrspace(11)* %p, align 8
+                  %v = load i8, i8* %data, align 1
+                  ret i8 %v
+                }
+                """
+            )
+
+            Enzyme.Compiler.nodecayed_phis!(mod)
+            @test LLVM.verify(mod) === nothing
             string(mod)
         end
     end
