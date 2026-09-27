@@ -430,6 +430,44 @@ function enzyme_call_kind(@nospecialize(interp::EnzymeInterpreter), @nospecializ
     return nothing
 end
 
+"""
+    despecializes_function_arg(info::CallInfo) -> Bool
+
+Say if the single method matching a call would be invoked through a compile
+signature that widens one of its function-typed arguments to `Function`. Julia
+does not specialize a method on an argument it only passes along, so such a
+call compiles to a boxed `jl_invoke`, which Enzyme can only differentiate
+through the slow runtime-generic path. In native Julia this never shows: the
+wrappers in question (e.g. `Base._mapreduce_dim` under `sum(f, x)`) are small
+and inline. Under this interpreter a wrapper can become too large to inline once
+its callee is replaced by an override (`_mapreduce` by `override_bc_mapreduce`),
+so such calls are inlined regardless of size.
+"""
+function despecializes_function_arg(@nospecialize(info::CallInfo))::Bool
+    # Constant propagation into the callee wraps the match.
+    if info isa Core.Compiler.ConstCallInfo
+        info = info.call
+    end
+    info isa Core.Compiler.MethodMatchInfo || return false
+    matches = info.results.matches
+    length(matches) == 1 || return false
+    m = matches[1]::Core.MethodMatch
+    m.fully_covers || return false
+    spec = m.spec_types
+    spec isa DataType || return false
+    csig = Core.Compiler.get_compileable_sig(m.method, spec, m.sparams)
+    (csig === nothing || csig === spec || !(csig isa DataType)) && return false
+    sp = spec.parameters
+    cp = csig.parameters
+    length(sp) == length(cp) || return false
+    for i in 2:length(sp)
+        if cp[i] === Function && sp[i] !== Function && sp[i] isa DataType && sp[i] <: Function
+            return true
+        end
+    end
+    return false
+end
+
 struct FutureCallinfoByType
     atype::Any
 end
@@ -439,7 +477,7 @@ end
     callinfo = ret.info
 
     kind = enzyme_call_kind(interp, simplify_kw(atype))
-    if kind === :alwaysinline
+    if kind === :alwaysinline || (kind === nothing && despecializes_function_arg(callinfo))
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
     elseif kind !== nothing
         callinfo = NoInlineCallInfo(callinfo, atype, kind)
