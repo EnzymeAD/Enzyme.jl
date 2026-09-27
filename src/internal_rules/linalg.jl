@@ -616,3 +616,128 @@ end
 
 EnzymeRules.has_easy_rule(::typeof(logdet), ::StridedMatrix) = true
 EnzymeRules.has_easy_rule(::typeof(det), ::StridedMatrix) = true
+
+# eigen of a real symmetric matrix, A = V diag(λ) Vᵀ.
+#   forward: λ̇ = diag(K), V̇ = V (F ∘ K) with K = Vᵀ Ȧ V
+#   reverse: Ā = V (diag(λ̄) + F ∘ (Vᵀ V̄)) Vᵀ
+# where F[i, j] = 1 / (λ[j] - λ[i]) off the diagonal and 0 on it.
+const RealSymMatrix{T} = Union{Symmetric{T, <:StridedMatrix{T}}, Hermitian{T, <:StridedMatrix{T}}}
+
+# `V (F ∘ K)`, with `K` (n×n) consumed.
+function eigen_offdiag!(K::AbstractMatrix, λ::AbstractVector)
+    n = length(λ)
+    @inbounds for j in 1:n, i in 1:n
+        K[i, j] = i == j ? zero(eltype(K)) : K[i, j] / (λ[j] - λ[i])
+    end
+    return K
+end
+
+# `Symmetric(M)` reads only its `uplo` triangle of `M`, so the cotangent `S` of
+# the symmetric matrix folds onto that triangle of `M`'s shadow.
+function eigen_accumulate!(dA::RealSymMatrix, S::AbstractMatrix)
+    d = parent(dA)
+    n = size(S, 1)
+    @inbounds if dA.uplo == 'U'
+        for j in 1:n, i in 1:j
+            d[i, j] += i == j ? S[i, i] : S[i, j] + S[j, i]
+        end
+    else
+        for j in 1:n, i in j:n
+            d[i, j] += i == j ? S[i, i] : S[i, j] + S[j, i]
+        end
+    end
+    return nothing
+end
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(eigen)},
+        ::Type{RT},
+        A::Annotation{<:RealSymMatrix{<:Real}};
+        kwargs...
+    ) where {RT}
+    res = eigen(A.val; kwargs...)
+    λ, V = res.values, res.vectors
+    dres = if isa(A, Const)
+        nothing
+    elseif EnzymeRules.width(config) == 1
+        K = V' * A.dval * V
+        Eigen(diag(K), V * eigen_offdiag!(K, λ))
+    else
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            K = V' * A.dval[i] * V
+            Eigen(diag(K), V * eigen_offdiag!(K, λ))
+        end
+    end
+    if dres === nothing && EnzymeRules.needs_shadow(config)
+        dres = if EnzymeRules.width(config) == 1
+            Eigen(zero(λ), zero(V))
+        else
+            ntuple(Returns(Eigen(zero(λ), zero(V))), Val(EnzymeRules.width(config)))
+        end
+    end
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            return Duplicated(res, dres)
+        else
+            return BatchDuplicated(res, dres)
+        end
+    elseif EnzymeRules.needs_primal(config)
+        return res
+    elseif EnzymeRules.needs_shadow(config)
+        return dres
+    else
+        return nothing
+    end
+end
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(eigen)},
+        ::Type{RT},
+        A::Annotation{<:RealSymMatrix{<:Real}};
+        kwargs...
+    ) where {RT}
+    res = eigen(A.val; kwargs...)
+    λ, V = res.values, res.vectors
+    dres = if !EnzymeRules.needs_shadow(config)
+        nothing
+    elseif EnzymeRules.width(config) == 1
+        Eigen(zero(λ), zero(V))
+    else
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            Eigen(zero(λ), zero(V))
+        end
+    end
+    retres = EnzymeRules.needs_primal(config) ? res : nothing
+    # The caller may change the returned arrays before the reverse pass runs.
+    cache = (copy(λ), copy(V), dres)
+    return EnzymeRules.AugmentedReturn(retres, dres, cache)
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(eigen)},
+        ::Type{RT},
+        cache,
+        A::Annotation{<:RealSymMatrix{<:Real}};
+        kwargs...
+    ) where {RT}
+    λ, V, dres = cache
+    if !isa(A, Const) && dres !== nothing
+        dress = EnzymeRules.width(config) == 1 ? (dres,) : dres
+        dAs = EnzymeRules.width(config) == 1 ? (A.dval,) : A.dval
+        for (dA, dr) in zip(dAs, dress)
+            K = eigen_offdiag!(V' * dr.vectors, λ)
+            @inbounds for i in 1:length(λ)
+                K[i, i] = dr.values[i]
+            end
+            eigen_accumulate!(dA, V * K * V')
+            fill!(dr.values, 0)
+            fill!(dr.vectors, 0)
+        end
+    end
+    return (nothing,)
+end

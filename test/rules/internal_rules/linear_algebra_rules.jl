@@ -604,3 +604,33 @@ end
         end
     end
 end
+
+# A function of `eigen` that does not depend on the signs of the eigenvectors,
+# which LAPACK picks arbitrarily.
+function eigen_sym_scalar(M, uplo)
+    λ, V = eigen(Symmetric(M * M' + I, uplo))
+    return sum(λ .* (1:length(λ))) + sum(abs2, V[:, 1] .* (1:size(V, 1))) + abs2(V[1, end] * V[2, end])
+end
+eigen_sym_U(M) = eigen_sym_scalar(M, :U)
+eigen_sym_L(M) = eigen_sym_scalar(M, :L)
+eigen_sym_values(S) = sum(eigen(S).values .* [1, 2, 3])
+
+@testset "eigen of a real symmetric matrix" begin
+    M = [1.0 0.3 0.2; 0.1 2.0 0.5; 0.4 0.2 3.0]
+    for f in (eigen_sym_U, eigen_sym_L)
+        gfd = FiniteDifferences.grad(central_fdm(5, 1), f, M)[1]
+        @test Enzyme.gradient(Reverse, f, M)[1] ≈ gfd rtol = 1.0e-6
+        @test Enzyme.gradient(Forward, f, M)[1] ≈ gfd rtol = 1.0e-6
+        @test Enzyme.gradient(Forward, f, M; chunk = Val(2))[1] ≈ gfd rtol = 1.0e-6
+        dMs = (zero(M), zero(M))
+        autodiff(Reverse, f, Active, BatchDuplicated(M, dMs))
+        @test dMs[1] ≈ gfd rtol = 1.0e-6
+        @test dMs[2] ≈ gfd rtol = 1.0e-6
+    end
+    # Only the triangle `Symmetric` reads gets a derivative.
+    S = Symmetric([2.0 0.5 0.0; 100.0 3.0 0.1; 100.0 100.0 4.0])
+    dS = Enzyme.make_zero(S)
+    autodiff(Reverse, eigen_sym_values, Active, Duplicated(S, dS))
+    @test all(iszero(dS.data[i, j]) for j in 1:3 for i in (j + 1):3)
+    @test !iszero(dS.data[1, 2])
+end
