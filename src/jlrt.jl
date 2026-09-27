@@ -504,13 +504,30 @@ For `count <= NTUPLE_TYPE_STACK_SIZE` it fills a stack array with `T` and calls
 `jl_apply_tuple_type_v`; otherwise it calls
 `jl_apply_tuple_type(jl_svec_fill(count, T))`. Both find the interned type
 several times faster than `jl_f_apply_type(NTuple, count, T)`, which first
-instantiates the `NTuple` `UnionAll`. Call this once differentiation is done,
-after the module for nested differentiation has been saved.
+instantiates the `NTuple` `UnionAll`. Calls whose `T` is a known constant are
+first redirected to `cached_ntuple_type!`, which memoizes the result. Call this
+once differentiation is done, after the module for nested differentiation has
+been saved.
 """
 function define_ntuple_type!(mod::LLVM.Module)
     haskey(functions(mod), "julia.enzyme.ntuple_type") || return
     fn = functions(mod)["julia.enzyme.ntuple_type"]
     isempty(blocks(fn)) || return
+
+    for u in collect(uses(fn))
+        call = LLVM.user(u)
+        isa(call, LLVM.CallInst) && LLVM.called_operand(call) == fn || continue
+        legal, T = absint(operands(call)[1])
+        legal || continue
+        cached, FT = cached_ntuple_type!(mod, fn, unbind(T))
+        B = IRBuilder()
+        position!(B, call)
+        new_call = call!(B, FT, cached, collect(arguments(call)))
+        API.EnzymeCopyMetadata(new_call, call)
+        replace_uses!(call, new_call)
+        LLVM.API.LLVMInstructionEraseFromParent(call)
+        dispose(B)
+    end
 
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
@@ -582,6 +599,85 @@ function define_ntuple_type!(mod::LLVM.Module)
         dispose(builder)
     end
     return
+end
+
+# Number of `NTuple{count, T}` types memoized per constant `T` by `cached_ntuple_type!`.
+const NTUPLE_TYPE_CACHE_SIZE = 64
+
+"""
+    cached_ntuple_type!(mod, ntuple_type, T) -> (LLVM.Function, LLVM.FunctionType)
+
+Return an `alwaysinline` wrapper of `julia.enzyme.ntuple_type` for a constant
+`T`, shared by all calls in `mod` with that `T`. Finding the interned
+`NTuple{count, T}` hashes all `count` parameters on every call, which costs more
+than the allocation it tags, so the wrapper memoizes the types for
+`count < NTUPLE_TYPE_CACHE_SIZE` in a module-level table and only calls
+`ntuple_type` on a miss. Types are interned and never freed, so the table holds
+untracked pointers and racing writers store the same value.
+"""
+function cached_ntuple_type!(mod::LLVM.Module, ntuple_type::LLVM.Function, @nospecialize(T))
+    FT = LLVM.function_type(ntuple_type)
+    name = "julia.enzyme.ntuple_type.cached." * string(convert(UInt, unsafe_to_pointer(T)))
+    if haskey(functions(mod), name)
+        return functions(mod)[name], FT
+    end
+
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_pjlvalue = LLVM.PointerType(T_jlvalue)
+    T_size = convert(LLVMType, Int)
+
+    T_cache = LLVM.ArrayType(T_pjlvalue, NTUPLE_TYPE_CACHE_SIZE)
+    cache = LLVM.GlobalVariable(mod, T_cache, name * ".cache")
+    linkage!(cache, LLVM.API.LLVMInternalLinkage)
+    initializer!(cache, LLVM.null(T_cache))
+
+    fn = LLVM.Function(mod, name, FT)
+    linkage!(fn, LLVM.API.LLVMInternalLinkage)
+    push!(function_attributes(fn), EnumAttribute("alwaysinline", 0))
+    push!(function_attributes(fn), EnumAttribute("nounwind", 0))
+
+    let builder = IRBuilder()
+        entry = BasicBlock(fn, "entry")
+        lookup = BasicBlock(fn, "lookup")
+        hit = BasicBlock(fn, "hit")
+        miss = BasicBlock(fn, "miss")
+        fill = BasicBlock(fn, "fill")
+        done = BasicBlock(fn, "done")
+        eltype, n = collect(parameters(fn))
+
+        position!(builder, entry)
+        emit_pgcstack(builder)
+        small = icmp!(builder, LLVM.API.LLVMIntULT, n, LLVM.ConstantInt(T_size, NTUPLE_TYPE_CACHE_SIZE))
+        br!(builder, small, lookup, miss)
+
+        position!(builder, lookup)
+        slot = inbounds_gep!(builder, T_cache, cache, LLVM.Value[LLVM.ConstantInt(T_size, 0), n])
+        cached = load!(builder, T_pjlvalue, slot)
+        ordering!(cached, LLVM.API.LLVMAtomicOrderingUnordered)
+        alignment!(cached, sizeof(Int))
+        br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, cached, LLVM.null(T_pjlvalue)), miss, hit)
+
+        position!(builder, hit)
+        ret!(builder, addrspacecast!(builder, cached, T_prjlvalue))
+
+        position!(builder, miss)
+        tag = call!(builder, FT, ntuple_type, LLVM.Value[eltype, n])
+        br!(builder, small, fill, done)
+
+        position!(builder, fill)
+        slot = inbounds_gep!(builder, T_cache, cache, LLVM.Value[LLVM.ConstantInt(T_size, 0), n])
+        raw = emit_pointerfromobjref!(builder, addrspacecast!(builder, tag, LLVM.PointerType(T_jlvalue, Derived)))
+        st = store!(builder, raw, slot)
+        ordering!(st, LLVM.API.LLVMAtomicOrderingUnordered)
+        alignment!(st, sizeof(Int))
+        br!(builder, done)
+
+        position!(builder, done)
+        ret!(builder, tag)
+        dispose(builder)
+    end
+    return fn, FT
 end
 
 """
