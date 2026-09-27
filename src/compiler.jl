@@ -6865,11 +6865,38 @@ const DumpLLVMCall = Ref(false)
                 end
             end
 
+            # An argument whose static type is wider than expected (for example
+            # a tape stored as `Any` by a rule and then invoked through its
+            # specialized signature) may still hold the right value. If every
+            # argument is either narrower or wider than expected, assert the
+            # expected types and dispatch again on the narrowed ones, so that
+            # only a genuinely mismatched call is rejected.
+            mismatched = false
+            narrowable = true
             for (expected, found) in zip(argtys, (fn, args...))
                 if !(found <: expected)
+                    mismatched = true
+                    if !(expected <: found)
+                        narrowable = false
+                    end
+                end
+            end
+            if mismatched
+                if !narrowable
                     return quote
                         throw(ThunkCallError($CC, $fn, $args, $truety, $hint))
                     end
+                end
+                narrowed = Expr[]
+                for i in 1:length(args)
+                    push!(narrowed, :(args[$i]::$(argtys[i + 1])))
+                end
+                return quote
+                    Base.@_inline_meta
+                    enzyme_call(
+                        Val($RawCall), fptr, $CC, Val($width), Val($returnPrimal),
+                        tt, rt, fn::$(argtys[1]), $TapeType, $(narrowed...),
+                    )
                 end
             end
         end
