@@ -323,3 +323,15 @@ end
 
     # TODO test for batch and reverse
 end
+
+# `__cat_offset!` copies an aggregate with inline roots through a critical edge
+# that the phi of its roots gets split along.
+vcat_view_scalar(x) = sum(abs2, vcat(view(x, 1:2), x[3]))
+
+@testset "vcat of a view and a scalar" begin
+    x = [1.0, 2.0, 3.0]
+    dx = zero(x)
+    autodiff(set_runtime_activity(Reverse), vcat_view_scalar, Active, Duplicated(x, dx))
+    @test dx ≈ [2.0, 4.0, 6.0]
+    @test Enzyme.gradient(Forward, vcat_view_scalar, x)[1] ≈ [2.0, 4.0, 6.0]
+end
