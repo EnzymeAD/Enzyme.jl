@@ -2452,6 +2452,7 @@ end
         (
             "jl_get_binding_or_error", "ijl_get_binding_or_error",
             "jl_get_binding_value_seqcst", "ijl_get_binding_value_seqcst",
+            "jl_eval_globalref", "ijl_eval_globalref",
         ),
         @augfunc(get_binding_or_error_augfwd),
         @revfunc(get_binding_or_error_rev),

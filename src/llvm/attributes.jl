@@ -6,6 +6,8 @@ const nofreefns = Set{String}((
     "jl_genericmemory_copyto",
     "jl_get_binding_value_seqcst",
     "ijl_get_binding_value_seqcst",
+        "jl_eval_globalref",
+        "ijl_eval_globalref",
     "jl_lazy_load_and_lookup",
     "ijl_lazy_load_and_lookup",
     "utf8proc_toupper",
@@ -247,6 +249,10 @@ const inactivefns = Set{String}((
     # If and when this changes, we need to change that here
     "jl_get_binding_value_seqcst",
     "ijl_get_binding_value_seqcst",
+        # Same for evaluating a `GlobalRef` (1.13 `Base.depwarn` reaches it through
+        # `invokelatest_gr`).
+        "jl_eval_globalref",
+        "ijl_eval_globalref",
 
     "utf8proc_toupper",
         "utf8proc_isupper",
