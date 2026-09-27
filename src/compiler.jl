@@ -6219,6 +6219,9 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
                     metadata(inst)["enzyme_type"] = to_md(ec, ctx)
                     metadata(inst)["enzymejl_source_type_$(source_typ)"] = MDNode(LLVM.Metadata[])
                     metadata(inst)["enzymejl_byref_$(byref)"] = MDNode(LLVM.Metadata[])
+                    if isa(inst, LLVM.LoadInst)
+                        mark_load_dereferenceable!(inst, source_typ, byref)
+                    end
             
 @static if VERSION < v"1.11-"
 else    

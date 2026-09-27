@@ -30,6 +30,8 @@ SafeAtomicToRegularStorePass() = NewPMFunctionPass("safe_atomic_to_regular_store
 Addr13NoAliasPass() = NewPMModulePass("addr13_noalias", addr13NoAlias)
 RemoveAlwaysInlineRootsPass() = NewPMModulePass("remove_alwaysinline_roots", remove_alwaysinline_roots!)
 
+MarkLoadsDereferenceablePass() = NewPMFunctionPass("enzyme_mark_loads_dereferenceable", mark_loads_dereferenceable!)
+
 function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti = nothing)
     @dispose pb = NewPMPassBuilder() begin
         if tti !== nothing
@@ -101,6 +103,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
             end
             registerEnzymeAndPassPipeline!(pb)
             register!(pb, RestoreAllocaType())
+            register!(pb, MarkLoadsDereferenceablePass())
             add!(pb, NewPMAAManager()) do aam
                 add!(aam, ScopedNoAliasAA())
                 add!(aam, TypeBasedAA())
@@ -125,6 +128,10 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
                     add!(fpm, AllocOptPass())
                     add!(fpm, RestoreAllocaType())
 
+                    # Loaded pointers to heap objects of a known type are `dereferenceable`
+                    # (see `mark_load_dereferenceable!`), so that LICM can hoist loads such as
+                    # an array's `Memory` pointer out of loops.
+                    add!(fpm, MarkLoadsDereferenceablePass())
                     add!(fpm, NewPMLoopPassManager(use_memory_ssa = true)) do lpm
                         add!(lpm, LoopIdiomRecognizePass())
                         add!(lpm, LoopRotatePass())
