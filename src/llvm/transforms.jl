@@ -461,6 +461,194 @@ function unfold_root_phi_loads!(f::LLVM.Function)::Bool
 end
 
 """
+    typeof_operand(x::LLVM.Value) -> Union{Nothing, LLVM.Value}
+
+If `x` is the `julia.typeof` of a tracked value, seen through `ptrtoint`,
+address space casts and `julia.pointer_from_objref`, return that value.
+"""
+function typeof_operand(@nospecialize(x::LLVM.Value))
+    while true
+        if isa(x, LLVM.PtrToIntInst)
+            # Narrower integers hold a hash of the type, not its address.
+            value_type(x) == LLVM.IntType(8 * sizeof(Int)) || return nothing
+            x = operands(x)[1]
+        elseif isa(x, LLVM.AddrSpaceCastInst)
+            x = operands(x)[1]
+        elseif isa(x, LLVM.CallInst)
+            cf = LLVM.called_operand(x)
+            isa(cf, LLVM.Function) || return nothing
+            nm = LLVM.name(cf)
+            if nm == "julia.pointer_from_objref"
+                x = operands(x)[1]
+            elseif nm == "julia.typeof"
+                v = operands(x)[1]
+                value_type(v) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked) || return nothing
+                # A constant's type is known already, and its uses span the
+                # whole module.
+                (isa(v, LLVM.Instruction) || isa(v, LLVM.Argument)) || return nothing
+                return v
+            else
+                return nothing
+            end
+        else
+            return nothing
+        end
+    end
+    return
+end
+
+"""
+    guard_type(tag::LLVM.Value) -> Union{Nothing, DataType}
+
+The concrete type whose address (or small type tag) the constant `tag` is.
+"""
+function guard_type(@nospecialize(tag::LLVM.Value))
+    if isa(tag, LLVM.ConstantExpr) && opcode(tag) == LLVM.API.LLVMIntToPtr
+        tag = operands(tag)[1]
+    end
+    (isa(tag, LLVM.ConstantInt) && value_type(tag) == LLVM.IntType(8 * sizeof(Int))) || return nothing
+    ce = convert(UInt, tag)
+    ptr = if ce < (JL_MAX_TAGS << 4)
+        # A small type tag indexes `jl_small_typeof` (see `jl_to_typeof`).
+        (ce != 0 && ce % 16 == 0) || return nothing
+        unsafe_load(Ptr{Ptr{Cvoid}}(cglobal(:jl_small_typeof)), ce ÷ sizeof(Ptr{Cvoid}) + 1)
+    else
+        Ptr{Cvoid}(ce)
+    end
+    ptr == C_NULL && return nothing
+    T = Base.unsafe_pointer_to_objref(ptr)
+    (T isa DataType && Base.isconcretetype(T)) || return nothing
+    return T
+end
+
+"""
+    typeof_guards(term::LLVM.Instruction)
+
+The exact type checks `term` branches on, as `(v, T, dest)` triples: `dest`
+runs only when `typeof(v) == T`, or, with `T === nothing`, only when `v` is
+none of the types the other destinations check for. Handles Julia's
+`icmp eq/ne` on a `julia.typeof` against one type and its `switch` over several.
+"""
+function typeof_guards(term::LLVM.Instruction)
+    guards = Tuple{LLVM.Value, Union{Nothing, DataType}, LLVM.BasicBlock}[]
+    if isa(term, LLVM.BrInst) && LLVM.isconditional(term)
+        cmp = LLVM.condition(term)
+        isa(cmp, LLVM.ICmpInst) || return guards
+        pred = LLVM.predicate(cmp)
+        (pred == LLVM.API.LLVMIntEQ || pred == LLVM.API.LLVMIntNE) || return guards
+        length(collect(LLVM.uses(cmp))) == 1 || return guards
+        ops = operands(cmp)
+        for (a, b) in ((ops[1], ops[2]), (ops[2], ops[1]))
+            v = typeof_operand(b)
+            v === nothing && continue
+            T = guard_type(a)
+            T === nothing && continue
+            succs = successors(term)
+            succs[1] != succs[2] || break
+            eq, ne = pred == LLVM.API.LLVMIntEQ ? (succs[1], succs[2]) : (succs[2], succs[1])
+            push!(guards, (v, T, eq))
+            push!(guards, (v, nothing, ne))
+            break
+        end
+    elseif isa(term, LLVM.SwitchInst)
+        v = typeof_operand(operands(term)[1])
+        v === nothing && return guards
+        succs = successors(term)
+        # operands: condition, default, then a (value, destination) pair per case
+        for i in 2:length(succs)
+            T = guard_type(operands(term)[2 * i - 1])
+            T === nothing && return empty!(guards)
+            push!(guards, (v, T, succs[i]))
+        end
+        push!(guards, (v, nothing, succs[1]))
+    end
+    return guards
+end
+
+"""
+    refine_union_splits!(f::LLVM.Function, ctx, dl, seen::TypeTreeTable) -> Bool
+
+Julia splits a call on a value of union type by comparing its `typeof` against
+each member, so the one SSA value has a different layout on each path (a
+`Matrix{Any}` holds boxed pointers where a `Matrix{W{Float64}}` holds floats).
+Type analysis is flow-insensitive and would merge what those paths know into a
+conflict. So on each path an exact type check selects, pass the value through
+`julia.enzyme.typerefine` (see `declare_typerefine!`) and use that instead: its
+call site carries the type tree of the member checked for, or, on the path
+that only excludes members, keeps the type analysis of that path to itself.
+"""
+function refine_union_splits!(f::LLVM.Function, ctx, dl, seen::TypeTreeTable)::Bool
+    guards = Tuple{LLVM.Instruction, LLVM.Value, Union{Nothing, DataType}, LLVM.BasicBlock}[]
+    for bb in blocks(f)
+        term = terminator(bb)
+        term === nothing && continue
+        for (v, T, dest) in typeof_guards(term)
+            # Only a block this check alone leads to is known to have passed it.
+            length(predecessors(dest)) == 1 || continue
+            push!(guards, (term, v, T, dest))
+        end
+    end
+    isempty(guards) && return false
+
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    mod = LLVM.parent(f)
+    fn, FT = declare_typerefine!(mod)
+    tree = LLVM.DomTree(f)
+    for (term, v, T, dest) in guards
+        pos = nothing
+        for inst in instructions(dest)
+            isa(inst, LLVM.PHIInst) && continue
+            pos = inst
+            break
+        end
+        B = IRBuilder()
+        position!(B, pos)
+        loc = LLVM.debuglocation(term)
+        loc === nothing || LLVM.debuglocation!(B, loc)
+        tag = T === nothing ? LLVM.PointerNull(T_prjlvalue) : unsafe_to_llvm(B, T)
+        refine = call!(B, FT, fn, LLVM.Value[v, tag])
+        dispose(B)
+
+        rest = if T === nothing
+            TypeTree(API.DT_Pointer, -1, ctx)
+        else
+            rest = copy(typetree(T, ctx, dl, seen))
+            if allocatedinline(T)
+                shift!(rest, dl, 0, sizeof(T), 0)
+            end
+            merge!(rest, TypeTree(API.DT_Pointer, ctx))
+            only!(rest, -1)
+            rest
+        end
+        LLVM.API.LLVMAddCallSiteAttribute(
+            refine, LLVM.API.LLVMAttributeReturnIndex, StringAttribute("enzyme_type", string(rest))
+        )
+
+        for u in collect(LLVM.uses(v))
+            user = LLVM.user(u)
+            (user == refine || !isa(user, LLVM.Instruction)) && continue
+            LLVM.parent(LLVM.parent(user)) == f || continue
+            if isa(user, LLVM.PHIInst)
+                for (i, (val, ibb)) in enumerate(LLVM.incoming(user))
+                    val == v || continue
+                    LLVM.dominates(tree, refine, terminator(ibb)) || continue
+                    LLVM.API.LLVMSetOperand(user, i - 1, refine)
+                end
+            else
+                LLVM.dominates(tree, refine, user) || continue
+                for (i, op) in enumerate(operands(user))
+                    op == v || continue
+                    LLVM.API.LLVMSetOperand(user, i - 1, refine)
+                end
+            end
+        end
+    end
+    dispose(tree)
+    return true
+end
+
+"""
     root_load_in(inst, ptr, bb, T_prjlvalue)
 
 Whether `inst` is a plain (non-volatile, non-atomic) load of a tracked pointer

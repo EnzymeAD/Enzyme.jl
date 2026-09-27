@@ -1535,6 +1535,12 @@ function nested_codegen!(
 
     # Apply first stage of optimization's so that this module is at the same stage as `mod`
     optimize!(otherMod, JIT.get_tm())
+    let ctx = LLVM.context(otherMod), dl = string(LLVM.datalayout(otherMod)), seen = TypeTreeTable()
+        for f in functions(otherMod)
+            isempty(blocks(f)) && continue
+            refine_union_splits!(f, ctx, dl, seen)
+        end
+    end
     
     if DumpPostNestedOpt[]
 	API.EnzymeDumpModuleRef(otherMod.ref)
@@ -6047,7 +6053,15 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     DL = LLVM.datalayout(mod)
     dl = string(DL)
     ctx = LLVM.context(mod)
-                        
+
+    # Give a value of union type its own copy on each path Julia's type check
+    # selects, so type analysis does not merge their layouts (see
+    # `refine_union_splits!`).
+    for f in functions(mod)
+        isempty(blocks(f)) && continue
+        refine_union_splits!(f, ctx, dl, seen)
+    end
+
     sretkind = kind(if LLVM.version().major >= 12
         TypeAttribute("sret", LLVM.Int32Type())
     else
@@ -7487,6 +7501,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
             end
         else
             define_ntuple_type!(mod)
+            inline_typerefine!(mod)
             propagate_returned!(mod)
             Compiler.JIT.prepare!(mod)
         end

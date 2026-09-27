@@ -102,6 +102,76 @@ function emit_pointerfromobjref!(B::LLVM.IRBuilder, @nospecialize(T::LLVM.Value)
     return call!(B, fty, func, [T])
 end
 
+"""
+    declare_typerefine!(mod::LLVM.Module)
+
+Declare `julia.enzyme.typerefine(v, T)`, which returns `v` and tells type
+analysis that `v` is exactly of type `T` on the path it is called from (see
+`refine_union_splits!`). It is an identity function with a body, so it
+differentiates like any other function, but it stays `noinline` and
+`enzyme_ta_norecur` while Enzyme runs so that the type tree its call site
+carries is not merged with what the other paths know about `v`.
+`inline_typerefine!` folds it away afterwards.
+"""
+function declare_typerefine!(mod::LLVM.Module)
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_prjlvalue])
+    memory = if LLVM.version().major <= 15
+        EnumAttribute("readnone", 0)
+    else
+        EnumAttribute("memory", NoEffects.data)
+    end
+    fn, _ = get_function!(
+        mod, "julia.enzyme.typerefine", FT,
+        LLVM.Attribute[
+            memory,
+            EnumAttribute("nounwind", 0),
+            EnumAttribute("willreturn", 0),
+            EnumAttribute("nosync", 0),
+            EnumAttribute("nofree", 0),
+            EnumAttribute("noinline", 0),
+            StringAttribute("enzyme_ta_norecur"),
+            StringAttribute("enzyme_shouldrecompute"),
+        ]
+    )
+    if isa(fn, LLVM.Function) && isempty(blocks(fn))
+        linkage!(fn, LLVM.API.LLVMInternalLinkage)
+        push!(parameter_attributes(fn, 2), EnumAttribute("nocapture", 0))
+        entry = BasicBlock(fn, "entry")
+        B = IRBuilder()
+        position!(B, entry)
+        ret!(B, parameters(fn)[1])
+        dispose(B)
+    end
+    return fn, FT
+end
+
+"""
+    inline_typerefine!(mod::LLVM.Module)
+
+Fold every `julia.enzyme.typerefine` call into its first argument and let the
+derivatives Enzyme made of it inline. Call this once differentiation is done,
+after the module for nested differentiation has been saved.
+"""
+function inline_typerefine!(mod::LLVM.Module)
+    for f in functions(mod)
+        occursin("julia.enzyme.typerefine", LLVM.name(f)) || continue
+        delete!(function_attributes(f), EnumAttribute("noinline", 0))
+        push!(function_attributes(f), EnumAttribute("alwaysinline", 0))
+    end
+    haskey(functions(mod), "julia.enzyme.typerefine") || return
+    fn = functions(mod)["julia.enzyme.typerefine"]
+    for u in collect(LLVM.uses(fn))
+        call = LLVM.user(u)
+        isa(call, LLVM.CallInst) || continue
+        LLVM.called_operand(call) == fn || continue
+        replace_uses!(call, operands(call)[1])
+        LLVM.API.LLVMInstructionEraseFromParent(call)
+    end
+    return
+end
+
 declare_writebarrier!(mod::LLVM.Module) =
     get_function!(mod, "julia.write_barrier") do
         T_jlvalue = LLVM.StructType(LLVMType[])
