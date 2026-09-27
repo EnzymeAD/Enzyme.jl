@@ -473,10 +473,12 @@ function declare_ntuple_type!(mod::LLVM.Module)
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_size = convert(LLVMType, Int)
     FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_size])
+    # The result depends only on the arguments and is interned, so the call can be
+    # treated as readnone, which also lets LLVM CSE it and hoist it out of loops.
     memory = if LLVM.version().major <= 15
-        EnumAttribute("inaccessiblemem_or_argmemonly", 0)
+        EnumAttribute("readnone", 0)
     else
-        EnumAttribute("memory", ReadArgMemReadWriteInaccessibleEffects.data)
+        EnumAttribute("memory", NoEffects.data)
     end
     fn, _ = get_function!(
         mod, "julia.enzyme.ntuple_type", FT,
