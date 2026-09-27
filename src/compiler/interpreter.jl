@@ -1644,4 +1644,44 @@ const HAS_INVOKE_RULES = VERSION >= v"1.12-"
 
 end
 
+
+# With `compilesig_invokes = false` above, inlining also emits an `:invoke` for a
+# callee whose specialized signature is not a dispatch tuple, for example
+# `reshape(::AbstractVector, ::Int, ::Int)` or `f(::Any)`, which the default
+# setting would have sent through dynamic dispatch. Julia compiles such a callee
+# for its abstract signature, with boxed and untyped arguments, and Enzyme then
+# has to differentiate it that way: type analysis fails, or the adjoint is lost
+# in boxed runtime calls. Keep the direct call only for fully specialized
+# signatures and route the others back through dynamic dispatch.
+function route_abstract_invokes!(ir::Core.Compiler.IRCode)
+    for i in 1:length(ir.stmts)
+        stmt = ir.stmts.stmt[i]
+        stmt isa Expr && stmt.head === :invoke || continue
+        target = stmt.args[1]
+        if target isa Core.CodeInstance
+            target = target.def
+        end
+        target isa Core.MethodInstance || continue
+        Base.isdispatchtuple(target.specTypes) && continue
+        ir.stmts.stmt[i] = Expr(:call, stmt.args[2:end]...)
+    end
+    return ir
+end
+
+@static if VERSION < v"1.12-"
+function Core.Compiler.optimize(interp::EnzymeInterpreter, opt::Core.Compiler.OptimizationState, caller::Core.Compiler.InferenceResult)
+    ir = Core.Compiler.run_passes_ipo_safe(opt.src, opt, caller)
+    route_abstract_invokes!(ir)
+    Core.Compiler.ipo_dataflow_analysis!(interp, ir, caller)
+    return Core.Compiler.finish(interp, opt, ir, caller)
+end
+else
+function Core.Compiler.optimize(interp::EnzymeInterpreter, opt::Core.Compiler.OptimizationState, caller::Core.Compiler.InferenceResult)
+    ir = Core.Compiler.run_passes_ipo_safe(opt.src, opt)
+    route_abstract_invokes!(ir)
+    Core.Compiler.ipo_dataflow_analysis!(interp, opt, ir, caller)
+    return Core.Compiler.finish(interp, opt, ir, caller)
+end
+end
+
 end
