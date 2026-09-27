@@ -540,6 +540,18 @@ const HAS_INVOKE_CI_LOWERING = VERSION >= v"1.13-"
     end
 end
 
+"""
+    has_inlinable_source(src) -> Bool
+
+Whether `src`, the source of a call the inliner is considering, is something it
+can actually build IR from. Forcing a call to be inlined overrides the cost
+model, not the availability of source: a cached `CodeInstance` which kept none
+hands `nothing` to the policy, and claiming that is inlinable walks into
+`retrieve_ir_for_inlining(::CodeInstance, ::Nothing)`.
+"""
+has_inlinable_source(@nospecialize(src))::Bool =
+    isa(src, Core.CodeInfo) || isa(src, String) || isa(src, Core.Compiler.IRCode)
+
 let # overload `inlining_policy`
     @static if VERSION ≥ v"1.11.0-DEV.879"
         sigs_ex = :(
@@ -610,7 +622,7 @@ let # overload `inlining_policy`
         elseif info isa AlwaysInlineCallInfo
             @safe_debug "Forcing inlining for primitive func" info.tt
 
-            return true
+                return has_inlinable_source(src)
         end
         return @invoke Core.Compiler.src_inlining_policy($(args_ex.args...))
     end
