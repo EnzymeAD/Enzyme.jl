@@ -1906,7 +1906,14 @@ function rt_jl_setfield_aug(dptr::T, idx, ::Val{isconst}, val, dval) where {T,is
     state = active_reg_nothrow(RT)
 
     if state == ActiveState
-        setfield!(dptr, idx, make_zero(val))
+        # The shadow field is the adjoint slot for the stored value and is
+        # only consumed (and re-zeroed) in the reverse pass. It may already
+        # hold a seed the caller placed there, so it must not be cleared here.
+        # It only has to be given a zero of the right type when the field is
+        # untyped and currently holds a value of another type (or nothing yet).
+        if !isdefined(dptr, idx) || Core.Typeof(getfield(dptr, idx)) != RT
+            setfield!(dptr, idx, make_zero(val))
+        end
     elseif state == MixedState
         throw(
             AssertionError("$RT has mixed internal activity types. See https://enzyme.mit.edu/julia/stable/faq/#Mixed-activity for more information"),
@@ -1919,8 +1926,12 @@ end
 function rt_jl_setfield_rev(dptr::T, idx, ::Val{isconst}, val, dval) where {T,isconst}
     RT = Core.Typeof(val)
     state = active_reg_nothrow(RT)
-    if state == ActiveState && !isconst
-        dval[] = recursive_add(dval[], getfield(dptr, idx), identity, guaranteed_nonactive)
+    if state == ActiveState
+        if !isconst
+            dval[] = recursive_add(dval[], getfield(dptr, idx), identity, guaranteed_nonactive)
+        end
+        # The store overwrote the field, so no adjoint flows past it to an
+        # earlier store: clear the slot whether or not the value was active.
         setfield!(dptr, idx, make_zero(val))
     end
 end
