@@ -483,6 +483,9 @@ function typeof_operand(@nospecialize(x::LLVM.Value))
             elseif nm == "julia.typeof"
                 v = operands(x)[1]
                 value_type(v) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked) || return nothing
+                # A constant's type is known already, and its uses span the
+                # whole module.
+                (isa(v, LLVM.Instruction) || isa(v, LLVM.Argument)) || return nothing
                 return v
             else
                 return nothing
@@ -625,6 +628,7 @@ function refine_union_splits!(f::LLVM.Function, ctx, dl, seen::TypeTreeTable)::B
         for u in collect(LLVM.uses(v))
             user = LLVM.user(u)
             (user == refine || !isa(user, LLVM.Instruction)) && continue
+            LLVM.parent(LLVM.parent(user)) == f || continue
             if isa(user, LLVM.PHIInst)
                 for (i, (val, ibb)) in enumerate(LLVM.incoming(user))
                     val == v || continue
