@@ -2296,9 +2296,7 @@ end
         "enzyme_custom",
         @diffusefunc(enzyme_custom_diffuse)
     )
-    for nm in ("julia.call", "julia.call2")
-        API.EnzymeRegisterDiffUseCallHandler(nm, @diffusefunc(jlcall_diffuse))
-    end
+    API.EnzymeRegisterDiffUseCallHandler("julia.call", @diffusefunc(jlcall_diffuse))
     for nm in ("jl_f_getfield", "ijl_f_getfield")
         API.EnzymeRegisterDiffUseCallHandler(nm, @diffusefunc(jl_getfield_diffuse))
     end
