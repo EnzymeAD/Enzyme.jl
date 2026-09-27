@@ -437,15 +437,7 @@ Say if the single method matching a call would be invoked through a compile
 signature that widens one of its function-typed arguments to `Function`. Julia
 does not specialize a method on an argument it only passes along, so such a
 call compiles to a boxed `jl_invoke`, which Enzyme can only differentiate
-through the slow runtime-generic path. In native Julia this never shows: the
-wrappers in question (e.g. `Base._mapreduce_dim` under `sum(f, x)`) are small
-and inline. Under this interpreter a wrapper can become too large to inline once
-its callee is replaced by an override (`_mapreduce` by `override_bc_mapreduce`),
-so such calls are inlined regardless of size.
-
-This is a workaround: #3665 removes the cause by keeping invokes on the
-specialized signature (`compilesig_invokes = false`); once it lands, this
-heuristic and its use in `FutureCallinfoByType` can be reverted.
+through the slow runtime-generic path.
 """
 function despecializes_function_arg(@nospecialize(info::CallInfo))::Bool
     # Constant propagation into the callee wraps the match.
