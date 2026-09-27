@@ -332,6 +332,143 @@ function fixup_1p12_sret!(f::LLVM.Function)
 end
 
 """
+    phi_load_in(inst, ptr, bb, loadty) -> Bool
+
+Whether `inst` is a plain (non-volatile, non-atomic) load from `ptr`, placed in the
+block `bb`. If `loadty` is not `nothing`, the load must also be of type `loadty`.
+"""
+function phi_load_in(@nospecialize(inst::LLVM.Value), @nospecialize(ptr::LLVM.Value), bb::LLVM.BasicBlock, @nospecialize(loadty::Union{Nothing, LLVM.LLVMType}))::Bool
+    return isa(inst, LLVM.LoadInst) && LLVM.parent(inst) == bb &&
+        operands(inst)[1] == ptr && (loadty === nothing || value_type(inst) == loadty) &&
+        !Bool(LLVM.API.LLVMGetVolatile(inst)) && !LLVM.is_atomic(inst)
+end
+
+"""
+    unfold_phi_loads!(phi::LLVM.PHIInst, loadty) -> Bool
+
+Change the loads through the pointer `phi` into a phi of loads, one load in each
+predecessor. Return whether the function changed `phi`.
+
+The function changes `phi` only if all of these conditions are true:
+- All users of `phi` are loads in the block of `phi` (see `phi_load_in`), or GEPs with
+  constant indices in that block whose users are all such loads.
+- No memory write comes before one of these loads in the block.
+- The load is safe on each edge from a predecessor with more than one successor (see
+  `is_speculatable_load`). On such an edge, the new load is speculative. If a call comes
+  before one of the loads, the call can prevent the load, thus the load must be safe on
+  all edges.
+
+A load from an undef or poison incoming value gives an undef or poison value.
+"""
+function unfold_phi_loads!(phi::LLVM.PHIInst, @nospecialize(loadty::Union{Nothing, LLVM.LLVMType}))::Bool
+    bb = LLVM.parent(phi)
+
+    # The users: loads in this block, directly or through a GEP with constant indices.
+    accesses = Tuple{LLVM.LoadInst, Union{Nothing, LLVM.GetElementPtrInst}}[]
+    for u in LLVM.uses(phi)
+        inst = LLVM.user(u)
+        if isa(inst, LLVM.GetElementPtrInst) && LLVM.parent(inst) == bb &&
+                operands(inst)[1] == phi && all(isa(op, LLVM.ConstantInt) for op in operands(inst)[2:end])
+            for u2 in LLVM.uses(inst)
+                ld = LLVM.user(u2)
+                phi_load_in(ld, inst, bb, loadty) || return false
+                push!(accesses, (ld, inst))
+            end
+        elseif phi_load_in(inst, phi, bb, loadty)
+            push!(accesses, (inst, nothing))
+        else
+            return false
+        end
+    end
+    isempty(accesses) && return false
+
+    # A write before a load can change the value that the load reads.
+    pending = Set{LLVM.Instruction}()
+    for (ld, _) in accesses
+        push!(pending, ld)
+    end
+    callfirst = false
+    for inst in instructions(bb)
+        isempty(pending) && break
+        if inst in pending
+            delete!(pending, inst)
+            continue
+        end
+        isa(inst, LLVM.PHIInst) && continue
+        mayWriteToMemory(inst) && return false
+        callfirst |= isa(inst, LLVM.CallInst)
+    end
+
+    dl = datalayout(LLVM.parent(LLVM.parent(bb)))
+    for (v, pred) in incoming(phi)
+        is_undef_or_poison(v) && continue
+        (callfirst || length(collect(successors(terminator(pred)))) != 1) || continue
+        for (ld, gep) in accesses
+            off = gep === nothing ? 0 : last(get_base_and_offset(gep))
+            off >= 0 || return false
+            sz = off + Int(LLVM.sizeof(dl, value_type(ld)))
+            is_speculatable_load(v, sz, terminator(pred)) || return false
+        end
+    end
+
+    incs = collect(incoming(phi))
+    builder = IRBuilder()
+    for (ld, gep) in accesses
+        position!(builder, phi)
+        newphi = phi!(builder, value_type(ld))
+        done = Dict{LLVM.BasicBlock, LLVM.LoadInst}()
+        for (v, pred) in incs
+            if is_undef_or_poison(v)
+                push!(incoming(newphi), (undef_or_poison_like(v, value_type(ld)), pred))
+                continue
+            end
+            nld = get(done, pred, nothing)
+            if nld === nothing
+                position!(builder, terminator(pred))
+                ptr = v
+                if gep !== nothing
+                    elty = LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(gep))
+                    inds = LLVM.Value[op for op in operands(gep)[2:end]]
+                    ptr = if Bool(LLVM.API.LLVMIsInBounds(gep))
+                        inbounds_gep!(builder, elty, v, inds)
+                    else
+                        gep!(builder, elty, v, inds)
+                    end
+                end
+                nld = load!(builder, value_type(ld), ptr)
+                alignment!(nld, alignment(ld))
+                copy_metadata!(nld, ld)
+                done[pred] = nld
+            end
+            push!(incoming(newphi), (nld, pred))
+        end
+        # Memory metadata such as `!tbaa` is not allowed on a phi.
+        for k in ("enzyme_type", "enzyme_inactive", "enzyme_active")
+            if haskey(metadata(ld), k)
+                metadata(newphi)[k] = metadata(ld)[k]
+            end
+        end
+        ldname = LLVM.name(ld)
+        replace_uses!(ld, newphi)
+        LLVM.erase!(ld)
+        LLVM.name!(newphi, ldname)
+    end
+    # Several loads can use the same GEP.
+    geps = Set{LLVM.GetElementPtrInst}()
+    for (_, gep) in accesses
+        gep === nothing || push!(geps, gep)
+    end
+    for gep in geps
+        @assert isempty(collect(LLVM.uses(gep)))
+        LLVM.erase!(gep)
+    end
+    @assert isempty(collect(LLVM.uses(phi)))
+    LLVM.erase!(phi)
+    dispose(builder)
+    return true
+end
+
+"""
     unfold_root_phi_loads!(f::LLVM.Function) -> Bool
 
 Turn a load through a phi of root-array pointers back into a phi of loads.
@@ -346,12 +483,9 @@ push that address-space change through a phi whose other operands are not
 allocas ("Illegal address space propagation"). Sinking the load back into the
 predecessors gives the alloca only plain loads again.
 
-Only rewrite what is certainly equivalent: a `phi ptr` in address space 0 with an
-alloca among its incoming values, whose users are all non-atomic loads of tracked
-pointers in its own block that no memory write precedes. Each load is re-created
-before the terminator of every predecessor; on an edge whose predecessor has other
-successors that is a speculative load, so it is only done for an alloca-backed
-pointer, which is always dereferenceable.
+Only a `phi ptr` in address space 0 with an alloca among its incoming values, whose
+loads are all of tracked pointers, is changed. See `unfold_phi_loads!` for the other
+conditions.
 """
 function unfold_root_phi_loads!(f::LLVM.Function)::Bool
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
@@ -359,117 +493,21 @@ function unfold_root_phi_loads!(f::LLVM.Function)::Bool
     changed = false
     for bb in blocks(f)
         for phi in collect(instructions(bb))
-            isa(phi, LLVM.PHIInst) || continue
+            isa(phi, LLVM.PHIInst) || break
             pty = value_type(phi)
             (isa(pty, LLVM.PointerType) && LLVM.addrspace(pty) == 0) || continue
-
-            incs = collect(incoming(phi))
-            any(((v, _),) -> isa(first(get_base_and_offset(v)), LLVM.AllocaInst), incs) || continue
-
-            # The users: loads of tracked pointers in this block, directly or
-            # through a GEP with constant indices, before any write.
-            accesses = Tuple{LLVM.LoadInst, Union{Nothing, LLVM.GetElementPtrInst}}[]
-            ok = true
-            for u in LLVM.uses(phi)
-                inst = LLVM.user(u)
-                if isa(inst, LLVM.GetElementPtrInst) && LLVM.parent(inst) == bb &&
-                        operands(inst)[1] == phi && all(isa(op, LLVM.ConstantInt) for op in operands(inst)[2:end])
-                    for u2 in LLVM.uses(inst)
-                        ld = LLVM.user(u2)
-                        if !root_load_in(ld, inst, bb, T_prjlvalue)
-                            ok = false
-                            break
-                        end
-                        push!(accesses, (ld, inst))
-                    end
-                elseif root_load_in(inst, phi, bb, T_prjlvalue)
-                    push!(accesses, (inst, nothing))
-                else
-                    ok = false
-                end
-                ok || break
-            end
-            (ok && !isempty(accesses)) || continue
-            for inst in instructions(bb)
-                mayWriteToMemory(inst) || continue
-                # A write before one of the loads could change what they read.
-                if any(((ld, _),) -> precedes(inst, ld), accesses)
-                    ok = false
-                end
-                break
-            end
-            ok || continue
-
-            # A speculative load is only safe from an alloca.
-            for (v, pred) in incs
-                nsucc = length(collect(successors(terminator(pred))))
-                if nsucc != 1 && !isa(first(get_base_and_offset(v)), LLVM.AllocaInst)
-                    ok = false
+            has_alloca = false
+            for (v, _) in incoming(phi)
+                if isa(first(get_base_and_offset(v)), LLVM.AllocaInst)
+                    has_alloca = true
                     break
                 end
             end
-            ok || continue
-
-            builder = LLVM.IRBuilder()
-            for (ld, gep) in accesses
-                newphi = let
-                    position!(builder, phi)
-                    phi!(builder, T_prjlvalue, LLVM.name(ld))
-                end
-                done = Dict{LLVM.BasicBlock, LLVM.LoadInst}()
-                for (v, pred) in incs
-                    nld = get!(done, pred) do
-                        position!(builder, terminator(pred))
-                        ptr = v
-                        if gep !== nothing
-                            elty = LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(gep))
-                            inds = LLVM.Value[op for op in operands(gep)[2:end]]
-                            ptr = if Bool(LLVM.API.LLVMIsInBounds(gep))
-                                inbounds_gep!(builder, elty, v, inds)
-                            else
-                                gep!(builder, elty, v, inds)
-                            end
-                        end
-                        nld = load!(builder, T_prjlvalue, ptr)
-                        alignment!(nld, alignment(ld))
-                        copy_metadata!(nld, ld)
-                        nld
-                    end
-                    push!(incoming(newphi), (nld, pred))
-                end
-                # Memory metadata such as `!tbaa` is not allowed on a phi.
-                for k in ("enzyme_type", "enzyme_inactive", "enzyme_active")
-                    if haskey(metadata(ld), k)
-                        metadata(newphi)[k] = metadata(ld)[k]
-                    end
-                end
-                replace_uses!(ld, newphi)
-                LLVM.erase!(ld)
-            end
-            for (_, gep) in accesses
-                if gep !== nothing && isempty(collect(LLVM.uses(gep)))
-                    LLVM.erase!(gep)
-                end
-            end
-            @assert isempty(collect(LLVM.uses(phi)))
-            LLVM.erase!(phi)
-            dispose(builder)
-            changed = true
+            has_alloca || continue
+            changed |= unfold_phi_loads!(phi, T_prjlvalue)
         end
     end
     return changed
-end
-
-"""
-    root_load_in(inst, ptr, bb, T_prjlvalue)
-
-Whether `inst` is a plain (non-volatile, non-atomic) load of a tracked pointer
-from `ptr`, placed in the block `bb`.
-"""
-function root_load_in(@nospecialize(inst::LLVM.Value), @nospecialize(ptr::LLVM.Value), bb::LLVM.BasicBlock, T_prjlvalue::LLVM.LLVMType)::Bool
-    return isa(inst, LLVM.LoadInst) && LLVM.parent(inst) == bb &&
-        operands(inst)[1] == ptr && value_type(inst) == T_prjlvalue &&
-        !Bool(LLVM.API.LLVMGetVolatile(inst)) && !LLVM.is_atomic(inst)
 end
 
 """
@@ -950,16 +988,11 @@ the type at each offset to each base object, and this causes an illegal type ana
 A phi of the loaded values has one type only, thus this function moves each load back
 into the predecessors.
 
-The function changes a phi only if all of these conditions are true:
-- The phi is a pointer in addrspace(11), and its incoming values have different
-  constant offsets. Undef and poison incoming values do not count.
-- All users of the phi are non-volatile, non-atomic loads in the block of the phi.
-- No call and no memory write comes before one of these loads in the block.
-- The load is safe on each edge from a predecessor with more than one successor (see
-  `is_speculatable_load`). On such an edge, the new load is speculative.
+Only a pointer phi in addrspace(11) whose incoming values have different constant
+offsets is changed. Undef and poison incoming values do not count. See
+`unfold_phi_loads!` for the other conditions.
 """
 function unfold_derived_phi_loads!(f::LLVM.Function)::Bool
-    dl = datalayout(LLVM.parent(f))
     changed = false
     for bb in blocks(f)
         for phi in collect(instructions(bb))
@@ -967,93 +1000,13 @@ function unfold_derived_phi_loads!(f::LLVM.Function)::Bool
             pty = value_type(phi)
             (isa(pty, LLVM.PointerType) && addrspace(pty) == Derived) || continue
 
-            incs = collect(incoming(phi))
             # An undef or poison incoming value has no offset. It does not make the
             # offsets different. Pass `inst` so that the offset of a constant-expression
             # GEP (for example, into a global) is computed too.
-            offsets = Int[last(get_base_and_offset(v; inst = terminator(pred))) for (v, pred) in incs if !is_undef_or_poison(v)]
+            offsets = Int[last(get_base_and_offset(v; inst = terminator(pred))) for (v, pred) in incoming(phi) if !is_undef_or_poison(v)]
             (isempty(offsets) || all(==(offsets[1]), offsets)) && continue
 
-            loads = LLVM.LoadInst[]
-            ok = true
-            for u in LLVM.uses(phi)
-                ld = LLVM.user(u)
-                if isa(ld, LLVM.LoadInst) && LLVM.parent(ld) == bb && operands(ld)[1] == phi &&
-                        !Bool(LLVM.API.LLVMGetVolatile(ld)) && !LLVM.is_atomic(ld)
-                    push!(loads, ld)
-                else
-                    ok = false
-                    break
-                end
-            end
-            (ok && !isempty(loads)) || continue
-
-            # A call or a write before a load can change the value that the load reads,
-            # or it can prevent the load.
-            pending = Set{LLVM.Instruction}(loads)
-            for inst in instructions(bb)
-                isempty(pending) && break
-                if inst in pending
-                    delete!(pending, inst)
-                    continue
-                end
-                isa(inst, LLVM.PHIInst) && continue
-                if isa(inst, LLVM.CallInst) || mayWriteToMemory(inst)
-                    ok = false
-                    break
-                end
-            end
-            ok || continue
-
-            for (v, pred) in incs
-                is_undef_or_poison(v) && continue
-                length(collect(successors(terminator(pred)))) == 1 && continue
-                for ld in loads
-                    if !is_speculatable_load(v, Int(LLVM.sizeof(dl, value_type(ld))), terminator(pred))
-                        ok = false
-                        break
-                    end
-                end
-                ok || break
-            end
-            ok || continue
-
-            builder = IRBuilder()
-            for ld in loads
-                position!(builder, phi)
-                newphi = phi!(builder, value_type(ld))
-                done = Dict{LLVM.BasicBlock, LLVM.LoadInst}()
-                for (v, pred) in incs
-                    # A load from an undef or poison pointer gives an undef or poison value.
-                    if is_undef_or_poison(v)
-                        push!(incoming(newphi), (undef_or_poison_like(v, value_type(ld)), pred))
-                        continue
-                    end
-                    nld = get(done, pred, nothing)
-                    if nld === nothing
-                        position!(builder, terminator(pred))
-                        nld = load!(builder, value_type(ld), v)
-                        alignment!(nld, alignment(ld))
-                        copy_metadata!(nld, ld)
-                        done[pred] = nld
-                    end
-                    push!(incoming(newphi), (nld, pred))
-                end
-                # Memory metadata such as `!tbaa` is not allowed on a phi.
-                for k in ("enzyme_type", "enzyme_inactive", "enzyme_active")
-                    if haskey(metadata(ld), k)
-                        metadata(newphi)[k] = metadata(ld)[k]
-                    end
-                end
-                ldname = LLVM.name(ld)
-                replace_uses!(ld, newphi)
-                LLVM.erase!(ld)
-                LLVM.name!(newphi, ldname)
-            end
-            @assert isempty(collect(LLVM.uses(phi)))
-            LLVM.erase!(phi)
-            dispose(builder)
-            changed = true
+            changed |= unfold_phi_loads!(phi, nothing)
         end
     end
     return changed

@@ -883,6 +883,62 @@ end
     end
 end
 
+@testset "unfold_root_phi_loads! speculative loads" begin
+    LLVM.Context() do ctx
+        mod = parse(
+            LLVM.Module, """
+            source_filename = "start"
+            target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+            target triple = "x86_64-linux-gnu"
+
+            define {} addrspace(10)* @cond_deref(i1 %cond, {} addrspace(10)** dereferenceable(16) %arg) {
+            top:
+              %roots = alloca [2 x {} addrspace(10)*], align 8
+              %r = bitcast [2 x {} addrspace(10)*]* %roots to {} addrspace(10)**
+              br i1 %cond, label %a, label %merge
+
+            a:
+              br label %merge
+
+            merge:
+              %p = phi {} addrspace(10)** [ %r, %a ], [ %arg, %top ]
+              %ld = load {} addrspace(10)*, {} addrspace(10)** %p, align 8
+              ret {} addrspace(10)* %ld
+            }
+
+            define {} addrspace(10)* @cond_noderef(i1 %cond, {} addrspace(10)** %arg) {
+            top:
+              %roots = alloca [2 x {} addrspace(10)*], align 8
+              %r = bitcast [2 x {} addrspace(10)*]* %roots to {} addrspace(10)**
+              br i1 %cond, label %a, label %merge
+
+            a:
+              br label %merge
+
+            merge:
+              %p = phi {} addrspace(10)** [ %r, %a ], [ %arg, %top ]
+              %ld = load {} addrspace(10)*, {} addrspace(10)** %p, align 8
+              ret {} addrspace(10)* %ld
+            }
+            """
+        )
+
+        # The edge from `top` is speculative. The load from `%arg` is safe because
+        # `%arg` is dereferenceable.
+        cond_deref = functions(mod)["cond_deref"]
+        @test Enzyme.Compiler.unfold_root_phi_loads!(cond_deref)
+        @test root_phi_addrspaces(cond_deref) == [10]
+
+        # The same, but `%arg` is not dereferenceable. The pass must not change this
+        # function.
+        cond_noderef = functions(mod)["cond_noderef"]
+        @test !Enzyme.Compiler.unfold_root_phi_loads!(cond_noderef)
+        @test root_phi_addrspaces(cond_noderef) == [0]
+
+        @test LLVM.verify(mod) === nothing
+    end
+end
+
 @testset "addrspace(11) argument phis are left alone" begin
     # LLVM 20 strength-reduces loop indices into pointer induction variables, so a
     # loop over an addrspace(11) argument (an SVector passed by reference) becomes
