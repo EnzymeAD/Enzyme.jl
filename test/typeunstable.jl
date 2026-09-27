@@ -346,3 +346,22 @@ batched_uninferred_return(x) = Base.invokelatest(batched_uninferred_target, x)
     @test result[1][1][1] == [2.0, 2.0]
     @test result[1][2][1] == [6.0, 6.0]
 end
+
+function getfield_push_2464(ks)
+    out = Any[]
+    for k in ks
+        push!(out, getfield(k, :value))
+    end
+    return out
+end
+
+@testset "Issue 2464 getfield rule keeps its object shadow" begin
+    ks = Any[Some(1), Some(2)]
+    dks = Any[Some(1), Some(2)]
+    fwd, rev = Enzyme.autodiff_thunk(
+        ReverseSplitWithPrimal, Const{typeof(getfield_push_2464)}, Duplicated, Duplicated{typeof(ks)}
+    )
+    tape, primal, shadow = fwd(Const(getfield_push_2464), Duplicated(ks, dks))
+    @test primal == Any[1, 2]
+    rev(Const(getfield_push_2464), Duplicated(ks, dks), tape)
+end
