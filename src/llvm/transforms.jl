@@ -483,8 +483,8 @@ function root_block_after(@nospecialize(inst::LLVM.Value), bb::LLVM.BasicBlock):
     isa(inst, LLVM.Instruction) || return false
     ib = LLVM.parent(inst)
     ib == bb && return true
-    preds = collect(predecessors(ib))
-    return length(preds) == 1 && preds[1] == bb
+    preds = predecessors(ib)
+    return length(preds) == 1 && first(preds) == bb
 end
 
 """
