@@ -276,6 +276,9 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
             # LoopRotate strips metadata from terminator, so run LowerSIMD afterwards
             add!(lpm, LowerSIMDLoopPass()) # Annotate loop marked with "loopinfo" as LLVM parallel loop
             add!(lpm, LICMPass())
+            # Runtime-activity checks compare loop-invariant pointers inside loops;
+            # hoist them so the loop bodies can vectorize.
+            add!(lpm, SimpleLoopUnswitchPass(; nontrivial = true, trivial = true))
             add!(lpm, JuliaLICMPass())
         end
         add!(fpm, InstCombinePass())
