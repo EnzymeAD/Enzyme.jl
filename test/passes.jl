@@ -730,6 +730,61 @@ end
     end
 end
 
+@testset "fix_decayaddr! derived pointer into a heap-promoted roots buffer" begin
+    # Since Julia 1.13.1, codegen passes a pointer into a `returnRoots` buffer
+    # on as another call's roots argument. When Enzyme moves that buffer to the
+    # GC heap, the argument becomes a derived pointer into the new object, cast
+    # back to addrspace 0. The roots must be copied into a stack slot instead.
+    rooted = string(convert(UInt, pointer_from_objref(Tuple{Vector{Float64}, Int})))
+    LLVM.Context() do ctx
+        if LLVM.supports_typed_pointers(ctx)
+            return
+        end
+        mod = parse(
+            LLVM.Module, """
+            source_filename = "start"
+            target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+            target triple = "x86_64-linux-gnu"
+
+            declare noalias nonnull ptr addrspace(10) @julia.gc_alloc_obj(ptr, i64, ptr addrspace(10))
+
+            declare void @use_roots(ptr nocapture readonly "enzymejl_rooted_typ"="$rooted")
+
+            define void @promoted() {
+            top:
+              %obj = call noalias nonnull ptr addrspace(10) @julia.gc_alloc_obj(ptr null, i64 32, ptr addrspace(10) null)
+              %derived = addrspacecast ptr addrspace(10) %obj to ptr addrspace(11)
+              %slot = getelementptr i8, ptr addrspace(11) %derived, i64 8
+              %decayed = addrspacecast ptr addrspace(11) %slot to ptr
+              call void @use_roots(ptr nocapture readonly %decayed)
+              ret void
+            }
+
+            define void @untracked(ptr addrspace(11) %arg) {
+            top:
+              %decayed = addrspacecast ptr addrspace(11) %arg to ptr
+              call void @use_roots(ptr nocapture readonly %decayed)
+              ret void
+            }
+            """
+        )
+        @test @filecheck begin
+            @check_label "@promoted"
+            @check "%[[TMP:[0-9]+]] = alloca [1 x ptr addrspace(10)]"
+            @check "%[[SLOT:.+]] = getelementptr i8, ptr addrspace(11)"
+            @check "load [1 x ptr addrspace(10)], ptr addrspace(11) %[[SLOT]]"
+            @check "store [1 x ptr addrspace(10)] {{.*}}, ptr %[[TMP]]"
+            @check "call void @use_roots(ptr nocapture readonly %[[TMP]])"
+            # A derived pointer that does not trace back to a tracked object
+            # is left alone.
+            @check_label "@untracked"
+            @check "addrspacecast ptr addrspace(11) %arg to ptr"
+            Enzyme.Compiler.fix_decayaddr!(mod)
+            string(mod)
+        end
+    end
+end
+
 # --- unfold_root_phi_loads! ---------------------------------------------------
 
 function root_phi_addrspaces(f::LLVM.Function)
