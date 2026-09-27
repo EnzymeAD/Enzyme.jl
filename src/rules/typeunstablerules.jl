@@ -1983,10 +1983,13 @@ function common_setfield_rev(offset, B, orig, gutils, tape)
     if !is_constant_value(gutils, origops[2])
         width = get_width(gutils)
 
-        shadowstruct = invert_pointer(gutils, origops[2], B)
+        # Look the batched shadows up before extracting a member: an
+        # extractvalue emitted into the reverse builder has no primal
+        # counterpart, and lookup_value only accepts values of the primal.
+        shadowstruct = lookup_value(gutils, invert_pointer(gutils, origops[2], B), B)
 
         shadowval = if !is_constant_value(gutils, origops[2])
-            invert_pointer(gutils, origops[4], B)
+            lookup_value(gutils, invert_pointer(gutils, origops[4], B), B)
         else
             nothing
         end
@@ -1996,20 +1999,12 @@ function common_setfield_rev(offset, B, orig, gutils, tape)
         # TODO handle runtime activity
         for idx = 1:width
             vals = LLVM.Value[
-                lookup_value(
-                    gutils,
-                    (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx - 1),
-                    B,
-                ),
+                (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx - 1),
                 lookup_value(gutils, new_from_original(gutils, origops[3]), B),
                 unsafe_to_llvm(B, Val(is_constant_value(gutils, origops[4]))),
                 lookup_value(gutils, new_from_original(gutils, origops[4]), B),
                 is_constant_value(gutils, origops[4]) ? unsafe_to_llvm(B, nothing) :
-                lookup_value(
-                    gutils,
-                    ((width == 1) ? shadowval : extract_value!(B, shadowval, idx - 1)),
-                    B,
-                ),
+                ((width == 1) ? shadowval : extract_value!(B, shadowval, idx - 1)),
             ]
 
             pushfirst!(vals, unsafe_to_llvm(B, rt_jl_setfield_rev))
