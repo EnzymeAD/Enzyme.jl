@@ -1375,7 +1375,7 @@ function nodecayed_phis!(mod::LLVM.Module)
         end
 
         if inactiveRet
-            for idx in length(collect(parameters(f)))
+            for idx in 1:length(parameters(f))
                 inactiveParm = false
                 for attr in collect(parameter_attributes(f, idx))
                     if !isa(attr, LLVM.StringAttribute)
