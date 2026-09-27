@@ -242,4 +242,53 @@ function EnzymeRules.reverse(
     return (nothing, nothing, nothing)
 end
 
+# GPUArrays counts the arrays that share a buffer in `rc.count`, a `Threads.Atomic{Int}`.
+# That type is inactive, so the `retain` done by `view` and `reshape` (through
+# `copy(::DataRef)`) updates only the primal count. The shadow array that the view makes
+# still gets the finalizer (see the rule for `Base.finalizer`), and that finalizer releases
+# the shadow buffer. Retain the shadow buffer too, else it is freed while still in use.
+_retain_shadow(::Const) = nothing
+function _retain_shadow(rc::Duplicated)
+    rc.dval !== rc.val && GPUArrays.retain(rc.dval)
+    return nothing
+end
+function _retain_shadow(rc::BatchDuplicated)
+    for drc in rc.dval
+        drc !== rc.val && GPUArrays.retain(drc)
+    end
+    return nothing
+end
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(GPUArrays.retain)},
+        ::Type{<:Const},
+        rc::Annotation{<:GPUArrays.RefCounted},
+    )
+    func.val(rc.val)
+    _retain_shadow(rc)
+    return nothing
+end
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(GPUArrays.retain)},
+        ::Type{<:Const},
+        rc::Annotation{<:GPUArrays.RefCounted},
+    )
+    func.val(rc.val)
+    _retain_shadow(rc)
+    return EnzymeRules.AugmentedReturn(nothing, nothing, nothing)
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(GPUArrays.retain)},
+        ::Type{<:Const},
+        tape,
+        rc::Annotation{<:GPUArrays.RefCounted},
+    )
+    return (nothing,)
+end
+
 end # module
