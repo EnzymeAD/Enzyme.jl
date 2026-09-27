@@ -1654,8 +1654,9 @@ end
 # in boxed runtime calls. Keep the direct call only for fully specialized
 # signatures and route the others back through dynamic dispatch.
 function route_abstract_invokes!(ir::Core.Compiler.IRCode)
-    for i in 1:length(ir.stmts)
-        stmt = ir.stmts.stmt[i]
+    stmts = @static VERSION < v"1.11-" ? ir.stmts.inst : ir.stmts.stmt
+    for i in 1:length(stmts)
+        stmt = stmts[i]
         stmt isa Expr && stmt.head === :invoke || continue
         target = stmt.args[1]
         if target isa Core.CodeInstance
@@ -1663,12 +1664,18 @@ function route_abstract_invokes!(ir::Core.Compiler.IRCode)
         end
         target isa Core.MethodInstance || continue
         Base.isdispatchtuple(target.specTypes) && continue
-        ir.stmts.stmt[i] = Expr(:call, stmt.args[2:end]...)
+        stmts[i] = Expr(:call, stmt.args[2:end]...)
     end
     return ir
 end
 
-@static if VERSION < v"1.12-"
+@static if VERSION < v"1.11-"
+    function Core.Compiler.optimize(interp::EnzymeInterpreter, opt::Core.Compiler.OptimizationState, caller::Core.Compiler.InferenceResult)
+        ir = Core.Compiler.run_passes(opt.src, opt, caller)
+        route_abstract_invokes!(ir)
+        return Core.Compiler.finish(interp, opt, ir, caller)
+    end
+elseif VERSION < v"1.12-"
     function Core.Compiler.optimize(interp::EnzymeInterpreter, opt::Core.Compiler.OptimizationState, caller::Core.Compiler.InferenceResult)
         ir = Core.Compiler.run_passes_ipo_safe(opt.src, opt, caller)
         route_abstract_invokes!(ir)
