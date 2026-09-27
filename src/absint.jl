@@ -123,6 +123,9 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
         if nm == "julia.gc_loaded"
             return absint(operands(arg)[2], partial)
         end
+        if nm == "julia.enzyme.typerefine"
+            return absint(operands(arg)[1], partial)
+        end
         if nm == "jl_typeof" || nm == "ijl_typeof"
             vals = abs_typeof(operands(arg)[1], partial)
             return (vals[1], vals[2])
@@ -504,6 +507,15 @@ function abs_typeof(
         if nm == "julia.gc_loaded"
             legal, res, byref = abs_typeof(operands(arg)[2], partial, seenphis)
             return legal, res, byref
+        end
+
+        # Exactly the type checked on this path (see `refine_union_splits!`)
+        if nm == "julia.enzyme.typerefine"
+            tag = operands(arg)[2]
+            isa(tag, LLVM.PointerNull) && return abs_typeof(operands(arg)[1], partial, seenphis)
+            legal, T = absint(tag, partial, true, true)
+            legal || return (false, nothing, nothing)
+            return (true, T, Base.ismutabletype(T) ? GPUCompiler.MUT_REF : GPUCompiler.BITS_REF)
         end
 
         for (fname, ty) in (

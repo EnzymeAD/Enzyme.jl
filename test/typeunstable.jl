@@ -398,3 +398,25 @@ end
     @test dval[] == 1.0
     @test dbox.v === 0.0
 end
+
+# `map` of a `UnionAll` constructor has `Any` as its default eltype, so the
+# empty path allocates a `Matrix{Any}` (boxed elements) where the non-empty
+# path allocates a `Matrix{UnionSplitWrap{Float64}}` (inline floats), and Julia
+# splits the following calls on `typeof` of that one value.
+struct UnionSplitWrap{T <: Real}
+    p::T
+end
+UnionSplitWrap(p::Real) = UnionSplitWrap{typeof(p)}(p)
+union_split_map(x) = sum(w.p^2 for w in map(UnionSplitWrap, x))
+
+@testset "Union split on typeof" begin
+    for x in ([0.1 0.2; 0.3 0.4], [0.1, 0.2])
+        dx = zero(x)
+        autodiff(set_runtime_activity(Reverse), union_split_map, Active, Duplicated(x, dx))
+        @test dx ≈ 2 .* x
+        dx = zero(x)
+        autodiff(Reverse, union_split_map, Active, Duplicated(x, dx))
+        @test dx ≈ 2 .* x
+        @test Enzyme.gradient(Forward, union_split_map, x)[1] ≈ 2 .* x
+    end
+end
