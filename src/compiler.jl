@@ -808,8 +808,15 @@ end
 
 function strip_writeonly_from_sret!(mod::LLVM.Module)
     for f in functions(mod)
-        if has_fn_attr(f, StringAttribute("enzyme_math", "enzyme_custom"))
-            strip_writeonly_from_sret!(f)
+        # `has_fn_attr` only compares the attribute kind, which would match
+        # every `enzyme_math` function; custom rules are the ones whose value
+        # is `enzyme_custom`.
+        for attr in collect(function_attributes(f))
+            if attr isa LLVM.StringAttribute && LLVM.kind(attr) == "enzyme_math" &&
+                    LLVM.value(attr) == "enzyme_custom"
+                strip_writeonly_from_sret!(f)
+                break
+            end
         end
     end
     return nothing
