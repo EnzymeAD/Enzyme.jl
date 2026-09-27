@@ -7459,6 +7459,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
                 API.EnzymeDumpModuleRef(mod.ref)
             end
         else
+            define_ntuple_type!(mod)
             propagate_returned!(mod)
             Compiler.JIT.prepare!(mod)
         end

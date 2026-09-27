@@ -16,22 +16,17 @@ end
 """
     abs_ntuple_type(arg::LLVM.Value) -> Union{Nothing, Tuple{LLVM.Value, Any}}
 
-If `arg` computes `NTuple{count, T}` the way `emit_ntuple_type!` does, return
-`(count, T)` with `T` known statically; otherwise `nothing`.
+If `arg` is a call `julia.enzyme.ntuple_type(T, count)` with `T` known
+statically, return `(count, T)`; otherwise `nothing`.
 """
 function abs_ntuple_type(@nospecialize(arg::LLVM.Value))::Union{Nothing, Tuple{LLVM.Value, Any}}
     isa(arg, LLVM.CallInst) || return nothing
     fn = LLVM.called_operand(arg)
     isa(fn, LLVM.Function) || return nothing
-    LLVM.name(fn) in ("jl_apply_tuple_type", "ijl_apply_tuple_type") || return nothing
-    params = operands(arg)[1]
-    isa(params, LLVM.CallInst) || return nothing
-    fn = LLVM.called_operand(params)
-    isa(fn, LLVM.Function) || return nothing
-    LLVM.name(fn) in ("jl_svec_fill", "ijl_svec_fill") || return nothing
-    legal, T = absint(operands(params)[2])
+    LLVM.name(fn) == "julia.enzyme.ntuple_type" || return nothing
+    legal, T = absint(operands(arg)[1])
     legal || return nothing
-    return (operands(params)[1], unbind(T))
+    return (operands(arg)[2], unbind(T))
 end
 
 function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked::Bool=false, typetag::Bool=false)::Tuple{Bool, Any}
