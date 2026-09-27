@@ -271,3 +271,37 @@ end
     RO = Enzyme.Compiler.set_readonly(Enzyme.Compiler.AllEffects)
     @test RO == Enzyme.Compiler.ReadOnlyEffects
 end
+
+# A loop whose body calls a function that only writes on a throwing path (the
+# bounds check) and loads an array's `Memory` pointer: the load must be hoisted,
+# or Enzyme caches a GC pointer per iteration and the tape grows with the loop.
+@noinline lookup_or_throw(r, i) = r[i]
+function sum_squares_indirect(x, r)
+    a = Vector{Float64}(undef, length(x))
+    for i in eachindex(x)
+        j = lookup_or_throw(r, i)
+        a[i] = x[j] * x[j]
+    end
+    return sum(a)
+end
+function sum_squares_indirect_grad!(dx, x, r)
+    Enzyme.autodiff(Reverse, sum_squares_indirect, Active, Duplicated(x, dx), Const(r))
+    return nothing
+end
+
+@testset "Loop-invariant load hoisted past a read-only-or-throw call" begin
+    function bytes(n)
+        x = 0.5 .+ collect(1:n) ./ n
+        r = collect(1:n)
+        dx = zero(x)
+        sum_squares_indirect_grad!(dx, x, r)
+        @test dx ≈ 2 .* x
+        return @allocated sum_squares_indirect_grad!(dx, x, r)
+    end
+    # Only `a` and its shadow may grow with `n`; a per-iteration tape of the
+    # `Memory` pointer and its shadow would double that. Relies on
+    # EnzymeAD/Enzyme#3264 (Enzyme_jll 0.0.296), which states
+    # `enzyme_ReadOnlyOrThrow` in LLVM memory attributes so that LICM can hoist
+    # the load past `lookup_or_throw`.
+    @test bytes(2000) - bytes(10) < 3 * sizeof(Float64) * (2000 - 10)
+end

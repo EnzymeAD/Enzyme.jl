@@ -89,6 +89,12 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
     end
 
     function middle_optimize!(second_stage = false)
+        # Infer which functions only write on paths that throw before the loop
+        # passes below run: with EnzymeAD/Enzyme#3264, Enzyme also states this as
+        # LLVM `memory` attributes, which lets LICM hoist loads (e.g. of an array's
+        # `Memory` pointer) past calls to such functions instead of Enzyme having
+        # to cache them per loop iteration.
+        API.EnzymeDetectReadonlyOrThrow(mod)
         return @dispose pb = NewPMPassBuilder() begin
             if tti !== nothing
                 LLVM.target_transform_info!(pb, tti)
