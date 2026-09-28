@@ -5714,6 +5714,49 @@ function memtransfer_truetype(world::UInt, @nospecialize(ptr::LLVM.Value), @nosp
     return nothing
 end
 
+"""
+    annotate_dynamic_call_rt!(mod, world)
+
+Tag each dynamic call `jl_apply_generic(f, args...)` whose callee is a known
+constant with the return type inference proves for it, when that type is
+concrete. The result of a dynamic call is otherwise opaque to `abs_typeof`, so
+nothing loaded out of it gets a type from its Julia layout, and type analysis
+has to rebuild that layout from uses -- which it only does up to
+`MaxTypeOffset` bytes. A by-value field past that is then untypeable (#3576).
+
+Inference gives an upper bound on the result, so a concrete answer is exact:
+the call returns an object of that type or throws. Every argument is taken as
+`Any`, so only calls whose result type does not depend on their arguments --
+constructors, typically -- are tagged. Using the arguments' actual types would
+be sound too, but can be more precise than what Julia itself inferred for the
+call; its IR then carries union-split paths for types the result can never have,
+and type analysis, being path-insensitive, would find them contradicting the tag.
+"""
+function annotate_dynamic_call_rt!(mod::LLVM.Module, world::UInt)
+    for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+        isa(inst, LLVM.CallInst) || continue
+        fn = LLVM.called_operand(inst)
+        (isa(fn, LLVM.Function) && LLVM.name(fn) == "julia.call") || continue
+        ops = collect(arg_operands_view(inst))
+        length(ops) >= 2 || continue
+        target = ops[1]
+        (isa(target, LLVM.Function) && LLVM.name(target) in ("jl_apply_generic", "ijl_apply_generic")) || continue
+        haskey(metadata(inst), "enzymejl_inferred_rt") && continue
+
+        legal, F = absint(ops[2])
+        legal || continue
+        F isa Core.Binding && continue
+        RT = try
+            primal_return_type_world(Reverse, world, Tuple{Core.Typeof(F), fill(Any, length(ops) - 2)...})
+        catch
+            continue
+        end
+        (RT isa DataType && Base.isconcretetype(RT)) || continue
+        metadata(inst)["enzymejl_inferred_rt"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
+    end
+    return
+end
+
 function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     @assert output == :llvm
     
@@ -6125,6 +6168,8 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
             end
         end
     end
+
+    annotate_dynamic_call_rt!(mod, job.world)
 
     for f in functions(mod), bb in blocks(f), inst in instructions(bb)
         fn = isa(inst, LLVM.CallInst) ? LLVM.called_operand(inst) : nothing

@@ -308,3 +308,32 @@ absint_wide_field(v, p) = AbsintInlineField(v, ntuple(Returns(p), 22))
     @test dm.vel.d.data ≈ [2.0, 4.0]
     @test dm.vel.d.pad[1] ≈ 11.0
 end
+
+struct AbsintBigSrc
+    head::NTuple{64, Float64}
+    tail_vec::Vector{Float64}
+    tail_int::Int
+end
+
+function absint_apply_template(src, template)
+    if template isa UnitRange{Int}
+        return collect(src.head[template])
+    elseif template isa Val{:vec}
+        return src.tail_vec .+ src.tail_int
+    else
+        throw(MethodError(absint_apply_template, (src, template)))
+    end
+end
+
+function absint_bigsrc_loss(t)
+    src = AbsintBigSrc(Tuple(t[1] .* collect(1:64)), [2.0 * t[1]], length(t))
+    return sum(mapreduce(Base.Fix1(absint_apply_template, src), vcat, (1:4, Val(:vec))))
+end
+
+@testset "Absint field of a dynamically constructed object past the type analysis offset limit" begin
+    # `AbsintBigSrc(...)` is dispatched dynamically, since `Tuple(...)` has no
+    # inferable length, so its Julia type never reaches `abs_typeof`; type
+    # analysis rebuilds the layout from uses only up to `MaxTypeOffset`, and
+    # `tail_int` at offset 520 is past it. Inference proves the result type.
+    @test Enzyme.gradient(set_runtime_activity(Reverse), Const(absint_bigsrc_loss), [0.5])[1] ≈ [12.0]
+end
