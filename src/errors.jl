@@ -656,6 +656,24 @@ function Base.showerror(io::IO, ece::NonInferredActiveReturn)
     end
 end
 
+struct ForwardModeSplitUnsupportedException <: CompilationException
+    callee::AbstractString
+    ir::String
+end
+
+function Base.showerror(io::IO, ece::ForwardModeSplitUnsupportedException)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
+    print(io, "ForwardModeSplitUnsupportedException: ForwardModeSplit does not yet support active calls to `", ece.callee, "`.\n")
+    print(io, "Custom forward rules (EnzymeRules.forward), dynamic dispatch, and other calls handled by the Julia runtime are only supported by `Forward`/`ForwardWithPrimal`.\n")
+    if VERBOSE_ERRORS[]
+        print(io, "Call: ", ece.ir, "\n")
+    else
+        print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
+    end
+end
+
 struct NoDerivativeException <: CompilationException
     msg::String
     ir::Union{Nothing,String}

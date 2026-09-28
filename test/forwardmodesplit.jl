@@ -268,3 +268,46 @@ end
     @test convert(API.CDerivativeMode, ForwardSplitNoPrimal)  === API.DEM_ForwardModeSplit
     @test convert(API.CDerivativeMode, ForwardSplitWithPrimal) === API.DEM_ForwardModeSplit
 end
+
+# ── unsupported handled calls ────────────────────────────────────────────────
+# The split derivative pass does not run Enzyme's custom call handlers yet, so
+# active custom forward rules and dynamic dispatch must error instead of crashing.
+
+@noinline fwdsplit_rule_f(x) = x^2
+function Enzyme.EnzymeRules.forward(config, ::Const{typeof(fwdsplit_rule_f)}, ::Type{<:Duplicated}, x::Duplicated)
+    return Duplicated(fwdsplit_rule_f(x.val), 2 * x.val * x.dval)
+end
+
+struct FwdSplitBox
+    v::Any
+end
+
+@testset "ForwardModeSplit – unsupported handled calls" begin
+    @test_throws Enzyme.Compiler.ForwardModeSplitUnsupportedException autodiff_thunk(
+        ForwardSplitNoPrimal,
+        Const{typeof(fwdsplit_rule_f)},
+        Duplicated,
+        Duplicated{Float64},
+    )
+
+    dyn(b, x) = b.v(x)
+    @test_throws Enzyme.Compiler.ForwardModeSplitUnsupportedException autodiff_thunk(
+        ForwardSplitNoPrimal,
+        Const{typeof(dyn)},
+        Duplicated,
+        Const{FwdSplitBox},
+        Duplicated{Float64},
+    )
+
+    # Dynamic dispatch on constant data only is fine.
+    dyninact(b, x) = (b.v(2.0); x * x)
+    aug, deriv = autodiff_thunk(
+        ForwardSplitNoPrimal,
+        Const{typeof(dyninact)},
+        Duplicated,
+        Const{FwdSplitBox},
+        Duplicated{Float64},
+    )
+    tape, _, _ = aug(Const(dyninact), Const(FwdSplitBox(sin)), Duplicated(1.0, 1.0))
+    @test deriv(Const(dyninact), Const(FwdSplitBox(sin)), Duplicated(1.0, 1.0), tape)[1] ≈ 2.0
+end

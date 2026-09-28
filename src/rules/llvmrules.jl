@@ -26,6 +26,33 @@ module RuleTrampolines
 
 end # module RuleTrampolines
 
+# Set on every function of a ForwardModeSplit job while its augmented forward pass
+# is created. Enzyme's split forward derivative pass never runs the custom call
+# handlers, so active handled calls would miscompile or crash there.
+const FWDSPLIT_ATTR = "enzymejl_fwdsplit"
+
+function check_fwdsplit_aug(orig::LLVM.CallInst, gutils::GradientUtils)
+    if !has_fn_attr(LLVM.parent(LLVM.parent(orig)), StringAttribute(FWDSPLIT_ATTR))
+        return
+    end
+    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+        return
+    end
+    mi, _ = enzyme_custom_extract_mi(orig, false)
+    name = if mi !== nothing
+        strip(sprint(io -> pretty_print_mi(mi, io)))
+    else
+        callee = LLVM.called_operand(orig)
+        fname = callee isa LLVM.Function ? LLVM.name(callee) : string(callee)
+        # julia.call(fptr, args...) wraps the runtime entry point, e.g. jl_apply_generic
+        if fname in ("julia.call", "julia.call2") && operands(orig)[1] isa LLVM.Function
+            fname = LLVM.name(operands(orig)[1])
+        end
+        fname
+    end
+    throw(ForwardModeSplitUnsupportedException(name, string(orig)))
+end
+
 macro register_aug(expr)
     decl = string(expr.args[1])
     name = decl[1:prevind(decl, findfirst('(', decl))]
@@ -43,6 +70,7 @@ macro register_aug(expr)
                 shadowR::Ptr{LLVM.API.LLVMValueRef},
                 tapeR::Ptr{LLVM.API.LLVMValueRef},
             )::UInt8
+            Compiler.check_fwdsplit_aug(LLVM.CallInst(OrigCI), GradientUtils(gutils))
             return UInt8(
                 Compiler.$name(
                     LLVM.IRBuilder(B),

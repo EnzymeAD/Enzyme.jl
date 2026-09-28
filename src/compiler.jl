@@ -3047,23 +3047,33 @@ function enzyme!(
         end
         returnUsed &= returnPrimal
         nowrite_shadows = zeros(UInt8, length(uncacheable_args))
-        augmented = API.EnzymeCreateAugmentedPrimal(
-            logic,
-            primalf,
-            retType,
-            args_activity,
-            TA,
-            returnUsed, #=returnUsed=#
-            false,      #=shadowReturnUsed=#
-            typeInfo,
-            uncacheable_args,
-            nowrite_shadows,
-            false,
-            runtimeActivity,
-            strongZero,
-            width,
-            parallel,
-        ) #=atomicAdd=#
+        fwdsplit_fns = LLVM.Function[f for f in functions(mod) if !isdeclaration(f)]
+        for f in fwdsplit_fns
+            push!(function_attributes(f), StringAttribute(FWDSPLIT_ATTR))
+        end
+        augmented = try
+            API.EnzymeCreateAugmentedPrimal(
+                logic,
+                primalf,
+                retType,
+                args_activity,
+                TA,
+                returnUsed, #=returnUsed=#
+                false,      #=shadowReturnUsed=#
+                typeInfo,
+                uncacheable_args,
+                nowrite_shadows,
+                false,
+                runtimeActivity,
+                strongZero,
+                width,
+                parallel,
+            ) #=atomicAdd=#
+        finally
+            for f in fwdsplit_fns
+                delete!(function_attributes(f), StringAttribute(FWDSPLIT_ATTR))
+            end
+        end
 
         augmented_primalf =
             LLVM.Function(API.EnzymeExtractFunctionFromAugmentation(augmented))
