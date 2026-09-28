@@ -53,7 +53,7 @@ function get_shadow_type(gutils::GradientUtils, T::LLVM.LLVMType)
 end
 function get_uncacheable(gutils::GradientUtils, orig::LLVM.CallInst)
     uncacheable = Vector{UInt8}(undef, LLVM.API.LLVMGetNumArgOperands(orig))
-    if get_mode(gutils) == API.DEM_ForwardMode
+    if get_mode(gutils) == API.DEM_ForwardMode || get_mode(gutils) == API.DEM_ForwardModeSplit
         fill!(uncacheable, 0)
         return uncacheable
     end

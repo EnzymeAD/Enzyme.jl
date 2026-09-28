@@ -1,12 +1,19 @@
 import EnzymeCore: Annotation
-import EnzymeCore.EnzymeRules: FwdConfig, RevConfig, forward, augmented_primal, inactive, _annotate_tt
+import EnzymeCore.EnzymeRules: FwdConfig, FwdSplitConfig, RevConfig, forward, forward_augmented, forward_tangent, augmented_primal, inactive, _annotate_tt
 
 function has_frule_from_sig(@nospecialize(interp::Core.Compiler.AbstractInterpreter),
     @nospecialize(TT::Type), sv::Core.Compiler.AbsIntState, partialedge::Bool=true)::Bool
     ft, tt = _annotate_tt(TT)
-    TT = Tuple{<:FwdConfig,<:Annotation{ft},Type{<:Annotation},tt...}
+    FTT = Tuple{<:FwdConfig,<:Annotation{ft},Type{<:Annotation},tt...}
     fwd_sig = Tuple{typeof(EnzymeRules.forward), <:EnzymeRules.FwdConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
-    return isapplicable(interp, forward, TT, sv, fwd_sig)
+    isapplicable(interp, forward, FTT, sv, fwd_sig) && return true
+    # A split forward rule also provides a (synthesized) forward rule.
+    ATT = Tuple{<:FwdSplitConfig,<:Annotation{ft},Type{<:Annotation},tt...}
+    aug_sig = Tuple{typeof(EnzymeRules.forward_augmented), <:EnzymeRules.FwdSplitConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
+    isapplicable(interp, forward_augmented, ATT, sv, aug_sig) || return false
+    TTT = Tuple{<:FwdSplitConfig,<:Annotation{ft},Type{<:Annotation},Any,tt...}
+    tan_sig = Tuple{typeof(EnzymeRules.forward_tangent), <:EnzymeRules.FwdSplitConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Any,Vararg{Enzyme.EnzymeCore.Annotation}}
+    return isapplicable(interp, forward_tangent, TTT, sv, tan_sig)
 end
 
 function has_rrule_from_sig(@nospecialize(interp::Core.Compiler.AbstractInterpreter),

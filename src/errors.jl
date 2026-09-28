@@ -657,7 +657,8 @@ function Base.showerror(io::IO, ece::NonInferredActiveReturn)
 end
 
 struct ForwardModeSplitUnsupportedException <: CompilationException
-    callee::AbstractString
+    callee::String
+    reason::String
     ir::String
 end
 
@@ -665,8 +666,8 @@ function Base.showerror(io::IO, ece::ForwardModeSplitUnsupportedException)
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
     end
-    print(io, "ForwardModeSplitUnsupportedException: ForwardModeSplit does not yet support active calls to `", ece.callee, "`.\n")
-    print(io, "Custom forward rules (EnzymeRules.forward), dynamic dispatch, and other calls handled by the Julia runtime are only supported by `Forward`/`ForwardWithPrimal`.\n")
+    print(io, "ForwardModeSplitUnsupportedException: ForwardModeSplit does not support the active call to `", ece.callee, "`: ", ece.reason, ".\n")
+    print(io, "Use `Forward`/`ForwardWithPrimal` instead.\n")
     if VERBOSE_ERRORS[]
         print(io, "Call: ", ece.ir, "\n")
     else

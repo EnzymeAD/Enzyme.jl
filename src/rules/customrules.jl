@@ -304,6 +304,24 @@ function push_box_for_argument!(
     return al0
 end
 
+# Zero shadow for an active argument in the augmented pass of a split forward rule.
+function fwdsplit_zero_shadow(B::LLVM.IRBuilder, alloctx::LLVM.IRBuilder, val::LLVM.Value, @nospecialize(arty::LLVM.LLVMType), width)
+    vt = value_type(val)
+    z = if vt isa LLVM.PointerType
+        al = alloca!(alloctx, arty, "fwdsplit.zero_shadow")
+        store!(B, LLVM.null(arty), al)
+        addrspacecast!(B, al, vt)
+    else
+        LLVM.null(vt)
+    end
+    width == 1 && return z
+    res = UndefValue(LLVM.ArrayType(vt, Int(width)))
+    for idx in 1:width
+        res = insert_value!(B, res, z, idx - 1)
+    end
+    return res
+end
+
 function enzyme_custom_setup_args(
     @nospecialize(B::Union{Nothing, LLVM.IRBuilder}),
     orig::LLVM.CallInst,
@@ -312,7 +330,10 @@ function enzyme_custom_setup_args(
     @nospecialize(RT::Type),
     reverse::Bool,
     isKWCall::Bool,
-    @nospecialize(tape::Union{Nothing, LLVM.Value}),
+    @nospecialize(tape::Union{Nothing, LLVM.Value});
+    # Arguments for a split forward rule (forward_augmented/forward_tangent): no
+    # Active/Mixed annotations and no by-value tapes, even in the augmented pass.
+    fwdsplit::Bool = false,
 )
     called = operands(orig)[end]
     ops = arg_operands_view(orig)
@@ -410,7 +431,15 @@ function enzyme_custom_setup_args(
 
         activep = API.EnzymeGradientUtilsGetDiffeType(gutils, op, false) #=isforeign=#
 	orig_activep = activep
-	any_active_data = mode != API.DEM_ForwardMode && mode != API.DEM_ForwardModeSplit && (activity_state == ActiveState || activity_state == MixedState)
+	any_active_data = !fwdsplit && mode != API.DEM_ForwardMode && mode != API.DEM_ForwardModeSplit && (activity_state == ActiveState || activity_state == MixedState)
+
+        # In the augmented pass of a split forward rule, active values have no
+        # shadow yet: pass them as Duplicated with a zero shadow.
+        zero_shadow = false
+        if fwdsplit && activep == API.DFT_OUT_DIFF
+            activep = API.DFT_DUP_ARG
+            zero_shadow = true
+        end
 
         roots_activep = nothing
 
@@ -548,7 +577,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                             end
                         end
  
-                        push!(byval_tapes, val)
+                        fwdsplit || push!(byval_tapes, val)
 
                     end
                 else
@@ -591,7 +620,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                             if B !== nothing
                                 root_cache = load!(B, root_ty, roots_val, "rules_load_ref_cache")
                                 metadata(root_cache)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
-                                push!(byval_tapes, root_cache)
+                                fwdsplit || push!(byval_tapes, root_cache)
                             end
                         else
                             if B !== nothing
@@ -722,7 +751,10 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
             ival = nothing
             roots_ival = nothing
             if B !== nothing
-                ival = if is_constant_value(gutils, op)
+                ival = if zero_shadow
+                    @assert roots_op === nothing
+                    fwdsplit_zero_shadow(B, alloctx, val, arty, width)
+                elseif is_constant_value(gutils, op)
                     @assert orig_activep != activep
                     @assert orig_activep == API.DFT_CONSTANT
                     if val == nothing
@@ -787,7 +819,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                                     end
                                     b_ival
                                 end
-                                push!(byval_tapes, sroot_cache)
+                                fwdsplit || push!(byval_tapes, sroot_cache)
                             else
                                 @assert tape isa LLVM.Value
                                 sroot_cache = extract_value!(B, tape, length(byval_tapes), "shadow_roots_cache_extract_")
@@ -876,7 +908,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                                             ld0 = nullify_rooted_values!(B, ld0)
                                         end
                                     end
-                                    push!(byval_tapes, ld0)
+                                    fwdsplit || push!(byval_tapes, ld0)
                                     ld0
                                 else
                                     @assert tape isa LLVM.Value
@@ -1034,7 +1066,8 @@ function enzyme_custom_setup_ret(
     orig::LLVM.CallInst,
     mi::Core.MethodInstance,
     @nospecialize(RealRt::Type),
-    @nospecialize(B::Union{LLVM.IRBuilder,Nothing})
+    @nospecialize(B::Union{LLVM.IRBuilder,Nothing});
+    fwdsplit::Bool = false,
 )
     width = get_width(gutils)
     mode = get_mode(gutils)
@@ -1084,7 +1117,7 @@ function enzyme_custom_setup_ret(
     cv = LLVM.called_operand(orig)
     swiftself = has_swiftself(cv)
 
-    may_have_active_reg = mode != API.DEM_ForwardMode && mode != API.DEM_ForwardModeSplit && !guaranteed_nonactive(RealRt, world)
+    may_have_active_reg = !fwdsplit && mode != API.DEM_ForwardMode && mode != API.DEM_ForwardModeSplit && !guaranteed_nonactive(RealRt, world)
 
     if sret !== nothing
         activep = API.EnzymeGradientUtilsGetDiffeType(gutils, operands(orig)[1+swiftself], false) #=isforeign=#
@@ -1116,6 +1149,11 @@ Custom rule for method return value of type $(RealRt) has mismatch between retur
 		roots_needsPrimal = roots_activep == API.DFT_DUP_ARG || roots_activep == API.DFT_CONSTANT
 		roots_needsShadowP = roots_activep == API.DFT_DUP_ARG || roots_activep == API.DFT_DUP_NONEED
 	end
+    end
+
+    if fwdsplit && activep == API.DFT_OUT_DIFF
+        # Split forward rules annotate an active return as duplicated.
+        activep = API.DFT_DUP_ARG
     end
 
     if !needsPrimal && activep == API.DFT_DUP_ARG
@@ -1161,6 +1199,12 @@ function custom_rule_method_error(world::UInt, @nospecialize(fn), @nospecialize(
 end
 
 @register_fwd function enzyme_custom_fwd(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef})
+    return enzyme_custom_fwd_impl(B, orig, gutils, normalR, shadowR, nothing)
+end
+
+# `split_tape`: (tape, TapeT, overwritten) from unwrap_fwdsplit_tape!, to apply
+# forward_tangent instead of forward in the ForwardModeSplit derivative pass.
+function enzyme_custom_fwd_impl(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, @nospecialize(split_tape::Union{Nothing, Tuple}))
     if is_constant_value(gutils, orig) &&
        is_constant_inst(gutils, orig) &&
        !has_rule(orig, gutils)
@@ -1169,7 +1213,9 @@ end
 
     width = get_width(gutils)
 
-    if shadowR != C_NULL
+    # The shadow created by forward_augmented, which the rule fills in place.
+    aug_shadow = split_tape !== nothing && split_tape[4]
+    if shadowR != C_NULL && !aug_shadow
         unsafe_store!(
             shadowR,
             UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))).ref,
@@ -1182,7 +1228,8 @@ end
 
     # TODO: don't inject the code multiple times for multiple calls
 
-    fmi, (args, TT, fwd_RT, kwtup, RT, needsPrimal, RealRt, origNeedsPrimal, activity, C) = fwd_mi(orig, gutils, B)
+    split_tape_info = split_tape === nothing ? nothing : (split_tape[2], split_tape[3], split_tape[4])
+    fmi, (args, TT, fwd_RT, kwtup, RT, needsPrimal, RealRt, origNeedsPrimal, activity, C, applicablefn) = fwd_mi(orig, gutils, B; split_tape_info)
 
     if kwtup !== nothing && kwtup <: Duplicated
         mi, _ = enzyme_custom_extract_mi(orig)
@@ -1205,6 +1252,23 @@ end
     orig_swiftself = has_swiftself(LLVM.called_operand(orig))
 
     gcstack_arg = has_gcstack_arg(llvmf)
+
+    if split_tape !== nothing && split_tape[1] !== nothing
+        tape, TapeT, _, _ = split_tape
+        funcTy = TT.parameters[(applicablefn ? 0 : 2) + (kwtup !== nothing ? 4 : 2)]
+        tape_idx = rule_tape_index(kwtup, funcTy, applicablefn)
+        _, tsret, treturnRoots = get_return_info(enzyme_custom_extract_mi(llvmf)[2])
+        trueidx = tape_idx + (tsret !== nothing) + (treturnRoots !== nothing) + gcstack_arg
+        innerTy = value_type(parameters(llvmf)[trueidx])
+        tape, tape_al = lower_rule_tape!(B, alloctx, tape, TapeT, innerTy) do
+            "Enzyme: mismatch between split forward rule parameter $innerTy and tape $(value_type(tape)) (TapeT = $TapeT, TT = $TT)"
+        end
+        insert!(args, tape_idx, tape)
+        if tape_al !== nothing
+            insert!(args, tape_idx + 1, tape_al)
+        end
+    end
+
     if gcstack_arg
         pushfirst!(args, reinsert_gcmarker!(fn, B))
     end
@@ -1308,7 +1372,7 @@ end
         return false
     end
 
-    if RT <: Const
+    if RT <: Const || !EnzymeRules.needs_shadow(C)
         if needsPrimal
             @assert RealRt == fwd_RT
 	    _, prim_sret, prim_roots = get_return_info(RealRt)
@@ -1435,7 +1499,7 @@ end
         end
     end
 
-    if shadowR != C_NULL
+    if shadowR != C_NULL && !aug_shadow
         unsafe_store!(shadowR, shadowV)
     end
 
@@ -1462,7 +1526,9 @@ end
     gutils::GradientUtils,
     forward::Bool = false,
     @nospecialize(B::Union{Nothing, LLVM.IRBuilder}) = nothing,
-    @nospecialize(tape::Union{Nothing, LLVM.Value}) = nothing,
+    @nospecialize(tape::Union{Nothing, LLVM.Value}) = nothing;
+    # Use the split forward rule (forward_augmented) instead of augmented_primal.
+    fwdsplit::Bool = false,
 )
     width = get_width(gutils)
 
@@ -1472,9 +1538,9 @@ end
 
     # 2) Create activity, and annotate function spec
     args, activity, overwritten, actives, kwtup, mixeds, byval_tapes =
-        enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, !forward, isKWCall, tape) #=reverse=#
+        enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, !forward, isKWCall, tape; fwdsplit) #=reverse=#
     RT, needsPrimal, needsShadow, origNeedsPrimal =
-        enzyme_custom_setup_ret(gutils, orig, mi, RealRt, B)
+        enzyme_custom_setup_ret(gutils, orig, mi, RealRt, B; fwdsplit)
 
     needsShadowJL = if RT <: Active
         false
@@ -1485,7 +1551,7 @@ end
     fn = LLVM.parent(LLVM.parent(orig))
     world = enzyme_world()
 
-    C = EnzymeRules.RevConfig{
+    C = (fwdsplit ? EnzymeRules.FwdSplitConfig : EnzymeRules.RevConfig){
         Bool(needsPrimal),
         Bool(needsShadowJL),
         Int(width),
@@ -1496,32 +1562,34 @@ end
 
     mode = get_mode(gutils)
 
+    rulefn = fwdsplit ? EnzymeRules.forward_augmented : EnzymeRules.augmented_primal
+    rulemode = fwdsplit ? Forward : Reverse
 
     augprimal_tt = copy(activity)
     functy = if isKWCall
         popfirst!(augprimal_tt)
         @assert kwtup !== nothing
         insert!(augprimal_tt, 1, kwtup)
-        insert!(augprimal_tt, 2, Core.typeof(EnzymeRules.augmented_primal))
+        insert!(augprimal_tt, 2, Core.typeof(rulefn))
         insert!(augprimal_tt, 3, C)
         insert!(augprimal_tt, 5, Type{RT})
 
         augprimal_TT = Tuple{augprimal_tt...}
-        Core.Typeof(Core.kwfunc(EnzymeRules.augmented_primal))
+        Core.Typeof(Core.kwfunc(rulefn))
     else
         @assert kwtup === nothing
         insert!(augprimal_tt, 1, C)
         insert!(augprimal_tt, 3, Type{RT})
 
         augprimal_TT = Tuple{augprimal_tt...}
-        typeof(EnzymeRules.augmented_primal)
+        typeof(rulefn)
     end
 
-    ami = my_methodinstance(Reverse, functy, augprimal_TT, world)
+    ami = my_methodinstance(rulemode, functy, augprimal_TT, world)
     if ami === nothing
         augprimal_TT = Tuple{typeof(world),functy,augprimal_TT.parameters...}
         ami = my_methodinstance(
-            Reverse,
+            rulemode,
             typeof(custom_rule_method_error),
             augprimal_TT,
             world,
@@ -1554,46 +1622,62 @@ end
 @inline function fwd_mi(
     orig::LLVM.CallInst,
     gutils::GradientUtils,
-    @nospecialize(B::Union{Nothing, LLVM.IRBuilder}) = nothing,
+    @nospecialize(B::Union{Nothing, LLVM.IRBuilder}) = nothing;
+    # (TapeT, overwritten, aug_shadow) of forward_augmented: call forward_tangent instead of forward.
+    split_tape_info::Union{Nothing, Tuple} = nothing,
 )
+    fwdsplit = split_tape_info !== nothing
+    rulefn = fwdsplit ? EnzymeRules.forward_tangent : EnzymeRules.forward
+
     # 1) extract out the MI from attributes
     mi, RealRt = enzyme_custom_extract_mi(orig)
 
-    kwfunc = nothing
-
     isKWCall = isKWCallSignature(mi.specTypes)
-    if isKWCall
-        kwfunc = Core.kwfunc(EnzymeRules.forward)
-    end
 
     # 2) Create activity, and annotate function spec
     args, activity, overwritten, actives, kwtup, _, byval_tapes =
-        enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, false, isKWCall, nothing) #=reverse=#
+        enzyme_custom_setup_args(B, orig, gutils, mi, RealRt, false, isKWCall, nothing; fwdsplit) #=reverse=#
     @assert length(byval_tapes) == 0
     RT, needsPrimal, needsShadow, origNeedsPrimal =
-        enzyme_custom_setup_ret(gutils, orig, mi, RealRt, B)
+        enzyme_custom_setup_ret(gutils, orig, mi, RealRt, B; fwdsplit)
     width = get_width(gutils)
 
-    C = EnzymeRules.FwdConfig{
-        Bool(needsPrimal),
-        Bool(needsShadow),
-        Int(width),
-        get_runtime_activity(gutils),
-        get_strong_zero(gutils),
-    }
+    C = if fwdsplit
+        TapeT, aug_overwritten, aug_shadow = split_tape_info
+        # A shadow created by forward_augmented is filled in place, not returned.
+        needsShadow &= !aug_shadow
+        EnzymeRules.FwdSplitConfig{
+            Bool(needsPrimal),
+            Bool(needsShadow),
+            Int(width),
+            aug_overwritten,
+            get_runtime_activity(gutils),
+            get_strong_zero(gutils),
+        }
+    else
+        EnzymeRules.FwdConfig{
+            Bool(needsPrimal),
+            Bool(needsShadow),
+            Int(width),
+            get_runtime_activity(gutils),
+            get_strong_zero(gutils),
+        }
+    end
 
     tt = copy(activity)
     if isKWCall
         popfirst!(tt)
         @assert kwtup !== nothing
         insert!(tt, 1, kwtup)
-        insert!(tt, 2, Core.typeof(EnzymeRules.forward))
+        insert!(tt, 2, Core.typeof(rulefn))
         insert!(tt, 3, C)
         insert!(tt, 5, Type{RT})
+        fwdsplit && insert!(tt, 6, split_tape_info[1])
     else
         @assert kwtup === nothing
         insert!(tt, 1, C)
         insert!(tt, 3, Type{RT})
+        fwdsplit && insert!(tt, 4, split_tape_info[1])
     end
     TT = Tuple{tt...}
 
@@ -1602,12 +1686,29 @@ end
     @safe_debug "Trying to apply custom forward rule" TT isKWCall
         
     functy = if isKWCall
-        rkwfunc = typeof(Core.kwfunc(EnzymeRules.forward))
+        rkwfunc = typeof(Core.kwfunc(rulefn))
     else
-        typeof(EnzymeRules.forward)
+        typeof(rulefn)
     end
     @safe_debug "Applying custom forward rule" TT = TT, functy = functy
     fmi = my_methodinstance(Forward, functy, TT, world)
+    if fmi === nothing && !fwdsplit && EnzymeRules.has_split_frule_from_sig(Interpreter.simplify_kw(mi.specTypes); world)
+        # No forward method, but a split forward rule: use the forward rule synthesized from it.
+        stt = collect(Any, TT.parameters)
+        sfuncty = if isKWCall
+            stt[2] = typeof(EnzymeRules.forward_from_split)
+            functy
+        else
+            typeof(EnzymeRules.forward_from_split)
+        end
+        STT = Tuple{stt...}
+        sfmi = my_methodinstance(Forward, sfuncty, STT, world)
+        if sfmi !== nothing
+            @safe_debug "Applying forward rule synthesized from split forward rule" TT = STT
+            fmi, TT, functy = sfmi, STT, sfuncty
+        end
+    end
+    applicablefn = fmi !== nothing
     if fmi === nothing
         TT = Tuple{typeof(world),functy,TT.parameters...}
         fmi = my_methodinstance(Forward, typeof(custom_rule_method_error), TT, world)
@@ -1619,7 +1720,7 @@ end
     
     fmi = fmi::Core.MethodInstance
     fwd_RT = fwd_RT::Type
-    return fmi, (args, TT, fwd_RT, kwtup, RT, needsPrimal, RealRt, origNeedsPrimal, activity, C)
+    return fmi, (args, TT, fwd_RT, kwtup, RT, needsPrimal, RealRt, origNeedsPrimal, activity, C, applicablefn)
 end
 
 @inline function has_easy_rule_from_call(orig::LLVM.CallInst, gutils::GradientUtils)::Bool
@@ -1747,6 +1848,65 @@ function nthfield_if_byref!(B, isboxed, sret_union_type, res)
     return call!(B, fty, func, [isboxed, sret_union_type, res])
 end
 
+# Pass the tape to a rule, which takes it by reference as readonly nocapture if
+# the rule's parameter type `innerTy` differs from the tape's LLVM type.
+# Returns the tape argument and its rooted array (or nothing).
+function lower_rule_tape!(errmsg, B::LLVM.IRBuilder, alloctx::LLVM.IRBuilder, tape::LLVM.Value, @nospecialize(TapeT), @nospecialize(innerTy::LLVM.LLVMType))
+    tape_al = nothing
+    if innerTy != value_type(tape)
+        if isabstracttype(TapeT) ||
+           TapeT isa UnionAll ||
+           TapeT == Tuple ||
+           TapeT.layout == C_NULL ||
+           TapeT == Array
+            throw(AssertionError(errmsg()))
+        end
+        llty = convert(LLVMType, TapeT; allow_boxed = true)
+
+        # The rule takes the tape by reference as readonly nocapture, so
+        # the tape goes in a stack slot, like every argument. On 1.12+
+        # the tracked pointers go through a rooted array, and the slot
+        # holds the layout with the pointer fields stripped.
+        tape_roots = inline_roots_type(TapeT)
+        if tape_roots != 0
+            tape_al = create_rooted_array(alloctx, tape_roots)
+            extract_roots_from_value!(B, tape, tape_al)
+            llty_foralloca = strip_tracked_pointers(llty)
+            al = alloca!(alloctx, llty_foralloca, "tape.$TapeT")
+            extract_nonjlvalues_into!(B, llty, al, tape)
+        else
+            llty_foralloca = llty
+            al = alloca!(alloctx, llty, "tape.$TapeT")
+            store!(B, tape, al)
+        end
+        tape = addrspacecast!(B, al, LLVM.PointerType(llty_foralloca, Derived))
+    end
+    return tape, tape_al
+end
+
+# Index of the tape among the rule arguments, before sret/returnRoots/gcstack are
+# prepended: it follows the keyword tuple, the function and, for a method error
+# fallback, the world.
+function rule_tape_index(@nospecialize(kwtup), @nospecialize(funcTy), applicablefn::Bool)
+    tape_idx = 1
+    if kwtup !== nothing && !isghostty(kwtup)
+        tape_idx += 1
+        if inline_roots_type(kwtup) != 0
+            tape_idx += 1
+        end
+    end
+    if !isghostty(funcTy)
+        tape_idx += 1
+        if inline_roots_type(funcTy) != 0
+            tape_idx += 1
+        end
+    end
+    if !applicablefn
+        tape_idx += 1
+    end
+    return tape_idx
+end
+
 function enzyme_custom_common_rev(
     forward::Bool,
     B::LLVM.IRBuilder,
@@ -1754,8 +1914,13 @@ function enzyme_custom_common_rev(
     gutils::GradientUtils,
     normalR::Ptr{LLVM.API.LLVMValueRef},
     shadowR::Ptr{LLVM.API.LLVMValueRef},
-    tape::Union{Nothing, LLVM.Value},
+    tape::Union{Nothing, LLVM.Value};
+    # Augmented pass of a split forward rule (forward_augmented); `forward` must be true.
+    fwdsplit::Bool = false,
+    # Receives (TapeT, overwritten, needs_shadow) of the rule when set.
+    tapeinfo::Union{Nothing, Base.RefValue{Any}} = nothing,
 )::LLVM.API.LLVMValueRef
+    @assert !fwdsplit || forward
 
     ctx = LLVM.context(orig)
 
@@ -1773,7 +1938,7 @@ function enzyme_custom_common_rev(
     isKWCall = isKWCallSignature(mi.specTypes)
 
     # 2) Create activity, and annotate function spec
-    ami, augprimal_TT, setup = aug_fwd_mi(orig, gutils, forward, B, tape)
+    ami, augprimal_TT, setup = aug_fwd_mi(orig, gutils, forward, B, tape; fwdsplit)
     args,
     activity,
     overwritten,
@@ -1792,7 +1957,7 @@ function enzyme_custom_common_rev(
         needsShadow
     end
 
-    C = EnzymeRules.RevConfig{
+    C = (fwdsplit ? EnzymeRules.FwdSplitConfig : EnzymeRules.RevConfig){
         Bool(needsPrimal),
         Bool(needsShadowJL),
         Int(width),
@@ -1870,6 +2035,9 @@ function enzyme_custom_common_rev(
         end
     else
         TapeT = Any
+    end
+    if tapeinfo !== nothing
+        tapeinfo[] = (TapeT, overwritten, needsShadowJL)
     end
 
     llvmf = nothing
@@ -1992,25 +2160,7 @@ function enzyme_custom_common_rev(
         funcTy = rev_TT.parameters[isKWCall ? 4 : 2]
         if needsTape
             @assert tape isa LLVM.Value
-            tape_idx = 1
-
-            if kwtup !== nothing && !isghostty(kwtup)
-                tape_idx += 1
-                if inline_roots_type(kwtup) != 0
-                    tape_idx += 1
-                end
-            end
-
-            if !isghostty(funcTy)
-                tape_idx += 1
-                if inline_roots_type(funcTy) != 0
-                    tape_idx += 1
-                end
-            end
-
-            if !applicablefn
-                tape_idx += 1
-            end
+            tape_idx = rule_tape_index(kwtup, funcTy, applicablefn)
 
             trueidx = tape_idx +
                 (sret !== nothing) +
@@ -2025,59 +2175,32 @@ function enzyme_custom_common_rev(
             end
 
             innerTy = value_type(parameters(llvmf)[trueidx])
-            tape_al = nothing
-            if innerTy != value_type(tape)
-                if isabstracttype(TapeT) ||
-                   TapeT isa UnionAll ||
-                   TapeT == Tuple ||
-                   TapeT.layout == C_NULL ||
-                   TapeT == Array
-                    msg = sprint() do io
-                        println(
-                            io,
-                            "Enzyme : mismatch between innerTy $innerTy and tape type $(value_type(tape))",
-                        )
-                        println(io, "tape_idx=", tape_idx)
-                        println(io, "true_idx=", trueidx)
-                        println(io, "isKWCall=", isKWCall)
-                        println(io, "kwtup=", kwtup)
-                        println(io, "funcTy=", funcTy)
-                        println(io, "isghostty(funcTy)=", isghostty(funcTy))
-                        println(io, "miRT=", miRT)
-                        println(io, "sret=", sret)
-                        println(io, "returnRoots=", returnRoots)
-                        println(io, "gcstack_arg=", gcstack_arg)
-                        println(io, "RT=", RT)
-                        println(io, "rev_RT=", rev_RT)
-                        println(io, "applicablefn=", applicablefn)
-                        println(io, "tape=", tape)
-                        println(io, "llvmf=", string(LLVM.function_type(llvmf)))
-                        println(io, "TapeT=", TapeT)
-                        println(io, "mi=", mi)
-                        println(io, "ami=", ami)
-                        println(io, "rev_TT =", rev_TT)
-                    end
-                    throw(AssertionError(msg))
+            tape, tape_al = lower_rule_tape!(B, alloctx, tape, TapeT, innerTy) do
+                sprint() do io
+                    println(
+                        io,
+                        "Enzyme : mismatch between innerTy $innerTy and tape type $(value_type(tape))",
+                    )
+                    println(io, "tape_idx=", tape_idx)
+                    println(io, "true_idx=", trueidx)
+                    println(io, "isKWCall=", isKWCall)
+                    println(io, "kwtup=", kwtup)
+                    println(io, "funcTy=", funcTy)
+                    println(io, "isghostty(funcTy)=", isghostty(funcTy))
+                    println(io, "miRT=", miRT)
+                    println(io, "sret=", sret)
+                    println(io, "returnRoots=", returnRoots)
+                    println(io, "gcstack_arg=", gcstack_arg)
+                    println(io, "RT=", RT)
+                    println(io, "rev_RT=", rev_RT)
+                    println(io, "applicablefn=", applicablefn)
+                    println(io, "tape=", tape)
+                    println(io, "llvmf=", string(LLVM.function_type(llvmf)))
+                    println(io, "TapeT=", TapeT)
+                    println(io, "mi=", mi)
+                    println(io, "ami=", ami)
+                    println(io, "rev_TT =", rev_TT)
                 end
-                llty = convert(LLVMType, TapeT; allow_boxed = true)
-
-                # The rule takes the tape by reference as readonly nocapture, so
-                # the tape goes in a stack slot, like every argument. On 1.12+
-                # the tracked pointers go through a rooted array, and the slot
-                # holds the layout with the pointer fields stripped.
-                tape_roots = inline_roots_type(TapeT)
-                if tape_roots != 0
-                    tape_al = create_rooted_array(alloctx, tape_roots)
-                    extract_roots_from_value!(B, tape, tape_al)
-                    llty_foralloca = strip_tracked_pointers(llty)
-                    al = alloca!(alloctx, llty_foralloca, "tape.$TapeT")
-                    extract_nonjlvalues_into!(B, llty, al, tape)
-                else
-                    llty_foralloca = llty
-                    al = alloca!(alloctx, llty, "tape.$TapeT")
-                    store!(B, tape, al)
-                end
-                tape = addrspacecast!(B, al, LLVM.PointerType(llty_foralloca, Derived))
             end
             insert!(args, tape_idx, tape)
             if tape_al !== nothing
@@ -2696,6 +2819,42 @@ end
 
 
 @register_aug function enzyme_custom_augfwd(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})
+    if in_fwdsplit_aug(orig) && has_split_rule(orig)
+        if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+            return true
+        end
+        # ForwardModeSplit with a split forward rule: run forward_augmented and
+        # pass its tape to forward_tangent (enzyme_custom_fwdsplit).
+        info = Ref{Any}(nothing)
+        tape = enzyme_custom_common_rev(true, B, orig, gutils, normalR, shadowR, nothing; fwdsplit = true, tapeinfo = info)
+        info[] === nothing && return false
+        unsafe_store!(tapeR, wrap_fwdsplit_tape(tape == C_NULL ? nothing : LLVM.Value(tape), info[]...).ref)
+        return false
+    end
+    if in_fwdsplit_aug(orig)
+        # ForwardModeSplit: the call has a forward rule, which runs in the split
+        # derivative pass (enzyme_custom_fwdsplit). Here only the primal runs.
+        mi, _ = enzyme_custom_extract_mi(orig)
+        if unsafe_load(shadowR) != C_NULL
+            # The shadow of the result is used within the augmented pass
+            # (e.g. a returned array), but the forward rule creates it later.
+            throw(ForwardModeSplitUnsupportedException(
+                fwdsplit_callee_name(mi),
+                "the forward rule would create a shadow that the augmented forward pass already needs",
+                string(orig),
+            ))
+        end
+        if !fwdsplit_effect_free(mi)
+            # A forward rule also performs the primal's side effects, so they
+            # would happen once in each pass.
+            throw(ForwardModeSplitUnsupportedException(
+                fwdsplit_callee_name(mi),
+                "the function has a forward rule but is not inferred to be effect free, so the rule would repeat its side effects",
+                string(orig),
+            ))
+        end
+        return true
+    end
     if is_constant_value(gutils, orig) &&
        is_constant_inst(gutils, orig) &&
        !has_rule(orig, gutils)
@@ -2706,6 +2865,100 @@ end
         unsafe_store!(tapeR, tape)
     end
     return false
+end
+
+function has_split_rule(orig::LLVM.CallInst)
+    mi, _ = enzyme_custom_extract_mi(orig)
+    return EnzymeRules.has_split_frule_from_sig(Interpreter.simplify_kw(mi.specTypes); world = enzyme_world())
+end
+
+# The tangent pass calls forward_tangent with the tape type and `overwritten`
+# config of the augmented pass, and must know whether the augmented pass created
+# the shadow of the result, none of which it can recompute. The augmented pass
+# wraps its tape in a named struct whose name indexes this registry.
+const FWDSPLIT_TAPE_INFO = Any[]
+const FWDSPLIT_TAPE_INDEX = Dict{Any, Int}()
+const FWDSPLIT_TAPE_LOCK = ReentrantLock()
+const FWDSPLIT_TAPE_PREFIX = "enzymejl_fwdsplit_tape."
+
+function wrap_fwdsplit_tape(@nospecialize(tape::Union{Nothing, LLVM.Value}), @nospecialize(TapeT), overwritten, aug_shadow::Bool)
+    key = (TapeT, overwritten, aug_shadow)
+    idx = lock(FWDSPLIT_TAPE_LOCK) do
+        get!(FWDSPLIT_TAPE_INDEX, key) do
+            push!(FWDSPLIT_TAPE_INFO, key)
+            length(FWDSPLIT_TAPE_INFO)
+        end
+    end
+    # LLVM uniques the name with a suffix if it is taken.
+    sty = LLVM.StructType(FWDSPLIT_TAPE_PREFIX * string(idx) * ".")
+    inner = tape === nothing ? LLVM.UndefValue(LLVM.Int8Type()) : tape
+    LLVM.elements!(sty, LLVM.LLVMType[value_type(inner)])
+    if inner isa LLVM.Constant
+        return LLVM.ConstantStruct(sty, LLVM.Constant[inner])
+    end
+    # The primal call, where the handler's builder points, may have been erased.
+    inner = inner::LLVM.Instruction
+    B = LLVM.IRBuilder()
+    next = LLVM.API.LLVMGetNextInstruction(inner)
+    @assert next != C_NULL
+    position!(B, LLVM.Instruction(next))
+    if inner isa LLVM.PHIInst
+        for inst in LLVM.instructions(LLVM.parent(inner))
+            if !(inst isa LLVM.PHIInst)
+                position!(B, inst)
+                break
+            end
+        end
+    end
+    res = insert_value!(B, LLVM.UndefValue(sty), inner, 0)
+    dispose(B)
+    return res
+end
+
+# Returns (tape of the rule or nothing, TapeT, overwritten, aug_shadow).
+function unwrap_fwdsplit_tape!(B::LLVM.IRBuilder, tape::LLVM.Value)
+    sty = value_type(tape)
+    name = sty isa LLVM.StructType ? LLVM.name(sty) : ""
+    startswith(name, FWDSPLIT_TAPE_PREFIX) || error("Enzyme: unexpected tape for split forward rule: $(string(tape))")
+    idx = parse(Int, first(split(name[(length(FWDSPLIT_TAPE_PREFIX) + 1):end], '.')))
+    TapeT, overwritten, aug_shadow = lock(() -> FWDSPLIT_TAPE_INFO[idx], FWDSPLIT_TAPE_LOCK)
+    needsTape = !isghostty(TapeT) && !Core.Compiler.isconstType(TapeT)
+    inner = needsTape ? extract_value!(B, tape, 0) : nothing
+    return inner, TapeT, overwritten, aug_shadow
+end
+
+# Whether all inferred code instances of `mi` are effect free. Forward rules can
+# only be split for such functions: the primal runs in the augmented pass and
+# the rule, which repeats the primal's side effects, in the derivative pass.
+function fwdsplit_effect_free(mi::Core.MethodInstance)
+    found = false
+    ci = isdefined(mi, :cache) ? mi.cache : nothing
+    while ci !== nothing
+        if isdefined(ci, :inferred) && ci.inferred !== nothing
+            Core.Compiler.is_effect_free(Core.Compiler.decode_effects(ci.ipo_purity_bits)) || return false
+            found = true
+        end
+        ci = isdefined(ci, :next) ? ci.next : nothing
+    end
+    return found
+end
+
+# ForwardModeSplit derivative pass. For a split forward rule, apply forward_tangent
+# to the tape of forward_augmented. For a forward rule, the augmented pass only ran
+# the primal (see enzyme_custom_augfwd), so there is no tape and the forward rule
+# is applied here in place of the primal call.
+@register_fwdsplit function enzyme_custom_fwdsplit(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, @nospecialize(tape::Union{Nothing, LLVM.Value}))
+    if is_constant_value(gutils, orig) &&
+       is_constant_inst(gutils, orig) &&
+       !has_rule(orig, gutils)
+        return true
+    end
+    if tape !== nothing
+        # Split forward rule: the augmented pass ran forward_augmented.
+        return enzyme_custom_fwd_impl(B, orig, gutils, normalR, shadowR, unwrap_fwdsplit_tape!(B, tape))
+    end
+    @assert !has_split_rule(orig)
+    return enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
 end
 
 @register_rev function enzyme_custom_rev(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, @nospecialize(tape::Union{Nothing, LLVM.Value}))
