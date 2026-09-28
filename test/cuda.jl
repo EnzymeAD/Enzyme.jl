@@ -142,6 +142,15 @@ using Test
     @test Array(dx) == 2 .* Array(x)
 end
 
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3042
+@testset "@allowscalar" begin
+    f(x) = CUDA.@allowscalar x[1] * x[2]
+    x = CuArray([3.0, 4.0])
+    dx = CUDA.zeros(Float64, 2)
+    autodiff(set_runtime_activity(Reverse), f, Active, Duplicated(x, dx))
+    @test Array(dx) == [4.0, 3.0]
+end
+
 function mul_kernel(A)
     i = threadIdx().x
     if i <= length(A)
