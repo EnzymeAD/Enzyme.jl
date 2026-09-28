@@ -3,6 +3,7 @@ module EnzymeTestUtilsGPUArraysCoreExt
 using GPUArraysCore
 using EnzymeTestUtils
 using Enzyme
+using LinearAlgebra
 
 function EnzymeTestUtils.acopyto!(dst::AnyGPUArray, src::AnyGPUArray)
     return Base.copyto!(dst, src)
@@ -16,6 +17,11 @@ end
 
 EnzymeTestUtils.map_fields_recursive(f, x::AbstractGPUArray{<:Number}...) = f(x...)
 EnzymeTestUtils._hostside(v::AnyGPUArray) = Array(v)
+
+_host(x::Hermitian) = Hermitian(Array(parent(x)), LinearAlgebra.sym_uplo(x.uplo))
+_host(x::Symmetric) = Symmetric(Array(parent(x)), LinearAlgebra.sym_uplo(x.uplo))
+EnzymeTestUtils.zero_copy(x::LinearAlgebra.HermOrSym{<:Any, <:AnyGPUArray}) =
+    EnzymeTestUtils.zero_copy(_host(x))
 EnzymeTestUtils.aliasids(x::AbstractGPUArray) = (UInt(pointer(x)), UInt(length(x)), objectid(eltype(x)))
 
 function EnzymeTestUtils.test_approx(x::AbstractGPUArray{<:Number}, y::AbstractGPUArray{<:Number}, msg; kwargs...)

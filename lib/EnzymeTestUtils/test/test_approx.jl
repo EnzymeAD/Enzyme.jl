@@ -2,6 +2,8 @@ using Test
 using EnzymeTestUtils
 using EnzymeTestUtils: test_approx
 using MetaTesting
+using JLArrays
+using LinearAlgebra
 
 function make_struct(a, b, c, d, e, f)
     x = TestStruct(a, :x)
@@ -73,6 +75,20 @@ end
             @test fails() do
                 test_approx(make_struct(x...), make_struct(y...); atol = err * 0.9)
             end
+        end
+    end
+    # only the used triangle is compared, and it must be read without scalar indexing
+    @testset "Hermitian/Symmetric of a GPU array" begin
+        @testset for W in (Hermitian, Symmetric), uplo in (:U, :L)
+            A = randn(ComplexF64, 3, 3)
+            B = copy(A)
+            # differs only in the unused triangle
+            B[uplo === :U ? 3 : 1, uplo === :U ? 1 : 3] += 1
+            test_approx(W(JLArray(A), uplo), W(JLArray(B), uplo))
+            C = copy(A)
+            C[1, 2] += 1
+            C[2, 1] += 1
+            @test fails(() -> test_approx(W(JLArray(A), uplo), W(JLArray(C), uplo)))
         end
     end
 end
