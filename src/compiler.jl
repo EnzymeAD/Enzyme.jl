@@ -40,7 +40,7 @@ import Enzyme:
     arg_operands_view
 
 using Enzyme
-using ScopedValues: @with
+using ScopedValues: ScopedValue, @with
 
 import EnzymeCore
 import EnzymeCore: EnzymeRules, ABI, FFIABI, DefaultABI
@@ -142,6 +142,15 @@ end
 struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
     mode::API.CDerivativeMode
 end
+
+"""
+    SPARSITY_COMPILATION
+
+Whether the compilation running in the current dynamic scope is for code that
+uses [`Enzyme.todense`](@ref). Such code keeps its loops rolled until Enzyme
+has rewritten them to be sparse.
+"""
+const SPARSITY_COMPILATION = ScopedValue(false)
 
 function EnzymeCompilerParams(TT, mode, width, rt, run_enzyme, abiwrap,
                               modifiedBetween, returnPrimal, shadowInit,

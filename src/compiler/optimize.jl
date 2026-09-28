@@ -135,7 +135,13 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
                         add!(lpm, LoopDeletionPass())
                     end
                     # todo peeling=false?
-                    add!(fpm, LoopUnrollPass(opt_level = 2, partial = false)) # what opt level?
+                    if SPARSITY_COMPILATION[]
+                        # Runtime unrolling breaks up the loops that automatic
+                        # sparsity rewrites (see `lower_sparsification!`).
+                        add!(fpm, LoopUnrollPass(opt_level = 2, partial = false, runtime = false))
+                    else
+                        add!(fpm, LoopUnrollPass(opt_level = 2, partial = false)) # what opt level?
+                    end
                     add!(fpm, AllocOptPass())
                     add!(fpm, RestoreAllocaType())
                     add!(fpm, SROAPass())
