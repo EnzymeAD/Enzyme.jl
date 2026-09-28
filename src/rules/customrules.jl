@@ -2696,6 +2696,30 @@ end
 
 
 @register_aug function enzyme_custom_augfwd(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, tapeR::Ptr{LLVM.API.LLVMValueRef})
+    if in_fwdsplit_aug(orig)
+        # ForwardModeSplit: the call has a forward rule, which runs in the split
+        # derivative pass (enzyme_custom_fwdsplit). Here only the primal runs.
+        mi, _ = enzyme_custom_extract_mi(orig)
+        if unsafe_load(shadowR) != C_NULL
+            # The shadow of the result is used within the augmented pass
+            # (e.g. a returned array), but the forward rule creates it later.
+            throw(ForwardModeSplitUnsupportedException(
+                fwdsplit_callee_name(mi),
+                "the forward rule would create a shadow that the augmented forward pass already needs",
+                string(orig),
+            ))
+        end
+        if !fwdsplit_effect_free(mi)
+            # A forward rule also performs the primal's side effects, so they
+            # would happen once in each pass.
+            throw(ForwardModeSplitUnsupportedException(
+                fwdsplit_callee_name(mi),
+                "the function has a forward rule but is not inferred to be effect free, so the rule would repeat its side effects",
+                string(orig),
+            ))
+        end
+        return true
+    end
     if is_constant_value(gutils, orig) &&
        is_constant_inst(gutils, orig) &&
        !has_rule(orig, gutils)
@@ -2706,6 +2730,35 @@ end
         unsafe_store!(tapeR, tape)
     end
     return false
+end
+
+# Whether all inferred code instances of `mi` are effect free. Forward rules can
+# only be split for such functions: the primal runs in the augmented pass and
+# the rule, which repeats the primal's side effects, in the derivative pass.
+function fwdsplit_effect_free(mi::Core.MethodInstance)
+    found = false
+    ci = isdefined(mi, :cache) ? mi.cache : nothing
+    while ci !== nothing
+        if isdefined(ci, :inferred) && ci.inferred !== nothing
+            Core.Compiler.is_effect_free(Core.Compiler.decode_effects(ci.ipo_purity_bits)) || return false
+            found = true
+        end
+        ci = isdefined(ci, :next) ? ci.next : nothing
+    end
+    return found
+end
+
+# ForwardModeSplit derivative pass. The augmented pass only ran the primal
+# (see enzyme_custom_augfwd), so there is no tape and the forward rule is applied
+# here in place of the primal call.
+@register_fwdsplit function enzyme_custom_fwdsplit(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, normalR::Ptr{LLVM.API.LLVMValueRef}, shadowR::Ptr{LLVM.API.LLVMValueRef}, @nospecialize(tape::Union{Nothing, LLVM.Value}))
+    @assert tape === nothing
+    if is_constant_value(gutils, orig) &&
+       is_constant_inst(gutils, orig) &&
+       !has_rule(orig, gutils)
+        return true
+    end
+    return enzyme_custom_fwd(B, orig, gutils, normalR, shadowR)
 end
 
 @register_rev function enzyme_custom_rev(B::LLVM.IRBuilder, orig::LLVM.CallInst, gutils::GradientUtils, @nospecialize(tape::Union{Nothing, LLVM.Value}))

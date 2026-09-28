@@ -1,7 +1,7 @@
 using Enzyme
 using Test
 
-import Enzyme: API
+import Enzyme: API, EnzymeRules
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -269,27 +269,86 @@ end
     @test convert(API.CDerivativeMode, ForwardSplitWithPrimal) === API.DEM_ForwardModeSplit
 end
 
-# ── unsupported handled calls ────────────────────────────────────────────────
-# The split derivative pass does not run Enzyme's custom call handlers yet, so
-# active custom forward rules and dynamic dispatch must error instead of crashing.
+# ── custom forward rules and unsupported handled calls ──────────────────────
+# Custom forward rules are split when libEnzyme supports split forward call
+# handlers. Other runtime-handled calls, such as dynamic dispatch, error instead
+# of crashing.
+
+const FWDSPLIT_RULES = "enzyme_custom" in Enzyme.Compiler.FWDSPLIT_HANDLED
+
+function fwdsplit_rule_result(config, primal, shadow)
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return shadow isa Tuple ? BatchDuplicated(primal, shadow) : Duplicated(primal, shadow)
+    elseif EnzymeRules.needs_shadow(config)
+        return shadow
+    elseif EnzymeRules.needs_primal(config)
+        return primal
+    end
+    return nothing
+end
 
 @noinline fwdsplit_rule_f(x) = x^2
-function Enzyme.EnzymeRules.forward(config, ::Const{typeof(fwdsplit_rule_f)}, ::Type{<:Duplicated}, x::Duplicated)
-    return Duplicated(fwdsplit_rule_f(x.val), 2 * x.val * x.dval)
+function EnzymeRules.forward(config, ::Const{typeof(fwdsplit_rule_f)}, ::Type, x::Duplicated)
+    return fwdsplit_rule_result(config, fwdsplit_rule_f(x.val), 2 * x.val * x.dval)
+end
+function EnzymeRules.forward(config, ::Const{typeof(fwdsplit_rule_f)}, ::Type, x::BatchDuplicated)
+    return fwdsplit_rule_result(config, fwdsplit_rule_f(x.val), map(dx -> 2 * x.val * dx, x.dval))
+end
+
+@noinline fwdsplit_rule_sum(x) = sum(x)
+function EnzymeRules.forward(config, ::Const{typeof(fwdsplit_rule_sum)}, ::Type, x::Duplicated)
+    # Deliberately not the true derivative, to check that the rule is used.
+    return fwdsplit_rule_result(config, fwdsplit_rule_sum(x.val), 10 * sum(x.dval))
+end
+
+@noinline function fwdsplit_rule_mut!(x)
+    x[1] *= 2
+    return x[1]
+end
+function EnzymeRules.forward(config, ::Const{typeof(fwdsplit_rule_mut!)}, ::Type, x::Duplicated)
+    x.val[1] *= 2
+    x.dval[1] *= 2
+    return fwdsplit_rule_result(config, x.val[1], x.dval[1])
 end
 
 struct FwdSplitBox
     v::Any
 end
 
-@testset "ForwardModeSplit – unsupported handled calls" begin
-    @test_throws Enzyme.Compiler.ForwardModeSplitUnsupportedException autodiff_thunk(
-        ForwardSplitNoPrimal,
-        Const{typeof(fwdsplit_rule_f)},
-        Duplicated,
-        Duplicated{Float64},
-    )
 
+@testset "ForwardModeSplit – custom forward rules" begin
+    h(x) = fwdsplit_rule_f(x) + 3x
+    if FWDSPLIT_RULES
+        aug, deriv = autodiff_thunk(ForwardSplitWithPrimal, Const{typeof(h)}, Duplicated, Duplicated{Float64})
+        tape, primal, _ = aug(Const(h), Duplicated(3.0, 1.0))
+        @test primal ≈ 18.0
+        @test deriv(Const(h), Duplicated(3.0, 1.0), tape) == (9.0, 18.0)
+
+        aug, deriv = autodiff_thunk(ForwardSplitWidth(ForwardSplitNoPrimal, Val(2)), Const{typeof(h)}, BatchDuplicated, BatchDuplicated{Float64, 2})
+        tape, _, _ = aug(Const(h), BatchDuplicated(3.0, (1.0, 2.0)))
+        shadows = deriv(Const(h), BatchDuplicated(3.0, (1.0, 2.0)), tape)[1]
+        @test shadows[1] ≈ 9.0
+        @test shadows[2] ≈ 18.0
+
+        k(x) = fwdsplit_rule_sum(x) * 2
+        aug, deriv = autodiff_thunk(ForwardSplitNoPrimal, Const{typeof(k)}, Duplicated, Duplicated{Vector{Float64}})
+        x = [1.0, 2.0]; dx = [1.0, 3.0]
+        tape, _, _ = aug(Const(k), Duplicated(x, dx))
+        @test deriv(Const(k), Duplicated(x, dx), tape)[1] ≈ 80.0
+
+        # The rule would repeat the side effects of the primal.
+        m(x) = fwdsplit_rule_mut!(x) + 1
+        @test_throws Enzyme.Compiler.ForwardModeSplitUnsupportedException autodiff_thunk(
+            ForwardSplitNoPrimal, Const{typeof(m)}, Duplicated, Duplicated{Vector{Float64}},
+        )
+    else
+        @test_throws Enzyme.Compiler.ForwardModeSplitUnsupportedException autodiff_thunk(
+            ForwardSplitNoPrimal, Const{typeof(h)}, Duplicated, Duplicated{Float64},
+        )
+    end
+end
+
+@testset "ForwardModeSplit – unsupported handled calls" begin
     dyn(b, x) = b.v(x)
     @test_throws Enzyme.Compiler.ForwardModeSplitUnsupportedException autodiff_thunk(
         ForwardSplitNoPrimal,

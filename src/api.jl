@@ -530,6 +530,14 @@ EnzymeRegisterCallHandler(name, fwdhandle, revhandle) = ccall(
     fwdhandle,
     revhandle,
 )
+const CustomForwardSplitPass = Ptr{Cvoid}
+# Returns false if libEnzyme predates EnzymeRegisterFwdSplitCallHandler.
+function EnzymeRegisterFwdSplitCallHandler(name, fwdsplithandle)
+    ptr = Libdl.dlsym(Libdl.dlopen(libEnzyme), :EnzymeRegisterFwdSplitCallHandler; throw_error = false)
+    ptr === nothing && return false
+    ccall(ptr, Cvoid, (Cstring, CustomForwardSplitPass), name, fwdsplithandle)
+    return true
+end
 EnzymeRegisterFwdCallHandler(name, fwdhandle) = ccall(
     (:EnzymeRegisterFwdCallHandler, libEnzyme),
     Cvoid,

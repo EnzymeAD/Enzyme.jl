@@ -27,20 +27,49 @@ module RuleTrampolines
 end # module RuleTrampolines
 
 # Set on every function of a ForwardModeSplit job while its augmented forward pass
-# is created. Enzyme's split forward derivative pass never runs the custom call
-# handlers, so active handled calls would miscompile or crash there.
+# is created. The augmented handlers use it to switch to split forward semantics.
+# Calls whose handler has no split forward counterpart (see FWDSPLIT_HANDLED)
+# would miscompile or crash in the split derivative pass, so they error here.
 const FWDSPLIT_ATTR = "enzymejl_fwdsplit"
 
+# Handler names registered with EnzymeRegisterFwdSplitCallHandler.
+const FWDSPLIT_HANDLED = Set{String}()
+
+in_fwdsplit_aug(orig::LLVM.CallInst) =
+    has_fn_attr(LLVM.parent(LLVM.parent(orig)), StringAttribute(FWDSPLIT_ATTR))
+
+# Name Enzyme uses to look up the call handler (getFuncNameFromCall).
+function handler_name(orig::LLVM.CallInst)
+    callee = LLVM.called_operand(orig)
+    for attr in collect(function_attributes(orig))
+        if attr isa LLVM.StringAttribute && kind(attr) == "enzyme_math"
+            return LLVM.value(attr)
+        end
+    end
+    if callee isa LLVM.Function
+        for attr in collect(function_attributes(callee))
+            if attr isa LLVM.StringAttribute && kind(attr) == "enzyme_math"
+                return LLVM.value(attr)
+            end
+        end
+        return LLVM.name(callee)
+    end
+    return nothing
+end
+
 function check_fwdsplit_aug(orig::LLVM.CallInst, gutils::GradientUtils)
-    if !has_fn_attr(LLVM.parent(LLVM.parent(orig)), StringAttribute(FWDSPLIT_ATTR))
+    if !in_fwdsplit_aug(orig)
         return
     end
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return
     end
+    if handler_name(orig) in FWDSPLIT_HANDLED
+        return
+    end
     mi, _ = enzyme_custom_extract_mi(orig, false)
     name = if mi !== nothing
-        strip(sprint(io -> pretty_print_mi(mi, io)))
+        fwdsplit_callee_name(mi)
     else
         callee = LLVM.called_operand(orig)
         fname = callee isa LLVM.Function ? LLVM.name(callee) : string(callee)
@@ -50,8 +79,11 @@ function check_fwdsplit_aug(orig::LLVM.CallInst, gutils::GradientUtils)
         end
         fname
     end
-    throw(ForwardModeSplitUnsupportedException(name, string(orig)))
+    throw(ForwardModeSplitUnsupportedException(name, "there is no split forward mode handler for this call", string(orig)))
 end
+
+fwdsplit_callee_name(mi::Core.MethodInstance) =
+    String(first(split(strip(sprint(io -> pretty_print_mi(mi, io))), '\n')))
 
 macro register_aug(expr)
     decl = string(expr.args[1])
@@ -135,6 +167,37 @@ macro register_fwd(expr)
                     GradientUtils(gutils),
                     normalR,
                     shadowR,
+                )::Bool,
+            )
+        end
+    end
+    return Expr(:block, esc(expr2), esc(res))
+end
+
+macro register_fwdsplit(expr)
+    decl = string(expr.args[1])
+    name = decl[1:prevind(decl, findfirst('(', decl))]
+    cname = name * "_cfunc"
+    name = Symbol(name)
+    cname = Symbol(cname)
+    expr2 = :(@inline $expr)
+    res = quote
+        @eval RuleTrampolines function $cname(
+                B::LLVM.API.LLVMBuilderRef,
+                OrigCI::LLVM.API.LLVMValueRef,
+                gutils::API.EnzymeGradientUtilsRef,
+                normalR::Ptr{LLVM.API.LLVMValueRef},
+                shadowR::Ptr{LLVM.API.LLVMValueRef},
+                tape::LLVM.API.LLVMValueRef,
+            )::UInt8
+            return UInt8(
+                Compiler.$name(
+                    LLVM.IRBuilder(B),
+                    LLVM.CallInst(OrigCI),
+                    GradientUtils(gutils),
+                    normalR,
+                    shadowR,
+                    tape == C_NULL ? nothing : LLVM.Value(tape),
                 )::Bool,
             )
         end
@@ -2241,7 +2304,7 @@ end
 end
 
 
-function register_handler!(variants, augfwd_handler, rev_handler, fwd_handler = nothing)
+function register_handler!(variants, augfwd_handler, rev_handler, fwd_handler = nothing, fwdsplit_handler = nothing)
     for variant in variants
         if augfwd_handler !== nothing && rev_handler !== nothing
             API.EnzymeRegisterCallHandler(variant, augfwd_handler, rev_handler)
@@ -2249,8 +2312,31 @@ function register_handler!(variants, augfwd_handler, rev_handler, fwd_handler = 
         if fwd_handler !== nothing
             API.EnzymeRegisterFwdCallHandler(variant, fwd_handler)
         end
+        if fwdsplit_handler !== nothing
+            if API.EnzymeRegisterFwdSplitCallHandler(variant, fwdsplit_handler)
+                push!(FWDSPLIT_HANDLED, variant)
+            end
+        end
     end
     return
+end
+
+macro fwdsplitfunc(f)
+    cname = Symbol(string(f) * "_cfunc")
+    return :(
+        @cfunction(
+            RuleTrampolines.$cname,
+            UInt8,
+            (
+                LLVM.API.LLVMBuilderRef,
+                LLVM.API.LLVMValueRef,
+                API.EnzymeGradientUtilsRef,
+                Ptr{LLVM.API.LLVMValueRef},
+                Ptr{LLVM.API.LLVMValueRef},
+                LLVM.API.LLVMValueRef,
+            )
+        )
+    )
 end
 
 macro augfunc(f)
@@ -2391,7 +2477,8 @@ end
         ("enzyme_custom",),
         @augfunc(enzyme_custom_augfwd),
         @revfunc(enzyme_custom_rev),
-        @fwdfunc(enzyme_custom_fwd)
+        @fwdfunc(enzyme_custom_fwd),
+        @fwdsplitfunc(enzyme_custom_fwdsplit)
     )
     register_handler!(
         ("jl_wait",),
