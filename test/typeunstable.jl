@@ -139,10 +139,7 @@ end
     y = [3.0]
     dy = [0.0]
 
-    # `use(res)` is compiled for its full signature, so the type-unstable element no
-    # longer forces runtime activity.
-    Enzyme.autodiff(Reverse, tupq, Const(x), Duplicated(y, dy))
-    @test dy ≈ [2.0]
+    @test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.autodiff(Reverse, tupq, Const(x), Duplicated(y, dy))
 
     x = [2.0]
     y = [3.0]
@@ -417,5 +414,9 @@ end
     dx = zero(x)
     sum_log_gradient!(dx, x)
     @test dx ≈ 1 ./ x
-    @test (@allocated sum_log_gradient!(dx, x)) == 0
+    if Enzyme.Compiler.Interpreter.SPECIALIZED_INVOKES
+        @test (@allocated sum_log_gradient!(dx, x)) == 0
+    else
+        @test_broken (@allocated sum_log_gradient!(dx, x)) == 0
+    end
 end

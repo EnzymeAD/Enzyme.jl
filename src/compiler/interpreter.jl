@@ -54,6 +54,16 @@ end
     $(Expr(:meta, :generated, rule_backedge_holder_generator))
 end
 
+"""
+    SPECIALIZED_INVOKES
+
+Whether this Julia can be asked to keep `:invoke`s on the fully specialized
+signature. Doing so is only safe if the specializations that codegen has no ABI
+for are held back, which needs the per-call hook on `compileable_specialization`
+that exists from 1.12 on; see #3688.
+"""
+const SPECIALIZED_INVOKES = VERSION >= v"1.12-"
+
 struct EnzymeInterpreter{T} <: AbstractInterpreter
     @static if HAS_INTEGRATED_CACHE
         token::Any
@@ -232,7 +242,16 @@ function EnzymeInterpreter(
         # (e.g. `Base._mapreduce_dim(f, op, ...)` under `sum(log, x)`) is widened to
         # `f::Function`, so codegen emits a boxed `jl_invoke` that Enzyme can only
         # differentiate through the slow runtime-generic path.
-        OptimizationParams(; compilesig_invokes = false),
+        #
+        # Only where the resulting invokes can be kept compileable, see
+        # `compileable_specialization` below and #3688.
+        @static(
+            if SPECIALIZED_INVOKES
+                OptimizationParams(; compilesig_invokes = false)
+            else
+                OptimizationParams()
+            end
+        ),
         forward_rules::Bool,
         reverse_rules::Bool,
         inactive_rules::Bool,
@@ -508,6 +527,35 @@ const HAS_INVOKE_CI_LOWERING = VERSION >= v"1.13-"
         end
         kind = enzyme_call_kind(interp, simplify_kw(abi))
         return kind !== nothing && kind !== :alwaysinline
+    end
+end
+
+@static if SPECIALIZED_INVOKES
+    # With `compilesig_invokes = false` the inliner will emit an `:invoke` against
+    # the specialized signature even when that specialization is not compileable
+    # (`isdispatchtuple` false, and often no compileable signature at all). Codegen
+    # has no ABI for such a target and emits `unreachable`, which traps at runtime
+    # as "Unreachable reached"; see #3688. Julia's own comment in that branch notes
+    # that a dynamic call is preferable to a non-compilesig, non-inlined one, so
+    # hold those back and let them stay dynamic, as they are by default.
+    function Core.Compiler.compileable_specialization(
+            code::Union{Core.MethodInstance, Core.CodeInstance},
+            effects::Core.Compiler.Effects,
+            et::Core.Compiler.InliningEdgeTracker,
+            @nospecialize(info::Core.Compiler.CallInfo),
+            state::Core.Compiler.InliningState{<:EnzymeInterpreter},
+        )
+        mi = isa(code, Core.CodeInstance) ? code.def : code
+        if isa(mi, Core.MethodInstance) && !Base.isdispatchtuple(mi.specTypes)
+            return nothing
+        end
+        return @invoke Core.Compiler.compileable_specialization(
+            code::Union{Core.MethodInstance, Core.CodeInstance},
+            effects::Core.Compiler.Effects,
+            et::Core.Compiler.InliningEdgeTracker,
+            info::Core.Compiler.CallInfo,
+            state::Core.Compiler.InliningState,
+        )
     end
 end
 
