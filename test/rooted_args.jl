@@ -144,3 +144,50 @@ end
     fd = central_difference_gradient(x, periodicities, phases, ks)
     @test dx ≈ fd rtol = 1.0e-6
 end
+
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3329
+# Forward-over-reverse through a loop that updates `u[1]` around dynamic calls. On Julia 1.11 the
+# inner reverse pass rebuilds the loop-carried `u[1]` pointer as an addrspace(13) phi of
+# `julia.gc_loaded` calls, one of whose data pointers comes straight from the tape. The outer
+# compile's `nodecayed_phis!` used to fail on it ("Could not analyze garbage collection behavior").
+struct NodecayedTapeProblem
+    f::Any
+    jac::Any
+    u0::Vector{Float64}
+    p::Vector{Float64}
+end
+
+@noinline function nodecayed_tape_solve(prob::NodecayedTapeProblem)
+    u = copy(prob.u0)
+    p = prob.p
+    f = prob.f
+    jac = prob.jac
+    for _ in 1:2
+        u[1] += 0.1 * f(u[1], p[1])
+        jval = jac !== nothing ? jac(u[1], p[1])::Float64 : 0.0
+        u[1] += 0.01 * jval
+    end
+    return u[1]
+end
+
+function nodecayed_tape_loss(p)
+    y = nodecayed_tape_solve(NodecayedTapeProblem((x, pv) -> -pv * x, nothing, [1.0], p))
+    return y * y
+end
+
+@noinline function nodecayed_tape_grad(p)
+    dp = zero(p)
+    autodiff(set_runtime_activity(Reverse), Const(nodecayed_tape_loss), Active, Duplicated(p, dp))
+    return dp
+end
+
+@testset "Forward-over-reverse with tape-cached gc_loaded data pointer" begin
+    # loss(p) = (1 - p/10)^4
+    p = 0.5
+    @test nodecayed_tape_grad([p])[1] ≈ -0.4 * (1 - 0.1p)^3
+    res = autodiff(
+        set_runtime_activity(Forward), Const(x -> sum(nodecayed_tape_grad(x))),
+        Duplicated([p], [1.0]),
+    )
+    @test res[1] ≈ 0.12 * (1 - 0.1p)^2
+end
