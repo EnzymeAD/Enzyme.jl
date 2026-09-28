@@ -163,6 +163,31 @@ end
     @test dy[2] ≈ 4.0
 end
 
+# ── loops (tape caches inside loops) ─────────────────────────────────────────
+
+@testset "ForwardModeSplit – loop" begin
+    function sumsq(x)
+        r = 0.0
+        for i in eachindex(x)
+            r += x[i] * x[i]
+        end
+        return r
+    end
+
+    aug, deriv = autodiff_thunk(
+        ForwardSplitNoPrimal,
+        Const{typeof(sumsq)},
+        Duplicated,
+        Duplicated{Vector{Float64}},
+    )
+
+    x  = [3.0, 4.0]
+    dx = [1.0, 1.0]
+    tape, _, _ = aug(Const(sumsq), Duplicated(x, dx))
+    (shadow,) = deriv(Const(sumsq), Duplicated(x, dx), tape)
+    @test shadow ≈ 14.0
+end
+
 # ── thunk caching ─────────────────────────────────────────────────────────────
 
 @testset "ForwardModeSplit – thunk caching" begin

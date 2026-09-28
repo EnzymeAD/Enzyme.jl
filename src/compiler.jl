@@ -3036,6 +3036,15 @@ function enzyme!(
         end
     elseif mode == API.DEM_ForwardModeSplit
         returnUsed = !(isghostty(actualRetType) || Core.Compiler.isconstType(actualRetType))
+
+        # The derivative pass shares the ForwardMode ABI wrapper, which expects the
+        # primal to be returned when runtime activity needs it for the boxed-return
+        # comparison, even if the user did not request the primal.
+        literal_rt = eltype(rt)
+        fwdReturnUsed = returnUsed
+        if !(!isghostty(literal_rt) && runtimeActivity && GPUCompiler.deserves_argbox(actualRetType) && !GPUCompiler.deserves_argbox(literal_rt))
+            fwdReturnUsed &= returnPrimal
+        end
         returnUsed &= returnPrimal
         nowrite_shadows = zeros(UInt8, length(uncacheable_args))
         augmented = API.EnzymeCreateAugmentedPrimal(
@@ -3100,7 +3109,7 @@ function enzyme!(
                 retType,
                 args_activity,
                 TA,
-                returnUsed,
+                fwdReturnUsed,
                 API.DEM_ForwardModeSplit,
                 runtimeActivity,
                 strongZero,

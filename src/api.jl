@@ -338,7 +338,9 @@ function EnzymeCreateForwardDiff(
     uncacheable_args,
     aug = C_NULL,
 )
-    freeMemory = true
+    # ForwardModeSplit has no reverse blocks in which to free loop caches (Enzyme
+    # asserts in freeCache), and tape memory is GC-allocated via julia_allocator.
+    freeMemory = mode != DEM_ForwardModeSplit
     subsequent_calls_may_write = mode == DEM_ForwardModeSplit
     ccall(
         (:EnzymeCreateForwardDiff, libEnzyme),
