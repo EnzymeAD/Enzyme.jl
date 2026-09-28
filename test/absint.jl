@@ -255,3 +255,56 @@ end
         @test [m.sp for m in dout[k]] == [m.sp for m in out[k]]
     end
 end
+
+struct AbsintInlineField
+    data::Vector{Float64}
+    pad::NTuple{22, Float64}
+end
+
+mutable struct AbsintWideModel
+    pad::NTuple{70, Float64}
+    vel::@NamedTuple{a::AbsintInlineField, b::AbsintInlineField, c::AbsintInlineField, d::AbsintInlineField}
+    x::Float64
+end
+
+@noinline function absint_consume_wide(vel, n)
+    s = 0.0
+    for i in 1:n
+        s += vel.d.pad[1] * vel.a.data[i] * vel.d.data[i]
+    end
+    return s
+end
+
+@noinline function absint_wide_tendencies(m::AbsintWideModel, callbacks)
+    vel = m.vel
+    s = absint_consume_wide(vel, length(vel.a.data))
+    for cb in callbacks
+        cb(m)
+    end
+    return s
+end
+
+absint_wide_loss(m) = absint_wide_tendencies(m, Any[])
+
+absint_wide_field(v, p) = AbsintInlineField(v, ntuple(Returns(p), 22))
+
+@testset "Absint memcpy out of an object past the type analysis offset limit" begin
+    # `m.vel` is 736 bytes at offset 560, copied out piecewise: each tracked
+    # pointer is loaded on its own and the runs of floats between them are
+    # memcpy'd. Both the source offset and the fresh stack slot it lands in lie
+    # beyond what type analysis keeps for either object, so the copy must be
+    # typed from the Julia layout of the source.
+    m = AbsintWideModel(
+        ntuple(Returns(0.0), 70),
+        (
+            a = absint_wide_field([1.0, 2.0], 0.0), b = absint_wide_field([0.0, 0.0], 0.0),
+            c = absint_wide_field([0.0, 0.0], 0.0), d = absint_wide_field([3.0, 4.0], 2.0),
+        ),
+        0.0,
+    )
+    dm = Enzyme.make_zero(m)
+    autodiff(Reverse, absint_wide_loss, Active, Duplicated(m, dm))
+    @test dm.vel.a.data ≈ [6.0, 8.0]
+    @test dm.vel.d.data ≈ [2.0, 4.0]
+    @test dm.vel.d.pad[1] ≈ 11.0
+end
