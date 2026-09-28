@@ -96,4 +96,19 @@ end
             @test pointer(y2.a) == pointer(y2.b)
         end
     end
+
+    @testset "same start pointer but different arrays" begin
+        x = CUDA.cuRAND.randn(3)
+        y = (x, view(x, 1:2))
+        v, from_vec = to_vec(y)
+        y2 = from_vec(v)
+        @test size(y2[1]) == (3,)
+        @test size(y2[2]) == (2,)
+
+        e = (CuArray{Float64}(undef, 0), CuArray{Float32}(undef, 0))
+        v, from_vec = to_vec(e)
+        e2 = from_vec(v)
+        @test eltype(e2[1]) === Float64
+        @test eltype(e2[2]) === Float32
+    end
 end
