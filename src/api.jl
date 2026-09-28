@@ -1055,6 +1055,26 @@ function EnzymeGetCLBool(ptr)
 end
 # void EnzymeSetCLInteger(void *, int64_t);
 
+function EnzymeLowerSparsification(F, replaceAll::Bool)
+    return ccall(
+        (:EnzymeLowerSparsification, libEnzyme),
+        UInt8,
+        (LLVM.API.LLVMValueRef, UInt8),
+        F,
+        replaceAll,
+    ) != 0
+end
+
+function autosparsity!(val)
+    ptr = cglobal((:EnzymeAutoSparsity, libEnzyme))
+    return ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)
+end
+
+function autosparsity()
+    ptr = cglobal((:EnzymeAutoSparsity, libEnzyme))
+    return ccall((:EnzymeGetCLBool, libEnzyme), UInt8, (Ptr{Cvoid},), ptr) != 0
+end
+
 function zcache!(val)
     ptr = cglobal((:EnzymeZeroCache, libEnzyme))
     return ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)

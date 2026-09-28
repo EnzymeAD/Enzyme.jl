@@ -524,6 +524,158 @@ function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
     return
 end
 
+function has_todense(mod::LLVM.Module)
+    for f in mod.functions
+        if isempty(f.blocks) && startswith(f.name, "__enzyme_todense") && !isempty(f.uses)
+            return true
+        end
+    end
+    return false
+end
+
+# The simplification the Enzyme clang plugin runs before lowering sparsity
+# (it lowers at the start of the optimizer pipeline): inline, clean up, and
+# canonicalize the loops, but do not unroll or vectorize them.
+function addSparsityPrePasses!(mpm::LLVM.PassManager)
+    add!(mpm, FunctionPassManager()) do fpm
+        add!(fpm, ReinsertGCMarkerPass())
+        add!(fpm, PropagateJuliaAddrspacesPass())
+        add!(fpm, SimplifyCFGPass())
+        add!(fpm, DCEPass())
+        add!(fpm, SROAPass())
+    end
+    add!(mpm, RemoveAlwaysInlineRootsPass())
+    add!(mpm, AlwaysInlinerPass())
+    return add!(mpm, FunctionPassManager()) do fpm
+        add!(fpm, AllocOptPass())
+        add!(fpm, RestoreAllocaType())
+        add!(fpm, InstCombinePass())
+        add!(fpm, JLInstSimplifyPass())
+        add!(fpm, SimplifyCFGPass())
+        add!(fpm, SROAPass())
+        add!(fpm, EarlyCSEPass())
+        add!(fpm, GVNPass())
+        add!(fpm, LoopPassManager(use_memory_ssa = true)) do lpm
+            add!(lpm, LoopRotatePass())
+            add!(lpm, LICMPass())
+        end
+        add!(fpm, InstCombinePass())
+        add!(fpm, LoopPassManager()) do lpm
+            add!(lpm, IndVarSimplifyPass())
+            add!(lpm, LoopDeletionPass())
+        end
+        add!(fpm, SimplifyCFGPass())
+    end
+end
+
+strip_constexpr(v::LLVM.Value) = v isa LLVM.ConstantExpr ? strip_constexpr(v.operands[1]) : v
+
+# `Enzyme.sparse_accumulate(f, args...)` calls `__enzyme_sparse_accumulate_call`
+# with a pointer to the compiled `f`. Call `f` directly, and mark it as the
+# accumulation that the sparsity rewrite of a `todense` loop keeps.
+function lower_sparse_accumulate!(mod::LLVM.Module)
+    for marker in collect(mod.functions)
+        startswith(marker.name, "__enzyme_sparse_accumulate_call") || continue
+        for u in collect(marker.uses)
+            ci = u.user::LLVM.CallInst
+            ops = collect(LLVM.Value, ci.arguments)
+            fn = strip_constexpr(ops[1])
+            if !(fn isa LLVM.Function)
+                error("Enzyme.sparse_accumulate: could not resolve the accumulation function in $(string(ci))")
+            end
+            attrs = fn.function_attributes
+            push!(attrs, StringAttribute("enzyme_sparse_accumulate"))
+            delete!(attrs, :alwaysinline)
+            push!(attrs, EnumAttribute(:noinline))
+            @dispose b = IRBuilder() begin
+                position!(b, LLVM.before(ci))
+                b.debug_location = ci.debug_location
+                call!(b, fn.function_type, fn, ops[2:end])
+            end
+            LLVM.erase!(ci)
+        end
+        isempty(marker.uses) && LLVM.erase!(marker)
+    end
+    return
+end
+
+# The loaders and storers of a `todense` pointer are inlined where the pointer
+# is used, so that automatic sparsity can reason about their index conditions.
+function inline_todense_callbacks!(mod::LLVM.Module)
+    for f in mod.functions
+        (isempty(f.blocks) && startswith(f.name, "__enzyme_todense")) || continue
+        for u in f.uses
+            ci = u.user
+            ci isa LLVM.CallInst || continue
+            for op in ci.operands[1:2]
+                fn = strip_constexpr(op)
+                fn isa LLVM.Function || continue
+                attrs = fn.function_attributes
+                delete!(attrs, :noinline)
+                push!(attrs, EnumAttribute(:alwaysinline))
+            end
+        end
+    end
+    return
+end
+
+function has_sparse_accumulate(mod::LLVM.Module)
+    for f in mod.functions
+        haskey(f.function_attributes, "enzyme_sparse_accumulate") && return true
+    end
+    return false
+end
+
+"""
+    lower_sparsification!(mod::LLVM.Module)
+
+Replace every `__enzyme_todense(load, store, args...)` pointer by calls to its
+`load`/`store` functions (see [`Enzyme.todense`](@ref)). With automatic
+sparsity, the loops that contain `todense` calls are then rewritten to visit
+only the indices at which an `enzyme_sparse_accumulate` call can be reached.
+
+This must run once the derivatives that use the pointers are inlined into the
+function that creates them. A loop that Enzyme cannot sparsify is kept dense,
+with a warning.
+"""
+function lower_sparsification!(mod::LLVM.Module)
+    lower_sparse_accumulate!(mod)
+    inline_todense_callbacks!(mod)
+    # Without accumulations there is nothing to sparsify.
+    autosparsity = has_sparse_accumulate(mod)
+    ctx = mod.context
+    prev = API.autosparsity()
+    API.autosparsity!(autosparsity)
+    try
+        for f in collect(mod.functions)
+            isempty(f.blocks) && continue
+            # Enzyme reports a loop it cannot sparsify as an error diagnostic,
+            # which LLVM.jl records for the context.
+            LLVM.prepare_diagnostic(ctx)
+            API.EnzymeLowerSparsification(f, true)
+            try
+                LLVM.check_diagnostic(ctx)
+            catch err
+                err isa LLVM.LLVMException || rethrow()
+                # The message dumps the function; its last line is the reason.
+                reason = last(filter(!isempty, split(err.info, '\n')))
+                # A function with `todense` pointers but no accumulation.
+                occursin("Found no stores for sparsification", reason) && continue
+                @warn "Enzyme could not sparsify a loop of $(f.name); it is evaluated densely" reason
+            end
+        end
+    finally
+        API.autosparsity!(prev)
+    end
+    for f in collect(mod.functions)
+        if isempty(f.blocks) && isempty(f.uses) &&
+                any(p -> startswith(f.name, p), ("__enzyme_todense", "__enzyme_post_sparse_todense", "__enzyme_sum", "__enzyme_product", "enzyme.sparse.inbounds"))
+            LLVM.erase!(f)
+        end
+    end
+    return
+end
+
 function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, machine::Bool = true; callconv::Bool = true, tti = nothing)
     modern_write_barriers!(mod)
     define_ntuple_type!(mod)
@@ -547,6 +699,30 @@ function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}
     end
 
     removeDeadArgs!(mod, tm, #=post_gc_fixup=# true)
+
+    if has_todense(mod)
+        # Inline the derivatives into the functions that create the `todense`
+        # pointers before lowering them.
+        @dispose pb = PassBuilder() begin
+            if tti !== nothing
+                LLVM.target_transform_info!(pb, tti)
+            end
+            registerEnzymeAndPassPipeline!(pb)
+            register!(pb, ReinsertGCMarkerPass())
+            register!(pb, RestoreAllocaType())
+            register!(pb, RemoveAlwaysInlineRootsPass())
+            add!(pb, AAManager()) do aam
+                add!(aam, ScopedNoAliasAA())
+                add!(aam, TypeBasedAA())
+                add!(aam, BasicAA())
+            end
+            add!(pb, ModulePassManager()) do mpm
+                addSparsityPrePasses!(mpm)
+            end
+            run!(pb, mod, tm)
+        end
+        lower_sparsification!(mod)
+    end
 
     @dispose pb = PassBuilder() begin
         if tti !== nothing
