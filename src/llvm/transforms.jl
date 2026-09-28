@@ -645,6 +645,68 @@ function addr13NoAlias(mod::LLVM.Module)
 end
 
 ## given code like
+#  %a = alloca
+#  ...                          (nothing stores to, sets, or copies into %a)
+#  memcpy(%dst, %a + off, n)
+# the copy reads only undefined bytes, so dropping it is a refinement of the
+# program. Julia 1.13 emits exactly this for the tracked slots of an aggregate
+# whose roots travel separately: SROA leaves the slice of the data half that
+# would hold them unwritten and unread, but still copies it into the destination.
+# There is no type to be found for such bytes, so type analysis cannot type the
+# copy; see #3589.
+function erase_memcpy_from_undef!(mod::LLVM.Module)
+    memcpy = LLVM.Intrinsic("llvm.memcpy").id
+    memmove = LLVM.Intrinsic("llvm.memmove").id
+    lstart = LLVM.Intrinsic("llvm.lifetime.start").id
+    lend = LLVM.Intrinsic("llvm.lifetime.end").id
+    for f in functions(mod)
+        isempty(blocks(f)) && continue
+        todel = Set{LLVM.Instruction}()
+        for alloca in instructions(first(blocks(f)))
+            isa(alloca, LLVM.AllocaInst) || continue
+            todo = LLVM.Value[alloca]
+            copies = LLVM.Instruction[]
+            written = false
+            while !isempty(todo) && !written
+                cur = pop!(todo)
+                for u in LLVM.uses(cur)
+                    user = LLVM.user(u)
+                    if isa(user, LLVM.BitCastInst) || isa(user, LLVM.AddrSpaceCastInst) ||
+                            isa(user, LLVM.GetElementPtrInst)
+                        push!(todo, user)
+                        continue
+                    end
+                    if isa(user, LLVM.LoadInst)
+                        continue
+                    end
+                    if isa(user, LLVM.CallInst) && isa(LLVM.called_operand(user), LLVM.Function)
+                        intr = LLVM.API.LLVMGetIntrinsicID(LLVM.called_operand(user))
+                        if intr == lstart || intr == lend
+                            continue
+                        end
+                        if (intr == memcpy || intr == memmove) &&
+                                operands(user)[2] == cur && operands(user)[1] != cur
+                            push!(copies, user)
+                            continue
+                        end
+                    end
+                    # a store, memset, copy into it, or an escape
+                    written = true
+                    break
+                end
+            end
+            if !written
+                union!(todel, copies)
+            end
+        end
+        for inst in todel
+            eraseInst(LLVM.parent(inst), inst)
+        end
+    end
+    return
+end
+
+## given code like
 #  % a = alloca
 #  ...
 #  memref(cast(%a), %b, constant size == sizeof(a))

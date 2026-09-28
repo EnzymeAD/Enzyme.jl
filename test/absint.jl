@@ -308,3 +308,42 @@ absint_wide_field(v, p) = AbsintInlineField(v, ntuple(Returns(p), 22))
     @test dm.vel.d.data ≈ [2.0, 4.0]
     @test dm.vel.d.pad[1] ≈ 11.0
 end
+
+Base.@noinline absint_undef_barrier(f, args...; kwargs...) = f(args...; kwargs...)
+
+struct AbsintAnyBox
+    fn::Any
+end
+(box::AbsintAnyBox)(a, b) = box.fn(a, b)
+
+struct AbsintTwoPtrs{T, C}
+    tunable::T
+    caches::C
+end
+
+struct AbsintPtrAndInt{U}
+    u::U
+    i::Int
+end
+
+function absint_undef_loss(p, box, s)
+    absint_undef_barrier(box, p, (s,))
+    return sum(p.tunable)
+end
+
+@testset "Absint memcpy from a stack slot that is never written" begin
+    # On 1.13 the tracked slots of `p` travel in a separate roots object, so SROA
+    # leaves the slice of the argument tuple's data half that would hold them
+    # unwritten and unread -- but still memcpys it into the varargs tuple. That
+    # copy reads only undefined bytes and has no type to find.
+    p = AbsintTwoPtrs([2.0], [0.0])
+    dp = Enzyme.make_zero(p)
+    s = AbsintPtrAndInt([1.0, 1.0], 0)
+    box = AbsintAnyBox((a, b) -> nothing)
+    autodiff(
+        set_runtime_activity(Reverse), Const(absint_undef_loss), Active,
+        Duplicated(p, dp), Const(box), Const(s),
+    )
+    @test dp.tunable == [1.0]
+    @test dp.caches == [0.0]
+end
