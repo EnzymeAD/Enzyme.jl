@@ -5671,6 +5671,49 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     end
 end
 
+"""
+    memtransfer_truetype(world, ptr, sz)
+
+The `enzyme_truetype` metadata for a memcpy/memmove/memset of `sz` bytes at
+`ptr`, or `nothing` if `ptr` cannot be traced back to a Julia object of known
+concrete type. The type is read off the Julia layout, so it is not limited to the
+offsets Enzyme's type analysis keeps.
+"""
+function memtransfer_truetype(world::UInt, @nospecialize(ptr::LLVM.Value), @nospecialize(sz::LLVM.Value))
+    base, offset = get_base_and_offset(ptr)
+    legal, jTy, byref = abs_typeof(base)
+    legal || return nothing
+    if byref == GPUCompiler.BITS_VALUE && jTy <: Ptr
+        ET = eltype(jTy)
+        if Base.isconcretetype(ET)
+            sz_et = actual_size(ET)
+            if sz_et > 0
+                jTy = ET
+                byref = GPUCompiler.MUT_REF
+                offset = Base.mod(offset, sz_et)
+            end
+        end
+    end
+    Base.isconcretetype(jTy) || return nothing
+    if jTy isa UnionAll ||
+            jTy isa Union ||
+            jTy == Union{} ||
+            jTy === Tuple ||
+            (is_concrete_tuple(jTy) && any(T2 isa Core.TypeofVararg for T2 in jTy.parameters))
+        return nothing
+    end
+    size = Compiler.datatype_layoutsize(jTy)
+    @assert offset >= 0
+    if offset < size && isa(sz, LLVM.ConstantInt) && size - offset >= convert(Int, sz)
+        @assert byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
+        return to_fullmd(world, jTy, offset, convert(Int, sz))
+    elseif byref == GPUCompiler.BITS_VALUE && jTy <: Ptr && eltype(jTy) == Any
+        # Todo generalize this
+        return to_fullmd(world, jTy, 0, sizeof(Ptr{Cvoid}))
+    end
+    return nothing
+end
+
 function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     @assert output == :llvm
     
@@ -6215,53 +6258,16 @@ end
             if intr == LLVM.Intrinsic("llvm.memcpy").id ||
                intr == LLVM.Intrinsic("llvm.memmove").id ||
                intr == LLVM.Intrinsic("llvm.memset").id
-                base, offset = get_base_and_offset(operands(inst)[1])
-                legal, jTy, byref = abs_typeof(base)
-                sz =
-                    if intr == LLVM.Intrinsic("llvm.memcpy").id ||
-                       intr == LLVM.Intrinsic("llvm.memmove").id
-                        operands(inst)[3]
-                    else
-                        operands(inst)[3]
-                    end
-                if legal && byref == GPUCompiler.BITS_VALUE && jTy <: Ptr
-                    ET = eltype(jTy)
-                    if Base.isconcretetype(ET)
-                        sz_et = actual_size(ET)
-                        if sz_et > 0
-                            jTy = ET
-                            byref = GPUCompiler.MUT_REF
-                            offset = Base.mod(offset, sz_et)
-                        end
-                    end
+                sz = operands(inst)[3]
+                md = memtransfer_truetype(job.world, operands(inst)[1], sz)
+                if md === nothing && intr != LLVM.Intrinsic("llvm.memset").id
+                    # The destination is often a fresh stack slot with no Julia
+                    # type of its own, being filled piecewise from an object that
+                    # does have one; the source can then still tell us the type.
+                    md = memtransfer_truetype(job.world, operands(inst)[2], sz)
                 end
-
-                if legal && Base.isconcretetype(jTy)
-                    if !(
-                        jTy isa UnionAll ||
-                        jTy isa Union ||
-                        jTy == Union{} ||
-                        jTy === Tuple ||
-                        (
-                            is_concrete_tuple(jTy) &&
-                            any(T2 isa Core.TypeofVararg for T2 in jTy.parameters)
-                        )
-                    )
-
-			 size = Compiler.datatype_layoutsize(jTy)
-                        @assert offset >= 0 
-                        if offset < size && isa(sz, LLVM.ConstantInt) && size - offset >= convert(Int, sz)
-                            lim = convert(Int, sz)
-                            md = to_fullmd(job.world, jTy, offset, lim)
-                            @assert byref == GPUCompiler.BITS_REF ||
-                                    byref == GPUCompiler.MUT_REF
-                            metadata(inst)["enzyme_truetype"] = md
-			elseif byref == GPUCompiler.BITS_VALUE && jTy <: Ptr && eltype(jTy) == Any
-			    # Todo generalize this
-                            md = to_fullmd(job.world, jTy, 0, sizeof(Ptr{Cvoid}))
-                            metadata(inst)["enzyme_truetype"] = md
-                        end
-                    end
+                if md !== nothing
+                    metadata(inst)["enzyme_truetype"] = md
                 end
             end
         end
