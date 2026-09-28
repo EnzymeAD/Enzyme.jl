@@ -28,6 +28,14 @@ end
         @test to_vec(x)[1] == vec(v)
     end
 
+    # the scalars land in the same device vector as the array, so reading them back
+    # must not index it one entry at a time
+    @testset "array and scalar together" begin
+        @testset for T in (Float32, Float64, ComplexF32, ComplexF64)
+            test_to_vec((JLArray(randn(T, 3)), randn(T)))
+        end
+    end
+
     @testset "incompletely initialized struct" begin
         x = JLArray(randn(2, 3))
         y = TestStruct2(x)

@@ -5,6 +5,11 @@ using MetaTesting
 using Test
 using CUDA
 
+# Stands in for `f_array`, which is `sum(abs2, x)`. With no rule for that `f`, Enzyme
+# descends into the CUDA reduction kernel, which fails to compile on Julia 1.10 and 1.11.
+# A plain `sum` goes to the `GPUArrays._mapreduce` rule instead.
+f_gpu_array(x) = sum(x)
+
 f_output_tangent(x) = 2 .* x
 
 function f_mut_rev!(y, x, a)
@@ -62,22 +67,17 @@ end
     @testset "tests pass for functions with no rules" begin
         @testset "unary function tests" begin
             combinations = [
-                "vector arguments" => (CuVector, f_array),
-                "matrix arguments" => (CuMatrix, f_array),
-                "multidimensional array arguments" => (CuArray{<:Any, 3}, f_array),
+                "vector arguments" => (CuVector, f_gpu_array),
+                "matrix arguments" => (CuMatrix, f_gpu_array),
+                "multidimensional array arguments" => (CuArray{<:Any, 3}, f_gpu_array),
             ]
             sz = (2, 3, 4)
             @testset "$name" for (name, (TT, fun)) in combinations
-                # `Active` is omitted, unlike the CPU equivalent. An active return makes
-                # `fun` return a scalar, and `sum(abs2, ::CuArray)` reduces via
-                # `GPUArrays._mapreduce`, which reads the single-element result back with
-                # `@allowscalar`. `@allowscalar` scopes itself through task-local storage,
-                # which Enzyme cannot differentiate:
-                #     No create nofree of empty function (ijl_eqtable_put)
-                @testset for Tret in (Const,),
+                @testset for Tret in (Active,),
                         Tx in (Const, Duplicated, BatchDuplicated),
                         T in (Float32, Float64, ComplexF32, ComplexF64)
 
+                    are_activities_compatible(Tret, Tx) || continue
                     x = CuArray(randn(T, sz[1:ndims(TT)]))
                     atol = rtol = sqrt(eps(real(T)))
                     test_reverse(fun, Tret, (x, Tx); atol, rtol)

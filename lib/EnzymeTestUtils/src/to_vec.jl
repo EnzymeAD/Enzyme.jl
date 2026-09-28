@@ -51,15 +51,21 @@ function to_vec(x)
     return x_vec, Base.Fix1(from_vec, from_vec_inner)
 end
 
+# `v` where its entries can be read one at a time; GPU-backed vectors are copied to the host
+_hostside(v) = v
+
 # base case: we've unwrapped to a number, so we break the recursion
 function to_vec(x::ElementType, seen_vecs::AliasDict)
-    AbstractFloat_from_vec(v::AbstractVector{<:ElementType}, _) = oftype(x, only(v))
+    AbstractFloat_from_vec(v::AbstractVector{<:ElementType}, _) = oftype(x, only(_hostside(v)))
     return [x], AbstractFloat_from_vec
 end
 
 # base case: we've unwrapped to a number, so we break the recursion
 function to_vec(x::Complex{<:ElementType}, seen_vecs::AliasDict)
-    AbstractComplex_from_vec(v::AbstractVector{<:ElementType}, _) = Core.Typeof(x)(v[1], v[2])
+    function AbstractComplex_from_vec(v::AbstractVector{<:ElementType}, _)
+        vh = _hostside(v)
+        return Core.Typeof(x)(vh[1], vh[2])
+    end
     return [real(x), imag(x)], AbstractComplex_from_vec
 end
 

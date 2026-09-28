@@ -15,6 +15,7 @@ function EnzymeTestUtils.acopyto!(dst, src::AnyGPUArray)
 end
 
 EnzymeTestUtils.map_fields_recursive(f, x::AbstractGPUArray{<:Number}...) = f(x...)
+EnzymeTestUtils._hostside(v::AnyGPUArray) = Array(v)
 EnzymeTestUtils.aliasids(x::AbstractGPUArray) = (UInt(pointer(x)), UInt(length(x)), objectid(eltype(x)))
 
 function EnzymeTestUtils.test_approx(x::AbstractGPUArray{<:Number}, y::AbstractGPUArray{<:Number}, msg; kwargs...)
