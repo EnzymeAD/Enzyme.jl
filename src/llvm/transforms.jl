@@ -366,23 +366,25 @@ function unfold_root_phi_loads!(f::LLVM.Function)::Bool
             incs = collect(incoming(phi))
             any(((v, _),) -> isa(first(get_base_and_offset(v)), LLVM.AllocaInst), incs) || continue
 
-            # The users: loads of tracked pointers in this block, directly or
-            # through a GEP with constant indices, before any write.
+            # The users: loads of tracked pointers, directly or through a GEP
+            # with constant indices, before any write. They may sit in this
+            # block, or in a successor whose only predecessor it is (a split
+            # critical edge).
             accesses = Tuple{LLVM.LoadInst, Union{Nothing, LLVM.GetElementPtrInst}}[]
             ok = true
             for u in LLVM.uses(phi)
                 inst = LLVM.user(u)
-                if isa(inst, LLVM.GetElementPtrInst) && LLVM.parent(inst) == bb &&
+                if isa(inst, LLVM.GetElementPtrInst) && root_block_after(inst, bb) &&
                         operands(inst)[1] == phi && all(isa(op, LLVM.ConstantInt) for op in operands(inst)[2:end])
                     for u2 in LLVM.uses(inst)
                         ld = LLVM.user(u2)
-                        if !root_load_in(ld, inst, bb, T_prjlvalue)
+                        if !(root_load_in(ld, inst, LLVM.parent(inst), T_prjlvalue))
                             ok = false
                             break
                         end
                         push!(accesses, (ld, inst))
                     end
-                elseif root_load_in(inst, phi, bb, T_prjlvalue)
+                elseif root_block_after(inst, bb) && root_load_in(inst, phi, LLVM.parent(inst), T_prjlvalue)
                     push!(accesses, (inst, nothing))
                 else
                     ok = false
@@ -390,13 +392,29 @@ function unfold_root_phi_loads!(f::LLVM.Function)::Bool
                 ok || break
             end
             (ok && !isempty(accesses)) || continue
+            # A write before one of the loads could change what they read: none
+            # in this block after the phi, and none in a load's own block before it.
             for inst in instructions(bb)
                 mayWriteToMemory(inst) || continue
-                # A write before one of the loads could change what they read.
-                if any(((ld, _),) -> precedes(inst, ld), accesses)
-                    ok = false
+                # The first write in this block: a load in a successor, or
+                # after it in this block, may read what it wrote.
+                for (ld, _) in accesses
+                    if LLVM.parent(ld) != bb || precedes(inst, ld)
+                        ok = false
+                        break
+                    end
                 end
                 break
+            end
+            for (ld, _) in accesses
+                LLVM.parent(ld) == bb && continue
+                for inst in instructions(LLVM.parent(ld))
+                    mayWriteToMemory(inst) || continue
+                    if precedes(inst, ld)
+                        ok = false
+                    end
+                    break
+                end
             end
             ok || continue
 
@@ -458,6 +476,20 @@ function unfold_root_phi_loads!(f::LLVM.Function)::Bool
         end
     end
     return changed
+end
+
+"""
+    root_block_after(inst, bb)
+
+Whether `inst` is in `bb`, or in a successor of `bb` that has no other
+predecessor, so that `bb` runs right before it.
+"""
+function root_block_after(@nospecialize(inst::LLVM.Value), bb::LLVM.BasicBlock)::Bool
+    isa(inst, LLVM.Instruction) || return false
+    ib = LLVM.parent(inst)
+    ib == bb && return true
+    preds = predecessors(ib)
+    return length(preds) == 1 && first(preds) == bb
 end
 
 """
