@@ -2,6 +2,7 @@
 BFloat16s = "ab4f0b2a-ad5b-11e8-123f-65d77653426b"
 ChainRules = "082447d4-558c-5d27-93f4-14fc19e9eca2"
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+Clang_jll = "0ee61d77-7f21-5576-8119-9fcc46b10100"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 EnzymeTestUtils = "12d8515a-0907-448a-8884-5fe00fdf1c5a"
