@@ -424,6 +424,72 @@ end
 
 const TypesNotToDisect = Set{Type}([BigFloat])
 
+"""
+    homogeneous_vararg_eltype(T)
+
+For a tuple of unknown length but uniform concrete element type -- such as
+`Tuple{Vararg{E}}`, the inferred type of `ntuple(f, n)` for a runtime `n` --
+return `E`, else `nothing`. Such a type is not concrete, but its layout is: every
+element sits at a multiple of `vararg_stride(E)`, whatever the length.
+"""
+function homogeneous_vararg_eltype(@nospecialize(T))
+    T isa DataType || return nothing
+    T <: Tuple || return nothing
+    params = T.parameters
+    length(params) == 1 || return nothing
+    va = params[1]
+    va isa Core.TypeofVararg || return nothing
+    isdefined(va, :N) && return nothing
+    E = va.T
+    (E isa DataType && Base.isconcretetype(E)) || return nothing
+    vararg_stride(E) > 0 || return nothing
+    return E
+end
+
+vararg_stride(@nospecialize(E::Type))::Int = Base.allocatedinline(E) ? sizeof(E) : sizeof(Ptr{Cvoid})
+
+"""
+    known_factor(v)
+
+An integer that the integer value `v` is known to be a multiple of, found by
+looking through constant multiplications and shifts, sums and phis (`0` if `v` is
+known to be zero, `1` if nothing is known).
+"""
+function known_factor(@nospecialize(v::LLVM.Value), seen::Set{LLVM.PHIInst} = Set{LLVM.PHIInst}())::Int
+    if isa(v, LLVM.ConstantInt)
+        return abs(convert(Int, v))
+    end
+    if isa(v, LLVM.MulInst)
+        a, b = operands(v)
+        return known_factor(a, seen) * known_factor(b, seen)
+    end
+    if isa(v, LLVM.ShlInst)
+        a, b = operands(v)
+        if isa(b, LLVM.ConstantInt) && 0 <= convert(Int, b) < 8 * sizeof(Int) - 2
+            return known_factor(a, seen) << convert(Int, b)
+        end
+    end
+    if isa(v, LLVM.AddInst) || isa(v, LLVM.SubInst)
+        a, b = operands(v)
+        return gcd(known_factor(a, seen), known_factor(b, seen))
+    end
+    if isa(v, LLVM.PHIInst)
+        # A phi already being visited is reached around a loop: if every value
+        # entering the loop, and every step taken around it, is a multiple of
+        # the result, so is the phi.
+        v in seen && return 0
+        push!(seen, v)
+        g = 0
+        for (inc, _) in LLVM.incoming(v)
+            g = gcd(g, known_factor(inc, seen))
+            g == 1 && break
+        end
+        delete!(seen, v)
+        return g
+    end
+    return 1
+end
+
 function abs_typeof(
         @nospecialize(arg::LLVM.Value),
         partial::Bool = false, seenphis = Set{LLVM.PHIInst}()
@@ -677,6 +743,11 @@ function abs_typeof(
         end
 
         _, RT = enzyme_custom_extract_mi(arg, false)
+        if RT !== nothing && homogeneous_vararg_eltype(RT) !== nothing &&
+                value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
+            # Not concrete, so returned boxed.
+            return (true, RT, GPUCompiler.MUT_REF)
+        end
         if RT !== nothing
             llrt, sret, returnRoots = get_return_info(RT)
             if sret !== nothing
@@ -707,6 +778,21 @@ function abs_typeof(
         dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(arg))))
 
         shouldLoad = true
+
+        if legal && (byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF)
+            ET = homogeneous_vararg_eltype(typ)
+            if ET !== nothing
+                # Every element is laid out alike, so which one is loaded from
+                # does not matter.
+                typ = ET
+                offset = Base.mod(offset, vararg_stride(ET))
+                if !Base.allocatedinline(ET)
+                    # The element slot holds a pointer to the element.
+                    shouldLoad = false
+                    byref = GPUCompiler.MUT_REF
+                end
+            end
+        end
 
         if legal && typ <: Ptr && Base.isconcretetype(typ) && byref == GPUCompiler.BITS_VALUE
             ET = eltype(typ)
@@ -936,6 +1022,38 @@ function abs_typeof(
         # out of the loop), so look through any such constant offsets here.
         base, base_offset = get_base_and_offset(operands(arg)[1])
         legal, typ, byref = abs_typeof(base, partial, seenphis)
+        if legal && (byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF)
+            ET = homogeneous_vararg_eltype(typ)
+            if ET !== nothing
+                # Indexing a tuple of uniform element type by a runtime index: if the
+                # step is a whole number of elements and the result lands on an
+                # element boundary, what follows is again such a tuple.
+                indices = operands(arg)[2:end]
+                var = findall(!Base.Fix2(isa, LLVM.ConstantInt), indices)
+                if length(var) == 1 && value_type(indices[only(var)]) isa LLVM.IntegerType
+                    b = LLVM.IRBuilder()
+                    position!(b, arg)
+                    source_type = LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(arg))
+                    idxty = value_type(indices[only(var)])
+                    offty = LLVM.IntType(8 * sizeof(Int))
+                    offs = Int[]
+                    for k in (0, 1)
+                        tmp_indices = LLVM.Value[i == only(var) ? LLVM.ConstantInt(idxty, k) : indices[i] for i in eachindex(indices)]
+                        tmp = LLVM.gep!(b, source_type, operands(arg)[1], tmp_indices)
+                        off = API.EnzymeComputeByteOffsetOfGEP(b, tmp, offty)
+                        LLVM.API.LLVMInstructionEraseFromParent(tmp)
+                        isa(off, LLVM.ConstantInt) || break
+                        push!(offs, convert(Int, off))
+                    end
+                    stride = vararg_stride(ET)
+                    if length(offs) == 2 &&
+                            Base.mod((offs[2] - offs[1]) * known_factor(indices[only(var)]), stride) == 0 &&
+                            Base.mod(base_offset + offs[1], stride) == 0
+                        return (true, typ, byref)
+                    end
+                end
+            end
+        end
         if legal && byref == GPUCompiler.BITS_VALUE && typ <: Ptr && Base.isconcretetype(typ)
             etyp = eltype(typ)
             if Base.isconcretetype(etyp)
