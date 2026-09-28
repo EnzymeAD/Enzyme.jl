@@ -262,6 +262,22 @@ struct BatchMixedDuplicated{T, N} <: Annotation{T}
     end
 end
 BatchMixedDuplicated(x::T, dx::NTuple{N, Base.RefValue{T}}, check::Bool = true) where {T, N} = BatchMixedDuplicated{T, N}(x, dx, check)
+
+"""
+    BatchMixedDuplicated(x::T, ∂f_∂xs::NTuple{N, Core.LLVMPtr{T}}, check=false)
+
+Device-code only: like `MixedDuplicated(x, ∂f_∂x::Core.LLVMPtr{T})`, with one shadow
+pointer per batch lane. Each lane must point to separate `T`-sized memory. Each lane is
+accumulated in place, with atomic updates on GPU targets.
+
+The same limits as for `MixedDuplicated` apply: `isbitstype(T)` is required, the
+pointers are presented to Enzyme as `Base.RefValue{T}` objects without an object header,
+and this is valid only where no garbage collector can see them, that is, in GPU kernels.
+"""
+@inline function BatchMixedDuplicated(x::T, dx::NTuple{N, Core.LLVMPtr{T}}, check::Bool = false) where {T, N}
+    isbitstype(T) || throw(ArgumentError("BatchMixedDuplicated with device pointer shadows requires an isbits type"))
+    return BatchMixedDuplicated{T, N}(x, map(unsafe_device_ref, dx), check)
+end
 @inline batch_size(::BatchMixedDuplicated{T, N}) where {T, N} = N
 @inline batch_size(::Type{BatchMixedDuplicated{T, N}}) where {T, N} = N
 
