@@ -308,3 +308,20 @@ absint_wide_field(v, p) = AbsintInlineField(v, ntuple(Returns(p), 22))
     @test dm.vel.d.data ≈ [2.0, 4.0]
     @test dm.vel.d.pad[1] ≈ 11.0
 end
+
+@noinline absint_closure_call(f) = f()
+# Re-capturing `f` in a new closure copies it by value; on Julia 1.13 that copy
+# is a memcpy spanning `f`'s leading reference field and the bits after it.
+@noinline absint_closure_wrap(f) = absint_closure_call(() -> f())
+
+function absint_closure_recapture(x, t)
+    r = Ref(0)
+    return absint_closure_wrap(() -> x[1] * t + r[])
+end
+
+@testset "Absint memcpy of a closure re-captured by value" begin
+    x = [2.0]
+    dx = zero(x)
+    autodiff(Reverse, absint_closure_recapture, Active, Duplicated(x, dx), Const(0.5))
+    @test dx ≈ [0.5]
+end
