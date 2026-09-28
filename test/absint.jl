@@ -308,3 +308,49 @@ absint_wide_field(v, p) = AbsintInlineField(v, ntuple(Returns(p), 22))
     @test dm.vel.d.data ≈ [2.0, 4.0]
     @test dm.vel.d.pad[1] ≈ 11.0
 end
+
+const ABSINT_VARARG_N = 54
+
+absint_vararg_slice(A, s) = view(A, :, :, s)
+absint_vararg_steps(A) = ntuple(Base.Fix1(absint_vararg_slice, A), size(A, 3))
+
+function absint_vararg_loss(y, w, A)
+    s = 0.0
+    for v in absint_vararg_steps(A)
+        fill!(v, 0)
+        @inbounds for k in 1:ABSINT_VARARG_N
+            v[k] = Complex(y[k], 0.0)
+        end
+        @inbounds for k in 1:ABSINT_VARARG_N
+            s += w[k] * abs2(v[k])
+        end
+    end
+    return s
+end
+
+function absint_vararg_fwd(y, w, A)
+    return only(
+        autodiff(
+            set_runtime_activity(Forward), absint_vararg_loss, Duplicated,
+            Duplicated(y, w), Const(w), Duplicated(A, Enzyme.make_zero(A))
+        )
+    )
+end
+
+@testset "Absint element of a runtime-length homogeneous tuple" begin
+    # `ntuple` with a runtime length returns a `Tuple{Vararg{T}}`, which is not a
+    # concrete type, but every element has the same layout. The views' memory
+    # (54 ComplexF64 = 864 bytes) is past the type analysis offset limit, so the
+    # `fill!` memset must be typed from the element type, including its shadow
+    # in the forward pass that the outer reverse pass differentiates.
+    N = ABSINT_VARARG_N
+    y = collect(1.0:N)
+    w = [ifelse(iseven(k), 1.0, -1.0) for k in 1:N]
+    A = zeros(ComplexF64, N, 1, 2)
+    dy = zeros(N)
+    autodiff(
+        set_runtime_activity(Reverse), absint_vararg_fwd, Active,
+        Duplicated(y, dy), Const(w), Duplicated(A, Enzyme.make_zero(A))
+    )
+    @test dy ≈ 4 .* w .^ 2
+end
