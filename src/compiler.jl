@@ -6439,6 +6439,7 @@ end
 
     if params.run_enzyme
         # Generate the adjoint
+        erase_memcpy_from_undef!(mod)
         memcpy_alloca_to_loadstore(mod, job.world)
         force_recompute!(mod)
         API.EnzymeDetectReadonlyOrThrow(mod)
