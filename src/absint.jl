@@ -491,6 +491,15 @@ function abs_typeof(
     end
 
     if isa(arg, LLVM.CallInst)
+        # The return type of a dynamic call as proven by inference, attached by
+        # `annotate_dynamic_call_rt!`. Unlike the allocation tags above it says
+        # nothing about the object being fresh.
+        if haskey(metadata(arg), "enzymejl_inferred_rt")
+            mds = operands(metadata(arg)["enzymejl_inferred_rt"])[1]::MDString
+            RT = Base.unsafe_pointer_to_objref(reinterpret(Ptr{Cvoid}, parse(UInt, Base.convert(String, mds))))
+            return (true, RT, GPUCompiler.MUT_REF)
+        end
+
         fn = LLVM.called_operand(arg)
         nm = ""
         if isa(fn, LLVM.Function)
