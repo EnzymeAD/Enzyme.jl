@@ -92,6 +92,8 @@ module FFI
             "ijl_eqtable_get",
             "jl_eqtable_put",
             "ijl_eqtable_put",
+            "jl_eqtable_pop",
+            "ijl_eqtable_pop",
             "memcmp",
             "memchr",
             "jl_get_nth_field_checked",
