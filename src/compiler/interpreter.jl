@@ -596,6 +596,73 @@ import Core.Compiler:
     widenconst,
     MethodResultPure
 
+"""
+    rewrite_callee!(sv, arginfo, f, fnew)::Bool
+
+Make the statement that inference evaluates in `sv` call `fnew` instead of `f`,
+and say if it did. `abstract_call_known` redirects some calls to Enzyme versions
+(e.g. `Base._mapreduce` to `override_bc_mapreduce`). The `CallInfo` then
+describes a method of `fnew`, so the statement must call `fnew` too. Otherwise,
+the inliner makes an `Expr(:invoke)` of a `fnew` MethodInstance with callee `f`,
+which is invalid IR when the call is not inlined.
+
+This changes the statement only if `arginfo` came from it: its arguments are
+`arginfo.fargs` and its callee is `f`. It does not change the statement for a
+call that inference makes on its own, e.g. inside `Core._apply_iterate` or
+`Core.Compiler.return_type`. It also does not change IR under semi-concrete
+interpretation (`IRInterpretationState`), where the statement info stays.
+`sv.src` is the copy of the source that this inference owns and that the
+optimizer gets, so the change reaches the inliner and codegen.
+"""
+function rewrite_callee!(sv::AbsIntState, arginfo::ArgInfo, @nospecialize(f), @nospecialize(fnew))::Bool
+    (; fargs, argtypes) = arginfo
+    fargs === nothing && return false
+    sv isa Core.Compiler.InferenceState || return false
+    Core.Compiler.singleton_type(argtypes[1]) === f || return false
+    stmt = sv.src.code[sv.currpc]
+    if Meta.isexpr(stmt, :(=))
+        stmt = stmt.args[2]
+    end
+    (Meta.isexpr(stmt, :call) && stmt.args === fargs) || return false
+    fargs[1] = fnew
+    return true
+end
+
+"""
+    redirect_call(interp, f, fnew, arginfo, si, sv, max_methods, needs_rewrite::Bool)
+
+Infer the call `f(args...)` of `arginfo` as the call `fnew(args...)`, and make
+the statement call `fnew` (`rewrite_callee!`). When the statement cannot be
+changed, the `CallInfo` does not match it, which is only valid if the inliner
+inlines `fnew`. Then, with `needs_rewrite`, return `nothing` and do not redirect:
+the caller infers the call to `f`. Without it, `fnew` must be `@inline`.
+"""
+function redirect_call(
+    interp::EnzymeInterpreter,
+    @nospecialize(f),
+    @nospecialize(fnew),
+    arginfo::ArgInfo,
+    si::StmtInfo,
+    sv::AbsIntState,
+    max_methods::Int,
+    needs_rewrite::Bool,
+)
+    (; fargs, argtypes) = arginfo
+    if !rewrite_callee!(sv, arginfo, f, fnew)
+        needs_rewrite && return nothing
+        fargs = fargs === nothing ? nothing : Any[fnew, fargs[2:end]...]
+    end
+    arginfo2 = ArgInfo(fargs, Any[Core.Const(fnew), argtypes[2:end]...])
+    return Base.@invoke abstract_call_known(
+        interp::AbstractInterpreter,
+        fnew::Any,
+        arginfo2::ArgInfo,
+        si::StmtInfo,
+        sv::AbsIntState,
+        max_methods::Int,
+    )
+end
+
 @static if VERSION < v"1.11.0-"
 else
     @inline function myunsafe_copyto!(dest::MemoryRef{T}, src::MemoryRef{T}, n) where {T}
@@ -1092,15 +1159,12 @@ end
     end
 end
 
-# The redirect in `abstract_call_known` is only valid once inlined, so this shim
-# must stay `@inline`. The body lives in a separate, not-inlined function so that
-# callers such as `Base._mapreduce_dim`, which only pass `f` along, stay small
-# enough to inline. Otherwise they are compiled despecialized on `f::Function`
-# and called dynamically (e.g. under `sum(log, x)`).
-@inline override_bc_mapreduce(f, op, ::Base.IndexLinear, A::Base.AbstractArrayOrBroadcasted) =
-    bc_mapreduce(f, op, A)
-
-function bc_mapreduce(f::F, op::OP, A::Base.AbstractArrayOrBroadcasted) where {F, OP}
+# Not `@inline`: `abstract_call_known` rewrites the call statement to call this
+# function (see `redirect_call`), so a non-inlined call is a valid `:invoke`.
+# Keeping the loop out of line lets callers such as `Base._mapreduce_dim`, which
+# only pass `f` along, stay small enough to inline. Otherwise they are compiled
+# despecialized on `f::Function` and called dynamically (e.g. under `sum(log, x)`).
+function override_bc_mapreduce(f::F, op::OP, ::Base.IndexLinear, A::Base.AbstractArrayOrBroadcasted) where {F, OP}
     inds = Base.LinearIndices(A)
     n = length(inds)
     if n == 0
@@ -1309,18 +1373,7 @@ function (bcr::broadcast_rewriter)(interp, sv)
     local retFuture
     if ElType !== Union{} && Base.isconcretetype(ElType)
         fn2 = Enzyme.Compiler.Interpreter.OverrideBCMaterialize{ElType}()
-        arginfo2 = ArgInfo(
-            fargs isa Nothing ? nothing : [:(fn2), fargs[2:end]...],
-           [Core.Const(fn2), argtypes[2:end]...],
-        )
-        retFuture = Base.@invoke abstract_call_known(
-            interp::AbstractInterpreter,
-            fn2::Any,
-            arginfo2::ArgInfo,
-            si::StmtInfo,
-            sv::AbsIntState,
-            max_methods::Int,
-        )
+        retFuture = redirect_call(interp, f, fn2, arginfo, si, sv, max_methods, false)
     else 
         if interp.handler != nothing
             return interp.handler(interp, f, arginfo, si, sv, max_methods)
@@ -1428,19 +1481,7 @@ function abstract_call_known(
             if ft2 isa DataType && length(ft2.parameters) >= 2
                 Ret = ft2.parameters[1]
                 ArgsT = ft2.parameters[2]
-                arginfo2 = ArgInfo(
-                    fargs isa Nothing ? nothing :
-                    [:(FuncWrapperRewriter{Ret, ArgsT}), fargs[2:end]...],
-                    [Core.Const(FuncWrapperRewriter{Ret, ArgsT}()), argtypes[2:end]...],
-                )
-                return Base.@invoke abstract_call_known(
-                    interp::AbstractInterpreter,
-                    FuncWrapperRewriter{Ret, ArgsT}(),
-                    arginfo2::ArgInfo,
-                    si::StmtInfo,
-                    sv::AbsIntState,
-                    max_methods::Int,
-                )
+                return redirect_call(interp, f, FuncWrapperRewriter{Ret, ArgsT}(), arginfo, si, sv, max_methods, false)
             end
         end
     end
@@ -1453,20 +1494,7 @@ function abstract_call_known(
             if widenconst(argtypes[2]) <: Array &&
                widenconst(argtypes[3]) <: Base.Broadcast.Broadcasted{Nothing}
             
-                arginfo2 = ArgInfo(
-                    fargs isa Nothing ? nothing :
-                    [:(Enzyme.Compiler.Interpreter.override_bc_copyto!), fargs[2:end]...],
-                    [Core.Const(Enzyme.Compiler.Interpreter.override_bc_copyto!), argtypes[2:end]...],
-                )
-
-                return Base.@invoke abstract_call_known(
-                    interp::AbstractInterpreter,
-                    Enzyme.Compiler.Interpreter.override_bc_copyto!::Any,
-                    arginfo2::ArgInfo,
-                    si::StmtInfo,
-                    sv::AbsIntState,
-                    max_methods::Int,
-                )
+                return redirect_call(interp, f, Enzyme.Compiler.Interpreter.override_bc_copyto!, arginfo, si, sv, max_methods, false)
             end
         end
     
@@ -1475,40 +1503,15 @@ function abstract_call_known(
            widenconst(argtypes[5]) <: Integer &&
            widenconst(argtypes[6]) <: Integer &&
            widenconst(argtypes[7]) <: Int 
-                arginfo2 = ArgInfo(
-                    fargs isa Nothing ? nothing :
-                    [:(Enzyme.Compiler.Interpreter.override_bc_mapreduceimpl), fargs[2:end]...],
-                    [Core.Const(Enzyme.Compiler.Interpreter.override_bc_mapreduceimpl), argtypes[2:end]...],
-                )
-
-                return Base.@invoke abstract_call_known(
-                    interp::AbstractInterpreter,
-                    Enzyme.Compiler.Interpreter.override_bc_mapreduceimpl::Any,
-                    arginfo2::ArgInfo,
-                    si::StmtInfo,
-                    sv::AbsIntState,
-                    max_methods::Int,
-                )
+                return redirect_call(interp, f, Enzyme.Compiler.Interpreter.override_bc_mapreduceimpl, arginfo, si, sv, max_methods, false)
             end
         end
     
     if f === Base._mapreduce &&  length(argtypes) == 5
             if widenconst(argtypes[4]) <: Base.IndexLinear &&
            widenconst(argtypes[5]) <: Array
-                arginfo2 = ArgInfo(
-                    fargs isa Nothing ? nothing :
-                    [:(Enzyme.Compiler.Interpreter.override_bc_mapreduce), fargs[2:end]...],
-                    [Core.Const(Enzyme.Compiler.Interpreter.override_bc_mapreduce), argtypes[2:end]...],
-                )
-
-                return Base.@invoke abstract_call_known(
-                    interp::AbstractInterpreter,
-                    Enzyme.Compiler.Interpreter.override_bc_mapreduce::Any,
-                    arginfo2::ArgInfo,
-                    si::StmtInfo,
-                    sv::AbsIntState,
-                    max_methods::Int,
-                )
+                ret = redirect_call(interp, f, Enzyme.Compiler.Interpreter.override_bc_mapreduce, arginfo, si, sv, max_methods, true)
+                ret === nothing || return ret
             end
         end
        
@@ -1521,20 +1524,7 @@ function abstract_call_known(
            bcty <: Base.Broadcast.Broadcasted{<:Base.Broadcast.DefaultArrayStyle} && ndims(bcty) >= 2 &&
            bc_or_array_or_number_ty(bcty, false) && has_array(bcty, false)
            
-                arginfo2 = ArgInfo(
-                    fargs isa Nothing ? nothing :
-                    [:(Enzyme.Compiler.Interpreter.override_bc_foldl), fargs[2:end]...],
-                    [Core.Const(Enzyme.Compiler.Interpreter.override_bc_foldl), argtypes[2:end]...],
-                )
-
-                return Base.@invoke abstract_call_known(
-                    interp::AbstractInterpreter,
-                    Enzyme.Compiler.Interpreter.override_bc_foldl::Any,
-                    arginfo2::ArgInfo,
-                    si::StmtInfo,
-                    sv::AbsIntState,
-                    max_methods::Int,
-                )
+                return redirect_call(interp, f, Enzyme.Compiler.Interpreter.override_bc_foldl, arginfo, si, sv, max_methods, false)
             end
         end
     end
@@ -1546,19 +1536,7 @@ function abstract_call_known(
             widenconst(argtypes[3]) == widenconst(argtypes[2]) && 
             Base.allocatedinline(eltype(widenconst(argtypes[2]))) && Base.isbitstype(eltype(widenconst(argtypes[2])))
 
-            arginfo2 = ArgInfo(
-                fargs isa Nothing ? nothing :
-                [:(Enzyme.Compiler.Interpreter.myunsafe_copyto!), fargs[2:end]...],
-                [Core.Const(Enzyme.Compiler.Interpreter.myunsafe_copyto!), argtypes[2:end]...],
-            )
-            return Base.@invoke abstract_call_known(
-                interp::AbstractInterpreter,
-                Enzyme.Compiler.Interpreter.myunsafe_copyto!::Any,
-                arginfo2::ArgInfo,
-                si::StmtInfo,
-                sv::AbsIntState,
-                max_methods::Int,
-            )
+            return redirect_call(interp, f, Enzyme.Compiler.Interpreter.myunsafe_copyto!, arginfo, si, sv, max_methods, false)
         end
     end
     if interp.broadcast_rewrite && f === Base.materialize && length(argtypes) == 2
@@ -1568,19 +1546,7 @@ function abstract_call_known(
                 if VERSION < v"1.12"
                     if ElType !== Union{} && Base.isconcretetype(ElType)
                         fn2 = Enzyme.Compiler.Interpreter.OverrideBCMaterialize{ElType}()
-                        arginfo2 = ArgInfo(
-                            fargs isa Nothing ? nothing : [:(fn2), fargs[2:end]...],
-                           [Core.Const(fn2), argtypes[2:end]...],
-                        )
-
-                        return Base.@invoke abstract_call_known(
-                            interp::AbstractInterpreter,
-                            fn2::Any,
-                            arginfo2::ArgInfo,
-                            si::StmtInfo,
-                            sv::AbsIntState,
-                            max_methods::Int,
-                        )
+                        return redirect_call(interp, f, fn2, arginfo, si, sv, max_methods, false)
                     end
                 else
                     ret = Core.Compiler.Future{Core.Compiler.CallMeta}()
