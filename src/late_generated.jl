@@ -89,3 +89,8 @@ end
     $(Expr(:meta, :generated_only))
     $(Expr(:meta, :generated, Compiler.deferred_id_generator))
 end
+
+@eval @inline function todense_fnptr_id(f, tt)
+    $(Expr(:meta, :generated_only))
+    $(Expr(:meta, :generated, todense_fnptr_generator))
+end
