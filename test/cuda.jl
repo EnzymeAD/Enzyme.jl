@@ -471,3 +471,38 @@ end
         @test Array(dx) == (name == "view" ? [1.0, 1.0, 0.0, 0.0] : ones(4))
     end
 end
+
+struct MixedDevParams{FT}
+    α::FT
+    β::FT
+end
+
+@noinline function mixed_dev_body!(out, c, p::MixedDevParams, i)
+    @inbounds out[i] = p.α * c[i]^2 + p.β * sin(c[i])
+    return nothing
+end
+
+function mixed_dev_kernel!(out, dout, c, p, dp)
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+    if i <= length(out)
+        autodiff_deferred(
+            Reverse, Const(mixed_dev_body!), Const, Duplicated(out, dout), Const(c),
+            MixedDuplicated(p, pointer(dp)), Const(i),
+        )
+    end
+    return nothing
+end
+
+@testset "MixedDuplicated with a device pointer shadow" begin
+    n = 1024
+    c = rand(n)
+    p = MixedDevParams(2.0, 3.0)
+    out = CUDA.zeros(Float64, n)
+    dout = CUDA.ones(Float64, n)
+    dp = CuArray([MixedDevParams(0.0, 0.0)])
+    @cuda threads = 256 blocks = cld(n, 256) mixed_dev_kernel!(out, dout, CuArray(c), p, dp)
+    res = Array(dp)[1]
+    @test res.α ≈ sum(abs2, c)
+    @test res.β ≈ sum(sin, c)
+    @test Array(out) ≈ @. p.α * c^2 + p.β * sin(c)
+end
