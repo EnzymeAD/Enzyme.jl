@@ -398,3 +398,19 @@ end
     @test dval[] == 1.0
     @test dbox.v === 0.0
 end
+
+typeunstable_view_bcast(g, c) = sum(Base.inferencebarrier(view(g, 1:5)) .* c)
+
+@testset "Broadcast of an uninferred view with another active array" begin
+    # The dynamically dispatched `materialize` receives the lazy broadcast
+    # through a stack slot whose shadow is moved back to the stack after
+    # differentiation; a phi merging pointers into it with pointers into another
+    # shadow must still be rewritten (#3701).
+    g = collect(Float32, 1:20)
+    c = collect(Float32, 1:5)
+    dg = zero(g)
+    dc = zero(c)
+    autodiff(Reverse, typeunstable_view_bcast, Active, Duplicated(g, dg), Duplicated(c, dc))
+    @test dg == [c; zeros(Float32, 15)]
+    @test dc == g[1:5]
+end
