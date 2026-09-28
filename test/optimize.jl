@@ -246,3 +246,28 @@ end
     autodiff(Forward, Const(fwd), Const, Const(x), Const(y))
     @test true
 end
+
+@noinline readonly_arg_norm(c, b) = sqrt(c[1]^2 + c[2]^2 + c[3]^2 + b)
+
+function readonly_arg_loop(s, coords)
+    E = 0.0
+    for i in eachindex(coords)
+        E += readonly_arg_norm(coords[i], s * i)
+    end
+    return E
+end
+
+@testset "Read-only callee reading a reused argument slot" begin
+    # Each tuple is passed through the same stack slot. The reverse pass stores
+    # it again before calling the callee's derivative, which reads it. Marking
+    # that derivative read-only must keep it reading argument memory, or the
+    # stores are dropped and every iteration sees the last tuple.
+    cs = [(i * 0.3, 0.1i^2 % 1.0, 0.2) for i in 1:6]
+    exact = sum(i / (2 * sqrt(sum(abs2, cs[i]) + 1.3i)) for i in 1:6)
+    @test autodiff(Reverse, readonly_arg_loop, Active, Active(1.3), Const(cs))[1][1] ≈ exact
+end
+
+@testset "set_readonly keeps every location" begin
+    RO = Enzyme.Compiler.set_readonly(Enzyme.Compiler.AllEffects)
+    @test RO == Enzyme.Compiler.ReadOnlyEffects
+end
