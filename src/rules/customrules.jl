@@ -1608,6 +1608,22 @@ end
     end
     @safe_debug "Applying custom forward rule" TT = TT, functy = functy
     fmi = my_methodinstance(Forward, functy, TT, world)
+    if fmi === nothing && EnzymeRules.has_split_frule_from_sig(Interpreter.simplify_kw(mi.specTypes); world)
+        # No forward method, but a split forward rule: use the forward rule synthesized from it.
+        stt = collect(Any, TT.parameters)
+        sfuncty = if isKWCall
+            stt[2] = typeof(EnzymeRules.forward_from_split)
+            functy
+        else
+            typeof(EnzymeRules.forward_from_split)
+        end
+        STT = Tuple{stt...}
+        sfmi = my_methodinstance(Forward, sfuncty, STT, world)
+        if sfmi !== nothing
+            @safe_debug "Applying forward rule synthesized from split forward rule" TT = STT
+            fmi, TT, functy = sfmi, STT, sfuncty
+        end
+    end
     if fmi === nothing
         TT = Tuple{typeof(world),functy,TT.parameters...}
         fmi = my_methodinstance(Forward, typeof(custom_rule_method_error), TT, world)

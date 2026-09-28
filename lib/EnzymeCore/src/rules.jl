@@ -4,6 +4,7 @@ import EnzymeCore
 import EnzymeCore: Annotation, Const, Duplicated, BatchDuplicated, Active, Mode
 export RevConfig, RevConfigWidth
 export FwdConfig, FwdConfigWidth
+export FwdSplitConfig, FwdSplitConfigWidth
 export AugmentedReturn
 import ..EnzymeCore: needs_primal
 export needs_primal, needs_shadow, width, overwritten, runtime_activity
@@ -201,6 +202,105 @@ end
 
 
 """
+    FwdSplitConfig{NeedsPrimal, NeedsShadow, Width, Overwritten, RuntimeActivity, StrongZero}
+    FwdSplitConfigWidth{Width} = FwdSplitConfig{<:Any, <:Any, Width}
+
+Configuration type to dispatch on in custom split forward rules (see [`forward_augmented`](@ref)
+and [`forward_tangent`](@ref)).
+* `NeedsPrimal` and `NeedsShadow`: boolean values specifying whether the primal and shadow (resp.) should be returned.
+* `Width`: an integer that specifies the number of shadows simultaneously being propagated.
+* `Overwritten`: a tuple of booleans of whether each argument (including the function itself) is modified between
+  the augmented and the tangent pass.
+* `RuntimeActivity`: whether runtime activity is enabled. See the [FAQ](@ref faq-runtime-activity) for more information.
+* `StrongZero`: whether strong zero is enabled. See the [FAQ](@ref faq-strong-zero) for more information.
+
+Getters for the type parameters are provided by [`needs_primal`](@ref), [`needs_shadow`](@ref),
+[`width`](@ref), [`overwritten`](@ref), `runtime_activity`, and `strong_zero`.
+"""
+struct FwdSplitConfig{NeedsPrimal, NeedsShadow, Width, Overwritten, RuntimeActivity, StrongZero} end
+const FwdSplitConfigWidth{Width} = FwdSplitConfig{<:Any,<:Any,Width}
+
+@inline needs_primal(::FwdSplitConfig{NeedsPrimal}) where NeedsPrimal = NeedsPrimal
+@inline needs_primal(::Type{<:FwdSplitConfig{NeedsPrimal}}) where NeedsPrimal = NeedsPrimal
+@inline needs_shadow(::FwdSplitConfig{<:Any, NeedsShadow}) where NeedsShadow = NeedsShadow
+@inline needs_shadow(::Type{<:FwdSplitConfig{<:Any, NeedsShadow}}) where NeedsShadow = NeedsShadow
+@inline width(::FwdSplitConfig{<:Any, <:Any, Width}) where Width = Width
+@inline width(::Type{<:FwdSplitConfig{<:Any, <:Any, Width}}) where Width = Width
+@inline overwritten(::FwdSplitConfig{<:Any, <:Any, <:Any, Overwritten}) where Overwritten = Overwritten
+@inline overwritten(::Type{<:FwdSplitConfig{<:Any, <:Any, <:Any, Overwritten}}) where Overwritten = Overwritten
+@inline runtime_activity(::FwdSplitConfig{<:Any, <:Any, <:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
+@inline strong_zero(::FwdSplitConfig{<:Any, <:Any, <:Any, <:Any, <:Any, StrongZero}) where StrongZero = StrongZero
+
+@inline primal_type(config::FwdSplitConfig, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
+@inline primal_type(config::Type{<:FwdSplitConfig}, ::Type{<:Annotation{RT}}) where RT = needs_primal(config) ? RT : Nothing
+@inline shadow_type(config::FwdSplitConfig, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
+@inline shadow_type(config::Type{<:FwdSplitConfig}, ::Type{<:Annotation{RT}}) where RT = needs_shadow(config) ? (width(config) == 1 ? RT : NTuple{width(config), RT}) : Nothing
+
+"""
+    forward_augmented(::FwdSplitConfig, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, args::Annotation...)
+
+Augmented pass of a split forward rule, run in place of the original function. It must compute and mutate
+the same values as the original function, exactly once, and save anything [`forward_tangent`](@ref) needs
+in the tape. It must not read the shadows of `args`: their values are only available in the tangent pass.
+
+Must return an [`AugmentedReturn`](@ref):
+* The primal must be the original return if [`needs_primal(config)`](@ref needs_primal), otherwise `nothing`.
+* The shadow must be `nothing` if [`needs_shadow(config)`](@ref needs_shadow) is `false`. Otherwise it is the
+  shadow data structure of the return (the same type as the original return if the width is 1, otherwise an
+  `NTuple` of `width` of them), which [`forward_tangent`](@ref) then fills in place. This is requested when the
+  shadow of the result is already needed before the tangent pass, e.g. for a returned array.
+* The tape can be any type (including `Nothing`) and is passed to [`forward_tangent`](@ref).
+
+Unless the config says that an argument is not [`overwritten`](@ref), rules must assume that the values in
+arrays/data structures may change between the two passes.
+
+A function with both `forward_augmented` and `forward_tangent` methods, but no [`forward`](@ref) method,
+also gets a forward rule synthesized from the two.
+"""
+function forward_augmented end
+
+"""
+    forward_tangent(::FwdSplitConfig, func::Annotation{typeof(f)}, RT::Type{<:Annotation}, tape, args::Annotation...)
+
+Tangent pass of a split forward rule. Given the `tape` from [`forward_augmented`](@ref), propagate the shadows
+of `args`, including writing into shadow memory. It must not repeat side effects of the original function.
+
+The return follows [`forward_rule_return_type`](@ref): the shadow if [`needs_shadow(config)`](@ref needs_shadow),
+else `nothing`. The primal is never requested ([`needs_primal(config)`](@ref needs_primal) is `false`); if
+[`forward_augmented`](@ref) was asked for the shadow, the tangent pass is not, and fills that shadow in place.
+"""
+function forward_tangent end
+
+"""
+    forward_from_split(::FwdConfig, func::Annotation, RT::Type{<:Annotation}, args::Annotation...; kwargs...)
+
+Forward rule synthesized from [`forward_augmented`](@ref) and [`forward_tangent`](@ref). Used for functions
+that have a split forward rule but no [`forward`](@ref) method.
+"""
+@inline function forward_from_split(config::FwdConfig, func::Annotation, ::Type{RT}, args::Vararg{Annotation,N}; kwargs...) where {RT, N}
+    # Nothing can change between the two calls.
+    ow = ntuple(Returns(false), Val(N + 1))
+    W = width(config)
+    aug = forward_augmented(
+        FwdSplitConfig{needs_primal(config), false, W, ow, runtime_activity(config), strong_zero(config)}(),
+        func, RT, args...; kwargs...
+    )
+    shadow = forward_tangent(
+        FwdSplitConfig{false, needs_shadow(config), W, ow, runtime_activity(config), strong_zero(config)}(),
+        func, RT, aug.tape, args...; kwargs...
+    )
+    if needs_primal(config) && needs_shadow(config)
+        return W == 1 ? Duplicated(aug.primal, shadow) : BatchDuplicated(aug.primal, shadow)
+    elseif needs_shadow(config)
+        return shadow
+    elseif needs_primal(config)
+        return aug.primal
+    else
+        return nothing
+    end
+end
+
+"""
     AugmentedReturn(primal, shadow, tape)
 
 Augment the primal return value of a function with its shadow, as well as any additional information needed to correctly
@@ -360,8 +460,26 @@ function has_frule_from_sig(@nospecialize(TT);
                             method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
                             caller::Union{Nothing,Core.MethodInstance}=nothing)::Bool
     ft, tt = _annotate_tt(TT)
-    TT = Tuple{<:FwdConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
-    return isapplicable(forward, TT; world, method_table, caller)
+    FTT = Tuple{<:FwdConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
+    return isapplicable(forward, FTT; world, method_table, caller) ||
+        has_split_frule_from_sig(TT; world, method_table, caller)
+end
+
+"""
+    has_split_frule_from_sig(TT; world, method_table, caller)
+
+Whether the signature `TT` has a split forward rule, i.e. both [`forward_augmented`](@ref) and
+[`forward_tangent`](@ref) methods.
+"""
+function has_split_frule_from_sig(@nospecialize(TT);
+                                  world::UInt=Base.get_world_counter(),
+                                  method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
+                                  caller::Union{Nothing,Core.MethodInstance}=nothing)::Bool
+    ft, tt = _annotate_tt(TT)
+    ATT = Tuple{<:FwdSplitConfig, <:Annotation{ft}, Type{<:Annotation}, tt...}
+    TTT = Tuple{<:FwdSplitConfig, <:Annotation{ft}, Type{<:Annotation}, Any, tt...}
+    return isapplicable(forward_augmented, ATT; world, method_table, caller) &&
+        isapplicable(forward_tangent, TTT; world, method_table, caller)
 end
 
 function has_rrule_from_sig(@nospecialize(TT);
