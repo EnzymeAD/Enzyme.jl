@@ -348,10 +348,12 @@ predecessors gives the alloca only plain loads again.
 
 Only rewrite what is certainly equivalent: a `phi ptr` in address space 0 with an
 alloca among its incoming values, whose users are all non-atomic loads of tracked
-pointers in its own block that no memory write precedes. Each load is re-created
-before the terminator of every predecessor; on an edge whose predecessor has other
-successors that is a speculative load, so it is only done for an alloca-backed
-pointer, which is always dereferenceable.
+pointers, in its own block or in a successor whose only predecessor it is, that no
+memory write precedes. Each load is re-created before the terminator of every
+predecessor. That load is speculative on an edge whose predecessor has other
+successors, and on every edge when the original load is in the successor, so it is
+then only done for a pointer that is always dereferenceable: an alloca, or an
+argument whose `dereferenceable` bytes cover it.
 """
 function unfold_root_phi_loads!(f::LLVM.Function)::Bool
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
@@ -395,7 +397,7 @@ function unfold_root_phi_loads!(f::LLVM.Function)::Bool
             # A write before one of the loads could change what they read: none
             # in this block after the phi, and none in a load's own block before it.
             for inst in instructions(bb)
-                mayWriteToMemory(inst) || continue
+                root_path_may_write(inst) || continue
                 # The first write in this block: a load in a successor, or
                 # after it in this block, may read what it wrote.
                 for (ld, _) in accesses
@@ -409,7 +411,7 @@ function unfold_root_phi_loads!(f::LLVM.Function)::Bool
             for (ld, _) in accesses
                 LLVM.parent(ld) == bb && continue
                 for inst in instructions(LLVM.parent(ld))
-                    mayWriteToMemory(inst) || continue
+                    root_path_may_write(inst) || continue
                     if precedes(inst, ld)
                         ok = false
                     end
@@ -418,10 +420,11 @@ function unfold_root_phi_loads!(f::LLVM.Function)::Bool
             end
             ok || continue
 
-            # A speculative load is only safe from an alloca.
+            # A speculative load needs an always dereferenceable pointer.
+            hoisted = any(((ld, _),) -> LLVM.parent(ld) != bb, accesses)
             for (v, pred) in incs
                 nsucc = length(collect(successors(terminator(pred))))
-                if nsucc != 1 && !isa(first(get_base_and_offset(v)), LLVM.AllocaInst)
+                if (hoisted || nsucc != 1) && !dereferenceable_root_ptr(v)
                     ok = false
                     break
                 end
@@ -490,6 +493,49 @@ function root_block_after(@nospecialize(inst::LLVM.Value), bb::LLVM.BasicBlock):
     ib == bb && return true
     preds = predecessors(ib)
     return length(preds) == 1 && first(preds) == bb
+end
+
+"""
+    root_path_may_write(inst) -> Bool
+
+Whether `inst` may write memory. Unlike `mayWriteToMemory`, which only reads the
+attributes of the call site, a call is also known not to write when its callee is
+read-only, as for intrinsics such as `llvm.smax` that LLVM leaves between a phi
+and the loads it moved into a successor.
+"""
+function root_path_may_write(@nospecialize(inst::LLVM.Instruction))::Bool
+    mayWriteToMemory(inst) || return false
+    if isa(inst, LLVM.CallInst)
+        callee = LLVM.called_operand(inst)
+        if isa(callee, LLVM.Function) && is_readonly(callee)
+            return false
+        end
+    end
+    return true
+end
+
+"""
+    dereferenceable_root_ptr(v) -> Bool
+
+Whether a pointer-sized load from `v` is safe even where the program would not
+have loaded from it: `v` points into an alloca, or at a constant offset into an
+argument whose `dereferenceable` attribute covers the load.
+"""
+function dereferenceable_root_ptr(@nospecialize(v::LLVM.Value))::Bool
+    base, offset = get_base_and_offset(v)
+    isa(base, LLVM.AllocaInst) && return true
+    isa(base, LLVM.Argument) || return false
+    offset >= 0 || return false
+    f = LLVM.Function(LLVM.API.LLVMGetParamParent(base))
+    idx = findfirst(==(base), collect(parameters(f)))
+    idx === nothing && return false
+    derefkind = LLVM.kind(LLVM.EnumAttribute("dereferenceable", 0))
+    for attr in collect(LLVM.parameter_attributes(f, idx))
+        if isa(attr, LLVM.EnumAttribute) && LLVM.kind(attr) == derefkind
+            return offset + sizeof(Int) <= LLVM.value(attr)
+        end
+    end
+    return false
 end
 
 """
