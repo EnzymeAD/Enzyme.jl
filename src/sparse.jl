@@ -187,3 +187,92 @@ end
     d.f(args...)
     return nothing
 end
+
+# Loaders and storers of `sparse_jacobian`, for the column that starts at byte
+# offset `coff`: the seed is that column of the identity, and the shadow of the
+# output collects the non-zero entries of that column of the Jacobian.
+struct JacobianSeed{T} end
+(::JacobianSeed{T})(offset::Int, coff::Int) where {T} = T(offset == coff)
+struct JacobianZero{T} end
+(::JacobianZero{T})(offset::Int, col::Int, acc::Ptr{Cvoid}) where {T} = zero(T)
+jacobian_nostore(val, offset::Int, coff::Int) = nothing
+function jacobian_store(val::T, offset::Int, col::Int, acc::Ptr{Cvoid}) where {T}
+    iszero(val) || sparse_accumulate(jacobian_accumulate!, offset, col, val, acc)
+    return nothing
+end
+@noinline function jacobian_accumulate!(offset::Int, col::Int, val::T, acc::Ptr{Cvoid}) where {T}
+    # A sparsified loop reaches the accumulation at every index that may be
+    # non-zero, whatever the value there.
+    iszero(val) && return nothing
+    entries = unsafe_pointer_to_objref(acc)::Vector{Tuple{Int, Int, T}}
+    push!(entries, (div(offset, sizeof(T)) + 1, col, val))
+    return nothing
+end
+
+# The byte offset of the (0-based) element `i`. Enzyme computes the offsets of
+# accesses the same way, and without the no-wrap flags a comparison of two
+# offsets does not simplify to a comparison of the indices.
+@inline offset_of(::Type{T}, i::Int) where {T} =
+    Base.llvmcall("%3 = mul nuw nsw i64 %0, %1\nret i64 %3", Int, Tuple{Int, Int}, i, sizeof(T))
+
+function sparse_jacobian_driver(f!::F, y::PtrVector{T}, x::PtrVector{T}, acc::Ptr{Cvoid}) where {F, T}
+    n = length(x)
+    m = length(y)
+    # A 0-based column counter is the canonical induction variable that
+    # automatic sparsity requires.
+    for c in 0:(n - 1)
+        dx = todense(T, JacobianSeed{T}(), jacobian_nostore, offset_of(T, c))
+        dy = todense(T, JacobianZero{T}(), jacobian_store, c + 1, acc)
+        autodiff_deferred(Forward, Const(f!), Const, Duplicated(y, PtrVector{T}(dy, m)), Duplicated(x, PtrVector{T}(dx, n)))
+    end
+    return nothing
+end
+
+"""
+    sparse_jacobian(f!, y::DenseVector{T}, x::DenseVector{T}) where {T<:AbstractFloat}
+
+Compute the Jacobian of `f!(y, x)` with respect to `x` as a `SparseMatrixCSC`,
+using forward mode with [`todense`](@ref) seeds. When Enzyme can prove where
+each column of the derivative is non-zero, it only computes those entries, so
+that the cost scales with the number of non-zeros rather than with
+`length(x) * length(y)`.
+
+`f!` is called with `y` and `x` wrapped as [`PtrVector`](@ref)s, so it must
+accept any `AbstractVector`. `y` is overwritten with the value of `f!`.
+
+Enzyme can only skip the zero entries of loops that it can analyze: loops with
+a single exit (bounds checks add exits, so use `@inbounds`) whose accesses are
+affine in the loop counters. Other loops are evaluated densely, with a warning,
+and the result is still exact.
+
+```julia
+julia> function f!(y, x)
+           @inbounds for i in 1:length(x)-1
+               y[i] = x[i] * x[i+1]
+           end
+           @inbounds y[end] = x[end]^2
+           return nothing
+       end;
+
+julia> Enzyme.sparse_jacobian(f!, zeros(3), [1.0, 2.0, 3.0])
+3×3 SparseArrays.SparseMatrixCSC{Float64, Int64} with 5 stored entries:
+ 2.0  1.0   ⋅
+  ⋅   3.0  2.0
+  ⋅    ⋅   6.0
+```
+"""
+function sparse_jacobian(f!::F, y::DenseVector{T}, x::DenseVector{T}) where {F, T <: AbstractFloat}
+    entries = Tuple{Int, Int, T}[]
+    GC.@preserve x y entries begin
+        todense_call(sparse_jacobian_driver, f!, PtrVector(y), PtrVector(x), pointer_from_objref(entries))
+    end
+    # The sparse loops only compute the entries of `y` that they visit.
+    f!(y, x)
+    I = Int[e[1] for e in entries]
+    J = Int[e[2] for e in entries]
+    V = T[e[3] for e in entries]
+    # Each entry records a store to the shadow of `y`, so a later store to the
+    # same element replaces an earlier one (e.g. the partial sums of a
+    # reduction into `y[i]`).
+    return SparseArrays.sparse(I, J, V, length(y), length(x), (a, b) -> b)
+end
