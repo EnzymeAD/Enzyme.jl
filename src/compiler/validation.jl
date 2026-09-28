@@ -411,6 +411,10 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
             originally_tracked_load = true
         end
     elseif isa(addr, LLVM.ConstantInt)
+        # A literal address says nothing about the object it points into (the field offset
+        # is usually folded into it), so there is no telling whether that object can change:
+        # a global `Dict` replaces its memories when it grows, a global `Vector` its ref.
+        check_mutability && return inst
         gname = string(convert(UInt, addr)) * "\$true"
         load1 = true
     end
