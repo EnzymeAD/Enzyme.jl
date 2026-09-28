@@ -2467,6 +2467,25 @@ end
     return nothing
 end
 
+# `invoke_in_world(world, f, args...)` (`_call_in_world` before Julia 1.12) is
+# `_call_latest` with the world in front; the runtime-generic path calls `f`
+# in the current world, as it does for `_call_latest`.
+@register_fwd function invoke_in_world_fwd(B, orig, gutils, normalR, shadowR)
+    @assert LLVM.callconv(orig) == 37
+    return common_apply_latest_fwd(2, B, orig, gutils, normalR, shadowR)
+end
+
+@register_aug function invoke_in_world_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    @assert LLVM.callconv(orig) == 37
+    return common_apply_latest_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
+end
+
+@register_rev function invoke_in_world_rev(B, orig, gutils, tape)
+    @assert LLVM.callconv(orig) == 37
+    common_apply_latest_rev(2, B, orig, gutils, tape)
+    return nothing
+end
+
 function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)

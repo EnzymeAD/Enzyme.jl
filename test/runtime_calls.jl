@@ -65,3 +65,18 @@ end
     @test g ≈ [3.0, 2.0]
 end
 
+
+# A deprecated method warns through `Base.depwarn`, which on Julia 1.13 reaches
+# `jl_eval_globalref` (via `invokelatest_gr`).
+depwarn_new_scale(x) = 2x
+Base.@deprecate depwarn_old_scale(x) depwarn_new_scale(x)
+depwarn_f(x) = depwarn_old_scale(x[1]) * x[1]
+
+@testset "Deprecated call" begin
+    if Base.JLOptions().depwarn != 2
+        x = [3.0]
+        dx = zero(x)
+        autodiff(set_runtime_activity(Reverse), depwarn_f, Active, Duplicated(x, dx))
+        @test dx ≈ [12.0]
+    end
+end
