@@ -273,6 +273,17 @@ end
 
 import GPUCompiler: @safe_debug, @safe_info, @safe_warn, @safe_error
 
+"""
+    EmitTypeNames[] = true
+
+Annotate the IR Enzyme generates with the printed names of the Julia types it
+carries (`enzymejl_parmtype_str`, `enzymejl_allocart_name` and
+`enzymejl_source_type_<T>`), for reading a dumped module. Nothing reads these
+annotations, and printing a type is costly (on Julia 1.12 it searches loaded
+modules for aliases), so they are off by default.
+"""
+const EmitTypeNames = Ref(false)
+
 include("compiler/utils.jl")
 
 include("compiler/orcv2.jl")
@@ -1319,13 +1330,9 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
                         string(convert(UInt, unsafe_to_pointer(arg.typ))),
                     ),
                 )
-                push!(
-                    parameter_attributes(f, arg.codegen.i),
-                    StringAttribute(
-                        "enzymejl_parmtype_str",
-                        string(arg.typ),
-                    ),
-                )
+                if EmitTypeNames[]
+                    push!(parameter_attributes(f, arg.codegen.i), StringAttribute("enzymejl_parmtype_str", string(arg.typ)))
+                end
                 push!(
                     parameter_attributes(f, arg.codegen.i),
                     StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))),
@@ -5239,13 +5246,9 @@ function lower_convention(
                         string(convert(UInt, unsafe_to_pointer(actualRetType))),
                     ),
                 )
-                push!(
-                    return_attributes(wrapper_f),
-                    StringAttribute(
-                        "enzymejl_parmtype_str",
-                        string(actualRetType),
-                    ),
-                )
+                if EmitTypeNames[]
+                    push!(return_attributes(wrapper_f), StringAttribute("enzymejl_parmtype_str", string(actualRetType)))
+                end
                 push!(
                     return_attributes(wrapper_f),
                     StringAttribute(
@@ -5272,13 +5275,9 @@ function lower_convention(
                         string(convert(UInt, unsafe_to_pointer(actualRetType))),
                     ),
                 )
-                push!(
-                    return_attributes(wrapper_f),
-                    StringAttribute(
-                        "enzymejl_parmtype_str",
-                        string(actualRetType),
-                    ),
-                )
+                if EmitTypeNames[]
+                    push!(return_attributes(wrapper_f), StringAttribute("enzymejl_parmtype_str", string(actualRetType)))
+                end
                 push!(
                     return_attributes(wrapper_f),
                     StringAttribute(
@@ -5314,13 +5313,9 @@ function lower_convention(
                         string(convert(UInt, unsafe_to_pointer(expected_RT))),
                     ),
                 )
-                push!(
-                    return_attributes(wrapper_f),
-                    StringAttribute(
-                        "enzymejl_parmtype_str",
-                        string(expected_RT),
-                    ),
-                )
+                if EmitTypeNames[]
+                    push!(return_attributes(wrapper_f), StringAttribute("enzymejl_parmtype_str", string(expected_RT)))
+                end
                 push!(
                     return_attributes(wrapper_f),
                     StringAttribute(
@@ -6179,7 +6174,9 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
                         lRT = convert(LLVMType, RT)
                         if LLVM.sizeof(DL, lRT) == LLVM.sizeof(DL, at)
                             metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
-                            metadata(inst)["enzymejl_allocart_name"] = MDNode(LLVM.Metadata[MDString(string(RT))])
+                            if EmitTypeNames[]
+                                metadata(inst)["enzymejl_allocart_name"] = MDNode(LLVM.Metadata[MDString(string(RT))])
+                            end
                         end
                     end
                 end
@@ -6217,7 +6214,9 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
                     )
                 else
                     metadata(inst)["enzyme_type"] = to_md(ec, ctx)
-                    metadata(inst)["enzymejl_source_type_$(source_typ)"] = MDNode(LLVM.Metadata[])
+                    if EmitTypeNames[]
+                        metadata(inst)["enzymejl_source_type_$(source_typ)"] = MDNode(LLVM.Metadata[])
+                    end
                     metadata(inst)["enzymejl_byref_$(byref)"] = MDNode(LLVM.Metadata[])
             
 @static if VERSION < v"1.11-"

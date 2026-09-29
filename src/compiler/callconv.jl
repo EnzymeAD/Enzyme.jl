@@ -284,7 +284,9 @@ end
             end
             pattrs = parameter_attributes(fn, arg.codegen.i)
             push!(pattrs, StringAttribute("enzymejl_parmtype", string(convert(UInt, unsafe_to_pointer(arg.typ)))))
-            push!(pattrs, StringAttribute("enzymejl_parmtype_str", string(arg.typ)))
+            if EmitTypeNames[]
+                push!(pattrs, StringAttribute("enzymejl_parmtype_str", string(arg.typ)))
+            end
             push!(pattrs, StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))))
             if arg.rooted_typ !== nothing
                 push!(pattrs, StringAttribute("enzymejl_rooted_typ", string(convert(UInt, unsafe_to_pointer(arg.rooted_typ)))))
