@@ -141,7 +141,11 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
                         add!(lpm, LoopDeletionPass())
                     end
                     # todo peeling=false?
-                    add!(fpm, LoopUnrollPass(opt_level = 2, partial = false)) # what opt level?
+                    # Only fully unroll before AD. Runtime unrolling a loop with an
+                    # unknown trip count gives it a strided body and a remainder loop,
+                    # which the reverse pass inherits and the vectorizer after AD turns
+                    # into gathers and scatters.
+                    add!(fpm, LoopUnrollPass(opt_level = 2, partial = false, runtime = false)) # what opt level?
                     add!(fpm, AllocOptPass())
                     add!(fpm, RestoreAllocaType())
                     add!(fpm, SROAPass())
