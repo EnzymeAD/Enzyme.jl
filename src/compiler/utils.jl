@@ -123,7 +123,7 @@ end
 function set_readonly(effect::MemoryEffect)::MemoryEffect
     data = UInt32(0)
     for loc in (ArgMem, InaccessibleMem, Other)
-        data = UInt32(set_readonly(getModRef(effect, loc))) << getLocationPos(loc)
+        data |= UInt32(set_readonly(getModRef(effect, loc))) << getLocationPos(loc)
     end
     return MemoryEffect(data)
 end

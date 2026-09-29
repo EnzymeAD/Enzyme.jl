@@ -398,3 +398,20 @@ end
     @test dval[] == 1.0
     @test dbox.v === 0.0
 end
+
+sum_log(x) = sum(log, x)
+
+function sum_log_gradient!(dx, x)
+    Enzyme.autodiff(Reverse, sum_log, Active, Duplicated(x, dx))
+    return nothing
+end
+
+@testset "Function argument passed through mapreduce" begin
+    # `sum(log, x)` passes `log` through `Base._mapreduce_dim`, which must inline,
+    # otherwise it is invoked despecialized on `log::Function`, dynamically.
+    x = [0.5, 2.0, 4.0]
+    dx = zero(x)
+    sum_log_gradient!(dx, x)
+    @test dx ≈ 1 ./ x
+    @test (@allocated sum_log_gradient!(dx, x)) == 0
+end
