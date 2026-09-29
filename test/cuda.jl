@@ -479,3 +479,21 @@ test/ext/jlarrays.jl for why, and for the rest of the coverage).
         )
     end
 end
+
+# A view or reshape shares the buffer of its parent and retains it. The shadow view
+# releases the shadow buffer when it is finalized, so the shadow buffer must be retained too.
+@testset "view and reshape keep the shadow buffer alive" begin
+    refcount(a) = a.data.rc.count[]
+    @testset "$name" for (name, f) in (
+            ("view", x -> sum(view(x, 1:2))),
+            ("reshape", x -> sum(reshape(x, 2, :))),
+        )
+        x = CUDA.ones(Float64, 4)
+        dx = CUDA.zeros(Float64, 4)
+        autodiff(Reverse, f, Active, Duplicated(x, dx))
+        GC.gc(true)
+        @test refcount(x) == 1
+        @test refcount(dx) == 1
+        @test Array(dx) == (name == "view" ? [1.0, 1.0, 0.0, 0.0] : ones(4))
+    end
+end

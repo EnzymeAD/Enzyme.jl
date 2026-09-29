@@ -169,6 +169,10 @@ include("parallelrules.jl")
             )
             return common_apply_latest_fwd(2, B, orig, gutils, normalR, shadowR)
         end
+        # `invoke_in_world(world, f, args...)`: skip the world operand too
+        if in(name, ("ijl_f_invoke_in_world", "jl_f_invoke_in_world", "ijl_f__call_in_world", "jl_f__call_in_world"))
+            return common_apply_latest_fwd(3, B, orig, gutils, normalR, shadowR)
+        end
         if in(name, ("ijl_new_structv", "jl_new_structv"))
             return common_newstructv_fwd(2, B, orig, gutils, normalR, shadowR)
         end
@@ -264,6 +268,10 @@ end
             )
             return common_apply_latest_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
+        # `invoke_in_world(world, f, args...)`: skip the world operand too
+        if in(name, ("ijl_f_invoke_in_world", "jl_f_invoke_in_world", "ijl_f__call_in_world", "jl_f__call_in_world"))
+            return common_apply_latest_augfwd(3, B, orig, gutils, normalR, shadowR, tapeR)
+        end
         if in(name, ("ijl_new_structv", "jl_new_structv"))
             return common_newstructv_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
@@ -357,6 +365,11 @@ end
                 ),
             )
             common_apply_latest_rev(2, B, orig, gutils, tape)
+            return nothing
+        end
+        # `invoke_in_world(world, f, args...)`: skip the world operand too
+        if in(name, ("ijl_f_invoke_in_world", "jl_f_invoke_in_world", "ijl_f__call_in_world", "jl_f__call_in_world"))
+            common_apply_latest_rev(3, B, orig, gutils, tape)
             return nothing
         end
         if in(name, ("ijl_new_structv", "jl_new_structv"))
@@ -2317,6 +2330,12 @@ end
         @fwdfunc(apply_latest_fwd),
     )
     register_handler!(
+        ("jl_f_invoke_in_world", "jl_f__call_in_world"),
+        @augfunc(invoke_in_world_augfwd),
+        @revfunc(invoke_in_world_rev),
+        @fwdfunc(invoke_in_world_fwd),
+    )
+    register_handler!(
         ("jl_threadsfor",),
         @augfunc(threadsfor_augfwd),
         @revfunc(threadsfor_rev),
@@ -2452,6 +2471,7 @@ end
         (
             "jl_get_binding_or_error", "ijl_get_binding_or_error",
             "jl_get_binding_value_seqcst", "ijl_get_binding_value_seqcst",
+            "jl_eval_globalref", "ijl_eval_globalref",
         ),
         @augfunc(get_binding_or_error_augfwd),
         @revfunc(get_binding_or_error_rev),

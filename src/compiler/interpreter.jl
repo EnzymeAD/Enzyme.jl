@@ -1092,7 +1092,15 @@ end
     end
 end
 
-@inline function override_bc_mapreduce(f, op, ::Base.IndexLinear, A::Base.AbstractArrayOrBroadcasted)
+# The redirect in `abstract_call_known` is only valid once inlined, so this shim
+# must stay `@inline`. The body lives in a separate, not-inlined function so that
+# callers such as `Base._mapreduce_dim`, which only pass `f` along, stay small
+# enough to inline. Otherwise they are compiled despecialized on `f::Function`
+# and called dynamically (e.g. under `sum(log, x)`).
+@inline override_bc_mapreduce(f, op, ::Base.IndexLinear, A::Base.AbstractArrayOrBroadcasted) =
+    bc_mapreduce(f, op, A)
+
+function bc_mapreduce(f::F, op::OP, A::Base.AbstractArrayOrBroadcasted) where {F, OP}
     inds = Base.LinearIndices(A)
     n = length(inds)
     if n == 0

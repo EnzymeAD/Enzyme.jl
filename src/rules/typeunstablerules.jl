@@ -1906,7 +1906,14 @@ function rt_jl_setfield_aug(dptr::T, idx, ::Val{isconst}, val, dval) where {T,is
     state = active_reg_nothrow(RT)
 
     if state == ActiveState
-        setfield!(dptr, idx, make_zero(val))
+        # The shadow field is the adjoint slot for the stored value and is
+        # only consumed (and re-zeroed) in the reverse pass. It may already
+        # hold a seed the caller placed there, so it must not be cleared here.
+        # It only has to be given a zero of the right type when the field is
+        # untyped and currently holds a value of another type (or nothing yet).
+        if !isdefined(dptr, idx) || Core.Typeof(getfield(dptr, idx)) != RT
+            setfield!(dptr, idx, make_zero(val))
+        end
     elseif state == MixedState
         throw(
             AssertionError("$RT has mixed internal activity types. See https://enzyme.mit.edu/julia/stable/faq/#Mixed-activity for more information"),
@@ -1919,8 +1926,12 @@ end
 function rt_jl_setfield_rev(dptr::T, idx, ::Val{isconst}, val, dval) where {T,isconst}
     RT = Core.Typeof(val)
     state = active_reg_nothrow(RT)
-    if state == ActiveState && !isconst
-        dval[] = recursive_add(dval[], getfield(dptr, idx), identity, guaranteed_nonactive)
+    if state == ActiveState
+        if !isconst
+            dval[] = recursive_add(dval[], getfield(dptr, idx), identity, guaranteed_nonactive)
+        end
+        # The store overwrote the field, so no adjoint flows past it to an
+        # earlier store: clear the slot whether or not the value was active.
         setfield!(dptr, idx, make_zero(val))
     end
 end
@@ -1983,10 +1994,13 @@ function common_setfield_rev(offset, B, orig, gutils, tape)
     if !is_constant_value(gutils, origops[2])
         width = get_width(gutils)
 
-        shadowstruct = invert_pointer(gutils, origops[2], B)
+        # Look the batched shadows up before extracting a member: an
+        # extractvalue emitted into the reverse builder has no primal
+        # counterpart, and lookup_value only accepts values of the primal.
+        shadowstruct = lookup_value(gutils, invert_pointer(gutils, origops[2], B), B)
 
         shadowval = if !is_constant_value(gutils, origops[2])
-            invert_pointer(gutils, origops[4], B)
+            lookup_value(gutils, invert_pointer(gutils, origops[4], B), B)
         else
             nothing
         end
@@ -1996,20 +2010,12 @@ function common_setfield_rev(offset, B, orig, gutils, tape)
         # TODO handle runtime activity
         for idx = 1:width
             vals = LLVM.Value[
-                lookup_value(
-                    gutils,
-                    (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx - 1),
-                    B,
-                ),
+                (width == 1) ? shadowstruct : extract_value!(B, shadowstruct, idx - 1),
                 lookup_value(gutils, new_from_original(gutils, origops[3]), B),
                 unsafe_to_llvm(B, Val(is_constant_value(gutils, origops[4]))),
                 lookup_value(gutils, new_from_original(gutils, origops[4]), B),
                 is_constant_value(gutils, origops[4]) ? unsafe_to_llvm(B, nothing) :
-                lookup_value(
-                    gutils,
-                    ((width == 1) ? shadowval : extract_value!(B, shadowval, idx - 1)),
-                    B,
-                ),
+                ((width == 1) ? shadowval : extract_value!(B, shadowval, idx - 1)),
             ]
 
             pushfirst!(vals, unsafe_to_llvm(B, rt_jl_setfield_rev))

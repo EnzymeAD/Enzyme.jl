@@ -708,3 +708,11 @@ end
     res = Enzyme.autodiff(Forward, make_fsq, Duplicated(3.1, 1.0))
     @test res[1] ≈ 1.0f0
 end
+
+@testset "get_return_info on non-concrete tuple returns" begin
+    # A callee invoked through its specialized signature can infer a UnionAll
+    # tuple return type, e.g. `convert(Type{T}, Tuple{Vararg{Any, N}})` returns
+    # `Tuple{Vararg{Any, N}} where N`. Such a value comes back boxed.
+    @test Enzyme.Compiler.get_return_info(Tuple{Vararg{Any, N}} where {N}) == (Any, nothing, nothing)
+    @test Enzyme.Compiler.get_return_info(Tuple{Vector{T}, T} where {T}) == (Any, nothing, nothing)
+end

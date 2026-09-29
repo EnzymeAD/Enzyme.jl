@@ -114,6 +114,12 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, job
     end
 
     function middle_optimize!(second_stage = false)
+        # Infer which functions only write on paths that throw before the loop
+        # passes below run: with EnzymeAD/Enzyme#3264, Enzyme also states this as
+        # LLVM `memory` attributes, which lets LICM hoist loads (e.g. of an array's
+        # `Memory` pointer) past calls to such functions instead of Enzyme having
+        # to cache them per loop iteration.
+        API.EnzymeDetectReadonlyOrThrow(mod)
         return @dispose pb = NewPMPassBuilder() begin
             if tti !== nothing
                 LLVM.target_transform_info!(pb, tti)
@@ -302,6 +308,9 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
             # LoopRotate strips metadata from terminator, so run LowerSIMD afterwards
             add!(lpm, LowerSIMDLoopPass()) # Annotate loop marked with "loopinfo" as LLVM parallel loop
             add!(lpm, LICMPass())
+            # Runtime-activity checks compare loop-invariant pointers inside loops;
+            # hoist them so the loop bodies can vectorize.
+            add!(lpm, SimpleLoopUnswitchPass(; nontrivial = true, trivial = true))
             add!(lpm, JuliaLICMPass())
         end
         add!(fpm, InstCombinePass())

@@ -366,23 +366,25 @@ function unfold_root_phi_loads!(f::LLVM.Function)::Bool
             incs = collect(incoming(phi))
             any(((v, _),) -> isa(first(get_base_and_offset(v)), LLVM.AllocaInst), incs) || continue
 
-            # The users: loads of tracked pointers in this block, directly or
-            # through a GEP with constant indices, before any write.
+            # The users: loads of tracked pointers, directly or through a GEP
+            # with constant indices, before any write. They may sit in this
+            # block, or in a successor whose only predecessor it is (a split
+            # critical edge).
             accesses = Tuple{LLVM.LoadInst, Union{Nothing, LLVM.GetElementPtrInst}}[]
             ok = true
             for u in LLVM.uses(phi)
                 inst = LLVM.user(u)
-                if isa(inst, LLVM.GetElementPtrInst) && LLVM.parent(inst) == bb &&
+                if isa(inst, LLVM.GetElementPtrInst) && root_block_after(inst, bb) &&
                         operands(inst)[1] == phi && all(isa(op, LLVM.ConstantInt) for op in operands(inst)[2:end])
                     for u2 in LLVM.uses(inst)
                         ld = LLVM.user(u2)
-                        if !root_load_in(ld, inst, bb, T_prjlvalue)
+                        if !(root_load_in(ld, inst, LLVM.parent(inst), T_prjlvalue))
                             ok = false
                             break
                         end
                         push!(accesses, (ld, inst))
                     end
-                elseif root_load_in(inst, phi, bb, T_prjlvalue)
+                elseif root_block_after(inst, bb) && root_load_in(inst, phi, LLVM.parent(inst), T_prjlvalue)
                     push!(accesses, (inst, nothing))
                 else
                     ok = false
@@ -390,13 +392,29 @@ function unfold_root_phi_loads!(f::LLVM.Function)::Bool
                 ok || break
             end
             (ok && !isempty(accesses)) || continue
+            # A write before one of the loads could change what they read: none
+            # in this block after the phi, and none in a load's own block before it.
             for inst in instructions(bb)
                 mayWriteToMemory(inst) || continue
-                # A write before one of the loads could change what they read.
-                if any(((ld, _),) -> precedes(inst, ld), accesses)
-                    ok = false
+                # The first write in this block: a load in a successor, or
+                # after it in this block, may read what it wrote.
+                for (ld, _) in accesses
+                    if LLVM.parent(ld) != bb || precedes(inst, ld)
+                        ok = false
+                        break
+                    end
                 end
                 break
+            end
+            for (ld, _) in accesses
+                LLVM.parent(ld) == bb && continue
+                for inst in instructions(LLVM.parent(ld))
+                    mayWriteToMemory(inst) || continue
+                    if precedes(inst, ld)
+                        ok = false
+                    end
+                    break
+                end
             end
             ok || continue
 
@@ -458,6 +476,20 @@ function unfold_root_phi_loads!(f::LLVM.Function)::Bool
         end
     end
     return changed
+end
+
+"""
+    root_block_after(inst, bb)
+
+Whether `inst` is in `bb`, or in a successor of `bb` that has no other
+predecessor, so that `bb` runs right before it.
+"""
+function root_block_after(@nospecialize(inst::LLVM.Value), bb::LLVM.BasicBlock)::Bool
+    isa(inst, LLVM.Instruction) || return false
+    ib = LLVM.parent(inst)
+    ib == bb && return true
+    preds = predecessors(ib)
+    return length(preds) == 1 && first(preds) == bb
 end
 
 """
@@ -642,6 +674,68 @@ function addr13NoAlias(mod::LLVM.Module)
         end
     end
     return true
+end
+
+## given code like
+#  %a = alloca
+#  ...                          (nothing stores to, sets, or copies into %a)
+#  memcpy(%dst, %a + off, n)
+# the copy reads only undefined bytes, so dropping it is a refinement of the
+# program. Julia 1.13 emits exactly this for the tracked slots of an aggregate
+# whose roots travel separately: SROA leaves the slice of the data half that
+# would hold them unwritten and unread, but still copies it into the destination.
+# There is no type to be found for such bytes, so type analysis cannot type the
+# copy; see #3589.
+function erase_memcpy_from_undef!(mod::LLVM.Module)
+    memcpy = LLVM.Intrinsic("llvm.memcpy").id
+    memmove = LLVM.Intrinsic("llvm.memmove").id
+    lstart = LLVM.Intrinsic("llvm.lifetime.start").id
+    lend = LLVM.Intrinsic("llvm.lifetime.end").id
+    for f in functions(mod)
+        isempty(blocks(f)) && continue
+        todel = Set{LLVM.Instruction}()
+        for alloca in instructions(first(blocks(f)))
+            isa(alloca, LLVM.AllocaInst) || continue
+            todo = LLVM.Value[alloca]
+            copies = LLVM.Instruction[]
+            written = false
+            while !isempty(todo) && !written
+                cur = pop!(todo)
+                for u in LLVM.uses(cur)
+                    user = LLVM.user(u)
+                    if isa(user, LLVM.BitCastInst) || isa(user, LLVM.AddrSpaceCastInst) ||
+                            isa(user, LLVM.GetElementPtrInst)
+                        push!(todo, user)
+                        continue
+                    end
+                    if isa(user, LLVM.LoadInst)
+                        continue
+                    end
+                    if isa(user, LLVM.CallInst) && isa(LLVM.called_operand(user), LLVM.Function)
+                        intr = LLVM.API.LLVMGetIntrinsicID(LLVM.called_operand(user))
+                        if intr == lstart || intr == lend
+                            continue
+                        end
+                        if (intr == memcpy || intr == memmove) &&
+                                operands(user)[2] == cur && operands(user)[1] != cur
+                            push!(copies, user)
+                            continue
+                        end
+                    end
+                    # a store, memset, copy into it, or an escape
+                    written = true
+                    break
+                end
+            end
+            if !written
+                union!(todel, copies)
+            end
+        end
+        for inst in todel
+            eraseInst(LLVM.parent(inst), inst)
+        end
+    end
+    return
 end
 
 ## given code like
@@ -1375,7 +1469,7 @@ function nodecayed_phis!(mod::LLVM.Module)
         end
 
         if inactiveRet
-            for idx in length(collect(parameters(f)))
+            for idx in 1:length(parameters(f))
                 inactiveParm = false
                 for attr in collect(parameter_attributes(f, idx))
                     if !isa(attr, LLVM.StringAttribute)

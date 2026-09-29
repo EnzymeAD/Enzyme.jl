@@ -246,3 +246,62 @@ end
     autodiff(Forward, Const(fwd), Const, Const(x), Const(y))
     @test true
 end
+
+@noinline readonly_arg_norm(c, b) = sqrt(c[1]^2 + c[2]^2 + c[3]^2 + b)
+
+function readonly_arg_loop(s, coords)
+    E = 0.0
+    for i in eachindex(coords)
+        E += readonly_arg_norm(coords[i], s * i)
+    end
+    return E
+end
+
+@testset "Read-only callee reading a reused argument slot" begin
+    # Each tuple is passed through the same stack slot. The reverse pass stores
+    # it again before calling the callee's derivative, which reads it. Marking
+    # that derivative read-only must keep it reading argument memory, or the
+    # stores are dropped and every iteration sees the last tuple.
+    cs = [(i * 0.3, 0.1i^2 % 1.0, 0.2) for i in 1:6]
+    exact = sum(i / (2 * sqrt(sum(abs2, cs[i]) + 1.3i)) for i in 1:6)
+    @test autodiff(Reverse, readonly_arg_loop, Active, Active(1.3), Const(cs))[1][1] ≈ exact
+end
+
+@testset "set_readonly keeps every location" begin
+    RO = Enzyme.Compiler.set_readonly(Enzyme.Compiler.AllEffects)
+    @test RO == Enzyme.Compiler.ReadOnlyEffects
+end
+
+# A loop whose body calls a function that only writes on a throwing path (the
+# bounds check) and loads an array's `Memory` pointer: the load must be hoisted,
+# or Enzyme caches a GC pointer per iteration and the tape grows with the loop.
+@noinline lookup_or_throw(r, i) = r[i]
+function sum_squares_indirect(x, r)
+    a = Vector{Float64}(undef, length(x))
+    for i in eachindex(x)
+        j = lookup_or_throw(r, i)
+        a[i] = x[j] * x[j]
+    end
+    return sum(a)
+end
+function sum_squares_indirect_grad!(dx, x, r)
+    Enzyme.autodiff(Reverse, sum_squares_indirect, Active, Duplicated(x, dx), Const(r))
+    return nothing
+end
+
+@testset "Loop-invariant load hoisted past a read-only-or-throw call" begin
+    function bytes(n)
+        x = 0.5 .+ collect(1:n) ./ n
+        r = collect(1:n)
+        dx = zero(x)
+        sum_squares_indirect_grad!(dx, x, r)
+        @test dx ≈ 2 .* x
+        return @allocated sum_squares_indirect_grad!(dx, x, r)
+    end
+    # Only `a` and its shadow may grow with `n`; a per-iteration tape of the
+    # `Memory` pointer and its shadow would double that. Relies on
+    # EnzymeAD/Enzyme#3264 (Enzyme_jll 0.0.296), which states
+    # `enzyme_ReadOnlyOrThrow` in LLVM memory attributes so that LICM can hoist
+    # the load past `lookup_or_throw`.
+    @test bytes(2000) - bytes(10) < 3 * sizeof(Float64) * (2000 - 10)
+end

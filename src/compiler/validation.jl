@@ -379,6 +379,15 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     return errors
 end
 
+function is_nonconst_binding(addr::UInt)
+    addr == 0 && return false
+    tag = Base.unsafe_load(Base.reinterpret(Ptr{UInt}, addr - sizeof(UInt))) & ~UInt(15)
+    tag == UInt(Base.pointer_from_objref(Core.Binding)) || return false
+    b = Base.unsafe_pointer_to_objref(Base.reinterpret(Ptr{Cvoid}, addr))::Core.Binding
+    gr = b.globalref
+    return !isconst(gr.mod, gr.name)
+end
+
 function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check_mutability::Bool = true, do_replace::Bool = true)::LLVM.Value
     if !(isa(value_type(inst), LLVM.PointerType) && addrspace(value_type(inst)) == Tracked)
         return inst
@@ -411,6 +420,12 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
             originally_tracked_load = true
         end
     elseif isa(addr, LLVM.ConstantInt)
+        # On Julia 1.10 a global read is a raw load from the `jl_binding_t*`
+        # (`value` is its first field). Folding that load freezes the value the
+        # global had at compile time, so only do it for `const` bindings.
+        if check_mutability && off == 0 && is_nonconst_binding(convert(UInt, addr))
+            return inst
+        end
         gname = string(convert(UInt, addr)) * "\$true"
         load1 = true
     end
@@ -730,6 +745,10 @@ const generic_method_offsets = Dict{String, Tuple{Int, Int}}(
         "ijl_f__call_latest" => (2, 3),
         "jl_f_invokelatest" => (2, 3),
         "ijl_f_invokelatest" => (2, 3),
+        "jl_f_invoke_in_world" => (3, 4),
+        "ijl_f_invoke_in_world" => (3, 4),
+        "jl_f__call_in_world" => (3, 4),
+        "ijl_f__call_in_world" => (3, 4),
         "jl_f_invoke" => (2, 3),
         "jl_invoke" => (1, 3),
         "jl_apply_generic" => (1, 2),
