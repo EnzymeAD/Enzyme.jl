@@ -2042,3 +2042,24 @@ end
     autodiff(Reverse, result_ok_caller, Duplicated(x, dx), Const(1))
     @test dx ≈ [1.0, 1.0]
 end
+
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3697
+# A non-const global must be read at runtime, not folded to its compile-time value.
+module MutableGlobal3697
+counter = 5000
+@noinline function bump()
+    global counter += 1
+    return counter
+end
+end
+
+mutable_global_3697(x) = x * MutableGlobal3697.bump()
+
+@testset "Non-const global is not folded" begin
+    for _ in 1:3
+        c = MutableGlobal3697.counter
+        @test autodiff(Reverse, mutable_global_3697, Active, Active(2.0))[1][1] == c + 1
+        @test MutableGlobal3697.counter == c + 1
+        MutableGlobal3697.bump()
+    end
+end
