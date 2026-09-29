@@ -47,7 +47,8 @@ end
 # heterogeneous field otherwise shares one SSA value between distinct layouts,
 # causing Enzyme's path-insensitive type analysis to combine their pointer depths.
 # Preserve the original checked read and type test; only rematerialize the
-# already-checked field where the original read strictly dominates the type arm.
+# already-checked field where the original read strictly dominates the type arm,
+# and only redirect uses that the new read dominates.
 function narrow_tuple_fields!(mod::LLVM.Module)
     changed = 0
     for f in functions(mod)
@@ -63,40 +64,7 @@ function narrow_tuple_fields!(mod::LLVM.Module)
         end
         isempty(tests) && continue
 
-        preds = Dict{LLVM.BasicBlock, Vector{LLVM.BasicBlock}}()
-        dom = Dict{LLVM.BasicBlock, Set{LLVM.BasicBlock}}()
-        for bb in bbs
-            preds[bb] = LLVM.BasicBlock[]
-            dom[bb] = Set(bbs)
-        end
-        for bb in bbs
-            term = terminator(bb)
-            term === nothing && continue
-            for i in 0:(Int(LLVM.API.LLVMGetNumSuccessors(term)) - 1)
-                dest = LLVM.BasicBlock(LLVM.API.LLVMGetSuccessor(term, i))
-                push!(preds[dest], bb)
-            end
-        end
-        dom[first(bbs)] = Set([first(bbs)])
-        more = true
-        while more
-            more = false
-            for bb in Iterators.drop(bbs, 1)
-                next = Set{LLVM.BasicBlock}()
-                if !isempty(preds[bb])
-                    union!(next, dom[first(preds[bb])])
-                    for pred in Iterators.drop(preds[bb], 1)
-                        intersect!(next, dom[pred])
-                    end
-                end
-                push!(next, bb)
-                if next != dom[bb]
-                    dom[bb] = next
-                    more = true
-                end
-            end
-        end
-
+        tree = LLVM.DomTree(f)
         for (term, source) in tests
             users = Set{LLVM.Value}()
             for use in LLVM.uses(source)
@@ -107,34 +75,39 @@ function narrow_tuple_fields!(mod::LLVM.Module)
                 push!(successors, LLVM.BasicBlock(LLVM.API.LLVMGetSuccessor(term, i)))
             end
             for succ in successors
-                LLVM.parent(source) != succ && LLVM.parent(source) in dom[succ] || continue
-                scoped = LLVM.Instruction[]
+                LLVM.parent(source) != succ || continue
+                anchor = nothing
+                for inst in instructions(succ)
+                    inst isa LLVM.PHIInst && continue
+                    anchor = inst
+                    break
+                end
+                LLVM.dominates(tree, source, anchor) || continue
+                builder = IRBuilder()
+                position!(builder, anchor)
+                clone = LLVM.Value(LLVM.API.LLVMInstructionClone(source))
+                LLVM.API.LLVMInsertIntoBuilderWithName(builder, clone, "tuplefield.narrow")
+                dispose(builder)
+                replaced = false
                 for user in users
                     # PHI operands are used on incoming edges, not in their block.
                     user isa LLVM.Instruction && !(user isa LLVM.PHIInst) || continue
-                    succ in dom[LLVM.parent(user)] || continue
-                    push!(scoped, user)
-                end
-                isempty(scoped) && continue
-                builder = IRBuilder()
-                for inst in instructions(succ)
-                    inst isa LLVM.PHIInst && continue
-                    position!(builder, inst)
-                    break
-                end
-                clone = LLVM.Value(LLVM.API.LLVMInstructionClone(source))
-                LLVM.API.LLVMInsertIntoBuilderWithName(builder, clone, "tuplefield.narrow")
-                for user in scoped
+                    LLVM.dominates(tree, clone, user) || continue
                     for i in 1:length(operands(user))
                         if operands(user)[i] == source
                             LLVM.API.LLVMSetOperand(user, i - 1, clone)
+                            replaced = true
                         end
                     end
                 end
-                changed += 1
-                dispose(builder)
+                if replaced
+                    changed += 1
+                else
+                    LLVM.API.LLVMInstructionEraseFromParent(clone)
+                end
             end
         end
+        dispose(tree)
     end
     return changed
 end
