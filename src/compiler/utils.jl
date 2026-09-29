@@ -1,4 +1,16 @@
 
+"""
+    EmitTypeNames[] = true
+
+Also write the printed Julia type next to each type Enzyme records in the IR (the
+`enzymejl_parmtype_str` attribute, and the `enzymejl_source_type_<T>` and
+`enzymejl_allocart_name` metadata). Nothing reads these names; they are for reading IR
+dumps. They are off by default because printing a type is slow: on Julia 1.12 it looks
+through module bindings for an alias of the type, and Enzyme records types for most
+instructions of every function it compiles.
+"""
+const EmitTypeNames = Ref(false)
+
 @enum(AllocFnKindEnum,
       AFKE_Unknown = 0,
       AFKE_Alloc = 1,
