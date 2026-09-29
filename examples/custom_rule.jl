@@ -236,11 +236,6 @@ end
 # * Finally, since all derivatives are accumulated *in place* (in the shadows of the [`Duplicated`](@ref) arguments), these derivatives must not be communicated via the return value.
 #   Hence, we return `(nothing, nothing)`. If, instead, one of our arguments was annotated as [`Active`](@ref), we would have to provide its derivative at the corresponding index in the tuple returned.
 
-# !!! warning "`Active` does not mean the caller wants that derivative"
-#     [`Active`](@ref) means only that Enzyme could not prove the argument inactive, and activity analysis over-approximates.
-#     The same fixed value can reach a rule as [`Const`](@ref) from one call site and as [`Active`](@ref) from another, so a rule that refuses or errors because an argument is `Active` will reject correct user code depending only on how the call is wrapped.
-#     Forward mode is different, since shadows there are values and `iszero(x.dval)` is an exact test.
-
 # Finally, let's see our reverse rule in action!
 
 x  = [3.0, 1.0]
