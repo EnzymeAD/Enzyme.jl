@@ -249,6 +249,32 @@ end
     @test all(dA .≈ -sin(1.f0))
 end
 
+# `Base.fma` asks `julia.cpu.have_fma` whether the device fuses a multiply-add (see "Metal fma" in
+# metal.jl). CUDA.jl overrides `fma` and `expm1` with libdevice's `__nv_fma` and `__nv_expm1`, so
+# these kernels don't reach `julia.cpu.have_fma`; they check that differentiating them still works.
+function fma_gpu!(y, x, f)
+    i = threadIdx().x
+    @inbounds y[i] = f(x[i])
+    return nothing
+end
+
+function ∇fma_gpu!(y, ȳ, x, x̄, f)
+    Enzyme.autodiff_deferred(Reverse, Const(fma_gpu!), Const, Duplicated(y, ȳ), Duplicated(x, x̄), Const(f))
+    return nothing
+end
+
+@testset "CUDA fma, $T" for T in (Float32, Float64)
+    x = T[0.1, 0.5, 1.5, 2.0]
+    @testset "$name" for (name, f, df) in (
+            ("fma", v -> fma(v, 2 * one(v), one(v)), v -> 2 * one(v)),
+            ("expm1", expm1, exp),
+        )
+        x̄ = CUDA.zeros(T, 4)
+        @cuda threads = 4 ∇fma_gpu!(CUDA.zeros(T, 4), CUDA.ones(T, 4), CuArray(x), x̄, f)
+        @test Array(x̄) ≈ df.(x)
+    end
+end
+
 function val_kernel!(_, ::Val{N}) where N
     return nothing
 end
