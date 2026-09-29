@@ -40,7 +40,7 @@ import Enzyme:
     arg_operands_view
 
 using Enzyme
-using ScopedValues: @with
+using ScopedValues: ScopedValue, @with
 
 import EnzymeCore
 import EnzymeCore: EnzymeRules, ABI, FFIABI, DefaultABI
@@ -142,6 +142,15 @@ end
 struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
     mode::API.CDerivativeMode
 end
+
+"""
+    SPARSITY_COMPILATION
+
+Whether the compilation running in the current dynamic scope is for code that
+uses [`Enzyme.todense`](@ref). Such code keeps its loops rolled until Enzyme
+has rewritten them to be sparse.
+"""
+const SPARSITY_COMPILATION = ScopedValue(false)
 
 function EnzymeCompilerParams(TT, mode, width, rt, run_enzyme, abiwrap,
                               modifiedBetween, returnPrimal, shadowInit,
@@ -2610,6 +2619,10 @@ function __init__()
     register_alloc_rules()
     register_llvm_rules()
 end
+
+# A primal job compiled separately and linked into its parent (see `Enzyme.todense`)
+# keeps its own parameters.
+GPUCompiler.nest_params(params::PrimalCompilerParams, ::AbstractCompilerParams) = params
 
 # FIXME: Use params.parent in more places where we rely on the behavior of the underlying 
 function GPUCompiler.nest_params(params::AbstractEnzymeCompilerParams, parent::AbstractCompilerParams)
@@ -6439,7 +6452,6 @@ end
 
     if params.run_enzyme
         # Generate the adjoint
-        erase_memcpy_from_undef!(mod)
         memcpy_alloca_to_loadstore(mod, job.world)
         force_recompute!(mod)
         API.EnzymeDetectReadonlyOrThrow(mod)
@@ -7925,6 +7937,47 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
 end
 
 # The generated wrapper `thunk` is defined in src/late_generated.jl; see the note there.
+
+"""
+    primal_thunk(f, tt::Type{<:Tuple}, world = Base.get_world_counter())
+
+Compile `f(::tt...)` with Enzyme's compiler, without differentiating it, and
+return a thunk that calls it with `Const` arguments. Code compiled this way can
+call `autodiff_deferred` and use [`Enzyme.todense`](@ref) pointers.
+"""
+function primal_thunk(f::F, @nospecialize(tt::Type{<:Tuple}), world::UInt = Base.get_world_counter()) where {F}
+    FA = Const{F}
+    TT = Tuple{map(T -> Const{T}, tt.parameters)...}
+    mi = my_methodinstance(Forward, F, tt, world)
+    mi === nothing && throw(MethodError(f, tt, world))
+    params = EnzymeCompilerParams(
+        Tuple{FA, TT.parameters...},
+        API.DEM_ForwardMode,
+        1,
+        Const{Nothing},
+        false, #=run_enzyme=#
+        true, #=abiwrap=#
+        ntuple(_ -> false, length(tt.parameters) + 1),
+        false, #=returnPrimal=#
+        false, #=shadowInit=#
+        UnknownTapeType,
+        FFIABI,
+        false, #=err_if_func_written=#
+        false, #=runtimeActivity=#
+        false, #=strongZero=#
+    )
+    job = CompilerJob(mi, CompilerConfig(EnzymeTarget(), params; kernel = false), world)
+    ts_ctx = JuliaContext()
+    ctx = context(ts_ctx)
+    activate(ctx)
+    compile_result = try
+        cached_compilation(job)
+    finally
+        deactivate(ctx)
+        dispose(ts_ctx)
+    end
+    return PrimalErrorThunk{typeof(compile_result.adjoint), FA, Const{Nothing}, TT, 1, false}(compile_result.adjoint)
+end
 
 import GPUCompiler: deferred_codegen_jobs
 
