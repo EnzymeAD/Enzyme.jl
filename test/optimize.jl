@@ -305,3 +305,36 @@ end
     # the load past `lookup_or_throw`.
     @test bytes(2000) - bytes(10) < 3 * sizeof(Float64) * (2000 - 10)
 end
+
+function horner_loop(x, n)
+    s = 0.0
+    for _ in 1:n
+        s = s * x + 1.0
+    end
+    return s
+end
+function horner_fixed(x)
+    s = 0.0
+    for _ in 1:8
+        s = s * x + 1.0
+    end
+    return s
+end
+pre_ad_ir(f, types) = sprint() do io
+    Enzyme.Compiler.enzyme_code_llvm(io, f, Active, types; run_enzyme = false, second_stage = false)
+end
+
+@testset "Unrolling before AD" begin
+    # A loop with a runtime trip count is not runtime unrolled, as the reverse
+    # pass inherits the loop's shape.
+    ir = pre_ad_ir(horner_loop, Tuple{Active{Float64}, Const{Int}})
+    @test count("fmul", ir) == 1
+    # A loop with a small constant trip count is still fully unrolled.
+    ir = pre_ad_ir(horner_fixed, Tuple{Active{Float64}})
+    @test count("fmul", ir) == 8
+
+    # d/dx of sum_{k=0}^{n-1} x^k
+    x = 0.5
+    @test autodiff(Reverse, horner_loop, Active, Active(x), Const(9))[1][1] ≈ sum(k * x^(k - 1) for k in 1:8)
+    @test autodiff(Reverse, horner_fixed, Active, Active(x))[1][1] ≈ sum(k * x^(k - 1) for k in 1:7)
+end
