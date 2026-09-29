@@ -529,7 +529,9 @@ function dereferenceable_root_ptr(@nospecialize(v::LLVM.Value))::Bool
     f = LLVM.Function(LLVM.API.LLVMGetParamParent(base))
     idx = findfirst(==(base), collect(parameters(f)))
     idx === nothing && return false
-    derefkind = LLVM.kind(LLVM.EnumAttribute("dereferenceable", 0))
+    # Look the kind up by name: building a `dereferenceable` attribute with value 0
+    # asserts on LLVM 15.
+    derefkind = LLVM.API.LLVMGetEnumAttributeKindForName("dereferenceable", Csize_t(15))
     for attr in collect(LLVM.parameter_attributes(f, idx))
         if isa(attr, LLVM.EnumAttribute) && LLVM.kind(attr) == derefkind
             return offset + sizeof(Int) <= LLVM.value(attr)
