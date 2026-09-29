@@ -338,3 +338,30 @@ end
     @test autodiff(Reverse, horner_loop, Active, Active(x), Const(9))[1][1] ≈ sum(k * x^(k - 1) for k in 1:8)
     @test autodiff(Reverse, horner_fixed, Active, Active(x))[1][1] ≈ sum(k * x^(k - 1) for k in 1:7)
 end
+
+function sum_squares_ptr(x)
+    s = 0.0
+    # Load through a pointer so the loop has no bounds checks, and vectorizes
+    # also under `--check-bounds=yes`.
+    GC.@preserve x begin
+        p = pointer(x)
+        @simd for i in 1:length(x)
+            s += abs2(unsafe_load(p, i))
+        end
+    end
+    return s
+end
+
+@testset "Reverse loop vectorizes without gathers" begin
+    x = collect(1.0:100.0)
+    dx = zero(x)
+    autodiff(Reverse, sum_squares_ptr, Active, Duplicated(x, dx))
+    @test dx ≈ 2 .* x
+    # Unrolling the reverse loop before vectorizing it left a strided loop that
+    # the vectorizer could only vectorize with gathers and scatters.
+    ir = sprint() do io
+        Enzyme.Compiler.enzyme_code_llvm(io, sum_squares_ptr, Active, Tuple{Duplicated{Vector{Float64}}})
+    end
+    @test !occursin("masked.gather", ir)
+    @test !occursin("masked.scatter", ir)
+end
