@@ -2713,6 +2713,8 @@ const DumpPreEnzyme = Ref(false)
 const DumpPostEnzyme = Ref(false)
 const DumpPostWrap = Ref(false)
 
+include("compiler/narrow_tuple_fields.jl")
+
 function enzyme!(
     job::CompilerJob,
     interp,
@@ -2731,6 +2733,7 @@ function enzyme!(
     boxedArgs::Set{Int},
     removedRoots::Set{Int},
 )
+    narrow_tuple_fields!(mod)
     if DumpPreEnzyme[]
         API.EnzymeDumpModuleRef(mod.ref)
     end
