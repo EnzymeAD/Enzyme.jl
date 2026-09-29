@@ -166,7 +166,7 @@ g(y, x) = f(y, x)^2 # function to differentiate
 # !!! warning "Runtime activity aliases an inactive argument's shadow to its primal"
 #     The `x isa Const` test above is not the whole test under [runtime activity](@ref faq-runtime-activity), where an argument that is inactive at run time is passed with its shadow aliased to its primal.
 #     A rule reading `x.dval` then reads the primal rather than a tangent and adds it to the derivative, giving a result that is finite, plausible and wrong.
-#     The full test is `x isa Const || (EnzymeRules.runtime_activity(config) && x.dval === x.val)`, which is the check Enzyme's own `mul!` rules make (see `src/internal_rules/linalg.jl`).
+#     As an example, for a rule that takes Julia Arrays, this can be checked using `x isa Const || (EnzymeRules.runtime_activity(config) && x.dval === x.val)`, (see `src/internal_rules/linalg.jl`).
 
 # Note that there are also exist batched duplicated annotations for forward mode, namely [`BatchDuplicated`](@ref)
 # and [`BatchDuplicatedNoNeed`](@ref), which are not covered in this tutorial.
