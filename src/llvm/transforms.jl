@@ -874,6 +874,7 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module, world::UInt)
                         metadata(src)["enzyme_type"] = to_md(ec, ctx)
                         metadata(src)["enzymejl_source_type_$(source_typ)"] = MDNode(LLVM.Metadata[])
                         metadata(src)["enzymejl_byref_$(byref)"] = MDNode(LLVM.Metadata[])
+                        mark_load_dereferenceable!(src, source_typ, byref)
 
                         @static if VERSION < v"1.11-"
                         else
