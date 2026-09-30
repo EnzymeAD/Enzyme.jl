@@ -60,23 +60,23 @@ end
             enzyme_ctx = Enzyme.Compiler.EnzymeContext(world)
             Enzyme.Compiler.record_julia_values!(enzyme_ctx, job, meta)
             nchecked = 0
-            for f in LLVM.functions(mod), bb in LLVM.blocks(f), inst in LLVM.instructions(bb)
+            for f in mod.functions, bb in f.blocks, inst in bb.instructions
                 isa(inst, LLVM.LoadInst) || continue
-                gv = LLVM.operands(inst)[1]
-                isa(gv, LLVM.GlobalVariable) && LLVM.name(gv) in slots || continue
-                LLVM.initializer(gv) === nothing || continue
-                for u in LLVM.uses(inst)
-                    user = LLVM.user(u)
+                gv = inst.operands[1]
+                isa(gv, LLVM.GlobalVariable) && gv.name in slots || continue
+                gv.initializer === nothing || continue
+                for u in inst.uses
+                    user = u.user
                     isa(user, LLVM.Instruction) || continue
-                    T = LLVM.value_type(user)
-                    isa(T, LLVM.PointerType) && LLVM.addrspace(T) == Enzyme.Compiler.Tracked || continue
+                    T = user.value_type
+                    isa(T, LLVM.PointerType) && T.addrspace == Enzyme.Compiler.Tracked || continue
                     folded = Enzyme.Compiler.try_replace_constant_load!(user, enzyme_ctx; do_replace = false)
                     folded === user && continue # e.g. a mutable object, which is not folded
-                    @test startswith(LLVM.name(folded), "ejl_inserted")
+                    @test startswith(folded.name, "ejl_inserted")
                     legal, val = Enzyme.Compiler.absint(folded, enzyme_ctx)
                     @test legal
                     addr = UInt(ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), val))
-                    @test !occursin(string(addr), LLVM.name(folded))
+                    @test !occursin(string(addr), folded.name)
                     nchecked += 1
                 end
             end
@@ -102,21 +102,21 @@ end
         fn = LLVM.Function(mod, "f", LLVM.FunctionType(LLVM.Int1Type(), [T_prjlvalue, LLVM.Int1Type()]))
         LLVM.IRBuilder() do B
             entry, other, join = (LLVM.BasicBlock(fn, n) for n in ("entry", "other", "join"))
-            LLVM.position!(B, entry)
-            LLVM.br!(B, LLVM.parameters(fn)[2], join, other)
-            LLVM.position!(B, other)
+            LLVM.position!(B, LLVM.at_end(entry))
+            LLVM.br!(B, fn.parameters[2], join, other)
+            LLVM.position!(B, LLVM.at_end(other))
             LLVM.br!(B, join)
-            LLVM.position!(B, join)
+            LLVM.position!(B, LLVM.at_end(join))
             # Used directly, through a phi, and through constant expressions.
             phi = LLVM.phi!(B, T_prjlvalue)
-            append!(LLVM.incoming(phi), [(gv, entry), (LLVM.parameters(fn)[1], other)])
+            append!(phi.incoming, [(gv, entry), (fn.parameters[1], other)])
             # Typed pointers (Julia 1.10, or a context without opaque pointers) want the casts.
             bytes = LLVM.const_bitcast(gv, LLVM.PointerType(T_int8, Enzyme.Compiler.Tracked))
             field = LLVM.const_inbounds_gep(T_int8, bytes, [LLVM.ConstantInt(Int64(8))])
             field = LLVM.bitcast!(B, field, LLVM.PointerType(T_prjlvalue, Enzyme.Compiler.Tracked))
             loaded = LLVM.load!(B, T_prjlvalue, LLVM.addrspacecast!(B, field, LLVM.PointerType(T_prjlvalue, Enzyme.Compiler.Derived)))
             same = LLVM.icmp!(B, LLVM.API.LLVMIntEQ, phi, loaded)
-            LLVM.ret!(B, LLVM.and!(B, same, LLVM.icmp!(B, LLVM.API.LLVMIntEQ, LLVM.parameters(fn)[1], gv)))
+            LLVM.ret!(B, LLVM.and!(B, same, LLVM.icmp!(B, LLVM.API.LLVMIntEQ, fn.parameters[1], gv)))
         end
         @test LLVM.verify(mod) === nothing
 
@@ -124,10 +124,10 @@ end
             relocs = GPUCompiler.Relocations()
             Enzyme.Compiler.relocate_julia_value_globals!(mod, relocs, enzyme_ctx.inserted_values)
             @test LLVM.verify(mod) === nothing
-            @test !haskey(LLVM.globals(mod), "ejl_" * key)
+            @test !haskey(mod.globals, "ejl_" * key)
             slot_name = "ejl_slot_" * GPUCompiler.safe_name(key)
-            @test haskey(LLVM.globals(mod), slot_name)
-            @test LLVM.initializer(LLVM.globals(mod)[slot_name]) === nothing
+            @test haskey(mod.globals, slot_name)
+            @test (mod.globals[slot_name]).initializer === nothing
             rec = only(relocs.records)
             @test rec.name == slot_name
             @test rec.target isa GPUCompiler.JuliaValueRef
@@ -155,18 +155,18 @@ end
         mod = LLVM.Module("device")
         fn = LLVM.Function(mod, "f", LLVM.FunctionType(LLVM.VoidType()))
         B = LLVM.IRBuilder()
-        LLVM.position!(B, LLVM.BasicBlock(fn, "entry"))
+        LLVM.position!(B, LLVM.at_end(LLVM.BasicBlock(fn, "entry")))
         function boxed_slot(name, hdr::UInt, val)
             bytes = collect(reinterpret(UInt8, [val]))
             init = LLVM.ConstantStruct([LLVM.ConstantInt(T_word, hdr), LLVM.ConstantDataArray(T_i8, bytes)])
-            box = LLVM.GlobalVariable(mod, LLVM.value_type(init), name * "_box")
-            LLVM.initializer!(box, init)
-            LLVM.constant!(box, true)
-            payload = LLVM.const_gep(LLVM.value_type(init), box, LLVM.Constant[LLVM.ConstantInt(Int32(0)), LLVM.ConstantInt(Int32(1))])
+            box = LLVM.GlobalVariable(mod, init.value_type, name * "_box")
+            box.initializer = init
+            box.constant = true
+            payload = LLVM.const_gep(init.value_type, box, LLVM.Constant[LLVM.ConstantInt(Int32(0)), LLVM.ConstantInt(Int32(1))])
             slot = LLVM.GlobalVariable(mod, T_pjlvalue, name)
-            LLVM.initializer!(slot, LLVM.const_pointercast(payload, T_pjlvalue))
-            LLVM.constant!(slot, true)
-            LLVM.metadata(slot)["julia.constgv"] = LLVM.MDNode(LLVM.Metadata[])
+            slot.initializer = LLVM.const_pointercast(payload, T_pjlvalue)
+            slot.constant = true
+            slot.metadata["julia.constgv"] = LLVM.MDNode(LLVM.Metadata[])
             load = LLVM.addrspacecast!(B, LLVM.load!(B, T_pjlvalue, slot), T_prjlvalue)
             return slot, load
         end

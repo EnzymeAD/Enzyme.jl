@@ -25,7 +25,7 @@ function to_tape_type(Type::LLVM.API.LLVMTypeRef)::Tuple{DataType,Bool}
         addrspace = LLVM.API.LLVMGetPointerAddressSpace(Type)
         if 10 <= addrspace <= 12
             return Any, true
-        elseif LLVM.is_opaque(LLVM.PointerType(Type))
+        elseif LLVM.isopaque(LLVM.PointerType(Type))
             return Core.LLVMPtr{Cvoid,Int(addrspace)}, false
         else
             e = LLVM.API.LLVMGetElementType(Type)

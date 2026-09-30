@@ -1922,7 +1922,7 @@ function generic_setup(
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
     if firstconst && !firstconst_after_tape
-        val = new_from_original(gutils, operands(orig)[start])
+        val = new_from_original(gutils, orig.operands[start])
         if lookup
             val = lookup_value(gutils, val, B)
         end
@@ -1995,7 +1995,7 @@ function generic_setup(
     end
 
     if firstconst && firstconst_after_tape
-        val = new_from_original(gutils, operands(orig)[start])
+        val = new_from_original(gutils, orig.operands[start])
         if lookup
             val = lookup_value(gutils, val, B)
         end
@@ -2028,7 +2028,7 @@ function generic_setup(
     etup0 = emit_tuple!(B, ActivityList, enzyme_ctx)
     etup = emit_apply_type!(B, Base.Val, LLVM.Value[etup0], enzyme_ctx)
     if isa(etup, LLVM.Instruction)
-        @assert length(collect(LLVM.uses(etup0))) == 1
+        @assert length(collect(etup0.uses)) == 1
     end
     pushfirst!(vals, etup)
 
@@ -2038,8 +2038,8 @@ function generic_setup(
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
     for v in vals
-       if value_type(v) != T_prjlvalue
-          if value_type(v) isa LLVM.PointerType && LLVM.addrspace(value_type(v)) == Tracked
+       if v.value_type != T_prjlvalue
+          if v.value_type isa LLVM.PointerType && v.value_type.addrspace == Tracked
              continue
           end
           throw(AssertionError("Illegal generic_setup, expected all arguments to by jlvaluet, found $(string(v)), within $(vals), orig=$(string(orig))"))
@@ -2103,7 +2103,7 @@ function common_generic_fwd(offset, B, orig, gutils, normalR, shadowR)
                 LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(1)])
             shadow = LLVM.load!(B, T_prjlvalue, gep)
         else
-            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type))
             shadow = LLVM.UndefValue(ST)
             for i = 1:width
                 gep = LLVM.inbounds_gep!(
@@ -2135,7 +2135,7 @@ function common_generic_fwd(offset, B, orig, gutils, normalR, shadowR)
 end
 
 @register_fwd function generic_fwd(B, orig, gutils, normalR, shadowR)
-    conv = LLVM.callconv(orig)
+    conv = orig.callconv
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
     @assert conv == 37
     common_generic_fwd(1, B, orig, gutils, normalR, shadowR)
@@ -2185,7 +2185,7 @@ function common_generic_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
                 LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(1)])
             shadow = LLVM.load!(B, T_prjlvalue, gep)
         else
-            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type))
             shadow = LLVM.UndefValue(ST)
             for i = 1:width
                 gep = LLVM.inbounds_gep!(
@@ -2224,7 +2224,7 @@ function common_generic_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
 end
 
 @register_aug function generic_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
-    conv = LLVM.callconv(orig)
+    conv = orig.callconv
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
 
     if conv != 37
@@ -2234,7 +2234,7 @@ end
             width = get_width(gutils)
             unsafe_store!(
                 shadowR,
-                UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))).ref,
+                UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type))).ref,
             )
         end
         return false
@@ -2267,7 +2267,7 @@ function common_generic_rev(offset, B, orig, gutils, tape)::Cvoid
 end
 
 @register_rev function generic_rev(B, orig, gutils, tape)::Cvoid
-    conv = LLVM.callconv(orig)
+    conv = orig.callconv
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
 
     if conv != 37
@@ -2295,7 +2295,7 @@ function common_apply_latest_fwd(offset, B, orig, gutils, normalR, shadowR)
        is_constant_inst(gutils, orig)
         return true
     end
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+    mod = orig.parent.parent.parent
 
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
@@ -2319,7 +2319,7 @@ function common_apply_latest_fwd(offset, B, orig, gutils, normalR, shadowR)
                 LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(1)])
             shadow = LLVM.load!(B, T_prjlvalue, gep)
         else
-            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type))
             shadow = LLVM.UndefValue(ST)
             for i = 1:width
                 gep = LLVM.inbounds_gep!(
@@ -2391,7 +2391,7 @@ function common_apply_latest_augfwd(offset, B, orig, gutils, normalR, shadowR, t
                 LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(1)])
             shadow = LLVM.load!(B, T_prjlvalue, gep)
         else
-            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type))
             shadow = LLVM.UndefValue(ST)
             for i = 1:width
                 gep = LLVM.inbounds_gep!(
@@ -2454,7 +2454,7 @@ function common_apply_latest_rev(offset, B, orig, gutils, tape)::Cvoid
 end
 
 @register_fwd function apply_latest_fwd(B, orig, gutils, normalR, shadowR)
-    conv = LLVM.callconv(orig)
+    conv = orig.callconv
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
     @assert conv == 37
 
@@ -2462,7 +2462,7 @@ end
 end
 
 @register_aug function apply_latest_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
-    conv = LLVM.callconv(orig)
+    conv = orig.callconv
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
     @assert conv == 37
 
@@ -2470,7 +2470,7 @@ end
 end
 
 @register_rev function apply_latest_rev(B, orig, gutils, tape)
-    conv = LLVM.callconv(orig)
+    conv = orig.callconv
     # https://github.com/JuliaLang/julia/blob/5162023b9b67265ddb0bbbc0f4bd6b225c429aa0/src/codegen_shared.h#L20
     @assert conv == 37
 
@@ -2482,17 +2482,17 @@ end
 # `_call_latest` with the world in front; the runtime-generic path calls `f`
 # in the current world, as it does for `_call_latest`.
 @register_fwd function invoke_in_world_fwd(B, orig, gutils, normalR, shadowR)
-    @assert LLVM.callconv(orig) == 37
+    @assert orig.callconv == 37
     return common_apply_latest_fwd(2, B, orig, gutils, normalR, shadowR)
 end
 
 @register_aug function invoke_in_world_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
-    @assert LLVM.callconv(orig) == 37
+    @assert orig.callconv == 37
     return common_apply_latest_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
 end
 
 @register_rev function invoke_in_world_rev(B, orig, gutils, tape)
-    @assert LLVM.callconv(orig) == 37
+    @assert orig.callconv == 37
     common_apply_latest_rev(2, B, orig, gutils, tape)
     return nothing
 end
@@ -2514,9 +2514,9 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
         return true
     end
 
-    v, isiter = absint(operands(orig)[offset + 1], enzyme_ctx)
+    v, isiter = absint(orig.operands[offset + 1], enzyme_ctx)
     isiter = unbind(isiter)
-    v2, istup = absint(operands(orig)[offset + 2], enzyme_ctx)
+    v2, istup = absint(orig.operands[offset + 2], enzyme_ctx)
     istup = unbind(istup)
 
     width = get_width(gutils)
@@ -2525,7 +2525,7 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
        v2 &&
        isiter == Base.iterate &&
        istup == Base.tuple &&
-       length(operands(orig)) >= offset + 4
+       length(orig.operands) >= offset + 4
         origops = arg_operands_view(orig)
         shadowins =
             [invert_pointer(gutils, origops[i], B) for i = (offset+3):length(origops)]
@@ -2550,10 +2550,10 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
                 newvals,
                 false,
             ) #=lookup=#
-            callconv!(cal, callconv(orig))
+            cal.callconv = orig.callconv
             cal
         else
-            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type))
             shadow = LLVM.UndefValue(ST)
             for j = 1:width
                 newops = LLVM.Value[]
@@ -2576,7 +2576,7 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
                     newvals,
                     false,
                 ) #=lookup=#
-                callconv!(cal, callconv(orig))
+                cal.callconv = orig.callconv
                 shadow = insert_value!(B, shadow, cal, j - 1)
             end
             shadow
@@ -2611,7 +2611,7 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
                 )
                 shadow = LLVM.load!(B, T_prjlvalue, gep)
             else
-                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type))
                 shadow = LLVM.UndefValue(ST)
                 for i = 1:width
                     gep = LLVM.inbounds_gep!(
@@ -2646,7 +2646,7 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
         B,
         orig,
         "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate " *
-        string((v, v2, isiter, istup, length(operands(orig)), offset + 4)),
+        string((v, v2, isiter, istup, length(orig.operands), offset + 4)),
     )
 
     return false
@@ -2669,8 +2669,8 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
         return true
     end
 
-    v, isiter = absint(operands(orig)[offset + 1], enzyme_ctx)
-    v2, istup = absint(operands(orig)[offset + 2], enzyme_ctx)
+    v, isiter = absint(orig.operands[offset + 1], enzyme_ctx)
+    v2, istup = absint(orig.operands[offset + 2], enzyme_ctx)
     isiter = unbind(isiter)
     istup = unbind(istup)
 
@@ -2702,7 +2702,7 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
                 )
                 shadow = LLVM.load!(B, T_prjlvalue, gep)
             else
-                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type))
                 shadow = LLVM.UndefValue(ST)
                 for i = 1:width
                     gep = LLVM.inbounds_gep!(
@@ -2750,12 +2750,12 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
         B,
         orig,
         "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate " *
-        string((v, v2, isiter, istup, length(operands(orig)), offset + 4)),
+        string((v, v2, isiter, istup, length(orig.operands), offset + 4)),
     )
 
     unsafe_store!(
         shadowR,
-        UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))).ref,
+        UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type))).ref,
     )
     return false
 end
@@ -2835,7 +2835,7 @@ function common_invoke_fwd(offset, B, orig, gutils, normalR, shadowR)
                 LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(1)])
             shadow = LLVM.load!(B, T_prjlvalue, gep)
         else
-            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type))
             shadow = LLVM.UndefValue(ST)
             for i = 1:width
                 gep = LLVM.inbounds_gep!(
@@ -2891,7 +2891,7 @@ function common_invoke_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
-    conv = LLVM.callconv(orig)
+    conv = orig.callconv
 
     width = get_width(gutils)
     sret = generic_setup(
@@ -2912,7 +2912,7 @@ function common_invoke_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
                 LLVM.inbounds_gep!(B, AT, sret, [LLVM.ConstantInt(0), LLVM.ConstantInt(1)])
             shadow = LLVM.load!(B, T_prjlvalue, gep)
         else
-            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type))
             shadow = LLVM.UndefValue(ST)
             for i = 1:width
                 gep = LLVM.inbounds_gep!(

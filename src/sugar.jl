@@ -25,7 +25,7 @@ end
         mod, meta = GPUCompiler.emit_llvm(job)
         
         copysetfn = meta.entry
-        blk = first(LLVM.blocks(copysetfn))
+        blk = first(copysetfn.blocks)
         iter = LLVM.API.LLVMGetFirstInstruction(blk)
         while iter != C_NULL
             inst = LLVM.Instruction(iter)
@@ -34,9 +34,9 @@ end
                 Compiler.eraseInst(blk, inst)
             end
             if isa(inst, LLVM.CallInst)
-                fn = LLVM.called_operand(inst)
+                fn = inst.called_operand
                 if isa(fn, LLVM.Function)
-                    if LLVM.name(fn) == "julia.safepoint"
+                    if fn.name == "julia.safepoint"
                         Compiler.eraseInst(blk, inst)
                     end
                 end     
@@ -45,7 +45,7 @@ end
         hasNoRet = Compiler.has_fn_attr(copysetfn, LLVM.EnumAttribute("noreturn"))
         @assert !hasNoRet
         if !hasNoRet
-            push!(LLVM.function_attributes(copysetfn), LLVM.EnumAttribute("alwaysinline", 0))
+            push!(copysetfn.function_attributes, LLVM.EnumAttribute("alwaysinline", 0))
         end
         ity = convert(LLVM.LLVMType, Int)
         jlvaluet = convert(LLVM.LLVMType, T; allow_boxed=true)
@@ -54,7 +54,7 @@ end
         # argument to allocate the result (see `Compiler.use_gcstack_arg!`).
         FT = LLVM.FunctionType(jlvaluet, LLVM.LLVMType[convert(LLVM.LLVMType, Ptr{Cvoid}), jlvaluet, ity, ity])
         llvm_f = LLVM.Function(mod, "f", FT)
-        push!(LLVM.function_attributes(llvm_f), LLVM.EnumAttribute("alwaysinline", 0))
+        push!(llvm_f.function_attributes, LLVM.EnumAttribute("alwaysinline", 0))
 
         # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
         # and also https://github.com/JuliaLang/julia/pull/47076
@@ -63,8 +63,8 @@ end
 
         builder = LLVM.IRBuilder()
         entry = LLVM.BasicBlock(llvm_f, "entry")
-        LLVM.position!(builder, entry)
-        pgcstack, inp, lstart, len = collect(LLVM.Value, LLVM.parameters(llvm_f))
+        LLVM.position!(builder, LLVM.at_end(entry))
+        pgcstack, inp, lstart, len = collect(LLVM.Value, llvm_f.parameters)
 
         boxed_count = if sizeof(Int) == sizeof(Int64)
             Compiler.emit_box_int64!(builder, len)
@@ -88,14 +88,14 @@ end
 
         LLVM.br!(builder, LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, LLVM.ConstantInt(0), len), exit, loop)
 
-        LLVM.position!(builder, loop)
+        LLVM.position!(builder, LLVM.at_end(loop))
         idx = LLVM.phi!(builder, ity, "onehot.idx")
 
-        push!(LLVM.incoming(idx), (LLVM.ConstantInt(0), entry))
+        push!(idx.incoming, (LLVM.ConstantInt(0), entry))
         inc = LLVM.add!(builder, idx, LLVM.ConstantInt(1))
-        push!(LLVM.incoming(idx), (inc, loop))
+        push!(idx.incoming, (inc, loop))
         rval = LLVM.add!(builder, inc, lstart)
-        res = LLVM.call!(builder, LLVM.function_type(copysetfn), copysetfn, [inp, rval])
+        res = LLVM.call!(builder, copysetfn.function_type, copysetfn, [inp, rval])
         if !hasNoRet
             gidx = LLVM.gep!(builder, jlvaluet, alloc, [idx])
             LLVM.store!(builder, res, gidx)
@@ -107,7 +107,7 @@ end
 
         T_int32 = LLVM.Int32Type()
 
-        LLVM.position!(builder, exit)
+        LLVM.position!(builder, LLVM.at_end(exit))
         LLVM.ret!(builder, obj)
 	
         Compiler.use_gcstack_arg!(llvm_f, pgcstack)
