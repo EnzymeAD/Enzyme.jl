@@ -26,10 +26,8 @@ end
         
         copysetfn = meta.entry
         blk = first(copysetfn.blocks)
-        iter = LLVM.API.LLVMGetFirstInstruction(blk)
-        while iter != C_NULL
-            inst = LLVM.Instruction(iter)
-            iter = LLVM.API.LLVMGetNextInstruction(iter)
+        # iteration looks up the next instruction first, so `inst` can be erased
+        for inst in blk.instructions
             if isa(inst, LLVM.FenceInst)
                 Compiler.eraseInst(blk, inst)
             end
@@ -42,10 +40,10 @@ end
                 end     
             end
         end
-        hasNoRet = Compiler.has_fn_attr(copysetfn, LLVM.EnumAttribute("noreturn"))
+        hasNoRet = haskey(copysetfn.function_attributes, :noreturn)
         @assert !hasNoRet
         if !hasNoRet
-            push!(copysetfn.function_attributes, LLVM.EnumAttribute("alwaysinline", 0))
+            push!(copysetfn.function_attributes, LLVM.EnumAttribute(:alwaysinline))
         end
         ity = convert(LLVM.LLVMType, Int)
         jlvaluet = convert(LLVM.LLVMType, T; allow_boxed=true)
@@ -54,7 +52,7 @@ end
         # argument to allocate the result (see `Compiler.use_gcstack_arg!`).
         FT = LLVM.FunctionType(jlvaluet, LLVM.LLVMType[convert(LLVM.LLVMType, Ptr{Cvoid}), jlvaluet, ity, ity])
         llvm_f = LLVM.Function(mod, "f", FT)
-        push!(llvm_f.function_attributes, LLVM.EnumAttribute("alwaysinline", 0))
+        push!(llvm_f.function_attributes, LLVM.EnumAttribute(:alwaysinline))
 
         # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
         # and also https://github.com/JuliaLang/julia/pull/47076
@@ -86,7 +84,7 @@ end
         loop = LLVM.BasicBlock(llvm_f, "loop")
         exit = LLVM.BasicBlock(llvm_f, "exit")
 
-        LLVM.br!(builder, LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, LLVM.ConstantInt(0), len), exit, loop)
+        LLVM.br!(builder, LLVM.icmp!(builder, LLVM.IntPredicate.EQ, LLVM.ConstantInt(0), len), exit, loop)
 
         LLVM.position!(builder, LLVM.at_end(loop))
         idx = LLVM.phi!(builder, ity, "onehot.idx")
@@ -102,7 +100,7 @@ end
             Compiler.emit_writebarrier!(builder, Compiler.get_julia_inner_types(builder, obj, res))
         end
 
-        LLVM.br!(builder, LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, inc, len), exit, loop)
+        LLVM.br!(builder, LLVM.icmp!(builder, LLVM.IntPredicate.EQ, inc, len), exit, loop)
 
 
         T_int32 = LLVM.Int32Type()
