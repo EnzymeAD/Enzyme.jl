@@ -643,8 +643,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                     todo = LLVM.Instruction[inst]
                     while length(todo) != 0
                         v = pop!(todo)
-                        for u in v.uses
-                            u = u.user
+                        for u in v.users
                             if isa(u, LLVM.CallInst)
                                 FT = u.called_type
                                 break
@@ -704,8 +703,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         erase!(inst)
 
                         baduse = false
-                        for u in fn_got.uses
-                            u = u.user
+                        for u in fn_got.users
                             if isa(u, LLVM.StoreInst)
                                 continue
                             end
@@ -1116,8 +1114,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                     if isa(ld, LLVM.LoadInst)
                                         b = IRBuilder()
                                         position!(b, LLVM.before(ld))
-                                        for u in ld.uses
-                                            u = u.user
+                                        for u in ld.users
                                             if isa(u, LLVM.CallInst)
                                                 push!(calls, u)
                                             end
@@ -1135,8 +1132,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         end
 
                         replacement = LLVM.const_inttoptr(replaceWith, inst.value_type)
-                        for u in inst.uses
-                            u = u.user
+                        for u in inst.users
                             if isa(u, LLVM.CallInst)
                                 push!(calls, u)
                             end
@@ -1146,14 +1142,12 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                         u.incoming,
                                     )
 
-                                    for u in u.uses
-                                        u = u.user
+                                    for u in u.users
                                         if isa(u, LLVM.CallInst)
                                             push!(calls, u)
                                         end
                                         if isa(u, LLVM.BitCastInst)
-                                            for u1 in u.uses
-                                                u1 = u1.user
+                                            for u1 in u.users
                                                 if isa(u1, LLVM.CallInst)
                                                     push!(calls, u1)
                                                 end
@@ -1348,8 +1342,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                 if isa(ld, LLVM.LoadInst)
                                     b = IRBuilder()
                                     position!(b, LLVM.before(ld))
-                                    for u in ld.uses
-                                        u = u.user
+                                    for u in ld.users
                                         if isa(u, LLVM.CallInst)
                                             push!(calls, u)
                                         end
@@ -1364,8 +1357,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                     end
 
                     replacement = LLVM.const_inttoptr(replaceWith, inst.value_type)
-                    for u in inst.uses
-                        u = u.user
+                    for u in inst.users
                         if isa(u, LLVM.CallInst)
                             push!(calls, u)
                         end
@@ -1375,14 +1367,12 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                                     u.incoming,
                                 )
 
-                                for u in u.uses
-                                    u = u.user
+                                for u in u.users
                                     if isa(u, LLVM.CallInst)
                                         push!(calls, u)
                                     end
                                     if isa(u, LLVM.BitCastInst)
-                                        for u1 in u.uses
-                                            u1 = u1.user
+                                        for u1 in u.users
                                             if isa(u1, LLVM.CallInst)
                                                 push!(calls, u1)
                                             end

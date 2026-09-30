@@ -79,24 +79,21 @@ function to_tape_type(@nospecialize(Type::LLVM.LLVMType))::Tuple{DataType, Bool}
             error("Can't construct tape type for integer of width $N")
         end
     end
-    # Workaround: LLVM.jl has no public Julia types for the floating-point types
-    # (`LLVM.HalfType` & co. are constructors), so compare their type kind.
-    tkind = LLVM.API.LLVMGetTypeKind(Type)
-    if tkind == LLVM.TypeKind.Half
+    if Type isa LLVM.HalfType
         return Float16, false
     end
     @static if isdefined(Core, :BFloat16)
-        if tkind == LLVM.TypeKind.BFloat
+        if Type isa LLVM.BFloatType
             return Core.BFloat16, false
         end
     end
-    if tkind == LLVM.TypeKind.Float
+    if Type isa LLVM.FloatType
         return Float32, false
     end
-    if tkind == LLVM.TypeKind.Double
+    if Type isa LLVM.DoubleType
         return Float64, false
     end
-    if tkind == LLVM.TypeKind.FP128
+    if Type isa LLVM.FP128Type
         return Float128, false
     end
     error("Can't construct tape type for $(string(Type))")
