@@ -2432,11 +2432,10 @@ function mayWriteToMemory(@nospecialize(inst::LLVM.Instruction); err_is_readonly
             if attr.kind == "enzyme_error" && err_is_readonly
                 return false
             end
-            if attr.kind == "memory"
-                if is_readonly(MemoryEffect(attr.value))
-                    return false
-                end
-            end
+        end
+        # the call site's own `memory` attribute (LLVM 16+)
+        if LLVM.version().major > 15 && is_readonly(LLVM.MemoryEffects(inst.memory_effects))
+            return false
         end
         return true
     end
@@ -3252,31 +3251,31 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
             mod,
             "llvm.enzymefakeuse",
             funcT,
-            LLVM.Attribute[EnumAttribute(:memory, NoEffects.data), EnumAttribute(:nofree)],
+            LLVM.Attribute[EnumAttribute(LLVM.MemoryEffects(:none)), EnumAttribute(:nofree)],
         )
         rfunc, _ = get_function!(
             mod,
             "llvm.enzymefakeread",
             funcT,
-            LLVM.Attribute[EnumAttribute(:memory, ReadOnlyArgMemEffects.data), EnumAttribute(:nofree)],
+            LLVM.Attribute[EnumAttribute(LLVM.MemoryEffects(argmem = :read)), EnumAttribute(:nofree)],
         )
         sfunc, _ = get_function!(
             mod,
             "llvm.enzyme.sret_use",
             funcT,
-            LLVM.Attribute[EnumAttribute(:memory, ReadOnlyArgMemEffects.data), EnumAttribute(:nofree)],
+            LLVM.Attribute[EnumAttribute(LLVM.MemoryEffects(argmem = :read)), EnumAttribute(:nofree)],
         )
         wfunc, _ = get_function!(
             mod,
             "llvm.enzymefakewrite",
             funcT,
-            LLVM.Attribute[EnumAttribute(:memory, WriteOnlyArgMemEffects.data), EnumAttribute(:nofree)],
+            LLVM.Attribute[EnumAttribute(LLVM.MemoryEffects(argmem = :write)), EnumAttribute(:nofree)],
         )
         rwfunc, _ = get_function!(
             mod,
             "llvm.enzymefakereadwrite",
             funcT,
-            LLVM.Attribute[EnumAttribute(:memory, ReadArgMemWriteInaccessibleEffects.data), EnumAttribute(:nofree)],
+            LLVM.Attribute[EnumAttribute(LLVM.MemoryEffects(argmem = :read, inaccessiblemem = :write)), EnumAttribute(:nofree)],
         )
     end
 
