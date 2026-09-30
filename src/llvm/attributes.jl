@@ -511,11 +511,7 @@ function annotate!(mod::LLVM.Module)
         ("julia.typeof", "jl_object_id_", "jl_object_id", "ijl_object_id_", "ijl_object_id")
         if haskey(funcs, fname)
             for fn in funcs[fname]
-                if LLVM.version().major <= 15
-                    push!(fn.function_attributes, LLVM.EnumAttribute(:readnone))
-                else
-                    push!(fn.function_attributes, EnumAttribute(LLVM.MemoryEffects(:none)))
-                end
+                fn.memory_effects = LLVM.MemoryEffects(:none)
                 push!(fn.function_attributes, LLVM.StringAttribute("enzyme_shouldrecompute"))
             end
         end
@@ -642,11 +638,7 @@ function annotate!(mod::LLVM.Module)
         if haskey(funcs, fname)
             for fn in funcs[fname]
                 # TODO per discussion w keno perhaps this should change to readonly / inaccessiblememonly
-                if LLVM.version().major <= 15
-                    push!(fn.function_attributes, LLVM.EnumAttribute(:readnone))
-                else
-                    push!(fn.function_attributes, EnumAttribute(LLVM.MemoryEffects(:none)))
-                end
+                fn.memory_effects = LLVM.MemoryEffects(:none)
                 push!(fn.function_attributes, LLVM.StringAttribute("enzyme_shouldrecompute"))
                 push!(fn.function_attributes, EnumAttribute(:nounwind))
                 push!(fn.function_attributes, EnumAttribute(:nosync))
@@ -781,11 +773,7 @@ function annotate!(mod::LLVM.Module)
     for fname in ("julia.pointer_from_objref", "julia_pointer_from_objref")
         if haskey(funcs, fname)
             for fn in funcs[fname]
-                if LLVM.version().major <= 15
-                    push!(fn.function_attributes, LLVM.EnumAttribute(:readnone))
-                else
-                    push!(fn.function_attributes, EnumAttribute(LLVM.MemoryEffects(:none)))
-                end
+                fn.memory_effects = LLVM.MemoryEffects(:none)
                 push!(fn.function_attributes, LLVM.EnumAttribute(:nounwind))
                 push!(fn.function_attributes, LLVM.EnumAttribute(:willreturn))
             end
@@ -978,14 +966,7 @@ function annotate!(mod::LLVM.Module)
         if haskey(funcs, fname)
             for fn in funcs[fname]
                 push!(fn.function_attributes, LLVM.StringAttribute("enzyme_ReadOnlyOrThrow"))
-                if LLVM.version().major <= 15
-                    push!(fn.function_attributes, LLVM.EnumAttribute(:inaccessiblememonly))
-                else
-                    push!(
-                        fn.function_attributes,
-                        EnumAttribute(LLVM.MemoryEffects(inaccessiblemem = :readwrite)),
-                    )
-                end
+                fn.memory_effects = LLVM.MemoryEffects(inaccessiblemem = :readwrite)
             end
         end
     end
@@ -995,15 +976,7 @@ function annotate!(mod::LLVM.Module)
         if haskey(funcs, fname)
             for fn in funcs[fname]
                 push!(fn.parameter_attributes[2], LLVM.StringAttribute("enzyme_inactive"))
-                if LLVM.version().major <= 15
-                    push!(fn.function_attributes, LLVM.EnumAttribute(:readonly))
-                    push!(fn.function_attributes, LLVM.EnumAttribute(:argmemonly))
-                else
-                    push!(
-                        fn.function_attributes,
-                        EnumAttribute(LLVM.MemoryEffects(argmem = :read)),
-                    )
-                end
+                fn.memory_effects = LLVM.MemoryEffects(argmem = :read)
             end
         end
     end
@@ -1027,14 +1000,7 @@ function annotate!(mod::LLVM.Module)
                     push!(fn.parameter_attributes[4], LLVM.EnumAttribute(:writeonly))
                     push!(fn.parameter_attributes[4], LLVM.EnumAttribute(:nocapture))
                 end
-                if LLVM.version().major <= 15
-                    push!(fn.function_attributes, LLVM.EnumAttribute(:argmemonly))
-                else
-                    push!(
-                        fn.function_attributes,
-                        EnumAttribute(LLVM.MemoryEffects(argmem = :readwrite)),
-                    )
-                end
+                fn.memory_effects = LLVM.MemoryEffects(argmem = :readwrite)
             end
         end
     end
@@ -1042,15 +1008,7 @@ function annotate!(mod::LLVM.Module)
     for fname in ("jl_in_threaded_region_", "jl_in_threaded_region")
         if haskey(funcs, fname)
             for fn in funcs[fname]
-                if LLVM.version().major <= 15
-                    push!(fn.function_attributes, LLVM.EnumAttribute(:readonly))
-                    push!(fn.function_attributes, LLVM.EnumAttribute(:inaccessiblememonly))
-                else
-                    push!(
-                        fn.function_attributes,
-                        EnumAttribute(LLVM.MemoryEffects(inaccessiblemem = :read)),
-                    )
-                end
+                fn.memory_effects = LLVM.MemoryEffects(inaccessiblemem = :read)
             end
         end
     end

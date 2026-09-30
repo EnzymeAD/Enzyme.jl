@@ -642,8 +642,7 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta, enzyme_ctx::EnzymeCon
         if is_sret_union(RT)
             attr = StringAttribute("enzymejl_sret_union_bytes", string(union_alloca_type(RT)))
             push!(llvmfn.parameter_attributes[1], attr)
-            for u in llvmfn.uses
-                u = u.user
+            for u in llvmfn.users
                 @assert isa(u, LLVM.CallInst)
                 push!(u.argument_attributes[1], attr)
             end
@@ -652,8 +651,7 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta, enzyme_ctx::EnzymeCon
         if returnRoots
             attr = StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1])))
             push!(llvmfn.parameter_attributes[2], attr)
-            for u in llvmfn.uses
-                u = u.user
+            for u in llvmfn.users
                 @assert isa(u, LLVM.CallInst)
                 push!(u.argument_attributes[2], attr)
             end
@@ -1374,7 +1372,7 @@ mutable struct HandlerState
 end
 
 
-function handleCustom(state::HandlerState, custom, k_name::String, llvmfn::LLVM.Function, name::String, attrs::Vector{LLVM.Attribute} = LLVM.Attribute[], setlink::Bool = true, noinl::Bool = true)
+function handleCustom(state::HandlerState, custom, k_name::String, llvmfn::LLVM.Function, name::String, attrs::Vector{LLVM.Attribute} = LLVM.Attribute[], setlink::Bool = true, noinl::Bool = true; memory_effects::Union{Nothing, LLVM.MemoryEffects} = nothing)
     attributes = llvmfn.function_attributes
     custom[k_name] = llvmfn.linkage
     if setlink
@@ -1382,6 +1380,9 @@ function handleCustom(state::HandlerState, custom, k_name::String, llvmfn::LLVM.
     end
     for a in attrs
         push!(attributes, a)
+    end
+    if memory_effects !== nothing
+        llvmfn.memory_effects = memory_effects
     end
     push!(attributes, StringAttribute("enzyme_math", name))
     if noinl
@@ -1464,170 +1465,86 @@ end
     if func == typeof(Base.eps) ||
        func == typeof(Base.nextfloat) ||
        func == typeof(Base.prevfloat)
-        if LLVM.version().major <= 15
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                "jl_inactive_inout",
-                LLVM.Attribute[
-                    StringAttribute("enzyme_inactive"),
-                    EnumAttribute(:readnone),
-                    EnumAttribute(:speculatable),
-                    EnumAttribute(:willreturn),
-                    EnumAttribute(:nosync),
-                    EnumAttribute(:nofree),
-                    EnumAttribute(:nounwind),
-                    StringAttribute("enzyme_shouldrecompute"),
-                ],
-            )
-        else
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                "jl_inactive_inout",
-                LLVM.Attribute[
-                    StringAttribute("enzyme_inactive"),
-                    EnumAttribute(LLVM.MemoryEffects(:none)),
-                    EnumAttribute(:speculatable),
-                    EnumAttribute(:willreturn),
-                    EnumAttribute(:nosync),
-                    EnumAttribute(:nofree),
-                    EnumAttribute(:nounwind),
-                    StringAttribute("enzyme_shouldrecompute"),
-                ],
-            )
-        end
+        handleCustom(
+            state,
+            custom,
+            k_name,
+            llvmfn,
+            "jl_inactive_inout",
+            LLVM.Attribute[
+                StringAttribute("enzyme_inactive"),
+                EnumAttribute(:speculatable),
+                EnumAttribute(:willreturn),
+                EnumAttribute(:nosync),
+                EnumAttribute(:nofree),
+                EnumAttribute(:nounwind),
+                StringAttribute("enzyme_shouldrecompute"),
+            ],
+            memory_effects = LLVM.MemoryEffects(:none),
+        )
         return
     end
     if func == typeof(Base.to_tuple_type)
-        if LLVM.version().major <= 15
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                "jl_to_tuple_type",
-                LLVM.Attribute[
-                    EnumAttribute(:readonly),
-                    EnumAttribute(:inaccessiblememonly),
-                    EnumAttribute(:speculatable),
-                    EnumAttribute(:willreturn),
-                    EnumAttribute(:nosync),
-                    EnumAttribute(:nofree),
-                    StringAttribute("enzyme_shouldrecompute"),
-                    StringAttribute("enzyme_inactive"),
-                ],
-            )
-        else
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                "jl_to_tuple_type",
-                LLVM.Attribute[
-                    EnumAttribute(LLVM.MemoryEffects(inaccessiblemem = :read)),
-                    EnumAttribute(:willreturn),
-                    EnumAttribute(:nosync),
-                    EnumAttribute(:nofree),
-                    EnumAttribute(:speculatable),
-                    StringAttribute("enzyme_shouldrecompute"),
-                    StringAttribute("enzyme_inactive"),
-                ],
-            )
-        end
+        handleCustom(
+            state,
+            custom,
+            k_name,
+            llvmfn,
+            "jl_to_tuple_type",
+            LLVM.Attribute[
+                EnumAttribute(:willreturn),
+                EnumAttribute(:nosync),
+                EnumAttribute(:nofree),
+                EnumAttribute(:speculatable),
+                StringAttribute("enzyme_shouldrecompute"),
+                StringAttribute("enzyme_inactive"),
+            ],
+            memory_effects = LLVM.MemoryEffects(inaccessiblemem = :read),
+        )
         return
     end
     if func == typeof(Base.mightalias)
-        if LLVM.version().major <= 15
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                "jl_mightalias",
-                LLVM.Attribute[
-                    EnumAttribute(:readonly),
-                    StringAttribute("enzyme_shouldrecompute"),
-                    StringAttribute("enzyme_inactive"),
-                    StringAttribute("enzyme_no_escaping_allocation"),
-                    EnumAttribute(:willreturn),
-                    EnumAttribute(:nosync),
-                    EnumAttribute(:nofree),
-                    StringAttribute("enzyme_ta_norecur"),
-                ],
-                true,
-                false,
-            )
-        else
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                "jl_mightalias",
-                LLVM.Attribute[
-                    EnumAttribute(LLVM.MemoryEffects(:read)),
-                    StringAttribute("enzyme_shouldrecompute"),
-                    StringAttribute("enzyme_inactive"),
-                    StringAttribute("enzyme_no_escaping_allocation"),
-                    EnumAttribute(:willreturn),
-                    EnumAttribute(:nosync),
-                    EnumAttribute(:nofree),
-                    StringAttribute("enzyme_ta_norecur"),
-                ],
-                true,
-                false,
-            )
-        end
+        handleCustom(
+            state,
+            custom,
+            k_name,
+            llvmfn,
+            "jl_mightalias",
+            LLVM.Attribute[
+                StringAttribute("enzyme_shouldrecompute"),
+                StringAttribute("enzyme_inactive"),
+                StringAttribute("enzyme_no_escaping_allocation"),
+                EnumAttribute(:willreturn),
+                EnumAttribute(:nosync),
+                EnumAttribute(:nofree),
+                StringAttribute("enzyme_ta_norecur"),
+            ],
+            true,
+            false,
+            memory_effects = LLVM.MemoryEffects(:read),
+        )
         return
     end
     if func == typeof(Base.Threads.threadid) || func == typeof(Base.Threads.nthreads)
         name = (func == typeof(Base.Threads.threadid)) ? "jl_threadid" : "jl_nthreads"
-        if LLVM.version().major <= 15
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                name,
-                LLVM.Attribute[
-                    EnumAttribute(:readonly),
-                    EnumAttribute(:inaccessiblememonly),
-                    EnumAttribute(:speculatable),
-                    EnumAttribute(:willreturn),
-                    EnumAttribute(:nosync),
-                    EnumAttribute(:nofree),
-                    EnumAttribute(:nounwind),
-                    StringAttribute("enzyme_shouldrecompute"),
-                    StringAttribute("enzyme_inactive"),
-                    StringAttribute("enzyme_no_escaping_allocation"),
-                ],
-            )
-        else
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                name,
-                LLVM.Attribute[
-                    EnumAttribute(LLVM.MemoryEffects(inaccessiblemem = :read)),
-                    EnumAttribute(:speculatable),
-                    EnumAttribute(:willreturn),
-                    EnumAttribute(:nosync),
-                    EnumAttribute(:nofree),
-                    EnumAttribute(:nounwind),
-                    StringAttribute("enzyme_shouldrecompute"),
-                    StringAttribute("enzyme_inactive"),
-                    StringAttribute("enzyme_no_escaping_allocation"),
-                ],
-            )
-        end
+        handleCustom(
+            state,
+            custom,
+            k_name,
+            llvmfn,
+            name,
+            LLVM.Attribute[
+                EnumAttribute(:speculatable),
+                EnumAttribute(:willreturn),
+                EnumAttribute(:nosync),
+                EnumAttribute(:nofree),
+                EnumAttribute(:nounwind),
+                StringAttribute("enzyme_shouldrecompute"),
+                StringAttribute("enzyme_inactive"),
+                StringAttribute("enzyme_no_escaping_allocation"),
+            ],
+            memory_effects = LLVM.MemoryEffects(inaccessiblemem = :read),
+        )
         return
     end
     # Since this is noreturn and it can't write to any operations in the function
@@ -1635,33 +1552,18 @@ end
     # handle this and similar not impacting the read/write behavior of the calling
     # fn, but it doesn't presently so for now we will ensure this by hand
     if func == typeof(Base.Checked.throw_overflowerr_binaryop)
-        if LLVM.version().major <= 15
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                "enz_noop",
-                LLVM.Attribute[
-                    StringAttribute("enzyme_inactive"),
-                    EnumAttribute(:readonly),
-                    StringAttribute("enzyme_ta_norecur"),
-                ],
-            )
-        else
-            handleCustom(
-                state,
-                custom,
-                k_name,
-                llvmfn,
-                "enz_noop",
-                LLVM.Attribute[
-                    StringAttribute("enzyme_inactive"),
-                    EnumAttribute(LLVM.MemoryEffects(:read)),
-                    StringAttribute("enzyme_ta_norecur"),
-                ],
-            )
-        end
+        handleCustom(
+            state,
+            custom,
+            k_name,
+            llvmfn,
+            "enz_noop",
+            LLVM.Attribute[
+                StringAttribute("enzyme_inactive"),
+                StringAttribute("enzyme_ta_norecur"),
+            ],
+            memory_effects = LLVM.MemoryEffects(:read),
+        )
         return
     end
     if EnzymeRules.is_inactive_from_sig(specTypes; world, method_table)
@@ -1792,24 +1694,14 @@ end
     name = string(name)
     name = T == Float32 ? name * "f" : name
 
-    attrs = if LLVM.version().major <= 15
-        LLVM.Attribute[
-            LLVM.EnumAttribute(:readnone), StringAttribute("enzyme_shouldrecompute"),
-            EnumAttribute(:willreturn),
-            EnumAttribute(:nosync),
-            EnumAttribute(:nofree),
-           	    StringAttribute("enzyme_preserve_primal", "*"),
-		      ]
-    else
-        LLVM.Attribute[
-            EnumAttribute(LLVM.MemoryEffects(:none)), StringAttribute("enzyme_shouldrecompute"),
-            EnumAttribute(:willreturn),
-            EnumAttribute(:nosync),
-            EnumAttribute(:nofree),
-           	    StringAttribute("enzyme_preserve_primal", "*"),
-		    ]
-    end
-    handleCustom(state, custom, k_name, llvmfn, name, attrs)
+    attrs = LLVM.Attribute[
+        StringAttribute("enzyme_shouldrecompute"),
+        EnumAttribute(:willreturn),
+        EnumAttribute(:nosync),
+        EnumAttribute(:nofree),
+        StringAttribute("enzyme_preserve_primal", "*"),
+    ]
+    handleCustom(state, custom, k_name, llvmfn, name, attrs; memory_effects = LLVM.MemoryEffects(:none))
     return
 end
 
@@ -2123,22 +2015,12 @@ function nested_codegen!(
     FT = lfn.function_type
     decl = LLVM.Function(mod, entry, FT)
 
-    # Copy function attributes
-    for attr in collect(lfn.function_attributes)
-        push!(decl.function_attributes, attr)
-    end
-
-    # Copy parameter attributes
+    # Copy function, parameter and return attributes
+    append!(decl.function_attributes, lfn.function_attributes)
     for idx in 1:length(lfn.parameters)
-        for attr in collect(lfn.parameter_attributes[idx])
-            push!(decl.parameter_attributes[idx], attr)
-        end
+        append!(decl.parameter_attributes[idx], lfn.parameter_attributes[idx])
     end
-
-    # Copy return attributes
-    for attr in collect(lfn.return_attributes)
-        push!(decl.return_attributes, attr)
-    end
+    append!(decl.return_attributes, lfn.return_attributes)
 
     enzyme_ctx.nested_cache[cache_key] = decl.name
     return decl
@@ -2799,12 +2681,7 @@ function zero_allocation(
     push!(wrapper_f.function_attributes, EnumAttribute(:alwaysinline))
     push!(wrapper_f.function_attributes, EnumAttribute(:nofree))
 
-    if LLVM.version().major <= 15
-        push!(wrapper_f.function_attributes, EnumAttribute(:argmemonly))
-        push!(wrapper_f.function_attributes, EnumAttribute(:writeonly))
-    else
-        push!(wrapper_f.function_attributes, EnumAttribute(LLVM.MemoryEffects(argmem = :write)))
-    end
+    wrapper_f.memory_effects = LLVM.MemoryEffects(argmem = :write)
     push!(wrapper_f.function_attributes, EnumAttribute(:willreturn))
     push!(wrapper_f.function_attributes, EnumAttribute(:mustprogress))
     push!(wrapper_f.parameter_attributes[1], EnumAttribute(:writeonly))
@@ -6031,8 +5908,7 @@ function lower_convention(
                     continue
                 end
                 legal = true
-                for u in inst.uses
-                    u = u.user
+                for u in inst.users
                     if !isa(u, LLVM.ExtractValueInst)
                         legal = false
                         break
@@ -6072,8 +5948,7 @@ function lower_convention(
         end
 
         torem = LLVM.Instruction[]
-        for u in p.uses
-            u = u.user
+        for u in p.users
             @assert isa(u, LLVM.ExtractValueInst)
             @assert length(u.indices) == 1
             ind = u.indices[1]
@@ -6441,19 +6316,11 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
 
         wrapper_f = LLVM.Function(mod, safe_name(llvmfn.name * "mustwrap"), FT)
 
-        for idx in 1:length(collect(llvmfn.parameters))
-            for attr in collect(llvmfn.parameter_attributes[idx])
-                push!(wrapper_f.parameter_attributes[idx], attr)
-            end
+        for idx in 1:length(llvmfn.parameters)
+            append!(wrapper_f.parameter_attributes[idx], llvmfn.parameter_attributes[idx])
         end
-
-        for attr in collect(llvmfn.function_attributes)
-            push!(wrapper_f.function_attributes, attr)
-        end
-
-        for attr in collect(llvmfn.return_attributes)
-            push!(wrapper_f.return_attributes, attr)
-        end
+        append!(wrapper_f.function_attributes, llvmfn.function_attributes)
+        append!(wrapper_f.return_attributes, llvmfn.return_attributes)
 
         mi, rt = enzyme_custom_extract_mi(primalf)
 
@@ -6636,8 +6503,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
         if !API.HasFromStack(inst) && isa(inst, LLVM.AllocaInst)
             calluse = LLVM.CallInst[]
             is_returnroots = false
-            for u in inst.uses
-                u = u.user
+            for u in inst.users
                 if isa(u, LLVM.CallInst)
                     for i in 1:2
                         if i >= length(u.operands) || u.operands[i] != inst
@@ -7973,13 +7839,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         primal_name = nothing
     end
 
-    LLVM.@dispose pb = PassBuilder() begin
-        register!(pb, ReinsertGCMarkerPass())
-        fpm = FunctionPassManager()
-        add!(fpm, ReinsertGCMarkerPass())
-        add!(pb, fpm)
-        LLVM.run!(pb, mod)
-    end
+    run!(ReinsertGCMarkerPass(), mod)
 
     # Run post optimization pipeline
     prepost = if postopt

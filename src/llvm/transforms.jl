@@ -751,8 +751,7 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module, world::UInt, enzyme_ctx::E
                     if isa(cur, LLVM.AllocaInst) ||
                             isa(cur, LLVM.AddrSpaceCastInst) ||
                             isa(cur, LLVM.BitCastInst)
-                        for u in cur.uses
-                            u = u.user
+                        for u in cur.users
                             push!(todo, (u, cur))
                         end
                         continue
@@ -2334,8 +2333,7 @@ function prop_global!(g::LLVM.GlobalVariable)
     newfns = String[]
     changed = false
     todo = Tuple{Vector{Cuint}, LLVM.Value}[]
-    for u in g.uses
-        u = u.user
+    for u in g.users
         push!(todo, (Cuint[], u))
     end
     while length(todo) > 0
@@ -2348,8 +2346,7 @@ function prop_global!(g::LLVM.GlobalVariable)
                 res = extract_value!(B, res, p)
             end
             changed = true
-            for u in var.uses
-                u = u.user
+            for u in var.users
                 if isa(u, LLVM.CallInst)
                     f2 = u.called_operand
                     if isa(f2, LLVM.Function)
@@ -2367,15 +2364,13 @@ function prop_global!(g::LLVM.GlobalVariable)
             continue
         end
         if isa(var, LLVM.AddrSpaceCastInst)
-            for u in var.uses
-                u = u.user
+            for u in var.users
                 push!(todo, (path, u))
             end
             continue
         end
         if isa(var, LLVM.ConstantExpr) && var.opcode == LLVM.Opcode.AddrSpaceCast
-            for u in var.uses
-                u = u.user
+            for u in var.users
                 push!(todo, (path, u))
             end
             continue
@@ -2383,8 +2378,7 @@ function prop_global!(g::LLVM.GlobalVariable)
         if isa(var, LLVM.GetElementPtrInst)
             if all(isa(v, LLVM.ConstantInt) for v in var.operands[2:end])
                 if LLVM.isnull(var.operands[2])
-                    for u in var.uses
-                        u = u.user
+                    for u in var.users
                         push!(
                             todo,
                             (
@@ -2442,8 +2436,8 @@ function mayWriteToMemory(@nospecialize(inst::LLVM.Instruction); err_is_readonly
                 return false
             end
         end
-        # the call site's own `memory` attribute (LLVM 16+)
-        if LLVM.version().major > 15 && is_readonly(LLVM.MemoryEffects(inst.memory_effects))
+        # the call site's own memory effects
+        if is_readonly(LLVM.MemoryEffects(inst.memory_effects))
             return false
         end
         return true
@@ -2774,8 +2768,7 @@ function propagate_returned!(mod::LLVM.Module)
                             if val === nothing
                                 val = LLVM.UndefValue(arg.value_type)
                             end
-                            for u in arg.uses
-                                u = u.user
+                            for u in arg.users
                                 if isa(u, LLVM.CallInst)
                                     f2 = u.called_operand
                                     if isa(f2, LLVM.Function)
@@ -2791,8 +2784,7 @@ function propagate_returned!(mod::LLVM.Module)
                     # see if there are no users of the value (excluding recursive/return)
                     if !prevent
                         baduse = false
-                        for u in arg.uses
-                            u = u.user
+                        for u in arg.users
                             if argn == i && u isa LLVM.RetInst
                                 continue
                             end
@@ -2861,8 +2853,7 @@ function propagate_returned!(mod::LLVM.Module)
                         LLVM.replace_uses!(un, un.operands[argn])
                     end
                 else
-                    for u in un.uses
-                        u = u.user
+                    for u in un.users
                         if u isa LLVM.CallInst
                             op = u.called_operand
                             if op isa LLVM.Function && op.name == "llvm.enzymefakeread"
@@ -2953,8 +2944,7 @@ end
 function delete_writes_into_removed_args(fn::LLVM.Function, toremove::Vector{Int64}, keepret::Bool)
     args = collect(fn.parameters)
     if !keepret
-        for u in fn.uses
-            u = u.user
+        for u in fn.users
             replace_uses!(u, LLVM.UndefValue(u.value_type))
         end
     end
@@ -3063,8 +3053,7 @@ function validate_return_roots!(mod::LLVM.Module)
                 end
 
                 alty = nothing
-                for u in f.uses
-                    u = u.user
+                for u in f.users
                     @assert isa(u, LLVM.CallInst)
                     @assert u.called_operand == f
                     alop = u.operands[1]
@@ -3102,8 +3091,7 @@ function validate_return_roots!(mod::LLVM.Module)
                 for idx in enzyme_srets
                     alty = nothing
                     bad = false
-                    for u in f.uses
-                        u = u.user
+                    for u in f.users
                         @assert isa(u, LLVM.CallInst)
                         @assert u.called_operand == f
                         alop = u.operands[1]
@@ -3257,34 +3245,24 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
         )
     else
         func, _ = get_function!(
-            mod,
-            "llvm.enzymefakeuse",
-            funcT,
-            LLVM.Attribute[EnumAttribute(LLVM.MemoryEffects(:none)), EnumAttribute(:nofree)],
+            mod, "llvm.enzymefakeuse", funcT, LLVM.Attribute[EnumAttribute(:nofree)];
+            memory_effects = LLVM.MemoryEffects(:none),
         )
         rfunc, _ = get_function!(
-            mod,
-            "llvm.enzymefakeread",
-            funcT,
-            LLVM.Attribute[EnumAttribute(LLVM.MemoryEffects(argmem = :read)), EnumAttribute(:nofree)],
+            mod, "llvm.enzymefakeread", funcT, LLVM.Attribute[EnumAttribute(:nofree)];
+            memory_effects = LLVM.MemoryEffects(argmem = :read),
         )
         sfunc, _ = get_function!(
-            mod,
-            "llvm.enzyme.sret_use",
-            funcT,
-            LLVM.Attribute[EnumAttribute(LLVM.MemoryEffects(argmem = :read)), EnumAttribute(:nofree)],
+            mod, "llvm.enzyme.sret_use", funcT, LLVM.Attribute[EnumAttribute(:nofree)];
+            memory_effects = LLVM.MemoryEffects(argmem = :read),
         )
         wfunc, _ = get_function!(
-            mod,
-            "llvm.enzymefakewrite",
-            funcT,
-            LLVM.Attribute[EnumAttribute(LLVM.MemoryEffects(argmem = :write)), EnumAttribute(:nofree)],
+            mod, "llvm.enzymefakewrite", funcT, LLVM.Attribute[EnumAttribute(:nofree)];
+            memory_effects = LLVM.MemoryEffects(argmem = :write),
         )
         rwfunc, _ = get_function!(
-            mod,
-            "llvm.enzymefakereadwrite",
-            funcT,
-            LLVM.Attribute[EnumAttribute(LLVM.MemoryEffects(argmem = :read, inaccessiblemem = :write)), EnumAttribute(:nofree)],
+            mod, "llvm.enzymefakereadwrite", funcT, LLVM.Attribute[EnumAttribute(:nofree)];
+            memory_effects = LLVM.MemoryEffects(argmem = :read, inaccessiblemem = :write),
         )
     end
 
@@ -3295,8 +3273,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
 
         rt = fn.function_type.return_type
         if rt isa LLVM.PointerType && rt.addrspace == 10
-            for u in fn.uses
-                u = u.user
+            for u in fn.users
                 if isa(u, LLVM.CallInst)
                     B = IRBuilder()
                     position!(B, LLVM.after(u))
@@ -3328,8 +3305,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
                             push!(cl.argument_attributes[1], EnumAttribute(:nocapture))
                         end
                     end
-                    for u in fn.uses
-                        u = u.user
+                    for u in fn.users
                         if !isa(u, LLVM.CallInst)
                             # TODO investigate if the inttoptr store that comes from reference caller poses an issue.
                             continue
@@ -3364,11 +3340,9 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
                             attr.kind == "enzyme_sret_v"
                     ) for attr in attrs
                 ) && any_jltypes(sret_ty(fn, idx))
-                for u in fn.uses
-                    u = u.user
+                for u in fn.users
                     if isa(u, LLVM.ConstantExpr)
-                        for u in u.uses
-                            u = u.user
+                        for u in u.users
                             if !isa(u, LLVM.CallInst)
                                 continue
                             end
@@ -3464,28 +3438,23 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
     post_attr!(mod, RunAttributor[])
     propagate_returned!(mod)
 
-    for u in rwfunc.uses
-        u = u.user
+    for u in rwfunc.users
         eraseInst(u.parent, u)
     end
     eraseInst(mod, rwfunc)
-    for u in wfunc.uses
-        u = u.user
+    for u in wfunc.users
         eraseInst(u.parent, u)
     end
     eraseInst(mod, wfunc)
-    for u in rfunc.uses
-        u = u.user
+    for u in rfunc.users
         eraseInst(u.parent, u)
     end
     eraseInst(mod, rfunc)
-    for u in sfunc.uses
-        u = u.user
+    for u in sfunc.users
         eraseInst(u.parent, u)
     end
     eraseInst(mod, sfunc)
-    for u in func.uses
-        u = u.user
+    for u in func.users
         eraseInst(u.parent, u)
     end
     return eraseInst(mod, func)

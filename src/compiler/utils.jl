@@ -57,7 +57,7 @@ Base.@assume_effects :removable :foldable :nothrow function is_readonly(attr::LL
     if attr.kind == :readnone
         return true
     end
-    if LLVM.version().major > 15 && attr.kind == :memory
+    if attr.kind == :memory
         if is_readonly(LLVM.MemoryEffects(attr))
             return true
         end
@@ -103,15 +103,7 @@ Base.@assume_effects :removable :foldable :nothrow function is_readnone(f::LLVM.
             f.name == "llvm.julia.gc_preserve_end"
         return true
     end
-    if haskey(f.function_attributes, :readnone)
-        return true
-    end
-    if LLVM.version().major > 15 && haskey(f.function_attributes, :memory)
-        if is_readnone(LLVM.MemoryEffects(f.function_attributes[:memory]))
-            return true
-        end
-    end
-    return false
+    return is_readnone(LLVM.MemoryEffects(f.memory_effects))
 end
 
 Base.@assume_effects :removable :foldable :nothrow function is_writeonly(f::LLVM.Function)::Bool
@@ -129,50 +121,32 @@ Base.@assume_effects :removable :foldable :nothrow function is_writeonly(f::LLVM
             f.name == "llvm.julia.gc_preserve_end"
         return true
     end
-    if haskey(f.function_attributes, :readnone) || haskey(f.function_attributes, :writeonly)
-        return true
-    end
-    if LLVM.version().major > 15 && haskey(f.function_attributes, :memory)
-        if is_writeonly(LLVM.MemoryEffects(f.function_attributes[:memory]))
-            return true
-        end
-    end
-    return false
+    return is_writeonly(LLVM.MemoryEffects(f.memory_effects))
 end
 
 function set_readonly!(fn::LLVM.Function)
-    attrs = collect(fn.function_attributes)
-    if LLVM.version().major <= 15
-        if !any(attr.kind == :readonly for attr in attrs) &&
-                !any(attr.kind == :readnone for attr in attrs)
-            if any(attr.kind == :writeonly for attr in attrs)
-                delete!(fn.function_attributes, :writeonly)
-                push!(fn.function_attributes, EnumAttribute(:readnone))
-            else
-                push!(fn.function_attributes, EnumAttribute(:readonly))
-            end
-            return true
-        end
-        return false
-    else
-        # without a `memory` attribute, a function may access any memory
-        old = LLVM.MemoryEffects(fn.memory_effects)
-        eff = set_readonly(old)
-        fn.memory_effects = eff
-        return old != eff
-    end
+    # without a `memory` attribute (or on LLVM 15, one of the attributes it replaced),
+    # a function may access any memory
+    old = LLVM.MemoryEffects(fn.memory_effects)
+    eff = set_readonly(old)
+    fn.memory_effects = eff
+    return old != eff
 end
 
 function get_function!(
-    mod::LLVM.Module,
-    name::String,
-    FT::LLVM.FunctionType,
-    attrs::Vector{LLVM.Attribute} = LLVM.Attribute[],
-)
+        mod::LLVM.Module,
+        name::String,
+        FT::LLVM.FunctionType,
+        attrs::Vector{LLVM.Attribute} = LLVM.Attribute[];
+        memory_effects::Union{Nothing, LLVM.MemoryEffects} = nothing,
+    )
     F = get(mod.functions, name, nothing)
     if F === nothing
         F = LLVM.Function(mod, name, FT)
         append!(F.function_attributes, attrs)
+        if memory_effects !== nothing
+            F.memory_effects = memory_effects
+        end
     else
         PT = LLVM.PointerType(FT)
         if F.value_type != PT
@@ -182,8 +156,8 @@ function get_function!(
     return F, FT
 end
 
-function get_function!(@nospecialize(builderF), mod::LLVM.Module, name::String, attrs::Vector{LLVM.Attribute} = LLVM.Attribute[])
-    get_function!(mod, name, builderF(), attrs)
+function get_function!(@nospecialize(builderF), mod::LLVM.Module, name::String, attrs::Vector{LLVM.Attribute} = LLVM.Attribute[]; memory_effects::Union{Nothing, LLVM.MemoryEffects} = nothing)
+    return get_function!(mod, name, builderF(), attrs; memory_effects)
 end
 
 T_ppjlvalue() = LLVM.PointerType(LLVM.PointerType(LLVM.StructType(LLVMType[])))
