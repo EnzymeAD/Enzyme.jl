@@ -37,6 +37,12 @@ kernel.
 @inline _isconst(config, x::Annotation) =
     EnzymeRules.runtime_activity(config) && x.dval === x.val
 
+# True when the return takes no cotangent. A constant return reaches `reverse`
+# as the type `Const{RT}` rather than an instance.
+@inline _noret(_) = false
+@inline _noret(::Const) = true
+@inline _noret(::Type{<:Const}) = true
+
 # The `init` for a reduction over shadows. `init` is a constant offset of the
 # primal, so its derivative is zero.
 @inline _dinit(::Nothing) = nothing
@@ -202,20 +208,20 @@ end
 function EnzymeRules.augmented_primal(
         config,
         ofn::Const{typeof(GPUArrays._mapreduce)},
-        ::Type{Active{RT}},
+        ::Type{<:Union{Active, Const}},
         f::Const{typeof(Base.identity)},
         op::Const{typeof(Base.add_sum)},
         A::Annotation{<:AnyGPUArray{T}};
         dims::D,
         init,
-    ) where {RT, T, D}
+    ) where {T, D}
     primal = needs_primal(config) ? ofn.val(f.val, op.val, A.val; dims, init) : nothing
     shadow = needs_shadow(config) ? A.dval : nothing
     return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
 end
 
 # `dres` is untyped on purpose: at width 1 it is an `Active`, at width > 1 a
-# tuple of them, and a `Const` when the result is unused.
+# tuple of them, and the type `Const{RT}` when the return is constant.
 function EnzymeRules.reverse(
         config,
         ofn::Const{typeof(GPUArrays._mapreduce)},
@@ -227,7 +233,7 @@ function EnzymeRules.reverse(
         dims::D,
         init,
     ) where {T, D}
-    if !_isconst(config, A) && !(dres isa Const)
+    if !_isconst(config, A) && !_noret(dres)
         N = width(config)
         ntuple(Val(N)) do i
             Base.@_inline_meta

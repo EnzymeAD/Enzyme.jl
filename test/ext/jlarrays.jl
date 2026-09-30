@@ -317,6 +317,17 @@ Enzyme descends into the backend reduction kernel, which aborts on a JLArray.
         @test collect(d2) ≈ fill(3.0, 4)
     end
 
+    # a constant return carries no cotangent, so the input shadow is left alone
+    @testset "reverse, Const return" begin
+        dx = jl(zeros(4))
+        Enzyme.autodiff(Reverse, sum, Const, Duplicated(jl(x0), dx))
+        @test collect(dx) == zeros(4)
+        d1, d2 = jl(zeros(4)), jl(zeros(4))
+        Enzyme.autodiff(Reverse, sum, Const, BatchDuplicated(jl(x0), (d1, d2)))
+        @test collect(d1) == zeros(4)
+        @test collect(d2) == zeros(4)
+    end
+
     @testset "forward" begin
         dx = jl([1.0, 1.0, 0.0, 0.0])
         res = only(Enzyme.autodiff(Forward, scaled, Duplicated, Duplicated(jl(x0), dx)))

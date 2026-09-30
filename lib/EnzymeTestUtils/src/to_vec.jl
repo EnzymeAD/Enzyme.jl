@@ -6,24 +6,28 @@ struct AliasDict{K,V} <: AbstractDict{K,V}
 end
 AliasDict() = AliasDict(IdDict(), IdDict{Tuple{UInt,Vararg{UInt}},Any}())
 
+aliasids(x) = nothing
+aliasids(x::Array) = Base.dataids(x)
+
 function Base.haskey(d::AliasDict, key)
     haskey(d.id_dict, key) && return true
-    key isa Array && haskey(d.dataids_dict, Base.dataids(key)) && return true
-    return false
+    ids = aliasids(key)
+    ids === nothing && return false
+    return haskey(d.dataids_dict, ids)
 end
 
-Base.getindex(d::AliasDict, key) = d.id_dict[key]
-function Base.getindex(d::AliasDict, key::Array)
+function Base.getindex(d::AliasDict, key)
     haskey(d.id_dict, key) && return d.id_dict[key]
-    dataids = Base.dataids(key)
-    return d.dataids_dict[dataids]
+    ids = aliasids(key)
+    ids === nothing && throw(KeyError(key))
+    return d.dataids_dict[ids]
 end
 
 function Base.setindex!(d::AliasDict, val, key)
     d.id_dict[key] = val
-    if key isa Array
-        dataids = Base.dataids(key)
-        d.dataids_dict[dataids] = val
+    ids = aliasids(key)
+    if ids !== nothing
+        d.dataids_dict[ids] = val
     end
     return d
 end
@@ -47,15 +51,21 @@ function to_vec(x)
     return x_vec, Base.Fix1(from_vec, from_vec_inner)
 end
 
+# `v` where its entries can be read one at a time; GPU-backed vectors are copied to the host
+_hostside(v) = v
+
 # base case: we've unwrapped to a number, so we break the recursion
 function to_vec(x::ElementType, seen_vecs::AliasDict)
-    AbstractFloat_from_vec(v::AbstractVector{<:ElementType}, _) = oftype(x, only(v))
+    AbstractFloat_from_vec(v::AbstractVector{<:ElementType}, _) = oftype(x, only(_hostside(v)))
     return [x], AbstractFloat_from_vec
 end
 
 # base case: we've unwrapped to a number, so we break the recursion
 function to_vec(x::Complex{<:ElementType}, seen_vecs::AliasDict)
-    AbstractComplex_from_vec(v::AbstractVector{<:ElementType}, _) = Core.Typeof(x)(v[1], v[2])
+    function AbstractComplex_from_vec(v::AbstractVector{<:ElementType}, _)
+        vh = _hostside(v)
+        return Core.Typeof(x)(vh[1], vh[2])
+    end
     return [real(x), imag(x)], AbstractComplex_from_vec
 end
 
@@ -92,18 +102,22 @@ acopyto!(dst, src) = Base.copyto!(dst, src)
 function append_or_merge(prev::Union{Nothing, Tuple{AbstractVector, Bool}}, newv::AbstractVector)::Tuple{AbstractVector, Bool}
     if prev === nothing
         return (newv, false)
-    elseif prev[2] && eltype(newv) <: eltype(prev[1])
+    elseif isempty(newv)
+        return prev
+    elseif isempty(prev[1])
+        return (newv, false)
+    elseif prev[2] && prev[1] isa Array && newv isa Array && eltype(newv) <: eltype(prev[1])
         append!(prev[1], newv)
         return prev
     else
         ET2 = Base.promote_type(eltype(prev[1]), eltype(newv))
-        if prev[2] && ET2 == eltype(prev[1])
+        if prev[2] && prev[1] isa Array && newv isa Array && ET2 == eltype(prev[1])
             append!(prev[1], newv)
             return prev
         else
-            res = Vector{ET2}(undef, length(prev[1]) + length(newv))
+            res = similar(prev[1] isa Array ? newv : prev[1], ET2, length(prev[1]) + length(newv))
             acopyto!(@view(res[1:length(prev[1])]), prev[1])
-            acopyto!(@view(res[length(prev[1])+1:end]), newv)
+            acopyto!(@view(res[(length(prev[1]) + 1):end]), newv)
             return (res, true)
         end
     end
