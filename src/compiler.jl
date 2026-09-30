@@ -7319,6 +7319,18 @@ const DumpLLVMCall = Ref(false)
             # TODO, consider optimization
             # However, julia will optimize after this, so no need
             submod = parse(LLVM.Module, String(submod))
+            # Julia's llvmcall links this module as is into every caller, so any external
+            # definition in it (e.g. the `ccalllib_*` library handle cache that Julia's
+            # codegen emits for a `ccall`) would be defined once per caller, and the JIT
+            # aborts with a duplicate symbol. Only this function uses the module, so all its
+            # definitions can be local to the caller.
+            for gv in Iterators.flatten((globals(submod), functions(submod)))
+                LLVM.isdeclaration(gv) && continue
+                LLVM.name(gv) == String(subname) && continue
+                if !(linkage(gv) in (LLVM.API.LLVMInternalLinkage, LLVM.API.LLVMPrivateLinkage))
+                    linkage!(gv, LLVM.API.LLVMInternalLinkage)
+                end
+            end
             LLVM.link!(mod, submod)
             lfn = functions(mod)[String(subname)]
             # Only this function calls the thunk, so the inliner can drop it afterwards.
