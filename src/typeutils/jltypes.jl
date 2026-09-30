@@ -29,13 +29,13 @@ per iteration.
 """
 function mark_load_dereferenceable!(inst::LLVM.LoadInst, @nospecialize(source_typ), byref)::Bool
     byref == GPUCompiler.MUT_REF || return false
-    ty = value_type(inst)
-    (isa(ty, LLVM.PointerType) && addrspace(ty) == Tracked) || return false
+    ty = inst.value_type
+    (isa(ty, LLVM.PointerType) && ty.addrspace == Tracked) || return false
     (source_typ isa DataType && isconcretetype(source_typ) && !Base.issingletontype(source_typ)) || return false
     source_typ.layout == C_NULL && return false
     size = datatype_layoutsize(source_typ)
     size > 0 || return false
-    metadata(inst)["dereferenceable_or_null"] = MDNode(LLVM.Metadata[LLVM.Metadata(LLVM.ConstantInt(Int64(size)))])
+    inst.metadata["dereferenceable_or_null"] = MDNode(LLVM.Metadata[LLVM.Metadata(LLVM.ConstantInt(Int64(size)))])
     return true
 end
 
@@ -51,10 +51,10 @@ function mark_loads_dereferenceable!(fn::LLVM.Function)
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     changed = false
-    for bb in blocks(fn), inst in instructions(bb)
+    for bb in fn.blocks, inst in bb.instructions
         isa(inst, LLVM.LoadInst) || continue
-        value_type(inst) == T_prjlvalue || continue
-        (haskey(metadata(inst), "dereferenceable") || haskey(metadata(inst), "dereferenceable_or_null")) && continue
+        inst.value_type == T_prjlvalue || continue
+        (haskey(inst.metadata, "dereferenceable") || haskey(inst.metadata, "dereferenceable_or_null")) && continue
         legal, source_typ, byref = abs_typeof(inst)
         legal || continue
         changed |= mark_load_dereferenceable!(inst, source_typ, byref)
@@ -337,7 +337,7 @@ function classify_arguments(
     mi::Core.MethodInstance,
     world::UInt,
 )
-    codegen_types = parameters(codegen_ft)
+    codegen_types = codegen_ft.parameters
 
     args = []
     codegen_i = 1

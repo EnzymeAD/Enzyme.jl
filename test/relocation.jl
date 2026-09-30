@@ -58,16 +58,16 @@ end
             mod, meta = GPUCompiler.emit_llvm(job)
             slots = Set(rec.name for rec in meta.relocations.records)
             nchecked = 0
-            for f in LLVM.functions(mod), bb in LLVM.blocks(f), inst in LLVM.instructions(bb)
+            for f in mod.functions, bb in f.blocks, inst in bb.instructions
                 isa(inst, LLVM.LoadInst) || continue
-                gv = LLVM.operands(inst)[1]
-                isa(gv, LLVM.GlobalVariable) && LLVM.name(gv) in slots || continue
-                LLVM.initializer(gv) === nothing || continue
-                for u in LLVM.uses(inst)
-                    user = LLVM.user(u)
+                gv = inst.operands[1]
+                isa(gv, LLVM.GlobalVariable) && gv.name in slots || continue
+                gv.initializer === nothing || continue
+                for u in inst.uses
+                    user = u.user
                     isa(user, LLVM.Instruction) || continue
-                    T = LLVM.value_type(user)
-                    isa(T, LLVM.PointerType) && LLVM.addrspace(T) == Enzyme.Compiler.Tracked || continue
+                    T = user.value_type
+                    isa(T, LLVM.PointerType) && T.addrspace == Enzyme.Compiler.Tracked || continue
                     @test Enzyme.Compiler.try_replace_constant_load!(user; do_replace = false) === user
                     nchecked += 1
                 end
