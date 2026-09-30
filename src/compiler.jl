@@ -7289,6 +7289,7 @@ const DumpLLVMCall = Ref(false)
 
         ir = string(mod)
         fn = llvm_f.name
+        dispose(mod)
         (ir, fn, combinedReturn)
     finally
         deactivate(ctx)
