@@ -457,7 +457,7 @@ end
             @test kind(Duplicated) === :boxed
 
             mod = LLVM.Module("test")
-            LLVM.triple!(mod, Sys.MACHINE)
+            mod.triple = Sys.MACHINE
             @test Enzyme.Compiler.native_invoke_available(mod)
 
             mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(all_boxed), Tuple{Any, Any, Any, Any}, world)

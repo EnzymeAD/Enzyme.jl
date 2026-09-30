@@ -150,9 +150,9 @@ include("typeunstablerules.jl")
 include("parallelrules.jl")
 
 @register_fwd function jlcall_fwd(B, orig, gutils, normalR, shadowR)
-    F = operands(orig)[1]
+    F = orig.operands[1]
     if isa(F, LLVM.Function)
-        name = LLVM.name(F)
+        name = F.name
         if in(name, ("ijl_apply_generic", "jl_apply_generic"))
             return common_generic_fwd(2, B, orig, gutils, normalR, shadowR)
         end
@@ -199,7 +199,7 @@ include("parallelrules.jl")
         end
     end
 
-    pf = LLVM.parent(LLVM.parent(orig))::LLVM.Function
+    pf = orig.parent.parent::LLVM.Function
     mi, _ = enzyme_custom_extract_mi(pf, false) #=error=#
     world = enzyme_world()
 
@@ -229,7 +229,7 @@ include("parallelrules.jl")
         width = get_width(gutils)
         if width != 1
             t_shadow = UndefValue(
-                LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
+                LLVM.LLVMType(API.EnzymeGetShadowType(width, normal.value_type)),
             )
             for idx in 1:width
                 t_shadow = insert_value!(B, t_shadow, normal, idx - 1)
@@ -239,7 +239,7 @@ include("parallelrules.jl")
     end
     # Delete the primal code
     if normal !== nothing
-        unsafe_store!(normalR, UndefValue(value_type(orig)).ref)
+        unsafe_store!(normalR, UndefValue(orig.value_type).ref)
     else
         ni = new_from_original(gutils, orig)
         API.EnzymeGradientUtilsErase(gutils, ni)
@@ -249,9 +249,9 @@ include("parallelrules.jl")
 end
 
 @register_aug function jlcall_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
-    F = operands(orig)[1]
+    F = orig.operands[1]
     if isa(F, LLVM.Function)
-        name = LLVM.name(F)
+        name = F.name
         if in(name, ("ijl_apply_generic", "jl_apply_generic"))
             return common_generic_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
@@ -298,7 +298,7 @@ end
         end
     end
 
-    pf = LLVM.parent(LLVM.parent(orig))::LLVM.Function
+    pf = orig.parent.parent::LLVM.Function
     mi, _ = enzyme_custom_extract_mi(pf, false) #=error=#
     world = enzyme_world()
 
@@ -327,13 +327,13 @@ end
         t_shadow1 = if normal !== nothing
             normal
         else
-            LLVM.null(value_type(orig))
+            LLVM.null(orig.value_type)
         end
         t_shadow = t_shadow1
         width = get_width(gutils)
         if width != 1
             t_shadow = UndefValue(
-                LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(t_shadow1))),
+                LLVM.LLVMType(API.EnzymeGetShadowType(width, t_shadow1.value_type)),
             )
             for idx in 1:width
                 t_shadow = insert_value!(B, t_shadow, t_shadow1, idx - 1)
@@ -346,9 +346,9 @@ end
 end
 
 @register_rev function jlcall_rev(B, orig, gutils, tape)
-    F = operands(orig)[1]
+    F = orig.operands[1]
     if isa(F, LLVM.Function)
-        name = LLVM.name(F)
+        name = F.name
         if in(name, ("ijl_apply_generic", "jl_apply_generic"))
             common_generic_rev(2, B, orig, gutils, tape)
             return nothing
@@ -405,7 +405,7 @@ end
         end
     end
 
-    pf = LLVM.parent(LLVM.parent(orig))::LLVM.Function
+    pf = orig.parent.parent::LLVM.Function
     mi, _ = enzyme_custom_extract_mi(pf, false) #=error=#
     world = enzyme_world()
 
@@ -429,9 +429,9 @@ end
 end
 
 @register_fwd function jlcall2_fwd(B, orig, gutils, normalR, shadowR)
-    F = operands(orig)[1]
+    F = orig.operands[1]
     if isa(F, LLVM.Function)
-        name = LLVM.name(F)
+        name = F.name
         if in(name, ("ijl_invoke", "jl_invoke"))
             return common_invoke_fwd(2, B, orig, gutils, normalR, shadowR)
         end
@@ -446,9 +446,9 @@ end
 end
 
 @register_aug function jlcall2_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
-    F = operands(orig)[1]
+    F = orig.operands[1]
     if isa(F, LLVM.Function)
-        name = LLVM.name(F)
+        name = F.name
         if in(name, ("ijl_invoke", "jl_invoke"))
             return common_invoke_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
@@ -463,9 +463,9 @@ end
 end
 
 @register_rev function jlcall2_rev(B, orig, gutils, tape)
-    F = operands(orig)[1]
+    F = orig.operands[1]
     if isa(F, LLVM.Function)
-        name = LLVM.name(F)
+        name = F.name
         if in(name, ("ijl_invoke", "jl_invoke"))
             common_invoke_rev(2, B, orig, gutils, tape)
             return nothing
@@ -535,20 +535,20 @@ end
 
 @register_fwd function arraycopy_fwd(B, orig, gutils, normalR, shadowR)
     enzyme_ctx = enzyme_context()
-    ctx = LLVM.context(orig)
+    ctx = orig.context
 
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
 
-    origops = LLVM.operands(orig)
+    origops = orig.operands
 
     width = get_width(gutils)
 
     shadowin = invert_pointer(gutils, origops[1], B)
 
     shadowres =
-        UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type)))
 
     found, arty, byref = abs_typeof(origops[1], enzyme_ctx)
 
@@ -594,8 +594,8 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, enzyme_ctx
     end
 
     tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, orig))
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    dl = string(LLVM.datalayout(mod))
+    mod = orig.parent.parent.parent
+    dl = string(mod.datalayout)
     # memory stores the data pointer after a length
     if memory
         API.EnzymeTypeTreeLookupEq(tt, 2 * sizeof(Int), dl)
@@ -620,7 +620,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, enzyme_ctx
     end
 
     @assert ct != API.DT_Unknown
-    ctx = LLVM.context(orig)
+    ctx = orig.context
     secretty = API.EnzymeConcreteTypeIsFloat(ct)
 
     actualOp = new_from_original(gutils, shadowsrc)
@@ -630,11 +630,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, enzyme_ctx
         B0 = LLVM.IRBuilder()
         position!(
             B0,
-            first(
-                instructions(
-                    new_from_original(gutils, LLVM.entry(LLVM.parent(LLVM.parent(orig)))),
-                ),
-            ),
+            LLVM.at_begin(new_from_original(gutils, orig.parent.parent.entry)),
         )
     else
         B0 = LLVM.IRBuilder()
@@ -645,7 +641,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, enzyme_ctx
         if len != nothing
             nextInst = new_from_original(gutils, orig)
         end
-        position!(B0, nextInst)
+        position!(B0, LLVM.before(nextInst))
     end
 
     elSize = if memory
@@ -818,7 +814,7 @@ end
     end
     arraycopy_fwd(B, orig, gutils, normalR, shadowR)
 
-    origops = LLVM.operands(orig)
+    origops = orig.operands
 
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
         shadowres = LLVM.Value(unsafe_load(shadowR))
@@ -830,7 +826,7 @@ end
 
 @register_rev function arraycopy_rev(B, orig, gutils, tape)
     enzyme_ctx = enzyme_context()
-    origops = LLVM.operands(orig)
+    origops = orig.operands
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
         arraycopy_common(false, B, orig, origops[1], gutils, nothing, enzyme_ctx)
     end
@@ -860,13 +856,13 @@ end
 
 @register_fwd function genericmemory_copy_slice_fwd(B, orig, gutils, normalR, shadowR)
     enzyme_ctx = enzyme_context()
-    ctx = LLVM.context(orig)
+    ctx = orig.context
 
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
 
-    origops = LLVM.operands(orig)
+    origops = orig.operands
 
     width = get_width(gutils)
 
@@ -901,7 +897,7 @@ end
     end
     genericmemory_copy_slice_fwd(B, orig, gutils, normalR, shadowR)
 
-    origops = LLVM.operands(orig)
+    origops = orig.operands
 
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
         shadowres = LLVM.Value(unsafe_load(shadowR))
@@ -916,7 +912,7 @@ end
 
 @register_rev function genericmemory_copy_slice_rev(B, orig, gutils, tape)
     enzyme_ctx = enzyme_context()
-    origops = LLVM.operands(orig)
+    origops = orig.operands
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
         len = new_from_original(gutils, origops[3])
         memoryptr = origops[2]
@@ -928,13 +924,13 @@ end
 
 
 @register_fwd function genericmemory_slice_fwd(B, orig, gutils, normalR, shadowR)
-    ctx = LLVM.context(orig)
+    ctx = orig.context
 
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
 
-    origops = LLVM.operands(orig)
+    origops = orig.operands
 
     width = get_width(gutils)
 
@@ -946,7 +942,7 @@ end
     algn = 0
 
     shadowres =
-        UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type)))
     for idx in 1:width
         ev = if width == 1
             shadowin
@@ -1013,7 +1009,7 @@ end
         return true
     end
     if unsafe_load(shadowR) != C_NULL
-        origops = LLVM.operands(orig)
+        origops = orig.operands
         if is_constant_value(gutils, origops[2])
             emit_error(B, orig, "Enzyme: reshape array has active return, but inactive input")
         end
@@ -1066,7 +1062,7 @@ end
         return true
     end
 
-    origops = LLVM.operands(orig)
+    origops = orig.operands
     if is_constant_value(gutils, origops[1])
         emit_error(B, orig, "Enzyme: gcloaded has active return, but inactive input(1)")
     end
@@ -1122,18 +1118,18 @@ end
         return true
     end
 
-    flt = value_type(first(operands(orig)))
-    shadowsin = LLVM.Value[invert_pointer(gutils, first(operands(orig)), B)]
+    flt = first(orig.operands).value_type
+    shadowsin = LLVM.Value[invert_pointer(gutils, first(orig.operands), B)]
     if width == 1
-        shadowres = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), shadowsin)
-        callconv!(shadowres, callconv(orig))
+        shadowres = LLVM.call!(B, orig.called_type, orig.called_operand, shadowsin)
+        shadowres.callconv = orig.callconv
     else
         shadowres =
-            UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+            UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type)))
         for idx in 1:width
             args = LLVM.Value[extract_value!(B, s, idx - 1) for s in shadowsin]
-            tmp = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), args)
-            callconv!(tmp, callconv(orig))
+            tmp = LLVM.call!(B, orig.called_type, orig.called_operand, args)
+            tmp.callconv = orig.callconv
             shadowres = insert_value!(B, shadowres, tmp, idx - 1)
         end
     end
@@ -1158,19 +1154,19 @@ end
         return true
     end
 
-    flt = value_type(first(operands(orig)))
+    flt = first(orig.operands).value_type
     TT = tape_type(flt)
 
     if width == 1
         obj = emit_allocobj!(B, Base.RefValue{TT})
-        o2 = bitcast!(B, obj, LLVM.PointerType(flt, addrspace(value_type(obj))))
+        o2 = bitcast!(B, obj, LLVM.PointerType(flt, obj.value_type.addrspace))
         store!(B, ConstantFP(flt, 0.0), o2)
         shadowres = obj
     else
         shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, flt)))
         for idx in 1:width
             obj = emit_allocobj!(B, Base.RefValue{TT})
-            o2 = bitcast!(B, obj, LLVM.PointerType(flt, addrspace(value_type(obj))))
+            o2 = bitcast!(B, obj, LLVM.PointerType(flt, obj.value_type.addrspace))
             store!(B, ConstantFP(flt, 0.0), o2)
             shadowres = insert_value!(B, shadowres, obj, idx - 1)
         end
@@ -1197,25 +1193,25 @@ end
 
     width = get_width(gutils)
     ip = lookup_value(gutils, invert_pointer(gutils, orig, B), B)
-    flt = value_type(first(operands(orig)))
+    flt = first(orig.operands).value_type
     if width == 1
-        ipc = bitcast!(B, ip, LLVM.PointerType(flt, addrspace(value_type(orig))))
+        ipc = bitcast!(B, ip, LLVM.PointerType(flt, orig.value_type.addrspace))
         ld = load!(B, flt, ipc)
         store!(B, ConstantFP(flt, 0.0), ipc)
-        if !is_constant_value(gutils, first(operands(orig)))
-            API.EnzymeGradientUtilsAddToDiffe(gutils, first(operands(orig)), ld, B, flt)
+        if !is_constant_value(gutils, first(orig.operands))
+            API.EnzymeGradientUtilsAddToDiffe(gutils, first(orig.operands), ld, B, flt)
         end
     else
         shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, flt)))
         for idx in 1:width
             ipc = extract_value!(B, ip, idx - 1)
-            ipc = bitcast!(B, ipc, LLVM.PointerType(flt, addrspace(value_type(orig))))
+            ipc = bitcast!(B, ipc, LLVM.PointerType(flt, orig.value_type.addrspace))
             ld = load!(B, flt, ipc)
             store!(B, ConstantFP(flt, 0.0), ipc)
             shadowres = insert_value!(B, shadowres, ld, idx - 1)
         end
-        if !is_constant_value(gutils, first(operands(orig)))
-            API.EnzymeGradientUtilsAddToDiffe(gutils, first(operands(orig)), shadowres, B, flt)
+        if !is_constant_value(gutils, first(orig.operands))
+            API.EnzymeGradientUtilsAddToDiffe(gutils, first(orig.operands), shadowres, B, flt)
         end
     end
     return nothing
@@ -1234,7 +1230,7 @@ end
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         width = get_width(gutils)
-        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type)))
         for idx in 1:width
             if width == 1
                 shadowres = normal
@@ -1279,7 +1275,7 @@ end
         return false
     end
 
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+    mod = orig.parent.parent.parent
 
     width = get_width(gutils)
 
@@ -1334,7 +1330,7 @@ end
             if width == 1
                 nop
             else
-                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(nop)))
+                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, nop.value_type))
                 shadowm = LLVM.UndefValue(ST)
                 for j in 1:width
                     shadowm = insert_value!(B, shadowm, nop, j - 1)
@@ -1391,7 +1387,7 @@ end
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         width = get_width(gutils)
-        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type)))
         for idx in 1:width
             if width == 1
                 shadowres = normal
@@ -1450,7 +1446,7 @@ end
             if width == 1
                 nop
             else
-                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(nop)))
+                ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, nop.value_type))
                 shadowm = LLVM.UndefValue(ST)
                 for j in 1:width
                     shadowm = insert_value!(B, shadowm, nop, j - 1)
@@ -1462,7 +1458,7 @@ end
         invert_pointer(gutils, origval, B)
     end
 
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+    mod = orig.parent.parent.parent
 
     newvals = API.CValueType[API.VT_Shadow, API.VT_Primal, API.VT_Shadow, API.VT_None]
 
@@ -1470,7 +1466,7 @@ end
         shadowh,
         new_from_original(gutils, origkey),
         shadowval,
-        LLVM.null(value_type(originserted)),
+        LLVM.null(originserted.value_type),
     ]
 
     shadowres = batch_call_same_with_inverted_arg_if_active!(
@@ -1500,7 +1496,7 @@ end
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         width = get_width(gutils)
-        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type)))
         for idx in 1:width
             if width == 1
                 shadowres = normal
@@ -1530,7 +1526,7 @@ end
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         width = get_width(gutils)
-        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type)))
         for idx in 1:width
             if width == 1
                 shadowres = normal
@@ -1550,16 +1546,16 @@ end
 end
 
 @register_fwd function jl_array_grow_end_fwd(B, orig, gutils, normalR, shadowR)
-    if is_constant_value(gutils, operands(orig)[1])
+    if is_constant_value(gutils, orig.operands[1])
         return true
     end
 
     width = get_width(gutils)
 
-    shadowin = invert_pointer(gutils, operands(orig)[1], B)
+    shadowin = invert_pointer(gutils, orig.operands[1], B)
     args = LLVM.Value[
         shadowin
-        new_from_original(gutils, operands(orig)[2])
+        new_from_original(gutils, orig.operands[2])
     ]
     batch_call_same_with_inverted_arg_if_active!(
         B,
@@ -1590,7 +1586,7 @@ function post_shadow_array_grow!(B, _, args, pre)
 
     i8 = LLVM.IntType(8)
 
-    elsz = zext!(B, get_array_elsz(B, anti), value_type(idx))
+    elsz = zext!(B, get_array_elsz(B, anti), idx.value_type)
     off = mul!(B, idx, elsz)
     tot = mul!(B, inc, elsz)
 
@@ -1601,17 +1597,17 @@ function post_shadow_array_grow!(B, _, args, pre)
 end
 
 @register_aug function jl_array_grow_end_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
-    if is_constant_value(gutils, operands(orig)[1])
+    if is_constant_value(gutils, orig.operands[1])
         return true
     end
 
     width = get_width(gutils)
 
-    shadowin = invert_pointer(gutils, operands(orig)[1], B)
-    ctx = LLVM.context(orig)
+    shadowin = invert_pointer(gutils, orig.operands[1], B)
+    ctx = orig.context
 
 
-    inc = new_from_original(gutils, operands(orig)[2])
+    inc = new_from_original(gutils, orig.operands[2])
 
     args = LLVM.Value[shadowin, inc]
     batch_call_same_with_inverted_arg_if_active!(
@@ -1632,23 +1628,23 @@ end
 end
 
 @register_rev function jl_array_grow_end_rev(B, orig, gutils, tape)
-    if !is_constant_value(gutils, operands(orig)[1])
+    if !is_constant_value(gutils, orig.operands[1])
 
         width = get_width(gutils)
 
-        called_value = LLVM.called_operand(orig)
-        funcT = called_type(orig)
-        mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+        called_value = orig.called_operand
+        funcT = orig.called_type
+        mod = orig.parent.parent.parent
         delF, fty = get_function!(mod, "jl_array_del_end", funcT)
 
-        shadowin = invert_pointer(gutils, operands(orig)[1], B)
+        shadowin = invert_pointer(gutils, orig.operands[1], B)
         shadowin = lookup_value(gutils, shadowin, B)
 
-        offset = new_from_original(gutils, operands(orig)[2])
+        offset = new_from_original(gutils, orig.operands[2])
         offset = lookup_value(gutils, offset, B)
 
         fval = if get_runtime_activity(gutils)
-            lookup_value(gutils, new_from_original(gutils, operands(orig)[1]), B)
+            lookup_value(gutils, new_from_original(gutils, orig.operands[1]), B)
         else
             nothing
         end
@@ -1667,8 +1663,8 @@ end
             if get_runtime_activity(gutils) && endB === nothing
                 cond = icmp!(B, LLVM.API.LLVMIntNE, fval, args[1])
 
-                currentBlock = Base.position(B)
-                ogname = LLVM.name(currentBlock)
+                currentBlock = B.insert_block
+                ogname = currentBlock.name
 
                 nextB = add_reverse_block!(gutils, currentBlock, ogname * "_active")
 
@@ -1676,7 +1672,7 @@ end
 
                 br!(B, cond, nextB, endB)
 
-                position!(B, nextB)
+                position!(B, LLVM.at_end(nextB))
             end
 
             LLVM.call!(B, fty, delF, args)
@@ -1685,7 +1681,7 @@ end
         if endB !== nothing
             br!(B, endB)
             set_reverse_block!(gutils, endB)
-            position!(B, endB)
+            position!(B, LLVM.at_end(endB))
             currentBlock = endB
         end
     end
@@ -1702,19 +1698,19 @@ end
 
 @register_rev function jl_array_del_end_rev(B, orig, gutils, tape)
     enzyme_ctx = enzyme_context()
-    if !is_constant_value(gutils, operands(orig)[1])
+    if !is_constant_value(gutils, orig.operands[1])
         width = get_width(gutils)
         origops = arg_operands_view(orig)
 
-        called_value = LLVM.called_operand(orig)
-        funcT = called_type(orig)
-        mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
+        called_value = orig.called_operand
+        funcT = orig.called_type
+        mod = orig.parent.parent.parent
         delF, fty = get_function!(mod, "jl_array_grow_end", funcT)
 
-        shadowin = invert_pointer(gutils, operands(orig)[1], B)
+        shadowin = invert_pointer(gutils, orig.operands[1], B)
         shadowin = lookup_value(gutils, shadowin, B)
 
-        offset = new_from_original(gutils, operands(orig)[2])
+        offset = new_from_original(gutils, orig.operands[2])
         offset = lookup_value(gutils, offset, B)
 
         # TODO get actual alignment
@@ -1723,7 +1719,7 @@ end
         i8 = LLVM.IntType(8)
 
         fval = if get_runtime_activity(gutils)
-            lookup_value(gutils, new_from_original(gutils, operands(orig)[1]), B)
+            lookup_value(gutils, new_from_original(gutils, orig.operands[1]), B)
         else
             nothing
         end
@@ -1740,8 +1736,8 @@ end
             if get_runtime_activity(gutils)
                 cond = icmp!(B, LLVM.API.LLVMIntNE, fval, anti)
 
-                currentBlock = Base.position(B)
-                ogname = LLVM.name(currentBlock)
+                currentBlock = B.insert_block
+                ogname = currentBlock.name
 
                 nextB = add_reverse_block!(gutils, currentBlock, ogname * "_active")
 
@@ -1749,7 +1745,7 @@ end
 
                 br!(B, cond, nextB, endB)
 
-                position!(B, nextB)
+                position!(B, LLVM.at_end(nextB))
             end
 
             args = LLVM.Value[anti, offset]
@@ -1786,7 +1782,7 @@ end
             if get_runtime_activity(gutils)
                 br!(B, endB)
                 set_reverse_block!(gutils, endB)
-                position!(B, endB)
+                position!(B, LLVM.at_end(endB))
                 currentBlock = endB
             end
         end
@@ -1833,7 +1829,7 @@ end
         return true
     end
     width = get_width(gutils)
-    shadowin = invert_pointer(gutils, operands(orig)[2], B)
+    shadowin = invert_pointer(gutils, orig.operands[2], B)
 
     valTys = API.CValueType[
         API.VT_Primal,
@@ -1843,10 +1839,10 @@ end
     ]
 
     args = LLVM.Value[
-        new_from_original(gutils, operands(orig)[1]),
+        new_from_original(gutils, orig.operands[1]),
         shadowin, # data
-        new_from_original(gutils, operands(orig)[3]),
-        new_from_original(gutils, operands(orig)[4]),
+        new_from_original(gutils, orig.operands[3]),
+        new_from_original(gutils, orig.operands[4]),
     ]
 
     shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false, "ptr_to_array"; cmpidx = 2)::LLVM.Value
@@ -1870,28 +1866,28 @@ end
     end
     width = get_width(gutils)
 
-    legal, dest_ty, _ = abs_typeof(first(operands(orig)), enzyme_ctx)
+    legal, dest_ty, _ = abs_typeof(first(orig.operands), enzyme_ctx)
 
     if !legal
-        emit_error(B, orig, "Enzyme: could not deduce element type of value within generic_memory_copyto of " * string(first(operands(orig))) * " within " * string(orig))
+        emit_error(B, orig, "Enzyme: could not deduce element type of value within generic_memory_copyto of " * string(first(orig.operands)) * " within " * string(orig))
     else
         dest_ty = Vector{Any}
     end
 
     ET = eltype(dest_ty)
 
-    fn = LLVM.parent(LLVM.parent(orig))
+    fn = orig.parent.parent
     world = enzyme_world()
     if !guaranteed_nonactive(ET, world)
         emit_error(B, orig, "Enzyme: element type $ET of generic_memory_copyto is potentially active ($reg) and not presently supported")
     end
 
     args = LLVM.Value[]
-    for a in @view operands(orig)[1:4]
+    for a in @view orig.operands[1:4]
         v = invert_pointer(gutils, a, B)
         push!(args, v)
     end
-    push!(args, new_from_original(gutils, operands(orig)[5]))
+    push!(args, new_from_original(gutils, orig.operands[5]))
     valTys = API.CValueType[
         API.VT_Shadow,
         API.VT_Shadow,
@@ -1904,10 +1900,10 @@ end
         vargs = args
         cal = call_samefunc_with_inverted_bundles!(B, gutils, orig, vargs, valTys, false) #=lookup=#
         debug_from_orig!(gutils, cal, orig)
-        callconv!(cal, callconv(orig))
+        cal.callconv = orig.callconv
     else
         shadowres =
-            UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+            UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type)))
         for idx in 1:width
             vargs = LLVM.Value[]
             for a in args[1:(end - 1)]
@@ -1917,7 +1913,7 @@ end
             cal =
                 call_samefunc_with_inverted_bundles!(B, gutils, orig, vargs, valTys, false) #=lookup=#
             debug_from_orig!(gutils, cal, orig)
-            callconv!(cal, callconv(orig))
+            cal.callconv = orig.callconv
         end
     end
 
@@ -1931,16 +1927,16 @@ end
 end
 
 @register_fwd function jl_array_sizehint_fwd(B, orig, gutils, normalR, shadowR)
-    if is_constant_value(gutils, operands(orig)[1])
+    if is_constant_value(gutils, orig.operands[1])
         return true
     end
     width = get_width(gutils)
 
-    shadowin = invert_pointer(gutils, operands(orig)[1], B)
+    shadowin = invert_pointer(gutils, orig.operands[1], B)
     if width == 1
         args = LLVM.Value[
             shadowin
-            new_from_original(gutils, operands(orig)[2])
+            new_from_original(gutils, orig.operands[2])
         ]
         call_samefunc_with_inverted_bundles!(
             B,
@@ -1952,11 +1948,11 @@ end
         ) #=lookup=#
     else
         shadowres =
-            UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+            UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type)))
         for idx in 1:width
             args = LLVM.Value[
                 extract_value!(B, shadowin, idx - 1)
-                new_from_original(gutils, operands(orig)[2])
+                new_from_original(gutils, orig.operands[2])
             ]
             call_samefunc_with_inverted_bundles!(
                 B,
@@ -1981,7 +1977,7 @@ end
 
 @register_fwd function jl_unhandled_fwd(B, orig, gutils, normalR, shadowR)
     newo = new_from_original(gutils, orig)
-    err = emit_error(B, orig, "Enzyme: unhandled forward for " * string(LLVM.called_operand(orig)))
+    err = emit_error(B, orig, "Enzyme: unhandled forward for " * string(orig.called_operand))
     API.moveBefore(newo, err, C_NULL)
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
@@ -1991,9 +1987,9 @@ end
         if width == 1
             shadowres = normal
         else
-            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
+            position!(B, LLVM.after(normal))
             shadowres = UndefValue(
-                LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
+                LLVM.LLVMType(API.EnzymeGetShadowType(width, normal.value_type)),
             )
             for idx in 1:width
                 shadowres = insert_value!(B, shadowres, normal, idx - 1)
@@ -2026,7 +2022,7 @@ end
     end
 
     newo = new_from_original(gutils, orig)
-    cmp = icmp!(B, LLVM.API.LLVMIntNE, newo, LLVM.null(value_type(newo)))
+    cmp = icmp!(B, LLVM.API.LLVMIntNE, newo, LLVM.null(newo.value_type))
 
     err = emit_error(
         B,
@@ -2041,9 +2037,9 @@ end
     if unsafe_load(shadowR) != C_NULL
         valTys = API.CValueType[]
         args = LLVM.Value[]
-        for i in 1:(length(operands(orig)) - 1)
+        for i in 1:(length(orig.operands) - 1)
             push!(valTys, API.VT_Primal)
-            push!(args, new_from_original(gutils, operands(orig)[i]))
+            push!(args, new_from_original(gutils, orig.operands[i]))
         end
         normal = call_samefunc_with_inverted_bundles!(B, gutils, orig, args, valTys, false) #=lookup=#
         width = get_width(gutils)
@@ -2051,7 +2047,7 @@ end
             shadowres = normal
         else
             shadowres = UndefValue(
-                LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
+                LLVM.LLVMType(API.EnzymeGetShadowType(width, normal.value_type)),
             )
             for idx in 1:width
                 shadowres = insert_value!(B, shadowres, normal, idx - 1)
@@ -2100,7 +2096,7 @@ end
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         width = get_width(gutils)
-        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type)))
         for idx in 1:width
             if width == 1
                 shadowres = normal
@@ -2128,7 +2124,7 @@ end
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         width = get_width(gutils)
-        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type)))
         for idx in 1:width
             if width == 1
                 shadowres = normal
@@ -2140,7 +2136,7 @@ end
     end
     # Delete the primal code
     if normal !== nothing
-        unsafe_store!(normalR, UndefValue(value_type(orig)).ref)
+        unsafe_store!(normalR, UndefValue(orig.value_type).ref)
     else
         ni = new_from_original(gutils, orig)
         API.EnzymeGradientUtilsErase(gutils, ni)
@@ -2169,7 +2165,7 @@ end
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         width = get_width(gutils)
-        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type)))
         for idx in 1:width
             if width == 1
                 shadowres = normal
@@ -2197,7 +2193,7 @@ end
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         width = get_width(gutils)
-        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type)))
         for idx in 1:width
             if width == 1
                 shadowres = normal
@@ -2209,7 +2205,7 @@ end
     end
     # Delete the primal code
     if normal !== nothing
-        unsafe_store!(normalR, UndefValue(value_type(orig)).ref)
+        unsafe_store!(normalR, UndefValue(orig.value_type).ref)
     else
         ni = new_from_original(gutils, orig)
         API.EnzymeGradientUtilsErase(gutils, ni)

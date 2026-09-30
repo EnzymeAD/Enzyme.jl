@@ -166,40 +166,6 @@ SetMD(v::Union{LLVM.Instruction,LLVM.GlobalVariable}, kind::String, node::LLVM.M
         LLVM.Value(node),
     )
 
-@static if !isdefined(LLVM, :ValueMetadataDict)
-    Base.haskey(md::LLVM.InstructionMetadataDict, kind::String) =
-        ccall(
-            (:EnzymeGetStringMD, libEnzyme),
-            Cvoid,
-            (LLVM.API.LLVMValueRef, Cstring),
-            md.inst,
-            kind,
-        ) != C_NULL
-
-    function Base.getindex(md::LLVM.InstructionMetadataDict, kind::String)
-        objref =
-            ccall(
-                (:EnzymeGetStringMD, libEnzyme),
-                Cvoid,
-                (LLVM.API.LLVMValueRef, Cstring),
-                md.inst,
-                kind,
-            ) != C_NULL
-        objref == C_NULL && throw(KeyError(kind))
-        return LLVM.Metadata(LLVM.MetadataAsValue(objref))
-    end
-
-    Base.setindex!(md::LLVM.InstructionMetadataDict, node::LLVM.Metadata, kind::String) =
-        ccall(
-            (:EnzymeSetStringMD, libEnzyme),
-            Cvoid,
-            (LLVM.API.LLVMValueRef, Cstring, LLVM.API.LLVMValueRef),
-            md.inst,
-            kind,
-            LLVM.Value(node),
-        )
-end
-
 @cenum(
     CDIFFE_TYPE,
     DFT_OUT_DIFF = 0,  # add differential to an output struct
