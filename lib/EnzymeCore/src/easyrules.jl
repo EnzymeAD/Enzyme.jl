@@ -558,8 +558,8 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                 #end
             elseif RTA <: Type{<:Union{EnzymeCore.DuplicatedNoNeed,EnzymeCore.Duplicated, EnzymeCore.BatchDuplicated, EnzymeCore.BatchDuplicatedNoNeed}}
                 push!(genexprs, Expr(:(=), :dΩ, :(cache[end])))
-            else
-                push!(genexprs, Expr(Base.throw, AssertionError("Easy Rule should never be provided a constant reverse seed")))
+            elseif !(RTA <: Type{<:EnzymeCore.Const})
+                push!(genexprs, Expr(:call, Base.throw, AssertionError("Easy Rule should never be provided a constant reverse seed")))
             end
 
             actives = Union{Nothing, Expr}[$(actives...)]
@@ -571,7 +571,8 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
             insyms = Matrix{Symbol}(undef, N, W)
 
             for (inum, sym_name) in enumerate(inp_names)
-                if (RTA <: EnzymeCore.Const)
+                # A constant return propagates no derivative into the inputs.
+                if RTA <: EnzymeCore.Const || RTA <: Type{<:EnzymeCore.Const}
                     push!(results, nothing)
                     continue
                 end
