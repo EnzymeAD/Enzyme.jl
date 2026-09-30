@@ -52,7 +52,7 @@ function get_shadow_type(gutils::GradientUtils, T::LLVM.LLVMType)
     end
 end
 function get_uncacheable(gutils::GradientUtils, orig::LLVM.CallInst)
-    uncacheable = Vector{UInt8}(undef, LLVM.API.LLVMGetNumArgOperands(orig))
+    uncacheable = Vector{UInt8}(undef, length(orig.arguments))
     if get_mode(gutils) == API.DEM_ForwardMode
         fill!(uncacheable, 0)
         return uncacheable
@@ -116,7 +116,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function, forward_tys::Vect
     if extra_rt
         insert!(ptys, 1, FT0.return_type)
     end
-    FT = LLVM.FunctionType(need_result ? FT0.return_type : LLVM.VoidType(), ptys; vararg=LLVM.isvararg(FT0))
+    FT = LLVM.FunctionType(need_result ? FT0.return_type : LLVM.VoidType(), ptys; vararg = LLVM.isvararg(FT0))
     mod = fn.parent
     newname = "julia.enzyme.conditionally_execute."
     if !need_result
@@ -140,7 +140,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function, forward_tys::Vect
     newname = newname * fn.name
     cfn, _ = get_function!(mod, newname, FT)
     if isempty(cfn.blocks)
-        cfn.linkage = LLVM.API.LLVMInternalLinkage
+        cfn.linkage = LLVM.Linkage.Internal
         let builder = IRBuilder()
             entry = BasicBlock(cfn, "entry")
             good = BasicBlock(cfn, "good")
@@ -160,7 +160,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function, forward_tys::Vect
                 res.callconv = fn.callconv
             end
 
-            cmp = icmp!(builder, LLVM.API.LLVMIntNE, parms[1 + extra_rt], parms[1 + cmpidx + extra_rt])
+            cmp = icmp!(builder, LLVM.IntPredicate.NE, parms[1 + extra_rt], parms[1 + cmpidx + extra_rt])
 
             br!(builder, cmp, good, bad)
             position!(builder, LLVM.at_end(good))
@@ -195,7 +195,7 @@ function get_or_insert_conditional_execute!(fn::LLVM.Function, forward_tys::Vect
                 ret!(builder, parms[1])
             end
         end
-        push!(cfn.function_attributes, EnumAttribute("alwaysinline"))
+        push!(cfn.function_attributes, EnumAttribute(:alwaysinline))
     end
     return cfn
 end
@@ -231,7 +231,7 @@ function call_same_with_inverted_arg_if_active!(
     need_result = true
 )::Union{LLVM.Value, Nothing}
     @assert length(args) == length(valTys)
-    origops = arg_operands_view(orig)
+    origops = orig.arguments
     if !force_run && is_constant_value(gutils, origops[cmpidx])
         if !need_result
             return nothing
@@ -336,7 +336,7 @@ function batch_call_same_with_inverted_arg_if_active!(
 
     width = get_width(gutils)
 
-    void_rt = orig.value_type ==LLVM.VoidType()
+    void_rt = orig.value_type == LLVM.VoidType()
     shadow = if !void_rt && need_result
         ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, orig.value_type))
         LLVM.UndefValue(ST)::LLVM.Value
