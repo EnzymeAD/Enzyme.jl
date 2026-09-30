@@ -64,12 +64,12 @@ const captured_constants = Base.IdSet{Any}()
 
 function arg_operands_view(inst::LLVM.CallInst)
     N_args = LLVM.API.LLVMGetNumArgOperands(inst)
-    return @view LLVM.operands(inst)[1:N_args]
+    return @view inst.operands[1:N_args]
 end
 
 
 function unsafe_nothing_to_llvm(mod::LLVM.Module)
-    globs = LLVM.globals(mod)
+    globs = mod.globals
     k = "jl_nothing"
     if Base.haskey(globs, "ejl_" * k)
         return globs["ejl_"*k]
@@ -136,8 +136,8 @@ function setup_global(
         @nospecialize(val),
         enzyme_ctx::Union{EnzymeContext, Nothing},
     )::LLVM.Value
-    mod = LLVM.parent(LLVM.parent(LLVM.position(B)))
-    globs = LLVM.globals(mod)
+    mod = B.insert_block.parent.parent
+    globs = mod.globals
     if Base.haskey(globs, "ejl_" * k)
         return globs["ejl_" * k]
     end
@@ -554,79 +554,75 @@ export typed_fieldoffset
 # returns the inner type of an sret/enzyme_sret/enzyme_sret_v
 function sret_ty(fn::LLVM.Function, idx::Int, btval::Union{Nothing, LLVM.Instruction}=nothing, throw_error=true)::Union{Nothing, LLVM.LLVMType}
 
-    vt = LLVM.value_type(LLVM.parameters(fn)[idx])
+    vt = fn.parameters[idx].value_type
 
-    sretkind = LLVM.kind(if LLVM.version().major >= 12
-        LLVM.TypeAttribute("sret", LLVM.Int32Type())
-    else
-        LLVM.EnumAttribute("sret")
-    end)
+    sretkind = :sret
 
 
     enzymejl_parmtype_ref = nothing
     enzymejl_parmtype = nothing
 
-    for attr in collect(LLVM.parameter_attributes(fn, idx))
-        ekind = LLVM.kind(attr)
+    for attr in collect(fn.parameter_attributes[idx])
+        ekind = attr.kind
 
         if ekind == sretkind
-            res = LLVM.value(attr)
-            if !LLVM.is_opaque(vt)
-                @assert eltype(vt) == res
+            res = attr.value
+            if !LLVM.isopaque(vt)
+                @assert vt.element_type == res
             end
             return res::LLVM.LLVMType
         end
 
         if ekind == "enzymejl_sret_union_bytes"
-            nbytes = parse(Int, LLVM.value(attr))
+            nbytes = parse(Int, attr.value)
             i8 = LLVM.IntType(8)
 
             res = LLVM.ArrayType(i8, nbytes)
-            if !LLVM.is_opaque(vt)
-                @assert eltype(vt) == res
+            if !LLVM.isopaque(vt)
+                @assert vt.element_type == res
             end
             return res::LLVM.LLVMType
         end
 
         if ekind == "enzymejl_returnRoots"
-            nroots = parse(Int, LLVM.value(attr))
+            nroots = parse(Int, attr.value)
     
             T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
             T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
             res = LLVM.ArrayType(T_prjlvalue, nroots)
-            if !LLVM.is_opaque(vt)
-                @assert eltype(vt) == res
+            if !LLVM.isopaque(vt)
+                @assert vt.element_type == res
             end
             return res::LLVM.LLVMType
         end
 
         if ekind == "enzyme_sret"
-            ety = parse(UInt, LLVM.value(attr))
+            ety = parse(UInt, attr.value)
             ety = Base.reinterpret(LLVM.API.LLVMTypeRef, ety)
             ety = LLVM.LLVMType(ety)
-            if !LLVM.is_opaque(vt)
-                @assert ety == eltype(vt) "Mismatched sret type $(string(fn))\nidx=$idx\nety ($(string(ety))) != eltype(vt) (vt = $(string(vt)))"
+            if !LLVM.isopaque(vt)
+                @assert ety == vt.element_type "Mismatched sret type $(string(fn))\nidx=$idx\nety ($(string(ety))) != eltype(vt) (vt = $(string(vt)))"
             end
         
             return ety::LLVM.LLVMType
         end
 
         if ekind == "enzymejl_parmtype_ref"
-            enzymejl_parmtype_ref = GPUCompiler.ArgumentCC(parse(UInt, LLVM.value(attr)))
+            enzymejl_parmtype_ref = GPUCompiler.ArgumentCC(parse(UInt, attr.value))
             continue
         end
 
         if ekind == "enzymejl_parmtype"
-            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(attr)))
+            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, attr.value))
             enzymejl_parmtype = Base.unsafe_pointer_to_objref(ptr)::Type
         end
     end
 
     if enzymejl_parmtype_ref == GPUCompiler.BITS_REF && enzymejl_parmtype !== nothing
         res = convert(LLVM.LLVMType, enzymejl_parmtype)
-        if !LLVM.is_opaque(vt)
-            @assert eltype(vt) == res
+        if !LLVM.isopaque(vt)
+            @assert vt.element_type == res
         end
         return res::LLVM.LLVMType
     end
@@ -658,11 +654,11 @@ end
 export sret_ty
 
 function get_rooted_typ(fn::LLVM.Function, idx::Int)::LLVM.LLVMType
-    for attr in collect(LLVM.parameter_attributes(fn, idx))
-        ekind = LLVM.kind(attr)
+    for attr in collect(fn.parameter_attributes[idx])
+        ekind = attr.kind
 
         if ekind == "enzymejl_rooted_typ"
-            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(attr)))
+            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, attr.value))
             return Base.unsafe_pointer_to_objref(ptr)
         end
     end

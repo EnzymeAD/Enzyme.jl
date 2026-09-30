@@ -118,7 +118,7 @@ function enzyme_code_llvm(
     end
     JuliaContext() do ctx
         entry_fn, ir = reflect(func, A, types; optimize, run_enzyme, second_stage, mode, kwargs...)
-        ts_mod = ThreadSafeModule(ir)
+        ts_mod = LLVM.ThreadSafeModule(ir)
         GC.@preserve ts_mod entry_fn begin
             value = Ref(jl_llvmf_dump(ts_mod.ref, entry_fn.ref))
             str = ccall(
