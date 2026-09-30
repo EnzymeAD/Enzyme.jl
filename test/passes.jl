@@ -1098,3 +1098,45 @@ end
         end
     end
 end
+
+@testset "detect_readonly_or_throw! keeps custom rule arguments read" begin
+    # `%data` stands for the data half of an aggregate with inline roots, which the
+    # primal body never loads. Inference may mark it `readnone` only where no custom rule
+    # replaces the body: a rule reads the whole argument.
+    @test @filecheck begin
+        @check_label "define double @rule_fn("
+        @check_same "readonly %data"
+        @check_label "define double @plain_fn("
+        @check_same "readnone %data"
+        @check_not "enzymefakeread"
+        LLVM.Context() do ctx
+            mod = parse(
+                LLVM.Module, """
+                source_filename = "start"
+                target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+                target triple = "x86_64-linux-gnu"
+
+                define double @rule_fn(double* nocapture readonly %data, double** nocapture readonly %roots) #0 {
+                top:
+                  %p = load double*, double** %roots, align 8
+                  %v = load double, double* %p, align 8
+                  ret double %v
+                }
+
+                define double @plain_fn(double* nocapture readonly %data, double** nocapture readonly %roots) #1 {
+                top:
+                  %p = load double*, double** %roots, align 8
+                  %v = load double, double* %p, align 8
+                  ret double %v
+                }
+
+                attributes #0 = { "enzyme_math"="enzyme_custom" "enzyme_preserve_primal"="*" "enzymejl_world"="1" }
+                attributes #1 = { "enzymejl_world"="1" }
+                """
+            )
+
+            Enzyme.Compiler.detect_readonly_or_throw!(mod)
+            string(mod)
+        end
+    end
+end

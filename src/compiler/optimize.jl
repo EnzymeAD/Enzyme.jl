@@ -95,8 +95,10 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
         # passes below run: with EnzymeAD/Enzyme#3264, Enzyme also states this as
         # LLVM `memory` attributes, which lets LICM hoist loads (e.g. of an array's
         # `Memory` pointer) past calls to such functions instead of Enzyme having
-        # to cache them per loop iteration.
-        API.EnzymeDetectReadonlyOrThrow(mod)
+        # to cache them per loop iteration. The arguments of functions with a custom
+        # rule must stay read here too: the `DSEPass` below would otherwise delete
+        # stores into buffers only the rule reads, see `detect_readonly_or_throw!`.
+        detect_readonly_or_throw!(mod)
         return @dispose pb = NewPMPassBuilder() begin
             if tti !== nothing
                 LLVM.target_transform_info!(pb, tti)
