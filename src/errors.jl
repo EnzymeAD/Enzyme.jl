@@ -1052,8 +1052,7 @@ function julia_error(
             end
         end
         if isa(val, LLVM.ConstantExpr)
-            for u in val.uses
-                u = u.user
+            for u in val.users
                 if isa(u, LLVM.Instruction)
                     bt = GPUCompiler.backtrace(u)
                     break
@@ -1401,8 +1400,7 @@ function julia_error(
                 larg, off = get_base_and_offset(cur.operands[1])
 		    if off == 0 && isa(larg, LLVM.AllocaInst)
 			 legal = true
-                    for u in larg.uses
-                        u = u.user
+                    for u in larg.users
 			    if isa(u, LLVM.LoadInst)
 				continue
 			    end

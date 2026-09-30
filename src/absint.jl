@@ -52,8 +52,7 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
                 init = gv.initializer
                 if init !== nothing
                     just_load = true
-                    for u in gv.uses
-                        u = u.user
+                    for u in gv.users
                         if !isa(u, LLVM.LoadInst)
                             just_load = false
                             break
@@ -328,23 +327,16 @@ function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Boo
                 continue
             end
             if larg.opcode == LLVM.Opcode.GetElementPtr && pinst isa LLVM.Instruction
-		    b = LLVM.IRBuilder()
-                position!(b, LLVM.before(pinst))
-		    offty = LLVM.IntType(8 * sizeof(Int))
-		    offset2 = API.EnzymeComputeByteOffsetOfGEP(b, larg, offty)
-		    if isa(offset2, LLVM.ConstantInt)
-			val = convert(Int, offset2)
-			if offsetAllowed || val == 0
-			    offset += val
-                        larg = larg.operands[1]
-			    continue
-			else
-			    break
-			end
-		    else
-			break
-		    end
-		end
+                dl = pinst.parent.parent.parent.datalayout
+                val = LLVM.constant_offset(Int, larg, dl)
+                if val !== nothing && (offsetAllowed || val == 0)
+                    offset += val
+                    larg = larg.operands[1]
+                    continue
+                else
+                    break
+                end
+            end
         end
         if isa(larg, LLVM.BitCastInst) || isa(larg, LLVM.IntToPtrInst)
             larg = larg.operands[1]
@@ -364,19 +356,12 @@ function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Boo
         end
         if isa(larg, LLVM.GetElementPtrInst) &&
                 all(Base.Fix2(isa, LLVM.ConstantInt), larg.operands[2:end])
-            b = LLVM.IRBuilder()
-            position!(b, LLVM.before(larg))
-            offty = LLVM.IntType(8 * sizeof(Int))
-            offset2 = API.EnzymeComputeByteOffsetOfGEP(b, larg, offty)
-            if isa(offset2, LLVM.ConstantInt)
-                val = convert(Int, offset2)
-                if offsetAllowed || val == 0
-                    offset += val
-                    larg = larg.operands[1]
-                    continue
-                else
-                    break
-                end
+            dl = larg.parent.parent.parent.datalayout
+            val = LLVM.constant_offset(Int, larg, dl)
+            if val !== nothing && (offsetAllowed || val == 0)
+                offset += val
+                larg = larg.operands[1]
+                continue
             else
                 break
             end
@@ -449,8 +434,7 @@ function abs_typeof(
                 init = gv.initializer
                 if init !== nothing
                     just_load = true
-                    for u in gv.uses
-                        u = u.user
+                    for u in gv.users
                         if !isa(u, LLVM.LoadInst)
                             just_load = false
                             break
@@ -959,28 +943,32 @@ function abs_typeof(
                     if length(indices) == 1 && indices[1].value_type isa LLVM.IntegerType
                         idx = indices[1]
                         
-                        b = LLVM.IRBuilder()
-                        position!(b, LLVM.before(arg))
-                        
                         source_type = arg.source_element_type
                         base_ptr = arg.operands[1]
-                        
-                        tmp_indices_0 = LLVM.Value[LLVM.ConstantInt(idx.value_type, 0)]
-                        tmp_gep_0 = LLVM.gep!(b, source_type, base_ptr, tmp_indices_0)
-                        
-                        tmp_indices_1 = LLVM.Value[LLVM.ConstantInt(idx.value_type, 1)]
-                        tmp_gep_1 = LLVM.gep!(b, source_type, base_ptr, tmp_indices_1)
-                        
-                        offty = LLVM.IntType(8 * sizeof(Int))
-                        offset_0_val = API.EnzymeComputeByteOffsetOfGEP(b, tmp_gep_0, offty)
-                        offset_1_val = API.EnzymeComputeByteOffsetOfGEP(b, tmp_gep_1, offty)
-                        
-                        erase!(tmp_gep_0)
-                        erase!(tmp_gep_1)
-                        
-                        if isa(offset_0_val, LLVM.ConstantInt) && isa(offset_1_val, LLVM.ConstantInt)
-                            C = convert(Int, offset_0_val)
-                            stride = convert(Int, offset_1_val) - C
+                        dl = arg.parent.parent.parent.datalayout
+
+                        offset_0, offset_1 = @dispose b = LLVM.IRBuilder() begin
+                            position!(b, LLVM.before(arg))
+
+                            tmp_indices_0 = LLVM.Value[LLVM.ConstantInt(idx.value_type, 0)]
+                            tmp_gep_0 = LLVM.gep!(b, source_type, base_ptr, tmp_indices_0)
+
+                            tmp_indices_1 = LLVM.Value[LLVM.ConstantInt(idx.value_type, 1)]
+                            tmp_gep_1 = LLVM.gep!(b, source_type, base_ptr, tmp_indices_1)
+
+                            offsets = (
+                                LLVM.constant_offset(tmp_gep_0, dl),
+                                LLVM.constant_offset(tmp_gep_1, dl),
+                            )
+
+                            erase!(tmp_gep_0)
+                            erase!(tmp_gep_1)
+                            offsets
+                        end
+
+                        if offset_0 !== nothing && offset_1 !== nothing
+                            C = Int(offset_0)
+                            stride = Int(offset_1) - C
 
                             # C and base_offset must each individually be a multiple of
                             # the element size, they cannot be combined to form one.
@@ -1090,33 +1078,36 @@ end
 end
 
 function abs_cstring(@nospecialize(arg::LLVM.Value))::Tuple{Bool, String}
-        ce = arg
-        while isa(ce, ConstantExpr)
-        if ce.opcode == LLVM.Opcode.AddrSpaceCast || ce.opcode == LLVM.Opcode.BitCast ||  ce.opcode == LLVM.Opcode.IntToPtr
+    ce = arg
+    while isa(ce, ConstantExpr)
+        if ce.opcode == LLVM.Opcode.AddrSpaceCast || ce.opcode == LLVM.Opcode.BitCast || ce.opcode == LLVM.Opcode.IntToPtr
             ce = ce.operands[1]
         elseif ce.opcode == LLVM.Opcode.GetElementPtr
             if all(is_zero, ce.operands[2:end])
                 ce = ce.operands[1]
-                else
-                    break
-                end
             else
                 break
             end
+        else
+            break
         end
-        
-        larg = nothing
+    end
+
+    larg = nothing
     if ce isa LLVM.GlobalAlias
-            larg = ce.aliasee
-        elseif isa(ce, LLVM.GlobalVariable)
+        larg = ce.aliasee
+    elseif isa(ce, LLVM.GlobalVariable)
         larg = ce.initializer
-        end
+    end
 
-        if larg !== nothing
-        if (isa(larg, LLVM.ConstantArray) || isa(larg, LLVM.ConstantDataArray)) && larg.value_type.element_type == LLVM.IntType(8)
+    if larg !== nothing
+        # drop the last character, the terminating NUL of a C string
+        if isstring(larg)
+            str = String(larg)
+            return (true, String(codeunits(str)[1:(end - 1)]))
+        elseif isa(larg, LLVM.ConstantArray) && larg.value_type.element_type == LLVM.IntType(8)
             return (true, String(map(Base.Fix1(convert, UInt8), collect(larg.elements)[1:(end - 1)])))
-            end
-
         end
+    end
     return (false, "")
 end

@@ -19,11 +19,7 @@ function unsafe_to_pointer_ir(builder, obj)
     push!(pointer_from_objref.return_attributes, LLVM.EnumAttribute(:nonnull))
 
     f = LLVM.Interop.current_function(builder)
-    if LLVM.version() >= v"16"
-        f.memory_effects = LLVM.MemoryEffects(:none)
-    else
-        push!(f.function_attributes, LLVM.EnumAttribute(:readnone))
-    end
+    f.memory_effects = LLVM.MemoryEffects(:none)
 
     c = LLVM.addrspacecast!(builder, obj, T_derived)
     r = LLVM.call!(builder, ft, pointer_from_objref, [c])
