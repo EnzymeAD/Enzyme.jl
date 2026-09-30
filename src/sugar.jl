@@ -432,9 +432,21 @@ end
     return ((one(x),),)
 end
 
-@inline tupleconcat(x) = x
-@inline tupleconcat(x, y) = (x..., y...)
-@inline tupleconcat(x, y, z...) = (x..., tupleconcat(y, z...)...)
+# Concatenate tuples into one tuple. Built as a single tuple expression, since
+# splatting recursively copies each intermediate tuple and so is quadratic in
+# the number of tuples.
+@generated function tupleconcat(xs::Tuple...)
+    elems = Expr[]
+    for (i, T) in enumerate(xs)
+        for j in 1:fieldcount(T)
+            push!(elems, :(xs[$i][$j]))
+        end
+    end
+    return quote
+        Base.@_inline_meta
+        ($(elems...),)
+    end
+end
 
 @generated function create_shadows(chunk::ChunkTy, x::X, vargs::Vararg{Any,N}) where {ChunkTy, X, N}
     args =  Union{Symbol,Expr}[:x]
