@@ -552,7 +552,7 @@ function annotate!(mod::LLVM.Module)
                 if LLVM.version().major <= 15
                     push!(fn.function_attributes, LLVM.EnumAttribute(:readnone))
                 else
-                    push!(fn.function_attributes, EnumAttribute(:memory, NoEffects.data))
+                    push!(fn.function_attributes, EnumAttribute(LLVM.MemoryEffects(:none)))
                 end
                 push!(fn.function_attributes, LLVM.StringAttribute("enzyme_shouldrecompute"))
             end
@@ -577,14 +577,7 @@ function annotate!(mod::LLVM.Module)
                 else
                     push!(
                         fn.function_attributes,
-                        EnumAttribute(
-                            "memory",
-                            MemoryEffect(
-                                (MRI_NoModRef << getLocationPos(ArgMem)) |
-                                (MRI_Ref << getLocationPos(InaccessibleMem)) |
-                                (MRI_NoModRef << getLocationPos(Other)),
-                            ).data,
-                        ),
+                        EnumAttribute(LLVM.MemoryEffects(inaccessiblemem = :read)),
                     )
                 end
             end
@@ -600,14 +593,7 @@ function annotate!(mod::LLVM.Module)
                 else
                     push!(
                         fn.function_attributes,
-                        EnumAttribute(
-                            "memory",
-                            MemoryEffect(
-                                (MRI_Ref << getLocationPos(ArgMem)) |
-                                (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
-                                (MRI_NoModRef << getLocationPos(Other)),
-                            ).data,
-                        ),
+                        EnumAttribute(LLVM.MemoryEffects(argmem = :read)),
                     )
                 end
             end
@@ -622,14 +608,7 @@ function annotate!(mod::LLVM.Module)
                 else
                     push!(
                         fn.function_attributes,
-                        EnumAttribute(
-                            "memory",
-                            MemoryEffect(
-                                (MRI_Ref << getLocationPos(ArgMem)) |
-                                (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
-                                (MRI_NoModRef << getLocationPos(Other)),
-                            ).data,
-                        )
+                        EnumAttribute(LLVM.MemoryEffects(argmem = :read))
                     )
                 end
                 push!(fn.function_attributes, LLVM.StringAttribute("enzyme_shouldrecompute"))
@@ -668,14 +647,7 @@ function annotate!(mod::LLVM.Module)
                 else
                     push!(
                         fn.function_attributes,
-                        EnumAttribute(
-                            "memory",
-                            MemoryEffect(
-                                (MRI_Ref << getLocationPos(ArgMem)) |
-                                (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
-                                (MRI_NoModRef << getLocationPos(Other)),
-                            ).data,
-                        )
+                        EnumAttribute(LLVM.MemoryEffects(argmem = :read))
                     )
                 end
                 for u in fn.uses
@@ -696,14 +668,7 @@ function annotate!(mod::LLVM.Module)
                     attr = if LLVM.version().major <= 15
                         LLVM.EnumAttribute(:readonly)
                     else
-                        EnumAttribute(
-                            "memory",
-                            MemoryEffect(
-                                (MRI_Ref << getLocationPos(ArgMem)) |
-                                (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
-                                (MRI_NoModRef << getLocationPos(Other)),
-                            ).data,
-                        )
+                        EnumAttribute(LLVM.MemoryEffects(argmem = :read))
                     end
                     push!(c.function_attributes, attr)
                 end
@@ -718,7 +683,7 @@ function annotate!(mod::LLVM.Module)
                 if LLVM.version().major <= 15
                     push!(fn.function_attributes, LLVM.EnumAttribute(:readnone))
                 else
-                    push!(fn.function_attributes, EnumAttribute(:memory, NoEffects.data))
+                    push!(fn.function_attributes, EnumAttribute(LLVM.MemoryEffects(:none)))
                 end
                 push!(fn.function_attributes, LLVM.StringAttribute("enzyme_shouldrecompute"))
                 push!(fn.function_attributes, EnumAttribute(:nounwind))
@@ -739,14 +704,7 @@ function annotate!(mod::LLVM.Module)
                 else
                     push!(
                         fn.function_attributes,
-                        EnumAttribute(
-                            "memory",
-                            MemoryEffect(
-                                (MRI_Ref << getLocationPos(ArgMem)) |
-                                (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
-                                (MRI_NoModRef << getLocationPos(Other)),
-                            ).data,
-                        )
+                        EnumAttribute(LLVM.MemoryEffects(argmem = :read))
                     )
                 end
             end
@@ -865,7 +823,7 @@ function annotate!(mod::LLVM.Module)
                 if LLVM.version().major <= 15
                     push!(fn.function_attributes, LLVM.EnumAttribute(:readnone))
                 else
-                    push!(fn.function_attributes, EnumAttribute(:memory, NoEffects.data))
+                    push!(fn.function_attributes, EnumAttribute(LLVM.MemoryEffects(:none)))
                 end
                 push!(fn.function_attributes, LLVM.EnumAttribute(:nounwind))
                 push!(fn.function_attributes, LLVM.EnumAttribute(:willreturn))
@@ -995,23 +953,9 @@ function annotate!(mod::LLVM.Module)
                         "jl_genericmemory_copy_slice",
                         "ijl_genericmemory_copy_slice",
                         )
-                        EnumAttribute(
-                            "memory",
-                            MemoryEffect(
-                                (MRI_Ref << getLocationPos(ArgMem)) |
-                                (MRI_ModRef << getLocationPos(InaccessibleMem)) |
-                                (MRI_NoModRef << getLocationPos(Other)),
-                            ).data,
-                        )
+                        EnumAttribute(LLVM.MemoryEffects(argmem = :read, inaccessiblemem = :readwrite))
                     else 
-                        EnumAttribute(
-                            "memory",
-                            MemoryEffect(
-                                (MRI_NoModRef << getLocationPos(ArgMem)) |
-                                (MRI_ModRef << getLocationPos(InaccessibleMem)) |
-                                (MRI_NoModRef << getLocationPos(Other)),
-                            ).data,
-                        )
+                        EnumAttribute(LLVM.MemoryEffects(inaccessiblemem = :readwrite))
                     end
                 end
                 if !(
@@ -1078,14 +1022,7 @@ function annotate!(mod::LLVM.Module)
                 else
                     push!(
                         fn.function_attributes,
-                        EnumAttribute(
-                            "memory",
-                            MemoryEffect(
-                                (MRI_NoModRef << getLocationPos(ArgMem)) |
-                                (MRI_ModRef << getLocationPos(InaccessibleMem)) |
-                                (MRI_NoModRef << getLocationPos(Other)),
-                            ).data,
-                        ),
+                        EnumAttribute(LLVM.MemoryEffects(inaccessiblemem = :readwrite)),
                     )
                 end
             end
@@ -1103,14 +1040,7 @@ function annotate!(mod::LLVM.Module)
                 else
                     push!(
                         fn.function_attributes,
-                        EnumAttribute(
-                            "memory",
-                            MemoryEffect(
-                                (MRI_Ref << getLocationPos(ArgMem)) |
-                                (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
-                                (MRI_NoModRef << getLocationPos(Other)),
-                            ).data,
-                        ),
+                        EnumAttribute(LLVM.MemoryEffects(argmem = :read)),
                     )
                 end
             end
@@ -1141,14 +1071,7 @@ function annotate!(mod::LLVM.Module)
                 else
                     push!(
                         fn.function_attributes,
-                        EnumAttribute(
-                            "memory",
-                            MemoryEffect(
-                                (MRI_ModRef << getLocationPos(ArgMem)) |
-                                (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
-                                (MRI_NoModRef << getLocationPos(Other)),
-                            ).data,
-                        ),
+                        EnumAttribute(LLVM.MemoryEffects(argmem = :readwrite)),
                     )
                 end
             end
@@ -1164,14 +1087,7 @@ function annotate!(mod::LLVM.Module)
                 else
                     push!(
                         fn.function_attributes,
-                        EnumAttribute(
-                            "memory",
-                            MemoryEffect(
-                                (MRI_NoModRef << getLocationPos(ArgMem)) |
-                                (MRI_Ref << getLocationPos(InaccessibleMem)) |
-                                (MRI_NoModRef << getLocationPos(Other)),
-                            ).data,
-                        ),
+                        EnumAttribute(LLVM.MemoryEffects(inaccessiblemem = :read)),
                     )
                 end
             end

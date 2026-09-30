@@ -268,8 +268,12 @@ end
 end
 
 @testset "set_readonly keeps every location" begin
-    RO = Enzyme.Compiler.set_readonly(Enzyme.Compiler.AllEffects)
-    @test RO == Enzyme.Compiler.ReadOnlyEffects
+    # the `memory` attribute, and with it `LLVM.MemoryEffects`, requires LLVM 16
+    if Enzyme.Compiler.LLVM.version() >= v"16"
+        MemoryEffects = Enzyme.Compiler.LLVM.MemoryEffects
+        RO = Enzyme.Compiler.set_readonly(MemoryEffects(:readwrite))
+        @test RO == MemoryEffects(:read)
+    end
 end
 
 # A loop whose body calls a function that only writes on a throwing path (the
