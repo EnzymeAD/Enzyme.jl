@@ -286,7 +286,7 @@ end
 
     dupClosure = !guaranteed_const_nongen(funcT, world)
     if dupClosure
-	if is_constant_value(gutils, orig.operands[1])
+        if is_constant_value(gutils, orig.operands[1])
 	    dupClosure = false
             if !boxed && inline_roots_type(funcT) != 0
 	        if !is_constant_value(gutils, orig.operands[2])
@@ -335,7 +335,7 @@ end
             push!(attributes, StringAttribute("enzymejl_forward", fwdmodenm))
             push!(
                 mod.functions[fwdmodenm].function_attributes,
-                EnumAttribute("alwaysinline"),
+                EnumAttribute(:alwaysinline),
             )
             permit_inlining!(mod.functions[fwdmodenm])
         end
@@ -396,14 +396,14 @@ end
             push!(attributes, StringAttribute("enzymejl_augforward", augfwdnm))
             push!(
                 mod.functions[augfwdnm].function_attributes,
-                EnumAttribute("alwaysinline"),
+                EnumAttribute(:alwaysinline),
             )
             permit_inlining!(mod.functions[augfwdnm])
 
             push!(attributes, StringAttribute("enzymejl_adjoint", adjointnm))
             push!(
                 mod.functions[adjointnm].function_attributes,
-                EnumAttribute("alwaysinline"),
+                EnumAttribute(:alwaysinline),
             )
             permit_inlining!(mod.functions[adjointnm])
 
@@ -502,7 +502,7 @@ end
                 
 	    fwdbuilder = if mode == API.DEM_ReverseModeGradient
 	       B2 = LLVM.IRBuilder()
-	       position!(B2, LLVM.before(new_from_original(gutils, orig)))
+                position!(B2, LLVM.before(new_from_original(gutils, orig)))
 	       B2
 	    else
 	       B
@@ -558,7 +558,7 @@ end
            extract_roots_from_value!(B, val0, al2)
            T_jlvalue = LLVM.StructType(LLVMType[])
            T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-           al3 = gep!(B, T_prjlvalue, al2, LLVM.Value[ConstantInt(CountTrackedPointers(val0.value_type).count)])
+            al3 = gep!(B, T_prjlvalue, al2, LLVM.Value[ConstantInt(CountTrackedPointers(val0.value_type).count)])
         end
             
         store!(B, val0, ptr)
@@ -570,7 +570,7 @@ end
                    
 		fwdbuilder = if mode == API.DEM_ReverseModeGradient
 		     B2 = LLVM.IRBuilder()
-		     position!(B2, LLVM.before(new_from_original(gutils, orig)))
+                    position!(B2, LLVM.before(new_from_original(gutils, orig)))
 		     B2
 		   else
 		     B
@@ -696,7 +696,7 @@ end
         push!(vals, tape)
     end
 
-    push!(vals, new_from_original(gutils, arg_operands_view(orig)[end]))
+    push!(vals, new_from_original(gutils, orig.arguments[end]))
 
     return refed, subfunc.name, dfuncT, vals, thunkTy, TapeType, copies
 end
@@ -718,7 +718,7 @@ end
     tt = Tuple{thunkTy,dfuncT,Bool}
     mode = get_mode(gutils)
     entry = nested_codegen!(mode, mod, runtime_pfor_fwd, tt)
-    push!(entry.function_attributes, EnumAttribute("alwaysinline"))
+    push!(entry.function_attributes, EnumAttribute(:alwaysinline))
 
     pval = mod.functions[sname]
     if VERSION < v"1.12"
@@ -765,7 +765,7 @@ end
     }
     mode = get_mode(gutils)
     entry = nested_codegen!(mode, mod, runtime_pfor_augfwd, tt)
-    push!(entry.function_attributes, EnumAttribute("alwaysinline"))
+    push!(entry.function_attributes, EnumAttribute(:alwaysinline))
 
     pval = mod.functions[sname]
     if VERSION < v"1.12"
@@ -823,7 +823,7 @@ end
     }
     mode = get_mode(gutils)
     entry = nested_codegen!(mode, mod, runtime_pfor_rev, tt)
-    push!(entry.function_attributes, EnumAttribute("alwaysinline"))
+    push!(entry.function_attributes, EnumAttribute(:alwaysinline))
 
     pval = mod.functions[sname]
     if VERSION < v"1.12"
@@ -1019,18 +1019,9 @@ end
 
 function find_match(mod, name)
     for f in mod.functions
-        iter = f.function_attributes
-        elems = Vector{LLVM.API.LLVMAttributeRef}(undef, length(iter))
-        LLVM.API.LLVMGetAttributesAtIndex(iter.f, iter.idx, elems)
-        for eattr in elems
-            at = Attribute(eattr)
-            if isa(at, LLVM.StringAttribute)
-                if at.kind == "enzyme_math"
-                    if at.value == name
-                        return f
-                    end
-                end
-            end
+        at = get(f.function_attributes, "enzyme_math", nothing)
+        if at !== nothing && at.value == name
+            return f
         end
     end
     return nothing

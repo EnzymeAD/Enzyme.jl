@@ -240,7 +240,7 @@ end
                 @test !LLVM.isdeclaration(imported)
                 # Externally visible, so the modules that only declare the entry
                 # bind to this definition when everything is linked together.
-                @test imported.linkage == LLVM.API.LLVMExternalLinkage
+                @test imported.linkage == LLVM.Linkage.External
                 @test haskey(first_mod.functions, "julia_shared")
 
                 second_mod = LLVM.Module("second")
@@ -253,7 +253,7 @@ end
                 LLVM.link!(first_mod, second_mod)
                 Enzyme.Compiler.internalize_imported_thunks!(first_mod)
                 @test first_mod.functions["thunk"].linkage ==
-                    LLVM.API.LLVMInternalLinkage
+                    LLVM.Linkage.Internal
             end
         finally
             delete!(Enzyme.Compiler.autodiff_cache, ptr)
@@ -295,7 +295,7 @@ end
         fns = dst.functions
         @test haskey(fns, "julia___dup")
         @test !LLVM.isdeclaration(fns["julia___dup"])
-        @test fns["julia___dup"].linkage == LLVM.API.LLVMExternalLinkage
+        @test fns["julia___dup"].linkage == LLVM.Linkage.External
         @test haskey(fns, "only_in_dst")
         @test haskey(fns, "uses_dup")
         usesfn = fns["uses_dup"]
@@ -306,7 +306,7 @@ end
             ),
         )
         called_fn = last(collect(callinst.operands))
-        @test called_fn.linkage == LLVM.API.LLVMInternalLinkage
+        @test called_fn.linkage == LLVM.Linkage.Internal
 
         # Test 2: Identical definitions are folded by MergeFunctionsPass
         dst2 = parse(
@@ -636,7 +636,7 @@ behind, and it is the input `fix_decayaddr!` has to repair.
 """
 function collapse_decay!(call::LLVM.CallInst)
     n = 0
-    for (i, arg) in enumerate(Enzyme.Compiler.arg_operands_view(call))
+    for (i, arg) in enumerate(call.arguments)
         # With typed pointers the `{}*` result is bitcast to `i8*` first; look
         # through that to the derivation underneath.
         pfo = isa(arg, LLVM.BitCastInst) ? arg.operands[1] : arg
@@ -650,9 +650,7 @@ function collapse_decay!(call::LLVM.CallInst)
         obj.value_type.addrspace == 10 || continue
         b = LLVM.IRBuilder()
         LLVM.position!(b, LLVM.before(call))
-        LLVM.API.LLVMSetOperand(
-            call, i - 1, LLVM.addrspacecast!(b, obj, arg.value_type)
-        )
+        call.operands[i] = LLVM.addrspacecast!(b, obj, arg.value_type)
         if arg != pfo && isempty(arg.uses)
             LLVM.erase!(arg)
         end
