@@ -200,18 +200,18 @@ Base.@assume_effects :removable :foldable :nothrow function is_readonly(attr::LL
 end
 
 Base.@assume_effects :removable :foldable :nothrow function is_readonly(f::LLVM.Function)::Bool
-    intr = LLVM.API.LLVMGetIntrinsicID(f)
-    if intr == LLVM.Intrinsic("llvm.lifetime.start").id
+    intr = f.intrinsic
+    if intr == LLVM.Intrinsic("llvm.lifetime.start")
         return true
     end
-    if intr == LLVM.Intrinsic("llvm.lifetime.end").id
+    if intr == LLVM.Intrinsic("llvm.lifetime.end")
         return true
     end
-    if intr == LLVM.Intrinsic("llvm.assume").id
+    if intr == LLVM.Intrinsic("llvm.assume")
         return true
     end
     if f.name == "llvm.julia.gc_preserve_begin" ||
-       f.name == "llvm.julia.gc_preserve_end"
+            f.name == "llvm.julia.gc_preserve_end"
         return true
     end
     for attr in collect(f.function_attributes)
@@ -223,18 +223,18 @@ Base.@assume_effects :removable :foldable :nothrow function is_readonly(f::LLVM.
 end
 
 Base.@assume_effects :removable :foldable :nothrow function is_readnone(f::LLVM.Function)::Bool
-    intr = LLVM.API.LLVMGetIntrinsicID(f)
-    if intr == LLVM.Intrinsic("llvm.lifetime.start").id
+    intr = f.intrinsic
+    if intr == LLVM.Intrinsic("llvm.lifetime.start")
         return true
     end
-    if intr == LLVM.Intrinsic("llvm.lifetime.end").id
+    if intr == LLVM.Intrinsic("llvm.lifetime.end")
         return true
     end
-    if intr == LLVM.Intrinsic("llvm.assume").id
+    if intr == LLVM.Intrinsic("llvm.assume")
         return true
     end
     if f.name == "llvm.julia.gc_preserve_begin" ||
-       f.name == "llvm.julia.gc_preserve_end"
+            f.name == "llvm.julia.gc_preserve_end"
         return true
     end
     for attr in collect(cur.function_attributes)
@@ -253,18 +253,18 @@ Base.@assume_effects :removable :foldable :nothrow function is_readnone(f::LLVM.
 end
 
 Base.@assume_effects :removable :foldable :nothrow function is_writeonly(f::LLVM.Function)::Bool
-    intr = LLVM.API.LLVMGetIntrinsicID(f)
-    if intr == LLVM.Intrinsic("llvm.lifetime.start").id
+    intr = f.intrinsic
+    if intr == LLVM.Intrinsic("llvm.lifetime.start")
         return true
     end
-    if intr == LLVM.Intrinsic("llvm.lifetime.end").id
+    if intr == LLVM.Intrinsic("llvm.lifetime.end")
         return true
     end
-    if intr == LLVM.Intrinsic("llvm.assume").id
+    if intr == LLVM.Intrinsic("llvm.assume")
         return true
     end
     if f.name == "llvm.julia.gc_preserve_begin" ||
-       f.name == "llvm.julia.gc_preserve_end"
+            f.name == "llvm.julia.gc_preserve_end"
         return true
     end
     for attr in collect(cur.function_attributes)
@@ -289,12 +289,12 @@ function set_readonly!(fn::LLVM.Function)
     attrs = collect(fn.function_attributes)
     if LLVM.version().major <= 15
         if !any(attr.kind == :readonly for attr in attrs) &&
-           !any(attr.kind == :readnone for attr in attrs)
+                !any(attr.kind == :readnone for attr in attrs)
             if any(attr.kind == :writeonly for attr in attrs)
-                delete!(fn.function_attributes, EnumAttribute("writeonly"))
-                push!(fn.function_attributes, EnumAttribute("readnone"))
+                delete!(fn.function_attributes, :writeonly)
+                push!(fn.function_attributes, EnumAttribute(:readnone))
             else
-                push!(fn.function_attributes, EnumAttribute("readonly"))
+                push!(fn.function_attributes, EnumAttribute(:readonly))
             end
             return true
         end
@@ -304,13 +304,13 @@ function set_readonly!(fn::LLVM.Function)
             if attr.kind == :memory
                 old = MemoryEffect(attr.value)
                 eff = set_readonly(old)
-                push!(fn.function_attributes, EnumAttribute("memory", eff.data))
+                push!(fn.function_attributes, EnumAttribute(:memory, eff.data))
                 return old != eff
             end
         end
         push!(
             fn.function_attributes,
-            EnumAttribute("memory", set_readonly(AllEffects).data),
+            EnumAttribute(:memory, set_readonly(AllEffects).data),
         )
         return true
     end
@@ -322,16 +322,14 @@ function get_function!(
     FT::LLVM.FunctionType,
     attrs::Vector{LLVM.Attribute} = LLVM.Attribute[],
 )
-    if haskey(mod.functions, name)
-        F = mod.functions[name]
+    F = get(mod.functions, name, nothing)
+    if F === nothing
+        F = LLVM.Function(mod, name, FT)
+        append!(F.function_attributes, attrs)
+    else
         PT = LLVM.PointerType(FT)
         if F.value_type != PT
             F = LLVM.const_pointercast(F, PT)
-        end
-    else
-        F = LLVM.Function(mod, name, FT)
-        for attr in attrs
-            push!(F.function_attributes, attr)
         end
     end
     return F, FT
@@ -403,17 +401,17 @@ function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing
         func.parent.context
         B = IRBuilder()
         entry_bb = first(func.blocks)
-	if PB !== nothing && PB.insert_block.name == "allocsForInversion"
+        if PB !== nothing && PB.insert_block.name == "allocsForInversion"
 	    B = PB
-	elseif !isempty(entry_bb.instructions)
-	    if PB === nothing || PB.insert_block != entry_bb 
-		    position!(B, LLVM.at_begin(entry_bb))
+        elseif !isempty(entry_bb.instructions)
+            if PB === nothing || PB.insert_block != entry_bb
+                position!(B, LLVM.at_begin(entry_bb))
 	    else
 		    B = PB
 	    end
         else
-	    if PB === nothing || PB.insert_block != entry_bb 
-               position!(B, LLVM.at_end(entry_bb))
+            if PB === nothing || PB.insert_block != entry_bb
+                position!(B, LLVM.at_end(entry_bb))
 	    else
 	       B = PB
 	    end
@@ -492,7 +490,7 @@ function use_gcstack_arg!(f::LLVM.Function, arg::LLVM.Argument)
     dispose(B)
     for call in calls
         replace_uses!(call, pgcstack)
-        LLVM.API.LLVMInstructionEraseFromParent(call)
+        erase!(call)
     end
     return
 end
@@ -547,56 +545,6 @@ Say if `fn` takes `pgcstack` as a parameter (see [`gcstack_arg_index`](@ref)).
 """
 Base.@assume_effects :removable :foldable :nothrow has_gcstack_arg(fn::LLVM.Function)::Bool = gcstack_arg_index(fn) != 0
 
-Base.@assume_effects :removable :foldable :nothrow function has_fn_attr(fn::LLVM.Function, attr::LLVM.EnumAttribute)::Bool
-    ekind = attr.kind
-    for attr in collect(fn.function_attributes)
-        if attr isa LLVM.EnumAttribute
-            if attr.kind == ekind
-                return true
-            end
-        end
-    end
-    return false
-end
-
-Base.@assume_effects :removable :foldable :nothrow function has_fn_attr(fn::LLVM.Function, attr::LLVM.StringAttribute)::Bool
-    ekind = attr.kind
-    for attr in collect(fn.function_attributes)
-        if attr isa LLVM.StringAttribute
-            if attr.kind == ekind
-                return true
-            end
-        end
-    end
-    return false
-end
-
-Base.@assume_effects :removable :foldable :nothrow function has_arg_attr(fn::LLVM.Function, i::Int, attr::LLVM.StringAttribute)::Bool
-    ekind = attr.kind
-    for attr in collect(fn.parameter_attributes[i])
-        if attr isa LLVM.StringAttribute
-            if attr.kind == ekind
-                return true
-            end
-        end
-    end
-    return false
-end
-
-"""
-    precedes(a, b)
-
-Whether instruction `a` comes before `b` in their common basic block.
-"""
-function precedes(a::LLVM.Instruction, b::LLVM.Instruction)::Bool
-    @assert a.parent == b.parent
-    for inst in a.parent.instructions
-        inst == a && return true
-        inst == b && return false
-    end
-    return false
-end
-
 """
     copy_metadata!(dst, src)
 
@@ -604,39 +552,16 @@ Attach every metadata node of the instruction `src`, except its debug location,
 to `dst`.
 """
 function copy_metadata!(dst::LLVM.Instruction, src::LLVM.Instruction)
-    num = Ref{Csize_t}()
-    entries = LLVM.API.LLVMInstructionGetAllMetadataOtherThanDebugLoc(src, num)
-    ctx = src.context
-    for i in 1:num[]
-        kind = LLVM.API.LLVMValueMetadataEntriesGetKind(entries, i - 1)
-        md = LLVM.API.LLVMValueMetadataEntriesGetMetadata(entries, i - 1)
-        LLVM.API.LLVMSetMetadata(dst, kind, LLVM.API.LLVMMetadataAsValue(ctx, md))
+    for (kind, md) in src.metadata
+        kind == LLVM.MD_dbg && continue
+        dst.metadata[kind] = md
     end
-    num[] > 0 && LLVM.API.LLVMDisposeValueMetadataEntries(entries)
     return nothing
 end
 
-function eraseInst(bb::LLVM.BasicBlock, @nospecialize(inst::LLVM.Instruction))
-    @static if isdefined(LLVM, Symbol("erase!"))
-        LLVM.erase!(inst)
-    else
-        erase!(inst)
-    end
-end
-function eraseInst(bb::LLVM.Module, inst::LLVM.Function)
-    @static if isdefined(LLVM, Symbol("erase!"))
-        LLVM.erase!(inst)
-    else
-        erase!(inst)
-    end
-end
-function eraseInst(bb::LLVM.Module, inst::LLVM.GlobalVariable)
-    @static if isdefined(LLVM, Symbol("erase!"))
-        LLVM.erase!(inst)
-    else
-        erase!(inst)
-    end
-end
+eraseInst(bb::LLVM.BasicBlock, @nospecialize(inst::LLVM.Instruction)) = erase!(inst)
+eraseInst(bb::LLVM.Module, inst::LLVM.Function) = erase!(inst)
+eraseInst(bb::LLVM.Module, inst::LLVM.GlobalVariable) = erase!(inst)
 
 function unique_gcmarker!(func::LLVM.Function)
     entry_bb = first(func.blocks)
@@ -668,7 +593,7 @@ Base.@assume_effects :removable :foldable :nothrow function recursive_eltype(@no
             ty = ty.element_type::LLVM.LLVMType
         else
             @assert isa(ty, LLVM.StructType)
-            ty = ty.elements[i+1]::LLVM.LLVMType
+            ty = ty.elements[i + 1]::LLVM.LLVMType
         end
     end
     return ty
@@ -688,12 +613,12 @@ function calling_conv_fixup(
     ctype = recursive_eltype(val, lidxs)
     if ctype == tape
         if length(lidxs) != 0
-            val = API.e_extract_value!(builder, val, lidxs)
+            val = extract_value!(builder, val, lidxs)
         end
         if length(ridxs) == 0
             return val
         else
-            return API.e_insert_value!(builder, prev, val, ridxs)
+            return insert_value!(builder, prev, val, ridxs)
         end
     end
 
@@ -723,7 +648,7 @@ function calling_conv_fixup(
     elseif isa(tape, LLVM.ArrayType)
         if isa(ctype, LLVM.ArrayType)
             @assert ctype.length == tape.length
-            for i = 1:tape.length
+            for i in 1:tape.length
                 ln = copy(lidxs)
                 push!(ln, i - 1)
                 rn = copy(ridxs)
@@ -734,7 +659,7 @@ function calling_conv_fixup(
         end
         if isa(ctype, LLVM.StructType)
             @assert length(ctype.elements) == tape.length
-            for i = 1:tape.length
+            for i in 1:tape.length
                 ln = copy(lidxs)
                 push!(ln, i - 1)
                 rn = copy(ridxs)
@@ -746,27 +671,27 @@ function calling_conv_fixup(
     end
 
     if isa(tape, LLVM.IntegerType) &&
-       tape.width == 1 &&
-       ctype.width != tape.width
+            tape.width == 1 &&
+            ctype.width != tape.width
         if length(lidxs) != 0
-            val = API.e_extract_value!(builder, val, lidxs)
+            val = extract_value!(builder, val, lidxs)
         end
         val = trunc!(builder, val, tape)
         return if length(ridxs) != 0
-            API.e_insert_value!(builder, prev, val, ridxs)
+            insert_value!(builder, prev, val, ridxs)
         else
             val
         end
     end
     if isa(tape, LLVM.PointerType) &&
        isa(ctype, LLVM.PointerType) &&
-       tape.addrspace == ctype.addrspace
+            tape.addrspace == ctype.addrspace
         if length(lidxs) != 0
-            val = API.e_extract_value!(builder, val, lidxs)
+            val = extract_value!(builder, val, lidxs)
         end
         val = pointercast!(builder, val, tape)
         return if length(ridxs) != 0
-            API.e_insert_value!(builder, prev, val, ridxs)
+            insert_value!(builder, prev, val, ridxs)
         else
             val
         end

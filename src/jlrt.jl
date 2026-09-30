@@ -20,7 +20,7 @@ function emit_allocobj!(
     T_pint8 = LLVM.PointerType(T_int8)
 
     pgcstack = reinsert_gcmarker!(fn, B)
-    bc = bitcast!(B, pgcstack, T_ppjlvalue, pgcstack.name*"_bc")
+    bc = bitcast!(B, pgcstack, T_ppjlvalue, pgcstack.name * "_bc")
     
     ct = inbounds_gep!(
         B,
@@ -80,11 +80,11 @@ end
 
 declare_pointerfromobjref!(mod::LLVM.Module) = begin
     readnone_attr = if LLVM.version().major <= 15
-        LLVM.EnumAttribute("readnone")
+        LLVM.EnumAttribute(:readnone)
     else
-        LLVM.EnumAttribute("memory", NoEffects.data)
+        LLVM.EnumAttribute(:memory, NoEffects.data)
     end
-    attrs = LLVM.Attribute[readnone_attr, LLVM.EnumAttribute("nounwind"), LLVM.EnumAttribute("willreturn")]
+    attrs = LLVM.Attribute[readnone_attr, LLVM.EnumAttribute(:nounwind), LLVM.EnumAttribute(:willreturn)]
     F, fty = get_function!(mod, "julia.pointer_from_objref", attrs) do
         T_jlvalue = LLVM.StructType(LLVMType[])
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Derived)
@@ -211,11 +211,7 @@ function emit_jl_throw!(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM
     FT = LLVM.FunctionType(T_void, [T_prjlvalue])
     fn, _ = get_function!(mod, "jl_throw", FT)
     cb = call!(B, FT, fn, LLVM.Value[val])
-    LLVM.API.LLVMAddCallSiteAttribute(
-		cb,
-		reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
-		EnumAttribute("noreturn"),
-	    )
+    push!(cb.function_attributes, EnumAttribute(:noreturn))
     return cb
 end
 
@@ -234,15 +230,15 @@ function emit_conditional_throw!(B::LLVM.IRBuilder, @nospecialize(cond::LLVM.Val
         fn = mod.functions[name]
     else
         fn = LLVM.Function(mod, name, FT)
-    	fn.linkage = LLVM.API.LLVMInternalLinkage
+        fn.linkage = LLVM.Linkage.Internal
         rstr, rcond = fn.parameters
 	 builder = LLVM.IRBuilder()
          entry = BasicBlock(fn, "entry")
          errb = BasicBlock(fn, "err")
          exitb = BasicBlock(fn, "errb")
-         position!(builder, LLVM.at_end(entry))
+        position!(builder, LLVM.at_end(entry))
 	 br!(builder, rcond, errb, exitb)
-         position!(builder, LLVM.at_end(errb))
+        position!(builder, LLVM.at_end(errb))
 
         err = emit_allocobj!(builder, errty)
         err2 = bitcast!(builder, err, LLVM.PointerType(LLVM.PointerType(LLVM.Int8Type()), 10))
@@ -252,10 +248,10 @@ function emit_conditional_throw!(B::LLVM.IRBuilder, @nospecialize(cond::LLVM.Val
     	 err = addrspacecast!(builder, err, LLVM.PointerType(T_jlvalue, 12))
 	   thrown = emit_jl_throw!(builder, err)
 	 unreachable!(builder)
-	 position!(builder, LLVM.at_end(exitb))
+        position!(builder, LLVM.at_end(exitb))
 	 ret!(builder)
 
-        push!(fn.function_attributes, LLVM.EnumAttribute("alwaysinline", 0))
+        push!(fn.function_attributes, LLVM.EnumAttribute(:alwaysinline))
     end
 
     call!(B, FT, fn, LLVM.Value[str, cond])
@@ -404,13 +400,13 @@ function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nosp
 	    else
 	    	shadowpointer = false
 	    	if isa(val, LLVM.PHIInst)
-	    		if size(val.incoming)[1] == 0
+                if size(val.incoming)[1] == 0
 	    			shadowpointer = true
 	    		end
 	    	elseif isa(val, LLVM.ExtractValueInst)
-	    		m = val.operands[1]
+                m = val.operands[1]
 		    	if isa(m, LLVM.PHIInst)
-		    		if size(m.incoming)[1] == 0
+                    if size(m.incoming)[1] == 0
 		    			shadowpointer = true
 		    		end
 		    	end
@@ -476,22 +472,22 @@ function declare_ntuple_type!(mod::LLVM.Module)
     # The result depends only on the arguments and is interned, so the call can be
     # treated as readnone, which also lets LLVM CSE it and hoist it out of loops.
     memory = if LLVM.version().major <= 15
-        EnumAttribute("readnone", 0)
+        EnumAttribute(:readnone)
     else
-        EnumAttribute("memory", NoEffects.data)
+        EnumAttribute(:memory, NoEffects.data)
     end
     fn, _ = get_function!(
         mod, "julia.enzyme.ntuple_type", FT,
         LLVM.Attribute[
             memory,
-            EnumAttribute("nounwind", 0),
+            EnumAttribute(:nounwind),
             StringAttribute("enzyme_inactive"),
             StringAttribute("enzyme_no_escaping_allocation"),
         ]
     )
     if isa(fn, LLVM.Function) && isempty(collect(fn.parameter_attributes[1]))
-        push!(fn.parameter_attributes[1], EnumAttribute("nocapture", 0))
-        push!(fn.parameter_attributes[1], EnumAttribute("readonly", 0))
+        push!(fn.parameter_attributes[1], EnumAttribute(:nocapture))
+        push!(fn.parameter_attributes[1], EnumAttribute(:readonly))
     end
     return fn, FT
 end
@@ -517,8 +513,8 @@ function define_ntuple_type!(mod::LLVM.Module)
     T_pjlvalue = LLVM.PointerType(T_jlvalue)
     T_size = convert(LLVMType, Int)
 
-    fn.linkage = LLVM.API.LLVMInternalLinkage
-    push!(fn.function_attributes, EnumAttribute("alwaysinline", 0))
+    fn.linkage = LLVM.Linkage.Internal
+    push!(fn.function_attributes, EnumAttribute(:alwaysinline))
 
     let builder = IRBuilder()
         entry = BasicBlock(fn, "entry")
@@ -529,41 +525,37 @@ function define_ntuple_type!(mod::LLVM.Module)
         eltype, n = collect(fn.parameters)
 
         position!(builder, LLVM.at_end(entry))
-        br!(builder, icmp!(builder, LLVM.API.LLVMIntULE, n, LLVM.ConstantInt(T_size, NTUPLE_TYPE_STACK_SIZE)), prefill, heap)
+        br!(builder, icmp!(builder, LLVM.IntPredicate.ULE, n, LLVM.ConstantInt(T_size, NTUPLE_TYPE_STACK_SIZE)), prefill, heap)
 
         position!(builder, LLVM.at_end(prefill))
         # `T` is a type, which is never freed, so the untracked slots need no rooting
         # of their own; `T` itself is rooted across the call by `jl_roots`.
         buf = array_alloca!(builder, T_pjlvalue, n, "ntuple_params")
         raw = emit_pointerfromobjref!(builder, addrspacecast!(builder, eltype, LLVM.PointerType(T_jlvalue, Derived)))
-        br!(builder, icmp!(builder, LLVM.API.LLVMIntEQ, n, LLVM.ConstantInt(T_size, 0)), stack, loop)
+        br!(builder, icmp!(builder, LLVM.IntPredicate.EQ, n, LLVM.ConstantInt(T_size, 0)), stack, loop)
 
         position!(builder, LLVM.at_end(loop))
         idx = LLVM.phi!(builder, T_size, "idx")
         store!(builder, raw, inbounds_gep!(builder, T_pjlvalue, buf, LLVM.Value[idx]))
         next = add!(builder, idx, LLVM.ConstantInt(T_size, 1))
         append!(idx.incoming, [(LLVM.ConstantInt(T_size, 0), prefill), (next, loop)])
-        br!(builder, icmp!(builder, LLVM.API.LLVMIntULT, next, n), loop, stack)
+        br!(builder, icmp!(builder, LLVM.IntPredicate.ULT, next, n), loop, stack)
 
         position!(builder, LLVM.at_end(stack))
         memory = if LLVM.version().major <= 15
-            EnumAttribute("inaccessiblemem_or_argmemonly", 0)
+            EnumAttribute(:inaccessiblemem_or_argmemonly)
         else
-            EnumAttribute("memory", ReadArgMemReadWriteInaccessibleEffects.data)
+            EnumAttribute(:memory, ReadArgMemReadWriteInaccessibleEffects.data)
         end
         apply_tuple_v, apply_tuple_v_FT = get_function!(
             mod, "ijl_apply_tuple_type_v", LLVM.FunctionType(T_prjlvalue, [LLVM.PointerType(T_pjlvalue), T_size]),
-            LLVM.Attribute[memory, EnumAttribute("nounwind", 0)]
+            LLVM.Attribute[memory, EnumAttribute(:nounwind)]
         )
         if isa(apply_tuple_v, LLVM.Function) && isempty(collect(apply_tuple_v.parameter_attributes[1]))
-            push!(apply_tuple_v.parameter_attributes[1], EnumAttribute("readonly", 0))
-            push!(apply_tuple_v.parameter_attributes[1], EnumAttribute("nocapture", 0))
+            push!(apply_tuple_v.parameter_attributes[1], EnumAttribute(:readonly))
+            push!(apply_tuple_v.parameter_attributes[1], EnumAttribute(:nocapture))
         end
-        roots = if isdefined(LLVM, :OperandBundleDef)
-            [LLVM.OperandBundleDef("jl_roots", LLVM.Value[eltype])]
-        else
-            [LLVM.OperandBundle("jl_roots", LLVM.Value[eltype])]
-        end
+        roots = [LLVM.OperandBundle("jl_roots", LLVM.Value[eltype])]
         ret!(builder, call!(builder, apply_tuple_v_FT, apply_tuple_v, LLVM.Value[buf, n], roots))
 
         position!(builder, LLVM.at_end(heap))
@@ -1058,7 +1050,7 @@ function emit_type_layout_elsz!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value)
 	@assert !isa(ty, LLVM.ConstantExpr)
 	@assert !isa(ty, LLVM.Constant)
 	i32 = LLVM.IntType(32)
-	lty = bitcast!(B, ty, LLVM.PointerType(i32, ty.value_type.addrspace))
+    lty = bitcast!(B, ty, LLVM.PointerType(i32, ty.value_type.addrspace))
 	return load!(B, i32, lty)
 end
 
@@ -1086,7 +1078,7 @@ function get_array_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
             if nm == fname
                 res = array.operands[2]
                 for i = 2:num
-                    res = mul!(B, res, array.operands[1+i])
+                    res = mul!(B, res, array.operands[1 + i])
                 end
                 return res
             end
@@ -1116,7 +1108,7 @@ function get_memory_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value), enz
             "jl_alloc_genericmemory",
             "ijl_alloc_genericmemory",
         )
-                res = array.operands[2]
+            res = array.operands[2]
                 return res
         end
         if nm in (
@@ -1175,7 +1167,7 @@ function get_memory_nbytes(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value), 
 	     "ijl_alloc_genericmemory_unchecked",
 	    )
 	        # This is number of bytes not number of elements
-                res = array.operands[2]
+            res = array.operands[2]
 		return res
         end
     end
@@ -1258,8 +1250,8 @@ function emit_printf(B::LLVM.IRBuilder, string::String, v::LLVM.Value...)
             end
         end
     end
-    exc, _ = get_function!(mod, "printf", LLVM.FunctionType(vt, [string.value_type], ;vararg=true))
-    call!(B, exc.function_type, exc, args)
+    exc, _ = get_function!(mod, "printf", LLVM.FunctionType(vt, [string.value_type], ; vararg = true))
+    return call!(B, exc.function_type, exc, args)
 end
 
 function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.Instruction}), string::Union{String, LLVM.Value, Tuple{String, Core.MethodInstance, UInt}}, @nospecialize(errty::Type) = EnzymeRuntimeException, @nospecialize(cond::Union{Nothing, LLVM.Value}) = nothing)
@@ -1335,11 +1327,11 @@ function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.I
 	    if string isa Tuple
 	       g1 = LLVM.inbounds_gep!(B, LLVM.PointerType(LLVM.Int8Type()), err2, [LLVM.ConstantInt(1)])
 	       ts = unsafe_to_llvm(B, string[2])
-	       g1 = LLVM.bitcast!(B, g1, LLVM.PointerType(ts.value_type, Derived))
+                g1 = LLVM.bitcast!(B, g1, LLVM.PointerType(ts.value_type, Derived))
 	       store!(B, ts, g1)
 	       g2 = LLVM.inbounds_gep!(B, LLVM.PointerType(LLVM.Int8Type()), err2, [LLVM.ConstantInt(2)])
 	       ts = LLVM.ConstantInt(string[3])
-	       g2 = LLVM.bitcast!(B, g2, LLVM.PointerType(ts.value_type, Derived))
+                g2 = LLVM.bitcast!(B, g2, LLVM.PointerType(ts.value_type, Derived))
 	       store!(B, ts, g2)
 	    end
     		emit_jl_throw!(
@@ -1351,17 +1343,9 @@ function emit_error(B::LLVM.IRBuilder, @nospecialize(orig::Union{Nothing, LLVM.I
 
     # 2. Call error function and insert unreachable
     if cond === nothing
-	    LLVM.API.LLVMAddCallSiteAttribute(
-		ct,
-		reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
-		EnumAttribute("noreturn"),
-	    )
+        push!(ct.function_attributes, EnumAttribute(:noreturn))
 	    if EnzymeMutabilityException != errty
-		LLVM.API.LLVMAddCallSiteAttribute(
-		    ct,
-		    reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
-		    StringAttribute("enzyme_error"),
-		)
+            push!(ct.function_attributes, StringAttribute("enzyme_error"))
 	    end
     end
     return ct

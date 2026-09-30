@@ -315,7 +315,7 @@ function enzyme_custom_setup_args(
     @nospecialize(tape::Union{Nothing, LLVM.Value}),
 )
     called = orig.operands[end]
-    ops = arg_operands_view(orig)
+    ops = orig.arguments
     width = get_width(gutils)
     kwtup = nothing
 
@@ -1087,11 +1087,11 @@ function enzyme_custom_setup_ret(
     may_have_active_reg = mode != API.DEM_ForwardMode && !guaranteed_nonactive(RealRt, world)
 
     if sret !== nothing
-        activep = API.EnzymeGradientUtilsGetDiffeType(gutils, orig.operands[1+swiftself], false) #=isforeign=#
+        activep = API.EnzymeGradientUtilsGetDiffeType(gutils, orig.operands[1 + swiftself], false) #=isforeign=#
         needsPrimal = activep == API.DFT_DUP_ARG || activep == API.DFT_CONSTANT
         needsShadowP[] = activep == API.DFT_DUP_ARG || activep == API.DFT_DUP_NONEED
 	if returnRoots !== nothing && VERSION >= v"1.12"
-        	roots_activep = API.EnzymeGradientUtilsGetDiffeType(gutils, orig.operands[2+swiftself], false) #=isforeign=#
+            roots_activep = API.EnzymeGradientUtilsGetDiffeType(gutils, orig.operands[2 + swiftself], false) #=isforeign=#
 		may_have_active_reg = false
 		if activep == API.DFT_CONSTANT
 		    activep = roots_activep
@@ -1220,7 +1220,7 @@ end
 	       sret_lty
 	    end
         sret = alloca!(alloctx, sret_lty_foralloca)
-    	sret.metadata["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(esret))))])
+        sret.metadata["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(esret))))])
         pushfirst!(args, sret)
         if returnRoots !== nothing
             returnRoots = alloca!(alloctx, convert(LLVMType, eltype(returnRoots)))
@@ -1267,7 +1267,7 @@ end
     res.callconv = llvmf.callconv
     copy_abi_attrs!(res, llvmf)
 
-    hasNoRet = has_fn_attr(llvmf, EnumAttribute("noreturn"))
+    hasNoRet = haskey(llvmf.function_attributes, :noreturn)
 
     if hasNoRet
         return false
@@ -1275,14 +1275,10 @@ end
 
     if sret !== nothing
         sty = sret_ty(llvmf, 1)
-        if LLVM.version().major >= 12
-            attr = TypeAttribute("sret", sty)
-        else
-            attr = EnumAttribute("sret")
-        end
-        LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1), attr)
+        attr = TypeAttribute(:sret, sty)
+        push!(res.argument_attributes[1], attr)
 	if returnRoots !== nothing
-	    LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(2), StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1]))))
+            push!(res.argument_attributes[2], StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1]))))
 	end
 
 	if returnRoots !== nothing && VERSION >= v"1.12"
@@ -1313,12 +1309,12 @@ end
             @assert RealRt == fwd_RT
 	    _, prim_sret, prim_roots = get_return_info(RealRt)
             if prim_sret !== nothing
-                val = new_from_original(gutils, orig.operands[1+orig_swiftself])
+                val = new_from_original(gutils, orig.operands[1 + orig_swiftself])
 		
 		if prim_roots !== nothing && VERSION >= v"1.12"
                     extract_nonjlvalues_into!(B, res.value_type, val, res)
 
-                    rval = new_from_original(gutils, orig.operands[2+orig_swiftself])
+                    rval = new_from_original(gutils, orig.operands[2 + orig_swiftself])
 
 		    extract_roots_from_value!(B, res, rval)
 		else
@@ -1339,27 +1335,27 @@ end
             @assert ST == fwd_RT
 	    _, prim_sret, prim_roots = get_return_info(RealRt)
             if prim_sret !== nothing
-	        dval_ptr = if !is_constant_value(gutils, orig.operands[1+orig_swiftself])
+                dval_ptr = if !is_constant_value(gutils, orig.operands[1 + orig_swiftself])
 		    @assert prim_roots !== nothing && VERSION >= v"1.12"
-		    @assert !is_constant_value(gutils, orig.operands[2+orig_swiftself])
+                    @assert !is_constant_value(gutils, orig.operands[2 + orig_swiftself])
 		    nothing
 		else
-		    invert_pointer(gutils, orig.operands[1+orig_swiftself], B)
+                    invert_pointer(gutils, orig.operands[1 + orig_swiftself], B)
 		end
                 dval = extract_value!(B, res, 1)
 		
 		droots = if prim_roots !== nothing && VERSION >= v"1.12"
-		    @assert !is_constant_value(gutils, orig.operands[2+orig_swiftself])
-		    invert_pointer(gutils, orig.operands[2], B)
+                    @assert !is_constant_value(gutils, orig.operands[2 + orig_swiftself])
+                    invert_pointer(gutils, orig.operands[2], B)
 	        end
                 
 		for idx = 1:width
                     ev = (width == 1) ? dval : extract_value!(B, dval, idx - 1)
 			
 		    if prim_roots !== nothing && VERSION >= v"1.12"
-                    	if !is_constant_value(gutils, orig.operands[1+orig_swiftself])
+                        if !is_constant_value(gutils, orig.operands[1 + orig_swiftself])
 			   pev = (width == 1) ? dval_ptr : extract_value!(B, dval_ptr, idx - 1)
-		           extract_nonjlvalues_into!(B, ev.value_type, pev, ev)
+                            extract_nonjlvalues_into!(B, ev.value_type, pev, ev)
 			end
 
 		        rval = (width == 1) ? droots : extract_value!(B, droots, idx - 1)
@@ -1384,39 +1380,39 @@ end
 	    
 	    _, prim_sret, prim_roots = get_return_info(RealRt)
             if prim_sret !== nothing
-                val = new_from_original(gutils, orig.operands[1+orig_swiftself])
+                val = new_from_original(gutils, orig.operands[1 + orig_swiftself])
                 
 		res0 = extract_value!(B, res, 0)
 		if prim_roots !== nothing && VERSION >= v"1.12"
                     extract_nonjlvalues_into!(B, res0.value_type, val, res0)
 
-                    rval = new_from_original(gutils, orig.operands[2+orig_swiftself])
+                    rval = new_from_original(gutils, orig.operands[2 + orig_swiftself])
 
 		    extract_roots_from_value!(B, res0, rval)
 		else
                     store!(B, res0, val)
 		end
 
-	        dval_ptr = if is_constant_value(gutils, orig.operands[1+orig_swiftself])
+                dval_ptr = if is_constant_value(gutils, orig.operands[1 + orig_swiftself])
 		    @assert prim_roots !== nothing && VERSION >= v"1.12"
-		    @assert !is_constant_value(gutils, orig.operands[2+orig_swiftself])
+                    @assert !is_constant_value(gutils, orig.operands[2 + orig_swiftself])
 		    nothing
 		else
-		    invert_pointer(gutils, orig.operands[1+orig_swiftself], B)
+                    invert_pointer(gutils, orig.operands[1 + orig_swiftself], B)
 		end
                 dval = extract_value!(B, res, 1)
 		
 		droots = if prim_roots !== nothing && VERSION >= v"1.12"
-		    @assert !is_constant_value(gutils, orig.operands[2+orig_swiftself])
-		    invert_pointer(gutils, orig.operands[2+orig_swiftself], B)
+                    @assert !is_constant_value(gutils, orig.operands[2 + orig_swiftself])
+                    invert_pointer(gutils, orig.operands[2 + orig_swiftself], B)
 	        end
                 
 		for idx = 1:width
                     ev = (width == 1) ? dval : extract_value!(B, dval, idx - 1)
 		    if prim_roots !== nothing && VERSION >= v"1.12"
-		        if !is_constant_value(gutils, orig.operands[1+orig_swiftself])
+                        if !is_constant_value(gutils, orig.operands[1 + orig_swiftself])
 			    pev = (width == 1) ? dval_ptr : extract_value!(B, dval_ptr, idx - 1)
-			    extract_nonjlvalues_into!(B, ev.value_type, pev, ev)
+                            extract_nonjlvalues_into!(B, ev.value_type, pev, ev)
 			end
 
 		        rval = (width == 1) ? droots : extract_value!(B, droots, idx - 1)
@@ -1691,7 +1687,7 @@ function box_inline_union!(B::LLVM.IRBuilder, alloctx::LLVM.IRBuilder, val::LLVM
     end
     result = boxed[end]
     for k in (length(members) - 1):-1:1
-        is_k = icmp!(B, LLVM.API.LLVMIntEQ, sel, LLVM.ConstantInt(T_int8, k - 1))
+        is_k = icmp!(B, LLVM.IntPredicate.EQ, sel, LLVM.ConstantInt(T_int8, k - 1))
         result = select!(B, is_k, boxed[k], result)
     end
     return result
@@ -1715,7 +1711,7 @@ function nthfield_if_byref!(B, isboxed, sret_union_type, res)
     func, _ = get_function!(mod, func_name, fty)
     
     if isempty(func.blocks)
-        func.linkage = LLVM.API.LLVMInternalLinkage
+        func.linkage = LLVM.Linkage.Internal
         
         # Build body
         B2 = LLVM.IRBuilder()
@@ -1955,7 +1951,7 @@ function enzyme_custom_common_rev(
         end
     elseif tape isa LLVM.Value && length(byval_tapes) != 0
         if needsTape
-            @assert length(tape.value_type.elements) ==  length(byval_tapes) + 1
+            @assert length(tape.value_type.elements) == length(byval_tapes) + 1
             tape = extract_value!(B, tape, length(byval_tapes))
         else
             tape = nothing
@@ -2108,15 +2104,15 @@ function enzyme_custom_common_rev(
 		   emit_error(B, orig, (msg2, final_mi, world), CallingConventionMismatchError{Cstring})
 		   return tapeV
 		end
-		@assert !is_constant_value(gutils,  orig.operands[1+!isghostty(funcTy)+orig_swiftself]) "Handle constant RT, but active roots"
-		ptr_val = invert_pointer(gutils, orig.operands[1+!isghostty(funcTy)+orig_swiftself], B)
+                @assert !is_constant_value(gutils, orig.operands[1 + !isghostty(funcTy) + orig_swiftself]) "Handle constant RT, but active roots"
+                ptr_val = invert_pointer(gutils, orig.operands[1 + !isghostty(funcTy) + orig_swiftself], B)
            
 		if active_roots != 0
 		    ptr_val = nullify_rooted_values!(ptr_val, B) # TODO this should be fwdB
-		    @assert !is_constant_value(gutils,  orig.operands[1+!isghostty(funcTy)+orig_swiftself+1])
+                    @assert !is_constant_value(gutils, orig.operands[1 + !isghostty(funcTy) + orig_swiftself + 1])
 		    roots_ty = convert(LLVMType, AnyArray(width * active_roots))
 		    ral = create_rooted_array(alloctx, width * active_roots)
-		    rptr_val = invert_pointer(gutils, orig.operands[1+!isghostty(funcTy)+orig_swiftself+1], B)
+                    rptr_val = invert_pointer(gutils, orig.operands[1 + !isghostty(funcTy) + orig_swiftself + 1], B)
                     rptr_val = lookup_value(gutils, rptr_val, B)
 		    # TODO actually cache the roots in the forward for use in the reverse here
                     for idx = 1:width
@@ -2209,7 +2205,7 @@ function enzyme_custom_common_rev(
             sret_lty
         end
         sret = alloca!(alloctx, sret_lty_foralloca)
-	sret.metadata["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(esret))))])
+        sret.metadata["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(esret))))])
         pushfirst!(args, sret)
         if returnRoots !== nothing
             returnRoots = alloca!(alloctx, convert(LLVMType, eltype(returnRoots)))
@@ -2296,7 +2292,7 @@ function enzyme_custom_common_rev(
     res.callconv = llvmf.callconv
     copy_abi_attrs!(res, llvmf)
 
-    hasNoRet = has_fn_attr(llvmf, EnumAttribute("noreturn"))
+    hasNoRet = haskey(llvmf.function_attributes, :noreturn)
 
     if hasNoRet
         return tapeV
@@ -2364,7 +2360,7 @@ function enzyme_custom_common_rev(
                 cur_singleton = LLVM.ConstantInt(T_int1, singleton)
                 cur_singleton_val = singleton_val
             else
-                cmpv = icmp!(B, LLVM.API.LLVMIntEQ, idxv, LLVM.ConstantInt(idxv.value_type, counter))
+                cmpv = icmp!(B, LLVM.IntPredicate.EQ, idxv, LLVM.ConstantInt(idxv.value_type, counter))
                 cur = select!(B, cmpv, unsafe_to_llvm(B, jlrettype), cur)
                 cur_size = select!(B, cmpv, LLVM.ConstantInt(sizeof(jlrettype)), cur_size)
                 cur_offset = select!(B, cmpv, LLVM.ConstantInt(fieldoffset(aug_RT, 3)), cur_offset)
@@ -2377,7 +2373,7 @@ function enzyme_custom_common_rev(
         end
         for_each_uniontype_small(inner, miRT)
 
-        isboxed = icmp!(B, LLVM.API.LLVMIntEQ, and!(B, idxv, LLVM.ConstantInt(idxv.value_type, 128)), LLVM.ConstantInt(idxv.value_type, 128))
+        isboxed = icmp!(B, LLVM.IntPredicate.EQ, and!(B, idxv, LLVM.ConstantInt(idxv.value_type, 128)), LLVM.ConstantInt(idxv.value_type, 128))
         cur = select!(B, isboxed, unsafe_to_llvm(B, UInt8), cur)
         cur_size = select!(B, isboxed, LLVM.ConstantInt(sizeof(UInt8)), cur_size)
 
@@ -2395,18 +2391,10 @@ function enzyme_custom_common_rev(
 
     elseif sret !== nothing
         sty = sret_ty(llvmf, 1)
-        if LLVM.version().major >= 12
-            attr = TypeAttribute("sret", sty)
-        else
-            attr = EnumAttribute("sret")
-        end
-        LLVM.API.LLVMAddCallSiteAttribute(
-            res,
-            LLVM.API.LLVMAttributeIndex(1),
-            attr,
-        )
+        attr = TypeAttribute(:sret, sty)
+        push!(res.argument_attributes[1], attr)
     	if returnRoots !== nothing
-    	    LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(2), StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1]))))
+            push!(res.argument_attributes[2], StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1]))))
     	end
     	if returnRoots !== nothing && VERSION >= v"1.12"
     	    res = recombine_value_ptr!(B, sty, sret, returnRoots; must_cache=true)
@@ -2519,12 +2507,12 @@ function enzyme_custom_common_rev(
             normalV = extract_value!(B, resV, idx)
 	        _, prim_sret, prim_roots = get_return_info(RealRt)
             if prim_sret !== nothing
-                val = new_from_original(gutils, orig.operands[1+orig_swiftself])
+                val = new_from_original(gutils, orig.operands[1 + orig_swiftself])
 		
     		    if prim_roots !== nothing && VERSION >= v"1.12"
                     extract_nonjlvalues_into!(B, normalV.value_type, val, normalV)
 
-                    rval = new_from_original(gutils, orig.operands[2+orig_swiftself])
+                    rval = new_from_original(gutils, orig.operands[2 + orig_swiftself])
 
         		    extract_roots_from_value!(B, normalV, rval)
         		else
@@ -2542,17 +2530,17 @@ function enzyme_custom_common_rev(
                 shadowV = extract_value!(B, resV, idx)
 	        _, prim_sret, prim_roots = get_return_info(RealRt)
                 if prim_sret !== nothing
-                    dval = if is_constant_value(gutils, orig.operands[1+orig_swiftself])
+                    dval = if is_constant_value(gutils, orig.operands[1 + orig_swiftself])
                         @assert prim_roots !== nothing && VERSION >= v"1.12"
-                        @assert !is_constant_value(gutils, orig.operands[2+orig_swiftself])
+                        @assert !is_constant_value(gutils, orig.operands[2 + orig_swiftself])
 		    	nothing
 		    else
-			invert_pointer(gutils, orig.operands[1+orig_swiftself], B)
+                        invert_pointer(gutils, orig.operands[1 + orig_swiftself], B)
 		    end
 
 		    droots = if prim_roots !== nothing && VERSION >= v"1.12"
-			@assert !is_constant_value(gutils, orig.operands[2+orig_swiftself])
-                    	invert_pointer(gutils, orig.operands[2+orig_swiftself], B)
+                        @assert !is_constant_value(gutils, orig.operands[2 + orig_swiftself])
+                        invert_pointer(gutils, orig.operands[2 + orig_swiftself], B)
 		    end
 
 		    for idx = 1:width
@@ -2561,9 +2549,9 @@ function enzyme_custom_common_rev(
 
 
 			if prim_roots !== nothing && VERSION >= v"1.12"
-			    if !is_constant_value(gutils, orig.operands[1+orig_swiftself])
+                            if !is_constant_value(gutils, orig.operands[1 + orig_swiftself])
 			        store_ptr = (width == 1) ? dval : extract_value!(B, dval, idx - 1)
-				extract_nonjlvalues_into!(B, to_store.value_type, store_ptr, to_store)
+                                extract_nonjlvalues_into!(B, to_store.value_type, store_ptr, to_store)
 			    end
 
                             rval = (width == 1) ? droots : extract_value!(B, droots, idx - 1)
@@ -2623,8 +2611,8 @@ function enzyme_custom_common_rev(
             return tapeV
         end
         if length(actives) >= 1 &&
-           !isa(res.value_type, LLVM.StructType) &&
-           !isa(res.value_type, LLVM.ArrayType)
+                !isa(res.value_type, LLVM.StructType) &&
+                !isa(res.value_type, LLVM.ArrayType)
             GPUCompiler.@safe_error "Shadow arg calling convention mismatch found return ",
             res
             return tapeV
@@ -2727,9 +2715,9 @@ end
     end
     non_rooting_use = false
     fop = orig.called_operand::LLVM.Function
-    for (i, v) in enumerate(arg_operands_view(orig))
+    for (i, v) in enumerate(orig.arguments)
         if v == val
-            if true || !has_arg_attr(fop, i, StringAttribute("enzymejl_returnRoots"))
+            if true || !haskey(fop.parameter_attributes[i], "enzymejl_returnRoots")
                 non_rooting_use = true
                 break
             end
