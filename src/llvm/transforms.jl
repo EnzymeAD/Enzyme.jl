@@ -1048,6 +1048,82 @@ struct NoDecayedPhiState
     nextvs::Dict{LLVM.PHIInst, LLVM.PHIInst}
     goffsets::Dict{LLVM.PHIInst, LLVM.PHIInst}
     phicache::Dict{LLVM.PHIInst, Tuple{LLVM.PHIInst, LLVM.PHIInst}}
+    # Union sret buffers promoted to GC objects, keyed by the raw pointer that replaced the
+    # alloca (see `promote_union_sret_alloca!`).
+    sretobjs::Dict{LLVM.Value, LLVM.Value}
+end
+
+# True if the alloca `al` is passed, possibly through casts, as the return buffer of a call
+# returning an isbits union (the `enzymejl_sret_union_bytes` parameter). Such a buffer holds
+# the unboxed payload of the union and never contains GC references.
+function is_union_sret_alloca(al::LLVM.AllocaInst)::Bool
+    todo = LLVM.Value[al]
+    seen = Set{LLVM.Value}()
+    found = false
+    while !isempty(todo)
+        cur = pop!(todo)
+        in(cur, seen) && continue
+        push!(seen, cur)
+        for u in LLVM.uses(cur)
+            us = LLVM.user(u)
+            if isa(us, LLVM.BitCastInst) || isa(us, LLVM.AddrSpaceCastInst) || isa(us, LLVM.GetElementPtrInst)
+                push!(todo, us)
+                continue
+            end
+            if isa(us, LLVM.CallInst)
+                cf = LLVM.called_operand(us)
+                if isa(cf, LLVM.Function)
+                    for (i, op) in enumerate(LLVM.arguments(us))
+                        op == cur || continue
+                        i <= length(LLVM.parameters(cf)) || continue
+                        for attr in collect(LLVM.parameter_attributes(cf, i))
+                            if isa(attr, LLVM.StringAttribute) && kind(attr) == "enzymejl_sret_union_bytes"
+                                found = true
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return found
+end
+
+# Replace the union sret buffer `al` by a GC-allocated object of the same size, so that a
+# decayed pointer into it has a real addrspace(10) parent. Rewriting the phi of such a
+# pointer onto `addrspacecast(al)` instead would hand Enzyme a stack address disguised as a
+# GC object: Enzyme then caches it by reference in the (GC-scanned) tape, where it dangles
+# once the augmented forward pass returns, crashing the GC and corrupting the reverse pass.
+# The payload of an isbits union has no GC references, so a pointer-free `NTuple{N, UInt8}`
+# is a valid type for the object. Returns the raw pointer that replaced `al` and the object.
+function promote_union_sret_alloca!(al::LLVM.AllocaInst)::Tuple{LLVM.Value, LLVM.Value}
+    ty = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(al))
+    f = LLVM.parent(LLVM.parent(al))
+    dl = datalayout(LLVM.parent(f))
+    nbytes = Int(LLVM.storage_size(dl, ty))
+    B = IRBuilder()
+    position!(B, al)
+    obj = emit_allocobj!(B, NTuple{nbytes, UInt8}, "union_sret_obj")
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+    derived = addrspacecast!(B, obj, LLVM.PointerType(T_jlvalue, Derived))
+    # Keep the object alive for the whole function: the raw pointer below is not tracked.
+    token = emit_gc_preserve_begin(B, LLVM.Value[obj])
+    raw = emit_pointerfromobjref!(B, derived)
+    rawc = bitcast!(B, raw, value_type(al))
+    LLVM.replace_uses!(al, rawc)
+    LLVM.API.LLVMInstructionEraseFromParent(al)
+    rets = LLVM.Instruction[]
+    for bb in blocks(f)
+        term = terminator(bb)
+        if isa(term, LLVM.RetInst)
+            push!(rets, term)
+        end
+    end
+    for term in rets
+        position!(B, term)
+        emit_gc_preserve_end(B, token)
+    end
+    return raw, obj
 end
 
 # Walk `v` back to its addrspace-10 parent, returning (parent, byte offset, hasload).
@@ -1220,6 +1296,24 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
                 LLVM.PointerType(10)
             else
                 LLVM.PointerType(eltype(value_type(v)), 10)
+            end
+            # A pointer into a stack buffer has no GC parent. For a union sret buffer we
+            # can give it one by moving the buffer into a GC object.
+            base, boff = get_base_and_offset(operands(v)[1]; addrcast = false)
+            obj = get(st.sretobjs, base, nothing)
+            if obj === nothing && isa(base, LLVM.AllocaInst) && is_union_sret_alloca(base)
+                raw, obj = promote_union_sret_alloca!(base)
+                st.sretobjs[raw] = obj
+            end
+            if obj !== nothing
+                v2 = obj
+                if !LLVM.is_opaque(value_type(v2)) && value_type(v2) != PT
+                    v2 = bitcast!(b, v2, PT)
+                end
+                if boff != 0
+                    offset = add!(b, offset, LLVM.ConstantInt(st.offty, boff))
+                end
+                return v2, offset, hasload
             end
             v2 = addrspacecast!(
                 b,
@@ -1494,6 +1588,10 @@ function nodecayed_phis!(mod::LLVM.Module)
         offty = LLVM.IntType(8 * sizeof(Int))
         i8 = LLVM.IntType(8)
 
+        # Shared by both address spaces: a buffer promoted while handling one must be found
+        # again (through the pointer that replaced it) while handling the other.
+        sretobjs = Dict{LLVM.Value, LLVM.Value}()
+
         for addr in (11, 13)
 
             nextvs = Dict{LLVM.PHIInst, LLVM.PHIInst}()
@@ -1572,7 +1670,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                         position!(b, terminator(pb))
 
                         phicache = Dict{LLVM.PHIInst, Tuple{LLVM.PHIInst, LLVM.PHIInst}}()
-                        st = NoDecayedPhiState(addr, offty, ctx, f, inst, v0, nextvs, goffsets, phicache)
+                        st = NoDecayedPhiState(addr, offty, ctx, f, inst, v0, nextvs, goffsets, phicache, sretobjs)
                         v, offset, hadload = nodecayed_getparent(st, b, v, LLVM.ConstantInt(offty, 0), false)
 
                         if addr == 13

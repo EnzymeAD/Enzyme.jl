@@ -955,3 +955,67 @@ end
         end
     end
 end
+
+@testset "nodecayed_phis! union sret buffer phi" begin
+    # A non-inlined call returning an isbits union writes the payload into a stack buffer
+    # (the `enzymejl_sret_union_bytes` argument), and the union's data pointer selects
+    # between the returned box and that buffer. Rooting the phi of that pointer on
+    # `addrspacecast(buffer)` hands Enzyme a stack address as if it were a GC object, which
+    # it may then cache in the tape. The buffer must instead become a GC allocation.
+    @test @filecheck begin
+        @check_label "define i64 @kernel"
+        @check_not "alloca [16 x i8]"
+        @check "julia.gc_alloc_obj"
+        @check "nodecayed."
+        LLVM.Context() do ctx
+            mod = parse(
+                LLVM.Module, """
+                source_filename = "start"
+                target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+                target triple = "x86_64-linux-gnu"
+
+                declare { {} addrspace(10)*, i8 } @iter([16 x i8]* "enzymejl_sret_union_bytes"="16", i64)
+
+                define i64 @kernel(i64 %n) #0 {
+                top:
+                  %box = alloca [16 x i8], align 8
+                  %r0 = call { {} addrspace(10)*, i8 } @iter([16 x i8]* %box, i64 0)
+                  %bc = bitcast [16 x i8]* %box to {}*
+                  %d = addrspacecast {}* %bc to {} addrspace(11)*
+                  %o0 = extractvalue { {} addrspace(10)*, i8 } %r0, 0
+                  %t0 = extractvalue { {} addrspace(10)*, i8 } %r0, 1
+                  %isbox0 = icmp slt i8 %t0, 0
+                  %o0d = addrspacecast {} addrspace(10)* %o0 to {} addrspace(11)*
+                  %s0 = select i1 %isbox0, {} addrspace(11)* %o0d, {} addrspace(11)* %d
+                  br label %loop
+
+                loop:
+                  %p = phi {} addrspace(11)* [ %s0, %top ], [ %s1, %loop ]
+                  %i = phi i64 [ 0, %top ], [ %inext, %loop ]
+                  %acc = phi i64 [ 0, %top ], [ %accnext, %loop ]
+                  %pi = bitcast {} addrspace(11)* %p to i64 addrspace(11)*
+                  %v = load i64, i64 addrspace(11)* %pi, align 8
+                  %accnext = add i64 %acc, %v
+                  %inext = add i64 %i, 1
+                  %r1 = call { {} addrspace(10)*, i8 } @iter([16 x i8]* %box, i64 %inext)
+                  %o1 = extractvalue { {} addrspace(10)*, i8 } %r1, 0
+                  %t1 = extractvalue { {} addrspace(10)*, i8 } %r1, 1
+                  %isbox1 = icmp slt i8 %t1, 0
+                  %o1d = addrspacecast {} addrspace(10)* %o1 to {} addrspace(11)*
+                  %s1 = select i1 %isbox1, {} addrspace(11)* %o1d, {} addrspace(11)* %d
+                  %done = icmp eq i64 %inext, %n
+                  br i1 %done, label %exit, label %loop
+
+                exit:
+                  ret i64 %accnext
+                }
+
+                attributes #0 = { "enzymejl_world"="1" }
+                """
+            )
+
+            Enzyme.Compiler.nodecayed_phis!(mod)
+            string(mod)
+        end
+    end
+end
