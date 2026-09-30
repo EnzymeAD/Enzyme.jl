@@ -236,25 +236,21 @@ function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing
 
     pgs = get_pgcstack(func)
     if pgs isa Nothing
-        func.parent.context
-        B = IRBuilder()
         entry_bb = first(func.blocks)
-        if PB !== nothing && PB.insert_block.name == "allocsForInversion"
-	    B = PB
-        elseif !isempty(entry_bb.instructions)
-            if PB === nothing || PB.insert_block != entry_bb
-                position!(B, LLVM.at_begin(entry_bb))
-	    else
-		    B = PB
-	    end
+        if PB !== nothing &&
+                (PB.insert_block.name == "allocsForInversion" || PB.insert_block == entry_bb)
+            # emit it with the caller's builder, which we don't own
+            emit_pgcstack(PB, "newly_emitted_pgc_stack")
         else
-            if PB === nothing || PB.insert_block != entry_bb
-                position!(B, LLVM.at_end(entry_bb))
-	    else
-	       B = PB
-	    end
+            @dispose B = IRBuilder() begin
+                if isempty(entry_bb.instructions)
+                    position!(B, LLVM.at_end(entry_bb))
+                else
+                    position!(B, LLVM.at_begin(entry_bb))
+                end
+                emit_pgcstack(B, "newly_emitted_pgc_stack")
+            end
         end
-        emit_pgcstack(B, "newly_emitted_pgc_stack")
     else
         entry_bb = first(func.blocks)
         fst = first(entry_bb.instructions)
@@ -316,16 +312,16 @@ function use_gcstack_arg!(f::LLVM.Function, arg::LLVM.Argument)
     if isempty(calls)
         return
     end
-    B = IRBuilder()
-    position!(B, LLVM.at_begin(f.entry))
     T_pgcstack = getter.function_type.return_type
-    # Before 1.12, a `Ptr{Cvoid}` is an integer in Julia's IR.
-    pgcstack = if arg.value_type isa LLVM.IntegerType
-        inttoptr!(B, arg, T_pgcstack)
-    else
-        bitcast!(B, arg, T_pgcstack)
+    pgcstack = @dispose B = IRBuilder() begin
+        position!(B, LLVM.at_begin(f.entry))
+        # Before 1.12, a `Ptr{Cvoid}` is an integer in Julia's IR.
+        if arg.value_type isa LLVM.IntegerType
+            inttoptr!(B, arg, T_pgcstack)
+        else
+            bitcast!(B, arg, T_pgcstack)
+        end
     end
-    dispose(B)
     for call in calls
         replace_uses!(call, pgcstack)
         erase!(call)
