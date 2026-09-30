@@ -82,7 +82,7 @@ declare_pointerfromobjref!(mod::LLVM.Module) = begin
     readnone_attr = if LLVM.version().major <= 15
         LLVM.EnumAttribute(:readnone)
     else
-        LLVM.EnumAttribute(:memory, NoEffects.data)
+        EnumAttribute(LLVM.MemoryEffects(:none))
     end
     attrs = LLVM.Attribute[readnone_attr, LLVM.EnumAttribute(:nounwind), LLVM.EnumAttribute(:willreturn)]
     F, fty = get_function!(mod, "julia.pointer_from_objref", attrs) do
@@ -474,7 +474,7 @@ function declare_ntuple_type!(mod::LLVM.Module)
     memory = if LLVM.version().major <= 15
         EnumAttribute(:readnone)
     else
-        EnumAttribute(:memory, NoEffects.data)
+        EnumAttribute(LLVM.MemoryEffects(:none))
     end
     fn, _ = get_function!(
         mod, "julia.enzyme.ntuple_type", FT,
@@ -545,7 +545,7 @@ function define_ntuple_type!(mod::LLVM.Module)
         memory = if LLVM.version().major <= 15
             EnumAttribute(:inaccessiblemem_or_argmemonly)
         else
-            EnumAttribute(:memory, ReadArgMemReadWriteInaccessibleEffects.data)
+            EnumAttribute(LLVM.MemoryEffects(argmem = :read, inaccessiblemem = :readwrite))
         end
         apply_tuple_v, apply_tuple_v_FT = get_function!(
             mod, "ijl_apply_tuple_type_v", LLVM.FunctionType(T_prjlvalue, [LLVM.PointerType(T_pjlvalue), T_size]),
