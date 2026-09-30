@@ -194,7 +194,7 @@ include("parallelrules.jl")
         if in(name, ("ijl_f_finalizer", "jl_f_finalizer"))
             return common_finalizer_fwd(2, B, orig, gutils, normalR, shadowR)
         end
-        if has_fn_attr(F, StringAttribute("enzyme_inactive"))
+        if haskey(F.function_attributes, "enzyme_inactive")
             return true
         end
     end
@@ -293,7 +293,7 @@ end
         if in(name, ("ijl_f_finalizer", "jl_f_finalizer"))
             return common_finalizer_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
-        if has_fn_attr(F, StringAttribute("enzyme_inactive"))
+        if haskey(F.function_attributes, "enzyme_inactive")
             return true
         end
     end
@@ -400,7 +400,7 @@ end
             common_finalizer_rev(2, B, orig, gutils, tape)
             return nothing
         end
-        if has_fn_attr(F, StringAttribute("enzyme_inactive"))
+        if haskey(F.function_attributes, "enzyme_inactive")
             return nothing
         end
     end
@@ -435,7 +435,7 @@ end
         if in(name, ("ijl_invoke", "jl_invoke"))
             return common_invoke_fwd(2, B, orig, gutils, normalR, shadowR)
         end
-        if has_fn_attr(F, StringAttribute("enzyme_inactive"))
+        if haskey(F.function_attributes, "enzyme_inactive")
             return true
         end
     end
@@ -452,7 +452,7 @@ end
         if in(name, ("ijl_invoke", "jl_invoke"))
             return common_invoke_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
-        if has_fn_attr(F, StringAttribute("enzyme_inactive"))
+        if haskey(F.function_attributes, "enzyme_inactive")
             return true
         end
     end
@@ -470,7 +470,7 @@ end
             common_invoke_rev(2, B, orig, gutils, tape)
             return nothing
         end
-        if has_fn_attr(F, StringAttribute("enzyme_inactive"))
+        if haskey(F.function_attributes, "enzyme_inactive")
             return nothing
         end
     end
@@ -490,7 +490,7 @@ end
 end
 
 @register_rev function duplicate_rev(B, orig, gutils, tape)
-    origops = arg_operands_view(orig)
+    origops = orig.arguments
     ops = [new_from_original(gutils, o) for o in origops]
 
     shadowin = invert_pointer(gutils, origops[1], B)
@@ -634,9 +634,9 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, enzyme_ctx
         )
     else
         B0 = LLVM.IRBuilder()
-        nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(actualOp))
+        nextInst = actualOp.next
         while isa(nextInst, LLVM.PHIInst)
-            nextInst = LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(nextInst))
+            nextInst = nextInst.next
         end
         if len != nothing
             nextInst = new_from_original(gutils, orig)
@@ -974,7 +974,7 @@ end
                 B,
                 LLVM.icmp!(
                     B,
-                    LLVM.API.LLVMIntNE,
+                    LLVM.IntPredicate.NE,
                     ev,
                     new_from_original(gutils, origops[1]),
                 ),
@@ -1279,7 +1279,7 @@ end
 
     width = get_width(gutils)
 
-    origh, origkey, origdflt = arg_operands_view(orig)
+    origh, origkey, origdflt = orig.arguments
 
     if is_constant_value(gutils, origh)
         emit_error(
@@ -1419,7 +1419,7 @@ end
 
     width = get_width(gutils)
 
-    origh, origkey, origval, originserted = arg_operands_view(orig)
+    origh, origkey, origval, originserted = orig.arguments
 
     @assert !is_constant_value(gutils, origh)
 
@@ -1661,7 +1661,7 @@ end
             end
 
             if get_runtime_activity(gutils) && endB === nothing
-                cond = icmp!(B, LLVM.API.LLVMIntNE, fval, args[1])
+                cond = icmp!(B, LLVM.IntPredicate.NE, fval, args[1])
 
                 currentBlock = B.insert_block
                 ogname = currentBlock.name
@@ -1700,7 +1700,7 @@ end
     enzyme_ctx = enzyme_context()
     if !is_constant_value(gutils, orig.operands[1])
         width = get_width(gutils)
-        origops = arg_operands_view(orig)
+        origops = orig.arguments
 
         called_value = orig.called_operand
         funcT = orig.called_type
@@ -1734,7 +1734,7 @@ end
             end
 
             if get_runtime_activity(gutils)
-                cond = icmp!(B, LLVM.API.LLVMIntNE, fval, anti)
+                cond = icmp!(B, LLVM.IntPredicate.NE, fval, anti)
 
                 currentBlock = B.insert_block
                 ogname = currentBlock.name
@@ -1794,7 +1794,7 @@ end
     if is_constant_inst(gutils, orig)
         return true
     end
-    ops = arg_operands_view(orig)
+    ops = orig.arguments
 
     args = LLVM.Value[]
     for a in ops[1:(end - 1)]
@@ -1978,7 +1978,7 @@ end
 @register_fwd function jl_unhandled_fwd(B, orig, gutils, normalR, shadowR)
     newo = new_from_original(gutils, orig)
     err = emit_error(B, orig, "Enzyme: unhandled forward for " * string(orig.called_operand))
-    API.moveBefore(newo, err, C_NULL)
+    move!(newo, LLVM.before(err))
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
 
@@ -2022,7 +2022,7 @@ end
     end
 
     newo = new_from_original(gutils, orig)
-    cmp = icmp!(B, LLVM.API.LLVMIntNE, newo, LLVM.null(newo.value_type))
+    cmp = icmp!(B, LLVM.IntPredicate.NE, newo, LLVM.null(newo.value_type))
 
     err = emit_error(
         B,
