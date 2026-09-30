@@ -136,11 +136,8 @@ end
 function move_to_threadsafe(ir)
     LLVM.verify(ir) # try to catch broken modules
 
-    # So 1. serialize the module
-    buf = convert(MemoryBuffer, ir)
-
-    # 2. deserialize and wrap by a ThreadSafeModule
-    return @dispose ctx = ThreadSafeContext() begin
+    # So 1. serialize the module, and 2. deserialize and wrap by a ThreadSafeModule
+    return @dispose buf = convert(MemoryBuffer, ir) ctx = ThreadSafeContext() begin
         mod = parse(LLVM.Module, buf)
         ThreadSafeModule(mod)
     end
