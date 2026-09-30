@@ -20,151 +20,19 @@ function Base.:|(lhs::AllocFnKind, rhs::AllocFnKind)
     AllocFnKind(UInt32(lhs.data) | UInt32(rhs.data))
 end
 
-struct MemoryEffect
-    data::UInt32
-end
+# Memory effects, as encoded in the `memory` attribute on LLVM 16+, are handled with
+# LLVM.jl's `MemoryEffects`, which knows the memory locations of each LLVM version.
+set_readonly(effects::LLVM.MemoryEffects) = effects & LLVM.MemoryEffects(:read)
 
+is_readonly(effects::LLVM.MemoryEffects) = effects.access in (:none, :read)
+is_readnone(effects::LLVM.MemoryEffects) = effects.access == :none
+is_writeonly(effects::LLVM.MemoryEffects) = effects.access in (:none, :write)
 
-@enum(ModRefInfo, MRI_NoModRef = 0, MRI_Ref = 1, MRI_Mod = 2, MRI_ModRef = 3)
+Base.@assume_effects :removable :foldable :nothrow is_noreturn(f::LLVM.Function)::Bool =
+    haskey(f.function_attributes, :noreturn)
 
-@enum(IRMemLocation, ArgMem = 0, InaccessibleMem = 1, Other = 2)
-
-const BitsPerLoc = UInt32(2)
-const LocMask = UInt32((1 << BitsPerLoc) - 1)
-function getLocationPos(Loc::IRMemLocation)
-    return UInt32(Loc) * BitsPerLoc
-end
-function Base.:<<(mr::ModRefInfo, rhs::UInt32)
-    UInt32(mr) << rhs
-end
-function Base.:|(lhs::ModRefInfo, rhs::ModRefInfo)
-    ModRefInfo(UInt32(lhs) | UInt32(rhs))
-end
-function Base.:&(lhs::ModRefInfo, rhs::ModRefInfo)
-    ModRefInfo(UInt32(lhs) & UInt32(rhs))
-end
-const AllEffects = MemoryEffect(
-    (MRI_ModRef << getLocationPos(ArgMem)) |
-    (MRI_ModRef << getLocationPos(InaccessibleMem)) |
-    (MRI_ModRef << getLocationPos(Other)),
-)
-const ReadOnlyEffects = MemoryEffect(
-    (MRI_Ref << getLocationPos(ArgMem)) |
-    (MRI_Ref << getLocationPos(InaccessibleMem)) |
-    (MRI_Ref << getLocationPos(Other)),
-)
-const ReadOnlyArgMemEffects = MemoryEffect(
-    (MRI_Ref << getLocationPos(ArgMem)) |
-    (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
-    (MRI_NoModRef << getLocationPos(Other)),
-)
-const WriteOnlyArgMemEffects = MemoryEffect(
-    (MRI_Mod << getLocationPos(ArgMem)) |
-    (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
-    (MRI_NoModRef << getLocationPos(Other)),
-)
-const NoEffects = MemoryEffect(
-    (MRI_NoModRef << getLocationPos(ArgMem)) |
-    (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
-    (MRI_NoModRef << getLocationPos(Other)),
-)
-const ReadArgMemReadWriteInaccessibleEffects = MemoryEffect(
-    (MRI_Ref << getLocationPos(ArgMem)) |
-        (MRI_ModRef << getLocationPos(InaccessibleMem)) |
-        (MRI_NoModRef << getLocationPos(Other)),
-)
-
-const ReadArgMemWriteInaccessibleEffects = MemoryEffect(
-    (MRI_Ref << getLocationPos(ArgMem)) |
-    (MRI_Mod << getLocationPos(InaccessibleMem)) |
-    (MRI_NoModRef << getLocationPos(Other)),
-)
-
-# Get ModRefInfo for any location.
-function getModRef(effect::MemoryEffect, loc::IRMemLocation)::ModRefInfo
-    ModRefInfo((effect.data >> getLocationPos(loc)) & LocMask)
-end
-
-function getModRef(effect::MemoryEffect)::ModRefInfo
-    cur = MRI_NoModRef
-    for loc in (ArgMem, InaccessibleMem, Other)
-        cur |= getModRef(effect, loc)
-    end
-    return cur
-end
-
-function setModRef(effect::MemoryEffect, Loc::IRMemLocation, MR::ModRefInfo)::MemoryEffect
-    data = effect.data
-    Data &= ~(LocMask << getLocationPos(Loc))
-    Data |= MR << getLocationPos(Loc)
-    return MemoryEffect(data)
-end
-
-function setModRef(effect::MemoryEffect)::MemoryEffect
-    for loc in (ArgMem, InaccessibleMem, Other)
-        effect = setModRef(effect, mri) = getModRef(effect, loc)
-    end
-    return effect
-end
-
-function set_readonly(mri::ModRefInfo)
-    return mri & MRI_Ref
-end
-function set_writeonly(mri::ModRefInfo)
-    return mri & MRI_Mod
-end
-function set_reading(mri::ModRefInfo)
-    return mri | MRI_Ref
-end
-function set_writing(mri::ModRefInfo)
-    return mri | MRI_Mod
-end
-
-function set_readonly(effect::MemoryEffect)::MemoryEffect
-    data = UInt32(0)
-    for loc in (ArgMem, InaccessibleMem, Other)
-        data |= UInt32(set_readonly(getModRef(effect, loc))) << getLocationPos(loc)
-    end
-    return MemoryEffect(data)
-end
-
-function is_readonly(mri::ModRefInfo)::Bool
-    return mri == MRI_NoModRef || mri == MRI_Ref
-end
-
-function is_readnone(mri::ModRefInfo)::Bool
-    return mri == MRI_NoModRef
-end
-
-function is_writeonly(mri::ModRefInfo)::Bool
-    return mri == MRI_NoModRef || mri == MRI_Mod
-end
-
-for n in (:is_readonly, :is_readnone, :is_writeonly)
-    @eval begin
-        function $n(memeffect::MemoryEffect)
-            return $n(getModRef(memeffect))
-        end
-    end
-end
-
-Base.@assume_effects :removable :foldable :nothrow function is_noreturn(f::LLVM.Function)::Bool
-    for attr in collect(f.function_attributes)
-        if attr.kind == :noreturn
-            return true
-        end
-    end
-    return false
-end
-
-Base.@assume_effects :removable :foldable :nothrow function is_nounwind(f::LLVM.Function)::Bool
-    for attr in collect(f.function_attributes)
-        if attr.kind == :nounwind
-            return true
-        end
-    end
-    return false
-end
+Base.@assume_effects :removable :foldable :nothrow is_nounwind(f::LLVM.Function)::Bool =
+    haskey(f.function_attributes, :nounwind)
 
 """
     is_readonly(attr::LLVM.Attribute)::Bool
@@ -180,11 +48,9 @@ Base.@assume_effects :removable :foldable :nothrow function is_readonly(attr::LL
     if attr.kind == :readnone
         return true
     end
-    if LLVM.version().major > 15 && isa(attr, LLVM.EnumAttribute)
-        if attr.kind == :memory
-            if is_readonly(MemoryEffect(attr.value))
-                return true
-            end
+    if LLVM.version().major > 15 && attr.kind == :memory
+        if is_readonly(LLVM.MemoryEffects(attr))
+            return true
         end
     end
     return false
@@ -228,16 +94,12 @@ Base.@assume_effects :removable :foldable :nothrow function is_readnone(f::LLVM.
             f.name == "llvm.julia.gc_preserve_end"
         return true
     end
-    for attr in collect(cur.function_attributes)
-        if attr.kind == :readnone
+    if haskey(f.function_attributes, :readnone)
+        return true
+    end
+    if LLVM.version().major > 15 && haskey(f.function_attributes, :memory)
+        if is_readnone(LLVM.MemoryEffects(f.function_attributes[:memory]))
             return true
-        end
-        if LLVM.version().major > 15
-            if attr.kind == :memory
-                if is_readnone(MemoryEffect(attr.value))
-                    return true
-                end
-            end
         end
     end
     return false
@@ -258,19 +120,12 @@ Base.@assume_effects :removable :foldable :nothrow function is_writeonly(f::LLVM
             f.name == "llvm.julia.gc_preserve_end"
         return true
     end
-    for attr in collect(cur.function_attributes)
-        if attr.kind == :readnone
+    if haskey(f.function_attributes, :readnone) || haskey(f.function_attributes, :writeonly)
+        return true
+    end
+    if LLVM.version().major > 15 && haskey(f.function_attributes, :memory)
+        if is_writeonly(LLVM.MemoryEffects(f.function_attributes[:memory]))
             return true
-        end
-        if attr.kind == :writeonly
-            return true
-        end
-        if LLVM.version().major > 15
-            if attr.kind == :memory
-                if is_writeonly(MemoryEffect(attr.value))
-                    return true
-                end
-            end
         end
     end
     return false
@@ -291,19 +146,11 @@ function set_readonly!(fn::LLVM.Function)
         end
         return false
     else
-        for attr in attrs
-            if attr.kind == :memory
-                old = MemoryEffect(attr.value)
-                eff = set_readonly(old)
-                push!(fn.function_attributes, EnumAttribute(:memory, eff.data))
-                return old != eff
-            end
-        end
-        push!(
-            fn.function_attributes,
-            EnumAttribute(:memory, set_readonly(AllEffects).data),
-        )
-        return true
+        # without a `memory` attribute, a function may access any memory
+        old = LLVM.MemoryEffects(fn.memory_effects)
+        eff = set_readonly(old)
+        fn.memory_effects = eff
+        return old != eff
     end
 end
 

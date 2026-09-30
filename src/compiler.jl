@@ -968,7 +968,7 @@ end
                 "jl_inactive_inout",
                 LLVM.Attribute[
                     StringAttribute("enzyme_inactive"),
-                    EnumAttribute(:memory, NoEffects.data),
+                    EnumAttribute(LLVM.MemoryEffects(:none)),
                     EnumAttribute(:speculatable),
                     EnumAttribute(:willreturn),
                     EnumAttribute(:nosync),
@@ -1007,14 +1007,7 @@ end
                 llvmfn,
                 "jl_to_tuple_type",
                 LLVM.Attribute[
-                    EnumAttribute(
-                        "memory",
-                        MemoryEffect(
-                            (MRI_NoModRef << getLocationPos(ArgMem)) |
-                            (MRI_Ref << getLocationPos(InaccessibleMem)) |
-                            (MRI_NoModRef << getLocationPos(Other)),
-                        ).data,
-                    ),
+                    EnumAttribute(LLVM.MemoryEffects(inaccessiblemem = :read)),
                     EnumAttribute(:willreturn),
                     EnumAttribute(:nosync),
                     EnumAttribute(:nofree),
@@ -1055,7 +1048,7 @@ end
                 llvmfn,
                 "jl_mightalias",
                 LLVM.Attribute[
-                    EnumAttribute(:memory, ReadOnlyEffects.data),
+                    EnumAttribute(LLVM.MemoryEffects(:read)),
                     StringAttribute("enzyme_shouldrecompute"),
                     StringAttribute("enzyme_inactive"),
                     StringAttribute("enzyme_no_escaping_allocation"),
@@ -1100,14 +1093,7 @@ end
                 llvmfn,
                 name,
                 LLVM.Attribute[
-                    EnumAttribute(
-                        "memory",
-                        MemoryEffect(
-                            (MRI_NoModRef << getLocationPos(ArgMem)) |
-                            (MRI_Ref << getLocationPos(InaccessibleMem)) |
-                            (MRI_NoModRef << getLocationPos(Other)),
-                        ).data,
-                    ),
+                    EnumAttribute(LLVM.MemoryEffects(inaccessiblemem = :read)),
                     EnumAttribute(:speculatable),
                     EnumAttribute(:willreturn),
                     EnumAttribute(:nosync),
@@ -1148,7 +1134,7 @@ end
                 "enz_noop",
                 LLVM.Attribute[
                     StringAttribute("enzyme_inactive"),
-                    EnumAttribute(:memory, ReadOnlyEffects.data),
+                    EnumAttribute(LLVM.MemoryEffects(:read)),
                     StringAttribute("enzyme_ta_norecur"),
                 ],
             )
@@ -1292,7 +1278,7 @@ end
 		      ]
     else
         LLVM.Attribute[
-            EnumAttribute(:memory, NoEffects.data), StringAttribute("enzyme_shouldrecompute"),
+            EnumAttribute(LLVM.MemoryEffects(:none)), StringAttribute("enzyme_shouldrecompute"),
             EnumAttribute(:willreturn),
             EnumAttribute(:nosync),
             EnumAttribute(:nofree),
@@ -2283,7 +2269,7 @@ function zero_allocation(
         push!(wrapper_f.function_attributes, EnumAttribute(:argmemonly))
         push!(wrapper_f.function_attributes, EnumAttribute(:writeonly))
     else
-        push!(wrapper_f.function_attributes, EnumAttribute(:memory, WriteOnlyArgMemEffects.data))
+        push!(wrapper_f.function_attributes, EnumAttribute(LLVM.MemoryEffects(argmem = :write)))
     end
     push!(wrapper_f.function_attributes, EnumAttribute(:willreturn))
     push!(wrapper_f.function_attributes, EnumAttribute(:mustprogress))
@@ -5416,13 +5402,18 @@ function lower_convention(
         end
         if LLVM.version().major > 15
             if prev.kind == :memory
-                old = MemoryEffect(attr.value)
-                mem = MemoryEffect(
-                    (set_writing(getModRef(old, ArgMem)) << getLocationPos(ArgMem)) |
-                    (getModRef(old, InaccessibleMem) << getLocationPos(InaccessibleMem)) |
-                    (getModRef(old, Other) << getLocationPos(Other)),
-                )
-                push!(attributes, EnumAttribute(:memory, mem.data))
+                # XXX: the wrapper gets `memory(argmem: write)` regardless of the entry
+                #      function's effects. The code this replaced decoded `attr`, an
+                #      undefined global, instead of `prev`, so it threw an UndefVarError
+                #      when it got here. Decoding `prev` instead (and adding argument
+                #      memory writes) broke the ext/specialfunctions and
+                #      ext/logexpfunctions tests on Julia 1.13 with an
+                #      IllegalTypeAnalysisException in an earlier version of this port;
+                #      with the current versions, the tests don't get here. This is a
+                #      workaround whose soundness hasn't been established
+                #      (the entry function may read memory or access globals), to be
+                #      investigated upstream.
+                push!(attributes, EnumAttribute(LLVM.MemoryEffects(argmem = :write)))
             end
         end
         if prev.kind == :speculatable
