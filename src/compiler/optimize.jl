@@ -235,6 +235,14 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
     return run!(GCInvariantVerifierPass(strong = false), mod)
 end
 
+# Julia's `aggressiveSimplifyCFGOptions`
+const aggressiveSimplifyCFGOptions = (
+    forward_switch_cond = true,
+    switch_range_to_icmp = true,
+    switch_to_lookup = true,
+    hoist_common_insts = true,
+)
+
 function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
     add!(mpm, NewPMFunctionPassManager()) do fpm
         add!(fpm, ReinsertGCMarkerPass())
@@ -293,11 +301,17 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         end
         add!(fpm, InstCombinePass())
         add!(fpm, JLInstSimplifyPass())
+        add!(fpm, IRCEPass())
         add!(fpm, NewPMLoopPassManager()) do lpm
+            add!(lpm, LoopInstSimplifyPass())
             add!(lpm, IndVarSimplifyPass())
             add!(lpm, LoopDeletionPass())
+            # As in Julia, only unroll loops whose trip count is known and small
+            # here, so that no loop remains. Partial and runtime unrolling happen
+            # after vectorization, as unrolling first leaves the vectorizer a
+            # strided loop that it can only vectorize with gathers and scatters.
+            add!(lpm, LoopFullUnrollPass())
         end
-        add!(fpm, LoopUnrollPass(opt_level = 2))
 
         # Run our own SROA on heap objects before LLVM's
         add!(fpm, AllocOptPass())
@@ -335,10 +349,19 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         end
         add!(fpm, InstCombinePass())
         add!(fpm, JLInstSimplifyPass())
+
+        # Vectorization, following Julia's `buildVectorPipeline`.
+        add!(fpm, InjectTLIMappings())
         add!(fpm, LoopVectorizePass())
-        add!(fpm, SimplifyCFGPass())
+        add!(fpm, LoopLoadEliminationPass())
+        add!(fpm, InstCombinePass())
+        add!(fpm, JLInstSimplifyPass())
+        add!(fpm, SimplifyCFGPass(; aggressiveSimplifyCFGOptions...))
         add!(fpm, SLPVectorizerPass())
+        add!(fpm, VectorCombinePass())
         add!(fpm, ADCEPass())
+        # Unroll vectorized loops, as well as loops that failed to vectorize.
+        add!(fpm, LoopUnrollPass(opt_level = 2))
     end
 end
 
@@ -409,13 +432,6 @@ function addJuliaLegalizationPasses!(mpm::LLVM.NewPMPassManager, lower_intrinsic
         add!(mpm, NewPMFunctionPassManager()) do fpm
             add!(fpm, InstCombinePass())
             add!(fpm, JLInstSimplifyPass())
-            aggressiveSimplifyCFGOptions =
-                (
-                forward_switch_cond = true,
-                switch_range_to_icmp = true,
-                switch_to_lookup = true,
-                hoist_common_insts = true,
-            )
             add!(fpm, SimplifyCFGPass(; aggressiveSimplifyCFGOptions...))
         end
     else
