@@ -708,6 +708,29 @@ end
     return nothing
 end
 
+"""
+    checkpoint_while(scheme::Ptr{Cvoid}, data::Ptr{Cvoid}, body)
+
+Run `body()` until it returns `false` (at least once). As [`checkpoint_for`](@ref),
+but the number of iterations is only known when the loop ends, so `scheme` must
+be able to schedule a loop of unknown length.
+"""
+@inline function checkpoint_while(scheme::Ptr{Cvoid}, data::Ptr{Cvoid}, body::B) where {B}
+    _checkpoint_while(scheme, data, Ref(body))
+    return nothing
+end
+
+@noinline function _checkpoint_while(
+        scheme::Ptr{Cvoid}, data::Ptr{Cvoid}, box::Base.RefValue{B}
+    ) where {B}
+    while checkpoint_while_step(box)
+    end
+    return nothing
+end
+
+# One iteration of `checkpoint_while`: whether to go on.
+@noinline checkpoint_while_step(box::Base.RefValue{B}) where {B} = box[]()::Bool
+
 # One iteration of `checkpoint_for`: the step Enzyme differentiates on its own.
 @noinline checkpoint_step(box::Base.RefValue{B}, i::Int) where {B} = (box[](i); nothing)
 

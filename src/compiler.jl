@@ -826,8 +826,17 @@ function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, m
 
     # Checkpointed loops (see compiler/checkpoint.jl) are rewritten from these
     # two calls, which must therefore stay out of line.
-    if func == typeof(EnzymeCore._checkpoint_for) || func == typeof(EnzymeCore.checkpoint_step)
-        attr = func == typeof(EnzymeCore._checkpoint_for) ? CHECKPOINT_FOR_ATTR : CHECKPOINT_STEP_ATTR
+    if func == typeof(EnzymeCore._checkpoint_for) ||
+            func == typeof(EnzymeCore._checkpoint_while) ||
+            func == typeof(EnzymeCore.checkpoint_step) ||
+            func == typeof(EnzymeCore.checkpoint_while_step)
+        attr = if func == typeof(EnzymeCore._checkpoint_for)
+            CHECKPOINT_FOR_ATTR
+        elseif func == typeof(EnzymeCore._checkpoint_while)
+            CHECKPOINT_WHILE_ATTR
+        else
+            CHECKPOINT_STEP_ATTR
+        end
         push!(function_attributes(llvmfn), StringAttribute(attr))
         push!(function_attributes(llvmfn), EnumAttribute("noinline", 0))
         return
