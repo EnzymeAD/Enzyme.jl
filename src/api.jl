@@ -519,6 +519,12 @@ EnzymeRegisterAllocationHandler(name, ahandle, fhandle) = ccall(
 const CustomAugmentedForwardPass = Ptr{Cvoid}
 const CustomForwardPass = Ptr{Cvoid}
 const CustomReversePass = Ptr{Cvoid}
+EnzymeLowerCheckpointMarkers(mod) = ccall(
+    (:EnzymeLowerCheckpointMarkers, libEnzyme),
+    UInt8,
+    (LLVM.API.LLVMModuleRef,),
+    mod,
+)
 EnzymeRegisterCallHandler(name, fwdhandle, revhandle) = ccall(
     (:EnzymeRegisterCallHandler, libEnzyme),
     Cvoid,

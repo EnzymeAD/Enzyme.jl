@@ -742,6 +742,7 @@ include("compiler/optimize.jl")
 include("compiler/interpreter.jl")
 include("compiler/callconv.jl")
 include("compiler/validation.jl")
+include("compiler/checkpoint.jl")
 include("typeutils/inference.jl")
 
 import .Interpreter: isKWCallSignature
@@ -822,6 +823,15 @@ function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, m
     end
 
     func = mi.specTypes.parameters[1]
+
+    # Checkpointed loops (see compiler/checkpoint.jl) are rewritten from these
+    # two calls, which must therefore stay out of line.
+    if func == typeof(EnzymeCore._checkpoint_for) || func == typeof(EnzymeCore.checkpoint_step)
+        attr = func == typeof(EnzymeCore._checkpoint_for) ? CHECKPOINT_FOR_ATTR : CHECKPOINT_STEP_ATTR
+        push!(function_attributes(llvmfn), StringAttribute(attr))
+        push!(function_attributes(llvmfn), EnumAttribute("noinline", 0))
+        return
+    end
 
 @static if VERSION < v"1.11-"
 else
@@ -6046,6 +6056,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     # annotate
     replace_builtin_fptr!(mod)
     annotate!(mod)
+    rewrite_checkpoint_calls!(mod)
     for name in ("gpu_report_exception", "report_exception")
         if haskey(functions(mod), name)
             exc = functions(mod)[name]
@@ -6446,6 +6457,7 @@ end
         memcpy_alloca_to_loadstore(mod, job.world)
         force_recompute!(mod)
         API.EnzymeDetectReadonlyOrThrow(mod)
+        lower_checkpoint_calls!(mod)
 
         adjointf, augmented_primalf, TapeType = enzyme!(
             job,
