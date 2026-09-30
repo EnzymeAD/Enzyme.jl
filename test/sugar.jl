@@ -22,6 +22,30 @@ end
     @test gradient(Forward, x -> sum(abs2, x), x; chunk = Val(3))[1] ≈ 2 .* x
 end
 
+@testset "Forward gradient of an Array" begin
+    y = [2.7, 3.1]
+    res = gradient(Forward, mul_scalar, [2.0, 3.0], Const(y))
+    @test res[1] isa Vector{Float64}
+    @test res[1] ≈ [3.1, 2.7]
+
+    X = [1.0 2.0 3.0; 4.0 5.0 6.0]
+    res = gradient(Forward, x -> sum(abs2, x), X)
+    @test res[1] isa Matrix{Float64}
+    @test res[1] ≈ 2 .* X
+
+    # In chunks, including a last chunk that is not full
+    res = gradient(Forward, x -> sum(abs2, x), X; chunk = Val(4))
+    @test res[1] isa Matrix{Float64}
+    @test res[1] ≈ 2 .* X
+
+    # With precomputed shadows, as in DifferentiationInterface, the result is
+    # type stable.
+    x = [2.0, 3.0]
+    shadows = Enzyme.create_shadows(Val(1), x, Const(y))
+    res = @inferred gradient(Forward, mul_scalar, x, Const(y); chunk = Val(1), shadows)
+    @test res[1] ≈ [3.1, 2.7]
+end
+
 function diffsize(θ0, X)
     return copy(X)
 end

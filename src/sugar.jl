@@ -491,7 +491,7 @@ function Base.convert(
 ) where {T,Shape,Length,N}
     vals = Array{T,N}(undef, Shape...)
     for i = 1:Length
-        @inbounds val[i] = X.data[i]
+        @inbounds vals[i] = X.data[i]
     end
     return vals
 end
@@ -516,6 +516,18 @@ end
 end
 
 @inline specialize_output(output, input) = output
+
+# The derivatives of a scalar-valued function with respect to each element of
+# `input`, in the shape of `input`. The shape of a `TupleArray` is a type
+# parameter, which is not known at compile time for an `Array`.
+@inline function gradient_output(data::NTuple{N, T}, input::Array) where {N, T}
+    res = Array{T}(undef, size(input))
+    @inbounds for i in 1:N
+        res[i] = data[i]
+    end
+    return res
+end
+@inline gradient_output(data, input) = specialize_output(TupleArray(data, size(input)), input)
 
 """
     gradient(::ForwardMode, f, x; shadows=onehot(x), chunk=nothing)
@@ -770,7 +782,7 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
                             # st : outshape x total inputs
                             tupstack($tmp, outshape, inshape)
                         else
-                            specialize_output(TupleArray($tmp, size($arg)), $(vals[i]))
+                            gradient_output($tmp, $(vals[i]))
                         end
                     end
                 else
