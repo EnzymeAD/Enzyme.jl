@@ -1903,7 +1903,7 @@ function generic_setup(
 )
     width = get_width(gutils)
     mode = get_mode(gutils)
-    ops = @view arg_operands_view(orig)[start+firstconst:end]
+    ops = @view orig.arguments[(start + firstconst):end]
     ops_count = length(ops)
 
     T_int8 = LLVM.Int8Type()
@@ -1956,7 +1956,7 @@ function generic_setup(
                     ActivityList,
                     select!(
                         B,
-                        icmp!(B, LLVM.API.LLVMIntNE, val, inv_0),
+                        icmp!(B, LLVM.IntPredicate.NE, val, inv_0),
                         unsafe_to_llvm(B, true),
                         unsafe_to_llvm(B, false),
                     ),
@@ -2037,8 +2037,8 @@ function generic_setup(
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
     for v in vals
-       if v.value_type != T_prjlvalue
-          if v.value_type isa LLVM.PointerType && v.value_type.addrspace == Tracked
+        if v.value_type != T_prjlvalue
+            if v.value_type isa LLVM.PointerType && v.value_type.addrspace == Tracked
              continue
           end
           throw(AssertionError("Illegal generic_setup, expected all arguments to by jlvaluet, found $(string(v)), within $(vals), orig=$(string(orig))"))
@@ -2502,9 +2502,9 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
         return true
     end
 
-    v, isiter = absint(orig.operands[offset+1])
+    v, isiter = absint(orig.operands[offset + 1])
     isiter = unbind(isiter)
-    v2, istup = absint(orig.operands[offset+2])
+    v2, istup = absint(orig.operands[offset + 2])
     istup = unbind(istup)
 
     width = get_width(gutils)
@@ -2513,8 +2513,8 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
        v2 &&
        isiter == Base.iterate &&
        istup == Base.tuple &&
-       length(orig.operands) >= offset + 4
-        origops = arg_operands_view(orig)
+            length(orig.operands) >= offset + 4
+        origops = orig.arguments
         shadowins =
             [invert_pointer(gutils, origops[i], B) for i = (offset+3):length(origops)]
         shadowres = if width == 1
@@ -2633,7 +2633,7 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
         B,
         orig,
         "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate " *
-        string((v, v2, isiter, istup, length(orig.operands), offset + 4)),
+            string((v, v2, isiter, istup, length(orig.operands), offset + 4)),
     )
 
     return false
@@ -2655,8 +2655,8 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
         return true
     end
 
-    v, isiter = absint(orig.operands[offset+1])
-    v2, istup = absint(orig.operands[offset+2])
+    v, isiter = absint(orig.operands[offset + 1])
+    v2, istup = absint(orig.operands[offset + 2])
     isiter = unbind(isiter)
     istup = unbind(istup)
 
@@ -2735,7 +2735,7 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
         B,
         orig,
         "Enzyme: Not yet implemented augmented forward for jl_f__apply_iterate " *
-        string((v, v2, isiter, istup, length(orig.operands), offset + 4)),
+            string((v, v2, isiter, istup, length(orig.operands), offset + 4)),
     )
 
     unsafe_store!(

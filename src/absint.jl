@@ -81,7 +81,7 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
     end
 
     if isa(arg, ConstantExpr)
-        if arg.opcode == LLVM.API.LLVMAddrSpaceCast || arg.opcode == LLVM.API.LLVMBitCast
+        if arg.opcode == LLVM.Opcode.AddrSpaceCast || arg.opcode == LLVM.Opcode.BitCast
             return absint(arg.operands[1], partial, false, typetag)
         end
     end
@@ -149,7 +149,7 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
                 found = Any[]
                 legal, Ty = absint(arg.operands[index], partial)
                 unionalls = TypeVar[]
-                for sarg in @view arg_operands_view(arg)[index+1:end]
+                for sarg in @view arg.arguments[(index + 1):end]
                     slegal, foundv = absint(sarg, partial)
                     if slegal
                         push!(found, foundv)
@@ -182,7 +182,7 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
                 index += 1
                 found = Any[]
                 legal = true
-                for sarg in @view arg_operands_view(arg)[index:end]
+                for sarg in @view arg.arguments[index:end]
                     slegal, foundv = absint(sarg, partial)
                     if slegal
                         push!(found, foundv)
@@ -315,28 +315,28 @@ function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Boo
     pinst = isa(larg, LLVM.Instruction) ? larg::LLVM.Instruction : inst
     while true
         if isa(larg, LLVM.ConstantExpr)
-            if larg.opcode == LLVM.API.LLVMBitCast || larg.opcode == LLVM.API.LLVMPtrToInt
+            if larg.opcode == LLVM.Opcode.BitCast || larg.opcode == LLVM.Opcode.PtrToInt
                 larg = larg.operands[1]
                 continue
             end
-            if addrcast && larg.opcode == LLVM.API.LLVMAddrSpaceCast
+            if addrcast && larg.opcode == LLVM.Opcode.AddrSpaceCast
                 larg = larg.operands[1]
                 continue
             end
-            if inttoptr && larg.opcode == LLVM.API.LLVMIntToPtr
+            if inttoptr && larg.opcode == LLVM.Opcode.IntToPtr
                 larg = larg.operands[1]
                 continue
             end
-	    if larg.opcode == LLVM.API.LLVMGetElementPtr && pinst isa LLVM.Instruction
+            if larg.opcode == LLVM.Opcode.GetElementPtr && pinst isa LLVM.Instruction
 		    b = LLVM.IRBuilder()
-		    position!(b, LLVM.before(pinst))
+                position!(b, LLVM.before(pinst))
 		    offty = LLVM.IntType(8 * sizeof(Int))
 		    offset2 = API.EnzymeComputeByteOffsetOfGEP(b, larg, offty)
 		    if isa(offset2, LLVM.ConstantInt)
 			val = convert(Int, offset2)
 			if offsetAllowed || val == 0
 			    offset += val
-			    larg = larg.operands[1]
+                        larg = larg.operands[1]
 			    continue
 			else
 			    break
@@ -358,8 +358,8 @@ function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Boo
             larg = larg.operands[1]
             continue
         end
-        if LLVM.API.LLVMGetValueKind(larg) == LLVM.API.LLVMGlobalAliasValueKind
-            larg = LLVM.Value(ccall((:LLVMAliasGetAliasee, LLVM.API.libllvm), LLVM.API.LLVMValueRef, (LLVM.API.LLVMValueRef,), larg))
+        if larg isa LLVM.GlobalAlias
+            larg = larg.aliasee
             continue
         end
         if isa(larg, LLVM.GetElementPtrInst) &&
@@ -393,17 +393,17 @@ function is_multiple_of(@nospecialize(val::LLVM.Value), sz::Int, stride::Int)::B
         return (convert(Int, val) * stride) % sz == 0
     elseif val isa LLVM.Instruction
         opc = val.opcode
-        if opc == LLVM.API.LLVMSelect
+        if opc == LLVM.Opcode.Select
             return is_multiple_of(val.operands[2], sz, stride) &&
-                   is_multiple_of(val.operands[3], sz, stride)
-        elseif opc == LLVM.API.LLVMShl
+                is_multiple_of(val.operands[3], sz, stride)
+        elseif opc == LLVM.Opcode.Shl
             if val.operands[2] isa LLVM.ConstantInt
                 shift_amt = convert(Int, val.operands[2])
                 if shift_amt < 64
                     return ((1 << shift_amt) * stride) % sz == 0
                 end
             end
-        elseif opc == LLVM.API.LLVMMul
+        elseif opc == LLVM.Opcode.Mul
             if val.operands[1] isa LLVM.ConstantInt
                 c = convert(Int, val.operands[1])
                 if (c * stride) % sz == 0
@@ -470,7 +470,7 @@ function abs_typeof(
     end
 
     if isa(arg, ConstantExpr)
-        if arg.opcode == LLVM.API.LLVMAddrSpaceCast || arg.opcode == LLVM.API.LLVMBitCast
+        if arg.opcode == LLVM.Opcode.AddrSpaceCast || arg.opcode == LLVM.Opcode.BitCast
             return abs_typeof(arg.operands[1], partial, seenphis)
         end
     end
@@ -480,8 +480,8 @@ function abs_typeof(
 
     if isa(arg, LLVM.AllocaInst) || isa(arg, LLVM.CallInst)
 	for mdname in ("enzymejl_gc_alloc_rt", "enzymejl_allocart")
-        if haskey(arg.metadata, mdname)
-            mds = arg.metadata[mdname].operands[1]::MDString
+            if haskey(arg.metadata, mdname)
+                mds = arg.metadata[mdname].operands[1]::MDString
             mds = Base.convert(String, mds)
             ptr = reinterpret(Ptr{Cvoid}, parse(UInt, mds))
             RT = Base.unsafe_pointer_to_objref(ptr)
@@ -531,14 +531,14 @@ function abs_typeof(
         if nm == "julia.gc_alloc_obj" ||
                 nm == "jl_gc_alloc_typed" ||
                 nm == "ijl_gc_alloc_typed"
-            vals = absint(arg.operands[3], partial, false, #=typetag=#true)
+            vals = absint(arg.operands[3], partial, false, #=typetag=# true)
 	    @assert !(vals[2] isa Core.Binding)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.BITS_REF : nothing)
         end
         # Type tag is arg 3
         if nm == "jl_alloc_genericmemory_unchecked" ||
 		nm == "ijl_alloc_genericmemory_unchecked"
-	    vals = absint(arg.operands[3], partial, true, #=typetag=#true)
+            vals = absint(arg.operands[3], partial, true, #=typetag=# true)
 	    @assert !(vals[2] isa Core.Binding)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
         end
@@ -553,13 +553,13 @@ function abs_typeof(
                 nm == "ijl_new_array" ||
                 nm == "jl_alloc_genericmemory" ||
                 nm == "ijl_alloc_genericmemory"
-            vals = absint(arg.operands[1], partial, false, #=typetag=#true)
+            vals = absint(arg.operands[1], partial, false, #=typetag=# true)
 	    @assert !(vals[2] isa Core.Binding)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
         end
 
         if nm == "jl_new_structt" || nm == "ijl_new_structt"
-            vals = absint(arg.operands[1], partial, false, #=typetag=#true)
+            vals = absint(arg.operands[1], partial, false, #=typetag=# true)
 	    @assert !(vals[2] isa Core.Binding)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
         end
@@ -578,7 +578,7 @@ function abs_typeof(
 
             if nm == "jl_new_structv" || nm == "ijl_new_structv"
                 @assert index == 2
-                vals = absint(arg.operands[index], partial, false, #=typetag=#true)
+                vals = absint(arg.operands[index], partial, false, #=typetag=# true)
 	    	@assert !(vals[2] isa Core.Binding)
                 return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
             end
@@ -588,7 +588,7 @@ function abs_typeof(
                 found = Union{Type, TypeVar}[]
                 unionalls = TypeVar[]
                 legal = true
-                for sarg in @view arg_operands_view(arg)[index:end]
+                for sarg in @view arg.arguments[index:end]
                     slegal, foundv, _ = abs_typeof(sarg, partial, seenphis)
                     if slegal
                         push!(found, foundv)
@@ -661,7 +661,7 @@ function abs_typeof(
         end
 
         if nm == "jl_reshape_array" || nm == "ijl_reshape_array"
-            vals = absint(arg.operands[1], partial, false, #=typetag=#true)
+            vals = absint(arg.operands[1], partial, false, #=typetag=# true)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
         end
         @static if VERSION < v"1.11-"
@@ -887,9 +887,7 @@ function abs_typeof(
 
     if isa(arg, LLVM.ExtractValueInst)
         larg = arg.operands[1]
-        indptrs = LLVM.API.LLVMGetIndices(arg)
-        numind = LLVM.API.LLVMGetNumIndices(arg)
-        offset = Cuint[unsafe_load(indptrs, i) for i in 1:numind]
+        offset = collect(Cuint, arg.indices)
         found, typ, byref = abs_typeof(larg, partial, seenphis)
         if !found
             return (false, nothing, nothing)
@@ -958,13 +956,13 @@ function abs_typeof(
                 end
                 if sz > 0
                     indices = arg.operands[2:end]
-		    if length(indices) == 1 && indices[1].value_type isa LLVM.IntegerType
+                    if length(indices) == 1 && indices[1].value_type isa LLVM.IntegerType
                         idx = indices[1]
                         
                         b = LLVM.IRBuilder()
                         position!(b, LLVM.before(arg))
                         
-                        source_type = LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(arg))
+                        source_type = arg.source_element_type
                         base_ptr = arg.operands[1]
                         
                         tmp_indices_0 = LLVM.Value[LLVM.ConstantInt(idx.value_type, 0)]
@@ -977,8 +975,8 @@ function abs_typeof(
                         offset_0_val = API.EnzymeComputeByteOffsetOfGEP(b, tmp_gep_0, offty)
                         offset_1_val = API.EnzymeComputeByteOffsetOfGEP(b, tmp_gep_1, offty)
                         
-                        LLVM.API.LLVMInstructionEraseFromParent(tmp_gep_0)
-                        LLVM.API.LLVMInstructionEraseFromParent(tmp_gep_1)
+                        erase!(tmp_gep_0)
+                        erase!(tmp_gep_1)
                         
                         if isa(offset_0_val, LLVM.ConstantInt) && isa(offset_1_val, LLVM.ConstantInt)
                             C = convert(Int, offset_0_val)
@@ -1068,7 +1066,7 @@ function abs_typeof(
     end
 
     if isa(arg, LLVM.Argument)
-        f = LLVM.Function(LLVM.API.LLVMGetParamParent(arg))
+        f = arg.parent
         idx = only([i for (i, v) in enumerate(f.parameters) if v == arg])
         typ, byref = enzyme_extract_parm_type(f, idx, false) #=error=#
         if typ !== nothing
@@ -1094,11 +1092,11 @@ end
 function abs_cstring(@nospecialize(arg::LLVM.Value))::Tuple{Bool, String}
         ce = arg
         while isa(ce, ConstantExpr)
-            if ce.opcode == LLVM.API.LLVMAddrSpaceCast || ce.opcode == LLVM.API.LLVMBitCast ||  ce.opcode == LLVM.API.LLVMIntToPtr
+        if ce.opcode == LLVM.Opcode.AddrSpaceCast || ce.opcode == LLVM.Opcode.BitCast ||  ce.opcode == LLVM.Opcode.IntToPtr
+            ce = ce.operands[1]
+        elseif ce.opcode == LLVM.Opcode.GetElementPtr
+            if all(is_zero, ce.operands[2:end])
                 ce = ce.operands[1]
-            elseif ce.opcode == LLVM.API.LLVMGetElementPtr
-                if all(is_zero, ce.operands[2:end])
-                    ce = ce.operands[1]
                 else
                     break
                 end
@@ -1108,15 +1106,15 @@ function abs_cstring(@nospecialize(arg::LLVM.Value))::Tuple{Bool, String}
         end
         
         larg = nothing
-        if LLVM.API.LLVMGetValueKind(ce) == LLVM.API.LLVMGlobalAliasValueKind
-            larg = LLVM.Value(ccall((:LLVMAliasGetAliasee, LLVM.API.libllvm), LLVM.API.LLVMValueRef, (LLVM.API.LLVMValueRef,), ce))
+    if ce isa LLVM.GlobalAlias
+            larg = ce.aliasee
         elseif isa(ce, LLVM.GlobalVariable)
-            larg = ce.initializer
+        larg = ce.initializer
         end
 
         if larg !== nothing
-            if (isa(larg, LLVM.ConstantArray) || isa(larg, LLVM.ConstantDataArray)) && larg.value_type.element_type == LLVM.IntType(8)
-	        return (true, String(map(Base.Fix1(convert, UInt8), collect(larg.elements)[1:(end-1)])))
+        if (isa(larg, LLVM.ConstantArray) || isa(larg, LLVM.ConstantDataArray)) && larg.value_type.element_type == LLVM.IntType(8)
+            return (true, String(map(Base.Fix1(convert, UInt8), collect(larg.elements)[1:(end - 1)])))
             end
 
         end

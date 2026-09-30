@@ -70,11 +70,11 @@ end
 function setup_globals()
     opt_level = Base.JLOptions().opt_level
     if opt_level < 2
-        optlevel = LLVM.API.LLVMCodeGenLevelNone
+        optlevel = LLVM.CodeGenOptLevel.None
     elseif opt_level == 2
-        optlevel = LLVM.API.LLVMCodeGenLevelDefault
+        optlevel = LLVM.CodeGenOptLevel.Default
     else
-        optlevel = LLVM.API.LLVMCodeGenLevelAggressive
+        optlevel = LLVM.CodeGenOptLevel.Aggressive
     end
 
     lljit = JuliaOJIT()
@@ -162,8 +162,8 @@ function prepare!(mod)
     # symbol and get registered. See EnzymeAD/Enzyme.jl#3374.
     if Sys.iswindows()
         for f in mod.functions
-            if !LLVM.isdeclaration(f) && f.linkage == LLVM.API.LLVMPrivateLinkage
-                f.linkage = LLVM.API.LLVMInternalLinkage
+            if !LLVM.isdeclaration(f) && f.linkage == LLVM.Linkage.Private
+                f.linkage = LLVM.Linkage.Internal
             end
         end
     end

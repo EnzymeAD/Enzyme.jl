@@ -156,16 +156,6 @@ struct CFnTypeInfo
     known_values::Ptr{IntList}
 end
 
-SetMD(v::Union{LLVM.Instruction,LLVM.GlobalVariable}, kind::String, node::LLVM.Metadata) =
-    ccall(
-        (:EnzymeSetStringMD, libEnzyme),
-        Cvoid,
-        (LLVM.API.LLVMValueRef, Cstring, LLVM.API.LLVMValueRef),
-        v,
-        kind,
-        LLVM.Value(node),
-    )
-
 @cenum(
     CDIFFE_TYPE,
     DFT_OUT_DIFF = 0,  # add differential to an output struct
@@ -1421,6 +1411,8 @@ function __init__()
     zcache!(true)
 end
 
+# libEnzyme's EnzymeMoveBefore moves `i1` before `i2`, first advancing the insertion point of
+# the builder `BR` if it is positioned at `i1`
 function moveBefore(i1, i2, BR)
     ccall(
         (:EnzymeMoveBefore, libEnzyme),
@@ -1445,26 +1437,6 @@ end
 function EnzymeCopyMetadata(i1, i2)
     ccall(
         (:EnzymeCopyMetadata, libEnzyme),
-        Cvoid,
-        (LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef),
-        i1,
-        i2,
-    )
-end
-
-function EnzymeCopyAlignment(i1::LLVM.AllocaInst, i2::LLVM.AllocaInst)
-    ccall(
-        (:EnzymeCopyAlignment, libEnzyme),
-        Cvoid,
-        (LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef),
-        i1,
-        i2,
-    )
-end
-
-function EnzymeTakeName(i1, i2)
-    ccall(
-        (:EnzymeTakeName, libEnzyme),
         Cvoid,
         (LLVM.API.LLVMValueRef, LLVM.API.LLVMValueRef),
         i1,
@@ -1535,15 +1507,6 @@ EnzymeComputeByteOffsetOfGEP(B, V, T) = LLVM.Value(
     ),
 )
 
-EnzymeAllocaType(al) = LLVM.LLVMType(
-    ccall(
-        (:EnzymeAllocaType, libEnzyme),
-        LLVM.API.LLVMTypeRef,
-        (LLVM.API.LLVMValueRef,),
-        al,
-    ),
-)
-
 EnzymeAttributeKnownFunctions(f) =
     ccall((:EnzymeAttributeKnownFunctions, libEnzyme), Cvoid, (LLVM.API.LLVMValueRef,), f)
 
@@ -1566,44 +1529,5 @@ EnzymeAnonymousAliasScope(dom::LLVM.Metadata, str) = LLVM.Metadata(
     ),
 )
 
-
-e_extract_value!(builder, AggVal, Index, Name::String = "") = GC.@preserve Index begin
-    LLVM.Value(
-        ccall(
-            (:EnzymeBuildExtractValue, libEnzyme),
-            LLVM.API.LLVMValueRef,
-            (LLVM.API.LLVMBuilderRef, LLVM.API.LLVMValueRef, Ptr{Cuint}, Cuint, Cstring),
-            builder,
-            AggVal,
-            Index,
-            length(Index),
-            Name,
-        ),
-    )
-end
-
-e_insert_value!(builder, AggVal, EltVal, Index, Name::String = "") =
-    GC.@preserve Index begin
-        LLVM.Value(
-            ccall(
-                (:EnzymeBuildInsertValue, libEnzyme),
-                LLVM.API.LLVMValueRef,
-                (
-                    LLVM.API.LLVMBuilderRef,
-                    LLVM.API.LLVMValueRef,
-                    LLVM.API.LLVMValueRef,
-                    Ptr{Cuint},
-                    Cuint,
-                    Cstring,
-                ),
-                builder,
-                AggVal,
-                EltVal,
-                Index,
-                length(Index),
-                Name,
-            ),
-        )
-    end
 
 end

@@ -8,48 +8,33 @@
 function unsafe_to_pointer end
 export unsafe_to_pointer
 
-if VERSION >= v"1.12-"
-    @inline function unsafe_to_pointer(@nospecialize(val::Type))
-        return Core.Intrinsics.llvmcall((
-            """
-            declare nonnull ptr @julia.pointer_from_objref(ptr addrspace(11))
+# the IR of `unsafe_to_pointer`, for `generate_llvmcall`
+function unsafe_to_pointer_ir(builder, obj)
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+    T_derived = LLVM.PointerType(T_jlvalue, 11)
+    T_ptr = LLVM.PointerType(T_jlvalue)
+    ft = LLVM.FunctionType(T_ptr, [T_derived])
+    mod = LLVM.Interop.current_module(builder)
+    pointer_from_objref = LLVM.Function(mod, "julia.pointer_from_objref", ft)
+    push!(pointer_from_objref.return_attributes, LLVM.EnumAttribute(:nonnull))
 
-            define ptr @f(ptr addrspace(10) %obj) readnone alwaysinline {
-                %c = addrspacecast ptr addrspace(10) %obj to ptr addrspace(11)
-                %r = call ptr @julia.pointer_from_objref(ptr addrspace(11) %c)
-                ret ptr %r
-            }
-            """, "f"), Ptr{Cvoid}, Tuple{Any}, val)
+    f = LLVM.Interop.current_function(builder)
+    if LLVM.version() >= v"16"
+        f.memory_effects = LLVM.MemoryEffects(:none)
+    else
+        push!(f.function_attributes, LLVM.EnumAttribute(:readnone))
     end
-elseif Int == Int64
-    @inline function unsafe_to_pointer(@nospecialize(val::Type))
-        return Base.llvmcall((
-            """
-            declare nonnull {}* @julia.pointer_from_objref({} addrspace(11)*)
 
-            define i64 @f({} addrspace(10)* %obj) readnone alwaysinline {
-                %c = addrspacecast {} addrspace(10)* %obj to {} addrspace(11)*
-                %r = call {}* @julia.pointer_from_objref({} addrspace(11)* %c)
-                %e = ptrtoint {}* %r to i64
-                ret i64 %e
-            }
-            """, "f"), Ptr{Cvoid}, Tuple{Any}, val)
-    end
-else
-    @inline function unsafe_to_pointer(@nospecialize(val::Type))
-        return Base.llvmcall((
-            """
-            declare nonnull {}* @julia.pointer_from_objref({} addrspace(11)*)
-
-            define i32 @f({} addrspace(10)* %obj) readnone alwaysinline {
-                %c = addrspacecast {} addrspace(10)* %obj to {} addrspace(11)*
-                %r = call {}* @julia.pointer_from_objref({} addrspace(11)* %c)
-                %e = ptrtoint {}* %r to i32
-                ret i32 %e
-            }
-            """, "f"), Ptr{Cvoid}, Tuple{Any}, val)
-    end
+    c = LLVM.addrspacecast!(builder, obj, T_derived)
+    r = LLVM.call!(builder, ft, pointer_from_objref, [c])
+    # before Julia 1.12, `Ptr` is passed as an integer
+    T_ret = f.function_type.return_type
+    return T_ret isa LLVM.IntegerType ? LLVM.ptrtoint!(builder, r, T_ret) : r
 end
+
+# `val` is passed boxed (`Tuple{Any}`), so that the pointer is taken at run time
+@eval @inline unsafe_to_pointer(@nospecialize(val::Type)) =
+    $(LLVM.Interop.generate_llvmcall(unsafe_to_pointer_ir, Ptr{Cvoid}, Tuple{Any}, :val))
 
 
 @inline is_concrete_tuple(x::Type{T2}) where {T2} =
@@ -62,12 +47,6 @@ export Tracked, Derived
 
 const captured_constants = Base.IdSet{Any}()
 
-function arg_operands_view(inst::LLVM.CallInst)
-    N_args = LLVM.API.LLVMGetNumArgOperands(inst)
-    return @view inst.operands[1:N_args]
-end
-
-
 function unsafe_nothing_to_llvm(mod::LLVM.Module)
     globs = mod.globals
     k = "jl_nothing"
@@ -77,8 +56,8 @@ function unsafe_nothing_to_llvm(mod::LLVM.Module)
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
 
-    API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
-    API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+    gv.metadata["enzyme_ta_norecur"] = LLVM.MDNode(LLVM.Metadata[])
+    gv.metadata["enzyme_inactive"] = LLVM.MDNode(LLVM.Metadata[])
     return gv
 end
 
@@ -131,7 +110,7 @@ function setup_global(
 
     gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
 
-    API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
+    gv.metadata["enzyme_ta_norecur"] = LLVM.MDNode(LLVM.Metadata[])
     inactive = force_inactive || Enzyme.Compiler.is_memory_instance(val)
     if !inactive && val isa Core.SimpleVector && length(val) == 0
         inactive = true
@@ -144,7 +123,7 @@ function setup_global(
         end
     end
     if inactive
-        API.SetMD(gv, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+        gv.metadata["enzyme_inactive"] = LLVM.MDNode(LLVM.Metadata[])
     end
     return gv
 end

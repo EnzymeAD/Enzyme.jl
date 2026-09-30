@@ -502,12 +502,12 @@ function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
             end
         end
     end
-    out_error = Ref{Cstring}()
-    if LLVM.API.LLVMVerifyModule(mod, LLVM.API.LLVMReturnStatusAction, out_error) != 0
+    verifier_msg = verification_error(mod)
+    if verifier_msg !== nothing
         throw(
             LLVM.LLVMException(
                 "broken gc calling conv fix\n" *
-                    string(unsafe_string(out_error[])) *
+                    verifier_msg *
                     "\n" *
                     string(mod),
             ),
@@ -532,8 +532,8 @@ function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}
             Base.empty!(f)
         end
 
-        if has_fn_attr(f, StringAttribute("enzyme_preserve_primal"))
-            delete!(f.function_attributes, StringAttribute("enzyme_preserve_primal"))
+        if haskey(f.function_attributes, "enzyme_preserve_primal")
+            delete!(f.function_attributes, "enzyme_preserve_primal")
         end
     end
 
@@ -568,7 +568,7 @@ function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}
         if isempty(f.blocks)
             continue
         end
-        if !has_fn_attr(f, StringAttribute("frame-pointer"))
+        if !haskey(f.function_attributes, "frame-pointer")
             push!(f.function_attributes, StringAttribute("frame-pointer", "all"))
         end
     end

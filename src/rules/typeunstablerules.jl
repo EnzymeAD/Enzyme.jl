@@ -449,7 +449,7 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
     world = enzyme_world()
 
     @assert is_constant_value(gutils, orig.operands[offset])
-    ops = @view arg_operands_view(orig)[offset+1:end]
+    ops = @view orig.arguments[(offset + 1):end]
     icvs = [is_constant_value(gutils, v) for v in ops]
     abs_partial = [abs_typeof(v, true) for v in ops]
     abs = [abs_typeof(v) for v in ops]
@@ -505,7 +505,7 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR)
         return true
     end
 
-    shadowsin = LLVM.Value[invert_pointer(gutils, o, B) for o in @view arg_operands_view(orig)[offset:end]]
+    shadowsin = LLVM.Value[invert_pointer(gutils, o, B) for o in @view orig.arguments[offset:end]]
     if width == 1
         if offset != 1
             pushfirst!(shadowsin, orig.operands[1])
@@ -548,7 +548,7 @@ function common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
     end
 
     if !newstruct_common(true, true, offset, B, orig, gutils, normalR, shadowR) #=run=#
-        origops = arg_operands_view(orig)
+        origops = orig.arguments
         ops = origops[offset+1:end]
         abs_partial = [abs_typeof(v, true) for v in ops]
         icvs = [is_constant_value(gutils, v) for v in ops]
@@ -1106,7 +1106,7 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
         shadowin = invert_pointer(gutils, ops[2], B)
         if width == 1
             args = LLVM.Value[new_from_original(gutils, ops[1]), shadowin]
-            for a in @view arg_operands_view(orig)[offset+2:end]
+            for a in @view orig.arguments[(offset + 2):end]
                 push!(args, new_from_original(gutils, a))
             end
             if offset != 1
@@ -1115,7 +1115,7 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
             shadowres = LLVM.call!(B, orig.called_type, orig.called_operand, args)
             shadowres.callconv = orig.callconv
             if get_runtime_activity(gutils)
-                is_inactive = icmp!(B, LLVM.API.LLVMIntEQ, shadowin, new_from_original(gutils, ops[2]))
+                is_inactive = icmp!(B, LLVM.IntPredicate.EQ, shadowin, new_from_original(gutils, ops[2]))
                 newval = new_from_original(gutils, orig)
                 shadowres = select!(B, is_inactive, newval, shadowres)
                 API.moveBefore(newval, shadowres, B)
@@ -1129,7 +1129,7 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
                     new_from_original(gutils, ops[1]),
                     shadowin_idx,
                 ]
-                for a in @view arg_operands_view(orig)[offset+2:end]
+                for a in @view orig.arguments[(offset + 2):end]
                     push!(args, new_from_original(gutils, a))
                 end
                 if offset != 1
@@ -1139,7 +1139,7 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
                 tmp.callconv = orig.callconv
 
                 if get_runtime_activity(gutils)
-                    is_inactive = icmp!(B, LLVM.API.LLVMIntEQ, shadowin_idx, new_from_original(gutils, ops[2]))
+                    is_inactive = icmp!(B, LLVM.IntPredicate.EQ, shadowin_idx, new_from_original(gutils, ops[2]))
                     newval = new_from_original(gutils, orig)
                     tmp = select!(B, is_inactive, newval, tmp)
                     if idx == 1
@@ -1641,7 +1641,7 @@ end
         shadowin = if !is_constant_value(gutils, orig.operands[1])
             invert_pointer(gutils, orig.operands[1], B)
         else
-            estr = "Mismatched activity for: " * string(orig) * " const input " *string(orig.operands[1]) * ", differentiable return"
+            estr = "Mismatched activity for: " * string(orig) * " const input " * string(orig.operands[1]) * ", differentiable return"
             eres = julia_error(estr, orig.ref, API.ET_MixedActivityError, gutils.ref, orig.operands[1].ref, B.ref)
             if eres != C_NULL
                 LLVM.Value(eres)
@@ -1660,7 +1660,7 @@ end
             API.VT_Primal,
         ]
 
-        shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false, "nthfield"; force_run=is_constant_value(gutils, orig.operands[1]))::LLVM.Value
+        shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false, "nthfield"; force_run = is_constant_value(gutils, orig.operands[1]))::LLVM.Value
 
         unsafe_store!(shadowR, shadowres.ref)
     else
@@ -2056,7 +2056,7 @@ function common_f_svec_ref_fwd(offset, B, orig, gutils, normalR, shadowR)
 
     width = get_width(gutils)
 
-    origmi, origh, origkey = @view arg_operands_view(orig)[offset:end]
+    origmi, origh, origkey = @view orig.arguments[offset:end]
 
     shadowh = invert_pointer(gutils, origh, B)
 
@@ -2135,7 +2135,7 @@ function common_f_svec_ref_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
 
     width = get_width(gutils)
 
-    origmi, origh, origkey = @view arg_operands_view(orig)[offset:end]
+    origmi, origh, origkey = @view orig.arguments[offset:end]
 
     shadowh = invert_pointer(gutils, origh, B)
 

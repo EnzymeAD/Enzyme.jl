@@ -26,7 +26,7 @@ function copy_abi_attrs!(call::LLVM.CallInst, fn::LLVM.Function)
     for i in 1:length(fn.parameters)
         for attr in collect(fn.parameter_attributes[i])
             if attr isa EnumAttribute && (attr.kind == zeroext || attr.kind == signext || attr.kind == swiftself_kind)
-                LLVM.API.LLVMAddCallSiteAttribute(call, LLVM.API.LLVMAttributeIndex(i), attr)
+                push!(call.argument_attributes[i], attr)
             end
         end
     end
@@ -138,10 +138,10 @@ end
                 # stripped.
                 sret_lty = convert(LLVMType, eltype(sret))
                 push!(params, T_ptr)
-                push!(param_attrs, LLVM.Attribute[TypeAttribute("sret", sret_lty), EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("noundef")])
+                push!(param_attrs, LLVM.Attribute[TypeAttribute(:sret, sret_lty), EnumAttribute(:noalias), EnumAttribute(:nocapture), EnumAttribute(:noundef)])
                 if returnRoots !== nothing
                     push!(params, T_ptr)
-                    push!(param_attrs, LLVM.Attribute[EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("noundef")])
+                    push!(param_attrs, LLVM.Attribute[EnumAttribute(:noalias), EnumAttribute(:nocapture), EnumAttribute(:noundef)])
                 end
                 retty = T_void
             end
@@ -159,9 +159,9 @@ end
 
         if gcstack_arg
             push!(params, T_ptr)
-            attrs = LLVM.Attribute[StringAttribute("gcstack"), EnumAttribute("nonnull")]
+            attrs = LLVM.Attribute[StringAttribute("gcstack"), EnumAttribute(:nonnull)]
             if jit_uses_swiftcc()
-                pushfirst!(attrs, EnumAttribute("swiftself"))
+                pushfirst!(attrs, EnumAttribute(:swiftself))
             end
             push!(param_attrs, attrs)
         end
@@ -174,15 +174,15 @@ end
                 push!(params, T_prjlvalue)
                 attrs = LLVM.Attribute[]
                 if T isa DataType && !Base.isabstracttype(T) && !ismutabletype(T)
-                    push!(attrs, EnumAttribute("readonly"))
+                    push!(attrs, EnumAttribute(:readonly))
                 end
                 push!(param_attrs, attrs)
             elseif kind === :byref
                 push!(params, T_derived)
-                push!(param_attrs, LLVM.Attribute[EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("readonly")])
+                push!(param_attrs, LLVM.Attribute[EnumAttribute(:noalias), EnumAttribute(:nocapture), EnumAttribute(:readonly)])
                 if inline_roots_type(T) != 0
                     push!(params, T_ptr)
-                    push!(param_attrs, LLVM.Attribute[EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("readonly")])
+                    push!(param_attrs, LLVM.Attribute[EnumAttribute(:noalias), EnumAttribute(:nocapture), EnumAttribute(:readonly)])
                 end
             else
                 lty = convert(LLVMType, T)
@@ -257,13 +257,13 @@ end
         # `pgcstack` parameter exists and the target supports it
         # (`get_specsig_function`).
         if jit_gcstack_arg() && jit_uses_swiftcc()
-            fn.callconv = LLVM.API.LLVMSwiftCallConv
+            fn.callconv = LLVM.CallConv.Swift
         end
         fattrs = fn.function_attributes
         push!(fattrs, StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))))
         push!(fattrs, StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(RT)))))
         if RT === Union{}
-            push!(fattrs, EnumAttribute("noreturn"))
+            push!(fattrs, EnumAttribute(:noreturn))
         end
         for (i, attrs) in enumerate(param_attrs)
             for attr in attrs
@@ -599,10 +599,9 @@ end
     function materialize_native_invokes!(mode::API.CDerivativeMode, mod::LLVM.Module)
         enzyme_ctx = enzyme_context()
         world = enzyme_ctx.world
-        marker = StringAttribute("enzymejl_native_invoke")
         for fn in collect(mod.functions)
             isdeclaration(fn) || continue
-            has_fn_attr(fn, marker) || continue
+            haskey(fn.function_attributes, "enzymejl_native_invoke") || continue
             mi, RT = enzyme_custom_extract_mi(fn)
             llvmf = nested_codegen!(mode, mod, mi, true)
             check_specsig(llvmf, mi, enzyme_custom_extract_mi(llvmf)[2])
@@ -644,10 +643,10 @@ end
             dispose(B)
 
             fattrs = fn.function_attributes
-            delete!(fattrs, StringAttribute("enzymejl_needs_restoration"))
-            delete!(fattrs, marker)
-            push!(fattrs, EnumAttribute("alwaysinline"))
-            fn.linkage = LLVM.API.LLVMInternalLinkage
+            delete!(fattrs, "enzymejl_needs_restoration")
+            delete!(fattrs, "enzymejl_native_invoke")
+            push!(fattrs, EnumAttribute(:alwaysinline))
+            fn.linkage = LLVM.Linkage.Internal
         end
         return nothing
     end
