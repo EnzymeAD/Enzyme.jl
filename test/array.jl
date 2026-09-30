@@ -335,3 +335,32 @@ vcat_view_scalar(x) = sum(abs2, vcat(view(x, 1:2), x[3]))
     @test dx ≈ [2.0, 4.0, 6.0]
     @test Enzyme.gradient(Forward, vcat_view_scalar, x)[1] ≈ [2.0, 4.0, 6.0]
 end
+
+function row_copy_sumsq(A)
+    B = similar(A, 1, size(A, 2))
+    copyto!(B, view(A, 1, :))
+    return sum(abs2, B)
+end
+
+function row_copy_self_sumsq(A)
+    # `dest` aliases `src`, so `copyto!` first copies the view with `unaliascopy`
+    copyto!(A, view(A, 2, :))
+    return sum(abs2, A)
+end
+
+@testset "copyto! from a row view" begin
+    # On Julia 1.13.1 the roots of the source view come either from the argument
+    # or from `unaliascopy`, and LLVM hoists the load of the merged root into the
+    # copy loop's preheader.
+    for T in (Float64, ComplexF64)
+        A = T[1 2 3; 4 5 6]
+        dA = zero(A)
+        autodiff(Reverse, row_copy_sumsq, Active, Duplicated(A, dA))
+        @test dA ≈ T[2 4 6; 0 0 0]
+
+        A = T[1 2 3; 4 5 6]
+        dA = zero(A)
+        autodiff(Reverse, row_copy_self_sumsq, Active, Duplicated(A, dA))
+        @test dA ≈ T[0 0 6; 8 20 24]
+    end
+end

@@ -839,7 +839,15 @@ function abs_typeof(
             end
 
             typ2 = typ
-            while legal && should_recurse(typ2, value_type(arg), byref, dl)
+            while legal
+                # A reference to a non-inline field is pointer-sized. A wider load
+                # (e.g. a memcpy of a closure that inlines such a field alongside
+                # others) spans several fields and has no single Julia type.
+                if byref != GPUCompiler.BITS_VALUE && sz != sizeof(Int)
+                    legal = false
+                    break
+                end
+                should_recurse(typ2, value_type(arg), byref, dl) || break
                 if is_padded
                     break
                 end
