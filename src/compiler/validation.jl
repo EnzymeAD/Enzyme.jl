@@ -607,9 +607,10 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction), enzym
             end
         end
 
-        b = IRBuilder()
-        position!(b, LLVM.before(inst))
-        newf = unsafe_to_llvm(b, obj0; insert_name_if_not_exists = gname, enzyme_ctx)
+        newf = @dispose b = IRBuilder() begin
+            position!(b, LLVM.before(inst))
+            unsafe_to_llvm(b, obj0; insert_name_if_not_exists = gname, enzyme_ctx)
+        end
         if do_replace
             replace_uses!(inst, newf)
             erase!(inst)

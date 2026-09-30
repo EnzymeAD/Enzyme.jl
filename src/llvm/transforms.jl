@@ -67,13 +67,18 @@ end
 
 # Rewrite calls with "jl_roots" to only have the jl_value_t attached and not  { { {} addrspace(10)*, [1 x [2 x i64]], i64, i64 }, [2 x i64] } %unbox110183_replacementA
 function rewrite_ccalls!(mod::LLVM.Module)
+    @dispose B = IRBuilder() begin
+        rewrite_ccalls!(B, mod)
+    end
+    return
+end
+function rewrite_ccalls!(B::IRBuilder, mod::LLVM.Module)
     for f in collect(mod.functions)
         replaceAndErase = Tuple{Instruction, Instruction}[]
         for bb in f.blocks, inst in bb.instructions
             if isa(inst, LLVM.CallInst)
                 fn = inst.called_operand
                 changed = false
-                B = IRBuilder()
                 position!(B, LLVM.before(inst))
                 if isa(fn, LLVM.Function) && fn.name == "llvm.julia.gc_preserve_begin"
                     uservals = LLVM.Value[]
@@ -1321,30 +1326,34 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
             offs = Union{LLVM.Value, Nothing}[]
             blks = LLVM.BasicBlock[]
 
-            B = LLVM.IRBuilder()
-            position!(B, LLVM.before(v))
-
             sPT = if !LLVM.isopaque(v.value_type)
                 LLVM.PointerType(v.value_type.element_type, 10)
             else
                 LLVM.PointerType(10)
             end
-            vphi = phi!(B, sPT, "nondecay.vphi." * v.name)
-            ophi = phi!(B, offset.value_type, "nondecay.ophi" * v.name)
+            vphi, ophi = @dispose B = LLVM.IRBuilder() begin
+                position!(B, LLVM.before(v))
+                (
+                    phi!(B, sPT, "nondecay.vphi." * v.name),
+                    phi!(B, offset.value_type, "nondecay.ophi" * v.name),
+                )
+            end
             st.phicache[v] = (vphi, ophi)
 
             bbcache = Dict{BasicBlock, Value}()
             for (vt, bb) in v.incoming
-                b2 = IRBuilder()
-                position!(b2, LLVM.before(bb.terminator))
-                v2, o2, hl2 = nodecayed_getparent(st, b2, vt, offset, hasload)
-                if v2.value_type != sPT
-                    if haskey(bbcache, bb)
-                        v2 = bbcache[bb]
-                    else
-                        v2 = bitcast!(b2, v2, sPT)
-                        bbcache[bb] = v2
+                v2, o2 = @dispose b2 = IRBuilder() begin
+                    position!(b2, LLVM.before(bb.terminator))
+                    v2, o2, hl2 = nodecayed_getparent(st, b2, vt, offset, hasload)
+                    if v2.value_type != sPT
+                        if haskey(bbcache, bb)
+                            v2 = bbcache[bb]
+                        else
+                            v2 = bitcast!(b2, v2, sPT)
+                            bbcache[bb] = v2
+                        end
                     end
+                    (v2, o2)
                 end
 
                 @assert sPT == v2.value_type
