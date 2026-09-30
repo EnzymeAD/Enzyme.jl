@@ -79,13 +79,8 @@ function emit_allocobj!(B::LLVM.IRBuilder, @nospecialize(T::DataType), name::Str
 end
 
 declare_pointerfromobjref!(mod::LLVM.Module) = begin
-    readnone_attr = if LLVM.version().major <= 15
-        LLVM.EnumAttribute(:readnone)
-    else
-        EnumAttribute(LLVM.MemoryEffects(:none))
-    end
-    attrs = LLVM.Attribute[readnone_attr, LLVM.EnumAttribute(:nounwind), LLVM.EnumAttribute(:willreturn)]
-    F, fty = get_function!(mod, "julia.pointer_from_objref", attrs) do
+    attrs = LLVM.Attribute[LLVM.EnumAttribute(:nounwind), LLVM.EnumAttribute(:willreturn)]
+    F, fty = get_function!(mod, "julia.pointer_from_objref", attrs; memory_effects = LLVM.MemoryEffects(:none)) do
         T_jlvalue = LLVM.StructType(LLVMType[])
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Derived)
         T_pjlvalue = LLVM.PointerType(T_jlvalue)
@@ -471,19 +466,14 @@ function declare_ntuple_type!(mod::LLVM.Module)
     FT = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, T_size])
     # The result depends only on the arguments and is interned, so the call can be
     # treated as readnone, which also lets LLVM CSE it and hoist it out of loops.
-    memory = if LLVM.version().major <= 15
-        EnumAttribute(:readnone)
-    else
-        EnumAttribute(LLVM.MemoryEffects(:none))
-    end
     fn, _ = get_function!(
         mod, "julia.enzyme.ntuple_type", FT,
         LLVM.Attribute[
-            memory,
             EnumAttribute(:nounwind),
             StringAttribute("enzyme_inactive"),
             StringAttribute("enzyme_no_escaping_allocation"),
-        ]
+        ];
+        memory_effects = LLVM.MemoryEffects(:none),
     )
     if isa(fn, LLVM.Function) && isempty(collect(fn.parameter_attributes[1]))
         push!(fn.parameter_attributes[1], EnumAttribute(:nocapture))
