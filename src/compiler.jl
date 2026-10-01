@@ -597,6 +597,9 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
         )
         if cached_has_easy_rule(Interpreter.simplify_kw(mi.specTypes), job.world)
             push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
+            # The rule accesses no more than the body does, so Enzyme may keep
+            # inferring the function's full parameter attributes from the body.
+            push!(attributes, LLVM.StringAttribute("enzyme_custom_full_attributes"))
         end
 
 	if startswith(LLVM.name(llvmfn), "japi3") || startswith(LLVM.name(llvmfn), "japi1") || startswith(LLVM.name(llvmfn), "jlcapi")
@@ -5402,6 +5405,7 @@ function lower_convention(
     )
     if cached_has_easy_rule(Interpreter.simplify_kw(mi.specTypes), world)
         push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
+        push!(attributes, LLVM.StringAttribute("enzyme_custom_full_attributes"))
     end
     for prev in collect(function_attributes(entry_f))
         if kind(prev) == kind(StringAttribute("enzyme_ta_norecur"))
