@@ -7311,6 +7311,8 @@ const cache_lock = ReentrantLock()
         if obj === nothing
             asm = _thunk(job)
             obj = _link(job, asm...)
+            # the JIT compiled a copy of the module (or, with the InlineABI, its IR)
+            LLVM.dispose(asm[1])
             if obj.adjoint isa Ptr{Nothing}
                 autodiff_cache[obj.adjoint] = (asm[3], asm[6])
             end

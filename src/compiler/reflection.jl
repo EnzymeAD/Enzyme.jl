@@ -144,6 +144,7 @@ function enzyme_code_native(
     JuliaContext() do ctx
         _, mod = reflect(func, A, types; mode)
         str = String(LLVM.emit(JIT.get_tm(), mod, LLVM.CodeGenFileType.Assembly))
+        LLVM.dispose(mod)
         print(io, str)
     end
 end
