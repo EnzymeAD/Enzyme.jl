@@ -225,6 +225,7 @@ function get_trampoline(job)
 
 	    prepare!(mod)
             tsm = move_to_threadsafe(mod)
+            dispose(mod)
 
             emit!(lljit.ir_compile_layer, mr, tsm)
         end

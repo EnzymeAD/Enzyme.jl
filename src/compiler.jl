@@ -7920,6 +7920,8 @@ const cache_lock = ReentrantLock()
         if obj === nothing
             mod, edges, adjoint_name, primal_name, TapeType, prepost, value_table = _thunk(job)
             obj = _link(job, mod, edges, adjoint_name, primal_name, TapeType, prepost)
+            # the JIT compiled a copy of the module (or, with the InlineABI, its IR)
+            LLVM.dispose(mod)
             if obj.adjoint isa Ptr{Nothing}
                 autodiff_cache[obj.adjoint] = CachedThunk(adjoint_name, prepost, value_table)
             end
