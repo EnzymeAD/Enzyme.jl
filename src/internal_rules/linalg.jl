@@ -301,6 +301,66 @@ _zero_unused_elements!(X, ::LowerTriangular) = tril!(X)
 _zero_unused_elements!(X, ::UnitUpperTriangular) = triu!(X, 1)
 _zero_unused_elements!(X, ::UnitLowerTriangular) = tril!(X, -1)
 
+# The part of dA used by trtrs!: its triangle, without the diagonal if A has a
+# unit diagonal.
+function _trtrs_tangent(uplo::AbstractChar, diag::AbstractChar, dA::AbstractMatrix)
+    if diag == 'U'
+        return uplo == 'U' ? triu(dA, 1) : tril(dA, -1)
+    else
+        return uplo == 'U' ? triu(dA) : tril(dA)
+    end
+end
+
+function _trtrs_op(trans::AbstractChar, M::AbstractMatrix)
+    if trans == 'T'
+        return transpose(M)
+    elseif trans == 'C'
+        return adjoint(M)
+    else
+        return M
+    end
+end
+
+# B(out) = op(A) \ B(in)
+# dB(out) = op(A) \ [ dB(in) - op(dA) B(out) ]
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(LinearAlgebra.LAPACK.trtrs!)},
+        RT::Type{<:Union{Const, Duplicated, BatchDuplicated}},
+        uplo::Const{<:AbstractChar},
+        trans::Const{<:AbstractChar},
+        diag::Const{<:AbstractChar},
+        A::Annotation{<:AbstractMatrix},
+        B::Annotation{<:AbstractVecOrMat},
+    )
+    func.val(uplo.val, trans.val, diag.val, A.val, B.val)
+    if !(B isa Const)
+        N = EnzymeRules.width(config)
+        for b in 1:N
+            dB = N == 1 ? B.dval : B.dval[b]
+            if !(A isa Const)
+                dA = _trtrs_tangent(uplo.val, diag.val, N == 1 ? A.dval : A.dval[b])
+                mul!(dB, _trtrs_op(trans.val, dA), B.val, -1, 1)
+            end
+            func.val(uplo.val, trans.val, diag.val, A.val, dB)
+        end
+    end
+
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        if EnzymeRules.width(config) == 1
+            return Duplicated(B.val, B.dval)
+        else
+            return BatchDuplicated(B.val, B.dval)
+        end
+    elseif EnzymeRules.needs_shadow(config)
+        return B.dval
+    elseif EnzymeRules.needs_primal(config)
+        return B.val
+    else
+        return nothing
+    end
+end
+
 function EnzymeRules.augmented_primal(
         config::EnzymeRules.RevConfig,
         func::Const{typeof(LinearAlgebra.mul!)},
