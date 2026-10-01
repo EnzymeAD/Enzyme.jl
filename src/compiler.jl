@@ -6622,6 +6622,24 @@ end
         augmented_primalf_name = name(augmented_primalf)
     end
 
+    # Enzyme replaced the calls it differentiated to a function with a custom rule
+    # with the rule. Delete the functions nothing calls any more, such as those and
+    # their callees, before optimizing instead of optimizing them only to drop them
+    # afterwards. Calls Enzyme kept, e.g. from a constant callee, still reach the
+    # body. Only the entry points are needed outside this module (see below).
+    for fn in functions(mod)
+        fn == adjointf && continue
+        augmented_primalf !== nothing && fn === augmented_primalf && continue
+        isempty(LLVM.blocks(fn)) && continue
+        linkage!(fn, LLVM.API.LLVMLinkerPrivateLinkage)
+    end
+    LLVM.@dispose pb = NewPMPassBuilder() begin
+        add!(pb, NewPMModulePassManager()) do mpm
+            add!(mpm, GlobalDCEPass())
+        end
+        LLVM.run!(pb, mod)
+    end
+
     if !device_module
         # Don't restore pointers when we are doing GPU compilation. The
         # declarations of natively called rules stay symbolic until `_thunk`
