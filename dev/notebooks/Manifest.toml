@@ -421,9 +421,9 @@ weakdeps = ["Adapt", "ChainRulesCore"]
 
 [[deps.Enzyme_jll]]
 deps = ["Artifacts", "JLLWrappers", "LazyArtifacts", "Libdl", "TOML"]
-git-tree-sha1 = "a5f7d5a67e03998b6767b093e0792554ef1063bf"
+git-tree-sha1 = "70157df43946daface67dd9d9ca33dd289869046"
 uuid = "7cc45869-7501-5eee-bdea-0790c847d4ef"
-version = "0.0.299+0"
+version = "0.0.300+0"
 
 [[deps.ExactPredicates]]
 deps = ["IntervalArithmetic", "Random", "StaticArrays"]
