@@ -124,6 +124,24 @@ function set_readonly!(fn::LLVM.Function)
     return old != eff
 end
 
+# declares a function for `get_function!`
+struct FunctionDeclaration <: Function
+    mod::LLVM.Module
+    name::String
+    FT::LLVM.FunctionType
+    attrs::Vector{LLVM.Attribute}
+    memory_effects::Union{Nothing, LLVM.MemoryEffects}
+end
+
+function (decl::FunctionDeclaration)()
+    F = LLVM.Function(decl.mod, decl.name, decl.FT)
+    append!(F.function_attributes, decl.attrs)
+    if decl.memory_effects !== nothing
+        F.memory_effects = decl.memory_effects
+    end
+    return F
+end
+
 function get_function!(
         mod::LLVM.Module,
         name::String,
@@ -131,18 +149,12 @@ function get_function!(
         attrs::Vector{LLVM.Attribute} = LLVM.Attribute[];
         memory_effects::Union{Nothing, LLVM.MemoryEffects} = nothing,
     )
-    F = get(mod.functions, name, nothing)
-    if F === nothing
-        F = LLVM.Function(mod, name, FT)
-        append!(F.function_attributes, attrs)
-        if memory_effects !== nothing
-            F.memory_effects = memory_effects
-        end
-    else
-        PT = LLVM.PointerType(FT)
-        if F.value_type != PT
-            F = LLVM.const_pointercast(F, PT)
-        end
+    # `get!` throws if another kind of global value already uses the name, where creating
+    # the function would give it a different name
+    F = get!(FunctionDeclaration(mod, name, FT, attrs, memory_effects), mod.functions, name)
+    PT = LLVM.PointerType(FT)
+    if F.value_type != PT
+        F = LLVM.const_pointercast(F, PT)
     end
     return F, FT
 end
