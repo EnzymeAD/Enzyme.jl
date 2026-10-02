@@ -2949,6 +2949,7 @@ function enzyme!(
                 shadow_init,
                 interp,
                 runtimeActivity,
+                !(job.config.target isa GPUCompiler.NativeCompilerTarget),
             )
         end
 
@@ -2989,7 +2990,8 @@ function enzyme!(
                 false,
                 shadow_init,
                 interp,
-                runtimeActivity
+                runtimeActivity,
+                !(job.config.target isa GPUCompiler.NativeCompilerTarget),
             ) #=returnPrimal=#
         end
     elseif mode == API.DEM_ReverseModeCombined
@@ -3029,7 +3031,8 @@ function enzyme!(
                 returnPrimal,
                 shadow_init,
                 interp,
-                runtimeActivity
+                runtimeActivity,
+                !(job.config.target isa GPUCompiler.NativeCompilerTarget),
             )
         end
     elseif mode == API.DEM_ForwardMode
@@ -3073,7 +3076,8 @@ function enzyme!(
                 returnPrimal,
                 shadow_init,
                 interp,
-                runtimeActivity
+                runtimeActivity,
+                !(job.config.target isa GPUCompiler.NativeCompilerTarget),
             )
         end
     else
@@ -3154,7 +3158,8 @@ function create_abi_wrapper(
     returnPrimal::Bool,
     shadow_init::Bool,
     interp,
-    runtime_activity::Bool
+    runtime_activity::Bool,
+    device::Bool = false,
 )
     world = enzyme_world()
     is_adjoint = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModeCombined
@@ -3509,15 +3514,24 @@ function create_abi_wrapper(
 
         if (T <: MixedDuplicated || T <: BatchMixedDuplicated) && !isboxed # && (isa(llty, LLVM.ArrayType) || isa(llty, LLVM.StructType))
             @assert Base.isconcretetype(T′)
-            al0 = al = emit_allocobj!(builder, Base.RefValue{T′}, "mixedparameter")
             parm = params[i]
             if arg_rooting && arg_roots != 0
                 parm = recombine_value!(builder, parm, params[i+1])
                 i += 1
             end
-            al = bitcast!(builder, al, LLVM.PointerType(llty, addrspace(value_type(al))))
-            store!(builder, parm, al)
-            emit_writebarrier!(builder, get_julia_inner_types(builder, al0, parm))
+            if device
+                # There is no GC on device targets, and a GC allocation is never freed. With
+                # runtime activity the box is compared against the shadow pointer, and Julia's
+                # allocation optimizer treats that comparison as an escape. So it would stay
+                # a heap allocation per call. Use a stack slot instead.
+                al = alloca!(builder, llty, "mixedparameter")
+                store!(builder, parm, al)
+            else
+                al0 = al = emit_allocobj!(builder, Base.RefValue{T′}, "mixedparameter")
+                al = bitcast!(builder, al, LLVM.PointerType(llty, addrspace(value_type(al))))
+                store!(builder, parm, al)
+                emit_writebarrier!(builder, get_julia_inner_types(builder, al0, parm))
+            end
             al = addrspacecast!(builder, al, LLVM.PointerType(llty, Derived))
             push!(realparms, al)
         else
