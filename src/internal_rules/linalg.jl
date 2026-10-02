@@ -224,6 +224,13 @@ function EnzymeRules.reverse(
     return (nothing, nothing, nothing)
 end
 
+# Views of the triangular factors of a Cholesky factorization; `F.L` and `F.U`
+# copy the factor that is not stored.
+@inline _cholesky_L(F::Cholesky) =
+    F.uplo == 'L' ? LowerTriangular(F.factors) : UpperTriangular(F.factors)'
+@inline _cholesky_U(F::Cholesky) =
+    F.uplo == 'U' ? UpperTriangular(F.factors) : LowerTriangular(F.factors)'
+
 # y = inv(A) B
 # dY = inv(A) [ dB - dA y ]
 # ->
@@ -248,45 +255,37 @@ function EnzymeRules.forward(
         N = EnzymeRules.width(config)
         retval = B.val
 
-        L = fact.val.L
-        U = fact.val.U
-
-        ldiv!(L, B.val)
-        ntuple(Val(N)) do b
-            Base.@_inline_meta
-            dB = N == 1 ? B.dval : B.dval[b]
-            if !(fact isa Const)
-                dL = N == 1 ? fact.dval.L : fact.dval[b].L
-                mul!(dB, dL, B.val, -1, 1)
+        # With A = L U, dA = dL U + L dU. Solving with the factorization rather
+        # than with L and U separately avoids triangular solves, which are much
+        # slower for small matrices.
+        if fact isa Const
+            ldiv!(fact.val, B.val)
+            for b in 1:N
+                ldiv!(fact.val, N == 1 ? B.dval : B.dval[b])
             end
-            ldiv!(L, dB)
-        end
-
-        ldiv!(U, B.val)
-        dretvals = ntuple(Val(N)) do b
-            Base.@_inline_meta
-            dB = N == 1 ? B.dval : B.dval[b]
-            if !(fact isa Const)
-                dU = N == 1 ? fact.dval.U : fact.dval[b].U
-                mul!(dB, dU, B.val, -1, 1)
+        else
+            L = _cholesky_L(fact.val)
+            ldiv!(fact.val, B.val)
+            Uy = _cholesky_U(fact.val) * B.val
+            dUy = similar(B.val)
+            for b in 1:N
+                dB = N == 1 ? B.dval : B.dval[b]
+                dfact = N == 1 ? fact.dval : fact.dval[b]
+                mul!(dB, _cholesky_L(dfact), Uy, -1, 1)
+                mul!(dUy, _cholesky_U(dfact), B.val)
+                mul!(dB, L, dUy, -1, 1)
+                ldiv!(fact.val, dB)
             end
-            ldiv!(U, dB)
-            return dB
         end
-
 
         if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
             if EnzymeRules.width(config) == 1
-                return Duplicated(retval, dretvals[1])
+                return Duplicated(retval, B.dval)
             else
-                return BatchDuplicated(retval, dretvals)
+                return BatchDuplicated(retval, B.dval)
             end
         elseif EnzymeRules.needs_shadow(config)
-            if EnzymeRules.width(config) == 1
-                return dretvals[1]
-            else
-                return dretvals
-            end
+            return B.dval
         elseif EnzymeRules.needs_primal(config)
             return retval
         else
