@@ -365,3 +365,34 @@ end
     @test !occursin("masked.gather", ir)
     @test !occursin("masked.scatter", ir)
 end
+
+
+# A temporary large enough that its buffer is malloc'd rather than pooled.
+function scaled_first(a)
+    t = similar(a)
+    t .= a .* 2
+    return t[1]
+end
+
+function scaled_first_grads!(dx, x, n)
+    for _ in 1:n
+        fill!(dx, 0)
+        autodiff(Reverse, Const(scaled_first), Active, Duplicated(x, dx))
+    end
+    return nothing
+end
+
+@static if VERSION >= v"1.11"
+    @testset "Shadow memory length is set before the next safepoint" begin
+        x = randn(1000)
+        dx = zeros(1000)
+        scaled_first_grads!(dx, x, 10)
+        @test dx[1] == 2.0
+        GC.gc()
+        before = Base.gc_num()
+        scaled_first_grads!(dx, x, 100_000)
+        # An unset length makes the GC account a huge malloc'd buffer as
+        # promoted, which forces full collections.
+        @test Base.GC_Diff(Base.gc_num(), before).full_sweep == 0
+    end
+end
