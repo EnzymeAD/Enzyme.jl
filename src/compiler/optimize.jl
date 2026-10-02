@@ -24,7 +24,7 @@ function enzyme_attributor_pass!(mod::LLVM.Module)
 end
 
 EnzymeAttributorPass() = ModulePass("enzyme_attributor", enzyme_attributor_pass!)
-ReinsertGCMarkerPass() = FunctionPass("reinsert_gcmarker", reinsert_gcmarker_pass!)
+ReinsertGCMarkerPass() = FunctionPass("reinsert_gcmarker", reinsert_gcmarker_pass!; required=true)
 RestoreAllocaType() = FunctionPass("restore_alloca_type", restore_alloca_type!)
 SafeAtomicToRegularStorePass() = FunctionPass("safe_atomic_to_regular_store", safe_atomic_to_regular_store!)
 Addr13NoAliasPass() = ModulePass("addr13_noalias", addr13NoAlias)
