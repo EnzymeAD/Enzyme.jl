@@ -129,12 +129,11 @@ function __init__()
         )
     end
 
-    for (k, v) in Compiler.JuliaEnzymeNameMap
-        ptr = Compiler.unsafe_to_ptr(v)
-        LLVM.define(
-            jd_main,
-            absolute_symbol_materialization(mangle(lljit, "ejl_" * k), ptr),
-        )
+    @lock defined_julia_values_lock begin
+        empty!(defined_julia_values)
+        for k in keys(Compiler.JuliaEnzymeNameMap)
+            define_julia_value!(lljit, jd_main, "ejl_" * k)
+        end
     end
 
     atexit() do
@@ -173,6 +172,36 @@ function add_trampoline!(jd, (lljit, lctm, ism), entry, target)
     LLVM.lookup(lljit, jd, entry)
 end
 
+# The keys of `JuliaEnzymeNameMap` whose `ejl_<key>` global the JIT has a definition for.
+const defined_julia_values = Set{String}()
+const defined_julia_values_lock = ReentrantLock()
+
+"""
+    define_julia_value!(lljit, jd, name)
+
+If `name` is the global `ejl_<key>` that stands for the Julia value `JuliaEnzymeNameMap[key]`,
+define it in `jd` as an absolute symbol at the address of that value, once. This is how the
+JIT resolves the Julia values Enzyme refers to: the IR names them, the address is supplied at
+link time. The map roots the values, so the address stays valid.
+"""
+function define_julia_value!(lljit, jd, name::String)
+    startswith(name, "ejl_") || return nothing
+    key = name[(ncodeunits("ejl_") + 1):end]
+    haskey(Compiler.JuliaEnzymeNameMap, key) || return nothing
+    @lock defined_julia_values_lock begin
+        key in defined_julia_values && return nothing
+        val = Compiler.JuliaEnzymeNameMap[key]
+        # A load folded through a binding (Julia 1.10) stands for the binding's value.
+        if val isa Core.Binding
+            val = val.value
+        end
+        ptr = Compiler.unsafe_to_ptr(val)
+        LLVM.define(jd, absolute_symbol_materialization(mangle(lljit, name), ptr))
+        push!(defined_julia_values, key)
+    end
+    return nothing
+end
+
 function prepare!(mod)
     # On Windows, LLVM's GlobalOpt demotes internal functions to `private` linkage,
     # which emits no object symbol. Julia's per-symbol Win64 JIT unwind registrar
@@ -199,32 +228,10 @@ function prepare!(mod)
         replace_uses!(f, ptr)
         Compiler.eraseInst(mod, f)
     end
-    for g in collect(globals(mod))
-        if !startswith(LLVM.name(g), "ejl_inserted\$")
-           continue
-        end
-        _, ogname, load1, initaddr = split(LLVM.name(g), "\$")
-
-        load1 = load1 == "true"
-            initaddr = parse(UInt, initaddr)
-        ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
-        if load1
-           ptr = Base.unsafe_load(ptr, :unordered)
-        end
-                
-        obj = Base.unsafe_pointer_to_objref(ptr)
-	
-        # Let's try a de-bind for 1.10 lux
-        if isa(obj, Core.Binding)
-           ptr = Compiler.unsafe_to_ptr(obj.value)
-        end
-
-        ptr = reinterpret(UInt, ptr)
-        ptr = LLVM.ConstantInt(ptr)
-        ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[])))
-        ptr = LLVM.const_addrspacecast(ptr, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10))
-        replace_uses!(g, ptr)
-        Compiler.eraseInst(mod, g)
+    lljit = jit[].jit
+    jd = JITDylib(lljit)
+    for g in globals(mod)
+        define_julia_value!(lljit, jd, LLVM.name(g))
     end
 end
 

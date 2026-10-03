@@ -97,6 +97,32 @@ function unsafe_to_ptr(@nospecialize(val))
 end
 export unsafe_to_ptr
 
+"""
+    insert_julia_value!(hint, val) -> String
+
+Record `val` in `JuliaEnzymeNameMap` and return its key, `inserted\$<hint>\$<id>`; the global
+`ejl_<key>` then stands for `val`, and the JIT resolves it from the map. The key names the
+object by its `objectid` rather than by its address, so it is the same in every session and
+leaves the address to the resolver. Values are rooted by the map for good, which keeps their
+`objectid` unique; should two values still hash alike, the later one gets a suffix.
+"""
+function insert_julia_value!(hint::String, @nospecialize(val))::String
+    base = "inserted\$" * hint * "\$" * string(objectid(val); base = 16)
+    k = base
+    n = 1
+    while true
+        if !haskey(Compiler.JuliaEnzymeNameMap, k)
+            Compiler.JuliaEnzymeNameMap[k] = val
+            return k
+        elseif Compiler.JuliaEnzymeNameMap[k] === val
+            return k
+        end
+        n += 1
+        k = base * "\$" * string(n)
+    end
+    return
+end
+
 # Create (or fetch) the `ejl_<k>` global that stands for the Julia object `val` in the module
 # `B` is positioned in. Top-level and `@nospecialize`d on purpose: as a closure inside
 # `unsafe_to_llvm` this captured `val`, so the closure type embedded `typeof(val)` and a fresh
@@ -117,10 +143,7 @@ function setup_global(
 
     force_inactive = false
     if insert_name_if_not_exists isa String
-        k = "inserted\$" * insert_name_if_not_exists
-        if !haskey(Compiler.JuliaEnzymeNameMap, k)
-            Compiler.JuliaEnzymeNameMap[k] = val
-        end
+        k = insert_julia_value!(insert_name_if_not_exists, val)
         # Since the legacy behavior was to force inactive for global constants, we retain that here (for now)
         force_inactive = true
     end

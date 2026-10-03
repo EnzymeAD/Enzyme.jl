@@ -452,7 +452,7 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
         if check_mutability && off == 0 && is_nonconst_binding(convert(UInt, addr))
             return inst
         end
-        gname = string(convert(UInt, addr)) * "\$true"
+        gname = "jl_binding\$true"
         load1 = true
     end
 
@@ -476,9 +476,6 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
         end
 
         initaddr = convert(UInt, addr) + off
-        if gname isa String
-            gname = gname * "\$$initaddr"
-        end
         ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
         if load1
             ptr = Base.unsafe_load(ptr, :unordered)
