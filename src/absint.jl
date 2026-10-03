@@ -293,8 +293,15 @@ end
 
 # The object a phi yields if every value flowing into it is that same object: for instance two
 # loads of one `julia.constgv` slot, which GVN merges across a branch. A value flowing in may lead
-# back to a phi being resolved further up (a loop through a cast), which says nothing new; the
+# back to a phi being resolved, directly or through casts (a loop), which says nothing new; the
 # phis in progress are kept per task so that this does not recurse forever.
+function strip_pointer_casts(@nospecialize(v::LLVM.Value))::LLVM.Value
+    while isa(v, LLVM.BitCastInst) || isa(v, LLVM.AddrSpaceCastInst)
+        v = operands(v)[1]
+    end
+    return v
+end
+
 function absint_phi(arg::LLVM.PHIInst, partial::Bool, istracked::Bool, typetag::Bool)::Tuple{Bool, Any}
     tls = task_local_storage()
     if !haskey(tls, :enzyme_absint_phis)
@@ -313,8 +320,10 @@ function absint_phi(arg::LLVM.PHIInst, partial::Bool, istracked::Bool, typetag::
             push!(seen, phi)
             push!(in_progress, phi)
             for (v, _) in LLVM.incoming(phi)
-                if isa(v, LLVM.PHIInst)
-                    push!(todo, v)
+                # A cast of a pointer is the same object: look through it to the phi it may be.
+                stripped = strip_pointer_casts(v)
+                if isa(stripped, LLVM.PHIInst)
+                    push!(todo, stripped)
                     continue
                 end
                 legal, val = absint(v, partial, istracked, typetag)

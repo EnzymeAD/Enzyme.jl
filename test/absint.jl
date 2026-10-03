@@ -430,6 +430,42 @@ end
     end
 end
 
+# GVN merges loads of one slot into a phi; in a loop, the value carried around may come back to
+# the phi through casts, which tell nothing new about the object.
+@testset "absint resolves a loop phi of a slot load through casts" begin
+    LLVM.Context() do ctx
+        T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+        T_pjlvalue = LLVM.PointerType(T_jlvalue)
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, 10)
+        T_pdjlvalue = LLVM.PointerType(T_jlvalue, 11)
+        mod = LLVM.Module("slots")
+        gv = LLVM.GlobalVariable(mod, T_pjlvalue, "slot")
+        fn = LLVM.Function(mod, "f", LLVM.FunctionType(T_prjlvalue, [LLVM.Int1Type()]))
+        phi = LLVM.IRBuilder() do B
+            entry, loop, exit = (LLVM.BasicBlock(fn, n) for n in ("entry", "loop", "exit"))
+            LLVM.position!(B, entry)
+            tracked = LLVM.addrspacecast!(B, LLVM.load!(B, T_pjlvalue, gv), T_prjlvalue)
+            LLVM.br!(B, loop)
+            LLVM.position!(B, loop)
+            phi = LLVM.phi!(B, T_prjlvalue)
+            back = LLVM.addrspacecast!(B, LLVM.addrspacecast!(B, phi, T_pdjlvalue), T_prjlvalue)
+            append!(LLVM.incoming(phi), [(tracked, entry), (back, loop)])
+            LLVM.br!(B, LLVM.parameters(fn)[1], loop, exit)
+            LLVM.position!(B, exit)
+            LLVM.ret!(B, phi)
+            phi
+        end
+        @test LLVM.verify(mod) === nothing
+
+        enzyme_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
+        Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
+            enzyme_ctx.julia_values["slot"] = SlotConst{Float64}
+            @test Enzyme.Compiler.absint(phi) == (true, SlotConst{Float64})
+        end
+        LLVM.dispose(mod)
+    end
+end
+
 # A slot whose initializer holds the address stays readable, with or without a table.
 @testset "absint still decodes a baked slot" begin
     LLVM.Context() do ctx
