@@ -2169,8 +2169,12 @@ function pre_attr!(mod::LLVM.Module, run_attr)
                 push!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_private"))
                 linkage!(fn, LLVM.API.LLVMExternalLinkage)
             end
-            continue
 
+            # A call to this function may be replaced by a custom rule or by
+            # Enzyme, so the Attributor must not deduce anything about the call
+            # from this body. For example, if the body reads only part of an
+            # argument, the Attributor would delete stores to the rest of it
+            # that the replacement reads. It does not analyze optnone functions.
             if !has_fn_attr(fn, EnumAttribute("noinline"))
                 push!(LLVM.function_attributes(fn), EnumAttribute("noinline"))
                 push!(LLVM.function_attributes(fn), StringAttribute("remove_noinline"))
