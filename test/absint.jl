@@ -654,6 +654,21 @@ end
     end
 end
 
+# Reflection shows the code that runs, so the slots are linked as `_thunk` links them.
+@static if VERSION >= v"1.11-"
+    @testset "reflection links the slots" begin
+        GPUCompiler.JuliaContext() do _
+            # `slot_stores_constant` is not inferred to return a `Float64`: an `Active` return is not
+            # supported, so the return is `Const`.
+            _, mod = Enzyme.Compiler.reflect(slot_stores_constant, Const, Tuple{Active{Float64}}; second_stage = false)
+            slots = [gv for gv in LLVM.globals(mod) if haskey(LLVM.metadata(gv), "julia.constgv")]
+            @test !isempty(slots)
+            @test all(!LLVM.isdeclaration, slots)
+        end
+        @test !isempty(sprint(io -> Enzyme.Compiler.enzyme_code_llvm(io, slot_stores_constant, Const, Tuple{Active{Float64}})))
+    end
+end
+
 # GPUCompiler 1.x resolves nothing in device code, so the Julia values Enzyme refers to there by
 # name get their address when the derivative is handed over.
 @testset "Julia-value globals of a device module are baked on GPUCompiler 1.x" begin
