@@ -10,7 +10,8 @@ using Core.Compiler:
 using GPUCompiler: @safe_debug
 using GPUCompiler
 if VERSION < v"1.11.0-DEV.1552"
-    using GPUCompiler: CodeCache, WorldView, @safe_debug
+    using GPUCompiler: CodeCache, @safe_debug
+    using Core.Compiler: WorldView
 end
 const HAS_INTEGRATED_CACHE = VERSION >= v"1.11.0-DEV.1552"
 

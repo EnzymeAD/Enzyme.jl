@@ -700,6 +700,10 @@ end
     v = first(onehot(x))
     hv = make_zero(v)
     nested_hvp!(hv, v, x)
+    # The nested deferred job is not toplevel, so `emit_llvm` leaves its Julia-value references
+    # symbolic under GPUCompiler 2.x and Enzyme has to resolve them itself before differentiating.
+    # test/relocation.jl covers the toplevel case.
+    @test hv ≈ [-2 * tanh(0.5) * sech(0.5)^2]
 end
 
 const CONST_VAL = 2.0

@@ -48,7 +48,7 @@ end
     # Inference under the Enzyme job now sees the backend's overlay, as the primal job does.
     @test Enzyme.Compiler.return_type(interp, mi) === String
     @static if VERSION >= v"1.11.0-DEV.1552"
-        @test GPUCompiler.ci_cache_token(backend_job).method_tables === (mt_test_table,)
+        @test Enzyme.Compiler.enzyme_cache_owner(backend_job).method_tables === (mt_test_table,)
     end
 end
 
@@ -80,10 +80,10 @@ mt_test_stacked_caller(x::Float64) = (mt_test_fn(x), mt_shared_fn(x))
     @static if VERSION >= v"1.11.0-DEV.1552"
         # The cache token covers the whole stack, so it differs from that of a backend that
         # only uses the same main table.
-        token = GPUCompiler.ci_cache_token(job)
+        token = Enzyme.Compiler.enzyme_cache_owner(job)
         @test token.method_tables === (mt_test_table, mt_shared_table)
         @test Core.Compiler.cache_owner(interp) === token
         _, other_job = enzyme_job(mt_test_overlay_caller, MTTestTarget(), MTTestParams(), mode, world)
-        @test token !== GPUCompiler.ci_cache_token(other_job)
+        @test token !== Enzyme.Compiler.enzyme_cache_owner(other_job)
     end
 end
