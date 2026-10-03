@@ -226,7 +226,9 @@ if VERSION >= v"1.11.0-DEV.1552"
             inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
         )
 
-    GPUCompiler.ci_cache_token(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+    # The owner of the code instances Enzyme infers for `job`. GPUCompiler asks for it through
+    # a hook whose name differs between its majors.
+    enzyme_cache_owner(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
         EnzymeCacheToken(
         method_tables(GPUCompiler.method_table_view(job)),
             job.world,
@@ -235,9 +237,12 @@ if VERSION >= v"1.11.0-DEV.1552"
             true
         )
 
+    GPUCompiler.ci_cache_token(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+        enzyme_cache_owner(job)
+
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         Interpreter.EnzymeInterpreter(
-            GPUCompiler.ci_cache_token(job),
+        enzyme_cache_owner(job),
             GPUCompiler.method_table_view(job),
             job.world,
             job.config.params.mode,
