@@ -7055,6 +7055,10 @@ const DumpLLVMCall = Ref(false)
                 end
                 push!(ccexprs, argexpr)
             elseif T <: MixedDuplicated
+                # The wrapper reads `width` shadows, but a `MixedDuplicated` has only one.
+                if width != 1
+                    error("MixedDuplicated argument in a thunk of width $width; use BatchMixedDuplicated{T, $width}")
+                end
                 if RawCall
                     argexpr = argexprs[i]
                     i += 1

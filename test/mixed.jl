@@ -172,3 +172,32 @@ end
     res = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Reverse), f, [0.5])
     @test res[1] ≈ [1.0]
 end
+
+struct MixedWidthParams
+    α::Float64
+    β::Float64
+end
+mixed_width_f!(out, p) = (out[1] = p.α * 2 + p.β * 3; nothing)
+
+@testset "MixedDuplicated in a batched thunk is rejected" begin
+    fwd, rev = autodiff_thunk(
+        ReverseSplitWithPrimal, Const{typeof(mixed_width_f!)}, Const{Nothing},
+        BatchDuplicated{Vector{Float64}, 2}, MixedDuplicated{MixedWidthParams},
+    )
+    bd = BatchDuplicated(zeros(1), ([1.0], [10.0]))
+    md = MixedDuplicated(MixedWidthParams(1.0, 1.0), Ref(MixedWidthParams(0.0, 0.0)))
+    @test_throws ErrorException fwd(Const(mixed_width_f!), bd, md)
+
+    # The batched annotation works
+    r1 = Ref(MixedWidthParams(0.0, 0.0))
+    r2 = Ref(MixedWidthParams(0.0, 0.0))
+    fwd, rev = autodiff_thunk(
+        ReverseSplitWithPrimal, Const{typeof(mixed_width_f!)}, Const{Nothing},
+        BatchDuplicated{Vector{Float64}, 2}, BatchMixedDuplicated{MixedWidthParams, 2},
+    )
+    bmd = BatchMixedDuplicated(MixedWidthParams(1.0, 1.0), (r1, r2))
+    tape = fwd(Const(mixed_width_f!), bd, bmd)[1]
+    rev(Const(mixed_width_f!), bd, bmd, tape)
+    @test r1[] == MixedWidthParams(2.0, 3.0)
+    @test r2[] == MixedWidthParams(20.0, 30.0)
+end
