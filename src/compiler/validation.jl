@@ -391,20 +391,18 @@ end
 """
     slot_object_address(gv) -> Union{LLVM.Value, Nothing}
 
-The address of the object the `julia.constgv` slot `gv` holds, as the constant a load of the
-slot yields, or `nothing` if the slot has no initializer.
+The address of the object the `julia.constgv` slot `gv` holds, as a constant, or `nothing` if
+it is not known. It is only read from at compile time, never written into the IR: what a fold
+inserts is a named global for the object, which the JIT or GPUCompiler resolves.
 
 The object comes from the compilation's table of Julia values ([`julia_value_of_slot`](@ref))
-where it can: that is what codegen said the slot refers to, independent of what is written
-into the IR. An `isbits` value is held in the table unboxed, though, and its box's address is
-lost; for those, and for slots the table has no record of, the address is decoded from the
-initializer. A slot without an initializer is left to the back-end's loader (GPUCompiler 2.x,
-`:patch` or `:table`); folding a load of it would put a host address into code that must not
-contain one, so it is not folded at all.
+where it can: that is what codegen said the slot refers to, and it is there whether or not the
+back-end left an address in the IR (GPUCompiler 2.x's `:patch` and `:table` do not). An
+`isbits` value is held in the table unboxed, though, and its box's address is lost; for those
+the address codegen reported is taken from [`JuliaSlotMap`](@ref), and for slots nothing records
+it is decoded from the initializer.
 """
 function slot_object_address(gv::LLVM.GlobalVariable)::Union{LLVM.Value, Nothing}
-    init = LLVM.initializer(gv)
-    init === nothing && return nothing
     found = julia_value_of_slot(gv)
     if found !== nothing
         obj = something(found)
@@ -412,6 +410,10 @@ function slot_object_address(gv::LLVM.GlobalVariable)::Union{LLVM.Value, Nothing
             return LLVM.ConstantInt(UInt(ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), obj)))
         end
     end
+    entry = @lock julia_slot_lock get(JuliaSlotMap, LLVM.name(gv), nothing)
+    entry === nothing || return LLVM.ConstantInt(reinterpret(UInt, entry[2]))
+    init = LLVM.initializer(gv)
+    init === nothing && return nothing
     return get_base_and_offset(init; offsetAllowed = false, inttoptr = true)[1]
 end
 

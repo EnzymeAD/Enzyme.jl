@@ -765,7 +765,116 @@ function record_julia_values!(ctx::EnzymeContext, meta)
     for (name, ptr) in meta.gv_to_value
         # A slot whose initializer GPUCompiler could not match to an object.
         ptr == C_NULL && continue
-        ctx.julia_values[name] = Base.unsafe_pointer_to_objref(ptr)
+        val = Base.unsafe_pointer_to_objref(ptr)
+        ctx.julia_values[name] = val
+        @lock julia_slot_lock JuliaSlotMap[name] = (val, ptr)
+    end
+    return nothing
+end
+
+"""
+    JuliaSlotMap
+
+The Julia value, and its address, behind every `julia.constgv` slot Enzyme has seen, keyed by
+the name of the slot: what [`resolve_slots!`](@ref) writes back into a module whose slots
+[`make_slots_symbolic!`](@ref) emptied. Unlike the table of a compilation it outlives it, for
+the modules that do (the bitcode `_thunk` keeps for a nested differentiation to import, which
+is resolved by the compilation that imports it). Slot names are unique within a session (codegen
+numbers them with a process-wide counter), not across sessions, so the map starts out empty in
+every one. The values stay rooted, as codegen roots them.
+"""
+const JuliaSlotMap = Dict{String, Tuple{Any, Ptr{Cvoid}}}()
+const julia_slot_lock = ReentrantLock()
+
+"""
+    make_slots_symbolic!(mod)
+
+Drop the address GPUCompiler 1.x writes into each `julia.constgv` slot of `mod` whose value is
+recorded in [`JuliaSlotMap`](@ref), leaving the slot a declaration: the shape GPUCompiler 2.x
+emits for a job compiled on behalf of another, with the value known only by name. Enzyme works
+on the module through the table of Julia values, and [`resolve_slots!`](@ref) writes the
+addresses back in once the module is linked into what runs: late, as GPUCompiler 2.x resolves
+its relocations.
+"""
+function make_slots_symbolic!(mod::LLVM.Module)
+    @lock julia_slot_lock for gv in globals(mod)
+        haskey(metadata(gv), "julia.constgv") || continue
+        LLVM.initializer(gv) === nothing && continue
+        haskey(JuliaSlotMap, LLVM.name(gv)) || continue
+        linkage!(gv, LLVM.API.LLVMExternalLinkage)
+        LLVM.initializer!(gv, nothing)
+        mark_symbolic_slot!(gv)
+    end
+    return nothing
+end
+
+"""
+    mark_symbolic_slot!(gv)
+
+Tell Enzyme what the initializer of the `julia.constgv` slot `gv` said before it became a
+declaration: the slot never changes (`constant`), and as it only ever holds the address of a
+Julia value, it is inactive. Activity analysis inferred that from a constant initializer; a
+declaration gives it nothing to go by, and an active-looking slot would need a shadow global.
+Type analysis is kept from accumulating information on the slot, which every load of it shares
+(as for the globals [`unsafe_to_llvm`](@ref) inserts); a load LLVM folded into the address
+gave it none either.
+"""
+function mark_symbolic_slot!(gv::LLVM.GlobalVariable)
+    constant!(gv, true)
+    API.SetMD(gv, "enzyme_inactive", MDNode(LLVM.Metadata[]))
+    API.SetMD(gv, "enzyme_ta_norecur", MDNode(LLVM.Metadata[]))
+    return nothing
+end
+
+"""
+    resolve_slots!(mod)
+
+Write the address of its value back into every `julia.constgv` slot of `mod` that
+[`make_slots_symbolic!`](@ref) left a declaration, from [`JuliaSlotMap`](@ref). This is the
+resolver for GPUCompiler 1.x, which resolves nothing itself: it runs where the module is linked
+into code that runs, so that everything before sees the slots as names.
+"""
+function resolve_slots!(mod::LLVM.Module)
+    @lock julia_slot_lock for gv in globals(mod)
+        haskey(metadata(gv), "julia.constgv") || continue
+        LLVM.isdeclaration(gv) || continue
+        entry = get(JuliaSlotMap, LLVM.name(gv), nothing)
+        entry === nothing && continue
+        addr = LLVM.ConstantInt(reinterpret(UInt, entry[2]))
+        LLVM.initializer!(gv, LLVM.const_inttoptr(addr, global_value_type(gv)))
+        linkage!(gv, LLVM.API.LLVMPrivateLinkage)
+        constant!(gv, true)
+    end
+    return nothing
+end
+
+"""
+    bake_julia_value_globals!(mod)
+
+Replace each `ejl_<key>` global of the device module `mod`, which stands for the Julia value
+`JuliaGlobalNameMap[key]` or `JuliaEnzymeNameMap[key]` (see [`unsafe_to_llvm`](@ref)), with
+the address of that value. On the host the JIT resolves these names
+(`JIT.define_julia_value!`); GPUCompiler 1.x resolves nothing in device code, so the address is
+written in when the derivative is handed to the kernel that requested it.
+"""
+function bake_julia_value_globals!(mod::LLVM.Module)
+    T_pjlvalue = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]))
+    for g in collect(globals(mod))
+        name = LLVM.name(g)
+        startswith(name, "ejl_") || continue
+        key = name[(ncodeunits("ejl_") + 1):end]
+        val = if haskey(JuliaGlobalNameMap, key)
+            JuliaGlobalNameMap[key]
+        elseif haskey(JuliaEnzymeNameMap, key)
+            JuliaEnzymeNameMap[key]
+        else
+            continue
+        end
+        # A load folded through a binding (Julia 1.10) stands for the binding's value.
+        val isa Core.Binding && (val = val.value)
+        addr = LLVM.ConstantInt(reinterpret(UInt, unsafe_to_ptr(val)))
+        replace_uses!(g, LLVM.const_addrspacecast(LLVM.const_inttoptr(addr, T_pjlvalue), value_type(g)))
+        LLVM.erase!(g)
     end
     return nothing
 end
@@ -1520,6 +1629,8 @@ function nested_codegen!(
 
     GPUCompiler.prepare_job!(job)
     otherMod, meta = GPUCompiler.emit_llvm(job)
+    record_julia_values!(enzyme_ctx, meta)
+    make_slots_symbolic!(otherMod)
     
     interp = GPUCompiler.get_interpreter(job)
     prepare_llvm(interp, otherMod, job, meta)
@@ -2530,6 +2641,8 @@ for (k, v) in (
 end
 
 function __init__()
+    # Slot names are only unique within a session.
+    empty!(JuliaSlotMap)
     API.memmove_warning!(false)
     API.typeWarning!(false)
     API.EnzymeNonPower2Cache!(false)
@@ -5799,6 +5912,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     # through jl_apply_generic, which forces boxing and GC-rooting across it.
     mod = mod::LLVM.Module
     record_julia_values!(enzyme_ctx, meta)
+    make_slots_symbolic!(mod)
     edges = enzyme_ctx.edges
 
     primal_interp = GPUCompiler.get_interpreter(primal_job)
@@ -6677,6 +6791,12 @@ end
 
     use_primal = mode == API.DEM_ReverseModePrimal
     entry = use_primal ? augmented_primalf : adjointf
+    # A derivative compiled on behalf of another job is linked into it here: resolve its slots.
+    # A toplevel one is resolved by `_thunk`, once it has kept the symbolic bitcode.
+    if !job.config.toplevel
+        resolve_slots!(mod)
+        device_module && bake_julia_value_globals!(mod)
+    end
     return mod, (; adjointf, augmented_primalf, entry, compiled = meta.compiled, TapeType, edges)
 end
 
@@ -7512,6 +7632,9 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
             dispose(buf)
             String(bytes)
         end
+        # The bitcode keeps its slots symbolic for a differentiation that imports it; the code
+        # that runs gets the addresses, before it is optimized.
+        resolve_slots!(mod)
         if job.config.params.ABI <: FFIABI || job.config.params.ABI <: NonGenABI
             if DumpPrePostOpt[]
                 API.EnzymeDumpModuleRef(mod.ref)
@@ -7527,6 +7650,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         end
         mstr
     else
+        resolve_slots!(mod)
         ""
     end
     # The module string above keeps the rule declarations symbolic for nested

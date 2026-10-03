@@ -228,6 +228,8 @@ function prepare!(mod)
         replace_uses!(f, ptr)
         Compiler.eraseInst(mod, f)
     end
+    # `_thunk` resolved the slots before optimizing; a module that skipped it still needs them.
+    Compiler.resolve_slots!(mod)
     lljit = jit[].jit
     jd = JITDylib(lljit)
     for g in globals(mod)
