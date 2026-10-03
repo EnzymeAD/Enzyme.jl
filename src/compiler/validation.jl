@@ -411,17 +411,12 @@ it is not known. It is only read from at compile time, never written into the IR
 inserts is a named global for the object, which the JIT or GPUCompiler resolves.
 """
 function slot_object_address(gv::LLVM.GlobalVariable)::Union{LLVM.Value, Nothing}
-    # Folding runs inside a compilation, whose table it consults.
-    ctx = enzyme_context()
-    name = LLVM.name(gv)
-    ptr = get(ctx.julia_slot_addrs, name, nothing)
-    if ptr !== nothing
-        obj = ctx.julia_values[name]
-        if !isbitstype(Core.Typeof(obj))
-            return LLVM.ConstantInt(UInt(ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), obj)))
-        end
-        return LLVM.ConstantInt(reinterpret(UInt, ptr))
-    end
+    # Folding runs inside a compilation, whose table it consults. The address is the one
+    # `resolve_slots!` writes into the slot: GPUCompiler 2.x reports the value of a slot as it was
+    # emitted, and its address as that of the instance it roots, which for an immutable value may
+    # be another, egal one.
+    ptr = get(enzyme_context().julia_slot_addrs, LLVM.name(gv), nothing)
+    ptr === nothing || return LLVM.ConstantInt(reinterpret(UInt, ptr))
     init = LLVM.initializer(gv)
     init === nothing && return nothing
     return get_base_and_offset(init; offsetAllowed = false, inttoptr = true)[1]

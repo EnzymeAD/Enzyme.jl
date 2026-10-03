@@ -566,6 +566,20 @@ const SLOT_RECORDED = Ref{Any}(("slot-recorded",))
             folded = Enzyme.Compiler.try_replace_constant_load!(value; do_replace = false)
             @test Enzyme.Compiler.absint(folded) == (true, SLOT_RECORDED[])
 
+            # The address is what the slot will hold. GPUCompiler 2.x reports an immutable value as
+            # emitted and the address of the instance it roots, which may be another, egal one: the
+            # fold takes the object at the address.
+            egal = Ref{Any}((string("slot-", "recorded"),))
+            @test egal[] === SLOT_RECORDED[]
+            @test ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), egal[]) != recorded_ptr
+            egal_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
+            Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => egal_ctx begin
+                Enzyme.Compiler.record_julia_value!(egal_ctx, "slot", egal[], recorded_ptr)
+                folded = Enzyme.Compiler.try_replace_constant_load!(value; do_replace = false)
+                obj = egal_ctx.inserted_values[LLVM.name(folded)[(ncodeunits("ejl_") + 1):end]]
+                @test ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), obj) == recorded_ptr
+            end
+
             # A value recorded without an address belongs to a slot the back-end keeps symbolic:
             # the initializer is what is left to go by.
             empty!(enzyme_ctx.julia_slot_addrs)
