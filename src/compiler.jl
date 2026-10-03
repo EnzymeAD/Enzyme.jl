@@ -741,6 +741,7 @@ function cached_noalias(specTypes::Type, world::UInt, method_table)
     return res
 end
 
+include("compiler/tape_byref.jl")
 include("compiler/optimize.jl")
 include("compiler/interpreter.jl")
 include("compiler/callconv.jl")

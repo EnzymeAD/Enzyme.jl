@@ -450,6 +450,8 @@ const DumpPreCallConv = Ref(false)
 const DumpPostCallConv = Ref(false)
 
 function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti = nothing)
+    # Before the InstCombine below splits whole-tape loads into per-field ones.
+    tape_byval_to_byref!(mod)
     addr13NoAlias(mod)
 
     removeDeadArgs!(mod, tm, #=post_gc_fixup=# false)

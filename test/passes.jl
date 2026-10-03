@@ -1098,3 +1098,113 @@ end
         end
     end
 end
+
+@testset "Large tapes are passed to diffe functions by reference" begin
+    @test @filecheck begin
+        # A user-level aggregate argument is left alone.
+        @check_label "define internal fastcc double @keep"
+        @check_same "{ double, double, double } %v"
+        @check_label "define double @caller"
+        # The whole-tape load feeding the call is replaced by the cache slot itself,
+        # so the slot is never promoted into one phi per tape field.
+        @check "call fastcc double @diffef(i64 1,"
+        @check_same "%cache)"
+        @check "call fastcc double @keep({ double, double, double } %ld)"
+        # Anything else is spilled to a fresh slot.
+        @check "store { double, double, double } %iv"
+        @check_same "%tape.slot"
+        @check "call fastcc double @diffef(i64 2,"
+        @check_same "%tape.slot)"
+        @check_label "define internal fastcc double @diffef"
+        @check_same "readonly"
+        @check_same "%tapeArg)"
+        @check "load { double, double, double }"
+        @check_same "%tapeArg"
+        # The recursive call is rewritten too.
+        @check "call fastcc double @diffef(i64 %x,"
+        @check_not "insertvalue"
+        LLVM.Context() do ctx
+            mod = parse(
+                LLVM.Module, """
+                source_filename = "start"
+                target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+                target triple = "x86_64-linux-gnu"
+
+                define internal fastcc double @diffef(i64 %x, { double, double, double } %tapeArg) {
+                top:
+                  %a = extractvalue { double, double, double } %tapeArg, 0
+                  %b = extractvalue { double, double, double } %tapeArg, 2
+                  %c = fadd double %a, %b
+                  %z = icmp eq i64 %x, 0
+                  br i1 %z, label %done, label %rec
+                rec:
+                  %r = call fastcc double @diffef(i64 %x, { double, double, double } %tapeArg)
+                  br label %done
+                done:
+                  %p = phi double [ %c, %top ], [ %r, %rec ]
+                  ret double %p
+                }
+
+                define internal fastcc double @keep({ double, double, double } %v) {
+                top:
+                  %a = extractvalue { double, double, double } %v, 1
+                  ret double %a
+                }
+
+                define double @caller(i1 %cond, { double, double, double }* %src, double %d) {
+                top:
+                  %cache = alloca { double, double, double }, align 8
+                  br i1 %cond, label %fwd, label %rev
+                fwd:
+                  %t = load { double, double, double }, { double, double, double }* %src, align 8
+                  store { double, double, double } %t, { double, double, double }* %cache, align 8
+                  br label %rev
+                rev:
+                  %ld = load { double, double, double }, { double, double, double }* %cache, align 8
+                  %r1 = call fastcc double @diffef(i64 1, { double, double, double } %ld)
+                  %k = call fastcc double @keep({ double, double, double } %ld)
+                  %iv = insertvalue { double, double, double } %ld, double %d, 1
+                  %r2 = call fastcc double @diffef(i64 2, { double, double, double } %iv)
+                  %s1 = fadd double %r1, %k
+                  %s2 = fadd double %s1, %r2
+                  ret double %s2
+                }
+                """
+            )
+
+            Enzyme.Compiler.tape_byval_to_byref!(mod; minfields = 2)
+            string(mod)
+        end
+    end
+end
+
+# EnzymeAD/Enzyme.jl#1156: recursive reverse mode hands each child `diffe` call its
+# tape by value; with the rewrite forced on for every tape the gradient must not change.
+function tape_byref_rec(x::Vector{Float64}, n::Int)
+    n == 0 && return x[1]
+    if n % 3 == 0
+        return sin(tape_byref_rec(x, n - 1)) * x[2]
+    elseif n % 3 == 1
+        return exp(tape_byref_rec(x, n - 1)) + x[1] * x[3]
+    else
+        return tape_byref_rec(x, n - 1) / (1 + x[2])
+    end
+end
+
+@testset "Recursive reverse mode with tapes passed by reference" begin
+    old = Enzyme.Compiler.TapeByRefMinFields[]
+    Enzyme.Compiler.TapeByRefMinFields[] = 1
+    try
+        x = [0.3, 0.7, 1.1]
+        dx = zero(x)
+        autodiff(Reverse, tape_byref_rec, Active, Duplicated(x, dx), Const(7))
+        h = 1.0e-6
+        fd = [
+            (tape_byref_rec(x .+ h .* (1:3 .== i), 7) - tape_byref_rec(x .- h .* (1:3 .== i), 7)) / 2h
+                for i in 1:3
+        ]
+        @test dx ≈ fd rtol = 1.0e-6
+    finally
+        Enzyme.Compiler.TapeByRefMinFields[] = old
+    end
+end
