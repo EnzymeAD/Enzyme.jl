@@ -196,13 +196,9 @@ function define_julia_value!(lljit, jd, key::String, @nospecialize(val))
     return nothing
 end
 
-"""
-    define_julia_values!(inserted)
-
-Define the `ejl_` globals of the Julia values a compilation inserted (`inserted`, keyed by the
-name of the global without the prefix, see [`Compiler.JuliaValueTable`](@ref)) in the JIT, for
-the module that refers to them to be linked.
-"""
+# Define the `ejl_` globals of the Julia values a compilation inserted (`inserted`, keyed by the
+# name of the global without the prefix, see `Compiler.JuliaValueTable`) in the JIT, for the
+# module that refers to them to be linked.
 function define_julia_values!(inserted::Dict{String, Any})
     isempty(inserted) && return nothing
     lljit = jit[].jit
