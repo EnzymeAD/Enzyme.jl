@@ -749,6 +749,29 @@ include("typeutils/inference.jl")
 
 import .Interpreter: isKWCallSignature
 
+"""
+    record_julia_values!(ctx, meta)
+
+Remember which Julia value each global slot of a freshly emitted module refers to.
+
+GPUCompiler (from 1.8) reports them as `gv_to_value`, the address of the object behind each
+slot, keyed by the name of the slot. That is the authoritative answer to "which object is
+this global?", and unlike an address decoded from an initializer it does not depend on the
+address having been written into the IR. `absint` and `abs_typeof` read the table through
+[`julia_value_of_slot`](@ref). Holding the values in the context also keeps them rooted for
+the duration of the compilation.
+
+GPUCompiler before 1.8 reports nothing; the table stays empty and every lookup misses.
+"""
+function record_julia_values!(ctx::EnzymeContext, meta)
+    haskey(meta, :gv_to_value) || return nothing
+    for (name, ptr) in meta.gv_to_value
+        # A slot whose initializer GPUCompiler could not match to an object.
+        ptr == C_NULL && continue
+        ctx.julia_values[name] = Base.unsafe_pointer_to_objref(ptr)
+    end
+    return nothing
+end
 
 mutable struct HandlerState
     primalf::Union{Nothing, LLVM.Function}
@@ -5778,6 +5801,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     # subsequent use of `mod` (e.g. `LLVM.context(mod)`) is a dynamic dispatch
     # through jl_apply_generic, which forces boxing and GC-rooting across it.
     mod = mod::LLVM.Module
+    record_julia_values!(enzyme_ctx, meta)
     edges = enzyme_ctx.edges
 
     primal_interp = GPUCompiler.get_interpreter(primal_job)
