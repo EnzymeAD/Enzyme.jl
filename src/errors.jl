@@ -1011,11 +1011,11 @@ function Base.showerror(io::IO, ece::EnzymeNoDerivativeError)
     end
 end
 
-parent_scope(val::LLVM.Function, depth = 0) = depth == 0 ? LLVM.parent(val) : val
+parent_scope(val::LLVM.Function, depth = 0) = depth == 0 ? val.parent : val
 parent_scope(val::LLVM.Module, depth = 0) = val
-parent_scope(@nospecialize(val::LLVM.Value), depth = 0) = parent_scope(LLVM.parent(val), depth + 1)
+parent_scope(@nospecialize(val::LLVM.Value), depth = 0) = parent_scope(val.parent, depth + 1)
 parent_scope(val::LLVM.Argument, depth = 0) =
-    parent_scope(LLVM.Function(LLVM.API.LLVMGetParamParent(val)), depth + 1)
+    parent_scope(val.parent, depth + 1)
 
 function julia_error(
     cstr::Cstring,
@@ -1043,22 +1043,16 @@ function julia_error(
         val = LLVM.Value(val)
         if isa(val, LLVM.Instruction)
             dbgval = val
-            while !haskey(metadata(dbgval), LLVM.MD_dbg)
-                dbgval = LLVM.API.LLVMGetNextInstruction(dbgval)
-                if dbgval == C_NULL
-                    dbgval = nothing
-                    break
-                else
-                    dbgval = LLVM.Instruction(dbgval)
-                end
+            while dbgval.debug_location === nothing
+                dbgval = dbgval.next
+                dbgval === nothing && break
             end
             if dbgval !== nothing
                 bt = GPUCompiler.backtrace(dbgval)
             end
         end
         if isa(val, LLVM.ConstantExpr)
-            for u in LLVM.uses(val)
-                u = LLVM.user(u)
+            for u in val.users
                 if isa(u, LLVM.Instruction)
                     bt = GPUCompiler.backtrace(u)
                     break
@@ -1102,7 +1096,7 @@ function julia_error(
             end
     	    if data2 != C_NULL
         		data2 = LLVM.Value(data2)
-                if value_type(data2) != LLVM.IntType(1)
+                if data2.value_type != LLVM.IntType(1)
                     data2 = nothing
                 end
             else
@@ -1113,7 +1107,7 @@ function julia_error(
             world = nothing
 
             if isa(val, LLVM.Instruction)
-                f = LLVM.parent(LLVM.parent(val))::LLVM.Function
+                f = val.parent.parent::LLVM.Function
                 mi, rt = enzyme_custom_extract_mi(
                     f,
                     false,
@@ -1142,7 +1136,7 @@ function julia_error(
         msgN = sprint() do io::IO
             if isa(val, LLVM.Argument)
                 fn = parent_scope(val)::LLVM.Function
-                scope = string(LLVM.name(fn)) * string(function_type(fn))
+                scope = string(fn.name) * string(fn.function_type)
                 print(io, "Current scope: \n")
                 print(io, scope)
             end
@@ -1172,7 +1166,7 @@ function julia_error(
             end
         end
         emit_error(IRBuilder(B), nothing, msgN, EnzymeNoShadowError)
-        return LLVM.null(get_shadow_type(gutils, value_type(val))).ref
+        return LLVM.null(get_shadow_type(gutils, val.value_type)).ref
     elseif errtype == API.ET_IllegalTypeAnalysis
         data = API.EnzymeTypeAnalyzerRef(data)
         ip = API.EnzymeTypeAnalyzerToString(data)
@@ -1183,7 +1177,7 @@ function julia_error(
         world = nothing
 
         if isa(val, LLVM.Instruction)
-            f = LLVM.parent(LLVM.parent(val))::LLVM.Function
+            f = val.parent.parent::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
@@ -1234,7 +1228,7 @@ function julia_error(
         world = nothing
 
         if isa(val, LLVM.Instruction)
-            f = LLVM.parent(LLVM.parent(val))::LLVM.Function
+            f = val.parent.parent::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
@@ -1261,7 +1255,7 @@ function julia_error(
         mi = nothing
 
         if isa(val, LLVM.Instruction)
-            f = LLVM.parent(LLVM.parent(val))::LLVM.Function
+            f = val.parent.parent::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
@@ -1288,7 +1282,7 @@ function julia_error(
         mi = nothing
 
         if isa(val, LLVM.Instruction)
-            f = LLVM.parent(LLVM.parent(val))::LLVM.Function
+            f = val.parent.parent::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
@@ -1317,14 +1311,10 @@ function julia_error(
         end
     elseif errtype == API.ET_GCRewrite
         data2 = LLVM.Value(data2)
-        fn = LLVM.Function(LLVM.API.LLVMGetParamParent(data2::LLVM.Argument))
+        fn = data2.parent
         @static if VERSION < v"1.11"
-	    sretkind = LLVM.kind(if LLVM.version().major >= 12
-		LLVM.TypeAttribute("sret", LLVM.Int32Type())
-	    else
-		LLVM.EnumAttribute("sret")
-	    end)
-	    if occursin("Could not find use of stored value", msg) && length(parameters(fn)) >= 1 && any(LLVM.kind(attr) == sretkind for attr in collect(LLVM.parameter_attributes(fn, 1)))
+            sretkind = :sret
+            if occursin("Could not find use of stored value", msg) && length(fn.parameters) >= 1 && any(attr.kind == sretkind for attr in collect(fn.parameter_attributes[1]))
 		return C_NULL
 	    end
         end
@@ -1365,7 +1355,7 @@ function julia_error(
         msg2 = sprint() do io
             print(io, msg)
             println(io)
-            println(io, string(LLVM.parent(LLVM.parent(data2))))
+            println(io, string(data2.parent.parent))
             println(io, val)
             println(io, data2)
         end
@@ -1385,7 +1375,7 @@ function julia_error(
                 return cur
             else
                 shadowres = UndefValue(
-                    LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(cur))),
+                    LLVM.LLVMType(API.EnzymeGetShadowType(width, cur.value_type)),
                 )
                 for idx = 1:width
                     shadowres = insert_value!(B, shadowres, cur, idx - 1)
@@ -1407,28 +1397,27 @@ function julia_error(
             end
 
 		if isa(cur, LLVM.LoadInst)
-                    larg, off = get_base_and_offset(operands(cur)[1])
+                larg, off = get_base_and_offset(cur.operands[1])
 		    if off == 0 && isa(larg, LLVM.AllocaInst)
 			 legal = true
-			 for u in LLVM.uses(larg)
-			    u = LLVM.user(u)
+                    for u in larg.users
 			    if isa(u, LLVM.LoadInst)
 				continue
 			    end
-			    if isa(u, LLVM.CallInst) && isa(called_operand(u), LLVM.Function)
-			       intr = LLVM.API.LLVMGetIntrinsicID(LLVM.called_operand(u))
-			       if intr == LLVM.Intrinsic("llvm.lifetime.start").id || intr == LLVM.Intrinsic("llvm.lifetime.end").id || LLVM.name(called_operand(u)) == "llvm.enzyme.lifetime_end" || LLVM.name(called_operand(u)) ==
+                        if isa(u, LLVM.CallInst) && isa(u.called_operand, LLVM.Function)
+                            intr = u.called_operand.intrinsic
+                            if intr == LLVM.Intrinsic("llvm.lifetime.start") || intr == LLVM.Intrinsic("llvm.lifetime.end") || u.called_operand.name == "llvm.enzyme.lifetime_end" || u.called_operand.name ==
  "llvm.enzyme.lifetime_start"
 				    continue
 			       end
 			    end
 			    if isa(u, LLVM.StoreInst)
-				 v = operands(u)[1]
+                            v = u.operands[1]
 				 if v == larg
 				    legal = false;
 				    break
 				 end
-				 if v isa ConstantInt && convert(Int, v) == -1
+                            if v isa ConstantInt && convert(BigInt, v) == -1
 				    continue
 				 end
 			    end
@@ -1443,7 +1432,7 @@ function julia_error(
 @static if VERSION < v"1.11-"
 else   
             if isa(cur, LLVM.ConstantExpr)
-                larg, off = get_base_and_offset(operands(cur)[1]; inst=first(instructions(position(prevbb))))
+                    larg, off = get_base_and_offset(cur.operands[1]; inst = first(prevbb.insert_block.instructions))
                 legal2, obj = absint(larg)
                 obj = unbind(obj)
                 if legal2 && is_memory_instance(obj)
@@ -1452,7 +1441,7 @@ else
             end
 
             if isa(cur, LLVM.LoadInst)
-                larg, off = get_base_and_offset(operands(cur)[1]; inst=cur)
+                    larg, off = get_base_and_offset(cur.operands[1]; inst = cur)
                 legal2, obj = absint(larg)
                 obj = unbind(obj)
                 if legal2 && is_memory_instance(obj)
@@ -1500,7 +1489,7 @@ end
                         end
                     else
                         shadowres = UndefValue(
-                            LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(cur))),
+                                LLVM.LLVMType(API.EnzymeGetShadowType(width, cur.value_type)),
                         )
                         for idx = 1:width
                             res = if mode == API.DEM_ForwardMode
@@ -1556,17 +1545,17 @@ end
                 return make_batched(ncur, prevbb)
             end
             if isa(cur, LLVM.ConstantInt)
-                if convert(UInt64, cur) == 0
+                if LLVM.isnull(cur)
                     return make_batched(ncur, prevbb)
                 end
             end
             if isa(cur, LLVM.ConstantFP)
-                return make_batched(ConstantFP(value_type(cur), 0), prevbb)
+                return make_batched(ConstantFP(cur.value_type, 0), prevbb)
             end
             if isa(cur, LLVM.ConstantDataSequential)
                 cvals = LLVM.Value[]
                 changed = false
-                for v in collect(cur)
+                for v in cur.elements
                     tmp = make_replacement(v, prevbb)
                     if illegal
                         return ncur
@@ -1589,38 +1578,38 @@ end
                 return cur2
             end
             if isa(cur, LLVM.ConstantInt)
-                if LLVM.width(value_type(cur)) <= sizeof(Int) * 8
+                if cur.value_type.width <= sizeof(Int) * 8
                     return make_batched(ncur, prevbb)
                 end
-                if LLVM.width(value_type(cur)) == sizeof(Int) * 8 &&
+                if cur.value_type.width == sizeof(Int) * 8 &&
                    abs(convert(Int, cur)) < 10000
                     return make_batched(ncur, prevbb)
                 end
                 # if storing a constant int as a non-pointer, presume it is not a GC'd var and is safe
                 # for activity state to mix
                 if isa(val, LLVM.StoreInst)
-                    operands(val)[1] == cur &&
-                        !isa(value_type(operands(val)[1]), LLVM.PointerType)
+                    val.operands[1] == cur &&
+                        !isa(val.operands[1].value_type, LLVM.PointerType)
                     return make_batched(ncur, prevbb)
                 end
             end
 
             if isa(cur, LLVM.SelectInst)
-                lhs = make_replacement(operands(cur)[2], prevbb)
+                lhs = make_replacement(cur.operands[2], prevbb)
                 if illegal
                     return ncur
                 end
-                rhs = make_replacement(operands(cur)[3], prevbb)
+                rhs = make_replacement(cur.operands[3], prevbb)
                 if illegal
                     return ncur
                 end
-                if lhs == operands(cur)[2] && rhs == operands(cur)[3]
+                if lhs == cur.operands[2] && rhs == cur.operands[3]
                     return make_batched(ncur, prevbb)
                 end
                 if width == 1
                     nv = select!(
                         prevbb,
-                        new_from_original(gutils, operands(cur)[1]),
+                        new_from_original(gutils, cur.operands[1]),
                         lhs,
                         rhs,
                     )
@@ -1628,14 +1617,14 @@ end
                     seen[cur] = nv
                     return nv
                 else
-                    shadowres = LLVM.UndefValue(value_type(lhs))
+                    shadowres = LLVM.UndefValue(lhs.value_type)
                     for idx = 1:width
                         shadowres = insert_value!(
                             prevbb,
                             shadowres,
                             select!(
                                 prevbb,
-                                new_from_original(gutils, operands(cur)[1]),
+                                new_from_original(gutils, cur.operands[1]),
                                 extract_value!(prevbb, lhs, idx - 1),
                                 extract_value!(prevbb, rhs, idx - 1),
                             ),
@@ -1651,22 +1640,20 @@ end
 
             if isa(cur, LLVM.InsertValueInst)
                 B2 = IRBuilder()
-                position!(B2, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(ncur)))
+                position!(B2, LLVM.after(ncur))
 
-                lhs = make_replacement(operands(cur)[1], B2)
+                lhs = make_replacement(cur.operands[1], B2)
                 if illegal
                     return ncur
                 end
-                rhs = make_replacement(operands(cur)[2], B2)
+                rhs = make_replacement(cur.operands[2], B2)
                 if illegal
                     return ncur
                 end
-                if lhs == operands(cur)[1] && rhs == operands(cur)[2]
+                if lhs == cur.operands[1] && rhs == cur.operands[2]
                     return make_batched(ncur, cur)
                 end
-                inds = LLVM.API.LLVMGetIndices(cur.ref)
-                ninds = LLVM.API.LLVMGetNumIndices(cur.ref)
-                jinds = Cuint[unsafe_load(inds, i) for i = 1:ninds]
+                jinds = collect(Cuint, cur.indices)
                 if width == 1
                     nv = API.EnzymeInsertValue(B2, lhs, rhs, jinds)
                     push!(created, nv)
@@ -1691,51 +1678,51 @@ end
                 end
             end
            
-	    if isa(cur, LLVM.LoadInst) || isa(cur, LLVM.BitCastInst) || isa(cur, LLVM.AddrSpaceCastInst) || (isa(cur, LLVM.GetElementPtrInst) && all(Base.Fix2(isa, LLVM.ConstantInt), operands(cur)[2:end])) || (isa(cur,LLVM.ConstantExpr) &&  opcode(cur) in (LLVM.API.LLVMBitCast, LLVM.API.LLVMAddrSpaceCast, LLVM.API.LLVMGetElementPtr))
-                lhs = make_replacement(operands(cur)[1], prevbb)
+            if isa(cur, LLVM.LoadInst) || isa(cur, LLVM.BitCastInst) || isa(cur, LLVM.AddrSpaceCastInst) || (isa(cur, LLVM.GetElementPtrInst) && all(Base.Fix2(isa, LLVM.ConstantInt), cur.operands[2:end])) || (isa(cur, LLVM.ConstantExpr) &&  cur.opcode in (LLVM.Opcode.BitCast, LLVM.Opcode.AddrSpaceCast, LLVM.Opcode.GetElementPtr))
+                lhs = make_replacement(cur.operands[1], prevbb)
                 if illegal
                     return ncur
                 end
-                if lhs == operands(ncur)[1]
+                if lhs == ncur.operands[1]
                     return make_batched(ncur, prevbb)
-                elseif width != 1 && isa(lhs, LLVM.InsertValueInst) && operands(lhs)[2] == operands(ncur)[1]
+                elseif width != 1 && isa(lhs, LLVM.InsertValueInst) && lhs.operands[2] == ncur.operands[1]
                     return make_batched(ncur, prevbb)
                 end
             end
 
             if isa(cur, LLVM.PHIInst)
                 Bphi = IRBuilder()
-                position!(Bphi, ncur)
-                shadowty = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(cur)))
-                phi2 = phi!(Bphi, shadowty, "tempphi" * LLVM.name(cur))
+                position!(Bphi, LLVM.before(ncur))
+                shadowty = LLVM.LLVMType(API.EnzymeGetShadowType(width, cur.value_type))
+                phi2 = phi!(Bphi, shadowty, "tempphi" * cur.name)
                 seen[cur] = phi2
                 changed = false
                 recsize = length(created) + 1
-                for (v, bb) in LLVM.incoming(cur)
+                for (v, bb) in cur.incoming
                     B2 = IRBuilder()
-                    position!(B2, new_from_original(gutils, last(instructions(bb))))
+                    position!(B2, LLVM.before(new_from_original(gutils, last(bb.instructions))))
                     tmp = make_replacement(v, B2)
                     if illegal
                         changed = true
                         break
                     end
-                    @assert value_type(tmp) == shadowty
+                    @assert tmp.value_type == shadowty
                     if tmp != new_from_original(gutils, v) && v != cur
                         changed = true
                     end
-                    push!(LLVM.incoming(phi2), (tmp, new_from_original(gutils, bb)))
+                    push!(phi2.incoming, (tmp, new_from_original(gutils, bb)))
                 end
                 if !changed || illegal
-                    LLVM.API.LLVMInstructionEraseFromParent(phi2)
+                    erase!(phi2)
                     seen[cur] = ncur
                     plen = length(created)
                     for i = recsize:plen
                         u = created[i]
-                        replace_uses!(u, LLVM.UndefValue(value_type(u)))
+                        replace_uses!(u, LLVM.UndefValue(u.value_type))
                     end
                     for i = recsize:plen
                         u = created[i]
-                        LLVM.API.LLVMInstructionEraseFromParent(u)
+                        erase!(u)
                     end
                     for i = recsize:plen
                         pop!(created)
@@ -1768,14 +1755,14 @@ end
             return replacement.ref
         end
         for u in created
-            replace_uses!(u, LLVM.UndefValue(value_type(u)))
+            replace_uses!(u, LLVM.UndefValue(u.value_type))
         end
         for u in created
-            LLVM.API.LLVMInstructionEraseFromParent(u)
+            erase!(u)
         end
-        if LLVM.API.LLVMIsAReturnInst(val) != C_NULL
+        if val isa LLVM.RetInst
             mi, rt = enzyme_custom_extract_mi(
-                LLVM.parent(LLVM.parent(val))::LLVM.Function,
+                val.parent.parent::LLVM.Function,
                 false,
             ) #=error=#
             if mi !== nothing && isghostty(rt)
@@ -1790,7 +1777,7 @@ end
             else
                 ttval = val
                 if isa(ttval, LLVM.StoreInst)
-                    ttval = operands(ttval)[1]
+                    ttval = ttval.operands[1]
                 end
                 tt = TypeTree(API.EnzymeGradientUtilsAllocAndGetTypeTree(gutils, ttval))
                 st = API.EnzymeTypeTreeToString(tt)
@@ -1810,7 +1797,7 @@ end
         world = nothing
 
         if isa(val, LLVM.Instruction)
-            f = LLVM.parent(LLVM.parent(val))::LLVM.Function
+            f = val.parent.parent::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,

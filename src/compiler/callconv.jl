@@ -21,12 +21,12 @@ register `pgcstack` goes in. A target without the swift calling convention
 takes `pgcstack` as a plain parameter, which carries no attribute to copy.
 """
 function copy_abi_attrs!(call::LLVM.CallInst, fn::LLVM.Function)
-    zeroext = enum_attr_kind("zeroext")
-    signext = enum_attr_kind("signext")
-    for i in 1:length(parameters(fn))
-        for attr in collect(parameter_attributes(fn, i))
-            if attr isa EnumAttribute && (kind(attr) == zeroext || kind(attr) == signext || kind(attr) == swiftself_kind)
-                LLVM.API.LLVMAddCallSiteAttribute(call, LLVM.API.LLVMAttributeIndex(i), attr)
+    zeroext = :zeroext
+    signext = :signext
+    for i in 1:length(fn.parameters)
+        for attr in collect(fn.parameter_attributes[i])
+            if attr isa EnumAttribute && (attr.kind == zeroext || attr.kind == signext || attr.kind == swiftself_kind)
+                push!(call.argument_attributes[i], attr)
             end
         end
     end
@@ -73,7 +73,7 @@ end
     writes `arm64` where `Sys.ARCH` says `aarch64`.
     """
     function module_targets_host(mod::LLVM.Module)::Bool
-        arch = first(split(LLVM.triple(mod), '-'))
+        arch = first(split(mod.triple, '-'))
         return arch == first(split(Sys.MACHINE, '-')) || arch == string(Sys.ARCH)
     end
 
@@ -138,10 +138,10 @@ end
                 # stripped.
                 sret_lty = convert(LLVMType, eltype(sret))
                 push!(params, T_ptr)
-                push!(param_attrs, LLVM.Attribute[TypeAttribute("sret", sret_lty), EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("noundef")])
+                push!(param_attrs, LLVM.Attribute[TypeAttribute(:sret, sret_lty), EnumAttribute(:noalias), EnumAttribute(:nocapture), EnumAttribute(:noundef)])
                 if returnRoots !== nothing
                     push!(params, T_ptr)
-                    push!(param_attrs, LLVM.Attribute[EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("noundef")])
+                    push!(param_attrs, LLVM.Attribute[EnumAttribute(:noalias), EnumAttribute(:nocapture), EnumAttribute(:noundef)])
                 end
                 retty = T_void
             end
@@ -159,9 +159,9 @@ end
 
         if gcstack_arg
             push!(params, T_ptr)
-            attrs = LLVM.Attribute[StringAttribute("gcstack"), EnumAttribute("nonnull")]
+            attrs = LLVM.Attribute[StringAttribute("gcstack"), EnumAttribute(:nonnull)]
             if jit_uses_swiftcc()
-                pushfirst!(attrs, EnumAttribute("swiftself"))
+                pushfirst!(attrs, EnumAttribute(:swiftself))
             end
             push!(param_attrs, attrs)
         end
@@ -174,15 +174,15 @@ end
                 push!(params, T_prjlvalue)
                 attrs = LLVM.Attribute[]
                 if T isa DataType && !Base.isabstracttype(T) && !ismutabletype(T)
-                    push!(attrs, EnumAttribute("readonly"))
+                    push!(attrs, EnumAttribute(:readonly))
                 end
                 push!(param_attrs, attrs)
             elseif kind === :byref
                 push!(params, T_derived)
-                push!(param_attrs, LLVM.Attribute[EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("readonly")])
+                push!(param_attrs, LLVM.Attribute[EnumAttribute(:noalias), EnumAttribute(:nocapture), EnumAttribute(:readonly)])
                 if inline_roots_type(T) != 0
                     push!(params, T_ptr)
-                    push!(param_attrs, LLVM.Attribute[EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("readonly")])
+                    push!(param_attrs, LLVM.Attribute[EnumAttribute(:noalias), EnumAttribute(:nocapture), EnumAttribute(:readonly)])
                 end
             else
                 lty = convert(LLVMType, T)
@@ -257,17 +257,17 @@ end
         # `pgcstack` parameter exists and the target supports it
         # (`get_specsig_function`).
         if jit_gcstack_arg() && jit_uses_swiftcc()
-            callconv!(fn, LLVM.API.LLVMSwiftCallConv)
+            fn.callconv = LLVM.CallConv.Swift
         end
-        fattrs = function_attributes(fn)
+        fattrs = fn.function_attributes
         push!(fattrs, StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))))
         push!(fattrs, StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(RT)))))
         if RT === Union{}
-            push!(fattrs, EnumAttribute("noreturn"))
+            push!(fattrs, EnumAttribute(:noreturn))
         end
         for (i, attrs) in enumerate(param_attrs)
             for attr in attrs
-                push!(parameter_attributes(fn, i), attr)
+                push!(fn.parameter_attributes[i], attr)
             end
         end
 
@@ -277,12 +277,12 @@ end
         # parameter only when the JIT passes one, so tell `classify_arguments`
         # the same.
         _, sret, returnRoots = get_return_info(RT)
-        jlargs = classify_arguments(mi.specTypes, LLVM.function_type(fn), sret !== nothing, returnRoots !== nothing, jit_gcstack_arg(), UInt64[], mi, world)
+        jlargs = classify_arguments(mi.specTypes, fn.function_type, sret !== nothing, returnRoots !== nothing, jit_gcstack_arg(), UInt64[], mi, world)
         for arg in jlargs
             if arg.cc == GPUCompiler.GHOST || arg.cc == RemovedParam
                 continue
             end
-            pattrs = parameter_attributes(fn, arg.codegen.i)
+            pattrs = fn.parameter_attributes[arg.codegen.i]
             push!(pattrs, StringAttribute("enzymejl_parmtype", string(convert(UInt, unsafe_to_pointer(arg.typ)))))
             push!(pattrs, StringAttribute("enzymejl_parmtype_str", string(arg.typ)))
             push!(pattrs, StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))))
@@ -291,7 +291,7 @@ end
             end
         end
         if returnRoots !== nothing
-            push!(parameter_attributes(fn, 2), StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots).parameters[1]))))
+            push!(fn.parameter_attributes[2], StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots).parameters[1]))))
         end
         return fn
     end
@@ -310,23 +310,23 @@ end
     """
     function check_specsig(llvmf::LLVM.Function, mi::Core.MethodInstance, @nospecialize(RT::Type))
         retty, params, param_attrs = specsig(mi, RT; gcstack_arg = has_gcstack_arg(llvmf))
-        ft = LLVM.function_type(llvmf)
-        ok = LLVM.return_type(ft) == retty && parameters(ft) == params
+        ft = llvmf.function_type
+        ok = ft.return_type == retty && ft.parameters == params
         if ok
-            sretkind = enum_attr_kind("sret")
+            sretkind = :sret
             for (i, attrs) in enumerate(param_attrs)
-                actual = collect(parameter_attributes(llvmf, i))
+                actual = collect(llvmf.parameter_attributes[i])
                 for attr in attrs
-                    is_sret = attr isa TypeAttribute && kind(attr) == sretkind
-                    is_swiftself = attr isa EnumAttribute && kind(attr) == swiftself_kind
+                    is_sret = attr isa TypeAttribute && attr.kind == sretkind
+                    is_swiftself = attr isa EnumAttribute && attr.kind == swiftself_kind
                     if !is_sret && !is_swiftself
                         continue
                     end
                     found = false
                     for a in actual
-                        if is_sret && a isa TypeAttribute && kind(a) == sretkind && LLVM.value(a) == LLVM.value(attr)
+                        if is_sret && a isa TypeAttribute && a.kind == sretkind && a.value == attr.value
                             found = true
-                        elseif is_swiftself && a isa EnumAttribute && kind(a) == swiftself_kind
+                        elseif is_swiftself && a isa EnumAttribute && a.kind == swiftself_kind
                             found = true
                         end
                     end
@@ -340,7 +340,7 @@ end
                 println(io, "mi = ", mi)
                 println(io, "specTypes = ", mi.specTypes)
                 println(io, "RT = ", RT)
-                println(io, "function = ", LLVM.name(llvmf))
+                println(io, "function = ", llvmf.name)
                 println(io, "emitted = ", string(ft))
                 println(io, "derived retty = ", string(retty))
                 println(io, "derived params = ", string.(params))
@@ -360,10 +360,10 @@ end
     """
     function declare_native!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), specptr::Ptr{Cvoid}, name::String, world::UInt)::LLVM.Function
         fn = specsig_function!(mod, mi, RT, name, world)
-        push!(function_attributes(fn), StringAttribute("enzymejl_needs_restoration", string(convert(UInt, specptr))))
+        push!(fn.function_attributes, StringAttribute("enzymejl_needs_restoration", string(convert(UInt, specptr))))
         # `restore_lookups` leaves the declaration symbolic until the module
         # is compiled, and `materialize_native_invokes!` finds it by this marker.
-        push!(function_attributes(fn), StringAttribute("enzymejl_native_invoke"))
+        push!(fn.function_attributes, StringAttribute("enzymejl_native_invoke"))
         return fn
     end
 
@@ -553,8 +553,8 @@ end
         world = enzyme_ctx.world
         if haskey(enzyme_ctx.nested_cache, funcspec)
             fname = enzyme_ctx.nested_cache[funcspec]
-            if haskey(functions(mod), fname)
-                return functions(mod)[fname]
+            if haskey(mod.functions, fname)
+                return mod.functions[fname]
             end
         end
 
@@ -599,33 +599,32 @@ end
     function materialize_native_invokes!(mode::API.CDerivativeMode, mod::LLVM.Module)
         enzyme_ctx = enzyme_context()
         world = enzyme_ctx.world
-        marker = StringAttribute("enzymejl_native_invoke")
-        for fn in collect(functions(mod))
+        for fn in collect(mod.functions)
             isdeclaration(fn) || continue
-            has_fn_attr(fn, marker) || continue
+            haskey(fn.function_attributes, "enzymejl_native_invoke") || continue
             mi, RT = enzyme_custom_extract_mi(fn)
             llvmf = nested_codegen!(mode, mod, mi, true)
             check_specsig(llvmf, mi, enzyme_custom_extract_mi(llvmf)[2])
             # `nested_codegen!` defers linking the emitted module until after
             # the differentiation. The body is needed before it.
-            fname = LLVM.name(llvmf)
+            fname = llvmf.name
             for otherMod in enzyme_ctx.modules_to_link
                 link_split_existing!(mod, otherMod)
             end
             empty!(enzyme_ctx.modules_to_link)
-            llvmf = functions(mod)[fname]
+            llvmf = mod.functions[fname]
 
             # Drop the `pgcstack` parameter when the emitted rule has none.
-            fparams = collect(parameters(fn))
+            fparams = collect(fn.parameters)
             drop = has_gcstack_arg(llvmf) ? 0 : gcstack_arg_index(fn)
             args = LLVM.Value[p for (i, p) in enumerate(fparams) if i != drop]
-            lft = LLVM.function_type(llvmf)
-            fretty = LLVM.return_type(LLVM.function_type(fn))
-            if length(args) != length(parameters(lft)) || any(value_type(a) != t for (a, t) in zip(args, parameters(lft))) || fretty != LLVM.return_type(lft)
+            lft = llvmf.function_type
+            fretty = fn.function_type.return_type
+            if length(args) != length(lft.parameters) || any(a.value_type != t for (a, t) in zip(args, lft.parameters)) || fretty != lft.return_type
                 msg = sprint() do io
                     println(io, "Enzyme: the emitted function does not match the natively called function it replaces")
                     println(io, "mi = ", mi)
-                    println(io, "native = ", string(LLVM.function_type(fn)))
+                    println(io, "native = ", string(fn.function_type))
                     println(io, "emitted = ", string(lft))
                 end
                 throw(CallingConventionMismatchError{String}(msg, mi, world))
@@ -633,9 +632,9 @@ end
 
             entry = BasicBlock(fn, "entry")
             B = IRBuilder()
-            position!(B, entry)
+            position!(B, LLVM.at_end(entry))
             res = call!(B, lft, llvmf, args)
-            callconv!(res, callconv(llvmf))
+            res.callconv = llvmf.callconv
             if fretty isa LLVM.VoidType
                 ret!(B)
             else
@@ -643,11 +642,11 @@ end
             end
             dispose(B)
 
-            fattrs = function_attributes(fn)
-            delete!(fattrs, StringAttribute("enzymejl_needs_restoration"))
-            delete!(fattrs, marker)
-            push!(fattrs, EnumAttribute("alwaysinline"))
-            linkage!(fn, LLVM.API.LLVMInternalLinkage)
+            fattrs = fn.function_attributes
+            delete!(fattrs, "enzymejl_needs_restoration")
+            delete!(fattrs, "enzymejl_native_invoke")
+            push!(fattrs, EnumAttribute(:alwaysinline))
+            fn.linkage = LLVM.Linkage.Internal
         end
         return nothing
     end

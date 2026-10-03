@@ -114,9 +114,10 @@ function enzyme_code_llvm(
     end
     JuliaContext() do ctx
         entry_fn, ir = reflect(func, A, types; optimize, run_enzyme, second_stage, mode, kwargs...)
-        ts_mod = ThreadSafeModule(ir)
-        GC.@preserve ts_mod entry_fn begin
-            value = Ref(jl_llvmf_dump(ts_mod.ref, entry_fn.ref))
+        ts_mod = LLVM.ThreadSafeModule(ir)
+        GC.@preserve entry_fn begin
+            # `jl_dump_function_ir` takes ownership of the thread-safe module
+            value = Ref(jl_llvmf_dump(LLVM.consume!(ts_mod), entry_fn.ref))
             str = ccall(
                 :jl_dump_function_ir,
                 Ref{String},
@@ -142,7 +143,8 @@ function enzyme_code_native(
 )
     JuliaContext() do ctx
         _, mod = reflect(func, A, types; mode)
-        str = String(LLVM.emit(JIT.get_tm(), mod, LLVM.API.LLVMAssemblyFile))
+        str = String(LLVM.emit(JIT.get_tm(), mod, LLVM.CodeGenFileType.Assembly))
+        LLVM.dispose(mod)
         print(io, str)
     end
 end

@@ -1421,7 +1421,9 @@ import .Compiler: remove_innerty, UnknownTapeType
 	    ctx = Compiler.context(ts_ctx)
 	    Compiler.activate(ctx)
             try
-                _, meta = GPUCompiler.compile(:llvm, job)
+                # only the tape type is needed, so dispose of the module we own
+                mod, meta = GPUCompiler.compile(:llvm, job)
+                LLVM.dispose(mod)
                 obj = meta.TapeType
                 tape_cache[key] = obj
 		obj
