@@ -67,9 +67,10 @@ end
 """
     julia_value_of_slot(gv)
 
-The Julia value a load of the global slot `gv` yields, as recorded by the compilation in
-flight (`record_julia_values!`, or `merge_julia_value_table!` for a module compiled earlier), or
-`nothing` if it has no record of the slot.
+The Julia value a load of the global slot `gv` yields, as the compilation in flight knows it
+(`slot_value`: what codegen reported, or a module compiled earlier brought along), or the value
+of the box GPUCompiler 2.x materialized for it in device code (`materialized_box_value`);
+`nothing` if neither.
 
 This is the preferred source: it is what codegen itself said the slot refers to, and it does
 not depend on the address of the value having been written into the IR, which Enzyme removes
@@ -78,9 +79,10 @@ falls back to decoding the initializer with `slot_initializer_address`.
 """
 function julia_value_of_slot(gv::LLVM.GlobalVariable)::Union{Some{Any}, Nothing}
     isassigned(ENZYME_CONTEXT) || return nothing
-    values = ENZYME_CONTEXT[].julia_values
-    gname = LLVM.name(gv)
-    return haskey(values, gname) ? Some{Any}(values[gname]) : nothing
+    ctx = ENZYME_CONTEXT[]
+    found = slot_value(ctx, LLVM.name(gv))
+    found === nothing || return found
+    return materialized_box_value(ctx, gv)
 end
 
 # The address the load `load` of the global `gv` yields, read out of the initializer, if

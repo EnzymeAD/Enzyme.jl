@@ -539,7 +539,7 @@ function slot_object_address(gv::LLVM.GlobalVariable)::Union{LLVM.Value, Nothing
     # `resolve_slots!` writes into the slot: GPUCompiler 2.x reports the value of a slot as it was
     # emitted, and its address as that of the instance it roots, which for an immutable value may
     # be another, egal one.
-    ptr = get(enzyme_context().julia_slot_addrs, LLVM.name(gv), nothing)
+    ptr = slot_address(enzyme_context(), LLVM.name(gv))
     ptr === nothing || return LLVM.ConstantInt(reinterpret(UInt, ptr))
     init = LLVM.initializer(gv)
     init === nothing && return nothing
