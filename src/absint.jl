@@ -34,9 +34,13 @@ function julia_global(gname::AbstractString)::Union{Some{Any}, Nothing}
     return haskey(JuliaGlobalNameMap, gname) ? Some{Any}(JuliaGlobalNameMap[gname]) : nothing
 end
 
-# The value of the global called `gname` that Enzyme inserted itself, if it is one.
+# The value of the global called `gname` that Enzyme inserted itself, if it is one: one of the
+# well-known ones, or one the compilation in flight inserted (`insert_julia_value!`).
 function enzyme_global(gname::AbstractString)::Union{Some{Any}, Nothing}
-    return haskey(JuliaEnzymeNameMap, gname) ? Some{Any}(JuliaEnzymeNameMap[gname]) : nothing
+    haskey(JuliaEnzymeNameMap, gname) && return Some{Any}(JuliaEnzymeNameMap[gname])
+    isassigned(ENZYME_CONTEXT) || return nothing
+    inserted = ENZYME_CONTEXT[].inserted_values
+    return haskey(inserted, gname) ? Some{Any}(inserted[gname]) : nothing
 end
 
 # Enzyme's own globals carry an `ejl_` prefix that the keys of the name maps lack.
@@ -55,7 +59,8 @@ function named_global(gv::LLVM.GlobalVariable)::Union{Some{Any}, Nothing}
         found = enzyme_global(stripped)
         found === nothing || return found
     end
-    @assert !startswith(gname, "ejl_inserted") "Could not find ejl_inserted variable in map $gname"
+    # The compilation that inserted the global, or that linked in a module with it, knows it.
+    @assert !(startswith(gname, "ejl_inserted") && isassigned(ENZYME_CONTEXT)) "Could not find ejl_inserted variable in map $gname"
     return nothing
 end
 
@@ -63,7 +68,7 @@ end
     julia_value_of_slot(gv)
 
 The Julia value a load of the global slot `gv` yields, as recorded by the compilation in
-flight (`record_julia_values!`, or `merge_slot_table!` for a module compiled earlier), or
+flight (`record_julia_values!`, or `merge_julia_value_table!` for a module compiled earlier), or
 `nothing` if it has no record of the slot.
 
 This is the preferred source: it is what codegen itself said the slot refers to, and it does

@@ -998,8 +998,8 @@ function import_cached_autodiff!(mod::LLVM.Module, ptr::Ptr{Cvoid}, FT::LLVM.Fun
     end
 
     LLVM.link!(mod, pmod)
-    # The blob's slots are symbolic; this compilation resolves them along with its own.
-    merge_slot_table!(enzyme_ctx, cached.julia_slots)
+    # The blob refers to Julia values by name; this compilation resolves them along with its own.
+    merge_julia_value_table!(enzyme_ctx, cached.value_table)
 
     replaceWith = functions(mod)[pname]
     push!(function_attributes(replaceWith), EnumAttribute("alwaysinline"))

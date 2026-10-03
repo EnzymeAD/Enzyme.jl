@@ -229,7 +229,7 @@ end
         dispose(buf)
 
         ptr = reinterpret(Ptr{Cvoid}, UInt(0x2788))
-        Enzyme.Compiler.autodiff_cache[ptr] = Enzyme.Compiler.CachedThunk("thunk", bitcode, Enzyme.Compiler.JuliaSlots())
+        Enzyme.Compiler.autodiff_cache[ptr] = Enzyme.Compiler.CachedThunk("thunk", bitcode, Enzyme.Compiler.JuliaValueTable())
         try
             Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT =>
                     Enzyme.Compiler.EnzymeContext(GPUCompiler.tls_world_age()) begin

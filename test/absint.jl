@@ -516,9 +516,12 @@ const SLOT_RECORDED = Ref{Any}(("slot-recorded",))
         word = LLVM.ConstantInt(LLVM.IntType(8 * sizeof(UInt)), addr)
         LLVM.initializer!(gv, LLVM.const_inttoptr(word, T_pjlvalue))
 
-        folded = Enzyme.Compiler.try_replace_constant_load!(value; do_replace = false)
-        @test folded !== value
-        @test Enzyme.Compiler.absint(folded) == (true, SLOT_BAKED[])
+        # A compilation with no record of the slot decodes the initializer.
+        Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => Enzyme.Compiler.EnzymeContext(Base.get_world_counter()) begin
+            folded = Enzyme.Compiler.try_replace_constant_load!(value; do_replace = false)
+            @test folded !== value
+            @test Enzyme.Compiler.absint(folded) == (true, SLOT_BAKED[])
+        end
 
         enzyme_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
         Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
@@ -548,17 +551,39 @@ const SLOT_RECORDED = Ref{Any}(("slot-recorded",))
     end
 end
 
-# Enzyme names a Julia value it inserts by the value's `objectid`, not by its address, and the
-# JIT resolves the name from `JuliaEnzymeNameMap`: nothing session-specific is in the name.
+# Enzyme names a Julia value it inserts by the value's `objectid`, not by its address, and
+# records it in the table of the compilation, not in a global map: nothing session-specific is
+# in the name, and the module takes the value along.
 @testset "inserted Julia values are named, not addressed" begin
     val = SlotConst{Float64}(2.5)
-    key = Enzyme.insert_julia_value!("hint", val)
+    enzyme_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
+    key = Enzyme.insert_julia_value!(enzyme_ctx, "hint", val)
     @test startswith(key, "inserted\$hint\$")
     @test !occursin(string(UInt(ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), val))), key)
-    @test Enzyme.Compiler.JuliaEnzymeNameMap[key] === val
+    @test enzyme_ctx.inserted_values[key] === val
+    @test !haskey(Enzyme.Compiler.JuliaEnzymeNameMap, key)
     # The same value is the same name; another value is another one.
-    @test Enzyme.insert_julia_value!("hint", val) == key
-    @test Enzyme.insert_julia_value!("hint", SlotConst{Float64}(3.5)) != key
+    @test Enzyme.insert_julia_value!(enzyme_ctx, "hint", val) == key
+    @test Enzyme.insert_julia_value!(enzyme_ctx, "hint", SlotConst{Float64}(3.5)) != key
+
+    # Analysis finds the value through the compilation's table, and so does a later compilation
+    # that links the module in, from the table the module takes along.
+    LLVM.Context() do ctx
+        mod = LLVM.Module("inserted")
+        gv = LLVM.GlobalVariable(mod, LLVM.StructType(LLVM.LLVMType[]), "ejl_" * key, Enzyme.Compiler.Tracked)
+        @test Enzyme.Compiler.absint(gv) == (false, nothing)
+        Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
+            @test Enzyme.Compiler.absint(gv) == (true, val)
+        end
+        table = Enzyme.Compiler.julia_value_table(enzyme_ctx, mod)
+        @test table.inserted == Dict(key => val)
+        later_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
+        Enzyme.Compiler.merge_julia_value_table!(later_ctx, table)
+        Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => later_ctx begin
+            @test Enzyme.Compiler.absint(gv) == (true, val)
+        end
+        LLVM.dispose(mod)
+    end
 end
 
 # Enzyme works on a module with its slots as declarations, the way GPUCompiler 2.x hands over a
@@ -607,18 +632,18 @@ end
             end
             # The module takes its part of the table along, and a later compilation that links it
             # in sees through its slots from that.
-            julia_slots = Enzyme.Compiler.slot_table(enzyme_ctx, mod)
-            @test Set(keys(julia_slots)) == Set(keys(baked))
+            value_table = Enzyme.Compiler.julia_value_table(enzyme_ctx, mod)
+            @test Set(keys(value_table.slots)) == Set(keys(baked))
             later_ctx = Enzyme.Compiler.EnzymeContext(world)
             Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => later_ctx begin
                 nslots, nresolved = count_slot_loads(mod, julia_values)
                 @test nresolved == 0
-                Enzyme.Compiler.merge_slot_table!(later_ctx, julia_slots)
+                Enzyme.Compiler.merge_julia_value_table!(later_ctx, value_table)
                 nslots, nresolved = count_slot_loads(mod, julia_values)
                 @test nresolved == nslots
             end
 
-            Enzyme.Compiler.resolve_slots!(mod, julia_slots)
+            Enzyme.Compiler.resolve_slots!(mod, value_table)
             for (name, init) in baked
                 gv = LLVM.globals(mod)[name]
                 @test !LLVM.isdeclaration(gv)
@@ -636,14 +661,15 @@ end
         T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Enzyme.Compiler.Tracked)
         mod = LLVM.Module("device")
-        key = Enzyme.insert_julia_value!("device", SlotConst{Float64})
+        enzyme_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
+        key = Enzyme.insert_julia_value!(enzyme_ctx, "device", SlotConst{Float64})
         gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * key, Enzyme.Compiler.Tracked)
         fn = LLVM.Function(mod, "f", LLVM.FunctionType(T_prjlvalue))
         LLVM.IRBuilder() do B
             LLVM.position!(B, LLVM.BasicBlock(fn, "entry"))
             LLVM.ret!(B, gv)
         end
-        Enzyme.Compiler.bake_julia_value_globals!(mod)
+        Enzyme.Compiler.bake_julia_value_globals!(mod, enzyme_ctx.inserted_values)
         @test !haskey(LLVM.globals(mod), "ejl_" * key)
         @test occursin("inttoptr", string(mod))
         @test LLVM.verify(mod) === nothing

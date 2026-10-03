@@ -777,46 +777,63 @@ function record_julia_value!(ctx::EnzymeContext, name::String, @nospecialize(val
 end
 
 """
-    JuliaSlots
+    JuliaValueTable
 
-The Julia value, and its address, behind each symbolic `julia.constgv` slot of one module,
-keyed by the name of the slot: the part of a compilation's table that module needs once the
-compilation is over. [`slot_table`](@ref) takes it out of the context, `_thunk` resolves the
-module it compiled with it, and `autodiff_cache` keeps it next to the bitcode of the thunk, so
-that a later compilation importing the bitcode ([`import_cached_autodiff!`](@ref)) can take the
-slots up into its own table. Holding the values keeps them rooted for as long as the bitcode
-refers to them by name.
+The Julia values one module refers to by name, the part of a compilation's tables that module
+needs once the compilation is over:
+
+- `slots`: the value, and its address, behind each symbolic `julia.constgv` slot, keyed by the
+  name of the slot (see [`make_slots_symbolic!`](@ref));
+- `inserted`: the value each `ejl_<key>` global Enzyme inserted stands for, keyed by `key`
+  (see `insert_julia_value!`).
+
+[`julia_value_table`](@ref) takes it out of the context. `_thunk` resolves the module it
+compiled with it, and `autodiff_cache` keeps it next to the bitcode of the thunk, so that a
+later compilation importing the bitcode ([`import_cached_autodiff!`](@ref)) can take the values
+up into its own tables. Holding the values keeps them rooted for as long as the bitcode refers
+to them by name.
 """
-const JuliaSlots = Dict{String, Tuple{Any, Ptr{Cvoid}}}
+struct JuliaValueTable
+    slots::Dict{String, Tuple{Any, Ptr{Cvoid}}}
+    inserted::Dict{String, Any}
+end
+JuliaValueTable() = JuliaValueTable(Dict{String, Tuple{Any, Ptr{Cvoid}}}(), Dict{String, Any}())
 
 """
-    slot_table(ctx, mod)::JuliaSlots
+    julia_value_table(ctx, mod)::JuliaValueTable
 
-The entries of the table of `ctx` for the slots of `mod` that are still symbolic.
+The entries of the tables of `ctx` for what `mod` refers to by name: its slots that are still
+symbolic, and the `ejl_` globals Enzyme inserted into it.
 """
-function slot_table(ctx::EnzymeContext, mod::LLVM.Module)::JuliaSlots
-    slots = JuliaSlots()
+function julia_value_table(ctx::EnzymeContext, mod::LLVM.Module)::JuliaValueTable
+    table = JuliaValueTable()
     for gv in globals(mod)
-        haskey(metadata(gv), "julia.constgv") || continue
-        LLVM.isdeclaration(gv) || continue
         name = LLVM.name(gv)
-        ptr = get(ctx.julia_slot_addrs, name, nothing)
-        ptr === nothing && continue
-        slots[name] = (ctx.julia_values[name], ptr)
+        if haskey(metadata(gv), "julia.constgv")
+            LLVM.isdeclaration(gv) || continue
+            ptr = get(ctx.julia_slot_addrs, name, nothing)
+            ptr === nothing && continue
+            table.slots[name] = (ctx.julia_values[name], ptr)
+        elseif startswith(name, "ejl_")
+            key = name[(ncodeunits("ejl_") + 1):end]
+            haskey(ctx.inserted_values, key) || continue
+            table.inserted[key] = ctx.inserted_values[key]
+        end
     end
-    return slots
+    return table
 end
 
 """
-    merge_slot_table!(ctx, slots::JuliaSlots)
+    merge_julia_value_table!(ctx, table::JuliaValueTable)
 
-Take the slots of a module compiled earlier, which is being linked into this compilation's,
-up into the table of `ctx`.
+Take the values of a module compiled earlier, which is being linked into this compilation's,
+up into the tables of `ctx`.
 """
-function merge_slot_table!(ctx::EnzymeContext, slots::JuliaSlots)
-    for (name, (val, ptr)) in slots
+function merge_julia_value_table!(ctx::EnzymeContext, table::JuliaValueTable)
+    for (name, (val, ptr)) in table.slots
         record_julia_value!(ctx, name, val, ptr)
     end
+    Base.merge!(ctx.inserted_values, table.inserted)
     return nothing
 end
 
@@ -861,15 +878,16 @@ function mark_symbolic_slot!(gv::LLVM.GlobalVariable)
 end
 
 """
-    resolve_slots!(mod, slots::JuliaSlots)
+    resolve_slots!(mod, table::JuliaValueTable)
 
 Write the address of its value back into every `julia.constgv` slot of `mod` that
-[`make_slots_symbolic!`](@ref) left a declaration, from the module's table `slots` (see
-[`slot_table`](@ref)). This is the resolver for GPUCompiler 1.x, which resolves nothing itself:
+[`make_slots_symbolic!`](@ref) left a declaration, from the module's table (see
+[`julia_value_table`](@ref)). This is the resolver for GPUCompiler 1.x, which resolves nothing itself:
 it runs where the module is linked into code that runs, so that everything before sees the
 slots as names.
 """
-function resolve_slots!(mod::LLVM.Module, slots::JuliaSlots)
+function resolve_slots!(mod::LLVM.Module, table::JuliaValueTable)
+    slots = table.slots
     for gv in globals(mod)
         haskey(metadata(gv), "julia.constgv") || continue
         LLVM.isdeclaration(gv) || continue
@@ -884,15 +902,16 @@ function resolve_slots!(mod::LLVM.Module, slots::JuliaSlots)
 end
 
 """
-    bake_julia_value_globals!(mod)
+    bake_julia_value_globals!(mod, inserted)
 
 Replace each `ejl_<key>` global of the device module `mod`, which stands for the Julia value
-`JuliaGlobalNameMap[key]` or `JuliaEnzymeNameMap[key]` (see `unsafe_to_llvm`), with
-the address of that value. On the host the JIT resolves these names
-(`JIT.define_julia_value!`); GPUCompiler 1.x resolves nothing in device code, so the address is
-written in when the derivative is handed to the kernel that requested it.
+`JuliaGlobalNameMap[key]`, `JuliaEnzymeNameMap[key]` or `inserted[key]` (the values the
+compilation inserted, see `unsafe_to_llvm`), with the address of that value. On the host the JIT
+resolves these names (`JIT.define_julia_values!`); GPUCompiler 1.x resolves nothing in device
+code, so the address is written in when the derivative is handed to the kernel that requested
+it. `unsafe_to_ptr` roots the values for good, as the kernel holds their addresses.
 """
-function bake_julia_value_globals!(mod::LLVM.Module)
+function bake_julia_value_globals!(mod::LLVM.Module, inserted::Dict{String, Any})
     T_pjlvalue = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]))
     for g in collect(globals(mod))
         name = LLVM.name(g)
@@ -902,6 +921,8 @@ function bake_julia_value_globals!(mod::LLVM.Module)
             JuliaGlobalNameMap[key]
         elseif haskey(JuliaEnzymeNameMap, key)
             JuliaEnzymeNameMap[key]
+        elseif haskey(inserted, key)
+            inserted[key]
         else
             continue
         end
@@ -5836,8 +5857,9 @@ end
 function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     # Every compilation runs under its own context; a nested compilation gets
     # its own and hands the outer one back when it returns.
+    outer = isassigned(ENZYME_CONTEXT) ? ENZYME_CONTEXT[] : nothing
     return @with ENZYME_CONTEXT => EnzymeContext(job.world) begin
-        compile_unhooked_impl(output, job)
+        compile_unhooked_impl(output, job, outer)
     end
 end
 
@@ -5884,7 +5906,7 @@ function memtransfer_truetype(world::UInt, @nospecialize(ptr::LLVM.Value), @nosp
     return nothing
 end
 
-function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
+function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget}, outer::Union{EnzymeContext, Nothing})
     @assert output == :llvm
     
     config = job.config
@@ -6827,12 +6849,21 @@ end
     # A derivative compiled on behalf of another job is linked into it here: resolve its slots.
     # A toplevel one is resolved by `_thunk`, once it has kept the symbolic bitcode.
     if !job.config.toplevel
-        resolve_slots!(mod, slot_table(enzyme_ctx, mod))
-        device_module && bake_julia_value_globals!(mod)
+        resolve_slots!(mod, julia_value_table(enzyme_ctx, mod))
+        if device_module || outer === nothing
+            # Nothing resolves the names of the values this compilation inserted where the
+            # module goes: write their addresses in.
+            bake_julia_value_globals!(mod, enzyme_ctx.inserted_values)
+        else
+            # A host derivative requested by the compilation in progress (`autodiff_deferred`
+            # in the function it differentiates) is linked into that compilation's module,
+            # which takes up the values.
+            Base.merge!(outer.inserted_values, enzyme_ctx.inserted_values)
+        end
     end
     # What is still symbolic leaves the compilation with the module.
-    julia_slots = slot_table(enzyme_ctx, mod)
-    return mod, (; adjointf, augmented_primalf, entry, compiled = meta.compiled, TapeType, edges, julia_slots)
+    value_table = julia_value_table(enzyme_ctx, mod)
+    return mod, (; adjointf, augmented_primalf, entry, compiled = meta.compiled, TapeType, edges, value_table)
 end
 
 # Compiler result
@@ -7623,12 +7654,12 @@ const DumpPrePostOpt = Ref(false)
 const DumpPostOpt = Ref(false)
 
 # actual compilation
-function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, String, Union{String, Nothing}, Type, String, JuliaSlots}
+function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, String, Union{String, Nothing}, Type, String, JuliaValueTable}
     config = CompilerConfig(job.config; optimize=false)
     job = CompilerJob(job.source, config, job.world)
     mod, meta = compile(:llvm, job)
     adjointf, augmented_primalf = meta.adjointf, meta.augmented_primalf
-    julia_slots = meta.julia_slots
+    value_table = meta.value_table
 
 
     adjoint_name = name(adjointf)
@@ -7669,9 +7700,10 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
             String(bytes)
         end
         # The bitcode keeps its slots symbolic for a differentiation that imports it, which
-        # takes `julia_slots` along; the code that runs gets the addresses, before it is
+        # takes `value_table` along; the code that runs gets the addresses, before it is
         # optimized.
-        resolve_slots!(mod, julia_slots)
+        resolve_slots!(mod, value_table)
+        JIT.define_julia_values!(value_table.inserted)
         if job.config.params.ABI <: FFIABI || job.config.params.ABI <: NonGenABI
             if DumpPrePostOpt[]
                 API.EnzymeDumpModuleRef(mod.ref)
@@ -7687,13 +7719,14 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         end
         mstr
     else
-        resolve_slots!(mod, julia_slots)
+        resolve_slots!(mod, value_table)
+        JIT.define_julia_values!(value_table.inserted)
         ""
     end
     # The module string above keeps the rule declarations symbolic for nested
     # differentiation; the compiled module binds them to their addresses.
     restore_native_invokes!(mod)
-    return (mod, meta.edges, adjoint_name, primal_name, meta.TapeType, prepost, julia_slots)
+    return (mod, meta.edges, adjoint_name, primal_name, meta.TapeType, prepost, value_table)
 end
 
 const cache = Dict{UInt,CompileResult}()
@@ -7703,13 +7736,13 @@ const cache = Dict{UInt,CompileResult}()
 
 What `autodiff_cache` keeps of a thunk for a later compilation to import (see
 [`import_cached_autodiff!`](@ref)): the name of the function to call (`entry`), the bitcode
-of the module before post-optimization (`bitcode`), whose slots are symbolic, and the Julia
-values behind those slots (`julia_slots`, see [`JuliaSlots`](@ref)).
+of the module before post-optimization (`bitcode`), which refers to Julia values by name, and
+those values (`value_table`, see [`JuliaValueTable`](@ref)).
 """
 struct CachedThunk
     entry::String
     bitcode::String
-    julia_slots::JuliaSlots
+    value_table::JuliaValueTable
 end
 
 # adjoint/primal pointer => the thunk's IR, for nested differentiation
@@ -7724,13 +7757,13 @@ const cache_lock = ReentrantLock()
     try
         obj = get(cache, key, nothing)
         if obj === nothing
-            mod, edges, adjoint_name, primal_name, TapeType, prepost, julia_slots = _thunk(job)
+            mod, edges, adjoint_name, primal_name, TapeType, prepost, value_table = _thunk(job)
             obj = _link(job, mod, edges, adjoint_name, primal_name, TapeType, prepost)
             if obj.adjoint isa Ptr{Nothing}
-                autodiff_cache[obj.adjoint] = CachedThunk(adjoint_name, prepost, julia_slots)
+                autodiff_cache[obj.adjoint] = CachedThunk(adjoint_name, prepost, value_table)
             end
             if obj.primal isa Ptr{Nothing} && primal_name isa String
-                autodiff_cache[obj.primal] = CachedThunk(primal_name, prepost, julia_slots)
+                autodiff_cache[obj.primal] = CachedThunk(primal_name, prepost, value_table)
             end
             cache[key] = obj
         end

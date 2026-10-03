@@ -280,9 +280,10 @@ end
                 world,
             )
 
-            cmod, edges, fwdmodenm, _, _, _ = _thunk(ejob, false) #=postopt=#
+            cmod, edges, fwdmodenm, _, _, _, value_table = _thunk(ejob, false) #=postopt=#
 
             LLVM.link!(mod, cmod)
+            merge_julia_value_table!(enzyme_context(), value_table)
 
             push!(attributes, StringAttribute("enzymejl_forward", fwdmodenm))
             push!(
@@ -340,9 +341,10 @@ end
                 world,
             )
 
-            cmod, edges, adjointnm, augfwdnm, TapeType, _ = _thunk(ejob, false) #=postopt=#
+            cmod, edges, adjointnm, augfwdnm, TapeType, _, value_table = _thunk(ejob, false) #=postopt=#
 
             LLVM.link!(mod, cmod)
+            merge_julia_value_table!(enzyme_context(), value_table)
 
             push!(attributes, StringAttribute("enzymejl_augforward", augfwdnm))
             push!(

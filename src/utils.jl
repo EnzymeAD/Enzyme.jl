@@ -97,20 +97,23 @@ function unsafe_to_ptr(@nospecialize(val))
 end
 export unsafe_to_ptr
 
-# Record `val` in `JuliaEnzymeNameMap` and return its key, `inserted$<hint>$<id>`; the global
-# `ejl_<key>` then stands for `val`, and the JIT resolves it from the map. The key names the
-# object by its `objectid` rather than by its address, so it is the same in every session and
-# leaves the address to the resolver. Values are rooted by the map for good, which keeps their
-# `objectid` unique; should two values still hash alike, the later one gets a suffix.
-function insert_julia_value!(hint::String, @nospecialize(val))::String
+# Record `val` in the table of the compilation `ctx` and return its key, `inserted$<hint>$<id>`;
+# the global `ejl_<key>` then stands for `val`. The table leaves the compilation with the module
+# (`julia_value_table`), and whoever links the module resolves the name: the JIT, or the job a
+# device derivative is handed to. The key names the object by its `objectid` rather than by its
+# address, so it is the same in every session and leaves the address to the resolver. The
+# context roots the values, which keeps their `objectid` unique; should two values still hash
+# alike, the later one gets a suffix.
+function insert_julia_value!(ctx::EnzymeContext, hint::String, @nospecialize(val))::String
+    inserted = ctx.inserted_values
     base = "inserted\$" * hint * "\$" * string(objectid(val); base = 16)
     k = base
     n = 1
     while true
-        if !haskey(Compiler.JuliaEnzymeNameMap, k)
-            Compiler.JuliaEnzymeNameMap[k] = val
+        if !haskey(inserted, k)
+            inserted[k] = val
             return k
-        elseif Compiler.JuliaEnzymeNameMap[k] === val
+        elseif inserted[k] === val
             return k
         end
         n += 1
@@ -139,7 +142,7 @@ function setup_global(
 
     force_inactive = false
     if insert_name_if_not_exists isa String
-        k = insert_julia_value!(insert_name_if_not_exists, val)
+        k = insert_julia_value!(enzyme_context(), insert_name_if_not_exists, val)
         # Since the legacy behavior was to force inactive for global constants, we retain that here (for now)
         force_inactive = true
     end
