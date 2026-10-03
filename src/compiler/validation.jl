@@ -409,7 +409,6 @@ end
 The address of the object the `julia.constgv` slot `gv` holds, as a constant, or `nothing` if
 it is not known. It is only read from at compile time, never written into the IR: what a fold
 inserts is a named global for the object, which the JIT or GPUCompiler resolves.
-
 """
 function slot_object_address(gv::LLVM.GlobalVariable, enzyme_ctx::EnzymeContext)::Union{LLVM.Value, Nothing}
     name = LLVM.name(gv)
