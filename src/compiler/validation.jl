@@ -399,7 +399,7 @@ The object comes from the compilation's table of Julia values ([`julia_value_of_
 where it can: that is what codegen said the slot refers to, and it is there whether or not the
 back-end left an address in the IR (GPUCompiler 2.x's `:patch` and `:table` do not). An
 `isbits` value is held in the table unboxed, though, and its box's address is lost; for those
-the address codegen reported is taken from [`JuliaSlotMap`](@ref), and for slots nothing records
+the address codegen reported is taken from the table's addresses, and for slots nothing records
 it is decoded from the initializer.
 """
 function slot_object_address(gv::LLVM.GlobalVariable)::Union{LLVM.Value, Nothing}
@@ -410,8 +410,10 @@ function slot_object_address(gv::LLVM.GlobalVariable)::Union{LLVM.Value, Nothing
             return LLVM.ConstantInt(UInt(ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), obj)))
         end
     end
-    entry = @lock julia_slot_lock get(JuliaSlotMap, LLVM.name(gv), nothing)
-    entry === nothing || return LLVM.ConstantInt(reinterpret(UInt, entry[2]))
+    if isassigned(ENZYME_CONTEXT)
+        ptr = get(ENZYME_CONTEXT[].julia_slot_addrs, LLVM.name(gv), nothing)
+        ptr === nothing || return LLVM.ConstantInt(reinterpret(UInt, ptr))
+    end
     init = LLVM.initializer(gv)
     init === nothing && return nothing
     return get_base_and_offset(init; offsetAllowed = false, inttoptr = true)[1]
@@ -963,7 +965,8 @@ is inlined and discarded just as a lone import was.
 """
 function import_cached_autodiff!(mod::LLVM.Module, ptr::Ptr{Cvoid}, FT::LLVM.FunctionType)
     enzyme_ctx = enzyme_context()
-    pname, bitcode = autodiff_cache[ptr]
+    cached = autodiff_cache[ptr]
+    pname = cached.entry
 
     if haskey(enzyme_ctx.imported_thunks, ptr)
         if haskey(functions(mod), pname)
@@ -977,7 +980,7 @@ function import_cached_autodiff!(mod::LLVM.Module, ptr::Ptr{Cvoid}, FT::LLVM.Fun
     end
 
     @assert !haskey(functions(mod), pname) || isdeclaration(functions(mod)[pname])
-    pmod = parse(LLVM.Module, unsafe_wrap(Vector{UInt8}, bitcode))
+    pmod = parse(LLVM.Module, unsafe_wrap(Vector{UInt8}, cached.bitcode))
     @assert haskey(functions(pmod), pname)
 
     # Everything the blob carries besides the entry is internal, so that a
@@ -995,6 +998,8 @@ function import_cached_autodiff!(mod::LLVM.Module, ptr::Ptr{Cvoid}, FT::LLVM.Fun
     end
 
     LLVM.link!(mod, pmod)
+    # The blob's slots are symbolic; this compilation resolves them along with its own.
+    merge_slot_table!(enzyme_ctx, cached.julia_slots)
 
     replaceWith = functions(mod)[pname]
     push!(function_attributes(replaceWith), EnumAttribute("alwaysinline"))

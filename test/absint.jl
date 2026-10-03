@@ -565,58 +565,68 @@ end
 # job compiled on behalf of another, and writes the addresses back in when it is linked.
 # Julia 1.10's codegen writes the address of an object into the IR, not a slot.
 @static if VERSION >= v"1.11-"
-@testset "slots stay symbolic until the module is linked" begin
-    world = Base.get_world_counter()
-    mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(slot_stores_constant), Tuple{Float64}, world)
-    config = GPUCompiler.CompilerConfig(
-        Enzyme.Compiler.DefaultCompilerTarget(),
-        Enzyme.Compiler.PrimalCompilerParams(Enzyme.API.DEM_ForwardMode);
-        kernel = false, libraries = true, toplevel = false, optimize = false,
-        cleanup = false, only_entry = false, validate = false, entry_abi = :specfunc,
-    )
-    job = GPUCompiler.CompilerJob(mi, config, world)
-    GPUCompiler.JuliaContext() do _
-        GPUCompiler.prepare_job!(job)
-        mod, meta = GPUCompiler.emit_llvm(job)
-        enzyme_ctx = Enzyme.Compiler.EnzymeContext(world)
-        Enzyme.Compiler.record_julia_values!(enzyme_ctx, meta)
-        julia_values = enzyme_ctx.julia_values
-        baked = Dict(
-            LLVM.name(gv) => string(LLVM.initializer(gv)) for gv in LLVM.globals(mod)
-                if haskey(julia_values, LLVM.name(gv))
+    @testset "slots stay symbolic until the module is linked" begin
+        world = Base.get_world_counter()
+        mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(slot_stores_constant), Tuple{Float64}, world)
+        config = GPUCompiler.CompilerConfig(
+            Enzyme.Compiler.DefaultCompilerTarget(),
+            Enzyme.Compiler.PrimalCompilerParams(Enzyme.API.DEM_ForwardMode);
+            kernel = false, libraries = true, toplevel = false, optimize = false,
+            cleanup = false, only_entry = false, validate = false, entry_abi = :specfunc,
         )
-        @test !isempty(baked)
+        job = GPUCompiler.CompilerJob(mi, config, world)
+        GPUCompiler.JuliaContext() do _
+            GPUCompiler.prepare_job!(job)
+            mod, meta = GPUCompiler.emit_llvm(job)
+            enzyme_ctx = Enzyme.Compiler.EnzymeContext(world)
+            Enzyme.Compiler.record_julia_values!(enzyme_ctx, meta)
+            julia_values = enzyme_ctx.julia_values
+            baked = Dict(
+                LLVM.name(gv) => string(LLVM.initializer(gv)) for gv in LLVM.globals(mod)
+                    if haskey(julia_values, LLVM.name(gv))
+            )
+            @test !isempty(baked)
 
-        Enzyme.Compiler.make_slots_symbolic!(mod)
-        for name in keys(baked)
-            gv = LLVM.globals(mod)[name]
-            @test LLVM.isdeclaration(gv)
-            @test LLVM.isconstant(gv)
-        end
-        # The addresses of the values are gone from the module.
-        str = string(mod)
-        for name in keys(baked)
-            addr = Enzyme.Compiler.JuliaSlotMap[name][2]
-            @test !occursin("i64 $(reinterpret(UInt, addr)) to", str)
-        end
-        # Analysis sees through the slots all the same, and so would a later compilation.
-        Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
-            nslots, nresolved = count_slot_loads(mod, julia_values)
-            @test nslots > 0
-            @test nresolved == nslots
-        end
-        nslots, nresolved = count_slot_loads(mod, julia_values)
-        @test nresolved == nslots
+            Enzyme.Compiler.make_slots_symbolic!(mod, enzyme_ctx)
+            for name in keys(baked)
+                gv = LLVM.globals(mod)[name]
+                @test LLVM.isdeclaration(gv)
+                @test LLVM.isconstant(gv)
+            end
+            # The addresses of the values are gone from the module.
+            str = string(mod)
+            for name in keys(baked)
+                addr = enzyme_ctx.julia_slot_addrs[name]
+                @test !occursin("i64 $(reinterpret(UInt, addr)) to", str)
+            end
+            # Analysis sees through the slots all the same.
+            Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
+                nslots, nresolved = count_slot_loads(mod, julia_values)
+                @test nslots > 0
+                @test nresolved == nslots
+            end
+            # The module takes its part of the table along, and a later compilation that links it
+            # in sees through its slots from that.
+            julia_slots = Enzyme.Compiler.slot_table(enzyme_ctx, mod)
+            @test Set(keys(julia_slots)) == Set(keys(baked))
+            later_ctx = Enzyme.Compiler.EnzymeContext(world)
+            Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => later_ctx begin
+                nslots, nresolved = count_slot_loads(mod, julia_values)
+                @test nresolved == 0
+                Enzyme.Compiler.merge_slot_table!(later_ctx, julia_slots)
+                nslots, nresolved = count_slot_loads(mod, julia_values)
+                @test nresolved == nslots
+            end
 
-        Enzyme.Compiler.resolve_slots!(mod)
-        for (name, init) in baked
-            gv = LLVM.globals(mod)[name]
-            @test !LLVM.isdeclaration(gv)
-            @test string(LLVM.initializer(gv)) == init
+            Enzyme.Compiler.resolve_slots!(mod, julia_slots)
+            for (name, init) in baked
+                gv = LLVM.globals(mod)[name]
+                @test !LLVM.isdeclaration(gv)
+                @test string(LLVM.initializer(gv)) == init
+            end
+            @test LLVM.verify(mod) === nothing
         end
-        @test LLVM.verify(mod) === nothing
     end
-end
 end
 
 # GPUCompiler 1.x resolves nothing in device code, so the Julia values Enzyme refers to there by

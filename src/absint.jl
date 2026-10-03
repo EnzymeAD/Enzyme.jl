@@ -63,8 +63,8 @@ end
     julia_value_of_slot(gv)
 
 The Julia value a load of the global slot `gv` yields, as recorded by the compilation in
-flight (`record_julia_values!`) or an earlier one (`JuliaSlotMap`), or `nothing` if neither
-has a record of the slot.
+flight (`record_julia_values!`, or `merge_slot_table!` for a module compiled earlier), or
+`nothing` if it has no record of the slot.
 
 This is the preferred source: it is what codegen itself said the slot refers to, and it does
 not depend on the address of the value having been written into the IR, which Enzyme removes
@@ -72,14 +72,10 @@ until the module is linked (see `make_slots_symbolic!`). For a slot with no reco
 falls back to decoding the initializer with `slot_initializer_address`.
 """
 function julia_value_of_slot(gv::LLVM.GlobalVariable)::Union{Some{Any}, Nothing}
+    isassigned(ENZYME_CONTEXT) || return nothing
+    values = ENZYME_CONTEXT[].julia_values
     gname = LLVM.name(gv)
-    if isassigned(ENZYME_CONTEXT)
-        values = ENZYME_CONTEXT[].julia_values
-        haskey(values, gname) && return Some{Any}(values[gname])
-    end
-    # A slot of a module compiled before, e.g. the bitcode of a cached thunk.
-    entry = @lock julia_slot_lock get(JuliaSlotMap, gname, nothing)
-    return entry === nothing ? nothing : Some{Any}(entry[1])
+    return haskey(values, gname) ? Some{Any}(values[gname]) : nothing
 end
 
 # The address the load `load` of the global `gv` yields, read out of the initializer, if
