@@ -63,19 +63,23 @@ end
     julia_value_of_slot(gv)
 
 The Julia value a load of the global slot `gv` yields, as recorded by the compilation in
-flight (`record_julia_values!`), or `nothing` if it has no record of the slot.
+flight (`record_julia_values!`) or an earlier one (`JuliaSlotMap`), or `nothing` if neither
+has a record of the slot.
 
-This is the preferred source: it is what codegen itself said the slot refers to, it does
-not depend on the address of the value having been written into the IR, and the value is
-rooted by the context. Outside of a compilation there is no table, and the caller falls
-back to decoding the initializer with [`slot_initializer_address`](@ref).
+This is the preferred source: it is what codegen itself said the slot refers to, and it does
+not depend on the address of the value having been written into the IR, which Enzyme removes
+until the module is linked (see `make_slots_symbolic!`). For a slot with no record the caller
+falls back to decoding the initializer with [`slot_initializer_address`](@ref).
 """
 function julia_value_of_slot(gv::LLVM.GlobalVariable)::Union{Some{Any}, Nothing}
-    isassigned(ENZYME_CONTEXT) || return nothing
-    values = ENZYME_CONTEXT[].julia_values
-    isempty(values) && return nothing
     gname = LLVM.name(gv)
-    return haskey(values, gname) ? Some{Any}(values[gname]) : nothing
+    if isassigned(ENZYME_CONTEXT)
+        values = ENZYME_CONTEXT[].julia_values
+        haskey(values, gname) && return Some{Any}(values[gname])
+    end
+    # A slot of a module compiled before, e.g. the bitcode of a cached thunk.
+    entry = @lock julia_slot_lock get(JuliaSlotMap, gname, nothing)
+    return entry === nothing ? nothing : Some{Any}(entry[1])
 end
 
 # The address the load `load` of the global `gv` yields, read out of the initializer, if
@@ -278,7 +282,41 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
         end
     end
 
+
+    if isa(arg, LLVM.PHIInst)
+        return absint_phi(arg, partial, istracked, typetag)
+    end
+
     return (false, nothing)
+end
+
+# The object a phi yields if every value flowing into it is that same object: for instance two
+# loads of one `julia.constgv` slot, which GVN merges across a branch.
+function absint_phi(arg::LLVM.PHIInst, partial::Bool, istracked::Bool, typetag::Bool)::Tuple{Bool, Any}
+    seen = Set{LLVM.PHIInst}()
+    todo = LLVM.PHIInst[arg]
+    found = false
+    res = nothing
+    while !isempty(todo)
+        phi = pop!(todo)
+        phi in seen && continue
+        push!(seen, phi)
+        for (v, _) in LLVM.incoming(phi)
+            if isa(v, LLVM.PHIInst)
+                push!(todo, v)
+                continue
+            end
+            legal, val = absint(v, partial, istracked, typetag)
+            legal || return (false, nothing)
+            if !found
+                res = val
+                found = true
+            elseif res !== val
+                return (false, nothing)
+            end
+        end
+    end
+    return found ? (true, res) : (false, nothing)
 end
 
 function actual_size(@nospecialize(typ2))::Int

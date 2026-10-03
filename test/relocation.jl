@@ -39,11 +39,11 @@ end
 end
 
 # The module GPUCompiler 2.x hands Enzyme for a job compiled on behalf of another keeps its slots
-# symbolic until the requesting job lowers them; on a `:patch` or `:table` back-end they are still
-# declarations when Enzyme validates the module. Folding a load of one must leave it alone rather
-# than fail on the missing initializer.
+# symbolic until the requesting job lowers them, so they are declarations when Enzyme validates
+# the module. Folding a load of one takes the object from the recorded values, and inserts a
+# global named after it: no address goes into the module.
 @static if Enzyme.Compiler.HAS_GPUCOMPILER_2
-    @testset "constant-load folding skips a symbolic slot" begin
+    @testset "constant-load folding of a symbolic slot" begin
         world = Base.get_world_counter()
         mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(reloc_stores_constant), Tuple{Float64}, world)
         config = GPUCompiler.CompilerConfig(
@@ -57,6 +57,8 @@ end
             GPUCompiler.prepare_job!(job)
             mod, meta = GPUCompiler.emit_llvm(job)
             slots = Set(rec.name for rec in meta.relocations.records)
+            enzyme_ctx = Enzyme.Compiler.EnzymeContext(world)
+            Enzyme.Compiler.record_julia_values!(enzyme_ctx, meta)
             nchecked = 0
             for f in LLVM.functions(mod), bb in LLVM.blocks(f), inst in LLVM.instructions(bb)
                 isa(inst, LLVM.LoadInst) || continue
@@ -68,7 +70,15 @@ end
                     isa(user, LLVM.Instruction) || continue
                     T = LLVM.value_type(user)
                     isa(T, LLVM.PointerType) && LLVM.addrspace(T) == Enzyme.Compiler.Tracked || continue
-                    @test Enzyme.Compiler.try_replace_constant_load!(user; do_replace = false) === user
+                    Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
+                        folded = Enzyme.Compiler.try_replace_constant_load!(user; do_replace = false)
+                        folded === user && continue # e.g. a mutable object, which is not folded
+                        @test startswith(LLVM.name(folded), "ejl_inserted")
+                        legal, val = Enzyme.Compiler.absint(folded)
+                        @test legal
+                        addr = UInt(ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), val))
+                        @test !occursin(string(addr), LLVM.name(folded))
+                    end
                     nchecked += 1
                 end
             end
