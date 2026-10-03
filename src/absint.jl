@@ -69,7 +69,7 @@ has a record of the slot.
 This is the preferred source: it is what codegen itself said the slot refers to, and it does
 not depend on the address of the value having been written into the IR, which Enzyme removes
 until the module is linked (see `make_slots_symbolic!`). For a slot with no record the caller
-falls back to decoding the initializer with [`slot_initializer_address`](@ref).
+falls back to decoding the initializer with `slot_initializer_address`.
 """
 function julia_value_of_slot(gv::LLVM.GlobalVariable)::Union{Some{Any}, Nothing}
     gname = LLVM.name(gv)
