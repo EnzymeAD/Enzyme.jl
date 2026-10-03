@@ -410,24 +410,26 @@ The address of the object the `julia.constgv` slot `gv` holds, as a constant, or
 it is not known. It is only read from at compile time, never written into the IR: what a fold
 inserts is a named global for the object, which the JIT or GPUCompiler resolves.
 
-The object comes from the compilation's table of Julia values ([`julia_value_of_slot`](@ref))
-where it can: that is what codegen said the slot refers to, and it is there whether or not the
-back-end left an address in the IR (GPUCompiler 2.x's `:patch` and `:table` do not). An
-`isbits` value is held in the table unboxed, though, and its box's address is lost; for those
-the address codegen reported is taken from the table's addresses, and for slots nothing records
-it is decoded from the initializer.
+The object comes from the compilation's table of Julia values where the table has the slot's
+address: that is what codegen said the slot refers to, whether or not the address is still in
+the IR. An `isbits` value is held in the table unboxed, its box's address is the one recorded.
+A slot recorded without an address is one the back-end keeps symbolic (GPUCompiler 2.x's
+`:patch` and `:table`), and a fold would refer to the host object from code that must not:
+it is not folded unless the IR itself holds the address. For slots nothing records, the
+address is decoded from the initializer.
 """
 function slot_object_address(gv::LLVM.GlobalVariable)::Union{LLVM.Value, Nothing}
-    found = julia_value_of_slot(gv)
-    if found !== nothing
-        obj = something(found)
+    # Folding runs inside a compilation, whose table it consults.
+    ctx = enzyme_context()
+    name = LLVM.name(gv)
+    ptr = get(ctx.julia_slot_addrs, name, nothing)
+    if ptr !== nothing
+        obj = ctx.julia_values[name]
         if !isbitstype(Core.Typeof(obj))
             return LLVM.ConstantInt(UInt(ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), obj)))
         end
+        return LLVM.ConstantInt(reinterpret(UInt, ptr))
     end
-    # Folding runs inside a compilation, whose table it consults.
-    ptr = get(enzyme_context().julia_slot_addrs, LLVM.name(gv), nothing)
-    ptr === nothing || return LLVM.ConstantInt(reinterpret(UInt, ptr))
     init = LLVM.initializer(gv)
     init === nothing && return nothing
     return get_base_and_offset(init; offsetAllowed = false, inttoptr = true)[1]
