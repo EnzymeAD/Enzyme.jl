@@ -622,28 +622,28 @@ end
     end
 end
 
-# The key of an inserted value is only unique within the compilation that inserted it. Should
-# another compilation have had the JIT define the same key for another value, the module linked
-# next refers to the value under a key of its own.
-@testset "the JIT renames an inserted value whose key another value has" begin
+# The values a compilation inserted stay local to the module that refers to them and its table:
+# linking the module writes their addresses in, and nothing of them is kept in a global.
+@testset "linking a module bakes the values inserted into it" begin
     LLVM.Context() do ctx
         T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
-        key = "inserted\$jit-test\$" * string(rand(UInt); base = 16)
-        function linked_name(val)
-            mod = LLVM.Module("linked")
-            gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * key, Enzyme.Compiler.Tracked)
-            Enzyme.Compiler.JIT.define_julia_values!(mod, Dict{String, Any}(key => val))
-            name = LLVM.name(gv)
-            LLVM.dispose(mod)
-            return name
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Enzyme.Compiler.Tracked)
+        enzyme_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
+        val = Ref{Any}(SlotConst{Float64}(4.5))
+        key = Enzyme.insert_julia_value!(enzyme_ctx, "link", val[])
+        mod = LLVM.Module("linked")
+        gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * key, Enzyme.Compiler.Tracked)
+        fn = LLVM.Function(mod, "f", LLVM.FunctionType(T_prjlvalue))
+        LLVM.IRBuilder() do B
+            LLVM.position!(B, LLVM.BasicBlock(fn, "entry"))
+            LLVM.ret!(B, gv)
         end
-        @test linked_name(SlotConst{Float64}(1.0)) == "ejl_" * key
-        # The same value is the same symbol.
-        @test linked_name(SlotConst{Float64}(1.0)) == "ejl_" * key
-        other = linked_name(SlotConst{Float64}(2.0))
-        @test other != "ejl_" * key
-        @test startswith(other, "ejl_" * key)
-        @test Enzyme.Compiler.JIT.defined_julia_values[other[(ncodeunits("ejl_") + 1):end]] === SlotConst{Float64}(2.0)
+        table = Enzyme.Compiler.julia_value_table(enzyme_ctx, mod)
+        Enzyme.Compiler.bake_inserted_values!(mod, table.inserted)
+        @test !haskey(LLVM.globals(mod), "ejl_" * key)
+        @test occursin("inttoptr", string(mod))
+        @test LLVM.verify(mod) === nothing
+        LLVM.dispose(mod)
     end
 end
 

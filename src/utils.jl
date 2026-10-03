@@ -99,8 +99,9 @@ export unsafe_to_ptr
 
 # Record `val` in the table of the compilation `ctx` and return its key, `inserted$<hint>$<id>`;
 # the global `ejl_<key>` then stands for `val`. The table leaves the compilation with the module
-# (`julia_value_table`), and whoever links the module resolves the name: the JIT, or the job a
-# device derivative is handed to. The key names the object by its `objectid` rather than by its
+# (`julia_value_table`), and whoever links the module resolves the name: `_thunk` as it hands the
+# module to the JIT, the compilation a host derivative is linked into, or the job a device
+# derivative is handed to. The key names the object by its `objectid` rather than by its
 # address, so it is the same in every session and leaves the address to the resolver. The
 # context roots the values, which keeps their `objectid` unique; should two values still hash
 # alike, the later one gets a suffix.

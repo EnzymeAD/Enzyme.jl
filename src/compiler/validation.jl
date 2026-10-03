@@ -410,10 +410,9 @@ function slot_object_address(gv::LLVM.GlobalVariable)::Union{LLVM.Value, Nothing
             return LLVM.ConstantInt(UInt(ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), obj)))
         end
     end
-    if isassigned(ENZYME_CONTEXT)
-        ptr = get(ENZYME_CONTEXT[].julia_slot_addrs, LLVM.name(gv), nothing)
-        ptr === nothing || return LLVM.ConstantInt(reinterpret(UInt, ptr))
-    end
+    # Folding runs inside a compilation, whose table it consults.
+    ptr = get(enzyme_context().julia_slot_addrs, LLVM.name(gv), nothing)
+    ptr === nothing || return LLVM.ConstantInt(reinterpret(UInt, ptr))
     init = LLVM.initializer(gv)
     init === nothing && return nothing
     return get_base_and_offset(init; offsetAllowed = false, inttoptr = true)[1]
