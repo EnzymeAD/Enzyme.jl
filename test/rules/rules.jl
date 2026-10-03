@@ -225,4 +225,38 @@ end
     @test dst.data == [2.0, 4.0]
 end
 
+# The rule reads every field of the argument, but the primal body only reads
+# the first, so analyses of the body must not drop stores of the others (#3733).
+struct TwoFieldCache
+    du::Vector{Float64}
+    dual_du::Vector{Float64}
+end
+get_tmp_3733(c::TwoFieldCache) = c.du
+
+shadow_3733(c::TwoFieldCache) = TwoFieldCache(zero(c.du), zero(c.dual_du))
+
+function forward(
+        config::FwdConfig, ::Const{typeof(get_tmp_3733)},
+        ::Type{<:Annotation}, c::Const{TwoFieldCache}
+    )
+    s = shadow_3733(c.val).du
+    return EnzymeRules.needs_primal(config) ? Duplicated(c.val.du, s) : s
+end
+
+function square_into_3733!(du, u, c)
+    o = get_tmp_3733(c)
+    o .= u .* u
+    du .= o
+    return nothing
+end
+
+@testset "Rule reads fields its primal does not" begin
+    c = TwoFieldCache(zeros(3), zeros(3))
+    x = [1.0, 2.0, 3.0]
+    dx = zeros(3)
+    ddx = zeros(3)
+    autodiff(Forward, square_into_3733!, Duplicated(dx, ddx), Duplicated(x, [1.0, 0, 0]), Const(c))
+    @test ddx == [2.0, 0.0, 0.0]
+end
+
 end # module ForwardRules
