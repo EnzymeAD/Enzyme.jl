@@ -485,16 +485,12 @@ end
         enzyme_ctx = Enzyme.Compiler.EnzymeContext(world)
         Enzyme.Compiler.record_julia_values!(enzyme_ctx, meta)
         julia_values = enzyme_ctx.julia_values
-        if haskey(meta, :gv_to_value)
-            @test !isempty(julia_values)
-            @test SlotConst{Float64}(1.0) in values(julia_values)
-            Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
-                nslots, nresolved = count_slot_loads(mod, julia_values)
-                @test nslots > 0
-                @test nresolved == nslots
-            end
-        else
-            @test isempty(julia_values)
+        @test !isempty(julia_values)
+        @test SlotConst{Float64}(1.0) in values(julia_values)
+        Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
+            nslots, nresolved = count_slot_loads(mod, julia_values)
+            @test nslots > 0
+            @test nresolved == nslots
         end
     end
 end
