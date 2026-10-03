@@ -1,4 +1,6 @@
 using Enzyme, Test
+using LLVM
+import GPUCompiler
 
 struct BufferedMap!{X}
     x_buffer::Vector{X}
@@ -363,4 +365,136 @@ end
     )
     @test dp.tunable == [1.0]
     @test dp.caches == [0.0]
+end
+
+abstract type SlotAbs end
+struct SlotConst{T} <: SlotAbs
+    σ::T
+end
+
+const SLOT_KEEP = Any[]
+
+function slot_stores_constant(x)
+    dists = SlotAbs[SlotConst{Float64}(1.0)]
+    push!(SLOT_KEEP, dists)
+    return @inbounds dists[1].σ
+end
+
+# `f` returns the value loaded from the global slot `gv`, in the shape Julia's codegen gives a
+# reference to a Julia value: an untracked load, cast into the tracked address space.
+function slot_module(name::String)
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+    T_pjlvalue = LLVM.PointerType(T_jlvalue)
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, 10)
+
+    mod = LLVM.Module("slots")
+    gv = LLVM.GlobalVariable(mod, T_pjlvalue, name)
+    fn = LLVM.Function(mod, "f", LLVM.FunctionType(T_prjlvalue))
+    value = LLVM.IRBuilder() do builder
+        LLVM.position!(builder, LLVM.BasicBlock(fn, "entry"))
+        loaded = LLVM.load!(builder, T_pjlvalue, gv)
+        tracked = LLVM.addrspacecast!(builder, loaded, T_prjlvalue)
+        LLVM.ret!(builder, tracked)
+        tracked
+    end
+    return mod, gv, value
+end
+
+# A slot without an initializer has no address of the value it refers to in the IR. The
+# compilation's table of slots is what tells `absint` which Julia value a load of it yields.
+@testset "absint resolves a symbolic slot from the context" begin
+    LLVM.Context() do ctx
+        mod, gv, value = slot_module("slot")
+
+        # Nothing to go by: no initializer, and no compilation in flight.
+        @test Enzyme.Compiler.absint(value) == (false, nothing)
+        @test !Enzyme.Compiler.abs_typeof(value)[1]
+
+        enzyme_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
+        Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
+            # A compilation that has no record of the slot does not know either.
+            @test Enzyme.Compiler.absint(value) == (false, nothing)
+
+            enzyme_ctx.julia_values["slot"] = SlotConst{Float64}
+            @test Enzyme.Compiler.absint(value) == (true, SlotConst{Float64})
+            @test Enzyme.Compiler.abs_typeof(value) ==
+                (true, Type{SlotConst{Float64}}, GPUCompiler.BITS_REF)
+
+            # `nothing` is a value like any other, not a miss.
+            enzyme_ctx.julia_values["slot"] = nothing
+            @test Enzyme.Compiler.absint(value) == (true, nothing)
+            @test Enzyme.Compiler.abs_typeof(value) ==
+                (true, Nothing, GPUCompiler.BITS_REF)
+        end
+        LLVM.dispose(mod)
+    end
+end
+
+# A slot whose initializer holds the address stays readable, with or without a table.
+@testset "absint still decodes a baked slot" begin
+    LLVM.Context() do ctx
+        mod, gv, value = slot_module("slot")
+        addr = UInt(ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), SlotConst{Float64}))
+        T_pjlvalue = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]))
+        word = LLVM.ConstantInt(LLVM.IntType(8 * sizeof(UInt)), addr)
+        LLVM.initializer!(gv, LLVM.const_inttoptr(word, T_pjlvalue))
+
+        @test Enzyme.Compiler.absint(value) == (true, SlotConst{Float64})
+        Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => Enzyme.Compiler.EnzymeContext(Base.get_world_counter()) begin
+            @test Enzyme.Compiler.absint(value) == (true, SlotConst{Float64})
+            @test Enzyme.Compiler.abs_typeof(value) ==
+                (true, Type{SlotConst{Float64}}, GPUCompiler.BITS_REF)
+        end
+        LLVM.dispose(mod)
+    end
+end
+
+function count_slot_loads(mod::LLVM.Module, julia_values::Dict{String, Any})
+    nslots = 0
+    nresolved = 0
+    for f in LLVM.functions(mod), bb in LLVM.blocks(f), inst in LLVM.instructions(bb)
+        inst isa LLVM.LoadInst || continue
+        gv = LLVM.operands(inst)[1]
+        gv isa LLVM.GlobalVariable || continue
+        haskey(julia_values, LLVM.name(gv)) || continue
+        nslots += 1
+        legal, val = Enzyme.Compiler.absint(inst, false, true)
+        if legal && val === julia_values[LLVM.name(gv)]
+            nresolved += 1
+        end
+    end
+    return nslots, nresolved
+end
+
+# GPUCompiler reports the object behind each slot of the module it emits as `gv_to_value`; the
+# table is filled from that, and resolves every load of a slot.
+@testset "the table is filled from gv_to_value" begin
+    world = Base.get_world_counter()
+    mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(slot_stores_constant), Tuple{Float64}, world)
+    config = GPUCompiler.CompilerConfig(
+        Enzyme.Compiler.DefaultCompilerTarget(),
+        Enzyme.Compiler.PrimalCompilerParams(Enzyme.API.DEM_ForwardMode);
+        kernel = false, libraries = true, toplevel = false, optimize = false,
+        cleanup = false, only_entry = false, validate = false, entry_abi = :specfunc,
+    )
+    job = GPUCompiler.CompilerJob(mi, config, world)
+    GPUCompiler.JuliaContext() do _
+        GPUCompiler.prepare_job!(job)
+        mod, meta = GPUCompiler.emit_llvm(job)
+
+        enzyme_ctx = Enzyme.Compiler.EnzymeContext(world)
+        Enzyme.Compiler.record_julia_values!(enzyme_ctx, meta)
+        julia_values = enzyme_ctx.julia_values
+        if haskey(meta, :gv_to_value)
+            @test !isempty(julia_values)
+            @test SlotConst{Float64}(1.0) in values(julia_values)
+            Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
+                nslots, nresolved = count_slot_loads(mod, julia_values)
+                @test nslots > 0
+                @test nresolved == nslots
+            end
+        else
+            @test isempty(julia_values)
+        end
+    end
 end
