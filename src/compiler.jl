@@ -7724,13 +7724,13 @@ const cache_lock = ReentrantLock()
     try
         obj = get(cache, key, nothing)
         if obj === nothing
-            asm = _thunk(job)
-            obj = _link(job, asm...)
+            mod, edges, adjoint_name, primal_name, TapeType, prepost, julia_slots = _thunk(job)
+            obj = _link(job, mod, edges, adjoint_name, primal_name, TapeType, prepost)
             if obj.adjoint isa Ptr{Nothing}
-                autodiff_cache[obj.adjoint] = CachedThunk(asm[3], asm[6], asm[7])
+                autodiff_cache[obj.adjoint] = CachedThunk(adjoint_name, prepost, julia_slots)
             end
-            if obj.primal isa Ptr{Nothing} && asm[4] isa String
-                autodiff_cache[obj.primal] = CachedThunk(asm[4], asm[6], asm[7])
+            if obj.primal isa Ptr{Nothing} && primal_name isa String
+                autodiff_cache[obj.primal] = CachedThunk(primal_name, prepost, julia_slots)
             end
             cache[key] = obj
         end
