@@ -65,28 +65,24 @@ function named_global(gv::LLVM.GlobalVariable, inserted_values::Union{Dict{Strin
 end
 
 """
-    julia_value_of_slot(gv, julia_values)
+    julia_value_of_slot(gv, enzyme_ctx)
 
-The Julia value a load of the global slot `gv` yields, as the compilation in flight recorded it
-in `julia_values` (`record_julia_values!`, or `merge_julia_value_table!` for a module compiled
-earlier), or `nothing` if it has no record of the slot.
+The Julia value a load of the global slot `gv` yields, as the compilation in flight knows it
+(`slot_value`: what codegen reported, or a module compiled earlier brought along), or the value
+of the box GPUCompiler 2.x materialized for it in device code (`materialized_box_value`);
+`nothing` if neither.
 
 This is the preferred source: it is what codegen itself said the slot refers to, and it does
 not depend on the address of the value having been written into the IR, which Enzyme removes
 until the module is linked (see `make_slots_symbolic!`). For a slot with no record the caller
 falls back to decoding the initializer with `slot_initializer_address`.
 """
-function julia_value_of_slot(gv::LLVM.GlobalVariable, julia_values::Union{Dict{String, Any}, Nothing})::Union{Some{Any}, Nothing}
-    julia_values === nothing && return nothing
-    gname = LLVM.name(gv)
-    return haskey(julia_values, gname) ? Some{Any}(julia_values[gname]) : nothing
+function julia_value_of_slot(gv::LLVM.GlobalVariable, enzyme_ctx::Union{EnzymeContext, Nothing})::Union{Some{Any}, Nothing}
+    enzyme_ctx === nothing && return nothing
+    found = slot_value(enzyme_ctx, LLVM.name(gv))
+    found === nothing || return found
+    return materialized_box_value(enzyme_ctx, gv)
 end
-
-# The table of the Julia values the global slots of the compilation `enzyme_ctx` refer to, see
-# `EnzymeContext`. Outside of a compilation (`nothing`) there is none: the IR then holds the
-# addresses.
-julia_values(enzyme_ctx::EnzymeContext) = enzyme_ctx.julia_values
-julia_values(::Nothing) = nothing
 
 # The address the load `load` of the global `gv` yields, read out of the initializer, if
 # nothing but loads touches the global; `load` itself otherwise.
@@ -117,7 +113,7 @@ function absint(@nospecialize(arg::LLVM.Value), enzyme_ctx::Union{EnzymeContext,
         if isa(ce, LLVM.LoadInst)
             gv = operands(ce)[1]
             if isa(gv, LLVM.GlobalVariable)
-                found = julia_value_of_slot(gv, julia_values(enzyme_ctx))
+                found = julia_value_of_slot(gv, enzyme_ctx)
                 found === nothing || return (true, something(found))
                 ce = slot_initializer_address(gv, ce)
             end
@@ -276,7 +272,7 @@ function absint(@nospecialize(arg::LLVM.Value), enzyme_ctx::Union{EnzymeContext,
         ptr = operands(arg)[1]
         ce, _ = get_base_and_offset(ptr; offsetAllowed = false, inttoptr = true)
         if isa(ce, GlobalVariable)
-            found = julia_value_of_slot(ce, julia_values(enzyme_ctx))
+            found = julia_value_of_slot(ce, enzyme_ctx)
             found === nothing || return (true, something(found))
             found = julia_global(LLVM.name(ce))
             found === nothing || return (true, something(found))
@@ -553,7 +549,7 @@ function abs_typeof(
         if isa(ce, LLVM.LoadInst)
             gv = operands(ce)[1]
             if isa(gv, LLVM.GlobalVariable)
-                found = julia_value_of_slot(gv, julia_values(enzyme_ctx))
+                found = julia_value_of_slot(gv, enzyme_ctx)
                 found === nothing || return (true, Core.Typeof(something(found)), GPUCompiler.BITS_REF)
                 ce = slot_initializer_address(gv, ce)
             end
@@ -790,7 +786,7 @@ function abs_typeof(
     if isa(arg, LLVM.LoadInst)
         ce, _ = get_base_and_offset(operands(arg)[1]; offsetAllowed = false, inttoptr = true)
         if isa(ce, GlobalVariable)
-            found = julia_value_of_slot(ce, julia_values(enzyme_ctx))
+            found = julia_value_of_slot(ce, enzyme_ctx)
             found === nothing || return (true, Core.Typeof(something(found)), GPUCompiler.BITS_REF)
             found = julia_global(LLVM.name(ce))
             found === nothing || return (true, Core.Typeof(something(found)), GPUCompiler.BITS_REF)
