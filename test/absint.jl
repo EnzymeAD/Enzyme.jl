@@ -498,3 +498,44 @@ end
         end
     end
 end
+
+# Folding a constant load takes the object from the table too, so it holds when the address in
+# the IR does not say the same: here the initializer points at one tuple, the table at another.
+# Read straight out of an `Any` container, so that the address taken is that of a box that stays
+# alive; an immutable passed to `jl_value_ptr` from a concretely typed variable is boxed afresh.
+const SLOT_BAKED = Ref{Any}(("slot-baked",))
+const SLOT_RECORDED = Ref{Any}(("slot-recorded",))
+
+@testset "constant-load folding takes the slot's object from the table" begin
+    LLVM.Context() do ctx
+        mod, gv, value = slot_module("slot")
+        LLVM.metadata(gv)["julia.constgv"] = LLVM.MDNode(LLVM.Metadata[])
+        addr = UInt(ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), SLOT_BAKED[]))
+        T_pjlvalue = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]))
+        word = LLVM.ConstantInt(LLVM.IntType(8 * sizeof(UInt)), addr)
+        LLVM.initializer!(gv, LLVM.const_inttoptr(word, T_pjlvalue))
+
+        folded = Enzyme.Compiler.try_replace_constant_load!(value; do_replace = false)
+        @test folded !== value
+        @test Enzyme.Compiler.absint(folded) == (true, SLOT_BAKED[])
+
+        enzyme_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
+        Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
+            enzyme_ctx.julia_values["slot"] = SLOT_RECORDED[]
+            folded = Enzyme.Compiler.try_replace_constant_load!(value; do_replace = false)
+            @test Enzyme.Compiler.absint(folded) == (true, SLOT_RECORDED[])
+
+            # The table holds an `isbits` value unboxed, without the address of its box: the
+            # initializer is what is left to go by.
+            enzyme_ctx.julia_values["slot"] = 2.5
+            folded = Enzyme.Compiler.try_replace_constant_load!(value; do_replace = false)
+            @test Enzyme.Compiler.absint(folded) == (true, SLOT_BAKED[])
+
+            # A slot without an initializer is the loader's to fill, record or not.
+            enzyme_ctx.julia_values["slot"] = SLOT_RECORDED[]
+            LLVM.initializer!(gv, nothing)
+            @test Enzyme.Compiler.try_replace_constant_load!(value; do_replace = false) === value
+        end
+        LLVM.dispose(mod)
+    end
+end

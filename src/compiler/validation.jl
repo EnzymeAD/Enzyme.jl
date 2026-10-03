@@ -388,6 +388,33 @@ function is_nonconst_binding(addr::UInt)
     return !isconst(gr.mod, gr.name)
 end
 
+"""
+    slot_object_address(gv) -> Union{LLVM.Value, Nothing}
+
+The address of the object the `julia.constgv` slot `gv` holds, as the constant a load of the
+slot yields, or `nothing` if the slot has no initializer.
+
+The object comes from the compilation's table of Julia values ([`julia_value_of_slot`](@ref))
+where it can: that is what codegen said the slot refers to, independent of what is written
+into the IR. An `isbits` value is held in the table unboxed, though, and its box's address is
+lost; for those, and for slots the table has no record of, the address is decoded from the
+initializer. A slot without an initializer is left to the back-end's loader (GPUCompiler 2.x,
+`:patch` or `:table`); folding a load of it would put a host address into code that must not
+contain one, so it is not folded at all.
+"""
+function slot_object_address(gv::LLVM.GlobalVariable)::Union{LLVM.Value, Nothing}
+    init = LLVM.initializer(gv)
+    init === nothing && return nothing
+    found = julia_value_of_slot(gv)
+    if found !== nothing
+        obj = something(found)
+        if !isbitstype(Core.Typeof(obj))
+            return LLVM.ConstantInt(UInt(ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), obj)))
+        end
+    end
+    return get_base_and_offset(init; offsetAllowed = false, inttoptr = true)[1]
+end
+
 function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check_mutability::Bool = true, do_replace::Bool = true)::LLVM.Value
     if !(isa(value_type(inst), LLVM.PointerType) && addrspace(value_type(inst)) == Tracked)
         return inst
@@ -404,18 +431,17 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
     originally_tracked_load = false
     if isa(addr, LLVM.GlobalVariable) && (haskey(metadata(addr), "julia.constgv") || !check_mutability)
         paddr = addr
-        addr = LLVM.initializer(paddr)
+        addr = slot_object_address(paddr)
+        addr === nothing && return inst
         gname = LLVM.name(paddr) * "\$false"
-        addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
         originally_tracked = true
     elseif isa(addr, LLVM.LoadInst)
         paddr = operands(addr)[1]
         if isa(paddr, LLVM.GlobalVariable) && (haskey(metadata(paddr), "julia.constgv") || !check_mutability)
-            addr = LLVM.initializer(paddr)
+            addr = slot_object_address(paddr)
+            addr === nothing && return inst
             gname = LLVM.name(paddr) * "\$true"
-            base_addr, _ = get_base_and_offset(addr; offsetAllowed = true, inttoptr = false)
             originally_tracked = true
-            addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
             load1 = true
             originally_tracked_load = true
         end
