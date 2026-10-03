@@ -754,17 +754,14 @@ import .Interpreter: isKWCallSignature
 
 Remember which Julia value each global slot of a freshly emitted module refers to.
 
-GPUCompiler (from 1.8) reports them as `gv_to_value`, the address of the object behind each
-slot, keyed by the name of the slot. That is the authoritative answer to "which object is
+GPUCompiler reports them as `gv_to_value`, the address of the object behind each slot, keyed
+by the name of the slot. That is the authoritative answer to "which object is
 this global?", and unlike an address decoded from an initializer it does not depend on the
 address having been written into the IR. `absint` and `abs_typeof` read the table through
 [`julia_value_of_slot`](@ref). Holding the values in the context also keeps them rooted for
 the duration of the compilation.
-
-GPUCompiler before 1.8 reports nothing; the table stays empty and every lookup misses.
 """
 function record_julia_values!(ctx::EnzymeContext, meta)
-    haskey(meta, :gv_to_value) || return nothing
     for (name, ptr) in meta.gv_to_value
         # A slot whose initializer GPUCompiler could not match to an object.
         ptr == C_NULL && continue
