@@ -559,25 +559,44 @@ const SLOT_RECORDED = Ref{Any}(("slot-recorded",))
             @test Enzyme.Compiler.absint(folded) == (true, SLOT_BAKED[])
         end
 
+        recorded_ptr = ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), SLOT_RECORDED[])
         enzyme_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
         Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
-            enzyme_ctx.julia_values["slot"] = SLOT_RECORDED[]
+            Enzyme.Compiler.record_julia_value!(enzyme_ctx, "slot", SLOT_RECORDED[], recorded_ptr)
             folded = Enzyme.Compiler.try_replace_constant_load!(value; do_replace = false)
             @test Enzyme.Compiler.absint(folded) == (true, SLOT_RECORDED[])
 
-            # The table holds an `isbits` value unboxed, without the address of its box: the
-            # initializer is what is left to go by.
-            enzyme_ctx.julia_values["slot"] = 2.5
+            # The address is what the slot will hold. GPUCompiler 2.x reports an immutable value as
+            # emitted and the address of the instance it roots, which may be another, egal one: the
+            # fold takes the object at the address.
+            egal = Ref{Any}((string("slot-", "recorded"),))
+            @test egal[] === SLOT_RECORDED[]
+            @test ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), egal[]) != recorded_ptr
+            egal_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
+            Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => egal_ctx begin
+                Enzyme.Compiler.record_julia_value!(egal_ctx, "slot", egal[], recorded_ptr)
+                folded = Enzyme.Compiler.try_replace_constant_load!(value; do_replace = false)
+                obj = egal_ctx.inserted_values[LLVM.name(folded)[(ncodeunits("ejl_") + 1):end]]
+                @test ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), obj) == recorded_ptr
+            end
+
+            # A value recorded without an address belongs to a slot the back-end keeps symbolic:
+            # the initializer is what is left to go by.
+            empty!(enzyme_ctx.julia_slot_addrs)
             folded = Enzyme.Compiler.try_replace_constant_load!(value; do_replace = false)
             @test Enzyme.Compiler.absint(folded) == (true, SLOT_BAKED[])
 
             # Without an initializer, as Enzyme keeps slots until the module is linked, the
             # record is all there is: the load still folds, into a global named after the object.
-            enzyme_ctx.julia_values["slot"] = SLOT_RECORDED[]
+            Enzyme.Compiler.record_julia_value!(enzyme_ctx, "slot", SLOT_RECORDED[], recorded_ptr)
             LLVM.initializer!(gv, nothing)
             folded = Enzyme.Compiler.try_replace_constant_load!(value; do_replace = false)
             @test Enzyme.Compiler.absint(folded) == (true, SLOT_RECORDED[])
-            @test !occursin(string(UInt(ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), SLOT_RECORDED[]))), LLVM.name(folded))
+            @test !occursin(string(UInt(recorded_ptr)), LLVM.name(folded))
+
+            # Nor without an address.
+            empty!(enzyme_ctx.julia_slot_addrs)
+            @test Enzyme.Compiler.try_replace_constant_load!(value; do_replace = false) === value
         end
         # Nor is a slot without an initializer folded when nothing records it.
         Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => Enzyme.Compiler.EnzymeContext(Base.get_world_counter()) begin

@@ -700,6 +700,7 @@ end
     v = first(onehot(x))
     hv = make_zero(v)
     nested_hvp!(hv, v, x)
+    @test hv ≈ [-2 * tanh(0.5) * sech(0.5)^2]
 end
 
 const CONST_VAL = 2.0
