@@ -622,6 +622,31 @@ end
     end
 end
 
+# The key of an inserted value is only unique within the compilation that inserted it. Should
+# another compilation have had the JIT define the same key for another value, the module linked
+# next refers to the value under a key of its own.
+@testset "the JIT renames an inserted value whose key another value has" begin
+    LLVM.Context() do ctx
+        T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+        key = "inserted\$jit-test\$" * string(rand(UInt); base = 16)
+        function linked_name(val)
+            mod = LLVM.Module("linked")
+            gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * key, Enzyme.Compiler.Tracked)
+            Enzyme.Compiler.JIT.define_julia_values!(mod, Dict{String, Any}(key => val))
+            name = LLVM.name(gv)
+            LLVM.dispose(mod)
+            return name
+        end
+        @test linked_name(SlotConst{Float64}(1.0)) == "ejl_" * key
+        # The same value is the same symbol.
+        @test linked_name(SlotConst{Float64}(1.0)) == "ejl_" * key
+        other = linked_name(SlotConst{Float64}(2.0))
+        @test other != "ejl_" * key
+        @test startswith(other, "ejl_" * key)
+        @test Enzyme.Compiler.JIT.defined_julia_values[other[(ncodeunits("ejl_") + 1):end]] === SlotConst{Float64}(2.0)
+    end
+end
+
 # Enzyme works on a module with its slots as declarations, the way GPUCompiler 2.x hands over a
 # job compiled on behalf of another, and writes the addresses back in when it is linked.
 # Julia 1.10's codegen writes the address of an object into the IR, not a slot.

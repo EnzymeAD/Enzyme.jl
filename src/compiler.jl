@@ -902,6 +902,27 @@ function resolve_slots!(mod::LLVM.Module, table::JuliaValueTable)
 end
 
 """
+    ejl_value(key, inserted)::Union{Some{Any}, Nothing}
+
+The Julia value the global `ejl_<key>` stands for: a well-known Julia global
+(`JuliaGlobalNameMap`), one Enzyme knows when it loads (`JuliaEnzymeNameMap`), or one the
+compilation inserted (`inserted`, see `insert_julia_value!`); `nothing` if none. A load folded
+through a binding (Julia 1.10) stands for the binding's value.
+"""
+function ejl_value(key::AbstractString, inserted::Dict{String, Any})::Union{Some{Any}, Nothing}
+    val = if haskey(JuliaGlobalNameMap, key)
+        JuliaGlobalNameMap[key]
+    elseif haskey(JuliaEnzymeNameMap, key)
+        JuliaEnzymeNameMap[key]
+    elseif haskey(inserted, key)
+        inserted[key]
+    else
+        return nothing
+    end
+    return Some{Any}(unbind(val))
+end
+
+"""
     bake_julia_value_globals!(mod, inserted)
 
 Replace each `ejl_<key>` global of the device module `mod`, which stands for the Julia value
@@ -916,19 +937,9 @@ function bake_julia_value_globals!(mod::LLVM.Module, inserted::Dict{String, Any}
     for g in collect(globals(mod))
         name = LLVM.name(g)
         startswith(name, "ejl_") || continue
-        key = name[(ncodeunits("ejl_") + 1):end]
-        val = if haskey(JuliaGlobalNameMap, key)
-            JuliaGlobalNameMap[key]
-        elseif haskey(JuliaEnzymeNameMap, key)
-            JuliaEnzymeNameMap[key]
-        elseif haskey(inserted, key)
-            inserted[key]
-        else
-            continue
-        end
-        # A load folded through a binding (Julia 1.10) stands for the binding's value.
-        val isa Core.Binding && (val = val.value)
-        addr = LLVM.ConstantInt(reinterpret(UInt, unsafe_to_ptr(val)))
+        found = ejl_value(name[(ncodeunits("ejl_") + 1):end], inserted)
+        found === nothing && continue
+        addr = LLVM.ConstantInt(reinterpret(UInt, unsafe_to_ptr(something(found))))
         replace_uses!(g, LLVM.const_addrspacecast(LLVM.const_inttoptr(addr, T_pjlvalue), value_type(g)))
         LLVM.erase!(g)
     end
@@ -7703,7 +7714,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         # takes `value_table` along; the code that runs gets the addresses, before it is
         # optimized.
         resolve_slots!(mod, value_table)
-        JIT.define_julia_values!(value_table.inserted)
+        JIT.define_julia_values!(mod, value_table.inserted)
         if job.config.params.ABI <: FFIABI || job.config.params.ABI <: NonGenABI
             if DumpPrePostOpt[]
                 API.EnzymeDumpModuleRef(mod.ref)
@@ -7720,7 +7731,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         mstr
     else
         resolve_slots!(mod, value_table)
-        JIT.define_julia_values!(value_table.inserted)
+        JIT.define_julia_values!(mod, value_table.inserted)
         ""
     end
     # The module string above keeps the rule declarations symbolic for nested
@@ -7822,6 +7833,8 @@ function clear_caches!()
     # The library handles `ejlstr$` and `ejlptr$` symbols were resolved through.
     empty!(JIT.hnd_string_map)
     empty!(JIT.hnd_int_map)
+    # The Julia values the JIT defined `ejl_` symbols for, rooted by the map.
+    @lock JIT.defined_julia_values_lock empty!(JIT.defined_julia_values)
 
     @static if VERSION < v"1.11.0-DEV.1552"
         # Inference results, kept by Enzyme itself on versions where Julia's own cache does

@@ -129,9 +129,11 @@ function __init__()
         )
     end
 
-    @lock defined_julia_values_lock empty!(defined_julia_values)
-    for (k, v) in Compiler.JuliaEnzymeNameMap
-        define_julia_value!(lljit, jd_main, k, v)
+    @lock defined_julia_values_lock begin
+        empty!(defined_julia_values)
+        for (k, v) in Compiler.JuliaEnzymeNameMap
+            define_julia_value!(lljit, jd_main, k, v)
+        end
     end
 
     atexit() do
@@ -176,35 +178,39 @@ const defined_julia_values = Dict{String, Any}()
 const defined_julia_values_lock = ReentrantLock()
 
 # Define the global `ejl_<key>`, which stands for the Julia value `val`, in `jd` as an absolute
-# symbol at the address of that value, once. This is how the JIT resolves the Julia values
-# Enzyme refers to: the IR names them, the address is supplied at link time.
+# symbol at the address of that value. This is how the JIT resolves the Julia values Enzyme refers
+# to: the IR names them, the address is supplied at link time. The caller holds
+# `defined_julia_values_lock` and has checked that `key` is not defined yet.
 function define_julia_value!(lljit, jd, key::String, @nospecialize(val))
-    @lock defined_julia_values_lock begin
-        if haskey(defined_julia_values, key)
-            defined_julia_values[key] === val ||
-                error("Enzyme internal error: ejl_$key already stands for another Julia value")
-            return nothing
-        end
-        defined_julia_values[key] = val
-        # A load folded through a binding (Julia 1.10) stands for the binding's value.
-        if val isa Core.Binding
-            val = val.value
-        end
-        ptr = Compiler.unsafe_to_ptr(val)
-        LLVM.define(jd, absolute_symbol_materialization(mangle(lljit, "ejl_" * key), ptr))
-    end
+    defined_julia_values[key] = val
+    ptr = Compiler.unsafe_to_ptr(Compiler.unbind(val))
+    LLVM.define(jd, absolute_symbol_materialization(mangle(lljit, "ejl_" * key), ptr))
     return nothing
 end
 
 # Define the `ejl_` globals of the Julia values a compilation inserted (`inserted`, keyed by the
-# name of the global without the prefix, see `Compiler.JuliaValueTable`) in the JIT, for the
-# module that refers to them to be linked.
-function define_julia_values!(inserted::Dict{String, Any})
+# name of the global without the prefix, see `Compiler.JuliaValueTable`) in the JIT, for `mod`,
+# which refers to them, to be linked. The key of a value is only unique within the compilation
+# that inserted it: should another one have had the JIT define the same key for another value,
+# the global of `mod` is renamed to a key of its own.
+function define_julia_values!(mod::LLVM.Module, inserted::Dict{String, Any})
     isempty(inserted) && return nothing
     lljit = jit[].jit
     jd = JITDylib(lljit)
-    for (key, val) in inserted
-        define_julia_value!(lljit, jd, key, val)
+    @lock defined_julia_values_lock for (key, val) in inserted
+        k = key
+        n = 1
+        while haskey(defined_julia_values, k) && defined_julia_values[k] !== val
+            n += 1
+            k = key * "\$jit" * string(n)
+        end
+        if k != key && haskey(globals(mod), "ejl_" * key)
+            g = globals(mod)["ejl_" * key]
+            LLVM.name!(g, "ejl_" * k)
+            LLVM.name(g) == "ejl_" * k ||
+                error("Enzyme internal error: cannot rename ejl_$key to ejl_$k")
+        end
+        haskey(defined_julia_values, k) || define_julia_value!(lljit, jd, k, val)
     end
     return nothing
 end
