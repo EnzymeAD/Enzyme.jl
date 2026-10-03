@@ -63,12 +63,15 @@ end
 # that dies partway.
 function run_child(load_path, code)
     out = IOBuffer()
+    err = IOBuffer()
     ok = success(
         pipeline(
             child_command(load_path, CHILD_PREAMBLE * code);
-            stdout = out, stderr = devnull,
+            stdout = out, stderr = err,
         )
     )
+    # Show why a child failed; its output is all there is to go by.
+    ok || println(stderr, "Child process failed:\n", String(take!(err)))
     fields = split(String(take!(out)))
     @test length(fields) >= 2 && fields[1] == "1" && fields[2] == "0"
     return ok, fields[3:end]
