@@ -291,30 +291,43 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
 end
 
 # The object a phi yields if every value flowing into it is that same object: for instance two
-# loads of one `julia.constgv` slot, which GVN merges across a branch.
+# loads of one `julia.constgv` slot, which GVN merges across a branch. A value flowing in may lead
+# back to a phi being resolved further up (a loop through a cast), which says nothing new; the
+# phis in progress are kept per task so that this does not recurse forever.
 function absint_phi(arg::LLVM.PHIInst, partial::Bool, istracked::Bool, typetag::Bool)::Tuple{Bool, Any}
-    seen = Set{LLVM.PHIInst}()
+    tls = task_local_storage()
+    if !haskey(tls, :enzyme_absint_phis)
+        tls[:enzyme_absint_phis] = Set{LLVM.PHIInst}()
+    end
+    in_progress = tls[:enzyme_absint_phis]::Set{LLVM.PHIInst}
+    arg in in_progress && return (false, nothing)
     todo = LLVM.PHIInst[arg]
+    seen = Set{LLVM.PHIInst}()
     found = false
     res = nothing
-    while !isempty(todo)
-        phi = pop!(todo)
-        phi in seen && continue
-        push!(seen, phi)
-        for (v, _) in LLVM.incoming(phi)
-            if isa(v, LLVM.PHIInst)
-                push!(todo, v)
-                continue
-            end
-            legal, val = absint(v, partial, istracked, typetag)
-            legal || return (false, nothing)
-            if !found
-                res = val
-                found = true
-            elseif res !== val
-                return (false, nothing)
+    try
+        while !isempty(todo)
+            phi = pop!(todo)
+            (phi in seen || phi in in_progress) && continue
+            push!(seen, phi)
+            push!(in_progress, phi)
+            for (v, _) in LLVM.incoming(phi)
+                if isa(v, LLVM.PHIInst)
+                    push!(todo, v)
+                    continue
+                end
+                legal, val = absint(v, partial, istracked, typetag)
+                legal || return (false, nothing)
+                if !found
+                    res = val
+                    found = true
+                elseif res !== val
+                    return (false, nothing)
+                end
             end
         end
+    finally
+        setdiff!(in_progress, seen)
     end
     return found ? (true, res) : (false, nothing)
 end
