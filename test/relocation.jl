@@ -3,6 +3,10 @@ using Enzyme, Test
 # How a Julia object referenced by generated code reaches Enzyme differs between GPUCompiler
 # majors: 1.x bakes the host address into the `julia.constgv` slot, 2.x keeps the slot symbolic
 # until it is resolved. Enzyme must end up with the host address either way.
+#
+# These tests cover a toplevel job, whose references `emit_llvm` already resolves. The non-toplevel
+# case, where Enzyme resolves a deferred job's references itself, is the "Nested Type Error"
+# testset in test/basic.jl.
 
 abstract type RelocAbs end
 struct RelocConst{T} <: RelocAbs
