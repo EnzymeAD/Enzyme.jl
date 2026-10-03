@@ -489,3 +489,37 @@ end
         @test oh == ([1.0, 0.0], [0.0, 1.0])
     end
 end
+
+const libm_inline_ccall = Base.Math.libm
+
+# Julia's codegen caches the library handle of a `ccall` in a `ccalllib_*` global.
+f_inline_ccall(x) = ccall((:erfc, libm_inline_ccall), Float64, (Float64,), x)
+
+const ForwardInline = Enzyme.set_abi(Forward, Enzyme.InlineABI)
+
+d1_inline_ccall(x) = only(autodiff(ForwardInline, f_inline_ccall, Duplicated(x, 1.0)))
+d2_inline_ccall(x) = only(autodiff(ForwardInline, d1_inline_ccall, Duplicated(x, 1.0)))
+d3_inline_ccall(x) = only(autodiff(ForwardInline, d2_inline_ccall, Duplicated(x, 1.0)))
+
+function sum_d1_inline_ccall(xs)
+    s = 0.0
+    for x in xs
+        s += only(autodiff(ForwardInline, f_inline_ccall, Duplicated(x, 1.0)))
+    end
+    return s
+end
+
+d1_default_ccall(x) = only(autodiff(Forward, f_inline_ccall, Duplicated(x, 1.0)))
+d2_default_ccall(x) = only(autodiff(Forward, d1_default_ccall, Duplicated(x, 1.0)))
+d3_default_ccall(x) = only(autodiff(Forward, d2_default_ccall, Duplicated(x, 1.0)))
+
+@testset "InlineABI derivative of a ccall in several callers" begin
+    # With `InlineABI` every caller links in the module of the derivative. A definition
+    # of the `ccalllib_*` global in each of them made the JIT abort with a duplicate symbol.
+    x = 0.3
+    @test d1_inline_ccall(x) ≈ -2 / sqrt(pi) * exp(-x^2)
+    @test d1_inline_ccall(x) ≈ d1_default_ccall(x)
+    @test d2_inline_ccall(x) ≈ d2_default_ccall(x)
+    @test d3_inline_ccall(x) ≈ d3_default_ccall(x)
+    @test sum_d1_inline_ccall([x, x]) ≈ 2 * d1_default_ccall(x)
+end
