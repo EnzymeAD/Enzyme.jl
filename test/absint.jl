@@ -466,35 +466,72 @@ function count_slot_loads(mod::LLVM.Module, julia_values::Dict{String, Any})
     return nslots, nresolved
 end
 
-# GPUCompiler reports the object behind each slot of the module it emits as `gv_to_value`; the
-# table is filled from that, and resolves every load of a slot.
-@testset "the table is filled from gv_to_value" begin
-    world = Base.get_world_counter()
-    mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(slot_stores_constant), Tuple{Float64}, world)
-    config = GPUCompiler.CompilerConfig(
-        Enzyme.Compiler.DefaultCompilerTarget(),
-        Enzyme.Compiler.PrimalCompilerParams(Enzyme.API.DEM_ForwardMode);
-        kernel = false, libraries = true, toplevel = false, optimize = false,
-        cleanup = false, only_entry = false, validate = false, entry_abi = :specfunc,
-    )
-    job = GPUCompiler.CompilerJob(mi, config, world)
-    GPUCompiler.JuliaContext() do _
-        GPUCompiler.prepare_job!(job)
-        mod, meta = GPUCompiler.emit_llvm(job)
+# GPUCompiler 2.x hands Enzyme the module of a job compiled on behalf of another with its slots
+# still symbolic, and the relocation records are all that names their values.
+@static if Enzyme.Compiler.HAS_GPUCOMPILER_2
+    @testset "absint resolves the slots of an unresolved primal module" begin
+        world = Base.get_world_counter()
+        mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(slot_stores_constant), Tuple{Float64}, world)
+        config = GPUCompiler.CompilerConfig(
+            Enzyme.Compiler.DefaultCompilerTarget(),
+            Enzyme.Compiler.PrimalCompilerParams(Enzyme.API.DEM_ForwardMode);
+            kernel = false, libraries = true, toplevel = false, optimize = false,
+            cleanup = false, only_entry = false, validate = false, entry_abi = :specfunc,
+        )
+        job = GPUCompiler.CompilerJob(mi, config, world)
+        GPUCompiler.JuliaContext() do _
+            GPUCompiler.prepare_job!(job)
+            mod, meta = GPUCompiler.emit_llvm(job)
 
-        enzyme_ctx = Enzyme.Compiler.EnzymeContext(world)
-        Enzyme.Compiler.record_julia_values!(enzyme_ctx, meta)
-        julia_values = enzyme_ctx.julia_values
-        if haskey(meta, :gv_to_value)
+            enzyme_ctx = Enzyme.Compiler.EnzymeContext(world)
+            Enzyme.Compiler.record_julia_values!(enzyme_ctx, meta)
+            julia_values = enzyme_ctx.julia_values
             @test !isempty(julia_values)
+            # The constant `slot_stores_constant` stores, which no name map knows of.
             @test SlotConst{Float64}(1.0) in values(julia_values)
+
+            # Without the table there is nothing in the IR to read the value from.
+            nslots, nresolved = count_slot_loads(mod, julia_values)
+            @test nslots > 0
+            @test nresolved == 0
+
             Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
                 nslots, nresolved = count_slot_loads(mod, julia_values)
-                @test nslots > 0
                 @test nresolved == nslots
             end
-        else
-            @test isempty(julia_values)
+        end
+    end
+else
+    # GPUCompiler 1.x reports the object behind each slot of the module it emits as `gv_to_value`;
+    # the table is filled from that, and resolves every load of a slot.
+    @testset "the table is filled from gv_to_value" begin
+        world = Base.get_world_counter()
+        mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(slot_stores_constant), Tuple{Float64}, world)
+        config = GPUCompiler.CompilerConfig(
+            Enzyme.Compiler.DefaultCompilerTarget(),
+            Enzyme.Compiler.PrimalCompilerParams(Enzyme.API.DEM_ForwardMode);
+            kernel = false, libraries = true, toplevel = false, optimize = false,
+            cleanup = false, only_entry = false, validate = false, entry_abi = :specfunc,
+        )
+        job = GPUCompiler.CompilerJob(mi, config, world)
+        GPUCompiler.JuliaContext() do _
+            GPUCompiler.prepare_job!(job)
+            mod, meta = GPUCompiler.emit_llvm(job)
+
+            enzyme_ctx = Enzyme.Compiler.EnzymeContext(world)
+            Enzyme.Compiler.record_julia_values!(enzyme_ctx, meta)
+            julia_values = enzyme_ctx.julia_values
+            if haskey(meta, :gv_to_value)
+                @test !isempty(julia_values)
+                @test SlotConst{Float64}(1.0) in values(julia_values)
+                Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
+                    nslots, nresolved = count_slot_loads(mod, julia_values)
+                    @test nslots > 0
+                    @test nresolved == nslots
+                end
+            else
+                @test isempty(julia_values)
+            end
         end
     end
 end

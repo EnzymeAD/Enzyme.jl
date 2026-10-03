@@ -804,21 +804,33 @@ end
 
 Remember which Julia value each global slot of a freshly emitted module refers to.
 
-GPUCompiler (from 1.8) reports them as `gv_to_value`, the address of the object behind each
-slot, keyed by the name of the slot. That is the authoritative answer to "which object is
-this global?", and unlike an address decoded from an initializer it does not depend on the
-address having been written into the IR. `absint` and `abs_typeof` read the table through
+GPUCompiler 2.x reports them as relocation records, one per `extinit` slot and keyed by the
+name of the slot; GPUCompiler 1.x (from 1.8) as `gv_to_value`, the address of the object
+behind each slot, keyed the same way. They are the authoritative answer to "which object is
+this global?", and unlike an address decoded from an initializer they exist on every
+back-end: a `:patch` or `:table` one never has an address in its IR (see
+[`resolve_relocations!`](@ref)). `absint` and `abs_typeof` read the table through
 [`julia_value_of_slot`](@ref). Holding the values in the context also keeps them rooted for
 the duration of the compilation.
 
-GPUCompiler before 1.8 reports nothing; the table stays empty and every lookup misses.
+This must run before [`resolve_relocations!`](@ref), which consumes the records it bakes.
+GPUCompiler 1.x before 1.8 reports nothing; the table stays empty and every lookup misses.
 """
 function record_julia_values!(ctx::EnzymeContext, meta)
-    haskey(meta, :gv_to_value) || return nothing
-    for (name, ptr) in meta.gv_to_value
-        # A slot whose initializer GPUCompiler could not match to an object.
-        ptr == C_NULL && continue
-        ctx.julia_values[name] = Base.unsafe_pointer_to_objref(ptr)
+    @static if HAS_GPUCOMPILER_2
+        for rec in meta.relocations.records
+            rec.kind === GPUCompiler.SlotSite || continue
+            target = rec.target
+            target isa GPUCompiler.JuliaValueRef || continue
+            ctx.julia_values[rec.name] = target.value
+        end
+    else
+        haskey(meta, :gv_to_value) || return nothing
+        for (name, ptr) in meta.gv_to_value
+            # A slot whose initializer GPUCompiler could not match to an object.
+            ptr == C_NULL && continue
+            ctx.julia_values[name] = Base.unsafe_pointer_to_objref(ptr)
+        end
     end
     return nothing
 end
@@ -842,9 +854,11 @@ keeps them symbolic (its code runs elsewhere, or the module outlives the session
 those the records are left untouched: `link_relocatable!` carries them into the job that
 requested the derivative, which lowers them with its own strategy. Codegen emits a slot for
 every Julia value it touches (intrinsic bindings, `llvmcall` strings, `nothing`), and all
-of those are dead once the module is optimized, so an ordinary kernel differentiates; a
-derivative whose analysis does need one of the values remains unsupported on such a
-back-end.
+of those are dead once the module is optimized, so an ordinary kernel differentiates.
+Analysis still sees through a symbolic slot, because `absint` and `abs_typeof` resolve it
+from the table [`record_julia_values!`](@ref) built; what remains unsupported on such a
+back-end is a derivative that needs the *address*: the shadow of a constant global, or
+`try_replace_constant_load!` folding the load.
 
 The strategy is asked of a `kernel = true` flavour of the job: a deferred derivative is
 linked into the kernel that requested it, and a back-end whose strategy depends on
