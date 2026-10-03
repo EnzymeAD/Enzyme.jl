@@ -391,20 +391,18 @@ end
 """
     slot_object_address(gv) -> Union{LLVM.Value, Nothing}
 
-The address of the object the `julia.constgv` slot `gv` holds, as the constant a load of the
-slot yields, or `nothing` if the slot has no initializer.
+The address of the object the `julia.constgv` slot `gv` holds, as a constant, or `nothing` if
+it is not known. It is only read from at compile time, never written into the IR: what a fold
+inserts is a named global for the object, which the JIT or GPUCompiler resolves.
 
 The object comes from the compilation's table of Julia values ([`julia_value_of_slot`](@ref))
-where it can: that is what codegen said the slot refers to, independent of what is written
-into the IR. An `isbits` value is held in the table unboxed, though, and its box's address is
-lost; for those, and for slots the table has no record of, the address is decoded from the
-initializer. A slot without an initializer is left to the back-end's loader (GPUCompiler 2.x,
-`:patch` or `:table`); folding a load of it would put a host address into code that must not
-contain one, so it is not folded at all.
+where it can: that is what codegen said the slot refers to, and it is there whether or not the
+back-end left an address in the IR (GPUCompiler 2.x's `:patch` and `:table` do not). An
+`isbits` value is held in the table unboxed, though, and its box's address is lost; for those
+the address codegen reported is taken from the table's addresses, and for slots nothing records
+it is decoded from the initializer.
 """
 function slot_object_address(gv::LLVM.GlobalVariable)::Union{LLVM.Value, Nothing}
-    init = LLVM.initializer(gv)
-    init === nothing && return nothing
     found = julia_value_of_slot(gv)
     if found !== nothing
         obj = something(found)
@@ -412,6 +410,11 @@ function slot_object_address(gv::LLVM.GlobalVariable)::Union{LLVM.Value, Nothing
             return LLVM.ConstantInt(UInt(ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), obj)))
         end
     end
+    # Folding runs inside a compilation, whose table it consults.
+    ptr = get(enzyme_context().julia_slot_addrs, LLVM.name(gv), nothing)
+    ptr === nothing || return LLVM.ConstantInt(reinterpret(UInt, ptr))
+    init = LLVM.initializer(gv)
+    init === nothing && return nothing
     return get_base_and_offset(init; offsetAllowed = false, inttoptr = true)[1]
 end
 
@@ -452,7 +455,7 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
         if check_mutability && off == 0 && is_nonconst_binding(convert(UInt, addr))
             return inst
         end
-        gname = string(convert(UInt, addr)) * "\$true"
+        gname = "jl_binding\$true"
         load1 = true
     end
 
@@ -476,9 +479,6 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
         end
 
         initaddr = convert(UInt, addr) + off
-        if gname isa String
-            gname = gname * "\$$initaddr"
-        end
         ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
         if load1
             ptr = Base.unsafe_load(ptr, :unordered)
@@ -964,7 +964,8 @@ is inlined and discarded just as a lone import was.
 """
 function import_cached_autodiff!(mod::LLVM.Module, ptr::Ptr{Cvoid}, FT::LLVM.FunctionType)
     enzyme_ctx = enzyme_context()
-    pname, bitcode = autodiff_cache[ptr]
+    cached = autodiff_cache[ptr]
+    pname = cached.entry
 
     if haskey(enzyme_ctx.imported_thunks, ptr)
         if haskey(functions(mod), pname)
@@ -978,7 +979,7 @@ function import_cached_autodiff!(mod::LLVM.Module, ptr::Ptr{Cvoid}, FT::LLVM.Fun
     end
 
     @assert !haskey(functions(mod), pname) || isdeclaration(functions(mod)[pname])
-    pmod = parse(LLVM.Module, unsafe_wrap(Vector{UInt8}, bitcode))
+    pmod = parse(LLVM.Module, unsafe_wrap(Vector{UInt8}, cached.bitcode))
     @assert haskey(functions(pmod), pname)
 
     # Everything the blob carries besides the entry is internal, so that a
@@ -996,6 +997,8 @@ function import_cached_autodiff!(mod::LLVM.Module, ptr::Ptr{Cvoid}, FT::LLVM.Fun
     end
 
     LLVM.link!(mod, pmod)
+    # The blob refers to Julia values by name; this compilation resolves them along with its own.
+    merge_julia_value_table!(enzyme_ctx, cached.value_table)
 
     replaceWith = functions(mod)[pname]
     push!(function_attributes(replaceWith), EnumAttribute("alwaysinline"))

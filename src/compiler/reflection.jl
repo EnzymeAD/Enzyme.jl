@@ -72,6 +72,10 @@ function reflect(
     job = get_job(func, A, types; optimize, kwargs...)
     # Codegen the primal function and all its dependency in one module
     mod, meta = GPUCompiler.codegen(:llvm, job) #= validate=false =#
+    # Link the module's Julia values as `_thunk` does, so that what is shown is the code that
+    # runs: the slots left symbolic until then would otherwise stay declarations, and the loads
+    # through them unfolded.
+    resolve_slots!(mod, meta.value_table)
 
     if second_stage
         post_optimize!(mod, JIT.get_tm())

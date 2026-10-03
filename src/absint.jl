@@ -34,9 +34,13 @@ function julia_global(gname::AbstractString)::Union{Some{Any}, Nothing}
     return haskey(JuliaGlobalNameMap, gname) ? Some{Any}(JuliaGlobalNameMap[gname]) : nothing
 end
 
-# The value of the global called `gname` that Enzyme inserted itself, if it is one.
+# The value of the global called `gname` that Enzyme inserted itself, if it is one: one of the
+# well-known ones, or one the compilation in flight inserted (`insert_julia_value!`).
 function enzyme_global(gname::AbstractString)::Union{Some{Any}, Nothing}
-    return haskey(JuliaEnzymeNameMap, gname) ? Some{Any}(JuliaEnzymeNameMap[gname]) : nothing
+    haskey(JuliaEnzymeNameMap, gname) && return Some{Any}(JuliaEnzymeNameMap[gname])
+    isassigned(ENZYME_CONTEXT) || return nothing
+    inserted = ENZYME_CONTEXT[].inserted_values
+    return haskey(inserted, gname) ? Some{Any}(inserted[gname]) : nothing
 end
 
 # Enzyme's own globals carry an `ejl_` prefix that the keys of the name maps lack.
@@ -55,7 +59,8 @@ function named_global(gv::LLVM.GlobalVariable)::Union{Some{Any}, Nothing}
         found = enzyme_global(stripped)
         found === nothing || return found
     end
-    @assert !startswith(gname, "ejl_inserted") "Could not find ejl_inserted variable in map $gname"
+    # The compilation that inserted the global, or that linked in a module with it, knows it.
+    @assert !(startswith(gname, "ejl_inserted") && isassigned(ENZYME_CONTEXT)) "Could not find ejl_inserted variable in map $gname"
     return nothing
 end
 
@@ -63,17 +68,17 @@ end
     julia_value_of_slot(gv)
 
 The Julia value a load of the global slot `gv` yields, as recorded by the compilation in
-flight (`record_julia_values!`), or `nothing` if it has no record of the slot.
+flight (`record_julia_values!`, or `merge_julia_value_table!` for a module compiled earlier), or
+`nothing` if it has no record of the slot.
 
-This is the preferred source: it is what codegen itself said the slot refers to, it does
-not depend on the address of the value having been written into the IR, and the value is
-rooted by the context. Outside of a compilation there is no table, and the caller falls
-back to decoding the initializer with `slot_initializer_address`.
+This is the preferred source: it is what codegen itself said the slot refers to, and it does
+not depend on the address of the value having been written into the IR, which Enzyme removes
+until the module is linked (see `make_slots_symbolic!`). For a slot with no record the caller
+falls back to decoding the initializer with `slot_initializer_address`.
 """
 function julia_value_of_slot(gv::LLVM.GlobalVariable)::Union{Some{Any}, Nothing}
     isassigned(ENZYME_CONTEXT) || return nothing
     values = ENZYME_CONTEXT[].julia_values
-    isempty(values) && return nothing
     gname = LLVM.name(gv)
     return haskey(values, gname) ? Some{Any}(values[gname]) : nothing
 end
@@ -278,7 +283,63 @@ function absint(@nospecialize(arg::LLVM.Value), partial::Bool = false, istracked
         end
     end
 
+
+    if isa(arg, LLVM.PHIInst)
+        return absint_phi(arg, partial, istracked, typetag)
+    end
+
     return (false, nothing)
+end
+
+# The object a phi yields if every value flowing into it is that same object: for instance two
+# loads of one `julia.constgv` slot, which GVN merges across a branch. A value flowing in may lead
+# back to a phi being resolved, directly or through casts (a loop), which says nothing new; the
+# phis in progress are kept per task so that this does not recurse forever.
+function strip_pointer_casts(@nospecialize(v::LLVM.Value))::LLVM.Value
+    while isa(v, LLVM.BitCastInst) || isa(v, LLVM.AddrSpaceCastInst)
+        v = operands(v)[1]
+    end
+    return v
+end
+
+function absint_phi(arg::LLVM.PHIInst, partial::Bool, istracked::Bool, typetag::Bool)::Tuple{Bool, Any}
+    tls = task_local_storage()
+    if !haskey(tls, :enzyme_absint_phis)
+        tls[:enzyme_absint_phis] = Set{LLVM.PHIInst}()
+    end
+    in_progress = tls[:enzyme_absint_phis]::Set{LLVM.PHIInst}
+    arg in in_progress && return (false, nothing)
+    todo = LLVM.PHIInst[arg]
+    seen = Set{LLVM.PHIInst}()
+    found = false
+    res = nothing
+    try
+        while !isempty(todo)
+            phi = pop!(todo)
+            (phi in seen || phi in in_progress) && continue
+            push!(seen, phi)
+            push!(in_progress, phi)
+            for (v, _) in LLVM.incoming(phi)
+                # A cast of a pointer is the same object: look through it to the phi it may be.
+                stripped = strip_pointer_casts(v)
+                if isa(stripped, LLVM.PHIInst)
+                    push!(todo, stripped)
+                    continue
+                end
+                legal, val = absint(v, partial, istracked, typetag)
+                legal || return (false, nothing)
+                if !found
+                    res = val
+                    found = true
+                elseif res !== val
+                    return (false, nothing)
+                end
+            end
+        end
+    finally
+        setdiff!(in_progress, seen)
+    end
+    return found ? (true, res) : (false, nothing)
 end
 
 function actual_size(@nospecialize(typ2))::Int
