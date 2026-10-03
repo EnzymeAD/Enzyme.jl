@@ -410,13 +410,6 @@ The address of the object the `julia.constgv` slot `gv` holds, as a constant, or
 it is not known. It is only read from at compile time, never written into the IR: what a fold
 inserts is a named global for the object, which the JIT or GPUCompiler resolves.
 
-The object comes from the compilation's table of Julia values where the table has the slot's
-address: that is what codegen said the slot refers to, whether or not the address is still in
-the IR. An `isbits` value is held in the table unboxed, its box's address is the one recorded.
-A slot recorded without an address is one the back-end keeps symbolic (GPUCompiler 2.x's
-`:patch` and `:table`), and a fold would refer to the host object from code that must not:
-it is not folded unless the IR itself holds the address. For slots nothing records, the
-address is decoded from the initializer.
 """
 function slot_object_address(gv::LLVM.GlobalVariable)::Union{LLVM.Value, Nothing}
     # Folding runs inside a compilation, whose table it consults.
