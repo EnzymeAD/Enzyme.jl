@@ -87,3 +87,53 @@ end
         end
     end
 end
+
+# The device module of a derivative refers to Julia values through `ejl_` globals, which only the
+# host JIT resolves. GPUCompiler 2.x is handed a slot and a relocation record for each instead.
+# (GPUCompiler 1.x, which resolves nothing, gets the address; see test/absint.jl.)
+@testset "Julia-value globals in a device module" begin
+    LLVM.Context() do ctx
+        T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Enzyme.Compiler.Tracked)
+        T_int8 = LLVM.Int8Type()
+        mod = LLVM.Module("device")
+        key = Enzyme.insert_julia_value!("device", RelocConst{Float64})
+        gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * key, Enzyme.Compiler.Tracked)
+
+        fn = LLVM.Function(mod, "f", LLVM.FunctionType(LLVM.Int1Type(), [T_prjlvalue, LLVM.Int1Type()]))
+        LLVM.IRBuilder() do B
+            entry, other, join = (LLVM.BasicBlock(fn, n) for n in ("entry", "other", "join"))
+            LLVM.position!(B, entry)
+            LLVM.br!(B, LLVM.parameters(fn)[2], join, other)
+            LLVM.position!(B, other)
+            LLVM.br!(B, join)
+            LLVM.position!(B, join)
+            # Used directly, through a phi, and through constant expressions.
+            phi = LLVM.phi!(B, T_prjlvalue)
+            append!(LLVM.incoming(phi), [(gv, entry), (LLVM.parameters(fn)[1], other)])
+            field = LLVM.const_inbounds_gep(T_int8, gv, [LLVM.ConstantInt(Int64(8))])
+            loaded = LLVM.load!(B, T_prjlvalue, LLVM.addrspacecast!(B, field, LLVM.PointerType(T_jlvalue, Enzyme.Compiler.Derived)))
+            same = LLVM.icmp!(B, LLVM.API.LLVMIntEQ, phi, loaded)
+            LLVM.ret!(B, LLVM.and!(B, same, LLVM.icmp!(B, LLVM.API.LLVMIntEQ, LLVM.parameters(fn)[1], gv)))
+        end
+        @test LLVM.verify(mod) === nothing
+
+        @static if Enzyme.Compiler.HAS_GPUCOMPILER_2
+            relocs = GPUCompiler.Relocations()
+            Enzyme.Compiler.relocate_julia_value_globals!(mod, relocs)
+            @test LLVM.verify(mod) === nothing
+            @test !haskey(LLVM.globals(mod), "ejl_" * key)
+            slot_name = "ejl_slot_" * GPUCompiler.safe_name(key)
+            @test haskey(LLVM.globals(mod), slot_name)
+            @test LLVM.initializer(LLVM.globals(mod)[slot_name]) === nothing
+            rec = only(relocs.records)
+            @test rec.name == slot_name
+            @test rec.target isa GPUCompiler.JuliaValueRef
+            @test rec.target.value === RelocConst{Float64}
+            # No address of the value is left in the module.
+            addr = string(UInt(ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), RelocConst{Float64})))
+            @test !occursin(addr, string(mod))
+        end
+        LLVM.dispose(mod)
+    end
+end

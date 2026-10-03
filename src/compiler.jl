@@ -807,12 +807,11 @@ Remember which Julia value each global slot of a freshly emitted module refers t
 GPUCompiler 2.x reports them as relocation records, one per `extinit` slot and keyed by the
 name of the slot; GPUCompiler 1.x as `gv_to_value`, the address of the object behind each slot,
 keyed the same way. They are the authoritative answer to "which object is this global?", and
-unlike an address decoded from an initializer they exist on every back-end: a `:patch` or
-`:table` one never has an address in its IR (see [`resolve_relocations!`](@ref)). `absint`
-and `abs_typeof` read the table through [`julia_value_of_slot`](@ref). Holding the values in
-the context also keeps them rooted for the duration of the compilation.
-
-This must run before [`resolve_relocations!`](@ref), which consumes the records it bakes.
+unlike an address decoded from an initializer they do not depend on an address being written
+into the IR, which no back-end has before Enzyme is done (see [`emit_unresolved_llvm`](@ref)
+and [`make_slots_symbolic!`](@ref)). `absint` and `abs_typeof` read the table through
+[`julia_value_of_slot`](@ref). Holding the values in the context also keeps them rooted for
+the duration of the compilation.
 """
 function record_julia_values!(ctx::EnzymeContext, meta)
     @static if HAS_GPUCOMPILER_2
@@ -865,10 +864,12 @@ its relocations.
 function make_slots_symbolic!(mod::LLVM.Module)
     @lock julia_slot_lock for gv in globals(mod)
         haskey(metadata(gv), "julia.constgv") || continue
-        LLVM.initializer(gv) === nothing && continue
         haskey(JuliaSlotMap, LLVM.name(gv)) || continue
-        linkage!(gv, LLVM.API.LLVMExternalLinkage)
-        LLVM.initializer!(gv, nothing)
+        # GPUCompiler 2.x already emits the slot as a declaration.
+        if LLVM.initializer(gv) !== nothing
+            linkage!(gv, LLVM.API.LLVMExternalLinkage)
+            LLVM.initializer!(gv, nothing)
+        end
         mark_symbolic_slot!(gv)
     end
     return nothing
@@ -915,48 +916,6 @@ function resolve_slots!(mod::LLVM.Module)
 end
 
 """
-    resolve_relocations!(job, mod, meta)
-
-Resolve the Julia-value references of a freshly emitted primal module to their host
-addresses, the shape GPUCompiler 1.x always produced.
-
-GPUCompiler 2.x keeps those references symbolic — an `extinit` slot named after the value,
-with no initializer — and resolves them itself only for a toplevel job. A job compiled on
-behalf of another (`toplevel = false`), which is how a deferred derivative reaches Enzyme,
-hands us the slots unresolved, and neither `absint` nor the shadow machinery can read one:
-the type argument of an allocation stops being statically known, and a constant global has
-no shadow. Relocatable derivative modules are left to later changes.
-
-Baking is only correct for a back-end whose `relocation_lowering` is `:bake`: the words
-written in are addresses in this process. A `:patch` or `:table` back-end deliberately
-keeps them symbolic (its code runs elsewhere, or the module outlives the session), so for
-those the records are left untouched: `link_relocatable!` carries them into the job that
-requested the derivative, which lowers them with its own strategy. Codegen emits a slot for
-every Julia value it touches (intrinsic bindings, `llvmcall` strings, `nothing`), and all
-of those are dead once the module is optimized, so an ordinary kernel differentiates.
-Analysis still sees through a symbolic slot, because `absint` and `abs_typeof` resolve it
-from the table [`record_julia_values!`](@ref) built; what remains unsupported on such a
-back-end is a derivative that needs the *address*: the shadow of a constant global, or
-`try_replace_constant_load!` folding the load.
-
-The strategy is asked of a `kernel = true` flavour of the job: a deferred derivative is
-linked into the kernel that requested it, and a back-end whose strategy depends on
-`kernel` (Metal answers `:table` for kernels only) would otherwise report `:bake` for the
-non-kernel primal job Enzyme holds and let host addresses into a persisted kernel.
-"""
-function resolve_relocations!(@nospecialize(job::CompilerJob), mod::LLVM.Module, meta)
-    @static if HAS_GPUCOMPILER_2
-        isempty(meta.relocations) && return nothing
-        kernel_job = CompilerJob(job; config = CompilerConfig(job.config; kernel = true))
-        if GPUCompiler.relocation_lowering(kernel_job) === :bake
-            GPUCompiler.prune_dead_relocations!(mod, meta.relocations)
-            GPUCompiler.bake_relocations!(mod, meta.relocations)
-        end
-    end
-    return nothing
-end
-
-"""
     bake_julia_value_globals!(mod)
 
 Replace each `ejl_<key>` global of the device module `mod`, which stands for the Julia value
@@ -986,6 +945,174 @@ function bake_julia_value_globals!(mod::LLVM.Module)
     end
     return nothing
 end
+
+# Whether the constant `c` is, or is a constant expression over, the global `g`.
+function refers_to(@nospecialize(c::LLVM.Value), g::LLVM.GlobalVariable)::Bool
+    c == g && return true
+    isa(c, LLVM.ConstantExpr) || return false
+    return any(Base.Fix2(refers_to, g), operands(c))
+end
+
+# Rebuild the constant `c` as instructions emitted by `B`, with `val` in place of `g`.
+function rebuild_without!(B::LLVM.IRBuilder, @nospecialize(c::LLVM.Value), g::LLVM.GlobalVariable, val::LLVM.Value)::LLVM.Value
+    c == g && return val
+    refers_to(c, g) || return c
+    ops = LLVM.Value[rebuild_without!(B, op, g, val) for op in operands(c)]
+    op = opcode(c)
+    if op in (LLVM.API.LLVMBitCast, LLVM.API.LLVMAddrSpaceCast, LLVM.API.LLVMPtrToInt, LLVM.API.LLVMIntToPtr)
+        return LLVM.Value(LLVM.API.LLVMBuildCast(B, op, ops[1], value_type(c), ""))
+    elseif op == LLVM.API.LLVMGetElementPtr
+        srcty = LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(c))
+        if LLVM.API.LLVMIsInBounds(c) != 0
+            return inbounds_gep!(B, srcty, ops[1], ops[2:end])
+        end
+        return gep!(B, srcty, ops[1], ops[2:end])
+    elseif op == LLVM.API.LLVMICmp
+        return icmp!(B, LLVM.API.LLVMGetICmpPredicate(c), ops[1], ops[2])
+    end
+    error("Enzyme internal error: cannot rebuild the constant expression $(string(c)) over $(LLVM.name(g)) as instructions")
+end
+
+"""
+    relocate_julia_value_globals!(mod, relocs)
+
+Hand the Julia values Enzyme refers to in the device module `mod` to GPUCompiler 2.x's
+relocation machinery.
+
+Enzyme refers to a Julia value through a global `ejl_<key>` whose address is the value
+(`JuliaGlobalNameMap[key]` or `JuliaEnzymeNameMap[key]`, see [`unsafe_to_llvm`](@ref)). On the
+host the JIT resolves it (`JIT.define_julia_value!`); nothing does in device code. Replace it
+with what codegen emits for a Julia value: a load of a word-sized slot, here
+`ejl_slot_<key>`, with a relocation record for the value. The job that requested the
+derivative then lowers it with its own strategy, as it does Julia's own slots: bakes the
+address in, or leaves it for its loader.
+"""
+function relocate_julia_value_globals!(mod::LLVM.Module, relocs)
+    T_slot = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]))
+    for g in collect(globals(mod))
+        name = LLVM.name(g)
+        startswith(name, "ejl_") || continue
+        key = name[(ncodeunits("ejl_") + 1):end]
+        val = if haskey(JuliaGlobalNameMap, key)
+            JuliaGlobalNameMap[key]
+        elseif haskey(JuliaEnzymeNameMap, key)
+            JuliaEnzymeNameMap[key]
+        else
+            continue
+        end
+        # A load folded through a binding (Julia 1.10) stands for the binding's value.
+        val isa Core.Binding && (val = val.value)
+
+        # The instructions using `g`, directly or through constant expressions.
+        users = Set{LLVM.Instruction}()
+        todo = LLVM.Value[g]
+        while !isempty(todo)
+            v = pop!(todo)
+            for u in LLVM.uses(v)
+                user = LLVM.user(u)
+                if isa(user, LLVM.Instruction)
+                    push!(users, user)
+                elseif isa(user, LLVM.ConstantExpr)
+                    push!(todo, user)
+                else
+                    error("Enzyme internal error: cannot relocate $name, used by $(string(user))")
+                end
+            end
+        end
+        isempty(users) && continue
+
+        slot_name = "ejl_slot_" * GPUCompiler.safe_name(key)
+        slot = if haskey(globals(mod), slot_name)
+            globals(mod)[slot_name]
+        else
+            GlobalVariable(mod, T_slot, slot_name)
+        end
+        GPUCompiler.add_relocation!(relocs, GPUCompiler.SlotSite, slot_name, 0, GPUCompiler.JuliaValueRef(val))
+
+        @dispose B = IRBuilder() begin
+            for inst in users
+                for (i, op) in enumerate(operands(inst))
+                    refers_to(op, g) || continue
+                    # A phi needs the value at the end of the incoming block.
+                    at = if isa(inst, LLVM.PHIInst)
+                        terminator(LLVM.BasicBlock(LLVM.API.LLVMGetIncomingBlock(inst, i - 1)))
+                    else
+                        inst
+                    end
+                    position!(B, at)
+                    word = load!(B, T_slot, slot)
+                    loaded = addrspacecast!(B, word, value_type(g))
+                    operands(inst)[i] = rebuild_without!(B, op, g, loaded)
+                end
+            end
+        end
+        # What still uses `g` are constant expressions nothing uses any more.
+        replace_uses!(g, LLVM.UndefValue(value_type(g)))
+        LLVM.erase!(g)
+    end
+    return nothing
+end
+
+"""
+    emit_unresolved_llvm(job)
+
+`GPUCompiler.emit_llvm(job)`, without resolving the references to Julia values on GPUCompiler
+2.x: what it returns for a job compiled on behalf of another, also for a toplevel one, so that
+nothing is baked into the module before Enzyme is done with it. The relocation records say
+what each slot holds; [`link_julia_values!`](@ref) resolves them once the module is linked.
+GPUCompiler 1.x always resolves; [`make_slots_symbolic!`](@ref) undoes it.
+"""
+function emit_unresolved_llvm(@nospecialize(job::CompilerJob))
+    @static if HAS_GPUCOMPILER_2
+        return GPUCompiler.emit_llvm(job; resolve_relocations = false)
+    else
+        return GPUCompiler.emit_llvm(job)
+    end
+end
+
+"""
+    record_symbolic_slots!(mod, relocs)
+
+Give every slot of `mod` that is still a declaration, and whose value [`JuliaSlotMap`](@ref)
+knows, a relocation record in `relocs`, unless it has one. The slots of the primal module come
+with records; those of a module linked in later (`nested_codegen!`, an imported thunk) do not,
+and whoever resolves the records must see them too.
+"""
+function record_symbolic_slots!(mod::LLVM.Module, relocs)
+    @static if HAS_GPUCOMPILER_2
+        named = Set{String}(rec.name for rec in relocs.records)
+        @lock julia_slot_lock for gv in globals(mod)
+            haskey(metadata(gv), "julia.constgv") || continue
+            LLVM.isdeclaration(gv) || continue
+            name = LLVM.name(gv)
+            name in named && continue
+            entry = get(JuliaSlotMap, name, nothing)
+            entry === nothing && continue
+            GPUCompiler.add_relocation!(relocs, GPUCompiler.SlotSite, name, 0, GPUCompiler.JuliaValueRef(entry[1]))
+        end
+    end
+    return nothing
+end
+
+"""
+    link_julia_values!(mod, meta)
+
+Resolve the Julia values the toplevel module `mod` refers to, as it is linked into what runs:
+on GPUCompiler 2.x by baking its relocation records (`meta.relocations`), on GPUCompiler 1.x
+from [`JuliaSlotMap`](@ref). The `ejl_` globals are left to the JIT.
+"""
+function link_julia_values!(mod::LLVM.Module, meta)
+    @static if HAS_GPUCOMPILER_2
+        relocs = meta.relocations
+        if !isempty(relocs)
+            GPUCompiler.prune_dead_relocations!(mod, relocs)
+            GPUCompiler.bake_relocations!(mod, relocs)
+        end
+    end
+    resolve_slots!(mod)
+    return nothing
+end
+
 
 
 mutable struct HandlerState
@@ -1737,7 +1864,7 @@ function nested_codegen!(
     job = CompilerJob(funcspec, CompilerConfig(target, params; kernel = false, libraries = true, toplevel = true, optimize = false, cleanup = false, only_entry = false, validate = false, entry_abi = :specfunc), world)
 
     GPUCompiler.prepare_job!(job)
-    otherMod, meta = GPUCompiler.emit_llvm(job)
+    otherMod, meta = emit_unresolved_llvm(job)
     record_julia_values!(enzyme_ctx, meta)
     make_slots_symbolic!(otherMod)
     
@@ -6015,13 +6142,12 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     primal_job = CompilerJob(primal, primal_config, job.world)
     @safe_debug "Emit LLVM with" primal_job
     GPUCompiler.prepare_job!(primal_job)
-    mod, meta = GPUCompiler.emit_llvm(primal_job)
+    mod, meta = emit_unresolved_llvm(primal_job)
     # `emit_llvm` is not concretely inferred, so without this assertion every
     # subsequent use of `mod` (e.g. `LLVM.context(mod)`) is a dynamic dispatch
     # through jl_apply_generic, which forces boxing and GC-rooting across it.
     mod = mod::LLVM.Module
     record_julia_values!(enzyme_ctx, meta)
-    resolve_relocations!(primal_job, mod, meta)
     make_slots_symbolic!(mod)
     edges = enzyme_ctx.edges
 
@@ -6902,14 +7028,19 @@ end
     use_primal = mode == API.DEM_ReverseModePrimal
     entry = use_primal ? augmented_primalf : adjointf
     # GPUCompiler 2.x links a deferred job's module with `link_relocatable!`, which reads the
-    # relocation records off this tuple: `resolve_relocations!` emptied them for a `:bake`
-    # back-end and left them for the requesting job's own lowering otherwise.
+    # relocation records off this tuple and leaves them to the requesting job's own lowering.
     relocations = @static if HAS_GPUCOMPILER_2
         meta.relocations
     else
         nothing
     end
-    @static if !HAS_GPUCOMPILER_2
+    @static if HAS_GPUCOMPILER_2
+        # Every Julia value the module refers to is a relocation for whoever links it: the job
+        # that requested the derivative lowers them with its own strategy, `_thunk` with
+        # GPUCompiler's `:bake`.
+        record_symbolic_slots!(mod, relocations)
+        device_module && relocate_julia_value_globals!(mod, relocations)
+    else
         # A derivative compiled on behalf of another job is linked into it here, and GPUCompiler
         # 1.x resolves nothing: resolve its slots. A toplevel one is resolved by `_thunk`, once
         # it has kept the symbolic bitcode.
@@ -7755,7 +7886,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         end
         # The bitcode keeps its slots symbolic for a differentiation that imports it; the code
         # that runs gets the addresses, before it is optimized.
-        resolve_slots!(mod)
+        link_julia_values!(mod, meta)
         if job.config.params.ABI <: FFIABI || job.config.params.ABI <: NonGenABI
             if DumpPrePostOpt[]
                 API.EnzymeDumpModuleRef(mod.ref)
@@ -7771,7 +7902,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         end
         mstr
     else
-        resolve_slots!(mod)
+        link_julia_values!(mod, meta)
         ""
     end
     # The module string above keeps the rule declarations symbolic for nested
