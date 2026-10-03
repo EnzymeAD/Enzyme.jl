@@ -144,7 +144,10 @@ the Julia values the module's global slots refer to and their addresses
 (`julia_values` and `julia_slot_addrs`, keyed by the name of the slot; see
 `Compiler.record_julia_values!`), and the Julia values Enzyme refers to by name
 from the code it generates (`inserted_values`, keyed by the name of the `ejl_`
-global without the prefix; see `insert_julia_value!`).
+global without the prefix; see `insert_julia_value!`). On GPUCompiler 2.x the
+values of the slots are read straight from the relocation records of the
+modules the compilation emitted (`relocations`), and `bakes` says whether the
+back-end lets their host addresses into the code.
 
 A context belongs to a single `compile_unhooked` invocation, and holds the
 world age that compilation runs in. It is not passed as an argument:
@@ -164,6 +167,8 @@ mutable struct EnzymeContext
     julia_values::Dict{String, Any}
     julia_slot_addrs::Dict{String, Ptr{Cvoid}}
     inserted_values::Dict{String, Any}
+    relocations::Vector{Any}
+    bakes::Bool
     EnzymeContext(world::Integer) = new(
         world,
         LLVM.Module[],
@@ -172,7 +177,9 @@ mutable struct EnzymeContext
         Dict{Ptr{Cvoid}, String}(),
         Dict{String, Any}(),
         Dict{String, Ptr{Cvoid}}(),
-        Dict{String, Any}()
+        Dict{String, Any}(),
+        Any[],
+        true
     )
 end
 

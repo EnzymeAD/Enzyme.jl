@@ -502,9 +502,9 @@ function count_slot_loads(mod::LLVM.Module, julia_values::Dict{String, Any})
     return nslots, nresolved
 end
 
-# GPUCompiler reports the object behind each slot of the module it emits as `gv_to_value`; the
-# table is filled from that, and resolves every load of a slot.
-@testset "the table is filled from gv_to_value" begin
+# GPUCompiler reports the object behind each slot of the module it emits, as `gv_to_value` (1.x)
+# or as relocation records (2.x); the table is filled from that, and resolves every load of a slot.
+@testset "the table is filled from what GPUCompiler reports" begin
     world = Base.get_world_counter()
     mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(slot_stores_constant), Tuple{Float64}, world)
     config = GPUCompiler.CompilerConfig(
@@ -519,14 +519,30 @@ end
         mod, meta = GPUCompiler.emit_llvm(job)
 
         enzyme_ctx = Enzyme.Compiler.EnzymeContext(world)
-        Enzyme.Compiler.record_julia_values!(enzyme_ctx, meta)
-        julia_values = enzyme_ctx.julia_values
+        Enzyme.Compiler.record_julia_values!(enzyme_ctx, job, meta)
+        # The slots GPUCompiler reported a value for: copied from `gv_to_value` on 1.x, read
+        # straight from the relocation records on 2.x.
+        julia_values = Dict{String, Any}()
+        for gv in LLVM.globals(mod)
+            found = Enzyme.Compiler.slot_value(enzyme_ctx, LLVM.name(gv))
+            found === nothing || (julia_values[LLVM.name(gv)] = something(found))
+        end
         @static if VERSION < v"1.11-"
-            # Julia 1.10's codegen writes the address of an object into the IR, not a slot.
+            # Julia 1.10's codegen writes the address of an object into the IR, not a slot, so
+            # neither GPUCompiler major reports one.
             @test isempty(julia_values)
         else
             @test !isempty(julia_values)
             @test SlotConst{Float64}(1.0) in values(julia_values)
+            # The host back-end bakes, so every slot has an address too.
+            @test all(name -> Enzyme.Compiler.slot_address(enzyme_ctx, name) !== nothing, keys(julia_values))
+            @static if Enzyme.Compiler.HAS_GPUCOMPILER_2
+                # GPUCompiler 2.x leaves the slots of a job compiled on behalf of another
+                # symbolic: without the table there is nothing in the IR to read the value from.
+                nslots, nresolved = count_slot_loads(mod, julia_values)
+                @test nslots > 0
+                @test nresolved == 0
+            end
             Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
                 nslots, nresolved = count_slot_loads(mod, julia_values)
                 @test nslots > 0
@@ -668,8 +684,9 @@ end
 
 # Enzyme works on a module with its slots as declarations, the way GPUCompiler 2.x hands over a
 # job compiled on behalf of another, and writes the addresses back in when it is linked.
-# Julia 1.10's codegen writes the address of an object into the IR, not a slot.
-@static if VERSION >= v"1.11-"
+# Julia 1.10's codegen writes the address of an object into the IR, not a slot. GPUCompiler 2.x
+# leaves the slots of this job without an initializer to begin with.
+@static if VERSION >= v"1.11-" && !Enzyme.Compiler.HAS_GPUCOMPILER_2
     @testset "slots stay symbolic until the module is linked" begin
         world = Base.get_world_counter()
         mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(slot_stores_constant), Tuple{Float64}, world)
@@ -684,7 +701,7 @@ end
             GPUCompiler.prepare_job!(job)
             mod, meta = GPUCompiler.emit_llvm(job)
             enzyme_ctx = Enzyme.Compiler.EnzymeContext(world)
-            Enzyme.Compiler.record_julia_values!(enzyme_ctx, meta)
+            Enzyme.Compiler.record_julia_values!(enzyme_ctx, job, meta)
             julia_values = enzyme_ctx.julia_values
             baked = Dict(
                 LLVM.name(gv) => string(LLVM.initializer(gv)) for gv in LLVM.globals(mod)
