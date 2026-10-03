@@ -486,18 +486,23 @@ end
             enzyme_ctx = Enzyme.Compiler.EnzymeContext(world)
             Enzyme.Compiler.record_julia_values!(enzyme_ctx, meta)
             julia_values = enzyme_ctx.julia_values
-            @test !isempty(julia_values)
-            # The constant `slot_stores_constant` stores, which no name map knows of.
-            @test SlotConst{Float64}(1.0) in values(julia_values)
+            @static if VERSION < v"1.11-"
+                # Julia 1.10's codegen writes the address of an object into the IR, not a slot.
+                @test isempty(julia_values)
+            else
+                @test !isempty(julia_values)
+                # The constant `slot_stores_constant` stores, which no name map knows of.
+                @test SlotConst{Float64}(1.0) in values(julia_values)
 
-            # Without the table there is nothing in the IR to read the value from.
-            nslots, nresolved = count_slot_loads(mod, julia_values)
-            @test nslots > 0
-            @test nresolved == 0
-
-            Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
+                # Without the table there is nothing in the IR to read the value from.
                 nslots, nresolved = count_slot_loads(mod, julia_values)
-                @test nresolved == nslots
+                @test nslots > 0
+                @test nresolved == 0
+
+                Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
+                    nslots, nresolved = count_slot_loads(mod, julia_values)
+                    @test nresolved == nslots
+                end
             end
         end
     end
@@ -521,7 +526,10 @@ else
             enzyme_ctx = Enzyme.Compiler.EnzymeContext(world)
             Enzyme.Compiler.record_julia_values!(enzyme_ctx, meta)
             julia_values = enzyme_ctx.julia_values
-            if haskey(meta, :gv_to_value)
+            if VERSION < v"1.11-"
+                # Julia 1.10's codegen writes the address of an object into the IR, not a slot.
+                @test isempty(julia_values)
+            elseif haskey(meta, :gv_to_value)
                 @test !isempty(julia_values)
                 @test SlotConst{Float64}(1.0) in values(julia_values)
                 Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin

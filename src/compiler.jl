@@ -805,16 +805,14 @@ end
 Remember which Julia value each global slot of a freshly emitted module refers to.
 
 GPUCompiler 2.x reports them as relocation records, one per `extinit` slot and keyed by the
-name of the slot; GPUCompiler 1.x (from 1.8) as `gv_to_value`, the address of the object
-behind each slot, keyed the same way. They are the authoritative answer to "which object is
-this global?", and unlike an address decoded from an initializer they exist on every
-back-end: a `:patch` or `:table` one never has an address in its IR (see
-[`resolve_relocations!`](@ref)). `absint` and `abs_typeof` read the table through
-[`julia_value_of_slot`](@ref). Holding the values in the context also keeps them rooted for
-the duration of the compilation.
+name of the slot; GPUCompiler 1.x as `gv_to_value`, the address of the object behind each slot,
+keyed the same way. They are the authoritative answer to "which object is this global?", and
+unlike an address decoded from an initializer they exist on every back-end: a `:patch` or
+`:table` one never has an address in its IR (see [`resolve_relocations!`](@ref)). `absint`
+and `abs_typeof` read the table through [`julia_value_of_slot`](@ref). Holding the values in
+the context also keeps them rooted for the duration of the compilation.
 
 This must run before [`resolve_relocations!`](@ref), which consumes the records it bakes.
-GPUCompiler 1.x before 1.8 reports nothing; the table stays empty and every lookup misses.
 """
 function record_julia_values!(ctx::EnzymeContext, meta)
     @static if HAS_GPUCOMPILER_2
@@ -825,7 +823,6 @@ function record_julia_values!(ctx::EnzymeContext, meta)
             ctx.julia_values[rec.name] = target.value
         end
     else
-        haskey(meta, :gv_to_value) || return nothing
         for (name, ptr) in meta.gv_to_value
             # A slot whose initializer GPUCompiler could not match to an object.
             ptr == C_NULL && continue

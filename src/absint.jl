@@ -66,10 +66,9 @@ The Julia value a load of the global slot `gv` yields, as recorded by the compil
 flight (`record_julia_values!`), or `nothing` if it has no record of the slot.
 
 This is the preferred source: it is what codegen itself said the slot refers to, it does
-not depend on the address of the value having been written into the IR (which GPUCompiler
-2.x only does for a `:bake` back-end), and the value is rooted by the context. Outside of a
-compilation, and on GPUCompiler 1.x before 1.8, there is no table and the caller falls back
-to decoding the initializer with [`slot_initializer_address`](@ref).
+not depend on the address of the value having been written into the IR, and the value is
+rooted by the context. Outside of a compilation there is no table, and the caller falls
+back to decoding the initializer with [`slot_initializer_address`](@ref).
 """
 function julia_value_of_slot(gv::LLVM.GlobalVariable)::Union{Some{Any}, Nothing}
     isassigned(ENZYME_CONTEXT) || return nothing
