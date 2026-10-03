@@ -1,4 +1,6 @@
 using Enzyme, Test
+using LLVM
+import GPUCompiler
 
 # How a Julia object referenced by generated code reaches Enzyme differs between GPUCompiler
 # majors: 1.x bakes the host address into the `julia.constgv` slot, 2.x keeps the slot symbolic
@@ -34,4 +36,44 @@ end
     GC.gc(true)
     @test RELOC_KEEP[1][1] === RelocConst{Float64}(1.0)
     empty!(RELOC_KEEP)
+end
+
+# The module GPUCompiler 2.x hands Enzyme for a job compiled on behalf of another keeps its slots
+# symbolic until the requesting job lowers them; on a `:patch` or `:table` back-end they are still
+# declarations when Enzyme validates the module. Folding a load of one must leave it alone rather
+# than fail on the missing initializer.
+@static if Enzyme.Compiler.HAS_GPUCOMPILER_2
+    @testset "constant-load folding skips a symbolic slot" begin
+        world = Base.get_world_counter()
+        mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(reloc_stores_constant), Tuple{Float64}, world)
+        config = GPUCompiler.CompilerConfig(
+            Enzyme.Compiler.DefaultCompilerTarget(),
+            Enzyme.Compiler.PrimalCompilerParams(Enzyme.API.DEM_ForwardMode);
+            kernel = false, libraries = true, toplevel = false, optimize = false,
+            cleanup = false, only_entry = false, validate = false, entry_abi = :specfunc,
+        )
+        job = GPUCompiler.CompilerJob(mi, config, world)
+        GPUCompiler.JuliaContext() do _
+            GPUCompiler.prepare_job!(job)
+            mod, meta = GPUCompiler.emit_llvm(job)
+            slots = Set(rec.name for rec in meta.relocations.records)
+            nchecked = 0
+            for f in LLVM.functions(mod), bb in LLVM.blocks(f), inst in LLVM.instructions(bb)
+                isa(inst, LLVM.LoadInst) || continue
+                gv = LLVM.operands(inst)[1]
+                isa(gv, LLVM.GlobalVariable) && LLVM.name(gv) in slots || continue
+                LLVM.initializer(gv) === nothing || continue
+                for u in LLVM.uses(inst)
+                    user = LLVM.user(u)
+                    isa(user, LLVM.Instruction) || continue
+                    T = LLVM.value_type(user)
+                    isa(T, LLVM.PointerType) && LLVM.addrspace(T) == Enzyme.Compiler.Tracked || continue
+                    @test Enzyme.Compiler.try_replace_constant_load!(user; do_replace = false) === user
+                    nchecked += 1
+                end
+            end
+            # Only Julia 1.11+ emits the slots as declarations.
+            GPUCompiler.supports_relocatable_ir() && @test nchecked > 0
+        end
+    end
 end

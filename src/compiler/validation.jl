@@ -420,6 +420,9 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
     if isa(addr, LLVM.GlobalVariable) && (haskey(metadata(addr), "julia.constgv") || !check_mutability)
         paddr = addr
         addr = LLVM.initializer(paddr)
+        # A slot GPUCompiler 2.x leaves to a `:patch` or `:table` back-end is a declaration:
+        # no address is in the IR to fold, the loader supplies it.
+        addr === nothing && return inst
         gname = LLVM.name(paddr) * "\$false"
         addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
         originally_tracked = true
@@ -427,6 +430,7 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
         paddr = operands(addr)[1]
         if isa(paddr, LLVM.GlobalVariable) && (haskey(metadata(paddr), "julia.constgv") || !check_mutability)
             addr = LLVM.initializer(paddr)
+            addr === nothing && return inst
             gname = LLVM.name(paddr) * "\$true"
             base_addr, _ = get_base_and_offset(addr; offsetAllowed = true, inttoptr = false)
             originally_tracked = true
