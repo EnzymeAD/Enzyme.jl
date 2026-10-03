@@ -816,7 +816,7 @@ declaration: the slot never changes (`constant`), and as it only ever holds the 
 Julia value, it is inactive. Activity analysis inferred that from a constant initializer; a
 declaration gives it nothing to go by, and an active-looking slot would need a shadow global.
 Type analysis is kept from accumulating information on the slot, which every load of it shares
-(as for the globals [`unsafe_to_llvm`](@ref) inserts); a load LLVM folded into the address
+(as for the globals `unsafe_to_llvm` inserts); a load LLVM folded into the address
 gave it none either.
 """
 function mark_symbolic_slot!(gv::LLVM.GlobalVariable)
@@ -852,7 +852,7 @@ end
     bake_julia_value_globals!(mod)
 
 Replace each `ejl_<key>` global of the device module `mod`, which stands for the Julia value
-`JuliaGlobalNameMap[key]` or `JuliaEnzymeNameMap[key]` (see [`unsafe_to_llvm`](@ref)), with
+`JuliaGlobalNameMap[key]` or `JuliaEnzymeNameMap[key]` (see `unsafe_to_llvm`), with
 the address of that value. On the host the JIT resolves these names
 (`JIT.define_julia_value!`); GPUCompiler 1.x resolves nothing in device code, so the address is
 written in when the derivative is handed to the kernel that requested it.

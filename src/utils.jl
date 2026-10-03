@@ -97,15 +97,11 @@ function unsafe_to_ptr(@nospecialize(val))
 end
 export unsafe_to_ptr
 
-"""
-    insert_julia_value!(hint, val) -> String
-
-Record `val` in `JuliaEnzymeNameMap` and return its key, `inserted\$<hint>\$<id>`; the global
-`ejl_<key>` then stands for `val`, and the JIT resolves it from the map. The key names the
-object by its `objectid` rather than by its address, so it is the same in every session and
-leaves the address to the resolver. Values are rooted by the map for good, which keeps their
-`objectid` unique; should two values still hash alike, the later one gets a suffix.
-"""
+# Record `val` in `JuliaEnzymeNameMap` and return its key, `inserted$<hint>$<id>`; the global
+# `ejl_<key>` then stands for `val`, and the JIT resolves it from the map. The key names the
+# object by its `objectid` rather than by its address, so it is the same in every session and
+# leaves the address to the resolver. Values are rooted by the map for good, which keeps their
+# `objectid` unique; should two values still hash alike, the later one gets a suffix.
 function insert_julia_value!(hint::String, @nospecialize(val))::String
     base = "inserted\$" * hint * "\$" * string(objectid(val); base = 16)
     k = base

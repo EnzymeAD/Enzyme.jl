@@ -176,14 +176,10 @@ end
 const defined_julia_values = Set{String}()
 const defined_julia_values_lock = ReentrantLock()
 
-"""
-    define_julia_value!(lljit, jd, name)
-
-If `name` is the global `ejl_<key>` that stands for the Julia value `JuliaEnzymeNameMap[key]`,
-define it in `jd` as an absolute symbol at the address of that value, once. This is how the
-JIT resolves the Julia values Enzyme refers to: the IR names them, the address is supplied at
-link time. The map roots the values, so the address stays valid.
-"""
+# If `name` is the global `ejl_<key>` that stands for the Julia value `JuliaEnzymeNameMap[key]`,
+# define it in `jd` as an absolute symbol at the address of that value, once. This is how the
+# JIT resolves the Julia values Enzyme refers to: the IR names them, the address is supplied at
+# link time. The map roots the values, so the address stays valid.
 function define_julia_value!(lljit, jd, name::String)
     startswith(name, "ejl_") || return nothing
     key = name[(ncodeunits("ejl_") + 1):end]
