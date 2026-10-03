@@ -1776,6 +1776,41 @@ function julia_undef_value_for_type(
     throw(AssertionError("Unknown type to val: $(Ty)"))
 end
 
+# Store the header of an empty `GenericMemory` with inline data, i.e. a length of
+# zero and a data pointer to the data following the header, into `mem`, an
+# allocation of a `GenericMemory` whose header is not yet written. The stores
+# are atomic so that they are not removed as dead before the header is written.
+function store_empty_memory_header!(B::LLVM.IRBuilder, @nospecialize(mem::LLVM.Value))::Nothing
+    T_int8 = LLVM.Int8Type()
+    T_int64 = LLVM.Int64Type()
+    T_ptr = LLVM.PointerType(T_int8)
+    T_pderived = LLVM.PointerType(T_int8, Derived)
+    mod = LLVM.parent(LLVM.parent(Base.position(B)))
+
+    derived = addrspacecast!(B, mem, T_pderived)
+    pointer_from_objref = if haskey(functions(mod), "julia.pointer_from_objref")
+        functions(mod)["julia.pointer_from_objref"]
+    else
+        LLVM.Function(mod, "julia.pointer_from_objref", LLVM.FunctionType(T_ptr, [T_pderived]))
+    end
+    fty = LLVM.function_type(pointer_from_objref)
+    objref = call!(B, fty, pointer_from_objref, [bitcast!(B, derived, LLVM.parameters(fty)[1])])
+    data = gep!(B, T_int8, bitcast!(B, objref, T_ptr), [LLVM.ConstantInt(T_int64, 16)])
+
+    length_loc = bitcast!(B, derived, LLVM.PointerType(T_int64, Derived))
+    ptr_loc = bitcast!(
+        B,
+        gep!(B, T_int8, derived, [LLVM.ConstantInt(T_int64, 8)]),
+        LLVM.PointerType(T_ptr, Derived),
+    )
+    for st in (store!(B, LLVM.ConstantInt(T_int64, 0), length_loc), store!(B, data, ptr_loc))
+        ordering!(st, LLVM.API.LLVMAtomicOrderingRelease)
+        syncscope!(st, LLVM.SyncScope("singlethread"))
+        metadata(st)["enzymejl_atomicgc"] = LLVM.MDNode(LLVM.Metadata[])
+    end
+    return nothing
+end
+
 # If count is nothing, it represents that we have an allocation of one of `Ty`. If it is a tuple LLVM values, it represents {the total size in bytes, the aligned size of each element}
 function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType), @nospecialize(prev::LLVM.Value), @nospecialize(count::Union{Nothing, Tuple{LLVM.Value, LLVM.ConstantInt}}))::Nothing
     if Base.datatype_pointerfree(Ty)
@@ -1983,7 +2018,23 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
     end
     @static if VERSION >= v"1.11"
 	if Ty <: GenericMemory
-	    # TODO throw(AssertionError("What the heck is happening, why are we gc.alloca'ing memory, $(string(V)) $Ty"))
+            # Julia allocates a small `Memory` with `julia.gc_alloc_obj` and only
+            # then stores its length and data pointer. In forward mode all shadow
+            # allocations run before those stores, so a collection triggered by one
+            # of them would find the preceding allocation with an undefined header
+            # (#3698). Give it the header of an empty `Memory` with inline data,
+            # which Julia overwrites.
+            if mode == API.DEM_ForwardMode && (used || idx != 0)
+                prev = LLVM.Instruction(prev)
+                if isa(prev, LLVM.CallInst)
+                    fn = LLVM.called_operand(prev)
+                    if isa(fn, LLVM.Function) && LLVM.name(fn) == "julia.gc_alloc_obj"
+                        B = LLVM.IRBuilder()
+                        position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(prev)))
+                        store_empty_memory_header!(B, prev)
+                    end
+                end
+            end
 	    return
 	end
     end
