@@ -175,3 +175,59 @@ end
     @test dq ≈ [1.0, 1.0]
 end
 
+
+# A custom rule gets a copy of the shadow of a mixed argument, which is written back after
+# the reverse rule. With threads that share the shadow, the write-back must not lose the
+# updates of the other threads.
+import Enzyme: EnzymeRules
+
+struct ThreadsMixedParams
+    α::Float64
+    arr::Vector{Float64}
+end
+
+@noinline threads_rule_noop(p::ThreadsMixedParams, i) = p.α * @inbounds(p.arr[i])
+@noinline threads_rule_acc(p::ThreadsMixedParams, i) = p.α * @inbounds(p.arr[i])
+
+function EnzymeRules.augmented_primal(config, func::Const{<:Union{typeof(threads_rule_noop), typeof(threads_rule_acc)}}, ::Type{<:Active}, p::Annotation{ThreadsMixedParams}, i::Const)
+    primal = EnzymeRules.needs_primal(config) ? func.val(p.val, i.val) : nothing
+    return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+end
+EnzymeRules.reverse(config, ::Const{typeof(threads_rule_noop)}, dret::Active, tape, p::Annotation{ThreadsMixedParams}, i::Const) = (nothing, nothing)
+function EnzymeRules.reverse(config, ::Const{typeof(threads_rule_acc)}, dret::Active, tape, p::Annotation{ThreadsMixedParams}, i::Const)
+    if p isa MixedDuplicated
+        d = p.dval[]
+        p.dval[] = ThreadsMixedParams(d.α + dret.val * p.val.arr[i.val], d.arr)
+    end
+    return (nothing, nothing)
+end
+
+# `p.α` is accumulated by Enzyme, the rule's term by the rule
+threads_mixed_noop(p, i) = threads_rule_noop(p, i) + p.α
+threads_mixed_acc(p, i) = threads_rule_acc(p, i) + p.α
+
+@testset "Mixed rule arguments with a shared shadow $(Threads.nthreads())" begin
+    n = 20_000
+    c = rand(n)
+    p = ThreadsMixedParams(2.0, c)
+    for (f, expected) in ((threads_mixed_noop, n), (threads_mixed_acc, n + sum(c)))
+        dp = Ref(ThreadsMixedParams(0.0, zeros(n)))
+        Threads.@threads for i in 1:n
+            autodiff(Reverse, f, Active, MixedDuplicated(p, dp), Const(i))
+        end
+        @test dp[].α ≈ expected
+    end
+end
+
+@noinline threads_splat_sum(a, b, c, d) = a + 2b + 3c + 4d
+threads_splat(x) = threads_splat_sum(Base.inferencebarrier(x)...)
+
+@testset "Dynamic splat with a shared shadow $(Threads.nthreads())" begin
+    n = 20_000
+    x = [1.0, 2.0, 3.0, 4.0]
+    dx = zeros(4)
+    Threads.@threads for i in 1:n
+        autodiff(Reverse, threads_splat, Active, Duplicated(x, dx))
+    end
+    @test dx == n .* [1.0, 2.0, 3.0, 4.0]
+end
