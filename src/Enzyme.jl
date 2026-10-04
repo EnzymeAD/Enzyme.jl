@@ -290,7 +290,7 @@ end
     same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(
     current,
-    arg::Type{BatchMixedDuplicated{T,N}},
+    arg::Type{<:BatchMixedDuplicated{T, N}},
     args...,
 ) where {T,N} = same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg::BatchDuplicatedFunc{T,N}, args...) where {T,N} =
@@ -466,11 +466,12 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
 
     FTy = Core.Typeof(f.val)
 
-    rt, A = if A0 isa UnionAll
+    A1 = Compiler.default_mixed_shadow(A0)
+    rt, A = if A1 isa UnionAll
         rt0 = Compiler.primal_return_type(Reverse, FTy, tt)
-        rt0, A0{rt0}
+        rt0, A1{rt0}
     else
-        eltype(A0), A0
+        eltype(A1), A1
     end
 
     if A0 <: Active
@@ -787,16 +788,16 @@ code, as well as high-order differentiation.
 
     FTy = Core.Typeof(f.val)
 
-    A2 = A
+    A2 = Compiler.default_mixed_shadow(A)
 
-    if A isa UnionAll
+    if A2 isa UnionAll
         rt = Compiler.primal_return_type(Reverse, FTy, tt)
-        A2 = A{rt}
+        A2 = A2{rt}
         if rt == Union{}
             rt = Nothing
         end
     else
-        @assert A isa DataType
+        @assert A2 isa DataType
         rt = A
         if rt == Union{}
 	    throw(ErrorException("Return type inferred to be Union{}. Giving up."))
@@ -1077,11 +1078,12 @@ result, ∂v, ∂A
 
     tt = Tuple{map(eltype, args)...}
 
-    A = if A0 isa UnionAll
+    A1 = Compiler.default_mixed_shadow(A0)
+    A = if A1 isa UnionAll
         rt0 = Compiler.primal_return_type(Reverse, eltype(FA), tt)
-        A0{rt0}
+        A1{rt0}
     else
-        A0
+        A1
     end
 
     tt′ = Tuple{args...}
@@ -1532,12 +1534,13 @@ result, ∂v, ∂A
 
     TT = Tuple{args...}
 
-    rt = if A2 isa UnionAll
+    A3 = Compiler.default_mixed_shadow(A2)
+    rt = if A3 isa UnionAll
         primal_tt = Tuple{map(eltype, args)...}
 	rt0 = Compiler.primal_return_type(Reverse, eltype(FA), primal_tt)
-	A2{rt0}
+        A3{rt0}
     else
-	A2
+        A3
     end
 
     primal_ptr = Compiler.deferred_codegen(

@@ -205,43 +205,34 @@ BatchDuplicatedNoNeed(x::T, y::NTuple{N, T}, check::Bool = true) where {T, N} = 
 Like [`Duplicated`](@ref), except x may contain both active [immutable] and duplicated [mutable]
 data which is differentiable. Only used within custom rules.
 
-If `check` is true the values will be checked for congruency (same type and shape).
+The shadow `∂f_∂x` is the memory into which the derivative of `x` is accumulated. It is
+either a `Base.RefValue{T}`, or a pointer to `T`-sized memory (`Ptr{T}` or
+`Core.LLVMPtr{T}`, for example `pointer(A)` of a one-element GPU array `A` in device code).
+A pointer shadow requires `isbitstype(T)`, and the caller keeps the memory alive. On GPU
+targets the shadow is accumulated with atomic updates, so many threads can share one
+shadow. `MixedDuplicated{T}` without a shadow type means a `Base.RefValue{T}` shadow.
+
+If `check` is true the values will be checked for congruency (same type and shape). A
+pointer shadow is not checked.
 """
-struct MixedDuplicated{T} <: Annotation{T}
+struct MixedDuplicated{T, S} <: Annotation{T}
     val::T
-    dval::Base.RefValue{T}
+    dval::S
     @inline function MixedDuplicated{T1}(x::T1, dx::Base.RefValue{T1}, check::Bool = true) where {T1}
         if check
             check_congruency(x, dx[])
         end
-        return new{T1}(x, dx)
+        return new{T1, Base.RefValue{T1}}(x, dx)
+    end
+    @inline function MixedDuplicated{T1}(x::T1, dx::Union{Ptr{T1}, Core.LLVMPtr{T1}}, check::Bool = false) where {T1}
+        isbitstype(T1) || throw_pointer_shadow_error(T1)
+        return new{T1, typeof(dx)}(x, dx)
     end
 end
 MixedDuplicated(x::T, dx::Base.RefValue{T}, check::Bool = true) where {T} = MixedDuplicated{T}(x, dx, check)
+MixedDuplicated(x::T, dx::Union{Ptr{T}, Core.LLVMPtr{T}}, check::Bool = false) where {T} = MixedDuplicated{T}(x, dx, check)
 
-"""
-    MixedDuplicated(x::T, ∂f_∂x::Core.LLVMPtr{T}, check=false)
-
-Device-code only: use the `T`-sized memory at `∂f_∂x` as the shadow of `x`, for example
-`pointer(A)` of a one-element GPU array `A`. The shadow is accumulated in place, with
-atomic updates on GPU targets, so many threads can share one shadow.
-
-Enzyme only needs a pointer to the shadow data. The pointer is presented to Enzyme as a
-`Base.RefValue{T}` object whose payload is at `∂f_∂x`. This is valid only for `isbitstype(T)`
-and only where no garbage collector can see the object, that is, in GPU kernels. Do not
-call `typeof` on, or store, the resulting `dval`.
-"""
-@inline function MixedDuplicated(x::T, dx::Core.LLVMPtr{T}, check::Bool = false) where {T}
-    isbitstype(T) || throw(ArgumentError("MixedDuplicated with a device pointer shadow requires an isbits type"))
-    return MixedDuplicated{T}(x, unsafe_device_ref(dx), check)
-end
-
-# Pun a pointer to `T` data as a `Base.RefValue{T}`. For an isbits `T` the payload of a
-# `RefValue{T}` starts at the object pointer, and the payload is all that the
-# MixedDuplicated lowering reads. Julia codegen lowers `jl_value_ptr` inline (no runtime
-# call). The `Ref{...}` return type avoids a type check of the (missing) object header.
-@inline unsafe_device_ref(ptr::Core.LLVMPtr{T}) where {T} =
-    ccall(:jl_value_ptr, Ref{Base.RefValue{T}}, (Ptr{Cvoid},), reinterpret(Ptr{Cvoid}, ptr))
+@noinline throw_pointer_shadow_error(T) = throw(ArgumentError("A pointer shadow requires an isbits type, got $T"))
 
 """
     BatchMixedDuplicated(x, ∂f_∂xs, check=true)
@@ -249,37 +240,29 @@ end
 Like [`MixedDuplicated`](@ref), except contains several shadows to compute derivatives
 for all at once. Only used within custom rules.
 
+The shadows are all `Base.RefValue{T}`, or all pointers to `T`-sized memory (see
+[`MixedDuplicated`](@ref)). Each lane must have its own memory.
+
 If `check` is true each shadow will be checked for congruency (same type and shape) with `x`.
 """
-struct BatchMixedDuplicated{T, N} <: Annotation{T}
+struct BatchMixedDuplicated{T, N, S} <: Annotation{T}
     val::T
-    dval::NTuple{N, Base.RefValue{T}}
+    dval::NTuple{N, S}
     @inline function BatchMixedDuplicated{T1, N}(x::T1, dx::NTuple{N, Base.RefValue{T1}}, check::Bool = true) where {T1, N}
         if check
             foreach(dxi -> check_congruency(x, dxi[]), dx)
         end
-        return new{T1, N}(x, dx)
+        return new{T1, N, Base.RefValue{T1}}(x, dx)
+    end
+    @inline function BatchMixedDuplicated{T1, N}(x::T1, dx::NTuple{N, S}, check::Bool = false) where {T1, N, S <: Union{Ptr{T1}, Core.LLVMPtr{T1}}}
+        isbitstype(T1) || throw_pointer_shadow_error(T1)
+        return new{T1, N, S}(x, dx)
     end
 end
 BatchMixedDuplicated(x::T, dx::NTuple{N, Base.RefValue{T}}, check::Bool = true) where {T, N} = BatchMixedDuplicated{T, N}(x, dx, check)
-
-"""
-    BatchMixedDuplicated(x::T, ∂f_∂xs::NTuple{N, Core.LLVMPtr{T}}, check=false)
-
-Device-code only: like `MixedDuplicated(x, ∂f_∂x::Core.LLVMPtr{T})`, with one shadow
-pointer per batch lane. Each lane must point to separate `T`-sized memory. Each lane is
-accumulated in place, with atomic updates on GPU targets.
-
-The same limits as for `MixedDuplicated` apply: `isbitstype(T)` is required, the
-pointers are presented to Enzyme as `Base.RefValue{T}` objects without an object header,
-and this is valid only where no garbage collector can see them, that is, in GPU kernels.
-"""
-@inline function BatchMixedDuplicated(x::T, dx::NTuple{N, Core.LLVMPtr{T}}, check::Bool = false) where {T, N}
-    isbitstype(T) || throw(ArgumentError("BatchMixedDuplicated with device pointer shadows requires an isbits type"))
-    return BatchMixedDuplicated{T, N}(x, map(unsafe_device_ref, dx), check)
-end
+BatchMixedDuplicated(x::T, dx::NTuple{N, S}, check::Bool = false) where {T, N, S <: Union{Ptr{T}, Core.LLVMPtr{T}}} = BatchMixedDuplicated{T, N}(x, dx, check)
 @inline batch_size(::BatchMixedDuplicated{T, N}) where {T, N} = N
-@inline batch_size(::Type{BatchMixedDuplicated{T, N}}) where {T, N} = N
+@inline batch_size(::Type{<:BatchMixedDuplicated{T, N}}) where {T, N} = N
 
 """
     abstract type ABI

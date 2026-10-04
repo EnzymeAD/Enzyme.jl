@@ -201,3 +201,39 @@ mixed_width_f!(out, p) = (out[1] = p.α * 2 + p.β * 3; nothing)
     @test r1[] == MixedWidthParams(2.0, 3.0)
     @test r2[] == MixedWidthParams(20.0, 30.0)
 end
+
+@testset "MixedDuplicated with pointer shadows" begin
+    p = MixedWidthParams(1.0, 1.0)
+    dp = [MixedWidthParams(0.0, 0.0), MixedWidthParams(0.0, 0.0)]
+    GC.@preserve dp begin
+        autodiff(Reverse, mixed_width_f!, Const, Duplicated(zeros(1), [1.0]), MixedDuplicated(p, pointer(dp)))
+        @test dp[1] == MixedWidthParams(2.0, 3.0)
+        @test dp[2] == MixedWidthParams(0.0, 0.0)
+
+        fill!(dp, MixedWidthParams(0.0, 0.0))
+        autodiff(
+            Reverse, mixed_width_f!, Const, BatchDuplicated(zeros(1), ([1.0], [10.0])),
+            BatchMixedDuplicated(p, (pointer(dp, 1), pointer(dp, 2))),
+        )
+        @test dp == [MixedWidthParams(2.0, 3.0), MixedWidthParams(20.0, 30.0)]
+
+        # Split mode, with the pointer shadow in the thunk type
+        fill!(dp, MixedWidthParams(0.0, 0.0))
+        md = MixedDuplicated(p, pointer(dp))
+        fwd, rev = autodiff_thunk(
+            ReverseSplitWithPrimal, Const{typeof(mixed_width_f!)}, Const{Nothing},
+            Duplicated{Vector{Float64}}, typeof(md),
+        )
+        d = Duplicated(zeros(1), [1.0])
+        tape = fwd(Const(mixed_width_f!), d, md)[1]
+        rev(Const(mixed_width_f!), d, md, tape)
+        @test dp[1] == MixedWidthParams(2.0, 3.0)
+
+        # A thunk for `MixedDuplicated{T}` takes a `RefValue{T}` shadow
+        fwd, rev = autodiff_thunk(
+            ReverseSplitWithPrimal, Const{typeof(mixed_width_f!)}, Const{Nothing},
+            Duplicated{Vector{Float64}}, MixedDuplicated{MixedWidthParams},
+        )
+        @test_throws Enzyme.Compiler.ThunkCallError fwd(Const(mixed_width_f!), d, md)
+    end
+end

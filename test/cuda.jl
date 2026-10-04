@@ -570,7 +570,7 @@ end
     TapeType = Enzyme.EnzymeCore.tape_type(
         job, BATCH_MIXED_DEV_MODE, Const{typeof(mixed_dev_body!)}, Const{Nothing},
         BatchDuplicated{typeof(cudaconvert(out)), 2}, Const{typeof(cudaconvert(dc))},
-        BatchMixedDuplicated{MixedDevParams{Float64}, 2}, Const{Int},
+        BatchMixedDuplicated{MixedDevParams{Float64}, 2, Core.LLVMPtr{MixedDevParams{Float64}, 1}}, Const{Int},
     )
     fill!(dp, MixedDevParams(0.0, 0.0))
     @cuda threads = 256 blocks = cld(n, 256) batch_mixed_dev_split_kernel!(out, CuArray(s1), CuArray(s2), dc, p, dp, Val(TapeType))

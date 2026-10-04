@@ -173,6 +173,17 @@ end
     # abstract type parameter still enforces matching concrete types
     @test MixedDuplicated{Any}(1.0, Ref{Any}(2.0)) isa MixedDuplicated{Any}
     @test_throws AssertionError MixedDuplicated{Any}(1.0, Ref{Any}(2))
+    @test typeof(d) === MixedDuplicated{Float64, Base.RefValue{Float64}}
+
+    # pointer shadows
+    p = Ptr{Float64}(UInt(8))
+    d = MixedDuplicated(1.0, p)
+    @test d isa MixedDuplicated{Float64, Ptr{Float64}}
+    @test d.dval === p
+    lp = reinterpret(Core.LLVMPtr{Float64, 1}, p)
+    @test MixedDuplicated(1.0, lp) isa MixedDuplicated{Float64, Core.LLVMPtr{Float64, 1}}
+    @test_throws ArgumentError MixedDuplicated(Any[], Ptr{Vector{Any}}(UInt(8)))
+    @test_throws MethodError MixedDuplicated(1.0, Ptr{Float32}(UInt(8)))
 end
 
 @testset "BatchMixedDuplicated" begin
@@ -190,4 +201,14 @@ end
 
     @test BatchMixedDuplicated{Any, 2}(1.0, (Ref{Any}(2.0), Ref{Any}(3.0))) isa BatchMixedDuplicated{Any, 2}
     @test_throws AssertionError BatchMixedDuplicated{Any, 2}(1.0, (Ref{Any}(2.0), Ref{Any}(3)))
+    @test typeof(d) === BatchMixedDuplicated{Float64, 2, Base.RefValue{Float64}}
+
+    # pointer shadows
+    p1 = Ptr{Float64}(UInt(8))
+    p2 = Ptr{Float64}(UInt(16))
+    d = BatchMixedDuplicated(1.0, (p1, p2))
+    @test d isa BatchMixedDuplicated{Float64, 2, Ptr{Float64}}
+    @test d.dval === (p1, p2)
+    @test EnzymeCore.batch_size(typeof(d)) == 2
+    @test_throws ArgumentError BatchMixedDuplicated(Any[], (Ptr{Vector{Any}}(UInt(8)),))
 end

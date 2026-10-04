@@ -3240,7 +3240,12 @@ function create_abi_wrapper(
                 push!(ActiveRetTypes, Nothing)
             end
         elseif T <: MixedDuplicated || T <: BatchMixedDuplicated
-            push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, T_prjlvalue)))
+            S = mixed_shadow_pointer(T)
+            if S === nothing
+                push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, T_prjlvalue)))
+            else
+                push!(T_wrapperargs, convert(LLVMType, width == 1 ? S : NTuple{width, S}))
+            end
             if inline_roots_type(source_typ) != 0
                 @assert isboxed == GPUCompiler.deserves_argbox(T)
             end
@@ -3617,7 +3622,11 @@ function create_abi_wrapper(
 		 i += 1
 	    end
 
-            if T <: BatchMixedDuplicated
+            # A pointer shadow points to the (isbits) `T′` data, like the payload of a
+            # `RefValue{T′}` shadow.
+            shadow_is_pointer = mixed_shadow_pointer(T) !== nothing
+
+            if T <: BatchMixedDuplicated && !shadow_is_pointer
                 @assert Base.isconcretetype(T′)
                 if GPUCompiler.deserves_argbox(NTuple{width,Base.RefValue{T′}})
                     njlvalue = LLVM.ArrayType(Int(width), T_prjlvalue)
@@ -3637,6 +3646,10 @@ function create_abi_wrapper(
             ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, resty)))
             for idx = 1:width
                 pv = (width == 1) ? darg : extract_value!(builder, darg, idx - 1)
+                if shadow_is_pointer && value_type(pv) isa LLVM.IntegerType
+                    # A `Ptr` is an integer on older Julia versions
+                    pv = inttoptr!(builder, pv, LLVM.PointerType(llty))
+                end
                 pv =
                     bitcast!(builder, pv, LLVM.PointerType(llty, addrspace(value_type(pv))))
                 pv = addrspacecast!(builder, pv, LLVM.PointerType(llty, Derived))
@@ -6805,7 +6818,7 @@ const DumpLLVMCall = Ref(false)
     ::Type{TapeType},
     args::Vararg{Any,N},
 ) where {RawCall,PT,T,RT,TapeType,N,CC,width,returnPrimal}
-        FA = fn_type(CC)
+        FA = default_mixed_shadow(fn_type(CC))
         F = eltype(FA)
         is_forward =
             CC <: AugmentedForwardThunk || CC <: ForwardModeThunk || CC <: PrimalErrorThunk
@@ -6815,7 +6828,8 @@ const DumpLLVMCall = Ref(false)
 
         argtt = tt.parameters[1]
         rettype = rt.parameters[1]
-        argtypes = DataType[argtt.parameters...]
+        # A thunk for a `MixedDuplicated{T}` argument takes a `RefValue{T}` shadow
+        argtypes = DataType[default_mixed_shadow(A) for A in argtt.parameters]
         argexprs = Union{Expr,Symbol}[:(args[$i]) for i = 1:N]
 
         if false && CC <: PrimalErrorThunk
@@ -6943,14 +6957,16 @@ const DumpLLVMCall = Ref(false)
                 argexpr = :(fn.dval)
                 F_ABI = F
                 if width == 1
-                    if (FA <: MixedDuplicated)
-                        push!(types, Any)
+                    if FA <: MixedDuplicated
+                        S = mixed_shadow_pointer(FA)
+                        push!(types, S === nothing ? Any : S)
                     else
                         push!(types, F_ABI)
                     end
                 else
-                    if F_ABI <: BatchMixedDuplicated
-                        F_ABI = Base.RefValue{F_ABI}
+                    if FA <: BatchMixedDuplicated
+                        S = mixed_shadow_pointer(FA)
+                        F_ABI = S === nothing ? Base.RefValue{F_ABI} : S
                     end
                     F_ABI = NTuple{width, F_ABI}
                     isboxedvec = GPUCompiler.deserves_argbox(F_ABI)
@@ -7057,7 +7073,8 @@ const DumpLLVMCall = Ref(false)
                 else
                     argexpr = Expr(:., expr, QuoteNode(:dval))
                 end
-                push!(types, Any)
+                S = mixed_shadow_pointer(T)
+                push!(types, S === nothing ? Any : S)
                 if is_adjoint
                     push!(ActiveRetTypes, Nothing)
                 end
@@ -7069,9 +7086,10 @@ const DumpLLVMCall = Ref(false)
                 else
                     argexpr = Expr(:., expr, QuoteNode(:dval))
                 end
-                isboxedvec =
-                    GPUCompiler.deserves_argbox(NTuple{width,Base.RefValue{source_typ}})
-                if isboxedvec
+                S = mixed_shadow_pointer(T)
+                if S !== nothing
+                    push!(types, NTuple{width,S})
+                elseif GPUCompiler.deserves_argbox(NTuple{width,Base.RefValue{source_typ}})
                     push!(types, Any)
                 else
                     push!(types, NTuple{width,Base.RefValue{source_typ}})
@@ -7610,12 +7628,16 @@ only `A{rt}` to them leaves that parameter free, and a subsequent `A{rt}` binds 
 *element type* to it, yielding an annotation whose `batch_size` is a type rather
 than the width. Filling both explicitly keeps `batch_size(A) == width`, which the
 shadow-return ABI in `create_abi_wrapper` and `enzyme_call` asserts.
+
+The mixed annotations also take the shadow type, which is bound to `Base.RefValue`.
+`MixedDuplicated{T}` already has an element type, which is kept.
 """
 @inline function instantiate_annotation(
         @nospecialize(A::Type{<:Annotation}),
         @nospecialize(rt::Type),
         width::Int,
     )
+    A = default_mixed_shadow(A)
     A isa UnionAll || return A
     return if A <: BatchDuplicated
         BatchDuplicated{rt, width}
@@ -7624,7 +7646,9 @@ shadow-return ABI in `create_abi_wrapper` and `enzyme_call` asserts.
     elseif A <: BatchDuplicatedFunc
         BatchDuplicatedFunc{rt, width}
     elseif A <: BatchMixedDuplicated
-        BatchMixedDuplicated{rt, width}
+        BatchMixedDuplicated{rt, width, Base.RefValue{rt}}
+    elseif A <: MixedDuplicated
+        MixedDuplicated{rt, Base.RefValue{rt}}
     else
         A{rt}
     end
