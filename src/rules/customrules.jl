@@ -683,7 +683,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                 if any_active_data && activity_state == MixedState
                     # TODO mixedupnoneed
                     shadowty = Base.RefValue{shadowty}
-                    Ty = MixedDuplicated{arg.typ, shadowty}
+                    Ty = MixedDuplicated{arg.typ}
                     mixed = true
                 else
                     if activep == API.DFT_DUP_ARG
@@ -697,7 +697,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                 if any_active_data && activity_state == MixedState
                     # TODO batchmixedupnoneed
                     shadowty = Base.RefValue{shadowty}
-                    Ty = BatchMixedDuplicated{arg.typ, Int(width), shadowty}
+                    Ty = BatchMixedDuplicated{arg.typ,Int(width)}
                     mixed = true
                 else
                     if activep == API.DFT_DUP_ARG

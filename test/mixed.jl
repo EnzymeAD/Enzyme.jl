@@ -202,24 +202,24 @@ mixed_width_f!(out, p) = (out[1] = p.α * 2 + p.β * 3; nothing)
     @test r2[] == MixedWidthParams(20.0, 30.0)
 end
 
-@testset "MixedDuplicated with pointer shadows" begin
+@testset "MixedDuplicatedPtr" begin
     p = MixedWidthParams(1.0, 1.0)
     dp = [MixedWidthParams(0.0, 0.0), MixedWidthParams(0.0, 0.0)]
     GC.@preserve dp begin
-        autodiff(Reverse, mixed_width_f!, Const, Duplicated(zeros(1), [1.0]), MixedDuplicated(p, pointer(dp)))
+        autodiff(Reverse, mixed_width_f!, Const, Duplicated(zeros(1), [1.0]), MixedDuplicatedPtr(p, pointer(dp)))
         @test dp[1] == MixedWidthParams(2.0, 3.0)
         @test dp[2] == MixedWidthParams(0.0, 0.0)
 
         fill!(dp, MixedWidthParams(0.0, 0.0))
         autodiff(
             Reverse, mixed_width_f!, Const, BatchDuplicated(zeros(1), ([1.0], [10.0])),
-            BatchMixedDuplicated(p, (pointer(dp, 1), pointer(dp, 2))),
+            BatchMixedDuplicatedPtr(p, (pointer(dp, 1), pointer(dp, 2))),
         )
         @test dp == [MixedWidthParams(2.0, 3.0), MixedWidthParams(20.0, 30.0)]
 
         # Split mode, with the pointer shadow in the thunk type
         fill!(dp, MixedWidthParams(0.0, 0.0))
-        md = MixedDuplicated(p, pointer(dp))
+        md = MixedDuplicatedPtr(p, pointer(dp))
         fwd, rev = autodiff_thunk(
             ReverseSplitWithPrimal, Const{typeof(mixed_width_f!)}, Const{Nothing},
             Duplicated{Vector{Float64}}, typeof(md),
@@ -229,7 +229,7 @@ end
         rev(Const(mixed_width_f!), d, md, tape)
         @test dp[1] == MixedWidthParams(2.0, 3.0)
 
-        # A thunk for `MixedDuplicated{T}` takes a `RefValue{T}` shadow
+        # A thunk for `MixedDuplicated{T}` does not take a `MixedDuplicatedPtr`
         fwd, rev = autodiff_thunk(
             ReverseSplitWithPrimal, Const{typeof(mixed_width_f!)}, Const{Nothing},
             Duplicated{Vector{Float64}}, MixedDuplicated{MixedWidthParams},

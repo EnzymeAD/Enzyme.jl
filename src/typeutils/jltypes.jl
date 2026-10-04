@@ -550,33 +550,27 @@ end
 @inline remove_innerty(::Type{<:MixedDuplicated}) = MixedDuplicated
 @inline remove_innerty(::Type{<:BatchMixedDuplicated}) = MixedDuplicated
 
+# A `MixedDuplicatedPtr` is lowered like a `MixedDuplicated`, but with a pointer shadow.
+const AnyMixedDuplicated = Union{MixedDuplicated, MixedDuplicatedPtr}
+const AnyBatchMixedDuplicated = Union{BatchMixedDuplicated, BatchMixedDuplicatedPtr}
+
 """
-    mixed_shadow_pointer(T::Type{<:Union{MixedDuplicated, BatchMixedDuplicated}})
+    mixed_shadow_pointer(T::Type{<:Union{AnyMixedDuplicated, AnyBatchMixedDuplicated}})
 
 The pointer type of the shadow(s) of the annotation `T`, or `nothing` if a shadow is a
-`Base.RefValue`. Without a shadow type (e.g. `MixedDuplicated{Float64}`), a shadow is a
 `Base.RefValue`.
 
 The ABI passes a `RefValue` shadow as a tracked object, and a pointer shadow as the raw
 pointer.
 """
 function mixed_shadow_pointer(@nospecialize(T::Type))
-    body = Base.unwrap_unionall(T)::DataType
-    S = T <: MixedDuplicated ? body.parameters[2] : body.parameters[3]
-    return S isa Type && S <: Union{Ptr, Core.LLVMPtr} ? S : nothing
+    if T <: MixedDuplicatedPtr
+        return T.parameters[2]
+    elseif T <: BatchMixedDuplicatedPtr
+        return T.parameters[3]
+    end
+    return nothing
 end
-
-"""
-    default_mixed_shadow(A::Type{<:Annotation})
-
-Bind the free shadow type of `MixedDuplicated{T}` or `BatchMixedDuplicated{T, N}` to
-`Base.RefValue{T}`, the shadow type when none is given. Any other `A` is returned as is.
-"""
-@inline default_mixed_shadow(::Type{A}) where {A} = A
-@inline default_mixed_shadow(::Type{MixedDuplicated{T}}) where {T} =
-    MixedDuplicated{T, Base.RefValue{T}}
-@inline default_mixed_shadow(::Type{BatchMixedDuplicated{T, N}}) where {T, N} =
-    BatchMixedDuplicated{T, N, Base.RefValue{T}}
 
 @inline function is_memory_instance(@nospecialize(obj))
    @static if VERSION < v"1.11"

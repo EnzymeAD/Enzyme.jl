@@ -487,13 +487,13 @@ function mixed_dev_kernel!(out, dout, c, p, dp)
     if i <= length(out)
         autodiff_deferred(
             Reverse, Const(mixed_dev_body!), Const, Duplicated(out, dout), Const(c),
-            MixedDuplicated(p, pointer(dp)), Const(i),
+            MixedDuplicatedPtr(p, pointer(dp)), Const(i),
         )
     end
     return nothing
 end
 
-@testset "MixedDuplicated with a device pointer shadow" begin
+@testset "MixedDuplicatedPtr with a device pointer" begin
     n = 1024
     c = rand(n)
     p = MixedDevParams(2.0, 3.0)
@@ -512,7 +512,7 @@ function batch_mixed_dev_kernel!(out, d1, d2, c, p, dp)
     if i <= length(out)
         autodiff_deferred(
             Reverse, Const(mixed_dev_body!), Const, BatchDuplicated(out, (d1, d2)), Const(c),
-            BatchMixedDuplicated(p, (pointer(dp, 1), pointer(dp, 2))), Const(i),
+            BatchMixedDuplicatedPtr(p, (pointer(dp, 1), pointer(dp, 2))), Const(i),
         )
     end
     return nothing
@@ -524,7 +524,7 @@ function batch_mixed_dev_split_kernel!(out, d1, d2, c, p, dp, ::Val{TapeType}) w
     i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
     if i <= length(out)
         bd = BatchDuplicated(out, (d1, d2))
-        md = BatchMixedDuplicated(p, (pointer(dp, 1), pointer(dp, 2)))
+        md = BatchMixedDuplicatedPtr(p, (pointer(dp, 1), pointer(dp, 2)))
         fwd, rev = autodiff_deferred_thunk(
             BATCH_MIXED_DEV_MODE, TapeType, Const{typeof(mixed_dev_body!)}, Const{Nothing},
             typeof(bd), Const{typeof(c)}, typeof(md), Const{Int},
@@ -535,7 +535,7 @@ function batch_mixed_dev_split_kernel!(out, d1, d2, c, p, dp, ::Val{TapeType}) w
     return nothing
 end
 
-@testset "BatchMixedDuplicated with device pointer shadows" begin
+@testset "BatchMixedDuplicatedPtr with device pointers" begin
     n = 1024
     c = rand(n)
     p = MixedDevParams(2.0, 3.0)
@@ -570,7 +570,7 @@ end
     TapeType = Enzyme.EnzymeCore.tape_type(
         job, BATCH_MIXED_DEV_MODE, Const{typeof(mixed_dev_body!)}, Const{Nothing},
         BatchDuplicated{typeof(cudaconvert(out)), 2}, Const{typeof(cudaconvert(dc))},
-        BatchMixedDuplicated{MixedDevParams{Float64}, 2, Core.LLVMPtr{MixedDevParams{Float64}, 1}}, Const{Int},
+        BatchMixedDuplicatedPtr{MixedDevParams{Float64}, 2, Core.LLVMPtr{MixedDevParams{Float64}, 1}}, Const{Int},
     )
     fill!(dp, MixedDevParams(0.0, 0.0))
     @cuda threads = 256 blocks = cld(n, 256) batch_mixed_dev_split_kernel!(out, CuArray(s1), CuArray(s2), dc, p, dp, Val(TapeType))

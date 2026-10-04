@@ -87,8 +87,8 @@ export Annotation,
 import EnzymeCore: BatchDuplicatedFunc
 export BatchDuplicatedFunc
 
-import EnzymeCore: MixedDuplicated, BatchMixedDuplicated
-export MixedDuplicated, BatchMixedDuplicated
+import EnzymeCore: MixedDuplicated, BatchMixedDuplicated, MixedDuplicatedPtr, BatchMixedDuplicatedPtr
+export MixedDuplicated, BatchMixedDuplicated, MixedDuplicatedPtr, BatchMixedDuplicatedPtr
 
 import EnzymeCore: batch_size, get_func
 export batch_size, get_func
@@ -238,9 +238,9 @@ end
         arg = @inbounds args[i]
         if arg isa Active
             return true
-        elseif arg isa MixedDuplicated
+        elseif arg isa MixedDuplicated || arg isa MixedDuplicatedPtr
             return true
-        elseif arg isa BatchMixedDuplicated
+        elseif arg isa BatchMixedDuplicated || arg isa BatchMixedDuplicatedPtr
             return true
         else
             return false
@@ -290,7 +290,14 @@ end
     same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(
     current,
-    arg::Type{<:BatchMixedDuplicated{T, N}},
+    arg::Type{BatchMixedDuplicated{T,N}},
+    args...,
+) where {T,N} = same_or_one_rec(same_or_one_helper(current, N), args...)
+@inline same_or_one_rec(current, arg::BatchMixedDuplicatedPtr{T,N}, args...) where {T,N} =
+    same_or_one_rec(same_or_one_helper(current, N), args...)
+@inline same_or_one_rec(
+    current,
+    arg::Type{<:BatchMixedDuplicatedPtr{T,N}},
     args...,
 ) where {T,N} = same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg::BatchDuplicatedFunc{T,N}, args...) where {T,N} =
@@ -466,12 +473,11 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
 
     FTy = Core.Typeof(f.val)
 
-    A1 = Compiler.default_mixed_shadow(A0)
-    rt, A = if A1 isa UnionAll
+    rt, A = if A0 isa UnionAll
         rt0 = Compiler.primal_return_type(Reverse, FTy, tt)
-        rt0, A1{rt0}
+        rt0, A0{rt0}
     else
-        eltype(A1), A1
+        eltype(A0), A0
     end
 
     if A0 <: Active
@@ -788,16 +794,16 @@ code, as well as high-order differentiation.
 
     FTy = Core.Typeof(f.val)
 
-    A2 = Compiler.default_mixed_shadow(A)
+    A2 = A
 
-    if A2 isa UnionAll
+    if A isa UnionAll
         rt = Compiler.primal_return_type(Reverse, FTy, tt)
-        A2 = A2{rt}
+        A2 = A{rt}
         if rt == Union{}
             rt = Nothing
         end
     else
-        @assert A2 isa DataType
+        @assert A isa DataType
         rt = A
         if rt == Union{}
 	    throw(ErrorException("Return type inferred to be Union{}. Giving up."))
@@ -1078,12 +1084,11 @@ result, ∂v, ∂A
 
     tt = Tuple{map(eltype, args)...}
 
-    A1 = Compiler.default_mixed_shadow(A0)
-    A = if A1 isa UnionAll
+    A = if A0 isa UnionAll
         rt0 = Compiler.primal_return_type(Reverse, eltype(FA), tt)
-        A1{rt0}
+        A0{rt0}
     else
-        A1
+        A0
     end
 
     tt′ = Tuple{args...}
@@ -1534,13 +1539,12 @@ result, ∂v, ∂A
 
     TT = Tuple{args...}
 
-    A3 = Compiler.default_mixed_shadow(A2)
-    rt = if A3 isa UnionAll
+    rt = if A2 isa UnionAll
         primal_tt = Tuple{map(eltype, args)...}
 	rt0 = Compiler.primal_return_type(Reverse, eltype(FA), primal_tt)
-        A3{rt0}
+	A2{rt0}
     else
-        A3
+	A2
     end
 
     primal_ptr = Compiler.deferred_codegen(

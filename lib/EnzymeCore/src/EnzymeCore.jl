@@ -3,7 +3,7 @@ module EnzymeCore
 export Forward, ForwardWithPrimal, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal, ReverseSplitWithPrimal
 export ReverseSplitModified, ReverseSplitWidth, ReverseHolomorphic, ReverseHolomorphicWithPrimal
 export Const, Active, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed, Annotation
-export MixedDuplicated, BatchMixedDuplicated
+export MixedDuplicated, BatchMixedDuplicated, MixedDuplicatedPtr, BatchMixedDuplicatedPtr
 export DefaultABI, FFIABI, InlineABI, NonGenABI
 export BatchDuplicatedFunc
 export within_autodiff, ignore_derivatives
@@ -205,34 +205,19 @@ BatchDuplicatedNoNeed(x::T, y::NTuple{N, T}, check::Bool = true) where {T, N} = 
 Like [`Duplicated`](@ref), except x may contain both active [immutable] and duplicated [mutable]
 data which is differentiable. Only used within custom rules.
 
-The shadow `∂f_∂x` is the memory into which the derivative of `x` is accumulated. It is
-either a `Base.RefValue{T}`, or a pointer to `T`-sized memory (`Ptr{T}` or
-`Core.LLVMPtr{T}`, for example `pointer(A)` of a one-element GPU array `A` in device code).
-A pointer shadow requires `isbitstype(T)`, and the caller keeps the memory alive. On GPU
-targets the shadow is accumulated with atomic updates, so many threads can share one
-shadow. `MixedDuplicated{T}` without a shadow type means a `Base.RefValue{T}` shadow.
-
-If `check` is true the values will be checked for congruency (same type and shape). A
-pointer shadow is not checked.
+If `check` is true the values will be checked for congruency (same type and shape).
 """
-struct MixedDuplicated{T, S} <: Annotation{T}
+struct MixedDuplicated{T} <: Annotation{T}
     val::T
-    dval::S
+    dval::Base.RefValue{T}
     @inline function MixedDuplicated{T1}(x::T1, dx::Base.RefValue{T1}, check::Bool = true) where {T1}
         if check
             check_congruency(x, dx[])
         end
-        return new{T1, Base.RefValue{T1}}(x, dx)
-    end
-    @inline function MixedDuplicated{T1}(x::T1, dx::Union{Ptr{T1}, Core.LLVMPtr{T1}}, check::Bool = false) where {T1}
-        isbitstype(T1) || throw_pointer_shadow_error(T1)
-        return new{T1, typeof(dx)}(x, dx)
+        return new{T1}(x, dx)
     end
 end
 MixedDuplicated(x::T, dx::Base.RefValue{T}, check::Bool = true) where {T} = MixedDuplicated{T}(x, dx, check)
-MixedDuplicated(x::T, dx::Union{Ptr{T}, Core.LLVMPtr{T}}, check::Bool = false) where {T} = MixedDuplicated{T}(x, dx, check)
-
-@noinline throw_pointer_shadow_error(T) = throw(ArgumentError("A pointer shadow requires an isbits type, got $T"))
 
 """
     BatchMixedDuplicated(x, ∂f_∂xs, check=true)
@@ -240,29 +225,72 @@ MixedDuplicated(x::T, dx::Union{Ptr{T}, Core.LLVMPtr{T}}, check::Bool = false) w
 Like [`MixedDuplicated`](@ref), except contains several shadows to compute derivatives
 for all at once. Only used within custom rules.
 
-The shadows are all `Base.RefValue{T}`, or all pointers to `T`-sized memory (see
-[`MixedDuplicated`](@ref)). Each lane must have its own memory.
-
 If `check` is true each shadow will be checked for congruency (same type and shape) with `x`.
 """
-struct BatchMixedDuplicated{T, N, S} <: Annotation{T}
+struct BatchMixedDuplicated{T, N} <: Annotation{T}
     val::T
-    dval::NTuple{N, S}
+    dval::NTuple{N, Base.RefValue{T}}
     @inline function BatchMixedDuplicated{T1, N}(x::T1, dx::NTuple{N, Base.RefValue{T1}}, check::Bool = true) where {T1, N}
         if check
             foreach(dxi -> check_congruency(x, dxi[]), dx)
         end
-        return new{T1, N, Base.RefValue{T1}}(x, dx)
-    end
-    @inline function BatchMixedDuplicated{T1, N}(x::T1, dx::NTuple{N, S}, check::Bool = false) where {T1, N, S <: Union{Ptr{T1}, Core.LLVMPtr{T1}}}
-        isbitstype(T1) || throw_pointer_shadow_error(T1)
-        return new{T1, N, S}(x, dx)
+        return new{T1, N}(x, dx)
     end
 end
 BatchMixedDuplicated(x::T, dx::NTuple{N, Base.RefValue{T}}, check::Bool = true) where {T, N} = BatchMixedDuplicated{T, N}(x, dx, check)
-BatchMixedDuplicated(x::T, dx::NTuple{N, S}, check::Bool = false) where {T, N, S <: Union{Ptr{T}, Core.LLVMPtr{T}}} = BatchMixedDuplicated{T, N}(x, dx, check)
 @inline batch_size(::BatchMixedDuplicated{T, N}) where {T, N} = N
-@inline batch_size(::Type{<:BatchMixedDuplicated{T, N}}) where {T, N} = N
+@inline batch_size(::Type{BatchMixedDuplicated{T, N}}) where {T, N} = N
+
+# TODO: On the next breaking release of EnzymeCore, fold `MixedDuplicatedPtr` and
+# `BatchMixedDuplicatedPtr` into `MixedDuplicated{T, S}` and `BatchMixedDuplicated{T, N, S}`,
+# parametric on the shadow type.
+
+"""
+    MixedDuplicatedPtr(x::T, ∂f_∂x::Union{Ptr{T}, Core.LLVMPtr{T}})
+
+Like [`MixedDuplicated`](@ref), except the shadow is a pointer to `T`-sized memory instead
+of a `Base.RefValue{T}`. For example `pointer(A)` of a one-element GPU array `A` in device
+code. The derivative of `x` is accumulated in place, with atomic updates on GPU targets,
+so many threads can share one shadow.
+
+Requires `isbitstype(T)`. The caller keeps the memory alive. The shadow is not checked for
+congruency.
+
+!!! note
+    On the next breaking release of EnzymeCore this will be folded into
+    [`MixedDuplicated`](@ref), as a `MixedDuplicated` with a pointer shadow type.
+"""
+struct MixedDuplicatedPtr{T, P <: Union{Ptr{T}, Core.LLVMPtr{T}}} <: Annotation{T}
+    val::T
+    dval::P
+    @inline function MixedDuplicatedPtr(x::T, dx::P) where {T, P <: Union{Ptr{T}, Core.LLVMPtr{T}}}
+        isbitstype(T) || throw_pointer_shadow_error(T)
+        return new{T, P}(x, dx)
+    end
+end
+
+@noinline throw_pointer_shadow_error(T) = throw(ArgumentError("A pointer shadow requires an isbits type, got $T"))
+
+"""
+    BatchMixedDuplicatedPtr(x::T, ∂f_∂xs::NTuple{N, <:Union{Ptr{T}, Core.LLVMPtr{T}}})
+
+Like [`MixedDuplicatedPtr`](@ref), with one shadow pointer per batch lane. Each lane must
+point to separate `T`-sized memory.
+
+!!! note
+    On the next breaking release of EnzymeCore this will be folded into
+    [`BatchMixedDuplicated`](@ref), as a `BatchMixedDuplicated` with a pointer shadow type.
+"""
+struct BatchMixedDuplicatedPtr{T, N, P <: Union{Ptr{T}, Core.LLVMPtr{T}}} <: Annotation{T}
+    val::T
+    dval::NTuple{N, P}
+    @inline function BatchMixedDuplicatedPtr(x::T, dx::NTuple{N, P}) where {T, N, P <: Union{Ptr{T}, Core.LLVMPtr{T}}}
+        isbitstype(T) || throw_pointer_shadow_error(T)
+        return new{T, N, P}(x, dx)
+    end
+end
+@inline batch_size(::BatchMixedDuplicatedPtr{T, N}) where {T, N} = N
+@inline batch_size(::Type{<:BatchMixedDuplicatedPtr{T, N}}) where {T, N} = N
 
 """
     abstract type ABI
