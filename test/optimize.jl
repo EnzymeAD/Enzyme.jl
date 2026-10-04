@@ -365,3 +365,24 @@ end
     @test !occursin("masked.gather", ir)
     @test !occursin("masked.scatter", ir)
 end
+
+mutable struct TypeNamesPair
+    a::Vector{Float64}
+    b::Float64
+end
+typenames_loss(p::TypeNamesPair) = sum(abs2, p.a) * p.b
+
+@testset "EmitTypeNames" begin
+    # The printed type names are debug output only; turning them on must not change
+    # the derivative.
+    Enzyme.Compiler.EmitTypeNames[] = true
+    try
+        p = TypeNamesPair([1.0, 2.0], 3.0)
+        dp = TypeNamesPair([0.0, 0.0], 0.0)
+        autodiff(Reverse, typenames_loss, Active, Duplicated(p, dp))
+        @test dp.a ≈ [6.0, 12.0]
+        @test dp.b ≈ 5.0
+    finally
+        Enzyme.Compiler.EmitTypeNames[] = false
+    end
+end

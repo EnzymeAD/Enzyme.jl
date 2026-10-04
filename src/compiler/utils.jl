@@ -1,4 +1,13 @@
 
+"""
+    EmitTypeNames[] = true
+
+Also write the printed Julia type next to each type Enzyme records in the IR (the
+`enzymejl_parmtype_str` attribute, and the `enzymejl_source_type_<T>` and
+`enzymejl_allocart_name` metadata). They help reading IR dumps.
+"""
+const EmitTypeNames = Ref(false)
+
 @enum(AllocFnKindEnum,
       AFKE_Unknown = 0,
       AFKE_Alloc = 1,
