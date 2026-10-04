@@ -1,4 +1,4 @@
-using Test, MatrixAlgebraKit, Random, LinearAlgebra, Enzyme, EnzymeTestUtils
+using Test, MatrixAlgebraKit, Random, LinearAlgebra, Enzyme, EnzymeTestUtils, StableRNGs
 
 function call_and_zero!(f!, A, alg)
     F′ = f!(A, alg)
@@ -9,10 +9,12 @@ end
 precision(::Type{T}) where {T <: Number} = sqrt(eps(real(T)))
 precision(::Type{T}) where {T} = precision(eltype(T))
 
-rng = Random.default_rng()
+# A fixed seed: finite differences of a factorization are unreliable for some
+# random matrices, e.g. SVDs with nearly equal singular values.
+const rng = StableRNG(0)
 
-structured_randn!(A::AbstractMatrix) = randn!(A)
-structured_randn!(A::Diagonal) = (randn!(MatrixAlgebraKit.diagview(A)); return A)
+structured_randn!(A::AbstractMatrix) = randn!(rng, A)
+structured_randn!(A::Diagonal) = (randn!(rng, MatrixAlgebraKit.diagview(A)); return A)
 
 instantiate_matrix(::Type{T}, size) where {T <: Number} = randn(rng, T, size)
 instantiate_matrix(::Type{AT}, size) where {AT <: Diagonal} = Diagonal(randn(rng, eltype(AT), size))
@@ -26,8 +28,8 @@ instantiate_matrix(::Type{AT}, size) where {AT <: Diagonal} = Diagonal(randn(rng
     LQ = lq_compact(A)
     ΔLQ = structured_randn!.(similar.(LQ))
     MatrixAlgebraKit.remove_lq_gauge_dependence!(ΔLQ..., A, LQ...)
-    test_reverse(lq_compact, Duplicated, (A, Duplicated), (alg, Const); atol, rtol, output_tangent = ΔLQ)
-    test_reverse(call_and_zero!, Duplicated, (lq_compact!, Const), (A, Duplicated), (alg, Const); atol, rtol, output_tangent = ΔLQ)
+    test_reverse(lq_compact, Duplicated, (A, Duplicated), (alg, Const); rng, atol, rtol, output_tangent = ΔLQ)
+    test_reverse(call_and_zero!, Duplicated, (lq_compact!, Const), (A, Duplicated), (alg, Const); rng, atol, rtol, output_tangent = ΔLQ)
 
     if sz[1] == sz[2]
         A = instantiate_matrix(Diagonal{T}, sz)
@@ -35,8 +37,8 @@ instantiate_matrix(::Type{AT}, size) where {AT <: Diagonal} = Diagonal(randn(rng
         LQ = lq_compact(A)
         ΔLQ = structured_randn!.(similar.(LQ))
         MatrixAlgebraKit.remove_lq_gauge_dependence!(ΔLQ..., A, LQ...)
-        test_reverse(lq_compact, Duplicated, (A, Duplicated), (alg, Const); atol, rtol, output_tangent = ΔLQ)
-        test_reverse(call_and_zero!, Duplicated, (lq_compact!, Const), (A, Duplicated), (alg, Const); atol, rtol, output_tangent = ΔLQ)
+        test_reverse(lq_compact, Duplicated, (A, Duplicated), (alg, Const); rng, atol, rtol, output_tangent = ΔLQ)
+        test_reverse(call_and_zero!, Duplicated, (lq_compact!, Const), (A, Duplicated), (alg, Const); rng, atol, rtol, output_tangent = ΔLQ)
     end
 end
 
@@ -49,8 +51,8 @@ end
     QR = qr_compact(A)
     ΔQR = structured_randn!.(similar.(QR))
     MatrixAlgebraKit.remove_lq_gauge_dependence!(ΔQR..., A, QR...)
-    test_reverse(qr_compact, Duplicated, (A, Duplicated), (alg, Const); atol, rtol, output_tangent = ΔQR)
-    test_reverse(call_and_zero!, Duplicated, (qr_compact!, Const), (A, Duplicated), (alg, Const); atol, rtol, output_tangent = ΔQR)
+    test_reverse(qr_compact, Duplicated, (A, Duplicated), (alg, Const); rng, atol, rtol, output_tangent = ΔQR)
+    test_reverse(call_and_zero!, Duplicated, (qr_compact!, Const), (A, Duplicated), (alg, Const); rng, atol, rtol, output_tangent = ΔQR)
 
     if sz[1] == sz[2]
         A = instantiate_matrix(Diagonal{T}, sz)
@@ -58,8 +60,8 @@ end
         QR = qr_compact(A)
         ΔQR = structured_randn!.(similar.(QR))
         MatrixAlgebraKit.remove_qr_gauge_dependence!(ΔQR..., A, QR...)
-        test_reverse(qr_compact, Duplicated, (A, Duplicated), (alg, Const); atol, rtol, output_tangent = ΔQR)
-        test_reverse(call_and_zero!, Duplicated, (qr_compact!, Const), (A, Duplicated), (alg, Const); atol, rtol, output_tangent = ΔQR)
+        test_reverse(qr_compact, Duplicated, (A, Duplicated), (alg, Const); rng, atol, rtol, output_tangent = ΔQR)
+        test_reverse(call_and_zero!, Duplicated, (qr_compact!, Const), (A, Duplicated), (alg, Const); rng, atol, rtol, output_tangent = ΔQR)
     end
 end
 
@@ -74,8 +76,8 @@ end
     ΔU, ΔS, ΔVᴴ = structured_randn!.(similar.((U, S, Vᴴ)))
     ΔU, ΔVᴴ = MatrixAlgebraKit.remove_svd_gauge_dependence!(ΔU, ΔVᴴ, U, S, Vᴴ)
     ΔUSVᴴ = (ΔU, ΔS, ΔVᴴ)
-    test_reverse(svd_compact, Duplicated, (A, Duplicated), (alg, Const); atol, rtol, output_tangent = ΔUSVᴴ)
-    test_reverse(call_and_zero!, Duplicated, (svd_compact!, Const), (A, Duplicated), (alg, Const); atol, rtol, output_tangent = ΔUSVᴴ)
+    test_reverse(svd_compact, Duplicated, (A, Duplicated), (alg, Const); rng, atol, rtol, output_tangent = ΔUSVᴴ)
+    test_reverse(call_and_zero!, Duplicated, (svd_compact!, Const), (A, Duplicated), (alg, Const); rng, atol, rtol, output_tangent = ΔUSVᴴ)
 
     #=if sz[1] == sz[2]
         A = instantiate_matrix(Diagonal{T}, sz)
@@ -83,7 +85,7 @@ end
         USVᴴ = svd_compact(A)
         ΔU, ΔS, ΔVᴴ = structured_randn!.(similar.((U, S, Vᴴ)))
         ΔU, ΔVᴴ = MatrixAlgebraKit.remove_svd_gauge_dependence!(ΔU, ΔVᴴ, U, S, Vᴴ)
-        test_reverse(svd_compact, Duplicated, (A, Duplicated), (alg, Const); atol, rtol, output_tangent = ΔUSVᴴ)
-        test_reverse(call_and_zero!, Duplicated, (svd_compact!, Const), (A, Duplicated), (alg, Const); atol, rtol, output_tangent = ΔUSVᴴ)
+        test_reverse(svd_compact, Duplicated, (A, Duplicated), (alg, Const); rng, atol, rtol, output_tangent = ΔUSVᴴ)
+        test_reverse(call_and_zero!, Duplicated, (svd_compact!, Const), (A, Duplicated), (alg, Const); rng, atol, rtol, output_tangent = ΔUSVᴴ)
     end=# # currently broken, waiting on fix in MAK 0.6.9
 end
