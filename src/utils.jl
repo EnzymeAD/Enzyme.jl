@@ -181,6 +181,18 @@ function setup_global(
     return gv
 end
 
+# A readable part for the key of `val` in the compilation's table.
+function julia_value_hint(@nospecialize(val))::String
+    # `Vector` is named after its body; `Union{A, B} where T` has no name.
+    T = val isa UnionAll ? Base.unwrap_unionall(val) : val
+    (T isa Function || T isa DataType) || return "val"
+    name = string(nameof(T))
+    for c in name
+        (isletter(c) || isdigit(c) || c == '_') || return "val"
+    end
+    return name
+end
+
 # This mimicks literal_pointer_val / literal_pointer_val_slot
 # `insert_name_if_not_exists` puts `val` in the table of the compilation `enzyme_ctx` under a
 # name, which the code then refers to (see `insert_julia_value!`).
@@ -197,20 +209,19 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
         end
     end
 
-    for (k, v) in Compiler.JuliaEnzymeNameMap
-        if v === val
-            return setup_global(B, T_jlvalue, world, insert_name_if_not_exists, k, val, enzyme_ctx)
-        end
+    # During a compilation the code refers to the value by name, `ejl_<key>`, and the
+    # compilation's table holds the value under `key` (`insert_julia_value!`): whoever links the
+    # module writes the address in. Like a literal address, the global is inactive.
+    if enzyme_ctx === nothing && isassigned(ENZYME_CONTEXT)
+        enzyme_ctx = ENZYME_CONTEXT[]
+    end
+    if insert_name_if_not_exists !== nothing || enzyme_ctx !== nothing
+        hint = insert_name_if_not_exists === nothing ? julia_value_hint(val) : insert_name_if_not_exists
+        return setup_global(B, T_jlvalue, world, hint, hint, val, enzyme_ctx)
     end
 
-    if insert_name_if_not_exists !== nothing
-        return setup_global(B, T_jlvalue, world, insert_name_if_not_exists, insert_name_if_not_exists, val, enzyme_ctx)
-    end
-
-    # XXX: This prevents code from being runtime relocatable
-    #      We likely should emit global variables and use something
-    #      like `absolute_symbol_materialization` and write out cache-files
-    #      that have relocation tables.
+    # Outside of a compilation (e.g. a module built for `llvmcall`) nothing would resolve a
+    # name: write the address in.
     ptr = unsafe_to_ptr(val)
 
     fill_val = LLVM.ConstantInt(convert(UInt, ptr))

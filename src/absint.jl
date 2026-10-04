@@ -34,16 +34,15 @@ function julia_global(gname::AbstractString)::Union{Some{Any}, Nothing}
     return haskey(JuliaGlobalNameMap, gname) ? Some{Any}(JuliaGlobalNameMap[gname]) : nothing
 end
 
-# The value of the global called `gname` that Enzyme inserted itself, if it is one: one of the
-# well-known ones, or one of the values the compilation in flight inserted (`inserted_values`, see
+# The value of the global called `gname` that Enzyme inserted itself, if it is one: one the
+# compilation in flight inserted, or took up from a module it links in (`inserted_values`, see
 # `insert_julia_value!`).
 function enzyme_global(gname::AbstractString, inserted_values::Union{Dict{String, Any}, Nothing})::Union{Some{Any}, Nothing}
-    haskey(JuliaEnzymeNameMap, gname) && return Some{Any}(JuliaEnzymeNameMap[gname])
     inserted_values === nothing && return nothing
     return haskey(inserted_values, gname) ? Some{Any}(inserted_values[gname]) : nothing
 end
 
-# Enzyme's own globals carry an `ejl_` prefix that the keys of the name maps lack.
+# Enzyme's own globals carry an `ejl_` prefix that the keys of the tables lack.
 function strip_ejl(gname::String)::Union{SubString{String}, Nothing}
     return startswith(gname, "ejl_") ? SubString(gname, 5) : nothing
 end

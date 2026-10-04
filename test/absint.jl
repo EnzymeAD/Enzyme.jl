@@ -586,7 +586,6 @@ end
     @test startswith(key, "inserted\$hint\$")
     @test !occursin(string(UInt(ccall(:jl_value_ptr, Ptr{Cvoid}, (Any,), val))), key)
     @test enzyme_ctx.inserted_values[key] === val
-    @test !haskey(Enzyme.Compiler.JuliaEnzymeNameMap, key)
     # The same value is the same name; another value is another one.
     @test Enzyme.insert_julia_value!(enzyme_ctx, "hint", val) == key
     @test Enzyme.insert_julia_value!(enzyme_ctx, "hint", SlotConst{Float64}(3.5)) != key

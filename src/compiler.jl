@@ -531,31 +531,6 @@ include("errors.jl")
 
 AnyArray(Length::Int) = NamedTuple{ntuple(Symbol, Val(Length)),NTuple{Length,Any}}
 
-const JuliaEnzymeNameMap = Dict{String,Any}(
-    "enz_val_true" => Val(true),
-    "enz_val_false" => Val(false),
-    "enz_val_1" => Val(1),
-    "enz_any_array_1" => AnyArray(1),
-    "enz_any_array_2" => AnyArray(2),
-    "enz_any_array_3" => AnyArray(3),
-    "enz_runtime_exc" => EnzymeRuntimeException,
-    "enz_runtime_mi_exc" => EnzymeRuntimeExceptionMI,
-    "enz_mut_exc" => EnzymeMutabilityException,
-    "enz_runtime_activity_exc" => EnzymeRuntimeActivityError{Cstring, Nothing, Nothing},
-    "enz_runtime_activity_str_exc" => EnzymeRuntimeActivityError{String, Nothing, Nothing},
-    "enz_runtime_activity_mi_exc" => EnzymeRuntimeActivityError{Cstring, Core.MethodInstance, UInt},
-    "enz_no_type_exc" => EnzymeNoTypeError{Nothing, Nothing},
-    "enz_no_type_mi_exc" => EnzymeNoTypeError{Core.MethodInstance, UInt},
-    "enz_no_shadow_exc" => EnzymeNoShadowError,
-    "enz_no_derivative_exc" => EnzymeNoDerivativeError{Nothing, Nothing},
-    "enz_no_derivative_mi_exc" => EnzymeNoDerivativeError{Core.MethodInstance, UInt},
-    "enz_non_const_kwarg_exc" => NonConstantKeywordArgException,
-    "enz_callconv_mismatch_exc"=> CallingConventionMismatchError{Cstring},
-    "enz_illegal_ta_exc" => IllegalTypeAnalysisException,
-    "enz_illegal_first_pointer_exc" => IllegalFirstPointerException,
-    "enz_internal_exc" => EnzymeInternalError,
-    "enz_non_scalar_return_exc" => EnzymeNonScalarReturnException,
-)
 
 include("absint.jl")
 include("llvm/transforms.jl")
@@ -905,15 +880,13 @@ end
     ejl_value(key, inserted)::Union{Some{Any}, Nothing}
 
 The Julia value the global `ejl_<key>` stands for: a well-known Julia global
-(`JuliaGlobalNameMap`), one Enzyme knows when it loads (`JuliaEnzymeNameMap`), or one the
+(`JuliaGlobalNameMap`), or one the
 compilation inserted (`inserted`, see `insert_julia_value!`); `nothing` if none. A load folded
 through a binding (Julia 1.10) stands for the binding's value.
 """
 function ejl_value(key::AbstractString, inserted::Dict{String, Any})::Union{Some{Any}, Nothing}
     val = if haskey(JuliaGlobalNameMap, key)
         JuliaGlobalNameMap[key]
-    elseif haskey(JuliaEnzymeNameMap, key)
-        JuliaEnzymeNameMap[key]
     elseif haskey(inserted, key)
         inserted[key]
     else
@@ -936,7 +909,7 @@ end
     bake_julia_value_globals!(mod, inserted)
 
 Replace each `ejl_<key>` global of the device module `mod`, which stands for the Julia value
-`JuliaGlobalNameMap[key]`, `JuliaEnzymeNameMap[key]` or `inserted[key]` (the values the
+`JuliaGlobalNameMap[key]` or `inserted[key]` (the values the
 compilation inserted, see `unsafe_to_llvm`), with the address of that value. On the host the JIT
 resolves the well-known names, and the module the values were inserted into gets their addresses
 when it is linked ([`bake_inserted_values!`](@ref)); GPUCompiler 1.x resolves nothing in device
@@ -960,8 +933,8 @@ end
 Write the address of each Julia value the compilation inserted (`inserted`, see
 `insert_julia_value!`) into `mod`, which refers to it as `ejl_<key>`, as the module is linked into
 code that runs. The names stay local to the module and its table until then, so there is nothing
-to keep of them in a global; the well-known names (`JuliaGlobalNameMap`, `JuliaEnzymeNameMap`)
-the JIT resolves.
+to keep of them in a global; the names of the runtime's globals (`JuliaGlobalNameMap`) the JIT
+resolves.
 """
 function bake_inserted_values!(mod::LLVM.Module, inserted::Dict{String, Any})
     for (key, val) in inserted
@@ -2710,31 +2683,6 @@ function add_one_in_place(x)
     return nothing
 end
 
-for (k, v) in (
-    ("enz_runtime_newtask_fwd", Enzyme.Compiler.runtime_newtask_fwd),
-    ("enz_runtime_newtask_augfwd", Enzyme.Compiler.runtime_newtask_augfwd),
-    ("enz_runtime_generic_fwd", Enzyme.Compiler.runtime_generic_fwd),
-    ("enz_runtime_generic_augfwd", Enzyme.Compiler.runtime_generic_augfwd),
-    ("enz_runtime_generic_rev", Enzyme.Compiler.runtime_generic_rev),
-    ("enz_runtime_iterate_fwd", Enzyme.Compiler.runtime_iterate_fwd),
-    ("enz_runtime_iterate_augfwd", Enzyme.Compiler.runtime_iterate_augfwd),
-    ("enz_runtime_iterate_rev", Enzyme.Compiler.runtime_iterate_rev),
-    ("enz_runtime_newstruct_augfwd", Enzyme.Compiler.runtime_newstruct_augfwd),
-    ("enz_runtime_newstruct_rev", Enzyme.Compiler.runtime_newstruct_rev),
-    ("enz_runtime_tuple_augfwd", Enzyme.Compiler.runtime_tuple_augfwd),
-    ("enz_runtime_tuple_rev", Enzyme.Compiler.runtime_tuple_rev),
-    ("enz_runtime_jl_getfield_aug", Enzyme.Compiler.rt_jl_getfield_aug),
-    ("enz_runtime_jl_getfield_rev", Enzyme.Compiler.rt_jl_getfield_rev),
-    ("enz_runtime_idx_jl_getfield_aug", Enzyme.Compiler.idx_jl_getfield_aug),
-    ("enz_runtime_idx_jl_getfield_rev", Enzyme.Compiler.idx_jl_getfield_rev),
-    ("enz_runtime_jl_setfield_aug", Enzyme.Compiler.rt_jl_setfield_aug),
-    ("enz_runtime_jl_setfield_rev", Enzyme.Compiler.rt_jl_setfield_rev),
-    ("enz_runtime_error_if_differentiable", Enzyme.Compiler.error_if_differentiable),
-    ("enz_runtime_error_if_active", Enzyme.Compiler.error_if_active),
-    ("enz_add_one_in_place", Enzyme.Compiler.add_one_in_place),
-)
-    JuliaEnzymeNameMap[k] = v
-end
 
 function __init__()
     API.memmove_warning!(false)
