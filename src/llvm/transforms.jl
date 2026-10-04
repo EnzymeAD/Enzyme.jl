@@ -3155,20 +3155,26 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
     # Prevent dead-arg-elimination of functions which we may require args for in the derivative
     funcT = LLVM.FunctionType(LLVM.VoidType(), LLVMType[], vararg = true)
     if LLVM.version().major <= 15
+        # These fake calls must not write memory they are passed, yet each also
+        # writes inaccessible memory. On LLVM 15 a call that writes nothing is
+        # deleted once it is nounwind, which InstCombine marks every call in a
+        # nounwind function: InstCombine assumes an `llvm.` call that only
+        # reads memory will return, and the Attributor deletes a nounwind
+        # read-only call to any other function.
         func, _ = get_function!(
             mod,
             "llvm.enzymefakeuse",
             funcT,
-            LLVM.Attribute[EnumAttribute("readnone"), EnumAttribute("nofree")],
+            LLVM.Attribute[EnumAttribute("inaccessiblememonly"), EnumAttribute("nofree")],
         )
+        # The read of the pointer argument is stated at the call site.
         rfunc, _ = get_function!(
             mod,
             "llvm.enzymefakeread",
             funcT,
             LLVM.Attribute[
-                EnumAttribute("readonly"),
                 EnumAttribute("nofree"),
-                EnumAttribute("argmemonly"),
+                EnumAttribute("inaccessiblemem_or_argmemonly"),
             ],
         )
         sfunc, _ = get_function!(
@@ -3176,9 +3182,8 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
             "llvm.enzyme.sret_use",
             funcT,
             LLVM.Attribute[
-                EnumAttribute("readonly"),
                 EnumAttribute("nofree"),
-                EnumAttribute("argmemonly"),
+                EnumAttribute("inaccessiblemem_or_argmemonly"),
             ],
         )
         wfunc, _ = get_function!(
@@ -3251,6 +3256,11 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
                         cl,
                         LLVM.API.LLVMAttributeIndex(1),
                         EnumAttribute("nocapture"),
+                    )
+                    LLVM.API.LLVMAddCallSiteAttribute(
+                        cl,
+                        LLVM.API.LLVMAttributeIndex(1),
+                        EnumAttribute("readonly"),
                     )
                 end
             end
@@ -3352,6 +3362,11 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
                                     LLVM.API.LLVMAttributeIndex(1),
                                     EnumAttribute("nocapture"),
                                 )
+                                LLVM.API.LLVMAddCallSiteAttribute(
+                                    cl,
+                                    LLVM.API.LLVMAttributeIndex(1),
+                                    EnumAttribute("readonly"),
+                                )
                             end
                         end
                         continue
@@ -3370,6 +3385,11 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
                             cl,
                             LLVM.API.LLVMAttributeIndex(1),
                             EnumAttribute("nocapture"),
+                        )
+                        LLVM.API.LLVMAddCallSiteAttribute(
+                            cl,
+                            LLVM.API.LLVMAttributeIndex(1),
+                            EnumAttribute("readonly"),
                         )
                     end
                 end
