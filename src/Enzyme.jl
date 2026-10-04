@@ -139,7 +139,9 @@ function guess_activity end
 The state one differentiation of one module accumulates: the modules
 `nested_codegen!` emitted and has yet to link, the edges the resulting
 `CodeInstance` must depend on, the cache of already emitted nested
-functions, and the cached thunks already imported into one of those modules.
+functions, the cached thunks already imported into one of those modules, and
+the Julia values the module's global slots refer to (`julia_values`, keyed by
+the name of the slot; see `Compiler.record_julia_values!`).
 
 A context belongs to a single `compile_unhooked` invocation, and holds the
 world age that compilation runs in. It is not passed as an argument:
@@ -156,12 +158,14 @@ mutable struct EnzymeContext
     edges::Vector{Any}
     nested_cache::Dict{Core.MethodInstance, String}
     imported_thunks::Dict{Ptr{Cvoid}, String}
+    julia_values::Dict{String, Any}
     EnzymeContext(world::Integer) = new(
         world,
         LLVM.Module[],
         Any[],
         Dict{Core.MethodInstance, String}(),
-        Dict{Ptr{Cvoid}, String}()
+        Dict{Ptr{Cvoid}, String}(),
+        Dict{String, Any}()
     )
 end
 
