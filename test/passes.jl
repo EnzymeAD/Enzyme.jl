@@ -608,7 +608,7 @@ function decay_egal_module()
     )
     GPUCompiler.prepare_job!(job)
     mod, _ = GPUCompiler.emit_llvm(job)
-    Enzyme.Compiler.optimize!(mod, Enzyme.Compiler.JIT.get_tm())
+    Enzyme.Compiler.optimize!(mod, Enzyme.Compiler.JIT.get_tm(), #=enzyme_ctx=# nothing)
     return mod
 end
 

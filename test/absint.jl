@@ -406,26 +406,24 @@ end
     LLVM.Context() do ctx
         mod, gv, value = slot_module("slot")
 
-        # Nothing to go by: no initializer, and no compilation in flight.
-        @test Enzyme.Compiler.absint(value) == (false, nothing)
-        @test !Enzyme.Compiler.abs_typeof(value)[1]
+        # Nothing to go by: no initializer, and no compilation.
+        @test Enzyme.Compiler.absint(value, nothing) == (false, nothing)
+        @test !Enzyme.Compiler.abs_typeof(value, nothing)[1]
 
+        # A compilation that has no record of the slot does not know either.
         enzyme_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
-        Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
-            # A compilation that has no record of the slot does not know either.
-            @test Enzyme.Compiler.absint(value) == (false, nothing)
+        @test Enzyme.Compiler.absint(value, enzyme_ctx) == (false, nothing)
 
-            enzyme_ctx.julia_values["slot"] = SlotConst{Float64}
-            @test Enzyme.Compiler.absint(value) == (true, SlotConst{Float64})
-            @test Enzyme.Compiler.abs_typeof(value) ==
-                (true, Type{SlotConst{Float64}}, GPUCompiler.BITS_REF)
+        enzyme_ctx.julia_values["slot"] = SlotConst{Float64}
+        @test Enzyme.Compiler.absint(value, enzyme_ctx) == (true, SlotConst{Float64})
+        @test Enzyme.Compiler.abs_typeof(value, enzyme_ctx) ==
+            (true, Type{SlotConst{Float64}}, GPUCompiler.BITS_REF)
 
-            # `nothing` is a value like any other, not a miss.
-            enzyme_ctx.julia_values["slot"] = nothing
-            @test Enzyme.Compiler.absint(value) == (true, nothing)
-            @test Enzyme.Compiler.abs_typeof(value) ==
-                (true, Nothing, GPUCompiler.BITS_REF)
-        end
+        # `nothing` is a value like any other, not a miss.
+        enzyme_ctx.julia_values["slot"] = nothing
+        @test Enzyme.Compiler.absint(value, enzyme_ctx) == (true, nothing)
+        @test Enzyme.Compiler.abs_typeof(value, enzyme_ctx) ==
+            (true, Nothing, GPUCompiler.BITS_REF)
         LLVM.dispose(mod)
     end
 end
@@ -439,17 +437,18 @@ end
         word = LLVM.ConstantInt(LLVM.IntType(8 * sizeof(UInt)), addr)
         LLVM.initializer!(gv, LLVM.const_inttoptr(word, T_pjlvalue))
 
-        @test Enzyme.Compiler.absint(value) == (true, SlotConst{Float64})
-        Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => Enzyme.Compiler.EnzymeContext(Base.get_world_counter()) begin
-            @test Enzyme.Compiler.absint(value) == (true, SlotConst{Float64})
-            @test Enzyme.Compiler.abs_typeof(value) ==
+        for enzyme_ctx in (nothing, Enzyme.Compiler.EnzymeContext(Base.get_world_counter()))
+            @test Enzyme.Compiler.absint(value, enzyme_ctx) == (true, SlotConst{Float64})
+            @test Enzyme.Compiler.abs_typeof(value, enzyme_ctx) ==
                 (true, Type{SlotConst{Float64}}, GPUCompiler.BITS_REF)
         end
         LLVM.dispose(mod)
     end
 end
 
-function count_slot_loads(mod::LLVM.Module, julia_values::Dict{String, Any})
+# The loads of the slots in `julia_values` in `mod`, and how many of them `absint` resolves to
+# that value as part of the compilation `enzyme_ctx`.
+function count_slot_loads(mod::LLVM.Module, julia_values::Dict{String, Any}, enzyme_ctx::Enzyme.Compiler.EnzymeContext)
     nslots = 0
     nresolved = 0
     for f in LLVM.functions(mod), bb in LLVM.blocks(f), inst in LLVM.instructions(bb)
@@ -458,7 +457,7 @@ function count_slot_loads(mod::LLVM.Module, julia_values::Dict{String, Any})
         gv isa LLVM.GlobalVariable || continue
         haskey(julia_values, LLVM.name(gv)) || continue
         nslots += 1
-        legal, val = Enzyme.Compiler.absint(inst, false, true)
+        legal, val = Enzyme.Compiler.absint(inst, enzyme_ctx, false, true)
         if legal && val === julia_values[LLVM.name(gv)]
             nresolved += 1
         end
@@ -491,11 +490,9 @@ end
         else
             @test !isempty(julia_values)
             @test SlotConst{Float64}(1.0) in values(julia_values)
-            Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
-                nslots, nresolved = count_slot_loads(mod, julia_values)
-                @test nslots > 0
-                @test nresolved == nslots
-            end
+            nslots, nresolved = count_slot_loads(mod, julia_values, enzyme_ctx)
+            @test nslots > 0
+            @test nresolved == nslots
         end
     end
 end
@@ -516,27 +513,27 @@ const SLOT_RECORDED = Ref{Any}(("slot-recorded",))
         word = LLVM.ConstantInt(LLVM.IntType(8 * sizeof(UInt)), addr)
         LLVM.initializer!(gv, LLVM.const_inttoptr(word, T_pjlvalue))
 
-        folded = Enzyme.Compiler.try_replace_constant_load!(value; do_replace = false)
+        # A compilation with no record of the slot decodes the initializer.
+        empty_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
+        folded = Enzyme.Compiler.try_replace_constant_load!(value, empty_ctx; do_replace = false)
         @test folded !== value
-        @test Enzyme.Compiler.absint(folded) == (true, SLOT_BAKED[])
+        @test Enzyme.Compiler.absint(folded, empty_ctx) == (true, SLOT_BAKED[])
 
         enzyme_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
-        Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT => enzyme_ctx begin
-            enzyme_ctx.julia_values["slot"] = SLOT_RECORDED[]
-            folded = Enzyme.Compiler.try_replace_constant_load!(value; do_replace = false)
-            @test Enzyme.Compiler.absint(folded) == (true, SLOT_RECORDED[])
+        enzyme_ctx.julia_values["slot"] = SLOT_RECORDED[]
+        folded = Enzyme.Compiler.try_replace_constant_load!(value, enzyme_ctx; do_replace = false)
+        @test Enzyme.Compiler.absint(folded, enzyme_ctx) == (true, SLOT_RECORDED[])
 
-            # The table holds an `isbits` value unboxed, without the address of its box: the
-            # initializer is what is left to go by.
-            enzyme_ctx.julia_values["slot"] = 2.5
-            folded = Enzyme.Compiler.try_replace_constant_load!(value; do_replace = false)
-            @test Enzyme.Compiler.absint(folded) == (true, SLOT_BAKED[])
+        # The table holds an `isbits` value unboxed, without the address of its box: the
+        # initializer is what is left to go by.
+        enzyme_ctx.julia_values["slot"] = 2.5
+        folded = Enzyme.Compiler.try_replace_constant_load!(value, enzyme_ctx; do_replace = false)
+        @test Enzyme.Compiler.absint(folded, enzyme_ctx) == (true, SLOT_BAKED[])
 
-            # A slot without an initializer is the loader's to fill, record or not.
-            enzyme_ctx.julia_values["slot"] = SLOT_RECORDED[]
-            LLVM.initializer!(gv, nothing)
-            @test Enzyme.Compiler.try_replace_constant_load!(value; do_replace = false) === value
-        end
+        # A slot without an initializer is the loader's to fill, record or not.
+        enzyme_ctx.julia_values["slot"] = SLOT_RECORDED[]
+        LLVM.initializer!(gv, nothing)
+        @test Enzyme.Compiler.try_replace_constant_load!(value, enzyme_ctx; do_replace = false) === value
         LLVM.dispose(mod)
     end
 end

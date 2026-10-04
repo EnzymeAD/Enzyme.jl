@@ -534,6 +534,7 @@ function post_arraycopy_memset(B, callv, _, _)
 end
 
 @register_fwd function arraycopy_fwd(B, orig, gutils, normalR, shadowR)
+    enzyme_ctx = enzyme_context()
     ctx = LLVM.context(orig)
 
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
@@ -549,7 +550,7 @@ end
     shadowres =
         UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
 
-    found, arty, byref = abs_typeof(origops[1])
+    found, arty, byref = abs_typeof(origops[1], enzyme_ctx)
 
     needs_runtime_zero = !found && !(eltype(arty) <: Base.IEEEFloat)
 
@@ -570,7 +571,7 @@ end
 
 # Optionally takes a length if requested
 # If this is a memory, pass memoryptr=<underlying data>
-function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = nothing, memoryptr = nothing)
+function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, enzyme_ctx::EnzymeContext; len = nothing, memoryptr = nothing)
     memory = memoryptr != nothing
     primalsrc = shadowsrc
     needsShadowP = Ref{UInt8}(0)
@@ -613,7 +614,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = noth
         emit_error(
             B,
             orig,
-            "Enzyme: Unknown concrete type in arraycopy_common. tt: " * string(tt) * " " * string(orig) * " " * string(abs_typeof(orig)),
+            "Enzyme: Unknown concrete type in arraycopy_common. tt: " * string(tt) * " " * string(orig) * " " * string(abs_typeof(orig, enzyme_ctx)),
         )
         return nothing
     end
@@ -648,7 +649,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = noth
     end
 
     elSize = if memory
-        get_memory_elsz(B0, actualOp)
+        get_memory_elsz(B0, actualOp, enzyme_ctx)
     else
         get_array_elsz(B0, actualOp)
     end
@@ -657,7 +658,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = noth
 
     if len == nothing
         if memory
-            len = get_memory_len(B0, actualOp)
+            len = get_memory_len(B0, actualOp, enzyme_ctx)
         else
             len = get_array_len(B0, actualOp)
         end
@@ -811,6 +812,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = noth
 end
 
 @register_aug function arraycopy_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    enzyme_ctx = enzyme_context()
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
@@ -820,25 +822,27 @@ end
 
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
         shadowres = LLVM.Value(unsafe_load(shadowR))
-        arraycopy_common(true, B, orig, origops[1], gutils, shadowres)
+        arraycopy_common(true, B, orig, origops[1], gutils, shadowres, enzyme_ctx)
     end
 
     return false
 end
 
 @register_rev function arraycopy_rev(B, orig, gutils, tape)
+    enzyme_ctx = enzyme_context()
     origops = LLVM.operands(orig)
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
-        arraycopy_common(false, B, orig, origops[1], gutils, nothing)
+        arraycopy_common(false, B, orig, origops[1], gutils, nothing, enzyme_ctx)
     end
 
     return nothing
 end
 
 function post_genericmemcpy_memset(B, callv, args, _)
+    enzyme_ctx = enzyme_context()
     _, _, len = args
 
-    elSize = get_memory_elsz(B, callv)
+    elSize = get_memory_elsz(B, callv, enzyme_ctx)
     elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
     length = LLVM.mul!(B, len, elSize)
 
@@ -855,6 +859,7 @@ function post_genericmemcpy_memset(B, callv, args, _)
 end
 
 @register_fwd function genericmemory_copy_slice_fwd(B, orig, gutils, normalR, shadowR)
+    enzyme_ctx = enzyme_context()
     ctx = LLVM.context(orig)
 
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
@@ -870,7 +875,7 @@ end
     len = new_from_original(gutils, origops[3])
 
 
-    found, arty, byref = abs_typeof(origops[1])
+    found, arty, byref = abs_typeof(origops[1], enzyme_ctx)
 
     needs_runtime_zero = !found && !(eltype(arty) <: Base.IEEEFloat)
 
@@ -890,6 +895,7 @@ end
 end
 
 @register_aug function genericmemory_copy_slice_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    enzyme_ctx = enzyme_context()
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
@@ -902,18 +908,19 @@ end
 
         len = new_from_original(gutils, origops[3])
         memoryptr = origops[2]        
-        arraycopy_common(true, B, orig, origops[1], gutils, shadowres; len, memoryptr)
+        arraycopy_common(true, B, orig, origops[1], gutils, shadowres, enzyme_ctx; len, memoryptr)
     end
 
     return false
 end
 
 @register_rev function genericmemory_copy_slice_rev(B, orig, gutils, tape)
+    enzyme_ctx = enzyme_context()
     origops = LLVM.operands(orig)
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
         len = new_from_original(gutils, origops[3])
         memoryptr = origops[2]
-        arraycopy_common(false, B, orig, origops[1], gutils, nothing; len, memoryptr)
+        arraycopy_common(false, B, orig, origops[1], gutils, nothing, enzyme_ctx; len, memoryptr)
     end
 
     return nothing
@@ -1252,6 +1259,7 @@ function error_if_active(::Type{T}) where {T}
 end
 
 @register_aug function eqtableget_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    enzyme_ctx = enzyme_context()
     if is_constant_value(gutils, orig)
         return true
     end
@@ -1286,21 +1294,21 @@ end
                 " " *
                 string(orig) *
                 " result: " *
-                string(absint(orig)) *
+                string(absint(orig, enzyme_ctx)) *
                 " " *
-                string(abs_typeof(orig, true)) *
+                string(abs_typeof(orig, enzyme_ctx, true)) *
                 " dict: " *
-                string(absint(origh)) *
+                string(absint(origh, enzyme_ctx)) *
                 " " *
-                string(abs_typeof(origh, true)) *
+                string(abs_typeof(origh, enzyme_ctx, true)) *
                 " key " *
-                string(absint(origkey)) *
+                string(absint(origkey, enzyme_ctx)) *
                 " " *
-                string(abs_typeof(origkey, true)) *
+                string(abs_typeof(origkey, enzyme_ctx, true)) *
                 " dflt " *
-                string(absint(origdflt)) *
+                string(absint(origdflt, enzyme_ctx)) *
                 " " *
-                string(abs_typeof(origdflt, true)),
+                string(abs_typeof(origdflt, enzyme_ctx, true)),
         )
     end
 
@@ -1308,18 +1316,16 @@ end
 
     shadowdflt = if is_constant_value(gutils, origdflt)
         shadowdflt2 = julia_error(
-            Base.unsafe_convert(
-                Cstring,
-                "Mixed activity for default of jl_eqtable_get " *
-                    string(orig) *
-                    " " *
-                    string(origdflt),
-            ),
+            "Mixed activity for default of jl_eqtable_get " *
+                string(orig) *
+                " " *
+                string(origdflt),
             orig.ref,
             API.ET_MixedActivityError,
             gutils.ref,
             origdflt.ref,
             B.ref,
+            enzyme_ctx,
         )
         if shadowdflt2 != C_NULL
             LLVM.Value(shadowdflt2)
@@ -1343,9 +1349,10 @@ end
     newvals = API.CValueType[API.VT_Shadow, API.VT_Primal, API.VT_Shadow]
 
     function post_err_if_active(B, cal, args)
+        enzyme_ctx = enzyme_context()
         emit_apply_generic!(
             B,
-            LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, cal)],
+            LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, cal, enzyme_ctx)],
         )
     end
 
@@ -1399,15 +1406,17 @@ end
 end
 
 function eqtable_shadow_active(B, args)
+    enzyme_ctx = enzyme_context()
     _, _, shadowval, _ = args
     emit_apply_generic!(
         B,
-        LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, shadowval)],
+        LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, shadowval, enzyme_ctx)],
     )
     return nothing
 end
 
 @register_aug function eqtableput_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    enzyme_ctx = enzyme_context()
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -1423,18 +1432,16 @@ end
 
     shadowval = if is_constant_value(gutils, origval)
         shadowdflt2 = julia_error(
-            Base.unsafe_convert(
-                Cstring,
-                "Mixed activity for val of jl_eqtable_put " *
-                    string(orig) *
-                    " " *
-                    string(origval),
-            ),
+            "Mixed activity for val of jl_eqtable_put " *
+                string(orig) *
+                " " *
+                string(origval),
             orig.ref,
             API.ET_MixedActivityError,
             gutils.ref,
             origval.ref,
             B.ref,
+            enzyme_ctx,
         )
         if shadowdflt2 != C_NULL
             LLVM.Value(shadowdflt2)
@@ -1694,6 +1701,7 @@ end
 end
 
 @register_rev function jl_array_del_end_rev(B, orig, gutils, tape)
+    enzyme_ctx = enzyme_context()
     if !is_constant_value(gutils, operands(orig)[1])
         width = get_width(gutils)
         origops = arg_operands_view(orig)
@@ -1746,7 +1754,7 @@ end
 
             args = LLVM.Value[anti, offset]
 
-            found, arty, byref = abs_typeof(origops[1])
+            found, arty, byref = abs_typeof(origops[1], enzyme_ctx)
             anti = shadowin
             elSize = if found
                 LLVM.ConstantInt(Csize_t(actual_size(eltype(arty))))
@@ -1856,12 +1864,13 @@ end
 end
 
 @register_fwd function genericmemory_copyto_fwd(B, orig, gutils, normalR, shadowR)
+    enzyme_ctx = enzyme_context()
     if is_constant_inst(gutils, orig)
         return true
     end
     width = get_width(gutils)
 
-    legal, dest_ty, _ = abs_typeof(first(operands(orig)))
+    legal, dest_ty, _ = abs_typeof(first(operands(orig)), enzyme_ctx)
 
     if !legal
         emit_error(B, orig, "Enzyme: could not deduce element type of value within generic_memory_copyto of " * string(first(operands(orig))) * " within " * string(orig))

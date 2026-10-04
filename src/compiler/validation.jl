@@ -327,15 +327,16 @@ function restore_lookups(mod::LLVM.Module; native_invokes::Bool = true)::Nothing
     return
 end
 
-function check_ir(interp, @nospecialize(job::CompilerJob), mod::LLVM.Module)
-    errors = check_ir!(interp, job, IRError[], mod)
+# `enzyme_ctx` is the compilation `mod` belongs to.
+function check_ir(interp, @nospecialize(job::CompilerJob), mod::LLVM.Module, enzyme_ctx::EnzymeContext)
+    errors = check_ir!(interp, job, IRError[], mod, enzyme_ctx)
     unique!(errors)
     return if !isempty(errors)
         throw(InvalidIRError(job, errors))
     end
 end
 
-function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, mod::LLVM.Module)
+function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, mod::LLVM.Module, enzyme_ctx::EnzymeContext)
     imported = Set(String[])
     if haskey(functions(mod), "malloc")
         f = functions(mod)["malloc"]
@@ -359,7 +360,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
         if in(f, del)
             continue
         end
-        check_ir!(interp, job, errors, imported, f, del, mod)
+        check_ir!(interp, job, errors, imported, f, del, mod, enzyme_ctx)
     end
     for d in del
         LLVM.API.LLVMDeleteFunction(d)
@@ -370,7 +371,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
         if in(f, del)
             continue
         end
-        check_ir!(interp, job, errors, imported, f, del, mod)
+        check_ir!(interp, job, errors, imported, f, del, mod, enzyme_ctx)
     end
     for d in del
         LLVM.API.LLVMDeleteFunction(d)
@@ -389,12 +390,13 @@ function is_nonconst_binding(addr::UInt)
 end
 
 """
-    slot_object_address(gv) -> Union{LLVM.Value, Nothing}
+    slot_object_address(gv, enzyme_ctx) -> Union{LLVM.Value, Nothing}
 
 The address of the object the `julia.constgv` slot `gv` holds, as the constant a load of the
 slot yields, or `nothing` if the slot has no initializer.
 
-The object comes from the compilation's table of Julia values ([`julia_value_of_slot`](@ref))
+The object comes from the table of Julia values of the compilation `enzyme_ctx`
+([`julia_value_of_slot`](@ref))
 where it can: that is what codegen said the slot refers to, independent of what is written
 into the IR. An `isbits` value is held in the table unboxed, though, and its box's address is
 lost; for those, and for slots the table has no record of, the address is decoded from the
@@ -402,10 +404,10 @@ initializer. A slot without an initializer is left to the back-end's loader (GPU
 `:patch` or `:table`); folding a load of it would put a host address into code that must not
 contain one, so it is not folded at all.
 """
-function slot_object_address(gv::LLVM.GlobalVariable)::Union{LLVM.Value, Nothing}
+function slot_object_address(gv::LLVM.GlobalVariable, enzyme_ctx::EnzymeContext)::Union{LLVM.Value, Nothing}
     init = LLVM.initializer(gv)
     init === nothing && return nothing
-    found = julia_value_of_slot(gv)
+    found = julia_value_of_slot(gv, enzyme_ctx.julia_values)
     if found !== nothing
         obj = something(found)
         if !isbitstype(Core.Typeof(obj))
@@ -415,7 +417,9 @@ function slot_object_address(gv::LLVM.GlobalVariable)::Union{LLVM.Value, Nothing
     return get_base_and_offset(init; offsetAllowed = false, inttoptr = true)[1]
 end
 
-function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check_mutability::Bool = true, do_replace::Bool = true)::LLVM.Value
+# Folds the load `inst` of a constant; the slots it may load through are those of the compilation
+# `enzyme_ctx`.
+function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction), enzyme_ctx::EnzymeContext; check_mutability::Bool = true, do_replace::Bool = true)::LLVM.Value
     if !(isa(value_type(inst), LLVM.PointerType) && addrspace(value_type(inst)) == Tracked)
         return inst
     end
@@ -431,14 +435,14 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
     originally_tracked_load = false
     if isa(addr, LLVM.GlobalVariable) && (haskey(metadata(addr), "julia.constgv") || !check_mutability)
         paddr = addr
-        addr = slot_object_address(paddr)
+        addr = slot_object_address(paddr, enzyme_ctx)
         addr === nothing && return inst
         gname = LLVM.name(paddr) * "\$false"
         originally_tracked = true
     elseif isa(addr, LLVM.LoadInst)
         paddr = operands(addr)[1]
         if isa(paddr, LLVM.GlobalVariable) && (haskey(metadata(paddr), "julia.constgv") || !check_mutability)
-            addr = slot_object_address(paddr)
+            addr = slot_object_address(paddr, enzyme_ctx)
             addr === nothing && return inst
             gname = LLVM.name(paddr) * "\$true"
             originally_tracked = true
@@ -513,7 +517,7 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
     return inst
 end
 
-function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, f::LLVM.Function, deletedfns::Vector{LLVM.Function}, mod::LLVM.Module)
+function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, f::LLVM.Function, deletedfns::Vector{LLVM.Function}, mod::LLVM.Module, enzyme_ctx::EnzymeContext)
     calls = LLVM.CallInst[]
     isInline = API.EnzymeGetCLBool(cglobal((:EnzymeInline, API.libEnzyme))) != 0
     mod = LLVM.parent(f)
@@ -523,7 +527,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             inst = LLVM.Instruction(iter)
             iter = LLVM.API.LLVMGetNextInstruction(iter)
 
-            if try_replace_constant_load!(inst; check_mutability=true, do_replace=true) != inst
+            if try_replace_constant_load!(inst, enzyme_ctx; check_mutability = true, do_replace = true) != inst
                 continue
             end
             if isa(inst, LLVM.CallInst)
@@ -754,7 +758,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
     while length(calls) > 0
         inst = pop!(calls)
-        check_ir!(interp, job, errors, imported, inst, calls, mod)
+        check_ir!(interp, job, errors, imported, inst, calls, mod, enzyme_ctx)
     end
 
     return errors
@@ -1028,7 +1032,7 @@ end
 import GPUCompiler:
     DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
-function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, inst::LLVM.CallInst, calls::Vector{LLVM.CallInst}, mod::LLVM.Module)
+function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, inst::LLVM.CallInst, calls::Vector{LLVM.CallInst}, mod::LLVM.Module, enzyme_ctx::EnzymeContext)
     world = job.world
     method_table = Core.Compiler.method_table(interp)
     bt = backtrace(inst)
@@ -1090,7 +1094,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
             op1 = operands(inst)[1]
             if isa(op1, LLVM.Instruction)
-                op1 = try_replace_constant_load!(op1; check_mutability=false, do_replace=false)
+                op1 = try_replace_constant_load!(op1, enzyme_ctx; check_mutability = false, do_replace = false)
             end
             arg1, _ = get_base_and_offset(op1; offsetAllowed = false, inttoptr = true)
             if isa(arg1, LLVM.ConstantInt)
@@ -1202,10 +1206,10 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             @assert length(ops) == 2
             flib = ops[1]
             if isa(flib, LLVM.Instruction)
-                flib = try_replace_constant_load!(flib; check_mutability=false, do_replace=false)
+                flib = try_replace_constant_load!(flib, enzyme_ctx; check_mutability = false, do_replace = false)
             end
             if isa(flib, LLVM.ConstantExpr) || isa(flib, LLVM.GlobalVariable)
-                legal, flib2 = absint(flib)
+                legal, flib2 = absint(flib, enzyme_ctx)
                 if legal
                     flib = unbind(flib2)
                 end
@@ -1233,7 +1237,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
             # Julia 1.13+: fname is an ejl_inserted GlobalVariable holding a Julia Symbol.
             if !isa(fname, String)
-                legal2, sym = absint(fname_llvm)
+                legal2, sym = absint(fname_llvm, enzyme_ctx)
                 if legal2
                     sym = unbind(sym)
                     if isa(sym, GlobalRef) && isdefined(sym.mod, sym.name)
@@ -1424,12 +1428,12 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 # Add 1 to account for function being first arg
                 iteroff = 2
 
-                legal, iterlib = absint(operands(inst)[iteroff + 1])
+                legal, iterlib = absint(operands(inst)[iteroff + 1], enzyme_ctx)
                 iterlib = unbind(iterlib)
                 if legal && iterlib == Base.iterate
-                    legal, GT, byref = abs_typeof(operands(inst)[4 + 1], true)
+                    legal, GT, byref = abs_typeof(operands(inst)[4 + 1], enzyme_ctx, true)
                     funcoff = 3
-                    legal2, funclib, byref2 = abs_typeof(operands(inst)[funcoff + 1])
+                    legal2, funclib, byref2 = abs_typeof(operands(inst)[funcoff + 1], enzyme_ctx)
                     if legal && (GT <: Vector || GT <: Tuple)
                         if legal2
                             tys = Union{Type, Core.TypeofVararg}[funclib, Vararg{Any}]
@@ -1504,17 +1508,17 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             if isa(dest, LLVM.Function) && in(LLVM.name(dest), keys(generic_method_offsets))
                 offset, start = generic_method_offsets[LLVM.name(dest)]
                 # Add 1 to account for function being first arg
-                legal, flibty, byref = abs_typeof(operands(inst)[offset + 1])
+                legal, flibty, byref = abs_typeof(operands(inst)[offset + 1], enzyme_ctx)
                 if legal
                     tys = Union{Type, Core.TypeofVararg}[flibty]
                     for op in @view arg_operands_view(inst)[(start + 1):end]
-                        legal, typ, byref2 = abs_typeof(op, true)
+                        legal, typ, byref2 = abs_typeof(op, enzyme_ctx, true)
                         if !legal
                             typ = Any
                         end
                         push!(tys, typ)
                     end
-                    legal, flib = absint(operands(inst)[offset + 1])
+                    legal, flib = absint(operands(inst)[offset + 1], enzyme_ctx)
                     flib = unbind(flib)
                     if legal && isa(flib, Core.MethodInstance)
                         if !Base.isvarargtype(flib.specTypes.parameters[end])
@@ -1660,17 +1664,17 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
         if isa(dest, LLVM.Function) && in(LLVM.name(dest), keys(generic_method_offsets))
             offset, start = generic_method_offsets[LLVM.name(dest)]
 
-            legal, flibty, byref = abs_typeof(operands(inst)[offset])
+            legal, flibty, byref = abs_typeof(operands(inst)[offset], enzyme_ctx)
             if legal
                 tys = Union{Type, Core.TypeofVararg}[flibty]
                 for op in @view arg_operands_view(inst)[start:end]
-                    legal, typ, byref2 = abs_typeof(op, true)
+                    legal, typ, byref2 = abs_typeof(op, enzyme_ctx, true)
                     if !legal
                         typ = Any
                     end
                     push!(tys, typ)
                 end
-                legal, flib = absint(operands(inst)[offset + 1])
+                legal, flib = absint(operands(inst)[offset + 1], enzyme_ctx)
                 flib = unbind(flib)
                 if legal && isa(flib, Core.MethodInstance)
                     if !Base.isvarargtype(flib.specTypes.parameters[end])
@@ -1731,7 +1735,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 end
 
 
-function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world::UInt, width::Int)
+function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world::UInt, width::Int, enzyme_ctx::EnzymeContext)
     todo = Tuple{LLVM.Value, Tuple}[]
     for b in blocks(enzymefn)
         term = terminator(b)
@@ -1799,7 +1803,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world
             end
 
             if nm == "julia.gc_alloc_obj"
-                legal, Ty, byref = abs_typeof(cur)
+                legal, Ty, byref = abs_typeof(cur, enzyme_ctx)
                 @assert legal
                 if !guaranteed_nonactive(Ty, world)
                     NTy = Base.RefValue{Ty}
@@ -1884,7 +1888,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world
 
         if length(off) == 0 &&
                 value_type(cur) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
-            legal, typ, byref = abs_typeof(cur)
+            legal, typ, byref = abs_typeof(cur, enzyme_ctx)
             if legal
                 if guaranteed_nonactive(typ, world)
                     continue
