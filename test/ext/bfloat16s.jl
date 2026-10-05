@@ -30,5 +30,8 @@ end
         dx = zeros(BFloat16, 4)
         Enzyme.autodiff(Reverse, bf16_pair_sum, Active, Duplicated(x, dx))
         @test dx == BFloat16[3, 2, 0, 0]
+
+        dx = BFloat16[1, 0, 0, 0]
+        @test Enzyme.autodiff(Forward, bf16_pair_sum, Duplicated(x, dx))[1] == BFloat16(3)
     end
 end
