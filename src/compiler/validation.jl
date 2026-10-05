@@ -1487,7 +1487,9 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                     ptr,
                     inst.called_type,
                 )
-                replace_uses!(ptr_arg, LLVM.const_pointercast(replaceWith, ptr_arg.value_type))
+                # `ptr_arg` is constant data, which has no use list (RAUW on it
+                # asserts on LLVM 21+); retarget this call instead.
+                inst.called_operand = replaceWith
                 return errors
             end
 
