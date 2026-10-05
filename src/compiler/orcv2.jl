@@ -34,17 +34,17 @@ const tm = Ref{TargetMachine}() # for opt pipeline
 get_tm() = tm[]
 get_jit() = jit[].jit
 
-function absolute_symbol_materialization(name, ptr)
+symbol_pair_type() =
+    LLVM.version() >= v"15" ? LLVM.API.LLVMOrcCSymbolMapPair : LLVM.API.LLVMJITCSymbolMapPair
+
+function absolute_symbol_pair(name, ptr)
     address = LLVM.API.LLVMOrcJITTargetAddress(reinterpret(UInt, ptr))
     flags = LLVM.API.LLVMJITSymbolFlags(LLVM.API.LLVMJITSymbolGenericFlagsExported, 0)
     symbol = LLVM.API.LLVMJITEvaluatedSymbol(address, flags)
-    gv = if LLVM.version() >= v"15"
-        LLVM.API.LLVMOrcCSymbolMapPair(name, symbol)
-    else
-        LLVM.API.LLVMJITCSymbolMapPair(name, symbol)
-    end
-    return LLVM.absolute_symbols(Ref(gv))
+    return symbol_pair_type()(name, symbol)
 end
+
+absolute_symbol_materialization(name, ptr) = LLVM.absolute_symbols(Ref(absolute_symbol_pair(name, ptr)))
 
 const hnd_string_map = Dict{String, Ref{Ptr{Cvoid}}}()
 const hnd_int_map = Dict{Int, Ref{Ptr{Cvoid}}}()
@@ -120,22 +120,18 @@ function __init__()
         define_absolute_symbol(jd_main, mangle(lljit, "___chkstk_ms"))
     end
 
+    # The well-known Julia values, defined in one go.
     hnd = unsafe_load(cglobal(:jl_libjulia_handle, Ptr{Cvoid}))
-    for (k, v) in Compiler.JuliaGlobalNameMap
+    pairs = symbol_pair_type()[]
+    for k in keys(Compiler.JuliaGlobalNameMap)
         ptr = unsafe_load(Base.reinterpret(Ptr{Ptr{Cvoid}}, Libdl.dlsym(hnd, k)))
-        LLVM.define(
-            jd_main,
-            absolute_symbol_materialization(mangle(lljit, "ejl_" * k), ptr),
-        )
+        push!(pairs, absolute_symbol_pair(mangle(lljit, "ejl_" * k), ptr))
     end
-
     for (k, v) in Compiler.JuliaEnzymeNameMap
         ptr = Compiler.unsafe_to_ptr(v)
-        LLVM.define(
-            jd_main,
-            absolute_symbol_materialization(mangle(lljit, "ejl_" * k), ptr),
-        )
+        push!(pairs, absolute_symbol_pair(mangle(lljit, "ejl_" * k), ptr))
     end
+    LLVM.define(jd_main, LLVM.absolute_symbols(pairs))
 
     atexit() do
         dispose(tm[])
