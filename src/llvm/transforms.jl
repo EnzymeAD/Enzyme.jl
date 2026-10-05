@@ -1480,6 +1480,172 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
     end
 end
 
+# Message of the runtime error thrown on reaching a phi `nodecayed_phis!` could
+# not handle, carrying the compile-time diagnosis.
+function nodecayed_runtime_message(err::EnzymeInternalError)::String
+    return sprint() do io
+        println(io, "Enzyme could not determine how to keep a pointer phi in this function rooted for")
+        println(io, "the garbage collector, so reaching the phi throws this error. Please open an issue")
+        println(io, "with the code to reproduce on github.com/EnzymeAD/Enzyme.jl.")
+        println(io)
+        print(io, err.msg)
+        if err.bt !== nothing && !isempty(err.bt)
+            println(io, "Location of the phi:")
+            Base.show_backtrace(io, err.bt)
+            println(io)
+        end
+        if VERBOSE_ERRORS[] && err.ir !== nothing
+            println(io, "Function at the time of the failure:")
+            print(io, err.ir)
+        end
+    end
+end
+
+# Attributes a function loses once it may throw, on itself and its calls: the
+# throw unwinds, does not return, and allocates and writes the exception.
+const THROWING_BODY_DROPPED_ATTRS = (
+    "nounwind", "willreturn", "speculatable", "readnone", "readonly", "writeonly",
+    "argmemonly", "inaccessiblememonly", "inaccessiblemem_or_argmemonly", "memory",
+)
+
+function drop_throwing_body_attrs!(attrs)
+    for nm in THROWING_BODY_DROPPED_ATTRS
+        kind = LLVM.API.LLVMGetEnumAttributeKindForName(nm, length(nm))
+        kind == 0 && continue
+        for attr in collect(attrs)
+            if attr isa LLVM.EnumAttribute && LLVM.kind(attr) == kind
+                delete!(attrs, attr)
+            end
+        end
+    end
+    return nothing
+end
+
+# Rebuild `phi` without its incoming values from blocks in `dropped`.
+function drop_phi_incoming!(phi::LLVM.PHIInst, dropped::Set{LLVM.BasicBlock})
+    kept = Tuple{LLVM.Value, LLVM.BasicBlock}[(v, bb) for (v, bb) in LLVM.incoming(phi) if !in(bb, dropped)]
+    if length(kept) == length(LLVM.incoming(phi))
+        return nothing
+    end
+    B = LLVM.IRBuilder()
+    position!(B, phi)
+    nphi = phi!(B, value_type(phi), LLVM.name(phi))
+    append!(LLVM.incoming(nphi), kept)
+    replace_uses!(phi, nphi)
+    LLVM.API.LLVMInstructionEraseFromParent(phi)
+    return nothing
+end
+
+# `nodecayed_phis!` could not give the phis in `failed` an addrspace(10)
+# parent. Such a phi is only a problem if it is reached, so make reaching its
+# block throw the compile-time diagnosis instead: keep the block's phis, then
+# throw, and remove the code that this leaves unreachable, which holds every
+# use of the phi.
+function nodecayed_cut_failed!(f::LLVM.Function, failed::Vector{Tuple{LLVM.PHIInst, EnzymeInternalError}})
+    # Placeholder phis whose rewrite failed have no incoming values yet.
+    preds = Dict{LLVM.BasicBlock, Vector{LLVM.BasicBlock}}(bb => LLVM.BasicBlock[] for bb in blocks(f))
+    for bb in blocks(f), succ in successors(terminator(bb))
+        push!(preds[succ], bb)
+    end
+    for bb in blocks(f), inst in collect(instructions(bb))
+        isa(inst, LLVM.PHIInst) || break
+        if isempty(LLVM.incoming(inst))
+            append!(LLVM.incoming(inst), [(LLVM.UndefValue(value_type(inst)), pb) for pb in preds[bb]])
+        end
+    end
+
+    cut = Dict{LLVM.BasicBlock, EnzymeInternalError}()
+    for (inst, err) in failed
+        get!(cut, LLVM.parent(inst), err)
+    end
+
+    dead = LLVM.Instruction[]
+    for (bb, err) in cut
+        rest = LLVM.Instruction[inst for inst in instructions(bb) if !isa(inst, LLVM.PHIInst)]
+        append!(dead, rest)
+        B = LLVM.IRBuilder()
+        position!(B, first(rest))
+        msg = nodecayed_runtime_message(err)
+        if err.mi !== nothing && err.world !== nothing
+            emit_error(B, nothing, (msg, err.mi, err.world), EnzymeRuntimeExceptionMI)
+        else
+            emit_error(B, nothing, msg)
+        end
+        unreachable!(B)
+    end
+
+    # The cut blocks no longer branch anywhere.
+    reachable = Set{LLVM.BasicBlock}()
+    worklist = LLVM.BasicBlock[LLVM.entry(f)]
+    while !isempty(worklist)
+        bb = pop!(worklist)
+        in(bb, reachable) && continue
+        push!(reachable, bb)
+        haskey(cut, bb) && continue
+        append!(worklist, collect(successors(terminator(bb))))
+    end
+    deadblocks = LLVM.BasicBlock[bb for bb in blocks(f) if !in(bb, reachable)]
+    dropped = Set{LLVM.BasicBlock}(deadblocks)
+    union!(dropped, keys(cut))
+    for bb in reachable
+        haskey(cut, bb) && continue
+        for inst in collect(instructions(bb))
+            isa(inst, LLVM.PHIInst) || break
+            drop_phi_incoming!(inst, dropped)
+        end
+    end
+
+    # Erase the dead code, users before definitions. Its only cycles go through
+    # phis, which are not of token type.
+    for bb in deadblocks, inst in instructions(bb)
+        push!(dead, inst)
+    end
+    for inst in dead
+        if isa(inst, LLVM.PHIInst)
+            replace_uses!(inst, LLVM.UndefValue(value_type(inst)))
+        end
+    end
+    while !isempty(dead)
+        remaining = LLVM.Instruction[]
+        for inst in dead
+            if isempty(LLVM.uses(inst))
+                LLVM.API.LLVMInstructionEraseFromParent(inst)
+            else
+                push!(remaining, inst)
+            end
+        end
+        @assert length(remaining) < length(dead)
+        dead = remaining
+    end
+    for bb in deadblocks
+        LLVM.API.LLVMDeleteBasicBlock(bb)
+    end
+
+    # The failed phis and their placeholders are now unused.
+    for bb in keys(cut)
+        changed = true
+        while changed
+            changed = false
+            for inst in collect(instructions(bb))
+                isa(inst, LLVM.PHIInst) || break
+                if isempty(LLVM.uses(inst))
+                    LLVM.API.LLVMInstructionEraseFromParent(inst)
+                    changed = true
+                end
+            end
+        end
+    end
+
+    drop_throwing_body_attrs!(function_attributes(f))
+    for u in LLVM.uses(f)
+        call = LLVM.user(u)
+        if isa(call, LLVM.CallInst) && LLVM.called_operand(call) == f
+            drop_throwing_body_attrs!(LLVM.function_attributes(call))
+        end
+    end
+    return nothing
+end
+
 function nodecayed_phis!(mod::LLVM.Module)
     # Simple handler to fix addrspace 11
     #complex handler for addrspace 13, which itself comes from a load of an
@@ -1547,6 +1713,7 @@ function nodecayed_phis!(mod::LLVM.Module)
         for addr in (11, 13)
 
             nextvs = Dict{LLVM.PHIInst, LLVM.PHIInst}()
+            failed = Tuple{LLVM.PHIInst, EnzymeInternalError}[]
             mtodo = Vector{LLVM.PHIInst}[]
             goffsets = Dict{LLVM.PHIInst, LLVM.PHIInst}()
             nonphis = LLVM.Instruction[]
@@ -1602,42 +1769,48 @@ function nodecayed_phis!(mod::LLVM.Module)
                     end
                     nvs = Tuple{LLVM.Value, LLVM.BasicBlock}[]
                     offsets = Tuple{LLVM.Value, LLVM.BasicBlock}[]
-                    for (v, pb) in LLVM.incoming(inst)
-                        done = false
-                        for ((nv, pb0), (offset, pb1)) in zip(nvs, offsets)
-                            if pb0 == pb
-                                push!(nvs, (nv, pb))
-                                push!(offsets, (offset, pb))
-                                done = true
-                                break
+                    try
+                        for (v, pb) in LLVM.incoming(inst)
+                            done = false
+                            for ((nv, pb0), (offset, pb1)) in zip(nvs, offsets)
+                                if pb0 == pb
+                                    push!(nvs, (nv, pb))
+                                    push!(offsets, (offset, pb))
+                                    done = true
+                                    break
+                                end
                             end
+                            if done
+                                continue
+                            end
+
+                            v0 = v
+
+                            b = IRBuilder()
+                            position!(b, terminator(pb))
+
+                            phicache = Dict{LLVM.PHIInst, Tuple{LLVM.PHIInst, LLVM.PHIInst}}()
+                            st = NoDecayedPhiState(addr, offty, ctx, f, inst, v0, nextvs, goffsets, phicache)
+                            v, offset, hadload = nodecayed_getparent(st, b, v, LLVM.ConstantInt(offty, 0), false)
+
+                            if addr == 13
+                                @assert hadload
+                            end
+
+                            if !LLVM.is_opaque(value_type(v)) && eltype(value_type(v)) != el_ty
+                                v = bitcast!(
+                                    b,
+                                    v,
+                                    LLVM.PointerType(el_ty, addrspace(value_type(v))),
+                                )
+                            end
+                            push!(nvs, (v, pb))
+                            push!(offsets, (offset, pb))
                         end
-                        if done
-                            continue
-                        end
-
-                        v0 = v
-
-                        b = IRBuilder()
-                        position!(b, terminator(pb))
-
-                        phicache = Dict{LLVM.PHIInst, Tuple{LLVM.PHIInst, LLVM.PHIInst}}()
-                        st = NoDecayedPhiState(addr, offty, ctx, f, inst, v0, nextvs, goffsets, phicache)
-                        v, offset, hadload = nodecayed_getparent(st, b, v, LLVM.ConstantInt(offty, 0), false)
-
-                        if addr == 13
-                            @assert hadload
-                        end
-
-                        if !LLVM.is_opaque(value_type(v)) && eltype(value_type(v)) != el_ty
-                            v = bitcast!(
-                                b,
-                                v,
-                                LLVM.PointerType(el_ty, addrspace(value_type(v))),
-                            )
-                        end
-                        push!(nvs, (v, pb))
-                        push!(offsets, (offset, pb))
+                    catch err
+                        err isa EnzymeInternalError || rethrow()
+                        push!(failed, (inst, err))
+                        continue
                     end
 
                     nb = IRBuilder()
@@ -1706,8 +1879,12 @@ function nodecayed_phis!(mod::LLVM.Module)
                     replace_uses!(inst, nphi)
                 end
                 for inst in todo
+                    any(x -> x[1] == inst, failed) && continue
                     LLVM.API.LLVMInstructionEraseFromParent(inst)
                 end
+            end
+            if !isempty(failed)
+                nodecayed_cut_failed!(f, failed)
             end
         end
     end

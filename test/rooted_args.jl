@@ -144,3 +144,29 @@ end
     fd = central_difference_gradient(x, periodicities, phases, ks)
     @test dx ≈ fd rtol = 1.0e-6
 end
+
+# A phi joins the by-reference argument with a GC object copied from it, which
+# nodecayed_phis! cannot yet root (SciMLSensitivity.jl#1696). Reaching the phi's
+# block throws at runtime instead, so paths that skip it still work.
+# Once such phis are supported, the throwing case needs another trigger.
+struct UnrootedPhiArg
+    x::Float64
+    flag::Bool
+end
+
+@noinline function unrooted_phi_sum(s::UnrootedPhiArg, n::Int)
+    acc = 0.0
+    for i in 1:n
+        t = s.flag ? deepcopy(s) : s
+        acc += t.x
+    end
+    return acc + 2 * s.x
+end
+
+unrooted_phi_loss(x, n) = unrooted_phi_sum(UnrootedPhiArg(x, true), n)
+
+@testset "Unrootable phi becomes a runtime error" begin
+    @test autodiff(Reverse, unrooted_phi_loss, Active, Active(2.0), Const(0))[1][1] == 2.0
+    @test autodiff(Forward, unrooted_phi_loss, Duplicated(2.0, 1.0), Const(0))[1] == 2.0
+    @test_throws Enzyme.Compiler.EnzymeRuntimeExceptionMI autodiff(Reverse, unrooted_phi_loss, Active, Active(2.0), Const(1))
+end
