@@ -128,7 +128,7 @@ function __init__()
         push!(pairs, absolute_symbol_pair(mangle(lljit, "ejl_" * k), ptr))
     end
     for (k, v) in Compiler.JuliaEnzymeNameMap
-        ptr = Compiler.unsafe_to_ptr(v)
+        ptr = Compiler.unsafe_to_ptr(Compiler.unbind(v))
         push!(pairs, absolute_symbol_pair(mangle(lljit, "ejl_" * k), ptr))
     end
     LLVM.define(jd_main, LLVM.absolute_symbols(pairs))
@@ -194,33 +194,6 @@ function prepare!(mod)
         ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.function_type(f)))
         replace_uses!(f, ptr)
         Compiler.eraseInst(mod, f)
-    end
-    for g in collect(globals(mod))
-        if !startswith(LLVM.name(g), "ejl_inserted\$")
-           continue
-        end
-        _, ogname, load1, initaddr = split(LLVM.name(g), "\$")
-
-        load1 = load1 == "true"
-            initaddr = parse(UInt, initaddr)
-        ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
-        if load1
-           ptr = Base.unsafe_load(ptr, :unordered)
-        end
-                
-        obj = Base.unsafe_pointer_to_objref(ptr)
-	
-        # Let's try a de-bind for 1.10 lux
-        if isa(obj, Core.Binding)
-           ptr = Compiler.unsafe_to_ptr(obj.value)
-        end
-
-        ptr = reinterpret(UInt, ptr)
-        ptr = LLVM.ConstantInt(ptr)
-        ptr = LLVM.const_inttoptr(ptr, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[])))
-        ptr = LLVM.const_addrspacecast(ptr, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), 10))
-        replace_uses!(g, ptr)
-        Compiler.eraseInst(mod, g)
     end
 end
 

@@ -1367,6 +1367,18 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
         return LLVM.UndefValue(PT), offset, st.addr == 13
     end
 
+    # A null pointer derives from no object: its base is null. Such a phi arm appears where
+    # the code tests a pointer it loaded from a `julia.constgv` slot, which LLVM cannot fold
+    # while the slot is a declaration (see `make_slots_symbolic!`).
+    if isa(v, LLVM.PointerNull)
+        PT = if LLVM.is_opaque(value_type(v))
+            LLVM.PointerType(10)
+        else
+            LLVM.PointerType(eltype(value_type(v)), 10)
+        end
+        return LLVM.null(PT), offset, st.addr == 13
+    end
+
     if isa(v, LLVM.PHIInst) && !hasload && haskey(st.goffsets, v)
         offset = nuwadd!(b, offset, st.goffsets[v])
         nv = st.nextvs[v]

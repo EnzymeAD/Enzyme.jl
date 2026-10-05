@@ -34,9 +34,13 @@ function julia_global(gname::AbstractString)::Union{Some{Any}, Nothing}
     return haskey(JuliaGlobalNameMap, gname) ? Some{Any}(JuliaGlobalNameMap[gname]) : nothing
 end
 
-# The value of the global called `gname` that Enzyme inserted itself, if it is one.
-function enzyme_global(gname::AbstractString)::Union{Some{Any}, Nothing}
-    return haskey(JuliaEnzymeNameMap, gname) ? Some{Any}(JuliaEnzymeNameMap[gname]) : nothing
+# The value of the global called `gname` that Enzyme inserted itself, if it is one: one of the
+# well-known ones, or one of the values the compilation in flight inserted (`inserted_values`, see
+# `insert_julia_value!`).
+function enzyme_global(gname::AbstractString, inserted_values::Union{Dict{String, Any}, Nothing})::Union{Some{Any}, Nothing}
+    haskey(JuliaEnzymeNameMap, gname) && return Some{Any}(JuliaEnzymeNameMap[gname])
+    inserted_values === nothing && return nothing
+    return haskey(inserted_values, gname) ? Some{Any}(inserted_values[gname]) : nothing
 end
 
 # Enzyme's own globals carry an `ejl_` prefix that the keys of the name maps lack.
@@ -45,16 +49,17 @@ function strip_ejl(gname::String)::Union{SubString{String}, Nothing}
 end
 
 # The object a tracked pointer to the global `gv` stands for: a well-known Julia global, or
-# one Enzyme inserted.
-function named_global(gv::LLVM.GlobalVariable)::Union{Some{Any}, Nothing}
+# one Enzyme inserted (`inserted_values`).
+function named_global(gv::LLVM.GlobalVariable, inserted_values::Union{Dict{String, Any}, Nothing})::Union{Some{Any}, Nothing}
     gname = LLVM.name(gv)
     found = julia_global(gname)
     found === nothing || return found
     stripped = strip_ejl(gname)
     if stripped !== nothing
-        found = enzyme_global(stripped)
+        found = enzyme_global(stripped, inserted_values)
         found === nothing || return found
     end
+    # The compilation that inserted the global, or that linked in a module with it, knows it.
     @assert !startswith(gname, "ejl_inserted") "Could not find ejl_inserted variable in map $gname"
     return nothing
 end
@@ -63,12 +68,13 @@ end
     julia_value_of_slot(gv, julia_values)
 
 The Julia value a load of the global slot `gv` yields, as the compilation in flight recorded it
-in `julia_values` (`record_julia_values!`), or `nothing` if it has no record of the slot.
+in `julia_values` (`record_julia_values!`, or `merge_julia_value_table!` for a module compiled
+earlier), or `nothing` if it has no record of the slot.
 
-This is the preferred source: it is what codegen itself said the slot refers to, it does
-not depend on the address of the value having been written into the IR, and the value is
-rooted by the context. Outside of a compilation there is no table, and the caller falls
-back to decoding the initializer with `slot_initializer_address`.
+This is the preferred source: it is what codegen itself said the slot refers to, and it does
+not depend on the address of the value having been written into the IR, which Enzyme removes
+until the module is linked (see `make_slots_symbolic!`). For a slot with no record the caller
+falls back to decoding the initializer with `slot_initializer_address`.
 """
 function julia_value_of_slot(gv::LLVM.GlobalVariable, julia_values::Union{Dict{String, Any}, Nothing})::Union{Some{Any}, Nothing}
     julia_values === nothing && return nothing
@@ -93,13 +99,19 @@ function slot_initializer_address(gv::LLVM.GlobalVariable, load::LLVM.LoadInst):
     return get_base_and_offset(init; offsetAllowed = false, inttoptr = true)[1]
 end
 
+# The table of the Julia values the compilation `enzyme_ctx` inserted, see `EnzymeContext`.
+# Outside of a compilation (`nothing`) there is none: the IR then holds the addresses.
+inserted_values(enzyme_ctx::EnzymeContext) = enzyme_ctx.inserted_values
+inserted_values(::Nothing) = nothing
+
 # The object `arg` stands for. `enzyme_ctx` is the compilation `arg` belongs to, which knows the
-# values its slots refer to (`nothing` outside of one).
-function absint(@nospecialize(arg::LLVM.Value), enzyme_ctx::Union{EnzymeContext, Nothing}, partial::Bool = false, istracked::Bool = false, typetag::Bool = false)::Tuple{Bool, Any}
+# values it named (`nothing` outside of one); `phis` are the phis being resolved further up, see
+# `absint_phi`.
+function absint(@nospecialize(arg::LLVM.Value), enzyme_ctx::Union{EnzymeContext, Nothing}, partial::Bool = false, istracked::Bool = false, typetag::Bool = false, phis::Union{Nothing, Set{LLVM.PHIInst}} = nothing)::Tuple{Bool, Any}
     if (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)) || (value_type(arg) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Derived)) || istracked
         ce, _ = get_base_and_offset(arg; offsetAllowed = false, inttoptr = true)
         if isa(ce, GlobalVariable)
-            found = named_global(ce)
+            found = named_global(ce, inserted_values(enzyme_ctx))
             found === nothing || return (true, something(found))
         end
         if isa(ce, LLVM.LoadInst)
@@ -127,11 +139,11 @@ function absint(@nospecialize(arg::LLVM.Value), enzyme_ctx::Union{EnzymeContext,
 
     if isa(arg, ConstantExpr)
         if opcode(arg) == LLVM.API.LLVMAddrSpaceCast || opcode(arg) == LLVM.API.LLVMBitCast
-            return absint(operands(arg)[1], enzyme_ctx, partial, false, typetag)
+            return absint(operands(arg)[1], enzyme_ctx, partial, false, typetag, phis)
         end
     end
     if isa(arg, LLVM.BitCastInst) || isa(arg, LLVM.AddrSpaceCastInst) || isa(arg, LLVM.IntToPtrInst)
-        return absint(operands(arg)[1], enzyme_ctx, partial, false, typetag)
+        return absint(operands(arg)[1], enzyme_ctx, partial, false, typetag, phis)
     end
     if isa(arg, LLVM.CallInst)
         fn = LLVM.called_operand(arg)
@@ -163,10 +175,10 @@ function absint(@nospecialize(arg::LLVM.Value), enzyme_ctx::Union{EnzymeContext,
             end
         end
         if nm == "julia.pointer_from_objref"
-            return absint(operands(arg)[1], enzyme_ctx, partial)
+            return absint(operands(arg)[1], enzyme_ctx, partial, false, false, phis)
         end
         if nm == "julia.gc_loaded"
-            return absint(operands(arg)[2], enzyme_ctx, partial)
+            return absint(operands(arg)[2], enzyme_ctx, partial, false, false, phis)
         end
         if nm == "jl_typeof" || nm == "ijl_typeof"
             vals = abs_typeof(operands(arg)[1], enzyme_ctx, partial)
@@ -192,10 +204,10 @@ function absint(@nospecialize(arg::LLVM.Value), enzyme_ctx::Union{EnzymeContext,
             if nm == "jl_f_apply_type" || nm == "ijl_f_apply_type"
                 index += 1
                 found = Any[]
-                legal, Ty = absint(operands(arg)[index], enzyme_ctx, partial)
+                legal, Ty = absint(operands(arg)[index], enzyme_ctx, partial, false, false, phis)
                 unionalls = TypeVar[]
                 for sarg in @view arg_operands_view(arg)[index+1:end]
-                    slegal, foundv = absint(sarg, enzyme_ctx, partial)
+                    slegal, foundv = absint(sarg, enzyme_ctx, partial, false, false, phis)
                     if slegal
                         push!(found, foundv)
                     elseif partial
@@ -228,7 +240,7 @@ function absint(@nospecialize(arg::LLVM.Value), enzyme_ctx::Union{EnzymeContext,
                 found = Any[]
                 legal = true
                 for sarg in @view arg_operands_view(arg)[index:end]
-                    slegal, foundv = absint(sarg, enzyme_ctx, partial)
+                    slegal, foundv = absint(sarg, enzyme_ctx, partial, false, false, phis)
                     if slegal
                         push!(found, foundv)
                     else
@@ -251,10 +263,10 @@ function absint(@nospecialize(arg::LLVM.Value), enzyme_ctx::Union{EnzymeContext,
             found = julia_global(stripped)
             found === nothing || return (true, something(found))
         end
-        found = enzyme_global(gname)
+        found = enzyme_global(gname, inserted_values(enzyme_ctx))
         found === nothing || return (true, something(found))
         if stripped !== nothing
-            found = enzyme_global(stripped)
+            found = enzyme_global(stripped, inserted_values(enzyme_ctx))
             found === nothing || return (true, something(found))
         end
     end
@@ -284,7 +296,61 @@ function absint(@nospecialize(arg::LLVM.Value), enzyme_ctx::Union{EnzymeContext,
         end
     end
 
+
+    if isa(arg, LLVM.PHIInst)
+        return absint_phi(arg, enzyme_ctx, partial, istracked, typetag, phis)
+    end
+
     return (false, nothing)
+end
+
+# The value `v` with the pointer casts around it removed.
+function strip_pointer_casts(@nospecialize(v::LLVM.Value))::LLVM.Value
+    while isa(v, LLVM.BitCastInst) || isa(v, LLVM.AddrSpaceCastInst)
+        v = operands(v)[1]
+    end
+    return v
+end
+
+# The object a phi yields if every value flowing into it is that same object: for instance two
+# loads of one `julia.constgv` slot, which GVN merges across a branch. A value flowing in may lead
+# back to a phi being resolved, directly or through casts (a loop), which says nothing new; the
+# phis in progress (`phis`, shared with the `absint` calls this one makes) keep it from
+# recursing forever.
+function absint_phi(arg::LLVM.PHIInst, enzyme_ctx::Union{EnzymeContext, Nothing}, partial::Bool, istracked::Bool, typetag::Bool, phis::Union{Nothing, Set{LLVM.PHIInst}})::Tuple{Bool, Any}
+    in_progress = phis === nothing ? Set{LLVM.PHIInst}() : phis
+    arg in in_progress && return (false, nothing)
+    todo = LLVM.PHIInst[arg]
+    seen = Set{LLVM.PHIInst}()
+    found = false
+    res = nothing
+    try
+        while !isempty(todo)
+            phi = pop!(todo)
+            (phi in seen || phi in in_progress) && continue
+            push!(seen, phi)
+            push!(in_progress, phi)
+            for (v, _) in LLVM.incoming(phi)
+                # A cast of a pointer is the same object: look through it to the phi it may be.
+                stripped = strip_pointer_casts(v)
+                if isa(stripped, LLVM.PHIInst)
+                    push!(todo, stripped)
+                    continue
+                end
+                legal, val = absint(v, enzyme_ctx, partial, istracked, typetag, in_progress)
+                legal || return (false, nothing)
+                if !found
+                    res = val
+                    found = true
+                elseif res !== val
+                    return (false, nothing)
+                end
+            end
+        end
+    finally
+        setdiff!(in_progress, seen)
+    end
+    return found ? (true, res) : (false, nothing)
 end
 
 function actual_size(@nospecialize(typ2))::Int
@@ -480,7 +546,7 @@ function abs_typeof(
             found === nothing || return (true, Core.Typeof(something(found)), GPUCompiler.BITS_REF)
             stripped = strip_ejl(gname)
             if stripped !== nothing
-                found = enzyme_global(stripped)
+                found = enzyme_global(stripped, inserted_values(enzyme_ctx))
                 found === nothing || return (true, Core.Typeof(unbind(something(found))), GPUCompiler.BITS_REF)
             end
         end
