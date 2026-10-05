@@ -132,7 +132,13 @@ function setup_global(
     gv = LLVM.GlobalVariable(mod, T_jlvalue, "ejl_" * k, Tracked)
 
     API.SetMD(gv, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
-    inactive = force_inactive || Enzyme.Compiler.is_memory_instance(val)
+    empty_memory = Enzyme.Compiler.is_memory_instance(val)
+    if empty_memory
+        # The empty Memory singleton: no in-bounds access writes its data, so Enzyme may treat
+        # writes through a Memory that is either it or freshly allocated as local writes.
+        API.SetMD(gv, "enzymejl_empty_memory", LLVM.MDNode(LLVM.Metadata[]))
+    end
+    inactive = force_inactive || empty_memory
     if !inactive && val isa Core.SimpleVector && length(val) == 0
         inactive = true
     end
