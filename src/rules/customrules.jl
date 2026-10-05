@@ -304,6 +304,15 @@ function push_box_for_argument!(
     return al0
 end
 
+# The type of a `Type` argument passed to a rule. Since JuliaLang/julia#62001
+# only `Core.TypeEgal{T}` is a unique representation (and so elided from the
+# specsig calling convention); `Type{T}` is passed as a boxed argument.
+@inline rule_type_arg(@nospecialize(RT)) = @static if isdefined(Core, :TypeEgal)
+    Core.TypeEgal{RT}
+else
+    Type{RT}
+end
+
 function enzyme_custom_setup_args(
         @nospecialize(B::Union{Nothing, LLVM.IRBuilder}),
         orig::LLVM.CallInst,
@@ -1508,14 +1517,14 @@ end
         insert!(augprimal_tt, 1, kwtup)
         insert!(augprimal_tt, 2, Core.typeof(EnzymeRules.augmented_primal))
         insert!(augprimal_tt, 3, C)
-        insert!(augprimal_tt, 5, Type{RT})
+        insert!(augprimal_tt, 5, rule_type_arg(RT))
 
         augprimal_TT = Tuple{augprimal_tt...}
         Core.Typeof(Core.kwfunc(EnzymeRules.augmented_primal))
     else
         @assert kwtup === nothing
         insert!(augprimal_tt, 1, C)
-        insert!(augprimal_tt, 3, Type{RT})
+        insert!(augprimal_tt, 3, rule_type_arg(RT))
 
         augprimal_TT = Tuple{augprimal_tt...}
         typeof(EnzymeRules.augmented_primal)
@@ -1593,11 +1602,11 @@ end
         insert!(tt, 1, kwtup)
         insert!(tt, 2, Core.typeof(EnzymeRules.forward))
         insert!(tt, 3, C)
-        insert!(tt, 5, Type{RT})
+        insert!(tt, 5, rule_type_arg(RT))
     else
         @assert kwtup === nothing
         insert!(tt, 1, C)
-        insert!(tt, 3, Type{RT})
+        insert!(tt, 3, rule_type_arg(RT))
     end
     TT = Tuple{tt...}
 
@@ -1902,12 +1911,12 @@ function enzyme_custom_common_rev(
             insert!(tt, 1, kwtup)
             insert!(tt, 2, Core.typeof(EnzymeRules.reverse))
             insert!(tt, 3, C)
-            insert!(tt, 5, RT <: Active ? (width == 1 ? RT : NTuple{Int(width), RT}) : Type{RT})
+            insert!(tt, 5, RT <: Active ? (width == 1 ? RT : NTuple{Int(width), RT}) : rule_type_arg(RT))
             insert!(tt, 6, TapeT)
         else
             @assert kwtup === nothing
             insert!(tt, 1, C)
-            insert!(tt, 3, RT <: Active ? (width == 1 ? RT : NTuple{Int(width), RT}) : Type{RT})
+            insert!(tt, 3, RT <: Active ? (width == 1 ? RT : NTuple{Int(width), RT}) : rule_type_arg(RT))
             insert!(tt, 4, TapeT)
         end
         rev_TT = Tuple{tt...}
