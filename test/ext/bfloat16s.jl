@@ -21,4 +21,14 @@ end
         Enzyme.autodiff(Reverse, bf16_conv, Active, Duplicated(x, dx))
         @test dx == 2 .* Float32.(BFloat16.(x))
     end
+
+    # https://github.com/EnzymeAD/Enzyme.jl/issues/3762
+    @noinline bf16_pair(x) = (x[1] * x[2], x[2] + x[1])
+    bf16_pair_sum(x) = (t = bf16_pair(x); t[1] + t[2])
+    @testset "bfloat16 aggregate return (#3762)" begin
+        x = BFloat16[1, 2, 3, 4]
+        dx = zeros(BFloat16, 4)
+        Enzyme.autodiff(Reverse, bf16_pair_sum, Active, Duplicated(x, dx))
+        @test dx == BFloat16[3, 2, 0, 0]
+    end
 end
