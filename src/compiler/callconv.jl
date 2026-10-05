@@ -149,10 +149,10 @@ function specsig(mi::Core.MethodInstance, @nospecialize(RT::Type); gcstack_arg::
             # stripped.
             sret_lty = convert(LLVMType, eltype(sret))
             push!(params, LLVM.PointerType(sret_lty))
-            push!(param_attrs, LLVM.Attribute[TypeAttribute(:sret, sret_lty), EnumAttribute(:noalias), EnumAttribute(:nocapture), EnumAttribute(:noundef)])
+            push!(param_attrs, LLVM.Attribute[TypeAttribute(:sret, sret_lty), EnumAttribute(:noalias), nocapture_attr(), EnumAttribute(:noundef)])
             if returnRoots !== nothing
                 push!(params, LLVM.PointerType(convert(LLVMType, eltype(returnRoots))))
-                push!(param_attrs, LLVM.Attribute[EnumAttribute(:noalias), EnumAttribute(:nocapture), EnumAttribute(:noundef)])
+                push!(param_attrs, LLVM.Attribute[EnumAttribute(:noalias), nocapture_attr(), EnumAttribute(:noundef)])
             end
             retty = T_void
         end
@@ -190,10 +190,10 @@ function specsig(mi::Core.MethodInstance, @nospecialize(RT::Type); gcstack_arg::
             push!(param_attrs, attrs)
         elseif kind === :byref
             push!(params, LLVM.PointerType(convert(LLVMType, T), Derived))
-            push!(param_attrs, LLVM.Attribute[EnumAttribute(:noalias), EnumAttribute(:nocapture), EnumAttribute(:readonly)])
+            push!(param_attrs, LLVM.Attribute[EnumAttribute(:noalias), nocapture_attr(), EnumAttribute(:readonly)])
             if inline_roots_type(T) != 0
                 push!(params, LLVM.PointerType(T_int8))
-                push!(param_attrs, LLVM.Attribute[EnumAttribute(:noalias), EnumAttribute(:nocapture), EnumAttribute(:readonly)])
+                push!(param_attrs, LLVM.Attribute[EnumAttribute(:noalias), nocapture_attr(), EnumAttribute(:readonly)])
             end
         else
             lty = convert(LLVMType, T)

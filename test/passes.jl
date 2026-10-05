@@ -772,7 +772,8 @@ end
             @check "%[[SLOT:.+]] = getelementptr i8, ptr addrspace(11)"
             @check "load [1 x ptr addrspace(10)], ptr addrspace(11) %[[SLOT]]"
             @check "store [1 x ptr addrspace(10)] {{.*}}, ptr %[[TMP]]"
-            @check "call void @use_roots(ptr nocapture readonly %[[TMP]])"
+            # LLVM 21+ prints `nocapture` as `captures(none)`.
+            @check "call void @use_roots(ptr {{nocapture|captures\\(none\\)}} readonly %[[TMP]])"
             # A derived pointer that does not trace back to a tracked object
             # is left alone.
             @check_label "@untracked"

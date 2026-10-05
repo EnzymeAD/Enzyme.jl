@@ -2853,7 +2853,7 @@ function zero_allocation(
     push!(wrapper_f.function_attributes, EnumAttribute(:willreturn))
     push!(wrapper_f.function_attributes, EnumAttribute(:mustprogress))
     push!(wrapper_f.parameter_attributes[1], EnumAttribute(:writeonly))
-    push!(wrapper_f.parameter_attributes[1], EnumAttribute(:nocapture))
+    push!(wrapper_f.parameter_attributes[1], nocapture_attr())
     wrapper_f.linkage = LLVM.Linkage.Internal
     let builder = IRBuilder()
         entry = BasicBlock(wrapper_f, "entry")
