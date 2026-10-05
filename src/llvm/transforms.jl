@@ -793,7 +793,7 @@ end
 #
 #  turn this into load/store, as this is more
 #  amenable to caching analysis infrastructure
-function memcpy_alloca_to_loadstore(mod::LLVM.Module, world::UInt)
+function memcpy_alloca_to_loadstore(mod::LLVM.Module, world::UInt, enzyme_ctx::EnzymeContext)
     dl = datalayout(mod)
     ctx = context(mod)
     seen = TypeTreeTable()
@@ -904,7 +904,7 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module, world::UInt)
                     T_jlvalue = LLVM.StructType(LLVMType[])
                     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
-                    legal, source_typ, byref = abs_typeof(src)
+                    legal, source_typ, byref = abs_typeof(src, enzyme_ctx)
                     codegen_typ = value_type(src)
                     if legal
                         if codegen_typ isa LLVM.PointerType || codegen_typ isa LLVM.IntegerType
@@ -928,7 +928,7 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module, world::UInt)
 
                         @static if VERSION < v"1.11-"
                         else
-                            legal2, obj = absint(src)
+                            legal2, obj = absint(src, enzyme_ctx)
                             if legal2 && is_memory_instance(unbind(obj))
                                 metadata(src)["nonnull"] = MDNode(LLVM.Metadata[])
                             end
@@ -3504,7 +3504,7 @@ function safe_atomic_to_regular_store!(f::LLVM.Function)
     return changed
 end
 
-function replace_builtin_fptr!(mod::LLVM.Module)
+function replace_builtin_fptr!(mod::LLVM.Module, enzyme_ctx::EnzymeContext)
     if !haskey(functions(mod), "jl_get_builtin_fptr")
         return false
     end
@@ -3526,7 +3526,7 @@ function replace_builtin_fptr!(mod::LLVM.Module)
             if isa(inst, LLVM.CallInst)
                 if called_operand(inst) == jl_get_builtin_fptr_fn
                     arg1 = operands(inst)[1]
-                    legal, obj = absint(arg1)
+                    legal, obj = absint(arg1, enzyme_ctx)
                     if legal
                         if isa(obj, DataType) && isdefined(obj, :instance)
                             obj = obj.instance

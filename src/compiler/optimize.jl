@@ -30,9 +30,17 @@ SafeAtomicToRegularStorePass() = NewPMFunctionPass("safe_atomic_to_regular_store
 Addr13NoAliasPass() = NewPMModulePass("addr13_noalias", addr13NoAlias)
 RemoveAlwaysInlineRootsPass() = NewPMModulePass("remove_alwaysinline_roots", remove_alwaysinline_roots!)
 
-MarkLoadsDereferenceablePass() = NewPMFunctionPass("enzyme_mark_loads_dereferenceable", mark_loads_dereferenceable!)
+# `mark_loads_dereferenceable!` for the compilation `enzyme_ctx`.
+struct MarkLoadsDereferenceable
+    enzyme_ctx::Union{EnzymeContext, Nothing}
+end
+(pass::MarkLoadsDereferenceable)(fn::LLVM.Function) = mark_loads_dereferenceable!(fn, pass.enzyme_ctx)
 
-function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti = nothing)
+MarkLoadsDereferenceablePass(enzyme_ctx::Union{EnzymeContext, Nothing}) =
+    NewPMFunctionPass("enzyme_mark_loads_dereferenceable", MarkLoadsDereferenceable(enzyme_ctx))
+
+# `enzyme_ctx` is the compilation `mod` belongs to, `nothing` outside of one.
+function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enzyme_ctx::Union{EnzymeContext, Nothing}, tti = nothing)
     @dispose pb = NewPMPassBuilder() begin
         if tti !== nothing
             LLVM.target_transform_info!(pb, tti)
@@ -103,7 +111,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
             end
             registerEnzymeAndPassPipeline!(pb)
             register!(pb, RestoreAllocaType())
-            register!(pb, MarkLoadsDereferenceablePass())
+            register!(pb, MarkLoadsDereferenceablePass(enzyme_ctx))
             add!(pb, NewPMAAManager()) do aam
                 add!(aam, ScopedNoAliasAA())
                 add!(aam, TypeBasedAA())
@@ -131,7 +139,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, tti
                     # Loaded pointers to heap objects of a known type are `dereferenceable`
                     # (see `mark_load_dereferenceable!`), so that LICM can hoist loads such as
                     # an array's `Memory` pointer out of loops.
-                    add!(fpm, MarkLoadsDereferenceablePass())
+                    add!(fpm, MarkLoadsDereferenceablePass(enzyme_ctx))
                     add!(fpm, NewPMLoopPassManager(use_memory_ssa = true)) do lpm
                         add!(lpm, LoopIdiomRecognizePass())
                         add!(lpm, LoopRotatePass())

@@ -72,7 +72,7 @@ end
             Compiler.emit_box_int32!(builder, len)
         end
 
-        tag = Compiler.emit_apply_type!(builder, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(builder, T)])
+        tag = Compiler.emit_apply_type!(builder, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(builder, T)], #=enzyme_ctx=# nothing)
 
         fullsize = LLVM.nuwmul!(builder, len, LLVM.ConstantInt(sizeof(Int)))
         obj = Compiler.emit_allocobj!(builder, tag, fullsize, needs_dynamic_size_workaround)

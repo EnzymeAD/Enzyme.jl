@@ -6,12 +6,13 @@ function array_shadow_handler(
         Args::Ptr{LLVM.API.LLVMValueRef},
         gutils::API.EnzymeGradientUtilsRef,
     )::LLVM.API.LLVMValueRef
+    enzyme_ctx = enzyme_context()
     inst = LLVM.Instruction(OrigCI)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
     ctx = LLVM.context(LLVM.Value(OrigCI))
     gutils = GradientUtils(gutils)
 
-    legal, typ, byref = abs_typeof(inst)
+    legal, typ, byref = abs_typeof(inst, enzyme_ctx)
     if !legal
         throw(
             AssertionError(
@@ -94,7 +95,7 @@ function array_shadow_handler(
     end
 
     nbytes = if memory
-        get_memory_nbytes(b, anti)
+        get_memory_nbytes(b, anti, enzyme_ctx)
     else
         arlen = get_array_len(b, anti)
         tot = LLVM.mul!(b, arlen, LLVM.ConstantInt(LLVM.value_type(arlen), elsz, false))

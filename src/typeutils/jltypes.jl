@@ -40,14 +40,14 @@ function mark_load_dereferenceable!(inst::LLVM.LoadInst, @nospecialize(source_ty
 end
 
 """
-    mark_loads_dereferenceable!(fn::LLVM.Function)::Bool
+    mark_loads_dereferenceable!(fn::LLVM.Function, enzyme_ctx)::Bool
 
 Apply `mark_load_dereferenceable!` to every load of a tracked pointer in `fn`
 whose Julia type `abs_typeof` can determine. Runs as a pass right before the
 loop passes of the early pipeline, since earlier passes recreate such loads
 without their metadata.
 """
-function mark_loads_dereferenceable!(fn::LLVM.Function)
+function mark_loads_dereferenceable!(fn::LLVM.Function, enzyme_ctx::Union{EnzymeContext, Nothing})
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     changed = false
@@ -55,7 +55,7 @@ function mark_loads_dereferenceable!(fn::LLVM.Function)
         isa(inst, LLVM.LoadInst) || continue
         value_type(inst) == T_prjlvalue || continue
         (haskey(metadata(inst), "dereferenceable") || haskey(metadata(inst), "dereferenceable_or_null")) && continue
-        legal, source_typ, byref = abs_typeof(inst)
+        legal, source_typ, byref = abs_typeof(inst, enzyme_ctx)
         legal || continue
         changed |= mark_load_dereferenceable!(inst, source_typ, byref)
     end

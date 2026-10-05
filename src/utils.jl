@@ -137,7 +137,7 @@ function setup_global(
         inactive = true
     end
     if !inactive && world isa UInt
-        legal, jTy, byref = Compiler.abs_typeof(gv, true)
+        legal, jTy, byref = Compiler.abs_typeof(gv, #=enzyme_ctx=# nothing, true)
         if legal
             state = Enzyme.Compiler.active_reg(jTy, world)
             inactive = state == Enzyme.Compiler.AnyState || state == Enzyme.Compiler.ActiveState
