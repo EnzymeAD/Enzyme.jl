@@ -184,7 +184,7 @@ function to_fullmd(world::UInt, @nospecialize(T::Type), offset::Int, lim::Int)
         elseif sT == API.DT_Float
             push!(mds, LLVM.MDString("Float@float"))
         elseif sT == API.DT_BFloat16
-            push!(mds, LLVM.MDString("Float@bfloat16"))
+            push!(mds, LLVM.MDString("Float@bf16"))
         elseif sT == API.DT_Double
             push!(mds, LLVM.MDString("Float@double"))
         else
