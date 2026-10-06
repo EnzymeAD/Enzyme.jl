@@ -278,6 +278,50 @@ function EnzymeRules.reverse(
     return (nothing, nothing, nothing)
 end
 
+# `dB .-= A * B` for A triangular, using `tmp`, which is like B, as scratch. Unlike `mul!`, this
+# uses BLAS also when A wraps the transpose or adjoint of a matrix, except for tiny products,
+# for which the generic `mul!` is faster than a BLAS call (n^2 m <= 128, as measured with
+# OpenBLAS).
+_trimul_sub!(dB, A, B, tmp) = mul!(dB, A, B, -1, 1)
+function _trimul_sub!(
+        dB::StridedVecOrMat{T}, A::AbstractMatrix{T}, B::StridedVecOrMat{T}, tmp::StridedVecOrMat{T}
+    ) where {T <: LinearAlgebra.BlasFloat}
+    args = _tri_blas_args(A)
+    if args === nothing || stride(args[1], 1) != 1 || stride(tmp, 1) != 1 ||
+            size(A, 1)^2 * size(B, 2) <= 128
+        return mul!(dB, A, B, -1, 1)
+    end
+    data, uplo, trans, diag = args
+    copyto!(tmp, B)
+    if tmp isa AbstractVector
+        BLAS.trmv!(uplo, trans, diag, data, tmp)
+    else
+        BLAS.trmm!('L', uplo, trans, diag, one(T), data, tmp)
+    end
+    dB .-= tmp
+    return dB
+end
+
+# Solve with, or multiply by, the lower (`Val(:L)`) or upper (`Val(:U)`) triangular factor of a
+# Cholesky factorization C. Unlike `C.L` and `C.U`, these do not copy the factor that is not
+# stored, but use its adjoint. They branch on `C.uplo` so that each branch has concrete types.
+function _chol_trisolve!(C::Cholesky, ::Val{:L}, B)
+    return C.uplo == 'L' ? _trisolve!(LowerTriangular(C.factors), B) :
+        _trisolve!(LowerTriangular(C.factors'), B)
+end
+function _chol_trisolve!(C::Cholesky, ::Val{:U}, B)
+    return C.uplo == 'U' ? _trisolve!(UpperTriangular(C.factors), B) :
+        _trisolve!(UpperTriangular(C.factors'), B)
+end
+function _chol_trimul_sub!(dB, C::Cholesky, ::Val{:L}, B, tmp)
+    return C.uplo == 'L' ? _trimul_sub!(dB, LowerTriangular(C.factors), B, tmp) :
+        _trimul_sub!(dB, LowerTriangular(C.factors'), B, tmp)
+end
+function _chol_trimul_sub!(dB, C::Cholesky, ::Val{:U}, B, tmp)
+    return C.uplo == 'U' ? _trimul_sub!(dB, UpperTriangular(C.factors), B, tmp) :
+        _trimul_sub!(dB, UpperTriangular(C.factors'), B, tmp)
+end
+
 # y = inv(A) B
 # dY = inv(A) [ dB - dA y ]
 # ->
@@ -302,29 +346,29 @@ function EnzymeRules.forward(
         N = EnzymeRules.width(config)
         retval = B.val
 
-        L = fact.val.L
-        U = fact.val.U
+        # Scratch for the products with the factors' shadows, shared by all lanes
+        tmp = fact isa Const ? nothing : similar(B.val)
 
-        _trisolve!(L, B.val)
+        _chol_trisolve!(fact.val, Val(:L), B.val)
         ntuple(Val(N)) do b
             Base.@_inline_meta
             dB = N == 1 ? B.dval : B.dval[b]
             if !(fact isa Const)
-                dL = N == 1 ? fact.dval.L : fact.dval[b].L
-                mul!(dB, dL, B.val, -1, 1)
+                dfact = N == 1 ? fact.dval : fact.dval[b]
+                _chol_trimul_sub!(dB, dfact, Val(:L), B.val, tmp)
             end
-            _trisolve!(L, dB)
+            _chol_trisolve!(fact.val, Val(:L), dB)
         end
 
-        _trisolve!(U, B.val)
+        _chol_trisolve!(fact.val, Val(:U), B.val)
         dretvals = ntuple(Val(N)) do b
             Base.@_inline_meta
             dB = N == 1 ? B.dval : B.dval[b]
             if !(fact isa Const)
-                dU = N == 1 ? fact.dval.U : fact.dval[b].U
-                mul!(dB, dU, B.val, -1, 1)
+                dfact = N == 1 ? fact.dval : fact.dval[b]
+                _chol_trimul_sub!(dB, dfact, Val(:U), B.val, tmp)
             end
-            _trisolve!(U, dB)
+            _chol_trisolve!(fact.val, Val(:U), dB)
             return dB
         end
 

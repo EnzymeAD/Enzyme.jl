@@ -630,25 +630,62 @@ end
     @test Enzyme._trisolve(Diagonal(diag(M)), B) ≈ Diagonal(diag(M)) \ B
 end
 
+@testset "Triangular products in derivatives" begin
+    # n = 12 is large enough to use BLAS rather than the generic multiplication
+    for T in (Float64, ComplexF64), n in (1, 3, 12), m in (0, 4)
+        M = randn(T, n, n) + 3n * I
+        B = m == 0 ? randn(T, n) : randn(T, n, m)
+        dB = m == 0 ? randn(T, n) : randn(T, n, m)
+        for W in (LowerTriangular, UpperTriangular, UnitLowerTriangular, UnitUpperTriangular),
+                A in (W(M), W(transpose(M)), W(adjoint(M)), Transpose(W(M)), Adjoint(W(M)))
+            X = copy(dB)
+            @test Enzyme._trimul_sub!(X, A, B, similar(B)) === X
+            @test X ≈ dB - A * B
+        end
+    end
+    # What BLAS cannot multiply with directly falls back to `mul!`
+    M = randn(4, 4) + 12I
+    B = randn(4, 2)
+    dB = randn(4, 2)
+    A = LowerTriangular(sparse(M))
+    @test Enzyme._trimul_sub!(copy(dB), A, B, similar(B)) ≈ dB - A * B
+end
+
+@testset "Cholesky factors in derivatives" begin
+    for T in (Float64, ComplexF64), uplo in (:U, :L), m in (0, 4)
+        A0 = randn(T, 3, 3)
+        C = cholesky(Hermitian(A0' * A0 + 3I, uplo))
+        D = Cholesky(randn(T, 3, 3), C.uplo, 0)
+        B = m == 0 ? randn(T, 3) : randn(T, 3, m)
+        dB = m == 0 ? randn(T, 3) : randn(T, 3, m)
+        for F in (:L, :U)
+            @test Enzyme._chol_trisolve!(C, Val(F), copy(B)) ≈ getproperty(C, F) \ B
+            @test Enzyme._chol_trimul_sub!(copy(dB), D, Val(F), B, similar(B)) ≈ dB - getproperty(D, F) * B
+        end
+    end
+end
+
 @testset "Cholesky ldiv! forward with a matrix right-hand side" begin
-    function solve_sum(A, B)
-        C = cholesky(Symmetric(A))
+    function solve_sum(A, B, uplo)
+        C = cholesky(Symmetric(A, uplo))
         X = copy(B)
         ldiv!(C, X)
         return sum(abs2, X)
     end
-    n = 3
-    A0 = randn(n, n)
-    A = A0' * A0 + n * I
-    B = randn(n, 4)
-    dA = randn(n, n)
-    dA = dA + dA'
-    dB = randn(n, 4)
-    fd = central_fdm(5, 1)(t -> solve_sum(A + t * dA, B + t * dB), 0.0)
-    @test autodiff(Forward, solve_sum, Duplicated(A, copy(dA)), Duplicated(B, copy(dB)))[1] ≈ fd
-    res = autodiff(
-        Forward, solve_sum, BatchDuplicated(A, (copy(dA), 2 .* dA)), BatchDuplicated(B, (copy(dB), 2 .* dB))
-    )[1]
-    @test res[1] ≈ fd
-    @test res[2] ≈ 2fd
+    for uplo in (:U, :L), m in (0, 4)
+        n = 3
+        A0 = randn(n, n)
+        A = A0' * A0 + n * I
+        B = m == 0 ? randn(n) : randn(n, m)
+        dA = randn(n, n)
+        dA = dA + dA'
+        dB = m == 0 ? randn(n) : randn(n, m)
+        fd = central_fdm(5, 1)(t -> solve_sum(A + t * dA, B + t * dB, uplo), 0.0)
+        @test autodiff(Forward, solve_sum, Duplicated(A, copy(dA)), Duplicated(B, copy(dB)), Const(uplo))[1] ≈ fd
+        res = autodiff(
+            Forward, solve_sum, BatchDuplicated(A, (copy(dA), 2 .* dA)), BatchDuplicated(B, (copy(dB), 2 .* dB)), Const(uplo)
+        )[1]
+        @test res[1] ≈ fd
+        @test res[2] ≈ 2fd
+    end
 end
