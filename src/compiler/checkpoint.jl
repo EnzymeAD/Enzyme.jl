@@ -160,4 +160,13 @@ end
 
 # Runs just before differentiation: Enzyme's loop function has a fixed
 # signature the pipeline must not change.
-lower_checkpoint_calls!(mod::LLVM.Module) = API.EnzymeLowerCheckpointMarkers(mod) != 0
+#
+# A loop Enzyme cannot checkpoint is reported as a diagnostic; it must be an
+# error, or the loop would quietly be differentiated without checkpointing.
+function lower_checkpoint_calls!(mod::LLVM.Module)
+    ctx = LLVM.context(mod)
+    LLVM.prepare_diagnostic(ctx)
+    changed = API.EnzymeLowerCheckpointMarkers(mod) != 0
+    LLVM.check_diagnostic(ctx)
+    return changed
+end
