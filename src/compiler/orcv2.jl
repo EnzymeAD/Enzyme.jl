@@ -170,6 +170,7 @@ function add_trampoline!(jd, (lljit, lctm, ism), entry, target)
 end
 
 function prepare!(mod)
+    Compiler.modern_write_barriers!(mod)
     # On Windows, LLVM's GlobalOpt demotes internal functions to `private` linkage,
     # which emits no object symbol. Julia's per-symbol Win64 JIT unwind registrar
     # (create_PRUNTIME_FUNCTION) then skips those functions, so their frames get no

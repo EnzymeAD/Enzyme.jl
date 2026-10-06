@@ -102,12 +102,40 @@ function emit_pointerfromobjref!(B::LLVM.IRBuilder, @nospecialize(T::LLVM.Value)
     return call!(B, fty, func, [T])
 end
 
+# Since julia#62737 codegen emits `julia.object_write_barrier(parent, children...)` and the
+# field-aware `julia.field_write_barrier.p11/.p13(parent, slot, child, ...)` instead of
+# `julia.write_barrier(parent, children...)`, which Julia no longer lowers.
+const WRITE_BARRIER = @static if VERSION >= v"1.14.0-DEV.3304"
+    "julia.object_write_barrier"
+else
+    "julia.write_barrier"
+end
+
 declare_writebarrier!(mod::LLVM.Module) =
-    get_function!(mod, "julia.write_barrier") do
+    get_function!(mod, WRITE_BARRIER) do
         T_jlvalue = LLVM.StructType(LLVMType[])
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
         LLVM.FunctionType(LLVM.VoidType(), [T_prjlvalue]; vararg = true)
     end
+
+# Enzyme emits `julia.write_barrier` into modules that had no julia#62737 barrier to
+# take the name from. Rename those to `julia.object_write_barrier`, which has the same
+# signature, before Julia's GC lowering runs.
+function modern_write_barriers!(mod::LLVM.Module)
+    @static if VERSION >= v"1.14.0-DEV.3304"
+        haskey(LLVM.functions(mod), "julia.write_barrier") || return
+        wb = LLVM.functions(mod)["julia.write_barrier"]
+        if haskey(LLVM.functions(mod), "julia.object_write_barrier")
+            owb = LLVM.functions(mod)["julia.object_write_barrier"]
+            LLVM.replace_uses!(wb, owb)
+            LLVM.erase!(wb)
+        else
+            LLVM.name!(wb, "julia.object_write_barrier")
+        end
+    end
+    return
+end
+
 declare_apply_generic!(mod::LLVM.Module) =
     get_function!(mod, "ijl_apply_generic") do
         T_jlvalue = LLVM.StructType(LLVMType[])
