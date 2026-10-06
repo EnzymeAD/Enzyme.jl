@@ -583,4 +583,38 @@ uninferred_outer(p) = (y = uninferred_fun(p); y[1]^2 + y[2]^2)
     @test d2 ≈ [2.0, 4.0]
 end
 
+# A rule reached through a dynamic call runs in split mode, where the augmented
+# forward and the reverse pass are separate compilations. They must agree on
+# the rule's config and return activity, which select the rule method and the
+# tape layout. Here only the augmented function returns the primal.
+struct SplitModeArg
+    x::Float64
+    v::Vector{Float64}
+end
+
+@noinline split_scale(s::SplitModeArg) = s.v .* s.x
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfigWidth{1}, ::Const{typeof(split_scale)},
+        RTA::Type{<:Duplicated}, s
+    )
+    res = split_scale(s.val)
+    dres = zero(res)
+    return EnzymeRules.augmented_rule_return_type(config, RTA)(res, dres, dres)
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfigWidth{1}, ::Const{typeof(split_scale)},
+        ::Type{<:Duplicated}, dres, s
+    )
+    s.dval[].v .+= dres .* s.val.x
+    return (nothing,)
+end
+
+split_scale_loss(v) = sum(Base.inferencebarrier(s -> split_scale(s))(SplitModeArg(2.0, v)))
+
+@testset "Custom rule in split mode through a dynamic call" begin
+    @test Enzyme.gradient(Reverse, split_scale_loss, [1.0, 2.0])[1] ≈ [2.0, 2.0]
+end
+
 end # ReverseRules
