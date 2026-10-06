@@ -17,6 +17,7 @@ const HAS_INTEGRATED_CACHE = VERSION >= v"1.11.0-DEV.1552"
 
 import ..Enzyme
 import ..EnzymeRules
+import ..EnzymeRules: FwdConfig, RevConfig, Annotation
 import ..cached_has_frule, ..cached_has_rrule, ..cached_is_inactive
 
 @static if VERSION ≥ v"1.11.0-DEV.1498"
@@ -87,35 +88,35 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
     handler::T
 end
 
-const SigCacheLock = ReentrantLock()
+# Argument tuples selecting the methods of each rule family.
+const FWD_RULE_TT = Tuple{<:FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}
+const REV_RULE_TT = Tuple{<:RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}
+const ANY_RULE_TT = Tuple{Vararg{Any}}
+
+# The methods of one rule family (`EnzymeRules.forward`, `augmented_primal`, `inactive`, ...)
+# visible in the world last asked about, and an epoch that advances whenever that set differs
+# between two worlds. Memoized rule queries and the pre-1.11 code cache key on the epoch: two
+# worlds that see the same rule methods answer every rule query the same way, so nothing has to
+# be recomputed per world, and a new rule method retires every answer at once. Only the global
+# method table is consulted, as for the cache token; rules living in an overlay method table are
+# not tracked.
+mutable struct RuleFamily
+    world::UInt
+    sigs::Base.IdSet{Type}
+    epoch::UInt
+end
+
+const RuleFamilyLock = ReentrantLock()
+const RULE_FAMILIES = Dict{Tuple{Any, Type}, RuleFamily}()
 const InterpreterLock = ReentrantLock()
-const SigCache = Dict{Tuple, Dict{UInt, Base.IdSet{Type}}}()
-function get_rule_signatures(f, TT, world)
-    subdict = lock(SigCacheLock) do
-        if haskey(SigCache, (f, TT))
-           SigCache[(f, TT)]
-        else
-           tmp = Dict{UInt, Base.IdSet{Type}}()
-           SigCache[(f, TT)] = tmp
-           tmp
-        end
+
+function rule_signatures_at(@nospecialize(f), @nospecialize(TT), world::UInt)
+    meths = Base._methods(f, TT, -1, world)::Vector
+    sigs = Type[]
+    for rule in meths
+        push!(sigs, (rule::Core.MethodMatch).method.sig)
     end
-    
-    return lock(SigCacheLock) do
-        if haskey(subdict, world)
-           return subdict[world]
-        end
-        
-        fwdrules_meths = Base._methods(f, TT, -1, world)::Vector
-        sigs = Type[]
-        for rule in fwdrules_meths
-            push!(sigs, (rule::Core.MethodMatch).method.sig)
-        end
-        result = Base.IdSet{Type}(sigs)
-        
-        subdict[world] = result
-        return result
-    end
+    return Base.IdSet{Type}(sigs)
 end
 
 function rule_sigs_equal(a, b)
@@ -131,9 +132,47 @@ function rule_sigs_equal(a, b)
     return true
 end
 
-const LastFwdWorld = Ref(Base.IdSet{Type}())
-const LastRevWorld = Ref(Base.IdSet{Type}())
-const LastInaWorld = Ref(Base.IdSet{Type}())
+# `(sigs, epoch)` of the family at `world`. The method lookup runs outside the lock.
+function rule_family(@nospecialize(f), @nospecialize(TT), world::UInt)
+    key = (f, TT)
+    lock(RuleFamilyLock)
+    try
+        fam = get(RULE_FAMILIES, key, nothing)
+        if fam !== nothing && fam.world == world
+            return (fam.sigs, fam.epoch)
+        end
+    finally
+        unlock(RuleFamilyLock)
+    end
+
+    sigs = rule_signatures_at(f, TT, world)
+
+    lock(RuleFamilyLock)
+    try
+        fam = get(RULE_FAMILIES, key, nothing)
+        if fam === nothing
+            fam = RuleFamily(world, sigs, UInt(1))
+            RULE_FAMILIES[key] = fam
+        elseif fam.world != world
+            if !rule_sigs_equal(sigs, fam.sigs)
+                fam.sigs = sigs
+                fam.epoch += 1
+            end
+            fam.world = world
+        end
+        return (fam.sigs, fam.epoch)
+    finally
+        unlock(RuleFamilyLock)
+    end
+end
+
+get_rule_signatures(@nospecialize(f), @nospecialize(TT), world::UInt) = rule_family(f, TT, world)[1]
+rule_epoch(@nospecialize(f), @nospecialize(TT), world::UInt) = rule_family(f, TT, world)[2]
+
+# Pre-1.11: the epochs the global code caches were last validated against.
+const LastFwdEpoch = Ref{UInt}(0)
+const LastRevEpoch = Ref{UInt}(0)
+const LastInaEpoch = Ref{UInt}(0)
 
 function EnzymeInterpreter(
     cache_or_token,
@@ -157,50 +196,33 @@ function EnzymeInterpreter(
     @static if HAS_INTEGRATED_CACHE
 
     else
-        fwdrules = if forward_rules
-            get_rule_signatures(EnzymeRules.forward, Tuple{<:FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)
-        else
-            nothing
-        end
-
-        revrules = if reverse_rules
-            get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)
-        else
-            nothing
-        end
-
-        inarules = if inactive_rules
-            get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)
-        else
-            nothing
-        end
+        # The global code cache holds inference results that depend on which rules were
+        # visible; drop it when a rule family changed since the last interpreter was built.
+        fwd_epoch = forward_rules ? rule_epoch(EnzymeRules.forward, FWD_RULE_TT, world) : UInt(0)
+        rev_epoch = reverse_rules ? rule_epoch(EnzymeRules.augmented_primal, REV_RULE_TT, world) : UInt(0)
+        ina_epoch = inactive_rules ? rule_epoch(EnzymeRules.inactive, ANY_RULE_TT, world) : UInt(0)
 
         cache_or_token = cache_or_token::CodeCache
-        invalid = false
-        lock(InterpreterLock) do
-            if forward_rules
-                if !rule_sigs_equal(fwdrules, LastFwdWorld[])
-                    LastFwdWorld[] = fwdrules
-                    invalid = true
-                end
+        lock(InterpreterLock)
+        try
+            invalid = false
+            if forward_rules && fwd_epoch != LastFwdEpoch[]
+                LastFwdEpoch[] = fwd_epoch
+                invalid = true
             end
-            if reverse_rules
-                if !rule_sigs_equal(revrules, LastRevWorld[])
-                    LastRevWorld[] = revrules
-                    invalid = true
-                end
+            if reverse_rules && rev_epoch != LastRevEpoch[]
+                LastRevEpoch[] = rev_epoch
+                invalid = true
             end
-    
-            if inactive_rules
-                if !rule_sigs_equal(inarules, LastInaWorld[])
-                    LastInaWorld[] = inarules
-                    invalid = true
-                end
+            if inactive_rules && ina_epoch != LastInaEpoch[]
+                LastInaEpoch[] = ina_epoch
+                invalid = true
             end
-            
             if invalid
                 Base.empty!(cache_or_token)
             end
+        finally
+            unlock(InterpreterLock)
         end
     end
 
