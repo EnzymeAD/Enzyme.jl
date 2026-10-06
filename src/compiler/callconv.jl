@@ -109,7 +109,8 @@ The return:
 
 The arguments:
 
-- Ghost and `Type{T}` arguments are omitted.
+- Ghost arguments and constant types are omitted (`isconstType`:
+  `TypeEgal{T}` on Julia 1.14+, `Type{T}` before).
 - Boxed arguments are tracked pointers.
 - Aggregates go by reference in the derived address space. On 1.12+ a
   pointer to their inline roots follows.
@@ -414,17 +415,25 @@ end
     codeinst(mi::MethodInstance, world::UInt) -> Union{Nothing, CodeInstance}
 
 Infer and compile the function `mi` at `world` with Julia's native
-interpreter and JIT, exactly as an ordinary call of it would, and return
-its `CodeInstance`. Return `nothing` when inference fails. The result is
-the same `CodeInstance` ordinary callers use, so the function is compiled
-at most once per process. See [`invoke_codegen!`](@ref) for why the native
-interpreter, and not `EnzymeInterpreter`, infers the functions that are
-called natively.
+interpreter and JIT, and return its `CodeInstance`. Return `nothing` when
+inference fails. The result is cached like the one of an ordinary call,
+so the function is compiled at most once per process. See
+[`invoke_codegen!`](@ref) for why the native interpreter, and not
+`EnzymeInterpreter`, infers the functions that are called natively.
+
+The function is compiled for `mi` itself, without Julia's specialization
+heuristics. Since julia#61997 `typeinf_ext_toplevel` first normalizes `mi`
+to its compilable form, which widens a `::Type` or `@nospecialize`
+argument (a rule's `TypeEgal{RT}` argument becomes a boxed `Type`). The
+declaration [`declare_native!`](@ref) makes is derived from
+`mi.specTypes`, so compile that signature.
 """
 function codeinst(mi::Core.MethodInstance, world::UInt)::Union{Nothing, Core.CodeInstance}
     @static if VERSION >= v"1.12-"
         CC = Core.Compiler
-        ci = CC.typeinf_ext_toplevel(CC.NativeInterpreter(world), mi, CC.SOURCE_MODE_ABI)
+        interp = CC.NativeInterpreter(world)
+        ci = CC.typeinf_ext(interp, mi, CC.SOURCE_MODE_ABI)
+        ci = CC.add_codeinsts_to_jit!(interp, ci, CC.SOURCE_MODE_ABI)
         return ci isa Core.CodeInstance ? ci : nothing
     else
         # The runtime's own compilation entry: infer with the native
@@ -502,9 +511,9 @@ function native_codeinst(mod::LLVM.Module, mi::Core.MethodInstance, world::UInt)
     (mi.specTypes isa DataType && native_invoke_available(mod)) || return nothing
     ci = codeinst(mi, world)
     ci === nothing && return nothing
-    # Julia may compile a normalized MethodInstance (for example with
-    # `@nospecialize` arguments widened) whose signature differs from
-    # `mi.specTypes`, which the declaration is derived from.
+    # `codeinst` compiles `mi` itself, not its normalized form, whose
+    # signature would differ from `mi.specTypes`, which the declaration
+    # is derived from.
     if codeinst_mi(ci) !== mi
         throw(CallingConventionMismatchError{String}("Enzyme: Julia compiled the custom rule $(mi) for the MethodInstance $(codeinst_mi(ci)). This is not expected to happen, please report it.", mi, world))
     end
