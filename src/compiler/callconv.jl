@@ -1,9 +1,10 @@
 # Calling natively compiled Julia code from a differentiated module.
 #
-# Julia 1.12 lets a caller infer a MethodInstance with an interpreter of its
-# choice, hand the result to Julia's JIT, and read back the entry points of
-# the compiled code. The functions here derive the signature Julia's codegen
-# gives that entry point (`get_specsig_function`), declare it in an LLVM
+# Julia lets a caller compile a MethodInstance with its native interpreter and
+# JIT and read back the entry points of the compiled code (on 1.12 through the
+# compiler API, earlier through `jl_compile_method_internal`). The functions
+# here derive the signature Julia's codegen gives that entry point
+# (`get_specsig_function`), declare it in an LLVM
 # module bound to its address, and decide, per inlining annotation, whether
 # a function reaches the module that way or is emitted into it by
 # `nested_codegen!`. The custom rule handlers are the first users
@@ -35,11 +36,17 @@ end
 
 @static if Interpreter.HAS_INVOKE_RULES
 
-    function read_jit_gcstack_arg()::Bool
-        off = fieldoffset(Base.CodegenParams, Base.fieldindex(Base.CodegenParams, :gcstack_arg))
-        return unsafe_load(Ptr{Cint}(cglobal(:jl_default_cgparams) + off)) != 0
+    @static if VERSION >= v"1.12-"
+        function read_jit_gcstack_arg()::Bool
+            off = fieldoffset(Base.CodegenParams, Base.fieldindex(Base.CodegenParams, :gcstack_arg))
+            return unsafe_load(Ptr{Cint}(cglobal(:jl_default_cgparams) + off)) != 0
+        end
+        const jit_gcstack_arg_once = Base.OncePerProcess{Bool}(read_jit_gcstack_arg)
+    else
+        # Before 1.12 `jl_default_cgparams` is not exported. The JIT of 1.10
+        # and 1.11 always passes `pgcstack` as an argument.
+        jit_gcstack_arg_once() = true
     end
-    const jit_gcstack_arg_once = Base.OncePerProcess{Bool}(read_jit_gcstack_arg)
 
     """
         jit_gcstack_arg() -> Bool
@@ -117,10 +124,12 @@ end
     function specsig(mi::Core.MethodInstance, @nospecialize(RT::Type); gcstack_arg::Bool = jit_gcstack_arg())
         T_void = LLVM.VoidType()
         T_int8 = LLVM.Int8Type()
-        T_ptr = LLVM.PointerType(T_int8)
         T_jlvalue = LLVM.StructType(LLVMType[])
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-        T_derived = LLVM.PointerType(T_jlvalue, Derived)
+        # Julia before 1.12 uses typed pointers, so every pointer parameter
+        # carries the pointee type Julia's codegen gives it. With opaque
+        # pointers these all collapse to `ptr`.
+        T_pgcstack = LLVM.PointerType(LLVM.PointerType(LLVM.PointerType(T_jlvalue)))
 
         params = LLVMType[]
         param_attrs = Vector{LLVM.Attribute}[]
@@ -128,7 +137,7 @@ end
         rt, sret, returnRoots = get_return_info(RT)
         if sret !== nothing
             if is_sret_union(RT)
-                push!(params, T_ptr)
+                push!(params, LLVM.PointerType(LLVM.ArrayType(T_int8, union_alloca_type(RT))))
                 push!(param_attrs, LLVM.Attribute[StringAttribute("enzymejl_sret_union_bytes", string(union_alloca_type(RT)))])
                 retty = LLVM.StructType(LLVMType[T_prjlvalue, T_int8])
             else
@@ -137,10 +146,10 @@ end
                 # roots, the buffer holds the layout with the tracked pointers
                 # stripped.
                 sret_lty = convert(LLVMType, eltype(sret))
-                push!(params, T_ptr)
+                push!(params, LLVM.PointerType(sret_lty))
                 push!(param_attrs, LLVM.Attribute[TypeAttribute("sret", sret_lty), EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("noundef")])
                 if returnRoots !== nothing
-                    push!(params, T_ptr)
+                    push!(params, LLVM.PointerType(convert(LLVMType, eltype(returnRoots))))
                     push!(param_attrs, LLVM.Attribute[EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("noundef")])
                 end
                 retty = T_void
@@ -158,7 +167,7 @@ end
         end
 
         if gcstack_arg
-            push!(params, T_ptr)
+            push!(params, T_pgcstack)
             attrs = LLVM.Attribute[StringAttribute("gcstack"), EnumAttribute("nonnull")]
             if jit_uses_swiftcc()
                 pushfirst!(attrs, EnumAttribute("swiftself"))
@@ -178,10 +187,10 @@ end
                 end
                 push!(param_attrs, attrs)
             elseif kind === :byref
-                push!(params, T_derived)
+                push!(params, LLVM.PointerType(convert(LLVMType, T), Derived))
                 push!(param_attrs, LLVM.Attribute[EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("readonly")])
                 if inline_roots_type(T) != 0
-                    push!(params, T_ptr)
+                    push!(params, LLVM.PointerType(T_int8))
                     push!(param_attrs, LLVM.Attribute[EnumAttribute("noalias"), EnumAttribute("nocapture"), EnumAttribute("readonly")])
                 end
             else
@@ -396,7 +405,7 @@ end
     precompilation, and only for modules that target the host.
     """
     function native_invoke_available(mod::LLVM.Module)::Bool
-        return !Base.generating_output() && module_targets_host(mod)
+        return ccall(:jl_generating_output, Cint, ()) == 0 && module_targets_host(mod)
     end
 
     """
@@ -411,9 +420,30 @@ end
     called natively.
     """
     function codeinst(mi::Core.MethodInstance, world::UInt)::Union{Nothing, Core.CodeInstance}
-        CC = Core.Compiler
-        ci = CC.typeinf_ext_toplevel(CC.NativeInterpreter(world), mi, CC.SOURCE_MODE_ABI)
-        return ci isa Core.CodeInstance ? ci : nothing
+        @static if VERSION >= v"1.12-"
+            CC = Core.Compiler
+            ci = CC.typeinf_ext_toplevel(CC.NativeInterpreter(world), mi, CC.SOURCE_MODE_ABI)
+            return ci isa Core.CodeInstance ? ci : nothing
+        else
+            # The runtime's own compilation entry: infer with the native
+            # interpreter, hand the result to the JIT, and return the
+            # `CodeInstance` with its entry points set. When codegen fails it
+            # falls back to the unspecialized code, which `native_codeinst`
+            # rejects for lacking a specialized entry point.
+            ci = ccall(:jl_compile_method_internal, Any, (Any, UInt), mi, world)
+            return ci isa Core.CodeInstance ? ci : nothing
+        end
+    end
+
+    """
+        codeinst_mi(ci::CodeInstance) -> MethodInstance
+
+    The MethodInstance `ci` was compiled for.
+    """
+    @static if VERSION >= v"1.12-"
+        codeinst_mi(ci::Core.CodeInstance)::Core.MethodInstance = Core.Compiler.get_ci_mi(ci)
+    else
+        codeinst_mi(ci::Core.CodeInstance)::Core.MethodInstance = ci.def
     end
 
     """
@@ -439,6 +469,9 @@ end
             CC.is_declared_noinline(method) && return :call
             CC.is_declared_inline(method) && return :inline
         end
+        # Before 1.12 the field is left undefined when the JIT dropped the
+        # source, which it does for code it would not inline.
+        isdefined(ci, :inferred) || return :call
         inferred = @atomic :monotonic ci.inferred
         inferred isa CC.MaybeCompressed && CC.is_inlineable(inferred) && return :inline
         return :call
@@ -470,12 +503,18 @@ end
         # Julia may compile a normalized MethodInstance (for example with
         # `@nospecialize` arguments widened) whose signature differs from
         # `mi.specTypes`, which the declaration is derived from.
-        if Core.Compiler.get_ci_mi(ci) !== mi
-            throw(CallingConventionMismatchError{String}("Enzyme: Julia compiled the custom rule $(mi) for the MethodInstance $(Core.Compiler.get_ci_mi(ci)). This is not expected to happen, please report it.", mi, world))
+        if codeinst_mi(ci) !== mi
+            throw(CallingConventionMismatchError{String}("Enzyme: Julia compiled the custom rule $(mi) for the MethodInstance $(codeinst_mi(ci)). This is not expected to happen, please report it.", mi, world))
         end
         call_convention(mi, ci) === :call || return nothing
         specptr, _ = Interpreter.codeinst_entry(ci)
         if specptr == C_NULL
+            # Before 1.12 the JIT does not prefer specialized signatures, and
+            # gives a rule whose arguments are all boxed or ghosts only the
+            # boxed `jl_fptr_args` entry. Emit such a rule instead.
+            @static if VERSION < v"1.12-"
+                return nothing
+            end
             throw(CallingConventionMismatchError{String}("Enzyme: Julia compiled the custom rule $(mi) without a specialized entry point. This is not expected to happen, please report it.", mi, world))
         end
         return (ci, specptr)
@@ -538,8 +577,7 @@ end
     gives the declarations one before the outer differentiation runs.
 
     Every rule is emitted by `nested_codegen!` where the call ABI does not
-    exist (see [`native_invoke_available`](@ref)) and on Julia without the 1.12
-    compiler API (`Interpreter.HAS_INVOKE_RULES`).
+    exist (see [`native_invoke_available`](@ref)).
     """
     function invoke_codegen!(
             mode::API.CDerivativeMode,
@@ -577,7 +615,9 @@ end
 
         # The native code stays valid as long as its CodeInstance does.
         push!(enzyme_ctx.edges, funcspec)
-        push!(enzyme_ctx.edges, ci)
+        @static if VERSION >= v"1.12-"
+            push!(enzyme_ctx.edges, ci)
+        end
         enzyme_ctx.nested_cache[funcspec] = name
         return fn
     end
@@ -653,20 +693,5 @@ end
         end
         return nothing
     end
-
-else
-
-    invoke_codegen!(
-        mode::API.CDerivativeMode,
-        mod::LLVM.Module,
-        funcspec::Core.MethodInstance,
-        alwaysinline::Bool = false,
-    ) = nested_codegen!(mode, mod, funcspec, alwaysinline)
-
-    native_return_type(mod::LLVM.Module, mi::Core.MethodInstance, world::UInt) = nothing
-
-    check_emitted_specsig(mod::LLVM.Module, llvmf::LLVM.Function, mi::Core.MethodInstance, @nospecialize(RT::Type)) = nothing
-
-    materialize_native_invokes!(mode::API.CDerivativeMode, mod::LLVM.Module) = nothing
 
 end

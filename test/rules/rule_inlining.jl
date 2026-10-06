@@ -466,7 +466,12 @@ end
             @test specptr == C_NULL
             @test invoke != C_NULL
             @test Enzyme.Compiler.call_convention(mi, ci) === :call
-            @test_throws Enzyme.Compiler.CallingConventionMismatchError Enzyme.Compiler.native_codeinst(mod, mi, world)
+            # Before 1.12 such a function is emitted instead.
+            @static if VERSION >= v"1.12-"
+                @test_throws Enzyme.Compiler.CallingConventionMismatchError Enzyme.Compiler.native_codeinst(mod, mi, world)
+            else
+                @test Enzyme.Compiler.native_codeinst(mod, mi, world) === nothing
+            end
 
             C = EnzymeRules.FwdConfig{true, true, 1, false, false}
             TT = Tuple{C, Const{typeof(cube_noinline)}, Type{Duplicated{Float64}}, Duplicated{Float64}}

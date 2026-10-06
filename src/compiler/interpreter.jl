@@ -1614,24 +1614,26 @@ function abstract_call_known(
 end
 
 # Say if custom rules can be called through their natively compiled CodeInstance
-# (see `Enzyme.Compiler.invoke_codegen!`). Julia 1.12 added the compiler entry
-# point that infers a MethodInstance with a given interpreter and hands the
-# result to the JIT (`typeinf_ext_toplevel` with `SOURCE_MODE_ABI`) and the
-# runtime function that reads back the entry points (`jl_read_codeinst_invoke`).
-# A Julia that renames one of them fails loudly at the first rule compilation.
-const HAS_INVOKE_RULES = VERSION >= v"1.12-"
+# (see `Enzyme.Compiler.invoke_codegen!`). Every supported Julia can compile a
+# MethodInstance with its native interpreter and JIT on request and hand back
+# the compiled `CodeInstance`: 1.12 through the compiler entry point
+# `typeinf_ext_toplevel` with `SOURCE_MODE_ABI`, earlier versions through the
+# runtime function `jl_compile_method_internal`. The entry points are read back
+# with `jl_read_codeinst_invoke` on 1.12, and from the `CodeInstance` fields on
+# earlier versions. A Julia that renames one of them fails loudly at the first
+# rule compilation.
+const HAS_INVOKE_RULES = true
 
-@static if HAS_INVOKE_RULES
+"""
+    codeinst_entry(ci::CodeInstance) -> (specptr, invoke)
 
-    """
-        codeinst_entry(ci::CodeInstance) -> (specptr, invoke)
-
-    Compile `ci` if needed and return its two entry points. `specptr` is the
-    specialized-signature entry, or `C_NULL` when `ci` only got a boxed
-    `jl_fptr_args` entry. `invoke` is the boxed `invoke(F, args, nargs, ci)`
-    entry, or `C_NULL` when `ci` could not be compiled.
-    """
-    function codeinst_entry(ci::Core.CodeInstance)
+Compile `ci` if needed and return its two entry points. `specptr` is the
+specialized-signature entry, or `C_NULL` when `ci` only got a boxed
+`jl_fptr_args` entry. `invoke` is the boxed `invoke(F, args, nargs, ci)`
+entry, or `C_NULL` when `ci` could not be compiled.
+"""
+function codeinst_entry(ci::Core.CodeInstance)
+    @static if VERSION >= v"1.12-"
         specsigflags = Ref{UInt8}(0)
         invoke = Ref{Ptr{Cvoid}}(C_NULL)
         specptr = Ref{Ptr{Cvoid}}(C_NULL)
@@ -1640,12 +1642,25 @@ const HAS_INVOKE_RULES = VERSION >= v"1.12-"
             ci::Any, specsigflags::Ptr{UInt8}, invoke::Ptr{Ptr{Cvoid}},
             specptr::Ptr{Ptr{Cvoid}}, waitcompile::Cint
         )::Cvoid
-        # Bit 0 says that specptr is the specialized-signature entry, not a
-        # jl_fptr_args entry.
-        specialized = (specsigflags[] & 0b1) != 0
-        return (specialized ? specptr[] : C_NULL, invoke[])
+        flags = specsigflags[]
+        invokeptr = invoke[]
+        specfptr = specptr[]
+    else
+        # `jl_compile_method_internal` (see `codeinst` in callconv.jl) returns
+        # only after the JIT stored `specptr` and `invoke` and set bit 1 of
+        # `specsigflags`, which says that both are final.
+        invokeptr = @atomic :acquire ci.invoke
+        specfptr = @atomic :acquire ci.specptr
+        # Julia 1.10 names the flag byte `isspecsig`, 1.11 `specsigflags`, and
+        # both declare it `Bool`, so read the byte itself.
+        flagfield = hasfield(Core.CodeInstance, :specsigflags) ? :specsigflags : :isspecsig
+        off = fieldoffset(Core.CodeInstance, Base.fieldindex(Core.CodeInstance, flagfield))
+        flags = GC.@preserve ci unsafe_load(Ptr{UInt8}(pointer_from_objref(ci) + off))
     end
-
+    # Bit 0 says that specptr is the specialized-signature entry, not a
+    # jl_fptr_args entry.
+    specialized = (flags & 0b1) != 0
+    return (specialized ? specfptr : C_NULL, invokeptr)
 end
 
 end
