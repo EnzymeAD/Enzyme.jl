@@ -1914,6 +1914,23 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
     end
 end
 
+# Since julia#60924 (1.14.0-DEV.1697) codegen attaches these operand bundles to
+# `julia.gc_alloc_obj`, and late-gc-lowering uses them to zero the GC pointer
+# fields of the object right where it is allocated. Enzyme copies them onto
+# shadow allocations, so such allocations need no explicit null stores.
+function has_gc_zeroing_bundle(@nospecialize(inst::LLVM.Value))::Bool
+    @static if VERSION < v"1.14.0-DEV.1697"
+        return false
+    end
+    isa(inst, LLVM.CallInst) || return false
+    for bundle in inst.operand_bundles
+        if bundle.tag == "julia.gc_alloc_ptr_offsets" || bundle.tag == "julia.gc_alloc_zeroinit"
+            return true
+        end
+    end
+    return false
+end
+
 function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, Orig::LLVM.API.LLVMValueRef, idx::UInt64, prev::API.LLVMValueRef, used::UInt8)
     enzyme_ctx = enzyme_context()
     used = used != 0
@@ -2028,10 +2045,12 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
 
         # Reverse mode will do similarly, except doing the shadow first
         prev = LLVM.Instruction(prev)
-        B = LLVM.IRBuilder()
-        position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(prev)))
+        if !has_gc_zeroing_bundle(prev)
+            B = LLVM.IRBuilder()
+            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(prev)))
 
-	create_recursive_stores(B, Ty, prev, count)
+            create_recursive_stores(B, Ty, prev, count)
+        end
     end
     if (mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeCombined) && used
         # Zero any jlvalue_t inner elements of preceeding allocation.
@@ -2053,10 +2072,12 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
         #   store orig[0] = jlvaluet
         #
         # Julia could decide to dead store eliminate the memset (not being read before the store of jlvaluet'), resulting in an error
-        B = LLVM.IRBuilder()
-        position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(V)))
-	
-	create_recursive_stores(B, Ty, V, count)
+        if !has_gc_zeroing_bundle(V)
+            B = LLVM.IRBuilder()
+            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(V)))
+
+            create_recursive_stores(B, Ty, V, count)
+        end
     end
 
     nothing
