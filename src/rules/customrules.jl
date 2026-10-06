@@ -967,10 +967,18 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
 
                     ptr_val = ival
                     ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llrty)))
+                    # The shadow memory may only exist in the reverse pass (when it
+                    # holds no pointers), and until then reads as zero.
+                    fwd_shadow = reverse || API.EnzymeGradientUtilsShadowInForward(gutils, op, false) != 0
                     for idx = 1:width
                         ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
-                        ld = load!(B, llrty, ev, "rules_mixed_shadow_load")
-                        metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                        ld = if fwd_shadow
+                            ld0 = load!(B, llrty, ev, "rules_mixed_shadow_load")
+                            metadata(ld0)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                            ld0
+                        else
+                            LLVM.null(llrty)
+                        end
                         if n_primal_roots > 0
                             sroots = (width == 1) ? roots_ival : extract_value!(B, roots_ival, idx - 1)
                             ld = recombine_value!(B, ld, sroots)
@@ -1078,6 +1086,12 @@ function enzyme_custom_setup_ret(
             end
             actv
         end
+    # A split reverse pass must configure the rule as the augmented pass did,
+    # else it looks up a different augmented_primal and misreads the tape.
+    augNeedsPrimalP = Ref{UInt8}(0)
+    if API.EnzymeGradientUtilsGetAugmentedPrimalReturnUsed(gutils, orig, augNeedsPrimalP) == 1
+        needsPrimalP[] = augNeedsPrimalP[]
+    end
     needsPrimal = needsPrimalP[] != 0
     origNeedsPrimal = needsPrimal
     _, sret, returnRoots = get_return_info(RealRt)
@@ -2563,7 +2577,11 @@ function enzyme_custom_common_rev(
 			if prim_roots !== nothing && VERSION >= v"1.12"
 			    if !is_constant_value(gutils, operands(orig)[1+orig_swiftself])
 			        store_ptr = (width == 1) ? dval : extract_value!(B, dval, idx - 1)
-				extract_nonjlvalues_into!(B, value_type(to_store), store_ptr, to_store)
+				# The sret holds only non-pointer fields, so Enzyme may give its
+				# shadow no forward memory (it is zeroed in the reverse pass).
+				if API.EnzymeGradientUtilsShadowInForward(gutils, operands(orig)[1+orig_swiftself], true) != 0
+				    extract_nonjlvalues_into!(B, value_type(to_store), store_ptr, to_store)
+				end
 			    end
 
                             rval = (width == 1) ? droots : extract_value!(B, droots, idx - 1)
