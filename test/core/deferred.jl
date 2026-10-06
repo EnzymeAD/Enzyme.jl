@@ -1,69 +1,72 @@
 using Enzyme, Test
+using Enzyme: API
+using Enzyme.Compiler: DeferredSpec, deferred_id, DeferredOnHostError, DEFERRED_SPECS,
+    rebuild_deferred_registry!, UnknownTapeType
+const GPUCompiler = Enzyme.Compiler.GPUCompiler
 
 @testset "deferred" begin
 
-    @testset "Deferred and deferred thunk" begin
-        function dot(A)
+    @testset "Host calls are an error" begin
+        function dot2(A)
             return A[1] * A[1] + A[2] * A[2]
         end
-        dA = zeros(2)
         A = [3.0, 5.0]
-        thunk_dA, def_dA = copy(dA), copy(dA)
-        def_A, thunk_A = copy(A), copy(A)
-        primal = Enzyme.autodiff(ReverseWithPrimal, dot, Active, Duplicated(A, dA))[2]
-        @test primal == 34.0
-        primal = Enzyme.autodiff_deferred(ReverseWithPrimal, Const(dot), Active, Duplicated(def_A, def_dA))[2]
-        @test primal == 34.0
-
-        dup = Duplicated(thunk_A, thunk_dA)
-        TapeType = Enzyme.EnzymeCore.tape_type(
-            ReverseSplitWithPrimal,
-            Const{typeof(dot)}, Active, Duplicated{typeof(thunk_A)}
+        dA = zeros(2)
+        @test_throws DeferredOnHostError autodiff_deferred(ReverseWithPrimal, Const(dot2), Active, Duplicated(A, dA))
+        @test_throws DeferredOnHostError autodiff_deferred(Forward, Const(dot2), Duplicated, Duplicated(A, dA))
+        TapeType = Enzyme.EnzymeCore.tape_type(ReverseSplitWithPrimal, Const{typeof(dot2)}, Active, Duplicated{typeof(A)})
+        @test_throws DeferredOnHostError autodiff_deferred_thunk(
+            ReverseSplitWithPrimal, TapeType, Const{typeof(dot2)}, Active, Duplicated{typeof(A)}
         )
-        @static if VERSION < v"1.11-"
-            @test Tuple{Float64, Float64} === TapeType
-        else
-            @test NamedTuple{(Symbol("1"), Symbol("2"), Symbol("3")), Tuple{Any, Float64, Float64}} === TapeType
-        end
-        Ret = Active
-        fwd, rev = Enzyme.autodiff_deferred_thunk(
-            ReverseSplitWithPrimal,
-            TapeType,
-            Const{typeof(dot)},
-            Ret,
-            Duplicated{typeof(thunk_A)}
+
+        # The host entry points do the job.
+        @test autodiff(ReverseWithPrimal, dot2, Active, Duplicated(A, dA))[2] == 34.0
+        @test dA == [6.0, 10.0]
+    end
+
+    @testset "Ids derive from the specification" begin
+        make_spec(width) = DeferredSpec(
+            Const{typeof(sin)}, Active, Tuple{Active{Float64}}, API.DEM_ReverseModeCombined,
+            width, (false, false), false, false, UnknownTapeType, false, false, false,
         )
-        tape, primal, _ = fwd(Const(dot), dup)
-        @test isa(tape, TapeType)
-        rev(Const(dot), dup, 1.0, tape)
-        @test all(primal == 34)
-        @test all(dA .== [6.0, 10.0])
-        @test all(dA .== def_dA)
-        @test all(dA .== thunk_dA)
+        id = deferred_id(make_spec(1))
+        @test id > 0
+        @test deferred_id(make_spec(1)) == id
+        @test deferred_id(make_spec(2)) != id
+        # Never one of GPUCompiler's own ids; the twin id is distinct and keeps that bit.
+        @test reinterpret(UInt, id) & Enzyme.Compiler.DEFERRED_ID_BIT != 0
+        twin = Enzyme.Compiler.deferred_twin_id(id)
+        @test twin != id
+        @test reinterpret(UInt, twin) & Enzyme.Compiler.DEFERRED_ID_BIT != 0
+        @test Enzyme.Compiler.deferred_twin_id(twin) == id
 
-        function kernel(len, A)
-            for i in 1:len
-                A[i] *= A[i]
-            end
+        # Another session derives the same id.
+        code = """
+        using Enzyme
+        using Enzyme: API
+        using Enzyme.Compiler: DeferredSpec, deferred_id, UnknownTapeType
+        print(deferred_id(DeferredSpec(
+            Const{typeof(sin)}, Active, Tuple{Active{Float64}}, API.DEM_ReverseModeCombined,
+            1, (false, false), false, false, UnknownTapeType, false, false, false,
+        )))
+        """
+        cmd = `$(Base.julia_cmd()) --project=$(Base.active_project()) --startup-file=no -e $code`
+        @test parse(Int, read(cmd, String)) == id
+    end
+
+    @testset "Registry rebuild" begin
+        ids = collect(keys(DEFERRED_SPECS))
+        @test !isempty(ids)
+        for id in ids
+            delete!(GPUCompiler.deferred_codegen_jobs, id)
         end
-
-        A = Array{Float64}(undef, 64)
-        dA = Array{Float64}(undef, 64)
-
-        A .= (1:1:64)
-        dA .= 1
-
-        function aug_fwd(ctx, f::FT, ::Val{ModifiedBetween}, args...) where {ModifiedBetween, FT}
-            TapeType = Enzyme.tape_type(ReverseSplitModified(ReverseSplitWithPrimal, Val(ModifiedBetween)), Const{Core.Typeof(f)}, Const, Const{Core.Typeof(ctx)}, map(Core.Typeof, args)...)
-            forward, reverse = Enzyme.autodiff_deferred_thunk(ReverseSplitModified(ReverseSplitWithPrimal, Val(ModifiedBetween)), TapeType, Const{Core.Typeof(f)}, Const, Const{Core.Typeof(ctx)}, map(Core.Typeof, args)...)
-            forward(Const(f), Const(ctx), args...)[1]
-            return nothing
+        @test rebuild_deferred_registry!() >= length(ids)
+        for id in ids
+            @test GPUCompiler.deferred_codegen_jobs[id] isa GPUCompiler.CompilerJob
+            # Both markers of a call site resolve to one job.
+            @test GPUCompiler.deferred_codegen_jobs[Enzyme.Compiler.deferred_twin_id(id)] ===
+                GPUCompiler.deferred_codegen_jobs[id]
         end
-
-        ModifiedBetween = Val((false, false, true))
-
-        aug_fwd(64, kernel, ModifiedBetween, Duplicated(A, dA))
-
     end
 
     @testset "Deferred upgrade" begin

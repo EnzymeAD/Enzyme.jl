@@ -246,7 +246,7 @@ end
 end
 
 fwd_over(x) = autodiff(ForwardWithPrimal, Const(cube_nested), Duplicated(x, 1.0))[1]
-rev_over(x) = autodiff_deferred(Reverse, Const(cube_nested), Active, Active(x))[1][1]
+rev_over(x) = autodiff(Reverse, Const(cube_nested), Active, Active(x))[1][1]
 
 @testset "nested differentiation through natively called rules" begin
     @test fwd_over(2.0) == 120.0
