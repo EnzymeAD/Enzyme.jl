@@ -604,3 +604,51 @@ end
         end
     end
 end
+
+@testset "Triangular solves in derivatives" begin
+    for T in (Float64, ComplexF64), n in (1, 3), m in (0, 1, 4)
+        M = randn(T, n, n) + 3n * I
+        B = m == 0 ? randn(T, n) : randn(T, n, m)
+        for W in (LowerTriangular, UpperTriangular, UnitLowerTriangular, UnitUpperTriangular),
+                A in (W(M), W(transpose(M)), W(adjoint(M)), Transpose(W(M)), Adjoint(W(M)))
+            @test Enzyme._trisolve(A, B) ≈ A \ B
+            X = copy(B)
+            @test Enzyme._trisolve!(A, X) === X
+            @test X ≈ A \ B
+        end
+    end
+
+    # What BLAS cannot solve with directly falls back to `\`
+    M = randn(4, 4) + 12I
+    B = randn(4, 2)
+    A = LowerTriangular(sparse(M))
+    @test Enzyme._trisolve(A, B) ≈ A \ B
+    A = LowerTriangular(M)
+    Bv = view(randn(8, 2), 1:2:8, :)
+    @test Enzyme._trisolve(A, Bv) ≈ A \ Bv
+    @test Enzyme._trisolve(LowerTriangular(Float32.(M)), B) ≈ LowerTriangular(Float32.(M)) \ B
+    @test Enzyme._trisolve(Diagonal(diag(M)), B) ≈ Diagonal(diag(M)) \ B
+end
+
+@testset "Cholesky ldiv! forward with a matrix right-hand side" begin
+    function solve_sum(A, B)
+        C = cholesky(Symmetric(A))
+        X = copy(B)
+        ldiv!(C, X)
+        return sum(abs2, X)
+    end
+    n = 3
+    A0 = randn(n, n)
+    A = A0' * A0 + n * I
+    B = randn(n, 4)
+    dA = randn(n, n)
+    dA = dA + dA'
+    dB = randn(n, 4)
+    fd = central_fdm(5, 1)(t -> solve_sum(A + t * dA, B + t * dB), 0.0)
+    @test autodiff(Forward, solve_sum, Duplicated(A, copy(dA)), Duplicated(B, copy(dB)))[1] ≈ fd
+    res = autodiff(
+        Forward, solve_sum, BatchDuplicated(A, (copy(dA), 2 .* dA)), BatchDuplicated(B, (copy(dB), 2 .* dB))
+    )[1]
+    @test res[1] ≈ fd
+    @test res[2] ≈ 2fd
+end
