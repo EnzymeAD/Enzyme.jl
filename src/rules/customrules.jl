@@ -1061,13 +1061,20 @@ function enzyme_custom_setup_ret(
             uncacheable,
             length(uncacheable),
         ) == 1
-            API.EnzymeGradientUtilsGetReturnDiffeType(
+        res = API.EnzymeGradientUtilsGetReturnDiffeType(
                 gutils,
                 orig,
                 needsPrimalP,
                 needsShadowP,
                 cmode,
             )
+        if mode == API.DEM_ReverseModeGradient
+            # The rule's config and return activity must be the ones the
+            # augmented pass chose, as they select the rule method and the
+            # tape layout. This pass's own analysis can differ from it.
+            needsPrimalP[] = API.EnzymeGradientUtilsGetAugmentedPrimalReturnUsed(gutils, orig)
+        end
+        res
         else
             actv = API.EnzymeGradientUtilsGetDiffeType(gutils, orig, false)
             if !isghostty(RealRt)
