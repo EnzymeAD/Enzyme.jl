@@ -21,6 +21,60 @@ end
 
 @inline onedimensionalize(::Type{T}) where {T<:Array} = Vector{eltype(T)}
 
+# Triangular solves for derivatives. For a strided triangular BLAS matrix, `ldiv!` and `\`
+# call LAPACK's trtrs, which besides solving checks the matrix for singularity, which the
+# primal computation already did. OpenBLAS also runs trtrs multithreaded for any matrix with
+# more than one right-hand side, so that solving a 2×2 system took microseconds. Solve with
+# BLAS's trsv/trsm instead, which compute the same result.
+const _EnzymeTriangular{T, S} = Union{
+    LowerTriangular{T, S},
+    UpperTriangular{T, S},
+    UnitLowerTriangular{T, S},
+    UnitUpperTriangular{T, S},
+}
+
+_tri_uplo(::Union{LowerTriangular, UnitLowerTriangular}) = 'L'
+_tri_uplo(::Union{UpperTriangular, UnitUpperTriangular}) = 'U'
+_tri_diag(::Union{LowerTriangular, UpperTriangular}) = 'N'
+_tri_diag(::Union{UnitLowerTriangular, UnitUpperTriangular}) = 'U'
+_flip_uplo(uplo::Char) = uplo == 'L' ? 'U' : 'L'
+
+# The stored matrix, and the uplo, trans and diag arguments, with which BLAS solves with A, or
+# nothing if it cannot.
+_tri_blas_args(A) = nothing
+_tri_blas_args(A::_EnzymeTriangular{T, <:StridedMatrix{T}}) where {T <: LinearAlgebra.BlasFloat} =
+    (A.data, _tri_uplo(A), 'N', _tri_diag(A))
+# The triangle used of the transpose of the stored matrix is the opposite one of the stored matrix.
+_tri_blas_args(A::_EnzymeTriangular{T, <:Transpose{T, <:StridedMatrix{T}}}) where {T <: LinearAlgebra.BlasFloat} =
+    (parent(A.data), _flip_uplo(_tri_uplo(A)), 'T', _tri_diag(A))
+_tri_blas_args(A::_EnzymeTriangular{T, <:Adjoint{T, <:StridedMatrix{T}}}) where {T <: LinearAlgebra.BlasFloat} =
+    (parent(A.data), _flip_uplo(_tri_uplo(A)), 'C', _tri_diag(A))
+_tri_blas_args(A::Transpose{T, <:_EnzymeTriangular{T, <:StridedMatrix{T}}}) where {T <: LinearAlgebra.BlasFloat} =
+    (parent(A).data, _tri_uplo(parent(A)), 'T', _tri_diag(parent(A)))
+_tri_blas_args(A::Adjoint{T, <:_EnzymeTriangular{T, <:StridedMatrix{T}}}) where {T <: LinearAlgebra.BlasFloat} =
+    (parent(A).data, _tri_uplo(parent(A)), 'C', _tri_diag(parent(A)))
+
+# Like `ldiv!(A, B)`, for A triangular.
+_trisolve!(A, B) = ldiv!(A, B)
+function _trisolve!(A::AbstractMatrix{T}, B::StridedVecOrMat{T}) where {T <: LinearAlgebra.BlasFloat}
+    args = _tri_blas_args(A)
+    if args === nothing || stride(args[1], 1) != 1 || stride(B, 1) != 1
+        return ldiv!(A, B)
+    end
+    data, uplo, trans, diag = args
+    if B isa AbstractVector
+        BLAS.trsv!(uplo, trans, diag, data, B)
+    else
+        BLAS.trsm!('L', uplo, trans, diag, one(T), data, B)
+    end
+    return B
+end
+
+# Like `A \ B`, for A triangular.
+_trisolve(A, B) = A \ B
+_trisolve(A::AbstractMatrix{T}, B::StridedVecOrMat{T}) where {T <: LinearAlgebra.BlasFloat} =
+    _tri_blas_args(A) === nothing ? A \ B : _trisolve!(A, copy(B))
+
 # y=inv(A) B
 #   dA −= z y^T
 #   dB += z, where  z = inv(A^T) dy
@@ -150,7 +204,7 @@ function EnzymeRules.reverse(
     end
 
     for (dA, db, dy) in zip(dAs, dbs, dys)
-        z = transpose(cache_A) \ dy
+        z = _trisolve(transpose(cache_A), dy)
         if !(typeof(A) <: Const)
             dA .-= z * transpose(y)
         end
@@ -209,7 +263,7 @@ function EnzymeRules.reverse(
         (cache_Yout, cache_A, cache_B) = cache
         for b = 1:EnzymeRules.width(config)
             dY = EnzymeRules.width(config) == 1 ? Y.dval : Y.dval[b]
-            z = adjoint(cache_A) \ dY
+            z = _trisolve(adjoint(cache_A), dY)
             if !isa(B, Const)
                 dB = EnzymeRules.width(config) == 1 ? B.dval : B.dval[b]
                 dB .+= z
@@ -251,7 +305,7 @@ function EnzymeRules.forward(
         L = fact.val.L
         U = fact.val.U
 
-        ldiv!(L, B.val)
+        _trisolve!(L, B.val)
         ntuple(Val(N)) do b
             Base.@_inline_meta
             dB = N == 1 ? B.dval : B.dval[b]
@@ -259,10 +313,10 @@ function EnzymeRules.forward(
                 dL = N == 1 ? fact.dval.L : fact.dval[b].L
                 mul!(dB, dL, B.val, -1, 1)
             end
-            ldiv!(L, dB)
+            _trisolve!(L, dB)
         end
 
-        ldiv!(U, B.val)
+        _trisolve!(U, B.val)
         dretvals = ntuple(Val(N)) do b
             Base.@_inline_meta
             dB = N == 1 ? B.dval : B.dval[b]
@@ -270,7 +324,7 @@ function EnzymeRules.forward(
                 dU = N == 1 ? fact.dval.U : fact.dval[b].U
                 mul!(dB, dU, B.val, -1, 1)
             end
-            ldiv!(U, dB)
+            _trisolve!(U, dB)
             return dB
         end
 
