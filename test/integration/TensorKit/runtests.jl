@@ -59,7 +59,7 @@ Tβs = (Active, Const)
         symmetricbraiding = BraidingStyle(sectortype(eltype(V))) isa SymmetricBraiding
         α = randn(T)
         β = randn(T)
-        @testset "flip and twist" begin
+        #=@testset "flip and twist" begin # turn off for now until Enzyme can get compilation times down
             if has_braiding
                 if !(T <: Real && !(sectorscalartype(sectortype(A)) <: Real))
                     EnzymeTestUtils.test_reverse(twist!, TA, (A, TA), (1, Const); atol, rtol, fkwargs = (inv = false,))
@@ -95,7 +95,7 @@ Tβs = (Active, Const)
                     EnzymeTestUtils.test_reverse(TensorKit.transpose!, Duplicated, (copy(C), Duplicated), (real(A), Duplicated), (p, Const), (real(α), Tα), (β, Tβ); atol, rtol)
                 end
             end
-        end
+        end=#
         symmetricbraiding && @testset "permute" begin
             A = randn(T, V[1] ⊗ V[2] ← (V[3] ⊗ V[4] ⊗ V[5])')
             p = randindextuple(numind(A))
