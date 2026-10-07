@@ -578,12 +578,7 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction), enzym
             originally_tracked_load = true
         end
     elseif isa(addr, LLVM.ConstantInt)
-        # A literal address says nothing about the object it points into (the field offset
-        # is usually folded into it), so there is no telling whether that object can change:
-        # a global `Dict` replaces its memories when it grows, a global `Vector` its ref.
-        # The one literal address that can be checked is that of a `jl_binding_t*`: on
-        # Julia 1.10 a global read is a raw load from it (`value` is its first field), which
-        # may only be folded for a `const` binding.
+        # On 1.10 reads from a  `jl_binding_t* are literal pointer loads. Fold them only for  a `const` binding.
         if check_mutability && !(off == 0 && is_const_binding(convert(UInt, addr)))
             return inst
         end
