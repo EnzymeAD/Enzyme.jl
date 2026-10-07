@@ -137,6 +137,14 @@ function __init__()
         )
     end
 
+    # The built-in checkpointing schedules Enzyme compiles in, which a
+    # checkpointed loop calls for its schedule.
+    for k in API.CHECKPOINT_RUNTIME_SYMBOLS
+        ptr = API.EnzymeCheckpointRuntimeSymbol(k)
+        ptr == C_NULL && continue
+        LLVM.define(jd_main, absolute_symbol_materialization(mangle(lljit, k), ptr))
+    end
+
     atexit() do
         dispose(tm[])
     end

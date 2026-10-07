@@ -540,6 +540,26 @@ EnzymeRegisterFwdCallHandler(name, fwdhandle) = ccall(
     name,
     fwdhandle,
 )
+# The functions of the checkpointing runtime (enzyme/checkpoint.h) that
+# Enzyme compiles in, where the loaded Enzyme has them.
+const CHECKPOINT_RUNTIME_SYMBOLS = (
+    "__enzyme_checkpoint_builtin",
+    "__enzyme_ckpt_schedule_begin",
+    "__enzyme_ckpt_schedule_next",
+    "__enzyme_ckpt_schedule_flag",
+    "__enzyme_ckpt_schedule_iteration",
+    "__enzyme_ckpt_schedule_start",
+    "__enzyme_ckpt_schedule_slot",
+    "__enzyme_ckpt_schedule_slots",
+    "__enzyme_ckpt_schedule_end",
+)
+
+function EnzymeCheckpointRuntimeSymbol(name::String)
+    fn = Libdl.dlsym(Libdl.dlopen(libEnzyme), :EnzymeCheckpointRuntimeSymbol; throw_error = false)
+    fn === nothing && return C_NULL
+    return ccall(fn, Ptr{Cvoid}, (Cstring,), name)
+end
+
 EnzymeKeepCheckpointLoops(mod) = ccall(
     (:EnzymeKeepCheckpointLoops, libEnzyme),
     UInt8,
