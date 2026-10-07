@@ -91,20 +91,18 @@ end
     # 10 * 2 * (3 + 4 + 5)
     @test autodiff(Reverse, scale_loop, Const(Scale([3.0], 2.0)), Active(1.5))[1][2] == 240.0
 
-    @static if Enzyme.Compiler.Interpreter.HAS_INVOKE_RULES
-        world = Base.get_world_counter()
-        C = EnzymeRules.FwdConfig{true, true, 1, false, false}
-        function convention(f)
-            TT = Tuple{C, Const{typeof(f)}, Type{Duplicated{Float64}}, Duplicated{Float64}}
-            mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(EnzymeRules.forward), TT, world)
-            ci = Enzyme.Compiler.codeinst(mi, world)
-            return Enzyme.Compiler.call_convention(mi, ci)
-        end
-        @test convention(cube_inline) === :inline
-        @test convention(cube_noinline) === :call
-        @test convention(cube_default) === :inline
-        @test convention(cube_big) === :call
+    world = Base.get_world_counter()
+    C = EnzymeRules.FwdConfig{true, true, 1, false, false}
+    function convention(f)
+        TT = Tuple{C, Const{typeof(f)}, Type{Duplicated{Float64}}, Duplicated{Float64}}
+        mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(EnzymeRules.forward), TT, world)
+        ci = Enzyme.Compiler.codeinst(mi, world)
+        return Enzyme.Compiler.call_convention(mi, ci)
     end
+    @test convention(cube_inline) === :inline
+    @test convention(cube_noinline) === :call
+    @test convention(cube_default) === :inline
+    @test convention(cube_big) === :call
 end
 
 # A natively called rule is compiled like any other Julia code. `ignore_derivatives`
@@ -137,16 +135,12 @@ end
 end
 
 @testset "natively called rules are ordinary Julia code" begin
-    @static if Enzyme.Compiler.Interpreter.HAS_INVOKE_RULES
-        # An emitted rule cannot lower `ignore_derivatives`: its extern is
-        # left for the differentiated code, which never includes the rule.
-        # So these only work through the native path.
-        @test autodiff(ForwardWithPrimal, cube_ignore, Duplicated(2.0, 1.0)) == (120.0, 8.0)
-        @test autodiff(Reverse, cube_ignore, Active(2.0))[1][1] == 120.0
-        @test autodiff(ForwardWithPrimal, cube_within, Duplicated(2.0, 1.0)) == (-120.0, 8.0)
-    else
-        @test autodiff(ForwardWithPrimal, cube_within, Duplicated(2.0, 1.0)) == (120.0, 8.0)
-    end
+    # An emitted rule cannot lower `ignore_derivatives`: its extern is
+    # left for the differentiated code, which never includes the rule.
+    # So these only work through the native path.
+    @test autodiff(ForwardWithPrimal, cube_ignore, Duplicated(2.0, 1.0)) == (120.0, 8.0)
+    @test autodiff(Reverse, cube_ignore, Active(2.0))[1][1] == 120.0
+    @test autodiff(ForwardWithPrimal, cube_within, Duplicated(2.0, 1.0)) == (-120.0, 8.0)
 end
 
 # Signature shapes that Julia's specsig treats specially. Each shape has an
@@ -428,69 +422,67 @@ end
 
 # The signature derivation, and the fallback for code without a specialized
 # entry point.
-@static if Enzyme.Compiler.Interpreter.HAS_INVOKE_RULES
-    # Julia compiles a function with the boxed `jl_fptr_args` ABI when every
-    # argument is boxed and so is the return. No rule has that shape, so use a
-    # plain function to exercise the error.
-    @noinline all_boxed(a, b, c, d) = a
+# Julia compiles a function with the boxed `jl_fptr_args` ABI when every
+# argument is boxed and so is the return. No rule has that shape, so use a
+# plain function to exercise the error.
+@noinline all_boxed(a, b, c, d) = a
 
-    @testset "signature derivation" begin
-        world = Base.get_world_counter()
-        LLVM = Enzyme.Compiler.LLVM
-        LLVM.Context() do ctx
-            kind = Enzyme.Compiler.arg_kind
-            @test kind(Nothing) === :ghost
-            @test kind(Type{Float64}) === :ghost
-            @test kind(Const{typeof(sin)}) === :ghost
-            @test kind(Float64) === :byval
-            @test kind(UInt8) === :byval
-            @test kind(Bool) === :byval
-            @test kind(Ptr{Float64}) === :byval
-            @test kind(Duplicated{Float64}) === :byref
-            @test kind(Tuple{Float64, Float64}) === :byref
-            @test kind(Duplicated{Vector{Float64}}) === :byref
-            @test kind(Any) === :boxed
-            @test kind(Vector{Float64}) === :boxed
-            @test kind(MParam) === :boxed
-            @test kind(Union{Nothing, Float64}) === :boxed
-            @test kind(SUninit) === :boxed
-            @test kind(Duplicated) === :boxed
+@testset "signature derivation" begin
+    world = Base.get_world_counter()
+    LLVM = Enzyme.Compiler.LLVM
+    LLVM.Context() do ctx
+        kind = Enzyme.Compiler.arg_kind
+        @test kind(Nothing) === :ghost
+        @test kind(Type{Float64}) === :ghost
+        @test kind(Const{typeof(sin)}) === :ghost
+        @test kind(Float64) === :byval
+        @test kind(UInt8) === :byval
+        @test kind(Bool) === :byval
+        @test kind(Ptr{Float64}) === :byval
+        @test kind(Duplicated{Float64}) === :byref
+        @test kind(Tuple{Float64, Float64}) === :byref
+        @test kind(Duplicated{Vector{Float64}}) === :byref
+        @test kind(Any) === :boxed
+        @test kind(Vector{Float64}) === :boxed
+        @test kind(MParam) === :boxed
+        @test kind(Union{Nothing, Float64}) === :boxed
+        @test kind(SUninit) === :boxed
+        @test kind(Duplicated) === :boxed
 
-            mod = LLVM.Module("test")
-            LLVM.triple!(mod, Sys.MACHINE)
-            @test Enzyme.Compiler.native_invoke_available(mod)
+        mod = LLVM.Module("test")
+        LLVM.triple!(mod, Sys.MACHINE)
+        @test Enzyme.Compiler.native_invoke_available(mod)
 
-            mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(all_boxed), Tuple{Any, Any, Any, Any}, world)
-            ci = Enzyme.Compiler.codeinst(mi, world)
-            specptr, invoke = Enzyme.Compiler.Interpreter.codeinst_entry(ci)
-            @test specptr == C_NULL
-            @test invoke != C_NULL
-            @test Enzyme.Compiler.call_convention(mi, ci) === :call
-            # Before 1.12 such a function is emitted instead.
-            @static if VERSION >= v"1.12-"
-                @test_throws Enzyme.Compiler.CallingConventionMismatchError Enzyme.Compiler.native_codeinst(mod, mi, world)
-            else
-                @test Enzyme.Compiler.native_codeinst(mod, mi, world) === nothing
-            end
-
-            C = EnzymeRules.FwdConfig{true, true, 1, false, false}
-            TT = Tuple{C, Const{typeof(cube_noinline)}, Type{Duplicated{Float64}}, Duplicated{Float64}}
-            mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(EnzymeRules.forward), TT, world)
-            native = Enzyme.Compiler.native_codeinst(mod, mi, world)
-            @test native !== nothing
-            @test native[2] != C_NULL
-
-            # The `pgcstack` parameter carries the `swiftself` attribute only
-            # where Julia's codegen uses the swift calling convention, and the
-            # `gcstack` attribute always, so `gcstack_arg_index` finds it on
-            # either target. `check_specsig` reads the parameter back from that
-            # mark, so it accepts the declaration it derived.
-            RT = native[1].rettype
-            decl = Enzyme.Compiler.specsig_function!(mod, mi, RT, "test_specsig_gcstack", world)
-            @test (Enzyme.Compiler.gcstack_arg_index(decl) != 0) == Enzyme.Compiler.jit_gcstack_arg()
-            @test Enzyme.Compiler.has_swiftself(decl) ==
-                (Enzyme.Compiler.jit_gcstack_arg() && Enzyme.Compiler.jit_uses_swiftcc())
-            @test Enzyme.Compiler.check_specsig(decl, mi, RT) === nothing
+        mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(all_boxed), Tuple{Any, Any, Any, Any}, world)
+        ci = Enzyme.Compiler.codeinst(mi, world)
+        specptr, invoke = Enzyme.Compiler.Interpreter.codeinst_entry(ci)
+        @test specptr == C_NULL
+        @test invoke != C_NULL
+        @test Enzyme.Compiler.call_convention(mi, ci) === :call
+        # Before 1.12 such a function is emitted instead.
+        @static if VERSION >= v"1.12-"
+            @test_throws Enzyme.Compiler.CallingConventionMismatchError Enzyme.Compiler.native_codeinst(mod, mi, world)
+        else
+            @test Enzyme.Compiler.native_codeinst(mod, mi, world) === nothing
         end
+
+        C = EnzymeRules.FwdConfig{true, true, 1, false, false}
+        TT = Tuple{C, Const{typeof(cube_noinline)}, Type{Duplicated{Float64}}, Duplicated{Float64}}
+        mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(EnzymeRules.forward), TT, world)
+        native = Enzyme.Compiler.native_codeinst(mod, mi, world)
+        @test native !== nothing
+        @test native[2] != C_NULL
+
+        # The `pgcstack` parameter carries the `swiftself` attribute only
+        # where Julia's codegen uses the swift calling convention, and the
+        # `gcstack` attribute always, so `gcstack_arg_index` finds it on
+        # either target. `check_specsig` reads the parameter back from that
+        # mark, so it accepts the declaration it derived.
+        RT = native[1].rettype
+        decl = Enzyme.Compiler.specsig_function!(mod, mi, RT, "test_specsig_gcstack", world)
+        @test (Enzyme.Compiler.gcstack_arg_index(decl) != 0) == Enzyme.Compiler.jit_gcstack_arg()
+        @test Enzyme.Compiler.has_swiftself(decl) ==
+            (Enzyme.Compiler.jit_gcstack_arg() && Enzyme.Compiler.jit_uses_swiftcc())
+        @test Enzyme.Compiler.check_specsig(decl, mi, RT) === nothing
     end
 end

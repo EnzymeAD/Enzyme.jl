@@ -1613,17 +1613,6 @@ function abstract_call_known(
     )
 end
 
-# Say if custom rules can be called through their natively compiled CodeInstance
-# (see `Enzyme.Compiler.invoke_codegen!`). Every supported Julia can compile a
-# MethodInstance with its native interpreter and JIT on request and hand back
-# the compiled `CodeInstance`: 1.12 through the compiler entry point
-# `typeinf_ext_toplevel` with `SOURCE_MODE_ABI`, earlier versions through the
-# runtime function `jl_compile_method_internal`. The entry points are read back
-# with `jl_read_codeinst_invoke` on 1.12, and from the `CodeInstance` fields on
-# earlier versions. A Julia that renames one of them fails loudly at the first
-# rule compilation.
-const HAS_INVOKE_RULES = true
-
 """
     codeinst_entry(ci::CodeInstance) -> (specptr, invoke)
 
@@ -1651,11 +1640,13 @@ function codeinst_entry(ci::Core.CodeInstance)
         # `specsigflags`, which says that both are final.
         invokeptr = @atomic :acquire ci.invoke
         specfptr = @atomic :acquire ci.specptr
-        # Julia 1.10 names the flag byte `isspecsig`, 1.11 `specsigflags`, and
-        # both declare it `Bool`, so read the byte itself.
-        flagfield = hasfield(Core.CodeInstance, :specsigflags) ? :specsigflags : :isspecsig
-        off = fieldoffset(Core.CodeInstance, Base.fieldindex(Core.CodeInstance, flagfield))
-        flags = GC.@preserve ci unsafe_load(Ptr{UInt8}(pointer_from_objref(ci) + off))
+        # Julia 1.10 names the flag `isspecsig`, 1.11 `specsigflags`. Both are
+        # `Bool`, and only the latter is atomic.
+        flags = @static if hasfield(Core.CodeInstance, :specsigflags)
+            @atomic :acquire ci.specsigflags
+        else
+            ci.isspecsig
+        end
     end
     # Bit 0 says that specptr is the specialized-signature entry, not a
     # jl_fptr_args entry.
