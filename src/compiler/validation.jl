@@ -578,7 +578,7 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction), enzym
             originally_tracked_load = true
         end
     elseif isa(addr, LLVM.ConstantInt)
-        # On 1.10 reads from a  `jl_binding_t* are literal pointer loads. Fold them only for  a `const` binding.
+        # On 1.10 reads from a `jl_binding_t*` are literal pointer loads. Fold them only for a `const` binding.
         if check_mutability && !(off == 0 && is_const_binding(convert(UInt, addr)))
             return inst
         end
