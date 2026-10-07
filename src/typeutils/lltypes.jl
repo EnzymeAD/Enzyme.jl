@@ -22,7 +22,7 @@ function isSpecialPtr(@nospecialize(Ty::LLVM.LLVMType))
     if !isa(Ty, LLVM.PointerType)
         return false
     end
-    AS = LLVM.addrspace(Ty)
+    AS = Ty.addrspace
     return 10 <= AS && AS <= 13
 end
 
@@ -38,23 +38,23 @@ function CountTrackedPointers(@nospecialize(T::LLVM.LLVMType))
     if isa(T, LLVM.PointerType)
         if isSpecialPtr(T)
             res.count += 1
-            if LLVM.addrspace(T) != Tracked
+            if T.addrspace != Tracked
                 res.derived = true
             end
         end
     elseif isa(T, LLVM.StructType)
-        for ElT in elements(T)
+        for ElT in T.elements
             sub = CountTrackedPointers(ElT)
             res.count += sub.count
             res.all &= sub.all
             res.derived |= sub.derived
         end
     elseif isa(T, LLVM.ArrayType) || isa(T, LLVM.VectorType)
-        sub = CountTrackedPointers(eltype(T))
+        sub = CountTrackedPointers(T.element_type)
         res.count += sub.count
         res.all &= sub.all
         res.derived |= sub.derived
-        res.count *= length(T)
+        res.count *= T.length
     end
     if res.count == 0
         res.all = false
@@ -74,7 +74,7 @@ end
 
 
 function any_jltypes(Type::LLVM.PointerType)
-    if 10 <= LLVM.addrspace(Type) <= 12
+    if 10 <= Type.addrspace <= 12
         return true
     else
         # do we care about {} addrspace(11)**
@@ -82,15 +82,15 @@ function any_jltypes(Type::LLVM.PointerType)
     end
 end
 
-any_jltypes(Type::LLVM.StructType) = any(any_jltypes, LLVM.elements(Type))
-any_jltypes(Type::Union{LLVM.VectorType, LLVM.ArrayType}) = any_jltypes(eltype(Type))
+any_jltypes(Type::LLVM.StructType) = any(any_jltypes, Type.elements)
+any_jltypes(Type::Union{LLVM.VectorType, LLVM.ArrayType}) = any_jltypes(Type.element_type)
 any_jltypes(::LLVM.IntegerType) = false
 any_jltypes(::LLVM.FloatingPointType) = false
 any_jltypes(::LLVM.VoidType) = false
 
-nfields(Type::LLVM.StructType) = length(LLVM.elements(Type))
-nfields(Type::LLVM.VectorType) = size(Type)
-nfields(Type::LLVM.ArrayType) = length(Type)
+nfields(Type::LLVM.StructType) = length(Type.elements)
+nfields(Type::LLVM.VectorType) = Type.length
+nfields(Type::LLVM.ArrayType) = Type.length
 nfields(Type::LLVM.PointerType) = 1
 
 """
@@ -105,13 +105,13 @@ function tracked_pointer_offsets!(offs::Vector{Int}, dl::LLVM.DataLayout, @nospe
             push!(offs, base)
         end
     elseif isa(T, LLVM.StructType)
-        for (i, ElT) in enumerate(LLVM.elements(T))
-            tracked_pointer_offsets!(offs, dl, ElT, base + Int(LLVM.offsetof(dl, T, i - 1)))
+        for (i, ElT) in enumerate(T.elements)
+            tracked_pointer_offsets!(offs, dl, ElT, base + LLVM.offsetof(dl, T, i))
         end
     elseif isa(T, LLVM.ArrayType) || isa(T, LLVM.VectorType)
-        ElT = eltype(T)
-        esz = LLVM.sizeof(dl, ElT)
-        for i in 0:(length(T) - 1)
+        ElT = T.element_type
+        esz = LLVM.storage_size(dl, ElT)
+        for i in 0:(T.length - 1)
             tracked_pointer_offsets!(offs, dl, ElT, base + i * esz)
         end
     end
@@ -136,7 +136,7 @@ or touch more. An `sret` buffer is not affected: its parameter is still declared
 memcpy that fills it may stop short (see `fixup_1p12_sret!`).
 """
 function split_value_size(dl::LLVM.DataLayout, @nospecialize(T::LLVM.LLVMType))::Int
-    size = LLVM.sizeof(dl, T)
+    size = LLVM.storage_size(dl, T)
     if !shrinks_split_values()
         return size
     end
@@ -165,23 +165,23 @@ function strip_tracked_pointers(@nospecialize(T::LLVM.LLVMType))
     end
     if isa(T, LLVM.PointerType)
         @assert isSpecialPtr(T)
-        if LLVM.is_opaque(T)
+        if LLVM.isopaque(T)
             return LLVM.PointerType()
         else
-            return LLVM.PointerType(eltype(T))
+            return LLVM.PointerType(T.element_type)
         end
     end
     if isa(T, LLVM.ArrayType)
-        return LLVM.ArrayType(strip_tracked_pointers(eltype(T)), length(T))
+        return LLVM.ArrayType(strip_tracked_pointers(T.element_type), T.length)
     end
 
     if isa(T, LLVM.VectorType)
-        return LLVM.VectorType(strip_tracked_pointers(eltype(T)), length(T))
+        return LLVM.VectorType(strip_tracked_pointers(T.element_type), T.length)
     end
 
     if isa(T, LLVM.StructType)
         subtypes = LLVM.LLVMType[]
-        for (i, t) in enumerate(LLVM.elements(T))
+        for (i, t) in enumerate(T.elements)
             push!(subtypes, strip_tracked_pointers(t))
         end
         return LLVM.StructType(subtypes; packed = LLVM.ispacked(T))
@@ -200,7 +200,7 @@ function store_nonjl_types!(B::LLVM.IRBuilder, @nospecialize(startval::LLVM.Valu
     todo = Tuple{Tuple, LLVM.Value}[((), startval)]
     while length(todo) != 0
         path, cur = popfirst!(todo)
-        ty = value_type(cur)
+        ty = cur.value_type
         if isa(ty, LLVM.PointerType)
             if any_jltypes(ty)
                 continue
@@ -208,7 +208,7 @@ function store_nonjl_types!(B::LLVM.IRBuilder, @nospecialize(startval::LLVM.Valu
         end
         if isa(ty, LLVM.ArrayType)
             if any_jltypes(ty)
-                for i in 1:length(ty)
+                for i in 1:ty.length
                     ev = extract_value!(B, cur, i - 1)
                     push!(todo, ((path..., i - 1), ev))
                 end
@@ -217,7 +217,7 @@ function store_nonjl_types!(B::LLVM.IRBuilder, @nospecialize(startval::LLVM.Valu
         end
         if isa(ty, LLVM.StructType)
             if any_jltypes(ty)
-                for (i, t) in enumerate(LLVM.elements(ty))
+                for (i, t) in enumerate(ty.elements)
                     ev = extract_value!(B, cur, i - 1)
                     push!(todo, ((path..., i - 1), ev))
                 end
@@ -228,7 +228,7 @@ function store_nonjl_types!(B::LLVM.IRBuilder, @nospecialize(startval::LLVM.Valu
         for v in path
             push!(parray, LLVM.ConstantInt(LLVM.IntType(32), v))
         end
-        gptr = gep!(B, value_type(startval), p, parray)
+        gptr = gep!(B, startval.value_type, p, parray)
         st = store!(B, cur, gptr)
     end
     return
@@ -244,21 +244,21 @@ function get_julia_inner_types(B::LLVM.IRBuilder, @nospecialize(p::Union{Nothing
     todo = LLVM.Value[startvals...]
     while length(todo) != 0
         cur = popfirst!(todo)
-        ty = value_type(cur)
+        ty = cur.value_type
         if isa(ty, LLVM.PointerType)
             if any_jltypes(ty)
-                if addrspace(ty) != Tracked
+                if ty.addrspace != Tracked
                     cur = addrspacecast!(
                         B,
                         cur,
-                        LLVM.PointerType(eltype(ty), Tracked),
-                        LLVM.name(cur) * ".innertracked",
+                        LLVM.PointerType(ty.element_type, Tracked),
+                        cur.name * ".innertracked",
                     )
                     if isa(cur, LLVM.Instruction)
                         push!(added, cur.ref)
                     end
                 end
-                if value_type(cur) != T_prjlvalue
+                if cur.value_type != T_prjlvalue
                     cur = bitcast!(B, cur, T_prjlvalue)
                     if isa(cur, LLVM.Instruction)
                         push!(added, cur.ref)
@@ -270,7 +270,7 @@ function get_julia_inner_types(B::LLVM.IRBuilder, @nospecialize(p::Union{Nothing
         end
         if isa(ty, LLVM.ArrayType)
             if any_jltypes(ty)
-                for i in 1:length(ty)
+                for i in 1:ty.length
                     ev = extract_value!(B, cur, i - 1)
                     if isa(ev, LLVM.Instruction)
                         push!(added, ev.ref)
@@ -281,7 +281,7 @@ function get_julia_inner_types(B::LLVM.IRBuilder, @nospecialize(p::Union{Nothing
             continue
         end
         if isa(ty, LLVM.StructType)
-            for (i, t) in enumerate(LLVM.elements(ty))
+            for (i, t) in enumerate(ty.elements)
                 if any_jltypes(t)
                     ev = extract_value!(B, cur, i - 1)
                     if isa(ev, LLVM.Instruction)

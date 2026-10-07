@@ -23,97 +23,97 @@ end
 
         GPUCompiler.prepare_job!(job)
         mod, meta = GPUCompiler.emit_llvm(job)
-        
-        copysetfn = meta.entry
-        blk = first(LLVM.blocks(copysetfn))
-        iter = LLVM.API.LLVMGetFirstInstruction(blk)
-        while iter != C_NULL
-            inst = LLVM.Instruction(iter)
-            iter = LLVM.API.LLVMGetNextInstruction(iter)
-            if isa(inst, LLVM.FenceInst)
-                Compiler.eraseInst(blk, inst)
-            end
-            if isa(inst, LLVM.CallInst)
-                fn = LLVM.called_operand(inst)
-                if isa(fn, LLVM.Function)
-                    if LLVM.name(fn) == "julia.safepoint"
-                        Compiler.eraseInst(blk, inst)
+        LLVM.@dispose mod = mod begin
+            copysetfn = meta.entry
+            blk = first(copysetfn.blocks)
+            # iteration looks up the next instruction first, so `inst` can be erased
+            for inst in blk.instructions
+                if isa(inst, LLVM.FenceInst)
+                    Compiler.eraseInst(blk, inst)
+                end
+                if isa(inst, LLVM.CallInst)
+                    fn = inst.called_operand
+                    if isa(fn, LLVM.Function)
+                        if fn.name == "julia.safepoint"
+                            Compiler.eraseInst(blk, inst)
+                        end
                     end
-                end     
+                end
+            end
+            hasNoRet = haskey(copysetfn.function_attributes, :noreturn)
+            @assert !hasNoRet
+            if !hasNoRet
+                push!(copysetfn.function_attributes, LLVM.EnumAttribute(:alwaysinline))
+            end
+            ity = convert(LLVM.LLVMType, Int)
+            jlvaluet = convert(LLVM.LLVMType, T; allow_boxed = true)
+
+            # Julia inlines this function into its caller, whose pgcstack it takes as an
+            # argument to allocate the result (see `Compiler.use_gcstack_arg!`).
+            FT = LLVM.FunctionType(jlvaluet, LLVM.LLVMType[convert(LLVM.LLVMType, Ptr{Cvoid}), jlvaluet, ity, ity])
+            llvm_f = LLVM.Function(mod, "f", FT)
+            push!(llvm_f.function_attributes, LLVM.EnumAttribute(:alwaysinline))
+
+            # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
+            # and also https://github.com/JuliaLang/julia/pull/47076
+            # and also https://github.com/JuliaLang/julia/pull/48620
+            needs_dynamic_size_workaround = !(VERSION >= v"1.10.5")
+
+            ir = LLVM.@dispose builder = LLVM.IRBuilder() begin
+                entry = LLVM.BasicBlock(llvm_f, "entry")
+                LLVM.position!(builder, LLVM.at_end(entry))
+                pgcstack, inp, lstart, len = collect(LLVM.Value, llvm_f.parameters)
+
+                boxed_count = if sizeof(Int) == sizeof(Int64)
+                    Compiler.emit_box_int64!(builder, len)
+                else
+                    Compiler.emit_box_int32!(builder, len)
+                end
+
+                tag = Compiler.emit_apply_type!(builder, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(builder, T)], #=enzyme_ctx=# nothing)
+
+                fullsize = LLVM.nuwmul!(builder, len, LLVM.ConstantInt(sizeof(Int)))
+                obj = Compiler.emit_allocobj!(builder, tag, fullsize, needs_dynamic_size_workaround)
+
+                T_int8 = LLVM.Int8Type()
+                LLVM.memset!(builder, obj, LLVM.ConstantInt(T_int8, 0), fullsize, 0)
+
+                alloc = LLVM.pointercast!(builder, obj, LLVM.PointerType(jlvaluet, Tracked))
+                alloc = LLVM.pointercast!(builder, alloc, LLVM.PointerType(jlvaluet, 11))
+
+                loop = LLVM.BasicBlock(llvm_f, "loop")
+                exit = LLVM.BasicBlock(llvm_f, "exit")
+
+                LLVM.br!(builder, LLVM.icmp!(builder, LLVM.IntPredicate.EQ, LLVM.ConstantInt(0), len), exit, loop)
+
+                LLVM.position!(builder, LLVM.at_end(loop))
+                idx = LLVM.phi!(builder, ity, "onehot.idx")
+
+                push!(idx.incoming, (LLVM.ConstantInt(0), entry))
+                inc = LLVM.add!(builder, idx, LLVM.ConstantInt(1))
+                push!(idx.incoming, (inc, loop))
+                rval = LLVM.add!(builder, inc, lstart)
+                res = LLVM.call!(builder, copysetfn.function_type, copysetfn, [inp, rval])
+                if !hasNoRet
+                    gidx = LLVM.gep!(builder, jlvaluet, alloc, [idx])
+                    LLVM.store!(builder, res, gidx)
+                    Compiler.emit_writebarrier!(builder, Compiler.get_julia_inner_types(builder, obj, res))
+                end
+
+                LLVM.br!(builder, LLVM.icmp!(builder, LLVM.IntPredicate.EQ, inc, len), exit, loop)
+
+
+                T_int32 = LLVM.Int32Type()
+
+                LLVM.position!(builder, LLVM.at_end(exit))
+                LLVM.ret!(builder, obj)
+
+                Compiler.use_gcstack_arg!(llvm_f, pgcstack)
+                Compiler.JIT.prepare!(mod)
+
+                string(mod)
             end
         end
-        hasNoRet = Compiler.has_fn_attr(copysetfn, LLVM.EnumAttribute("noreturn"))
-        @assert !hasNoRet
-        if !hasNoRet
-            push!(LLVM.function_attributes(copysetfn), LLVM.EnumAttribute("alwaysinline", 0))
-        end
-        ity = convert(LLVM.LLVMType, Int)
-        jlvaluet = convert(LLVM.LLVMType, T; allow_boxed=true)
-
-        # Julia inlines this function into its caller, whose pgcstack it takes as an
-        # argument to allocate the result (see `Compiler.use_gcstack_arg!`).
-        FT = LLVM.FunctionType(jlvaluet, LLVM.LLVMType[convert(LLVM.LLVMType, Ptr{Cvoid}), jlvaluet, ity, ity])
-        llvm_f = LLVM.Function(mod, "f", FT)
-        push!(LLVM.function_attributes(llvm_f), LLVM.EnumAttribute("alwaysinline", 0))
-
-        # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
-        # and also https://github.com/JuliaLang/julia/pull/47076
-        # and also https://github.com/JuliaLang/julia/pull/48620
-        needs_dynamic_size_workaround = !(VERSION >= v"1.10.5")
-
-        builder = LLVM.IRBuilder()
-        entry = LLVM.BasicBlock(llvm_f, "entry")
-        LLVM.position!(builder, entry)
-        pgcstack, inp, lstart, len = collect(LLVM.Value, LLVM.parameters(llvm_f))
-
-        boxed_count = if sizeof(Int) == sizeof(Int64)
-            Compiler.emit_box_int64!(builder, len)
-        else
-            Compiler.emit_box_int32!(builder, len)
-        end
-
-        tag = Compiler.emit_apply_type!(builder, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(builder, T)], #=enzyme_ctx=# nothing)
-
-        fullsize = LLVM.nuwmul!(builder, len, LLVM.ConstantInt(sizeof(Int)))
-        obj = Compiler.emit_allocobj!(builder, tag, fullsize, needs_dynamic_size_workaround)
-
-        T_int8 = LLVM.Int8Type()
-        LLVM.memset!(builder, obj,  LLVM.ConstantInt(T_int8, 0), fullsize, 0)
-
-        alloc = LLVM.pointercast!(builder, obj, LLVM.PointerType(jlvaluet, Tracked))
-        alloc = LLVM.pointercast!(builder, alloc, LLVM.PointerType(jlvaluet, 11))
-
-        loop = LLVM.BasicBlock(llvm_f, "loop")
-        exit = LLVM.BasicBlock(llvm_f, "exit")
-
-        LLVM.br!(builder, LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, LLVM.ConstantInt(0), len), exit, loop)
-
-        LLVM.position!(builder, loop)
-        idx = LLVM.phi!(builder, ity, "onehot.idx")
-
-        push!(LLVM.incoming(idx), (LLVM.ConstantInt(0), entry))
-        inc = LLVM.add!(builder, idx, LLVM.ConstantInt(1))
-        push!(LLVM.incoming(idx), (inc, loop))
-        rval = LLVM.add!(builder, inc, lstart)
-        res = LLVM.call!(builder, LLVM.function_type(copysetfn), copysetfn, [inp, rval])
-        if !hasNoRet
-            gidx = LLVM.gep!(builder, jlvaluet, alloc, [idx])
-            LLVM.store!(builder, res, gidx)
-            Compiler.emit_writebarrier!(builder, Compiler.get_julia_inner_types(builder, obj, res))
-        end
-
-        LLVM.br!(builder, LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, inc, len), exit, loop)
-
-
-        T_int32 = LLVM.Int32Type()
-
-        LLVM.position!(builder, exit)
-        LLVM.ret!(builder, obj)
-	
-        Compiler.use_gcstack_arg!(llvm_f, pgcstack)
-	Compiler.JIT.prepare!(mod)
-
-        string(mod)
     end
     return quote
         Base.@_inline_meta

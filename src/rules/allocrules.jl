@@ -8,8 +8,8 @@ function array_shadow_handler(
     )::LLVM.API.LLVMValueRef
     enzyme_ctx = enzyme_context()
     inst = LLVM.Instruction(OrigCI)
-    mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
-    ctx = LLVM.context(LLVM.Value(OrigCI))
+    mod = inst.parent.parent.parent
+    ctx = LLVM.Value(OrigCI).context
     gutils = GradientUtils(gutils)
 
     legal, typ, byref = abs_typeof(inst, enzyme_ctx)
@@ -26,7 +26,7 @@ function array_shadow_handler(
     b = LLVM.IRBuilder(B)
     orig = LLVM.Value(OrigCI)::LLVM.CallInst
 
-    nm = LLVM.name(LLVM.called_operand(orig)::LLVM.Function)
+    nm = (orig.called_operand::LLVM.Function).name
 
     if iszeroinit(typ)
         # If already zero init we should not need to perform the initial memset.
@@ -79,9 +79,9 @@ function array_shadow_handler(
         stride = elsz + (isunboxed && isunion)
         nbytes_arg = vals[2]
         nel = if stride == 0
-            LLVM.ConstantInt(LLVM.value_type(nbytes_arg), 0, false)
+            LLVM.ConstantInt(nbytes_arg.value_type, 0, false)
         else
-            LLVM.udiv!(b, nbytes_arg, LLVM.ConstantInt(LLVM.value_type(nbytes_arg), stride, false))
+            LLVM.udiv!(b, nbytes_arg, LLVM.ConstantInt(nbytes_arg.value_type, stride, false))
         end
         ST = get_memory_struct()
         lenptr = inbounds_gep!(
@@ -98,11 +98,11 @@ function array_shadow_handler(
         get_memory_nbytes(b, anti, enzyme_ctx)
     else
         arlen = get_array_len(b, anti)
-        tot = LLVM.mul!(b, arlen, LLVM.ConstantInt(LLVM.value_type(arlen), elsz, false))
+        tot = LLVM.mul!(b, arlen, LLVM.ConstantInt(arlen.value_type, elsz, false))
 
         if elsz == 1 && !isunion
             # extra byte for all julia allocated byte arrays
-            tot = LLVM.add!(b, tot, LLVM.ConstantInt(LLVM.value_type(tot), 1, false))
+            tot = LLVM.add!(b, tot, LLVM.ConstantInt(tot.value_type, 1, false))
         end
         if isunion
             # an extra byte for each isbits union array element, stored after a->maxsize
