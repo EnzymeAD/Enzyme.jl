@@ -1,13 +1,13 @@
 """
     FunctionSummary
 
-What the LLVM function emitted for a `CodeInstance` does to floating-point data, computed
-from its body alone. Calls stay symbolic: what a callee does with the memory it is given is
-in the callee's own summary, not in this one.
+A summary of information needed for Enzyme analyses. This includes activity information
+(`flow`), alias information (`points_to`), effects information (`reads_arg`, `writes_arg`,
+`writes_arg_any`, `escapes_arg`, `globals_read`, `globals_write`, `globals_write_any`)
 
-The shape follows ActivityAnalysis.jl's `ActivityDescriptor`, with indices of the LLVM
-function's parameters (not of the Julia arguments; ghost arguments have none, and the
-`swiftself` task pointer, `sret` and return roots have one each). For `n = nargs`:
+Using the indices of the LLVM function's parameters (not of the Julia arguments; ghost
+arguments have none, and the `swiftself` task pointer, `sret` and return roots have one
+each). For `n = nargs`:
 
 - `flow[s, t]`: data from source `s` may reach sink `t`. Sources `1:n` are the
   parameters (their value, or memory reachable from them) and `n + 1` any global; sinks
@@ -33,17 +33,18 @@ struct FunctionSummary
     escapes_arg::BitVector
     flow::BitMatrix
     points_to::BitMatrix
-    globals_read::Vector{String}
-    globals_write::Vector{String}
-    globals_write_any::Vector{String}
+    globals_read::Set{String}
+    globals_write::Set{String}
+    globals_write_any::Set{String}
     flags::UInt32
 end
 
 function summary_globals(ref::API.EnzymeFunctionSummaryRef, kind::API.CSummaryGlobals)
-    n = API.EnzymeFunctionSummaryNumGlobals(ref, kind)
-    names = Vector{String}(undef, n)
+    n = Int(API.EnzymeFunctionSummaryNumGlobals(ref, kind))
+    names = Set{String}()
+    sizehint!(names, n)
     for i in 1:n
-        names[i] = Base.unsafe_string(API.EnzymeFunctionSummaryGlobal(ref, kind, i - 1))
+        push!(names, Base.unsafe_string(API.EnzymeFunctionSummaryGlobal(ref, kind, i - 1)))
     end
     return names
 end
@@ -111,43 +112,93 @@ may_write_global(s::FunctionSummary) =
     !isempty(s.globals_write) || s.flags & API.SUMMARY_UNKNOWN_WRITE != 0
 has_unknown_effects(s::FunctionSummary) = s.flags & API.SUMMARY_UNKNOWN != 0
 
+# Where summaries live: on GPUCompiler 2.x (Julia 1.11+), in the results CompilerCaching
+# attaches to each of Enzyme's `CodeInstance`s, so they are serialized into package images
+# along with them; otherwise in a cache for this session.
+const SUMMARY_ON_CODE_INSTANCE = HAS_GPUCOMPILER_2 && VERSION >= v"1.11.0-DEV.1552"
+
 """
     SummarizeFunctions[]
 
 Compute a [`FunctionSummary`](@ref) for each `CodeInstance` emitted for differentiation and
-cache it (see [`function_summary`](@ref)). Off by default.
+cache it (see [`function_summary`](@ref)). On by default with GPUCompiler 2.x, where the
+summary is stored on the `CodeInstance`; off by default otherwise.
 """
-const SummarizeFunctions = Ref(false)
+const SummarizeFunctions = Ref(SUMMARY_ON_CODE_INSTANCE)
 
-const FUNCTION_SUMMARIES = IdDict{Core.CodeInstance, FunctionSummary}()
 const FUNCTION_SUMMARIES_LOCK = ReentrantLock()
 
-"""
-    function_summary(ci::Core.CodeInstance)
+@static if SUMMARY_ON_CODE_INSTANCE
+    """
+        FunctionSummaryResults
 
-The cached [`FunctionSummary`](@ref) of `ci`, or `nothing`.
-"""
-function function_summary(ci::Core.CodeInstance)
-    return @lock FUNCTION_SUMMARIES_LOCK get(FUNCTION_SUMMARIES, ci, nothing)
+    The results CompilerCaching attaches to one of Enzyme's `CodeInstance`s: its
+    [`FunctionSummary`](@ref), once computed.
+    """
+    mutable struct FunctionSummaryResults
+        summary::Union{Nothing, FunctionSummary}
+        FunctionSummaryResults() = new(nothing)
+    end
+
+    # Results are only attached to the `CodeInstance`s Enzyme's interpreter owns.
+    is_enzyme_code_instance(ci::Core.CodeInstance) = ci.owner isa EnzymeCacheToken
+
+    """
+        function_summary(ci::Core.CodeInstance)
+
+    The [`FunctionSummary`](@ref) stored on `ci`, or `nothing`.
+    """
+    function function_summary(ci::Core.CodeInstance)
+        is_enzyme_code_instance(ci) || return nothing
+        res = GPUCompiler.CompilerCaching.results(FunctionSummaryResults, ci)
+        return @lock FUNCTION_SUMMARIES_LOCK res.summary
+    end
+
+    needs_summary(ci::Core.CodeInstance) =
+        is_enzyme_code_instance(ci) && function_summary(ci) === nothing
+
+    function store_summary!(ci::Core.CodeInstance, summary::FunctionSummary)
+        res = GPUCompiler.CompilerCaching.results(FunctionSummaryResults, ci)
+        @lock FUNCTION_SUMMARIES_LOCK begin
+            res.summary === nothing && (res.summary = summary)
+        end
+        return nothing
+    end
+else
+    const FUNCTION_SUMMARIES = IdDict{Core.CodeInstance, FunctionSummary}()
+
+    """
+        function_summary(ci::Core.CodeInstance)
+
+    The cached [`FunctionSummary`](@ref) of `ci`, or `nothing`.
+    """
+    function function_summary(ci::Core.CodeInstance)
+        return @lock FUNCTION_SUMMARIES_LOCK get(FUNCTION_SUMMARIES, ci, nothing)
+    end
+
+    """
+        function_summaries()
+
+    A snapshot of the cache: the `CodeInstance`s summarized so far and their summaries.
+    """
+    function function_summaries()
+        return @lock FUNCTION_SUMMARIES_LOCK collect(FUNCTION_SUMMARIES)
+    end
+
+    needs_summary(ci::Core.CodeInstance) =
+        !(@lock FUNCTION_SUMMARIES_LOCK haskey(FUNCTION_SUMMARIES, ci))
+
+    function store_summary!(ci::Core.CodeInstance, summary::FunctionSummary)
+        @lock FUNCTION_SUMMARIES_LOCK get!(FUNCTION_SUMMARIES, ci, summary)
+        return nothing
+    end
 end
-
-"""
-    function_summaries()
-
-A snapshot of the cache: the `CodeInstance`s summarized so far and their summaries.
-"""
-function function_summaries()
-    return @lock FUNCTION_SUMMARIES_LOCK collect(FUNCTION_SUMMARIES)
-end
-
-is_summarized(ci::Core.CodeInstance) =
-    @lock FUNCTION_SUMMARIES_LOCK haskey(FUNCTION_SUMMARIES, ci)
 
 """
     summarize_code_instances!(mod::LLVM.Module, compiled)
 
 Summarize the function emitted into `mod` for each `CodeInstance` of `compiled` (GPUCompiler's
-`meta.compiled`) that has none cached yet, if [`SummarizeFunctions`](@ref) is set and the
+`meta.compiled`) that has no summary yet, if [`SummarizeFunctions`](@ref) is set and the
 loaded libEnzyme can. Does not change `mod`.
 """
 function summarize_code_instances!(mod::LLVM.Module, compiled)
@@ -158,15 +209,14 @@ function summarize_code_instances!(mod::LLVM.Module, compiled)
         haskey(k, :ci) || continue
         ci = k.ci
         ci isa Core.CodeInstance || continue
-        is_summarized(ci) && continue
+        needs_summary(ci) || continue
         specfunc = k.specfunc
         specfunc === nothing && continue
         fname = GPUCompiler.safe_name(specfunc)
         haskey(fns, fname) || continue
         f = fns[fname]
         isempty(blocks(f)) && continue
-        summary = FunctionSummary(f)
-        @lock FUNCTION_SUMMARIES_LOCK get!(FUNCTION_SUMMARIES, ci, summary)
+        store_summary!(ci, FunctionSummary(f))
     end
     return nothing
 end
