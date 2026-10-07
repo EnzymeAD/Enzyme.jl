@@ -518,13 +518,13 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     return errors
 end
 
-function is_nonconst_binding(addr::UInt)
+function is_const_binding(addr::UInt)
     addr == 0 && return false
     tag = Base.unsafe_load(Base.reinterpret(Ptr{UInt}, addr - sizeof(UInt))) & ~UInt(15)
     tag == UInt(Base.pointer_from_objref(Core.Binding)) || return false
     b = Base.unsafe_pointer_to_objref(Base.reinterpret(Ptr{Cvoid}, addr))::Core.Binding
     gr = b.globalref
-    return !isconst(gr.mod, gr.name)
+    return isconst(gr.mod, gr.name)
 end
 
 """
@@ -578,10 +578,13 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction), enzym
             originally_tracked_load = true
         end
     elseif isa(addr, LLVM.ConstantInt)
-        # On Julia 1.10 a global read is a raw load from the `jl_binding_t*`
-        # (`value` is its first field). Folding that load freezes the value the
-        # global had at compile time, so only do it for `const` bindings.
-        if check_mutability && off == 0 && is_nonconst_binding(convert(UInt, addr))
+        # A literal address says nothing about the object it points into (the field offset
+        # is usually folded into it), so there is no telling whether that object can change:
+        # a global `Dict` replaces its memories when it grows, a global `Vector` its ref.
+        # The one literal address that can be checked is that of a `jl_binding_t*`: on
+        # Julia 1.10 a global read is a raw load from it (`value` is its first field), which
+        # may only be folded for a `const` binding.
+        if check_mutability && !(off == 0 && is_const_binding(convert(UInt, addr)))
             return inst
         end
         gname = "jl_binding\$true"
