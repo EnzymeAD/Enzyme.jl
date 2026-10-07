@@ -576,8 +576,9 @@ end
     differentiated through, so they need a body. [`materialize_native_invokes!`](@ref)
     gives the declarations one before the outer differentiation runs.
 
-    Where the call ABI does not exist (see [`native_invoke_available`](@ref)), every
-    rule is emitted by `nested_codegen!`.
+    Every rule is emitted by `nested_codegen!` where the call ABI does not
+    exist (see [`native_invoke_available`](@ref)) and on Julia without the 1.12
+    compiler API (`Interpreter.HAS_INVOKE_RULES`).
     """
     function invoke_codegen!(
             mode::API.CDerivativeMode,
