@@ -579,6 +579,22 @@ end
     end
 end
 
+@testset "Forward triangular solve (trtrs!)" begin
+    trtrs!(uplo, trans, diag, A, B) = LinearAlgebra.LAPACK.trtrs!(uplo, trans, diag, A, B)
+    @testset for uplo in ('U', 'L'), trans in ('N', 'T', 'C'), diag in ('N', 'U'),
+            TE in (Float64, ComplexF64), sizeB in ((3,), (3, 2))
+        A = rand(TE, 3, 3) + 3I
+        B = rand(TE, sizeB...)
+        for TA in (Const, Duplicated, BatchDuplicated), TB in (Duplicated, BatchDuplicated)
+            are_activities_compatible(TB, TA, TB) || continue
+            test_forward(
+                trtrs!, TB, (uplo, Const), (trans, Const), (diag, Const), (A, TA), (B, TB);
+                atol = 1.0e-5, rtol = 1.0e-5
+            )
+        end
+    end
+end
+
 @testset "(matrix) det/logdet" begin
     @testset "forward" begin
         @testset for RT in (Const,DuplicatedNoNeed,Duplicated,),
