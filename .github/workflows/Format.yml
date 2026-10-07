@@ -21,6 +21,10 @@ jobs:
           ref: ${{github.event.pull_request.head.ref}}
           repository: ${{github.event.pull_request.head.repo.full_name}}
           fetch-depth: 0
+          # Required since actions/checkout@v7 to read a fork's code from a
+          # `pull_request_target` workflow. Runic only parses the sources, they
+          # are never executed, so no fork code runs in this trusted context.
+          allow-unsafe-pr-checkout: true
 
       - name: Add upstream remote
         run: |
