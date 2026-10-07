@@ -129,7 +129,7 @@ const SummarizeFunctions = Ref(SUMMARY_ON_CODE_INSTANCE)
 const FUNCTION_SUMMARIES_LOCK = ReentrantLock()
 
 @static if SUMMARY_ON_CODE_INSTANCE
-    """
+    @doc """
         FunctionSummaryResults
 
     The results CompilerCaching attaches to one of Enzyme's `CodeInstance`s: its
@@ -143,7 +143,7 @@ const FUNCTION_SUMMARIES_LOCK = ReentrantLock()
     # Results are only attached to the `CodeInstance`s Enzyme's interpreter owns.
     is_enzyme_code_instance(ci::Core.CodeInstance) = ci.owner isa EnzymeCacheToken
 
-    """
+    @doc """
         function_summary(ci::Core.CodeInstance)
 
     The [`FunctionSummary`](@ref) stored on `ci`, or `nothing`.
@@ -167,7 +167,7 @@ const FUNCTION_SUMMARIES_LOCK = ReentrantLock()
 else
     const FUNCTION_SUMMARIES = IdDict{Core.CodeInstance, FunctionSummary}()
 
-    """
+    @doc """
         function_summary(ci::Core.CodeInstance)
 
     The cached [`FunctionSummary`](@ref) of `ci`, or `nothing`.
@@ -176,7 +176,7 @@ else
         return @lock FUNCTION_SUMMARIES_LOCK get(FUNCTION_SUMMARIES, ci, nothing)
     end
 
-    """
+    @doc """
         function_summaries()
 
     A snapshot of the cache: the `CodeInstance`s summarized so far and their summaries.
