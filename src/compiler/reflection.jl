@@ -76,7 +76,7 @@ function reflect(
     # Link the module's Julia values as `_thunk` does, so that what is shown is the code that
     # runs: the slots left symbolic until then would otherwise stay declarations, and the loads
     # through them unfolded.
-    resolve_slots!(mod, meta.value_table)
+    link_julia_values!(mod, meta)
 
     if second_stage
         post_optimize!(mod, JIT.get_tm())

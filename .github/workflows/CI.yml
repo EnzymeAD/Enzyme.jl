@@ -26,7 +26,7 @@ concurrency:
 jobs:
   test:
     timeout-minutes: 120
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - assertions=${{ matrix.assertions }} llvm_args=${{ matrix.llvm_args }} - ${{ github.event_name }}
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - assertions=${{ matrix.assertions }} llvm_args=${{ matrix.llvm_args }} - GPUCompiler=${{ matrix.gpucompiler || 'default' }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -46,6 +46,11 @@ jobs:
           - default
         assertions:
           - false
+        # A one-value dimension so that the `include:` entries below which only differ in
+        # `gpucompiler` overwrite a base value, and therefore add jobs instead of being
+        # merged into (and silently repurposing) the matching default combination.
+        gpucompiler:
+          - default
         libEnzyme: [local, packaged]
         exclude:
           - os: windows-latest
@@ -90,6 +95,19 @@ jobs:
             version: '1.11'
             assertions: false
             llvm_args: '--opaque-pointers'
+          # GPUCompiler 1.x compatibility path (the default resolves to 2.x).
+          - os: ubuntu-24.04
+            arch: default
+            libEnzyme: packaged
+            version: '1.10'
+            assertions: false
+            gpucompiler: '1'
+          - os: ubuntu-24.04
+            arch: default
+            libEnzyme: packaged
+            version: '1.12'
+            assertions: false
+            gpucompiler: '1'
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
@@ -125,6 +143,23 @@ jobs:
         if: ${{ matrix.version == '1.10' }}
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+      # After the develop step: on 1.10 `[sources]` is ignored, so resolving the project
+      # before EnzymeCore is developed needs a registered EnzymeCore that satisfies the
+      # compat, which a same-PR EnzymeCore bump does not have yet.
+      - name: Pin GPUCompiler to v1
+        if: ${{ matrix.gpucompiler == '1' }}
+        shell: julia --color=yes --project=. {0}
+        run: |
+          using Pkg
+          # A version bound handed to `add` is not recorded anywhere, so a later resolve
+          # would be free to upgrade back to 2.x. Pin instead; `pin` only accepts direct
+          # dependencies, hence the `add` first.
+          Pkg.add(PackageSpec(; name = "GPUCompiler", version = "1"))
+          Pkg.pin("GPUCompiler")
+          Pkg.status()
+        env:
+          JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+          JULIA_PKG_PRECOMPILE_AUTO: "false"
       - name: Build libEnzyme
         if: ${{ matrix.libEnzyme == 'local' && matrix.os != 'macOS-latest'}}
         id: build_libenzyme
@@ -143,6 +178,16 @@ jobs:
         id: buildpkg
         env:
           JULIA_PKG_SERVER_REGISTRY_PREFERENCE: eager
+      # `julia-buildpkg` re-resolves; the manifest pin should hold it to 1.x, but fail
+      # loudly rather than let this job silently duplicate the 2.x one.
+      - name: Check GPUCompiler pin held
+        if: ${{ matrix.gpucompiler == '1' }}
+        shell: julia --color=yes --project=. {0}
+        run: |
+          using GPUCompiler
+          v = pkgversion(GPUCompiler)
+          @info "Resolved GPUCompiler" v
+          v < v"2" || error("GPUCompiler pin did not hold: resolved $v")
       - name: "Set test arguments"
         shell: bash
         run: |
