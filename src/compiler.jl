@@ -6066,6 +6066,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     replace_builtin_fptr!(mod)
     annotate!(mod)
     rewrite_checkpoint_calls!(mod)
+    keep_checkpoint_loops!(mod)
     for name in ("gpu_report_exception", "report_exception")
         if haskey(functions(mod), name)
             exc = functions(mod)[name]

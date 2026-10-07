@@ -901,6 +901,15 @@ function annotate_checkpoint_loop_state!(mod::LLVM.Module)
     return changed
 end
 
+# Runs before the pipeline that prepares the module for differentiation:
+# an annotated loop is checkpointed one iteration a step, so there it must
+# not be unrolled (a step would be several iterations, the rest of them not
+# checkpointed, or the loop gone if fully unrolled) or vectorized (its
+# remainder would be a second loop). This module is only differentiated;
+# the function's own code, from Julia's pipeline, keeps those optimizations,
+# as its annotation is metadata no pass reads.
+keep_checkpoint_loops!(mod::LLVM.Module) = API.EnzymeKeepCheckpointLoops(mod) != 0
+
 # Runs just before differentiation: Enzyme's loop function has a fixed
 # signature the pipeline must not change.
 #

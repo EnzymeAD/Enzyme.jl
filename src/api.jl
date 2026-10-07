@@ -540,6 +540,12 @@ EnzymeRegisterFwdCallHandler(name, fwdhandle) = ccall(
     name,
     fwdhandle,
 )
+EnzymeKeepCheckpointLoops(mod) = ccall(
+    (:EnzymeKeepCheckpointLoops, libEnzyme),
+    UInt8,
+    (LLVM.API.LLVMModuleRef,),
+    mod,
+)
 
 EnzymeInsertValue(
     B::LLVM.IRBuilder,
