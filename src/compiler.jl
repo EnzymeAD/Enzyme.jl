@@ -770,6 +770,7 @@ include("compiler/optimize.jl")
 include("compiler/interpreter.jl")
 include("compiler/callconv.jl")
 include("compiler/validation.jl")
+include("compiler/summary.jl")
 include("typeutils/inference.jl")
 
 import .Interpreter: isKWCallSignature
@@ -6418,6 +6419,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     # subsequent use of `mod` (e.g. `LLVM.context(mod)`) is a dynamic dispatch
     # through jl_apply_generic, which forces boxing and GC-rooting across it.
     mod = mod::LLVM.Module
+    summarize_code_instances!(mod, meta.compiled)
     record_julia_values!(enzyme_ctx, primal_job, meta)
     make_slots_symbolic!(mod, enzyme_ctx)
     edges = enzyme_ctx.edges
