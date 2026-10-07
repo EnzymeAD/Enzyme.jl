@@ -1,8 +1,3 @@
-# Function summaries: what the LLVM function emitted for one `CodeInstance` does to
-# floating-point data, computed by Enzyme's `enzyme-summary` analysis and cached per
-# `CodeInstance`. Nothing consumes them yet; they are computed only when
-# `SummarizeFunctions[]` is set.
-
 """
     FunctionSummary
 
