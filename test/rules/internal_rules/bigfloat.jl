@@ -46,6 +46,16 @@ end
     umul2(x) = x * BigFloat(UInt(2))
     @test autodiff(Enzyme.Forward, umul2, Duplicated, Duplicated(a, da))[:1] ≈ 2 * da
 
+    # on Windows `Clong === Int32`, so `BigFloat(::Int64)` takes the generic
+    # `Integer -> BigInt` path; `Int128` and `BigInt` exercise it on every platform
+    @test autodiff(Enzyme.Forward, BigFloat, Duplicated, Const(Int128(2)))[:1] ≈ 0
+    @test autodiff(Enzyme.Forward, BigFloat, Duplicated, Const(big(2)))[:1] ≈ 0
+    i128mul2(x) = x * BigFloat(Int128(2))
+    @test autodiff(Enzyme.Forward, i128mul2, Duplicated, Duplicated(a, da))[:1] ≈ 2 * da
+    dres = autodiff(Enzyme.Forward, i128mul2, BatchDuplicated, BatchDuplicated(a, (da, 2da)))[1]
+    @test dres[1] ≈ 2 * da
+    @test dres[2] ≈ 4 * da
+
     # the constructor also has to keep working under a non-default precision
     setprecision(BigFloat, 512) do
         @test precision(BigFloat(3)) == 512
