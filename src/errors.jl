@@ -53,12 +53,12 @@ function code_typed_helper(mi::Core.MethodInstance, world::UInt, mode::Enzyme.AP
         EnzymeCacheToken(
             (GPUCompiler.GLOBAL_METHOD_TABLE,),
             world,
-            mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit,
-            mode != API.DEM_ForwardMode && mode != API.DEM_ForwardModeSplit,
+            API.is_forward_mode(mode),
+            !API.is_forward_mode(mode),
             true
         )
     else
-        if mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit
+        if API.is_forward_mode(mode)
             GLOBAL_FWD_CACHE
         else
             GLOBAL_REV_CACHE
@@ -1505,7 +1505,7 @@ end
 		     ( isa(cur, LLVM.ConstantExpr) || isa(cur, LLVM.GlobalVariable)) &&
                    cur == data2
                     if width == 1
-                        if mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit
+                        if API.is_forward_mode(mode)
                             instance = make_zero(obj)
                             return unsafe_to_llvm(prevbb, instance)
                         else
@@ -1521,7 +1521,7 @@ end
                             LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(cur))),
                         )
                         for idx = 1:width
-                            res = if mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit
+                            res = if API.is_forward_mode(mode)
                                 instance = make_zero(obj)
                                 unsafe_to_llvm(prevbb, instance)
                             else

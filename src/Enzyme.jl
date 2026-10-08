@@ -1258,8 +1258,8 @@ end
 Provide the split forward and forward-derivative pass functions for annotated function type
 `ftype` when called with args of type `argtypes` when using split forward mode.
 
-`Activity` is the Activity of the return value, it may be `Const` or `Duplicated`
-(or its variants `BatchDuplicated`, `BatchDuplicatedNoNeed`).
+`Activity` is the Activity of the return value, it may be `Const`, `Duplicated`
+or `BatchDuplicated`.
 
 Returns a pair `(forward, derivative)` where:
 - `forward` is an [`AugmentedForwardThunk`](@ref) that runs the primal and captures a tape
@@ -1308,7 +1308,7 @@ shadow2, result2 = derivative(Const(f), Duplicated(3.14, 1.0), tape)
     StrongZero,
 }
     width = if Width == 0
-        w = same_or_one(1, args...)
+        w = same_or_one(1, A, args...)
         if w == 0
             throw(ErrorException("Cannot differentiate with a batch size of 0"))
         end
@@ -1320,9 +1320,16 @@ shadow2, result2 = derivative(Const(f), Duplicated(3.14, 1.0), tape)
     if A <: Active
         throw(ErrorException("Active Returns not allowed in forward mode"))
     end
+    if A <: DuplicatedNoNeed || A <: BatchDuplicatedNoNeed
+        throw(
+            ErrorException(
+                "Return activity `DuplicatedNoNeed` is not supported for ForwardModeSplit.\nPlease use ForwardSplitNoPrimal or ForwardSplitWithPrimal with `Duplicated`/`BatchDuplicated`.",
+            ),
+        )
+    end
 
     if ModifiedBetweenT === true
-        ModifiedBetween = Val(falses_from_args(Nargs + 1))
+        ModifiedBetween = Val(trues_from_args(Nargs + 1))
     else
         ModifiedBetween = Val(ModifiedBetweenT)
     end

@@ -223,13 +223,13 @@ end
 
     # TODO actually do modifiedBetween
     e_tt = Tuple{Const{Int}}
-    modifiedBetween = (mode != API.DEM_ForwardMode && mode != API.DEM_ForwardModeSplit, false)
+    modifiedBetween = (!API.is_forward_mode(mode), false)
 
     world = enzyme_world()
 
     pfuncT = funcT
 
-    mi2 = my_methodinstance((mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit) ? Forward : Reverse, funcT, Tuple{map(eltype, e_tt.parameters)...}, world)
+    mi2 = my_methodinstance(API.is_forward_mode(mode) ? Forward : Reverse, funcT, Tuple{map(eltype, e_tt.parameters)...}, world)
     @assert mi2 !== nothing
 
     refed = false
@@ -255,7 +255,7 @@ end
 
     dFT = (dupClosure ? (width == 1 ? Duplicated : (BatchDuplicated{T, Int(width)} where T)) : Const){funcT}
 
-    if mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit
+    if API.is_forward_mode(mode)
         if fwdmodenm === nothing
             etarget = Compiler.EnzymeTarget()
             eparams = Compiler.EnzymeCompilerParams(
@@ -309,7 +309,7 @@ end
                 funcT = Core.Typeof(referenceCaller)
                 dupClosure = false
                 modifiedBetween = (false, modifiedBetween...)
-                mi2 = my_methodinstance((mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit) ? Forward : Reverse, funcT, Tuple{map(eltype, e_tt.parameters)...}, world)
+                mi2 = my_methodinstance(API.is_forward_mode(mode) ? Forward : Reverse, funcT, Tuple{map(eltype, e_tt.parameters)...}, world)
                 @assert mi2 !== nothing
     		dFT = (dupClosure ? (width == 1 ? Duplicated : (BatchDuplicated{T, Int(width)} where T)) : Const){funcT}
             end

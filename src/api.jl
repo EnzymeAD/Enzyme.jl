@@ -232,6 +232,9 @@ end
     DEM_ForwardModeSplit = 4
 )
 
+@inline is_forward_mode(mode) =
+    mode == DEM_ForwardMode || mode == DEM_ForwardModeSplit
+
 # Create the derivative function itself.
 #  \p todiff is the function to differentiate
 #  \p retType is the activity info of the return

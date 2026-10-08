@@ -40,7 +40,9 @@ function check_fwdsplit_aug(orig::LLVM.CallInst, gutils::GradientUtils)
     end
     mi, _ = enzyme_custom_extract_mi(orig, false)
     name = if mi !== nothing
-        strip(sprint(io -> pretty_print_mi(mi, io)))
+        buf = IOBuffer()
+        pretty_print_mi(mi, buf)
+        strip(String(take!(buf)))
     else
         callee = LLVM.called_operand(orig)
         fname = callee isa LLVM.Function ? LLVM.name(callee) : string(callee)

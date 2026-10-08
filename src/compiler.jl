@@ -230,8 +230,8 @@ if VERSION >= v"1.11.0-DEV.1552"
         EnzymeCacheToken(
         method_tables(GPUCompiler.method_table_view(job)),
             job.world,
-            job.config.params.mode == API.DEM_ForwardMode || job.config.params.mode == API.DEM_ForwardModeSplit,
-            job.config.params.mode != API.DEM_ForwardMode && job.config.params.mode != API.DEM_ForwardModeSplit,
+            API.is_forward_mode(job.config.params.mode),
+            !API.is_forward_mode(job.config.params.mode),
             true
         )
 
@@ -251,7 +251,7 @@ else
     const GLOBAL_FWD_CACHE = GPUCompiler.CodeCache()
     const GLOBAL_REV_CACHE = GPUCompiler.CodeCache()
     function enzyme_ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams})
-        return if job.config.params.mode == API.DEM_ForwardMode || job.config.params.mode == API.DEM_ForwardModeSplit
+        return if API.is_forward_mode(job.config.params.mode)
             GLOBAL_FWD_CACHE
         else
             GLOBAL_REV_CACHE
@@ -568,7 +568,7 @@ include("llvm/passes.jl")
 include("typeutils/make_zero.jl")
 
 function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type))
-    funcspec = my_methodinstance((mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit) ? Forward : Reverse, typeof(f), tt, enzyme_world())
+    funcspec = my_methodinstance(API.is_forward_mode(mode) ? Forward : Reverse, typeof(f), tt, enzyme_world())
     return nested_codegen!(mode, mod, funcspec)
 end
 
@@ -786,7 +786,7 @@ function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, m
 
     specTypes = Interpreter.simplify_kw(mi.specTypes)
 
-    if mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit
+    if API.is_forward_mode(mode)
         has_custom_rule = cached_has_frule(specTypes, world, method_table)
         if has_custom_rule
             @safe_debug "Found frule for" mi.specTypes
@@ -1990,7 +1990,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
 	end
     end
 
-    if (mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit) && (used || idx != 0)
+    if API.is_forward_mode(mode) && (used || idx != 0)
         # Zero any jlvalue_t inner elements of preceeding allocation.
 
         # Specifically in forward mode, you will first run the original allocation,
@@ -3496,7 +3496,7 @@ function create_abi_wrapper(
             push!(sret_types, literal_rt)
         end
     end
-    if Mode == API.DEM_ForwardMode || Mode == API.DEM_ForwardModeSplit
+    if API.is_forward_mode(Mode)
         if !(rettype <: Const)
             if width == 1
                 push!(sret_types, literal_rt)
@@ -3774,7 +3774,7 @@ function create_abi_wrapper(
 		 @assert arg_roots == 0
 	    end
             Func = get_func(T)
-            funcspec = my_methodinstance((Mode == API.DEM_ForwardMode || Mode == API.DEM_ForwardModeSplit) ? Forward : Reverse, Func, Tuple{}, world)
+            funcspec = my_methodinstance(API.is_forward_mode(Mode) ? Forward : Reverse, Func, Tuple{}, world)
             llvmf = nested_codegen!(Mode, mod, funcspec)
             push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
             Func_RT = return_type(interp, funcspec)
@@ -3991,7 +3991,7 @@ function create_abi_wrapper(
             end
         end
         @assert returnNum == numLLVMReturns
-    elseif Mode == API.DEM_ForwardMode || Mode == API.DEM_ForwardModeSplit
+    elseif API.is_forward_mode(Mode)
         count_Sret = 0
         count_llvm_Sret = 0
         if !isghostty(actualRetType)
@@ -5946,10 +5946,10 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     ForwardModeTypes = ("s", "d", "c", "z")
     ReverseModeTypes = ("s", "d")
     # Tablegen BLAS does not support forward mode yet
-    if !((mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit) && params.runtimeActivity)
-        for ty in ((mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit) ? ForwardModeTypes : ReverseModeTypes)
+    if !(API.is_forward_mode(mode) && params.runtimeActivity)
+        for ty in (API.is_forward_mode(mode) ? ForwardModeTypes : ReverseModeTypes)
             for func in (
-                (mode == API.DEM_ForwardMode || mode == API.DEM_ForwardModeSplit) ? ForwardModeDerivatives :
+                API.is_forward_mode(mode) ? ForwardModeDerivatives :
                 ReverseModeDerivatives
             )
                 for prefix in ("", "cblas_")
@@ -6670,7 +6670,7 @@ end
             ((LLVM.DoubleType(), Float64, ""), (LLVM.FloatType(), Float32, "f"))
             fname = String(name) * pf
             if haskey(functions(mod), fname)
-                funcspec = my_methodinstance((Mode == API.DEM_ForwardMode || Mode == API.DEM_ForwardModeSplit) ? Forward : Reverse, fnty, Tuple{JT}, job.world)
+                funcspec = my_methodinstance(API.is_forward_mode(Mode) ? Forward : Reverse, fnty, Tuple{JT}, job.world)
                 llvmf = nested_codegen!(mode, mod, funcspec)
 
                 llvmf = LLVM.name(llvmf)
@@ -8013,7 +8013,7 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
     
-    mi = my_methodinstance((Mode == API.DEM_ForwardMode || Mode == API.DEM_ForwardModeSplit) ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
+    mi = my_methodinstance(API.is_forward_mode(Mode) ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
 
     mi === nothing && return stub(world, source, :(throw(MethodError($ft, $primal_tt, $world))))
 
@@ -8053,7 +8053,7 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
 
 
 
-    if Mode == API.DEM_ForwardMode || Mode == API.DEM_ForwardModeSplit
+    if API.is_forward_mode(Mode)
         fwd_sig = Tuple{typeof(EnzymeRules.forward), <:EnzymeRules.FwdConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
         add_edge!(edges, fwd_sig)
     else
@@ -8102,13 +8102,13 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
  
-    mi = my_methodinstance((Mode == API.DEM_ForwardMode || Mode == API.DEM_ForwardModeSplit) ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
+    mi = my_methodinstance(API.is_forward_mode(Mode) ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
 
     mi === nothing && return stub(world, source, :(throw(MethodError($ft, $primal_tt, $world))))
 
     target = EnzymeTarget()
     rt2 = if A isa UnionAll
-        rrt = primal_return_type_world((Mode == API.DEM_ForwardMode || Mode == API.DEM_ForwardModeSplit) ? Forward : Reverse, world, mi)
+        rrt = primal_return_type_world(API.is_forward_mode(Mode) ? Forward : Reverse, world, mi)
 
         # Don't error here but default to nothing return since in cuda context we don't use the device overrides
         if rrt == Union{}
