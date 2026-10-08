@@ -593,6 +593,71 @@ function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, @nospecial
 end
 
 
+"""
+    mark_compiled!(mod::LLVM.Module, llvmfn::LLVM.Function, mi::MethodInstance, RT::Type, world::UInt)
+
+Give `llvmfn`, the function Julia's codegen emitted into `mod` for `mi` with return type
+`RT`, the attributes Enzyme reads from a compiled Julia function: `enzymejl_mi` and
+`enzymejl_rt`, the read-only-or-throw of a function with an easy rule, and the markers of
+an sret union and of the GC roots of the return, on the function and its call sites.
+"""
+function mark_compiled!(mod::LLVM.Module, llvmfn::LLVM.Function, mi::Core.MethodInstance, @nospecialize(RT), world::UInt)
+    _, _, returnRoots0 = get_return_info(RT)
+    returnRoots = returnRoots0 !== nothing
+
+    attributes = function_attributes(llvmfn)
+    # A function that already carries `enzymejl_mi` is not this emission's
+    # output: a derivative embedded for nested differentiation may reuse
+    # the name of a fresh function, since Julia's function name counters
+    # restart per compilation.
+    fresh = !has_fn_attr(llvmfn, StringAttribute("enzymejl_mi"))
+    push!(
+        attributes,
+        StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))),
+    )
+    push!(
+        attributes,
+        StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(RT)))),
+    )
+    if cached_has_easy_rule(Interpreter.simplify_kw(mi.specTypes), world)
+        push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
+        # The rule accesses no more than the body does, so Enzyme may keep
+        # inferring the function's full parameter attributes from the body.
+        push!(attributes, LLVM.StringAttribute("enzyme_custom_full_attributes"))
+    end
+
+    if startswith(LLVM.name(llvmfn), "japi3") || startswith(LLVM.name(llvmfn), "japi1") || startswith(LLVM.name(llvmfn), "jlcapi")
+        return nothing
+    end
+
+    if fresh
+        check_emitted_specsig(mod, llvmfn, mi, RT)
+    end
+
+    if is_sret_union(RT)
+        attr = StringAttribute("enzymejl_sret_union_bytes", string(union_alloca_type(RT)))
+        push!(parameter_attributes(llvmfn, 1), attr)
+        for u in LLVM.uses(llvmfn)
+            u = LLVM.user(u)
+            @assert isa(u, LLVM.CallInst)
+            LLVM.API.LLVMAddCallSiteAttribute(u, LLVM.API.LLVMAttributeIndex(1), attr)
+        end
+    end
+
+    if returnRoots
+        attr = StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1])))
+        push!(parameter_attributes(llvmfn, 2), attr)
+        for u in LLVM.uses(llvmfn)
+            u = LLVM.user(u)
+            @assert isa(u, LLVM.CallInst)
+            LLVM.API.LLVMAddCallSiteAttribute(u, LLVM.API.LLVMAttributeIndex(2), attr)
+        end
+    end
+
+    fixup_1p12_sret!(llvmfn)
+    return nothing
+end
+
 function prepare_llvm(interp, mod::LLVM.Module, job, meta, enzyme_ctx::EnzymeContext)
     for (mi, k) in meta.compiled
         k_name = GPUCompiler.safe_name(k.specfunc)
@@ -600,62 +665,7 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta, enzyme_ctx::EnzymeCon
             continue
         end
         llvmfn = functions(mod)[k_name]
-
-        RT = return_type(interp, mi)
-
-        _, _, returnRoots0 = get_return_info(RT)
-        returnRoots = returnRoots0 !== nothing
-
-        attributes = function_attributes(llvmfn)
-        # A function that already carries `enzymejl_mi` is not this emission's
-        # output: a derivative embedded for nested differentiation may reuse
-        # the name of a fresh function, since Julia's function name counters
-        # restart per compilation.
-        fresh = !has_fn_attr(llvmfn, StringAttribute("enzymejl_mi"))
-        push!(
-            attributes,
-            StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))),
-        )
-        push!(
-            attributes,
-            StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(RT)))),
-        )
-        if cached_has_easy_rule(Interpreter.simplify_kw(mi.specTypes), job.world)
-            push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
-            # The rule accesses no more than the body does, so Enzyme may keep
-            # inferring the function's full parameter attributes from the body.
-            push!(attributes, LLVM.StringAttribute("enzyme_custom_full_attributes"))
-        end
-
-	if startswith(LLVM.name(llvmfn), "japi3") || startswith(LLVM.name(llvmfn), "japi1") || startswith(LLVM.name(llvmfn), "jlcapi")
-	   continue
-	end
-
-        if fresh
-            check_emitted_specsig(mod, llvmfn, mi, RT)
-        end
-
-        if is_sret_union(RT)
-            attr = StringAttribute("enzymejl_sret_union_bytes", string(union_alloca_type(RT)))
-            push!(parameter_attributes(llvmfn, 1), attr)
-            for u in LLVM.uses(llvmfn)
-                u = LLVM.user(u)
-                @assert isa(u, LLVM.CallInst)
-                LLVM.API.LLVMAddCallSiteAttribute(u, LLVM.API.LLVMAttributeIndex(1), attr)
-            end
-        end
-
-        if returnRoots
-            attr = StringAttribute("enzymejl_returnRoots", string(length(eltype(returnRoots0).parameters[1])))
-            push!(parameter_attributes(llvmfn, 2), attr)
-            for u in LLVM.uses(llvmfn)
-                u = LLVM.user(u)
-                @assert isa(u, LLVM.CallInst)
-                LLVM.API.LLVMAddCallSiteAttribute(u, LLVM.API.LLVMAttributeIndex(2), attr)
-            end
-        end
-
-        fixup_1p12_sret!(llvmfn)
+        mark_compiled!(mod, llvmfn, mi, return_type(interp, mi), job.world)
     end
 
     # We explicitly save the type of alloca's before they get lowered
@@ -6435,7 +6445,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
 
     # A derivative linked into this module as a deferred job calls its rules
     # natively. Differentiating it again needs their bodies.
-    materialize_native_invokes!(mode, mod)
+    materialize_native_invokes!(mode, mod, Core.Compiler.method_table(primal_interp))
 
     LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
@@ -6456,7 +6466,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     end
     # `check_ir` links in the derivatives that `enzyme_call` embeds. Their
     # natively called rules need bodies too.
-    materialize_native_invokes!(mode, mod)
+    materialize_native_invokes!(mode, mod, Core.Compiler.method_table(primal_interp))
 
     disableFallback = String[]
 
