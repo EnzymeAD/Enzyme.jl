@@ -769,6 +769,7 @@ end
 include("compiler/optimize.jl")
 include("compiler/interpreter.jl")
 include("compiler/callconv.jl")
+include("compiler/native_callees.jl")
 include("compiler/validation.jl")
 include("typeutils/inference.jl")
 
@@ -2112,8 +2113,10 @@ function nested_codegen!(
     GPUCompiler.prepare_job!(job)
     otherMod, meta = emit_unresolved_llvm(job)
     record_julia_values!(enzyme_ctx, job, meta)
+    # Before the Julia values become symbolic: it reads the stubs' slots.
+    bind_native_callees!(otherMod, world)
     make_slots_symbolic!(otherMod, enzyme_ctx)
-    
+
     interp = GPUCompiler.get_interpreter(job)
     prepare_llvm(interp, otherMod, job, meta, enzyme_ctx)
 
@@ -6419,6 +6422,8 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     # through jl_apply_generic, which forces boxing and GC-rooting across it.
     mod = mod::LLVM.Module
     record_julia_values!(enzyme_ctx, primal_job, meta)
+    # Before the Julia values become symbolic: it reads the stubs' slots.
+    bind_native_callees!(mod, job.world)
     make_slots_symbolic!(mod, enzyme_ctx)
     edges = enzyme_ctx.edges
 

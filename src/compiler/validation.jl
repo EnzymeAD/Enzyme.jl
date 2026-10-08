@@ -1544,7 +1544,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         end
                         tys = flib.specTypes.parameters
                     end
-                    if is_inactive(tys, world, method_table)
+                    if is_inactive(tys, world, method_table) || is_native_edge(interp, flib)
                         inactive = LLVM.StringAttribute("enzyme_inactive", "")
                         LLVM.API.LLVMAddCallSiteAttribute(
                             inst,
@@ -1713,7 +1713,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                     end
                     tys = flib.specTypes.parameters
                 end
-                if is_inactive(tys, world, method_table)
+                if is_inactive(tys, world, method_table) || is_native_edge(interp, flib)
                     ofn = LLVM.parent(LLVM.parent(inst))
                     mod = LLVM.parent(ofn)
                     inactive = LLVM.StringAttribute("enzyme_inactive", "")
