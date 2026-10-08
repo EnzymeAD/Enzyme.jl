@@ -1280,8 +1280,8 @@ Provide the split forward and forward-derivative pass functions for annotated fu
 or `BatchDuplicated`.
 
 Returns a pair `(forward, derivative)` where:
-- `forward` is an [`AugmentedForwardThunk`](@ref) that runs the primal and captures a tape
-- `derivative` is a [`ForwardModeSplitThunk`](@ref) that takes the same args plus the tape, and returns the shadow (and optionally the primal)
+- `forward` is an `AugmentedForwardThunk` that runs the primal and captures a tape
+- `derivative` is a `ForwardModeSplitThunk` that takes the same args plus the tape, and returns the shadow (and optionally the primal)
 
 Example:
 
