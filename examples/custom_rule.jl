@@ -163,6 +163,11 @@ g(y, x) = f(y, x)^2 # function to differentiate
 @show autodiff(Forward, g, Const(y), Duplicated(x, dx)) # derivative of g w.r.t. x[1], with y annotated Const
 @show autodiff(Forward, g, Const(y), Const(x)); # derivative of g w.r.t. x[1], with x and y annotated Const
 
+# !!! warning "Runtime activity may alias an inactive argument's shadow to its primal"
+#     The `x isa Const` test above is not the whole test under [runtime activity](@ref faq-runtime-activity), where an argument that is inactive at run time is passed with its shadow aliased to its primal.
+#     A rule reading `x.dval` then reads the primal rather than a tangent and adds it to the derivative, giving a result that is plausible but wrong.
+#     As an example, for a rule that takes Julia Arrays, this can be checked using `x isa Const || (EnzymeRules.runtime_activity(config) && x.dval === x.val)`, (see `src/internal_rules/linalg.jl`).
+
 # Note that there are also exist batched duplicated annotations for forward mode, namely [`BatchDuplicated`](@ref)
 # and [`BatchDuplicatedNoNeed`](@ref), which are not covered in this tutorial.
 

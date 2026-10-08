@@ -185,7 +185,7 @@ function runtime_pfor_rev(
     return nothing
 end
 
-@inline function threadsfor_common(orig, gutils, B, mode, tape = nothing)
+@inline function threadsfor_common(orig, gutils, B, mode, enzyme_ctx, tape = nothing)
 
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
@@ -280,9 +280,10 @@ end
                 world,
             )
 
-            cmod, edges, fwdmodenm, _, _, _ = _thunk(ejob, false) #=postopt=#
+            cmod, edges, fwdmodenm, _, _, _, value_table = _thunk(ejob, false) #=postopt=#
 
             LLVM.link!(mod, cmod)
+            merge_julia_value_table!(enzyme_ctx, value_table)
 
             push!(attributes, StringAttribute("enzymejl_forward", fwdmodenm))
             push!(
@@ -340,9 +341,10 @@ end
                 world,
             )
 
-            cmod, edges, adjointnm, augfwdnm, TapeType, _ = _thunk(ejob, false) #=postopt=#
+            cmod, edges, adjointnm, augfwdnm, TapeType, _, value_table = _thunk(ejob, false) #=postopt=#
 
             LLVM.link!(mod, cmod)
+            merge_julia_value_table!(enzyme_ctx, value_table)
 
             push!(attributes, StringAttribute("enzymejl_augforward", augfwdnm))
             push!(
@@ -635,7 +637,7 @@ end
         (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
 
     _, sname, dfuncT, vals, thunkTy, _, _ =
-        threadsfor_common(orig, gutils, B, API.DEM_ForwardMode)
+        threadsfor_common(orig, gutils, B, API.DEM_ForwardMode, enzyme_context())
 
     tt = Tuple{thunkTy,dfuncT,Bool}
     mode = get_mode(gutils)
@@ -676,7 +678,7 @@ end
         (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
 
     byRef, sname, dfuncT, vals, thunkTy, _, copies =
-        threadsfor_common(orig, gutils, B, API.DEM_ReverseModePrimal)
+        threadsfor_common(orig, gutils, B, API.DEM_ReverseModePrimal, enzyme_context())
 
     tt = Tuple{
         thunkTy,
@@ -727,7 +729,7 @@ end
     end
 
     byRef, sname, dfuncT, vals, thunkTy, TapeType, copies =
-        threadsfor_common(orig, gutils, B, API.DEM_ReverseModeGradient, tape)
+        threadsfor_common(orig, gutils, B, API.DEM_ReverseModeGradient, enzyme_context(), tape)
 
     STT = if !any_jltypes(TapeType)
         Ptr{TapeType}

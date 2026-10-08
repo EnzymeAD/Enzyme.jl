@@ -10,7 +10,8 @@ using Core.Compiler:
 using GPUCompiler: @safe_debug
 using GPUCompiler
 if VERSION < v"1.11.0-DEV.1552"
-    using GPUCompiler: CodeCache, WorldView, @safe_debug
+    using GPUCompiler: CodeCache, @safe_debug
+    using Core.Compiler: WorldView
 end
 const HAS_INTEGRATED_CACHE = VERSION >= v"1.11.0-DEV.1552"
 
@@ -1092,7 +1093,15 @@ end
     end
 end
 
-@inline function override_bc_mapreduce(f, op, ::Base.IndexLinear, A::Base.AbstractArrayOrBroadcasted)
+# The redirect in `abstract_call_known` is only valid once inlined, so this shim
+# must stay `@inline`. The body lives in a separate, not-inlined function so that
+# callers such as `Base._mapreduce_dim`, which only pass `f` along, stay small
+# enough to inline. Otherwise they are compiled despecialized on `f::Function`
+# and called dynamically (e.g. under `sum(log, x)`).
+@inline override_bc_mapreduce(f, op, ::Base.IndexLinear, A::Base.AbstractArrayOrBroadcasted) =
+    bc_mapreduce(f, op, A)
+
+function bc_mapreduce(f::F, op::OP, A::Base.AbstractArrayOrBroadcasted) where {F, OP}
     inds = Base.LinearIndices(A)
     n = length(inds)
     if n == 0
@@ -1604,25 +1613,16 @@ function abstract_call_known(
     )
 end
 
-# Say if custom rules can be called through their natively compiled CodeInstance
-# (see `Enzyme.Compiler.invoke_codegen!`). Julia 1.12 added the compiler entry
-# point that infers a MethodInstance with a given interpreter and hands the
-# result to the JIT (`typeinf_ext_toplevel` with `SOURCE_MODE_ABI`) and the
-# runtime function that reads back the entry points (`jl_read_codeinst_invoke`).
-# A Julia that renames one of them fails loudly at the first rule compilation.
-const HAS_INVOKE_RULES = VERSION >= v"1.12-"
+"""
+    codeinst_entry(ci::CodeInstance) -> (specptr, invoke)
 
-@static if HAS_INVOKE_RULES
-
-    """
-        codeinst_entry(ci::CodeInstance) -> (specptr, invoke)
-
-    Compile `ci` if needed and return its two entry points. `specptr` is the
-    specialized-signature entry, or `C_NULL` when `ci` only got a boxed
-    `jl_fptr_args` entry. `invoke` is the boxed `invoke(F, args, nargs, ci)`
-    entry, or `C_NULL` when `ci` could not be compiled.
-    """
-    function codeinst_entry(ci::Core.CodeInstance)
+Compile `ci` if needed and return its two entry points. `specptr` is the
+specialized-signature entry, or `C_NULL` when `ci` only got a boxed
+`jl_fptr_args` entry. `invoke` is the boxed `invoke(F, args, nargs, ci)`
+entry, or `C_NULL` when `ci` could not be compiled.
+"""
+function codeinst_entry(ci::Core.CodeInstance)
+    @static if VERSION >= v"1.12-"
         specsigflags = Ref{UInt8}(0)
         invoke = Ref{Ptr{Cvoid}}(C_NULL)
         specptr = Ref{Ptr{Cvoid}}(C_NULL)
@@ -1631,12 +1631,27 @@ const HAS_INVOKE_RULES = VERSION >= v"1.12-"
             ci::Any, specsigflags::Ptr{UInt8}, invoke::Ptr{Ptr{Cvoid}},
             specptr::Ptr{Ptr{Cvoid}}, waitcompile::Cint
         )::Cvoid
-        # Bit 0 says that specptr is the specialized-signature entry, not a
-        # jl_fptr_args entry.
-        specialized = (specsigflags[] & 0b1) != 0
-        return (specialized ? specptr[] : C_NULL, invoke[])
+        flags = specsigflags[]
+        invokeptr = invoke[]
+        specfptr = specptr[]
+    else
+        # `jl_compile_method_internal` (see `codeinst` in callconv.jl) returns
+        # only after the JIT stored `specptr` and `invoke` and set bit 1 of
+        # `specsigflags`, which says that both are final.
+        invokeptr = @atomic :acquire ci.invoke
+        specfptr = @atomic :acquire ci.specptr
+        # Julia 1.10 names the flag `isspecsig`, 1.11 `specsigflags`. Both are
+        # `Bool`, and only the latter is atomic.
+        flags = @static if hasfield(Core.CodeInstance, :specsigflags)
+            @atomic :acquire ci.specsigflags
+        else
+            ci.isspecsig
+        end
     end
-
+    # Bit 0 says that specptr is the specialized-signature entry, not a
+    # jl_fptr_args entry.
+    specialized = (flags & 0b1) != 0
+    return (specialized ? specfptr : C_NULL, invokeptr)
 end
 
 end

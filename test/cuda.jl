@@ -112,6 +112,44 @@ using Test
 
         @test ptr_copy(C) == ptr_copy(R)
     end
+
+    @testset "forward pointer copies, $T" for T in (Float32, ComplexF64)
+        n = 4
+        copy_ptr = (d, s) -> (unsafe_copyto!(d, s, n); nothing)
+        dev, hst = CuArray, identity
+        directions = (
+            ("device to device", dev, dev),
+            ("host to device", dev, hst),
+            ("device to host", hst, dev),
+        )
+        @testset "$name" for (name, to_dst, to_src) in directions
+            src = to_src(T[i for i in 1:n])
+            dsrc = to_src(T[10i for i in 1:n])
+            dst = to_dst(zeros(T, n))
+            ddst = to_dst(ones(T, n))
+            GC.@preserve src dsrc dst ddst begin
+                Enzyme.autodiff(
+                    Forward, Const(copy_ptr), Const,
+                    Duplicated(pointer(dst), pointer(ddst)),
+                    Duplicated(pointer(src), pointer(dsrc)),
+                )
+            end
+            CUDA.synchronize()
+            @test Array(dst) == Array(src)
+            @test Array(ddst) == Array(dsrc)
+
+            # the tangent of a constant source is zero
+            fill!(ddst, one(T))
+            GC.@preserve src dst ddst begin
+                Enzyme.autodiff(
+                    Forward, Const(copy_ptr), Const,
+                    Duplicated(pointer(dst), pointer(ddst)), Const(pointer(src)),
+                )
+            end
+            CUDA.synchronize()
+            @test all(iszero, Array(ddst))
+        end
+    end
     @testset "unified memory" begin
         @test grad_roundtrip(x -> cu(x; unified = true)) == Float32[2, 4, 6]
     end

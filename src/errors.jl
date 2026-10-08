@@ -1044,9 +1044,12 @@ function julia_error(
     B::LLVM.API.LLVMBuilderRef,
 )::LLVM.API.LLVMValueRef
     msg = Base.unsafe_string(cstr)
-    julia_error(msg, val, errtype, data, data2, B)
+    # Enzyme also reports from passes that run after the compilation is over (`post_optimize!`).
+    enzyme_ctx = isassigned(ENZYME_CONTEXT) ? ENZYME_CONTEXT[] : nothing
+    julia_error(msg, val, errtype, data, data2, B, enzyme_ctx)
 end
 
+# `enzyme_ctx` is the compilation that ran into the error, `nothing` once it is over.
 function julia_error(
     msg::String,
     val::LLVM.API.LLVMValueRef,
@@ -1054,6 +1057,7 @@ function julia_error(
     data::Ptr{Cvoid},
     data2::LLVM.API.LLVMValueRef,
     B::LLVM.API.LLVMBuilderRef,
+    enzyme_ctx::Union{EnzymeContext, Nothing},
 )::LLVM.API.LLVMValueRef
     bt = nothing
     ir = nothing
@@ -1164,7 +1168,7 @@ function julia_error(
                 print(io, "Current scope: \n")
                 print(io, scope)
             end
-	    legal, obj = absint(val)
+            legal, obj = absint(val, enzyme_ctx)
 	    if legal
 		obj0 = obj
 		obj = unbind(obj)
@@ -1462,7 +1466,7 @@ function julia_error(
 else   
             if isa(cur, LLVM.ConstantExpr)
                 larg, off = get_base_and_offset(operands(cur)[1]; inst=first(instructions(position(prevbb))))
-                legal2, obj = absint(larg)
+                    legal2, obj = absint(larg, enzyme_ctx)
                 obj = unbind(obj)
                 if legal2 && is_memory_instance(obj)
                     return make_batched(ncur, prevbb)
@@ -1471,13 +1475,13 @@ else
 
             if isa(cur, LLVM.LoadInst)
                 larg, off = get_base_and_offset(operands(cur)[1]; inst=cur)
-                legal2, obj = absint(larg)
+                    legal2, obj = absint(larg, enzyme_ctx)
                 obj = unbind(obj)
                 if legal2 && is_memory_instance(obj)
                     return make_batched(ncur, prevbb)
                 end
                 if isa(larg, LLVM.LoadInst)
-                    legal2, obj = absint(larg)
+                        legal2, obj = absint(larg, enzyme_ctx)
                     obj = unbind(obj)
                     if legal2 && is_memory_instance(obj)
                         return make_batched(ncur, prevbb)
@@ -1486,14 +1490,14 @@ else
             end
 end
 
-            legal, TT, byref = abs_typeof(cur, true)
+            legal, TT, byref = abs_typeof(cur, enzyme_ctx, true)
 
             if legal
                 if guaranteed_const_nongen(TT, world)
                     return make_batched(ncur, prevbb)
                 end
 
-                legal2, obj = absint(cur)
+                legal2, obj = absint(cur, enzyme_ctx)
 		obj0 = obj
                 # Only do so for the immediate operand/etc to a phi, since otherwise we will make multiple
                 if legal2

@@ -229,7 +229,7 @@ end
         dispose(buf)
 
         ptr = reinterpret(Ptr{Cvoid}, UInt(0x2788))
-        Enzyme.Compiler.autodiff_cache[ptr] = ("thunk", bitcode)
+        Enzyme.Compiler.autodiff_cache[ptr] = Enzyme.Compiler.CachedThunk("thunk", bitcode, Enzyme.Compiler.JuliaValueTable())
         try
             Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT =>
                     Enzyme.Compiler.EnzymeContext(GPUCompiler.tls_world_age()) begin
@@ -608,7 +608,7 @@ function decay_egal_module()
     )
     GPUCompiler.prepare_job!(job)
     mod, _ = GPUCompiler.emit_llvm(job)
-    Enzyme.Compiler.optimize!(mod, Enzyme.Compiler.JIT.get_tm())
+    Enzyme.Compiler.optimize!(mod, Enzyme.Compiler.JIT.get_tm(), #=enzyme_ctx=# nothing)
     return mod
 end
 
@@ -878,6 +878,149 @@ end
         selfref_gep = functions(mod)["selfref_gep"]
         @test !Enzyme.Compiler.unfold_root_phi_loads!(selfref_gep)
         @test root_phi_addrspaces(selfref_gep) == [0]
+
+        @test LLVM.verify(mod) === nothing
+    end
+end
+
+@testset "unfold_root_phi_loads! with the load hoisted past the phi's block" begin
+    # LLVM hoists the load of the merged root into a later block, such as the
+    # preheader of the loop that uses it (`copyto!` from a row view on 1.13.1).
+    LLVM.Context() do ctx
+        mod = parse(
+            LLVM.Module, """
+            source_filename = "start"
+            target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+            target triple = "x86_64-linux-gnu"
+
+            declare i64 @llvm.smax.i64(i64, i64)
+            declare void @fill({} addrspace(10)**)
+
+            define {} addrspace(10)* @preheader(i1 %c, i64 %n, {} addrspace(10)** nonnull dereferenceable(8) %arg) {
+            top:
+              %roots = alloca {} addrspace(10)*, align 8
+              br i1 %c, label %a, label %b
+
+            a:
+              call void @fill({} addrspace(10)** %roots)
+              br label %merge
+
+            b:
+              br label %merge
+
+            merge:
+              %p = phi {} addrspace(10)** [ %roots, %a ], [ %arg, %b ]
+              %m = call i64 @llvm.smax.i64(i64 %n, i64 0)
+              %cc = icmp ult i64 %m, 4
+              br i1 %cc, label %ph, label %exit
+
+            ph:
+              %ld = load {} addrspace(10)*, {} addrspace(10)** %p, align 8
+              ret {} addrspace(10)* %ld
+
+            exit:
+              ret {} addrspace(10)* null
+            }
+
+            define {} addrspace(10)* @store_between(i1 %c, i64 %n, {} addrspace(10)** nonnull dereferenceable(8) %arg, i64* %out) {
+            top:
+              %roots = alloca {} addrspace(10)*, align 8
+              br i1 %c, label %a, label %b
+
+            a:
+              call void @fill({} addrspace(10)** %roots)
+              br label %merge
+
+            b:
+              br label %merge
+
+            merge:
+              %p = phi {} addrspace(10)** [ %roots, %a ], [ %arg, %b ]
+              %cc = icmp ult i64 %n, 4
+              br i1 %cc, label %ph, label %exit
+
+            ph:
+              store i64 %n, i64* %out, align 8
+              %ld = load {} addrspace(10)*, {} addrspace(10)** %p, align 8
+              ret {} addrspace(10)* %ld
+
+            exit:
+              ret {} addrspace(10)* null
+            }
+
+            define {} addrspace(10)* @not_dereferenceable(i1 %c, i64 %n, {} addrspace(10)** %arg) {
+            top:
+              %roots = alloca {} addrspace(10)*, align 8
+              br i1 %c, label %a, label %b
+
+            a:
+              call void @fill({} addrspace(10)** %roots)
+              br label %merge
+
+            b:
+              br label %merge
+
+            merge:
+              %p = phi {} addrspace(10)** [ %roots, %a ], [ %arg, %b ]
+              %cc = icmp ult i64 %n, 4
+              br i1 %cc, label %ph, label %exit
+
+            ph:
+              %ld = load {} addrspace(10)*, {} addrspace(10)** %p, align 8
+              ret {} addrspace(10)* %ld
+
+            exit:
+              ret {} addrspace(10)* null
+            }
+
+            define {} addrspace(10)* @two_preds(i1 %c, i1 %d, {} addrspace(10)** nonnull dereferenceable(8) %arg) {
+            top:
+              %roots = alloca {} addrspace(10)*, align 8
+              br i1 %c, label %a, label %b
+
+            a:
+              call void @fill({} addrspace(10)** %roots)
+              br label %merge
+
+            b:
+              br label %merge
+
+            merge:
+              %p = phi {} addrspace(10)** [ %roots, %a ], [ %arg, %b ]
+              br i1 %d, label %ph, label %other
+
+            other:
+              br label %ph
+
+            ph:
+              %ld = load {} addrspace(10)*, {} addrspace(10)** %p, align 8
+              ret {} addrspace(10)* %ld
+            }
+            """
+        )
+
+        # A read-only intrinsic between the phi and the load does not block the
+        # rewrite, and both incoming pointers may be loaded speculatively.
+        preheader = functions(mod)["preheader"]
+        @test Enzyme.Compiler.unfold_root_phi_loads!(preheader)
+        @test root_phi_addrspaces(preheader) == [10]
+
+        # A store before the load could change what it reads.
+        store_between = functions(mod)["store_between"]
+        @test !Enzyme.Compiler.unfold_root_phi_loads!(store_between)
+        @test root_phi_addrspaces(store_between) == [0]
+
+        # Loading the argument where the program did not is only safe when it is
+        # known to be dereferenceable.
+        not_dereferenceable = functions(mod)["not_dereferenceable"]
+        @test !Enzyme.Compiler.unfold_root_phi_loads!(not_dereferenceable)
+        @test root_phi_addrspaces(not_dereferenceable) == [0]
+
+        # The load's block has two predecessors, so the phi's block does not
+        # lead straight to it.
+        two_preds = functions(mod)["two_preds"]
+        @test !Enzyme.Compiler.unfold_root_phi_loads!(two_preds)
+        @test root_phi_addrspaces(two_preds) == [0]
 
         @test LLVM.verify(mod) === nothing
     end

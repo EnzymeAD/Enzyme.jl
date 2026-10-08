@@ -11,6 +11,17 @@ mul_vector(x, y) = [x[1]*y[2], x[2]*y[1]]
 end
 
 
+@testset "tupleconcat" begin
+    @test Enzyme.tupleconcat((1, 2)) === (1, 2)
+    @test Enzyme.tupleconcat((1, 2), (), (3.0,), ("a", [4])) == (1, 2, 3.0, "a", [4])
+    chunks = ntuple(i -> ntuple(j -> Float64(16 * (i - 1) + j), 16), 64)
+    @test Enzyme.tupleconcat(chunks...) === ntuple(Float64, 1024)
+
+    # Forward gradient in many chunks
+    x = collect(1.0:100.0)
+    @test gradient(Forward, x -> sum(abs2, x), x; chunk = Val(3))[1] ≈ 2 .* x
+end
+
 function diffsize(θ0, X)
     return copy(X)
 end

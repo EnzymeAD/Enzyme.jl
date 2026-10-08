@@ -249,6 +249,19 @@ end
     @test autodiff(Reverse, f_dict, Duplicated(params, dparams), Active(5.0)) == ((nothing, 10.0),)
     @test dparams[:var] == 5.0
 
+    # A `String` key hashes through the `memhash_seed` ccall, so every dictionary operation
+    # here loads the symbol from a PLT stub. `check_ir` has to resolve each of those loads to
+    # the same declaration; resolving one to a bare address instead leaves Enzyme
+    # differentiating an anonymous call ("No create nofree of unknown value").
+    function f_strdict(x)
+        d = Dict{String, Float64}()
+        d["a"] = x
+        d["bb"] = 2 * x
+        return d["a"] + d["bb"]
+    end
+
+    @test autodiff(Reverse, f_strdict, Active, Active(3.0))[1][1] == 3.0
+
 
     mutable struct MD
         v::Float64
@@ -2041,4 +2054,25 @@ end
     dx = [0.0, 0.0]
     autodiff(Reverse, result_ok_caller, Duplicated(x, dx), Const(1))
     @test dx ≈ [1.0, 1.0]
+end
+
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3697
+# A non-const global must be read at runtime, not folded to its compile-time value.
+module MutableGlobal3697
+counter = 5000
+@noinline function bump()
+    global counter += 1
+    return counter
+end
+end
+
+mutable_global_3697(x) = x * MutableGlobal3697.bump()
+
+@testset "Non-const global is not folded" begin
+    for _ in 1:3
+        c = MutableGlobal3697.counter
+        @test autodiff(Reverse, mutable_global_3697, Active, Active(2.0))[1][1] == c + 1
+        @test MutableGlobal3697.counter == c + 1
+        MutableGlobal3697.bump()
+    end
 end

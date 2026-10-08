@@ -385,11 +385,11 @@ function load_if_mixed(oval::OT, val::VT) where {OT, VT}
     end
 end
 
-function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nospecialize(oval::LLVM.Value), @nospecialize(val::LLVM.Value))::LLVM.Value
+function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nospecialize(oval::LLVM.Value), @nospecialize(val::LLVM.Value), enzyme_ctx::Union{EnzymeContext, Nothing})::LLVM.Value
     world = enzyme_world()
-    legal, TT, _ = abs_typeof(oval)
+    legal, TT, _ = abs_typeof(oval, enzyme_ctx)
     if !legal
-        legal, TT, _ = abs_typeof(oval, true)
+        legal, TT, _ = abs_typeof(oval, enzyme_ctx, true)
         if legal
             if active_reg(TT, world) == AnyState
                 return val
@@ -398,7 +398,7 @@ function val_from_byref_if_mixed(B::LLVM.IRBuilder, gutils::GradientUtils, @nosp
         return emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, load_if_mixed), new_from_original(gutils, oval), val]) 
     end
     if !guaranteed_nonactive(TT, world)
-        legal2, TT2, _ = abs_typeof(val)
+        legal2, TT2, _ = abs_typeof(val, enzyme_ctx)
         if legal2
 	        @assert TT2 <: Base.RefValue
 	    else
@@ -432,11 +432,11 @@ end
     end
 end
 
-function byref_from_val_if_mixed(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value))::LLVM.Value
+function byref_from_val_if_mixed(B::LLVM.IRBuilder, @nospecialize(val::LLVM.Value), enzyme_ctx::Union{EnzymeContext, Nothing})::LLVM.Value
     world = enzyme_world()
-    legal, TT, _ = abs_typeof(val)
+    legal, TT, _ = abs_typeof(val, enzyme_ctx)
     if !legal
-        legal, TT, _ = abs_typeof(val, true)
+        legal, TT, _ = abs_typeof(val, enzyme_ctx, true)
         if legal && active_reg(TT, world) == AnyState
             return val
         end
@@ -595,7 +595,7 @@ function emit_ntuple_type!(B::LLVM.IRBuilder, @nospecialize(count::LLVM.Value), 
     return call!(B, FT, fn, LLVM.Value[unsafe_to_llvm(B, T), count])
 end
 
-function emit_apply_type!(B::LLVM.IRBuilder, @nospecialize(Ty::Type), args::Vector{LLVM.Value})::LLVM.Value
+function emit_apply_type!(B::LLVM.IRBuilder, @nospecialize(Ty::Type), args::Vector{LLVM.Value}, enzyme_ctx::Union{EnzymeContext, Nothing})::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -603,7 +603,7 @@ function emit_apply_type!(B::LLVM.IRBuilder, @nospecialize(Ty::Type), args::Vect
     legal = true
     found = Any[]
     for arg in args
-        slegal, foundv = absint(arg)
+        slegal, foundv = absint(arg, enzyme_ctx)
         if slegal
 	    push!(found, unbind(foundv))
         else
@@ -650,7 +650,7 @@ function emit_apply_type!(B::LLVM.IRBuilder, @nospecialize(Ty::Type), args::Vect
     return tag
 end
 
-function emit_tuple!(B::LLVM.IRBuilder, args::Vector{LLVM.Value})::LLVM.Value
+function emit_tuple!(B::LLVM.IRBuilder, args::Vector{LLVM.Value}, enzyme_ctx::Union{EnzymeContext, Nothing})::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -658,7 +658,7 @@ function emit_tuple!(B::LLVM.IRBuilder, args::Vector{LLVM.Value})::LLVM.Value
     legal = true
     found = Any[]
     for arg in args
-        slegal, foundv = absint(arg)
+        slegal, foundv = absint(arg, enzyme_ctx)
         if slegal
 	    push!(found, unbind(foundv))
         else
@@ -704,12 +704,12 @@ function emit_tuple!(B::LLVM.IRBuilder, args::Vector{LLVM.Value})::LLVM.Value
     return tag
 end
 
-function emit_jltypeof!(B::LLVM.IRBuilder, @nospecialize(arg::LLVM.Value))::LLVM.Value
+function emit_jltypeof!(B::LLVM.IRBuilder, @nospecialize(arg::LLVM.Value), enzyme_ctx::Union{EnzymeContext, Nothing})::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
 
-    legal, val, byref = abs_typeof(arg)
+    legal, val, byref = abs_typeof(arg, enzyme_ctx)
     if legal
         return unsafe_to_llvm(B, val)
     end
@@ -721,7 +721,7 @@ function emit_jltypeof!(B::LLVM.IRBuilder, @nospecialize(arg::LLVM.Value))::LLVM
     call!(B, FT, fn, [arg])
 end
 
-function emit_methodinstance!(B::LLVM.IRBuilder, @nospecialize(func), args::Vector{LLVM.Value})::LLVM.Value
+function emit_methodinstance!(B::LLVM.IRBuilder, @nospecialize(func), args::Vector{LLVM.Value}, enzyme_ctx::Union{EnzymeContext, Nothing})::LLVM.Value
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
@@ -733,11 +733,11 @@ function emit_methodinstance!(B::LLVM.IRBuilder, @nospecialize(func), args::Vect
 
     primalvaltys = LLVM.Value[unsafe_to_llvm(B, Core.Typeof(func))]
     for a in args
-        push!(primalvaltys, emit_jltypeof!(B, a))
+        push!(primalvaltys, emit_jltypeof!(B, a, enzyme_ctx))
     end
 
     meth = only(methods(func))
-    tag = emit_apply_type!(B, Tuple, primalvaltys)
+    tag = emit_apply_type!(B, Tuple, primalvaltys, enzyme_ctx)
 
     #    TT = meth.sig
     #    while TT isa UnionAll
@@ -1024,8 +1024,8 @@ function get_array_elsz(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
     return LLVM.load!(B, elsz, v)
 end
 
-function emit_layout_of_type!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value))
-    legal, JTy = absint(ty)
+function emit_layout_of_type!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value), enzyme_ctx::Union{EnzymeContext, Nothing})
+    legal, JTy = absint(ty, enzyme_ctx)
     # The layout is not a GC object. Do not use address space 10 for it,
     # because LateLowerGCFrame then puts the pointer in a GC frame slot
     # and the GC writes mark bits before the layout.
@@ -1045,8 +1045,8 @@ function emit_layout_of_type!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value))
     return load!(B, lptr, layoutp)
 end
 
-function emit_type_layout_elsz!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value))
-	legal, JTy = absint(ty)
+function emit_type_layout_elsz!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value), enzyme_ctx::Union{EnzymeContext, Nothing})
+    legal, JTy = absint(ty, enzyme_ctx)
 	if legal
 	    JTy = unbind(JTy)
 	    @assert JTy isa Type
@@ -1054,7 +1054,7 @@ function emit_type_layout_elsz!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value)
 	    return LLVM.ConstantInt(res)
 	end
 
-	ty = emit_layout_of_type!(B, ty)
+    ty = emit_layout_of_type!(B, ty, enzyme_ctx)
 	@assert !isa(ty, LLVM.ConstantExpr)
 	@assert !isa(ty, LLVM.Constant)
 	i32 = LLVM.IntType(32)
@@ -1062,9 +1062,9 @@ function emit_type_layout_elsz!(B::LLVM.IRBuilder, @nospecialize(ty::LLVM.Value)
 	return load!(B, i32, lty)
 end
 
-function get_memory_elsz(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
-    ty = emit_jltypeof!(B, array)
-    return emit_type_layout_elsz!(B, ty)
+function get_memory_elsz(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value), enzyme_ctx::Union{EnzymeContext, Nothing})
+    ty = emit_jltypeof!(B, array, enzyme_ctx)
+    return emit_type_layout_elsz!(B, ty, enzyme_ctx)
 end
 
 function get_array_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
@@ -1104,7 +1104,7 @@ function get_array_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
     return LLVM.load!(B, sizeT, v)
 end
 
-function get_memory_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
+function get_memory_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value), enzyme_ctx::Union{EnzymeContext, Nothing})
     if isa(array, LLVM.CallInst)
         fn = LLVM.called_operand(array)
         nm = ""
@@ -1125,7 +1125,7 @@ function get_memory_len(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
 	    )
 	        # This is number of bytes not number of elements
 		res = get_memory_size(B, array)
-		es = get_memory_elsz(B, array)
+            es = get_memory_elsz(B, array, enzyme_ctx)
 		return udiv!(B, res, es)
         end
     end
@@ -1163,7 +1163,7 @@ function get_memory_nbytes(B::LLVM.IRBuilder, memty::Type{<:Memory}, nel::LLVM.V
 end
 end
 
-function get_memory_nbytes(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
+function get_memory_nbytes(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value), enzyme_ctx::Union{EnzymeContext, Nothing})
     if isa(array, LLVM.CallInst)
         fn = LLVM.called_operand(array)
         nm = ""
@@ -1179,8 +1179,8 @@ function get_memory_nbytes(B::LLVM.IRBuilder, @nospecialize(array::LLVM.Value))
 		return res
         end
     end
-    nel = get_memory_len(B, array)
-    legal, memty = abs_typeof(array)
+    nel = get_memory_len(B, array, enzyme_ctx)
+    legal, memty = abs_typeof(array, enzyme_ctx)
     @assert legal
     return get_memory_nbytes(B, memty, nel)
 end

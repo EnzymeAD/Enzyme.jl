@@ -6,12 +6,13 @@ function array_shadow_handler(
         Args::Ptr{LLVM.API.LLVMValueRef},
         gutils::API.EnzymeGradientUtilsRef,
     )::LLVM.API.LLVMValueRef
+    enzyme_ctx = enzyme_context()
     inst = LLVM.Instruction(OrigCI)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(inst)))
     ctx = LLVM.context(LLVM.Value(OrigCI))
     gutils = GradientUtils(gutils)
 
-    legal, typ, byref = abs_typeof(inst)
+    legal, typ, byref = abs_typeof(inst, enzyme_ctx)
     if !legal
         throw(
             AssertionError(
@@ -69,8 +70,32 @@ function array_shadow_handler(
 
     arlen = nothing
 
+    if nm == "jl_alloc_genericmemory_unchecked" || nm == "ijl_alloc_genericmemory_unchecked"
+        # The unchecked allocator leaves the length for codegen to store, and
+        # the GC reads it to account the malloc'd buffer. Store it before the
+        # next safepoint rather than where the primal's store is mirrored.
+        # The store is volatile since LLVM would otherwise remove it as dead,
+        # not knowing that a GC at an intervening call reads it.
+        stride = elsz + (isunboxed && isunion)
+        nbytes_arg = vals[2]
+        nel = if stride == 0
+            LLVM.ConstantInt(LLVM.value_type(nbytes_arg), 0, false)
+        else
+            LLVM.udiv!(b, nbytes_arg, LLVM.ConstantInt(LLVM.value_type(nbytes_arg), stride, false))
+        end
+        ST = get_memory_struct()
+        lenptr = inbounds_gep!(
+            b,
+            ST,
+            struct_ptr!(b, anti, ST),
+            LLVM.Value[LLVM.ConstantInt(Int32(0)), LLVM.ConstantInt(Int32(0))],
+        )
+        st = LLVM.store!(b, nel, lenptr)
+        LLVM.API.LLVMSetVolatile(st, true)
+    end
+
     nbytes = if memory
-        get_memory_nbytes(b, anti)
+        get_memory_nbytes(b, anti, enzyme_ctx)
     else
         arlen = get_array_len(b, anti)
         tot = LLVM.mul!(b, arlen, LLVM.ConstantInt(LLVM.value_type(arlen), elsz, false))

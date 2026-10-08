@@ -136,6 +136,11 @@ end
     @test res[1][2] == nothing
     @test calls[] == 2
 
+    # Enzyme skips the rule for a constant call, call it directly.
+    config = EnzymeRules.RevConfig{false, false, 1, (false, false, false), false, false}()
+    @test EnzymeRules.reverse(config, Const(mymul), Const{Float64}, (nothing, nothing), Const(2.0), Const(3.1)) == (nothing, nothing)
+    @test calls[] == 2
+
     res = autodiff(Reverse, byref, Const(mymul), BatchDuplicatedNoNeed(Ref(0.0), (Ref(1.2), Ref(1.4))), Active(2.0), Active(2.7))
     @test res[1][3][1] ≈ 1.2 * exp(2.0)
     @test res[1][3][2] ≈ 1.4 * exp(2.0)

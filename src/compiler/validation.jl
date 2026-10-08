@@ -327,15 +327,152 @@ function restore_lookups(mod::LLVM.Module; native_invokes::Bool = true)::Nothing
     return
 end
 
-function check_ir(interp, @nospecialize(job::CompilerJob), mod::LLVM.Module)
-    errors = check_ir!(interp, job, IRError[], mod)
+function check_ir(interp, @nospecialize(job::CompilerJob), mod::LLVM.Module, enzyme_ctx::EnzymeContext)
+    errors = check_ir!(interp, job, IRError[], mod, enzyme_ctx)
     unique!(errors)
     return if !isempty(errors)
         throw(InvalidIRError(job, errors))
     end
 end
 
-function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, mod::LLVM.Module)
+"""
+    PLTGot
+
+What the got of a PLT stub (`jlplt_<name>_<n>_got`) resolves to, read out of the stub before
+`check_ir!` walks any function (see [`plt_gots`](@ref)): `lib` and `sym`, what the stub looks
+up (`lib` a library name or handle, or `nothing` for a function of Julia's runtime, called by
+name). Only that is read ahead: it is what walking the stub folds away. The stub itself and the
+global it stores the address to are read where the got is rewritten, as rewriting another got
+may have deleted a global they share.
+"""
+struct PLTGot
+    lib::Union{String, Ptr{Cvoid}, Nothing}
+    sym::String
+end
+
+"""
+    plt_gots(mod)::Dict{String, PLTGot}
+
+What every PLT got of `mod` resolves to, keyed by the name of the got. Rewriting a load of a
+got reads the library and symbol out of the `ijl_load_and_lookup` call in its stub, and walking
+the stub folds that call away; reading them all before the walk makes the order in which
+`check_ir!` walks the functions irrelevant (GPUCompiler 1.x happens to list stubs after their
+users, 2.x before).
+"""
+function plt_gots(mod::LLVM.Module)::Dict{String, PLTGot}
+    gots = Dict{String, PLTGot}()
+    for fn_got in globals(mod)
+        match_ = match(r"^jlplt_(.*)_\d+_got$", LLVM.name(fn_got))
+        match_ === nothing && continue
+        init = LLVM.initializer(fn_got)
+        init === nothing && continue
+        initfn, _ = get_base_and_offset(init; offsetAllowed = false, inttoptr = false)
+        # A got resolved before has a null initializer.
+        isa(initfn, LLVM.Function) || continue
+        gots[LLVM.name(fn_got)] = plt_got(fn_got, String(match_[1]), initfn)
+    end
+    return gots
+end
+
+# The global the PLT stub `initfn` stores the address of the symbol to.
+function plt_stub_store(mod::LLVM.Module, initfn::LLVM.Function)::LLVM.GlobalVariable
+    loadfn = first(instructions(first(blocks(initfn))))::LLVM.LoadInst
+    opv = operands(loadfn)[1]
+    if !isa(opv, LLVM.GlobalVariable)
+        for iv in instructions(last(blocks(initfn)))
+            if !(iv isa LLVM.StoreInst)
+                continue
+            end
+            gv = operands(iv)[2]
+            if !(gv isa LLVM.GlobalVariable)
+                continue
+            end
+            opv = gv
+            break
+        end
+    end
+    if !isa(opv, LLVM.GlobalVariable)
+        msg = sprint() do io::IO
+            println(io, "Enzyme internal error unsupported got(load)")
+            println(io, "mod=", string(mod))
+            println(io, "initfn=", string(initfn))
+            println(io, "loadfn=", string(loadfn))
+            println(io, "opv=", string(opv))
+        end
+        throw(AssertionError(msg))
+    end
+    return opv::LLVM.GlobalVariable
+end
+
+function plt_got(fn_got::LLVM.GlobalVariable, fname::String, initfn::LLVM.Function)::PLTGot
+    if startswith(fname, "jl_") || startswith(fname, "ijl_") || startswith(fname, "_j_")
+        return PLTGot(nothing, fname)
+    end
+
+    found = nothing
+    for lbb in blocks(initfn)
+        liter = LLVM.API.LLVMGetFirstInstruction(lbb)
+        while liter != C_NULL
+            linst = LLVM.Instruction(liter)
+            liter = LLVM.API.LLVMGetNextInstruction(liter)
+            if !isa(linst, LLVM.CallInst)
+                continue
+            end
+            cv = LLVM.called_operand(linst)
+            if !isa(cv, LLVM.Function)
+                continue
+            end
+            if LLVM.name(cv) == "ijl_load_and_lookup"
+                found = linst
+                break
+            end
+        end
+    end
+    if found === nothing
+        msg = sprint() do io::IO
+            println(io, "Enzyme internal error unsupported got")
+            println(io, "fname=", fname)
+            println(io, "fn_got=", fn_got)
+            println(io, "init=", string(initfn))
+        end
+        throw(AssertionError(msg))
+    end
+
+    legal1, arg1 = abs_cstring(operands(found)[1])
+    if !legal1
+        arg1, _ = get_base_and_offset(operands(found)[1]; offsetAllowed = false, inttoptr = true)
+        if isa(arg1, LLVM.PointerNull)
+            arg1 = LLVM.ConstantInt(0)
+        elseif !isa(arg1, LLVM.ConstantInt)
+            msg = sprint() do io::IO
+                println(io, "Enzyme internal error unsupported got(arg1)")
+                println(io, "fname=", fname)
+                println(io, "fn_got=", fn_got)
+                println(io, "init=", string(initfn))
+                println(io, "found=", string(found))
+                println(io, "arg1=", string(arg1))
+            end
+            throw(AssertionError(msg))
+        end
+        arg1 = reinterpret(Ptr{Cvoid}, convert(UInt, arg1))
+    end
+
+    legal2, sym = abs_cstring(operands(found)[2])
+    if !legal2
+        msg = sprint() do io::IO
+            println(io, "Enzyme internal error unsupported got(fname)")
+            println(io, "fname=", fname)
+            println(io, "fn_got=", fn_got)
+            println(io, "init=", string(initfn))
+            println(io, "found=", string(found))
+            println(io, "fname=", string(operands(found)[2]))
+        end
+        throw(AssertionError(msg))
+    end
+    return PLTGot(arg1, sym)
+end
+
+function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, mod::LLVM.Module, enzyme_ctx::EnzymeContext)
     imported = Set(String[])
     if haskey(functions(mod), "malloc")
         f = functions(mod)["malloc"]
@@ -355,22 +492,24 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     Compiler.rewrite_ccalls!(mod)
 
     del = LLVM.Function[]
+    gots = plt_gots(mod)
     for f in collect(functions(mod))
         if in(f, del)
             continue
         end
-        check_ir!(interp, job, errors, imported, f, del, mod)
+        check_ir!(interp, job, errors, imported, f, del, mod, gots, enzyme_ctx)
     end
     for d in del
         LLVM.API.LLVMDeleteFunction(d)
     end
 
     del = LLVM.Function[]
+    gots = plt_gots(mod)
     for f in collect(functions(mod))
         if in(f, del)
             continue
         end
-        check_ir!(interp, job, errors, imported, f, del, mod)
+        check_ir!(interp, job, errors, imported, f, del, mod, gots, enzyme_ctx)
     end
     for d in del
         LLVM.API.LLVMDeleteFunction(d)
@@ -379,7 +518,36 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     return errors
 end
 
-function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check_mutability::Bool = true, do_replace::Bool = true)::LLVM.Value
+function is_const_binding(addr::UInt)
+    addr == 0 && return false
+    tag = Base.unsafe_load(Base.reinterpret(Ptr{UInt}, addr - sizeof(UInt))) & ~UInt(15)
+    tag == UInt(Base.pointer_from_objref(Core.Binding)) || return false
+    b = Base.unsafe_pointer_to_objref(Base.reinterpret(Ptr{Cvoid}, addr))::Core.Binding
+    gr = b.globalref
+    return isconst(gr.mod, gr.name)
+end
+
+"""
+    slot_object_address(gv, enzyme_ctx) -> Union{LLVM.Value, Nothing}
+
+The address of the object the `julia.constgv` slot `gv` holds, as a constant, or `nothing` if
+it is not known. It is only read from at compile time, never written into the IR: what a fold
+inserts is a named global for the object, which the JIT or GPUCompiler resolves.
+"""
+function slot_object_address(gv::LLVM.GlobalVariable, enzyme_ctx::EnzymeContext)::Union{LLVM.Value, Nothing}
+    # The address is the one `resolve_slots!` writes into the slot: GPUCompiler 2.x reports the
+    # value of a slot as it was emitted, and its address as that of the instance it roots, which
+    # for an immutable value may be another, egal one.
+    ptr = slot_address(enzyme_ctx, LLVM.name(gv))
+    ptr === nothing || return LLVM.ConstantInt(reinterpret(UInt, ptr))
+    init = LLVM.initializer(gv)
+    init === nothing && return nothing
+    return get_base_and_offset(init; offsetAllowed = false, inttoptr = true)[1]
+end
+
+# Fold a load of a constant Julia value into a global named after the value, the slots it may
+# load through being those of the compilation `enzyme_ctx`.
+function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction), enzyme_ctx::EnzymeContext; check_mutability::Bool = true, do_replace::Bool = true)::LLVM.Value
     if !(isa(value_type(inst), LLVM.PointerType) && addrspace(value_type(inst)) == Tracked)
         return inst
     end
@@ -395,23 +563,26 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
     originally_tracked_load = false
     if isa(addr, LLVM.GlobalVariable) && (haskey(metadata(addr), "julia.constgv") || !check_mutability)
         paddr = addr
-        addr = LLVM.initializer(paddr)
+        addr = slot_object_address(paddr, enzyme_ctx)
+        addr === nothing && return inst
         gname = LLVM.name(paddr) * "\$false"
-        addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
         originally_tracked = true
     elseif isa(addr, LLVM.LoadInst)
         paddr = operands(addr)[1]
         if isa(paddr, LLVM.GlobalVariable) && (haskey(metadata(paddr), "julia.constgv") || !check_mutability)
-            addr = LLVM.initializer(paddr)
+            addr = slot_object_address(paddr, enzyme_ctx)
+            addr === nothing && return inst
             gname = LLVM.name(paddr) * "\$true"
-            base_addr, _ = get_base_and_offset(addr; offsetAllowed = true, inttoptr = false)
             originally_tracked = true
-            addr, _ = get_base_and_offset(addr; offsetAllowed = false, inttoptr = true)
             load1 = true
             originally_tracked_load = true
         end
     elseif isa(addr, LLVM.ConstantInt)
-        gname = string(convert(UInt, addr)) * "\$true"
+        # On 1.10 reads from a `jl_binding_t*` are literal pointer loads. Fold them only for a `const` binding.
+        if check_mutability && !(off == 0 && is_const_binding(convert(UInt, addr)))
+            return inst
+        end
+        gname = "jl_binding\$true"
         load1 = true
     end
 
@@ -435,9 +606,6 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
         end
 
         initaddr = convert(UInt, addr) + off
-        if gname isa String
-            gname = gname * "\$$initaddr"
-        end
         ptr = Base.reinterpret(Ptr{Ptr{Cvoid}}, initaddr)
         if load1
             ptr = Base.unsafe_load(ptr, :unordered)
@@ -462,7 +630,7 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
 
         b = IRBuilder()
         position!(b, inst)
-        newf = unsafe_to_llvm(b, obj0; insert_name_if_not_exists = gname)
+        newf = unsafe_to_llvm(b, obj0; insert_name_if_not_exists = gname, enzyme_ctx)
         if do_replace
             replace_uses!(inst, newf)
             LLVM.API.LLVMInstructionEraseFromParent(inst)
@@ -472,7 +640,7 @@ function try_replace_constant_load!(@nospecialize(inst::LLVM.Instruction); check
     return inst
 end
 
-function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, f::LLVM.Function, deletedfns::Vector{LLVM.Function}, mod::LLVM.Module)
+function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, f::LLVM.Function, deletedfns::Vector{LLVM.Function}, mod::LLVM.Module, gots::Dict{String, PLTGot}, enzyme_ctx::EnzymeContext)
     calls = LLVM.CallInst[]
     isInline = API.EnzymeGetCLBool(cglobal((:EnzymeInline, API.libEnzyme))) != 0
     mod = LLVM.parent(f)
@@ -482,7 +650,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             inst = LLVM.Instruction(iter)
             iter = LLVM.API.LLVMGetNextInstruction(iter)
 
-            if try_replace_constant_load!(inst; check_mutability=true, do_replace=true) != inst
+            if try_replace_constant_load!(inst, enzyme_ctx; check_mutability = true, do_replace = true) != inst
                 continue
             end
             if isa(inst, LLVM.CallInst)
@@ -515,123 +683,15 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         end
                     end
                     @assert FT !== nothing
-                    init = LLVM.initializer(fn_got)
-                    if init !== nothing
-                        initfn, _ = get_base_and_offset(init; offsetAllowed = false, inttoptr = false)
-                        loadfn = first(instructions(first(blocks(initfn))))::LLVM.LoadInst
-                        opv = operands(loadfn)[1]
-                        if !isa(opv, LLVM.GlobalVariable)
-                            for iv in instructions(last(blocks(initfn)))
-                                if !(iv isa LLVM.StoreInst)
-                                    continue
-                                end
-                                gv = operands(iv)[2]
-                                if !(gv isa LLVM.GlobalVariable)
-                                    continue
-                                end
-                                opv = gv
-                                break
-                            end
-                        end
-                        if !isa(opv, LLVM.GlobalVariable)
-                            msg = sprint() do io::IO
-                                println(
-                                    io,
-                                    "Enzyme internal error unsupported got(load)",
-                                )
-                                println(io, "mod=", string(mod))
-                                println(io, "initfn=", string(initfn))
-                                println(io, "loadfn=", string(loadfn))
-                                println(io, "opv=", string(opv))
-                            end
-                            throw(AssertionError(msg))
-                        end
-                        opv = opv::LLVM.GlobalVariable
-
-                        if startswith(fname, "jl_") || startswith(fname, "ijl_") || startswith(fname, "_j_")
-                            newf, _ = get_function!(mod, fname, FT)
+                    got = get(gots, LLVM.name(fn_got), nothing)
+                    if got !== nothing
+                        initfn, _ = get_base_and_offset(LLVM.initializer(fn_got); offsetAllowed = false, inttoptr = false)
+                        opv = plt_stub_store(mod, initfn)
+                        if got.lib === nothing
+                            newf, _ = get_function!(mod, got.sym, FT)
                         else
-                            found = nothing
-                            for lbb in blocks(initfn)
-                                liter = LLVM.API.LLVMGetFirstInstruction(lbb)
-                                while liter != C_NULL
-                                    linst = LLVM.Instruction(liter)
-                                    liter = LLVM.API.LLVMGetNextInstruction(liter)
-                                    if !isa(linst, LLVM.CallInst)
-                                        continue
-                                    end
-                                    cv = LLVM.called_operand(linst)
-                                    if !isa(cv, LLVM.Function)
-                                        continue
-                                    end
-                                    if LLVM.name(cv) == "ijl_load_and_lookup"
-                                        found = linst
-                                        break
-                                    end
-                                end
-                            end
-                            if found == nothing
-                                msg = sprint() do io::IO
-                                    println(
-                                        io,
-                                        "Enzyme internal error unsupported got",
-                                    )
-                                    println(io, "inst=", inst)
-                                    println(io, "fname=", fname)
-                                    println(io, "FT=", FT)
-                                    println(io, "fn_got=", fn_got)
-                                    println(io, "init=", string(initfn))
-                                    println(io, "opv=", string(opv))
-                                end
-                                throw(AssertionError(msg))
-                            end
-
-                            legal1, arg1 = abs_cstring(operands(found)[1])
-                            if legal1
-                            else
-                                arg1, _ = get_base_and_offset(operands(found)[1]; offsetAllowed = false, inttoptr = true)
-                                if isa(arg1, LLVM.PointerNull)
-                                    arg1 = LLVM.ConstantInt(0)
-                                elseif !isa(arg1, LLVM.ConstantInt)
-                                    msg = sprint() do io::IO
-                                        println(
-                                            io,
-                                            "Enzyme internal error unsupported got(arg1)",
-                                        )
-                                        println(io, "inst=", inst)
-                                        println(io, "fname=", fname)
-                                        println(io, "FT=", FT)
-                                        println(io, "fn_got=", fn_got)
-                                        println(io, "init=", string(initfn))
-                                        println(io, "opv=", string(opv))
-                                        println(io, "found=", string(found))
-                                        println(io, "arg1=", string(arg1))
-                                    end
-                                    throw(AssertionError(msg))
-                                end
-
-                                arg1 = reinterpret(Ptr{Cvoid}, convert(UInt, arg1))
-                            end
-
-                            legal2, fname = abs_cstring(operands(found)[2])
-                            if !legal2
-                                msg = sprint() do io::IO
-                                    println(
-                                        io,
-                                        "Enzyme internal error unsupported got(fname)",
-                                    )
-                                    println(io, "inst=", inst)
-                                    println(io, "fname=", fname)
-                                    println(io, "FT=", FT)
-                                    println(io, "fn_got=", fn_got)
-                                    println(io, "init=", string(initfn))
-                                    println(io, "opv=", string(opv))
-                                    println(io, "found=", string(found))
-                                    println(io, "fname=", string(operands(found)[2]))
-                                end
-                                throw(AssertionError(msg))
-                            end
-
+                            arg1 = got.lib
+                            fname = got.sym
                             newf = nothing
                             if arg1 isa AbstractString
                                 found, newf = try_import_llvmbc(mod, arg1, fname, imported)
@@ -713,7 +773,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
     while length(calls) > 0
         inst = pop!(calls)
-        check_ir!(interp, job, errors, imported, inst, calls, mod)
+        check_ir!(interp, job, errors, imported, inst, calls, mod, enzyme_ctx)
     end
 
     return errors
@@ -923,7 +983,8 @@ is inlined and discarded just as a lone import was.
 """
 function import_cached_autodiff!(mod::LLVM.Module, ptr::Ptr{Cvoid}, FT::LLVM.FunctionType)
     enzyme_ctx = enzyme_context()
-    pname, bitcode = autodiff_cache[ptr]
+    cached = autodiff_cache[ptr]
+    pname = cached.entry
 
     if haskey(enzyme_ctx.imported_thunks, ptr)
         if haskey(functions(mod), pname)
@@ -937,7 +998,7 @@ function import_cached_autodiff!(mod::LLVM.Module, ptr::Ptr{Cvoid}, FT::LLVM.Fun
     end
 
     @assert !haskey(functions(mod), pname) || isdeclaration(functions(mod)[pname])
-    pmod = parse(LLVM.Module, unsafe_wrap(Vector{UInt8}, bitcode))
+    pmod = parse(LLVM.Module, unsafe_wrap(Vector{UInt8}, cached.bitcode))
     @assert haskey(functions(pmod), pname)
 
     # Everything the blob carries besides the entry is internal, so that a
@@ -955,6 +1016,8 @@ function import_cached_autodiff!(mod::LLVM.Module, ptr::Ptr{Cvoid}, FT::LLVM.Fun
     end
 
     LLVM.link!(mod, pmod)
+    # The blob refers to Julia values by name; this compilation resolves them along with its own.
+    merge_julia_value_table!(enzyme_ctx, cached.value_table)
 
     replaceWith = functions(mod)[pname]
     push!(function_attributes(replaceWith), EnumAttribute("alwaysinline"))
@@ -987,7 +1050,7 @@ end
 import GPUCompiler:
     DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
 import GPUCompiler: backtrace, isintrinsic
-function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, inst::LLVM.CallInst, calls::Vector{LLVM.CallInst}, mod::LLVM.Module)
+function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRError}, imported::Set{String}, inst::LLVM.CallInst, calls::Vector{LLVM.CallInst}, mod::LLVM.Module, enzyme_ctx::EnzymeContext)
     world = job.world
     method_table = Core.Compiler.method_table(interp)
     bt = backtrace(inst)
@@ -1049,7 +1112,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
             op1 = operands(inst)[1]
             if isa(op1, LLVM.Instruction)
-                op1 = try_replace_constant_load!(op1; check_mutability=false, do_replace=false)
+                op1 = try_replace_constant_load!(op1, enzyme_ctx; check_mutability = false, do_replace = false)
             end
             arg1, _ = get_base_and_offset(op1; offsetAllowed = false, inttoptr = true)
             if isa(arg1, LLVM.ConstantInt)
@@ -1161,10 +1224,10 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             @assert length(ops) == 2
             flib = ops[1]
             if isa(flib, LLVM.Instruction)
-                flib = try_replace_constant_load!(flib; check_mutability=false, do_replace=false)
+                flib = try_replace_constant_load!(flib, enzyme_ctx; check_mutability = false, do_replace = false)
             end
             if isa(flib, LLVM.ConstantExpr) || isa(flib, LLVM.GlobalVariable)
-                legal, flib2 = absint(flib)
+                legal, flib2 = absint(flib, enzyme_ctx)
                 if legal
                     flib = unbind(flib2)
                 end
@@ -1192,7 +1255,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
             # Julia 1.13+: fname is an ejl_inserted GlobalVariable holding a Julia Symbol.
             if !isa(fname, String)
-                legal2, sym = absint(fname_llvm)
+                legal2, sym = absint(fname_llvm, enzyme_ctx)
                 if legal2
                     sym = unbind(sym)
                     if isa(sym, GlobalRef) && isdefined(sym.mod, sym.name)
@@ -1383,12 +1446,12 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 # Add 1 to account for function being first arg
                 iteroff = 2
 
-                legal, iterlib = absint(operands(inst)[iteroff + 1])
+                legal, iterlib = absint(operands(inst)[iteroff + 1], enzyme_ctx)
                 iterlib = unbind(iterlib)
                 if legal && iterlib == Base.iterate
-                    legal, GT, byref = abs_typeof(operands(inst)[4 + 1], true)
+                    legal, GT, byref = abs_typeof(operands(inst)[4 + 1], enzyme_ctx, true)
                     funcoff = 3
-                    legal2, funclib, byref2 = abs_typeof(operands(inst)[funcoff + 1])
+                    legal2, funclib, byref2 = abs_typeof(operands(inst)[funcoff + 1], enzyme_ctx)
                     if legal && (GT <: Vector || GT <: Tuple)
                         if legal2
                             tys = Union{Type, Core.TypeofVararg}[funclib, Vararg{Any}]
@@ -1463,17 +1526,17 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
             if isa(dest, LLVM.Function) && in(LLVM.name(dest), keys(generic_method_offsets))
                 offset, start = generic_method_offsets[LLVM.name(dest)]
                 # Add 1 to account for function being first arg
-                legal, flibty, byref = abs_typeof(operands(inst)[offset + 1])
+                legal, flibty, byref = abs_typeof(operands(inst)[offset + 1], enzyme_ctx)
                 if legal
                     tys = Union{Type, Core.TypeofVararg}[flibty]
                     for op in @view arg_operands_view(inst)[(start + 1):end]
-                        legal, typ, byref2 = abs_typeof(op, true)
+                        legal, typ, byref2 = abs_typeof(op, enzyme_ctx, true)
                         if !legal
                             typ = Any
                         end
                         push!(tys, typ)
                     end
-                    legal, flib = absint(operands(inst)[offset + 1])
+                    legal, flib = absint(operands(inst)[offset + 1], enzyme_ctx)
                     flib = unbind(flib)
                     if legal && isa(flib, Core.MethodInstance)
                         if !Base.isvarargtype(flib.specTypes.parameters[end])
@@ -1619,17 +1682,17 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
         if isa(dest, LLVM.Function) && in(LLVM.name(dest), keys(generic_method_offsets))
             offset, start = generic_method_offsets[LLVM.name(dest)]
 
-            legal, flibty, byref = abs_typeof(operands(inst)[offset])
+            legal, flibty, byref = abs_typeof(operands(inst)[offset], enzyme_ctx)
             if legal
                 tys = Union{Type, Core.TypeofVararg}[flibty]
                 for op in @view arg_operands_view(inst)[start:end]
-                    legal, typ, byref2 = abs_typeof(op, true)
+                    legal, typ, byref2 = abs_typeof(op, enzyme_ctx, true)
                     if !legal
                         typ = Any
                     end
                     push!(tys, typ)
                 end
-                legal, flib = absint(operands(inst)[offset + 1])
+                legal, flib = absint(operands(inst)[offset + 1], enzyme_ctx)
                 flib = unbind(flib)
                 if legal && isa(flib, Core.MethodInstance)
                     if !Base.isvarargtype(flib.specTypes.parameters[end])
@@ -1690,7 +1753,7 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 end
 
 
-function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world::UInt, width::Int)
+function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world::UInt, width::Int, enzyme_ctx::EnzymeContext)
     todo = Tuple{LLVM.Value, Tuple}[]
     for b in blocks(enzymefn)
         term = terminator(b)
@@ -1758,7 +1821,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world
             end
 
             if nm == "julia.gc_alloc_obj"
-                legal, Ty, byref = abs_typeof(cur)
+                legal, Ty, byref = abs_typeof(cur, enzyme_ctx)
                 @assert legal
                 if !guaranteed_nonactive(Ty, world)
                     NTy = Base.RefValue{Ty}
@@ -1843,7 +1906,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world
 
         if length(off) == 0 &&
                 value_type(cur) == LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
-            legal, typ, byref = abs_typeof(cur)
+            legal, typ, byref = abs_typeof(cur, enzyme_ctx)
             if legal
                 if guaranteed_nonactive(typ, world)
                     continue

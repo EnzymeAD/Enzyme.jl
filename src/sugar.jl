@@ -72,7 +72,7 @@ end
             Compiler.emit_box_int32!(builder, len)
         end
 
-        tag = Compiler.emit_apply_type!(builder, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(builder, T)])
+        tag = Compiler.emit_apply_type!(builder, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(builder, T)], #=enzyme_ctx=# nothing)
 
         fullsize = LLVM.nuwmul!(builder, len, LLVM.ConstantInt(sizeof(Int)))
         obj = Compiler.emit_allocobj!(builder, tag, fullsize, needs_dynamic_size_workaround)
@@ -432,9 +432,21 @@ end
     return ((one(x),),)
 end
 
-@inline tupleconcat(x) = x
-@inline tupleconcat(x, y) = (x..., y...)
-@inline tupleconcat(x, y, z...) = (x..., tupleconcat(y, z...)...)
+# Concatenate tuples into one tuple. Built as a single tuple expression, since
+# splatting recursively copies each intermediate tuple and so is quadratic in
+# the number of tuples.
+@generated function tupleconcat(xs::Tuple...)
+    elems = Expr[]
+    for (i, T) in enumerate(xs)
+        for j in 1:fieldcount(T)
+            push!(elems, :(xs[$i][$j]))
+        end
+    end
+    return quote
+        Base.@_inline_meta
+        ($(elems...),)
+    end
+end
 
 @generated function create_shadows(chunk::ChunkTy, x::X, vargs::Vararg{Any,N}) where {ChunkTy, X, N}
     args =  Union{Symbol,Expr}[:x]
@@ -462,36 +474,28 @@ end
     end
 end
 
-struct TupleArray{T,Shape,Length,N} <: AbstractArray{T,N}
+# The shape is a field rather than a type parameter: it is only known at runtime, so as a type
+# parameter every construction would build a new type dynamically.
+struct TupleArray{T, Length, N} <: AbstractArray{T, N}
     data::NTuple{Length,T}
+    shape::NTuple{N, Int}
 end
-TupleArray(data::NTuple{Length,T}, Shape) where {Length,T} =
-    TupleArray{T,Shape,Length,length(Shape)}(data)
 
 @inline Base.eltype(::TupleArray{T}) where {T} = T
 @inline Base.eltype(::Type{<:TupleArray{T}}) where {T} = T
-@inline Base.size(::TupleArray{<:Any,Shape}) where {Shape} = Shape
-@inline Base.ndims(::TupleArray{<:Any,<:Any,<:Any,N}) where {N} = N
+@inline Base.size(a::TupleArray) = a.shape
+@inline Base.ndims(::TupleArray{<:Any, <:Any, N}) where {N} = N
 
-function Base.convert(
-    ::Type{Array{T,N}},
-    X::TupleArray{T,Shape,Length,N},
-) where {T,Shape,Length,N}
-    vals = Array{T,N}(undef, Shape...)
+# The data is stored in column-major order, like an `Array`.
+Base.IndexStyle(::Type{<:TupleArray}) = IndexLinear()
+@inline Base.getindex(a::TupleArray, i::Int) = a.data[i]
+
+function Base.convert(::Type{Array{T, N}}, X::TupleArray{T, Length, N}) where {T, Length, N}
+    vals = Array{T, N}(undef, size(X)...)
     for i = 1:Length
-        @inbounds val[i] = X.data[i]
+        @inbounds vals[i] = X.data[i]
     end
     return vals
-end
-
-function Base.getindex(a::TupleArray, args::Vararg{Int,N}) where {N}
-    start = 0
-    for i = 1:N
-        start *= size(a, N - i + 1)
-        start += (args[N-i+1] - 1)
-    end
-    start += 1
-    return a.data[start]
 end
 
 @inline function tupstack(data::Tuple{Vararg{Array{T}}}, outshape::Tuple{Vararg{Int}}, inshape::Tuple{Vararg{Int}}) where {T}
