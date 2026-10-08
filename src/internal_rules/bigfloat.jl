@@ -67,83 +67,84 @@ function EnzymeRules.reverse(
     return ()
 end
 
-# `BigFloat(x::Clong)` / `BigFloat(x::Culong)` lower to `mpfr_set_si` / `mpfr_set_ui`,
-# for which there is no derivative, so any active use of an integer-constructed
-# BigFloat otherwise fails with `EnzymeNoDerivativeError`.
+# `BigFloat(x::Integer)` lowers to `mpfr_set_si` / `mpfr_set_ui` (for `Clong` / `Culong`)
+# or `mpfr_set_z` (via `BigInt`), for which there is no derivative, so any active use
+# of an integer-constructed BigFloat otherwise fails. Note `Clong === Int32` on Windows,
+# so `BigFloat(::Int64)` takes the `BigInt` path there.
+_bigfloat_rounding_val(r::Const{Base.MPFR.MPFRRoundingMode}) = r.val
+
+# Callable struct constructing `BigFloat(x, rs...; kwargs...)`; each call allocates a
+# fresh BigFloat, so batched shadows built with `ntuple` don't alias one another.
+struct BigFloatIntCtor{T <: Integer, R <: Tuple, K}
+    x::T
+    rs::R
+    kwargs::K
+end
+@inline (f::BigFloatIntCtor)(_...) = BigFloat(f.x, f.rs...; f.kwargs...)
+
 function EnzymeRules.forward(
-    config::EnzymeRules.FwdConfig,
-    Ty::Const{Type{BigFloat}},
-    RT::Type{<:Union{DuplicatedNoNeed,Duplicated,BatchDuplicated,BatchDuplicatedNoNeed}},
-    x::Const{Ti},
-    rs::Const{Base.MPFR.MPFRRoundingMode}...;
-    kwargs...,
-    ) where {Ti <: Union{Clong, Culong}}
-    rvals = map(r -> r.val, rs)
+        config::EnzymeRules.FwdConfig,
+        Ty::Const{Type{BigFloat}},
+        RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}},
+        x::Const{Ti},
+        rs::Const{Base.MPFR.MPFRRoundingMode}...;
+        kwargs...,
+    ) where {Ti <: Integer}
+    rvals = map(_bigfloat_rounding_val, rs)
+    primal = BigFloatIntCtor(x.val, rvals, kwargs)
+    shadow = BigFloatIntCtor(zero(Ti), rvals, kwargs)
     if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
         if EnzymeRules.width(config) == 1
-            return remove_innerty(RT)(
-                Ty.val(x.val, rvals...; kwargs...),
-                Ty.val(zero(Ti), rvals...; kwargs...),
-            )
+            return remove_innerty(RT)(primal(), shadow())
         else
-            tup = ntuple(Val(EnzymeRules.width(config))) do i
-                Base.@_inline_meta
-                Ty.val(zero(Ti), rvals...; kwargs...)
-            end
-            return remove_innerty(RT)(Ty.val(x.val, rvals...; kwargs...), tup)
+            return BatchDuplicated(primal(), ntuple(shadow, Val(EnzymeRules.width(config))))
         end
     elseif EnzymeRules.needs_shadow(config)
         if EnzymeRules.width(config) == 1
-            return Ty.val(zero(Ti), rvals...; kwargs...)
+            return shadow()
         else
-            return ntuple(Val(EnzymeRules.width(config))) do i
-                Base.@_inline_meta
-                Ty.val(zero(Ti), rvals...; kwargs...)
-            end
+            return ntuple(shadow, Val(EnzymeRules.width(config)))
         end
     elseif EnzymeRules.needs_primal(config)
-        return Ty.val(x.val, rvals...; kwargs...)
+        return primal()
     else
         return nothing
     end
 end
 
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.RevConfig,
-    Ty::Const{Type{BigFloat}},
-    RT::Type{<:Union{DuplicatedNoNeed,Duplicated,BatchDuplicated,BatchDuplicatedNoNeed}},
-    x::Const{Ti},
-    rs::Const{Base.MPFR.MPFRRoundingMode}...;
-    kwargs...,
-    ) where {Ti <: Union{Clong, Culong}}
-    rvals = map(r -> r.val, rs)
+        config::EnzymeRules.RevConfig,
+        Ty::Const{Type{BigFloat}},
+        RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}},
+        x::Const{Ti},
+        rs::Const{Base.MPFR.MPFRRoundingMode}...;
+        kwargs...,
+    ) where {Ti <: Integer}
+    rvals = map(_bigfloat_rounding_val, rs)
     primal = if EnzymeRules.needs_primal(config)
-        Ty.val(x.val, rvals...; kwargs...)
+        BigFloatIntCtor(x.val, rvals, kwargs)()
     else
         nothing
     end
     shadow = if RT <: Const
         nothing
     elseif EnzymeRules.width(config) == 1
-        Ty.val(zero(Ti), rvals...; kwargs...)
+        BigFloatIntCtor(zero(Ti), rvals, kwargs)()
     else
-        ntuple(Val(EnzymeRules.width(config))) do i
-            Base.@_inline_meta
-            Ty.val(zero(Ti), rvals...; kwargs...)
-        end
+        ntuple(BigFloatIntCtor(zero(Ti), rvals, kwargs), Val(EnzymeRules.width(config)))
     end
     return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfig,
-    Ty::Const{Type{BigFloat}},
-    RT::Type{<:Union{DuplicatedNoNeed,Duplicated,BatchDuplicated,BatchDuplicatedNoNeed}},
-    tape,
-    x::Const{<:Union{Culong, Clong}},
-    rs::Const{Base.MPFR.MPFRRoundingMode}...;
-    kwargs...,
-)
+        config::EnzymeRules.RevConfig,
+        Ty::Const{Type{BigFloat}},
+        RT::Type{<:Union{DuplicatedNoNeed, Duplicated, BatchDuplicated, BatchDuplicatedNoNeed}},
+        tape,
+        x::Const{<:Integer},
+        rs::Const{Base.MPFR.MPFRRoundingMode}...;
+        kwargs...,
+    )
     # the integer argument carries no derivative
     return ntuple(Returns(nothing), Val(1 + length(rs)))
 end
