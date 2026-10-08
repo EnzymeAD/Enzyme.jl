@@ -647,6 +647,8 @@ function materialize_native_invokes!(mode::API.CDerivativeMode, mod::LLVM.Module
     for fn in collect(functions(mod))
         isdeclaration(fn) || continue
         has_fn_attr(fn, marker) || continue
+        # A callee Enzyme never differentiates needs no body (see `bind_native_callees!`).
+        has_fn_attr(fn, StringAttribute("enzymejl_native_inactive")) && continue
         mi, RT = enzyme_custom_extract_mi(fn)
         llvmf = nested_codegen!(mode, mod, mi, true)
         check_specsig(llvmf, mi, enzyme_custom_extract_mi(llvmf)[2])
