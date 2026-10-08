@@ -295,9 +295,11 @@ end
 
 #=
 The AbstractGPUArray reduction rules. `sum`/`mapreduce` over a GPU array goes
-through `GPUArrays._mapreduce`, which allocates the output and fills it with
-`GPUArrays.mapreducedim!`; both have rules in EnzymeGPUArraysExt. Without them
-Enzyme descends into the backend reduction kernel, which aborts on a JLArray.
+through `GPUArrays._mapreduce`, which allocates the output and, before GPUArrays
+12, fills it with `GPUArrays.mapreducedim!`; both have rules in
+EnzymeGPUArraysExt. GPUArrays 12 reduces with AcceleratedKernels and has no
+`mapreducedim!`, so there only the `_mapreduce` rules apply. Without them Enzyme
+descends into the backend reduction kernel, which aborts on a JLArray.
 =#
 @testset "GPUArrays reduction rules" begin
     jl(x) = JLArray(x)
