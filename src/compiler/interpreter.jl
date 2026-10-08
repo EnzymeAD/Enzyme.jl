@@ -148,8 +148,8 @@ function EnzymeInterpreter(
     inactive_rules::Bool,
     broadcast_rewrite::Bool = true,
     within_autodiff_rewrite::Bool = true,
-    handler = nothing;
-    native_callees::Bool = false
+        handler = nothing;
+        native_callees::Bool = false
 )
     @assert world <= Base.get_world_counter()
 
@@ -272,7 +272,7 @@ function EnzymeInterpreter(interp::EnzymeInterpreter;
     inactive_rules = interp.inactive_rules,
     broadcast_rewrite = interp.broadcast_rewrite,
     within_autodiff_rewrite = interp.within_autodiff_rewrite,
-    native_callees = interp.native_callees,
+        native_callees = interp.native_callees,
     handler = interp.handler)
     return EnzymeInterpreter(
         cache_or_token,
