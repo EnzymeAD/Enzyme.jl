@@ -47,6 +47,7 @@ import EnzymeCore: EnzymeRules, ABI, FFIABI, DefaultABI
 
 using LLVM, GPUCompiler, Libdl
 import Enzyme_jll
+import CompilerCaching
 
 import GPUCompiler: CompilerJob, compile, safe_name
 using LLVM.Interop
@@ -211,6 +212,16 @@ end
 # other views are specific to a world, so only share inference results within that world
 method_tables(@nospecialize(view::Core.Compiler.MethodTableView)) = (view,)
 
+# Whether inference for code that looks methods up in `view` calls derivative-free callees
+# natively (see compiler/native_callees.jl): only code for the host can, which looks methods
+# up in Julia's own method table or in GPUCompiler's global one. Back-ends stack their own
+# overlay tables for device code. Julia 1.10 and 1.11 stay off for now: with it, Julia 1.10's
+# GC lowering crashes on some augmented calls that return mixed tracked and untracked fields
+# through an sret buffer.
+const NATIVE_CALLEES = VERSION >= v"1.12-beta3"
+native_callees_for(@nospecialize(view::Core.Compiler.MethodTableView)) =
+    NATIVE_CALLEES && method_tables(view) in ((), (GPUCompiler.GLOBAL_METHOD_TABLE,))
+
 # provide a specific interpreter to use.
 if VERSION >= v"1.11.0-DEV.1552"
     # The owner of the CodeInstances produced by an `EnzymeInterpreter`, compared with
@@ -226,26 +237,31 @@ if VERSION >= v"1.11.0-DEV.1552"
         last_fwd_rule_world::Union{Nothing, Tuple}
         last_rev_rule_world::Union{Nothing, Tuple}
         last_ina_rule_world::Union{Nothing, Tuple}
+        native_callees::Bool
     end
 
-    @inline EnzymeCacheToken(method_tables::Tuple, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
+    @inline EnzymeCacheToken(method_tables::Tuple, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool, native_callees::Bool) =
         EnzymeCacheToken(
         method_tables,
             is_forward ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.forward, Tuple{<:EnzymeCore.EnzymeRules.FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
             is_reverse ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:EnzymeCore.EnzymeRules.RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
-            inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
+            inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing,
+            native_callees
         )
 
     # The owner of the code instances Enzyme infers for `job`. GPUCompiler asks for it through
     # a hook whose name differs between its majors.
-    enzyme_cache_owner(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
-        EnzymeCacheToken(
-        method_tables(GPUCompiler.method_table_view(job)),
+    function enzyme_cache_owner(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams})
+        view = GPUCompiler.method_table_view(job)
+        return EnzymeCacheToken(
+            method_tables(view),
             job.world,
             job.config.params.mode == API.DEM_ForwardMode,
             job.config.params.mode != API.DEM_ForwardMode,
-            true
+            true,
+            native_callees_for(view)
         )
+    end
 
     @static if HAS_GPUCOMPILER_2
         GPUCompiler.cache_owner(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
@@ -261,7 +277,8 @@ if VERSION >= v"1.11.0-DEV.1552"
             GPUCompiler.method_table_view(job),
             job.world,
             job.config.params.mode,
-            true
+            true,
+            native_callees = native_callees_for(GPUCompiler.method_table_view(job))
         )
 else
 
@@ -292,7 +309,8 @@ else
             GPUCompiler.method_table_view(job),
             job.world,
             job.config.params.mode,
-            true
+            true,
+            native_callees = native_callees_for(GPUCompiler.method_table_view(job))
         )
 end
 
@@ -1170,7 +1188,7 @@ end
 @static if HAS_GPUCOMPILER_2
     @static if VERSION >= v"1.11.0-DEV.1552"
         GPUCompiler.drive_inference!(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance) =
-            GPUCompiler.CompilerCaching.typeinf!(interp, mi)
+            CompilerCaching.typeinf!(interp, mi)
     else
         # Mirrors GPUCompiler's own `CodeCache`-based `drive_inference!` (jlgen.jl), which
         # is typed on `GPUInterpreter` and therefore cannot be reused for ours.

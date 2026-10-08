@@ -11,7 +11,7 @@
 # with `EnzymeInterpreter`, and `compileable_specialization` makes the optimizer emit an
 # `:invoke` of that native CodeInstance.
 #
-# On Julia 1.12 and 1.13, GPUCompiler emits exactly the CodeInstances `ci_cache_populate`
+# On Julia 1.12 and later, GPUCompiler emits exactly the CodeInstances `ci_cache_populate`
 # returns (`jl_emit_native`). A call of a MethodInstance or CodeInstance that is not in
 # that list gets a small specsig stub, which boxes the arguments and calls `jl_invoke` on
 # the callee; none of the callee's body, nor of its callees, is emitted.
@@ -24,24 +24,14 @@
 # file).
 
 """
-    host_interp(interp::EnzymeInterpreter) -> Bool
-
-Say if `interp` infers code for the host: it looks methods up in GPUCompiler's global
-method table only. Back-ends stack their own overlay tables for device code, which
-cannot call code Julia compiled for the host.
-"""
-host_interp(interp::Interpreter.EnzymeInterpreter) =
-    method_tables(interp.method_table) == (GPUCompiler.GLOBAL_METHOD_TABLE,)
-
-"""
     use_native_callees(interp) -> Bool
 
-Say if `interp` resolves derivative-free callees to native code: it infers code for the
-host (see [`host_interp`](@ref)), and Julia is not generating a package image, which
-must not refer to code compiled in this session.
+Say if `interp` resolves derivative-free callees to native code: it was built for code
+for the host (its `native_callees` flag, see `native_callees_for`), and Julia is not
+generating a package image, which must not refer to code compiled in this session.
 """
 use_native_callees(interp::Interpreter.EnzymeInterpreter) =
-    ccall(:jl_generating_output, Cint, ()) == 0 && host_interp(interp)
+    interp.native_callees && !generating_output()
 
 """
     is_native_edge(interp, x) -> Bool
@@ -57,10 +47,10 @@ function is_native_edge(@nospecialize(interp), @nospecialize(x))::Bool
     return native_entry(interp, x) !== nothing
 end
 
-# Julia 1.12 and 1.13: GPUCompiler emits exactly the CodeInstances it gathers for
+# Julia 1.12 and later: GPUCompiler emits exactly the CodeInstances it gathers for
 # `jl_emit_native`, with `ci_cache_populate` on GPUCompiler 1.x and with CompilerCaching's
 # `get_codeinfos` on 2.x. The overrides below follow those for these versions.
-@static if v"1.12-beta3" <= VERSION < v"1.14-"
+@static if v"1.12-beta3" <= VERSION
 
     """
         native_uses_specsig(specTypes, RT) -> Bool
@@ -184,8 +174,6 @@ end
 
     @static if HAS_GPUCOMPILER_2
 
-        const CompilerCaching = GPUCompiler.CompilerCaching
-
         # As CompilerCaching's, except that derivative-free callees are left out, and recorded in
         # the `EnzymeContext` of the compilation for `bind_native_callees!`.
         function CompilerCaching.get_codeinfos(interp::Interpreter.EnzymeInterpreter, root::Core.CodeInstance)
@@ -215,7 +203,7 @@ end
                     src = CompilerCaching.get_source(callee)
                     src === nothing && continue
                 end
-                @static if isdefined(GPUCompiler.CompilerCaching, :resolve_invoke_targets)
+                @static if isdefined(CompilerCaching, :resolve_invoke_targets)
                     src = CompilerCaching.resolve_invoke_targets(interp, src)
                 end
                 push!(codeinfos, callee => src)

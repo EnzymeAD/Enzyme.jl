@@ -1,6 +1,6 @@
 using Enzyme, Test
 
-# Derivative-free callees called natively instead of being emitted (Julia 1.10 to 1.13).
+# Derivative-free callees called natively instead of being emitted (Julia 1.10 and later).
 
 struct NCStructure
     idx::Vector{Int}
@@ -21,7 +21,7 @@ end
 # the boxed `jl_fptr_args` ABI and not a specialized entry: it must stay emitted.
 nc_sortperm(x) = (p = sortperm([3, 1, 2]); x * p[1])
 
-@static if VERSION < v"1.12-" || v"1.12-beta3" <= VERSION < v"1.14-"
+@static if VERSION < v"1.12-" || v"1.12-beta3" <= VERSION
     @testset "Native derivative-free callees" begin
         x = [1.0, 2.0, 3.0]
         dx = zero(x)
