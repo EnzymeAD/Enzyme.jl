@@ -324,6 +324,38 @@ end
     # TODO test for batch and reverse
 end
 
+# `jl_ptr_to_array` writes no memory, so its instruction is inactive when type analysis
+# finds no float in the result, although the returned array is active here (a constant
+# buffer filled with active data by a callee). The rule must still produce the shadow,
+# else the shadow placeholder PHI remains in the middle of the block ("PHI nodes not
+# grouped at top of basic block").
+@noinline function ptr_to_array_fill!(a, x)
+    @inbounds for i in eachindex(a)
+        a[i] = x[1] * x[1]
+    end
+    nothing
+end
+@noinline function ptr_to_array_wrap!(buf::Vector{Float64}, x::Vector{Float64})
+    a = unsafe_wrap(Array, pointer(buf), (2, 2))
+    ptr_to_array_fill!(a, x)
+    nothing
+end
+function ptr_to_array_scratch(x, buf)
+    ptr_to_array_wrap!(buf, x)
+    return buf[1]
+end
+
+@testset "Unsafe wrap of a constant scratch buffer" begin
+    x = [3.0]
+    dx = [0.0]
+    autodiff(Reverse, ptr_to_array_scratch, Active, Duplicated(x, dx), Duplicated(zeros(4), zeros(4)))
+    @test dx ≈ [6.0]
+
+    dx = [0.0]
+    autodiff(set_runtime_activity(Reverse), ptr_to_array_scratch, Active, Duplicated(x, dx), Const(zeros(4)))
+    @test dx ≈ [0.0]
+end
+
 # `__cat_offset!` copies an aggregate with inline roots through a critical edge
 # that the phi of its roots gets split along.
 vcat_view_scalar(x) = sum(abs2, vcat(view(x, 1:2), x[3]))

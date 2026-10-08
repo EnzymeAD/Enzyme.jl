@@ -1829,7 +1829,12 @@ end
 end
 
 @register_fwd function jl_ptr_to_array_fwd(B, orig, gutils, normalR, shadowR)
-    if is_constant_inst(gutils, orig)
+    # `jl_ptr_to_array` does not write to memory, so activity analysis marks the
+    # instruction inactive whenever type analysis finds no float in its result, even if
+    # the returned array is active (e.g. a wrapper of a constant buffer that is later
+    # written with active data). The shadow is needed whenever the value is active,
+    # otherwise the shadow placeholder PHI is left behind in the middle of the block.
+    if is_constant_value(gutils, orig)
         return true
     end
     width = get_width(gutils)
