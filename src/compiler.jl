@@ -245,8 +245,8 @@ if VERSION >= v"1.11.0-DEV.1552"
         method_tables,
             is_forward ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.forward, Tuple{<:EnzymeCore.EnzymeRules.FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
             is_reverse ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:EnzymeCore.EnzymeRules.RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
-            inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing,
-            native_callees
+        inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing,
+        native_callees
         )
 
     # The owner of the code instances Enzyme infers for `job`. GPUCompiler asks for it through
@@ -277,8 +277,8 @@ if VERSION >= v"1.11.0-DEV.1552"
             GPUCompiler.method_table_view(job),
             job.world,
             job.config.params.mode,
-            true,
-            native_callees = native_callees_for(GPUCompiler.method_table_view(job))
+        true,
+        native_callees = native_callees_for(GPUCompiler.method_table_view(job))
         )
 else
 
@@ -309,8 +309,8 @@ else
             GPUCompiler.method_table_view(job),
             job.world,
             job.config.params.mode,
-            true,
-            native_callees = native_callees_for(GPUCompiler.method_table_view(job))
+        true,
+        native_callees = native_callees_for(GPUCompiler.method_table_view(job))
         )
 end
 
