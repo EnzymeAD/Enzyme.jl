@@ -19,14 +19,18 @@ end
 
 nrm(s::S4) = sqrt(s.a^2 + s.b^2 + s.c^2 + s.d^2)
 
-function EnzymeRules.augmented_primal(config::EnzymeRules.RevConfig,
-        func::Const{typeof(nrm)}, ::Type{<:Active}, s::Active{S4})
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(nrm)}, ::Type{<:Active}, s::Active{S4}
+    )
     h = func.val(s.val)
     return EnzymeRules.AugmentedReturn(EnzymeRules.needs_primal(config) ? h : nothing, nothing, h)
 end
 
-function EnzymeRules.reverse(config::EnzymeRules.RevConfig,
-        func::Const{typeof(nrm)}, dret::Active, h, s::Active{S4})
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(nrm)}, dret::Active, h, s::Active{S4}
+    )
     x, d = s.val, dret.val / h
     return (S4(x.a * d, x.b * d, x.c * d, x.d * d),)
 end
@@ -36,10 +40,16 @@ f(s) = lin(s) + nrm(s)
 
 # Whether the shadow slot happens to be 32-aligned depends on the stack, so a
 # run alone does not catch this reliably. Check the IR instead: no vector load
-# or store (the combined fields) may claim more alignment than `S4` has.
+# or store (the combined fields) may claim more alignment than the memory can
+# have. That bound is not `datatype_alignment(S4)`: LLVM may legitimately
+# claim more when it knows the underlying allocation is more aligned (on i686
+# `S4` is 4-aligned, yet the accesses carry `align 8`). Julia never aligns an
+# allocation beyond 16 bytes, so the 32 of `<4 x double>` is never justified.
+const MAX_ALIGN = max(Base.datatype_alignment(S4), 16)
+
 function overaligned_accesses(ir)
     pat = r"(?:load|store) <\d+ x [^\n]*, align (\d+)"
-    return [m.match for m in eachmatch(pat, ir) if parse(Int, m[1]) > Base.datatype_alignment(S4)]
+    return [m.match for m in eachmatch(pat, ir) if parse(Int, m[1]) > MAX_ALIGN]
 end
 
 @testset "Active struct cotangent alignment" begin
