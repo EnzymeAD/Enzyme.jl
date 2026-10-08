@@ -6,6 +6,13 @@
 # optimizes, analyzes and code generates the same code again for each thunk, although
 # Julia compiles it natively for the primal anyway.
 #
+# The same holds for the primal of a function with a custom rule, on Julia 1.12 and
+# 1.13: Enzyme calls the rule, not the primal, unless no rule applies to a constant call
+# (its function, arguments and return are all constant, see `has_rule`), and then it
+# calls the primal as is. So such a callee is called natively too, through a declaration
+# the rule handlers recognize as they recognize an emitted one (see
+# `bind_native_callees!`).
+#
 # During inference, `typeinf_edge` resolves a call of a derivative-free method to the
 # code Julia's native interpreter and JIT produce for it, without inferring the method
 # with `EnzymeInterpreter`, and `compileable_specialization` makes the optimizer emit an
@@ -34,18 +41,21 @@ use_native_callees(interp::Interpreter.EnzymeInterpreter) =
     interp.native_callees && !generating_output()
 
 """
-    native_edge(interp, x) -> Union{Nothing, Tuple{CodeInstance, Ptr{Cvoid}}}
+    native_edge(interp, x) -> Union{Nothing, Tuple{CodeInstance, Ptr{Cvoid}, Symbol}}
 
-Return what `native_entry` does for `x` if it is a MethodInstance `interp` resolves
-to native code (see `typeinf_edge` below), and `nothing` otherwise. Codegen calls one it has
-no CodeInstance for through `jl_invoke`, which `check_ir!` marks with
-[`mark_inactive_invoke!`](@ref).
+Return what `native_entry` does for `x` if it is a derivative-free MethodInstance
+`interp` resolves to native code (see `typeinf_edge` below), and `nothing` otherwise.
+Codegen calls one it has no CodeInstance for through `jl_invoke`, which `check_ir!` marks
+with [`mark_inactive_invoke!`](@ref). A callee with a custom rule is not derivative-free:
+its call must reach the rule handlers.
 """
 function native_edge(@nospecialize(interp), @nospecialize(x))
     interp isa Interpreter.EnzymeInterpreter || return nothing
     x isa Core.MethodInstance || return nothing
     use_native_callees(interp) || return nothing
-    return native_entry(interp, x)
+    native = native_entry(interp, x)
+    (native === nothing || native[3] !== :inactive) && return nothing
+    return native
 end
 
 """
@@ -60,7 +70,7 @@ information for `abs_typeof`, and is read-only-or-throw when native inference pr
 callee effect-free, as `mark_read_only_or_throw!` marks the declarations bound on
 Julia 1.12 and later, so that Enzyme still finds the callers read-only-or-throw.
 """
-function mark_inactive_invoke!(inst::LLVM.CallInst, native::Union{Nothing, Tuple{Core.CodeInstance, Ptr{Cvoid}}})
+function mark_inactive_invoke!(inst::LLVM.CallInst, native::Union{Nothing, Tuple{Core.CodeInstance, Ptr{Cvoid}, Symbol}})
     fnidx = reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex)
     LLVM.API.LLVMAddCallSiteAttribute(inst, fnidx, LLVM.StringAttribute("enzyme_inactive", ""))
     LLVM.API.LLVMAddCallSiteAttribute(inst, fnidx, LLVM.EnumAttribute("nofree"))
@@ -129,18 +139,23 @@ end
     """
         native_entry(interp::EnzymeInterpreter, mi::MethodInstance)
 
-    Return the native `CodeInstance` of `mi` and its specialized entry point when Enzyme
-    never differentiates `mi` and can call its natively compiled code instead, and `nothing`
-    otherwise.
+    Return the native `CodeInstance` of `mi`, its specialized entry point and how Enzyme
+    handles a call of `mi` (`:inactive`, `:frule` or `:rrule`) when Enzyme never
+    differentiates the code of `mi` and can call its natively compiled code instead, and
+    `nothing` otherwise.
 
-    `mi` must have an `EnzymeRules.inactive` rule, or take and return only guaranteed-const
-    types, and no other rule or special handling, asked of its signature without the
-    keyword-call wrapper as every other decision point asks it (see `enzyme_call_kind`).
-    Julia's native interpreter infers it and its JIT compiles it, exactly as for an ordinary
-    call (see [`codeinst`](@ref)), and it must get a specialized entry point for the same
-    MethodInstance (the `:call` convention of [`call_convention`](@ref), and see
-    [`native_uses_specsig`](@ref)). A small method Julia would inline gets `nothing`, so
-    that it is inlined as before.
+    `mi` must either be derivative-free (`:inactive`): have an `EnzymeRules.inactive` rule,
+    or take and return only guaranteed-const types, and no other rule or special handling.
+    Or it must have a custom rule that `interp` applies (`:frule` or `:rrule`): Enzyme calls
+    the rule instead of `mi`, and calls `mi` itself only when no rule applies to a constant
+    call (its function, arguments and return are all constant, see `has_rule`), which needs
+    no derivative of `mi` either. Both are asked of its signature without the keyword-call
+    wrapper (see [`native_call_kind`](@ref)). Julia's native interpreter infers `mi` and its
+    JIT compiles it, exactly as for an ordinary call (see [`codeinst`](@ref)), and it must
+    get a specialized entry point for the same MethodInstance (see
+    [`native_uses_specsig`](@ref)). A small derivative-free method Julia would inline (not
+    the `:call` convention of [`call_convention`](@ref)) gets `nothing`, so that it is
+    inlined as before. A method with a rule is never inlined (`NoInlineCallInfo`).
     """
     function native_entry(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance)
         CC = Core.Compiler
@@ -154,26 +169,49 @@ end
         method = mi.def
         method isa Method || return nothing
         method.isva && return nothing
-        kind = Interpreter.enzyme_call_kind(interp, Interpreter.simplify_kw(specTypes))
-        (kind === nothing || kind === :inactive) || return nothing
+        kind = native_call_kind(interp, specTypes)
+        kind === nothing && return nothing
+        ruled = kind === :frule || kind === :rrule
         world = interp.world
         # Ask the cheap question before inferring natively.
-        (kind === :inactive || all_guaranteed_const(params, world)) || return nothing
+        if kind === :const
+            all_guaranteed_const(params, world) || return nothing
+        end
         # Infer natively first, and compile only what is called natively: most calls with
         # const arguments go to small methods that are inlined.
         inferred = CC.typeinf_ext(CC.NativeInterpreter(world), mi, CC.SOURCE_MODE_NOT_REQUIRED)
         inferred isa Core.CodeInstance || return nothing
         CC.get_ci_mi(inferred) === mi || return nothing
         RT = inferred.rettype
-        (kind === :inactive || guaranteed_const_nongen(RT, world)) || return nothing
-        call_convention(mi, inferred) === :call || return nothing
+        if kind === :const
+            guaranteed_const_nongen(RT, world) || return nothing
+        end
+        # `NoInlineCallInfo` keeps a call of a method with a rule from being inlined.
+        (ruled || call_convention(mi, inferred) === :call) || return nothing
         native_uses_specsig(specTypes, RT) || return nothing
         ci = codeinst(mi, world)
         ci === nothing && return nothing
         (CC.get_ci_mi(ci) === mi && ci.rettype == RT) || return nothing
         specptr, _ = Interpreter.codeinst_entry(ci)
         specptr == C_NULL && return nothing
-        return (ci, specptr)
+        return (ci, specptr, ruled ? kind : :inactive)
+    end
+
+    """
+        native_call_kind(interp::EnzymeInterpreter, specTypes) -> Union{Nothing, Symbol}
+
+    Say which callees of signature `specTypes` `native_entry` may resolve to native
+    code: `:inactive` for one with an inactive rule, `:const` for one without special
+    handling, which is derivative-free only when its argument and return types are
+    guaranteed const, `:frule` or `:rrule` for one with a custom rule `interp` applies, and
+    `nothing` for any other. As at every other decision point, a keyword call has the rule
+    of the function it calls (see `enzyme_call_kind`).
+    """
+    function native_call_kind(interp::Interpreter.EnzymeInterpreter, @nospecialize(specTypes))::Union{Nothing, Symbol}
+        kind = Interpreter.enzyme_call_kind(interp, Interpreter.simplify_kw(specTypes))
+        kind === nothing && return :const
+        (kind === :inactive || kind === :frule || kind === :rrule) && return kind
+        return nothing
     end
 
     """
@@ -363,13 +401,20 @@ end
     by a declaration bound to the native entry point of the callee. The stub is a specsig
     function that calls `julia.call(@tojlinvokeN, ...)`.
 
-    The declaration is marked `enzyme_inactive`, and `enzymejl_native_inactive` so that
-    [`materialize_native_invokes!`](@ref) leaves it without a body even for nested
-    differentiation, which does not differentiate it either. It is `nofree`: Julia code
-    frees nothing its caller can observe. A return with GC roots gets an sret type with
-    the tracked pointers stripped, as the buffer holds (the roots array keeps the objects
-    alive), because Enzyme may move that buffer to the heap to keep the result for the
-    reverse pass, and LateLowerGC requires a stack buffer for an sret with tracked pointers.
+    The declaration of a derivative-free callee is marked `enzyme_inactive`, and
+    `enzymejl_native_inactive` so that [`materialize_native_invokes!`](@ref) leaves it
+    without a body even for nested differentiation, which does not differentiate it either.
+    It is `nofree`: Julia code frees nothing its caller can observe.
+
+    A callee with a custom rule gets none of these: its calls must reach the rule handlers.
+    Its stub stays, and calls the declaration instead (see [`bind_ruled_stub!`](@ref)).
+    Binding such a callee is not allowed to fail: the stub would call it through
+    `jl_invoke`, and Enzyme would not apply its rule.
+
+    A return with GC roots gets an sret type with the tracked pointers stripped, as the
+    buffer holds (the roots array keeps the objects alive), because Enzyme may move that
+    buffer to the heap to keep the result for the reverse pass, and LateLowerGC requires a
+    stack buffer for an sret with tracked pointers.
     """
     function bind_native_callees!(mod::LLVM.Module, world::UInt)
         isassigned(ENZYME_CONTEXT) || return nothing
@@ -383,7 +428,8 @@ end
             callee === nothing && continue
             native = get(skipped, callee, nothing)
             native === nothing && continue
-            ci, specptr = native
+            ci, specptr, kind = native
+            ruled = kind !== :inactive
             mi = Core.Compiler.get_ci_mi(ci)
             RT = ci.rettype
             stubs = LLVM.Function[]
@@ -398,8 +444,14 @@ end
                 catch err
                     # The stub's signature is not the one `specsig` derives: leave it
                     # calling `jl_invoke`, which boxes but is correct for any signature.
-                    err isa AssertionError || rethrow()
+                    (ruled || !(err isa AssertionError)) && rethrow()
                     @safe_debug "Enzyme: not binding a native callee to its stub" mi exception = err
+                    continue
+                end
+                if ruled
+                    bind_ruled_stub!(mod, stub, mi, RT, specptr, world)
+                    push!(enzyme_ctx.edges, mi)
+                    push!(enzyme_ctx.edges, ci)
                     continue
                 end
                 name = LLVM.name(stub)
@@ -409,15 +461,9 @@ end
                 push!(fattrs, StringAttribute("enzyme_inactive"))
                 push!(fattrs, StringAttribute("enzymejl_native_inactive"))
                 push!(fattrs, EnumAttribute("nofree"))
-                _, sret, returnRoots = get_return_info(RT)
-                sret_attr = nothing
-                if returnRoots !== nothing && sret !== nothing && !is_sret_union(RT)
-                    full = convert(LLVMType, eltype(sret))
-                    sret_attr = TypeAttribute("sret", strip_tracked_pointers(full))
-                    delete!(parameter_attributes(fn, 1), TypeAttribute("sret", full))
-                    push!(parameter_attributes(fn, 1), sret_attr)
-                end
+                sret_attr = strip_native_sret!(fn, RT)
                 if Core.Compiler.is_effect_free(Core.Compiler.decode_effects(ci.ipo_purity_bits))
+                    _, sret, returnRoots = get_return_info(RT)
                     mark_read_only_or_throw!(fn, sret === nothing ? 0 : returnRoots === nothing ? 1 : 2)
                 end
                 if !retarget_calls!(stub, fn, sret_attr)
@@ -429,8 +475,117 @@ end
                 push!(enzyme_ctx.edges, mi)
                 push!(enzyme_ctx.edges, ci)
             end
-            isempty(LLVM.uses(tojl)) && LLVM.erase!(tojl)
+            if isempty(LLVM.uses(tojl))
+                LLVM.erase!(tojl)
+            elseif ruled
+                throw(AssertionError("Enzyme: the function $(mi), which has a custom rule, is called through $(LLVM.name(tojl)) other than from a specsig stub that calls it with `julia.call`. This is not expected to happen, please report it."))
+            end
         end
+        return nothing
+    end
+
+    """
+        strip_native_sret!(fn::LLVM.Function, RT) -> Union{Nothing, LLVM.Attribute}
+
+    Give the sret parameter of the native declaration `fn`, of a function returning `RT`
+    with GC roots, the sret type with the tracked pointers stripped (see
+    [`bind_native_callees!`](@ref)), and return that attribute for the calls of `fn`.
+    Return `nothing`, and change nothing, for any other return.
+    """
+    function strip_native_sret!(fn::LLVM.Function, @nospecialize(RT::Type))
+        _, sret, returnRoots = get_return_info(RT)
+        (returnRoots !== nothing && sret !== nothing && !is_sret_union(RT)) || return nothing
+        full = convert(LLVMType, eltype(sret))
+        sret_attr = TypeAttribute("sret", strip_tracked_pointers(full))
+        delete!(parameter_attributes(fn, 1), TypeAttribute("sret", full))
+        push!(parameter_attributes(fn, 1), sret_attr)
+        return sret_attr
+    end
+
+    """
+        bind_ruled_stub!(mod::LLVM.Module, stub::LLVM.Function, mi::MethodInstance, RT, specptr, world)
+
+    Make `stub`, the stub Julia's codegen emitted for a call of `mi`, which has a custom
+    rule, call the native entry `specptr` of `mi` through a declaration, instead of calling
+    `mi` through `jl_invoke`.
+
+    The rule handlers handle the calls of `stub` as they would the calls of the function
+    Julia's codegen emits for `mi` in `mod`, which `stub` stands for: it keeps its
+    signature, without the `pgcstack` parameter of the native entry, which the handlers do
+    not expect, and gets the attributes Enzyme reads from an emitted function (see
+    `mark_compiled!`), so that `handle_compiled` marks it for the rule handlers. They call
+    the rule instead of `stub`, or `stub` as is when no rule applies to a constant call
+    (see `has_rule`). Its body only forwards to the declaration, which Enzyme never
+    differentiates (see [`materialize_native_invokes!`](@ref) for nested differentiation).
+    """
+    function bind_ruled_stub!(mod::LLVM.Module, stub::LLVM.Function, mi::Core.MethodInstance, @nospecialize(RT::Type), specptr::Ptr{Cvoid}, world::UInt)
+        fn = declare_native!(mod, mi, RT, specptr, LLVM.name(stub) * ".native", world)
+        sret_attr = strip_native_sret!(fn, RT)
+        if sret_attr === nothing
+            _, sret, _ = get_return_info(RT)
+            if sret !== nothing && !is_sret_union(RT)
+                sret_attr = TypeAttribute("sret", convert(LLVMType, eltype(sret)))
+            end
+        end
+
+        # Drop the body of the stub, which boxes the arguments and calls `jl_invoke`.
+        for bb in LLVM.blocks(stub), inst in LLVM.instructions(bb)
+            isempty(LLVM.uses(inst)) || LLVM.replace_uses!(inst, LLVM.UndefValue(LLVM.value_type(inst)))
+        end
+        for bb in collect(LLVM.blocks(stub))
+            for inst in reverse(collect(LLVM.instructions(bb)))
+                LLVM.API.LLVMInstructionEraseFromParent(inst)
+            end
+            LLVM.API.LLVMDeleteBasicBlock(bb)
+        end
+
+        B = LLVM.IRBuilder()
+        entry = LLVM.BasicBlock(stub, "entry")
+        LLVM.position!(B, entry)
+        args = collect(LLVM.Value, LLVM.parameters(stub))
+        gi = gcstack_arg_index(fn)
+        if gi != 0
+            pgcstack = reinsert_gcmarker!(stub, B)
+            LLVM.position!(B, entry)
+            insert!(args, gi, pgcstack)
+        end
+        # `enzyme-fixup-julia` rejects an sret parameter with GC roots that is passed on
+        # to a call. So with return roots, the native entry returns into buffers of `stub`,
+        # as in the thunks of `enzyme_call`, and `stub` splits the value into its own sret
+        # and roots as Julia's codegen does.
+        _, sret, returnRoots = get_return_info(RT)
+        rooted = sret !== nothing && returnRoots !== nothing && !is_sret_union(RT)
+        if rooted
+            jltype = convert(LLVMType, eltype(sret))
+            args[1] = LLVM.alloca!(B, strip_tracked_pointers(jltype), "native.sret")
+            args[2] = LLVM.alloca!(B, convert(LLVMType, eltype(returnRoots)), "native.return_roots")
+        end
+        ft = LLVM.function_type(fn)
+        @assert length(args) == length(LLVM.parameters(ft))
+        call = LLVM.call!(B, ft, fn, args)
+        LLVM.callconv!(call, LLVM.callconv(fn))
+        copy_abi_attrs!(call, fn)
+        if sret_attr !== nothing
+            LLVM.API.LLVMAddCallSiteAttribute(call, UInt32(1), sret_attr)
+        end
+        if rooted
+            val = recombine_value_ptr!(B, jltype, args[1], args[2])
+            stub_params = LLVM.parameters(stub)
+            split_value_into!(B, val, stub_params[1], stub_params[2])
+        end
+        if RT === Union{}
+            LLVM.unreachable!(B)
+        elseif LLVM.return_type(LLVM.function_type(stub)) isa LLVM.VoidType
+            LLVM.ret!(B)
+        else
+            LLVM.ret!(B, call)
+        end
+        LLVM.dispose(B)
+
+        fattrs = function_attributes(stub)
+        delete!(fattrs, EnumAttribute("alwaysinline"))
+        delete!(fattrs, EnumAttribute("inlinehint"))
+        mark_compiled!(mod, stub, mi, RT, world)
         return nothing
     end
 
@@ -559,7 +714,9 @@ elseif VERSION < v"1.12-"
     guaranteed-const types, and no other rule or special handling, and a small method
     Julia would inline gets `nothing`.
     The second element is unused (`C_NULL`): the call goes through `jl_invoke`, which
-    compiles the callee when it first runs.
+    compiles the callee when it first runs. A callee with a custom rule stays emitted: the
+    rule handlers cannot read the boxed arguments of a `jl_invoke` call. The third element
+    is always `:inactive`.
     """
     function native_entry(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance)
         CC = Core.Compiler
@@ -581,7 +738,7 @@ elseif VERSION < v"1.12-"
         inferred isa Core.CodeInstance || return nothing
         (kind === :inactive || guaranteed_const_nongen(inferred.rettype, world)) || return nothing
         call_convention(mi, inferred) === :call || return nothing
-        return (inferred, C_NULL)
+        return (inferred, C_NULL, :inactive)
     end
 
     # The result of a call edge to the cached `ci`, as `typeinf_edge` returns it.
