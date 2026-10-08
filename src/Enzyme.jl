@@ -1352,6 +1352,16 @@ shadow2, result2 = derivative(Const(f), Duplicated(3.14, 1.0), tape)
         ModifiedBetween = Val(ModifiedBetweenT)
     end
 
+    # Without ReturnShadow the derivative pass does not compute the return shadow, but
+    # still propagates tangents into the shadows of the (Batch)Duplicated arguments.
+    A2 = if ReturnShadow || A <: Const
+        A
+    elseif A isa UnionAll
+        Const
+    else
+        Const{eltype(A)}
+    end
+
     tt = Tuple{map(eltype, args)...}
 
     tt′ = Tuple{args...}
@@ -1363,7 +1373,7 @@ shadow2, result2 = derivative(Const(f), Duplicated(3.14, 1.0), tape)
     Enzyme.Compiler.thunk(
         opt_mi,
         FA,
-        A,
+        A2,
         tt′,
         Val(API.DEM_ForwardModeSplit),
         Val(width),

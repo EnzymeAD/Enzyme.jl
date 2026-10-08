@@ -601,7 +601,8 @@ and a forward derivative pass that uses the tape to compute derivatives.
 
 # Type parameters
 
-- `ReturnShadow`: whether to return the shadow (derivative) from the derivative pass.
+- `ReturnShadow`: whether the derivative pass computes and returns the shadow of the return value.
+  When `false`, the return is treated as `Const`; tangents are still propagated into argument shadows.
 - `Width`: batch size (pick `0` to derive it automatically)
 - `ModifiedBetween`: `Tuple` of each argument's "modified between" state (pick `true` to derive it automatically).
 - other parameters: see [`ForwardMode`](@ref)

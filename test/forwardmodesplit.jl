@@ -124,6 +124,35 @@ end
     @test res === nothing || res === (nothing,) || res == (nothing,) || isempty(res)
 end
 
+# ── ReturnShadow = false ─────────────────────────────────────────────────────
+
+@testset "ForwardModeSplit – ReturnShadow=false" begin
+    function sq_cube!(y, x)
+        y[1] = x[1]^2
+        return x[1]^3
+    end
+
+    mode = Enzyme.ForwardModeSplit{false, false, false, false, 0, true, Enzyme.DefaultABI, false}()
+    aug, deriv = autodiff_thunk(
+        mode,
+        Const{typeof(sq_cube!)},
+        Duplicated,
+        Duplicated{Vector{Float64}},
+        Duplicated{Vector{Float64}},
+    )
+
+    y = [0.0]
+    dy = [0.0]
+    x = [3.0]
+    dx = [1.0]
+    tape, _, _ = aug(Const(sq_cube!), Duplicated(y, dy), Duplicated(x, dx))
+    res = deriv(Const(sq_cube!), Duplicated(y, dy), Duplicated(x, dx), tape)
+    # The return shadow (27.0) is not computed or returned ...
+    @test res === nothing || isempty(res)
+    # ... but argument shadows are still propagated: d(x^2)/dx = 6
+    @test dy[1] ≈ 6.0
+end
+
 # ── mutating function (tape correctness) ─────────────────────────────────────
 
 @testset "ForwardModeSplit – mutating primal" begin
