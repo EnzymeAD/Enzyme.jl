@@ -6,8 +6,8 @@ import Enzyme: API
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 # Finite-difference first derivative for real scalars
-function fd(f, x; h = 1e-5)
-    (f(x + h) - f(x - h)) / (2h)
+function fd(f, x; h = 1.0e-5)
+    return (f(x + h) - f(x - h)) / (2h)
 end
 
 # ── basic scalar tests ────────────────────────────────────────────────────────
@@ -44,7 +44,7 @@ end
         @test primal_aug ≈ f(x)
 
         shadow, primal_deriv = deriv(Const(f), Duplicated(x, 1.0), tape)
-        @test shadow      ≈ fd(f, x)
+        @test shadow ≈ fd(f, x)
         @test primal_deriv ≈ f(x)
     end
 end
@@ -162,10 +162,10 @@ end
         return nothing
     end
 
-    y    = [0.0, 0.0]
-    dy   = [0.0, 0.0]
-    x    = [3.0, 4.0]
-    dx   = [1.0, 0.0]  # seed: d/dx[1]
+    y = [0.0, 0.0]
+    dy = [0.0, 0.0]
+    x = [3.0, 4.0]
+    dx = [1.0, 0.0]  # seed: d/dx[1]
 
     aug, deriv = autodiff_thunk(
         ForwardSplitNoPrimal,
@@ -210,7 +210,7 @@ end
         Duplicated{Vector{Float64}},
     )
 
-    x  = [3.0, 4.0]
+    x = [3.0, 4.0]
     dx = [1.0, 1.0]
     tape, _, _ = aug(Const(sumsq), Duplicated(x, dx))
     (shadow,) = deriv(Const(sumsq), Duplicated(x, dx), tape)
@@ -236,22 +236,22 @@ end
     )
 
     # Same thunk types (cached)
-    @test typeof(aug1)   === typeof(aug2)
+    @test typeof(aug1) === typeof(aug2)
     @test typeof(deriv1) === typeof(deriv2)
 
     # Still produces correct results
     tape, _, _ = aug1(Const(f), Duplicated(2.0, 1.0))
-    (shadow,)  = deriv1(Const(f), Duplicated(2.0, 1.0), tape)
+    (shadow,) = deriv1(Const(f), Duplicated(2.0, 1.0), tape)
     @test shadow ≈ 3 * 2.0^2  # f'(2) = 12
 end
 
 # ── guess_activity ────────────────────────────────────────────────────────────
 
 @testset "ForwardModeSplit – guess_activity" begin
-    @test Enzyme.guess_activity(Float64,  ForwardSplitNoPrimal)  == Duplicated{Float64}
-    @test Enzyme.guess_activity(Float32,  ForwardSplitNoPrimal)  == Duplicated{Float32}
-    @test Enzyme.guess_activity(Int,      ForwardSplitNoPrimal)  == Const{Int}
-    @test Enzyme.guess_activity(String,   ForwardSplitNoPrimal)  == Const{String}
+    @test Enzyme.guess_activity(Float64, ForwardSplitNoPrimal) == Duplicated{Float64}
+    @test Enzyme.guess_activity(Float32, ForwardSplitNoPrimal) == Duplicated{Float32}
+    @test Enzyme.guess_activity(Int, ForwardSplitNoPrimal) == Const{Int}
+    @test Enzyme.guess_activity(String, ForwardSplitNoPrimal) == Const{String}
 end
 
 # ── error cases ───────────────────────────────────────────────────────────────
@@ -280,8 +280,8 @@ end
         BatchDuplicated{Float64, 2},
     )
 
-    x   = 3.0
-    dx  = (1.0, 2.0)  # two simultaneous seeds
+    x = 3.0
+    dx = (1.0, 2.0)  # two simultaneous seeds
 
     tape, _, _ = aug(Const(f), BatchDuplicated(x, dx))
     (shadows,) = deriv(Const(f), BatchDuplicated(x, dx), tape)
@@ -294,7 +294,7 @@ end
 # ── convert mode ─────────────────────────────────────────────────────────────
 
 @testset "ForwardModeSplit – convert to CDerivativeMode" begin
-    @test convert(API.CDerivativeMode, ForwardSplitNoPrimal)  === API.DEM_ForwardModeSplit
+    @test convert(API.CDerivativeMode, ForwardSplitNoPrimal) === API.DEM_ForwardModeSplit
     @test convert(API.CDerivativeMode, ForwardSplitWithPrimal) === API.DEM_ForwardModeSplit
 end
 

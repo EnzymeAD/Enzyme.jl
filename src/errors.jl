@@ -667,7 +667,7 @@ function Base.showerror(io::IO, ece::ForwardModeSplitUnsupportedException)
     end
     print(io, "ForwardModeSplitUnsupportedException: ForwardModeSplit does not yet support active calls to `", ece.callee, "`.\n")
     print(io, "Custom forward rules (EnzymeRules.forward), dynamic dispatch, and other calls handled by the Julia runtime are only supported by `Forward`/`ForwardWithPrimal`.\n")
-    if VERBOSE_ERRORS[]
+    return if VERBOSE_ERRORS[]
         print(io, "Call: ", ece.ir, "\n")
     else
         print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
@@ -1509,12 +1509,12 @@ end
 		     ( isa(cur, LLVM.ConstantExpr) || isa(cur, LLVM.GlobalVariable)) &&
                    cur == data2
                     if width == 1
-                        if API.is_forward_mode(mode)
+                            if API.is_forward_mode(mode)
                             instance = make_zero(obj)
                             return unsafe_to_llvm(prevbb, instance)
                         else
-                            res = emit_allocobj!(prevbb, Base.RefValue{TT})
-			    T_int8 = LLVM.Int8Type()
+                                res = emit_allocobj!(prevbb, Base.RefValue{TT})
+                                T_int8 = LLVM.Int8Type()
 			    T_size_t = convert(LLVM.LLVMType, UInt)
 			    LLVM.memset!(prevbb, bitcast!(prevbb, res, LLVM.PointerType(T_int8, 10)),  LLVM.ConstantInt(T_int8, 0), LLVM.ConstantInt(T_size_t, sizeof(TT)), 0)
                             push!(created, res)
@@ -1525,7 +1525,7 @@ end
                             LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(cur))),
                         )
                         for idx = 1:width
-                            res = if API.is_forward_mode(mode)
+                                res = if API.is_forward_mode(mode)
                                 instance = make_zero(obj)
                                 unsafe_to_llvm(prevbb, instance)
                             else

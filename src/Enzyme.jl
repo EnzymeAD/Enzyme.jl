@@ -1299,32 +1299,32 @@ shadow2, result2 = derivative(Const(f), Duplicated(3.14, 1.0), tape)
 ```
 """
 @inline function autodiff_thunk(
-    mode::ForwardModeSplit{
+        mode::ForwardModeSplit{
+            ReturnPrimal,
+            ReturnShadow,
+            RuntimeActivity,
+            StrongZero,
+            Width,
+            ModifiedBetweenT,
+            RABI,
+            ErrIfFuncWritten,
+        },
+        ::Type{FA},
+        ::Type{A},
+        args::Vararg{Type{<:Annotation}, Nargs},
+    ) where {
+        FA <: Annotation,
+        A <: Annotation,
         ReturnPrimal,
         ReturnShadow,
-        RuntimeActivity,
-        StrongZero,
         Width,
         ModifiedBetweenT,
-        RABI,
+        RABI <: ABI,
+        Nargs,
         ErrIfFuncWritten,
-    },
-    ::Type{FA},
-    ::Type{A},
-    args::Vararg{Type{<:Annotation},Nargs},
-) where {
-    FA<:Annotation,
-    A<:Annotation,
-    ReturnPrimal,
-    ReturnShadow,
-    Width,
-    ModifiedBetweenT,
-    RABI<:ABI,
-    Nargs,
-    ErrIfFuncWritten,
-    RuntimeActivity,
-    StrongZero,
-}
+        RuntimeActivity,
+        StrongZero,
+    }
     width = if Width == 0
         w = same_or_one(1, A, args...)
         if w == 0
@@ -1370,7 +1370,7 @@ shadow2, result2 = derivative(Const(f), Duplicated(3.14, 1.0), tape)
     else
         Val(0)
     end
-    Enzyme.Compiler.thunk(
+    return Enzyme.Compiler.thunk(
         opt_mi,
         FA,
         A2,

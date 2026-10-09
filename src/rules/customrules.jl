@@ -410,7 +410,7 @@ function enzyme_custom_setup_args(
 
         activep = API.EnzymeGradientUtilsGetDiffeType(gutils, op, false) #=isforeign=#
 	orig_activep = activep
-	any_active_data = !API.is_forward_mode(mode) && (activity_state == ActiveState || activity_state == MixedState)
+        any_active_data = !API.is_forward_mode(mode) && (activity_state == ActiveState || activity_state == MixedState)
 
         roots_activep = nothing
 
@@ -1054,7 +1054,7 @@ function enzyme_custom_setup_ret(
         cmode = API.DEM_ReverseModePrimal
     end
     activep =
-        if API.is_forward_mode(mode) ||
+    if API.is_forward_mode(mode) ||
            API.EnzymeGradientUtilsGetUncacheableArgs(
             gutils,
             orig,

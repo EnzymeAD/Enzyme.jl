@@ -242,8 +242,8 @@ if VERSION >= v"1.11.0-DEV.1552"
         EnzymeCacheToken(
         method_tables(GPUCompiler.method_table_view(job)),
             job.world,
-            API.is_forward_mode(job.config.params.mode),
-            !API.is_forward_mode(job.config.params.mode),
+        API.is_forward_mode(job.config.params.mode),
+        !API.is_forward_mode(job.config.params.mode),
             true
         )
 
@@ -519,7 +519,7 @@ struct AdjointThunk{PT,FA,RT,TT,Width,TapeType} <: AbstractThunk{FA,RT,TT,Width}
     adjoint::PT
 end
 
-struct ForwardModeSplitThunk{PT,FA,RT,TT,Width,ReturnPrimal,TapeType} <: AbstractThunk{FA,RT,TT,Width}
+struct ForwardModeSplitThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeType} <: AbstractThunk{FA, RT, TT, Width}
     adjoint::PT
 end
 
@@ -549,7 +549,7 @@ end
 @inline fn_type(::Type{<:ForwardModeThunk{<:Any,FA}}) where FA = FA
 @inline fn_type(::Type{<:AugmentedForwardThunk{<:Any,FA}}) where FA = FA
 @inline fn_type(::Type{<:AdjointThunk{<:Any,FA}}) where FA = FA
-@inline fn_type(::Type{<:ForwardModeSplitThunk{<:Any,FA}}) where FA = FA
+@inline fn_type(::Type{<:ForwardModeSplitThunk{<:Any, FA}}) where {FA} = FA
 @inline fn_type(::Type{<:PrimalErrorThunk{<:Any,FA}}) where FA = FA
 
 using .JIT
@@ -3707,119 +3707,119 @@ function enzyme!(
                     enzyme_ctx,
             )
         end
-    elseif mode == API.DEM_ForwardModeSplit
-        returnUsed = !(isghostty(actualRetType) || Core.Compiler.isconstType(actualRetType))
+        elseif mode == API.DEM_ForwardModeSplit
+            returnUsed = !(isghostty(actualRetType) || Core.Compiler.isconstType(actualRetType))
 
-        # The derivative pass shares the ForwardMode ABI wrapper, which expects the
-        # primal to be returned when runtime activity needs it for the boxed-return
-        # comparison, even if the user did not request the primal.
-        literal_rt = eltype(rt)
-        fwdReturnUsed = returnUsed
-        if !(!isghostty(literal_rt) && runtimeActivity && GPUCompiler.deserves_argbox(actualRetType) && !GPUCompiler.deserves_argbox(literal_rt))
-            fwdReturnUsed &= returnPrimal
-        end
-        returnUsed &= returnPrimal
-        nowrite_shadows = zeros(UInt8, length(uncacheable_args))
-        fwdsplit_fns = LLVM.Function[f for f in functions(mod) if !isdeclaration(f)]
-        for f in fwdsplit_fns
-            push!(function_attributes(f), StringAttribute(FWDSPLIT_ATTR))
-        end
-        augmented = try
-            API.EnzymeCreateAugmentedPrimal(
-                logic,
-                primalf,
-                retType,
-                args_activity,
-                TA,
-                returnUsed, #=returnUsed=#
-                false,      #=shadowReturnUsed=#
-                typeInfo,
-                uncacheable_args,
-                nowrite_shadows,
-                false,
-                runtimeActivity,
-                strongZero,
-                width,
-                parallel,
-            ) #=atomicAdd=#
-        finally
-            for f in fwdsplit_fns
-                delete!(function_attributes(f), StringAttribute(FWDSPLIT_ATTR))
+            # The derivative pass shares the ForwardMode ABI wrapper, which expects the
+            # primal to be returned when runtime activity needs it for the boxed-return
+            # comparison, even if the user did not request the primal.
+            literal_rt = eltype(rt)
+            fwdReturnUsed = returnUsed
+            if !(!isghostty(literal_rt) && runtimeActivity && GPUCompiler.deserves_argbox(actualRetType) && !GPUCompiler.deserves_argbox(literal_rt))
+                fwdReturnUsed &= returnPrimal
             end
-        end
+            returnUsed &= returnPrimal
+            nowrite_shadows = zeros(UInt8, length(uncacheable_args))
+            fwdsplit_fns = LLVM.Function[f for f in functions(mod) if !isdeclaration(f)]
+            for f in fwdsplit_fns
+                push!(function_attributes(f), StringAttribute(FWDSPLIT_ATTR))
+            end
+            augmented = try
+                API.EnzymeCreateAugmentedPrimal(
+                    logic,
+                    primalf,
+                    retType,
+                    args_activity,
+                    TA,
+                    returnUsed, #=returnUsed=#
+                    false,      #=shadowReturnUsed=#
+                    typeInfo,
+                    uncacheable_args,
+                    nowrite_shadows,
+                    false,
+                    runtimeActivity,
+                    strongZero,
+                    width,
+                    parallel,
+                ) #=atomicAdd=#
+            finally
+                for f in fwdsplit_fns
+                    delete!(function_attributes(f), StringAttribute(FWDSPLIT_ATTR))
+                end
+            end
 
-        augmented_primalf =
-            LLVM.Function(API.EnzymeExtractFunctionFromAugmentation(augmented))
-        tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
-        utape = API.EnzymeExtractUnderlyingTapeTypeFromAugmentation(augmented)
-        if utape != C_NULL
-            TapeType = EnzymeTapeToLoad{Compiler.tape_type(LLVMType(utape))}
-            tape = utape
-        elseif tape != C_NULL
-            TapeType = Compiler.tape_type(LLVMType(tape))
-        else
-            TapeType = Cvoid
-        end
-        if expectedTapeType !== UnknownTapeType
-            @assert expectedTapeType === TapeType
-        end
+            augmented_primalf =
+                LLVM.Function(API.EnzymeExtractFunctionFromAugmentation(augmented))
+            tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
+            utape = API.EnzymeExtractUnderlyingTapeTypeFromAugmentation(augmented)
+            if utape != C_NULL
+                TapeType = EnzymeTapeToLoad{Compiler.tape_type(LLVMType(utape))}
+                tape = utape
+            elseif tape != C_NULL
+                TapeType = Compiler.tape_type(LLVMType(tape))
+            else
+                TapeType = Cvoid
+            end
+            if expectedTapeType !== UnknownTapeType
+                @assert expectedTapeType === TapeType
+            end
 
-        if wrap
-            # The augmented forward pass for ForwardModeSplit only computes the primal
-            # and stores the tape — it does not compute the shadow. Use Const rettype
-            # so that create_abi_wrapper (DEM_ReverseModePrimal path) does not expect
-            # a shadow return value from the C function.
-            aug_rt = Const{actualRetType}
-            augmented_primalf = create_abi_wrapper(
-                augmented_primalf,
-                TT,
-                aug_rt,
-                actualRetType,
-                API.DEM_ReverseModePrimal,
-                augmented,
-                width,
-                returnPrimal,
-                shadow_init,
-                interp,
-                runtimeActivity,
-                enzyme_ctx,
+            if wrap
+                # The augmented forward pass for ForwardModeSplit only computes the primal
+                # and stores the tape — it does not compute the shadow. Use Const rettype
+                # so that create_abi_wrapper (DEM_ReverseModePrimal path) does not expect
+                # a shadow return value from the C function.
+                aug_rt = Const{actualRetType}
+                augmented_primalf = create_abi_wrapper(
+                    augmented_primalf,
+                    TT,
+                    aug_rt,
+                    actualRetType,
+                    API.DEM_ReverseModePrimal,
+                    augmented,
+                    width,
+                    returnPrimal,
+                    shadow_init,
+                    interp,
+                    runtimeActivity,
+                    enzyme_ctx,
+                )
+            end
+
+            adjointf = LLVM.Function(
+                API.EnzymeCreateForwardDiff(
+                    logic,
+                    primalf,
+                    retType,
+                    args_activity,
+                    TA,
+                    fwdReturnUsed,
+                    API.DEM_ForwardModeSplit,
+                    runtimeActivity,
+                    strongZero,
+                    width, #=mode=#
+                    tape,
+                    typeInfo, #=additionalArg=#
+                    uncacheable_args,
+                    augmented,
+                ),
             )
-        end
-
-        adjointf = LLVM.Function(
-            API.EnzymeCreateForwardDiff(
-                logic,
-                primalf,
-                retType,
-                args_activity,
-                TA,
-                fwdReturnUsed,
-                API.DEM_ForwardModeSplit,
-                runtimeActivity,
-                strongZero,
-                width, #=mode=#
-                tape,
-                typeInfo, #=additionalArg=#
-                uncacheable_args,
-                augmented,
-            ),
-        )
-        if wrap
-            adjointf = create_abi_wrapper(
-                adjointf,
-                TT,
-                rt,
-                actualRetType,
-                API.DEM_ForwardModeSplit,
-                augmented,
-                width,
-                returnPrimal,
-                shadow_init,
-                interp,
-                runtimeActivity,
-                enzyme_ctx,
-            )
-        end
+            if wrap
+                adjointf = create_abi_wrapper(
+                    adjointf,
+                    TT,
+                    rt,
+                    actualRetType,
+                    API.DEM_ForwardModeSplit,
+                    augmented,
+                    width,
+                    returnPrimal,
+                    shadow_init,
+                    interp,
+                    runtimeActivity,
+                    enzyme_ctx,
+                )
+            end
     elseif mode == API.DEM_ForwardMode
         returnUsed = !(isghostty(actualRetType) || Core.Compiler.isconstType(actualRetType))
 
@@ -3827,7 +3827,7 @@ function enzyme!(
 
         if !isghostty(literal_rt) && runtimeActivity && GPUCompiler.deserves_argbox(actualRetType) && !GPUCompiler.deserves_argbox(literal_rt)
         else
-            returnUsed &= returnPrimal
+                returnUsed &= returnPrimal
         end
 
         adjointf = LLVM.Function(
@@ -6649,7 +6649,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     if !(API.is_forward_mode(mode) && params.runtimeActivity)
         for ty in (API.is_forward_mode(mode) ? ForwardModeTypes : ReverseModeTypes)
             for func in (
-                API.is_forward_mode(mode) ? ForwardModeDerivatives :
+                    API.is_forward_mode(mode) ? ForwardModeDerivatives :
                 ReverseModeDerivatives
             )
                 for prefix in ("", "cblas_")
@@ -7615,13 +7615,13 @@ end
     args...,
 ) #=ReturnPrimal=#
 
-@inline (thunk::ForwardModeSplitThunk{PT,FA,RT,TT,Width,ReturnPrimal,TapeT})(
+@inline (thunk::ForwardModeSplitThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeT})(
     fn,
     args...,
-) where {PT,FA,Width,RT,TT,ReturnPrimal,TapeT} = enzyme_call(
+) where {PT, FA, Width, RT, TT, ReturnPrimal, TapeT} = enzyme_call(
     Val(false),
     thunk.adjoint,
-    ForwardModeSplitThunk{PT,FA,RT,TT,Width,ReturnPrimal,TapeT},
+    ForwardModeSplitThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeT},
     Val(Width),
     Val(ReturnPrimal),
     TT,
@@ -7700,10 +7700,10 @@ const DumpLLVMCall = Ref(false)
         FA = fn_type(CC)
         F = eltype(FA)
         is_forward =
-            CC <: AugmentedForwardThunk || CC <: ForwardModeThunk || CC <: ForwardModeSplitThunk || CC <: PrimalErrorThunk
+        CC <: AugmentedForwardThunk || CC <: ForwardModeThunk || CC <: ForwardModeSplitThunk || CC <: PrimalErrorThunk
         is_adjoint = CC <: AdjointThunk || CC <: CombinedAdjointThunk
         is_split = CC <: AdjointThunk || CC <: AugmentedForwardThunk
-        needs_tape = CC <: AdjointThunk || CC <: ForwardModeSplitThunk
+    needs_tape = CC <: AdjointThunk || CC <: ForwardModeSplitThunk
 
         argtt = tt.parameters[1]
         rettype = rt.parameters[1]
