@@ -6895,8 +6895,8 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
         # every word copied into it, pointers included, is an untyped integer that
         # type analysis cannot follow past `maxtypeoffset` or across padding.
         if !API.HasFromStack(inst) && isa(inst, LLVM.AllocaInst) &&
-           !haskey(metadata(inst), "enzymejl_allocart") &&
-           !haskey(metadata(inst), "enzymejl_gc_alloc_rt")
+                !haskey(metadata(inst), "enzymejl_allocart") &&
+                !haskey(metadata(inst), "enzymejl_gc_alloc_rt")
             RT = byref_alloca_type(inst, DL)
             if RT !== nothing
                 metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
