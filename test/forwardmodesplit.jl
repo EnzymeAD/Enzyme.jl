@@ -332,9 +332,10 @@ end
     end
     @test err isa Enzyme.Compiler.ForwardModeSplitUnsupportedException
     @test occursin("ForwardModeSplit does not yet support", sprint(showerror, err))
-    @test occursin("VERBOSE_ERRORS", sprint(showerror, err))
     old_verbose = Enzyme.Compiler.VERBOSE_ERRORS[]
     try
+        Enzyme.Compiler.VERBOSE_ERRORS[] = false
+        @test occursin("VERBOSE_ERRORS", sprint(showerror, err))
         Enzyme.Compiler.VERBOSE_ERRORS[] = true
         @test occursin("Call: ", sprint(showerror, err))
     finally
