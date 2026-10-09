@@ -228,8 +228,12 @@ end
     DEM_ForwardMode = 0,
     DEM_ReverseModePrimal = 1,
     DEM_ReverseModeGradient = 2,
-    DEM_ReverseModeCombined = 3
+    DEM_ReverseModeCombined = 3,
+    DEM_ForwardModeSplit = 4
 )
+
+@inline is_forward_mode(mode) =
+    mode == DEM_ForwardMode || mode == DEM_ForwardModeSplit
 
 # Create the derivative function itself.
 #  \p todiff is the function to differentiate
@@ -335,10 +339,12 @@ function EnzymeCreateForwardDiff(
     additionalArg,
     typeInfo,
     uncacheable_args,
+        aug = C_NULL,
 )
-    freeMemory = true
-    aug = C_NULL
-    subsequent_calls_may_write = false
+    # ForwardModeSplit has no reverse blocks in which to free loop caches (Enzyme
+    # asserts in freeCache), and tape memory is GC-allocated via julia_allocator.
+    freeMemory = mode != DEM_ForwardModeSplit
+    subsequent_calls_may_write = mode == DEM_ForwardModeSplit
     ccall(
         (:EnzymeCreateForwardDiff, libEnzyme),
         LLVMValueRef,

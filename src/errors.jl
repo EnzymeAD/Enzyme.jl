@@ -53,12 +53,12 @@ function code_typed_helper(mi::Core.MethodInstance, world::UInt, mode::Enzyme.AP
         EnzymeCacheToken(
             (GPUCompiler.GLOBAL_METHOD_TABLE,),
             world,
-            mode == API.DEM_ForwardMode,
-            mode != API.DEM_ForwardMode,
+            API.is_forward_mode(mode),
+            !API.is_forward_mode(mode),
             true
         )
     else
-        if mode == API.DEM_ForwardMode
+        if API.is_forward_mode(mode)
             GLOBAL_FWD_CACHE
         else
             GLOBAL_REV_CACHE
@@ -653,6 +653,24 @@ function Base.showerror(io::IO, ece::NonInferredActiveReturn)
             ": You can avoid this error by explicitly setting the return activity as $newRT";
             color = :cyan,
         )
+    end
+end
+
+struct ForwardModeSplitUnsupportedException <: CompilationException
+    callee::AbstractString
+    ir::String
+end
+
+function Base.showerror(io::IO, ece::ForwardModeSplitUnsupportedException)
+    if isdefined(Base.Experimental, :show_error_hints)
+        Base.Experimental.show_error_hints(io, ece)
+    end
+    print(io, "ForwardModeSplitUnsupportedException: ForwardModeSplit does not yet support active calls to `", ece.callee, "`.\n")
+    print(io, "Custom forward rules (EnzymeRules.forward), dynamic dispatch, and other calls handled by the Julia runtime are only supported by `Forward`/`ForwardWithPrimal`.\n")
+    return if VERBOSE_ERRORS[]
+        print(io, "Call: ", ece.ir, "\n")
+    else
+        print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
     end
 end
 
@@ -1491,12 +1509,12 @@ end
 		     ( isa(cur, LLVM.ConstantExpr) || isa(cur, LLVM.GlobalVariable)) &&
                    cur == data2
                     if width == 1
-                        if mode == API.DEM_ForwardMode
+                            if API.is_forward_mode(mode)
                             instance = make_zero(obj)
                             return unsafe_to_llvm(prevbb, instance)
                         else
-                            res = emit_allocobj!(prevbb, Base.RefValue{TT}) 
-			    T_int8 = LLVM.Int8Type() 
+                                res = emit_allocobj!(prevbb, Base.RefValue{TT})
+                                T_int8 = LLVM.Int8Type()
 			    T_size_t = convert(LLVM.LLVMType, UInt)
 			    LLVM.memset!(prevbb, bitcast!(prevbb, res, LLVM.PointerType(T_int8, 10)),  LLVM.ConstantInt(T_int8, 0), LLVM.ConstantInt(T_size_t, sizeof(TT)), 0)
                             push!(created, res)
@@ -1507,7 +1525,7 @@ end
                             LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(cur))),
                         )
                         for idx = 1:width
-                            res = if mode == API.DEM_ForwardMode
+                                res = if API.is_forward_mode(mode)
                                 instance = make_zero(obj)
                                 unsafe_to_llvm(prevbb, instance)
                             else

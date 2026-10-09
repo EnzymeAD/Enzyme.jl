@@ -242,8 +242,8 @@ if VERSION >= v"1.11.0-DEV.1552"
         EnzymeCacheToken(
         method_tables(GPUCompiler.method_table_view(job)),
             job.world,
-            job.config.params.mode == API.DEM_ForwardMode,
-            job.config.params.mode != API.DEM_ForwardMode,
+        API.is_forward_mode(job.config.params.mode),
+        !API.is_forward_mode(job.config.params.mode),
             true
         )
 
@@ -271,7 +271,7 @@ else
     const GLOBAL_FWD_CACHE = GPUCompiler.CodeCache()
     const GLOBAL_REV_CACHE = GPUCompiler.CodeCache()
     function enzyme_ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams})
-        return if job.config.params.mode == API.DEM_ForwardMode
+        return if API.is_forward_mode(job.config.params.mode)
             GLOBAL_FWD_CACHE
         else
             GLOBAL_REV_CACHE
@@ -519,6 +519,10 @@ struct AdjointThunk{PT,FA,RT,TT,Width,TapeType} <: AbstractThunk{FA,RT,TT,Width}
     adjoint::PT
 end
 
+struct ForwardModeSplitThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeType} <: AbstractThunk{FA, RT, TT, Width}
+    adjoint::PT
+end
+
 struct PrimalErrorThunk{PT,FA,RT,TT,Width,ReturnPrimal} <: AbstractThunk{FA,RT,TT,Width}
     adjoint::PT
 end
@@ -545,6 +549,7 @@ end
 @inline fn_type(::Type{<:ForwardModeThunk{<:Any,FA}}) where FA = FA
 @inline fn_type(::Type{<:AugmentedForwardThunk{<:Any,FA}}) where FA = FA
 @inline fn_type(::Type{<:AdjointThunk{<:Any,FA}}) where FA = FA
+@inline fn_type(::Type{<:ForwardModeSplitThunk{<:Any, FA}}) where {FA} = FA
 @inline fn_type(::Type{<:PrimalErrorThunk{<:Any,FA}}) where FA = FA
 
 using .JIT
@@ -588,7 +593,7 @@ include("llvm/passes.jl")
 include("typeutils/make_zero.jl")
 
 function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type))
-    funcspec = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, typeof(f), tt, enzyme_world())
+    funcspec = my_methodinstance(API.is_forward_mode(mode) ? Forward : Reverse, typeof(f), tt, enzyme_world())
     return nested_codegen!(mode, mod, funcspec)
 end
 
@@ -1392,7 +1397,7 @@ function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, m
 
     specTypes = Interpreter.simplify_kw(mi.specTypes)
 
-    if mode == API.DEM_ForwardMode
+    if API.is_forward_mode(mode)
         has_custom_rule = cached_has_frule(specTypes, world, method_table)
         if has_custom_rule
             @safe_debug "Found frule for" mi.specTypes
@@ -2654,7 +2659,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
 	end
     end
 
-    if mode == API.DEM_ForwardMode && (used || idx != 0)
+    if API.is_forward_mode(mode) && (used || idx != 0)
         # Zero any jlvalue_t inner elements of preceeding allocation.
 
         # Specifically in forward mode, you will first run the original allocation,
@@ -3702,6 +3707,119 @@ function enzyme!(
                     enzyme_ctx,
             )
         end
+        elseif mode == API.DEM_ForwardModeSplit
+            returnUsed = !(isghostty(actualRetType) || Core.Compiler.isconstType(actualRetType))
+
+            # The derivative pass shares the ForwardMode ABI wrapper, which expects the
+            # primal to be returned when runtime activity needs it for the boxed-return
+            # comparison, even if the user did not request the primal.
+            literal_rt = eltype(rt)
+            fwdReturnUsed = returnUsed
+            if !(!isghostty(literal_rt) && runtimeActivity && GPUCompiler.deserves_argbox(actualRetType) && !GPUCompiler.deserves_argbox(literal_rt))
+                fwdReturnUsed &= returnPrimal
+            end
+            returnUsed &= returnPrimal
+            nowrite_shadows = zeros(UInt8, length(uncacheable_args))
+            fwdsplit_fns = LLVM.Function[f for f in functions(mod) if !isdeclaration(f)]
+            for f in fwdsplit_fns
+                push!(function_attributes(f), StringAttribute(FWDSPLIT_ATTR))
+            end
+            augmented = try
+                API.EnzymeCreateAugmentedPrimal(
+                    logic,
+                    primalf,
+                    retType,
+                    args_activity,
+                    TA,
+                    returnUsed, #=returnUsed=#
+                    false,      #=shadowReturnUsed=#
+                    typeInfo,
+                    uncacheable_args,
+                    nowrite_shadows,
+                    false,
+                    runtimeActivity,
+                    strongZero,
+                    width,
+                    parallel,
+                ) #=atomicAdd=#
+            finally
+                for f in fwdsplit_fns
+                    delete!(function_attributes(f), StringAttribute(FWDSPLIT_ATTR))
+                end
+            end
+
+            augmented_primalf =
+                LLVM.Function(API.EnzymeExtractFunctionFromAugmentation(augmented))
+            tape = API.EnzymeExtractTapeTypeFromAugmentation(augmented)
+            utape = API.EnzymeExtractUnderlyingTapeTypeFromAugmentation(augmented)
+            if utape != C_NULL
+                TapeType = EnzymeTapeToLoad{Compiler.tape_type(LLVMType(utape))}
+                tape = utape
+            elseif tape != C_NULL
+                TapeType = Compiler.tape_type(LLVMType(tape))
+            else
+                TapeType = Cvoid
+            end
+            if expectedTapeType !== UnknownTapeType
+                @assert expectedTapeType === TapeType
+            end
+
+            if wrap
+                # The augmented forward pass for ForwardModeSplit only computes the primal
+                # and stores the tape — it does not compute the shadow. Use Const rettype
+                # so that create_abi_wrapper (DEM_ReverseModePrimal path) does not expect
+                # a shadow return value from the C function.
+                aug_rt = Const{actualRetType}
+                augmented_primalf = create_abi_wrapper(
+                    augmented_primalf,
+                    TT,
+                    aug_rt,
+                    actualRetType,
+                    API.DEM_ReverseModePrimal,
+                    augmented,
+                    width,
+                    returnPrimal,
+                    shadow_init,
+                    interp,
+                    runtimeActivity,
+                    enzyme_ctx,
+                )
+            end
+
+            adjointf = LLVM.Function(
+                API.EnzymeCreateForwardDiff(
+                    logic,
+                    primalf,
+                    retType,
+                    args_activity,
+                    TA,
+                    fwdReturnUsed,
+                    API.DEM_ForwardModeSplit,
+                    runtimeActivity,
+                    strongZero,
+                    width, #=mode=#
+                    tape,
+                    typeInfo, #=additionalArg=#
+                    uncacheable_args,
+                    augmented,
+                ),
+            )
+            if wrap
+                adjointf = create_abi_wrapper(
+                    adjointf,
+                    TT,
+                    rt,
+                    actualRetType,
+                    API.DEM_ForwardModeSplit,
+                    augmented,
+                    width,
+                    returnPrimal,
+                    shadow_init,
+                    interp,
+                    runtimeActivity,
+                    enzyme_ctx,
+                )
+            end
     elseif mode == API.DEM_ForwardMode
         returnUsed = !(isghostty(actualRetType) || Core.Compiler.isconstType(actualRetType))
 
@@ -3709,7 +3827,7 @@ function enzyme!(
 
         if !isghostty(literal_rt) && runtimeActivity && GPUCompiler.deserves_argbox(actualRetType) && !GPUCompiler.deserves_argbox(literal_rt)
         else
-            returnUsed &= returnPrimal        
+                returnUsed &= returnPrimal
         end
 
         adjointf = LLVM.Function(
@@ -3831,7 +3949,7 @@ function create_abi_wrapper(
     world = enzyme_world()
     is_adjoint = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModeCombined
     is_split = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModePrimal
-    needs_tape = Mode == API.DEM_ReverseModeGradient
+    needs_tape = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ForwardModeSplit
 
     mod = LLVM.parent(enzymefn)
     ctx = LLVM.context(mod)
@@ -4055,7 +4173,7 @@ function create_abi_wrapper(
             push!(sret_types, literal_rt)
         end
     end
-    if Mode == API.DEM_ForwardMode
+    if API.is_forward_mode(Mode)
         if !(rettype <: Const)
             if width == 1
                 push!(sret_types, literal_rt)
@@ -4333,7 +4451,7 @@ function create_abi_wrapper(
 		 @assert arg_roots == 0
 	    end
             Func = get_func(T)
-            funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, Func, Tuple{}, world)
+            funcspec = my_methodinstance(API.is_forward_mode(Mode) ? Forward : Reverse, Func, Tuple{}, world)
             llvmf = nested_codegen!(Mode, mod, funcspec)
             push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
             Func_RT = return_type(interp, funcspec)
@@ -4550,7 +4668,7 @@ function create_abi_wrapper(
             end
         end
         @assert returnNum == numLLVMReturns
-    elseif Mode == API.DEM_ForwardMode
+    elseif API.is_forward_mode(Mode)
         count_Sret = 0
         count_llvm_Sret = 0
         if !isghostty(actualRetType)
@@ -6528,10 +6646,10 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     ForwardModeTypes = ("s", "d", "c", "z")
     ReverseModeTypes = ("s", "d")
     # Tablegen BLAS does not support forward mode yet
-    if !(mode == API.DEM_ForwardMode && params.runtimeActivity)
-        for ty in (mode == API.DEM_ForwardMode ? ForwardModeTypes : ReverseModeTypes)
+    if !(API.is_forward_mode(mode) && params.runtimeActivity)
+        for ty in (API.is_forward_mode(mode) ? ForwardModeTypes : ReverseModeTypes)
             for func in (
-                mode == API.DEM_ForwardMode ? ForwardModeDerivatives :
+                    API.is_forward_mode(mode) ? ForwardModeDerivatives :
                 ReverseModeDerivatives
             )
                 for prefix in ("", "cblas_")
@@ -7287,7 +7405,7 @@ end
             ((LLVM.DoubleType(), Float64, ""), (LLVM.FloatType(), Float32, "f"))
             fname = String(name) * pf
             if haskey(functions(mod), fname)
-                funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, fnty, Tuple{JT}, job.world)
+                funcspec = my_methodinstance(API.is_forward_mode(Mode) ? Forward : Reverse, fnty, Tuple{JT}, job.world)
                 llvmf = nested_codegen!(mode, mod, funcspec)
 
                 llvmf = LLVM.name(llvmf)
@@ -7497,6 +7615,22 @@ end
     args...,
 ) #=ReturnPrimal=#
 
+@inline (thunk::ForwardModeSplitThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeT})(
+    fn,
+    args...,
+) where {PT, FA, Width, RT, TT, ReturnPrimal, TapeT} = enzyme_call(
+    Val(false),
+    thunk.adjoint,
+    ForwardModeSplitThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeT},
+    Val(Width),
+    Val(ReturnPrimal),
+    TT,
+    RT,
+    fn,
+    TapeT,
+    args...,
+)
+
 @inline (thunk::AugmentedForwardThunk{PT,FA,RT,TT,Width,ReturnPrimal,TapeT})(
     fn,
     args...,
@@ -7566,10 +7700,10 @@ const DumpLLVMCall = Ref(false)
         FA = fn_type(CC)
         F = eltype(FA)
         is_forward =
-            CC <: AugmentedForwardThunk || CC <: ForwardModeThunk || CC <: PrimalErrorThunk
+        CC <: AugmentedForwardThunk || CC <: ForwardModeThunk || CC <: ForwardModeSplitThunk || CC <: PrimalErrorThunk
         is_adjoint = CC <: AdjointThunk || CC <: CombinedAdjointThunk
         is_split = CC <: AdjointThunk || CC <: AugmentedForwardThunk
-        needs_tape = CC <: AdjointThunk
+    needs_tape = CC <: AdjointThunk || CC <: ForwardModeSplitThunk
 
         argtt = tt.parameters[1]
         rettype = rt.parameters[1]
@@ -7902,7 +8036,7 @@ const DumpLLVMCall = Ref(false)
             push!(sret_types, TapeType)
         end
 
-        if returnPrimal && !(CC <: ForwardModeThunk)
+        if returnPrimal && !(CC <: ForwardModeThunk) && !(CC <: ForwardModeSplitThunk)
             push!(sret_types, jlRT)
         end
         if is_forward
@@ -7943,7 +8077,7 @@ const DumpLLVMCall = Ref(false)
             end
         end
 
-        if returnPrimal && (CC <: ForwardModeThunk)
+        if returnPrimal && (CC <: ForwardModeThunk || CC <: ForwardModeSplitThunk)
             push!(sret_types, jlRT)
         end
 
@@ -8524,7 +8658,7 @@ end
     end
     if !run_enzyme
         ErrT = PrimalErrorThunk{typeof(compile_result.adjoint),FA,rt2,TT,width,ReturnPrimal}
-        if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
+        if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ForwardModeSplit
             return (ErrT(compile_result.adjoint), ErrT(compile_result.adjoint))
         else
             return ErrT(compile_result.adjoint)
@@ -8549,6 +8683,30 @@ end
             TapeType,
         }
         return (AugT(compile_result.primal), AdjT(compile_result.adjoint))
+    elseif Mode == API.DEM_ForwardModeSplit
+        TapeType = compile_result.TapeType
+        # The augmented forward pass for ForwardModeSplit does not return a shadow;
+        # use Const{eltype(rt2)} so that enzyme_call agrees with the ABI wrapper.
+        aug_rt2 = Const{eltype(rt2)}
+        AugT = AugmentedForwardThunk{
+            typeof(compile_result.primal),
+            FA,
+            aug_rt2,
+            Tuple{params.TT.parameters[2:end]...},
+            width,
+            ReturnPrimal,
+            TapeType,
+        }
+        FMST = ForwardModeSplitThunk{
+            typeof(compile_result.adjoint),
+            FA,
+            rt2,
+            Tuple{params.TT.parameters[2:end]...},
+            width,
+            ReturnPrimal,
+            TapeType,
+        }
+        return (AugT(compile_result.primal), FMST(compile_result.adjoint))
     elseif Mode == API.DEM_ReverseModeCombined
         CAdjT = CombinedAdjointThunk{
             typeof(compile_result.adjoint),
@@ -8647,15 +8805,15 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
     
-    mi = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
-    
+    mi = my_methodinstance(API.is_forward_mode(Mode) ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
+
     mi === nothing && return stub(world, source, :(throw(MethodError($ft, $primal_tt, $world))))
- 
+
     check_activity_cache_invalidations(world)
 
     edges = Any[]
     add_edge!(edges, mi)
-    
+
     ts_ctx = JuliaContext()
     ctx = context(ts_ctx)
     activate(ctx)
@@ -8687,13 +8845,13 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
 
 
 
-    if Mode == API.DEM_ForwardMode
+    if API.is_forward_mode(Mode)
         fwd_sig = Tuple{typeof(EnzymeRules.forward), <:EnzymeRules.FwdConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
         add_edge!(edges, fwd_sig)
     else
         rev_sig = Tuple{typeof(EnzymeRules.augmented_primal), <:EnzymeRules.RevConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
         add_edge!(edges, rev_sig)
-        
+
         rev_sig = Tuple{typeof(EnzymeRules.reverse), <:EnzymeRules.RevConfig, <:Enzyme.EnzymeCore.Annotation, Union{Type{<:Enzyme.EnzymeCore.Annotation}, Enzyme.EnzymeCore.Active}, Any, Vararg{Enzyme.EnzymeCore.Annotation}}
         add_edge!(edges, rev_sig)
     end
@@ -8736,13 +8894,13 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
     min_world = Ref{UInt}(typemin(UInt))
     max_world = Ref{UInt}(typemax(UInt))
  
-    mi = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
-    
+    mi = my_methodinstance(API.is_forward_mode(Mode) ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
+
     mi === nothing && return stub(world, source, :(throw(MethodError($ft, $primal_tt, $world))))
-    
+
     target = EnzymeTarget()
     rt2 = if A isa UnionAll
-        rrt = primal_return_type_world(Mode == API.DEM_ForwardMode ? Forward : Reverse, world, mi)
+        rrt = primal_return_type_world(API.is_forward_mode(Mode) ? Forward : Reverse, world, mi)
 
         # Don't error here but default to nothing return since in cuda context we don't use the device overrides
         if rrt == Union{}
