@@ -1,6 +1,8 @@
 using Test, TensorKit, Random, Enzyme, EnzymeTestUtils, TupleTools
 using TensorKit.VectorInterface: One, Zero
 
+Enzyme.Compiler.RunAttributor[] = false
+
 default_tol(::Type{<:Union{Float32, Complex{Float32}}}) = 1.0e-2
 default_tol(::Type{<:Union{Float64, Complex{Float64}}}) = 1.0e-5
 
