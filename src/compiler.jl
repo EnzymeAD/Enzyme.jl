@@ -240,14 +240,15 @@ if VERSION >= v"1.11.0-DEV.1552"
         native_callees::Bool
     end
 
-    @inline EnzymeCacheToken(method_tables::Tuple, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool, native_callees::Bool) =
-        EnzymeCacheToken(
-        method_tables,
+    @inline function EnzymeCacheToken(method_tables::Tuple, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool, native_callees::Bool)
+        return EnzymeCacheToken(
+            method_tables,
             is_forward ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.forward, Tuple{<:EnzymeCore.EnzymeRules.FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
             is_reverse ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:EnzymeCore.EnzymeRules.RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
-        inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing,
-        native_callees
+            inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing,
+            native_callees
         )
+    end
 
     # The owner of the code instances Enzyme infers for `job`. GPUCompiler asks for it through
     # a hook whose name differs between its majors.
@@ -271,15 +272,13 @@ if VERSION >= v"1.11.0-DEV.1552"
             enzyme_cache_owner(job)
     end
 
-    GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        Interpreter.EnzymeInterpreter(
-        enzyme_cache_owner(job),
-            GPUCompiler.method_table_view(job),
-            job.world,
-            job.config.params.mode,
-        true,
-        native_callees = native_callees_for(GPUCompiler.method_table_view(job))
+    function GPUCompiler.get_interpreter(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams})
+        view = GPUCompiler.method_table_view(job)
+        return Interpreter.EnzymeInterpreter(
+            enzyme_cache_owner(job), view, job.world, job.config.params.mode, true;
+            native_callees = native_callees_for(view)
         )
+    end
 else
 
     # the codeinstance cache to use -- should only be used for the constructor
@@ -303,15 +302,13 @@ else
             enzyme_ci_cache(job)
     end
 
-    GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        Interpreter.EnzymeInterpreter(
-            enzyme_ci_cache(job),
-            GPUCompiler.method_table_view(job),
-            job.world,
-            job.config.params.mode,
-        true,
-        native_callees = native_callees_for(GPUCompiler.method_table_view(job))
+    function GPUCompiler.get_interpreter(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams})
+        view = GPUCompiler.method_table_view(job)
+        return Interpreter.EnzymeInterpreter(
+            enzyme_ci_cache(job), view, job.world, job.config.params.mode, true;
+            native_callees = native_callees_for(view)
         )
+    end
 end
 
 import GPUCompiler: @safe_debug, @safe_info, @safe_warn, @safe_error
