@@ -275,11 +275,18 @@ end
 # A loop whose body calls a function that only writes on a throwing path (the
 # bounds check) and loads an array's `Memory` pointer: the load must be hoisted,
 # or Enzyme caches a GC pointer per iteration and the tape grows with the loop.
-@noinline lookup_or_throw(r, i) = r[i]
+# The lookup holds a `Float64`, so that its type is not guaranteed const and Enzyme
+# emits the callee instead of calling it natively, which would cache its result.
+struct IndexLookup
+    r::Vector{Int}
+    scale::Float64
+end
+@noinline lookup_or_throw(l, i) = l.r[i]
 function sum_squares_indirect(x, r)
     a = Vector{Float64}(undef, length(x))
+    l = IndexLookup(r, 1.0)
     for i in eachindex(x)
-        j = lookup_or_throw(r, i)
+        j = lookup_or_throw(l, i)
         a[i] = x[j] * x[j]
     end
     return sum(a)
