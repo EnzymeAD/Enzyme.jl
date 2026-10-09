@@ -397,10 +397,8 @@ end
     end
 
     ppfuncT = pfuncT
-    dpfuncT = width == 1 ? pfuncT : NTuple{Int(width),pfuncT}
 
     if refed
-        dpfuncT = Base.RefValue{dpfuncT}
         pfuncT = Base.RefValue{pfuncT}
     end
 
@@ -516,21 +514,25 @@ end
         if pdupClosure
 
             if !isghostty(ppfuncT)
-                dv = invert_pointer(gutils, operands(orig)[1], B)
-                   
-		fwdbuilder = if mode == API.DEM_ReverseModeGradient
-		     B2 = LLVM.IRBuilder()
-		     position!(B2, new_from_original(gutils, orig))
-		     B2
-		   else
-		     B
-		   end
-	        
+                fwdbuilder = if mode == API.DEM_ReverseModeGradient
+                    B2 = LLVM.IRBuilder()
+                    position!(B2, new_from_original(gutils, orig))
+                    B2
+                else
+                    B
+                end
+
+                # The shadow is read in the forward pass (and looked up below), so it must be
+                # materialized there: in batch mode `invert_pointer` may build the shadow
+                # aggregate at the builder, which in the reverse block would not dominate the
+                # loads in the forward pass.
+                dv = invert_pointer(gutils, operands(orig)[1], fwdbuilder)
+
                 spllty = LLVM.LLVMType(API.EnzymeGetShadowType(width, pllty))
                 pv = nothing
 	        
                 dv2 = if inline_roots_type(ppfuncT) != 0
-                   invert_pointer(gutils, operands(orig)[2], B)
+                    invert_pointer(gutils, operands(orig)[2], fwdbuilder)
                 end
 
                 if value_type(dv) != spllty
@@ -563,28 +565,40 @@ end
             end
 
             if refed
-                dval0 = dval = emit_allocobj!(B, dpfuncT)
-                dval =
-                    bitcast!(B, dval, LLVM.PointerType(spllty, addrspace(value_type(dval))))
-                dval = addrspacecast!(B, dval, LLVM.PointerType(spllty, Derived))
-                store!(B, dv, dval)
-                if any_jltypes(spllty)
-                    emit_writebarrier!(B, get_julia_inner_types(B, dval0, dv))
+                # The thunk takes `Duplicated{Base.RefValue{funcT}}` or
+                # `BatchDuplicated{Base.RefValue{funcT}, width}`, i.e. one reference per lane
+                # (not one reference to a tuple of closures).
+                pvl = pv === nothing ? nothing : lookup_value(gutils, pv, B)
+                dval0 = if width == 1
+                    nothing
+                else
+                    LLVM.UndefValue(LLVM.ArrayType(value_type(val0), width))
                 end
-                pvl = lookup_value(gutils, pv, B)
-                if mode == API.DEM_ReverseModeGradient
+                dcopy = nothing
+                for idx in 1:width
+                    lane = width == 1 ? dv : extract_value!(B, dv, idx - 1)
+                    dvi0 = dvi = emit_allocobj!(B, pfuncT)
+                    dvi = bitcast!(B, dvi, LLVM.PointerType(pllty, addrspace(value_type(dvi))))
+                    dvi = addrspacecast!(B, dvi, LLVM.PointerType(pllty, Derived))
+                    store!(B, lane, dvi)
+                    if any_jltypes(pllty)
+                        emit_writebarrier!(B, get_julia_inner_types(B, dvi0, lane))
+                    end
+                    if mode == API.DEM_ReverseModeGradient && pvl !== nothing
+                        pvi = width == 1 ? pvl : extract_value!(B, pvl, idx - 1)
+                        copy_floats_into!(B, pllty, dvi, pvi)
+                    end
                     if width == 1
-                       copy_floats_into!(B, spllty, dval, pvl)
+                        dval0 = dvi0
+                        dcopy = dvi
                     else
-                       for idx = 1:width
-                           arg = extract_value!(B, pvl, idx - 1)
-                           g0 = inbounds_gep!(B, spllty, dval, LLVM.Value[LLVM.ConstantInt(Int64(0)), LLVM.ConstantInt(Int32(idx-1))])
-                           copy_floats_into!(B, pllty, g0, arg)
-                        end
+                        dval0 = insert_value!(B, dval0, dvi0, idx - 1)
                     end
                 end
                 if pv !== nothing
-                    push!(copies, (pv, dval, spllty))
+                    # `threadsfor_rev` copies the reference back to `pv`; in batch mode lane
+                    # `i` of the reference array goes to the pointer in lane `i` of `pv`.
+                    push!(copies, (pv, width == 1 ? dcopy : dval0, pllty))
                 end
             else
                 dval0 = dv
@@ -760,9 +774,21 @@ end
     debug_from_orig!(gutils, cal, orig)
 
     for (pv, val, pllty) in copies
-        ld = load!(B, pllty, val)
-	pv = lookup_value(gutils, pv, B)
-        store!(B, ld, pv)
+        pv = lookup_value(gutils, pv, B)
+        if value_type(pv) isa LLVM.ArrayType
+            # Batched shadow: `pv` holds one pointer per lane and `val` one reference per
+            # lane (see `threadsfor_common`).
+            for idx in 1:length(value_type(pv))
+                r = extract_value!(B, val, idx - 1)
+                r = bitcast!(B, r, LLVM.PointerType(pllty, addrspace(value_type(r))))
+                r = addrspacecast!(B, r, LLVM.PointerType(pllty, Derived))
+                ld = load!(B, pllty, r)
+                store!(B, ld, extract_value!(B, pv, idx - 1))
+            end
+        else
+            ld = load!(B, pllty, val)
+            store!(B, ld, pv)
+        end
     end
     return nothing
 end
