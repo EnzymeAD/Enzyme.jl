@@ -319,6 +319,28 @@ end
         Duplicated{Float64},
     )
 
+    err = try
+        autodiff_thunk(
+            ForwardSplitNoPrimal,
+            Const{typeof(fwdsplit_rule_f)},
+            Duplicated,
+            Duplicated{Float64},
+        )
+        nothing
+    catch e
+        e
+    end
+    @test err isa Enzyme.Compiler.ForwardModeSplitUnsupportedException
+    @test occursin("ForwardModeSplit does not yet support", sprint(showerror, err))
+    @test occursin("VERBOSE_ERRORS", sprint(showerror, err))
+    old_verbose = Enzyme.Compiler.VERBOSE_ERRORS[]
+    try
+        Enzyme.Compiler.VERBOSE_ERRORS[] = true
+        @test occursin("Call: ", sprint(showerror, err))
+    finally
+        Enzyme.Compiler.VERBOSE_ERRORS[] = old_verbose
+    end
+
     dyn(b, x) = b.v(x)
     @test_throws Enzyme.Compiler.ForwardModeSplitUnsupportedException autodiff_thunk(
         ForwardSplitNoPrimal,
