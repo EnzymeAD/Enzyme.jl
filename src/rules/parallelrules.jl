@@ -397,10 +397,8 @@ end
     end
 
     ppfuncT = pfuncT
-    dpfuncT = width == 1 ? pfuncT : NTuple{Int(width),pfuncT}
 
     if refed
-        dpfuncT = Base.RefValue{dpfuncT}
         pfuncT = Base.RefValue{pfuncT}
     end
 
@@ -516,13 +514,13 @@ end
         if pdupClosure
 
             if !isghostty(ppfuncT)
-		fwdbuilder = if mode == API.DEM_ReverseModeGradient
-		     B2 = LLVM.IRBuilder()
-		     position!(B2, new_from_original(gutils, orig))
-		     B2
-		   else
-		     B
-		   end
+                fwdbuilder = if mode == API.DEM_ReverseModeGradient
+                    B2 = LLVM.IRBuilder()
+                    position!(B2, new_from_original(gutils, orig))
+                    B2
+                else
+                    B
+                end
 
                 # The shadow is read in the forward pass (and looked up below), so it must be
                 # materialized there: in batch mode `invert_pointer` may build the shadow
@@ -566,29 +564,19 @@ end
                 @assert false
             end
 
-            if refed && width == 1
-                dval0 = dval = emit_allocobj!(B, dpfuncT)
-                dval =
-                    bitcast!(B, dval, LLVM.PointerType(spllty, addrspace(value_type(dval))))
-                dval = addrspacecast!(B, dval, LLVM.PointerType(spllty, Derived))
-                store!(B, dv, dval)
-                if any_jltypes(spllty)
-                    emit_writebarrier!(B, get_julia_inner_types(B, dval0, dv))
-                end
-                pvl = lookup_value(gutils, pv, B)
-                if mode == API.DEM_ReverseModeGradient
-                    copy_floats_into!(B, spllty, dval, pvl)
-                end
-                if pv !== nothing
-                    push!(copies, (pv, dval, spllty))
-                end
-            elseif refed
-                # The thunk takes `BatchDuplicated{Base.RefValue{funcT}, width}`, i.e. one
-                # reference per lane (not one reference to a tuple of closures).
+            if refed
+                # The thunk takes `Duplicated{Base.RefValue{funcT}}` or
+                # `BatchDuplicated{Base.RefValue{funcT}, width}`, i.e. one reference per lane
+                # (not one reference to a tuple of closures).
                 pvl = pv === nothing ? nothing : lookup_value(gutils, pv, B)
-                dval0 = LLVM.UndefValue(LLVM.ArrayType(value_type(val0), width))
-                for idx = 1:width
-                    lane = extract_value!(B, dv, idx - 1)
+                dval0 = if width == 1
+                    nothing
+                else
+                    LLVM.UndefValue(LLVM.ArrayType(value_type(val0), width))
+                end
+                dcopy = nothing
+                for idx in 1:width
+                    lane = width == 1 ? dv : extract_value!(B, dv, idx - 1)
                     dvi0 = dvi = emit_allocobj!(B, pfuncT)
                     dvi = bitcast!(B, dvi, LLVM.PointerType(pllty, addrspace(value_type(dvi))))
                     dvi = addrspacecast!(B, dvi, LLVM.PointerType(pllty, Derived))
@@ -597,14 +585,20 @@ end
                         emit_writebarrier!(B, get_julia_inner_types(B, dvi0, lane))
                     end
                     if mode == API.DEM_ReverseModeGradient && pvl !== nothing
-                        copy_floats_into!(B, pllty, dvi, extract_value!(B, pvl, idx - 1))
+                        pvi = width == 1 ? pvl : extract_value!(B, pvl, idx - 1)
+                        copy_floats_into!(B, pllty, dvi, pvi)
                     end
-                    dval0 = insert_value!(B, dval0, dvi0, idx - 1)
+                    if width == 1
+                        dval0 = dvi0
+                        dcopy = dvi
+                    else
+                        dval0 = insert_value!(B, dval0, dvi0, idx - 1)
+                    end
                 end
                 if pv !== nothing
-                    # `threadsfor_rev` copies lane `i` of the reference array back to the
-                    # pointer in lane `i` of `pv`.
-                    push!(copies, (pv, dval0, pllty))
+                    # `threadsfor_rev` copies the reference back to `pv`; in batch mode lane
+                    # `i` of the reference array goes to the pointer in lane `i` of `pv`.
+                    push!(copies, (pv, width == 1 ? dcopy : dval0, pllty))
                 end
             else
                 dval0 = dv
@@ -780,7 +774,7 @@ end
     debug_from_orig!(gutils, cal, orig)
 
     for (pv, val, pllty) in copies
-	pv = lookup_value(gutils, pv, B)
+        pv = lookup_value(gutils, pv, B)
         if value_type(pv) isa LLVM.ArrayType
             # Batched shadow: `pv` holds one pointer per lane and `val` one reference per
             # lane (see `threadsfor_common`).

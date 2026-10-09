@@ -681,7 +681,7 @@ function common_newstructv_rev(offset, B, orig, gutils, tape)
             cal = tape
             cal = LLVM.addrspacecast!(B, cal, LLVM.PointerType(T_jlvalue, Derived))
             cal = LLVM.pointercast!(B, cal, LLVM.PointerType(llty, Derived))
-            for i = 1:width
+            for i in 1:width
                 gep = LLVM.inbounds_gep!(
                     B,
                     AT,
