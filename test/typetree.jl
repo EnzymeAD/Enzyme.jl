@@ -196,3 +196,28 @@ Enzyme.get_offsets(::Type{ExtPtr}) = ((Enzyme.API.DT_Pointer, 0),)
     @test tt == "{[0]:Float@double, [8]:Pointer, [8,-1]:Float@double}"
     @test occursin("Pointer", md)
 end
+
+# A floating-point type that is a struct of two Float64, like the double-double types of
+# DoubleFloats.jl and MultiFloats.jl. Enzyme must not differentiate its arithmetic limb
+# by limb, so it asks for custom rules.
+struct StructFloat <: AbstractFloat
+    hi::Float64
+    lo::Float64
+end
+Base.:*(a::StructFloat, b::StructFloat) = StructFloat(a.hi * b.hi, a.hi * b.lo + a.lo * b.hi)
+
+@testset "Unknown floating-point types" begin
+    err = try
+        typetree(StructFloat, ctx, dl)
+        nothing
+    catch e
+        e
+    end
+    @test err isa Enzyme.UnknownFloatError
+    msg = sprint(showerror, err)
+    @test occursin("custom rules", msg)
+    @test occursin("typetree_inner", msg)
+    @test occursin("get_offsets", msg)
+    @test_throws Enzyme.UnknownFloatError Enzyme.get_offsets(StructFloat)
+    @test_throws Enzyme.UnknownFloatError autodiff(Forward, x -> x * x, Duplicated(StructFloat(2.0, 0.0), StructFloat(1.0, 0.0)))
+end
