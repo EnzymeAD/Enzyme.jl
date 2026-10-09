@@ -8275,7 +8275,6 @@ function clear_caches!()
     # addresses were written into their code.
     empty!(cache)
     empty!(autodiff_cache)
-    empty!(pfor_erased_cache)
     empty!(Enzyme.tape_cache)
     empty!(Enzyme.captured_constants)
 

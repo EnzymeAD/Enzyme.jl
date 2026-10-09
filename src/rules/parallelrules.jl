@@ -116,7 +116,7 @@ end
 
 Type-erased threading wrapper for the forward derivative of a `Threads.@threads` loop:
 run `tramp(env, tid)` on every thread through `Base.Threads.threading_run`. `tramp` is
-the C-ABI trampoline of the loop-body derivative (see [`pfor_erased_body!`](@ref)), and
+the C-ABI trampoline of the loop-body derivative (see [`pfor_trampoline!`](@ref)), and
 `env` points to the annotated loop closure. Its specialization is shared by all loops
 and compiled once by Julia, instead of emitting the threading machinery (task creation,
 scheduling, waiting) into the differentiated module for every loop.
@@ -139,70 +139,47 @@ const PFOR_ERASED = Ref(true)
 pfor_erased_available(mod::LLVM.Module) =
     PFOR_ERASED[] && VERSION >= v"1.12-" && native_invoke_available(mod)
 
-# Trampolines of loop-body derivatives and their edges, keyed by the hash of their
-# compiler job.
-const pfor_erased_cache = Dict{UInt, Tuple{Ptr{Cvoid}, Vector{Any}}}()
-
 """
-    pfor_erased_body!(ejob, dFT) -> Union{Ptr{Cvoid}, Nothing}
+    pfor_trampoline!(mod, body, dFT) -> Union{LLVM.Function, Nothing}
 
-Compile the derivative of a loop body, the forward-mode FFI-ABI job `ejob` taking the
-annotated closure `dFT` and the thread id, as an ordinary thunk in its own JIT module.
-Add to that module a trampoline `void(ptr env, i64 tid)` that loads the fields of `dFT`
-from `env`, where they are laid out as the Julia value, and calls the derivative.
-Return the address of the trampoline, or `nothing` when the derivative does not take
-the fields of `dFT` by value followed by the thread id.
+Add to `mod` a trampoline `void(ptr env, i64 tid)` for the derivative of a loop body
+`body`, which takes the fields of the annotated closure `dFT` by value followed by the
+thread id. The trampoline loads the fields from `env`, where they are laid out as the
+Julia value, and calls `body`. Return `nothing` when `body` does not have that signature.
+The body and its trampoline are compiled with `mod`, so all loop bodies of a function
+share one post-optimization and JIT.
 """
-function pfor_erased_body!(ejob, @nospecialize(dFT))
-    key = hash(ejob)
-    lock(cache_lock)
-    try
-        cached = get(pfor_erased_cache, key, nothing)
-        if cached !== nothing
-            append!(enzyme_context().edges, cached[2])
-            return cached[1]
-        end
-        mod, edges, adjoint_name, _, TapeType, prepost, _ = _thunk(ejob)
-        adj = functions(mod)[adjoint_name]
-        fty = LLVM.function_type(adj)
-        ps = parameters(fty)
-        dl = LLVM.datalayout(mod)
-        nf = isghostty(dFT) ? 0 : fieldcount(dFT)
-        ok = LLVM.return_type(fty) isa LLVM.VoidType && length(ps) == nf + 1 &&
-             ps[end] == LLVM.IntType(8 * sizeof(Int))
-        for i in 1:nf
-            ok || break
-            ok = LLVM.storage_size(dl, ps[i]) == sizeof(fieldtype(dFT, i))
-        end
-        if !ok
-            dispose(mod)
-            return nothing
-        end
-        T_ptr = LLVM.PointerType(LLVM.Int8Type())
-        trampf = LLVM.Function(mod, "pfor_tramp_" * adjoint_name,
-                               LLVM.FunctionType(LLVM.VoidType(), [T_ptr, ps[end]]))
-        B = LLVM.IRBuilder()
-        position!(B, LLVM.BasicBlock(trampf, "entry"))
-        env, tid = parameters(trampf)
-        args = LLVM.Value[]
-        for i in 1:nf
-            ptr = inbounds_gep!(B, LLVM.Int8Type(), env,
-                                LLVM.Value[LLVM.ConstantInt(Int64(fieldoffset(dFT, i)))])
-            push!(args, load!(B, ps[i], ptr))
-        end
-        push!(args, tid)
-        cal = call!(B, fty, adj, args)
-        callconv!(cal, callconv(adj))
-        ret!(B)
-        dispose(B)
-        obj = _link(ejob, mod, edges, LLVM.name(trampf), nothing, TapeType, prepost)
-        tramp = obj.adjoint::Ptr{Cvoid}
-        pfor_erased_cache[key] = (tramp, edges)
-        append!(enzyme_context().edges, edges)
-        return tramp
-    finally
-        unlock(cache_lock)
+function pfor_trampoline!(mod::LLVM.Module, body::LLVM.Function, @nospecialize(dFT))
+    fty = LLVM.function_type(body)
+    ps = parameters(fty)
+    dl = LLVM.datalayout(mod)
+    nf = isghostty(dFT) ? 0 : fieldcount(dFT)
+    ok = LLVM.return_type(fty) isa LLVM.VoidType && length(ps) == nf + 1 &&
+         ps[end] == LLVM.IntType(8 * sizeof(Int))
+    for i in 1:nf
+        ok || break
+        ok = LLVM.storage_size(dl, ps[i]) == sizeof(fieldtype(dFT, i))
     end
+    ok || return nothing
+    T_ptr = LLVM.PointerType(LLVM.Int8Type())
+    trampf = LLVM.Function(mod, "pfor_tramp_" * LLVM.name(body),
+                           LLVM.FunctionType(LLVM.VoidType(), [T_ptr, ps[end]]))
+    linkage!(trampf, LLVM.API.LLVMInternalLinkage)
+    B = LLVM.IRBuilder()
+    position!(B, LLVM.BasicBlock(trampf, "entry"))
+    env, tid = parameters(trampf)
+    args = LLVM.Value[]
+    for i in 1:nf
+        ptr = inbounds_gep!(B, LLVM.Int8Type(), env,
+                            LLVM.Value[LLVM.ConstantInt(Int64(fieldoffset(dFT, i)))])
+        push!(args, load!(B, ps[i], ptr))
+    end
+    push!(args, tid)
+    cal = call!(B, fty, body, args)
+    callconv!(cal, callconv(body))
+    ret!(B)
+    dispose(B)
+    return trampf
 end
 
 """
@@ -304,6 +281,7 @@ end
     llvmfn = LLVM.called_operand(orig)
     mi = nothing
     fwdmodenm = nothing
+    tramp = nothing
     augfwdnm = nothing
     adjointnm = nothing
     TapeType = nothing
@@ -320,6 +298,9 @@ end
             end
             if kind(fattr) == "enzymejl_forward"
                 fwdmodenm = value(fattr)
+            end
+            if kind(fattr) == "enzymejl_forward_tramp"
+                tramp = value(fattr)
             end
             if kind(fattr) == "enzymejl_augforward"
                 augfwdnm = value(fattr)
@@ -392,23 +373,22 @@ end
                 world,
             )
 
-            tramp = if pfor_erased_available(mod) && pfor_erased_entry!(mod) !== nothing
-                pfor_erased_body!(ejob, dFT)
+            cmod, edges, fwdmodenm, _, _, _, value_table = _thunk(ejob, false) #=postopt=#
+
+            LLVM.link!(mod, cmod)
+            merge_julia_value_table!(enzyme_ctx, value_table)
+
+            push!(attributes, StringAttribute("enzymejl_forward", fwdmodenm))
+            body = functions(mod)[fwdmodenm]
+            trampf = if pfor_erased_available(mod) && pfor_erased_entry!(mod) !== nothing
+                pfor_trampoline!(mod, body, dFT)
             end
-            if tramp !== nothing
-                subfunc = tramp
+            if trampf !== nothing
+                tramp = LLVM.name(trampf)
+                push!(attributes, StringAttribute("enzymejl_forward_tramp", tramp))
             else
-                cmod, edges, fwdmodenm, _, _, _, value_table = _thunk(ejob, false) #=postopt=#
-
-                LLVM.link!(mod, cmod)
-                merge_julia_value_table!(enzyme_ctx, value_table)
-
-                push!(attributes, StringAttribute("enzymejl_forward", fwdmodenm))
-                push!(
-                    function_attributes(functions(mod)[fwdmodenm]),
-                    EnumAttribute("alwaysinline"),
-                )
-                permit_inlining!(functions(mod)[fwdmodenm])
+                push!(function_attributes(body), EnumAttribute("alwaysinline"))
+                permit_inlining!(body)
             end
         end
         thunkTy = ForwardModeThunk{
@@ -419,9 +399,7 @@ end
             width,
             false,
         }  #=returnPrimal=#
-        if !(subfunc isa Ptr{Cvoid})
-            subfunc = functions(mod)[fwdmodenm]
-        end
+        subfunc = tramp === nothing ? functions(mod)[fwdmodenm] : (:erased, tramp)
 
     elseif mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
         if dupClosure
@@ -743,7 +721,7 @@ end
 
     push!(vals, new_from_original(gutils, arg_operands_view(orig)[end]))
 
-    return refed, subfunc isa Ptr{Cvoid} ? subfunc : LLVM.name(subfunc), dfuncT, vals, thunkTy, TapeType, copies
+    return refed, subfunc isa Tuple ? subfunc : LLVM.name(subfunc), dfuncT, vals, thunkTy, TapeType, copies
 end
 
 @register_fwd function threadsfor_fwd(B, orig, gutils, normalR, shadowR)
@@ -760,8 +738,8 @@ end
     _, sname, dfuncT, vals, thunkTy, _, _ =
         threadsfor_common(orig, gutils, B, API.DEM_ForwardMode, enzyme_context())
 
-    if sname isa Ptr{Cvoid}
-        cal = pfor_erased_call!(B, mod, sname, vals)
+    if sname isa Tuple
+        cal = pfor_erased_call!(B, mod, functions(mod)[sname[2]], vals)
     else
         cal = pfor_emitted_call!(B, gutils, mod, sname, vals, thunkTy, dfuncT)
     end
@@ -781,7 +759,7 @@ end
 # Call `runtime_pfor_erased(tramp, env, static)`. `vals` are the arguments
 # `threadsfor_common` prepared for `runtime_pfor_fwd`: the thunk buffer, the closure
 # buffer and its roots (if the closure is not a ghost), and `static`.
-function pfor_erased_call!(B::LLVM.IRBuilder, mod::LLVM.Module, tramp::Ptr{Cvoid}, vals::Vector{LLVM.Value})
+function pfor_erased_call!(B::LLVM.IRBuilder, mod::LLVM.Module, tramp::LLVM.Function, vals::Vector{LLVM.Value})
     entry = pfor_erased_entry!(mod)::LLVM.Function
     params = parameters(LLVM.function_type(entry))
     off = has_gcstack_arg(entry) ? 1 : 0
@@ -795,7 +773,7 @@ function pfor_erased_call!(B::LLVM.IRBuilder, mod::LLVM.Module, tramp::Ptr{Cvoid
             return addrspace(vty) == addrspace(ty) ? v : addrspacecast!(B, v, ty)
         end
     end
-    trampv = cast(LLVM.ConstantInt(reinterpret(UInt, tramp)), params[off + 1])
+    trampv = params[off + 1] isa LLVM.IntegerType ? LLVM.const_ptrtoint(tramp, params[off + 1]) : tramp
     envty = params[off + 2]
     envv = if length(vals) >= 3
         cast(vals[2], envty)
