@@ -593,6 +593,22 @@ function abs_typeof(
             return abs_typeof(operands(arg)[1], enzyme_ctx, partial, seenphis)
         end
 
+        # A call resolved to native code during inference goes through `jl_invoke` on
+        # Julia 1.10 and 1.11 (see `typeinf_edge` in native_callees.jl): its result is
+        # the boxed value of the type native inference gave the MethodInstance.
+        if nm == "julia.call2" || nm == "jl_invoke" || nm == "ijl_invoke"
+            target = nm == "julia.call2" ? operands(arg)[1] : fn
+            if isa(target, LLVM.Function) && LLVM.name(target) in ("jl_invoke", "ijl_invoke")
+                mi_op = nm == "julia.call2" ? operands(arg)[2] : operands(arg)[4]
+                legal, mi = absint(mi_op, enzyme_ctx)
+                mi = unbind(mi)
+                if legal && mi isa Core.MethodInstance
+                    RT = native_edge_rettype(mi)
+                    RT === nothing || return (true, RT, GPUCompiler.MUT_REF)
+                end
+            end
+        end
+
         if nm == "julia.gc_loaded"
             legal, res, byref = abs_typeof(operands(arg)[2], enzyme_ctx, partial, seenphis)
             return legal, res, byref

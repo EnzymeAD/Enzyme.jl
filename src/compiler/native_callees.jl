@@ -23,6 +23,21 @@
 # On Julia 1.10 and 1.11 the call goes through `jl_invoke` instead (see the end of this
 # file).
 
+# The return type native inference gave each MethodInstance a call was resolved to on
+# Julia 1.10 and 1.11, where the call goes through `jl_invoke` and the boxed result
+# has no other type information for `abs_typeof`.
+const NATIVE_EDGE_RT = IdDict{Core.MethodInstance, Any}()
+const NATIVE_EDGE_RT_LOCK = ReentrantLock()
+
+"""
+    native_edge_rettype(mi::MethodInstance)
+
+Return the return type of a MethodInstance whose calls were resolved to native code
+through `jl_invoke`, or `nothing` if none were.
+"""
+native_edge_rettype(mi::Core.MethodInstance) =
+    @lock NATIVE_EDGE_RT_LOCK get(NATIVE_EDGE_RT, mi, nothing)
+
 """
     use_native_callees(interp) -> Bool
 
@@ -531,6 +546,7 @@ elseif VERSION < v"1.12-"
         inferred isa Core.CodeInstance || return nothing
         (kind === :inactive || guaranteed_const_nongen(inferred.rettype, world)) || return nothing
         call_convention(mi, inferred) === :call || return nothing
+        @lock NATIVE_EDGE_RT_LOCK NATIVE_EDGE_RT[mi] = inferred.rettype
         return (inferred, C_NULL)
     end
 
