@@ -1872,6 +1872,58 @@ end
     return
 end
 
+is_untyped_alloca_type(T::LLVM.LLVMType) =
+    T isa LLVM.IntegerType || (T isa LLVM.ArrayType && eltype(T) isa LLVM.IntegerType)
+
+"""
+    byref_alloca_type(inst::LLVM.AllocaInst, DL)
+
+The Julia type of the untyped alloca `inst` (`iN` or `[N x iM]`), if it is passed
+(possibly through casts) by reference (`BITS_REF`) as an argument of calls whose
+parameter type is known (`enzymejl_parmtype`), all agreeing on one concrete
+immutable type of the alloca's size. Otherwise `nothing`.
+"""
+function byref_alloca_type(inst::LLVM.AllocaInst, DL)
+    at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(inst))
+    is_untyped_alloca_type(at) || return nothing
+    RT = nothing
+    todo = LLVM.Value[inst]
+    while !isempty(todo)
+        v = pop!(todo)
+        for u in LLVM.uses(v)
+            user = LLVM.user(u)
+            if isa(user, LLVM.AddrSpaceCastInst) || isa(user, LLVM.BitCastInst)
+                push!(todo, user)
+                continue
+            end
+            isa(user, LLVM.CallInst) || continue
+            fn = LLVM.called_operand(user)
+            fn isa LLVM.Function || continue
+            ops = operands(user)
+            for i in 1:min(length(ops) - 1, length(parameters(fn)))
+                ops[i] == v || continue
+                ty = nothing
+                ref = nothing
+                for attr in collect(parameter_attributes(fn, i))
+                    attr isa LLVM.StringAttribute || continue
+                    if kind(attr) == "enzymejl_parmtype"
+                        ty = LLVM.value(attr)
+                    elseif kind(attr) == "enzymejl_parmtype_ref"
+                        ref = parse(UInt, LLVM.value(attr))
+                    end
+                end
+                (ty === nothing || ref != UInt(GPUCompiler.BITS_REF)) && continue
+                T = Base.unsafe_pointer_to_objref(reinterpret(Ptr{Cvoid}, parse(UInt, ty)))
+                (T isa DataType && isconcretetype(T) && !ismutabletype(T)) || return nothing
+                LLVM.sizeof(DL, convert(LLVMType, T)) == LLVM.sizeof(DL, at) || return nothing
+                (RT === nothing || RT == T) || return nothing
+                RT = T
+            end
+        end
+    end
+    return RT
+end
+
 function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLVM.Function}, job, edges, run_enzyme, mode::API.CDerivativeMode, enzyme_ctx::EnzymeContext)::Tuple{Dict{String, LLVM.API.LLVMLinkage}, HandlerState}
     # One memo table for the whole module: the argument and return types of
     # its functions overlap heavily (the same model / array types recur in
@@ -6891,6 +6943,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
         end
     end
 
+    retype_allocas = Set{LLVM.Function}()
     for f in functions(mod), bb in blocks(f), inst in instructions(bb)
         fn = isa(inst, LLVM.CallInst) ? LLVM.called_operand(inst) : nothing
        
@@ -6950,6 +7003,25 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
                         end
                     end
                 end
+            end
+        end
+
+        # Julia >= 1.12 emits the stack slot of an immutable struct (e.g. a closure
+        # object built with `new`) as an untyped `[N x i64]` alloca. If it is passed
+        # by reference to calls whose parameter type is known, record that type, so
+        # that `restore_alloca_type!` gives the alloca the struct's type. Otherwise
+        # every word copied into it, pointers included, is an untyped integer that
+        # type analysis cannot follow past `maxtypeoffset` or across padding.
+        if !API.HasFromStack(inst) && isa(inst, LLVM.AllocaInst) &&
+                !haskey(metadata(inst), "enzymejl_allocart") &&
+                !haskey(metadata(inst), "enzymejl_gc_alloc_rt")
+            RT = byref_alloca_type(inst, DL)
+            if RT !== nothing
+                metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
+                if EmitTypeNames[]
+                    metadata(inst)["enzymejl_allocart_name"] = MDNode(LLVM.Metadata[MDString(string(RT))])
+                end
+                push!(retype_allocas, f)
             end
         end
 
@@ -7066,6 +7138,11 @@ end
         else
             metadata(inst)["enzyme_inactive"] = inactive_md(INACTIVE_GUARANTEED_CONST)
         end
+    end
+    # give the allocas annotated above their struct type, before their copies are
+    # turned into loads and stores (memcpy_alloca_to_loadstore)
+    for f in retype_allocas
+        restore_alloca_type!(f)
     end
 
 
