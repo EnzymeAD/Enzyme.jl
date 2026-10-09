@@ -2641,7 +2641,7 @@ function enzyme_custom_common_rev(
             shadowVType = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(v)))
             if value_type(ext) != shadowVType
                 size = sizeof(Ty)
-                align = 0
+                align = Base.datatype_alignment(Ty)
                 premask = C_NULL
                 API.EnzymeGradientUtilsAddToInvertedPointerDiffeTT(
                     gutils,
