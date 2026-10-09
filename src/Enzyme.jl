@@ -148,9 +148,11 @@ global without the prefix; see `insert_julia_value!`). On GPUCompiler 2.x the
 values of the slots are read straight from the relocation records of the
 modules the compilation emitted (`relocations`), and `bakes` says whether the
 back-end lets their host addresses into the code. `native_callees` holds the
-derivative-free callees `ci_cache_populate` left out of the module, for
-`bind_native_callees!` to call natively, keyed by the CodeInstance or
-MethodInstance codegen invokes.
+callees `ci_cache_populate` left out of the module, for `bind_native_callees!` to call
+natively, keyed by the CodeInstance or MethodInstance codegen invokes: their native
+CodeInstance, its specialized entry point, and how Enzyme handles their calls
+(`:inactive` for a derivative-free callee, `:frule` or `:rrule` for one with a custom
+rule).
 
 A context belongs to a single `compile_unhooked` invocation, and holds the
 world age that compilation runs in. It is not passed as an argument:
@@ -172,7 +174,7 @@ mutable struct EnzymeContext
     inserted_values::Dict{String, Any}
     relocations::Vector{Any}
     bakes::Bool
-    native_callees::IdDict{Any, Tuple{Core.CodeInstance, Ptr{Cvoid}}}
+    native_callees::IdDict{Any, Tuple{Core.CodeInstance, Ptr{Cvoid}, Symbol}}
     EnzymeContext(world::Integer) = new(
         world,
         LLVM.Module[],
@@ -184,7 +186,7 @@ mutable struct EnzymeContext
         Dict{String, Any}(),
         Any[],
         true,
-        IdDict{Any, Tuple{Core.CodeInstance, Ptr{Cvoid}}}()
+        IdDict{Any, Tuple{Core.CodeInstance, Ptr{Cvoid}, Symbol}}()
     )
 end
 

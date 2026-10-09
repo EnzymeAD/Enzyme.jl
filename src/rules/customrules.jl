@@ -1630,14 +1630,36 @@ end
     return EnzymeRules.has_easy_rule_from_sig(specTypes; world)
 end
 
+"""
+    no_rule_for_constant_call(rmi, activity, kwtup, RT) -> Bool
+
+Say if no rule method applies to a call whose function, arguments, keyword arguments and
+return are all constant: `rmi` is the `custom_rule_method_error` fallback `fwd_mi` or
+`aug_fwd_mi` substitutes when no rule method matches, and `activity`, `kwtup` and `RT`
+are the activities they looked the rule up with. Enzyme then calls the primal as is
+instead of throwing the `MethodError` at runtime. A call with a non-constant argument or
+return, such as an sret buffer with a shadow, still needs a rule.
+"""
+function no_rule_for_constant_call(rmi::Core.MethodInstance, activity::Vector{Type}, @nospecialize(kwtup), @nospecialize(RT::Type))::Bool
+    rmi.specTypes.parameters[1] === typeof(custom_rule_method_error) || return false
+    RT <: Const || return false
+    # A constant keyword tuple is its plain type, a non-constant one an annotation.
+    (kwtup === nothing || !(kwtup <: Annotation)) || return false
+    for T in activity
+        T <: Const || return false
+    end
+    return true
+end
+
 @inline function has_rule(orig::LLVM.CallInst, gutils::GradientUtils)::Bool
     if get_mode(gutils) == API.DEM_ForwardMode
-       tup = fwd_mi(orig, gutils)
-        if tup[1] === nothing
-           return false
+        fmi, (_, _, _, kwtup, RT, _, _, _, activity, _) = fwd_mi(orig, gutils)
+        if fmi === nothing || no_rule_for_constant_call(fmi, activity, kwtup, RT)
+            return false
         end
     else
-       if aug_fwd_mi(orig, gutils)[1] === nothing
+        ami, _, (_, activity, _, _, kwtup, RT, _, _, _, _, _) = aug_fwd_mi(orig, gutils)
+        if ami === nothing || no_rule_for_constant_call(ami, activity, kwtup, RT)
             return false
         end
     end
