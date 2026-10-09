@@ -111,6 +111,118 @@ function runtime_pfor_fwd(
     return
 end
 
+"""
+    runtime_pfor_erased(tramp::Ptr{Cvoid}, env::Ptr{Cvoid}, static::Bool)
+
+Type-erased threading wrapper for the forward derivative of a `Threads.@threads` loop:
+run `tramp(env, tid)` on every thread through `Base.Threads.threading_run`. `tramp` is
+the C-ABI trampoline of the loop-body derivative (see [`pfor_erased_body!`](@ref)), and
+`env` points to the annotated loop closure. Its specialization is shared by all loops
+and compiled once by Julia, instead of emitting the threading machinery (task creation,
+scheduling, waiting) into the differentiated module for every loop.
+"""
+@noinline function runtime_pfor_erased(tramp::Ptr{Cvoid}, env::Ptr{Cvoid}, static::Bool)::Cvoid
+    fwd(tid) = ccall(tramp, Cvoid, (Ptr{Cvoid}, Int), env, tid)
+    Base.Threads.threading_run(fwd, static)
+    return
+end
+
+"""
+    PFOR_ERASED
+
+Use [`runtime_pfor_erased`](@ref) for forward-mode `Threads.@threads` loops where
+available (Julia 1.12 and later, host code). Set to `false` to always emit the
+specialized `runtime_pfor_fwd` into the differentiated module.
+"""
+const PFOR_ERASED = Ref(true)
+
+pfor_erased_available(mod::LLVM.Module) =
+    PFOR_ERASED[] && VERSION >= v"1.12-" && native_invoke_available(mod)
+
+# Trampolines of loop-body derivatives and their edges, keyed by the hash of their
+# compiler job.
+const pfor_erased_cache = Dict{UInt, Tuple{Ptr{Cvoid}, Vector{Any}}}()
+
+"""
+    pfor_erased_body!(ejob, dFT) -> Union{Ptr{Cvoid}, Nothing}
+
+Compile the derivative of a loop body, the forward-mode FFI-ABI job `ejob` taking the
+annotated closure `dFT` and the thread id, as an ordinary thunk in its own JIT module.
+Add to that module a trampoline `void(ptr env, i64 tid)` that loads the fields of `dFT`
+from `env`, where they are laid out as the Julia value, and calls the derivative.
+Return the address of the trampoline, or `nothing` when the derivative does not take
+the fields of `dFT` by value followed by the thread id.
+"""
+function pfor_erased_body!(ejob, @nospecialize(dFT))
+    key = hash(ejob)
+    lock(cache_lock)
+    try
+        cached = get(pfor_erased_cache, key, nothing)
+        if cached !== nothing
+            append!(enzyme_context().edges, cached[2])
+            return cached[1]
+        end
+        mod, edges, adjoint_name, _, TapeType, prepost, _ = _thunk(ejob)
+        adj = functions(mod)[adjoint_name]
+        fty = LLVM.function_type(adj)
+        ps = parameters(fty)
+        dl = LLVM.datalayout(mod)
+        nf = isghostty(dFT) ? 0 : fieldcount(dFT)
+        ok = LLVM.return_type(fty) isa LLVM.VoidType && length(ps) == nf + 1 &&
+             ps[end] == LLVM.IntType(8 * sizeof(Int))
+        for i in 1:nf
+            ok || break
+            ok = LLVM.storage_size(dl, ps[i]) == sizeof(fieldtype(dFT, i))
+        end
+        if !ok
+            dispose(mod)
+            return nothing
+        end
+        T_ptr = LLVM.PointerType(LLVM.Int8Type())
+        trampf = LLVM.Function(mod, "pfor_tramp_" * adjoint_name,
+                               LLVM.FunctionType(LLVM.VoidType(), [T_ptr, ps[end]]))
+        B = LLVM.IRBuilder()
+        position!(B, LLVM.BasicBlock(trampf, "entry"))
+        env, tid = parameters(trampf)
+        args = LLVM.Value[]
+        for i in 1:nf
+            ptr = inbounds_gep!(B, LLVM.Int8Type(), env,
+                                LLVM.Value[LLVM.ConstantInt(Int64(fieldoffset(dFT, i)))])
+            push!(args, load!(B, ps[i], ptr))
+        end
+        push!(args, tid)
+        cal = call!(B, fty, adj, args)
+        callconv!(cal, callconv(adj))
+        ret!(B)
+        dispose(B)
+        obj = _link(ejob, mod, edges, LLVM.name(trampf), nothing, TapeType, prepost)
+        tramp = obj.adjoint::Ptr{Cvoid}
+        pfor_erased_cache[key] = (tramp, edges)
+        append!(enzyme_context().edges, edges)
+        return tramp
+    finally
+        unlock(cache_lock)
+    end
+end
+
+"""
+    pfor_erased_entry!(mod) -> LLVM.Function
+
+Declaration in `mod` of the natively compiled [`runtime_pfor_erased`](@ref).
+"""
+function pfor_erased_entry!(mod::LLVM.Module)
+    world = enzyme_context().world
+    mi = my_methodinstance(Forward, typeof(runtime_pfor_erased), Tuple{Ptr{Cvoid}, Ptr{Cvoid}, Bool}, world)
+    name = "ejl_runtime_pfor_erased"
+    haskey(functions(mod), name) && return functions(mod)[name]
+    ci = codeinst(mi, world)
+    ci === nothing && return nothing
+    specptr, _ = Interpreter.codeinst_entry(ci)
+    specptr == C_NULL && return nothing
+    push!(enzyme_context().edges, mi)
+    return declare_native!(mod, mi, ci.rettype, specptr, name, world)
+end
+
 function runtime_pfor_augfwd(
     thunk::ThunkTy,
     ft::FT,
@@ -280,17 +392,24 @@ end
                 world,
             )
 
-            cmod, edges, fwdmodenm, _, _, _, value_table = _thunk(ejob, false) #=postopt=#
+            tramp = if pfor_erased_available(mod) && pfor_erased_entry!(mod) !== nothing
+                pfor_erased_body!(ejob, dFT)
+            end
+            if tramp !== nothing
+                subfunc = tramp
+            else
+                cmod, edges, fwdmodenm, _, _, _, value_table = _thunk(ejob, false) #=postopt=#
 
-            LLVM.link!(mod, cmod)
-            merge_julia_value_table!(enzyme_ctx, value_table)
+                LLVM.link!(mod, cmod)
+                merge_julia_value_table!(enzyme_ctx, value_table)
 
-            push!(attributes, StringAttribute("enzymejl_forward", fwdmodenm))
-            push!(
-                function_attributes(functions(mod)[fwdmodenm]),
-                EnumAttribute("alwaysinline"),
-            )
-            permit_inlining!(functions(mod)[fwdmodenm])
+                push!(attributes, StringAttribute("enzymejl_forward", fwdmodenm))
+                push!(
+                    function_attributes(functions(mod)[fwdmodenm]),
+                    EnumAttribute("alwaysinline"),
+                )
+                permit_inlining!(functions(mod)[fwdmodenm])
+            end
         end
         thunkTy = ForwardModeThunk{
             Ptr{Cvoid},
@@ -300,7 +419,9 @@ end
             width,
             false,
         }  #=returnPrimal=#
-        subfunc = functions(mod)[fwdmodenm]
+        if !(subfunc isa Ptr{Cvoid})
+            subfunc = functions(mod)[fwdmodenm]
+        end
 
     elseif mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient
         if dupClosure
@@ -622,7 +743,7 @@ end
 
     push!(vals, new_from_original(gutils, arg_operands_view(orig)[end]))
 
-    return refed, LLVM.name(subfunc), dfuncT, vals, thunkTy, TapeType, copies
+    return refed, subfunc isa Ptr{Cvoid} ? subfunc : LLVM.name(subfunc), dfuncT, vals, thunkTy, TapeType, copies
 end
 
 @register_fwd function threadsfor_fwd(B, orig, gutils, normalR, shadowR)
@@ -639,6 +760,81 @@ end
     _, sname, dfuncT, vals, thunkTy, _, _ =
         threadsfor_common(orig, gutils, B, API.DEM_ForwardMode, enzyme_context())
 
+    if sname isa Ptr{Cvoid}
+        cal = pfor_erased_call!(B, mod, sname, vals)
+    else
+        cal = pfor_emitted_call!(B, gutils, mod, sname, vals, thunkTy, dfuncT)
+    end
+    debug_from_orig!(gutils, cal, orig)
+
+    # Delete the primal code
+    if normal !== nothing
+        unsafe_store!(normalR, C_NULL)
+    else
+        ni = new_from_original(gutils, orig)
+	API.EnzymeReplaceOriginalToNew(gutils, orig, cal)
+        API.EnzymeGradientUtilsErase(gutils, ni)
+    end
+    return false
+end
+
+# Call `runtime_pfor_erased(tramp, env, static)`. `vals` are the arguments
+# `threadsfor_common` prepared for `runtime_pfor_fwd`: the thunk buffer, the closure
+# buffer and its roots (if the closure is not a ghost), and `static`.
+function pfor_erased_call!(B::LLVM.IRBuilder, mod::LLVM.Module, tramp::Ptr{Cvoid}, vals::Vector{LLVM.Value})
+    entry = pfor_erased_entry!(mod)::LLVM.Function
+    params = parameters(LLVM.function_type(entry))
+    off = has_gcstack_arg(entry) ? 1 : 0
+    function cast(v, ty)
+        vty = value_type(v)
+        if ty isa LLVM.IntegerType
+            return vty isa LLVM.IntegerType ? v : ptrtoint!(B, v, ty)
+        elseif vty isa LLVM.IntegerType
+            return inttoptr!(B, v, ty)
+        else
+            return addrspace(vty) == addrspace(ty) ? v : addrspacecast!(B, v, ty)
+        end
+    end
+    trampv = cast(LLVM.ConstantInt(reinterpret(UInt, tramp)), params[off + 1])
+    envty = params[off + 2]
+    envv = if length(vals) >= 3
+        cast(vals[2], envty)
+    else
+        envty isa LLVM.IntegerType ? LLVM.ConstantInt(envty, 0) : LLVM.null(envty)
+    end
+    # `env` is an untracked pointer: keep the roots of the closure alive across the call.
+    preserve = LLVM.Value[]
+    if length(vals) == 4
+        roots = vals[3]
+        nroots = convert(Int, operands(roots)[1])
+        T_prjlvalue = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), Tracked)
+        for i in 1:nroots
+            ptr = inbounds_gep!(B, T_prjlvalue, roots, LLVM.Value[LLVM.ConstantInt(Int64(i - 1))])
+            push!(preserve, load!(B, T_prjlvalue, ptr))
+        end
+    end
+    token = emit_gc_preserve_begin(B, preserve)
+    args = LLVM.Value[trampv, envv, vals[end]]
+    if off == 1
+        pushfirst!(args, reinsert_gcmarker!(LLVM.parent(LLVM.position(B)), B))
+    end
+    cal = LLVM.call!(B, LLVM.function_type(entry), entry, args)
+    # The ABI is lowered from the call site: it needs the calling convention and the
+    # `swiftself` of `pgcstack` too.
+    callconv!(cal, callconv(entry))
+    if off == 1
+        idx = gcstack_arg_index(entry)
+        for attr in collect(parameter_attributes(entry, idx))
+            attr isa LLVM.EnumAttribute && push!(argument_attributes(cal, idx), attr)
+        end
+    end
+    emit_gc_preserve_end(B, token)
+    return cal
+end
+
+# Call `runtime_pfor_fwd`, emitted into `mod` for this loop, with the derivative of the
+# loop body `sname` linked into `mod`.
+function pfor_emitted_call!(B::LLVM.IRBuilder, gutils, mod::LLVM.Module, sname::String, vals::Vector{LLVM.Value}, @nospecialize(thunkTy), @nospecialize(dfuncT))
     tt = Tuple{thunkTy,dfuncT,Bool}
     mode = get_mode(gutils)
     entry = nested_codegen!(mode, mod, runtime_pfor_fwd, tt)
@@ -651,18 +847,7 @@ end
     pval = LLVM.ConstantArray(value_type(pval), [pval])
     store!(B, pval, vals[1])
 
-    cal = LLVM.call!(B, LLVM.function_type(entry), entry, vals)
-    debug_from_orig!(gutils, cal, orig)
-
-    # Delete the primal code
-    if normal !== nothing
-        unsafe_store!(normalR, C_NULL)
-    else
-        ni = new_from_original(gutils, orig)
-	API.EnzymeReplaceOriginalToNew(gutils, orig, cal)
-        API.EnzymeGradientUtilsErase(gutils, ni)
-    end
-    return false
+    return LLVM.call!(B, LLVM.function_type(entry), entry, vals)
 end
 
 @register_aug function threadsfor_augfwd(B, orig, gutils, normalR, shadowR, tapeR)

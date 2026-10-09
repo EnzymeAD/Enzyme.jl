@@ -175,3 +175,46 @@ end
     @test dq ≈ [1.0, 1.0]
 end
 
+
+struct PforState{T}
+    a::Vector{T}
+    p::NTuple{2, T}
+end
+
+function pfor_loops!(y, x, s)
+    Threads.@threads :static for i in eachindex(y)
+        y[i] = sin(s.a[i] * x[i]) + s.p[1] * x[i]^2
+    end
+    k = 3.0
+    Threads.@threads for i in eachindex(y)
+        y[i] += k * x[i] * s.a[i]
+    end
+    return nothing
+end
+
+@testset "Forward @threads, erased wrapper $erased" for erased in (true, false)
+    old = Enzyme.Compiler.PFOR_ERASED[]
+    Enzyme.Compiler.PFOR_ERASED[] = erased
+    try
+        n = 37
+        s = PforState(collect(1:n) ./ n, (2.0, 3.0))
+        x = collect(range(0.1, 1; length = n))
+        y = zeros(n)
+        exact(d) = [(cos(s.a[i] * x[i]) * s.a[i] + 2 * s.p[1] * x[i] + 3.0 * s.a[i]) * d[i] for i in 1:n]
+        dx1 = ones(n)
+        dx2 = collect(1.0:n)
+
+        dy = zeros(n)
+        autodiff(Forward, pfor_loops!, Const, Duplicated(y, dy), Duplicated(x, dx1),
+                 Duplicated(s, Enzyme.make_zero(s)))
+        @test dy ≈ exact(dx1)
+
+        dys = (zeros(n), zeros(n))
+        autodiff(Forward, pfor_loops!, Const, BatchDuplicated(y, dys), BatchDuplicated(x, (dx1, dx2)),
+                 BatchDuplicated(s, (Enzyme.make_zero(s), Enzyme.make_zero(s))))
+        @test dys[1] ≈ exact(dx1)
+        @test dys[2] ≈ exact(dx2)
+    finally
+        Enzyme.Compiler.PFOR_ERASED[] = old
+    end
+end
