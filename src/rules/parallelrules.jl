@@ -532,7 +532,7 @@ end
                 pv = nothing
 	        
                 dv2 = if inline_roots_type(ppfuncT) != 0
-                   invert_pointer(gutils, operands(orig)[2], fwdbuilder)
+                    invert_pointer(gutils, operands(orig)[2], fwdbuilder)
                 end
 
                 if value_type(dv) != spllty

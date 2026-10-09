@@ -173,15 +173,19 @@ end
     x = collect(1.0:8.0)
     for W in (2, 4)
         dx = ntuple(_ -> zeros(8), W)
-        autodiff(Reverse, br1!, Const, BatchDuplicated(zeros(8), ntuple(k -> fill(Float64(k), 8), W)),
-                 BatchDuplicated(x, dx))
+        autodiff(
+            Reverse, br1!, Const, BatchDuplicated(zeros(8), ntuple(k -> fill(Float64(k), 8), W)),
+            BatchDuplicated(x, dx)
+        )
         for k in 1:W
             @test dx[k] ≈ k .* (cos.(x) .* x .+ sin.(x))
         end
 
         dx = ntuple(_ -> zeros(8), W)
-        autodiff(Reverse, br2!, Const, BatchDuplicated(zeros(8), ntuple(k -> fill(Float64(k), 8), W)),
-                 BatchDuplicated(x, dx))
+        autodiff(
+            Reverse, br2!, Const, BatchDuplicated(zeros(8), ntuple(k -> fill(Float64(k), 8), W)),
+            BatchDuplicated(x, dx)
+        )
         for k in 1:W
             @test dx[k] ≈ k .* (x[1] .+ [sum(x); zeros(7)])
         end
@@ -207,9 +211,11 @@ end
     for W in (2, 4)
         d1 = ntuple(_ -> zeros(8), W)
         d2 = ntuple(_ -> zeros(8), W)
-        r = autodiff(Reverse, bbox!, Const, BatchDuplicated(zeros(8), ntuple(k -> fill(Float64(k), 8), W)),
-                     BatchDuplicated((x1, x2), ntuple(k -> (d1[k], d2[k]), W)),
-                     Active(BatchBoxParams(2.0)))
+        r = autodiff(
+            Reverse, bbox!, Const, BatchDuplicated(zeros(8), ntuple(k -> fill(Float64(k), 8), W)),
+            BatchDuplicated((x1, x2), ntuple(k -> (d1[k], d2[k]), W)),
+            Active(BatchBoxParams(2.0))
+        )
         for k in 1:W
             @test d1[k] ≈ fill(2.0 * k, 8)
             @test d2[k] ≈ fill(2.0 * k, 8)
