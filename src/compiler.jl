@@ -3481,8 +3481,8 @@ function enzyme!(
         elseif T <: Duplicated ||
                T <: BatchDuplicated ||
                T <: BatchDuplicatedFunc ||
-               T <: MixedDuplicated ||
-               T <: BatchMixedDuplicated
+               T <: AnyMixedDuplicated ||
+               T <: AnyBatchMixedDuplicated
             push!(args_activity, API.DFT_DUP_ARG)
 	    if inline_root
                push!(args_activity, API.DFT_DUP_ARG)
@@ -3529,7 +3529,7 @@ function enzyme!(
     #     If requested, the shadow return value of the function
     #     For each active (non duplicated) argument
     #       The adjoint of that argument
-    retType = if rt <: MixedDuplicated || rt <: BatchMixedDuplicated
+    retType = if rt <: AnyMixedDuplicated || rt <: AnyBatchMixedDuplicated
         API.DFT_OUT_DIFF
     else
         convert(API.CDIFFE_TYPE, rt)
@@ -3563,8 +3563,8 @@ function enzyme!(
             returnUsed && (
                 retType == API.DFT_DUP_ARG ||
                 retType == API.DFT_DUP_NONEED ||
-                rt <: MixedDuplicated ||
-                rt <: BatchMixedDuplicated
+                rt <: AnyMixedDuplicated ||
+                rt <: AnyBatchMixedDuplicated
             )
         returnUsed &= returnPrimal
         nowrite_shadows = zeros(UInt8, length(uncacheable_args))
@@ -3914,8 +3914,13 @@ function create_abi_wrapper(
             if is_adjoint && i != 1
                 push!(ActiveRetTypes, Nothing)
             end
-        elseif T <: MixedDuplicated || T <: BatchMixedDuplicated
-            push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, T_prjlvalue)))
+        elseif T <: AnyMixedDuplicated || T <: AnyBatchMixedDuplicated
+            S = mixed_shadow_pointer(T)
+            if S === nothing
+                push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, T_prjlvalue)))
+            else
+                push!(T_wrapperargs, convert(LLVMType, width == 1 ? S : NTuple{width, S}))
+            end
             if inline_roots_type(source_typ) != 0
                 @assert isboxed == GPUCompiler.deserves_argbox(T)
             end
@@ -3944,8 +3949,8 @@ function create_abi_wrapper(
     # API.DFT_OUT_DIFF
     if is_adjoint
         if rettype <: Active ||
-           rettype <: MixedDuplicated ||
-           rettype <: BatchMixedDuplicated
+           rettype <: AnyMixedDuplicated ||
+           rettype <: AnyBatchMixedDuplicated
             @assert !sret_union
             if allocatedinline(actualRetType) != allocatedinline(literal_rt)
                 throw(NonInferredActiveReturn(actualRetType, rettype))
@@ -4012,12 +4017,12 @@ function create_abi_wrapper(
             # width one; a batch activity must agree with the width it was built for.
             if rettype <: Duplicated ||
                     rettype <: DuplicatedNoNeed ||
-                    rettype <: MixedDuplicated
+                    rettype <: AnyMixedDuplicated
                 @assert width == 1
             elseif rettype <: BatchDuplicated ||
                     rettype <: BatchDuplicatedNoNeed ||
                     rettype <: BatchDuplicatedFunc ||
-                    rettype <: BatchMixedDuplicated
+                    rettype <: AnyBatchMixedDuplicated
                 @assert width == batch_size(rettype)
             end
             if rettype <: Duplicated ||
@@ -4030,7 +4035,7 @@ function create_abi_wrapper(
                 else
                     push!(sret_types, AnonymousStruct(NTuple{width,literal_rt}))
                 end
-            elseif rettype <: MixedDuplicated || rettype <: BatchMixedDuplicated
+            elseif rettype <: AnyMixedDuplicated || rettype <: AnyBatchMixedDuplicated
                 rty = if Base.isconcretetype(literal_rt)
                     Base.RefValue{literal_rt}
                 else
@@ -4179,7 +4184,7 @@ function create_abi_wrapper(
 
         arg_roots = isboxed ? inline_roots_type(T′) : 0
 
-        if (T <: MixedDuplicated || T <: BatchMixedDuplicated) && !isboxed # && (isa(llty, LLVM.ArrayType) || isa(llty, LLVM.StructType))
+        if (T <: AnyMixedDuplicated || T <: AnyBatchMixedDuplicated) && !isboxed # && (isa(llty, LLVM.ArrayType) || isa(llty, LLVM.StructType))
             @assert Base.isconcretetype(T′)
             al0 = al = emit_allocobj!(builder, Base.RefValue{T′}, "mixedparameter")
             parm = params[i]
@@ -4274,7 +4279,7 @@ function create_abi_wrapper(
 		push!(realparms, root)
 		push!(realparms, droot)
 	    end
-        elseif T <: MixedDuplicated || T <: BatchMixedDuplicated
+        elseif T <: AnyMixedDuplicated || T <: AnyBatchMixedDuplicated
 	    # Enzyme expects, arg, [w x darg], root, droot
 	    # Julia expects   arg, root, darg, droot
 	    # We already pushed arg
@@ -4292,7 +4297,11 @@ function create_abi_wrapper(
 		 i += 1
 	    end
 
-            if T <: BatchMixedDuplicated
+            # A pointer shadow points to the (isbits) `T′` data, like the payload of a
+            # `RefValue{T′}` shadow.
+            shadow_is_pointer = mixed_shadow_pointer(T) !== nothing
+
+            if T <: AnyBatchMixedDuplicated && !shadow_is_pointer
                 @assert Base.isconcretetype(T′)
                 if GPUCompiler.deserves_argbox(NTuple{width,Base.RefValue{T′}})
                     njlvalue = LLVM.ArrayType(Int(width), T_prjlvalue)
@@ -4312,6 +4321,10 @@ function create_abi_wrapper(
             ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, resty)))
             for idx = 1:width
                 pv = (width == 1) ? darg : extract_value!(builder, darg, idx - 1)
+                if shadow_is_pointer && value_type(pv) isa LLVM.IntegerType
+                    # A `Ptr` is an integer on older Julia versions
+                    pv = inttoptr!(builder, pv, LLVM.PointerType(llty))
+                end
                 pv =
                     bitcast!(builder, pv, LLVM.PointerType(llty, addrspace(value_type(pv))))
                 pv = addrspacecast!(builder, pv, LLVM.PointerType(llty, Derived))
@@ -4366,7 +4379,7 @@ function create_abi_wrapper(
     end
 
     if is_adjoint &&
-       (rettype <: Active || rettype <: MixedDuplicated || rettype <: BatchMixedDuplicated)
+       (rettype <: Active || rettype <: AnyMixedDuplicated || rettype <: AnyBatchMixedDuplicated)
         push!(realparms, params[i])
         i += 1
     end
@@ -4426,7 +4439,7 @@ function create_abi_wrapper(
                     end 
                 end
                 if i == 3
-                    if rettype <: MixedDuplicated || rettype <: BatchMixedDuplicated
+                    if rettype <: AnyMixedDuplicated || rettype <: AnyBatchMixedDuplicated
                         ival = UndefValue(
                             LLVM.LLVMType(API.EnzymeGetShadowType(width, T_prjlvalue)),
                         )
@@ -5372,7 +5385,7 @@ function lower_convention(
     returnRoots = returnRoots !== nothing
 
     loweredReturn = RetActivity <: Active && !allocatedinline(actualRetType)
-    if (RetActivity <: Active || RetActivity <: MixedDuplicated ||  RetActivity <: BatchMixedDuplicated) && (allocatedinline(actualRetType) != allocatedinline(eltype(RetActivity)))
+    if (RetActivity <: Active || RetActivity <: AnyMixedDuplicated ||  RetActivity <: AnyBatchMixedDuplicated) && (allocatedinline(actualRetType) != allocatedinline(eltype(RetActivity)))
 	  @assert !allocatedinline(actualRetType)
 	  loweredReturn = true
     end
@@ -5427,8 +5440,8 @@ function lower_convention(
 	   throw(AssertionError("TT=$TT, args=$args idx=$idx"))
 	end
 	return (
-                   TT.parameters[idx] <: MixedDuplicated ||
-                   TT.parameters[idx] <: BatchMixedDuplicated
+                   TT.parameters[idx] <: AnyMixedDuplicated ||
+                   TT.parameters[idx] <: AnyBatchMixedDuplicated
                ) &&
                run_enzyme
     end
@@ -7599,8 +7612,8 @@ const DumpLLVMCall = Ref(false)
 
             if is_adjoint
                 if rettype <: Active ||
-                   rettype <: MixedDuplicated ||
-                   rettype <: BatchMixedDuplicated
+                   rettype <: AnyMixedDuplicated ||
+                   rettype <: AnyBatchMixedDuplicated
 
                     push!(argtys,
                         if width == 1
@@ -7701,14 +7714,16 @@ const DumpLLVMCall = Ref(false)
                 argexpr = :(fn.dval)
                 F_ABI = F
                 if width == 1
-                    if (FA <: MixedDuplicated)
-                        push!(types, Any)
+                    if FA <: AnyMixedDuplicated
+                        S = mixed_shadow_pointer(FA)
+                        push!(types, S === nothing ? Any : S)
                     else
                         push!(types, F_ABI)
                     end
                 else
-                    if F_ABI <: BatchMixedDuplicated
-                        F_ABI = Base.RefValue{F_ABI}
+                    if FA <: AnyBatchMixedDuplicated
+                        S = mixed_shadow_pointer(FA)
+                        F_ABI = S === nothing ? Base.RefValue{F_ABI} : S
                     end
                     F_ABI = NTuple{width, F_ABI}
                     isboxedvec = GPUCompiler.deserves_argbox(F_ABI)
@@ -7804,28 +7819,34 @@ const DumpLLVMCall = Ref(false)
                     push!(ActiveRetTypes, Nothing)
                 end
                 push!(ccexprs, argexpr)
-            elseif T <: MixedDuplicated
+            elseif T <: AnyMixedDuplicated
+                # The wrapper reads `width` shadows, but a `MixedDuplicated` has only one.
+                if width != 1
+                    error("MixedDuplicated argument in a thunk of width $width; use BatchMixedDuplicated{T, $width}")
+                end
                 if RawCall
                     argexpr = argexprs[i]
                     i += 1
                 else
                     argexpr = Expr(:., expr, QuoteNode(:dval))
                 end
-                push!(types, Any)
+                S = mixed_shadow_pointer(T)
+                push!(types, S === nothing ? Any : S)
                 if is_adjoint
                     push!(ActiveRetTypes, Nothing)
                 end
                 push!(ccexprs, argexpr)
-            elseif T <: BatchMixedDuplicated
+            elseif T <: AnyBatchMixedDuplicated
                 if RawCall
                     argexpr = argexprs[i]
                     i += 1
                 else
                     argexpr = Expr(:., expr, QuoteNode(:dval))
                 end
-                isboxedvec =
-                    GPUCompiler.deserves_argbox(NTuple{width,Base.RefValue{source_typ}})
-                if isboxedvec
+                S = mixed_shadow_pointer(T)
+                if S !== nothing
+                    push!(types, NTuple{width,S})
+                elseif GPUCompiler.deserves_argbox(NTuple{width,Base.RefValue{source_typ}})
                     push!(types, Any)
                 else
                     push!(types, NTuple{width,Base.RefValue{source_typ}})
@@ -7852,8 +7873,8 @@ const DumpLLVMCall = Ref(false)
         # API.DFT_OUT_DIFF
         if is_adjoint
             if rettype <: Active ||
-               rettype <: MixedDuplicated ||
-               rettype <: BatchMixedDuplicated
+               rettype <: AnyMixedDuplicated ||
+               rettype <: AnyBatchMixedDuplicated
                 # TODO handle batch width
                 if rettype <: Active
                     @assert allocatedinline(jlRT)
@@ -7912,7 +7933,7 @@ const DumpLLVMCall = Ref(false)
             if rettype <: Duplicated || rettype <: DuplicatedNoNeed
                 @assert width == 1
                 push!(sret_types, jlRT)
-            elseif rettype <: MixedDuplicated
+            elseif rettype <: AnyMixedDuplicated
                 @assert width == 1
                 rty = if Base.isconcretetype(jlRT)
                     Base.RefValue{jlRT}
@@ -7923,7 +7944,7 @@ const DumpLLVMCall = Ref(false)
             elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
                 @assert width == batch_size(rettype)
                 push!(sret_types, AnonymousStruct(NTuple{width,jlRT}))
-            elseif rettype <: BatchMixedDuplicated
+            elseif rettype <: AnyBatchMixedDuplicated
                 @assert width == batch_size(rettype)
                 rty = if Base.isconcretetype(jlRT)
                     Base.RefValue{jlRT}
@@ -8409,7 +8430,7 @@ shadow-return ABI in `create_abi_wrapper` and `enzyme_call` asserts.
         BatchDuplicatedNoNeed{rt, width}
     elseif A <: BatchDuplicatedFunc
         BatchDuplicatedFunc{rt, width}
-    elseif A <: BatchMixedDuplicated
+    elseif A <: AnyBatchMixedDuplicated
         BatchMixedDuplicated{rt, width}
     else
         A{rt}

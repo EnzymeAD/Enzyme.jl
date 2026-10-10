@@ -191,3 +191,27 @@ end
     @test BatchMixedDuplicated{Any, 2}(1.0, (Ref{Any}(2.0), Ref{Any}(3.0))) isa BatchMixedDuplicated{Any, 2}
     @test_throws AssertionError BatchMixedDuplicated{Any, 2}(1.0, (Ref{Any}(2.0), Ref{Any}(3)))
 end
+
+@testset "MixedDuplicatedPtr" begin
+    p = Ptr{Float64}(UInt(8))
+    d = MixedDuplicatedPtr(1.0, p)
+    @test d isa MixedDuplicatedPtr{Float64, Ptr{Float64}}
+    @test d isa EnzymeCore.Annotation{Float64}
+    @test d.val === 1.0
+    @test d.dval === p
+    lp = reinterpret(Core.LLVMPtr{Float64, 1}, p)
+    @test MixedDuplicatedPtr(1.0, lp) isa MixedDuplicatedPtr{Float64, Core.LLVMPtr{Float64, 1}}
+    @test_throws ArgumentError MixedDuplicatedPtr(Any[], Ptr{Vector{Any}}(UInt(8)))
+    @test_throws MethodError MixedDuplicatedPtr(1.0, Ptr{Float32}(UInt(8)))
+end
+
+@testset "BatchMixedDuplicatedPtr" begin
+    p1 = Ptr{Float64}(UInt(8))
+    p2 = Ptr{Float64}(UInt(16))
+    d = BatchMixedDuplicatedPtr(1.0, (p1, p2))
+    @test d isa BatchMixedDuplicatedPtr{Float64, 2, Ptr{Float64}}
+    @test d.dval === (p1, p2)
+    @test EnzymeCore.batch_size(d) == 2
+    @test EnzymeCore.batch_size(typeof(d)) == 2
+    @test_throws ArgumentError BatchMixedDuplicatedPtr(Any[], (Ptr{Vector{Any}}(UInt(8)),))
+end
