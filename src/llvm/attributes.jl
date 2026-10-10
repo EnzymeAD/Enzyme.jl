@@ -1023,8 +1023,11 @@ function annotate!(mod::LLVM.Module)
                     if cf == fn
                         LLVM.API.LLVMAddCallSiteAttribute(
                             c,
-                            LLVM.API.LLVMAttributeReturnIndex,
-                            LLVM.StringAttribute("enzyme_ReadOnlyOrThrow"),
+                            reinterpret(
+                                LLVM.API.LLVMAttributeIndex,
+                                LLVM.API.LLVMAttributeFunctionIndex,
+                            ),
+                            LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"),
                         )
                         LLVM.API.LLVMAddCallSiteAttribute(
                             c,
