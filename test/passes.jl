@@ -229,7 +229,7 @@ end
         dispose(buf)
 
         ptr = reinterpret(Ptr{Cvoid}, UInt(0x2788))
-        Enzyme.Compiler.autodiff_cache[ptr] = Enzyme.Compiler.CachedThunk("thunk", bitcode, Enzyme.Compiler.JuliaValueTable())
+        Enzyme.Compiler.THUNK_CACHE.by_ptr[ptr] = Enzyme.Compiler.CachedThunk("thunk", bitcode, Enzyme.Compiler.JuliaValueTable())
         try
             Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT =>
                     Enzyme.Compiler.EnzymeContext(GPUCompiler.tls_world_age()) begin
@@ -256,7 +256,7 @@ end
                     LLVM.API.LLVMInternalLinkage
             end
         finally
-            delete!(Enzyme.Compiler.autodiff_cache, ptr)
+            delete!(Enzyme.Compiler.THUNK_CACHE.by_ptr, ptr)
         end
     end
 end

@@ -976,7 +976,7 @@ needs once the compilation is over:
   (see `insert_julia_value!`).
 
 [`julia_value_table`](@ref) takes it out of the context. `_thunk` resolves the module it
-compiled with it, and `autodiff_cache` keeps it next to the bitcode of the thunk, so that a
+compiled with it, and `THUNK_CACHE.by_ptr` keeps it next to the bitcode of the thunk, so that a
 later compilation importing the bitcode ([`import_cached_autodiff!`](@ref)) can take the values
 up into its own tables. Holding the values keeps them rooted for as long as the bitcode refers
 to them by name.
@@ -3176,6 +3176,7 @@ for (k, v) in (
 end
 
 function __init__()
+    reset_session!()
     API.memmove_warning!(false)
     API.typeWarning!(false)
     API.EnzymeNonPower2Cache!(false)
@@ -5304,7 +5305,7 @@ end
 #   of the autodiff call being compiled on the stack slot it creates for a
 #   by-value argument or for the sret. This is only valid for the current compilation.
 #   Enzyme leaves the tag on the derivative it emits, and
-#   nested differentiation (see `autodiff_cache`) differentiates that
+#   nested differentiation (see `THUNK_CACHE.by_ptr`) differentiates that
 #   derivative again with its own activities. If the tag stays, the outer differentiation
 #   treats every load of the slot as constant and silently zeroes the gradient
 #   (EnzymeAD/Enzyme.jl#3617). `strip_activity_inactive_md!` removes these tags
@@ -8247,7 +8248,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
                     end
                 end
             end
-            # Kept for nested differentiation (see autodiff_cache); bitcode
+            # Kept for nested differentiation (see THUNK_CACHE.by_ptr); bitcode
             # is far cheaper to write than textual IR and parses faster.
             buf = convert(MemoryBuffer, mod)
             bytes = convert(Vector{UInt8}, buf)
@@ -8282,12 +8283,10 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
     return (mod, meta.edges, adjoint_name, primal_name, meta.TapeType, prepost, value_table)
 end
 
-const cache = Dict{UInt,CompileResult}()
-
 """
     CachedThunk
 
-What `autodiff_cache` keeps of a thunk for a later compilation to import (see
+What `THUNK_CACHE.by_ptr` keeps of a thunk for a later compilation to import (see
 [`import_cached_autodiff!`](@ref)): the name of the function to call (`entry`), the bitcode
 of the module before post-optimization (`bitcode`), which refers to Julia values by name, and
 those values (`value_table`, see [`JuliaValueTable`](@ref)).
@@ -8298,31 +8297,30 @@ struct CachedThunk
     value_table::JuliaValueTable
 end
 
-# adjoint/primal pointer => the thunk's IR, for nested differentiation
-const autodiff_cache = Dict{Ptr{Cvoid}, CachedThunk}()
+include("compiler/session.jl")
 
-const cache_lock = ReentrantLock()
 @inline function cached_compilation(@nospecialize(job::CompilerJob))::CompileResult
     key = hash(job)
+    cache = THUNK_CACHE
 
     # NOTE: no use of lock(::Function)/@lock/get! to keep stack traces clean
-    lock(cache_lock)
+    lock(cache.lock)
     try
-        obj = get(cache, key, nothing)
+        obj = get(cache.thunks, key, nothing)
         if obj === nothing
             mod, edges, adjoint_name, primal_name, TapeType, prepost, value_table = _thunk(job)
             obj = _link(job, mod, edges, adjoint_name, primal_name, TapeType, prepost)
             if obj.adjoint isa Ptr{Nothing}
-                autodiff_cache[obj.adjoint] = CachedThunk(adjoint_name, prepost, value_table)
+                cache.by_ptr[obj.adjoint] = CachedThunk(adjoint_name, prepost, value_table)
             end
             if obj.primal isa Ptr{Nothing} && primal_name isa String
-                autodiff_cache[obj.primal] = CachedThunk(primal_name, prepost, value_table)
+                cache.by_ptr[obj.primal] = CachedThunk(primal_name, prepost, value_table)
             end
-            cache[key] = obj
+            cache.thunks[key] = obj
         end
         obj
     finally
-        unlock(cache_lock)
+        unlock(cache.lock)
     end
 end
 
@@ -8350,9 +8348,7 @@ session and so never reach an image.
 function clear_caches!()
     # Thunks, held as the addresses the JIT gave them, and the objects rooted because those
     # addresses were written into their code.
-    empty!(cache)
-    empty!(autodiff_cache)
-    empty!(Enzyme.tape_cache)
+    reset_session!()
     empty!(Enzyme.captured_constants)
 
     # Which rules apply, memoized against the world the methods were read in.
