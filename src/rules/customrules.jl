@@ -325,7 +325,8 @@ function enzyme_custom_setup_args(
 
     actives = LLVM.Value[]
 
-    mixeds = Tuple{LLVM.Value,Type,LLVM.Value}[]
+    # (shadow pointer, type, box passed to the rule, shadow value copied into the box)
+    mixeds = Tuple{LLVM.Value, Type, LLVM.Value, LLVM.Value}[]
     uncacheable = get_uncacheable(gutils, orig)
     mode = get_mode(gutils)
 
@@ -996,8 +997,8 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                         store!(B, refal0, rptr)
                     end
 
+                    push!(mixeds, (ptr_val, arg.typ, refal, ival))
                     ival = refal0
-                    push!(mixeds, (ptr_val, arg.typ, refal))
                 end
 
                 @assert ival !== nothing
@@ -2662,13 +2663,19 @@ function enzyme_custom_common_rev(
             idx += 1
         end
 
-        for (ptr_val, argTyp, refal) in mixeds
+        for (ptr_val, argTyp, refal, pre) in mixeds
             RefTy = argTyp
             if width != 1
                 RefTy = NTuple{Int(width),RefTy}
             end
             curs = load!(B, convert(LLVMType, RefTy), refal, "rules_mixed_prestore")
 
+            if width == 1 && get_atomic_add(gutils)
+                # Other threads may update the shadow while the rule runs on its copy.
+                # Add only what the rule changed, so that their updates are kept.
+                atomic_add_nonjl_delta!(B, pre, curs, ptr_val)
+                continue
+            end
             for idx = 1:width
                 evp = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
                 evcur = (width == 1) ? curs : extract_value!(B, curs, idx - 1)

@@ -1534,13 +1534,25 @@ end
     )
 end
 
-function add_into_vec!(val::Base.RefValue, expr, vec, idx_in_vec)
-    val[] = recursive_add(val[], expr, identity, guaranteed_nonactive)
+function add_into_vec!(val::Base.RefValue{T}, expr, vec, idx_in_vec, ::Val{atomic}) where {T, atomic}
+    if atomic && expr isa T && atomic_accumulate_supported(T)
+        r = Base.RefValue{T}(expr)
+        GC.@preserve val r begin
+            atomic_accumulate!(Ptr{T}(pointer_from_objref(val)), Ptr{T}(pointer_from_objref(r)))
+        end
+    else
+        val[] = recursive_add(val[], expr, identity, guaranteed_nonactive)
+    end
     nothing
 end
 
-function add_into_vec!(val::T, expr, vec, idx_in_vec) where {T}
-    if ismutable(vec)
+function add_into_vec!(val::T, expr, vec, idx_in_vec, ::Val{atomic}) where {T, atomic}
+    if atomic && vec isa Array{T} && expr isa T && atomic_accumulate_supported(T)
+        r = Base.RefValue{T}(expr)
+        GC.@preserve vec r begin
+            atomic_accumulate!(pointer(vec, idx_in_vec), Ptr{T}(pointer_from_objref(r)))
+        end
+    elseif ismutable(vec)
         @inbounds vec[idx_in_vec] = recursive_add(val, expr, identity, guaranteed_nonactive)
     else
         error(
@@ -1558,6 +1570,7 @@ end
     ::Val{dupClosure0},
     ::Val{ModifiedBetween0},
     ::Val{lengths},
+    ::Val{atomic},
     ::Type{FT},
     ::Type{ttp},
     f::FT,
@@ -1572,6 +1585,7 @@ end
     dupClosure0,
     ModifiedBetween0,
     lengths,
+    atomic,
     FT,
     ttp,
     DF,
@@ -1620,10 +1634,14 @@ end
                         vecld = vec[]
                         T = Core.Typeof(vecld)
                         @assert !(vecld isa Base.RefValue)
-                        vec[] = recursive_index_add(T, vecld, Val(idx_in_vec), $expr)
+                        if $(atomic && args[i] <: Active)
+                            atomic_index_add!(vec, Val(idx_in_vec), $expr)
+                        else
+                            vec[] = recursive_index_add(T, vecld, Val(idx_in_vec), $expr)
+                        end
                     elseif $(args[i] <: Active)
                         val = @inbounds vec[idx_in_vec]
-                        add_into_vec!(Base.inferencebarrier(val), $expr, vec, idx_in_vec)
+                        add_into_vec!(Base.inferencebarrier(val), $expr, vec, idx_in_vec, Val($atomic))
                     else  # args[i] <: MixedDuplicated || args[i] <: BatchMixedDuplicated
                         @inbounds vec[idx_in_vec] = $expr
                     end
@@ -1741,6 +1759,7 @@ end
 function body_runtime_iterate_rev(
     N,
     Width,
+    Atomic,
     modbetween,
     wrapped,
     primargs,
@@ -1791,6 +1810,7 @@ function body_runtime_iterate_rev(
             Val(ActivityTup[1]),
             Val($(Expr(:call, concat, modbetween...))),
             Val($(Expr(:call, concat, lengths...))),
+            Val($Atomic),
             FT,
             tt′,
             f,
@@ -1803,7 +1823,7 @@ function body_runtime_iterate_rev(
     end
 end
 
-function func_runtime_iterate_rev(N, Width)
+function func_runtime_iterate_rev(N, Width, Atomic)
     primargs,
     _,
     primtypes,
@@ -1816,6 +1836,7 @@ function func_runtime_iterate_rev(N, Width)
     body = body_runtime_iterate_rev(
         N,
         Width,
+        Atomic,
         modbetween,
         wrapped,
         primargs,
@@ -1829,6 +1850,7 @@ function func_runtime_iterate_rev(N, Width)
             runtimeActivity::Val{RuntimeActivity},
             width::Val{$Width},
             ModifiedBetween::Val{MB},
+            atomic::Val{$Atomic},
             tape::TapeType,
             f::F,
             df::DF,
@@ -1845,17 +1867,19 @@ end
     strongZero::Val{StrongZero},
     width::Val{Width},
     ModifiedBetween::Val{MB},
+    atomic::Val{Atomic},
     tape::TapeType,
     f::F,
     df::DF,
     allargs...,
-) where {ActivityTup,RuntimeActivity,StrongZero,MB,Width,TapeType,F,DF}
+) where {ActivityTup,RuntimeActivity,StrongZero,MB,Width,Atomic,TapeType,F,DF}
     N = div(length(allargs) + 2, Width + 1) - 1
     primargs, _, primtypes, _, _, wrapped, batchshadowargs, modbetween, active_refs, dfns =
         setup_macro_wraps(false, N, Width, :allargs, true; reverse = true) #=iterate=#
     return body_runtime_iterate_rev(
         N,
         Width,
+        Atomic,
         modbetween,
         wrapped,
         primargs,
@@ -1882,7 +1906,7 @@ set_fn_max_args(runtime_iterate_rev)
 #     eval(func_runtime_generic_rev(N, Width))
 #     eval(func_runtime_iterate_fwd(N, Width))
 #     eval(func_runtime_iterate_augfwd(N, Width))
-#     eval(func_runtime_iterate_rev(N, Width))
+#     eval(func_runtime_iterate_rev(N, Width, false))
 # end
 
 function generic_setup(
@@ -2012,7 +2036,7 @@ function generic_setup(
         for idx = 1:(ops_count+firstconst)
             push!(ModifiedBetween, uncacheable[(start-1)+idx] != 0)
         end
-        if func == runtime_generic_rev
+        if func == runtime_generic_rev || func == runtime_iterate_rev
             pushfirst!(vals, unsafe_to_llvm(B, Val(get_atomic_add(gutils))))
         end
         pushfirst!(vals, unsafe_to_llvm(B, Val((ModifiedBetween...,))))

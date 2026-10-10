@@ -161,6 +161,49 @@ end
     end
 end
 
+"""
+    atomic_accumulate_supported(T)
+
+Whether `atomic_accumulate!` can add a `T` in place: `T` is stored inline, and its only
+floating-point data is `Float64` or `Float32`.
+"""
+function atomic_accumulate_supported(@nospecialize(T::Type))
+    (T === Float64 || T === Float32) && return true
+    T <: AbstractFloat && return false
+    isbitstype(T) || return false
+    for i in 1:fieldcount(T)
+        atomic_accumulate_supported(fieldtype(T, i)) || return false
+    end
+    return true
+end
+
+"""
+    atomic_index_add!(vec::Base.RefValue{T}, ::Val{i}, y)
+
+Atomically add `y` to field `i` of `vec[]`, if `atomic_accumulate!` supports it. Otherwise
+add it non-atomically, like `vec[] = recursive_index_add(T, vec[], Val(i), y)`.
+"""
+@generated function atomic_index_add!(vec::Base.RefValue{T}, ::Val{i}, y::Y) where {T, i, Y}
+    ST = fieldtype(T, i)
+    if isbitstype(T) && Y === ST && atomic_accumulate_supported(ST)
+        return quote
+            Base.@_inline_meta
+            r = Base.RefValue{$ST}(y)
+            GC.@preserve vec r begin
+                px = Ptr{$ST}(pointer_from_objref(vec) + $(fieldoffset(T, i)))
+                atomic_accumulate!(px, Ptr{$ST}(pointer_from_objref(r)))
+            end
+            return nothing
+        end
+    else
+        return quote
+            Base.@_inline_meta
+            vec[] = recursive_index_add(T, vec[], Val(i), y)
+            return nothing
+        end
+    end
+end
+
 # Recursively In-place accumulate(aka +=). E.g. generalization of x .+= f(y)
 @inline function recursive_accumulate(x::Array{T}, y::Array{T}, ::Val{atomic} = Val(false), f::F = identity) where {T,atomic,F}
     if !mutable_register(T)
