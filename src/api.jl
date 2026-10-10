@@ -805,6 +805,24 @@ EnzymeGradientUtilsGetUncacheableArgs(gutils, orig, uncacheable, size) = ccall(
     size,
 )
 
+EnzymeGradientUtilsGetAugmentedPrimalReturnUsed(gutils, orig, used) = ccall(
+    (:EnzymeGradientUtilsGetAugmentedPrimalReturnUsed, libEnzyme),
+    UInt8,
+    (EnzymeGradientUtilsRef, LLVMValueRef, Ptr{UInt8}),
+    gutils,
+    orig,
+    used,
+)
+
+EnzymeGradientUtilsShadowInForward(gutils, orig, write) = ccall(
+    (:EnzymeGradientUtilsShadowInForward, libEnzyme),
+    UInt8,
+    (EnzymeGradientUtilsRef, LLVMValueRef, UInt8),
+    gutils,
+    orig,
+    write,
+)
+
 EnzymeGradientUtilsGetDiffeType(gutils, op, isforeign) = ccall(
     (:EnzymeGradientUtilsGetDiffeType, libEnzyme),
     CDIFFE_TYPE,
