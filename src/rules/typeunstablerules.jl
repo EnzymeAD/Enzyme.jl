@@ -1852,21 +1852,26 @@ end
     common_jl_getfield_rev(1, B, orig, gutils, tape)
 end
 
-function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
+function store_setfield_shadow_return!(B, orig, gutils, normalR, shadowR)
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     if shadowR != C_NULL && normal !== nothing
         width = get_width(gutils)
-        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-        for idx = 1:width
-            if width == 1
-                shadowres = normal
-            else
+        shadowres = normal
+        if width != 1
+            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
+            shadowres =
+                UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+            for idx in 1:width
                 shadowres = insert_value!(B, shadowres, normal, idx - 1)
             end
         end
         unsafe_store!(shadowR, shadowres.ref)
     end
+    return nothing
+end
+
+function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
 
     origops = @view operands(orig)[offset:end]
     if !is_constant_value(gutils, origops[4])
@@ -1909,6 +1914,7 @@ function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
             need_result = false
         ) #=lookup=#
     end
+    store_setfield_shadow_return!(B, orig, gutils, normalR, shadowR)
     return false
 end
 
@@ -1951,21 +1957,6 @@ end
 
 function common_setfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
 
-    normal =
-        (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
-    if shadowR != C_NULL && normal !== nothing
-        width = get_width(gutils)
-        shadowres = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-        for idx = 1:width
-            if width == 1
-                shadowres = normal
-            else
-                shadowres = insert_value!(B, shadowres, normal, idx - 1)
-            end
-        end
-        unsafe_store!(shadowR, shadowres.ref)
-    end
-
     origops = @view operands(orig)[offset:end]
     if !is_constant_value(gutils, origops[2])
         width = get_width(gutils)
@@ -1998,6 +1989,7 @@ function common_setfield_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR
             debug_from_orig!(gutils, cal, orig)
         end
     end
+    store_setfield_shadow_return!(B, orig, gutils, normalR, shadowR)
 
     return false
 end
