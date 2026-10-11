@@ -1089,7 +1089,7 @@ function resolve_slots!(mod::LLVM.Module, table::JuliaValueTable)
         entry = get(slots, gv.name, nothing)
         entry === nothing && continue
         addr = LLVM.ConstantInt(reinterpret(UInt, entry[2]))
-        gv.initializer = LLVM.const_inttoptr(addr, global_value_type(gv))
+        gv.initializer = LLVM.const_inttoptr(addr, gv.global_value_type)
         gv.linkage = LLVM.API.LLVMPrivateLinkage
         gv.constant = true
     end
