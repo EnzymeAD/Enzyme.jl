@@ -155,6 +155,75 @@ end
     @test ty[4] ≈ [10.0, 10.0]
 end
 
+@testset "Batched Reverse" begin
+    function br1!(y, x)
+        Threads.@threads for i in eachindex(x)
+            y[i] = sin(x[i]) * x[i]
+        end
+        return nothing
+    end
+    # The closure captures an active scalar, so it is passed by reference
+    function br2!(y, x)
+        s = x[1]
+        Threads.@threads for i in eachindex(x)
+            y[i] = s * x[i]
+        end
+        return nothing
+    end
+    x = collect(1.0:8.0)
+    for W in (2, 4)
+        dx = ntuple(_ -> zeros(8), W)
+        autodiff(
+            Reverse, br1!, Const, BatchDuplicated(zeros(8), ntuple(k -> fill(Float64(k), 8), W)),
+            BatchDuplicated(x, dx)
+        )
+        for k in 1:W
+            @test dx[k] ≈ k .* (cos.(x) .* x .+ sin.(x))
+        end
+
+        dx = ntuple(_ -> zeros(8), W)
+        autodiff(
+            Reverse, br2!, Const, BatchDuplicated(zeros(8), ntuple(k -> fill(Float64(k), 8), W)),
+            BatchDuplicated(x, dx)
+        )
+        for k in 1:W
+            @test dx[k] ≈ k .* (x[1] .+ [sum(x); zeros(7)])
+        end
+    end
+end
+
+struct BatchBoxParams
+    a::Float64
+end
+@testset "Batched Reverse, boxed capture" begin
+    # `t` is reassigned in the loop body, so the closure captures it in a Core.Box and is
+    # built at run time (`jl_new_structv`); it also captures the active `p`.
+    function bbox!(y, t, p)
+        tx, ty = t
+        Threads.@threads for i in eachindex(y)
+            y[i] = p.a * (tx[i] + ty[i])
+            t = (tx, ty)
+        end
+        return nothing
+    end
+    x1 = collect(1.0:8.0)
+    x2 = collect(1.0:8.0)
+    for W in (2, 4)
+        d1 = ntuple(_ -> zeros(8), W)
+        d2 = ntuple(_ -> zeros(8), W)
+        r = autodiff(
+            Reverse, bbox!, Const, BatchDuplicated(zeros(8), ntuple(k -> fill(Float64(k), 8), W)),
+            BatchDuplicated((x1, x2), ntuple(k -> (d1[k], d2[k]), W)),
+            Active(BatchBoxParams(2.0))
+        )
+        for k in 1:W
+            @test d1[k] ≈ fill(2.0 * k, 8)
+            @test d2[k] ≈ fill(2.0 * k, 8)
+            @test r[1][3][k].a ≈ k * (sum(x1) + sum(x2))
+        end
+    end
+end
+
 @testset "GEP non-inline type analysis" begin
     function spread_no_broadcast!(bufs, q, ::Val{N}) where N
         Threads.@threads for t in 1:N

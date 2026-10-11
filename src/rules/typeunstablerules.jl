@@ -400,7 +400,7 @@ end
 )::ReturnType where {ActivityTup,MB,RuntimeActivity,Width,ReturnType,NewType}
     N = div(length(allargs), Width + 1)
     primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
-        setup_macro_wraps(false, N, Width, :allargs; mixed_or_active = true)
+        setup_macro_wraps(false, N, Width, :allargs; func = false, mixed_or_active = true)
     return body_runtime_newstruct_augfwd(
         N,
         RuntimeActivity,
@@ -670,6 +670,30 @@ function common_newstructv_rev(offset, B, orig, gutils, tape)
     if !newstruct_common(false, false, offset, B, orig, gutils, nothing, nothing, enzyme_ctx) #=shadowR=#
         @assert tape !== C_NULL
         width = get_width(gutils)
+        # The augmented primal returns one result per lane (an `AnyArray(width)`);
+        # `runtime_newstruct_rev` takes lane 1 as `tape` and lanes 2:width as leading args.
+        tape = if width != 1
+            res = LLVM.Value[]
+            T_jlvalue = LLVM.StructType(LLVMType[])
+            T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+            AT = LLVM.ArrayType(T_prjlvalue, Int(width))
+            llty = convert(LLVMType, AnyArray(Int(width)))
+            cal = tape
+            cal = LLVM.addrspacecast!(B, cal, LLVM.PointerType(T_jlvalue, Derived))
+            cal = LLVM.pointercast!(B, cal, LLVM.PointerType(llty, Derived))
+            for i in 1:width
+                gep = LLVM.inbounds_gep!(
+                    B,
+                    AT,
+                    cal,
+                    [LLVM.ConstantInt(0), LLVM.ConstantInt(i - 1)],
+                )
+                push!(res, LLVM.load!(B, T_prjlvalue, gep))
+            end
+            res
+        else
+            tape
+        end
         generic_setup(
             orig,
             runtime_newstruct_rev,
