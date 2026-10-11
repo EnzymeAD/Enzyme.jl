@@ -226,7 +226,7 @@ end
         )
         buf = convert(LLVM.MemoryBuffer, blob)
         bitcode = String(convert(Vector{UInt8}, buf))
-        dispose(buf)
+        LLVM.dispose(buf)
 
         ptr = reinterpret(Ptr{Cvoid}, UInt(0x2788))
         Enzyme.Compiler.autodiff_cache[ptr] = Enzyme.Compiler.CachedThunk("thunk", bitcode, Enzyme.Compiler.JuliaValueTable())
@@ -240,20 +240,20 @@ end
                 @test !LLVM.isdeclaration(imported)
                 # Externally visible, so the modules that only declare the entry
                 # bind to this definition when everything is linked together.
-                @test LLVM.linkage(imported) == LLVM.API.LLVMExternalLinkage
-                @test haskey(LLVM.functions(first_mod), "julia_shared")
+                @test imported.linkage == LLVM.Linkage.External
+                @test haskey(first_mod.functions, "julia_shared")
 
                 second_mod = LLVM.Module("second")
                 declared = Enzyme.Compiler.import_cached_autodiff!(second_mod, ptr, FT)
                 @test LLVM.isdeclaration(declared)
                 # The blob is not imported a second time, so nothing it carries
                 # is defined twice.
-                @test !haskey(LLVM.functions(second_mod), "julia_shared")
+                @test !haskey(second_mod.functions, "julia_shared")
 
                 LLVM.link!(first_mod, second_mod)
                 Enzyme.Compiler.internalize_imported_thunks!(first_mod)
-                @test LLVM.linkage(LLVM.functions(first_mod)["thunk"]) ==
-                    LLVM.API.LLVMInternalLinkage
+                @test first_mod.functions["thunk"].linkage ==
+                    LLVM.Linkage.Internal
             end
         finally
             delete!(Enzyme.Compiler.autodiff_cache, ptr)
@@ -292,21 +292,21 @@ end
 
         Enzyme.Compiler.link_split_existing!(dst, src)
 
-        fns = LLVM.functions(dst)
+        fns = dst.functions
         @test haskey(fns, "julia___dup")
         @test !LLVM.isdeclaration(fns["julia___dup"])
-        @test LLVM.linkage(fns["julia___dup"]) == LLVM.API.LLVMExternalLinkage
+        @test fns["julia___dup"].linkage == LLVM.Linkage.External
         @test haskey(fns, "only_in_dst")
         @test haskey(fns, "uses_dup")
         usesfn = fns["uses_dup"]
         callinst = first(
             filter(
                 Base.Fix2(isa, LLVM.CallInst),
-                collect(instructions(first(blocks(usesfn)))),
+                collect(first(usesfn.blocks).instructions),
             ),
         )
-        called_fn = last(collect(operands(callinst)))
-        @test LLVM.linkage(called_fn) == LLVM.API.LLVMInternalLinkage
+        called_fn = last(collect(callinst.operands))
+        @test called_fn.linkage == LLVM.Linkage.Internal
 
         # Test 2: Identical definitions are folded by MergeFunctionsPass
         dst2 = parse(
@@ -332,17 +332,17 @@ end
             """,
         )
         Enzyme.Compiler.link_split_existing!(dst2, src2)
-        fns2 = LLVM.functions(dst2)
+        fns2 = dst2.functions
         @test haskey(fns2, "julia___dup")
         @test haskey(fns2, "uses_dup2")
         usesfn2 = fns2["uses_dup2"]
         callinst2 = first(
             filter(
                 Base.Fix2(isa, LLVM.CallInst),
-                collect(instructions(first(blocks(usesfn2)))),
+                collect(first(usesfn2.blocks).instructions),
             ),
         )
-        @test LLVM.name(last(collect(operands(callinst2)))) == "julia___dup"
+        @test last(collect(callinst2.operands)).name == "julia___dup"
     end
 end
 
@@ -380,8 +380,8 @@ end
             attributes #0 = { "enzymejl_needs_restoration"="12345" }
             """,
         )
-        @test Enzyme.Compiler.restoration_ptr(functions(mod)["foo"]) == UInt(12345)
-        @test Enzyme.Compiler.restoration_ptr(functions(mod)["bar"]) === nothing
+        @test Enzyme.Compiler.restoration_ptr(mod.functions["foo"]) == UInt(12345)
+        @test Enzyme.Compiler.restoration_ptr(mod.functions["bar"]) === nothing
     end
 end
 
@@ -614,11 +614,11 @@ end
 
 "The `memcmp` / `bcmp` call in `mod`, or `nothing` if there is none."
 function find_bits_compare(mod::LLVM.Module)
-    for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+    for f in mod.functions, bb in f.blocks, inst in bb.instructions
         isa(inst, LLVM.CallInst) || continue
-        callee = LLVM.called_operand(inst)
+        callee = inst.called_operand
         isa(callee, LLVM.Function) || continue
-        if LLVM.name(callee) in ("bcmp", "memcmp")
+        if callee.name in ("bcmp", "memcmp")
             return inst
         end
     end
@@ -636,27 +636,25 @@ behind, and it is the input `fix_decayaddr!` has to repair.
 """
 function collapse_decay!(call::LLVM.CallInst)
     n = 0
-    for (i, arg) in enumerate(Enzyme.Compiler.arg_operands_view(call))
+    for (i, arg) in enumerate(call.arguments)
         # With typed pointers the `{}*` result is bitcast to `i8*` first; look
         # through that to the derivation underneath.
-        pfo = isa(arg, LLVM.BitCastInst) ? operands(arg)[1] : arg
+        pfo = isa(arg, LLVM.BitCastInst) ? arg.operands[1] : arg
         isa(pfo, LLVM.CallInst) || continue
-        callee = LLVM.called_operand(pfo)
-        (isa(callee, LLVM.Function) && LLVM.name(callee) == "julia.pointer_from_objref") ||
+        callee = pfo.called_operand
+        (isa(callee, LLVM.Function) && callee.name == "julia.pointer_from_objref") ||
             continue
-        src = operands(pfo)[1]
+        src = pfo.operands[1]
         isa(src, LLVM.AddrSpaceCastInst) || continue
-        obj = operands(src)[1]
-        LLVM.addrspace(value_type(obj)) == 10 || continue
+        obj = src.operands[1]
+        obj.value_type.addrspace == 10 || continue
         b = LLVM.IRBuilder()
-        LLVM.position!(b, call)
-        LLVM.API.LLVMSetOperand(
-            call, i - 1, LLVM.addrspacecast!(b, obj, value_type(arg))
-        )
-        if arg != pfo && isempty(LLVM.uses(arg))
+        LLVM.position!(b, LLVM.before(call))
+        call.operands[i] = LLVM.addrspacecast!(b, obj, arg.value_type)
+        if arg != pfo && isempty(arg.uses)
             LLVM.erase!(arg)
         end
-        isempty(LLVM.uses(pfo)) && LLVM.erase!(pfo)
+        isempty(pfo.uses) && LLVM.erase!(pfo)
         n += 1
     end
     return n
@@ -664,8 +662,8 @@ end
 
 "Strip every read-only marker from `call` and from the function it calls."
 function drop_readonly!(call::LLVM.CallInst)
-    callee = LLVM.called_operand(call)::LLVM.Function
-    for attrs in (LLVM.function_attributes(callee), LLVM.function_attributes(call))
+    callee = call.called_operand::LLVM.Function
+    for attrs in (callee.function_attributes, call.function_attributes)
         for attr in collect(attrs)
             if Enzyme.Compiler.is_readonly(attr)
                 delete!(attrs, attr)
@@ -682,7 +680,7 @@ end
         @test cmp !== nothing
         # The callee has to be read-only for the rewrite below to apply at all;
         # that is how Julia and LLVM annotate `memcmp` / `bcmp`.
-        @test Enzyme.Compiler.is_readonly(LLVM.called_operand(cmp)::LLVM.Function)
+        @test Enzyme.Compiler.is_readonly(cmp.called_operand::LLVM.Function)
         @test collapse_decay!(cmp) == 2
 
         @test @filecheck begin
@@ -704,11 +702,11 @@ end
         end
 
         # Nothing decays straight out of the tracked address space any more.
-        for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+        for f in mod.functions, bb in f.blocks, inst in bb.instructions
             if isa(inst, LLVM.AddrSpaceCastInst)
                 @test !(
-                    LLVM.addrspace(value_type(operands(inst)[1])) == 10 &&
-                        LLVM.addrspace(value_type(inst)) == 0
+                    inst.operands[1].value_type.addrspace == 10 &&
+                        inst.value_type.addrspace == 0
                 )
             end
         end
@@ -724,7 +722,7 @@ end
         @test cmp !== nothing
         @test collapse_decay!(cmp) == 2
         drop_readonly!(cmp)
-        @test !Enzyme.Compiler.is_readonly(LLVM.called_operand(cmp)::LLVM.Function)
+        @test !Enzyme.Compiler.is_readonly(cmp.called_operand::LLVM.Function)
 
         @test_throws AssertionError Enzyme.Compiler.fix_decayaddr!(mod)
     end
@@ -789,9 +787,9 @@ end
 
 function root_phi_addrspaces(f::LLVM.Function)
     spaces = Int[]
-    for bb in blocks(f), inst in instructions(bb)
+    for bb in f.blocks, inst in bb.instructions
         if isa(inst, LLVM.PHIInst)
-            push!(spaces, Int(LLVM.addrspace(value_type(inst))))
+            push!(spaces, Int(inst.value_type.addrspace))
         end
     end
     return spaces
@@ -863,19 +861,19 @@ end
         )
 
         # The pass replaces the phi of root-array pointers with a phi of loads.
-        diamond = functions(mod)["diamond"]
+        diamond = mod.functions["diamond"]
         @test root_phi_addrspaces(diamond) == [0]
         @test Enzyme.Compiler.unfold_root_phi_loads!(diamond)
         @test root_phi_addrspaces(diamond) == [10]
 
         # The phi gets a value from its own block, and that value is the phi.
         # The pass must not change this function.
-        selfref = functions(mod)["selfref"]
+        selfref = mod.functions["selfref"]
         @test !Enzyme.Compiler.unfold_root_phi_loads!(selfref)
         @test root_phi_addrspaces(selfref) == [0]
 
         # The same, but the value from its own block is a GEP of the phi.
-        selfref_gep = functions(mod)["selfref_gep"]
+        selfref_gep = mod.functions["selfref_gep"]
         @test !Enzyme.Compiler.unfold_root_phi_loads!(selfref_gep)
         @test root_phi_addrspaces(selfref_gep) == [0]
 
@@ -1001,24 +999,24 @@ end
 
         # A read-only intrinsic between the phi and the load does not block the
         # rewrite, and both incoming pointers may be loaded speculatively.
-        preheader = functions(mod)["preheader"]
+        preheader = mod.functions["preheader"]
         @test Enzyme.Compiler.unfold_root_phi_loads!(preheader)
         @test root_phi_addrspaces(preheader) == [10]
 
         # A store before the load could change what it reads.
-        store_between = functions(mod)["store_between"]
+        store_between = mod.functions["store_between"]
         @test !Enzyme.Compiler.unfold_root_phi_loads!(store_between)
         @test root_phi_addrspaces(store_between) == [0]
 
         # Loading the argument where the program did not is only safe when it is
         # known to be dereferenceable.
-        not_dereferenceable = functions(mod)["not_dereferenceable"]
+        not_dereferenceable = mod.functions["not_dereferenceable"]
         @test !Enzyme.Compiler.unfold_root_phi_loads!(not_dereferenceable)
         @test root_phi_addrspaces(not_dereferenceable) == [0]
 
         # The load's block has two predecessors, so the phi's block does not
         # lead straight to it.
-        two_preds = functions(mod)["two_preds"]
+        two_preds = mod.functions["two_preds"]
         @test !Enzyme.Compiler.unfold_root_phi_loads!(two_preds)
         @test root_phi_addrspaces(two_preds) == [0]
 

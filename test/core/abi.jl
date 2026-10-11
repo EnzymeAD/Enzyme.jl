@@ -682,7 +682,7 @@ import LLVM
         )
         TT = Enzyme.Compiler.tape_type(ty)
         DL = LLVM.DataLayout(LLVM.JITTargetMachine())
-        @test sizeof(TT) == LLVM.sizeof(DL, ty)
+        @test sizeof(TT) == LLVM.storage_size(DL, ty)
     end
 end
 
