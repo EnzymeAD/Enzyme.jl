@@ -368,6 +368,9 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         # Vectorization, following Julia's `buildVectorPipeline`.
         add!(fpm, InjectTLIMappings())
         add!(fpm, LoopVectorizePass())
+        if LLVM.version().major >= 18
+            add!(fpm, "infer-alignment")
+        end
         add!(fpm, LoopLoadEliminationPass())
         add!(fpm, InstCombinePass())
         add!(fpm, JLInstSimplifyPass())
@@ -404,7 +407,6 @@ function addMachinePasses!(mpm::LLVM.NewPMPassManager)
     end
     return add!(mpm, NewPMFunctionPassManager()) do fpm
         add!(fpm, DemoteFloat16Pass())
-        add!(fpm, GVNPass())
     end
 end
 
@@ -437,7 +439,7 @@ function addJuliaLegalizationPasses!(mpm::LLVM.NewPMPassManager, lower_intrinsic
         # after GC lowering to let LLVM do some constant propagation on the tags.
         # and remove some unnecessary write barrier checks.
         add!(mpm, NewPMFunctionPassManager()) do fpm
-            add!(fpm, GVNPass())
+            add!(fpm, EarlyCSEPass(; memssa = true))
             add!(fpm, SCCPPass())
             # Remove dead use of ptls
             add!(fpm, DCEPass())
