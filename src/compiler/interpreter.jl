@@ -27,35 +27,6 @@ else
     import Core.Compiler: get_world_counter, get_world_counter as get_inference_world
 end
 
-function rule_backedge_holder end
-
-function rule_backedge_holder_generator(world::UInt, source, self, ft::Type)
-    @nospecialize
-
-    code = Any[Core.Compiler.ReturnNode(world)]
-    ci = Core.Compiler.create_fresh_codeinfo(rule_backedge_holder, source, world, Core.svec(Symbol("#self#"), :ft), code)
-
-    edges = Any[]
-
-    if ft == typeof(EnzymeRules.augmented_primal)
-        sig = Tuple{typeof(EnzymeRules.augmented_primal), <:RevConfig, <:Annotation, Type{<:Annotation},Vararg{Annotation}}
-    elseif ft == typeof(EnzymeRules.forward)
-        sig = Tuple{typeof(EnzymeRules.forward), <:FwdConfig, <:Annotation, Type{<:Annotation},Vararg{Annotation}}
-    else
-        sig = Tuple{typeof(EnzymeRules.inactive), Vararg{Annotation}}
-    end
-    add_edge!(edges, sig)
-
-    ci.edges = edges
-
-    return ci
-end
-
-@eval Base.@assume_effects :removable :foldable :nothrow @inline function rule_backedge_holder(ft)
-    $(Expr(:meta, :generated_only))
-    $(Expr(:meta, :generated, rule_backedge_holder_generator))
-end
-
 struct EnzymeInterpreter{T} <: AbstractInterpreter
     @static if HAS_INTEGRATED_CACHE
         token::Any
@@ -369,7 +340,6 @@ function simplify_kw(@nospecialize(specTypes))
     end
 end
 
-include("tfunc.jl")
 
 import Core.Compiler: CallInfo
 
