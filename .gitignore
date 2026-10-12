@@ -5,6 +5,7 @@
 lib/EnzymeCore/Manifest.toml
 /Manifest-v*.toml
 /test/Manifest.toml
+/test/Manifest-v*.toml
 /docs/Manifest.toml
 /docs/Manifest-v*.toml
 /docs/**/Manifest.toml
