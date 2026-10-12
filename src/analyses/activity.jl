@@ -45,6 +45,38 @@ else
 @inline is_arrayorvararg_ty(::Type{Memory{T}}) where T = true
 end
 
+@inline function record_dep!(deps::Vector{Any}, @nospecialize(sig::Type))
+    sig in deps || push!(deps, sig)
+    return nothing
+end
+
+"""
+    @record_dep deps f(args...)
+
+Call `f(args...)` and record the signature of the call in `deps`, so that code built from
+the result gets an edge to the method the call dispatches to (`add_activity_edges!`). For
+the calls to the hooks packages add methods to (`is_mutable_array`, `inactive_type`,
+`eltype`), whose answer the result depends on.
+"""
+macro record_dep(deps, call)
+    Meta.isexpr(call, :call) || error("@record_dep expects a call, got $call")
+    f = gensym(:f)
+    args = Symbol[]
+    bindings = Expr[:($f = $(esc(call.args[1])))]
+    sigparts = Any[:(Core.Typeof($f))]
+    for arg in call.args[2:end]
+        a = gensym(:arg)
+        push!(args, a)
+        push!(bindings, :($a = $(esc(arg))))
+        push!(sigparts, :(Core.Typeof($a)))
+    end
+    return quote
+        $(bindings...)
+        record_dep!($(esc(deps)), Tuple{$(sigparts...)})
+        $f($(args...))
+    end
+end
+
 Base.@nospecializeinfer function active_reg_recur(
     @nospecialize(ST::Type),
     seen::Base.IdSet{Type},
@@ -214,15 +246,13 @@ Base.@nospecializeinfer @inline function active_reg_inner(
         return ActiveState
     end
 
-    record_dep!(deps, Tuple{typeof(is_mutable_array), Type{T}})
-    if is_mutable_array(T)
+    if @record_dep deps is_mutable_array(T)
         if justActive
             return AnyState
         end
 
-        record_dep!(deps, Tuple{typeof(eltype), Type{T}})
         if active_reg_inner(
-            eltype(T),
+                (@record_dep deps eltype(T)),
             seen,
                 deps,
             justActive,
@@ -273,8 +303,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
         return AnyState
     end
 
-    record_dep!(deps, Tuple{typeof(EnzymeCore.EnzymeRules.inactive_type), Type{T}})
-    if EnzymeCore.EnzymeRules.inactive_type(T)
+    if @record_dep deps EnzymeCore.EnzymeRules.inactive_type(T)
         return AnyState
     end
 
@@ -431,15 +460,11 @@ const ActivityHookSigs = (
     Tuple{typeof(is_mutable_array), Type},
 )
 
-@inline function record_dep!(deps::Vector{Any}, @nospecialize(sig::Type))
-    sig in deps || push!(deps, sig)
-    return nothing
-end
 
 """
     active_reg_with_deps(T, world, justActive, UnionSret, AbstractIsMixed)
 
-The [`ActivityState`](@ref) of `T` in `world`, with the signatures of the dispatches the
+The `ActivityState` of `T` in `world`, with the signatures of the dispatches the
 result depends on: the hooks packages add methods to, and `eltype` of the mutable array
 types. This is the uncached analysis, for the generators; everything else goes through
 [`active_reg`](@ref), which caches.
@@ -516,9 +541,9 @@ end
 """
     active_reg(T, world; justActive=false, UnionSret=false, AbstractIsMixed=false)
 
-The [`ActivityState`](@ref) of `T` in `world`, usually the world of the compilation.
+The `ActivityState` of `T` in `world`, usually the world of the compilation.
 
-Calls [`active_reg_flags`](@ref) in `world`, so the answer comes from the `CodeInstance`
+Calls `active_reg_flags` in `world`, so the answer comes from the `CodeInstance`
 Julia keeps for `T` and the flags in that world, or from the analysis if there is none yet.
 `Core._call_in_world_total` changes the world also inside a generator, where this is
 called while a thunk compiles.
