@@ -7163,6 +7163,10 @@ end
                         resstr *= "of type " * string(foundv)
                     end
                     emit_error(builder, user, resstr, EnzymeMutabilityException)
+                    # Optimization may have proven the function `nounwind`
+                    # before the throw existed. Left in place, that would
+                    # let LLVM delete the throw and the write it guards.
+                    clear_nounwind!(LLVM.parent(LLVM.parent(user)))
                 end
             end
         end
