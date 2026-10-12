@@ -826,6 +826,15 @@ EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, 
         mode,
     )
 
+EnzymeGradientUtilsGetAugmentedPrimalReturnUsed(gutils, orig) =
+    ccall(
+    (:EnzymeGradientUtilsGetAugmentedPrimalReturnUsed, libEnzyme),
+    UInt8,
+    (EnzymeGradientUtilsRef, LLVMValueRef),
+    gutils,
+    orig,
+)
+
 EnzymeGradientUtilsSubTransferHelper(
     gutils,
     mode,
