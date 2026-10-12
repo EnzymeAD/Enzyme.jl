@@ -1837,7 +1837,16 @@ function enzyme_custom_common_rev(
         bt = GPUCompiler.backtrace(orig)
         msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
         emit_error(B, orig, (msg2, mi, world), NonConstantKeywordArgException)
-        return C_NULL
+        # The reverse pass reads the cached arguments from the tape before it
+        # reaches this check, so they must still be passed to it.
+        if !forward || length(byval_tapes) == 0
+            return C_NULL
+        end
+        tapeV = LLVM.UndefValue(LLVM.StructType(LLVM.LLVMType[value_type(v) for v in byval_tapes]))
+        for (i, v) in enumerate(byval_tapes)
+            tapeV = LLVM.insert_value!(B, tapeV, v, i - 1)
+        end
+        return tapeV.ref
     end
 
     rev_TT = nothing
