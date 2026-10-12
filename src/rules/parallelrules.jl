@@ -220,6 +220,40 @@ end
 
     funcT = mi.specTypes.parameters[2]
 
+    # Since JuliaLang/julia#63184, `threading_run` does not specialize on the loop
+    # body, so the body is passed boxed and its type is only known at the call site.
+    # One `threading_run` is then shared by every loop, so the derivatives compiled
+    # for this loop are recorded on the call rather than on the function.
+    boxed = funcT === Any
+    if boxed
+        legal, funcT, _ = abs_typeof(operands(orig)[1], enzyme_ctx)
+        if !legal
+            throw(AssertionError("Could not determine the type of the Threads.@threads loop body $(string(operands(orig)[1]))"))
+        end
+        fwdmodenm = nothing
+        augfwdnm = nothing
+        adjointnm = nothing
+        TapeType = nothing
+        attributes = function_attributes(orig)
+        for fattr in collect(attributes)
+            if isa(fattr, LLVM.StringAttribute)
+                if kind(fattr) == "enzymejl_tapetype"
+                    ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
+                    TapeType = Base.unsafe_pointer_to_objref(ptr)
+                end
+                if kind(fattr) == "enzymejl_forward"
+                    fwdmodenm = value(fattr)
+                end
+                if kind(fattr) == "enzymejl_augforward"
+                    augfwdnm = value(fattr)
+                end
+                if kind(fattr) == "enzymejl_adjoint"
+                    adjointnm = value(fattr)
+                end
+            end
+        end
+    end
+
 
     # TODO actually do modifiedBetween
     e_tt = Tuple{Const{Int}}
@@ -241,7 +275,7 @@ end
     if dupClosure
 	if is_constant_value(gutils, operands(orig)[1])
 	    dupClosure = false
-	    if inline_roots_type(funcT) != 0
+            if !boxed && inline_roots_type(funcT) != 0
 	        if !is_constant_value(gutils, operands(orig)[2])
 		    dupClosure = true
 		end
@@ -462,11 +496,14 @@ end
 	    end
 	    
             if value_type(v) != pllty
+                if boxed
+                    v = addrspacecast!(fwdbuilder, v, LLVM.PointerType(pllty, Derived))
+                end
                 pv = v
                 v = load!(fwdbuilder, pllty, v)
             end
 	    
-	    if inline_roots_type(ppfuncT) != 0
+            if !boxed && inline_roots_type(ppfuncT) != 0
 		v2 = new_from_original(gutils, operands(orig)[2])
 		v = recombine_value!(fwdbuilder, v, v2)
 	    end
@@ -529,13 +566,17 @@ end
                 spllty = LLVM.LLVMType(API.EnzymeGetShadowType(width, pllty))
                 pv = nothing
 	        
-                dv2 = if inline_roots_type(ppfuncT) != 0
+                dv2 = if !boxed && inline_roots_type(ppfuncT) != 0
                    invert_pointer(gutils, operands(orig)[2], B)
                 end
 
                 if value_type(dv) != spllty
                     pv = dv
                     if width == 1
+                        if boxed
+                            dv = addrspacecast!(fwdbuilder, dv, LLVM.PointerType(spllty, Derived))
+                            pv = dv
+                        end
                         dv = load!(fwdbuilder, spllty, dv)
 			            if dv2 !== nothing
                            dv = recombine_value!(fwdbuilder, dv, dv2)
@@ -544,6 +585,9 @@ end
                         shadowres = UndefValue(spllty)
                         for idx = 1:width
                             arg = extract_value!(fwdbuilder, dv, idx - 1)
+                            if boxed
+                                arg = addrspacecast!(fwdbuilder, arg, LLVM.PointerType(pllty, Derived))
+                            end
                             arg = load!(fwdbuilder, pllty, arg)
                             if dv2 !== nothing
                               arg2 = extract_value!(fwdbuilder, dv2, idx - 1)

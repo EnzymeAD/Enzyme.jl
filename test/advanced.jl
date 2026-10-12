@@ -319,7 +319,7 @@ end
     x = [2.0]
     dx = [0.0]
     @test Enzyme.autodiff(Reverse, invsin2, Active, Duplicated(x, dx)) == ((nothing,),)
-    if julia_typed_pointers
+    if julia_typed_pointers || VERSION >= v"1.13.2-DEV"
         @test dx[1] == -0.4161468365471424
     else
         @test_broken dx[1] == -0.4161468365471424
