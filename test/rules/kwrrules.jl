@@ -206,4 +206,29 @@ module RootedEnzymeKwargBug
         autodiff(set_runtime_activity(Reverse), g, Active, Duplicated(x, dx))
     end
 
+    struct KWClos
+        v::Vector{Float64}
+        s::Float64
+    end
+
+    f_kw6(c, x; tol) = c.v[1] * x
+
+    function augmented_primal(config::RevConfigWidth{1}, func::Const{typeof(f_kw6)}, ::Type{<:Active}, c, x::Active; tol)
+        primal = needs_primal(config) ? func.val(c.val, x.val; tol) : nothing
+        return AugmentedReturn(primal, nothing, nothing)
+    end
+
+    function reverse(config::RevConfigWidth{1}, ::Const{typeof(f_kw6)}, dret::Active, tape, c, x::Active; tol)
+        return (nothing, c.val.v[1] * dret.val)
+    end
+
+    g6(p, tol) = Base.inferencebarrier(f_kw6)(KWClos(p, 1.0), p[2]; tol)
+
+    # The augmented primal caches an argument on the tape before rejecting the
+    # differentiable kwarg, so the reverse pass must get that tape to reach the
+    # same error (#3781).
+    @testset "Differentiable kwarg with cached argument" begin
+        @test_throws Enzyme.Compiler.NonConstantKeywordArgException autodiff(Reverse, g6, Active, Duplicated([1.5, 0.7], zeros(2)), Active(1.0e-8))
+    end
+
 end # module
