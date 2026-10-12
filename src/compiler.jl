@@ -231,13 +231,17 @@ if VERSION >= v"1.11.0-DEV.1552"
     @static if HAS_RULE_EDGES
         # The inference results carry edges to the rule queries they depend on (see
         # `enzyme_call_kind`), so a change of the rules invalidates them like any other
-        # method change; the token need not tell rule sets apart.
+        # method change; the token need not tell rule sets apart. It does tell the modes
+        # apart: which kinds of rules mark a call differs between them.
         struct EnzymeCacheToken
             method_tables::Tuple
+            forward_rules::Bool
+            reverse_rules::Bool
+            inactive_rules::Bool
         end
 
         @inline EnzymeCacheToken(method_tables::Tuple, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
-            EnzymeCacheToken(method_tables)
+            EnzymeCacheToken(method_tables, is_forward, is_reverse, inactive_rule)
     else
         # Without such edges, inference results are only shared while the set of rules
         # visible in the world for the mode is the same.
