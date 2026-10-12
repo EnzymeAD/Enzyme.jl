@@ -176,6 +176,43 @@ Base.@assume_effects :removable :foldable :nothrow function is_nounwind(f::LLVM.
 end
 
 """
+    clear_nounwind!(f::LLVM.Function)
+
+Remove `nounwind` from `f`, from every call of `f`, and from each calling
+function in turn, so that a throw inserted into `f` may unwind through its
+callers.
+
+Enzyme's preprocessing marks every call it differentiates `willreturn`, and
+inlining a `nounwind` function marks the calls it inlines `nounwind`. A
+`noreturn` throw that is also `nounwind` and `willreturn` can neither return,
+unwind nor run forever, so LLVM treats it as unreachable and deletes it,
+together with every path that leads to it.
+"""
+function clear_nounwind!(f::LLVM.Function)
+    idx = reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex)
+    nounwind = kind(EnumAttribute("nounwind"))
+    todo = LLVM.Function[f]
+    done = Set{LLVM.Function}()
+    while !isempty(todo)
+        cur = pop!(todo)
+        if cur in done
+            continue
+        end
+        push!(done, cur)
+        LLVM.API.LLVMRemoveEnumAttributeAtIndex(cur, idx, nounwind)
+        for u in LLVM.uses(cur)
+            call = LLVM.user(u)
+            if !isa(call, LLVM.CallBase) || LLVM.called_operand(call) != cur
+                continue
+            end
+            LLVM.API.LLVMRemoveCallSiteEnumAttribute(call, idx, nounwind)
+            push!(todo, LLVM.parent(LLVM.parent(call)))
+        end
+    end
+    return nothing
+end
+
+"""
     is_readonly(attr::LLVM.Attribute)::Bool
 
 Whether `attr` on its own establishes that the function or argument position it

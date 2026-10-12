@@ -449,6 +449,21 @@ end
     @test autodiff(Reverse, Const(c), Active(3.0))[1][1] ≈ 1.0
     @test autodiff(Reverse, Duplicated(c, RWClos([2.7])), Active(3.0))[1][1] ≈ (1.0 + 2.7 * 4 * 3)
 
+    # A write that cannot throw otherwise leaves the closure `nounwind` (#3786)
+    xs = [1.0, 2.0, 3.0]
+    scale_loop = g -> begin
+        for i in eachindex(xs)
+            xs[i] *= g
+        end
+        return sum(xs)
+    end
+    @test_throws Enzyme.Compiler.EnzymeMutabilityException autodiff(ReverseWithPrimal, scale_loop, Active, Active(2.0))
+    @test_throws Enzyme.Compiler.EnzymeMutabilityException autodiff(ForwardWithPrimal, scale_loop, Duplicated(2.0, 1.0))
+    scale_fill = g -> (fill!(xs, g); sum(xs))
+    @test_throws Enzyme.Compiler.EnzymeMutabilityException autodiff(Reverse, scale_fill, Active, Active(2.0))
+    @test_throws Enzyme.Compiler.EnzymeMutabilityException autodiff(Forward, scale_fill, Duplicated(2.0, 1.0))
+    @test xs == [1.0, 2.0, 3.0]
+
     struct RWClos2
         x::Vector{Float64}
     end
