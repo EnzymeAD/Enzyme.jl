@@ -366,6 +366,8 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         add!(fpm, JLInstSimplifyPass())
 
         # Vectorization, following Julia's `buildVectorPipeline`.
+        add!(fpm, Float2IntPass())
+        add!(fpm, LowerConstantIntrinsicsPass())
         add!(fpm, InjectTLIMappings())
         add!(fpm, LoopVectorizePass())
         if LLVM.version().major >= 18
