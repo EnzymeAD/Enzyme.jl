@@ -212,6 +212,12 @@ end
 # other views are specific to a world, so only share inference results within that world
 method_tables(@nospecialize(view::Core.Compiler.MethodTableView)) = (view,)
 
+# Whether inference under the `EnzymeInterpreter` can give its results edges to the rule
+# queries they depend on: the inference frame collects edges as a list from this version
+# on, and backedges are per `CodeInstance`, so an edge of Enzyme's does not invalidate
+# the native code of the same method instance. See `enzyme_call_kind`.
+const HAS_RULE_EDGES = VERSION >= v"1.12.0-DEV.1531"
+
 # provide a specific interpreter to use.
 if VERSION >= v"1.11.0-DEV.1552"
     # The owner of the CodeInstances produced by an `EnzymeInterpreter`, compared with
@@ -222,20 +228,34 @@ if VERSION >= v"1.11.0-DEV.1552"
     # call builds interpreters from several differently-typed jobs (the `EnzymeTarget`
     # thunk job, the unwrapped primal job, `primal_interp_world`) that all infer the same
     # way, and keying on those types made each of them re-infer the whole call graph.
-    struct EnzymeCacheToken
-        method_tables::Tuple
-        last_fwd_rule_world::Union{Nothing, Tuple}
-        last_rev_rule_world::Union{Nothing, Tuple}
-        last_ina_rule_world::Union{Nothing, Tuple}
-    end
+    @static if HAS_RULE_EDGES
+        # The inference results carry edges to the rule queries they depend on (see
+        # `enzyme_call_kind`), so a change of the rules invalidates them like any other
+        # method change; the token need not tell rule sets apart.
+        struct EnzymeCacheToken
+            method_tables::Tuple
+        end
 
-    @inline EnzymeCacheToken(method_tables::Tuple, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
-        EnzymeCacheToken(
-        method_tables,
+        @inline EnzymeCacheToken(method_tables::Tuple, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
+            EnzymeCacheToken(method_tables)
+    else
+        # Without such edges, inference results are only shared while the set of rules
+        # visible in the world for the mode is the same.
+        struct EnzymeCacheToken
+            method_tables::Tuple
+            last_fwd_rule_world::Union{Nothing, Tuple}
+            last_rev_rule_world::Union{Nothing, Tuple}
+            last_ina_rule_world::Union{Nothing, Tuple}
+        end
+
+        @inline EnzymeCacheToken(method_tables::Tuple, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
+            EnzymeCacheToken(
+            method_tables,
             is_forward ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.forward, Tuple{<:EnzymeCore.EnzymeRules.FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
             is_reverse ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:EnzymeCore.EnzymeRules.RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
             inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
         )
+    end
 
     # The owner of the code instances Enzyme infers for `job`. GPUCompiler asks for it through
     # a hook whose name differs between its majors.
@@ -681,90 +701,175 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta, enzyme_ctx::EnzymeCon
     return rewrite_abi_converter_calls!(mod)
 end
 
-const FRULE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
-const RRULE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
-const INACTIVE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
-const EASY_RULE_CACHE = Dict{Tuple{Type, UInt}, Bool}()
-const NOALIAS_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
+# Rule queries: does a call of signature `specTypes` have a rule of a given kind?
+#
+# Each query is a generated function of the signature, so that Julia's `CodeInstance` cache
+# is the cache of the answer (see `active_reg_nothrow`): an instance holds the answer for
+# the world range in which the rule methods it looked at are what they were, carries edges
+# to those methods, and is closed when a rule is added or deleted that changes the answer.
+# The queries look in the internal method table; an overlay table a back-end stacks on top
+# is asked separately, see `rule_applies`.
 
-function cached_has_easy_rule(specTypes::Type, world::UInt)
-    key = (specTypes, world)
-    val = get(EASY_RULE_CACHE, key, nothing)
-    if val !== nothing
-        return val::Bool
-    end
-    func = specTypes.parameters[1]
-    if func isa Core.Builtin
-        EASY_RULE_CACHE[key] = false
-        return false
-    end
-    res = EnzymeRules.has_easy_rule_from_sig(specTypes; world)
-    EASY_RULE_CACHE[key] = res
-    return res
+# The signature `EnzymeCore.EnzymeRules.isapplicable` looks up for `rule` on a call of
+# signature `specTypes`: the rule function applied to the annotated arguments for the
+# `forward`/`augmented_primal` rules (as `has_frule_from_sig` and `has_rrule_from_sig`
+# build it), and to the call's own arguments for the other rules.
+function rule_query_tt(@nospecialize(rule), annotate::Bool, @nospecialize(specTypes::Type))
+    annotate || return specTypes
+    ft, tt = EnzymeRules._annotate_tt(specTypes)
+    Config = rule === EnzymeRules.forward ? EnzymeRules.FwdConfig : EnzymeRules.RevConfig
+    return Tuple{<:Config, <:Annotation{ft}, Type{<:Annotation}, tt...}
 end
 
-function cached_has_frule(specTypes::Type, world::UInt, method_table)
-    key = (specTypes, world, method_table)
-    val = get(FRULE_CACHE, key, nothing)
-    if val !== nothing
-        return val::Bool
-    end
-    func = specTypes.parameters[1]
-    if func isa Core.Builtin
-        FRULE_CACHE[key] = false
-        return false
-    end
-    res = EnzymeRules.has_frule_from_sig(specTypes; world, method_table)
-    FRULE_CACHE[key] = res
-    return res
+function rule_query_sig(@nospecialize(rule), annotate::Bool, @nospecialize(specTypes::Type))
+    return Base.signature_type(rule, Base.to_tuple_type(rule_query_tt(rule, annotate, specTypes)))
 end
 
-function cached_has_rrule(specTypes::Type, world::UInt, method_table)
-    key = (specTypes, world, method_table)
-    val = get(RRULE_CACHE, key, nothing)
-    if val !== nothing
-        return val::Bool
+# Whether any method matches `sig` in the internal method table in `world`, adding the
+# edges that keep that answer current: one on each matching method instance, and one on the
+# signature when the matches do not cover it, so that a method added for it invalidates.
+function add_matches_edges!(edges::Vector{Any}, @nospecialize(sig::Type), world::UInt)::Bool
+    mt = ccall(:jl_method_table_for, Any, (Any,), sig)
+    mt isa Core.MethodTable || return false
+    result = Core.Compiler.findall(sig, Core.Compiler.InternalMethodTable(world); limit = -1)
+    if result === nothing || result === missing
+        # Too many matches to list: depend on the signature as a whole.
+        add_edge!(edges, sig)
+        return true
     end
-    func = specTypes.parameters[1]
-    if func isa Core.Builtin
-        RRULE_CACHE[key] = false
-        return false
+    lookup = @static if isdefined(Core.Compiler, :MethodMatchResult)
+        result.matches
+    else
+        result
     end
-    res = EnzymeRules.has_rrule_from_sig(specTypes; world, method_table)
-    RRULE_CACHE[key] = res
-    return res
+    matches = lookup.matches::Vector{Any}
+    fully_covers = false
+    for match in matches
+        match = match::Core.MethodMatch
+        fully_covers |= match.fully_covers
+        add_edge!(edges, Core.Compiler.specialize_method(match)::Core.MethodInstance)
+    end
+    fully_covers || add_edge!(edges, sig)
+    return !isempty(matches)
 end
 
-function cached_is_inactive(specTypes::Type, world::UInt, method_table)
-    key = (specTypes, world, method_table)
-    val = get(INACTIVE_CACHE, key, nothing)
-    if val !== nothing
-        return val::Bool
-    end
-    func = specTypes.parameters[1]
-    if func isa Core.Builtin
-        INACTIVE_CACHE[key] = false
-        return false
-    end
-    res = EnzymeRules.is_inactive_from_sig(specTypes; world, method_table)
-    INACTIVE_CACHE[key] = res
-    return res
+function rule_query_codeinfo(fn, @nospecialize(rule), annotate::Bool, source::Union{Method, LineNumberNode}, world::UInt, @nospecialize(specTypes::Type))
+    edges = Any[]
+    result = add_matches_edges!(edges, rule_query_sig(rule, annotate, specTypes), world)
+    code = Any[Core.Compiler.ReturnNode(result)]
+    ci = create_fresh_codeinfo(fn, source, world, Core.svec(Symbol("#self#"), :specTypes), code)
+    ci.edges = edges
+    return ci
 end
 
-function cached_noalias(specTypes::Type, world::UInt, method_table)
-    key = (specTypes, world, method_table)
-    val = get(NOALIAS_CACHE, key, nothing)
-    if val !== nothing
-        return val::Bool
+for (fn, gen, rule, annotate) in (
+        (:has_frule_gen, :has_frule_generator, :(EnzymeRules.forward), true),
+        (:has_rrule_gen, :has_rrule_generator, :(EnzymeRules.augmented_primal), true),
+        (:is_inactive_gen, :is_inactive_generator, :(EnzymeRules.inactive), false),
+        (:is_inactive_noinl_gen, :is_inactive_noinl_generator, :(EnzymeRules.inactive_noinl), false),
+        (:is_inactive_kwarg_gen, :is_inactive_kwarg_generator, :(EnzymeRules.inactive_kwarg), false),
+        (:is_inactive_arg_gen, :is_inactive_arg_generator, :(EnzymeRules.inactive_arg), false),
+        (:noalias_gen, :noalias_generator, :(EnzymeRules.noalias), false),
+        (:has_easy_rule_gen, :has_easy_rule_generator, :(EnzymeRules.has_easy_rule), false),
+    )
+    @eval begin
+        function $fn end
+        function $gen(world::UInt, source::Union{Method, LineNumberNode}, specTypes, self, _)
+            @nospecialize
+            return rule_query_codeinfo($fn, $rule, $annotate, source, world, specTypes)
+        end
     end
+    @eval Base.@assume_effects :removable :foldable :nothrow @inline function $fn(::Type{specTypes})::Bool where {specTypes}
+        $(Expr(:meta, :generated_only))
+        $(Expr(:meta, :generated, getfield(@__MODULE__, gen)))
+    end
+end
+
+# Whether the overlay tables of a method table view, if any, have a method matching the
+# rule query. The internal table is the generated query's business. A view that is not a
+# stack of overlay tables over the internal one is asked as a whole, as before.
+function overlay_rule_applies(@nospecialize(rule), annotate::Bool, @nospecialize(specTypes::Type), world::UInt, @nospecialize(view))::Bool
+    view === nothing && return false
+    for mt in method_tables(view)
+        if mt isa Core.MethodTable
+            sig = rule_query_sig(rule, annotate, specTypes)
+            matches = Base._methods_by_ftype(sig, mt, -1, world)
+            if matches isa Vector && !isempty(matches)
+                return true
+            end
+        else
+            return EnzymeRules.isapplicable(rule, rule_query_tt(rule, annotate, specTypes); world, method_table = view)
+        end
+    end
+    return false
+end
+
+"""
+    rule_applies(gen, rule, annotate, specTypes, world, method_table)
+
+Whether a call of signature `specTypes` has a method of `rule` in `world`, looking it up
+in the method table view `method_table` (`nothing` for the internal table). `gen` is the
+generated query for the internal table, called in `world`.
+"""
+function rule_applies(gen, @nospecialize(rule), annotate::Bool, @nospecialize(specTypes::Type), world::UInt, @nospecialize(method_table))::Bool
     func = specTypes.parameters[1]
-    if func isa Core.Builtin
-        NOALIAS_CACHE[key] = false
-        return false
+    func isa Core.Builtin && return false
+    Core._call_in_world_total(world, gen, specTypes)::Bool && return true
+    return overlay_rule_applies(rule, annotate, specTypes, world, method_table)
+end
+
+cached_has_frule(specTypes::Type, world::UInt, method_table)::Bool =
+    rule_applies(has_frule_gen, EnzymeRules.forward, true, specTypes, world, method_table)
+cached_has_rrule(specTypes::Type, world::UInt, method_table)::Bool =
+    rule_applies(has_rrule_gen, EnzymeRules.augmented_primal, true, specTypes, world, method_table)
+cached_is_inactive(specTypes::Type, world::UInt, method_table)::Bool =
+    rule_applies(is_inactive_gen, EnzymeRules.inactive, false, specTypes, world, method_table)
+cached_is_inactive_noinl(specTypes::Type, world::UInt, method_table)::Bool =
+    rule_applies(is_inactive_noinl_gen, EnzymeRules.inactive_noinl, false, specTypes, world, method_table)
+cached_is_inactive_kwarg(specTypes::Type, world::UInt, method_table = nothing)::Bool =
+    rule_applies(is_inactive_kwarg_gen, EnzymeRules.inactive_kwarg, false, specTypes, world, method_table)
+cached_is_inactive_arg(specTypes::Type, world::UInt, method_table = nothing)::Bool =
+    rule_applies(is_inactive_arg_gen, EnzymeRules.inactive_arg, false, specTypes, world, method_table)
+cached_noalias(specTypes::Type, world::UInt, method_table)::Bool =
+    rule_applies(noalias_gen, EnzymeRules.noalias, false, specTypes, world, method_table)
+cached_has_easy_rule(specTypes::Type, world::UInt)::Bool =
+    rule_applies(has_easy_rule_gen, EnzymeRules.has_easy_rule, false, specTypes, world, nothing)
+
+"""
+    rule_query_edge(gen, specTypes, world)
+
+The edge that makes code depend on the answer of the generated rule query `gen` for
+`specTypes` in `world`: its `CodeInstance` for that world, so that the code is invalidated
+with it and verified through it when a package image loads, or its `MethodInstance` when
+no instance covers the world.
+"""
+function rule_query_edge(gen, @nospecialize(specTypes::Type), world::UInt)
+    @static if HAS_RULE_EDGES
+        match = Base._which(Tuple{typeof(gen), Type{specTypes}}; world, raise = false)
+        match === nothing && return nothing
+        mi = Core.Compiler.specialize_method(match::Core.MethodMatch)::Core.MethodInstance
+        ci = ccall(:jl_rettype_inferred_native, Any, (Any, UInt, UInt), mi, world, world)
+        return ci === nothing ? mi : ci
+    else
+        return nothing
     end
-    res = EnzymeRules.noalias_from_sig(specTypes; world, method_table)
-    NOALIAS_CACHE[key] = res
-    return res
+end
+
+# Add that edge to `edges` (an inference frame's, or a compilation's), once. Before
+# `HAS_RULE_EDGES` nothing is added: an edge on a `CodeInstance` is not an edge format of
+# those versions, and the compiled code takes the signature edges of
+# `add_compilation_edges!` instead.
+function push_rule_query_edge!(edges::Vector{Any}, gen, @nospecialize(specTypes::Type), world::UInt)
+    @static if HAS_RULE_EDGES
+        specTypes.parameters[1] isa Core.Builtin && return nothing
+        edge = rule_query_edge(gen, specTypes, world)
+        edge === nothing && return nothing
+        for e in edges
+            e === edge && return nothing
+        end
+        push!(edges, edge)
+    end
+    return nothing
 end
 
 include("compiler/optimize.jl")
@@ -1393,12 +1498,15 @@ function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, m
 
     specTypes = Interpreter.simplify_kw(mi.specTypes)
 
+    # The compiled code depends on these answers; the edges keep it current with them.
     if mode == API.DEM_ForwardMode
+        push_rule_query_edge!(edges, has_frule_gen, specTypes, world)
         has_custom_rule = cached_has_frule(specTypes, world, method_table)
         if has_custom_rule
             @safe_debug "Found frule for" mi.specTypes
         end
     else
+        push_rule_query_edge!(edges, has_rrule_gen, specTypes, world)
         has_custom_rule = cached_has_rrule(specTypes, world, method_table)
         if has_custom_rule
             @safe_debug "Found rrule for" mi.specTypes
@@ -1414,6 +1522,7 @@ function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, m
         state.actualRetType = rettype
     end
 
+    push_rule_query_edge!(edges, noalias_gen, specTypes, world)
     if cached_noalias(specTypes, world, method_table)
         push!(edges, mi)
         push!(return_attributes(llvmfn), EnumAttribute("noalias"))
@@ -1679,7 +1788,8 @@ end
         end
         return
     end
-    if EnzymeRules.is_inactive_from_sig(specTypes; world, method_table)
+    push_rule_query_edge!(edges, is_inactive_gen, specTypes, world)
+    if cached_is_inactive(specTypes, world, method_table)
         push!(edges, mi)
         handleCustom(
             state,
@@ -1696,7 +1806,8 @@ end
         )
         return
     end
-    if EnzymeRules.is_inactive_noinl_from_sig(specTypes; world, method_table)
+    push_rule_query_edge!(edges, is_inactive_noinl_gen, specTypes, world)
+    if cached_is_inactive_noinl(specTypes, world, method_table)
         push!(edges, mi)
         handleCustom(
             state,
@@ -8360,16 +8471,14 @@ function clear_caches!()
     empty!(Enzyme.tape_cache)
     empty!(Enzyme.captured_constants)
 
-    # Which rules apply, memoized against the world the methods were read in.
-    empty!(FRULE_CACHE)
-    empty!(RRULE_CACHE)
-    empty!(INACTIVE_CACHE)
-    empty!(EASY_RULE_CACHE)
-    empty!(NOALIAS_CACHE)
-    empty!(Interpreter.SigCache)
-    Interpreter.LastFwdWorld[] = Base.IdSet{Type}()
-    Interpreter.LastRevWorld[] = Base.IdSet{Type}()
-    Interpreter.LastInaWorld[] = Base.IdSet{Type}()
+    # The sets of rule methods read per world, on versions whose inference results carry
+    # no edges to the rule queries.
+    @static if !HAS_RULE_EDGES
+        empty!(Interpreter.SigCache)
+        Interpreter.LastFwdWorld[] = Base.IdSet{Type}()
+        Interpreter.LastRevWorld[] = Base.IdSet{Type}()
+        Interpreter.LastInaWorld[] = Base.IdSet{Type}()
+    end
 
     # The library handles `ejlstr$` and `ejlptr$` symbols were resolved through.
     empty!(JIT.hnd_string_map)
