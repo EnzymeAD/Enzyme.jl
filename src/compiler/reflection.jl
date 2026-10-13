@@ -18,6 +18,7 @@ function get_job(
     ErrIfFuncWritten = false,
     RuntimeActivity = false,
     StrongZero = false,
+        AtomicAdd = nothing,
     kwargs...,
 )
 
@@ -51,7 +52,8 @@ function get_job(
         ABI,
         ErrIfFuncWritten,
         RuntimeActivity,
-        StrongZero
+        StrongZero,
+        AtomicAdd
     )
     return GPUCompiler.CompilerJob(
             primal,

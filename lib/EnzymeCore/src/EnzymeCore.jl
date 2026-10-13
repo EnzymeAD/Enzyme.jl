@@ -331,7 +331,8 @@ strong_zero(::Type{<:Mode{<:Any, <:Any, <:Any, StrongZero}}) where {StrongZero} 
         StrongZero,
         ABI,
         Holomorphic,
-        ErrIfFuncWritten
+        ErrIfFuncWritten,
+        AtomicAdd
     } <: Mode{ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}
 
 Subtype of [`Mode`](@ref) for reverse mode differentiation.
@@ -340,6 +341,7 @@ Subtype of [`Mode`](@ref) for reverse mode differentiation.
 
 - `ReturnPrimal`: whether to return the primal return value from the augmented-forward pass.
 - `Holomorphic`: Whether the complex result function is holomorphic and we should compute `d/dz`
+- `AtomicAdd`: whether derivatives are accumulated into shadow memory with atomic updates (`true`), with plain updates (`false`), or as Enzyme decides (`nothing`, the default). See [`set_atomic_add`](@ref).
 - other parameters: see [`Mode`](@ref)
 
 !!! warning
@@ -354,68 +356,76 @@ Subtype of [`Mode`](@ref) for reverse mode differentiation.
     - [`set_err_if_func_written`](@ref) / [`clear_err_if_func_written`](@ref)
     - [`set_runtime_activity`](@ref) / [`clear_runtime_activity`](@ref)
     - [`set_strong_zero`](@ref) / [`clear_strong_zero`](@ref)
+    - [`set_atomic_add`](@ref)
     - [`set_abi`](@ref)
 """
-struct ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} <: Mode{ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} end
+struct ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd} <: Mode{ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} end
+
+# Code written before `AtomicAdd` existed spells the mode without it; such a mode leaves the choice to Enzyme.
+ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}() where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, nothing}()
 
 """
     const Reverse
 
 Default instance of [`ReverseMode`](@ref) that doesn't return the primal
 """
-const Reverse = ReverseMode{false, false, false, DefaultABI, false, false}()
+const Reverse = ReverseMode{false, false, false, DefaultABI, false, false, nothing}()
 
 """
     const ReverseWithPrimal
 
 Default instance of [`ReverseMode`](@ref) that also returns the primal.
 """
-const ReverseWithPrimal = ReverseMode{true, false, false, DefaultABI, false, false}()
+const ReverseWithPrimal = ReverseMode{true, false, false, DefaultABI, false, false, nothing}()
 
 """
     const ReverseHolomorphic
 
 Holomorphic instance of [`ReverseMode`](@ref) that doesn't return the primal
 """
-const ReverseHolomorphic = ReverseMode{false, false, false, DefaultABI, true, false}()
+const ReverseHolomorphic = ReverseMode{false, false, false, DefaultABI, true, false, nothing}()
 
 """
     const ReverseHolomorphicWithPrimal
 
 Holomorphic instance of [`ReverseMode`](@ref) that also returns the primal
 """
-const ReverseHolomorphicWithPrimal = ReverseMode{true, false, false, DefaultABI, true, false}()
+const ReverseHolomorphicWithPrimal = ReverseMode{true, false, false, DefaultABI, true, false, nothing}()
 
-@inline set_err_if_func_written(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, true}()
-@inline clear_err_if_func_written(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, false}()
+@inline set_err_if_func_written(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}) where {AtomicAdd, ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, true, AtomicAdd}()
+@inline clear_err_if_func_written(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}) where {AtomicAdd, ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, false, AtomicAdd}()
 
-@inline set_abi(::Type{ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, OldABI, Holomorphic, ErrIfFuncWritten}}, ::Type{NewABI}) where {ReturnPrimal, RuntimeActivity, StrongZero, OldABI, Holomorphic, ErrIfFuncWritten, NewABI <: ABI} = ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, NewABI, Holomorphic, ErrIfFuncWritten}
-@inline set_abi(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, OldABI, Holomorphic, ErrIfFuncWritten}, ::Type{NewABI}) where {ReturnPrimal, RuntimeActivity, StrongZero, OldABI, Holomorphic, ErrIfFuncWritten, NewABI <: ABI} = ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, NewABI, Holomorphic, ErrIfFuncWritten}()
+@inline set_abi(::Type{ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, OldABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}}, ::Type{NewABI}) where {AtomicAdd, ReturnPrimal, RuntimeActivity, StrongZero, OldABI, Holomorphic, ErrIfFuncWritten, NewABI <: ABI} = ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, NewABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}
+@inline set_abi(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, OldABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}, ::Type{NewABI}) where {AtomicAdd, ReturnPrimal, RuntimeActivity, StrongZero, OldABI, Holomorphic, ErrIfFuncWritten, NewABI <: ABI} = ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, NewABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}()
 
-@inline set_runtime_activity(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, true, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}()
-@inline set_runtime_activity(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}, rt::Bool) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, rt, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}()
-@inline set_runtime_activity(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}, ::Mode{<:Any, <:Any, RT2}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, RT2} = ReverseMode{ReturnPrimal, RT2, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}()
-@inline clear_runtime_activity(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, false, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}()
+@inline set_runtime_activity(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}) where {AtomicAdd, ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, true, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}()
+@inline set_runtime_activity(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}, rt::Bool) where {AtomicAdd, ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, rt, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}()
+@inline set_runtime_activity(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}, ::Mode{<:Any, <:Any, RT2}) where {AtomicAdd, ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, RT2} = ReverseMode{ReturnPrimal, RT2, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}()
+@inline clear_runtime_activity(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}) where {AtomicAdd, ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, false, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}()
 
 
-@inline set_strong_zero(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, RuntimeActivity, true, ABI, Holomorphic, ErrIfFuncWritten}()
-@inline set_strong_zero(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}, rt::Bool) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, RuntimeActivity, rt, ABI, Holomorphic, ErrIfFuncWritten}()
-@inline set_strong_zero(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}, ::Mode{<:Any, <:Any, <:Any, SZ2}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, SZ2} = ReverseMode{ReturnPrimal, RuntimeActivity, SZ2, ABI, Holomorphic, ErrIfFuncWritten}()
-@inline clear_strong_zero(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, RuntimeActivity, false, ABI, Holomorphic, ErrIfFuncWritten}()
+@inline set_strong_zero(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}) where {AtomicAdd, ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, RuntimeActivity, true, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}()
+@inline set_strong_zero(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}, rt::Bool) where {AtomicAdd, ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, RuntimeActivity, rt, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}()
+@inline set_strong_zero(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}, ::Mode{<:Any, <:Any, <:Any, SZ2}) where {AtomicAdd, ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, SZ2} = ReverseMode{ReturnPrimal, RuntimeActivity, SZ2, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}()
+@inline clear_strong_zero(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}) where {AtomicAdd, ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, RuntimeActivity, false, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}()
+
+@inline set_atomic_add(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}, atomic::Union{Bool, Nothing}) where {AtomicAdd, ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, atomic}()
+@inline atomic_add(::ReverseMode{<:Any, <:Any, <:Any, <:Any, <:Any, <:Any, AtomicAdd}) where {AtomicAdd} = AtomicAdd
+@inline atomic_add(::Type{<:ReverseMode{<:Any, <:Any, <:Any, <:Any, <:Any, <:Any, AtomicAdd}}) where {AtomicAdd} = AtomicAdd
 
 """
     WithPrimal(::Mode)
 
 Return a new mode which includes the primal value.
 """
-@inline WithPrimal(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{true, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}()
+@inline WithPrimal(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}) where {AtomicAdd, ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{true, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}()
 
 """
     NoPrimal(::Mode)
 
 Return a new mode which excludes the primal value.
 """
-@inline NoPrimal(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}) where {ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{false, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten}()
+@inline NoPrimal(::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}) where {AtomicAdd, ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten} = ReverseMode{false, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, AtomicAdd}()
 
 """
     needs_primal(::Mode)
@@ -435,7 +445,9 @@ Returns `true` if the mode needs the primal value, otherwise `false`.
         StrongZero,
         ModifiedBetween,
         ABI,
-        ErrFuncIfWritten
+        ErrFuncIfWritten,
+        ShadowInit,
+        AtomicAdd
     } <: Mode{ABI,ErrIfFuncWritten,RuntimeActivity,StrongZero}
         WithPrimal(::Enzyme.Mode)
 
@@ -458,58 +470,66 @@ Subtype of [`Mode`](@ref) for split reverse mode differentiation, to use in [`au
     - [`set_err_if_func_written`](@ref) / [`clear_err_if_func_written`](@ref)
     - [`set_runtime_activity`](@ref) / [`clear_runtime_activity`](@ref)
     - [`set_strong_zero`](@ref) / [`clear_strong_zero`](@ref)
+    - [`set_atomic_add`](@ref)
     - [`set_abi`](@ref)
     - [`ReverseSplitModified`](@ref), [`ReverseSplitWidth`](@ref)
 """
-struct ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} <: Mode{ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} end
+struct ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd} <: Mode{ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero} end
+
+# Code written before `AtomicAdd` existed spells the mode without it; such a mode leaves the choice to Enzyme.
+ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}() where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, nothing}()
 
 """
     const ReverseSplitNoPrimal
 
 Default instance of [`ReverseModeSplit`](@ref) that doesn't return the primal
 """
-const ReverseSplitNoPrimal = ReverseModeSplit{false, true, false, false, 0, true, DefaultABI, false, false, false}()
+const ReverseSplitNoPrimal = ReverseModeSplit{false, true, false, false, 0, true, DefaultABI, false, false, false, nothing}()
 
 """
     const ReverseSplitWithPrimal
 
 Default instance of [`ReverseModeSplit`](@ref) that also returns the primal
 """
-const ReverseSplitWithPrimal = ReverseModeSplit{true, true, false, false, 0, true, DefaultABI, false, false, false}()
+const ReverseSplitWithPrimal = ReverseModeSplit{true, true, false, false, 0, true, DefaultABI, false, false, false, nothing}()
 
 """
     ReverseSplitModified(::ReverseModeSplit, ::Val{MB})
 
 Return a new instance of [`ReverseModeSplit`](@ref) mode where `ModifiedBetween` is set to `MB`. 
 """
-@inline ReverseSplitModified(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MBO, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, ::Val{MB}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MB, MBO, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MB, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+@inline ReverseSplitModified(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MBO, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}, ::Val{MB}) where {AtomicAdd, ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MB, MBO, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MB, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}()
 
 """
     ReverseSplitWidth(::ReverseModeSplit, ::Val{W})
 
 Return a new instance of [`ReverseModeSplit`](@ref) mode where `Width` is set to `W`. 
 """
-@inline ReverseSplitWidth(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, WidthO, MB, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, ::Val{Width}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MB, WidthO, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MB, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+@inline ReverseSplitWidth(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, WidthO, MB, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}, ::Val{Width}) where {AtomicAdd, ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MB, WidthO, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, MB, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}()
 
-@inline set_err_if_func_written(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, true, ShadowInit}()
-@inline clear_err_if_func_written(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, Width, ModifiedBetween, ABI, Holomorphic, false, ShadowInit}()
+@inline set_err_if_func_written(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}) where {AtomicAdd, ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, true, ShadowInit, AtomicAdd}()
+@inline clear_err_if_func_written(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}) where {AtomicAdd, ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, false, ShadowInit, AtomicAdd}()
 
-@inline set_runtime_activity(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, true, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
-@inline set_runtime_activity(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, rt::Bool) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, rt, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
-@inline set_runtime_activity(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, ::Mode{<:Any, <:Any, RT2}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, RT2} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RT2, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
-@inline clear_runtime_activity(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, false, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+@inline set_runtime_activity(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}) where {AtomicAdd, ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, true, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}()
+@inline set_runtime_activity(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}, rt::Bool) where {AtomicAdd, ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, rt, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}()
+@inline set_runtime_activity(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}, ::Mode{<:Any, <:Any, RT2}) where {AtomicAdd, ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, RT2} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RT2, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}()
+@inline clear_runtime_activity(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}) where {AtomicAdd, ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, false, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}()
 
 
-@inline set_strong_zero(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, true, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
-@inline set_strong_zero(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, rt::Bool) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, rt, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
-@inline set_strong_zero(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, ::Mode{<:Any, <:Any, <:Any, SZ2}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, SZ2} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, SZ2, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
-@inline clear_strong_zero(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, false, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+@inline set_strong_zero(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}) where {AtomicAdd, ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, true, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}()
+@inline set_strong_zero(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}, rt::Bool) where {AtomicAdd, ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, rt, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}()
+@inline set_strong_zero(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}, ::Mode{<:Any, <:Any, <:Any, SZ2}) where {AtomicAdd, ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, SZ2} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, SZ2, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}()
+@inline clear_strong_zero(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}) where {AtomicAdd, ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, false, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}()
 
-@inline set_abi(::Type{ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, OldABI, Holomorphic, ErrIfFuncWritten, ShadowInit}}, ::Type{NewABI}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, OldABI, Holomorphic, ErrIfFuncWritten, ShadowInit, NewABI <: ABI} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, NewABI, Holomorphic, ErrIfFuncWritten, ShadowInit}
-@inline set_abi(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, OldABI, Holomorphic, ErrIfFuncWritten, ShadowInit}, ::Type{NewABI}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, OldABI, Holomorphic, ErrIfFuncWritten, ShadowInit, NewABI <: ABI} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, NewABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+@inline set_atomic_add(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}, atomic::Union{Bool, Nothing}) where {AtomicAdd, ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, atomic}()
+@inline atomic_add(::ReverseModeSplit{<:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, AtomicAdd}) where {AtomicAdd} = AtomicAdd
+@inline atomic_add(::Type{<:ReverseModeSplit{<:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, AtomicAdd}}) where {AtomicAdd} = AtomicAdd
 
-@inline WithPrimal(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{true, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
-@inline NoPrimal(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}) where {ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{false, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit}()
+@inline set_abi(::Type{ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, OldABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}}, ::Type{NewABI}) where {AtomicAdd, ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, OldABI, Holomorphic, ErrIfFuncWritten, ShadowInit, NewABI <: ABI} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, NewABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}
+@inline set_abi(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, OldABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}, ::Type{NewABI}) where {AtomicAdd, ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, OldABI, Holomorphic, ErrIfFuncWritten, ShadowInit, NewABI <: ABI} = ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, NewABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}()
+
+@inline WithPrimal(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}) where {AtomicAdd, ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{true, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}()
+@inline NoPrimal(::ReverseModeSplit{ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}) where {AtomicAdd, ReturnPrimal, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit} = ReverseModeSplit{false, ReturnShadow, RuntimeActivity, StrongZero, Width, ModifiedBetween, ABI, Holomorphic, ErrIfFuncWritten, ShadowInit, AtomicAdd}()
 
 @inline needs_primal(::ReverseModeSplit{ReturnPrimal}) where {ReturnPrimal} = ReturnPrimal
 @inline needs_primal(::Type{<:ReverseModeSplit{ReturnPrimal}}) where {ReturnPrimal} = ReturnPrimal
@@ -725,6 +745,40 @@ Return a new mode where strong_zero is deactivated. See [Enzyme.Mode](@ref) for 
 function clear_strong_zero end
 
 """
+    set_atomic_add(::Union{ReverseMode,ReverseModeSplit}, atomic::Union{Bool,Nothing})
+
+Return a new reverse mode that chooses how derivatives are accumulated into shadow memory
+(for example the `dx[i] += ...` updates that `Duplicated(x, dx)` receives).
+
+- `nothing` (the default of every predefined mode): Enzyme decides. A derivative compiled for
+  the CPU accumulates atomically whenever Julia runs with more than one thread
+  (`Threads.nthreads() > 1`), since the same shadow may then be updated from several threads
+  at once, for example by `autodiff` calls on different threads sharing one `dx`. GPU code
+  always accumulates atomically.
+- `true`: always accumulate atomically.
+- `false`: accumulate with plain loads and stores, which is faster (an atomic floating-point
+  add is a compare-and-swap loop on most CPUs and keeps loops from vectorizing). By choosing
+  it the caller promises that no shadow is updated concurrently while the derivative runs.
+  Enzyme still accumulates atomically where the differentiated function itself runs work in
+  parallel: the bodies of `Threads.@threads` loops and spawned tasks, and any function that
+  starts or waits for a task. `false` applies to CPU code only; GPU code always accumulates
+  atomically.
+
+See the [FAQ](@ref faq-atomic-add) for more information.
+"""
+function set_atomic_add end
+
+"""
+    atomic_add(::Union{ReverseMode,ReverseModeSplit})
+    atomic_add(::Type{<:Union{ReverseMode,ReverseModeSplit}})
+
+Return how the given reverse mode accumulates derivatives into shadow memory: `true`
+(atomically), `false` (with plain updates) or `nothing` (as Enzyme decides). See
+[`set_atomic_add`](@ref).
+"""
+function atomic_add end
+
+"""
     set_abi(::Mode, ::Type{ABI})
 
 Return a new mode with its [`ABI`](@ref) set to the chosen type.
@@ -751,6 +805,7 @@ function Split(
             ABI,
             Holomorphic,
             ErrIfFuncWritten,
+            AtomicAdd,
         },
         ::Val{ReturnShadow} = Val(true),
         ::Val{Width} = Val(0),
@@ -767,6 +822,7 @@ function Split(
         Holomorphic,
         ErrIfFuncWritten,
         ShadowInit,
+        AtomicAdd,
     }
     mode_split = ReverseModeSplit{
         ReturnPrimal,
@@ -779,6 +835,7 @@ function Split(
         Holomorphic,
         ErrIfFuncWritten,
         ShadowInit,
+        AtomicAdd,
     }()
     return mode_split
 end
@@ -806,6 +863,7 @@ function Combined(
             Holomorphic,
             ErrIfFuncWritten,
             ShadowInit,
+            AtomicAdd,
         }
     ) where {
         ReturnPrimal,
@@ -818,6 +876,7 @@ function Combined(
         Holomorphic,
         ErrIfFuncWritten,
         ShadowInit,
+        AtomicAdd,
     }
     mode_unsplit = ReverseMode{
         ReturnPrimal,
@@ -826,6 +885,7 @@ function Combined(
         ABI,
         Holomorphic,
         ErrIfFuncWritten,
+        AtomicAdd,
     }()
     return mode_unsplit
 end

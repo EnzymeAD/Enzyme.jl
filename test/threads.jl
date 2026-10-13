@@ -175,3 +175,80 @@ end
     @test dq ≈ [1.0, 1.0]
 end
 
+
+@testset "Atomic accumulation into shadows $(Threads.nthreads())" begin
+    function sumsq(x)
+        s = 0.0
+        @inbounds for i in eachindex(x)
+            s += x[i]^2
+        end
+        return s
+    end
+    function spawn_sumsq!(out, x)
+        task = Threads.@spawn begin
+            @inbounds out[1] = sumsq(x)
+        end
+        @inbounds out[2] = sumsq(x)
+        wait(task)
+        nothing
+    end
+    function threaded_sumsq(x)
+        out = zeros(4)
+        Threads.@threads for i in 1:4
+            @inbounds out[i] = i * sumsq(x)
+        end
+        return sum(out)
+    end
+    function atomics(f, A, TT, setting)
+        ir = sprint() do io
+            Enzyme.Compiler.enzyme_code_llvm(io, f, A, TT; dump_module = true, AtomicAdd = setting)
+        end
+        return count("atomicrmw", ir)
+    end
+
+    @test atomic_add(Reverse) === nothing
+    @test atomic_add(set_atomic_add(Reverse, false)) === false
+    @test atomic_add(set_atomic_add(ReverseSplitWithPrimal, true)) === true
+
+    multithreaded = Threads.nthreads() > 1
+    VecDup = Tuple{Duplicated{Vector{Float64}}}
+    # By default a CPU derivative accumulates atomically exactly when Julia runs several threads
+    @test (atomics(sumsq, Active, VecDup, nothing) > 0) == multithreaded
+    @test atomics(sumsq, Active, VecDup, true) > 0
+    @test atomics(sumsq, Active, VecDup, false) == 0
+    # A function that runs work on other threads keeps the default (its primal code has atomics
+    # of its own, so compare against the other settings rather than against zero)
+    for (f, A, TT) in ((threaded_sumsq, Active, VecDup), (spawn_sumsq!, Const, Tuple{Duplicated{Vector{Float64}}, Duplicated{Vector{Float64}}}))
+        @test atomics(f, A, TT, false) == atomics(f, A, TT, nothing)
+        @test (atomics(f, A, TT, nothing) == atomics(f, A, TT, true)) == multithreaded
+    end
+
+    x = collect(1.0:10.0)
+    for mode in (Reverse, set_atomic_add(Reverse, false), set_atomic_add(Reverse, true))
+        dx = zero(x)
+        autodiff(mode, Const(sumsq), Active, Duplicated(x, dx))
+        @test dx ≈ 2 .* x
+        @test gradient(mode, sumsq, x)[1] ≈ 2 .* x
+
+        dx = zero(x)
+        autodiff(mode, Const(threaded_sumsq), Active, Duplicated(x, dx))
+        @test dx ≈ 20 .* x
+
+        dx = zero(x)
+        autodiff(mode, Const(spawn_sumsq!), Const, Duplicated(zeros(2), ones(2)), Duplicated(x, dx))
+        @test dx ≈ 4 .* x
+    end
+
+    fwd, rev = autodiff_thunk(set_atomic_add(ReverseSplitNoPrimal, false), Const{typeof(sumsq)}, Active, Duplicated{Vector{Float64}})
+    dx = zero(x)
+    tape, = fwd(Const(sumsq), Duplicated(x, dx))
+    rev(Const(sumsq), Duplicated(x, dx), 1.0, tape)
+    @test dx ≈ 2 .* x
+
+    # By default, `autodiff` calls on several threads may share one shadow
+    dx = zero(x)
+    Threads.@threads for i in 1:1000
+        autodiff(Reverse, Const(sumsq), Active, Duplicated(x, dx))
+    end
+    @test dx ≈ 2000 .* x
+end
