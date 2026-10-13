@@ -1,3 +1,6 @@
+# `BigFloat` holds its value behind a pointer, so it gets a shadow
+EnzymeRules.active_type(::Type{BigFloat}) = true
+
 function EnzymeRules.forward(
     config::EnzymeRules.FwdConfig,
     Ty::Const{Type{BigFloat}},

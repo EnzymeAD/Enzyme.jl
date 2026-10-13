@@ -23,6 +23,7 @@ import Enzyme:
     TypeTree,
     typetree,
     typetree_in_world,
+    is_active_type,
     TypeTreeTable,
     only!,
     shift!,

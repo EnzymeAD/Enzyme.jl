@@ -110,6 +110,8 @@ end
     @test Enzyme.Compiler.active_reg(ActiveTypeRegion, world) == Enzyme.Compiler.DupState
     @test Enzyme.Compiler.active_reg(ActiveTypeWrapper, world) == Enzyme.Compiler.DupState
     @test Enzyme.Compiler.active_reg(ActiveTypeBoth, world) == Enzyme.Compiler.AnyState
+    @test EnzymeRules.active_type(BigFloat)
+    @test Enzyme.Compiler.active_reg(BigFloat, world) == Enzyme.Compiler.DupState
     @test Enzyme.guess_activity(ActiveTypeRegion, Reverse) == Duplicated{ActiveTypeRegion}
     @test Enzyme.guess_activity(ActiveTypeNone, Reverse) == Const{ActiveTypeNone}
 
@@ -119,6 +121,8 @@ end
     tt(T) = string(Enzyme.typetree(T, ctx, dl))
     @test tt(ActiveTypeNone) == "{[-1]:Integer}"
     @test tt(ActiveTypeRegion) == "{}"
+    @test tt(BigFloat) == "{}"
+    @test tt(ActiveTypeBoth) == "{[-1]:Integer}"
     @test tt(ActiveTypeOuter) == "{[0]:Float@double}"
     @test Enzyme.get_offsets(ActiveTypeOuter) == [(Enzyme.API.DT_Double, 0)]
     dispose(ctx)

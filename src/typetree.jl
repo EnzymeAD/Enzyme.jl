@@ -93,7 +93,16 @@ else
     const TypeTreePrimitives = (Char, Float16, Float32, Float64)
 end
 
-const TypeTreeEmptyPointers = (BigFloat, Any, Symbol, Union{})
+const TypeTreeEmptyPointers = (Any, Symbol, Union{})
+
+"""
+    is_active_type(T::Type)::Bool
+
+Return `true` if `EnzymeRules.active_type(T)` is `true` and `EnzymeRules.inactive_type(T)`
+is `false`. Call it in the world of the compilation.
+"""
+is_active_type(@nospecialize(T::Type)) =
+    EnzymeRules.active_type(T) && !EnzymeRules.inactive_type(T)
 
 function get_offsets(@nospecialize(T::Type))
     for sT in (Integer, Enum, TypeTreePrimitives...)
@@ -122,12 +131,12 @@ function get_offsets(@nospecialize(T::Type))
         end
     end
 
-    @assert !(T <: AbstractFloat)
-
     # Give no information about the data of an active type, like `typetree_inner`
-    if EnzymeRules.active_type(T)
+    if is_active_type(T)
         return ()
     end
+
+    @assert !(T <: AbstractFloat)
 
     if fieldcount(T) == 0
         return ()
@@ -393,15 +402,15 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
         return TypeTree()
     end
 
-    if T <: AbstractFloat
-        throw(AssertionError("Unknown floating point type $T"))
-    end
-
     # Give no information about the data of an active type. Otherwise the activity
     # analysis finds that the data holds only integers, and makes the value constant.
     # This call runs in the world of the compilation, see `typetree_in_world`.
-    if EnzymeRules.active_type(T)
+    if is_active_type(T)
         return TypeTree()
+    end
+
+    if T <: AbstractFloat
+        throw(AssertionError("Unknown floating point type $T"))
     end
 
     try

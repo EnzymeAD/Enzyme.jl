@@ -195,7 +195,10 @@ Base.@nospecializeinfer @inline function active_reg_inner(
         end
     end
 
-    if T <: BigFloat
+    # The type may hold no differentiable data, but it must get a shadow, for example
+    # `BigFloat`. Check this before `AbstractFloat`. Use _call_in_world_total to see the
+    # methods that packages add.
+    if Core._call_in_world_total(world, is_active_type, T)
         return DupState
     end
 
@@ -266,11 +269,6 @@ Base.@nospecializeinfer @inline function active_reg_inner(
 
     if inactivety
         return AnyState
-    end
-
-    # The type holds no differentiable data, but the user wants a shadow for it.
-    if Core._call_in_world_total(world, EnzymeCore.EnzymeRules.active_type, T)
-        return DupState
     end
 
     # unknown number of fields
