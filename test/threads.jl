@@ -176,6 +176,26 @@ end
 end
 
 
+# Callees reached from inside a threaded loop: one by static dispatch (compiled into the loop
+# body's job), one by dynamic dispatch (compiled by the runtime rules). Top-level so that the
+# loop body captures nothing but the array.
+function atomic_sumsq(x)
+    s = 0.0
+    @inbounds for i in eachindex(x)
+        s += x[i]^2
+    end
+    return s
+end
+@noinline atomic_sumsq_noinline(x) = atomic_sumsq(x)
+const atomic_sumsq_ref = Ref{Any}(atomic_sumsq)
+function atomic_threaded_callees(x, N)
+    out = zeros(N)
+    Threads.@threads for i in 1:N
+        @inbounds out[i] = isodd(i) ? atomic_sumsq_noinline(x) : (atomic_sumsq_ref[](x)::Float64)
+    end
+    return sum(out)
+end
+
 @testset "Atomic accumulation into shadows $(Threads.nthreads())" begin
     function sumsq(x)
         s = 0.0
@@ -251,4 +271,16 @@ end
         autodiff(Reverse, Const(sumsq), Active, Duplicated(x, dx))
     end
     @test dx ≈ 2000 .* x
+
+    # Callees of a threaded loop body never see the caller's setting: the body and the
+    # `@noinline` callee it calls statically are compiled by the threadsfor rule, a dynamically
+    # dispatched callee by the runtime rules, all with the default
+    CalleesTT = Tuple{Duplicated{Vector{Float64}}, Const{Int}}
+    @test atomics(atomic_threaded_callees, Active, CalleesTT, false) == atomics(atomic_threaded_callees, Active, CalleesTT, nothing)
+    N = 1000
+    for mode in (Reverse, set_atomic_add(Reverse, false), set_atomic_add(Reverse, true))
+        dx = zero(x)
+        autodiff(mode, Const(atomic_threaded_callees), Active, Duplicated(x, dx), Const(N))
+        @test dx ≈ 2N .* x
+    end
 end
