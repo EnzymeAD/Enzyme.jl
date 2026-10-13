@@ -392,6 +392,13 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
         throw(AssertionError("Unknown floating point type $T"))
     end
 
+    # Give no information about the data of an active type. Otherwise the activity
+    # analysis finds that the data holds only integers, and makes the value constant.
+    # This call runs in the world of the compilation, see `typetree_in_world`.
+    if EnzymeRules.active_type(T)
+        return TypeTree()
+    end
+
     try
         fieldcount(T)
     catch

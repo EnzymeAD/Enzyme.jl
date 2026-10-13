@@ -268,6 +268,11 @@ Base.@nospecializeinfer @inline function active_reg_inner(
         return AnyState
     end
 
+    # The type holds no differentiable data, but the user wants a shadow for it.
+    if Core._call_in_world_total(world, EnzymeCore.EnzymeRules.active_type, T)
+        return DupState
+    end
+
     # unknown number of fields
     if T isa UnionAll
         aT = Base.argument_datatype(T)
@@ -423,6 +428,7 @@ const ActivityMethodCache = Core.MethodMatch[]
 # result of `active_reg`.
 const ActivityHookSigs = (
     Tuple{typeof(EnzymeRules.inactive_type), Type},
+    Tuple{typeof(EnzymeRules.active_type), Type},
     Tuple{typeof(is_mutable_array), Type},
 )
 
