@@ -1370,33 +1370,39 @@ end
 const parallel_runtime_functions = ("jl_new_task", "ijl_new_task")
 const parallel_enzyme_math = ("jl_threadsfor", "jl_enq_work", "jl_wait")
 
-function starts_parallel_work(mod::LLVM.Module)
+# The name of the first call in `mod` that starts or waits for work on another thread, or
+# `nothing` when there is none.
+function parallel_work_in(mod::LLVM.Module)
     for f in functions(mod)
-        if LLVM.name(f) in parallel_runtime_functions
-            return true
-        end
+        name = LLVM.name(f)
+        name in parallel_runtime_functions && return name
         attr = LLVM.API.LLVMGetStringAttributeAtIndex(
             f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
             "enzyme_math", length("enzyme_math"),
         )
-        if attr != C_NULL && LLVM.value(LLVM.StringAttribute(attr)) in parallel_enzyme_math
-            return true
+        if attr != C_NULL
+            math = LLVM.value(LLVM.StringAttribute(attr))
+            math in parallel_enzyme_math && return math
         end
     end
-    return false
+    return nothing
 end
 
 # Whether a CPU derivative accumulates into shadow memory atomically, given the mode's
 # `AtomicAdd` setting (see `EnzymeCore.set_atomic_add`). By default it does whenever Julia runs
 # more than one thread, because a shadow may then be updated from several threads at once,
 # for instance by `autodiff` calls on different threads that share one shadow. `false` is the
-# caller's promise that this does not happen. It cannot cover a function that runs work in
-# parallel itself: the reverse of a task runs while the caller's reverse pass continues, so
-# such a function keeps the default. The bodies of threaded loops and tasks are compiled as
-# their own jobs, which do not carry the caller's setting and keep the default as well.
-function atomic_add_for(setting::Union{Bool, Nothing}, mod::LLVM.Module)
+# caller's promise that this does not happen. It cannot hold for a function that runs work in
+# parallel itself, since the reverse of a task runs while the caller's reverse pass continues,
+# so that is refused rather than compiled with atomics anyway. The bodies of threaded loops
+# and tasks are compiled as their own jobs, which do not carry the caller's setting.
+function atomic_add_for(setting::Union{Bool, Nothing}, mod::LLVM.Module, mi::Core.MethodInstance)
     setting === true && return true
-    setting === false && !starts_parallel_work(mod) && return false
+    if setting === false
+        call = parallel_work_in(mod)
+        call === nothing && return false
+        throw(EnzymeAtomicAddError(call, mi))
+    end
     return Base.Threads.nthreads() > 1
 end
 
@@ -6773,7 +6779,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     process_module = false
     device_module = false
     if primal_target isa GPUCompiler.NativeCompilerTarget
-        parallel = atomic_add_for(job.config.params.atomicAdd, mod)
+        parallel = atomic_add_for(job.config.params.atomicAdd, mod, job.source)
     else
         # All other targets are GPU targets
         parallel = true

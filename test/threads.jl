@@ -195,6 +195,8 @@ function atomic_threaded_callees(x, N)
     end
     return sum(out)
 end
+const atomic_threaded_ref = Ref{Any}(atomic_threaded_callees)
+atomic_via_dynamic(x, N) = atomic_threaded_ref[](x, N)::Float64
 
 @testset "Atomic accumulation into shadows $(Threads.nthreads())" begin
     function sumsq(x)
@@ -236,10 +238,12 @@ end
     @test (atomics(sumsq, Active, VecDup, nothing) > 0) == multithreaded
     @test atomics(sumsq, Active, VecDup, true) > 0
     @test atomics(sumsq, Active, VecDup, false) == 0
-    # A function that runs work on other threads keeps the default (its primal code has atomics
-    # of its own, so compare against the other settings rather than against zero)
-    for (f, A, TT) in ((threaded_sumsq, Active, VecDup), (spawn_sumsq!, Const, Tuple{Duplicated{Vector{Float64}}, Duplicated{Vector{Float64}}}))
-        @test atomics(f, A, TT, false) == atomics(f, A, TT, nothing)
+    # A function that runs work on other threads cannot opt out: `false` is refused rather than
+    # compiled with atomics anyway (its primal code has atomics of its own, so the default is
+    # compared against `true` rather than against zero)
+    SpawnTT = Tuple{Duplicated{Vector{Float64}}, Duplicated{Vector{Float64}}}
+    for (f, A, TT) in ((threaded_sumsq, Active, VecDup), (spawn_sumsq!, Const, SpawnTT))
+        @test_throws Enzyme.Compiler.EnzymeAtomicAddError atomics(f, A, TT, false)
         @test (atomics(f, A, TT, nothing) == atomics(f, A, TT, true)) == multithreaded
     end
 
@@ -249,7 +253,8 @@ end
         autodiff(mode, Const(sumsq), Active, Duplicated(x, dx))
         @test dx ≈ 2 .* x
         @test gradient(mode, sumsq, x)[1] ≈ 2 .* x
-
+    end
+    for mode in (Reverse, set_atomic_add(Reverse, true))
         dx = zero(x)
         autodiff(mode, Const(threaded_sumsq), Active, Duplicated(x, dx))
         @test dx ≈ 20 .* x
@@ -258,6 +263,8 @@ end
         autodiff(mode, Const(spawn_sumsq!), Const, Duplicated(zeros(2), ones(2)), Duplicated(x, dx))
         @test dx ≈ 4 .* x
     end
+    @test_throws Enzyme.Compiler.EnzymeAtomicAddError autodiff(set_atomic_add(Reverse, false), Const(threaded_sumsq), Active, Duplicated(x, zero(x)))
+    @test_throws Enzyme.Compiler.EnzymeAtomicAddError autodiff(set_atomic_add(Reverse, false), Const(spawn_sumsq!), Const, Duplicated(zeros(2), ones(2)), Duplicated(x, zero(x)))
 
     fwd, rev = autodiff_thunk(set_atomic_add(ReverseSplitNoPrimal, false), Const{typeof(sumsq)}, Active, Duplicated{Vector{Float64}})
     dx = zero(x)
@@ -276,11 +283,19 @@ end
     # `@noinline` callee it calls statically are compiled by the threadsfor rule, a dynamically
     # dispatched callee by the runtime rules, all with the default
     CalleesTT = Tuple{Duplicated{Vector{Float64}}, Const{Int}}
-    @test atomics(atomic_threaded_callees, Active, CalleesTT, false) == atomics(atomic_threaded_callees, Active, CalleesTT, nothing)
+    @test_throws Enzyme.Compiler.EnzymeAtomicAddError atomics(atomic_threaded_callees, Active, CalleesTT, false)
     N = 1000
-    for mode in (Reverse, set_atomic_add(Reverse, false), set_atomic_add(Reverse, true))
+    for mode in (Reverse, set_atomic_add(Reverse, true))
         dx = zero(x)
         autodiff(mode, Const(atomic_threaded_callees), Active, Duplicated(x, dx), Const(N))
+        @test dx ≈ 2N .* x
+    end
+    # A function whose dynamically dispatched callee runs the threaded loop may opt out: its
+    # own module starts no parallel work, and the callee is compiled with the default
+    @test atomics(atomic_via_dynamic, Active, CalleesTT, false) == 0
+    for mode in (Reverse, set_atomic_add(Reverse, false), set_atomic_add(Reverse, true))
+        dx = zero(x)
+        autodiff(mode, Const(atomic_via_dynamic), Active, Duplicated(x, dx), Const(N))
         @test dx ≈ 2N .* x
     end
 end

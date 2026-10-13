@@ -759,10 +759,11 @@ Return a new reverse mode that chooses how derivatives are accumulated into shad
 - `false`: accumulate with plain loads and stores, which is faster (an atomic floating-point
   add is a compare-and-swap loop on most CPUs and keeps loops from vectorizing). By choosing
   it the caller promises that no shadow is updated concurrently while the derivative runs.
-  Enzyme still accumulates atomically where the differentiated function itself runs work in
-  parallel: the bodies of `Threads.@threads` loops and spawned tasks, and any function that
-  starts or waits for a task. `false` applies to CPU code only; GPU code always accumulates
-  atomically.
+  A function that itself starts or waits for a task or runs a `Threads.@threads` loop cannot
+  make that promise, and Enzyme throws an `EnzymeAtomicAddError` for it instead of compiling
+  it with atomics anyway. The bodies of threaded loops and tasks, and dynamically dispatched
+  callees, are compiled separately with the default setting. `false` applies to CPU code
+  only; GPU code always accumulates atomically.
 
 See the [FAQ](@ref faq-atomic-add) for more information.
 """

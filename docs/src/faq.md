@@ -473,7 +473,7 @@ dx = zero(x)
 autodiff(set_atomic_add(Reverse, false), f, Active, Duplicated(x, dx))
 ```
 
-The setting works for every reverse mode (`ReverseWithPrimal`, the split modes of [`autodiff_thunk`](@ref), [`gradient`](@ref), ...). Enzyme keeps atomic updates where the differentiated function runs work in parallel itself: the bodies of `Threads.@threads` loops and spawned tasks, and any function that starts or waits for a task. GPU code always uses atomic updates. `set_atomic_add(Reverse, true)` requests atomic updates even when Julia runs a single thread, and `set_atomic_add(Reverse, nothing)` restores the default.
+The setting works for every reverse mode (`ReverseWithPrimal`, the split modes of [`autodiff_thunk`](@ref), [`gradient`](@ref), ...). It applies to the function being differentiated: the bodies of `Threads.@threads` loops and spawned tasks, and dynamically dispatched callees, are compiled separately and keep the default. A function that itself starts or waits for a task or runs a threaded loop cannot opt out, because the reverse pass of a task runs concurrently with its caller's; `set_atomic_add(Reverse, false)` on such a function throws an `EnzymeAtomicAddError` instead of silently using atomics. GPU code always uses atomic updates. `set_atomic_add(Reverse, true)` requests atomic updates even when Julia runs a single thread, and `set_atomic_add(Reverse, nothing)` restores the default.
 
 ## Complex numbers
 
