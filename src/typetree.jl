@@ -124,6 +124,11 @@ function get_offsets(@nospecialize(T::Type))
 
     @assert !(T <: AbstractFloat)
 
+    # Give no information about the data of an active type, like `typetree_inner`
+    if EnzymeRules.active_type(T)
+        return ()
+    end
+
     if fieldcount(T) == 0
         return ()
     end

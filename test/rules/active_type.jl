@@ -1,4 +1,4 @@
-using Enzyme, Test
+using Enzyme, LLVM, Test
 using Enzyme: EnzymeRules, Annotation
 
 # A region that holds no differentiable data. Its shadow carries data from the reverse
@@ -18,6 +18,18 @@ mutable struct ActiveTypeBoth
 end
 EnzymeRules.active_type(::Type{ActiveTypeBoth}) = true
 EnzymeRules.inactive_type(::Type{ActiveTypeBoth}) = true
+
+# An active type that is stored inline in another struct
+struct ActiveTypeInline
+    a::Int
+    b::Int
+end
+EnzymeRules.active_type(::Type{ActiveTypeInline}) = true
+
+struct ActiveTypeOuter
+    x::Float64
+    inner::ActiveTypeInline
+end
 
 mutable struct ActiveTypeNone
     id::Int
@@ -100,6 +112,16 @@ end
     @test Enzyme.Compiler.active_reg(ActiveTypeBoth, world) == Enzyme.Compiler.AnyState
     @test Enzyme.guess_activity(ActiveTypeRegion, Reverse) == Duplicated{ActiveTypeRegion}
     @test Enzyme.guess_activity(ActiveTypeNone, Reverse) == Const{ActiveTypeNone}
+
+    # The type tree gives no information about the data of an active type
+    ctx = LLVM.Context()
+    dl = string(LLVM.DataLayout(LLVM.JITTargetMachine()))
+    tt(T) = string(Enzyme.typetree(T, ctx, dl))
+    @test tt(ActiveTypeNone) == "{[-1]:Integer}"
+    @test tt(ActiveTypeRegion) == "{}"
+    @test tt(ActiveTypeOuter) == "{[0]:Float@double}"
+    @test Enzyme.get_offsets(ActiveTypeOuter) == [(Enzyme.API.DT_Double, 0)]
+    dispose(ctx)
 
     # The shadow carries data from the reverse of `region_end` to the reverse of
     # `region_begin`
