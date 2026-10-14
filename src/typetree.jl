@@ -3,6 +3,38 @@
 # - recursive types
 
 import LLVM: refcheck
+
+"""
+    UnknownFloatError(T)
+
+Thrown when Enzyme meets a subtype of `AbstractFloat` that is not one of the IEEE
+floating-point types it knows.
+"""
+struct UnknownFloatError <: Exception
+    T::Type
+end
+
+function Base.showerror(io::IO, e::UnknownFloatError)
+    T = e.T
+    print(io, "UnknownFloatError: Enzyme does not know the floating-point type ", T, ".")
+    if isprimitivetype(T)
+        print(
+            io, "\nDefine `Enzyme.typetree_inner(::Type{", T, "}, ctx, dl, seen)` and ",
+            "`Enzyme.get_offsets(::Type{", T, "})` to tell Enzyme how ", T,
+            " is laid out in memory, e.g. which IEEE type it is."
+        )
+    else
+        print(
+            io, "\n", T, " is a struct. If it stores a number as an unevaluated sum of floats ",
+            "(like a double-double type), differentiating its arithmetic limb by limb gives ",
+            "wrong derivatives. Write custom rules (`EnzymeRules`, e.g. `@easy_rule`) for the ",
+            "arithmetic of ", T, " and define `Enzyme.typetree_inner(::Type{", T,
+            "}, ctx, dl, seen)` and `Enzyme.get_offsets(::Type{", T, "})` for it, e.g. ",
+            "as those of its fields."
+        )
+    end
+    return
+end
 import GPUCompiler
 LLVM.@checked struct TypeTree
     ref::API.CTypeTreeRef
@@ -122,7 +154,7 @@ function get_offsets(@nospecialize(T::Type))
         end
     end
 
-    @assert !(T <: AbstractFloat)
+    T <: AbstractFloat && throw(UnknownFloatError(T))
 
     if fieldcount(T) == 0
         return ()
@@ -389,7 +421,7 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
     end
 
     if T <: AbstractFloat
-        throw(AssertionError("Unknown floating point type $T"))
+        throw(UnknownFloatError(T))
     end
 
     try
