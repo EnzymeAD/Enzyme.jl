@@ -1573,6 +1573,20 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                             ),
                             no_escaping_alloc,
                         )
+                        native_rt = native_edge_rettype(interp, flib)
+                        if native_rt !== nothing
+                            LLVM.API.LLVMAddCallSiteAttribute(
+                                inst,
+                                reinterpret(
+                                    LLVM.API.LLVMAttributeIndex,
+                                    LLVM.API.LLVMAttributeFunctionIndex,
+                                ),
+                                LLVM.StringAttribute(
+                                    "enzymejl_rt",
+                                    string(convert(UInt, unsafe_to_pointer(native_rt))),
+                                ),
+                            )
+                        end
                         if is_effect_free_native_edge(interp, flib)
                             LLVM.API.LLVMAddCallSiteAttribute(
                                 inst,
@@ -1754,6 +1768,20 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         ),
                         no_escaping_alloc,
                     )
+                    native_rt = native_edge_rettype(interp, flib)
+                    if native_rt !== nothing
+                        LLVM.API.LLVMAddCallSiteAttribute(
+                            inst,
+                            reinterpret(
+                                LLVM.API.LLVMAttributeIndex,
+                                LLVM.API.LLVMAttributeFunctionIndex,
+                            ),
+                            LLVM.StringAttribute(
+                                "enzymejl_rt",
+                                string(convert(UInt, unsafe_to_pointer(native_rt))),
+                            ),
+                        )
+                    end
                     if is_effect_free_native_edge(interp, flib)
                         LLVM.API.LLVMAddCallSiteAttribute(
                             inst,

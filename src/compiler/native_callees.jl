@@ -23,21 +23,6 @@
 # On Julia 1.10 and 1.11 the call goes through `jl_invoke` instead (see the end of this
 # file).
 
-# The return type native inference gave each MethodInstance a call was resolved to on
-# Julia 1.10 and 1.11, where the call goes through `jl_invoke` and the boxed result
-# has no other type information for `abs_typeof`.
-const NATIVE_EDGE_RT = IdDict{Core.MethodInstance, Any}()
-const NATIVE_EDGE_RT_LOCK = ReentrantLock()
-
-"""
-    native_edge_rettype(mi::MethodInstance)
-
-Return the return type of a MethodInstance whose calls were resolved to native code
-through `jl_invoke`, or `nothing` if none were.
-"""
-native_edge_rettype(mi::Core.MethodInstance) =
-    @lock NATIVE_EDGE_RT_LOCK get(NATIVE_EDGE_RT, mi, nothing)
-
 """
     use_native_callees(interp) -> Bool
 
@@ -60,6 +45,23 @@ function is_native_edge(@nospecialize(interp), @nospecialize(x))::Bool
     x isa Core.MethodInstance || return false
     use_native_callees(interp) || return false
     return native_entry(interp, x) !== nothing
+end
+
+"""
+    native_edge_rettype(interp, x)
+
+Return the return type Julia's native inference gave `x` if it is a native edge (see
+[`is_native_edge`](@ref)), and `nothing` otherwise. On Julia 1.10 and 1.11 the call goes
+through `jl_invoke`, and `check_ir!` records this type on the call as `enzymejl_rt`, since
+the boxed result has no other type information for `abs_typeof`.
+"""
+function native_edge_rettype(@nospecialize(interp), @nospecialize(x))
+    interp isa Interpreter.EnzymeInterpreter || return nothing
+    x isa Core.MethodInstance || return nothing
+    use_native_callees(interp) || return nothing
+    native = native_entry(interp, x)
+    native === nothing && return nothing
+    return native[1].rettype
 end
 
 """
@@ -564,7 +566,6 @@ elseif VERSION < v"1.12-"
         inferred isa Core.CodeInstance || return nothing
         (kind === :inactive || guaranteed_const_nongen(inferred.rettype, world)) || return nothing
         call_convention(mi, inferred) === :call || return nothing
-        @lock NATIVE_EDGE_RT_LOCK NATIVE_EDGE_RT[mi] = inferred.rettype
         return (inferred, C_NULL)
     end
 
