@@ -66,7 +66,7 @@ end
     is_effect_free_native_edge(interp, x) -> Bool
 
 Say if `x` is a native edge (see [`is_native_edge`](@ref)) that Julia's native inference
-proved effect-free: as for the declarations [`mark_read_only_or_throw!`](@ref) marks on
+proved effect-free: as for the declarations `mark_read_only_or_throw!` marks on
 Julia 1.12 and later, a call of it writes no memory its caller can observe, although it may
 throw. On Julia 1.10 and 1.11 such a call goes through `jl_invoke`, and `check_ir!` marks
 the call itself, so that Enzyme still finds its callers read-only-or-throw.
