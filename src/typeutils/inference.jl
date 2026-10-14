@@ -29,7 +29,7 @@ function primal_interp_world(
             NATIVE_CALLEES
         )
     else
-        Enzyme.Compiler.GLOBAL_REV_CACHE
+        Enzyme.Compiler.enzyme_ci_cache(mode, NATIVE_CALLEES)
     end
 
     return Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true; native_callees = NATIVE_CALLEES)
@@ -51,7 +51,7 @@ function primal_interp_world(
             NATIVE_CALLEES
         )
     else
-        Enzyme.Compiler.GLOBAL_FWD_CACHE
+        Enzyme.Compiler.enzyme_ci_cache(mode, NATIVE_CALLEES)
     end
 
     return Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true; native_callees = NATIVE_CALLEES)

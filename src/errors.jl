@@ -59,11 +59,7 @@ function code_typed_helper(mi::Core.MethodInstance, world::UInt, mode::Enzyme.AP
             NATIVE_CALLEES
         )
     else
-        if mode == API.DEM_ForwardMode
-            GLOBAL_FWD_CACHE
-        else
-            GLOBAL_REV_CACHE
-        end
+        enzyme_ci_cache(mode, NATIVE_CALLEES)
     end
 
     interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true; native_callees = NATIVE_CALLEES)

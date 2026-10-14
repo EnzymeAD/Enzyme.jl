@@ -1,4 +1,5 @@
 using Enzyme, Test
+using Enzyme: EnzymeRules
 
 # Derivative-free callees called natively instead of being emitted (Julia 1.10 and later).
 
@@ -47,6 +48,51 @@ end
 end
 nc_branch(x, p) = nc_shared(x, p) ? sum(x) : 2 * sum(x)
 
+# A callee with few boxed parameters and a boxed return: Julia gives it a specialized entry
+# point all the same, so it is called natively.
+@noinline nc_structure2(idx::Vector{Int}) = NCStructure(idx, length(idx))
+function nc_loss2(x::Vector{Float64})
+    s = nc_structure2(collect(1:length(x)))
+    acc = 0.0
+    for i in s.idx
+        acc += x[i]^2
+    end
+    return acc
+end
+
+# Keyword calls: `@noinline` keeps the `Core.kwcall` wrapper out of line, so it is a
+# candidate for a native call. Whether its function has a rule is asked of the signature
+# without the wrapper, as every other decision point asks it.
+@noinline function nc_kw(x::Int; iters::Int = 3)
+    acc = 0
+    for i in 1:iters
+        acc += (x * i) % 7 + i ÷ 2
+    end
+    return acc
+end
+@noinline function nc_kw_ruled(x::Int; iters::Int = 3)
+    acc = 0
+    for i in 1:iters
+        acc += (x * i) % 7 + i ÷ 2
+    end
+    return acc
+end
+function EnzymeRules.forward(config, ::Const{typeof(nc_kw_ruled)}, ::Type{<:Const}, x::Const{Int}; iters::Int = 3)
+    return Const(nc_kw_ruled(x.val; iters))
+end
+nc_kw_user(x) = x * nc_kw(2; iters = 3)
+
+kwcall_methodinstance(f, nt, args...) =
+    Enzyme.my_methodinstance(nothing, typeof(Core.kwcall), Tuple{nt, typeof(f), args...})
+
+# The job `onehot` emits for `llvmcall` outside any `EnzymeContext` is one of a host
+# compilation whose parameters turn native callees off.
+function primal_job(mi::Core.MethodInstance, params)
+    GPUCompiler = Enzyme.Compiler.GPUCompiler
+    config = GPUCompiler.CompilerConfig(Enzyme.Compiler.DefaultCompilerTarget(), params; kernel = false)
+    return GPUCompiler.CompilerJob(mi, config)
+end
+
 @static if VERSION < v"1.12-" || v"1.12-beta3" <= VERSION
     @testset "Native derivative-free callees" begin
         x = [1.0, 2.0, 3.0]
@@ -57,6 +103,53 @@ nc_branch(x, p) = nc_shared(x, p) ? sum(x) : 2 * sum(x)
 
         @test autodiff(Reverse, nc_sortperm, Active, Active(2.0))[1][1] ≈ 2.0
         @test autodiff(Forward, nc_sortperm, Duplicated(2.0, 1.0))[1] ≈ 2.0
+
+        world = Base.get_world_counter()
+        interp = Enzyme.Compiler.primal_interp_world(Forward, world)
+        nt = NamedTuple{(:iters,), Tuple{Int}}
+        mi_kw = kwcall_methodinstance(nc_kw, nt, Int)
+        mi_kw_ruled = kwcall_methodinstance(nc_kw_ruled, nt, Int)
+        @test Enzyme.Compiler.native_entry(interp, mi_kw) !== nothing
+        @test Enzyme.Compiler.native_entry(interp, mi_kw_ruled) === nothing
+        # Memoized per world and rules.
+        key = Enzyme.Compiler.native_entry_key(interp, mi_kw)
+        @test haskey(Enzyme.Compiler.NATIVE_ENTRY_CACHE, key)
+        @test Enzyme.Compiler.NATIVE_ENTRY_CACHE[key] === Enzyme.Compiler.native_entry(interp, mi_kw)
+        @test autodiff(Forward, nc_kw_user, Duplicated(2.0, 1.0))[1] ≈ nc_kw(2; iters = 3)
+        @test autodiff(Reverse, nc_kw_user, Active, Active(2.0))[1][1] ≈ nc_kw(2; iters = 3)
+
+        mi2 = Enzyme.my_methodinstance(nothing, typeof(nc_structure2), Tuple{Vector{Int}})
+        @test Enzyme.Compiler.native_entry(interp, mi2) !== nothing
+        x = [1.0, 2.0, 3.0]
+        dx = zero(x)
+        autodiff(Reverse, nc_loss2, Active, Duplicated(x, dx))
+        @test dx ≈ 2 .* x
+
+        mi_zero = Enzyme.my_methodinstance(nothing, typeof(Enzyme.zerosetfn), Tuple{Vector{Float64}, Int})
+        GPUCompiler = Enzyme.Compiler.GPUCompiler
+        params = Enzyme.Compiler.PrimalCompilerParams(Enzyme.API.DEM_ForwardMode)
+        @test params.native_callees
+        @test GPUCompiler.get_interpreter(primal_job(mi_zero, params)).native_callees
+        params = Enzyme.Compiler.PrimalCompilerParams(Enzyme.API.DEM_ForwardMode; native_callees = false)
+        @test !GPUCompiler.get_interpreter(primal_job(mi_zero, params)).native_callees
+        @test Enzyme.onehot([1.0, 2.0]) == ([1.0, 0.0], [0.0, 1.0])
+
+        # Julia 1.10: Enzyme keeps its inference results in caches of its own, and a job
+        # that does not call natively must not find a caller inferred by one that does.
+        @static if VERSION < v"1.11.0-DEV.1552"
+            CC = Core.Compiler
+            mode = Enzyme.API.DEM_ReverseModeCombined
+            native_cache = Enzyme.Compiler.enzyme_ci_cache(mode, true)
+            cache = Enzyme.Compiler.enzyme_ci_cache(mode, false)
+            @test native_cache !== cache
+            mi_loss = Enzyme.my_methodinstance(nothing, typeof(nc_loss), Tuple{Vector{Float64}})
+            mi_callee = Enzyme.my_methodinstance(nothing, typeof(nc_structure), Tuple{Int})
+            @test CC.get(CC.WorldView(native_cache, world, world), mi_loss, nothing) !== nothing
+            @test CC.get(CC.WorldView(native_cache, world, world), mi_callee, nothing) === nothing
+            interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(cache, nothing, world, mode, true; native_callees = false)
+            CC.typeinf_ext_toplevel(interp, mi_loss)
+            @test CC.get(CC.code_cache(interp), mi_callee, nothing) !== nothing
+        end
 
         # TODO: with code coverage `nc_shared` writes its counters, so Enzyme clones it
         # anyway, and on Julia 1.10 the clone fails verification until Enzyme_jll

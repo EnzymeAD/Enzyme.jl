@@ -1544,59 +1544,9 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         end
                         tys = flib.specTypes.parameters
                     end
-                    if is_inactive(tys, world, method_table) || is_native_edge(interp, flib)
-                        inactive = LLVM.StringAttribute("enzyme_inactive", "")
-                        LLVM.API.LLVMAddCallSiteAttribute(
-                            inst,
-                            reinterpret(
-                                LLVM.API.LLVMAttributeIndex,
-                                LLVM.API.LLVMAttributeFunctionIndex,
-                            ),
-                            inactive,
-                        )
-                        nofree = LLVM.EnumAttribute("nofree")
-                        LLVM.API.LLVMAddCallSiteAttribute(
-                            inst,
-                            reinterpret(
-                                LLVM.API.LLVMAttributeIndex,
-                                LLVM.API.LLVMAttributeFunctionIndex,
-                            ),
-                            nofree,
-                        )
-                        no_escaping_alloc =
-                            LLVM.StringAttribute("enzyme_no_escaping_allocation")
-                        LLVM.API.LLVMAddCallSiteAttribute(
-                            inst,
-                            reinterpret(
-                                LLVM.API.LLVMAttributeIndex,
-                                LLVM.API.LLVMAttributeFunctionIndex,
-                            ),
-                            no_escaping_alloc,
-                        )
-                        native_rt = native_edge_rettype(interp, flib)
-                        if native_rt !== nothing
-                            LLVM.API.LLVMAddCallSiteAttribute(
-                                inst,
-                                reinterpret(
-                                    LLVM.API.LLVMAttributeIndex,
-                                    LLVM.API.LLVMAttributeFunctionIndex,
-                                ),
-                                LLVM.StringAttribute(
-                                    "enzymejl_rt",
-                                    string(convert(UInt, unsafe_to_pointer(native_rt))),
-                                ),
-                            )
-                        end
-                        if is_effect_free_native_edge(interp, flib)
-                            LLVM.API.LLVMAddCallSiteAttribute(
-                                inst,
-                                reinterpret(
-                                    LLVM.API.LLVMAttributeIndex,
-                                    LLVM.API.LLVMAttributeFunctionIndex,
-                                ),
-                                LLVM.StringAttribute("enzyme_ReadOnlyOrThrow"),
-                            )
-                        end
+                    native = native_edge(interp, flib)
+                    if native !== nothing || is_inactive(tys, world, method_table)
+                        mark_inactive_invoke!(inst, native)
                     end
                 end
             end
@@ -1737,61 +1687,9 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                     end
                     tys = flib.specTypes.parameters
                 end
-                if is_inactive(tys, world, method_table) || is_native_edge(interp, flib)
-                    ofn = LLVM.parent(LLVM.parent(inst))
-                    mod = LLVM.parent(ofn)
-                    inactive = LLVM.StringAttribute("enzyme_inactive", "")
-                    LLVM.API.LLVMAddCallSiteAttribute(
-                        inst,
-                        reinterpret(
-                            LLVM.API.LLVMAttributeIndex,
-                            LLVM.API.LLVMAttributeFunctionIndex,
-                        ),
-                        inactive,
-                    )
-                    nofree = LLVM.EnumAttribute("nofree")
-                    LLVM.API.LLVMAddCallSiteAttribute(
-                        inst,
-                        reinterpret(
-                            LLVM.API.LLVMAttributeIndex,
-                            LLVM.API.LLVMAttributeFunctionIndex,
-                        ),
-                        nofree,
-                    )
-                    no_escaping_alloc =
-                        LLVM.StringAttribute("enzyme_no_escaping_allocation")
-                    LLVM.API.LLVMAddCallSiteAttribute(
-                        inst,
-                        reinterpret(
-                            LLVM.API.LLVMAttributeIndex,
-                            LLVM.API.LLVMAttributeFunctionIndex,
-                        ),
-                        no_escaping_alloc,
-                    )
-                    native_rt = native_edge_rettype(interp, flib)
-                    if native_rt !== nothing
-                        LLVM.API.LLVMAddCallSiteAttribute(
-                            inst,
-                            reinterpret(
-                                LLVM.API.LLVMAttributeIndex,
-                                LLVM.API.LLVMAttributeFunctionIndex,
-                            ),
-                            LLVM.StringAttribute(
-                                "enzymejl_rt",
-                                string(convert(UInt, unsafe_to_pointer(native_rt))),
-                            ),
-                        )
-                    end
-                    if is_effect_free_native_edge(interp, flib)
-                        LLVM.API.LLVMAddCallSiteAttribute(
-                            inst,
-                            reinterpret(
-                                LLVM.API.LLVMAttributeIndex,
-                                LLVM.API.LLVMAttributeFunctionIndex,
-                            ),
-                            LLVM.StringAttribute("enzyme_ReadOnlyOrThrow"),
-                        )
-                    end
+                native = native_edge(interp, flib)
+                if native !== nothing || is_inactive(tys, world, method_table)
+                    mark_inactive_invoke!(inst, native)
                 end
             end
         end

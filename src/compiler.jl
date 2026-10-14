@@ -142,7 +142,14 @@ end
 # FIXME: Should this take something like PTXCompilerParams/CUDAParams?
 struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
     mode::API.CDerivativeMode
+    # Call derivative-free callees natively instead of emitting them (see
+    # compiler/native_callees.jl), where the target allows it (see `native_callees_for`).
+    # Off for a job compiled outside `compile_unhooked`, whose module no `EnzymeContext`
+    # records the callees for.
+    native_callees::Bool
 end
+PrimalCompilerParams(mode::API.CDerivativeMode; native_callees::Bool = true) =
+    PrimalCompilerParams(mode, native_callees)
 
 function EnzymeCompilerParams(TT, mode, width, rt, run_enzyme, abiwrap,
                               modifiedBetween, returnPrimal, shadowInit,
@@ -221,6 +228,13 @@ const NATIVE_CALLEES = VERSION < v"1.12-" || VERSION >= v"1.12-beta3"
 native_callees_for(@nospecialize(view::Core.Compiler.MethodTableView)) =
     NATIVE_CALLEES && method_tables(view) in ((), (GPUCompiler.GLOBAL_METHOD_TABLE,))
 
+# Whether inference for `job` calls derivative-free callees natively: its target must allow
+# it, and so must its parameters (see `PrimalCompilerParams`).
+native_callees_param(params::PrimalCompilerParams) = params.native_callees
+native_callees_param(params::EnzymeCompilerParams) = native_callees_param(params.params)
+native_callees_for(@nospecialize(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams})) =
+    native_callees_param(job.config.params) && native_callees_for(GPUCompiler.method_table_view(job))
+
 # provide a specific interpreter to use.
 if VERSION >= v"1.11.0-DEV.1552"
     # The owner of the CodeInstances produced by an `EnzymeInterpreter`, compared with
@@ -252,14 +266,13 @@ if VERSION >= v"1.11.0-DEV.1552"
     # The owner of the code instances Enzyme infers for `job`. GPUCompiler asks for it through
     # a hook whose name differs between its majors.
     function enzyme_cache_owner(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams})
-        view = GPUCompiler.method_table_view(job)
         return EnzymeCacheToken(
-            method_tables(view),
+            method_tables(GPUCompiler.method_table_view(job)),
             job.world,
             job.config.params.mode == API.DEM_ForwardMode,
             job.config.params.mode != API.DEM_ForwardMode,
             true,
-            native_callees_for(view)
+            native_callees_for(job)
         )
     end
 
@@ -272,26 +285,32 @@ if VERSION >= v"1.11.0-DEV.1552"
     end
 
     function GPUCompiler.get_interpreter(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams})
-        view = GPUCompiler.method_table_view(job)
         return Interpreter.EnzymeInterpreter(
-            enzyme_cache_owner(job), view, job.world, job.config.params.mode, true;
-            native_callees = native_callees_for(view)
+            enzyme_cache_owner(job), GPUCompiler.method_table_view(job), job.world,
+            job.config.params.mode, true; native_callees = native_callees_for(job)
         )
     end
 else
 
     # the codeinstance cache to use -- should only be used for the constructor
-    # Note that the only way the interpreter modifies codegen is either not inlining a fwd mode
-    # rule or not inlining a rev mode rule. Otherwise, all caches can be re-used.
+    # Note that the interpreter modifies codegen by not inlining a fwd mode rule or not
+    # inlining a rev mode rule, and by resolving derivative-free callees to native code
+    # (see compiler/native_callees.jl): a caller it inferred that way invokes a callee the
+    # cache has no CodeInstance for, which codegen for a job that does not call natively
+    # must not find. Otherwise, all caches can be re-used.
     const GLOBAL_FWD_CACHE = GPUCompiler.CodeCache()
     const GLOBAL_REV_CACHE = GPUCompiler.CodeCache()
-    function enzyme_ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams})
-        return if job.config.params.mode == API.DEM_ForwardMode
-            GLOBAL_FWD_CACHE
+    const GLOBAL_FWD_NATIVE_CACHE = GPUCompiler.CodeCache()
+    const GLOBAL_REV_NATIVE_CACHE = GPUCompiler.CodeCache()
+    function enzyme_ci_cache(mode::API.CDerivativeMode, native_callees::Bool)
+        return if mode == API.DEM_ForwardMode
+            native_callees ? GLOBAL_FWD_NATIVE_CACHE : GLOBAL_FWD_CACHE
         else
-            GLOBAL_REV_CACHE
+            native_callees ? GLOBAL_REV_NATIVE_CACHE : GLOBAL_REV_CACHE
         end
     end
+    enzyme_ci_cache(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+        enzyme_ci_cache(job.config.params.mode, native_callees_for(job))
 
     @static if HAS_GPUCOMPILER_2
         GPUCompiler.get_code_cache(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
@@ -302,10 +321,9 @@ else
     end
 
     function GPUCompiler.get_interpreter(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams})
-        view = GPUCompiler.method_table_view(job)
         return Interpreter.EnzymeInterpreter(
-            enzyme_ci_cache(job), view, job.world, job.config.params.mode, true;
-            native_callees = native_callees_for(view)
+            enzyme_ci_cache(job), GPUCompiler.method_table_view(job), job.world,
+            job.config.params.mode, true; native_callees = native_callees_for(job)
         )
     end
 end
@@ -8404,7 +8422,13 @@ function clear_caches!()
         # not hold them. The `CodeInstance`s carry `invoke` and `specptr` addresses.
         empty!(GLOBAL_FWD_CACHE.dict)
         empty!(GLOBAL_REV_CACHE.dict)
+        empty!(GLOBAL_FWD_NATIVE_CACHE.dict)
+        empty!(GLOBAL_REV_NATIVE_CACHE.dict)
     end
+
+    # The native code of derivative-free callees, whose `CodeInstance`s carry entry
+    # addresses too (see compiler/native_callees.jl).
+    @lock native_entry_lock empty!(NATIVE_ENTRY_CACHE)
     return nothing
 end
 
