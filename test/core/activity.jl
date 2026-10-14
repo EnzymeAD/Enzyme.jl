@@ -234,3 +234,18 @@ struct NotInAnyActivityResult end
     @test C.active_reg(UnrelatedToTheCache, Base.get_world_counter()) == C.ActiveState
     @test only(code_instances(activity_instance(UnrelatedToTheCache))) === ci
 end
+
+# A compiled thunk depends on the activity of the types it met through the instances of
+# the activity query it consulted, so a hook method defined after it was compiled
+# invalidates it.
+struct HookedAfterCompile
+    x::Float64
+end
+hooked_after_compile(h::HookedAfterCompile) = 3.0 * h.x
+
+@testset "thunks follow hook methods defined after compiling" begin
+    @test Enzyme.gradient(Reverse, hooked_after_compile, HookedAfterCompile(2.0))[1] == HookedAfterCompile(3.0)
+    @eval Enzyme.EnzymeRules.inactive_type(::Type{HookedAfterCompile}) = true
+    @test Enzyme.gradient(Reverse, hooked_after_compile, HookedAfterCompile(2.0))[1] === nothing
+    @test Enzyme.autodiff(Reverse, hooked_after_compile, Active, Const(HookedAfterCompile(2.0))) == ((nothing,),)
+end
