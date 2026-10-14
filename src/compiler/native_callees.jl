@@ -249,13 +249,25 @@ end
     # with boxed arguments and result: Enzyme then sees neither the callee nor the type of
     # the result. Give it the native CodeInstance of a call `typeinf_edge` resolved to native
     # code instead, so that codegen emits a specsig call of a stub for it.
+    #
+    # A callee with a custom rule keeps the `:invoke` of its MethodInstance when that is not
+    # the MethodInstance inference resolved the call to, but its compilation signature,
+    # which widens the argument types (`@nospecialize` arguments, such as those of
+    # `finalizer` and `deepcopy`, become `Any`). The rule handlers look the rule up and
+    # build its annotations from the signature of the MethodInstance a specsig call calls:
+    # they would call the rule for, say, `Duplicated{Any}` instead of the type of the
+    # argument, which selects another rule method, or none. The `jl_invoke` of the
+    # MethodInstance is handled with the types of the arguments at run time instead.
     function Core.Compiler.compileable_specialization(code::Union{Core.MethodInstance, Core.CodeInstance}, effects::Core.Compiler.Effects, et::Core.Compiler.InliningEdgeTracker, @nospecialize(info::Core.Compiler.CallInfo), state::Core.Compiler.InliningState{<:Interpreter.EnzymeInterpreter})
         CC = Core.Compiler
         case = @invoke CC.compileable_specialization(code::Union{Core.MethodInstance, Core.CodeInstance}, effects::CC.Effects, et::CC.InliningEdgeTracker, info::CC.CallInfo, state::CC.InliningState)
         if case isa CC.InvokeCase && case.invoke isa Core.MethodInstance && use_native_callees(state.interp)
             native = native_entry(state.interp, case.invoke)
             if native !== nothing && native[1].min_world <= state.world <= native[1].max_world
-                return CC.InvokeCase(native[1], case.effects, case.info)
+                inferred_mi = code isa Core.CodeInstance ? CC.get_ci_mi(code) : code
+                if native[3] === :inactive || case.invoke === inferred_mi
+                    return CC.InvokeCase(native[1], case.effects, case.info)
+                end
             end
         end
         return case

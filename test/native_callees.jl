@@ -110,7 +110,14 @@ end
         mi_kw = kwcall_methodinstance(nc_kw, nt, Int)
         mi_kw_ruled = kwcall_methodinstance(nc_kw_ruled, nt, Int)
         @test Enzyme.Compiler.native_entry(interp, mi_kw) !== nothing
-        @test Enzyme.Compiler.native_entry(interp, mi_kw_ruled) === nothing
+        # A keyword call of a function with a rule is never derivative-free. On Julia 1.12
+        # and later it is called natively as one with a rule, which the handlers apply.
+        @test Enzyme.Compiler.native_edge(interp, mi_kw_ruled) === nothing
+        @static if VERSION >= v"1.12-"
+            @test Enzyme.Compiler.native_entry(interp, mi_kw_ruled)[3] === :frule
+        else
+            @test Enzyme.Compiler.native_entry(interp, mi_kw_ruled) === nothing
+        end
         @test autodiff(Forward, nc_kw_user, Duplicated(2.0, 1.0))[1] ≈ nc_kw(2; iters = 3)
         @test autodiff(Reverse, nc_kw_user, Active, Active(2.0))[1][1] ≈ nc_kw(2; iters = 3)
 
