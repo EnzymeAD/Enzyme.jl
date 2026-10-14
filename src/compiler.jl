@@ -23,6 +23,7 @@ import Enzyme:
     TypeTree,
     typetree,
     typetree_in_world,
+    is_active_type,
     TypeTreeTable,
     only!,
     shift!,
@@ -8370,8 +8371,8 @@ function clear_caches!()
     Interpreter.LastRevWorld[] = Base.IdSet{Type}()
     Interpreter.LastInaWorld[] = Base.IdSet{Type}()
 
-    # Activity, and the world its `inactive_type` methods were last checked in. Left set, it
-    # tells a later session its own worlds need no check.
+    # Activity, and the world its `inactive_type` and `active_type` methods were last
+    # checked in. Left set, it tells a later session its own worlds need no check.
     empty!(ActivityCache)
     empty!(ActivityMethodCache)
     ActivityWorldCache[] = 0
@@ -8709,6 +8710,7 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
         Tuple{typeof(EnzymeRules.inactive_kwarg), Vararg{Any}},
         Tuple{typeof(EnzymeRules.noalias), Vararg{Any}},
         Tuple{typeof(EnzymeRules.inactive_type), Type},
+            Tuple{typeof(EnzymeRules.active_type), Type},
     )
         add_edge!(edges, gen_sig)
     end

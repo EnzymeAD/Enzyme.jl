@@ -195,7 +195,10 @@ Base.@nospecializeinfer @inline function active_reg_inner(
         end
     end
 
-    if T <: BigFloat
+    # The type may hold no differentiable data, but it must get a shadow, for example
+    # `BigFloat`. Check this before `AbstractFloat`. Use _call_in_world_total to see the
+    # methods that packages add.
+    if Core._call_in_world_total(world, is_active_type, T)
         return DupState
     end
 
@@ -423,6 +426,7 @@ const ActivityMethodCache = Core.MethodMatch[]
 # result of `active_reg`.
 const ActivityHookSigs = (
     Tuple{typeof(EnzymeRules.inactive_type), Type},
+    Tuple{typeof(EnzymeRules.active_type), Type},
     Tuple{typeof(is_mutable_array), Type},
 )
 

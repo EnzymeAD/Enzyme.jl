@@ -515,6 +515,25 @@ Mark a particular type `Ty` as always being inactive.
 """
 inactive_type(::Type) = false
 
+"""
+    active_type(::Type{Ty})
+
+Mark a particular type `Ty` as possibly active, even if it holds no differentiable data.
+Enzyme then treats a value of type `Ty` like a value that holds differentiable data by
+reference: it can give the value a shadow, for example as a `Duplicated` argument or return
+value of a custom rule.
+
+Use this for a type whose shadow carries data from one custom rule to another, for example
+from the reverse pass of one rule to the reverse pass of a different rule. Enzyme never
+writes derivatives into such a shadow.
+
+Enzyme can still find that a specific value is constant, so the custom rules must also
+accept a `Const` value of type `Ty`.
+
+If both `inactive_type(Ty)` and `active_type(Ty)` are `true`, `inactive_type` wins.
+"""
+active_type(::Type) = false
+
 @inline EnzymeCore.set_runtime_activity(mode::M, config::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_runtime_activity(mode, runtime_activity(config))
 
 @inline EnzymeCore.set_strong_zero(mode::M, config::Config) where {M<:Mode, Config <: Union{FwdConfig, RevConfig}} = EnzymeCore.set_strong_zero(mode, strong_zero(config))
