@@ -6866,8 +6866,9 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
                     _, RT = enzyme_custom_extract_mi(cu, false)
                     push!(RTs, RT)
                 end
-                @assert all(RTs[1] == RT for RT in RTs)
-                RT = RTs[1]
+                # LLVM can merge the stack slots of calls that return different types
+                # (e.g. `T` and `Tuple{T, T}`) into one alloca; then its type is unknown.
+                RT = all(RTs[1] == RT for RT in RTs) ? RTs[1] : nothing
                 if RT !== nothing
                     llrt, sret, returnRoots = get_return_info(RT)
                     at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(inst))

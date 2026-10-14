@@ -11,8 +11,9 @@ mf_sum_of_squares(v) = sum(abs2, v)
 @testset "MultiFloats" begin
     T = Float64x2
     x = T(1) / 3
-    xb = BigFloat(x; precision = 256)
-    relerr(a, b) = Float64(abs(BigFloat(a; precision = 256) - b) / abs(b))
+    xb = BigFloat(x)
+    # BigFloat defaults to 256 bits, enough to check double-double results
+    relerr(a, b) = Float64(abs(BigFloat(a) - b) / abs(b))
 
     for (f, df) in (
             (mf_poly, 3 * xb^2 + 2),
@@ -32,5 +33,5 @@ mf_sum_of_squares(v) = sum(abs2, v)
     v = [T(1) / 3, T(2) / 7]
     dv = zero.(v)
     autodiff(Reverse, mf_sum_of_squares, Active, Duplicated(v, dv))
-    @test all(relerr.(dv, 2 .* BigFloat.(v; precision = 256)) .< 1.0e-30)
+    @test all(relerr.(dv, 2 .* BigFloat.(v)) .< 1.0e-30)
 end
