@@ -62,6 +62,24 @@ function is_native_edge(@nospecialize(interp), @nospecialize(x))::Bool
     return native_entry(interp, x) !== nothing
 end
 
+"""
+    is_effect_free_native_edge(interp, x) -> Bool
+
+Say if `x` is a native edge (see [`is_native_edge`](@ref)) that Julia's native inference
+proved effect-free: as for the declarations [`mark_read_only_or_throw!`](@ref) marks on
+Julia 1.12 and later, a call of it writes no memory its caller can observe, although it may
+throw. On Julia 1.10 and 1.11 such a call goes through `jl_invoke`, and `check_ir!` marks
+the call itself, so that Enzyme still finds its callers read-only-or-throw.
+"""
+function is_effect_free_native_edge(@nospecialize(interp), @nospecialize(x))::Bool
+    interp isa Interpreter.EnzymeInterpreter || return false
+    x isa Core.MethodInstance || return false
+    use_native_callees(interp) || return false
+    native = native_entry(interp, x)
+    native === nothing && return false
+    return Core.Compiler.is_effect_free(Core.Compiler.decode_effects(native[1].ipo_purity_bits))
+end
+
 # Julia 1.12 and later: GPUCompiler emits exactly the CodeInstances it gathers for
 # `jl_emit_native`, with `ci_cache_populate` on GPUCompiler 1.x and with CompilerCaching's
 # `get_codeinfos` on 2.x. The overrides below follow those for these versions.

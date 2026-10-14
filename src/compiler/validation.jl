@@ -1573,6 +1573,16 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                             ),
                             no_escaping_alloc,
                         )
+                        if is_effect_free_native_edge(interp, flib)
+                            LLVM.API.LLVMAddCallSiteAttribute(
+                                inst,
+                                reinterpret(
+                                    LLVM.API.LLVMAttributeIndex,
+                                    LLVM.API.LLVMAttributeFunctionIndex,
+                                ),
+                                LLVM.StringAttribute("enzyme_ReadOnlyOrThrow"),
+                            )
+                        end
                     end
                 end
             end
@@ -1744,6 +1754,16 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         ),
                         no_escaping_alloc,
                     )
+                    if is_effect_free_native_edge(interp, flib)
+                        LLVM.API.LLVMAddCallSiteAttribute(
+                            inst,
+                            reinterpret(
+                                LLVM.API.LLVMAttributeIndex,
+                                LLVM.API.LLVMAttributeFunctionIndex,
+                            ),
+                            LLVM.StringAttribute("enzyme_ReadOnlyOrThrow"),
+                        )
+                    end
                 end
             end
         end
