@@ -170,6 +170,8 @@ function add_trampoline!(jd, (lljit, lctm, ism), entry, target)
 end
 
 function prepare!(mod)
+    # Nothing reads the type metadata once the module is handed to the JIT.
+    Compiler.unpin_ejl_globals!(mod)
     # On Windows, LLVM's GlobalOpt demotes internal functions to `private` linkage,
     # which emits no object symbol. Julia's per-symbol Win64 JIT unwind registrar
     # (create_PRUNTIME_FUNCTION) then skips those functions, so their frames get no

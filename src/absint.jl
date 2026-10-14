@@ -95,6 +95,27 @@ function slot_initializer_address(gv::LLVM.GlobalVariable, load::LLVM.LoadInst):
     return get_base_and_offset(init; offsetAllowed = false, inttoptr = true)[1]
 end
 
+"""
+    type_from_metadata(inst, kind)
+
+The Julia type recorded on `inst` under the metadata `kind` by `type_metadata`, or `nothing`
+if there is none (or the value it referred to has been deleted since). A type is only ever
+referred to by a well-known name, so no compilation context is needed to resolve it.
+"""
+function type_from_metadata(inst::LLVM.Instruction, kind::String)::Union{Type, Nothing}
+    # `!{value}` is canonicalized to the bare `ValueAsMetadata` when wrapped as a value, so
+    # its operand is read with the C API, which sees through that.
+    mav = LLVM.API.LLVMGetMetadata(inst, LLVM.MDKind(kind))
+    mav == C_NULL && return nothing
+    LLVM.API.LLVMGetMDNodeNumOperands(mav) == 1 || return nothing
+    ops = Ref{LLVM.API.LLVMValueRef}(C_NULL)
+    LLVM.API.LLVMGetMDNodeOperands(mav, ops)
+    ops[] == C_NULL && return nothing
+    legal, RT = absint(LLVM.Value(ops[]), nothing, false, true)
+    legal || return nothing
+    return RT::Type
+end
+
 # The table of the Julia values the compilation `enzyme_ctx` inserted, see `EnzymeContext`.
 # Outside of a compilation (`nothing`) there is none: the IR then holds the addresses.
 inserted_values(enzyme_ctx::EnzymeContext) = enzyme_ctx.inserted_values
@@ -571,15 +592,10 @@ function abs_typeof(
     end
 
     if isa(arg, LLVM.AllocaInst) || isa(arg, LLVM.CallInst)
-	for mdname in ("enzymejl_gc_alloc_rt", "enzymejl_allocart")
-        if haskey(metadata(arg), mdname)
-            mds = operands(metadata(arg)[mdname])[1]::MDString
-            mds = Base.convert(String, mds)
-            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, mds))
-            RT = Base.unsafe_pointer_to_objref(ptr)
-            return (true, RT, GPUCompiler.MUT_REF)
+        for mdname in ("enzymejl_gc_alloc_rt", "enzymejl_allocart")
+            RT = type_from_metadata(arg, mdname)
+            RT === nothing || return (true, RT, GPUCompiler.MUT_REF)
         end
-	end
     end
 
     if isa(arg, LLVM.CallInst)

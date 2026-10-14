@@ -1227,7 +1227,7 @@ end
 	       sret_lty
 	    end
         sret = alloca!(alloctx, sret_lty_foralloca)
-    	metadata(sret)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(esret))))])
+        metadata(sret)["enzymejl_allocart"] = type_metadata(mod, esret)
         pushfirst!(args, sret)
         if returnRoots !== nothing
             returnRoots = alloca!(alloctx, convert(LLVMType, eltype(returnRoots)))
@@ -2225,7 +2225,7 @@ function enzyme_custom_common_rev(
             sret_lty
         end
         sret = alloca!(alloctx, sret_lty_foralloca)
-	metadata(sret)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(esret))))])
+        metadata(sret)["enzymejl_allocart"] = type_metadata(mod, esret)
         pushfirst!(args, sret)
         if returnRoots !== nothing
             returnRoots = alloca!(alloctx, convert(LLVMType, eltype(returnRoots)))
