@@ -105,8 +105,12 @@ export unsafe_to_ptr
 # address, so it is the same in every session and leaves the address to the resolver. The
 # context roots the values, which keeps their `objectid` unique; should two values still hash
 # alike, the later one gets a suffix.
-function insert_julia_value!(ctx::EnzymeContext, hint::String, @nospecialize(val))::String
-    inserted = ctx.inserted_values
+insert_julia_value!(ctx::EnzymeContext, hint::String, @nospecialize(val))::String =
+    insert_julia_value!(ctx.inserted_values, hint, val)
+
+# As above, into the table `inserted` of a module whose compilation is over (see
+# `JuliaValueTable`).
+function insert_julia_value!(inserted::Dict{String, Any}, hint::String, @nospecialize(val))::String
     base = "inserted\$" * hint * "\$" * string(objectid(val); base = 16)
     k = base
     n = 1

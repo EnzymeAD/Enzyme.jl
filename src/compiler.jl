@@ -8696,6 +8696,9 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
             dispose(buf)
             String(bytes)
         end
+        # The bitcode keeps the rule declarations symbolic for nested differentiation; the
+        # compiled module calls them through their CodeInstances.
+        bind_native_invokes!(mod, value_table.inserted)
         # The bitcode keeps its slots symbolic for a differentiation that imports it, which
         # takes `value_table` along; the code that runs gets the addresses, before it is
         # optimized.
@@ -8715,12 +8718,10 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         end
         mstr
     else
+        bind_native_invokes!(mod, value_table.inserted)
         link_julia_values!(mod, meta)
         ""
     end
-    # The module string above keeps the rule declarations symbolic for nested
-    # differentiation; the compiled module binds them to their addresses.
-    restore_native_invokes!(mod)
     return (mod, meta.edges, adjoint_name, primal_name, meta.TapeType, prepost, value_table)
 end
 

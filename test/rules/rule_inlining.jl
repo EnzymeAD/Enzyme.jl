@@ -143,6 +143,22 @@ end
     @test autodiff(ForwardWithPrimal, cube_within, Duplicated(2.0, 1.0)) == (-120.0, 8.0)
 end
 
+# A natively called rule is called through its `CodeInstance`, which the compiled thunk
+# refers to as a Julia value (resolved like every other one when the thunk is linked), and
+# whose entry point it loads at run time, rather than through an address baked into it.
+cube_bound(x) = x^3
+@noinline function EnzymeRules.forward(config, ::Const{typeof(cube_bound)}, ::Type{<:Duplicated}, x::Duplicated)
+    return Duplicated(cube_bound(x.val), 10 * 3 * x.val^2 * x.dval)
+end
+
+@testset "natively called rules are bound through their CodeInstance" begin
+    @test autodiff(ForwardWithPrimal, cube_bound, Duplicated(2.0, 1.0)) == (120.0, 8.0)
+    C = Enzyme.Compiler
+    e = only(C.thunk_entries(cube_bound))
+    table = C.autodiff_cache[C.thunk_link(e).ptr].value_table
+    @test any(v -> v isa Core.CodeInstance, values(table.inserted))
+end
+
 # Signature shapes that Julia's specsig treats specially. Each shape has an
 # `@inline` rule, which `check_specsig` compares against Julia's own codegen
 # of the rule, and a `@noinline` rule, which is called natively through the

@@ -367,15 +367,18 @@ end
     declare_native!(mod, mi, RT, specptr, name, world)
 
 Declare the natively compiled function `mi`, with return type `RT`, in `mod`,
-with the signature [`specsig`](@ref) derives. Store the entry point
-`specptr` in the `enzymejl_needs_restoration` attribute. `restore_lookups`
-turns that attribute into the address once the calling module is final.
+with the signature [`specsig`](@ref) derives. Store the `CodeInstance` `ci` the
+function is compiled in in the `enzymejl_native_ci` attribute, by its address.
+[`bind_native_invokes!`](@ref) gives the declaration a body that calls the
+function through `ci` once the calling module is final.
 """
-function declare_native!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), specptr::Ptr{Cvoid}, name::String, world::UInt)::LLVM.Function
+function declare_native!(mod::LLVM.Module, mi::Core.MethodInstance, @nospecialize(RT::Type), ci::Core.CodeInstance, name::String, world::UInt)::LLVM.Function
     fn = specsig_function!(mod, mi, RT, name, world)
-    push!(function_attributes(fn), StringAttribute("enzymejl_needs_restoration", string(convert(UInt, specptr))))
-    # `restore_lookups` leaves the declaration symbolic until the module
-    # is compiled, and `materialize_native_invokes!` finds it by this marker.
+    # Julia's cache roots `ci`, and so do the edges of every compilation that calls it.
+    push!(function_attributes(fn), StringAttribute("enzymejl_native_ci", string(UInt(pointer_from_objref(ci)))))
+    # The declaration stays symbolic until `bind_native_invokes!` gives it a body (after
+    # the module string for nested differentiation is taken), and
+    # `materialize_native_invokes!` finds it by this marker.
     push!(function_attributes(fn), StringAttribute("enzymejl_native_invoke"))
     return fn
 end
@@ -551,7 +554,8 @@ Rules with the `:call` convention are not emitted at all. Julia's native
 interpreter infers the rule, exactly as an ordinary call of it would, and
 Julia's JIT compiles the resulting `CodeInstance` and its callees (see
 [`codeinst`](@ref)). `declare_native!` declares the specialized
-entry point in `mod`, and `restore_lookups` binds the entry's address. Such
+entry point in `mod`, and `bind_native_invokes!` calls it through the
+rule's `CodeInstance`. Such
 a rule is compiled once for the whole process, shares its `CodeInstance`s
 and native code with ordinary callers, and is called directly through its
 specsig, without boxing or dispatch. Callers build its arguments as for an
@@ -567,8 +571,8 @@ is legal to *call*, because a rule body is primal code that Enzyme never
 differentiates. It is not legal to emit into `mod`, where `check_ir`, the
 rule handlers and the Enzyme pipeline expect `EnzymeInterpreter` output
 and its `enzymejl_*` attributes. Hence a natively called rule reaches
-`mod` only as a declaration bound to an address: it has no body that LLVM
-could inline. Conversely, code inferred by `EnzymeInterpreter` must not be
+`mod` only as a declaration bound to its `CodeInstance`: it has no body that
+LLVM could inline. Conversely, code inferred by `EnzymeInterpreter` must not be
 handed to Julia's JIT: `within_autodiff()` is `true` there, so a rule body
 that calls `ignore_derivatives` emits a call to
 `__enzyme_ignore_derivatives`, which only the Enzyme pipeline resolves.
@@ -610,10 +614,10 @@ function invoke_codegen!(
         check_specsig(llvmf, funcspec, enzyme_custom_extract_mi(llvmf)[2])
         return llvmf
     end
-    ci, specptr = native
+    ci, _ = native
 
     name = "ejl_enzyme_" * GPUCompiler.safe_name(string(funcspec.def.name)) * "_" * string(convert(UInt, pointer_from_objref(funcspec)))
-    fn = declare_native!(mod, funcspec, ci.rettype, specptr, name, world)
+    fn = declare_native!(mod, funcspec, ci.rettype, ci, name, world)
 
     # The native code stays valid as long as its CodeInstance does.
     push!(enzyme_ctx.edges, funcspec)
@@ -633,8 +637,8 @@ the differentiation of `mod` can differentiate through it.
 A derivative that is differentiated again reaches the outer primal module
 either linked in as a deferred job, or embedded through `enzyme_call`.
 Either way it calls its rules through the declarations
-[`declare_native!`](@ref) made, which `restore_lookups` leaves
-symbolic until the module is compiled (see `_thunk`). Such a declaration
+[`declare_native!`](@ref) made, which stay symbolic until the module is
+compiled (see `_thunk` and [`bind_native_invokes!`](@ref)). Such a declaration
 is an opaque call to the outer differentiation. This emits the rule with
 `nested_codegen!`, as an `:inline` rule, and defines the declaration as an
 always-inline wrapper that forwards to it. The wrapper drops the
@@ -688,7 +692,85 @@ function materialize_native_invokes!(mode::API.CDerivativeMode, mod::LLVM.Module
         dispose(B)
 
         fattrs = function_attributes(fn)
-        delete!(fattrs, StringAttribute("enzymejl_needs_restoration"))
+        delete!(fattrs, StringAttribute("enzymejl_native_ci"))
+        delete!(fattrs, marker)
+        push!(fattrs, EnumAttribute("alwaysinline"))
+        linkage!(fn, LLVM.API.LLVMInternalLinkage)
+    end
+    return nothing
+end
+
+const SPECPTR_OFFSET = fieldoffset(Core.CodeInstance, Base.fieldindex(Core.CodeInstance, :specptr))
+
+"""
+    bind_native_invokes!(mod, inserted)
+
+Give every natively called declaration ([`declare_native!`](@ref)) of `mod` a body that
+calls the function through its `CodeInstance`, the shape Julia's own image-mode codegen
+gives an `invoke`: the instance is referred to as a Julia value the compilation inserted (a
+global `ejl_<key>`, with `inserted[key]` the instance, see `insert_julia_value!`), so it is
+resolved when the module is linked like every other Julia value, and the specialized entry
+point is loaded from the instance's `specptr` field at run time. The module thus holds no
+address of the native code. The body is always inlined, so each call site becomes a load
+and an indirect call with the declaration's calling convention and parameter attributes.
+Runs after the module string for nested differentiation is taken, which must still see
+declarations (`materialize_native_invokes!`), and before the module's Julia values are
+resolved.
+"""
+function bind_native_invokes!(mod::LLVM.Module, inserted::Dict{String, Any})::Nothing
+    marker = StringAttribute("enzymejl_native_invoke")
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+    T_i8 = LLVM.Int8Type()
+    for fn in collect(functions(mod))
+        isdeclaration(fn) || continue
+        has_fn_attr(fn, marker) || continue
+        addr = nothing
+        for fattr in collect(function_attributes(fn))
+            if isa(fattr, LLVM.StringAttribute) && kind(fattr) == "enzymejl_native_ci"
+                addr = parse(UInt, LLVM.value(fattr))
+            end
+        end
+        addr === nothing && error("Enzyme: native invoke $(LLVM.name(fn)) has no CodeInstance")
+        ci = Base.unsafe_pointer_to_objref(Ptr{Cvoid}(addr))::Core.CodeInstance
+        key = Enzyme.insert_julia_value!(inserted, "native", ci)
+        gname = "ejl_" * key
+        civ = if haskey(globals(mod), gname)
+            globals(mod)[gname]
+        else
+            GlobalVariable(mod, T_jlvalue, gname, Tracked)
+        end
+
+        ft = LLVM.function_type(fn)
+        T_fnptr = LLVM.PointerType(ft)
+        entry = BasicBlock(fn, "entry")
+        b = IRBuilder()
+        position!(b, entry)
+        p0 = addrspacecast!(b, civ, LLVM.PointerType(T_jlvalue))
+        p0 = bitcast!(b, p0, LLVM.PointerType(T_i8))
+        slot = inbounds_gep!(b, T_i8, p0, LLVM.Value[ConstantInt(Int64(SPECPTR_OFFSET))])
+        slot = bitcast!(b, slot, LLVM.PointerType(T_fnptr))
+        fp = load!(b, T_fnptr, slot)
+        ordering!(fp, LLVM.API.LLVMAtomicOrderingMonotonic)
+        alignment!(fp, sizeof(Ptr{Cvoid}))
+        args = collect(LLVM.Value, parameters(fn))
+        call = call!(b, ft, fp, args)
+        callconv!(call, callconv(fn))
+        for i in 1:length(args)
+            for attr in collect(parameter_attributes(fn, i))
+                LLVM.API.LLVMAddCallSiteAttribute(call, LLVM.API.LLVMAttributeIndex(i), attr)
+            end
+        end
+        if has_fn_attr(fn, EnumAttribute("noreturn"))
+            unreachable!(b)
+        elseif LLVM.return_type(ft) == LLVM.VoidType()
+            ret!(b)
+        else
+            ret!(b, call)
+        end
+        dispose(b)
+
+        fattrs = function_attributes(fn)
+        delete!(fattrs, StringAttribute("enzymejl_native_ci"))
         delete!(fattrs, marker)
         push!(fattrs, EnumAttribute("alwaysinline"))
         linkage!(fn, LLVM.API.LLVMInternalLinkage)
