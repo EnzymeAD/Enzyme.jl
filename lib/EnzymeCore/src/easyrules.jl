@@ -765,7 +765,7 @@ macro easy_rule(call, maybe_setup, partials...)
 
     # Final return: building the expression to insert in the place of this macro
     quote
-        EnzymeRules.has_easy_rule(::Core.Typeof($f), $(normal_inputs...)) = true
+        EnzymeRules.has_easy_rule(::Core.Typeof($f), $(esc.(normal_inputs)...)) = true
         $(frule_expr)
         $(rrule_expr)
     end
