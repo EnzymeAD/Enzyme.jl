@@ -7,7 +7,7 @@ function forward(config, ::Const{typeof(g)}, ::Type{<:Const}, x::Const)
     return Const(g(x.val))
 end
 
-@test has_frule_from_sig(Base.signature_type(g, Tuple{Float64}))
+@test has_frule_from_sig(Base.signature_type(g, Tuple{Float64}); world = Base.get_world_counter())
 
 f(;kwargs) = 1.0
 
@@ -15,7 +15,7 @@ function forward(config, ::Const{typeof(f)}, ::Type{<:Const}; kwargs...)
     return Const(f(; kwargs...))
 end
 
-@test has_frule_from_sig(Base.signature_type(f, Tuple{}))
+@test has_frule_from_sig(Base.signature_type(f, Tuple{}); world = Base.get_world_counter())
 
 data = [1.0, 2.0, 3.0, 4.0]
 

@@ -356,7 +356,7 @@ function _annotate_tt(@nospecialize(TT0))
 end
 
 function has_frule_from_sig(@nospecialize(TT);
-                            world::UInt=Base.get_world_counter(),
+        world::UInt,
                             method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
                             caller::Union{Nothing,Core.MethodInstance}=nothing)::Bool
     ft, tt = _annotate_tt(TT)
@@ -365,7 +365,7 @@ function has_frule_from_sig(@nospecialize(TT);
 end
 
 function has_rrule_from_sig(@nospecialize(TT);
-                            world::UInt=Base.get_world_counter(),
+        world::UInt,
                             method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
                             caller::Union{Nothing,Core.MethodInstance}=nothing)::Bool
     ft, tt = _annotate_tt(TT)
@@ -382,7 +382,7 @@ end
 # but here we want the broader query using `Core.Compiler.findall`.
 # Also add appropriate backedges to the caller `MethodInstance` if given.
 function isapplicable(@nospecialize(f), @nospecialize(TT);
-                      world::UInt=Base.get_world_counter(),
+        world::UInt,
                       method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
                       caller::Union{Nothing,Core.MethodInstance}=nothing)::Bool
     tt = Base.to_tuple_type(TT)
@@ -439,7 +439,7 @@ Mark a particular function as always being inactive in both its return result an
 function inactive end
 
 function is_inactive_from_sig(@nospecialize(TT);
-                              world::UInt=Base.get_world_counter(),
+        world::UInt,
                               method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
                               caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
     return isapplicable(inactive, TT; world, method_table, caller)
@@ -454,7 +454,7 @@ but do not prevent inlining of the function.
 function inactive_noinl end
 
 function is_inactive_noinl_from_sig(@nospecialize(TT);
-                              world::UInt=Base.get_world_counter(),
+        world::UInt,
                               method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
                               caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
     return isapplicable(inactive_noinl, TT; world, method_table, caller)
@@ -470,7 +470,7 @@ This function is currently considered internal/experimental and may not respect 
 function inactive_kwarg end
 
 function is_inactive_kwarg_from_sig(@nospecialize(TT);
-                              world::UInt=Base.get_world_counter(),
+        world::UInt,
                               method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
                               caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
     return isapplicable(inactive_kwarg, TT; world, method_table, caller)
@@ -487,7 +487,7 @@ This function is currently considered internal/experimental and may not respect 
 function inactive_arg end
 
 function is_inactive_arg_from_sig(@nospecialize(TT);
-                              world::UInt=Base.get_world_counter(),
+        world::UInt,
                               method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
                               caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
     return isapplicable(inactive_arg, TT; world, method_table, caller)
@@ -502,7 +502,7 @@ accessible memory.
 function noalias end
 
 function noalias_from_sig(@nospecialize(TT);
-                              world::UInt=Base.get_world_counter(),
+        world::UInt,
                               method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
                               caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
     return isapplicable(noalias, TT; world, method_table, caller)

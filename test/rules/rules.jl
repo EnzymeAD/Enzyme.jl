@@ -43,8 +43,8 @@ function has_frule(f, @nospecialize(RT), @nospecialize(TT::Type{<:Tuple}); world
 end
 
 @testset "has_frule" begin
-    @test has_frule_from_sig(Base.signature_type(f, Tuple{Float64}))
-    @test has_frule_from_sig(Base.signature_type(f_ip, Tuple{Vector{Float64}}))
+    @test has_frule_from_sig(Base.signature_type(f, Tuple{Float64}); world = Base.get_world_counter())
+    @test has_frule_from_sig(Base.signature_type(f_ip, Tuple{Vector{Float64}}); world = Base.get_world_counter())
 
     @test has_frule(f, Duplicated, Tuple{<:Duplicated})
     @test has_frule(f, DuplicatedNoNeed, Tuple{<:Duplicated})

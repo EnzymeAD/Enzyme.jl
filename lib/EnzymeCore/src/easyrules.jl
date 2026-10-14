@@ -4,7 +4,7 @@
 function has_easy_rule end
 
 function has_easy_rule_from_sig(@nospecialize(TT);
-                              world::UInt=Base.get_world_counter(),
+        world::UInt,
                               method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
                               caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
     return isapplicable(has_easy_rule, TT; world, method_table, caller)

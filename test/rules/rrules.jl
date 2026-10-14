@@ -43,8 +43,8 @@ function reverse(::RevConfig{false, false, 1}, ::Const{typeof(f_ip)}, ::Type{<:C
 end
 
 @testset "has_rrule" begin
-    @test has_rrule_from_sig(Base.signature_type(f, Tuple{Float64}))
-    @test has_rrule_from_sig(Base.signature_type(f_ip, Tuple{Vector{Float64}}))
+    @test has_rrule_from_sig(Base.signature_type(f, Tuple{Float64}); world = Base.get_world_counter())
+    @test has_rrule_from_sig(Base.signature_type(f_ip, Tuple{Vector{Float64}}); world = Base.get_world_counter())
 end
 
 
