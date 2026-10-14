@@ -231,6 +231,9 @@ native_callees_for(@nospecialize(view::Core.Compiler.MethodTableView)) =
 # Whether inference for `job` calls derivative-free callees natively: its target must allow
 # it, and so must its parameters (see `PrimalCompilerParams`).
 native_callees_param(params::PrimalCompilerParams) = params.native_callees
+# A back-end's own parameters, which `nest_params` wraps for device code: its method table
+# decides (see `native_callees_for`).
+native_callees_param(::AbstractCompilerParams) = true
 native_callees_param(params::EnzymeCompilerParams) = native_callees_param(params.params)
 native_callees_for(@nospecialize(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams})) =
     native_callees_param(job.config.params) && native_callees_for(GPUCompiler.method_table_view(job))
