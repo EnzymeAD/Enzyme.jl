@@ -49,3 +49,18 @@ end
         end
     end
 end
+
+@testset "set_config" begin
+    using EnzymeCore: set_strong_zero, set_runtime_activity
+    using EnzymeCore.EnzymeRules: FwdConfig, RevConfig, set_config
+
+    for mode in (Forward, ForwardWithPrimal, Reverse, ReverseWithPrimal, ReverseSplitNoPrimal)
+        for rt in (false, true), sz in (false, true)
+            expected = set_strong_zero(set_runtime_activity(mode, rt), sz)
+            @test set_config(mode, FwdConfig{false, true, 1, rt, sz}()) === expected
+            @test set_config(mode, RevConfig{true, false, 2, (), rt, sz}()) === expected
+            # Settings of `mode` are overwritten by `config`
+            @test set_config(set_strong_zero(set_runtime_activity(mode)), FwdConfig{false, true, 1, rt, sz}()) === expected
+        end
+    end
+end
