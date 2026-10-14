@@ -172,6 +172,37 @@ else
     end
 end
 
+@static if VERSION < v"1.11-"
+else
+    # A `MemoryRef` must point into the shadow of its `Memory`. The generic struct method
+    # would zero the `Memory` but copy the `ptr_or_offset` field, leaving the shadow
+    # `MemoryRef` pointing into the primal data.
+    @inline function EnzymeCore.make_zero(
+            ::Type{RT},
+            seen::IdDict,
+            prev::RT,
+            ::Val{copy_if_inactive} = Val(false),
+        )::RT where {copy_if_inactive, RT <: GenericMemoryRef}
+        if haskey(seen, prev)
+            return seen[prev]
+        end
+        if guaranteed_const(RT)
+            return copy_if_inactive ? Base.deepcopy_internal(prev, seen) : prev
+        end
+        mem = prev.mem
+        newmem = EnzymeCore.make_zero(Core.Typeof(mem), seen, mem, Val(copy_if_inactive))
+        # `memoryrefoffset` is 1-based; no bounds check, so that refs into empty
+        # memories (e.g. of an empty `Vector`) are supported as well
+        newref = Base.memoryref(newmem)
+        offset = Base.memoryrefoffset(prev)
+        if offset != 1
+            newref = @inbounds Base.memoryref(newref, offset)
+        end
+        seen[prev] = newref
+        return newref
+    end
+end
+
 @inline function EnzymeCore.make_zero(
         ::Type{RT},
         seen::IdDict,
