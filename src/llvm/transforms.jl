@@ -2427,6 +2427,24 @@ function post_attr!(mod::LLVM.Module, run_attr)
     return nothing
 end
 
+# The type reached by `extract_value` with the indices `path`, or `nothing` if the
+# indices do not address an element of `T`.
+function type_at_path(@nospecialize(T::LLVM.LLVMType), path)
+    for p in path
+        if T isa LLVM.StructType
+            elts = LLVM.elements(T)
+            p < length(elts) || return nothing
+            T = elts[p + 1]
+        elseif T isa LLVM.ArrayType
+            p < length(T) || return nothing
+            T = eltype(T)
+        else
+            return nothing
+        end
+    end
+    return T
+end
+
 function prop_global!(g::LLVM.GlobalVariable)
     newfns = String[]
     changed = false
@@ -2479,23 +2497,17 @@ function prop_global!(g::LLVM.GlobalVariable)
         end
         if isa(var, LLVM.GetElementPtrInst)
             if all(isa(v, LLVM.ConstantInt) for v in operands(var)[2:end])
-                if LLVM.API.LLVMConstIntGetZExtValue(operands(var)[2]) == 0
+                # With opaque pointers the GEP may index a different type than the
+                # global (e.g. a struct as an array of doubles); its indices then do not
+                # address the initializer.
+                srcty = LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(var))
+                newpath = vcat(path, Cuint[convert(Cuint, v) for v in operands(var)[3:end]])
+                if LLVM.API.LLVMConstIntGetZExtValue(operands(var)[2]) == 0 &&
+                        srcty == type_at_path(LLVM.global_value_type(g), path) &&
+                        type_at_path(LLVM.global_value_type(g), newpath) !== nothing
                     for u in LLVM.uses(var)
                         u = LLVM.user(u)
-                        push!(
-                            todo,
-                            (
-                                vcat(
-                                    path,
-                                    collect(
-                                        (
-                                            convert(Cuint, v) for v in operands(var)[3:end]
-                                        )
-                                    ),
-                                ),
-                                u,
-                            ),
-                        )
+                        push!(todo, (newpath, u))
                     end
                 end
                 continue
