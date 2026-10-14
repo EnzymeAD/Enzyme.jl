@@ -1336,10 +1336,6 @@ end
     end
 end
 
-const tape_cache = Dict{UInt,Type}()
-
-const tape_cache_lock = ReentrantLock()
-
 import .Compiler: remove_innerty, UnknownTapeType
 
 @inline function tape_type(
@@ -1423,35 +1419,18 @@ import .Compiler: remove_innerty, UnknownTapeType
     # the same, non-top-level compilation.
     config = GPUCompiler.CompilerConfig(target, params; kernel = false, toplevel = parent_job === nothing)
     job = GPUCompiler.CompilerJob(mi, config)
-
-
-    key = hash(parent_job, hash(job))
-
-    # NOTE: no use of lock(::Function)/@lock/get! to keep stack traces clean
-    lock(tape_cache_lock)
-
+    # Compiled for each call: the result depends on the world of the parent compilation,
+    # whose instance is the only thing that could own a memo of it. The method without a
+    # parent job goes through the generated `thunk`, whose instance Julia keeps.
+    ts_ctx = Compiler.JuliaContext()
+    ctx = Compiler.context(ts_ctx)
+    Compiler.activate(ctx)
     try
-        obj = get(tape_cache, key, nothing)
-        # If the tape is not cached, compile it
-        if obj === nothing
-
-	    ts_ctx = Compiler.JuliaContext()
-	    ctx = Compiler.context(ts_ctx)
-	    Compiler.activate(ctx)
-            try
-                _, meta = GPUCompiler.compile(:llvm, job)
-                obj = meta.TapeType
-                tape_cache[key] = obj
-		obj
-    	    finally
-                Compiler.deactivate(ctx)
-		Compiler.dispose(ts_ctx)
-            end
-	else
-	    obj
-        end
+        _, meta = GPUCompiler.compile(:llvm, job)
+        return meta.TapeType
     finally
-        unlock(tape_cache_lock)
+        Compiler.deactivate(ctx)
+        Compiler.dispose(ts_ctx)
     end
 end
 
