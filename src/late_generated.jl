@@ -40,7 +40,8 @@ end
         abi::Type{ABI},
         erriffuncwritten::Val{ErrIfFuncWritten},
         runtimeactivity::Val{RuntimeActivity},
-        strongzero::Val{StrongZero}
+        strongzero::Val{StrongZero},
+        atomicadd::Val{AtomicAdd}
     ) where {
         FA <: Annotation,
         A <: Annotation,
@@ -54,6 +55,7 @@ end
         ErrIfFuncWritten,
         RuntimeActivity,
         StrongZero,
+        AtomicAdd,
     }
     $(Expr(:meta, :generated_only))
     $(Expr(:meta, :generated, Compiler.thunk_generator))
@@ -71,7 +73,8 @@ end
         expectedtapetype::Type{ExpectedTapeType},
         erriffuncwritten::Val{ErrIfFuncWritten},
         runtimeactivity::Val{RuntimeActivity},
-        strongzero::Val{StrongZero}
+        strongzero::Val{StrongZero},
+        atomicadd::Val{AtomicAdd}
     ) where {
         FA <: Annotation,
         A <: Annotation,
@@ -85,6 +88,7 @@ end
         ErrIfFuncWritten,
         RuntimeActivity,
         StrongZero,
+        AtomicAdd,
     }
     $(Expr(:meta, :generated_only))
     $(Expr(:meta, :generated, Compiler.deferred_id_generator))

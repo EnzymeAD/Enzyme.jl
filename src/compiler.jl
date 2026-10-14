@@ -136,6 +136,10 @@ struct EnzymeCompilerParams{Params<:AbstractCompilerParams} <: AbstractEnzymeCom
 
     # Whether to enforce that a zero derivative propagates as a zero (and never a nan)
     strongZero::Bool
+
+    # Whether to accumulate into shadow memory atomically: `true`, `false`, or `nothing` to
+    # decide in `codegen` (see `atomic_add_for`)
+    atomicAdd::Union{Bool, Nothing}
 end
 
 # FIXME: Should this take something like PTXCompilerParams/CUDAParams?
@@ -146,7 +150,9 @@ end
 function EnzymeCompilerParams(TT, mode, width, rt, run_enzyme, abiwrap,
                               modifiedBetween, returnPrimal, shadowInit,
                               expectedTapeType, ABI,
-                              err_if_func_written, runtimeActivity, strongZero)
+        err_if_func_written, runtimeActivity, strongZero,
+        atomicAdd = nothing
+    )
     params = PrimalCompilerParams(mode)
     EnzymeCompilerParams(
         params,
@@ -163,7 +169,8 @@ function EnzymeCompilerParams(TT, mode, width, rt, run_enzyme, abiwrap,
         ABI,
         err_if_func_written,
         runtimeActivity,
-        strongZero
+        strongZero,
+        atomicAdd
     )
 end
 
@@ -1357,6 +1364,47 @@ function link_julia_values!(mod::LLVM.Module, meta)
     return nothing
 end
 
+
+# The calls by which differentiated code runs work on other threads: the runtime's task
+# constructor, and the calls that `handle_compiled` marks with these `enzyme_math` names.
+const parallel_runtime_functions = ("jl_new_task", "ijl_new_task")
+const parallel_enzyme_math = ("jl_threadsfor", "jl_enq_work", "jl_wait")
+
+# The name of the first call in `mod` that starts or waits for work on another thread, or
+# `nothing` when there is none.
+function parallel_work_in(mod::LLVM.Module)
+    for f in functions(mod)
+        name = LLVM.name(f)
+        name in parallel_runtime_functions && return name
+        attr = LLVM.API.LLVMGetStringAttributeAtIndex(
+            f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
+            "enzyme_math", length("enzyme_math"),
+        )
+        if attr != C_NULL
+            math = LLVM.value(LLVM.StringAttribute(attr))
+            math in parallel_enzyme_math && return math
+        end
+    end
+    return nothing
+end
+
+# Whether a CPU derivative accumulates into shadow memory atomically, given the mode's
+# `AtomicAdd` setting (see `EnzymeCore.set_atomic_add`). By default it does whenever Julia runs
+# more than one thread, because a shadow may then be updated from several threads at once,
+# for instance by `autodiff` calls on different threads that share one shadow. `false` is the
+# caller's promise that this does not happen. It cannot hold for a function that runs work in
+# parallel itself, since the reverse of a task runs while the caller's reverse pass continues,
+# so that is refused rather than compiled with atomics anyway. The bodies of threaded loops
+# and tasks are compiled as their own jobs, which do not carry the caller's setting.
+function atomic_add_for(setting::Union{Bool, Nothing}, mod::LLVM.Module, mi::Core.MethodInstance)
+    setting === true && return true
+    if setting === false
+        call = parallel_work_in(mod)
+        call === nothing && return false
+        throw(EnzymeAtomicAddError(call, mi))
+    end
+    return Base.Threads.nthreads() > 1
+end
 
 mutable struct HandlerState
     primalf::Union{Nothing, LLVM.Function}
@@ -3298,6 +3346,7 @@ function GPUCompiler.nest_params(params::AbstractEnzymeCompilerParams, parent::A
         params.err_if_func_written,
         params.runtimeActivity,
         params.strongZero,
+        params.atomicAdd,
     )
 end
 
@@ -6729,8 +6778,8 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     parallel = false
     process_module = false
     device_module = false
-    if primal_target isa GPUCompiler.NativeCompilerTarget 
-        parallel = Base.Threads.nthreads() > 1 
+    if primal_target isa GPUCompiler.NativeCompilerTarget
+        parallel = atomic_add_for(job.config.params.atomicAdd, mod, job.source)
     else
         # All other targets are GPU targets
         parallel = true
@@ -8435,6 +8484,7 @@ end
     ErrIfFuncWritten::Bool,
     RuntimeActivity::Bool,
     StrongZero::Bool,
+        AtomicAdd::Union{Bool, Nothing},
     edges::Union{Nothing, Vector{Any}}
 )
     target = Compiler.EnzymeTarget()
@@ -8452,7 +8502,8 @@ end
         ABI,
         ErrIfFuncWritten,
         RuntimeActivity,
-        StrongZero
+        StrongZero,
+        AtomicAdd
     ) #=abiwrap=#
     tmp_job = if World isa Nothing
         jb = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false))
@@ -8506,7 +8557,8 @@ end
         ABI,
         ErrIfFuncWritten,
         RuntimeActivity,
-        StrongZero
+        StrongZero,
+        AtomicAdd
     ) #=abiwrap=#
     job = if World isa Nothing
         Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false))
@@ -8591,7 +8643,8 @@ end
     ::Type{ABI},
     ::Val{ErrIfFuncWritten},
     ::Val{RuntimeActivity},
-    ::Val{StrongZero}
+        ::Val{StrongZero},
+        ::Val{AtomicAdd}
 ) where {
     FA<:Annotation,
     A<:Annotation,
@@ -8604,7 +8657,8 @@ end
     ABI,
     ErrIfFuncWritten,
     RuntimeActivity,
-    StrongZero
+        StrongZero,
+        AtomicAdd,
 }
     ts_ctx = JuliaContext()
     ctx = context(ts_ctx)
@@ -8625,6 +8679,7 @@ end
             ErrIfFuncWritten,
             RuntimeActivity,
             StrongZero,
+            AtomicAdd,
             nothing
         )
     finally
@@ -8635,13 +8690,24 @@ end
 
 function thunk end
 
-function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where N)), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ABI::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, StrongZero::Bool, @nospecialize(self), @nospecialize(fakeworld), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(abi::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type), @nospecialize(strongzero::Type))
+# Callers that predate the `AtomicAdd` argument leave the choice to `codegen`.
+@inline thunk(
+    mi::Union{Val{0}, Core.MethodInstance}, fa::Type{FA}, a::Type{A}, tt::Type{TT},
+    mode::Val, width::Val, modifiedbetween::Val, returnprimal::Val, shadowinit::Val,
+    abi::Type{ABI}, erriffuncwritten::Val, runtimeactivity::Val, strongzero::Val,
+) where {FA, A, TT, ABI} = thunk(
+    mi, fa, a, tt, mode, width, modifiedbetween, returnprimal, shadowinit, abi,
+    erriffuncwritten, runtimeactivity, strongzero, Val(nothing),
+)
+
+function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where {N})), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ABI::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, StrongZero::Bool, AtomicAdd::Union{Bool, Nothing}, @nospecialize(self), @nospecialize(fakeworld), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(abi::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type), @nospecialize(strongzero::Type), @nospecialize(atomicadd::Type))
     @nospecialize
     
     slotnames = Core.svec(Symbol("#self#"), 
                     :fakeworld, :fa, :a, :tt, :mode, :width,
                     :modifiedbetween, :returnprimal, :shadowinit,
-                    :abi, :erriffuncwritten, :runtimeactivity, :strongzero)
+        :abi, :erriffuncwritten, :runtimeactivity, :strongzero, :atomicadd
+    )
     stub = Core.GeneratedFunctionStub(identity, slotnames, Core.svec())
 
     ft = eltype(FA)
@@ -8679,6 +8745,7 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
             ErrIfFuncWritten,
             RuntimeActivity,
             StrongZero,
+            AtomicAdd,
             edges
         )
     finally
@@ -8723,13 +8790,14 @@ import GPUCompiler: deferred_codegen_jobs
 
 function deferred_id_codegen end
 
-function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode}, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where N)), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ExpectedTapeType::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, StrongZero::Bool, @nospecialize(self), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(expectedtapetype::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type), @nospecialize(strongzero::Type))
+function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode}, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where {N})), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ExpectedTapeType::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, StrongZero::Bool, AtomicAdd::Union{Bool, Nothing}, @nospecialize(self), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(expectedtapetype::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type), @nospecialize(strongzero::Type), @nospecialize(atomicadd::Type))
     @nospecialize
     
     slotnames = Core.svec(Symbol("#self#"),
                           :fa, :a, :tt, :mode, :width, :modifiedbetween,
                           :returnprimal, :shadowinit, :expectedtapetype,
-                          :erriffuncwritten, :runtimeactivity, :strongzero)
+        :erriffuncwritten, :runtimeactivity, :strongzero, :atomicadd
+    )
 
     stub = Core.GeneratedFunctionStub(identity, slotnames, Core.svec())
 
@@ -8780,7 +8848,8 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
         FFIABI,
         ErrIfFuncWritten,
         RuntimeActivity,
-        StrongZero
+        StrongZero,
+        AtomicAdd
     ) #=abiwrap=#
     job =
         Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false), world)
@@ -8811,9 +8880,10 @@ end
     @nospecialize(expectedtapetype::Type),
     @nospecialize(erriffuncwritten::Val),
     @nospecialize(runtimeactivity::Val),
-    @nospecialize(strongzero::Val)
+        @nospecialize(strongzero::Val),
+        @nospecialize(atomicadd::Val = Val(nothing))
 )
-    id = deferred_id_codegen(fa, a, tt, mode, width, modifiedbetween, returnprimal, shadowinit, expectedtapetype, erriffuncwritten, runtimeactivity, strongzero)
+    id = deferred_id_codegen(fa, a, tt, mode, width, modifiedbetween, returnprimal, shadowinit, expectedtapetype, erriffuncwritten, runtimeactivity, strongzero, atomicadd)
     return _deferred_codegen_call(Val(id))
 end
 

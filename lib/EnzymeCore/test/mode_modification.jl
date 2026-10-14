@@ -1,5 +1,5 @@
 using EnzymeCore
-using EnzymeCore: InlineABI, ReverseModeSplit, Split, Combined, set_runtime_activity, set_err_if_func_written, set_abi
+using EnzymeCore: InlineABI, ReverseMode, ReverseModeSplit, Split, Combined, set_runtime_activity, set_err_if_func_written, clear_err_if_func_written, set_strong_zero, set_abi, set_atomic_add, atomic_add, WithPrimal, NoPrimal
 using Test
 
 @testset "Split / unsplit mode" begin
@@ -48,4 +48,30 @@ end
             @test set_runtime_activity(mode, config_sz) === mode
         end
     end
+end
+
+@testset "Atomic accumulation setting" begin
+    @test atomic_add(Reverse) === nothing
+    @test atomic_add(ReverseSplitNoPrimal) === nothing
+    for setting in (true, false, nothing)
+        mode = set_atomic_add(Reverse, setting)
+        @test atomic_add(mode) === setting
+        @test atomic_add(typeof(mode)) === setting
+        @test atomic_add(set_runtime_activity(mode)) === setting
+        @test atomic_add(set_strong_zero(mode)) === setting
+        @test atomic_add(set_err_if_func_written(mode)) === setting
+        @test atomic_add(set_abi(mode, InlineABI)) === setting
+        @test atomic_add(WithPrimal(mode)) === setting
+        @test atomic_add(Split(mode)) === setting
+        @test Combined(Split(mode)) == mode
+
+        split = set_atomic_add(ReverseSplitWithPrimal, setting)
+        @test atomic_add(split) === setting
+        @test atomic_add(NoPrimal(split)) === setting
+        @test atomic_add(clear_err_if_func_written(set_err_if_func_written(split))) === setting
+        @test atomic_add(Combined(split)) === setting
+    end
+    # Modes spelled without the setting, as code written before it existed does, leave it to Enzyme
+    @test ReverseMode{false, false, false, EnzymeCore.DefaultABI, false, false}() === Reverse
+    @test ReverseModeSplit{false, true, false, false, 0, true, EnzymeCore.DefaultABI, false, false, false}() === ReverseSplitNoPrimal
 end

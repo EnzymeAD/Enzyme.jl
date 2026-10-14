@@ -846,6 +846,22 @@ struct EnzymeMutabilityException <: EnzymeError
     msg::Cstring
 end
 
+# `set_atomic_add(mode, false)` on a function that starts or waits for work on other threads
+struct EnzymeAtomicAddError <: EnzymeError
+    call::String
+    mi::Core.MethodInstance
+end
+
+function Base.showerror(io::IO, ece::EnzymeAtomicAddError)
+    return print(
+        io, "EnzymeAtomicAddError: set_atomic_add(mode, false) was used, but ", ece.mi.specTypes,
+        " starts or waits for work on other threads (it calls ", ece.call, "), so its shadow",
+        " accumulation must be atomic. Use the default setting (nothing) or true for this",
+        " function. The bodies of threaded loops and tasks and dynamically dispatched callees",
+        " are compiled on their own and keep the default.\n"
+    )
+end
+
 function Base.showerror(io::IO, ece::EnzymeMutabilityException)
     if isdefined(Base.Experimental, :show_error_hints)
         Base.Experimental.show_error_hints(io, ece)
