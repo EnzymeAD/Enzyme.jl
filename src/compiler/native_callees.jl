@@ -57,7 +57,7 @@ differentiates: inactive, `nofree`, and allocating nothing that escapes. `native
 an `EnzymeRules.inactive` rule. A native callee's call also records the return type Julia's
 native inference gave it as `enzymejl_rt`, since the boxed result has no other type
 information for `abs_typeof`, and is read-only-or-throw when native inference proved the
-callee effect-free, as [`mark_read_only_or_throw!`](@ref) marks the declarations bound on
+callee effect-free, as `mark_read_only_or_throw!` marks the declarations bound on
 Julia 1.12 and later, so that Enzyme still finds the callers read-only-or-throw.
 """
 function mark_inactive_invoke!(inst::LLVM.CallInst, native::Union{Nothing, Tuple{Core.CodeInstance, Ptr{Cvoid}}})
@@ -109,7 +109,7 @@ end
 
 Return the native `CodeInstance` of `mi`, and on Julia 1.12 and later its specialized entry
 point, when Enzyme never differentiates `mi` and can call its natively compiled code
-instead, and `nothing` otherwise (see [`native_entry_uncached`](@ref), whose result this
+instead, and `nothing` otherwise (see `native_entry_uncached`, whose result this
 memoizes per world and per the rules of `interp`).
 """
 function native_entry(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance)
