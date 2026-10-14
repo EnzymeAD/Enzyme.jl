@@ -18,6 +18,7 @@ const HAS_INTEGRATED_CACHE = VERSION >= v"1.11.0-DEV.1552"
 import ..Enzyme
 import ..EnzymeRules
 import ..cached_has_frule, ..cached_has_rrule, ..cached_is_inactive
+import ..HAS_RULE_EDGES, ..push_rule_query_edge!, ..has_frule_gen, ..has_rrule_gen, ..is_inactive_gen
 
 @static if VERSION ≥ v"1.11.0-DEV.1498"
     import Core.Compiler: get_inference_world
@@ -87,8 +88,14 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
     handler::T
 end
 
-const SigCacheLock = ReentrantLock()
 const InterpreterLock = ReentrantLock()
+
+# The sets of rule methods visible per world, for the cache token (Julia 1.11) and the
+# cache flush (Julia 1.10) that tell inference results of different rule sets apart. With
+# `HAS_RULE_EDGES` the results carry edges to the rule queries instead; see
+# `enzyme_call_kind`.
+@static if !HAS_RULE_EDGES
+    const SigCacheLock = ReentrantLock()
 const SigCache = Dict{Tuple, Dict{UInt, Base.IdSet{Type}}}()
 function get_rule_signatures(f, TT, world)
     subdict = lock(SigCacheLock) do
@@ -134,6 +141,7 @@ end
 const LastFwdWorld = Ref(Base.IdSet{Type}())
 const LastRevWorld = Ref(Base.IdSet{Type}())
 const LastInaWorld = Ref(Base.IdSet{Type}())
+end # @static if !HAS_RULE_EDGES
 
 function EnzymeInterpreter(
     cache_or_token,
@@ -416,17 +424,37 @@ Every place that decides whether a call needs Enzyme's handling asks this, so
 that a call reaches the pipeline the same way whichever path inference took to
 it: `FutureCallinfoByType` for an ordinary call, and `invoked_ci_needs_rule`
 for `invoke(f, ci, args...)`.
+
+The answer depends on the rule methods for `specTypes` in `interp.world`. With
+`sv`, the inference frame asking, the frame gets an edge to each rule query it
+consulted (`rule_query_edge`), so that its result is invalidated when a rule is
+added or deleted that changes the answer, including an answer of "no rule".
+(`HAS_RULE_EDGES`; before that version the cache token carries the rule set.)
 """
-function enzyme_call_kind(@nospecialize(interp::EnzymeInterpreter), @nospecialize(specTypes))::Union{Nothing, Symbol}
+function enzyme_call_kind(@nospecialize(interp::EnzymeInterpreter), @nospecialize(specTypes), sv::Union{Nothing, AbsIntState} = nothing)::Union{Nothing, Symbol}
     is_primitive_func(specTypes) && return :primitive
     is_alwaysinline_func(specTypes) && return :alwaysinline
     method_table = Core.Compiler.method_table(interp)
-    if interp.inactive_rules && cached_is_inactive(specTypes, interp.world, method_table)
-        return :inactive
-    elseif interp.forward_rules && cached_has_frule(specTypes, interp.world, method_table)
-        return :frule
-    elseif interp.reverse_rules && cached_has_rrule(specTypes, interp.world, method_table)
-        return :rrule
+    if interp.inactive_rules
+        add_rule_query_edge!(sv, is_inactive_gen, specTypes, interp.world)
+        cached_is_inactive(specTypes, interp.world, method_table) && return :inactive
+    end
+    if interp.forward_rules
+        add_rule_query_edge!(sv, has_frule_gen, specTypes, interp.world)
+        cached_has_frule(specTypes, interp.world, method_table) && return :frule
+    end
+    if interp.reverse_rules
+        add_rule_query_edge!(sv, has_rrule_gen, specTypes, interp.world)
+        cached_has_rrule(specTypes, interp.world, method_table) && return :rrule
+    end
+    return nothing
+end
+
+# Give the frame `sv` an edge to the rule query `gen` for `specTypes`.
+function add_rule_query_edge!(sv::Union{Nothing, AbsIntState}, gen, @nospecialize(specTypes), world::UInt)
+    @static if HAS_RULE_EDGES
+        sv === nothing && return nothing
+        push_rule_query_edge!(sv.edges, gen, specTypes, world)
     end
     return nothing
 end
@@ -439,7 +467,7 @@ end
     atype = closure.atype
     callinfo = ret.info
 
-    kind = enzyme_call_kind(interp, simplify_kw(atype))
+    kind = enzyme_call_kind(interp, simplify_kw(atype), sv)
     if kind === :alwaysinline
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
     elseif kind !== nothing
@@ -495,14 +523,14 @@ const HAS_INVOKE_CI_LOWERING = VERSION >= v"1.13-"
     under `interp` (see `enzyme_call_kind`). An always-inlined signature does
     not: the inliner gives it a body like any other call.
     """
-    function invoked_ci_needs_rule(@nospecialize(interp::EnzymeInterpreter), ci::Core.CodeInstance)::Bool
+    function invoked_ci_needs_rule(@nospecialize(interp::EnzymeInterpreter), ci::Core.CodeInstance, sv::Union{Nothing, AbsIntState} = nothing)::Bool
         CC = Core.Compiler
         abi = @static if isdefined(Core.Compiler, :get_ci_abi)
             CC.get_ci_abi(ci)
         else
             CC.get_ci_mi(ci).specTypes
         end
-        kind = enzyme_call_kind(interp, simplify_kw(abi))
+        kind = enzyme_call_kind(interp, simplify_kw(abi), sv)
         return kind !== nothing && kind !== :alwaysinline
     end
 end
@@ -1376,7 +1404,7 @@ function abstract_call_known(
         if f === Core.invoke && length(argtypes) >= 3
             citype = argtypes[3]
             if citype isa Core.Const && citype.val isa Core.CodeInstance &&
-                    invoked_ci_needs_rule(interp, citype.val)
+                    invoked_ci_needs_rule(interp, citype.val, sv)
                 argtypes′ = Core.Compiler.invoke_rewrite(argtypes)
                 fargs′ = fargs === nothing ? nothing : Core.Compiler.invoke_rewrite(fargs)
                 # `abstract_call` handles a known callee and one without a
