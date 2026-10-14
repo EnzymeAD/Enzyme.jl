@@ -37,6 +37,7 @@ import Enzyme:
     ismutabletype,
     create_fresh_codeinfo,
     add_edge!,
+    add_dispatch_edge!,
     arg_operands_view
 
 using Enzyme
@@ -8370,12 +8371,6 @@ function clear_caches!()
     Interpreter.LastRevWorld[] = Base.IdSet{Type}()
     Interpreter.LastInaWorld[] = Base.IdSet{Type}()
 
-    # Activity, and the world its `inactive_type` methods were last checked in. Left set, it
-    # tells a later session its own worlds need no check.
-    empty!(ActivityCache)
-    empty!(ActivityMethodCache)
-    ActivityWorldCache[] = 0
-
     # The library handles `ejlstr$` and `ejlptr$` symbols were resolved through.
     empty!(JIT.hnd_string_map)
     empty!(JIT.hnd_int_map)
@@ -8455,9 +8450,7 @@ end
         StrongZero
     ) #=abiwrap=#
     tmp_job = if World isa Nothing
-        jb = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false))
-        check_activity_cache_invalidations(jb.world)
-        jb
+        Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false))
     else
         Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false), World)
     end
@@ -8654,8 +8647,6 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
     mi = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, ft, primal_tt, world, min_world, max_world)
     
     mi === nothing && return stub(world, source, :(throw(MethodError($ft, $primal_tt, $world))))
- 
-    check_activity_cache_invalidations(world)
 
     edges = Any[]
     add_edge!(edges, mi)
@@ -8689,8 +8680,19 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
     code = Any[Core.Compiler.ReturnNode(result)]
     ci = create_fresh_codeinfo(thunk, source, world, slotnames, code)
 
+    add_compilation_edges!(edges, Mode)
+    ci.edges = edges
+    return ci
+end
 
+"""
+    add_compilation_edges!(edges, Mode)
 
+Add the edges of code Enzyme compiled in `Mode`: the signatures of the rules and of the
+activity hooks. A method added to any of them changes what the compilation produces, so
+it has to invalidate code built from the compilation.
+"""
+function add_compilation_edges!(edges::Vector{Any}, Mode::API.CDerivativeMode)
     if Mode == API.DEM_ForwardMode
         fwd_sig = Tuple{typeof(EnzymeRules.forward), <:EnzymeRules.FwdConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
         add_edge!(edges, fwd_sig)
@@ -8708,13 +8710,11 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
         Tuple{typeof(EnzymeRules.inactive_arg), Vararg{Any}},
         Tuple{typeof(EnzymeRules.inactive_kwarg), Vararg{Any}},
         Tuple{typeof(EnzymeRules.noalias), Vararg{Any}},
-        Tuple{typeof(EnzymeRules.inactive_type), Type},
+            ActivityHookSigs...,
     )
         add_edge!(edges, gen_sig)
     end
-
-    ci.edges = edges
-    return ci
+    return edges
 end
 
 # The generated wrapper `thunk` is defined in src/late_generated.jl; see the note there.
@@ -8792,7 +8792,10 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
     code = Any[Core.Compiler.ReturnNode(reinterpret(UInt, id))]
     ci = create_fresh_codeinfo(deferred_id_codegen, source, world, slotnames, code)
 
-    ci.edges = Any[mi]
+    # The job compiles later, in `world`, against the rules and hooks of that world.
+    edges = Any[mi]
+    add_compilation_edges!(edges, Mode)
+    ci.edges = edges
 
     return ci
 end
