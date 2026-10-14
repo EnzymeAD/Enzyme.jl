@@ -215,10 +215,9 @@ method_tables(@nospecialize(view::Core.Compiler.MethodTableView)) = (view,)
 # Whether inference for code that looks methods up in `view` calls derivative-free callees
 # natively (see compiler/native_callees.jl): only code for the host can, which looks methods
 # up in Julia's own method table or in GPUCompiler's global one. Back-ends stack their own
-# overlay tables for device code. Julia 1.10 and 1.11 stay off for now: with it, Julia 1.10's
-# GC lowering crashes on some augmented calls that return mixed tracked and untracked fields
-# through an sret buffer.
-const NATIVE_CALLEES = VERSION >= v"1.12-beta3"
+# overlay tables for device code. Prereleases of 1.12 before beta3 have neither the 1.10/1.11
+# nor the 1.12 implementation.
+const NATIVE_CALLEES = VERSION < v"1.12-" || VERSION >= v"1.12-beta3"
 native_callees_for(@nospecialize(view::Core.Compiler.MethodTableView)) =
     NATIVE_CALLEES && method_tables(view) in ((), (GPUCompiler.GLOBAL_METHOD_TABLE,))
 
