@@ -233,4 +233,21 @@ EnzymeRules.@easy_rule(mycube(x::LocalFloat), (3 * x^2,))
     @test autodiff(Reverse, mycube, Active, Active(2.0))[1][1] ≈ 12.0
 end
 
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3844
+sqfirst(x::Vector{Float64}) = x[1]^2
+EnzymeRules.@easy_rule(sqfirst(x::Vector{Float64}), ([2x[1]],))
+
+function sqfirst_overwrite(x)
+    y = sqfirst(x)
+    x[1] = 0.0
+    return y
+end
+
+@testset "Reverse EasyRule with an overwritten input" begin
+    x = [3.0]
+    dx = Enzyme.make_zero(x)
+    autodiff(Reverse, sqfirst_overwrite, Active, Duplicated(x, dx))
+    @test dx ≈ [6.0]
+end
+
 end # module EasyRules
