@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Box model · Enzyme.jl</title><script data-outdated-warner src="../../assets/warner.js"></script><link rel="canonical" href="https://enzyme.mit.edu/julia/generated/box/"/><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.045/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.13.24/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script><script src="https://plausible.io/js/plausible.js" data-domain="enzyme.mit.edu" defer></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">Enzyme.jl</a></span></div><form class="docs-search" action="../../search/"><input class="docs-search-query" id="documenter-search-query" name="q" type="text" placeholder="Search docs"/></form><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><span class="tocitem">Examples</span><ul><li class="is-active"><a class="tocitem" href>Box model</a><ul class="internal"><li class="toplevel"><a class="tocitem" href="#Brief-model-overview"><span>Brief model overview</span></a></li><li class="toplevel"><a class="tocitem" href="#Model-setup"><span>Model setup</span></a></li><li><a class="tocitem" href="#Model-dependencies"><span>Model dependencies</span></a></li><li><a class="tocitem" href="#Initialize-constants"><span>Initialize constants</span></a></li><li><a class="tocitem" href="#Define-model-functions"><span>Define model functions</span></a></li><li><a class="tocitem" href="#Define-forward-functions"><span>Define forward functions</span></a></li><li class="toplevel"><a class="tocitem" href="#Example-1:-Simply-using-Enzyme"><span>Example 1: Simply using Enzyme</span></a></li><li class="toplevel"><a class="tocitem" href="#Example-2:-Full-sensitivity-calculations"><span>Example 2: Full sensitivity calculations</span></a></li></ul></li></ul></li><li><a class="tocitem" href="../../api/">API</a></li><li><a class="tocitem" href="../../pullbacks/">Implementing pullbacks</a></li><li><a class="tocitem" href="../../dev_docs/">For developers</a></li><li><a class="tocitem" href="../../internal_api/">Internal API</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Examples</a></li><li class="is-active"><a href>Box model</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Box model</a></li></ul></nav><div class="docs-right"><a class="docs-edit-link" href="https://github.com/EnzymeAD/Enzyme.jl/blob/main/examples/box.jl" title="Edit on GitHub"><span class="docs-icon fab"></span><span class="docs-label is-hidden-touch">Edit on GitHub</span></a><a class="docs-settings-button fas fa-cog" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-sidebar-button fa fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a></div></header><article class="content" id="documenter-page"><h1 id="Enzyme-for-adjoint-tutorial:-Stommel-three-box-ocean-model"><a class="docs-heading-anchor" href="#Enzyme-for-adjoint-tutorial:-Stommel-three-box-ocean-model">Enzyme for adjoint tutorial: Stommel three-box ocean model</a><a id="Enzyme-for-adjoint-tutorial:-Stommel-three-box-ocean-model-1"></a><a class="docs-heading-anchor-permalink" href="#Enzyme-for-adjoint-tutorial:-Stommel-three-box-ocean-model" title="Permalink"></a></h1><p>The goal of this tutorial is to teach about a specific usage of Enzyme&#39;s automatic differentiation capabilities, and will be centered around the Stommel ocean model. This is a nice example to see how powerful Enzyme is, and the ability of it to take a derivative of a complicated function (namely one that has many parts and parameters). This tutorial will focus first on the computations and getting Enzyme running, for those interested a mathematical explanation of the model and what an adjoint variable is will be provided at the end.</p><h1 id="Brief-model-overview"><a class="docs-heading-anchor" href="#Brief-model-overview">Brief model overview</a><a id="Brief-model-overview-1"></a><a class="docs-heading-anchor-permalink" href="#Brief-model-overview" title="Permalink"></a></h1><p>The Stommel box model can be viewed as a watered down full ocean model. In our example, we have three boxes (Box One, Box Two, and Box Three) and we model the transport of fluid between them. The full equations of our system are given by:</p><p class="math-container">\[\begin{aligned}
+   U &amp;= u_0 \left\{ \rho_2 - \left[ \rho_1 + (1 - \delta) \rho_3 \right] \right\} \\
+   \rho_i &amp;= -\alpha T_i + \beta S_i, \; \; \; \; i = 1, 2, 3
+\end{aligned}\]</p><p>for the <strong>transport</strong> U and <strong>densities</strong> <span>$\rho$</span>, and then the time derivatives</p><p class="math-container">\[\begin{aligned}
+   \dot{T_1} &amp;= U(T_3 - T_1)/V_1 + \gamma (T_1^* - T_1 ) &amp; \dot{S_1} &amp;= U(S_3 - S_1)/V_1 + FW_1/V_1 \\
+   \dot{T_2} &amp;= U(T_1 - T_2)/V_2 + \gamma (T_2^* - T_2 ) &amp; \dot{S_2} &amp;= U(S_1 - S_2)/V_2 + FW_2/V_2 \\
+   \dot{T_3} &amp;= U(T_2 - T_3)/V_3 &amp; \dot{S_3} &amp;= U(S_2 - S_3)/V_3
+\end{aligned}\]</p><p>for positive transport, <span>$U &gt; 0$</span>, and</p><p class="math-container">\[\begin{aligned}
+   \dot{T_1} &amp;= U(T_2 - T_1)/V_1 + \gamma (T_1^* - T_1) &amp; \dot{S_1} &amp;= U(S_2 - S_1)/V_1 + FW_1/V_1 \\
+   \dot{T_2} &amp;= U(T_3 - T_2)/V_2 + \gamma (T_2^* - T_2 ) &amp; \dot{S_2} &amp;= U(S_3 - S_2)/V_2 + FW_2/V_2 \\
+   \dot{T_3} &amp;= U(T_1 - T_3)/V_3 &amp; \dot{S_3} &amp;= U(S_1 - S_3)/V_3
+\end{aligned}\]</p><p>for <span>$U \leq 0$</span>. The only force driving our system is a density gradient generated via temperature and salinity differences between the boxes. This makes it a really easy model to play around with! With this in mind, the model is run forward with the steps:</p><ol><li>Compute densities</li><li>Compute transport</li><li>Compute time derivatives of the box temperatures and salinities</li><li>Update the state vector</li></ol><p>We&#39;ll start by going through the model setup step by step, then providing a few test cases with Enzyme.</p><h1 id="Model-setup"><a class="docs-heading-anchor" href="#Model-setup">Model setup</a><a id="Model-setup-1"></a><a class="docs-heading-anchor-permalink" href="#Model-setup" title="Permalink"></a></h1><h2 id="Model-dependencies"><a class="docs-heading-anchor" href="#Model-dependencies">Model dependencies</a><a id="Model-dependencies-1"></a><a class="docs-heading-anchor-permalink" href="#Model-dependencies" title="Permalink"></a></h2><p>Let&#39;s first add the necessary packages to run everything</p><pre><code class="language-julia hljs">using Enzyme</code></pre><h2 id="Initialize-constants"><a class="docs-heading-anchor" href="#Initialize-constants">Initialize constants</a><a id="Initialize-constants-1"></a><a class="docs-heading-anchor-permalink" href="#Initialize-constants" title="Permalink"></a></h2><p>The system equations have quite a few constants that appear, here we initialize them for later use</p><pre><code class="language-julia hljs">const blength = [5000.0e5; 1000.0e5; 5000.0e5]   ## north-south size of boxes, centimeters
+
+const bdepth = [1.0e5; 5.0e5; 4.0e5]   ## depth of boxes, centimeters
+
+const delta = bdepth[1]/(bdepth[1] + bdepth[3])  ## constant ratio of two depths
+
+const bwidth = 4000.0*1e5  ## box width, centimeters
+
+# box areas
+const barea = [blength[1]*bwidth;
+         blength[2]*bwidth;
+         blength[3]*bwidth]
+
+# box volumes
+const bvol = [barea[1]*bdepth[1];
+        barea[2]*bdepth[2];
+        barea[3]*bdepth[3]]
+
+# parameters that are used to ensure units are in CGS (cent-gram-sec)
+
+const hundred = 100.0
+const thousand = 1000.0
+const day = 3600.0*24.0
+const year = day*365.0
+const Sv = 1e12     ## one Sverdrup (a unit of ocean transport), 1e6 meters^3/second
+
+# parameters that appear in box model equations
+const u0 = 16.0*Sv/0.0004
+const alpha = 1668e-7
+const beta = 0.7811e-3
+
+const gamma = 1/(300*day)
+
+# robert filter coefficient for the smoother part of the timestep
+const robert_filter_coeff = 0.25
+
+# freshwater forcing
+const FW = [(hundred/year) * 35.0 * barea[1]; -(hundred/year) * 35.0 * barea[1]]
+
+# restoring atmospheric temperatures
+const Tstar = [22.0; 0.0]
+const Sstar = [36.0; 34.0];</code></pre><h2 id="Define-model-functions"><a class="docs-heading-anchor" href="#Define-model-functions">Define model functions</a><a id="Define-model-functions-1"></a><a class="docs-heading-anchor-permalink" href="#Define-model-functions" title="Permalink"></a></h2><p>Here we define functions that will calculate quantities used in the forward steps.</p><pre><code class="language-julia hljs"># function to compute transport
+#       Input: rho - the density vector
+#       Output: U - transport value
+
+function U_func(dens)
+
+    U = u0*(dens[2] - (delta * dens[1] + (1 - delta)*dens[3]))
+    return U
+
+end
+
+# function to compute density
+#       Input: state = [T1; T2; T3; S1; S2; S3]
+#       Output: rho
+
+function rho_func(state)
+
+    rho = zeros(3)
+
+    rho[1] = -alpha * state[1] + beta * state[4]
+    rho[2] = -alpha * state[2] + beta * state[5]
+    rho[3] = -alpha * state[3] + beta * state[6]
+
+    return rho
+
+end
+
+# lastly our timestep function
+#       Input: fld_now = [T1(t), T2(t), ..., S3(t)]
+#           fld_old = [T1(t-dt), ..., S3(t-dt)]
+#           u = transport(t)
+#           dt = time step
+#       Output: fld_new = [T1(t+dt), ..., S3(t+dt)]
+
+function timestep_func(fld_now, fld_old, u, dt)
+
+    temp = zeros(6)
+    fld_new = zeros(6)
+
+    # first computing the time derivatives of the various temperatures and salinities
+    if u &gt; 0
+
+        temp[1] = u * (fld_now[3] - fld_now[1]) / bvol[1] + gamma * (Tstar[1] - fld_now[1])
+        temp[2] = u * (fld_now[1] - fld_now[2]) / bvol[2] + gamma * (Tstar[2] - fld_now[2])
+        temp[3] = u * (fld_now[2] - fld_now[3]) / bvol[3]
+
+        temp[4] = u * (fld_now[6] - fld_now[4]) / bvol[1] + FW[1] / bvol[1]
+        temp[5] = u * (fld_now[4] - fld_now[5]) / bvol[2] + FW[2] / bvol[2]
+        temp[6] = u * (fld_now[5] - fld_now[6]) / bvol[3]
+
+    elseif u &lt;= 0
+
+        temp[1] = u * (fld_now[2] - fld_now[1]) / bvol[1] + gamma * (Tstar[1] - fld_now[1])
+        temp[2] = u * (fld_now[3] - fld_now[2]) / bvol[2] + gamma * (Tstar[2] - fld_now[2])
+        temp[3] = u * (fld_now[1] - fld_now[3]) / bvol[3]
+
+        temp[4] = u * (fld_now[5] - fld_now[4]) / bvol[1] + FW[1] / bvol[1]
+        temp[5] = u * (fld_now[6] - fld_now[5]) / bvol[2] + FW[2] / bvol[2]
+        temp[6] = u * (fld_now[4] - fld_now[6]) / bvol[3]
+
+    end
+
+    # update fldnew using a version of Euler&#39;s method
+
+    for j = 1:6
+        fld_new[j] = fld_old[j] + 2.0 * dt * temp[j]
+    end
+
+    return fld_new
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">timestep_func (generic function with 1 method)</code></pre><h2 id="Define-forward-functions"><a class="docs-heading-anchor" href="#Define-forward-functions">Define forward functions</a><a id="Define-forward-functions-1"></a><a class="docs-heading-anchor-permalink" href="#Define-forward-functions" title="Permalink"></a></h2><p>Finally, we create two functions, bthe first of which computes and stores all the states of the system, and the second which has been written specifically to be passed to Enzyme.</p><p>Let&#39;s start with the standard forward function. This is just going to be used to store the states at every timestep:</p><pre><code class="language-julia hljs">function forward_func(fld_old, fld_now, dt, M)
+
+    state_now = copy(fld_now)
+    state_old = copy(fld_old)
+    state_new = zeros(6)
+
+    states_unsmooth = [state_old];
+    states_smooth = [state_old]
+
+    for t = 1:M
+        rho_now = rho_func(state_now)
+        u_now = U_func(rho_now)
+        state_new = timestep_func(state_now, state_old, u_now, dt)
+
+        # Robert filter smoother (needed for stability)
+        for j = 1:6
+            state_now[j] = state_now[j] + robert_filter_coeff * (state_new[j] - 2.0 * state_now[j] + state_old[j])
+        end
+
+        push!(states_smooth, copy(state_now))
+        push!(states_unsmooth, copy(state_new))
+
+        # cycle the &quot;now, new, old&quot; states
+
+        state_old = state_now
+        state_now = state_new
+    end
+
+    return states_smooth, states_unsmooth
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">forward_func (generic function with 1 method)</code></pre><p>Next, we have the Enzyme-designed forward function. This is what we&#39;ll actually be passing to Enzyme to differentiate:</p><pre><code class="language-julia hljs">function forward_func_4_AD(in_now, in_old, out_old, out_now)
+
+    rho_now = rho_func(in_now)                             ## compute density
+    u_now = U_func(rho_now)                                ## compute transport
+    in_new = timestep_func(in_now, in_old, u_now, 10*day)  ## compute new state values
+
+    # Robert filter smoother
+    in_now[1] = in_now[1] + robert_filter_coeff * (in_new[1] - 2.0 * in_now[1] + in_old[1])
+    in_now[2] = in_now[2] + robert_filter_coeff * (in_new[2] - 2.0 * in_now[2] + in_old[2])
+    in_now[3] = in_now[3] + robert_filter_coeff * (in_new[3] - 2.0 * in_now[3] + in_old[3])
+    in_now[4] = in_now[4] + robert_filter_coeff * (in_new[4] - 2.0 * in_now[4] + in_old[4])
+    in_now[5] = in_now[5] + robert_filter_coeff * (in_new[5] - 2.0 * in_now[5] + in_old[5])
+    in_now[6] = in_now[6] + robert_filter_coeff * (in_new[6] - 2.0 * in_now[6] + in_old[6])
+
+    out_old[:] = in_now
+    out_now[:] = in_new
+    return nothing
+
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">forward_func_4_AD (generic function with 1 method)</code></pre><p>Two key differences:</p><ol><li><code>forward_func_4_AD</code> now returns nothing, but is rather a function of both its input and output.</li><li>All operations are now inlined, meaning we compute the entries of the input vector individually.</li></ol><p>Currently, Enzyme does not have compatibility with matrix/vector operations so inlining is necessary to run Enzyme on this function.</p><h1 id="Example-1:-Simply-using-Enzyme"><a class="docs-heading-anchor" href="#Example-1:-Simply-using-Enzyme">Example 1: Simply using Enzyme</a><a id="Example-1:-Simply-using-Enzyme-1"></a><a class="docs-heading-anchor-permalink" href="#Example-1:-Simply-using-Enzyme" title="Permalink"></a></h1><p>For the first example let&#39;s just compute the gradient of our forward function and examine the output. We&#39;ll just run the model for one step, and take a <code>dt</code> of ten days. The initial conditions of the system are given as <code>Tbar</code> and <code>Sbar</code>.</p><pre><code class="language-julia hljs">const Tbar = [20.0; 1.0; 1.0]
+const Sbar = [35.5; 34.5; 34.5]
+
+# Running the model one step forward
+states_smooth, states_unsmooth = forward_func(copy([Tbar; Sbar]), copy([Tbar; Sbar]), 10*day, 1)
+
+# Run Enzyme one time on `forward_func_4_AD``
+din_now = zeros(6)
+din_old = zeros(6)
+out_now = zeros(6); dout_now = ones(6)
+out_old = zeros(6); dout_old = ones(6)
+autodiff(forward_func_4_AD, Duplicated([Tbar; Sbar], din_now), Duplicated([Tbar; Sbar], din_old),
+                    Duplicated(out_now, dout_now), Duplicated(out_old, dout_old));</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">warning: didn&#39;t implement memmove, using memcpy as fallback which can result in errors
+warning: didn&#39;t implement memmove, using memcpy as fallback which can result in errors</code></pre><p>In order to run Enzyme on <code>forward_func_4_AD</code>, we&#39;ve needed to provide quite a few placeholders, and wrap everything in <a href="../../api/#EnzymeCore.Duplicated"><code>Duplicated</code></a> as all components of our function are vectors, not scalars. Let&#39;s go through and see what Enzyme did with all of those placeholders.</p><p>First we can look at what happened to the zero vectors out<em>now and out</em>old:</p><pre><code class="language-julia hljs">@show out_now, out_old</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">([20.025492723413333, 0.9911739432533333, 1.0, 35.500066788374795, 34.499933211625205, 34.5], [20.101970893653334, 0.9646957730133332, 1.0, 35.50026715349918, 34.49973284650082, 34.5])</code></pre><p>Comparing to the results of forward func:</p><pre><code class="language-julia hljs">@show states_smooth[2], states_unsmooth[2]</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">([20.025492723413333, 0.9911739432533333, 1.0, 35.500066788374795, 34.499933211625205, 34.5], [20.101970893653334, 0.9646957730133332, 1.0, 35.50026715349918, 34.49973284650082, 34.5])</code></pre><p>we see that Enzyme has computed and stored exactly the output of the forward step. Next, let&#39;s look at <code>din_now</code>:</p><pre><code class="language-julia hljs">@show din_now</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">6-element Vector{Float64}:
+ 0.41666666666666663
+ 0.41511917786666663
+ 0.5015474888
+ 0.49999999999999994
+ 0.49845251119999995
+ 0.5015474888</code></pre><p>Just a few numbers, but this is what makes AD so nice: Enzyme has exactly computed the derivative of all outputs with respect to the input in<em>now, evaluated at in</em>now, and acted with this gradient on what we gave as dout_now (in our case, all ones). In math language, this is just</p><p class="math-container">\[\text{din now} = (\frac{\partial \text{out now}(\text{in now})}{\partial \text{in now}} + \frac{\partial \text{out old}(\text{in now})}{\partial \text{in now}}) \text{dout now}\]</p><p>We note here that had we given dout<em>now and dout</em>now as something else, our results will change. Let&#39;s multiply them by two and see what happens.</p><pre><code class="language-julia hljs">din_now_new = zeros(6)
+din_old_new = zeros(6)
+out_now = zeros(6); dout_now = 2*ones(6)
+out_old = zeros(6); dout_old = 2*ones(6)
+autodiff(forward_func_4_AD, Duplicated([Tbar; Sbar], din_now_new), Duplicated([Tbar; Sbar], din_old_new),
+                    Duplicated(out_now, dout_now), Duplicated(out_old, dout_old));</code></pre><p>Now checking din<em>now</em>new and din<em>old</em>new we see</p><pre><code class="language-julia hljs">@show din_now_new</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">6-element Vector{Float64}:
+ 0.8333333333333333
+ 0.8302383557333333
+ 1.0030949776
+ 0.9999999999999999
+ 0.9969050223999999
+ 1.0030949776</code></pre><p>What happened? Enzyme is actually taking the computed gradient and acting on what we give as input to dout<em>now and dout</em>old. Checking this, we see</p><pre><code class="language-julia hljs">@show 2*din_now</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">6-element Vector{Float64}:
+ 0.8333333333333333
+ 0.8302383557333333
+ 1.0030949776
+ 0.9999999999999999
+ 0.9969050223999999
+ 1.0030949776</code></pre><p>and they match the new results.</p><h1 id="Example-2:-Full-sensitivity-calculations"><a class="docs-heading-anchor" href="#Example-2:-Full-sensitivity-calculations">Example 2: Full sensitivity calculations</a><a id="Example-2:-Full-sensitivity-calculations-1"></a><a class="docs-heading-anchor-permalink" href="#Example-2:-Full-sensitivity-calculations" title="Permalink"></a></h1><p>Now we want to use Enzyme for a bit more than just a single derivative. Let&#39;s say we&#39;d like to understand how sensitive the final temperature of Box One is to the initial salinity of Box Two. That is, given the function</p><p class="math-container">\[J = (1,0,0,0,0,0)^T \cdot \mathbf{x}(t_f)\]</p><p>we want Enzyme to calculate the derivative</p><p class="math-container">\[\frac{\partial J}{\partial \mathbf{x}(0)}\]</p><p>where <code>x(t)</code><code>is the state of the model at time t. If we think about</code>x(t_f)`` as solely depending on the initial condition, then this derivative is really</p><p class="math-container">\[\frac{\partial J}{\partial \mathbf{x}(0)} = \frac{\partial}{\partial \mathbf{x}(0)} \left( (1,0,0,0,0,0)^T \cdot L(\ldots(L(\mathbf{x}(0)))) \right)\]</p><p>with L(x(t)) = x(t + dt), i.e. one forward step. One could expand this derivative with the chain rule (and it would be very complicated), but really this is where Enzyme comes in. Each run of autodiff on our forward function is one piece of this big chain rule done for us! We also note that the chain rule goes from the outside in, so we start with the derivative of the forward function at the final state, and work backwards until the initial state. To get Enzyme to do this, we complete the following steps:</p><ol><li>Run the forward model and store outputs (in a real ocean model this wouldn&#39;t be    feasible and we&#39;d need to use checkpointing)</li><li>Compute the initial derivative from the final state</li><li>Use Enzyme to work backwards until we reach the desired derivative.</li></ol><p>For simplicity we define a function that takes completes our AD steps</p><pre><code class="language-julia hljs">function ad_calc(in_now, in_old, M)
+
+dout_old = [1.0;0.0;0.0;0.0;0.0;0.0]
+dout_now = [0.0;0.0;0.0;0.0;0.0;0.0]
+
+for j = M:-1:1
+
+    din_now = zeros(6)
+    din_old = zeros(6)
+
+    autodiff(forward_func_4_AD, Duplicated(in_now[j], din_now),
+            Duplicated(in_old[j], din_old), Duplicated(zeros(6), dout_old),
+            Duplicated(zeros(6), dout_now))
+
+    dout_old = copy(din_old)
+    dout_now = copy(din_now)
+
+    if j == 1
+        return din_now, din_old
+    end
+
+end
+
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">ad_calc (generic function with 1 method)</code></pre><p>First we complete step one and run the forward model:</p><pre><code class="language-julia hljs">const M = 10000             ## Deciding on total number of forward steps to take
+
+states_smooth, states_unsmooth = forward_func(copy([Tbar; Sbar]), copy([Tbar; Sbar]), 10*day, M);</code></pre><p>Next, we pass all of our states to the AD function to get back to the desired derivative:</p><pre><code class="language-julia hljs">adjoint_now, adjoint_old = ad_calc(states_unsmooth, states_smooth, M);</code></pre><p>And we&#39;re done! We were interested in sensitivity to the initial salinity of box two, which will live in what we&#39;ve called <code>adjoint_old</code>. Checking this value we see</p><pre><code class="language-julia hljs">@show adjoint_old[5]</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">0.0061613959575951786</code></pre><p>As it stands this is just a number, but a good check that Enzyme has computed what we want is to approximate the derivative with a Taylor series. Specifically,</p><p class="math-container">\[J(\mathbf{x}(0) + \varepsilon) \approx J(\mathbf{x}(0)) +
+\varepsilon \frac{\partial J}{\partial \mathbf{x}(0)}\]</p><p>and a simple rearrangement yields</p><p class="math-container">\[\frac{\partial J}{\partial \mathbf{x}(0)} \approx
+\frac{J(\mathbf{x}(0) + \varepsilon)  - J(\mathbf{x}(0))}{\varepsilon}\]</p><p>Hopefully we see that the analytical values converge close to the one we found with Enzyme:</p><pre><code class="language-julia hljs"># unperturbed final state
+use_to_check = states_smooth[M+1]
+
+# a loop to compute the perturbed final state
+diffs = []
+step_sizes = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10]
+for eps in step_sizes
+    new1 = Tbar
+    new2 = Sbar + [0.0;eps;0.0]
+    state_old = [new1; new2];
+    state_new = zeros(6);
+    state_now = [Tbar; Sbar];
+
+    for t = 1:M
+
+        rho_now = rho_func(state_now)
+        u_now = U_func(rho_now)
+        state_new = timestep_func(state_now, state_old, u_now, 10*day)
+
+        for j = 1:6
+            state_now[j] = state_now[j] + robert_filter_coeff * (state_new[j] - 2.0 * state_now[j] + state_old[j])
+        end
+
+        state_old = state_now
+        state_now = state_new
+
+
+    end
+
+    temp = (state_old[1] - use_to_check[1])/eps;
+    push!(diffs, temp)
+
+end</code></pre><p>Then checking what we found the derivative to be analytically:</p><pre><code class="language-julia hljs">@show diffs</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">10-element Vector{Any}:
+ 0.0057270806669862395
+ 0.006114968958925715
+ 0.006156721866545922
+ 0.0061609284074393145
+ 0.00616134023800896
+ 0.006161283039318732
+ 0.006160796317544737
+ 0.0061451288502212265
+ 0.006068034963391256
+ 0.006359357485052897</code></pre><p>which comes very close to our calculated value. We can go further and check the percent difference to see</p><pre><code class="language-julia hljs">@show abs.(diffs .- adjoint_old[5])./adjoint_old[5]</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">10-element Vector{Float64}:
+ 0.07048975485393967
+ 0.007535142845710605
+ 0.0007586091011558111
+ 7.588380280734036e-5
+ 9.043338003577594e-6
+ 1.8326735892867866e-5
+ 9.73221092377159e-5
+ 0.0026401658789514375
+ 0.015152571729923719
+ 0.03212933056407292</code></pre><p>and we get down to a percent difference on the order of <span>$1e^{-5}$</span>, showing Enzyme calculated the correct derivative. Success!</p><hr/><p><em>This page was generated using <a href="https://github.com/fredrikekre/Literate.jl">Literate.jl</a>.</em></p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../../">« Home</a><a class="docs-footer-nextpage" href="../../api/">API »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 0.27.23 on <span class="colophon-date" title="Tuesday 11 October 2022 02:01">Tuesday 11 October 2022</span>. Using Julia version 1.8.2.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
