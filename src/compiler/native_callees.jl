@@ -36,7 +36,7 @@ use_native_callees(interp::Interpreter.EnzymeInterpreter) =
 """
     native_edge(interp, x) -> Union{Nothing, Tuple{CodeInstance, Ptr{Cvoid}}}
 
-Return what [`native_entry`](@ref) does for `x` if it is a MethodInstance `interp` resolves
+Return what `native_entry` does for `x` if it is a MethodInstance `interp` resolves
 to native code (see `typeinf_edge` below), and `nothing` otherwise. Codegen calls one it has
 no CodeInstance for through `jl_invoke`, which `check_ir!` marks with
 [`mark_inactive_invoke!`](@ref).
@@ -179,7 +179,7 @@ end
     """
         native_callee(interp::EnzymeInterpreter, callee::CodeInstance)
 
-    Like [`native_entry`](@ref) for a callee `interp` inferred: the native code must have
+    Like `native_entry` for a callee `interp` inferred: the native code must have
     the return type `callee` has.
     """
     function native_callee(interp::Interpreter.EnzymeInterpreter, callee::Core.CodeInstance)
