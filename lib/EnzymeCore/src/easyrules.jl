@@ -439,7 +439,7 @@ function scalar_rrule_expr(__source__, f, call, setup_stmts, inputs, input_names
                     continue
                 end
                 # Partials refer to the unwrapped value (`x`), not the annotation (`ann_x`).
-                val_name = Symbol(sym_name[length("ann_")+1:end])
+                val_name = Symbol(sym_name[(length("ann_") + 1):end])
                 VT = eltype(inp_types[inum])
                 if VT <: AbstractFloat || VT <: Integer
                     push!(caches, nothing)
