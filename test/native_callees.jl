@@ -111,10 +111,6 @@ end
         mi_kw_ruled = kwcall_methodinstance(nc_kw_ruled, nt, Int)
         @test Enzyme.Compiler.native_entry(interp, mi_kw) !== nothing
         @test Enzyme.Compiler.native_entry(interp, mi_kw_ruled) === nothing
-        # Memoized per world and rules.
-        key = Enzyme.Compiler.native_entry_key(interp, mi_kw)
-        @test haskey(Enzyme.Compiler.NATIVE_ENTRY_CACHE, key)
-        @test Enzyme.Compiler.NATIVE_ENTRY_CACHE[key] === Enzyme.Compiler.native_entry(interp, mi_kw)
         @test autodiff(Forward, nc_kw_user, Duplicated(2.0, 1.0))[1] ≈ nc_kw(2; iters = 3)
         @test autodiff(Reverse, nc_kw_user, Active, Active(2.0))[1][1] ≈ nc_kw(2; iters = 3)
 

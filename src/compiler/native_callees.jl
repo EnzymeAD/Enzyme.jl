@@ -89,40 +89,6 @@ function all_guaranteed_const(params::Core.SimpleVector, world::UInt)::Bool
     return true
 end
 
-# The results of `native_entry`, which infers and, on Julia 1.12 and later, compiles a
-# callee natively: `typeinf_edge` asks for every edge inference visits, and
-# `compileable_specialization`, `ci_cache_populate` and `check_ir!` ask again for the same
-# callees. A result holds for a world and the rules of the interpreter (see
-# `enzyme_call_kind`).
-const NATIVE_ENTRY_CACHE = Dict{Any, Union{Nothing, Tuple{Core.CodeInstance, Ptr{Cvoid}}}}()
-const native_entry_lock = ReentrantLock()
-
-function native_entry_key(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance)
-    return (
-        mi, interp.world, interp.forward_rules, interp.reverse_rules, interp.inactive_rules,
-        method_tables(Core.Compiler.method_table(interp)),
-    )
-end
-
-"""
-    native_entry(interp::EnzymeInterpreter, mi::MethodInstance)
-
-Return the native `CodeInstance` of `mi`, and on Julia 1.12 and later its specialized entry
-point, when Enzyme never differentiates `mi` and can call its natively compiled code
-instead, and `nothing` otherwise (see `native_entry_uncached`, whose result this
-memoizes per world and per the rules of `interp`).
-"""
-function native_entry(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance)
-    key = native_entry_key(interp, mi)
-    found = @lock native_entry_lock get(NATIVE_ENTRY_CACHE, key, missing)
-    found === missing || return found
-    # Not under the lock: native inference and compilation may take a while, and may
-    # themselves compile.
-    native = native_entry_uncached(interp, mi)
-    @lock native_entry_lock NATIVE_ENTRY_CACHE[key] = native
-    return native
-end
-
 # Julia 1.12 and later: GPUCompiler emits exactly the CodeInstances it gathers for
 # `jl_emit_native`, with `ci_cache_populate` on GPUCompiler 1.x and with CompilerCaching's
 # `get_codeinfos` on 2.x. The overrides below follow those for these versions.
@@ -161,11 +127,11 @@ end
     end
 
     """
-        native_entry_uncached(interp::EnzymeInterpreter, mi::MethodInstance)
+        native_entry(interp::EnzymeInterpreter, mi::MethodInstance)
 
     Return the native `CodeInstance` of `mi` and its specialized entry point when Enzyme
     never differentiates `mi` and can call its natively compiled code instead, and `nothing`
-    otherwise ([`native_entry`](@ref) memoizes this).
+    otherwise.
 
     `mi` must have an `EnzymeRules.inactive` rule, or take and return only guaranteed-const
     types, and no other rule or special handling, asked of its signature without the
@@ -176,7 +142,7 @@ end
     [`native_uses_specsig`](@ref)). A small method Julia would inline gets `nothing`, so
     that it is inlined as before.
     """
-    function native_entry_uncached(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance)
+    function native_entry(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance)
         CC = Core.Compiler
         specTypes = mi.specTypes
         specTypes isa DataType || return nothing
@@ -585,17 +551,17 @@ elseif VERSION < v"1.12-"
     # arguments and result. `check_ir!` marks such a call inactive (see `native_edge`).
 
     """
-        native_entry_uncached(interp::EnzymeInterpreter, mi::MethodInstance)
+        native_entry(interp::EnzymeInterpreter, mi::MethodInstance)
 
     Return the CodeInstance Julia's native interpreter infers for `mi` when Enzyme never
-    differentiates `mi` and can call its native code instead, and `nothing` otherwise
-    ([`native_entry`](@ref) memoizes this): as on Julia 1.12, `mi` must have an
-    `EnzymeRules.inactive` rule, or take and return only guaranteed-const types, and no
-    other rule or special handling, and a small method Julia would inline gets `nothing`.
+    differentiates `mi` and can call its native code instead, and `nothing` otherwise: as
+    on Julia 1.12, `mi` must have an `EnzymeRules.inactive` rule, or take and return only
+    guaranteed-const types, and no other rule or special handling, and a small method
+    Julia would inline gets `nothing`.
     The second element is unused (`C_NULL`): the call goes through `jl_invoke`, which
     compiles the callee when it first runs.
     """
-    function native_entry_uncached(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance)
+    function native_entry(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance)
         CC = Core.Compiler
         specTypes = mi.specTypes
         specTypes isa DataType || return nothing
@@ -665,7 +631,7 @@ elseif VERSION < v"1.12-"
 
 else
 
-    native_entry_uncached(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance) = nothing
+    native_entry(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance) = nothing
     bind_native_callees!(mod::LLVM.Module, world::UInt) = nothing
 
 end

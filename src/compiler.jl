@@ -8428,10 +8428,6 @@ function clear_caches!()
         empty!(GLOBAL_FWD_NATIVE_CACHE.dict)
         empty!(GLOBAL_REV_NATIVE_CACHE.dict)
     end
-
-    # The native code of derivative-free callees, whose `CodeInstance`s carry entry
-    # addresses too (see compiler/native_callees.jl).
-    @lock native_entry_lock empty!(NATIVE_ENTRY_CACHE)
     return nothing
 end
 
