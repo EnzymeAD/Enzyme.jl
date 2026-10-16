@@ -123,12 +123,12 @@ function insert_julia_value!(ctx::EnzymeContext, hint::String, @nospecialize(val
     return
 end
 
-# Create (or fetch) the `ejl_<k>` global that stands for the Julia object `val` in the module
-# `B` is positioned in. Top-level and `@nospecialize`d on purpose: as a closure inside
-# `unsafe_to_llvm` this captured `val`, so the closure type embedded `typeof(val)` and a fresh
-# specialization (~20 ms of compile) was needed for every distinct global object ever emitted.
+# Create (or fetch) the `ejl_<k>` global that stands for the Julia object `val` in `mod`.
+# Top-level and `@nospecialize`d on purpose: as a closure inside `unsafe_to_llvm` this
+# captured `val`, so the closure type embedded `typeof(val)` and a fresh specialization
+# (~20 ms of compile) was needed for every distinct global object ever emitted.
 function setup_global(
-        B::LLVM.IRBuilder,
+        mod::LLVM.Module,
         T_jlvalue::LLVM.StructType,
         world::Union{UInt, Nothing},
         insert_name_if_not_exists::Union{String, Nothing},
@@ -136,7 +136,6 @@ function setup_global(
         @nospecialize(val),
         enzyme_ctx::Union{EnzymeContext, Nothing},
     )::LLVM.Value
-    mod = LLVM.parent(LLVM.parent(LLVM.position(B)))
     globs = LLVM.globals(mod)
     if Base.haskey(globs, "ejl_" * k)
         return globs["ejl_" * k]
@@ -185,6 +184,11 @@ end
 # `insert_name_if_not_exists` puts `val` in the table of the compilation `enzyme_ctx` under a
 # name, which the code then refers to (see `insert_julia_value!`).
 function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_not_exists::Union{String, Nothing} = nothing, enzyme_ctx::Union{EnzymeContext, Nothing} = nothing)::LLVM.Value
+    mod = LLVM.parent(LLVM.parent(LLVM.position(B)))
+    return unsafe_to_llvm(mod, val; insert_name_if_not_exists, enzyme_ctx)
+end
+
+function unsafe_to_llvm(mod::LLVM.Module, @nospecialize(val); insert_name_if_not_exists::Union{String, Nothing} = nothing, enzyme_ctx::Union{EnzymeContext, Nothing} = nothing)::LLVM.Value
     T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
@@ -193,18 +197,18 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
 
     for (k, v) in Compiler.JuliaGlobalNameMap
         if v === val
-            return setup_global(B, T_jlvalue, world, insert_name_if_not_exists, k, val, enzyme_ctx)
+            return setup_global(mod, T_jlvalue, world, insert_name_if_not_exists, k, val, enzyme_ctx)
         end
     end
 
     for (k, v) in Compiler.JuliaEnzymeNameMap
         if v === val
-            return setup_global(B, T_jlvalue, world, insert_name_if_not_exists, k, val, enzyme_ctx)
+            return setup_global(mod, T_jlvalue, world, insert_name_if_not_exists, k, val, enzyme_ctx)
         end
     end
 
     if insert_name_if_not_exists !== nothing
-        return setup_global(B, T_jlvalue, world, insert_name_if_not_exists, insert_name_if_not_exists, val, enzyme_ctx)
+        return setup_global(mod, T_jlvalue, world, insert_name_if_not_exists, insert_name_if_not_exists, val, enzyme_ctx)
     end
 
     # XXX: This prevents code from being runtime relocatable
@@ -218,6 +222,27 @@ function unsafe_to_llvm(B::LLVM.IRBuilder, @nospecialize(val); insert_name_if_no
     LLVM.const_addrspacecast(fill_val, T_prjlvalue)
 end
 export unsafe_to_llvm, unsafe_nothing_to_llvm
+
+"""
+    type_metadata(mod, T)
+
+The metadata node `!{<literal_pointer_val(T)>}` recording the Julia type `T` on an
+instruction of `mod`: the `ejl_` global standing for `T` if it has one, so that the
+reference stays relocatable, and an `inttoptr` constant otherwise. Read it back with
+`type_from_metadata`. Types are never inserted into the table of a compilation, only
+referred to by their well-known names, so no context is needed.
+
+Metadata does not count as a use, so the global is pinned in `llvm.compiler.used`;
+otherwise GlobalDCE deletes it and leaves `!{null}` behind. `unpin_ejl_globals!` drops
+it again where the global is replaced.
+"""
+function type_metadata(mod::LLVM.Module, @nospecialize(T::Type))::LLVM.MDNode
+    val = unsafe_to_llvm(mod, T)
+    if val isa LLVM.GlobalVariable
+        LLVM.set_compiler_used!(mod, val)
+    end
+    return LLVM.MDNode(LLVM.Metadata[LLVM.Metadata(val)])
+end
 
 function makeInstanceOf(B::LLVM.IRBuilder, @nospecialize(T::Type))
     if !Core.Compiler.isconstType(T)

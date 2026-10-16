@@ -37,7 +37,8 @@ import Enzyme:
     ismutabletype,
     create_fresh_codeinfo,
     add_edge!,
-    arg_operands_view
+    arg_operands_view,
+    type_metadata
 
 using Enzyme
 using ScopedValues: @with
@@ -671,7 +672,7 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta, enzyme_ctx::EnzymeCon
             if LLVM.name(fn) == "julia.gc_alloc_obj"
                 legal, RT, _ = abs_typeof(inst, enzyme_ctx)
                 if legal
-                    metadata(inst)["enzymejl_gc_alloc_rt"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
+                    metadata(inst)["enzymejl_gc_alloc_rt"] = type_metadata(mod, RT)
                 end
             end
         end
@@ -1115,9 +1116,48 @@ function ejl_value(key::AbstractString, inserted::Dict{String, Any})::Union{Some
     return Some{Any}(unbind(val))
 end
 
+"""
+    unpin_ejl_globals!(mod, only = nothing)
+
+Drop the `ejl_` globals `type_metadata` pinned in `llvm.compiler.used` of `mod` (only `only`,
+if given) as they are about to be replaced: a constant or a load may not be a member. The
+metadata keeps referring to what replaces a global.
+"""
+function unpin_ejl_globals!(mod::LLVM.Module, only::Union{LLVM.GlobalVariable, Nothing} = nothing)
+    globs = globals(mod)
+    haskey(globs, "llvm.compiler.used") || return nothing
+    used = globs["llvm.compiler.used"]
+    init = LLVM.initializer(used)
+    init isa LLVM.ConstantArray || return nothing
+    keep = LLVM.Constant[]
+    for member in operands(init)
+        base = member
+        while base isa LLVM.ConstantExpr
+            base = operands(base)[1]
+        end
+        unpin = if only === nothing
+            base isa LLVM.GlobalVariable && startswith(LLVM.name(base), "ejl_")
+        else
+            base == only
+        end
+        unpin || push!(keep, member)
+    end
+    length(keep) == length(operands(init)) && return nothing
+    elty = LLVM.eltype(value_type(init))
+    LLVM.erase!(used)
+    if !isempty(keep)
+        used = GlobalVariable(mod, LLVM.ArrayType(elty, length(keep)), "llvm.compiler.used")
+        linkage!(used, LLVM.API.LLVMAppendingLinkage)
+        LLVM.section!(used, "llvm.metadata")
+        LLVM.initializer!(used, LLVM.ConstantArray(elty, keep))
+    end
+    return nothing
+end
+
 # Replace the global `g`, which stands for the Julia value `val`, with the address of the value.
 # `unsafe_to_ptr` roots the value for good, as the code holds its address.
 function bake_julia_value_global!(g::LLVM.GlobalVariable, @nospecialize(val))
+    unpin_ejl_globals!(LLVM.parent(g), g)
     T_pjlvalue = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]))
     addr = LLVM.ConstantInt(reinterpret(UInt, unsafe_to_ptr(val)))
     replace_uses!(g, LLVM.const_addrspacecast(LLVM.const_inttoptr(addr, T_pjlvalue), value_type(g)))
@@ -1243,6 +1283,7 @@ function relocate_julia_value_globals!(mod::LLVM.Module, relocs, inserted::Dict{
         found = ejl_value(key, inserted)
         found === nothing && continue
         val = something(found)
+        unpin_ejl_globals!(mod, g)
 
         # The instructions using `g`, directly or through constant expressions.
         users = Set{LLVM.Instruction}()
@@ -6878,7 +6919,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
                         end
                         lRT = convert(LLVMType, RT)
                         if LLVM.sizeof(DL, lRT) == LLVM.sizeof(DL, at)
-                            metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
+                            metadata(inst)["enzymejl_allocart"] = type_metadata(mod, RT)
                             if EmitTypeNames[]
                                 metadata(inst)["enzymejl_allocart_name"] = MDNode(LLVM.Metadata[MDString(string(RT))])
                             end
@@ -6899,7 +6940,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
                 !haskey(metadata(inst), "enzymejl_gc_alloc_rt")
             RT = byref_alloca_type(inst, DL)
             if RT !== nothing
-                metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
+                metadata(inst)["enzymejl_allocart"] = type_metadata(mod, RT)
                 if EmitTypeNames[]
                     metadata(inst)["enzymejl_allocart_name"] = MDNode(LLVM.Metadata[MDString(string(RT))])
                 end
