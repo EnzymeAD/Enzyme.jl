@@ -617,4 +617,38 @@ split_scale_loss(v) = sum(Base.inferencebarrier(s -> split_scale(s))(SplitModeAr
     @test Enzyme.gradient(Reverse, split_scale_loss, [1.0, 2.0])[1] ≈ [2.0, 2.0]
 end
 
+# As in rules.jl: the rule takes batched shadows of `Any`, held in a boxed tuple.
+mutable struct ScaleBox
+    v::Float64
+end
+@noinline boxed_scale(@nospecialize(b), s::Float64) = ScaleBox(b.v * s)
+function augmented_primal(config, ::Const{typeof(boxed_scale)}, ::Type, b::Union{Duplicated, BatchDuplicated}, s::Const)
+    p = boxed_scale(b.val, s.val)
+    N = EnzymeRules.width(config)
+    d = N == 1 ? ScaleBox(0.0) : ntuple(i -> ScaleBox(0.0), Val(N))
+    return EnzymeRules.AugmentedReturn(
+        EnzymeRules.needs_primal(config) ? p : nothing,
+        EnzymeRules.needs_shadow(config) ? d : nothing, d
+    )
+end
+function reverse(config, ::Const{typeof(boxed_scale)}, ::Type, d, b::Union{Duplicated, BatchDuplicated}, s::Const)
+    N = EnzymeRules.width(config)
+    if N == 1
+        b.dval.v += d.v * s.val
+    else
+        for i in 1:N
+            b.dval[i].v += d[i].v * s.val
+        end
+    end
+    return (nothing, nothing)
+end
+boxed_scale_val(b) = boxed_scale(Base.inferencebarrier(b), 3.0).v
+
+@testset "Batched reverse rule with shadows of Any" begin
+    d1, d2 = ScaleBox(0.0), ScaleBox(0.0)
+    autodiff(Reverse, boxed_scale_val, Active, BatchDuplicated(ScaleBox(2.0), (d1, d2)))
+    @test d1.v ≈ 3.0
+    @test d2.v ≈ 3.0
+end
+
 end # ReverseRules

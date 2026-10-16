@@ -530,6 +530,27 @@ end
 
 const TypesNotToDisect = Set{Type}([BigFloat])
 
+"""
+    callsite_rettype(call::LLVM.CallInst)
+
+Return the type recorded on `call` as its `enzymejl_rt` attribute, or `nothing`.
+"""
+function callsite_rettype(call::LLVM.CallInst)
+    idx = reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex)
+    n = LLVM.API.LLVMGetCallSiteAttributeCount(call, idx)
+    n == 0 && return nothing
+    attrs = Vector{LLVM.API.LLVMAttributeRef}(undef, n)
+    LLVM.API.LLVMGetCallSiteAttributes(call, idx, attrs)
+    for a in attrs
+        attr = LLVM.Attribute(a)
+        if attr isa LLVM.StringAttribute && kind(attr) == "enzymejl_rt"
+            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(attr)))
+            return Base.unsafe_pointer_to_objref(ptr)
+        end
+    end
+    return nothing
+end
+
 function abs_typeof(
         @nospecialize(arg::LLVM.Value), enzyme_ctx::Union{EnzymeContext, Nothing},
         partial::Bool = false, seenphis = Set{LLVM.PHIInst}()
@@ -591,6 +612,18 @@ function abs_typeof(
 
         if nm == "julia.pointer_from_objref"
             return abs_typeof(operands(arg)[1], enzyme_ctx, partial, seenphis)
+        end
+
+        # A call resolved to native code during inference goes through `jl_invoke` on
+        # Julia 1.10 and 1.11 (see `typeinf_edge` in native_callees.jl): its result is
+        # the boxed value of the type native inference gave the MethodInstance, which
+        # `check_ir!` records on the call as `enzymejl_rt`.
+        if nm == "julia.call2" || nm == "jl_invoke" || nm == "ijl_invoke"
+            target = nm == "julia.call2" ? operands(arg)[1] : fn
+            if isa(target, LLVM.Function) && LLVM.name(target) in ("jl_invoke", "ijl_invoke")
+                RT = callsite_rettype(arg)
+                RT === nothing || return (true, RT, GPUCompiler.MUT_REF)
+            end
         end
 
         if nm == "julia.gc_loaded"
