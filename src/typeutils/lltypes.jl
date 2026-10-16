@@ -234,6 +234,48 @@ function store_nonjl_types!(B::LLVM.IRBuilder, @nospecialize(startval::LLVM.Valu
     return
 end
 
+"""
+    atomic_add_nonjl_delta!(B, pre, cur, p)
+
+Atomically add `cur - pre` to the memory at `p`, which holds a value of the type of `cur`,
+for each `float` and `double` field. This writes back only what changed since `pre` was
+loaded from `p`, so concurrent atomic updates of `p` are kept, unlike with
+`store_nonjl_types!`.
+
+Other floating-point and vector fields get `cur` stored non-atomically, as in
+`store_nonjl_types!`. Integer and pointer fields carry no derivative and are not written.
+"""
+function atomic_add_nonjl_delta!(B::LLVM.IRBuilder, @nospecialize(pre::LLVM.Value), @nospecialize(cur::LLVM.Value), @nospecialize(p::LLVM.Value))
+    @assert value_type(pre) == value_type(cur)
+    todo = Tuple{Tuple, LLVM.Value, LLVM.Value}[((), pre, cur)]
+    while length(todo) != 0
+        path, pv, cv = popfirst!(todo)
+        ty = value_type(cv)
+        if isa(ty, LLVM.ArrayType) || isa(ty, LLVM.StructType)
+            n = isa(ty, LLVM.ArrayType) ? length(ty) : length(LLVM.elements(ty))
+            for i in 1:n
+                push!(todo, ((path..., i - 1), extract_value!(B, pv, i - 1), extract_value!(B, cv, i - 1)))
+            end
+            continue
+        end
+        if isa(ty, LLVM.IntegerType) || isa(ty, LLVM.PointerType)
+            continue
+        end
+        parray = LLVM.Value[LLVM.ConstantInt(LLVM.IntType(64), 0)]
+        for v in path
+            push!(parray, LLVM.ConstantInt(LLVM.IntType(32), v))
+        end
+        gptr = gep!(B, value_type(cur), p, parray)
+        if isa(ty, LLVM.LLVMFloat) || isa(ty, LLVM.LLVMDouble)
+            delta = fsub!(B, cv, pv)
+            atomic_rmw!(B, LLVM.API.LLVMAtomicRMWBinOpFAdd, gptr, delta, LLVM.API.LLVMAtomicOrderingMonotonic, false)
+        else
+            store!(B, cv, gptr)
+        end
+    end
+    return
+end
+
 function get_julia_inner_types(B::LLVM.IRBuilder, @nospecialize(p::Union{Nothing, LLVM.Value}), @nospecialize(startvals::Vararg{LLVM.Value}); added = LLVM.API.LLVMValueRef[])
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
