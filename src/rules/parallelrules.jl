@@ -185,36 +185,33 @@ function runtime_pfor_rev(
     return nothing
 end
 
+# The derivatives of a loop body change with the activity of the body, the width
+# and the mode settings. The cache key contains all of these values. Thus a call
+# with different settings does not use a derivative compiled for other settings.
+function threadsfor_cache_key(dFT, e_tt, modifiedBetween, gutils)
+    key = (dFT, e_tt, modifiedBetween, get_runtime_activity(gutils), get_strong_zero(gutils))
+    return string(hash(key); base = 16)
+end
+
+function threadsfor_cached(attributes, name::String)
+    for fattr in collect(attributes)
+        if isa(fattr, LLVM.StringAttribute) && kind(fattr) == name
+            return value(fattr)
+        end
+    end
+    return nothing
+end
+
 @inline function threadsfor_common(orig, gutils, B, mode, enzyme_ctx, tape = nothing)
 
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     llvmfn = LLVM.called_operand(orig)
     mi = nothing
-    fwdmodenm = nothing
-    augfwdnm = nothing
-    adjointnm = nothing
-    TapeType = nothing
-    attributes = function_attributes(llvmfn)
-    for fattr in collect(attributes)
-        if isa(fattr, LLVM.StringAttribute)
-            if kind(fattr) == "enzymejl_mi"
-                ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
-                mi = Base.unsafe_pointer_to_objref(ptr)
-            end
-            if kind(fattr) == "enzymejl_tapetype"
-                ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
-                TapeType = Base.unsafe_pointer_to_objref(ptr)
-            end
-            if kind(fattr) == "enzymejl_forward"
-                fwdmodenm = value(fattr)
-            end
-            if kind(fattr) == "enzymejl_augforward"
-                augfwdnm = value(fattr)
-            end
-            if kind(fattr) == "enzymejl_adjoint"
-                adjointnm = value(fattr)
-            end
+    for fattr in collect(function_attributes(llvmfn))
+        if isa(fattr, LLVM.StringAttribute) && kind(fattr) == "enzymejl_mi"
+            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
+            mi = Base.unsafe_pointer_to_objref(ptr)
         end
     end
 
@@ -230,30 +227,8 @@ end
         if !legal
             throw(AssertionError("Could not determine the type of the Threads.@threads loop body $(string(operands(orig)[1]))"))
         end
-        fwdmodenm = nothing
-        augfwdnm = nothing
-        adjointnm = nothing
-        TapeType = nothing
-        attributes = function_attributes(orig)
-        for fattr in collect(attributes)
-            if isa(fattr, LLVM.StringAttribute)
-                if kind(fattr) == "enzymejl_tapetype"
-                    ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
-                    TapeType = Base.unsafe_pointer_to_objref(ptr)
-                end
-                if kind(fattr) == "enzymejl_forward"
-                    fwdmodenm = value(fattr)
-                end
-                if kind(fattr) == "enzymejl_augforward"
-                    augfwdnm = value(fattr)
-                end
-                if kind(fattr) == "enzymejl_adjoint"
-                    adjointnm = value(fattr)
-                end
-            end
-        end
     end
-
+    attributes = boxed ? function_attributes(orig) : function_attributes(llvmfn)
 
     # TODO actually do modifiedBetween
     e_tt = Tuple{Const{Int}}
@@ -289,7 +264,10 @@ end
 
     dFT = (dupClosure ? (width == 1 ? Duplicated : (BatchDuplicated{T, Int(width)} where T)) : Const){funcT}
 
+    TapeType = nothing
     if mode == API.DEM_ForwardMode
+        cachekey = threadsfor_cache_key(dFT, e_tt, modifiedBetween, gutils)
+        fwdmodenm = threadsfor_cached(attributes, "enzymejl_forward_" * cachekey)
         if fwdmodenm === nothing
             etarget = Compiler.EnzymeTarget()
             eparams = Compiler.EnzymeCompilerParams(
@@ -319,7 +297,7 @@ end
             LLVM.link!(mod, cmod)
             merge_julia_value_table!(enzyme_ctx, value_table)
 
-            push!(attributes, StringAttribute("enzymejl_forward", fwdmodenm))
+            push!(attributes, StringAttribute("enzymejl_forward_" * cachekey, fwdmodenm))
             push!(
                 function_attributes(functions(mod)[fwdmodenm]),
                 EnumAttribute("alwaysinline"),
@@ -348,6 +326,15 @@ end
                 @assert mi2 !== nothing
     		dFT = (dupClosure ? (width == 1 ? Duplicated : (BatchDuplicated{T, Int(width)} where T)) : Const){funcT}
             end
+        end
+
+        cachekey = threadsfor_cache_key(dFT, e_tt, modifiedBetween, gutils)
+        augfwdnm = threadsfor_cached(attributes, "enzymejl_augforward_" * cachekey)
+        adjointnm = threadsfor_cached(attributes, "enzymejl_adjoint_" * cachekey)
+        TapeType = threadsfor_cached(attributes, "enzymejl_tapetype_" * cachekey)
+        if TapeType !== nothing
+            ptr = reinterpret(Ptr{Cvoid}, parse(UInt, TapeType))
+            TapeType = Base.unsafe_pointer_to_objref(ptr)
         end
 
         if augfwdnm === nothing || adjointnm === nothing
@@ -380,14 +367,14 @@ end
             LLVM.link!(mod, cmod)
             merge_julia_value_table!(enzyme_ctx, value_table)
 
-            push!(attributes, StringAttribute("enzymejl_augforward", augfwdnm))
+            push!(attributes, StringAttribute("enzymejl_augforward_" * cachekey, augfwdnm))
             push!(
                 function_attributes(functions(mod)[augfwdnm]),
                 EnumAttribute("alwaysinline"),
             )
             permit_inlining!(functions(mod)[augfwdnm])
 
-            push!(attributes, StringAttribute("enzymejl_adjoint", adjointnm))
+            push!(attributes, StringAttribute("enzymejl_adjoint_" * cachekey, adjointnm))
             push!(
                 function_attributes(functions(mod)[adjointnm]),
                 EnumAttribute("alwaysinline"),
@@ -397,7 +384,7 @@ end
             push!(
                 attributes,
                 StringAttribute(
-                    "enzymejl_tapetype",
+                    "enzymejl_tapetype_" * cachekey,
                     string(convert(UInt, unsafe_to_pointer(TapeType))),
                 ),
             )
@@ -431,10 +418,8 @@ end
     end
 
     ppfuncT = pfuncT
-    dpfuncT = width == 1 ? pfuncT : NTuple{Int(width),pfuncT}
 
     if refed
-        dpfuncT = Base.RefValue{dpfuncT}
         pfuncT = Base.RefValue{pfuncT}
     end
 
@@ -564,19 +549,19 @@ end
 		   end
 	        
                 spllty = LLVM.LLVMType(API.EnzymeGetShadowType(width, pllty))
-                pv = nothing
-	        
+                # The pointer to the shadow body of each lane. It is empty when the shadow is not passed by reference.
+                pvs = LLVM.Value[]
+
                 dv2 = if !boxed && inline_roots_type(ppfuncT) != 0
                    invert_pointer(gutils, operands(orig)[2], B)
                 end
 
                 if value_type(dv) != spllty
-                    pv = dv
                     if width == 1
                         if boxed
                             dv = addrspacecast!(fwdbuilder, dv, LLVM.PointerType(spllty, Derived))
-                            pv = dv
                         end
+                        push!(pvs, dv)
                         dv = load!(fwdbuilder, spllty, dv)
 			            if dv2 !== nothing
                            dv = recombine_value!(fwdbuilder, dv, dv2)
@@ -588,6 +573,7 @@ end
                             if boxed
                                 arg = addrspacecast!(fwdbuilder, arg, LLVM.PointerType(pllty, Derived))
                             end
+                            push!(pvs, arg)
                             arg = load!(fwdbuilder, pllty, arg)
                             if dv2 !== nothing
                               arg2 = extract_value!(fwdbuilder, dv2, idx - 1)
@@ -607,28 +593,31 @@ end
             end
 
             if refed
-                dval0 = dval = emit_allocobj!(B, dpfuncT)
-                dval =
-                    bitcast!(B, dval, LLVM.PointerType(spllty, addrspace(value_type(dval))))
-                dval = addrspacecast!(B, dval, LLVM.PointerType(spllty, Derived))
-                store!(B, dv, dval)
-                if any_jltypes(spllty)
-                    emit_writebarrier!(B, get_julia_inner_types(B, dval0, dv))
-                end
-                pvl = lookup_value(gutils, pv, B)
-                if mode == API.DEM_ReverseModeGradient
-                    if width == 1
-                       copy_floats_into!(B, spllty, dval, pvl)
-                    else
-                       for idx = 1:width
-                           arg = extract_value!(B, pvl, idx - 1)
-                           g0 = inbounds_gep!(B, spllty, dval, LLVM.Value[LLVM.ConstantInt(Int64(0)), LLVM.ConstantInt(Int32(idx-1))])
-                           copy_floats_into!(B, pllty, g0, arg)
-                        end
+                # The shadow type is `BatchDuplicated{RefValue{T}, width}`. Thus each lane gets a separate `RefValue`.
+                dval0 = nothing
+                for idx in 1:width
+                    lane0 = lane = emit_allocobj!(B, pfuncT)
+                    lane = bitcast!(B, lane, LLVM.PointerType(pllty, addrspace(value_type(lane))))
+                    lane = addrspacecast!(B, lane, LLVM.PointerType(pllty, Derived))
+                    laneval = width == 1 ? dv : extract_value!(B, dv, idx - 1)
+                    store!(B, laneval, lane)
+                    if any_jltypes(pllty)
+                        emit_writebarrier!(B, get_julia_inner_types(B, lane0, laneval))
                     end
-                end
-                if pv !== nothing
-                    push!(copies, (pv, dval, spllty))
+                    if !isempty(pvs)
+                        if mode == API.DEM_ReverseModeGradient
+                            copy_floats_into!(B, pllty, lane, lookup_value(gutils, pvs[idx], B))
+                        end
+                        push!(copies, (pvs[idx], lane, pllty))
+                    end
+                    if width == 1
+                        dval0 = lane0
+                    else
+                        if dval0 === nothing
+                            dval0 = UndefValue(LLVM.ArrayType(value_type(lane0), width))
+                        end
+                        dval0 = insert_value!(B, dval0, lane0, idx - 1)
+                    end
                 end
             else
                 dval0 = dv
