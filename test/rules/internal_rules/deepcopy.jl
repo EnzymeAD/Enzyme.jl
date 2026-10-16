@@ -158,3 +158,50 @@ const U0_test = [2.0]
         @test U0_test ≈ [2.0]
     end
 end
+
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3528
+struct Foo3528{T}
+    foo2::T
+end
+struct Bar3528{V, S}
+    bar1::V
+    nested_foo::S
+end
+
+@testset "deepcopy of mixed-activity structs (#3528)" begin
+    # Return type Bar3528{Vector{Float64}, Foo3528{Float64}} holds both a GC
+    # pointer and an active float and is returned through the type-unstable
+    # (runtime activity) path in split reverse mode.
+    function f3528(x, b)
+        b = deepcopy(b)
+        return sum(b.nested_foo.foo2 * x .+ b.bar1)
+    end
+    b = Bar3528(zeros(3), Foo3528(1.0))
+    @test f3528(ones(3), b) ≈ 3.0
+    @static if VERSION < v"1.12"
+        @test_throws Enzyme.Compiler.MixedReturnException Enzyme.gradient(
+            set_runtime_activity(Reverse), f3528, ones(3), Const(b)
+        )
+    else
+        grad = Enzyme.gradient(set_runtime_activity(Reverse), f3528, ones(3), Const(b))
+        @test grad[1] ≈ ones(3)
+        @test grad[2] === nothing
+
+        g3528(x, b) = (deepcopy(b); sum(x))
+        grad = Enzyme.gradient(set_runtime_activity(Reverse), g3528, ones(3), Const((zeros(3), 1.0)))
+        @test grad[1] ≈ ones(3)
+
+        # Shadow accumulation into a MixedDuplicated argument.
+        h3528(x, b) = sum(deepcopy(b).bar1 .* x)
+        x = [1.0, 2.0, 3.0]
+        dx = zeros(3)
+        b2 = Bar3528([4.0, 5.0, 6.0], Foo3528(1.0))
+        db2 = Enzyme.make_zero(b2)
+        autodiff(set_runtime_activity(Reverse), h3528, Duplicated(x, dx), MixedDuplicated(b2, Ref(db2)))
+        @test dx ≈ [4.0, 5.0, 6.0]
+        @test db2.bar1 ≈ [1.0, 2.0, 3.0]
+    end
+    # Generated functions and the REPL must still work afterwards (the original
+    # failure corrupted the symbol table).
+    @test ccall(:jl_symbol, Any, (Cstring,), "lambda") === :lambda
+end
