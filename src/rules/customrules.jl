@@ -969,11 +969,34 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                     ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llrty)))
                     for idx = 1:width
                         ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
-                        ld = load!(B, llrty, ev, "rules_mixed_shadow_load")
-                        metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
-                        if n_primal_roots > 0
-                            sroots = (width == 1) ? roots_ival : extract_value!(B, roots_ival, idx - 1)
-                            ld = recombine_value!(B, ld, sroots)
+                        shadow_overwritten = uncacheable[arg.codegen.i] != 0
+                        ld = if shadow_overwritten && reverse
+                            # The shadow's by-ref memory was overwritten after this call
+                            # (e.g. a stack slot reused by every loop iteration), so in
+                            # the reverse pass only its float fields (the live derivative
+                            # accumulators) are meaningful. Take everything else,
+                            # including the shadow's own pointers, from the shadow value
+                            # the forward pass cached on the tape.
+                            @assert tape isa LLVM.Value
+                            cached = extract_value!(B, tape, length(byval_tapes), "rules_mixed_shadow_extract_")
+                            @assert value_type(cached) == llrty
+                            push!(byval_tapes, cached)
+                            tmp = alloca!(alloctx, llrty, "rules_mixed_shadow_tmp")
+                            store!(B, cached, tmp)
+                            copy_floats_into!(B, llrty, tmp, ev)
+                            load!(B, llrty, tmp, "rules_mixed_shadow_merged")
+                        else
+                            ld0 = load!(B, llrty, ev, "rules_mixed_shadow_load")
+                            metadata(ld0)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                            if n_primal_roots > 0
+                                sroots = (width == 1) ? roots_ival : extract_value!(B, roots_ival, idx - 1)
+                                # A value cached on the tape needs valid GC pointers.
+                                ld0 = recombine_value!(B, ld0, sroots; must_cache = shadow_overwritten)
+                            end
+                            if shadow_overwritten
+                                push!(byval_tapes, ld0)
+                            end
+                            ld0
                         end
                         ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
                     end
