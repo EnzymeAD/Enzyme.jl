@@ -549,7 +549,13 @@ Julia keeps for `T` and the flags in that world, or from the analysis if there i
 called while a thunk compiles.
 """
 Base.@nospecializeinfer @inline function active_reg(@nospecialize(ST::Type), world::UInt; justActive = false, UnionSret = false, AbstractIsMixed = false)::ActivityState
+    record_query_edge!(activity_query_sig(ST, justActive::Bool, UnionSret::Bool, AbstractIsMixed::Bool), world)
     return Core._call_in_world_total(world, active_reg_flags, ST, Val(justActive::Bool), Val(UnionSret::Bool), Val(AbstractIsMixed::Bool))::ActivityState
+end
+
+# The signature of the `active_reg_flags` call `active_reg` makes, for its edge.
+@inline function activity_query_sig(@nospecialize(ST::Type), justActive::Bool, UnionSret::Bool, AbstractIsMixed::Bool)
+    return Tuple{typeof(active_reg_flags), Type{ST}, Val{justActive}, Val{UnionSret}, Val{AbstractIsMixed}}
 end
 
 Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_const(@nospecialize(T::Type))::Bool

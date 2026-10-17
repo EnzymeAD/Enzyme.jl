@@ -169,6 +169,8 @@ mutable struct EnzymeContext
     inserted_values::Dict{String, Any}
     relocations::Vector{Any}
     bakes::Bool
+    # The edges in `edges` that are query instances (activity, rules), for adding each once.
+    query_edges::Base.IdSet{Any}
     EnzymeContext(world::Integer) = new(
         world,
         LLVM.Module[],
@@ -179,7 +181,8 @@ mutable struct EnzymeContext
         Dict{String, Ptr{Cvoid}}(),
         Dict{String, Any}(),
         Any[],
-        true
+        true,
+        Base.IdSet{Any}()
     )
 end
 
@@ -224,6 +227,18 @@ after a compilation has already returned its module.
 function enzyme_world_if_active()::Union{Nothing, UInt}
     isassigned(ENZYME_CONTEXT) || return nothing
     return ENZYME_CONTEXT[].world
+end
+
+"""
+    enzyme_context_if_active()
+
+The [`EnzymeContext`](@ref) of the compilation running in the current dynamic scope, or
+`nothing` when none is. For the queries whose answers a compilation bakes in (activity,
+rules), which give the compilation an edge to their instance when one is running.
+"""
+function enzyme_context_if_active()::Union{Nothing, EnzymeContext}
+    isassigned(ENZYME_CONTEXT) || return nothing
+    return ENZYME_CONTEXT[]
 end
 
 include("logic.jl")
