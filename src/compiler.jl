@@ -8402,7 +8402,17 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
     return (mod, meta.edges, adjoint_name, primal_name, meta.TapeType, prepost, value_table)
 end
 
-const cache = Dict{UInt,CompileResult}()
+# Compiled thunks, by their job without its world (`job_key`), with the world each was
+# compiled in.
+#
+# The real cache of a thunk is the `CodeInstance` of the generated `thunk` that bakes the
+# result in: Julia keeps it for the world range in which the compilation's edges hold. This
+# table only saves recompiling the same job when the generator runs again while such an
+# instance still holds: another interpreter inferring the same call (nested
+# differentiation), or the explicit `thunk(mi, ...)` entry. So a result is reused in a
+# world other than the one it was compiled in exactly when a compiled instance of the
+# `thunk` call still covers that world (`compiled_instance_covers`), and replaced otherwise.
+const cache = Dict{UInt, Tuple{CompileResult, UInt}}()
 
 """
     CachedThunk
@@ -8422,25 +8432,58 @@ end
 const autodiff_cache = Dict{Ptr{Cvoid}, CachedThunk}()
 
 const cache_lock = ReentrantLock()
-@inline function cached_compilation(@nospecialize(job::CompilerJob))::CompileResult
-    key = hash(job)
+
+job_key(@nospecialize(job::CompilerJob)) = hash(job.source, hash(job.config))
+
+"""
+    compiled_instance_covers(sig, world)
+
+Whether an instance of the method `sig` dispatches to holds in `world`, whichever
+interpreter made it. An instance holds for as long as none of the edges of its
+compilation was invalidated; its source may have been dropped after codegen.
+"""
+function compiled_instance_covers(@nospecialize(sig::Type), world::UInt)::Bool
+    match = Base._which(sig; world, raise = false)
+    match === nothing && return false
+    mi = Core.Compiler.specialize_method(match::Core.MethodMatch)::Core.MethodInstance
+    isdefined(mi, :cache) || return false
+    ci = mi.cache
+    while ci !== nothing
+        if ci.min_world <= world <= ci.max_world
+            return true
+        end
+        ci = isdefined(ci, :next) ? ci.next : nothing
+    end
+    return false
+end
+
+# `thunk_sig` is the signature of the generated `thunk` call the result is baked into, or
+# `nothing` when there is none (the explicit `thunk(mi, ...)` entry), in which case a
+# result is only reused in the world it was compiled in.
+@inline function cached_compilation(@nospecialize(job::CompilerJob), @nospecialize(thunk_sig::Union{Nothing, Type}))::CompileResult
+    key = job_key(job)
+    world = job.world
 
     # NOTE: no use of lock(::Function)/@lock/get! to keep stack traces clean
     lock(cache_lock)
     try
-        obj = get(cache, key, nothing)
-        if obj === nothing
-            mod, edges, adjoint_name, primal_name, TapeType, prepost, value_table = _thunk(job)
-            obj = _link(job, mod, edges, adjoint_name, primal_name, TapeType, prepost)
-            if obj.adjoint isa Ptr{Nothing}
-                autodiff_cache[obj.adjoint] = CachedThunk(adjoint_name, prepost, value_table)
+        entry = get(cache, key, nothing)
+        if entry !== nothing
+            obj, compiled_world = entry
+            if compiled_world == world || (thunk_sig !== nothing && compiled_instance_covers(thunk_sig, world))
+                return obj
             end
-            if obj.primal isa Ptr{Nothing} && primal_name isa String
-                autodiff_cache[obj.primal] = CachedThunk(primal_name, prepost, value_table)
-            end
-            cache[key] = obj
         end
-        obj
+        mod, edges, adjoint_name, primal_name, TapeType, prepost, value_table = _thunk(job)
+        obj = _link(job, mod, edges, adjoint_name, primal_name, TapeType, prepost)
+        if obj.adjoint isa Ptr{Nothing}
+            autodiff_cache[obj.adjoint] = CachedThunk(adjoint_name, prepost, value_table)
+        end
+        if obj.primal isa Ptr{Nothing} && primal_name isa String
+            autodiff_cache[obj.primal] = CachedThunk(primal_name, prepost, value_table)
+        end
+        cache[key] = (obj, world)
+        return obj
     finally
         unlock(cache_lock)
     end
@@ -8472,7 +8515,6 @@ function clear_caches!()
     # addresses were written into their code.
     empty!(cache)
     empty!(autodiff_cache)
-    empty!(Enzyme.tape_cache)
     empty!(Enzyme.captured_constants)
 
     # The sets of rule methods read per world, on versions whose inference results carry
@@ -8543,7 +8585,8 @@ end
     ErrIfFuncWritten::Bool,
     RuntimeActivity::Bool,
     StrongZero::Bool,
-    edges::Union{Nothing, Vector{Any}}
+        edges::Union{Nothing, Vector{Any}},
+        thunk_sig::Union{Nothing, Type} = nothing
 )
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(
@@ -8626,7 +8669,7 @@ end
     # invalidations of the primal, which is managed by GPUCompiler.
 
 
-    compile_result = cached_compilation(job)
+    compile_result = cached_compilation(job, thunk_sig)
     if edges !== nothing
         for e in compile_result.edges
             push!(edges, e)
@@ -8783,7 +8826,9 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
             ErrIfFuncWritten,
             RuntimeActivity,
             StrongZero,
-            edges
+            edges,
+            # The signature of this `thunk` call, whose compiled instance the result is baked into.
+            Tuple{self, fakeworld, fa, a, tt, mode, width, modifiedbetween, returnprimal, shadowinit, abi, erriffuncwritten, runtimeactivity, strongzero}
         )
     finally
         deactivate(ctx)
