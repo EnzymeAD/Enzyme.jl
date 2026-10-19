@@ -65,6 +65,17 @@ end
     @test g ≈ [3.0, 2.0]
 end
 
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3858
+donotdelete_f(x) = (y = x .^ 2; Base.donotdelete(y); sum(y))
+
+@testset "jl_f_donotdelete" begin
+    x = [1.0, 2.0]
+    dx = zero(x)
+    autodiff(Reverse, donotdelete_f, Active, Duplicated(x, dx))
+    @test dx ≈ [2.0, 4.0]
+    @test autodiff(Forward, donotdelete_f, Duplicated(x, [1.0, 0.0]))[1] ≈ 2.0
+end
+
 
 # A deprecated method warns through `Base.depwarn`, which on Julia 1.13 reaches
 # `jl_eval_globalref` (via `invokelatest_gr`).
