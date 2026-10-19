@@ -512,23 +512,19 @@ end
 
 # A broadcast with a scalar argument, like `b .* 2f0`, holds both an array and an active
 # scalar, so Enzyme passes it to KernelAbstractions' kernel rule as a `MixedDuplicated`,
-# and the rule moves it to the device with `cudaconvert`.
+# and the rule moves it to the device with `cudaconvert`. That can't keep the scalar's
+# gradient, so it throws.
 @testset "cudaconvert of a MixedDuplicated" begin
     a = CUDA.ones(Float32, 4)
     da = CUDA.zeros(Float32, 4)
     bc = Broadcast.instantiate(Broadcast.broadcasted(*, a, 2.0f0))
     dbc = Broadcast.instantiate(Broadcast.broadcasted(*, da, 0.0f0))
-    x = cudaconvert(MixedDuplicated(bc, Ref(dbc)))
-    @test x isa MixedDuplicated
-    @test x.dval isa Base.RefValue
-    @test x.val.args[1] isa CuDeviceVector{Float32}
-    @test pointer(x.dval[].args[1]) == pointer(cudaconvert(da))
-    @test x.dval[].args[2] === 0.0f0
+    MixedAdaptError = Base.get_extension(Enzyme.EnzymeCore, :AdaptExt).MixedAdaptError
+    @test_throws MixedAdaptError cudaconvert(MixedDuplicated(bc, Ref(dbc)))
 end
 
-# The gradients, against the CPU. These still fail: KernelAbstractions passes the
-# `MixedDuplicated` to the GPU kernel as it is, and its `Base.RefValue` shadow can't be a
-# kernel argument.
+# The gradients, against the CPU. These need a shadow for the scalar that lives on the
+# device and is written back to the caller's.
 @testset "broadcast with a scalar" begin
     b0 = Float32[1, 2, 3, 4]
     grad_const = b -> Enzyme.gradient(Reverse, Const(b -> sum(b .* 2.0f0)), b)

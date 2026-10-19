@@ -15,17 +15,24 @@ end
 function Adapt.adapt_structure(to, x::BatchDuplicatedNoNeed)
     return BatchDuplicatedNoNeed(adapt(to, x.val), adapt(to, x.dval))
 end
-# The shadow of a mixed annotation must be a `Base.RefValue`, but adaptors either leave
-# a `Base.RefValue` alone (so its contents are not adapted) or replace it with their own
-# ref type (CUDA's `KernelAdaptor` gives a `KernelRefValue`). Adapt the contents and wrap
-# them in a new `Ref` instead. Writes to the new `Ref` do not reach the old one.
-adapt_ref(to, r::Base.RefValue) = Ref(adapt(to, r[]))
-function Adapt.adapt_structure(to, x::MixedDuplicated)
-    return MixedDuplicated(adapt(to, x.val), adapt_ref(to, x.dval))
+# The shadow of a mixed annotation is a `Base.RefValue` that the caller reads the active
+# parts of the gradient back from. Adapting it means building a new `Ref`, and writes to
+# that never reach the caller's, so the gradient would be silently dropped. Throw instead.
+# See https://github.com/EnzymeAD/Enzyme.jl/issues/3451.
+struct MixedAdaptError <: Exception
+    T::Type
 end
-function Adapt.adapt_structure(to, x::BatchMixedDuplicated)
-    dval = map(Base.Fix1(adapt_ref, to), x.dval)
-    return BatchMixedDuplicated(adapt(to, x.val), dval)
+function Base.showerror(io::IO, e::MixedAdaptError)
+    return print(
+        io, "MixedAdaptError: cannot `adapt` a `", nameof(e.T), "`. Its shadow is a ",
+        "`Base.RefValue`, and adapting it would create a new `Ref`, so gradients written ",
+        "to it would not reach the original shadow. ",
+        "See https://github.com/EnzymeAD/Enzyme.jl/issues/3451."
+    )
+end
+Adapt.adapt_structure(to, ::MixedDuplicated) = throw(MixedAdaptError(MixedDuplicated))
+function Adapt.adapt_structure(to, ::BatchMixedDuplicated)
+    throw(MixedAdaptError(BatchMixedDuplicated))
 end
 
 end #module
