@@ -61,7 +61,7 @@ Tβs = (Active, Const)
         symmetricbraiding = BraidingStyle(sectortype(eltype(V))) isa SymmetricBraiding
         α = randn(T)
         β = randn(T)
-        #=@testset "flip and twist" begin # turn off for now until Enzyme can get compilation times down
+        @testset "flip and twist" begin
             if has_braiding
                 if !(T <: Real && !(sectorscalartype(sectortype(A)) <: Real))
                     EnzymeTestUtils.test_reverse(twist!, TA, (A, TA), (1, Const); atol, rtol, fkwargs = (inv = false,))
@@ -84,6 +84,7 @@ Tβs = (Active, Const)
                 EnzymeTestUtils.test_forward(flip, TA, (A, TA), ([1, 3], Const); atol, rtol)
             end
         end
+        #=
         @testset "transpose" begin
             # repeat a couple times to get some distribution of arrows
             p = randcircshift(numout(A), numin(A))
