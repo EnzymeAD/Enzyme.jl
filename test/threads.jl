@@ -155,6 +155,27 @@ end
     @test ty[4] ≈ [10.0, 10.0]
 end
 
+@testset "Batched Reverse, active closure" begin
+    function scale_threads!(out, x)
+        a = x[1]
+        b = x[2]
+        Threads.@threads for i in 1:length(out)
+            out[i] = a * b * i
+        end
+        return nothing
+    end
+
+    out = zeros(4)
+    x = [2.0, 3.0]
+    dout1 = ones(4)
+    dout2 = 2 .* ones(4)
+    dx1 = zeros(2)
+    dx2 = zeros(2)
+    autodiff(Reverse, scale_threads!, Const, BatchDuplicated(out, (dout1, dout2)), BatchDuplicated(x, (dx1, dx2)))
+    @test dx1 ≈ [30.0, 20.0]
+    @test dx2 ≈ [60.0, 40.0]
+end
+
 @testset "GEP non-inline type analysis" begin
     function spread_no_broadcast!(bufs, q, ::Val{N}) where N
         Threads.@threads for t in 1:N
