@@ -542,6 +542,10 @@ end
     @inferred hvp!(zeros(2), mulsin, [2.0, 3.0], [5.0, 2.7])
 
     @inferred hvp_and_gradient!(zeros(2), zeros(2), mulsin, [2.0, 3.0], [5.0, 2.7])
+
+    @inferred hessian(mulsin, [2.0, 3.0])
+
+    @inferred hessian!(zeros(2, 2), mulsin, [2.0, 3.0]; chunk = Val(2))
 end
 
 function ulogistic(x)

@@ -677,3 +677,39 @@ end
     # @show J_r_3(u, A, x)
     # @show J_f_3(u, A, x)
 end
+
+hess_sinprod(x) = sin(x[1] * x[2])
+hess_cubic(x) = sum(x .^ 3) + x[1] * x[2] * x[3]
+
+@testset "Hessian" begin
+    x = [2.0, 3.0]
+    s, c = sin(6.0), cos(6.0)
+    H = [
+        -s * 9     c - 6 * s;
+        c - 6 * s  -s * 4
+    ]
+
+    @test hessian(hess_sinprod, x) ≈ H
+    @test hessian(hess_sinprod, x; chunk = Val(1)) ≈ H
+    @test hessian(hess_sinprod, x; chunk = Val(2)) ≈ H
+
+    res = zeros(2, 2)
+    @test hessian!(res, hess_sinprod, x) === res
+    @test res ≈ H
+
+    @test hessian(hess_sinprod, x) * [5.0, 2.7] ≈ hvp(hess_sinprod, x, [5.0, 2.7])
+
+    # Chunk size not dividing the input length, and a matrix input.
+    y = [1.0 2.0; 3.0 4.0]
+    Hy = [
+        6.0  2.0   3.0   0.0;
+        2.0  18.0  1.0   0.0;
+        3.0  1.0   12.0  0.0;
+        0.0  0.0   0.0   24.0
+    ]
+    @test hessian(hess_cubic, y) ≈ Hy
+    @test hessian(hess_cubic, y; chunk = Val(3)) ≈ Hy
+    @test hessian(hess_cubic, y; chunk = Val(4)) ≈ Hy
+
+    @test_throws DimensionMismatch hessian!(zeros(3, 3), hess_sinprod, x)
+end

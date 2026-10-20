@@ -275,6 +275,17 @@ julia> grad
  1.920340573300732
 ```
 
+The full Hessian can be computed with [`hessian`](@ref) (or the in-place [`hessian!`](@ref)), which computes one Hessian vector product per input using forward over reverse mode. The optional `chunk` argument computes several Hessian vector products at once using batched forward mode.
+
+```jldoctest hessian; filter = r"([0-9]+\.[0-9]{8})[0-9]+" => s"\1***"
+julia> f(x) = sin(x[1] * x[2]);
+
+julia> hessian(f, [2.0, 3.0]; chunk=Val(2))
+2×2 Matrix{Float64}:
+ 2.51474  2.63666
+ 2.63666  1.11766
+```
+
 ## Defining rules
 
 While Enzyme will automatically generate derivative functions for you, there may be instances in which it is necessary or helpful to define custom derivative rules. Enzyme has three primary ways for defining derivative rules: inactive annotations, [`EnzymeRules.@easy_rule`](@ref) macro definitions, general purpose derivative rules, and importing from `ChainRules`.

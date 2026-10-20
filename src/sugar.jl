@@ -1369,3 +1369,130 @@ grad
     )
     return nothing
 end
+
+struct MakeZeroLike{X}
+    x::X
+end
+
+@inline (z::MakeZeroLike)(_) = make_zero(z.x)
+
+"""
+    hessian(f::F, x::X; chunk=nothing) where {F, X<:AbstractArray}
+
+Compute the Hessian of an array-input scalar-output function `f`, as evaluated at `x`.
+The result is a matrix of size `(length(x), length(x))`, whose `i`-th column is the
+Hessian-vector product of `f` at `x` with the `i`-th basis vector.
+
+The Hessian is computed with forward over reverse mode, one Hessian-vector product per
+column. The `chunk` argument optionally denotes the number of Hessian-vector products to
+compute at once (e.g. `chunk=Val(2)`), using batched forward mode. If `chunk` is
+`nothing` (the default), the columns are computed one at a time.
+
+See [`hessian!`](@ref) for a version which stores the result in an existing buffer.
+
+Example:
+
+```jldoctest hessian; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+f(x) = sin(x[1] * x[2])
+
+hessian(f, [2.0, 3.0])
+
+# output
+2×2 Matrix{Float64}:
+ 2.51474  2.63666
+ 2.63666  1.11766
+```
+"""
+@inline function hessian(f::F, x::X; chunk::CT = nothing) where {F, X <: AbstractArray, CT}
+    n = length(x)
+    res = similar(x, eltype(x), (n, n))
+    hessian!(res, f, x; chunk)
+    return res
+end
+
+"""
+    hessian!(res::AbstractMatrix, f::F, x::X; chunk=nothing) where {F, X<:AbstractArray}
+
+Compute the Hessian of an array-input scalar-output function `f`, as evaluated at `x`,
+storing the result into the `(length(x), length(x))` matrix `res`.
+
+See [`hessian`](@ref) for the meaning of the `chunk` argument.
+
+Example:
+
+```jldoctest hessianip; filter = r"([0-9]+\\.[0-9]{8})[0-9]+" => s"\\1***"
+f(x) = sin(x[1] * x[2])
+
+res = Matrix{Float64}(undef, 2, 2)
+hessian!(res, f, [2.0, 3.0])
+
+res
+# output
+2×2 Matrix{Float64}:
+ 2.51474  2.63666
+ 2.63666  1.11766
+```
+"""
+@inline function hessian!(res::AbstractMatrix, f::F, x::X; chunk::CT = nothing) where {F, X <: AbstractArray, CT}
+    n = length(x)
+    if size(res) != (n, n)
+        throw(DimensionMismatch("hessian! expects a result of size $((n, n)), got $(size(res))"))
+    end
+    grad = make_zero(x)
+    if chunk === nothing || chunk == Val(1)
+        v = make_zero(x)
+        hv = make_zero(x)
+        for i in 1:n
+            v[i] = one(eltype(x))
+            make_zero!(hv)
+            Enzyme.autodiff(
+                Forward,
+                gradient!,
+                Const(Reverse),
+                DuplicatedNoNeed(grad, hv),
+                Const(f),
+                Duplicated(x, v),
+            )
+            v[i] = zero(eltype(x))
+            for k in 1:n
+                @inbounds res[k, i] = hv[k]
+            end
+        end
+    else
+        hessian_chunked!(res, grad, f, x, chunk)
+    end
+    return res
+end
+
+@inline function hessian_chunked!(res::AbstractMatrix, grad::X, f::F, x::X, ::Val{W}) where {F, X <: AbstractArray, W}
+    n = length(x)
+    vs = ntuple(MakeZeroLike(x), Val(W))
+    hvs = ntuple(MakeZeroLike(x), Val(W))
+    for start in 1:W:n
+        # The last chunk may be partially filled; its unused directions stay zero.
+        for j in 1:W
+            make_zero!(vs[j])
+            make_zero!(hvs[j])
+            col = start + j - 1
+            if col <= n
+                vs[j][col] = one(eltype(x))
+            end
+        end
+        Enzyme.autodiff(
+            Forward,
+            gradient!,
+            Const(Reverse),
+            BatchDuplicatedNoNeed(grad, hvs),
+            Const(f),
+            BatchDuplicated(x, vs),
+        )
+        for j in 1:W
+            col = start + j - 1
+            col <= n || break
+            for k in 1:n
+                @inbounds res[k, col] = hvs[j][k]
+            end
+        end
+    end
+    return nothing
+end
