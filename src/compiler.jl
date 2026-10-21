@@ -4941,6 +4941,37 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
 end
 
 """
+    zero_float_values!(builder, val) -> LLVM.Value
+
+Return `val` (an LLVM aggregate or scalar value) with every floating point element set to
+zero, leaving integers and pointers unchanged. This builds the shadow of constant data
+whose type is differentiable: its derivative is zero, while its non-differentiable fields
+keep their primal values.
+
+This mirrors `Enzyme.make_zero` at the LLVM level: floats become zero and integers keep
+their value (unlike `LLVM.null`, which zeroes them too).
+"""
+function zero_float_values!(builder::LLVM.IRBuilder, val::LLVM.Value)::LLVM.Value
+    ty = value_type(val)
+    if isa(ty, LLVM.FloatingPointType)
+        return LLVM.null(ty)
+    elseif isa(ty, LLVM.VectorType)
+        return isa(eltype(ty), LLVM.FloatingPointType) ? LLVM.null(ty) : val
+    elseif isa(ty, LLVM.StructType) || isa(ty, LLVM.ArrayType)
+        n = isa(ty, LLVM.StructType) ? length(LLVM.elements(ty)) : length(ty)
+        for i in 1:n
+            elt = extract_value!(builder, val, i - 1)
+            nelt = zero_float_values!(builder, elt)
+            if nelt !== elt
+                val = insert_value!(builder, val, nelt, i - 1)
+            end
+        end
+        return val
+    end
+    return val
+end
+
+"""
     nullify_rooted_values!(builder, sret)
 
 Return the value `sret` with every GC-tracked field replaced by a null reference.

@@ -413,6 +413,9 @@ function enzyme_custom_setup_args(
 	any_active_data = mode != API.DEM_ForwardMode && (activity_state == ActiveState || activity_state == MixedState)
 
         roots_activep = nothing
+        # The non-rooted data is constant but the argument is passed as duplicated, while
+        # the data has differentiable types: its shadow must have them zeroed
+        zero_const_data = false
 
         if roots != 0
             roots_op = ops[arg.codegen.i + 1]
@@ -432,7 +435,12 @@ function enzyme_custom_setup_args(
                 end
             end
 
-            if roots_activep != activep && activep == API.DFT_CONSTANT && !any_active
+            # Constant non-rooted data with duplicated roots (e.g. a closure capturing
+            # duplicated arrays and a constant scalar): the argument is duplicated, and the
+            # differentiable non-rooted data gets a zero shadow
+            if roots_activep != activep && activep == API.DFT_CONSTANT &&
+                    (!any_active || roots_activep == API.DFT_DUP_ARG)
+                zero_const_data = any_active
                 if roots_activep != API.DFT_DUP_ARG
                     if B !== nothing
                         bt = GPUCompiler.backtrace(orig)
@@ -739,6 +747,9 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                     invert_pointer(gutils, op, B)
                 end
                 @assert ival !== nothing
+                if zero_const_data
+                    ival = zero_float_values!(B, ival)
+                end
 
                 uncache_arg = uncacheable[arg.codegen.i] != 0
                 if roots_op !== nothing
@@ -841,7 +852,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                         @assert ival !== nothing
                          ival
                     else
-                        if val == nothing
+                        cval = if val == nothing
                             ld = load!(B, iarty, ogval, "rules_bitsref_nonmixed")
                             metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
 			    if roots_op !== nothing
@@ -851,6 +862,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                         else
                             val
                         end
+                        zero_const_data ? zero_float_values!(B, cval) : cval
                     end
                     @assert ptr_val !== nothing
                     ival = UndefValue(siarty)
