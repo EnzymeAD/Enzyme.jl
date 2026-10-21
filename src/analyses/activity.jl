@@ -45,10 +45,42 @@ else
 @inline is_arrayorvararg_ty(::Type{Memory{T}}) where T = true
 end
 
+@inline function record_dep!(deps::Vector{Any}, @nospecialize(sig::Type))
+    sig in deps || push!(deps, sig)
+    return nothing
+end
+
+"""
+    @record_dep deps f(args...)
+
+Call `f(args...)` and record the signature of the call in `deps`, so that code built from
+the result gets an edge to the method the call dispatches to (`add_activity_edges!`). For
+the calls to the hooks packages add methods to (`is_mutable_array`, `inactive_type`,
+`eltype`), whose answer the result depends on.
+"""
+macro record_dep(deps, call)
+    Meta.isexpr(call, :call) || error("@record_dep expects a call, got $call")
+    f = gensym(:f)
+    args = Symbol[]
+    bindings = Expr[:($f = $(esc(call.args[1])))]
+    sigparts = Any[:(Core.Typeof($f))]
+    for arg in call.args[2:end]
+        a = gensym(:arg)
+        push!(args, a)
+        push!(bindings, :($a = $(esc(arg))))
+        push!(sigparts, :(Core.Typeof($a)))
+    end
+    return quote
+        $(bindings...)
+        record_dep!($(esc(deps)), Tuple{$(sigparts...)})
+        $f($(args...))
+    end
+end
+
 Base.@nospecializeinfer function active_reg_recur(
     @nospecialize(ST::Type),
     seen::Base.IdSet{Type},
-    world::UInt,
+        deps::Vector{Any},
     justActive::Bool,
     UnionSret::Bool,
     AbstractIsMixed::Bool,
@@ -58,7 +90,7 @@ Base.@nospecializeinfer function active_reg_recur(
             active_reg_recur(
                 ST.a,
                 seen,
-                world,
+                deps,
                 justActive,
                 UnionSret,
                 AbstractIsMixed,
@@ -67,7 +99,7 @@ Base.@nospecializeinfer function active_reg_recur(
             active_reg_recur(
                 ST.b,
                 seen,
-                world,
+                deps,
                 justActive,
                 UnionSret,
                 AbstractIsMixed,
@@ -77,7 +109,7 @@ Base.@nospecializeinfer function active_reg_recur(
     return active_reg_inner(
         ST,
         seen,
-        world,
+        deps,
         justActive,
         UnionSret,
         AbstractIsMixed,
@@ -138,10 +170,21 @@ Base.@nospecializeinfer @inline function unwrapped_number_type(@nospecialize(T::
     return T.parameters[1]
 end
 
+# The activity of `T`.
+#
+# World age: this runs in the world of the compilation, which `active_reg` enters with
+# `Core._call_in_world_total` before calling it. So plain dispatch here, including the calls
+# to the hooks packages add methods to (`is_mutable_array`, `inactive_type`, `eltype`), sees
+# the methods of that world, and not of the (older) world a generator runs in. Do not call
+# this directly from a generator; call `active_reg`.
+#
+# `deps` collects the signatures of the dispatches the result depends on (the hooks, and
+# `eltype` of the mutable array types), so that code that bakes the result in gets an edge
+# to each of them (see `add_activity_edges!`).
 Base.@nospecializeinfer @inline function active_reg_inner(
     @nospecialize(T::Type),
     seen::Base.IdSet{Type},
-    world::UInt,
+        deps::Vector{Any},
     justActive::Bool,
     UnionSret::Bool,
     AbstractIsMixed::Bool,
@@ -162,7 +205,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
         return active_reg_inner(
             ptreltype(T),
             seen,
-            world,
+            deps,
             justActive,
             UnionSret,
             AbstractIsMixed,
@@ -180,7 +223,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
         if active_reg_inner(
             unwrapped_number_type(T),
             seen,
-            world,
+                deps,
             justActive,
             UnionSret,
             AbstractIsMixed,
@@ -203,16 +246,15 @@ Base.@nospecializeinfer @inline function active_reg_inner(
         return ActiveState
     end
 
-    # Use _call_in_world_total to see the methods that packages add.
-    if Core._call_in_world_total(world, is_mutable_array, T)
+    if @record_dep deps is_mutable_array(T)
         if justActive
             return AnyState
         end
 
         if active_reg_inner(
-            eltype(T),
+                (@record_dep deps eltype(T)),
             seen,
-            world,
+                deps,
             justActive,
             UnionSret,
             AbstractIsMixed,
@@ -238,7 +280,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
            active_reg_inner(
             ptreltype(T),
             seen,
-            world,
+                deps,
             justActive,
             UnionSret,
             AbstractIsMixed,
@@ -261,10 +303,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
         return AnyState
     end
 
-    # Use _call_in_world_total to perform a concrete eval.
-    inactivety = Core._call_in_world_total(world, EnzymeCore.EnzymeRules.inactive_type, T)
-
-    if inactivety
+    if @record_dep deps EnzymeCore.EnzymeRules.inactive_type(T)
         return AnyState
     end
 
@@ -294,7 +333,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
             return active_reg_recur(
                 T,
                 seen,
-                world,
+                deps,
                 justActive,
                 UnionSret,
                 AbstractIsMixed,
@@ -303,7 +342,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
             if justActive
                 return AnyState
             end
-            if active_reg_inner(T.a, seen, world, justActive, UnionSret, false) !=
+            if active_reg_inner(T.a, seen, deps, justActive, UnionSret, false) !=
                AnyState
                 if AbstractIsMixed
                     return MixedState
@@ -311,7 +350,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
                     return DupState
                 end
             end
-            if active_reg_inner(T.b, seen, world, justActive, UnionSret, false) !=
+            if active_reg_inner(T.b, seen, deps, justActive, UnionSret, false) !=
                AnyState
                 if AbstractIsMixed
                     return MixedState
@@ -389,7 +428,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
         sub = active_reg_inner(
             subT,
             seen2,
-            world,
+            deps,
             justActive,
             UnionSret,
             AbstractIsMixed,
@@ -413,86 +452,104 @@ Base.@nospecializeinfer @inline function active_reg_inner(
     return ty
 end
 
-const ActivityCache = Dict{Tuple{Type, Bool, Bool, Bool}, ActivityState}()
-
-const ActivityWorldCache = Ref(0)
-
-const ActivityMethodCache = Core.MethodMatch[]
-
-# The signatures of the functions that packages can add methods to, and that change the
-# result of `active_reg`.
+# The signatures of the hooks packages add methods to, and that change the result of
+# `active_reg`. Code that cannot name the types its activity results were computed for
+# (a compiled thunk) takes an edge on each of these; see `add_compilation_edges!`.
 const ActivityHookSigs = (
     Tuple{typeof(EnzymeRules.inactive_type), Type},
     Tuple{typeof(is_mutable_array), Type},
 )
 
-# given the current worldage of compilation, check if there are any methods 
-# of the activity hooks which may invalidate the cache, and if so clear it.
-function check_activity_cache_invalidations(world::UInt)
-    # We've already guaranteed that this world doesn't have any stale caches
-    if world <= ActivityWorldCache[]
-        return
-    end
 
-    methods = Core.MethodMatch[]
-    for tt in ActivityHookSigs
-        matches = Base._methods_by_ftype(tt, -1, world)
-        if matches === nothing
-            @assert ActivityCache.size() == 0
-            return
-        end
-        for match in matches::Vector
-            push!(methods, match::Core.MethodMatch)
-        end
-    end
+"""
+    active_reg_with_deps(T, world, justActive, UnionSret, AbstractIsMixed)
 
-    if methods == ActivityMethodCache
-        return
-    end
+The `ActivityState` of `T` in `world`, with the signatures of the dispatches the
+result depends on: the hooks packages add methods to, and `eltype` of the mutable array
+types. This is the uncached analysis, for the generators; everything else goes through
+[`active_reg`](@ref), which caches.
 
-    empty!(ActivityCache)
-    empty!(ActivityMethodCache)
-    for match in methods
-        push!(ActivityMethodCache, match)
-    end
-
-    ActivityWorldCache[] = world
-
+The analysis runs in `world` through `Core._call_in_world_total`, which also changes the
+world inside a generator (where `Base.invoke_in_world` does not), so the methods packages
+add to the hooks are seen whichever world the caller runs in.
+"""
+Base.@nospecializeinfer function active_reg_with_deps(@nospecialize(ST::Type), world::UInt, justActive::Bool, UnionSret::Bool, AbstractIsMixed::Bool)::Tuple{ActivityState, Vector{Any}}
+    deps = Any[]
+    state = Core._call_in_world_total(world, active_reg_inner, ST, Base.IdSet{Type}(), deps, justActive, UnionSret, AbstractIsMixed)::ActivityState
+    return (state, deps)
 end
 
-Base.@nospecializeinfer @inline function active_reg(@nospecialize(ST::Type), world::UInt; justActive=false, UnionSret = false, AbstractIsMixed = false)
-    key = (ST, justActive, UnionSret, AbstractIsMixed)
-    if haskey(ActivityCache, key)
-        return ActivityCache[key]
+"""
+    add_activity_edges!(edges, deps, world)
+
+Add the edges that keep code built from a result of [`active_reg_with_deps`](@ref)
+current: one on each dispatch in `deps`, resolved in `world`. These are method instance
+edges, which Julia closes when a method takes a dispatch over, and verifies against the
+loaded methods when a package image loads (unlike edges on a bare signature, which it
+only registers).
+"""
+function add_activity_edges!(edges::Vector{Any}, deps::Vector{Any}, world::UInt)
+    for sig in deps
+        add_dispatch_edge!(edges, sig::Type, world)
     end
-    set = Base.IdSet{Type}()
-    result = active_reg_inner(ST, set, world, justActive, UnionSret, AbstractIsMixed)
-    ActivityCache[key] = result
-    return result
+    return edges
+end
+
+# The code of the generated functions below: the result as a constant, with the edges.
+function activity_codeinfo(fn, source::Union{Method, LineNumberNode}, world::UInt, slotnames::Core.SimpleVector, @nospecialize(T::Type), justActive::Bool, UnionSret::Bool, AbstractIsMixed::Bool)
+    state, deps = active_reg_with_deps(T, world, justActive, UnionSret, AbstractIsMixed)
+    code = Any[Core.Compiler.ReturnNode(state)]
+    ci = create_fresh_codeinfo(fn, source, world, slotnames, code)
+    ci.edges = add_activity_edges!(Any[], deps, world)
+    return ci
 end
 
 function active_reg_nothrow end
 
 function active_reg_nothrow_generator(world::UInt, source::Union{Method, LineNumberNode}, T, self, _)
     @nospecialize
-    result = active_reg(T, world)
-    check_activity_cache_invalidations(world)
-
-    slotnames = Core.svec(Symbol("#self#"), :T)
-    code = Any[Core.Compiler.ReturnNode(result)]
-    ci = create_fresh_codeinfo(active_reg_nothrow, source, world, slotnames, code)
-    
-    ci.edges = Any[]
-    for sig in ActivityHookSigs
-        add_edge!(ci.edges, sig)
-    end
-
-    return ci
+    return activity_codeinfo(active_reg_nothrow, source, world, Core.svec(Symbol("#self#"), :T), T, false, false, false)
 end
 
+# The activity of `T`, as the generated code of a `:foldable` function.
+#
+# This is also the cache of the analysis. Julia keeps the `CodeInstance` of each
+# specialization with the world range it holds in: open when it is made, and closed by the
+# invalidation of one of its edges when a method is added or deleted that changes a
+# dispatch the result depends on. A call in a world the instance covers returns the
+# constant; a call in a world it does not runs the generator again, in that world. The
+# instances precompile, and are verified against the loaded methods when the image loads.
 @eval Base.@assume_effects :removable :foldable :nothrow @inline function active_reg_nothrow(::Type{T})::ActivityState where {T}
     $(Expr(:meta, :generated_only))
     $(Expr(:meta, :generated, active_reg_nothrow_generator))
+end
+
+function active_reg_flags end
+
+function active_reg_flags_generator(world::UInt, source::Union{Method, LineNumberNode}, T, justActive, UnionSret, AbstractIsMixed, self, _, _, _, _)
+    @nospecialize
+    slotnames = Core.svec(Symbol("#self#"), :T, :justActive, :UnionSret, :AbstractIsMixed)
+    return activity_codeinfo(active_reg_flags, source, world, slotnames, T, justActive::Bool, UnionSret::Bool, AbstractIsMixed::Bool)
+end
+
+# `active_reg_nothrow` with the flags of `active_reg`; see there.
+@eval Base.@assume_effects :removable :foldable :nothrow @inline function active_reg_flags(::Type{T}, ::Val{justActive}, ::Val{UnionSret}, ::Val{AbstractIsMixed})::ActivityState where {T, justActive, UnionSret, AbstractIsMixed}
+    $(Expr(:meta, :generated_only))
+    $(Expr(:meta, :generated, active_reg_flags_generator))
+end
+
+"""
+    active_reg(T, world; justActive=false, UnionSret=false, AbstractIsMixed=false)
+
+The `ActivityState` of `T` in `world`, usually the world of the compilation.
+
+Calls `active_reg_flags` in `world`, so the answer comes from the `CodeInstance`
+Julia keeps for `T` and the flags in that world, or from the analysis if there is none yet.
+`Core._call_in_world_total` changes the world also inside a generator, where this is
+called while a thunk compiles.
+"""
+Base.@nospecializeinfer @inline function active_reg(@nospecialize(ST::Type), world::UInt; justActive = false, UnionSret = false, AbstractIsMixed = false)::ActivityState
+    return Core._call_in_world_total(world, active_reg_flags, ST, Val(justActive::Bool), Val(UnionSret::Bool), Val(AbstractIsMixed::Bool))::ActivityState
 end
 
 Base.@assume_effects :removable :foldable :nothrow @inline function guaranteed_const(@nospecialize(T::Type))::Bool
