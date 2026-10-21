@@ -18,6 +18,8 @@ const HAS_INTEGRATED_CACHE = VERSION >= v"1.11.0-DEV.1552"
 import ..Enzyme
 import ..EnzymeRules
 import ..cached_has_frule, ..cached_has_rrule, ..cached_is_inactive
+import ..HAS_RULE_DEPS, ..RuleAnswer, ..EnzymeRuleDeps, ..rule_answer, ..rule_deps_of,
+    ..ci_rule_valid!, ..ci_inserted!, ..record_ci!
 
 @static if VERSION ≥ v"1.11.0-DEV.1498"
     import Core.Compiler: get_inference_world
@@ -417,18 +419,111 @@ that a call reaches the pipeline the same way whichever path inference took to
 it: `FutureCallinfoByType` for an ordinary call, and `invoked_ci_needs_rule`
 for `invoke(f, ci, args...)`.
 """
-function enzyme_call_kind(@nospecialize(interp::EnzymeInterpreter), @nospecialize(specTypes))::Union{Nothing, Symbol}
+function enzyme_call_kind(@nospecialize(interp::EnzymeInterpreter), @nospecialize(specTypes), sv::Union{Nothing, Core.Compiler.AbsIntState} = nothing)::Union{Nothing, Symbol}
     is_primitive_func(specTypes) && return :primitive
     is_alwaysinline_func(specTypes) && return :alwaysinline
+    specTypes isa DataType && specTypes.parameters[1] isa Core.Builtin && return nothing
     method_table = Core.Compiler.method_table(interp)
-    if interp.inactive_rules && cached_is_inactive(specTypes, interp.world, method_table)
+    if interp.inactive_rules && rule_kind_applies!(sv, EnzymeRules.inactive, false, specTypes, interp.world, method_table)
         return :inactive
-    elseif interp.forward_rules && cached_has_frule(specTypes, interp.world, method_table)
+    elseif interp.forward_rules && rule_kind_applies!(sv, EnzymeRules.forward, true, specTypes, interp.world, method_table)
         return :frule
-    elseif interp.reverse_rules && cached_has_rrule(specTypes, interp.world, method_table)
+    elseif interp.reverse_rules && rule_kind_applies!(sv, EnzymeRules.augmented_primal, true, specTypes, interp.world, method_table)
         return :rrule
     end
     return nothing
+end
+
+# Answer a rule query for the inference frame `sv`, which then depends on the answer: it is
+# recorded among the `EnzymeRuleDeps` of the result the frame's code goes into.
+function rule_kind_applies!(sv::Union{Nothing, Core.Compiler.AbsIntState}, @nospecialize(rule), annotate::Bool, @nospecialize(specTypes), world::UInt, @nospecialize(method_table))::Bool
+    answer = rule_answer(rule, annotate, specTypes, world, method_table)
+    add_frame_rule_dep!(sv, answer)
+    return answer.value
+end
+
+# Record that the frame `sv` depends on the rule answer `answer`, among the `EnzymeRuleDeps`
+# of the result the frame's code goes into.
+function add_frame_rule_dep!(sv::Union{Nothing, Core.Compiler.AbsIntState}, answer::RuleAnswer)
+    @static if HAS_RULE_DEPS
+        result = rule_deps_result(sv)
+        result === nothing && return nothing
+        deps = rule_deps_of(result)
+        if deps === nothing
+            deps = EnzymeRuleDeps(RuleAnswer[])
+            Core.Compiler.stack_analysis_result!(result, deps)
+        end
+        if !any(Base.Fix1(===, answer), deps.answers)
+            push!(deps.answers, answer)
+        end
+    end
+    return nothing
+end
+
+# Whether the thunk guard `g` holds in `world`; if it does, the frame `sv` and the compilation
+# in progress depend on its answers.
+function thunk_guard_holds!(sv::Union{Nothing, Core.Compiler.AbsIntState}, @nospecialize(g), world::UInt)::Bool
+    g isa Enzyme.Compiler.ThunkGuard || return false
+    Enzyme.Compiler.guard_holds!(g, world) || return false
+    for a in g.answers
+        add_frame_rule_dep!(sv, a)
+    end
+    Enzyme.Compiler.merge_answers!(g.answers)
+    return true
+end
+
+@static if HAS_RULE_DEPS
+    # The inference result whose code the frame `sv` contributes to: its own, if it goes
+    # into the global cache, otherwise (constant propagation) that of the nearest such
+    # parent frame.
+    function rule_deps_result(sv::Union{Nothing, Core.Compiler.AbsIntState})
+        while sv isa InferenceState
+            if !iszero(sv.cache_mode & Core.Compiler.CACHE_MODE_GLOBAL)
+                return sv.result
+            end
+            sv = Core.Compiler.frame_parent(sv)
+        end
+        return nothing
+    end
+
+    # The code cache of the interpreter verifies an instance's rule answers before handing it
+    # out (see `ci_rule_valid!`), and notes the instances it hands out or takes in with the
+    # compilation in progress.
+    struct EnzymeCodeCache
+        owner::Any
+    end
+
+    Core.Compiler.code_cache(@nospecialize(interp::EnzymeInterpreter)) =
+        Core.Compiler.WorldView(EnzymeCodeCache(interp.token), Core.Compiler.WorldRange(interp.world))
+
+    function Core.Compiler.get(wvc::Core.Compiler.WorldView{EnzymeCodeCache}, mi::MethodInstance, default)
+        min_world, max_world = first(wvc.worlds), last(wvc.worlds)
+        ci = ccall(:jl_rettype_inferred, Any, (Any, Any, UInt, UInt), wvc.cache.owner, mi, min_world, max_world)
+        ci === nothing && return default
+        ci = ci::Core.CodeInstance
+        world = min(max_world, Enzyme.Compiler.newest_world())
+        ci_rule_valid!(ci, world) || return default
+        if min_world != world && !ci_rule_valid!(ci, min_world)
+            return default
+        end
+        record_ci!(ci)
+        return ci
+    end
+
+    Core.Compiler.haskey(wvc::Core.Compiler.WorldView{EnzymeCodeCache}, mi::MethodInstance) =
+        Core.Compiler.get(wvc, mi, nothing) !== nothing
+
+    function Core.Compiler.getindex(wvc::Core.Compiler.WorldView{EnzymeCodeCache}, mi::MethodInstance)
+        r = Core.Compiler.get(wvc, mi, nothing)
+        r === nothing && throw(KeyError(mi))
+        return r::Core.CodeInstance
+    end
+
+    function Core.Compiler.setindex!(wvc::Core.Compiler.WorldView{EnzymeCodeCache}, ci::Core.CodeInstance, mi::MethodInstance)
+        Core.Compiler.setindex!(Core.Compiler.InternalCodeCache(wvc.cache.owner), ci, mi)
+        ci_inserted!(ci, last(wvc.worlds) == typemax(UInt) ? first(wvc.worlds) : last(wvc.worlds))
+        return wvc
+    end
 end
 
 struct FutureCallinfoByType
@@ -439,7 +534,7 @@ end
     atype = closure.atype
     callinfo = ret.info
 
-    kind = enzyme_call_kind(interp, simplify_kw(atype))
+    kind = enzyme_call_kind(interp, simplify_kw(atype), sv)
     if kind === :alwaysinline
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
     elseif kind !== nothing
@@ -495,14 +590,14 @@ const HAS_INVOKE_CI_LOWERING = VERSION >= v"1.13-"
     under `interp` (see `enzyme_call_kind`). An always-inlined signature does
     not: the inliner gives it a body like any other call.
     """
-    function invoked_ci_needs_rule(@nospecialize(interp::EnzymeInterpreter), ci::Core.CodeInstance)::Bool
+    function invoked_ci_needs_rule(@nospecialize(interp::EnzymeInterpreter), ci::Core.CodeInstance, sv::Union{Nothing, Core.Compiler.AbsIntState} = nothing)::Bool
         CC = Core.Compiler
         abi = @static if isdefined(Core.Compiler, :get_ci_abi)
             CC.get_ci_abi(ci)
         else
             CC.get_ci_mi(ci).specTypes
         end
-        kind = enzyme_call_kind(interp, simplify_kw(abi))
+        kind = enzyme_call_kind(interp, simplify_kw(abi), sv)
         return kind !== nothing && kind !== :alwaysinline
     end
 end
@@ -1376,7 +1471,7 @@ function abstract_call_known(
         if f === Core.invoke && length(argtypes) >= 3
             citype = argtypes[3]
             if citype isa Core.Const && citype.val isa Core.CodeInstance &&
-                    invoked_ci_needs_rule(interp, citype.val)
+                    invoked_ci_needs_rule(interp, citype.val, sv)
                 argtypes′ = Core.Compiler.invoke_rewrite(argtypes)
                 fargs′ = fargs === nothing ? nothing : Core.Compiler.invoke_rewrite(fargs)
                 # `abstract_call` handles a known callee and one without a
@@ -1420,6 +1515,24 @@ function abstract_call_known(
         end
     end
     
+    @static if HAS_RULE_DEPS
+        # The check of a thunk compiled into code this compilation differentiates (nested
+        # differentiation): settle it now, in the world compiled for, so that the code keeps
+        # only the baked, constant thunk, whose IR the differentiation finds by its address
+        # (`autodiff_cache`). The result then depends on the thunk's rule answers itself.
+        if f === Enzyme.Compiler.thunk_guard_ok && length(argtypes) == 2 && argtypes[2] isa Core.Const &&
+                thunk_guard_holds!(sv, argtypes[2].val, interp.world)
+            return Core.Compiler.Future{Core.Compiler.CallMeta}(
+                CallMeta(
+                    Core.Const(true),
+                    Union{},
+                    Core.Compiler.EFFECTS_TOTAL,
+                    MethodResultPure(),
+                )
+            )
+        end
+    end
+
     let ft = Core.Compiler.widenconst(argtypes[1])
         if ft isa DataType && ft.name.name == Symbol("#do_ccall") && string(ft.name.module) == "FunctionWrappers"
             ft2 = Core.Compiler.widenconst(argtypes[2])

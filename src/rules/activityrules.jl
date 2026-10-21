@@ -34,7 +34,7 @@ function julia_activity_rule(f::LLVM.Function, method_table)
     kwarg_inactive = false
 
     if isKWCallSignature(mi.specTypes)
-        if EnzymeRules.is_inactive_kwarg_from_sig(Interpreter.simplify_kw(mi.specTypes); world, method_table)
+        if cached_is_inactive_kwarg(Interpreter.simplify_kw(mi.specTypes), world, method_table)
             kwarg_inactive = true
         end
     end
