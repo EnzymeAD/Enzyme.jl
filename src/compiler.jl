@@ -20,6 +20,7 @@ import Enzyme:
     enzyme_context,
     enzyme_world,
     enzyme_world_if_active,
+    enzyme_context_if_active,
     TypeTree,
     typetree,
     typetree_in_world,
@@ -818,6 +819,7 @@ generated query for the internal table, called in `world`.
 function rule_applies(gen, @nospecialize(rule), annotate::Bool, @nospecialize(specTypes::Type), world::UInt, @nospecialize(method_table))::Bool
     func = specTypes.parameters[1]
     func isa Core.Builtin && return false
+    record_query_edge!(Tuple{typeof(gen), Type{specTypes}}, world)
     Core._call_in_world_total(world, gen, specTypes)::Bool && return true
     return overlay_rule_applies(rule, annotate, specTypes, world, method_table)
 end
@@ -840,16 +842,20 @@ cached_has_easy_rule(specTypes::Type, world::UInt)::Bool =
     rule_applies(has_easy_rule_gen, EnzymeRules.has_easy_rule, false, specTypes, world, nothing)
 
 """
-    rule_query_edge(gen, specTypes, world)
+    query_instance_edge(sig, world)
 
-The edge that makes code depend on the answer of the generated rule query `gen` for
-`specTypes` in `world`: its `CodeInstance` for that world, so that the code is invalidated
-with it and verified through it when a package image loads, or its `MethodInstance` when
-no instance covers the world.
+The edge that makes code depend on the answer of a generated query (a rule query, or
+`active_reg_flags`) called with signature `sig` in `world`: its `CodeInstance` for that
+world, so that the code is invalidated with it and verified through it when a package image
+loads, or its `MethodInstance` when no instance covers the world.
+
+Before `HAS_RULE_EDGES` there is none: an edge on a `CodeInstance` is not an edge format
+of those versions, and compiled code takes the signature edges of
+`add_compilation_edges!` instead.
 """
-function rule_query_edge(gen, @nospecialize(specTypes::Type), world::UInt)
+function query_instance_edge(@nospecialize(sig::Type), world::UInt)
     @static if HAS_RULE_EDGES
-        match = Base._which(Tuple{typeof(gen), Type{specTypes}}; world, raise = false)
+        match = Base._which(sig; world, raise = false)
         match === nothing && return nothing
         mi = Core.Compiler.specialize_method(match::Core.MethodMatch)::Core.MethodInstance
         ci = ccall(:jl_rettype_inferred_native, Any, (Any, UInt, UInt), mi, world, world)
@@ -859,19 +865,31 @@ function rule_query_edge(gen, @nospecialize(specTypes::Type), world::UInt)
     end
 end
 
-# Add that edge to `edges` (an inference frame's, or a compilation's), once. Before
-# `HAS_RULE_EDGES` nothing is added: an edge on a `CodeInstance` is not an edge format of
-# those versions, and the compiled code takes the signature edges of
-# `add_compilation_edges!` instead.
-function push_rule_query_edge!(edges::Vector{Any}, gen, @nospecialize(specTypes::Type), world::UInt)
+# Add that edge to the edges of an inference frame, once.
+function push_query_edge!(edges::Vector{Any}, @nospecialize(sig::Type), world::UInt)
     @static if HAS_RULE_EDGES
-        specTypes.parameters[1] isa Core.Builtin && return nothing
-        edge = rule_query_edge(gen, specTypes, world)
+        edge = query_instance_edge(sig, world)
         edge === nothing && return nothing
         for e in edges
             e === edge && return nothing
         end
         push!(edges, edge)
+    end
+    return nothing
+end
+
+# Add that edge to the compilation running in the current dynamic scope, if any, once.
+# Every query a compilation bakes an answer of records itself here, so that the compiled
+# code's edges are exactly the instances it depends on (see `add_compilation_edges!`).
+function record_query_edge!(@nospecialize(sig::Type), world::UInt)
+    @static if HAS_RULE_EDGES
+        ctx = enzyme_context_if_active()
+        ctx === nothing && return nothing
+        edge = query_instance_edge(sig, world)
+        edge === nothing && return nothing
+        edge in ctx.query_edges && return nothing
+        push!(ctx.query_edges, edge)
+        push!(ctx.edges, edge)
     end
     return nothing
 end
@@ -1502,15 +1520,13 @@ function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, m
 
     specTypes = Interpreter.simplify_kw(mi.specTypes)
 
-    # The compiled code depends on these answers; the edges keep it current with them.
+    # The compiled code depends on these answers; the queries record their edges.
     if mode == API.DEM_ForwardMode
-        push_rule_query_edge!(edges, has_frule_gen, specTypes, world)
         has_custom_rule = cached_has_frule(specTypes, world, method_table)
         if has_custom_rule
             @safe_debug "Found frule for" mi.specTypes
         end
     else
-        push_rule_query_edge!(edges, has_rrule_gen, specTypes, world)
         has_custom_rule = cached_has_rrule(specTypes, world, method_table)
         if has_custom_rule
             @safe_debug "Found rrule for" mi.specTypes
@@ -1526,7 +1542,6 @@ function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, m
         state.actualRetType = rettype
     end
 
-    push_rule_query_edge!(edges, noalias_gen, specTypes, world)
     if cached_noalias(specTypes, world, method_table)
         push!(edges, mi)
         push!(return_attributes(llvmfn), EnumAttribute("noalias"))
@@ -1792,7 +1807,6 @@ end
         end
         return
     end
-    push_rule_query_edge!(edges, is_inactive_gen, specTypes, world)
     if cached_is_inactive(specTypes, world, method_table)
         push!(edges, mi)
         handleCustom(
@@ -1810,7 +1824,6 @@ end
         )
         return
     end
-    push_rule_query_edge!(edges, is_inactive_noinl_gen, specTypes, world)
     if cached_is_inactive_noinl(specTypes, world, method_table)
         push!(edges, mi)
         handleCustom(
@@ -8625,6 +8638,10 @@ end
         A
     end
 
+    if World isa UInt && edges !== nothing
+        # Asked before the compilation, and thus its context, exists.
+        push_query_edge!(edges, activity_query_sig(rrt, false, false, false), World)
+    end
     if run_enzyme && !(A2 <: Const) && (World isa Nothing ? guaranteed_const(rrt) : guaranteed_const_nongen(rrt, World))
         estr = "Return type `$rrt` not marked Const, but type is guaranteed to be constant"
         return error(estr)
@@ -8838,19 +8855,27 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
     code = Any[Core.Compiler.ReturnNode(result)]
     ci = create_fresh_codeinfo(thunk, source, world, slotnames, code)
 
-    add_compilation_edges!(edges, Mode)
+    add_compilation_edges!(edges, Mode, HAS_RULE_EDGES)
     ci.edges = edges
     return ci
 end
 
 """
-    add_compilation_edges!(edges, Mode)
+    add_compilation_edges!(edges, Mode, precise)
 
-Add the edges of code Enzyme compiled in `Mode`: the signatures of the rules and of the
-activity hooks. A method added to any of them changes what the compilation produces, so
-it has to invalidate code built from the compilation.
+Add the edges of code Enzyme compiled in `Mode`.
+
+With `precise`, the compilation recorded an edge to the instance of every activity and
+rule query it baked an answer of (`record_query_edge!`), next to the method instances it
+compiled, so the code depends on exactly what it was built from; these edges are verified
+when a package image loads. Without, the edges are the signatures of the rules and of the
+activity hooks: a method added to any of them invalidates all such code, and the
+signature edges are not verified when an image loads. That is all the versions before
+`HAS_RULE_EDGES` can express, and what a deferred job, which compiles only later, has to
+settle for.
 """
-function add_compilation_edges!(edges::Vector{Any}, Mode::API.CDerivativeMode)
+function add_compilation_edges!(edges::Vector{Any}, Mode::API.CDerivativeMode, precise::Bool)
+    precise && return edges
     if Mode == API.DEM_ForwardMode
         fwd_sig = Tuple{typeof(EnzymeRules.forward), <:EnzymeRules.FwdConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
         add_edge!(edges, fwd_sig)
@@ -8952,7 +8977,7 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
 
     # The job compiles later, in `world`, against the rules and hooks of that world.
     edges = Any[mi]
-    add_compilation_edges!(edges, Mode)
+    add_compilation_edges!(edges, Mode, false)
     ci.edges = edges
 
     return ci
