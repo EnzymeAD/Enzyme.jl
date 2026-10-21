@@ -1515,13 +1515,17 @@ function abstract_call_known(
         end
     end
     
-    @static if HAS_RULE_DEPS
-        # The check of a thunk compiled into code this compilation differentiates (nested
-        # differentiation): settle it now, in the world compiled for, so that the code keeps
-        # only the baked, constant thunk, whose IR the differentiation finds by its address
-        # (`autodiff_cache`). The result then depends on the thunk's rule answers itself.
-        if f === Enzyme.Compiler.thunk_guard_ok && length(argtypes) == 2 && argtypes[2] isa Core.Const &&
-                thunk_guard_holds!(sv, argtypes[2].val, interp.world)
+    # The check of a thunk compiled into code this compilation differentiates (nested
+    # differentiation): settle it now, in the world compiled for, so that the code keeps only
+    # the baked, constant thunk, whose IR the differentiation finds by its address
+    # (`autodiff_cache`). The result then depends on the thunk's rule answers itself.
+    if f === Enzyme.Compiler.thunk_guard_ok && length(argtypes) == 2 && argtypes[2] isa Core.Const &&
+            thunk_guard_holds!(sv, argtypes[2].val, interp.world)
+        @static if VERSION < v"1.11.0-"
+            return CallMeta(Core.Const(true), Core.Compiler.EFFECTS_TOTAL, MethodResultPure())
+        elseif VERSION < v"1.12.0-"
+            return CallMeta(Core.Const(true), Union{}, Core.Compiler.EFFECTS_TOTAL, MethodResultPure())
+        else
             return Core.Compiler.Future{Core.Compiler.CallMeta}(
                 CallMeta(
                     Core.Const(true),

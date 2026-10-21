@@ -136,10 +136,8 @@ call_rd_rev(x) = rd_rev(x) + 1.0
         Base.delete_method(m)
     end
 
-    @static if C.HAS_RULE_DEPS || VERSION >= v"1.13.1-DEV"
-        @test autodiff(Reverse, rd_rev, Active(3.0))[1][1] ≈ 6.0
-        @test autodiff(Reverse, call_rd_rev, Active(3.0))[1][1] ≈ 6.0
-    end
+    @test autodiff(Reverse, rd_rev, Active(3.0))[1][1] ≈ 6.0
+    @test autodiff(Reverse, call_rd_rev, Active(3.0))[1][1] ≈ 6.0
 end
 
 # An `inactive` rule for a callee makes the derivative through it zero, and deleting it
@@ -154,9 +152,7 @@ call_rd_ina(x) = rd_ina(x) + x
     for m in methods(EnzymeRules.inactive, Tuple{typeof(rd_ina), Vararg{Any}})
         Base.delete_method(m)
     end
-    @static if C.HAS_RULE_DEPS || VERSION >= v"1.13.1-DEV"
-        @test autodiff(Forward, call_rd_ina, Duplicated(2.0, 1.0))[1] ≈ 4.0
-    end
+    @test autodiff(Forward, call_rd_ina, Duplicated(2.0, 1.0))[1] ≈ 4.0
 end
 
 # A compiled thunk is checked in the world it runs in, not only when it is compiled: code
