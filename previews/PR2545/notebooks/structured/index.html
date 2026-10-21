@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>- · Enzyme.jl</title><meta name="title" content="- · Enzyme.jl"/><meta property="og:title" content="- · Enzyme.jl"/><meta property="twitter:title" content="- · Enzyme.jl"/><meta name="description" content="Documentation for Enzyme.jl."/><meta property="og:description" content="Documentation for Enzyme.jl."/><meta property="twitter:description" content="Documentation for Enzyme.jl."/><meta property="og:url" content="https://enzyme.mit.edu/julia/notebooks/structured/"/><meta property="twitter:url" content="https://enzyme.mit.edu/julia/notebooks/structured/"/><link rel="canonical" href="https://enzyme.mit.edu/julia/notebooks/structured/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script><script src="https://plausible.io/js/plausible.js" data-domain="enzyme.mit.edu" defer></script></head><body><div id="documenter"><nav class="docs-sidebar"><a class="docs-logo" href="../../"><img src="../../assets/logo.svg" alt="Enzyme.jl logo"/></a><div class="docs-package-name"><span class="docs-autofit"><a href="../../">Enzyme.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><span class="tocitem">Examples</span><ul><li><a class="tocitem" href="../../generated/autodiff/">Basics</a></li><li><a class="tocitem" href="../../generated/box/">Box model</a></li><li><a class="tocitem" href="../../generated/custom_rule/">Custom rules</a></li></ul></li><li><span class="tocitem">Notebooks</span><ul><li><a class="tocitem" href="../ignore_derivatives/">Ignore derivatives</a></li></ul></li><li><a class="tocitem" href="../../faq/">FAQ</a></li><li><a class="tocitem" href="../../api/">API reference</a></li><li><span class="tocitem">Advanced</span><ul><li><a class="tocitem" href="../../dev_docs/">For developers</a></li><li><a class="tocitem" href="../../internal_api/">Internal API</a></li></ul></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li class="is-active"><a href>-</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>-</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/EnzymeAD/Enzyme.jl/blob/main/docs/src/notebooks/structured.jl" title="View source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><style>
+    #documenter-page table {
+        display: table !important;
+        margin: 2rem auto !important;
+        border-top: 2pt solid rgba(0,0,0,0.2);
+        border-bottom: 2pt solid rgba(0,0,0,0.2);
+    }
+
+    #documenter-page pre, #documenter-page div {
+        margin-top: 1.4rem !important;
+        margin-bottom: 1.4rem !important;
+    }
+
+    .code-output {
+        padding: 0.7rem 0.5rem !important;
+    }
+
+    .admonition-body {
+        padding: 0em 1.25em !important;
+    }
+</style>
+
+<!-- PlutoStaticHTML.Begin -->
+<!--
+    # This information is used for caching.
+    [PlutoStaticHTML.State]
+    input_sha = "994554d318f3cb7452d9bcdbfe0244a8f6cd0f92b4fdd2672da9f6c4149655de"
+    julia_version = "1.11.6"
+-->
+<pre class='language-julia'><code class='language-julia'>begin
+    import Pkg
+    # careful: this is _not_ a reproducible environment
+    # activate the local environment
+    Pkg.activate(".")
+    Pkg.instantiate()
+    using PlutoUI, PlutoLinks
+end</code></pre>
+
+
+<pre class='language-julia'><code class='language-julia'>@revise using Enzyme</code></pre>
+
+
+<pre class='language-julia'><code class='language-julia'>@revise using EnzymeCore</code></pre>
+
+
+<pre class='language-julia'><code class='language-julia'>import EnzymeCore: EnzymeRules</code></pre>
+
+
+<pre class='language-julia'><code class='language-julia'>using LinearAlgebra</code></pre>
+
+
+
+<div class="markdown"><p>Let us implement a Symmetric matrix type like it exist in LinearAlgebra.jl</p></div>
+
+<pre class='language-julia'><code class='language-julia'>begin
+    struct MySymmetric{T,S&lt;:AbstractMatrix{&lt;:T}} &lt;: AbstractMatrix{T}
+        data::S
+        uplo::Char
+    
+        function MySymmetric{T,S}(data, uplo::Char) where {T,S&lt;:AbstractMatrix{&lt;:T}}
+            LinearAlgebra.require_one_based_indexing(data)
+            (uplo != 'U' && uplo != 'L') && LinearAlgebra.throw_uplo()
+            new{T,S}(data, uplo)
+        end
+    end
+    function MySymmetric(A, uplo='U')
+         MySymmetric{eltype(A), typeof(A)}(A, 'U')
+    end
+end</code></pre>
+<pre class="code-output documenter-example-output" id="var-MySymmetric">MySymmetric</pre>
+
+<pre class='language-julia'><code class='language-julia'>@inline function Base.getindex(A::MySymmetric, i::Int, j::Int)
+    @boundscheck Base.checkbounds(A, i, j)
+    @inbounds if i == j
+        return A.data[i, j]
+    elseif (A.uplo == 'U') == (i &lt; j)
+        return A.data[i, j]
+    else
+        return A.data[j, i]
+    end
+end</code></pre>
+
+
+<pre class='language-julia'><code class='language-julia'>begin
+    Base.size(A::MySymmetric) = size(A.data)
+    Base.length(A::MySymmetric) = length(A.data)
+end</code></pre>
+
+
+<pre class='language-julia'><code class='language-julia'>x = [1.0 0.0
+     0.0 1.0]</code></pre>
+<pre class="code-output documenter-example-output" id="var-x">2×2 Matrix{Float64}:
+ 1.0  0.0
+ 0.0  1.0</pre>
+
+<pre class='language-julia'><code class='language-julia'>norm(x)</code></pre>
+<pre class="code-output documenter-example-output" id="var-hash141031">1.4142135623730951</pre>
+
+<pre class='language-julia'><code class='language-julia'>Enzyme.gradient(Reverse, norm, x) |&gt; only</code></pre>
+<pre class="code-output documenter-example-output" id="var-hash138190">2×2 Matrix{Float64}:
+ 0.707107  0.0
+ 0.0       0.707107</pre>
+
+<pre class='language-julia'><code class='language-julia'>Enzyme.gradient(Reverse, norm, MySymmetric(x))|&gt; only</code></pre>
+<pre class="code-output documenter-example-output" id="var-hash758699">2×2 MySymmetric{Float64, Matrix{Float64}}:
+ 0.707107  0.0
+ 0.0       0.707107</pre>
+
+
+<div class="markdown"><div class="admonition is-warning"><header class="admonition-header">Warning</header><div class="admonition-body"><p>The gradient of a Symmetric matrix seem to be right right! But let's check for the correctness of the off-diagonal entries, when they are non-zero!</p></div></div></div>
+
+<pre class='language-julia'><code class='language-julia'>x2 = [0.0 1.0
+      1.0 0.0]</code></pre>
+<pre class="code-output documenter-example-output" id="var-x2">2×2 Matrix{Float64}:
+ 0.0  1.0
+ 1.0  0.0</pre>
+
+<pre class='language-julia'><code class='language-julia'>d_x2 = Enzyme.gradient(Reverse, norm, x2) |&gt; only</code></pre>
+<pre class="code-output documenter-example-output" id="var-d_x2">2×2 Matrix{Float64}:
+ 0.0       0.707107
+ 0.707107  0.0</pre>
+
+<pre class='language-julia'><code class='language-julia'>d_x2_sym = Enzyme.gradient(Reverse, norm, MySymmetric(x2)) |&gt; only</code></pre>
+<pre class="code-output documenter-example-output" id="var-d_x2_sym">2×2 MySymmetric{Float64, Matrix{Float64}}:
+ 0.0      1.41421
+ 1.41421  0.0</pre>
+
+<pre class='language-julia'><code class='language-julia'>d_x2 == d_x2_sym</code></pre>
+<pre class="code-output documenter-example-output" id="var-hash174339">false</pre>
+
+<pre class='language-julia'><code class='language-julia'>sum(d_x2) == sum(d_x2_sym.data)</code></pre>
+<pre class="code-output documenter-example-output" id="var-hash106223">true</pre>
+
+<pre class='language-julia'><code class='language-julia'> Symmetric(x2) |&gt; dump</code></pre>
+
+
+<pre class='language-julia'><code class='language-julia'> d_x2_sym |&gt; dump</code></pre>
+
+
+
+<div class="markdown"><p>So while the Symmetric matrix does actually store a full matrix underneath, it is more treated like a triangular matrix (upper in this case). So the entries <code>A[1,2]</code> and <code>A[2,1]</code> are aliased. The gradient accumulation is correct, but when we then use this matrix later on in Julia code it appears as if the gradient was twice what it ought to be.</p></div>
+
+
+<div class="markdown"><div class="admonition is-note"><header class="admonition-header">Note</header><div class="admonition-body"><p>We implement a second equivalent type here, since otherwise we could not show the issue clearly.</p></div></div></div>
+
+<pre class='language-julia'><code class='language-julia'>begin
+    struct MySymmetric2{T,S&lt;:AbstractMatrix{&lt;:T}} &lt;: AbstractMatrix{T}
+        data::S
+        uplo::Char
+    
+        function MySymmetric2{T,S}(data, uplo::Char) where {T,S&lt;:AbstractMatrix{&lt;:T}}
+            LinearAlgebra.require_one_based_indexing(data)
+            (uplo != 'U' && uplo != 'L') && LinearAlgebra.throw_uplo()
+            new{T,S}(data, uplo)
+        end
+    end
+    function MySymmetric2(A, uplo='U')
+         MySymmetric2{eltype(A), typeof(A)}(A, 'U')
+    end
+end</code></pre>
+<pre class="code-output documenter-example-output" id="var-MySymmetric2">MySymmetric2</pre>
+
+<pre class='language-julia'><code class='language-julia'>@inline function Base.getindex(A::MySymmetric2, i::Int, j::Int)
+    @boundscheck Base.checkbounds(A, i, j)
+    @inbounds if i == j
+        return A.data[i, j]
+    elseif (A.uplo == 'U') == (i &lt; j)
+        return A.data[i, j]
+    else
+        return A.data[j, i]
+    end
+end</code></pre>
+
+
+<pre class='language-julia'><code class='language-julia'>begin
+    Base.size(A::MySymmetric2) = size(A.data)
+    Base.length(A::MySymmetric2) = length(A.data)
+end</code></pre>
+
+
+
+<div class="markdown"><p>Now we can implement a rule where we adjust the gradient contribution to be half since later we will double count them.</p></div>
+
+<pre class='language-julia'><code class='language-julia'>begin
+    function EnzymeRules.augmented_primal(config, func::Const{typeof(Base.getindex)}, ::Type{&lt;:Active}, S::Duplicated{&lt;:MySymmetric2}, i::Const, j::Const)
+        # Compute primal
+        if needs_primal(config)
+            primal = func.val(S.val, i.val, j.val)
+        else
+            primal = nothing
+        end
+    
+        # Return an AugmentedReturn object with shadow = nothing
+        return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+    end
+
+    function EnzymeRules.reverse(config, ::Const{typeof(Base.getindex)}, dret::Active, tape,
+                     S::Duplicated{&lt;:MySymmetric2}, i::Const, j::Const)
+        i = i.val
+        j = j.val
+        A = S.val
+        dA = S.dval
+        @inbounds if i == j
+        	dA.data[i, j] += dret.val
+    	elseif (A.uplo == 'U') == (i &lt; j)
+        	dA.data[i, j] += dret.val / 2
+    	else
+            dA.data[j, i] += dret.val / 2
+    	end
+        
+        return (nothing, nothing, nothing)
+    end
+end</code></pre>
+
+
+<pre class='language-julia'><code class='language-julia'>Enzyme.gradient(Reverse, norm, MySymmetric(x2)) |&gt; only</code></pre>
+<pre class="code-output documenter-example-output" id="var-hash579005">2×2 MySymmetric{Float64, Matrix{Float64}}:
+ 0.0      1.41421
+ 1.41421  0.0</pre>
+
+<pre class='language-julia'><code class='language-julia'>Enzyme.gradient(Reverse, norm, MySymmetric2(x2)) |&gt; only</code></pre>
+<pre class="code-output documenter-example-output" id="var-hash166233">2×2 MySymmetric2{Float64, Matrix{Float64}}:
+ 0.0       0.707107
+ 0.707107  0.0</pre>
+
+<!-- PlutoStaticHTML.End --></article><nav class="docs-footer"><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.14.1 on <span class="colophon-date" title="Saturday 30 August 2025 12:47">Saturday 30 August 2025</span>. Using Julia version 1.11.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
