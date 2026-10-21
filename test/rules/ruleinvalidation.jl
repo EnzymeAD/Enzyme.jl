@@ -48,9 +48,10 @@ for m in methods(inactive, Tuple{typeof(issue696), Vararg{Any}})
     Base.delete_method(m)
 end
 
-# Deleting the `inactive` method invalidates its callers only since Julia 1.13.1
-# (JuliaLang/julia#63227).
-if VERSION >= v"1.13.1-DEV"
+# Deleting the `inactive` method invalidates its callers through native edges only since
+# Julia 1.13.1 (JuliaLang/julia#63227); where Enzyme verifies its rule answers itself
+# (`HAS_RULE_DEPS`), it does so regardless.
+if Enzyme.Compiler.HAS_RULE_DEPS || VERSION >= v"1.13.1-DEV"
     @test autodiff(Forward, issue696, Duplicated(1.0, 1.0))[1] ≈ 2.0
     @test autodiff(Forward, call_issue696, Duplicated(1.0, 1.0))[1] ≈ 2.0
 else

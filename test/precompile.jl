@@ -150,15 +150,21 @@ end
             end
         end
 
-        # Differentiating again from a loaded image is what does not work yet. The thunk the
-        # package image refers to was compiled by the process that precompiled it, so the
-        # call goes to an address that means nothing here and the child dies on it.
+        # Differentiating again from a loaded image. The thunk the package image refers to
+        # was compiled by the process that precompiled it, at an address that means nothing
+        # here. Where the generated code checks its thunk before returning it (see
+        # `ThunkGuard`), it finds the thunk is another session's and recompiles; before, the
+        # call went to that address and the child died on it.
         call_code = """
         using Enzyme, EnzymePrecompileAtBuild
         print(EnzymePrecompileAtBuild.rev(3.0), " ", EnzymePrecompileAtBuild.fwd(3.0))
         """
         ok, fields = run_child(load_path, call_code)
-        @test_broken ok
+        if Enzyme.Compiler.HAS_RULE_DEPS
+            @test ok
+        else
+            @test_broken ok
+        end
         if ok
             rev3, fwd3 = fields
             @test parse(Float64, rev3) ≈ rev_at_3
@@ -177,9 +183,7 @@ end
         using Enzyme
         C = Enzyme.Compiler
         sizes = (length(C.cache), length(C.autodiff_cache), length(Enzyme.tape_cache),
-                         length(C.FRULE_CACHE), length(C.RRULE_CACHE), length(C.INACTIVE_CACHE),
-                 length(C.EASY_RULE_CACHE), length(C.NOALIAS_CACHE),
-                 length(C.Interpreter.SigCache),
+                         length(C.Interpreter.SigCache), length(C.RULE_ANSWERS), length(C.CI_VALIDATED),
                  length(C.JIT.hnd_string_map), length(C.JIT.hnd_int_map))
         print(sum(sizes), " ", Enzyme.autodiff(Reverse, x -> x * x, Active(4.0))[1][1])
         """
@@ -196,7 +200,8 @@ end
         # An emptied cache is not the whole of it. The workload differentiates a function
         # that stays in Enzyme, and the thunk that call goes through was compiled while
         # Enzyme precompiled, so Enzyme's own image bakes in an address of that session just
-        # as a package image does. Asking for that derivative again calls it.
+        # as a package image does. Asking for that derivative again calls it, which works
+        # where the thunk is checked before it is used (see `ThunkGuard`).
         workload_code = """
         using Enzyme
         mods = [getfield(Enzyme, n) for n in names(Enzyme; all = true) if
@@ -212,8 +217,96 @@ end
         ok, fields = run_child(load_path, workload_code)
         if ok && fields == ["none"]
             @test_skip ok
+        elseif Enzyme.Compiler.HAS_RULE_DEPS
+            @test ok
         else
             @test_broken ok
+        end
+    end
+end
+
+# A package image carries what Enzyme decided while the package precompiled: the thunk the
+# package's code calls and the inference results it was compiled from, each of which baked
+# in that `EnzymeRDTarget.h` has no rule. A session that has loaded a package defining
+# such a rule before it loads the image must not use those answers. Enzyme verifies the rule
+# answers of everything restored from an image before its first use (src/rule_deps.jl),
+# instead of relying on native edges, which package-image verification does not apply to
+# missing methods of this kind.
+const RD_TARGET = """
+module EnzymeRDTarget
+h(x) = x * x
+g(x) = h(x) + 1.0
+end
+"""
+
+const RD_RULE = """
+module EnzymeRDRule
+using Enzyme, EnzymeRDTarget
+import Enzyme.EnzymeRules: forward
+forward(config, ::Const{typeof(EnzymeRDTarget.h)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated) = 100.0 * x.dval
+forward(config, func::Const{typeof(EnzymeRDTarget.h)}, ::Type{<:Duplicated}, x::Duplicated) =
+    Duplicated(func.val(x.val), 100.0 * x.dval)
+end
+"""
+
+const RD_USER = """
+module EnzymeRDUser
+using Enzyme, EnzymeRDTarget
+fwd(x) = Enzyme.autodiff(Forward, EnzymeRDTarget.g, Duplicated(x, 1.0))[1]
+const PRECOMPILED = fwd(2.0)
+end
+"""
+
+@testset "a no-rule answer from a package image yields to a rule loaded before it" begin
+    precompile_test_harness() do load_path
+        write(joinpath(load_path, "EnzymeRDTarget.jl"), RD_TARGET)
+        write(joinpath(load_path, "EnzymeRDRule.jl"), RD_RULE)
+        write(joinpath(load_path, "EnzymeRDUser.jl"), RD_USER)
+
+        # Without the rule: the first child writes the image, the second loads it.
+        code = """
+        using Enzyme, EnzymeRDUser
+        print(EnzymeRDUser.PRECOMPILED, " ", EnzymeRDUser.fwd(3.0))
+        """
+        for i in 1:2
+            ok, fields = run_child(load_path, code)
+            # Calling a thunk compiled while the package precompiled works only where the
+            # thunk checks it is ours before using it.
+            if Enzyme.Compiler.HAS_RULE_DEPS || i == 1
+                @test ok
+            else
+                @test_broken ok
+            end
+            if ok
+                pre, now = fields
+                @test parse(Float64, pre) ≈ 4.0
+                @test parse(Float64, now) ≈ 6.0
+            end
+        end
+
+        # The rule is loaded first, the image of `EnzymeRDUser` is not rebuilt: what was
+        # compiled into it must give way to the rule.
+        code = """
+        using Enzyme, EnzymeRDRule, EnzymeRDUser
+        stats = Enzyme.Compiler.RULE_STATS
+        print(EnzymeRDUser.PRECOMPILED, " ", EnzymeRDUser.fwd(3.0), " ", stats.verify_failed, " ", stats.ci_closed)
+        """
+        ok, fields = run_child(load_path, code)
+        if Enzyme.Compiler.HAS_RULE_DEPS
+            @test ok
+            if ok
+                pre, now, failed, closed = fields
+                # The value computed while precompiling stays what it was ...
+                @test parse(Float64, pre) ≈ 4.0
+                # ... and the code differentiates with the rule now.
+                @test parse(Float64, now) ≈ 100.0
+                # The answers restored from the image were verified and found stale, and the
+                # inference results that carried them were closed.
+                @test parse(Int, failed) > 0
+                @test parse(Int, closed) > 0
+            end
+        else
+            @test_broken ok && parse(Float64, fields[2]) ≈ 100.0
         end
     end
 end
