@@ -222,20 +222,38 @@ if VERSION >= v"1.11.0-DEV.1552"
     # call builds interpreters from several differently-typed jobs (the `EnzymeTarget`
     # thunk job, the unwrapped primal job, `primal_interp_world`) that all infer the same
     # way, and keying on those types made each of them re-infer the whole call graph.
-    struct EnzymeCacheToken
-        method_tables::Tuple
-        last_fwd_rule_world::Union{Nothing, Tuple}
-        last_rev_rule_world::Union{Nothing, Tuple}
-        last_ina_rule_world::Union{Nothing, Tuple}
-    end
+    @static if VERSION >= v"1.12.0-DEV.1531" # HAS_RULE_DEPS, see src/rule_deps.jl
+        # The inference results carry the rule answers they depend on and are verified
+        # against them before use (see `ci_rule_valid!`), so the token need not tell rule
+        # sets apart. It does tell the modes apart: which kinds of rules mark a call
+        # differs between them.
+        struct EnzymeCacheToken
+            method_tables::Tuple
+            forward_rules::Bool
+            reverse_rules::Bool
+            inactive_rules::Bool
+        end
 
-    @inline EnzymeCacheToken(method_tables::Tuple, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
-        EnzymeCacheToken(
-        method_tables,
+        @inline EnzymeCacheToken(method_tables::Tuple, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
+            EnzymeCacheToken(method_tables, is_forward, is_reverse, inactive_rule)
+    else
+        # Without such answers, inference results are only shared while the set of rules
+        # visible in the world for the mode is the same.
+        struct EnzymeCacheToken
+            method_tables::Tuple
+            last_fwd_rule_world::Union{Nothing, Tuple}
+            last_rev_rule_world::Union{Nothing, Tuple}
+            last_ina_rule_world::Union{Nothing, Tuple}
+        end
+
+        @inline EnzymeCacheToken(method_tables::Tuple, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
+            EnzymeCacheToken(
+            method_tables,
             is_forward ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.forward, Tuple{<:EnzymeCore.EnzymeRules.FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
             is_reverse ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:EnzymeCore.EnzymeRules.RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
             inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
         )
+    end
 
     # The owner of the code instances Enzyme infers for `job`. GPUCompiler asks for it through
     # a hook whose name differs between its majors.
@@ -681,91 +699,7 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta, enzyme_ctx::EnzymeCon
     return rewrite_abi_converter_calls!(mod)
 end
 
-const FRULE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
-const RRULE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
-const INACTIVE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
-const EASY_RULE_CACHE = Dict{Tuple{Type, UInt}, Bool}()
-const NOALIAS_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
-
-function cached_has_easy_rule(specTypes::Type, world::UInt)
-    key = (specTypes, world)
-    val = get(EASY_RULE_CACHE, key, nothing)
-    if val !== nothing
-        return val::Bool
-    end
-    func = specTypes.parameters[1]
-    if func isa Core.Builtin
-        EASY_RULE_CACHE[key] = false
-        return false
-    end
-    res = EnzymeRules.has_easy_rule_from_sig(specTypes; world)
-    EASY_RULE_CACHE[key] = res
-    return res
-end
-
-function cached_has_frule(specTypes::Type, world::UInt, method_table)
-    key = (specTypes, world, method_table)
-    val = get(FRULE_CACHE, key, nothing)
-    if val !== nothing
-        return val::Bool
-    end
-    func = specTypes.parameters[1]
-    if func isa Core.Builtin
-        FRULE_CACHE[key] = false
-        return false
-    end
-    res = EnzymeRules.has_frule_from_sig(specTypes; world, method_table)
-    FRULE_CACHE[key] = res
-    return res
-end
-
-function cached_has_rrule(specTypes::Type, world::UInt, method_table)
-    key = (specTypes, world, method_table)
-    val = get(RRULE_CACHE, key, nothing)
-    if val !== nothing
-        return val::Bool
-    end
-    func = specTypes.parameters[1]
-    if func isa Core.Builtin
-        RRULE_CACHE[key] = false
-        return false
-    end
-    res = EnzymeRules.has_rrule_from_sig(specTypes; world, method_table)
-    RRULE_CACHE[key] = res
-    return res
-end
-
-function cached_is_inactive(specTypes::Type, world::UInt, method_table)
-    key = (specTypes, world, method_table)
-    val = get(INACTIVE_CACHE, key, nothing)
-    if val !== nothing
-        return val::Bool
-    end
-    func = specTypes.parameters[1]
-    if func isa Core.Builtin
-        INACTIVE_CACHE[key] = false
-        return false
-    end
-    res = EnzymeRules.is_inactive_from_sig(specTypes; world, method_table)
-    INACTIVE_CACHE[key] = res
-    return res
-end
-
-function cached_noalias(specTypes::Type, world::UInt, method_table)
-    key = (specTypes, world, method_table)
-    val = get(NOALIAS_CACHE, key, nothing)
-    if val !== nothing
-        return val::Bool
-    end
-    func = specTypes.parameters[1]
-    if func isa Core.Builtin
-        NOALIAS_CACHE[key] = false
-        return false
-    end
-    res = EnzymeRules.noalias_from_sig(specTypes; world, method_table)
-    NOALIAS_CACHE[key] = res
-    return res
-end
+include("rule_deps.jl")
 
 include("compiler/optimize.jl")
 include("compiler/interpreter.jl")
@@ -1679,7 +1613,7 @@ end
         end
         return
     end
-    if EnzymeRules.is_inactive_from_sig(specTypes; world, method_table)
+    if cached_is_inactive(specTypes, world, method_table)
         push!(edges, mi)
         handleCustom(
             state,
@@ -1696,7 +1630,7 @@ end
         )
         return
     end
-    if EnzymeRules.is_inactive_noinl_from_sig(specTypes; world, method_table)
+    if cached_is_inactive_noinl(specTypes, world, method_table)
         push!(edges, mi)
         handleCustom(
             state,
@@ -3177,6 +3111,7 @@ for (k, v) in (
 end
 
 function __init__()
+    init_rule_session!()
     API.memmove_warning!(false)
     API.typeWarning!(false)
     API.EnzymeNonPower2Cache!(false)
@@ -7420,7 +7355,11 @@ struct CompileResult{AT,PT}
     primal::PT
     TapeType::Type
     edges::Vector{Any}
+    # The rule answers the compilation depended on (see src/rule_deps.jl).
+    rule_answers::Vector{RuleAnswer}
 end
+CompileResult(adjoint, primal, @nospecialize(TapeType), edges::Vector{Any}) =
+    CompileResult(adjoint, primal, TapeType, edges, RuleAnswer[])
 
 @inline (thunk::PrimalErrorThunk{PT,FA,RT,TT,Width,ReturnPrimal})(
     fn,
@@ -8315,8 +8254,15 @@ const cache_lock = ReentrantLock()
     try
         obj = get(cache, key, nothing)
         if obj === nothing
-            mod, edges, adjoint_name, primal_name, TapeType, prepost, value_table = _thunk(job)
+            collector, prev = push_collector!()
+            local mod, edges, adjoint_name, primal_name, TapeType, prepost, value_table
+            try
+                mod, edges, adjoint_name, primal_name, TapeType, prepost, value_table = _thunk(job)
+            finally
+                pop_collector!(collector, prev)
+            end
             obj = _link(job, mod, edges, adjoint_name, primal_name, TapeType, prepost)
+            obj = CompileResult(obj.adjoint, obj.primal, obj.TapeType, obj.edges, flatten_rule_deps(collector))
             if obj.adjoint isa Ptr{Nothing}
                 autodiff_cache[obj.adjoint] = CachedThunk(adjoint_name, prepost, value_table)
             end
@@ -8324,6 +8270,10 @@ const cache_lock = ReentrantLock()
                 autodiff_cache[obj.primal] = CachedThunk(primal_name, prepost, value_table)
             end
             cache[key] = obj
+        else
+            # Compiled before in this world; what the compilation depended on, so does the
+            # enclosing one.
+            merge_answers!(obj.rule_answers)
         end
         obj
     finally
@@ -8360,12 +8310,10 @@ function clear_caches!()
     empty!(Enzyme.tape_cache)
     empty!(Enzyme.captured_constants)
 
-    # Which rules apply, memoized against the world the methods were read in.
-    empty!(FRULE_CACHE)
-    empty!(RRULE_CACHE)
-    empty!(INACTIVE_CACHE)
-    empty!(EASY_RULE_CACHE)
-    empty!(NOALIAS_CACHE)
+    # Which rules apply, with the worlds of this session they were verified in. The
+    # answers inference results carry stay with them; they are verified anew in a
+    # session that loads them (see src/rule_deps.jl).
+    clear_rule_caches!()
     empty!(Interpreter.SigCache)
     Interpreter.LastFwdWorld[] = Base.IdSet{Type}()
     Interpreter.LastRevWorld[] = Base.IdSet{Type}()
@@ -8650,7 +8598,46 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
 
     edges = Any[]
     add_edge!(edges, mi)
-    
+
+    params = (FA, A, TT, Mode, Width, ModifiedBetween, ReturnPrimal, ShadowInit, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero)
+    result, answers = compile_thunk(mi, world, params, edges)
+
+    # The code returns the thunk only while the rule answers its compilation depended on
+    # hold in the world it runs in, and only in the session that compiled it; Enzyme
+    # verifies them itself (see src/rule_deps.jl), so from Julia 1.12 on (`HAS_RULE_DEPS`)
+    # the instance takes no edges for them. Before, the answers inference results decided
+    # with are not recorded, and the instance keeps the rule signature edges as well. The
+    # `InlineABI` thunk is its module, which is part of its type, so it cannot be recompiled
+    # into the same code: it keeps the edges and no guard.
+    if !(ABI <: InlineABI)
+        guard = ThunkGuard(result, answers, params, world)
+        code = Any[
+            Expr(:call, GlobalRef(@__MODULE__, :thunk_guard_ok), QuoteNode(guard)),
+            Core.GotoIfNot(Core.SSAValue(1), 4),
+            Core.Compiler.ReturnNode(result),
+            Expr(:call, GlobalRef(@__MODULE__, :guarded_thunk_slow), QuoteNode(guard)),
+            Core.Compiler.ReturnNode(Core.SSAValue(4)),
+        ]
+        ci = create_fresh_codeinfo(thunk, source, world, slotnames, code)
+        add_compilation_edges!(edges, Mode; rules = !HAS_RULE_DEPS)
+    else
+        code = Any[Core.Compiler.ReturnNode(result)]
+        ci = create_fresh_codeinfo(thunk, source, world, slotnames, code)
+        add_compilation_edges!(edges, Mode)
+    end
+    ci.edges = edges
+    return ci
+end
+
+"""
+    compile_thunk(mi, world, params, edges) -> (thunk, rule answers)
+
+Compile the thunk of `mi` in `world` for the `thunk` parameters `params`, collecting the
+rule answers the compilation depends on (see `flatten_rule_deps`).
+"""
+function compile_thunk(mi::Core.MethodInstance, world::UInt, @nospecialize(params::Tuple), edges::Union{Nothing, Vector{Any}})
+    FA, A, TT, Mode, Width, ModifiedBetween, ReturnPrimal, ShadowInit, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero = params
+    collector, prev = push_collector!()
     ts_ctx = JuliaContext()
     ctx = context(ts_ctx)
     activate(ctx)
@@ -8675,14 +8662,21 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
     finally
         deactivate(ctx)
         dispose(ts_ctx)
+        pop_collector!(collector, prev)
     end
+    return result, flatten_rule_deps(collector)
+end
 
-    code = Any[Core.Compiler.ReturnNode(result)]
-    ci = create_fresh_codeinfo(thunk, source, world, slotnames, code)
-
-    add_compilation_edges!(edges, Mode)
-    ci.edges = edges
-    return ci
+# Compile the thunk of a `ThunkGuard` anew in `world`, for code that runs there although the
+# rule answers baked into it no longer hold.
+function recompile_thunk(@nospecialize(params::Tuple), world::UInt)
+    FA, A, TT, Mode = params
+    ft = eltype(FA)
+    primal_tt = Tuple{map(eltype, TT.parameters)...}
+    mi = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, ft, primal_tt, world)
+    mi === nothing && throw(MethodError(ft, primal_tt, world))
+    result, answers = compile_thunk(mi, world, params, nothing)
+    return ThunkGuard(result, answers, params, world)
 end
 
 """
@@ -8692,8 +8686,10 @@ Add the edges of code Enzyme compiled in `Mode`: the signatures of the rules and
 activity hooks. A method added to any of them changes what the compilation produces, so
 it has to invalidate code built from the compilation.
 """
-function add_compilation_edges!(edges::Vector{Any}, Mode::API.CDerivativeMode)
-    if Mode == API.DEM_ForwardMode
+function add_compilation_edges!(edges::Vector{Any}, Mode::API.CDerivativeMode; rules::Bool = true)
+    if !rules
+        # The rule answers are verified by Enzyme (see src/rule_deps.jl).
+    elseif Mode == API.DEM_ForwardMode
         fwd_sig = Tuple{typeof(EnzymeRules.forward), <:EnzymeRules.FwdConfig, <:Enzyme.EnzymeCore.Annotation, Type{<:Enzyme.EnzymeCore.Annotation},Vararg{Enzyme.EnzymeCore.Annotation}}
         add_edge!(edges, fwd_sig)
     else
@@ -8704,14 +8700,18 @@ function add_compilation_edges!(edges::Vector{Any}, Mode::API.CDerivativeMode)
         add_edge!(edges, rev_sig)
     end
     
-    for gen_sig in (
-        Tuple{typeof(EnzymeRules.inactive), Vararg{Any}},
-        Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{Any}},
-        Tuple{typeof(EnzymeRules.inactive_arg), Vararg{Any}},
-        Tuple{typeof(EnzymeRules.inactive_kwarg), Vararg{Any}},
-        Tuple{typeof(EnzymeRules.noalias), Vararg{Any}},
-            ActivityHookSigs...,
-    )
+    if rules
+        for gen_sig in (
+                Tuple{typeof(EnzymeRules.inactive), Vararg{Any}},
+                Tuple{typeof(EnzymeRules.inactive_noinl), Vararg{Any}},
+                Tuple{typeof(EnzymeRules.inactive_arg), Vararg{Any}},
+                Tuple{typeof(EnzymeRules.inactive_kwarg), Vararg{Any}},
+                Tuple{typeof(EnzymeRules.noalias), Vararg{Any}},
+            )
+            add_edge!(edges, gen_sig)
+        end
+    end
+    for gen_sig in ActivityHookSigs
         add_edge!(edges, gen_sig)
     end
     return edges

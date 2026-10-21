@@ -3,14 +3,13 @@ using Enzyme, Test
 # Enzyme keeps what it compiles in globals of its own, and a thunk is held as the address of
 # the code the JIT emitted for it. Neither survives the process that produced it, so a
 # package that differentiates while it precompiles writes an image that refers to a dead
-# session (EnzymeAD/Enzyme.jl#1549). What follows pins down which parts of that already work
-# and which do not: the `@test_broken` cases are what precompilation support has to fix, and
-# the plain `@test` cases are what it must not regress.
+# session (EnzymeAD/Enzyme.jl#1549). What follows pins down what precompilation support
+# must not regress.
 #
-# One of them Enzyme can already keep out of an image, and does: the caches its own workload
-# fills are emptied before the image is written. What no cache can help with is an address
-# baked into code that was compiled during precompilation, which is what the remaining broken
-# cases are.
+# Enzyme keeps its caches out of an image: the caches its own workload fills are emptied
+# before the image is written. An address baked into code that was compiled during
+# precompilation is not called: the generated code checks that its thunk belongs to this
+# session before using it (`ThunkGuard`), and recompiles it otherwise.
 
 # Write the packages into a directory of their own and put it first on the child's load
 # path. The depot is the one this test runs under, so the packages precompile next to the
@@ -150,15 +149,16 @@ end
             end
         end
 
-        # Differentiating again from a loaded image is what does not work yet. The thunk the
-        # package image refers to was compiled by the process that precompiled it, so the
-        # call goes to an address that means nothing here and the child dies on it.
+        # Differentiating again from a loaded image. The thunk the package image refers to
+        # was compiled by the process that precompiled it, at an address that means nothing
+        # here. The generated code checks its thunk before returning it (see `ThunkGuard`),
+        # finds the thunk is another session's, and recompiles.
         call_code = """
         using Enzyme, EnzymePrecompileAtBuild
         print(EnzymePrecompileAtBuild.rev(3.0), " ", EnzymePrecompileAtBuild.fwd(3.0))
         """
         ok, fields = run_child(load_path, call_code)
-        @test_broken ok
+        @test ok
         if ok
             rev3, fwd3 = fields
             @test parse(Float64, rev3) ≈ rev_at_3
@@ -177,9 +177,7 @@ end
         using Enzyme
         C = Enzyme.Compiler
         sizes = (length(C.cache), length(C.autodiff_cache), length(Enzyme.tape_cache),
-                         length(C.FRULE_CACHE), length(C.RRULE_CACHE), length(C.INACTIVE_CACHE),
-                 length(C.EASY_RULE_CACHE), length(C.NOALIAS_CACHE),
-                 length(C.Interpreter.SigCache),
+                         length(C.Interpreter.SigCache), length(C.RULE_ANSWERS), length(C.CI_VALIDATED),
                  length(C.JIT.hnd_string_map), length(C.JIT.hnd_int_map))
         print(sum(sizes), " ", Enzyme.autodiff(Reverse, x -> x * x, Active(4.0))[1][1])
         """
@@ -196,7 +194,8 @@ end
         # An emptied cache is not the whole of it. The workload differentiates a function
         # that stays in Enzyme, and the thunk that call goes through was compiled while
         # Enzyme precompiled, so Enzyme's own image bakes in an address of that session just
-        # as a package image does. Asking for that derivative again calls it.
+        # as a package image does. Asking for that derivative again calls it, which works
+        # where the thunk is checked before it is used (see `ThunkGuard`).
         workload_code = """
         using Enzyme
         mods = [getfield(Enzyme, n) for n in names(Enzyme; all = true) if
@@ -213,7 +212,90 @@ end
         if ok && fields == ["none"]
             @test_skip ok
         else
-            @test_broken ok
+            @test ok
+        end
+    end
+end
+
+# A package image carries what Enzyme decided while the package precompiled: the thunk the
+# package's code calls and the inference results it was compiled from, each of which baked
+# in that `EnzymeRDTarget.h` has no rule. A session that has loaded a package defining
+# such a rule before it loads the image must not use those answers. Enzyme verifies the rule
+# answers of everything restored from an image before its first use (src/rule_deps.jl),
+# instead of relying on native edges, which package-image verification does not apply to
+# missing methods of this kind.
+const RD_TARGET = """
+module EnzymeRDTarget
+h(x) = x * x
+g(x) = h(x) + 1.0
+end
+"""
+
+const RD_RULE = """
+module EnzymeRDRule
+using Enzyme, EnzymeRDTarget
+import Enzyme.EnzymeRules: forward
+forward(config, ::Const{typeof(EnzymeRDTarget.h)}, ::Type{<:DuplicatedNoNeed}, x::Duplicated) = 100.0 * x.dval
+forward(config, func::Const{typeof(EnzymeRDTarget.h)}, ::Type{<:Duplicated}, x::Duplicated) =
+    Duplicated(func.val(x.val), 100.0 * x.dval)
+end
+"""
+
+const RD_USER = """
+module EnzymeRDUser
+using Enzyme, EnzymeRDTarget
+fwd(x) = Enzyme.autodiff(Forward, EnzymeRDTarget.g, Duplicated(x, 1.0))[1]
+const PRECOMPILED = fwd(2.0)
+end
+"""
+
+@testset "a no-rule answer from a package image yields to a rule loaded before it" begin
+    precompile_test_harness() do load_path
+        write(joinpath(load_path, "EnzymeRDTarget.jl"), RD_TARGET)
+        write(joinpath(load_path, "EnzymeRDRule.jl"), RD_RULE)
+        write(joinpath(load_path, "EnzymeRDUser.jl"), RD_USER)
+
+        # Without the rule: the first child writes the image, the second loads it.
+        code = """
+        using Enzyme, EnzymeRDUser
+        print(EnzymeRDUser.PRECOMPILED, " ", EnzymeRDUser.fwd(3.0))
+        """
+        for i in 1:2
+            ok, fields = run_child(load_path, code)
+            # Both children call the thunk compiled while the package precompiled (the
+            # first precompiles it in a process of its own); it is recompiled because it
+            # belongs to another session.
+            @test ok
+            if ok
+                pre, now = fields
+                @test parse(Float64, pre) ≈ 4.0
+                @test parse(Float64, now) ≈ 6.0
+            end
+        end
+
+        # The rule is loaded first, the image of `EnzymeRDUser` is not rebuilt: what was
+        # compiled into it must give way to the rule.
+        code = """
+        using Enzyme, EnzymeRDRule, EnzymeRDUser
+        stats = Enzyme.Compiler.RULE_STATS
+        print(EnzymeRDUser.PRECOMPILED, " ", EnzymeRDUser.fwd(3.0), " ", stats.verify_failed, " ", stats.ci_closed)
+        """
+        ok, fields = run_child(load_path, code)
+        @test ok
+        if ok
+            pre, now, failed, closed = fields
+            # The value computed while precompiling stays what it was ...
+            @test parse(Float64, pre) ≈ 4.0
+            # ... and the code differentiates with the rule now.
+            @test parse(Float64, now) ≈ 100.0
+            if Enzyme.Compiler.HAS_RULE_DEPS
+                # The answers restored from the image were verified and found stale, and
+                # the inference results that carried them were closed. Before Julia 1.12
+                # inference results carry no answers; the rule's signature edge invalidates
+                # the restored code instead.
+                @test parse(Int, failed) > 0
+                @test parse(Int, closed) > 0
+            end
         end
     end
 end

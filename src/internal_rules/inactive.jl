@@ -164,3 +164,9 @@ end
 @inline EnzymeRules.inactive_type(v::Type{Core.Compiler.WorldRange}) = true
 @inline EnzymeRules.inactive_type(v::Type{Core.MethodInstance}) = true
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T <: IO} = true
+
+# Recompiling a thunk whose rule answers no longer hold (src/rule_deps.jl) is not part of
+# what a differentiation of the calling code differentiates.
+function EnzymeRules.inactive(::typeof(Compiler.guarded_thunk_slow), args...)
+    return nothing
+end
