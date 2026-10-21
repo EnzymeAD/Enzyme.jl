@@ -1571,6 +1571,22 @@ function nodecayed_cut_failed!(f::LLVM.Function, failed::Vector{Tuple{LLVM.PHIIn
         get!(cut, LLVM.parent(inst), err)
     end
 
+    # The cut blocks no longer branch anywhere.
+    reachable = Set{LLVM.BasicBlock}()
+    worklist = LLVM.BasicBlock[LLVM.entry(f)]
+    while !isempty(worklist)
+        bb = pop!(worklist)
+        in(bb, reachable) && continue
+        push!(reachable, bb)
+        haskey(cut, bb) && continue
+        append!(worklist, collect(successors(terminator(bb))))
+    end
+    # A cut block reached only through another cut block is dead code itself,
+    # so it is deleted below rather than cut.
+    for bb in collect(keys(cut))
+        in(bb, reachable) || delete!(cut, bb)
+    end
+
     dead = LLVM.Instruction[]
     for (bb, err) in cut
         rest = LLVM.Instruction[inst for inst in instructions(bb) if !isa(inst, LLVM.PHIInst)]
@@ -1586,16 +1602,6 @@ function nodecayed_cut_failed!(f::LLVM.Function, failed::Vector{Tuple{LLVM.PHIIn
         unreachable!(B)
     end
 
-    # The cut blocks no longer branch anywhere.
-    reachable = Set{LLVM.BasicBlock}()
-    worklist = LLVM.BasicBlock[LLVM.entry(f)]
-    while !isempty(worklist)
-        bb = pop!(worklist)
-        in(bb, reachable) && continue
-        push!(reachable, bb)
-        haskey(cut, bb) && continue
-        append!(worklist, collect(successors(terminator(bb))))
-    end
     deadblocks = LLVM.BasicBlock[bb for bb in blocks(f) if !in(bb, reachable)]
     dropped = Set{LLVM.BasicBlock}(deadblocks)
     union!(dropped, keys(cut))
