@@ -1138,6 +1138,18 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
         end
         if isa(v, LLVM.CallInst)
             cf = LLVM.called_operand(v)
+            # The inline data of a small `Memory` is addressed relative to the
+            # object itself, which is then its parent.
+            if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.pointer_from_objref"
+                obj = operands(v)[1]
+                while isa(obj, LLVM.AddrSpaceCastInst) ||
+                        (isa(obj, LLVM.ConstantExpr) && opcode(obj) == LLVM.API.LLVMAddrSpaceCast)
+                    obj = operands(obj)[1]
+                end
+                if addrspace(value_type(obj)) == 10
+                    return obj, offset, true
+                end
+            end
             if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded"
                 ld = operands(v)[2]
                 ld0, o0, ol0 = nodecayed_getparent(st, b, ld, LLVM.ConstantInt(st.offty, 0), hasload)
