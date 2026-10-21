@@ -127,10 +127,6 @@ function __init__()
         ptr = unsafe_load(Base.reinterpret(Ptr{Ptr{Cvoid}}, Libdl.dlsym(hnd, k)))
         push!(pairs, absolute_symbol_pair(mangle(lljit, "ejl_" * k), ptr))
     end
-    for (k, v) in Compiler.JuliaEnzymeNameMap
-        ptr = Compiler.unsafe_to_ptr(Compiler.unbind(v))
-        push!(pairs, absolute_symbol_pair(mangle(lljit, "ejl_" * k), ptr))
-    end
     LLVM.define(jd_main, LLVM.absolute_symbols(pairs))
 
     atexit() do
