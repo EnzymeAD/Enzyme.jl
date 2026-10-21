@@ -570,7 +570,26 @@ end
                    invert_pointer(gutils, operands(orig)[2], B)
                 end
 
-                if value_type(dv) != spllty
+                # The closure's tracked pointers live in the roots array, so its bits
+                # fields alone can make it inactive. Its shadow is then the primal
+                # itself, so in forward mode start from zero rather than copying the
+                # primal floats.
+                const_bits = mode == API.DEM_ForwardMode && dv2 !== nothing &&
+                    is_constant_value(gutils, operands(orig)[1])
+
+                if const_bits
+                    if width == 1
+                        dv = recombine_value!(fwdbuilder, LLVM.null(spllty), dv2)
+                    else
+                        shadowres = UndefValue(spllty)
+                        for idx = 1:width
+                            arg2 = extract_value!(fwdbuilder, dv2, idx - 1)
+                            arg = recombine_value!(fwdbuilder, LLVM.null(pllty), arg2)
+                            shadowres = insert_value!(fwdbuilder, shadowres, arg, idx - 1)
+                        end
+                        dv = shadowres
+                    end
+                elseif value_type(dv) != spllty
                     pv = dv
                     if width == 1
                         if boxed
