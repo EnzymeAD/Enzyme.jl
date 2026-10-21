@@ -403,18 +403,21 @@ function EnzymeRules.augmented_primal(
     args::Vararg{Annotation,N},
 ) where {BodyTy,N}
 
-    config2 = ReverseModeSplit{
-        false,
-        false,
-        EnzymeRules.runtime_activity(config),
-        EnzymeRules.strong_zero(config),
-        EnzymeRules.width(config),
-        EnzymeRules.overwritten(config)[2:end],
-        InlineABI,
-        false,
-        false,
-        false
-    }()
+    config2 = EnzymeRules.set_config(
+        ReverseModeSplit{
+            false,
+            false,
+            false,
+            false,
+            EnzymeRules.width(config),
+            EnzymeRules.overwritten(config)[2:end],
+            InlineABI,
+            false,
+            false,
+            false,
+        }(),
+        config,
+    )
     fwd_thunk, rev_thunk =
         autodiff_thunk(config2, BodyTy, Const, typeof(count), map(typeof, args)...)
 
@@ -460,18 +463,21 @@ function EnzymeRules.reverse(
     args::Vararg{Annotation,N},
 ) where {BodyTy,N}
 
-    config2 = ReverseModeSplit{
-        false,
-        false,
-        EnzymeRules.runtime_activity(config),
-        EnzymeRules.strong_zero(config),
-        EnzymeRules.width(config),
-        EnzymeRules.overwritten(config)[2:end],
-        InlineABI,
-        false,
-        false,
-        false
-    }()
+    config2 = EnzymeRules.set_config(
+        ReverseModeSplit{
+            false,
+            false,
+            false,
+            false,
+            EnzymeRules.width(config),
+            EnzymeRules.overwritten(config)[2:end],
+            InlineABI,
+            false,
+            false,
+            false,
+        }(),
+        config,
+    )
     fwd_thunk, rev_thunk =
         autodiff_thunk(config2, BodyTy, Const, typeof(count), map(typeof, args)...)
 
