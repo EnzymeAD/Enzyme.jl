@@ -664,9 +664,11 @@ end
 # Julia's TBAA tags and `jnoalias_*` scopes describe memory as seen by one function. Julia
 # never inlines at the LLVM level, so they say nothing about how an argument's memory
 # relates to the caller's: a readonly argument read as `jtbaa_const` may be a stack slot
-# the caller just stored to as `jtbaa_stack`. Once `f` is inlined, both AA passes would
-# conclude such a load and store do not alias. Drop the tags on accesses through `f`'s
-# arguments.
+# the caller just stored to as `jtbaa_stack`. Once such a function is inlined, both AA
+# passes would conclude that load and store do not alias. `permit_inlining!` with
+# `strip_argument_aa` drops the tags on accesses through the function's arguments; only
+# functions that Enzyme inlines into a different Julia function (nested modules, rule
+# bodies) need it, the module being differentiated keeps them.
 function points_into_argument(@nospecialize(v::LLVM.Value))::Bool
     while true
         if isa(v, LLVM.Argument)
@@ -701,7 +703,7 @@ function drop_function_local_aa!(@nospecialize(inst::LLVM.Instruction))
     return
 end
 
-function permit_inlining!(f::LLVM.Function)
+function permit_inlining!(f::LLVM.Function; strip_argument_aa::Bool = false)
     for bb in blocks(f), inst in instructions(bb)
         # remove illegal invariant.load and jtbaa_const invariants
         if isa(inst, LLVM.LoadInst)
@@ -720,9 +722,11 @@ function permit_inlining!(f::LLVM.Function)
             if haskey(md, LLVM.MD_invariant_load)
                 delete!(md, LLVM.MD_invariant_load)
             end
-            if points_into_argument(operands(inst)[1])
+            if strip_argument_aa && points_into_argument(operands(inst)[1])
                 drop_function_local_aa!(inst)
             end
+        elseif !strip_argument_aa
+            continue
         elseif isa(inst, LLVM.StoreInst)
             if points_into_argument(operands(inst)[2])
                 drop_function_local_aa!(inst)
