@@ -661,6 +661,46 @@ function force_recompute!(mod::LLVM.Module)
     return
 end
 
+# Julia's TBAA tags and `jnoalias_*` scopes describe memory as seen by one function. Julia
+# never inlines at the LLVM level, so they say nothing about how an argument's memory
+# relates to the caller's: a readonly argument read as `jtbaa_const` may be a stack slot
+# the caller just stored to as `jtbaa_stack`. Once `f` is inlined, both AA passes would
+# conclude such a load and store do not alias. Drop the tags on accesses through `f`'s
+# arguments.
+function points_into_argument(@nospecialize(v::LLVM.Value))::Bool
+    while true
+        if isa(v, LLVM.Argument)
+            return true
+        elseif isa(v, LLVM.GetElementPtrInst) || isa(v, LLVM.BitCastInst) || isa(v, LLVM.AddrSpaceCastInst)
+            v = operands(v)[1]
+        elseif isa(v, LLVM.ConstantExpr) && (
+                opcode(v) == LLVM.API.LLVMGetElementPtr ||
+                    opcode(v) == LLVM.API.LLVMBitCast ||
+                    opcode(v) == LLVM.API.LLVMAddrSpaceCast
+            )
+            v = operands(v)[1]
+        elseif isa(v, LLVM.CallInst)
+            cf = LLVM.called_operand(v)
+            if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded"
+                v = operands(v)[1]
+            else
+                return false
+            end
+        else
+            return false
+        end
+    end
+    return
+end
+
+function drop_function_local_aa!(@nospecialize(inst::LLVM.Instruction))
+    md = metadata(inst)
+    for kind in (LLVM.MD_tbaa, LLVM.MD_alias_scope, LLVM.MD_noalias)
+        haskey(md, kind) && delete!(md, kind)
+    end
+    return
+end
+
 function permit_inlining!(f::LLVM.Function)
     for bb in blocks(f), inst in instructions(bb)
         # remove illegal invariant.load and jtbaa_const invariants
@@ -679,6 +719,20 @@ function permit_inlining!(f::LLVM.Function)
             end
             if haskey(md, LLVM.MD_invariant_load)
                 delete!(md, LLVM.MD_invariant_load)
+            end
+            if points_into_argument(operands(inst)[1])
+                drop_function_local_aa!(inst)
+            end
+        elseif isa(inst, LLVM.StoreInst)
+            if points_into_argument(operands(inst)[2])
+                drop_function_local_aa!(inst)
+            end
+        elseif isa(inst, LLVM.CallInst)
+            cf = LLVM.called_operand(inst)
+            if isa(cf, LLVM.Function) && LLVM.isintrinsic(cf) &&
+                    any(points_into_argument, arguments(inst)[1:min(2, end)]) &&
+                    startswith(LLVM.name(cf), "llvm.mem")
+                drop_function_local_aa!(inst)
             end
         end
     end
