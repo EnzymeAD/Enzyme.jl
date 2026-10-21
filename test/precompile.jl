@@ -3,14 +3,13 @@ using Enzyme, Test
 # Enzyme keeps what it compiles in globals of its own, and a thunk is held as the address of
 # the code the JIT emitted for it. Neither survives the process that produced it, so a
 # package that differentiates while it precompiles writes an image that refers to a dead
-# session (EnzymeAD/Enzyme.jl#1549). What follows pins down which parts of that already work
-# and which do not: the `@test_broken` cases are what precompilation support has to fix, and
-# the plain `@test` cases are what it must not regress.
+# session (EnzymeAD/Enzyme.jl#1549). What follows pins down what precompilation support
+# must not regress.
 #
-# One of them Enzyme can already keep out of an image, and does: the caches its own workload
-# fills are emptied before the image is written. What no cache can help with is an address
-# baked into code that was compiled during precompilation, which is what the remaining broken
-# cases are.
+# Enzyme keeps its caches out of an image: the caches its own workload fills are emptied
+# before the image is written. An address baked into code that was compiled during
+# precompilation is not called: the generated code checks that its thunk belongs to this
+# session before using it (`ThunkGuard`), and recompiles it otherwise.
 
 # Write the packages into a directory of their own and put it first on the child's load
 # path. The depot is the one this test runs under, so the packages precompile next to the
@@ -152,19 +151,14 @@ end
 
         # Differentiating again from a loaded image. The thunk the package image refers to
         # was compiled by the process that precompiled it, at an address that means nothing
-        # here. Where the generated code checks its thunk before returning it (see
-        # `ThunkGuard`), it finds the thunk is another session's and recompiles; before, the
-        # call went to that address and the child died on it.
+        # here. The generated code checks its thunk before returning it (see `ThunkGuard`),
+        # finds the thunk is another session's, and recompiles.
         call_code = """
         using Enzyme, EnzymePrecompileAtBuild
         print(EnzymePrecompileAtBuild.rev(3.0), " ", EnzymePrecompileAtBuild.fwd(3.0))
         """
         ok, fields = run_child(load_path, call_code)
-        if Enzyme.Compiler.HAS_RULE_DEPS
-            @test ok
-        else
-            @test_broken ok
-        end
+        @test ok
         if ok
             rev3, fwd3 = fields
             @test parse(Float64, rev3) ≈ rev_at_3
@@ -217,10 +211,8 @@ end
         ok, fields = run_child(load_path, workload_code)
         if ok && fields == ["none"]
             @test_skip ok
-        elseif Enzyme.Compiler.HAS_RULE_DEPS
-            @test ok
         else
-            @test_broken ok
+            @test ok
         end
     end
 end
@@ -270,13 +262,10 @@ end
         """
         for i in 1:2
             ok, fields = run_child(load_path, code)
-            # Calling a thunk compiled while the package precompiled works only where the
-            # thunk checks it is ours before using it.
-            if Enzyme.Compiler.HAS_RULE_DEPS || i == 1
-                @test ok
-            else
-                @test_broken ok
-            end
+            # Both children call the thunk compiled while the package precompiled (the
+            # first precompiles it in a process of its own); it is recompiled because it
+            # belongs to another session.
+            @test ok
             if ok
                 pre, now = fields
                 @test parse(Float64, pre) ≈ 4.0
@@ -292,21 +281,21 @@ end
         print(EnzymeRDUser.PRECOMPILED, " ", EnzymeRDUser.fwd(3.0), " ", stats.verify_failed, " ", stats.ci_closed)
         """
         ok, fields = run_child(load_path, code)
-        if Enzyme.Compiler.HAS_RULE_DEPS
-            @test ok
-            if ok
-                pre, now, failed, closed = fields
-                # The value computed while precompiling stays what it was ...
-                @test parse(Float64, pre) ≈ 4.0
-                # ... and the code differentiates with the rule now.
-                @test parse(Float64, now) ≈ 100.0
-                # The answers restored from the image were verified and found stale, and the
-                # inference results that carried them were closed.
+        @test ok
+        if ok
+            pre, now, failed, closed = fields
+            # The value computed while precompiling stays what it was ...
+            @test parse(Float64, pre) ≈ 4.0
+            # ... and the code differentiates with the rule now.
+            @test parse(Float64, now) ≈ 100.0
+            if Enzyme.Compiler.HAS_RULE_DEPS
+                # The answers restored from the image were verified and found stale, and
+                # the inference results that carried them were closed. Before Julia 1.12
+                # inference results carry no answers; the rule's signature edge invalidates
+                # the restored code instead.
                 @test parse(Int, failed) > 0
                 @test parse(Int, closed) > 0
             end
-        else
-            @test_broken ok && parse(Float64, fields[2]) ≈ 100.0
         end
     end
 end

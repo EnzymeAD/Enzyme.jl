@@ -26,8 +26,11 @@
 #   differentiates such code (nested differentiation) settles the check in the world it
 #   compiles for, and takes the thunk's answers as its own (`thunk_guard_holds!`).
 #
-# Before Julia 1.12 (`HAS_RULE_DEPS`), only the rule queries are verified this way; inference
-# results and thunks rely on the cache token and on signature edges as before.
+# Before Julia 1.12 (`HAS_RULE_DEPS`), inference results carry no rule answers, so they rely
+# on the cache token as before, and thunks keep the rule signature edges in addition to their
+# guard. The guard then still verifies that a thunk is this session's (a thunk restored from
+# a package image holds an address of the session that wrote the image) and the answers its
+# compilation consulted directly.
 #
 # An answer, inference result or thunk made by another session (one restored from a
 # package image) is never taken on trust: its session differs from `RULE_SESSION[]`, so it
@@ -673,7 +676,7 @@ end
 # returns the baked thunk itself, a constant, when it does: a differentiation of that code
 # (nested differentiation) must see the constant to find the thunk's IR (`autodiff_cache`).
 @inline function thunk_guard_ok(g::ThunkGuard)::Bool
-    world = Base.tls_world_age()
+    world = GPUCompiler.tls_world_age()
     return (@atomic :acquire g.session) === RULE_SESSION[] &&
         (@atomic :monotonic g.min_world) <= world <= (@atomic :acquire g.validated)
 end
@@ -691,7 +694,7 @@ function guard_holds!(g::ThunkGuard, world::UInt)::Bool
 end
 
 @noinline function guarded_thunk_slow(g::ThunkGuard{T})::T where {T}
-    world = Base.tls_world_age()
+    world = GPUCompiler.tls_world_age()
     RULE_STATS.guard_slow += 1
     guard_holds!(g, world) && return g.result
     r = @atomic :acquire g.replacement

@@ -8603,10 +8603,13 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
     result, answers = compile_thunk(mi, world, params, edges)
 
     # The code returns the thunk only while the rule answers its compilation depended on
-    # hold in the world it runs in; Enzyme verifies them itself (see src/rule_deps.jl), so
-    # the instance takes no edges for them. The `InlineABI` thunk is its module, which is
-    # part of its type, so it cannot be recompiled into the same code: it keeps the edges.
-    if HAS_RULE_DEPS && !(ABI <: InlineABI)
+    # hold in the world it runs in, and only in the session that compiled it; Enzyme
+    # verifies them itself (see src/rule_deps.jl), so from Julia 1.12 on (`HAS_RULE_DEPS`)
+    # the instance takes no edges for them. Before, the answers inference results decided
+    # with are not recorded, and the instance keeps the rule signature edges as well. The
+    # `InlineABI` thunk is its module, which is part of its type, so it cannot be recompiled
+    # into the same code: it keeps the edges and no guard.
+    if !(ABI <: InlineABI)
         guard = ThunkGuard(result, answers, params, world)
         code = Any[
             Expr(:call, GlobalRef(@__MODULE__, :thunk_guard_ok), QuoteNode(guard)),
@@ -8616,7 +8619,7 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
             Core.Compiler.ReturnNode(Core.SSAValue(4)),
         ]
         ci = create_fresh_codeinfo(thunk, source, world, slotnames, code)
-        add_compilation_edges!(edges, Mode; rules = false)
+        add_compilation_edges!(edges, Mode; rules = !HAS_RULE_DEPS)
     else
         code = Any[Core.Compiler.ReturnNode(result)]
         ci = create_fresh_codeinfo(thunk, source, world, slotnames, code)
