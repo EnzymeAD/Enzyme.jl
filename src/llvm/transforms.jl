@@ -661,7 +661,49 @@ function force_recompute!(mod::LLVM.Module)
     return
 end
 
-function permit_inlining!(f::LLVM.Function)
+# Julia's TBAA tags and `jnoalias_*` scopes describe memory as seen by one function. Julia
+# never inlines at the LLVM level, so they say nothing about how an argument's memory
+# relates to the caller's: a readonly argument read as `jtbaa_const` may be a stack slot
+# the caller just stored to as `jtbaa_stack`. Once such a function is inlined, both AA
+# passes would conclude that load and store do not alias. `permit_inlining!` with
+# `strip_argument_aa` drops the tags on accesses through the function's arguments; only
+# functions that Enzyme inlines into a different Julia function (nested modules, rule
+# bodies) need it, the module being differentiated keeps them.
+function points_into_argument(@nospecialize(v::LLVM.Value))::Bool
+    while true
+        if isa(v, LLVM.Argument)
+            return true
+        elseif isa(v, LLVM.GetElementPtrInst) || isa(v, LLVM.BitCastInst) || isa(v, LLVM.AddrSpaceCastInst)
+            v = operands(v)[1]
+        elseif isa(v, LLVM.ConstantExpr) && (
+                opcode(v) == LLVM.API.LLVMGetElementPtr ||
+                    opcode(v) == LLVM.API.LLVMBitCast ||
+                    opcode(v) == LLVM.API.LLVMAddrSpaceCast
+            )
+            v = operands(v)[1]
+        elseif isa(v, LLVM.CallInst)
+            cf = LLVM.called_operand(v)
+            if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded"
+                v = operands(v)[1]
+            else
+                return false
+            end
+        else
+            return false
+        end
+    end
+    return
+end
+
+function drop_function_local_aa!(@nospecialize(inst::LLVM.Instruction))
+    md = metadata(inst)
+    for kind in (LLVM.MD_tbaa, LLVM.MD_alias_scope, LLVM.MD_noalias)
+        haskey(md, kind) && delete!(md, kind)
+    end
+    return
+end
+
+function permit_inlining!(f::LLVM.Function; strip_argument_aa::Bool = false)
     for bb in blocks(f), inst in instructions(bb)
         # remove illegal invariant.load and jtbaa_const invariants
         if isa(inst, LLVM.LoadInst)
@@ -679,6 +721,22 @@ function permit_inlining!(f::LLVM.Function)
             end
             if haskey(md, LLVM.MD_invariant_load)
                 delete!(md, LLVM.MD_invariant_load)
+            end
+            if strip_argument_aa && points_into_argument(operands(inst)[1])
+                drop_function_local_aa!(inst)
+            end
+        elseif !strip_argument_aa
+            continue
+        elseif isa(inst, LLVM.StoreInst)
+            if points_into_argument(operands(inst)[2])
+                drop_function_local_aa!(inst)
+            end
+        elseif isa(inst, LLVM.CallInst)
+            cf = LLVM.called_operand(inst)
+            if isa(cf, LLVM.Function) && LLVM.isintrinsic(cf) &&
+                    any(points_into_argument, arguments(inst)[1:min(2, end)]) &&
+                    startswith(LLVM.name(cf), "llvm.mem")
+                drop_function_local_aa!(inst)
             end
         end
     end
@@ -1138,6 +1196,18 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
         end
         if isa(v, LLVM.CallInst)
             cf = LLVM.called_operand(v)
+            # The inline data of a small `Memory` is addressed relative to the
+            # object itself, which is then its parent.
+            if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.pointer_from_objref"
+                obj = operands(v)[1]
+                while isa(obj, LLVM.AddrSpaceCastInst) ||
+                        (isa(obj, LLVM.ConstantExpr) && opcode(obj) == LLVM.API.LLVMAddrSpaceCast)
+                    obj = operands(obj)[1]
+                end
+                if addrspace(value_type(obj)) == 10
+                    return obj, offset, true
+                end
+            end
             if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded"
                 ld = operands(v)[2]
                 ld0, o0, ol0 = nodecayed_getparent(st, b, ld, LLVM.ConstantInt(st.offty, 0), hasload)
@@ -1571,6 +1641,22 @@ function nodecayed_cut_failed!(f::LLVM.Function, failed::Vector{Tuple{LLVM.PHIIn
         get!(cut, LLVM.parent(inst), err)
     end
 
+    # The cut blocks no longer branch anywhere.
+    reachable = Set{LLVM.BasicBlock}()
+    worklist = LLVM.BasicBlock[LLVM.entry(f)]
+    while !isempty(worklist)
+        bb = pop!(worklist)
+        in(bb, reachable) && continue
+        push!(reachable, bb)
+        haskey(cut, bb) && continue
+        append!(worklist, collect(successors(terminator(bb))))
+    end
+    # A cut block reached only through another cut block is dead code itself,
+    # so it is deleted below rather than cut.
+    for bb in collect(keys(cut))
+        in(bb, reachable) || delete!(cut, bb)
+    end
+
     dead = LLVM.Instruction[]
     for (bb, err) in cut
         rest = LLVM.Instruction[inst for inst in instructions(bb) if !isa(inst, LLVM.PHIInst)]
@@ -1586,16 +1672,6 @@ function nodecayed_cut_failed!(f::LLVM.Function, failed::Vector{Tuple{LLVM.PHIIn
         unreachable!(B)
     end
 
-    # The cut blocks no longer branch anywhere.
-    reachable = Set{LLVM.BasicBlock}()
-    worklist = LLVM.BasicBlock[LLVM.entry(f)]
-    while !isempty(worklist)
-        bb = pop!(worklist)
-        in(bb, reachable) && continue
-        push!(reachable, bb)
-        haskey(cut, bb) && continue
-        append!(worklist, collect(successors(terminator(bb))))
-    end
     deadblocks = LLVM.BasicBlock[bb for bb in blocks(f) if !in(bb, reachable)]
     dropped = Set{LLVM.BasicBlock}(deadblocks)
     union!(dropped, keys(cut))
