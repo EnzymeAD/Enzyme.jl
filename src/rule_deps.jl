@@ -658,10 +658,20 @@ mutable struct ThunkGuard{T}
     const answers::Vector{RuleAnswer}
     const params::Any
     @atomic min_world::UInt
-    @atomic validated::UInt
+    # The world through which the guard is known to hold, kept as a `Ptr` so that a package
+    # image does not carry it: Julia writes the `Ptr` fields of mutable objects into an image
+    # as `C_NULL` (see `guard_validated`).
+    @atomic validated::Ptr{Cvoid}
     @atomic session::Any
     @atomic replacement::Any
 end
+
+# The world through which `g` is known to hold: 0 for a guard restored from a package image.
+@inline guard_validated(g::ThunkGuard) = UInt((@atomic :acquire g.validated))
+
+# A world as `validated` keeps it. `-1` would survive an image, so the newest world it can
+# record is one before.
+validated_ptr(world::UInt) = Ptr{Cvoid}(min(world, typemax(UInt) - 1))
 
 function ThunkGuard(@nospecialize(result), answers::Vector{RuleAnswer}, @nospecialize(params), world::UInt)
     validated = typemax(UInt)
@@ -669,26 +679,37 @@ function ThunkGuard(@nospecialize(result), answers::Vector{RuleAnswer}, @nospeci
         validated = min(validated, @atomic :acquire a.validated)
     end
     validated = max(validated, world)
-    return ThunkGuard{typeof(result)}(result, answers, params, world, validated, RULE_SESSION[], nothing)
+    return ThunkGuard{typeof(result)}(result, answers, params, world, validated_ptr(validated), RULE_SESSION[], nothing)
 end
 
 # Whether the thunk baked into the code holds in the world the code runs in. The code
 # returns the baked thunk itself, a constant, when it does: a differentiation of that code
 # (nested differentiation) must see the constant to find the thunk's IR (`autodiff_cache`).
+#
+# This runs on every call of the code, so it decides with two plain loads. The code runs in
+# no world before the one it was generated for (`g.min_world`), and in none after the newest
+# world, so the guard holds where it runs if it is known to hold through the newest world.
+# When it is not (a method was defined anywhere since it was last verified),
+# `guarded_thunk_slow` verifies it in the world of the call, which extends `validated` to
+# the newest world again. A guard restored from a package image has `validated` 0, so it
+# always takes that path, which checks that the guard is this session's.
 @inline function thunk_guard_ok(g::ThunkGuard)::Bool
-    world = GPUCompiler.tls_world_age()
-    return (@atomic :acquire g.session) === RULE_SESSION[] &&
-        (@atomic :monotonic g.min_world) <= world <= (@atomic :acquire g.validated)
+    return newest_world() <= guard_validated(g)
 end
 
 function guard_holds!(g::ThunkGuard, world::UInt)::Bool
     (@atomic :acquire g.session) === RULE_SESSION[] || return false
     world < (@atomic :monotonic g.min_world) && return false
+    # Each answer that holds in `world` is known to hold through some newer world as well
+    # (`answer_valid!`), and so is the guard, through the first of them to end.
+    validated = max(world, newest_world())
     for a in g.answers
         answer_valid!(a, world) || return false
+        validated = min(validated, @atomic :acquire a.validated)
     end
-    if world > (@atomic :acquire g.validated)
-        @atomic :release g.validated = world
+    validated = max(validated, world)
+    if validated > guard_validated(g)
+        @atomic :release g.validated = validated_ptr(validated)
     end
     return true
 end
