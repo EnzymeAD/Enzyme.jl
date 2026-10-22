@@ -28,6 +28,7 @@ jobs:
     timeout-minutes: 120
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ matrix.libEnzyme }} libEnzyme - assertions=${{ matrix.assertions }} llvm_args=${{ matrix.llvm_args }} - GPUCompiler=${{ matrix.gpucompiler || 'default' }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.allow_failure || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -83,6 +84,13 @@ jobs:
             libEnzyme: packaged
             version: '1.13'
             assertions: true
+          # Julia 1.14 is not supported yet; run it to track progress without gating PRs.
+          - os: ubuntu-24.04
+            arch: default
+            libEnzyme: packaged
+            version: '1.14'
+            assertions: true
+            allow_failure: true
           - os: ubuntu-24.04
             arch: default
             libEnzyme: packaged
