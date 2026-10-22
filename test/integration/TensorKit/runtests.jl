@@ -102,7 +102,8 @@ Tβs = (Active, Const)
         symmetricbraiding && @testset "permute" begin
             A = randn(T, V[1] ⊗ V[2] ← (V[3] ⊗ V[4] ⊗ V[5])')
             p = randindextuple(numind(A))
-            C = randn!(permute(A, p))
+            # copy = true: for Trivial sectors permute may alias A when p keeps the memory order
+            C = randn!(permute(A, p; copy = true))
             @testset for Tα in Tαs, Tβ in Tβs
                 EnzymeTestUtils.test_reverse(TensorKit.permute!, Duplicated, (C, Duplicated), (A, Duplicated), (p, Const), (α, Tα), (β, Tβ); atol, rtol)
             end
