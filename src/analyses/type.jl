@@ -8,9 +8,9 @@ Base.unsafe_convert(::Type{API.EnzymeTypeAnalysisRef}, ta::TypeAnalysis) = ta.re
 LLVM.dispose(ta::TypeAnalysis) = API.FreeTypeAnalysis(ta)
 
 function TypeAnalysis(
-    logic,
-    typerules::Union{Dict{String,CustomRuleType}, Nothing} = nothing,
-)
+        logic,
+        typerules::Union{Dict{String, CustomRuleType}, Nothing} = nothing,
+    )
     if typerules isa Nothing
         ref = API.CreateTypeAnalysis(logic, (), ())
     else
@@ -22,7 +22,7 @@ function TypeAnalysis(
         end
         ref = API.CreateTypeAnalysis(logic, rulenames, rules)
     end
-    TypeAnalysis(ref)
+    return TypeAnalysis(ref)
 end
 
 # typedef bool (*CustomRuleType)(int /*direction*/, CTypeTree * /*return*/,

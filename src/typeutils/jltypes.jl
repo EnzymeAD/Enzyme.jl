@@ -12,6 +12,56 @@ function datatype_layoutsize(dt::Base.DataType)
 end
 end
 
+"""
+    mark_load_dereferenceable!(inst::LLVM.LoadInst, @nospecialize(source_typ), byref)
+
+Julia only marks a loaded pointer to a heap object as `dereferenceable` when
+it comes from a mutable struct's field; a field of an immutable struct gets no
+such metadata. Enzyme's `abs_typeof` knows the exact Julia type of the loaded
+value, so if `inst` loads a tracked pointer to an object of the concrete type
+`source_typ` (`byref == MUT_REF`), mark it `dereferenceable_or_null` for that
+type's size, as Julia's codegen does in the mutable case. Whether it is also
+non-null is left to Julia's own `nonnull`, which it emits exactly when the
+field cannot be `#undef`; with both, LLVM may speculate loads through the
+pointer, which lets LICM hoist e.g. an array's `Memory` pointer out of loops
+it is not guaranteed to be loaded in, where Enzyme otherwise has to cache it
+per iteration.
+"""
+function mark_load_dereferenceable!(inst::LLVM.LoadInst, @nospecialize(source_typ), byref)::Bool
+    byref == GPUCompiler.MUT_REF || return false
+    ty = value_type(inst)
+    (isa(ty, LLVM.PointerType) && addrspace(ty) == Tracked) || return false
+    (source_typ isa DataType && isconcretetype(source_typ) && !Base.issingletontype(source_typ)) || return false
+    source_typ.layout == C_NULL && return false
+    size = datatype_layoutsize(source_typ)
+    size > 0 || return false
+    metadata(inst)["dereferenceable_or_null"] = MDNode(LLVM.Metadata[LLVM.Metadata(LLVM.ConstantInt(Int64(size)))])
+    return true
+end
+
+"""
+    mark_loads_dereferenceable!(fn::LLVM.Function, enzyme_ctx)::Bool
+
+Apply `mark_load_dereferenceable!` to every load of a tracked pointer in `fn`
+whose Julia type `abs_typeof` can determine. Runs as a pass right before the
+loop passes of the early pipeline, since earlier passes recreate such loads
+without their metadata.
+"""
+function mark_loads_dereferenceable!(fn::LLVM.Function, enzyme_ctx::Union{EnzymeContext, Nothing})
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    changed = false
+    for bb in blocks(fn), inst in instructions(bb)
+        isa(inst, LLVM.LoadInst) || continue
+        value_type(inst) == T_prjlvalue || continue
+        (haskey(metadata(inst), "dereferenceable") || haskey(metadata(inst), "dereferenceable_or_null")) && continue
+        legal, source_typ, byref = abs_typeof(inst, enzyme_ctx)
+        legal || continue
+        changed |= mark_load_dereferenceable!(inst, source_typ, byref)
+    end
+    return changed
+end
+
 # On 1.12+, there was a change to the calling convention where
 # an additional argument would be added for the roots, this will
 # return the number of roots in the corresponding convention, or
@@ -151,6 +201,18 @@ function equivalent_rooted_type(@nospecialize(typ::DataType))
     return res
 end
 
+function tuple_non_rooted_types(@nospecialize(typ::DataType))
+    return Tuple(non_rooted_types(typ))
+end
+
+function tuple_rooted_types(@nospecialize(typ::DataType))
+    eq = equivalent_rooted_type(typ)
+    if eq <: NamedTuple && length(eq.parameters) >= 2
+        return Tuple(eq.parameters[2].parameters)
+    end
+    return ()
+end
+
 struct RemovedParam end
 
 function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nospecialize(rooted_typ::Union{Nothing, Type}), source_i::Int, orig_i::Int, arg_jl_i::Int, codegen_i::Int, last_cc, parmsRemoved, @nospecialize(source_sig::Type))
@@ -207,7 +269,7 @@ function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nos
 		    last_cc = GPUCompiler.BITS_VALUE
         elseif llvm_source_typ isa LLVM.PointerType
             if llvm_source_typ != codegen_typ
-                throw(AssertionError("Mismatch codegen type llvm_source_typ=$(string(llvm_source_typ)) codegen_typ=$(string(codegen_typ)) source_i=$source_i source_sig=$source_sig, source_typ=$source_typ, codegen_i=$codegen_i, codegen_types=$(string(codegen_ft))"))
+                throw(AssertionError("Mismatch codegen type llvm_source_typ=$(string(llvm_source_typ)) codegen_typ=$(string(codegen_typ)) source_i=$source_i source_sig=$source_sig, source_typ=$source_typ, codegen_i=$codegen_i, codegen_types=$(string(codegen_types))"))
             end
             push!(
                 args,
@@ -446,7 +508,10 @@ function get_return_info(
         else
             rt = Any
         end
-    elseif jlrettype <: Tuple && in(Any, jlrettype.parameters)
+    elseif jlrettype <: Tuple && (!isa(jlrettype, DataType) || in(Any, jlrettype.parameters))
+        # A tuple that is not fully concrete (a UnionAll such as
+        # `Tuple{Vararg{Any, N}} where N`, or one with an `Any` element) is
+        # returned boxed.
         rt = Any
     elseif !GPUCompiler.deserves_retbox(jlrettype)
         lRT = convert(LLVMType, jlrettype)

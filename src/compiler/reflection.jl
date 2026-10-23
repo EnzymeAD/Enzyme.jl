@@ -70,8 +70,13 @@ function reflect(
 )
 
     job = get_job(func, A, types; optimize, kwargs...)
-    # Codegen the primal function and all its dependency in one module
-    mod, meta = GPUCompiler.codegen(:llvm, job) #= validate=false =#
+    # Run Enzyme's `compile_unhooked` on the job: the primal and every dependency land in
+    # one module, differentiated. (GPUCompiler 1.x's `codegen` is a thin alias of this.)
+    mod, meta = GPUCompiler.compile_unhooked(:llvm, job)
+    # Link the module's Julia values as `_thunk` does, so that what is shown is the code that
+    # runs: the slots left symbolic until then would otherwise stay declarations, and the loads
+    # through them unfolded.
+    link_julia_values!(mod, meta)
 
     if second_stage
         post_optimize!(mod, JIT.get_tm())

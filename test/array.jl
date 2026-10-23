@@ -1,36 +1,36 @@
 using Enzyme, Test
 
 function ptrcopy(B, A)
-@static if VERSION < v"1.11"
-	Base.unsafe_copyto!(B, 1, A, 1, 2)
-else
-	Base.unsafe_copyto!(B.ref, A.ref, 2)
-end
-	nothing
+    @static if VERSION < v"1.11"
+        Base.unsafe_copyto!(B, 1, A, 1, 2)
+    else
+        Base.unsafe_copyto!(B.ref, A.ref, 2)
+    end
+    return nothing
 end
 
 @testset "Array of Pointer Copy" begin
-	A = [[2.7, 3.1], [4.7, 5.6]]
-	dA1 = [1.1, 4.3]
-	dA2 = [17.2, 0.26]
-	dA = [dA1, dA2]
+    A = [[2.7, 3.1], [4.7, 5.6]]
+    dA1 = [1.1, 4.3]
+    dA2 = [17.2, 0.26]
+    dA = [dA1, dA2]
 
-	B = [[2.0, 4.0], [7.0, 11.0]]
-	dB = Enzyme.make_zero(B)
+    B = [[2.0, 4.0], [7.0, 11.0]]
+    dB = Enzyme.make_zero(B)
 
-	Enzyme.autodiff(set_runtime_activity(Reverse), ptrcopy, Duplicated(B, dB), Duplicated(A, dA))
+    Enzyme.autodiff(set_runtime_activity(Reverse), ptrcopy, Duplicated(B, dB), Duplicated(A, dA))
 
-	@test dB[1] === dA1
-	@test dB[2] === dA2
+    @test dB[1] === dA1
+    @test dB[2] === dA2
 end
 
 function unsafe_wrap_test(a, i, x)
-	GC.@preserve a begin
-		 ptr = pointer(a)
-		 b = Base.unsafe_wrap(Array, ptr, length(a))
-		 b[i] = x
-	end
-	a[i]
+    GC.@preserve a begin
+        ptr = pointer(a)
+        b = Base.unsafe_wrap(Array, ptr, length(a))
+        b[i] = x
+    end
+    return a[i]
 end
 
 
@@ -193,133 +193,174 @@ end
 
 
 for RTA in (false, true)
-@testset "Array push runtime activity=$RTA" begin
+    @testset "Array push runtime activity=$RTA" begin
 
-    function pusher(x, y)
-        push!(x, y)
-        x[1] + x[2]
-    end
-
-    x = [2.3]
-    dx = [0.0]
-    rf = @static if VERSION < v"1.11-"
-        nothing
-    else
-        dx.ref.mem
-    end
-    @test 1.0 ≈ first(Enzyme.autodiff(set_runtime_activity(Reverse, RTA), pusher, Duplicated(x, dx), Active(2.0)))[2]
-    @static if VERSION < v"1.11-"
-        @test dx ≈ [1.0]
-    else
-        @test dx ≈ [0.0, 0.0]
-        @test rf ≈ [1.0]
-    end
-    @test x ≈ [2.3, 2.0]
-
-
-    function pusher_ref(x, y, z)
-        push!(x, y[])
-        z[] = x[1] + x[2]
-        nothing
-    end
-
-    yr = Ref(2.0)
-    dyr = Ref(0.0)
-    dyr2 = Ref(0.0)
-
-    zr = Ref(2.0)
-    dzr = Ref(1.0)
-    dzr2 = Ref(2.7)
-
-    x = [2.3]
-    dx = [0.0]
-    dx2 = [0.0]
-    rf = @static if VERSION < v"1.11-"
-        nothing
-    else
-        dx.ref.mem
-    end
-
-    rf2 = @static if VERSION < v"1.11-"
-        nothing
-    else
-        dx2.ref.mem
-    end
-
-    Enzyme.autodiff(set_runtime_activity(Reverse, RTA), pusher_ref, BatchDuplicated(x, (dx, dx2)), BatchDuplicated(yr, (dyr, dyr2)), BatchDuplicated(zr, (dzr, dzr2)))
-
-    @test 1.0 ≈ dyr[]
-    @test 2.7 ≈ dyr2[]
-    
-    @static if VERSION < v"1.11-"
-        @test dx ≈ [1.0]
-        @test dx2 ≈ [2.7]
-    else
-        @test dx ≈ [0.0, 0.0]
-        @test dx2 ≈ [0.0, 0.0]
-        @test rf ≈ [1.0]
-        @test rf2 ≈ [2.7]
-    end
-    @test x ≈ [2.3, 2.0]
-
-    function double_push(x)
-        a = [0.5]
-        push!(a, 1.0)
-        push!(a, 1.0)
-        return x
-    end
-    y, = Enzyme.autodiff(set_runtime_activity(Reverse, RTA), double_push, Active(1.0))[1]
-    @test y == 1.0
-
-    function aloss(a, arr)
-        for i in 1:2500
-            push!(arr, a)
+        function pusher(x, y)
+            push!(x, y)
+            x[1] + x[2]
         end
-        return @inbounds arr[2500]
-    end
-    arr = Float64[]
-    darr = Float64[]
 
-    y = autodiff(
-        set_runtime_activity(Reverse, RTA),
-        aloss,
-        Active,
-        Active(1.0),
-        Duplicated(arr, darr)
-    )[1][1]
-    @test y == 1.0
-    @test arr ≈ ones(2500)
+        x = [2.3]
+        dx = [0.0]
+        rf = @static if VERSION < v"1.11-"
+            nothing
+        else
+            dx.ref.mem
+        end
+        @test 1.0 ≈ first(Enzyme.autodiff(set_runtime_activity(Reverse, RTA), pusher, Duplicated(x, dx), Active(2.0)))[2]
+        @static if VERSION < v"1.11-"
+            @test dx ≈ [1.0]
+        else
+            @test dx ≈ [0.0, 0.0]
+            @test rf ≈ [1.0]
+        end
+        @test x ≈ [2.3, 2.0]
 
-    arr = Float64[]
 
-    y = autodiff(
-        set_runtime_activity(Reverse, RTA),
-        aloss,
-        Active,
-        Active(1.0),
-        Const(arr)
-    )[1][1]
-    @test y == 0.0
-    @test arr ≈ ones(2500)
+        function pusher_ref(x, y, z)
+            push!(x, y[])
+            z[] = x[1] + x[2]
+            nothing
+        end
 
-    if RTA
+        yr = Ref(2.0)
+        dyr = Ref(0.0)
+        dyr2 = Ref(0.0)
+
+        zr = Ref(2.0)
+        dzr = Ref(1.0)
+        dzr2 = Ref(2.7)
+
+        x = [2.3]
+        dx = [0.0]
+        dx2 = [0.0]
+        rf = @static if VERSION < v"1.11-"
+            nothing
+        else
+            dx.ref.mem
+        end
+
+        rf2 = @static if VERSION < v"1.11-"
+            nothing
+        else
+            dx2.ref.mem
+        end
+
+        Enzyme.autodiff(set_runtime_activity(Reverse, RTA), pusher_ref, BatchDuplicated(x, (dx, dx2)), BatchDuplicated(yr, (dyr, dyr2)), BatchDuplicated(zr, (dzr, dzr2)))
+
+        @test 1.0 ≈ dyr[]
+        @test 2.7 ≈ dyr2[]
+
+        @static if VERSION < v"1.11-"
+            @test dx ≈ [1.0]
+            @test dx2 ≈ [2.7]
+        else
+            @test dx ≈ [0.0, 0.0]
+            @test dx2 ≈ [0.0, 0.0]
+            @test rf ≈ [1.0]
+            @test rf2 ≈ [2.7]
+        end
+        @test x ≈ [2.3, 2.0]
+
+        function double_push(x)
+            a = [0.5]
+            push!(a, 1.0)
+            push!(a, 1.0)
+            return x
+        end
+        y, = Enzyme.autodiff(set_runtime_activity(Reverse, RTA), double_push, Active(1.0))[1]
+        @test y == 1.0
+
+        function aloss(a, arr)
+            for i in 1:2500
+                push!(arr, a)
+            end
+            return @inbounds arr[2500]
+        end
         arr = Float64[]
+        darr = Float64[]
+
         y = autodiff(
-            set_runtime_activity(Reverse),
+            set_runtime_activity(Reverse, RTA),
             aloss,
             Active,
             Active(1.0),
-            Duplicated(arr, arr)
+            Duplicated(arr, darr)
+        )[1][1]
+        @test y == 1.0
+        @test arr ≈ ones(2500)
+
+        arr = Float64[]
+
+        y = autodiff(
+            set_runtime_activity(Reverse, RTA),
+            aloss,
+            Active,
+            Active(1.0),
+            Const(arr)
         )[1][1]
         @test y == 0.0
         @test arr ≈ ones(2500)
-    end
 
-end
+        if RTA
+            arr = Float64[]
+            y = autodiff(
+                set_runtime_activity(Reverse),
+                aloss,
+                Active,
+                Active(1.0),
+                Duplicated(arr, arr)
+            )[1][1]
+            @test y == 0.0
+            @test arr ≈ ones(2500)
+        end
+
+    end
 end
 
 @testset "Unsafe wrap" begin
-   autodiff(Forward, unsafe_wrap_test,  Duplicated(zeros(1), zeros(1)), Const(1), Duplicated(1.0, 2.0))
+    autodiff(Forward, unsafe_wrap_test, Duplicated(zeros(1), zeros(1)), Const(1), Duplicated(1.0, 2.0))
 
-	# TODO test for batch and reverse
+    # TODO test for batch and reverse
+end
+
+# `__cat_offset!` copies an aggregate with inline roots through a critical edge
+# that the phi of its roots gets split along.
+vcat_view_scalar(x) = sum(abs2, vcat(view(x, 1:2), x[3]))
+
+@testset "vcat of a view and a scalar" begin
+    x = [1.0, 2.0, 3.0]
+    dx = zero(x)
+    autodiff(set_runtime_activity(Reverse), vcat_view_scalar, Active, Duplicated(x, dx))
+    @test dx ≈ [2.0, 4.0, 6.0]
+    @test Enzyme.gradient(Forward, vcat_view_scalar, x)[1] ≈ [2.0, 4.0, 6.0]
+end
+
+function row_copy_sumsq(A)
+    B = similar(A, 1, size(A, 2))
+    copyto!(B, view(A, 1, :))
+    return sum(abs2, B)
+end
+
+function row_copy_self_sumsq(A)
+    # `dest` aliases `src`, so `copyto!` first copies the view with `unaliascopy`
+    copyto!(A, view(A, 2, :))
+    return sum(abs2, A)
+end
+
+@testset "copyto! from a row view" begin
+    # On Julia 1.13.1 the roots of the source view come either from the argument
+    # or from `unaliascopy`, and LLVM hoists the load of the merged root into the
+    # copy loop's preheader.
+    for T in (Float64, ComplexF64)
+        A = T[1 2 3; 4 5 6]
+        dA = zero(A)
+        autodiff(Reverse, row_copy_sumsq, Active, Duplicated(A, dA))
+        @test dA ≈ T[2 4 6; 0 0 0]
+
+        A = T[1 2 3; 4 5 6]
+        dA = zero(A)
+        autodiff(Reverse, row_copy_self_sumsq, Active, Duplicated(A, dA))
+        @test dA ≈ T[0 0 6; 8 20 24]
+    end
 end

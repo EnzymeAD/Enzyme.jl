@@ -32,7 +32,7 @@ const U0_test = [2.0]
             n1 = CyclicNode(p .* 3.0, nothing)
             n2 = CyclicNode(p .* 5.0, n1)
             n1.next = n2
-            
+
             n1_copied = deepcopy(n1)
             # Both nodes are visited via recursion if cycle not memoized
             return sum(n1_copied.val) + sum(n1_copied.next.val)
@@ -96,9 +96,9 @@ const U0_test = [2.0]
         end
 
         f(w) = Base.deepcopy(w)
-        w  = Wrap([1.0, 2.0], 7)
+        w = Wrap([1.0, 2.0], 7)
         dw = Wrap([1.0, 0.0], 0)
-        
+
         res = Enzyme.autodiff(Enzyme.set_runtime_activity(Enzyme.Forward), Enzyme.Const(f), Enzyme.Duplicated, Enzyme.Duplicated(w, dw))
         @test res[1].v ≈ [1.0, 0.0]
     end

@@ -1,10 +1,10 @@
 function EnzymeRules.forward(
-    config::EnzymeRules.FwdConfig,
-    ::Const{typeof(sort!)},
-    RT::Type{<:Union{Const,DuplicatedNoNeed,Duplicated}},
-    xs::Duplicated{T};
-    kwargs...,
-) where {T<:AbstractArray{<:AbstractFloat}}
+        config::EnzymeRules.FwdConfig,
+        ::Const{typeof(sort!)},
+        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
+        xs::Duplicated{T};
+        kwargs...,
+    ) where {T <: AbstractArray{<:AbstractFloat}}
     inds = sortperm(xs.val; kwargs...)
     xs.val .= xs.val[inds]
     xs.dval .= xs.dval[inds]
@@ -20,15 +20,15 @@ function EnzymeRules.forward(
 end
 
 function EnzymeRules.forward(
-    config::EnzymeRules.FwdConfig,
-    ::Const{typeof(sort!)},
-    RT::Type{<:Union{Const,BatchDuplicatedNoNeed,BatchDuplicated}},
-    xs::BatchDuplicated{T,N};
-    kwargs...,
-) where {T<:AbstractArray{<:AbstractFloat},N}
+        config::EnzymeRules.FwdConfig,
+        ::Const{typeof(sort!)},
+        RT::Type{<:Union{Const, BatchDuplicatedNoNeed, BatchDuplicated}},
+        xs::BatchDuplicated{T, N};
+        kwargs...,
+    ) where {T <: AbstractArray{<:AbstractFloat}, N}
     inds = sortperm(xs.val; kwargs...)
     xs.val .= xs.val[inds]
-    for i = 1:N
+    for i in 1:N
         xs.dval[i] .= xs.dval[i][inds]
     end
     if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
@@ -44,12 +44,12 @@ end
 
 
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.RevConfigWidth{1},
-    ::Const{typeof(sort!)},
-    RT::Type{<:Union{Const,DuplicatedNoNeed,Duplicated}},
-    xs::Duplicated{T};
-    kwargs...,
-) where {T<:AbstractArray{<:AbstractFloat}}
+        config::EnzymeRules.RevConfigWidth{1},
+        ::Const{typeof(sort!)},
+        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
+        xs::Duplicated{T};
+        kwargs...,
+    ) where {T <: AbstractArray{<:AbstractFloat}}
     inds = sortperm(xs.val; kwargs...)
     xs.val .= xs.val[inds]
     xs.dval .= xs.dval[inds]
@@ -67,13 +67,13 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfigWidth{1},
-    ::Const{typeof(sort!)},
-    RT::Type{<:Union{Const,DuplicatedNoNeed,Duplicated}},
-    tape,
-    xs::Duplicated{T};
-    kwargs...,
-) where {T<:AbstractArray{<:AbstractFloat}}
+        config::EnzymeRules.RevConfigWidth{1},
+        ::Const{typeof(sort!)},
+        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
+        tape,
+        xs::Duplicated{T};
+        kwargs...,
+    ) where {T <: AbstractArray{<:AbstractFloat}}
     inds = tape
     back_inds = sortperm(inds)
     xs.dval .= xs.dval[back_inds]
@@ -81,13 +81,13 @@ function EnzymeRules.reverse(
 end
 
 function EnzymeRules.forward(
-    config::EnzymeRules.FwdConfig,
-    ::Const{typeof(partialsort!)},
-    RT::Type{<:Union{Const,DuplicatedNoNeed,Duplicated}},
-    xs::Duplicated{T},
-    k::Const{<:Union{Integer,OrdinalRange}};
-    kwargs...,
-) where {T<:AbstractArray{<:AbstractFloat}}
+        config::EnzymeRules.FwdConfig,
+        ::Const{typeof(partialsort!)},
+        RT::Type{<:Union{Const, DuplicatedNoNeed, Duplicated}},
+        xs::Duplicated{T},
+        k::Const{<:Union{Integer, OrdinalRange}};
+        kwargs...,
+    ) where {T <: AbstractArray{<:AbstractFloat}}
     kv = k.val
     inds = collect(eachindex(xs.val))
     partialsortperm!(inds, xs.val, kv; kwargs...)
@@ -110,18 +110,18 @@ function EnzymeRules.forward(
 end
 
 function EnzymeRules.forward(
-    config::EnzymeRules.FwdConfig,
-    ::Const{typeof(partialsort!)},
-    RT::Type{<:Union{Const,BatchDuplicatedNoNeed,BatchDuplicated}},
-    xs::BatchDuplicated{T,N},
-    k::Const{<:Union{Integer,OrdinalRange}};
-    kwargs...,
-) where {T<:AbstractArray{<:AbstractFloat},N}
+        config::EnzymeRules.FwdConfig,
+        ::Const{typeof(partialsort!)},
+        RT::Type{<:Union{Const, BatchDuplicatedNoNeed, BatchDuplicated}},
+        xs::BatchDuplicated{T, N},
+        k::Const{<:Union{Integer, OrdinalRange}};
+        kwargs...,
+    ) where {T <: AbstractArray{<:AbstractFloat}, N}
     kv = k.val
     inds = collect(eachindex(xs.val))
     partialsortperm!(inds, xs.val, kv; kwargs...)
     xs.val .= xs.val[inds]
-    for i = 1:N
+    for i in 1:N
         xs.dval[i] .= xs.dval[i][inds]
     end
 
@@ -145,13 +145,13 @@ function EnzymeRules.forward(
 end
 
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.RevConfigWidth{1},
-    ::Const{typeof(partialsort!)},
-    RT::Type{<:Union{Const,Active,DuplicatedNoNeed,Duplicated}},
-    xs::Duplicated{T},
-    k::Const{<:Union{Integer,OrdinalRange}};
-    kwargs...,
-) where {T<:AbstractArray{<:AbstractFloat}}
+        config::EnzymeRules.RevConfigWidth{1},
+        ::Const{typeof(partialsort!)},
+        RT::Type{<:Union{Const, Active, DuplicatedNoNeed, Duplicated}},
+        xs::Duplicated{T},
+        k::Const{<:Union{Integer, OrdinalRange}};
+        kwargs...,
+    ) where {T <: AbstractArray{<:AbstractFloat}}
     kv = k.val
     inds = collect(eachindex(xs.val))
     partialsortperm!(inds, xs.val, kv; kwargs...)
@@ -171,14 +171,14 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfigWidth{1},
-    ::Const{typeof(partialsort!)},
-    dret::Union{Active,Type{<:Union{Const,Active,DuplicatedNoNeed,Duplicated}}},
-    tape,
-    xs::Duplicated{T},
-    k::Const{<:Union{Integer,OrdinalRange}};
-    kwargs...,
-) where {T<:AbstractArray{<:AbstractFloat}}
+        config::EnzymeRules.RevConfigWidth{1},
+        ::Const{typeof(partialsort!)},
+        dret::Union{Active, Type{<:Union{Const, Active, DuplicatedNoNeed, Duplicated}}},
+        tape,
+        xs::Duplicated{T},
+        k::Const{<:Union{Integer, OrdinalRange}};
+        kwargs...,
+    ) where {T <: AbstractArray{<:AbstractFloat}}
     inds = tape
     kv = k.val
     if dret isa Active
@@ -192,4 +192,3 @@ function EnzymeRules.reverse(
     xs.dval .= xs.dval[back_inds]
     return (nothing, nothing)
 end
-

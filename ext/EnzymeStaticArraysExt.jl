@@ -3,8 +3,8 @@ module EnzymeStaticArraysExt
 using StaticArrays
 using Enzyme
 
-@inline function Base.convert(::Type{SArray}, tpa::Enzyme.TupleArray{T,S,L,N}) where {T,S,L,N}
-    SArray{Tuple{S...},T,N,L}(tpa.data)
+@inline function Base.convert(::Type{SArray}, tpa::Enzyme.TupleArray{T, L, N}) where {T, L, N}
+    return SArray{Tuple{size(tpa)...}, T, N, L}(tpa.data)
 end
 @inline Base.convert(::Type{StaticArray}, tpa::Enzyme.TupleArray) = convert(SArray, tpa)
 
@@ -12,7 +12,12 @@ end
     reshape(reduce(hcat, map(vec, rows)), Size(outshape..., inshape...))
 end
 
-@inline Enzyme.specialize_output(output, input::StaticArray) = convert(SArray, output)
+# The input's type has the static shape, so the output can be built type-stably from it.
+@inline function Enzyme.specialize_output(
+        output::Enzyme.TupleArray{T, L, N}, ::StaticArray{S, <:Any, N}
+    ) where {T, L, N, S}
+    return SArray{S, T, N, L}(output.data)
+end
 
 @inline function Enzyme.onehot(x::StaticArrays.SArray{S, T, N, L}) where {S, T, N, L}
     ntuple(Val(L)) do i

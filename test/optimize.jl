@@ -23,11 +23,11 @@ function gcloaded_fixup(dest, src)
         j = 1
         while true
             ld = @inbounds if i <= j
-                dat[(i-1) * 2 + j]
+                dat[(i - 1) * 2 + j]
             else
-                dat[(j-1) * 2 + i]
+                dat[(j - 1) * 2 + i]
             end
-            @inbounds dest[(i-1) * 2 + j] = ld
+            @inbounds dest[(i - 1) * 2 + j] = ld
             if j == len
                 break
             end
@@ -42,16 +42,16 @@ function gcloaded_fixup(dest, src)
 end
 
 @testset "GCLoaded fixup" begin
-	H = Hermitian(Matrix([4.0 1.0; 2.0 5.0]))
-	dest = Matrix{Float64}(undef, 2, 2)
+    H = Hermitian(Matrix([4.0 1.0; 2.0 5.0]))
+    dest = Matrix{Float64}(undef, 2, 2)
 
-	Enzyme.autodiff(
-	    ForwardWithPrimal,
-	    gcloaded_fixup,
-	    Const,
-	    Const(dest),
-	    Const(H),
-	)[1]
+    Enzyme.autodiff(
+        ForwardWithPrimal,
+        gcloaded_fixup,
+        Const,
+        Const(dest),
+        Const(H),
+    )[1]
     @test dest ≈ [4.0 2.0; 2.0 5.0]
     dest = Matrix{Float64}(undef, 2, 2)
     gcloaded_fixup(dest, H)
@@ -64,11 +64,11 @@ struct MyNormal
 end
 
 struct MvLocationScale{
-    S, D, L
-}
-    location ::L
-    scale    ::S
-    dist     ::D
+        S, D, L,
+    }
+    location::L
+    scale::S
+    dist::D
 end
 
 @noinline function law(dist, flat::AbstractVector)
@@ -93,8 +93,8 @@ end
 
 function man(q::MvLocationScale)
     dist = MyNormal(1.0, 0.0)
-    
-    out = ones(2,3) # Array{Float64}(undef, (2,3))
+
+    out = ones(2, 3) # Array{Float64}(undef, (2,3))
     @inbounds myrand!(Random.default_rng(), dist, out)
 
     return q.scale[1] * out
@@ -103,19 +103,19 @@ end
 function estimate_repgradelbo_ad_forward(params, dist)
     q = law(dist, params)
     samples = man(q)
-    mean(samples)
+    return mean(samples)
 end
 
 @testset "Removed undef arguments" begin
     T = Float64
-	d = 2
+    d = 2
     dist = MyNormal(1.0, 0.0)
     q = MvLocationScale(zeros(T, d), Diagonal(ones(T, d)), dist)
     params = destructure(q)
-    
+
     ∇x = zero(params)
     fill!(∇x, zero(eltype(∇x)))
-    
+
     estimate_repgradelbo_ad_forward(params, dist)
 
     Enzyme.autodiff(
@@ -164,8 +164,8 @@ module RetTypeMod
 
     # This specialization improves AD performance of the sampling path
     @inline function myrand(
-        q::MvLocationScale, num_samples::Int
-    )
+            q::MvLocationScale, num_samples::Int
+        )
         return ones(5, num_samples)
     end
 
@@ -197,6 +197,7 @@ module RetTypeMod
                 Enzyme.Const(q),
             )
         end
+        return
     end
 
 end
@@ -205,24 +206,26 @@ end
     RetTypeMod.main()
 end
 
-const LBT =  LinearAlgebra.BLAS.libblastrampoline
+const LBT = LinearAlgebra.BLAS.libblastrampoline
 
 @noinline function blasdot(x, y)
     n = length(x)
     s = GC.@preserve x y begin
-	   DX, incx = LinearAlgebra.BLAS.vec_pointer_stride(x)
-	   DY, incy = LinearAlgebra.BLAS.vec_pointer_stride(y)
-	    result = Ref{ComplexF64}()
-            ccall((LinearAlgebra.BLAS.@blasfunc(cblas_zdotc_sub), LBT), Cvoid,
-                (LinearAlgebra.BLAS.BlasInt, Ptr{ComplexF64}, LinearAlgebra.BLAS.BlasInt, Ptr{ComplexF64}, LinearAlgebra.BLAS.BlasInt, Ptr{ComplexF64}),
-                 n, DX, incx, DY, incy, result)
-            result[]
+        DX, incx = LinearAlgebra.BLAS.vec_pointer_stride(x)
+        DY, incy = LinearAlgebra.BLAS.vec_pointer_stride(y)
+        result = Ref{ComplexF64}()
+        ccall(
+            (LinearAlgebra.BLAS.@blasfunc(cblas_zdotc_sub), LBT), Cvoid,
+            (LinearAlgebra.BLAS.BlasInt, Ptr{ComplexF64}, LinearAlgebra.BLAS.BlasInt, Ptr{ComplexF64}, LinearAlgebra.BLAS.BlasInt, Ptr{ComplexF64}),
+            n, DX, incx, DY, incy, result
+        )
+        result[]
     end
     return s
 end
 
 function fwd(x, y)
-	blasdot(x, y)
+    return blasdot(x, y)
 end
 
 @testset "Parameter removal" begin
@@ -244,3 +247,207 @@ end
     @test true
 end
 
+@noinline readonly_arg_norm(c, b) = sqrt(c[1]^2 + c[2]^2 + c[3]^2 + b)
+
+function readonly_arg_loop(s, coords)
+    E = 0.0
+    for i in eachindex(coords)
+        E += readonly_arg_norm(coords[i], s * i)
+    end
+    return E
+end
+
+@testset "Read-only callee reading a reused argument slot" begin
+    # Each tuple is passed through the same stack slot. The reverse pass stores
+    # it again before calling the callee's derivative, which reads it. Marking
+    # that derivative read-only must keep it reading argument memory, or the
+    # stores are dropped and every iteration sees the last tuple.
+    cs = [(i * 0.3, 0.1i^2 % 1.0, 0.2) for i in 1:6]
+    exact = sum(i / (2 * sqrt(sum(abs2, cs[i]) + 1.3i)) for i in 1:6)
+    @test autodiff(Reverse, readonly_arg_loop, Active, Active(1.3), Const(cs))[1][1] ≈ exact
+end
+
+@testset "set_readonly keeps every location" begin
+    RO = Enzyme.Compiler.set_readonly(Enzyme.Compiler.AllEffects)
+    @test RO == Enzyme.Compiler.ReadOnlyEffects
+end
+
+# A loop whose body calls a function that only writes on a throwing path (the
+# bounds check) and loads an array's `Memory` pointer: the load must be hoisted,
+# or Enzyme caches a GC pointer per iteration and the tape grows with the loop.
+@noinline lookup_or_throw(r, i) = r[i]
+function sum_squares_indirect(x, r)
+    a = Vector{Float64}(undef, length(x))
+    for i in eachindex(x)
+        j = lookup_or_throw(r, i)
+        a[i] = x[j] * x[j]
+    end
+    return sum(a)
+end
+function sum_squares_indirect_grad!(dx, x, r)
+    Enzyme.autodiff(Reverse, sum_squares_indirect, Active, Duplicated(x, dx), Const(r))
+    return nothing
+end
+
+@testset "Loop-invariant load hoisted past a read-only-or-throw call" begin
+    function bytes(n)
+        x = 0.5 .+ collect(1:n) ./ n
+        r = collect(1:n)
+        dx = zero(x)
+        sum_squares_indirect_grad!(dx, x, r)
+        @test dx ≈ 2 .* x
+        return @allocated sum_squares_indirect_grad!(dx, x, r)
+    end
+    # Only `a` and its shadow may grow with `n`; a per-iteration tape of the
+    # `Memory` pointer and its shadow would double that. Relies on
+    # EnzymeAD/Enzyme#3264 (Enzyme_jll 0.0.296), which states
+    # `enzyme_ReadOnlyOrThrow` in LLVM memory attributes so that LICM can hoist
+    # the load past `lookup_or_throw`.
+    @test bytes(2000) - bytes(10) < 3 * sizeof(Float64) * (2000 - 10)
+end
+
+function horner_loop(x, n)
+    s = 0.0
+    for _ in 1:n
+        s = s * x + 1.0
+    end
+    return s
+end
+function horner_fixed(x)
+    s = 0.0
+    for _ in 1:8
+        s = s * x + 1.0
+    end
+    return s
+end
+pre_ad_ir(f, types) = sprint() do io
+    Enzyme.Compiler.enzyme_code_llvm(io, f, Active, types; run_enzyme = false, second_stage = false)
+end
+
+@testset "Unrolling before AD" begin
+    # A loop with a runtime trip count is not runtime unrolled, as the reverse
+    # pass inherits the loop's shape.
+    ir = pre_ad_ir(horner_loop, Tuple{Active{Float64}, Const{Int}})
+    @test count("fmul", ir) == 1
+    # A loop with a small constant trip count is still fully unrolled.
+    ir = pre_ad_ir(horner_fixed, Tuple{Active{Float64}})
+    @test count("fmul", ir) == 8
+
+    # d/dx of sum_{k=0}^{n-1} x^k
+    x = 0.5
+    @test autodiff(Reverse, horner_loop, Active, Active(x), Const(9))[1][1] ≈ sum(k * x^(k - 1) for k in 1:8)
+    @test autodiff(Reverse, horner_fixed, Active, Active(x))[1][1] ≈ sum(k * x^(k - 1) for k in 1:7)
+end
+
+function sum_squares_ptr(x)
+    s = 0.0
+    # Load through a pointer so the loop has no bounds checks, and vectorizes
+    # also under `--check-bounds=yes`.
+    GC.@preserve x begin
+        p = pointer(x)
+        @simd for i in 1:length(x)
+            s += abs2(unsafe_load(p, i))
+        end
+    end
+    return s
+end
+
+@testset "Reverse loop vectorizes without gathers" begin
+    x = collect(1.0:100.0)
+    dx = zero(x)
+    autodiff(Reverse, sum_squares_ptr, Active, Duplicated(x, dx))
+    @test dx ≈ 2 .* x
+    # Unrolling the reverse loop before vectorizing it left a strided loop that
+    # the vectorizer could only vectorize with gathers and scatters.
+    ir = sprint() do io
+        Enzyme.Compiler.enzyme_code_llvm(io, sum_squares_ptr, Active, Tuple{Duplicated{Vector{Float64}}})
+    end
+    @test !occursin("masked.gather", ir)
+    @test !occursin("masked.scatter", ir)
+end
+
+mutable struct TypeNamesPair
+    a::Vector{Float64}
+    b::Float64
+end
+typenames_loss(p::TypeNamesPair) = sum(abs2, p.a) * p.b
+
+@testset "EmitTypeNames" begin
+    # The printed type names are debug output only; turning them on must not change
+    # the derivative.
+    Enzyme.Compiler.EmitTypeNames[] = true
+    try
+        p = TypeNamesPair([1.0, 2.0], 3.0)
+        dp = TypeNamesPair([0.0, 0.0], 0.0)
+        autodiff(Reverse, typenames_loss, Active, Duplicated(p, dp))
+        @test dp.a ≈ [6.0, 12.0]
+        @test dp.b ≈ 5.0
+    finally
+        Enzyme.Compiler.EmitTypeNames[] = false
+    end
+end
+
+# The fake use that keeps the argument of a function with a custom rule alive
+# must survive in a nounwind function, or the Attributor drops stores of fields
+# the primal body does not read but the rule does (#3733).
+struct FakeUseCache
+    du::Vector{Float64}
+    dual_du::Vector{Float64}
+end
+fakeuse_tmp(c::FakeUseCache) = c.du
+
+fakeuse_shadow(c::FakeUseCache) = FakeUseCache(zero(c.du), zero(c.dual_du))
+
+function Enzyme.EnzymeRules.forward(
+        config::Enzyme.EnzymeRules.FwdConfig, ::Const{typeof(fakeuse_tmp)},
+        ::Type{<:Annotation}, c::Const{FakeUseCache}
+    )
+    s = fakeuse_shadow(c.val).du
+    return Enzyme.EnzymeRules.needs_primal(config) ? Duplicated(c.val.du, s) : s
+end
+
+function fakeuse_square!(du, u, c)
+    o = fakeuse_tmp(c)
+    o .= u .* u
+    du .= o
+    return nothing
+end
+
+@testset "Fake use survives in a nounwind function" begin
+    c = FakeUseCache(zeros(3), zeros(3))
+    x = [1.0, 2.0, 3.0]
+    dx = zeros(3)
+    ddx = zeros(3)
+    autodiff(Forward, fakeuse_square!, Duplicated(dx, ddx), Duplicated(x, [1.0, 0, 0]), Const(c))
+    @test ddx == [2.0, 0.0, 0.0]
+end
+
+# A temporary large enough that its buffer is malloc'd rather than pooled.
+function scaled_first(a)
+    t = similar(a)
+    t .= a .* 2
+    return t[1]
+end
+
+function scaled_first_grads!(dx, x, n)
+    for _ in 1:n
+        fill!(dx, 0)
+        autodiff(Reverse, Const(scaled_first), Active, Duplicated(x, dx))
+    end
+    return nothing
+end
+
+@static if VERSION >= v"1.11"
+    @testset "Shadow memory length is set before the next safepoint" begin
+        x = randn(1000)
+        dx = zeros(1000)
+        scaled_first_grads!(dx, x, 10)
+        @test dx[1] == 2.0
+        GC.gc()
+        before = Base.gc_num()
+        scaled_first_grads!(dx, x, 100_000)
+        # An unset length makes the GC account a huge malloc'd buffer as
+        # promoted, which forces full collections.
+        @test Base.GC_Diff(Base.gc_num(), before).full_sweep == 0
+    end
+end

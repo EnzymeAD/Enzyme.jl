@@ -1,11 +1,11 @@
 using Random
 
 function EnzymeRules.inactive(
-    ::typeof(Random.rand!),
-    ::Random.AbstractRNG,
-    ::Random.Sampler,
-    ::AbstractArray,
-)
+        ::typeof(Random.rand!),
+        ::Random.AbstractRNG,
+        ::Random.Sampler,
+        ::AbstractArray,
+    )
     return nothing
 end
 function EnzymeRules.inactive(::typeof(Random.randn!), ::Random.AbstractRNG, ::AbstractArray)
@@ -19,13 +19,13 @@ function EnzymeRules.inactive(::typeof(Random.seed!), args...)
 end
 
 function EnzymeRules.forward(
-    config::EnzymeRules.FwdConfig,
-    Ty::Const{typeof(Random.rand!)},
-    RT::Type,
-    rng::Annotation{rngty},
-    dst::Annotation{<:Array{FT}},
-    smpl::Annotation{<:Random.SamplerTrivial{Random.CloseOpen01{FT}}},
-) where {rngty<:Union{TaskLocalRNG,Xoshiro},FT<:Union{Float32,Float64}}
+        config::EnzymeRules.FwdConfig,
+        Ty::Const{typeof(Random.rand!)},
+        RT::Type,
+        rng::Annotation{rngty},
+        dst::Annotation{<:Array{FT}},
+        smpl::Annotation{<:Random.SamplerTrivial{Random.CloseOpen01{FT}}},
+    ) where {rngty <: Union{TaskLocalRNG, Xoshiro}, FT <: Union{Float32, Float64}}
     Ty.val(rng.val, dst.val, smpl.val)
 
     if !(dst isa Const)
@@ -40,7 +40,7 @@ function EnzymeRules.forward(
         end
     end
 
-    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+    return if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
         dst
     elseif EnzymeRules.needs_shadow(config)
         dst.dval
@@ -52,13 +52,13 @@ function EnzymeRules.forward(
 end
 
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.RevConfig,
-    Ty::Const{typeof(Random.rand!)},
-    RT::Type,
-    rng::Annotation{rngty},
-    dst::Annotation{<:Array{FT}},
-    smpl::Annotation{<:Random.SamplerTrivial{Random.CloseOpen01{FT}}},
-) where {rngty<:Union{TaskLocalRNG,Xoshiro},FT<:Union{Float32,Float64}}
+        config::EnzymeRules.RevConfig,
+        Ty::Const{typeof(Random.rand!)},
+        RT::Type,
+        rng::Annotation{rngty},
+        dst::Annotation{<:Array{FT}},
+        smpl::Annotation{<:Random.SamplerTrivial{Random.CloseOpen01{FT}}},
+    ) where {rngty <: Union{TaskLocalRNG, Xoshiro}, FT <: Union{Float32, Float64}}
     Ty.val(rng.val, dst.val, smpl.val)
     if RT <: Duplicated || RT <: DuplicatedNoNeed
         fill!(dst.dval, 0)
@@ -78,23 +78,24 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfig,
-    Ty::Const{typeof(Random.rand!)},
-    RT::Type,
-    tape,
-    rng::Annotation{rngty},
-    dst::Annotation{<:Array{FT}},
-    smpl::Annotation{<:Random.SamplerTrivial{Random.CloseOpen01{FT}}},
-) where {rngty<:Union{TaskLocalRNG,Xoshiro},FT<:Union{Float32,Float64}}
+        config::EnzymeRules.RevConfig,
+        Ty::Const{typeof(Random.rand!)},
+        RT::Type,
+        tape,
+        rng::Annotation{rngty},
+        dst::Annotation{<:Array{FT}},
+        smpl::Annotation{<:Random.SamplerTrivial{Random.CloseOpen01{FT}}},
+    ) where {rngty <: Union{TaskLocalRNG, Xoshiro}, FT <: Union{Float32, Float64}}
     return (nothing, nothing, nothing)
 end
 
 function EnzymeRules.forward(
-    config::EnzymeRules.FwdConfig,
-    Ty::Const{typeof(Random.randn!)},
-    RT::Type,
-    rng::Annotation{<:Random.AbstractRNG},
-    dst::Annotation{<:AbstractArray})
+        config::EnzymeRules.FwdConfig,
+        Ty::Const{typeof(Random.randn!)},
+        RT::Type,
+        rng::Annotation{<:Random.AbstractRNG},
+        dst::Annotation{<:AbstractArray}
+    )
 
     Ty.val(rng.val, dst.val)
 
@@ -110,7 +111,7 @@ function EnzymeRules.forward(
         end
     end
 
-    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+    return if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
         dst
     elseif EnzymeRules.needs_shadow(config)
         dst.dval
@@ -122,12 +123,12 @@ function EnzymeRules.forward(
 end
 
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.RevConfig,
-    Ty::Const{typeof(Random.randn!)},
-    RT::Type,
-    rng::Annotation{<:Random.AbstractRNG},
-    dst::Annotation{<:AbstractArray}
-)
+        config::EnzymeRules.RevConfig,
+        Ty::Const{typeof(Random.randn!)},
+        RT::Type,
+        rng::Annotation{<:Random.AbstractRNG},
+        dst::Annotation{<:AbstractArray}
+    )
     Ty.val(rng.val, dst.val)
     if RT <: Duplicated || RT <: DuplicatedNoNeed
         make_zero!(dst.dval)
@@ -147,13 +148,12 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfig,
-    Ty::Const{typeof(Random.randn!)},
-    RT::Type,
-    tape,
-    rng::Annotation{<:Random.AbstractRNG},
-    dst::Annotation{<:AbstractArray})
+        config::EnzymeRules.RevConfig,
+        Ty::Const{typeof(Random.randn!)},
+        RT::Type,
+        tape,
+        rng::Annotation{<:Random.AbstractRNG},
+        dst::Annotation{<:AbstractArray}
+    )
     return (nothing, nothing)
 end
-
-

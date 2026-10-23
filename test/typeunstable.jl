@@ -310,3 +310,108 @@ end
         Enzyme.Duplicated([0.5], [1.0]),
     ) == (1.0,)
 end
+
+# Issue 3425: an `Active` return whose inferred type is abstract routes combined
+# reverse mode through the split (augmented forward + adjoint) path.  For a batched
+# call the return annotation handed to that path must carry the batch width,
+# otherwise the caller-side ABI reserves a single shadow slot while the generated
+# adjoint writes `width` of them, smashing the caller's gcframe.
+@noinline unstable_tuple_3425(p) = Base.inferencebarrier((p[1], p[2]))
+unstable_batch_3425(p) = (y = unstable_tuple_3425(p); y[1]^2 + y[2]^2)
+
+@testset "Issue 3425 batched abstract active return" begin
+    p = [1.0, 2.0]
+    for width in 1:3
+        dps = Tuple([zero(p) for _ in 1:width])
+        arg = width == 1 ? Duplicated(p, dps[1]) : BatchDuplicated(p, dps)
+        Enzyme.autodiff(Reverse, unstable_batch_3425, Active, arg)
+        for dp in dps
+            @test dp ≈ [2.0, 4.0]
+        end
+    end
+end
+
+batched_uninferred_target(x) = (2 .* x,)
+batched_uninferred_return(x) = Base.invokelatest(batched_uninferred_target, x)
+
+@testset "Batched forward concrete annotation with uninferred return" begin
+    x = [1.0, 2.0]
+    dx1 = ones(2)
+    dx2 = fill(3.0, 2)
+    return_activity = BatchDuplicated{Tuple{Vector{Float64}}, 2}
+    result = Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Forward), Const(batched_uninferred_return),
+        return_activity, BatchDuplicated(x, (dx1, dx2))
+    )
+    @test result[1][1][1] == [2.0, 2.0]
+    @test result[1][2][1] == [6.0, 6.0]
+end
+
+mutable struct RTSetfieldSeedBox
+    v::Any
+end
+
+# The runtime setfield rules run when jl_f_setfield is differentiated directly,
+# e.g. inside setproperty!(::RefValue{Float64}, ::Symbol, ::Any) once that call
+# is not routed through the runtime-generic path. The shadow field is the
+# adjoint slot of the stored value: it may already hold a seed from the caller,
+# which only the reverse rule may consume and clear.
+@testset "Runtime setfield keeps the shadow seed" begin
+    aug = Enzyme.Compiler.rt_jl_setfield_aug
+    rev = Enzyme.Compiler.rt_jl_setfield_rev
+
+    dout = Ref(1.0)
+    dval = Ref(0.0)
+    aug(dout, :x, Val(false), 4.0, dval)
+    @test dout[] == 1.0
+    rev(dout, :x, Val(false), 4.0, dval)
+    @test dval[] == 1.0
+    @test dout[] == 0.0
+
+    # A constant store lets nothing flow, but still overwrites the slot.
+    dout = Ref(1.0)
+    aug(dout, :x, Val(true), 4.0, nothing)
+    @test dout[] == 1.0
+    rev(dout, :x, Val(true), 4.0, nothing)
+    @test dout[] == 0.0
+
+    # An untyped field only needs a fresh zero when it holds another type.
+    dbox = RTSetfieldSeedBox(nothing)
+    aug(dbox, :v, Val(false), 4.0, Ref(0.0))
+    @test dbox.v === 0.0
+    dbox = RTSetfieldSeedBox(2.0)
+    aug(dbox, :v, Val(false), 4.0, Ref(0.0))
+    @test dbox.v === 2.0
+
+    # That fresh zero is what the reverse of a later read of the field
+    # accumulates into: rt_jl_getfield_rev takes the activity of the slot from
+    # the type of the value it currently holds, so a slot still holding the
+    # previous `nothing` would drop the adjoint and leave nothing for the
+    # store's reverse to pass on.
+    getrev = Enzyme.Compiler.rt_jl_getfield_rev
+    dbox = RTSetfieldSeedBox(nothing)
+    dval = Ref(0.0)
+    aug(dbox, :v, Val(false), 4.0, dval)
+    getrev(dbox, Ref(1.0), Val{:v}, Val(false))
+    @test dbox.v === 1.0
+    rev(dbox, :v, Val(false), 4.0, dval)
+    @test dval[] == 1.0
+    @test dbox.v === 0.0
+end
+
+sum_log(x) = sum(log, x)
+
+function sum_log_gradient!(dx, x)
+    Enzyme.autodiff(Reverse, sum_log, Active, Duplicated(x, dx))
+    return nothing
+end
+
+@testset "Function argument passed through mapreduce" begin
+    # `sum(log, x)` passes `log` through `Base._mapreduce_dim`, which must inline,
+    # otherwise it is invoked despecialized on `log::Function`, dynamically.
+    x = [0.5, 2.0, 4.0]
+    dx = zero(x)
+    sum_log_gradient!(dx, x)
+    @test dx ≈ 1 ./ x
+    @test (@allocated sum_log_gradient!(dx, x)) == 0
+end

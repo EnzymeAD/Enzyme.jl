@@ -13,7 +13,7 @@ end
 @testset "Activity Tests" begin
     @static if VERSION < v"1.11-"
     else
-    @test Enzyme.Compiler.active_reg(Memory{Float64}, Base.get_world_counter()) == Enzyme.Compiler.DupState
+        @test Enzyme.Compiler.active_reg(Memory{Float64}, Base.get_world_counter()) == Enzyme.Compiler.DupState
     end
     @test Enzyme.Compiler.active_reg(Type{Array}, Base.get_world_counter()) == Enzyme.Compiler.AnyState
     @test Enzyme.Compiler.active_reg(Core.SimpleVector, Base.get_world_counter()) == Enzyme.Compiler.DupState
@@ -25,7 +25,7 @@ end
     @test Enzyme.Compiler.active_reg(Ints{Integer, Float64}, Base.get_world_counter()) == Enzyme.Compiler.ActiveState
     @test Enzyme.Compiler.active_reg(MInts{Integer, Float64}, Base.get_world_counter()) == Enzyme.Compiler.DupState
 
-    @test Enzyme.Compiler.active_reg(Tuple{Float32,Float32,Int}, Base.get_world_counter()) == Enzyme.Compiler.ActiveState
+    @test Enzyme.Compiler.active_reg(Tuple{Float32, Float32, Int}, Base.get_world_counter()) == Enzyme.Compiler.ActiveState
     @test Enzyme.Compiler.active_reg(Tuple{NamedTuple{(), Tuple{}}, NamedTuple{(), Tuple{}}}, Base.get_world_counter()) == Enzyme.Compiler.AnyState
     @test Enzyme.Compiler.active_reg(Base.RefValue{Float32}, Base.get_world_counter()) == Enzyme.Compiler.DupState
     @test Enzyme.Compiler.active_reg(Ptr, Base.get_world_counter()) == Enzyme.Compiler.DupState
@@ -33,15 +33,15 @@ end
     @test Enzyme.Compiler.active_reg(Colon, Base.get_world_counter()) == Enzyme.Compiler.AnyState
     @test Enzyme.Compiler.active_reg(Symbol, Base.get_world_counter()) == Enzyme.Compiler.AnyState
     @test Enzyme.Compiler.active_reg(String, Base.get_world_counter()) == Enzyme.Compiler.AnyState
-    @test Enzyme.Compiler.active_reg(Tuple{Any,Int64}, Base.get_world_counter()) == Enzyme.Compiler.DupState
-    @test Enzyme.Compiler.active_reg(Tuple{S,Int64} where S, Base.get_world_counter()) == Enzyme.Compiler.DupState
-    @test Enzyme.Compiler.active_reg(Union{Float64,Nothing}, Base.get_world_counter()) == Enzyme.Compiler.DupState
-    @test Enzyme.Compiler.active_reg(Union{Float64,Nothing}, Base.get_world_counter(), UnionSret=true) == Enzyme.Compiler.ActiveState
+    @test Enzyme.Compiler.active_reg(Tuple{Any, Int64}, Base.get_world_counter()) == Enzyme.Compiler.DupState
+    @test Enzyme.Compiler.active_reg(Tuple{S, Int64} where {S}, Base.get_world_counter()) == Enzyme.Compiler.DupState
+    @test Enzyme.Compiler.active_reg(Union{Float64, Nothing}, Base.get_world_counter()) == Enzyme.Compiler.DupState
+    @test Enzyme.Compiler.active_reg(Union{Float64, Nothing}, Base.get_world_counter(), UnionSret = true) == Enzyme.Compiler.ActiveState
     @test Enzyme.Compiler.active_reg(Tuple, Base.get_world_counter()) == Enzyme.Compiler.DupState
-    @test Enzyme.Compiler.active_reg(Tuple, Base.get_world_counter(); AbstractIsMixed=true) == Enzyme.Compiler.MixedState
-    @test Enzyme.Compiler.active_reg(Tuple{A,A} where A, Base.get_world_counter(), AbstractIsMixed=true) == Enzyme.Compiler.MixedState
+    @test Enzyme.Compiler.active_reg(Tuple, Base.get_world_counter(); AbstractIsMixed = true) == Enzyme.Compiler.MixedState
+    @test Enzyme.Compiler.active_reg(Tuple{A, A} where {A}, Base.get_world_counter(), AbstractIsMixed = true) == Enzyme.Compiler.MixedState
 
-    @test Enzyme.Compiler.active_reg(Tuple, Base.get_world_counter(), AbstractIsMixed=true, justActive=true) == Enzyme.Compiler.MixedState
+    @test Enzyme.Compiler.active_reg(Tuple, Base.get_world_counter(), AbstractIsMixed = true, justActive = true) == Enzyme.Compiler.MixedState
 end
 
 # Reactant number and array wrappers are recognized by module/type name in
@@ -98,4 +98,14 @@ end
     @test Enzyme.Compiler.is_mutable_array(Reactant.TracedRArray{Float64, 1})
     @test Enzyme.Compiler.active_reg(Reactant.TracedRArray{Float64, 1}, Base.get_world_counter()) == Enzyme.Compiler.DupState
     @test Enzyme.Compiler.active_reg(Reactant.TracedRArray{Int, 1}, Base.get_world_counter()) == Enzyme.Compiler.AnyState
+end
+
+# A pointer type from a package, with a method for `is_mutable_array` (for example, in a
+# package extension). These methods are newer than the generator of `active_reg_nothrow`.
+primitive type ExtDevPtr{T} 64 end
+Base.eltype(::Type{<:ExtDevPtr{T}}) where {T} = T
+Enzyme.Compiler.is_mutable_array(::Type{<:ExtDevPtr}) = true
+
+@testset "is_mutable_array methods from a newer world" begin
+    @test Enzyme.Compiler.active_reg_nothrow(ExtDevPtr{Float64}) == Enzyme.Compiler.DupState
 end

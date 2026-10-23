@@ -1,17 +1,21 @@
 const HAS_STRUCT_TO_LLVM = Libdl.dlsym(
-                   unsafe_load(cglobal(:jl_libjulia_handle, Ptr{Cvoid})), :jl_struct_to_llvm, throw_error = false
-               ) !== nothing
+    unsafe_load(cglobal(:jl_libjulia_handle, Ptr{Cvoid})), :jl_struct_to_llvm, throw_error = false
+) !== nothing
 
 function struct_to_llvm(@nospecialize(Ty::Type))
-	if HAS_STRUCT_TO_LLVM
-	    isboxed_ref = Ref{Bool}()
-	    llvmtyp =
-        LLVM.LLVMType(ccall(:jl_struct_to_llvm, LLVM.API.LLVMTypeRef,
-                        (Any, LLVM.Context, Ptr{Bool}), Ty, LLVM.context(), isboxed_ref))
-	    return llvmtyp
-	 else
-	    return convert(LLVMType, Ty)
-	 end
+    if HAS_STRUCT_TO_LLVM
+        isboxed_ref = Ref{Bool}()
+        llvmtyp =
+            LLVM.LLVMType(
+            ccall(
+                :jl_struct_to_llvm, LLVM.API.LLVMTypeRef,
+                (Any, LLVM.Context, Ptr{Bool}), Ty, LLVM.context(), isboxed_ref
+            )
+        )
+        return llvmtyp
+    else
+        return convert(LLVMType, Ty)
+    end
 end
 
 function isSpecialPtr(@nospecialize(Ty::LLVM.LLVMType))
@@ -79,7 +83,7 @@ function any_jltypes(Type::LLVM.PointerType)
 end
 
 any_jltypes(Type::LLVM.StructType) = any(any_jltypes, LLVM.elements(Type))
-any_jltypes(Type::Union{LLVM.VectorType,LLVM.ArrayType}) = any_jltypes(eltype(Type))
+any_jltypes(Type::Union{LLVM.VectorType, LLVM.ArrayType}) = any_jltypes(eltype(Type))
 any_jltypes(::LLVM.IntegerType) = false
 any_jltypes(::LLVM.FloatingPointType) = false
 any_jltypes(::LLVM.VoidType) = false
@@ -88,6 +92,72 @@ nfields(Type::LLVM.StructType) = length(LLVM.elements(Type))
 nfields(Type::LLVM.VectorType) = size(Type)
 nfields(Type::LLVM.ArrayType) = length(Type)
 nfields(Type::LLVM.PointerType) = 1
+
+"""
+    tracked_pointer_offsets!(offs, dl, T, base=0)
+
+Append to `offs` the byte offset, relative to `base`, of every GC-tracked pointer
+leaf of the LLVM type `T` in layout order.
+"""
+function tracked_pointer_offsets!(offs::Vector{Int}, dl::LLVM.DataLayout, @nospecialize(T::LLVM.LLVMType), base::Int = 0)
+    if isa(T, LLVM.PointerType)
+        if isSpecialPtr(T)
+            push!(offs, base)
+        end
+    elseif isa(T, LLVM.StructType)
+        for (i, ElT) in enumerate(LLVM.elements(T))
+            tracked_pointer_offsets!(offs, dl, ElT, base + Int(LLVM.offsetof(dl, T, i - 1)))
+        end
+    elseif isa(T, LLVM.ArrayType) || isa(T, LLVM.VectorType)
+        ElT = eltype(T)
+        esz = LLVM.sizeof(dl, ElT)
+        for i in 0:(length(T) - 1)
+            tracked_pointer_offsets!(offs, dl, ElT, base + i * esz)
+        end
+    end
+    return offs
+end
+
+"""
+    split_value_size(dl, T) -> Int
+
+Size in bytes of the data half of a value of LLVM type `T` when Julia keeps it on
+the stack split into inline data and GC roots (`split_value_size` in
+`cgutils.cpp`).
+
+Up to Julia 1.13.0 the data half kept the full layout, with the tracked slots left
+undefined. Since 1.13.1 (JuliaLang/julia#60388) codegen shrink-wraps it: pointer
+words at the very end of the layout are dropped, while interior pointer slots stay
+as padding so the offsets of the remaining fields are unchanged. The buffer behind
+the by-reference pointer of an argument with inline roots, and the stack copy a
+`new` makes of such a value, are only this many bytes; a callee may not describe
+or touch more. An `sret` buffer is not affected: its parameter is still declared
+`dereferenceable` for the full layout and callers allocate it whole, only the
+memcpy that fills it may stop short (see `fixup_1p12_sret!`).
+"""
+function split_value_size(dl::LLVM.DataLayout, @nospecialize(T::LLVM.LLVMType))::Int
+    size = LLVM.sizeof(dl, T)
+    if !shrinks_split_values()
+        return size
+    end
+    offs = tracked_pointer_offsets!(Int[], dl, T)
+    for off in Iterators.reverse(offs)
+        if off + sizeof(Ptr{Cvoid}) == size
+            size = off
+        else
+            break
+        end
+    end
+    return size
+end
+
+"""
+    shrinks_split_values() -> Bool
+
+Whether this Julia trims trailing tracked pointers from the data half of a split
+value (see [`split_value_size`](@ref)).
+"""
+shrinks_split_values() = VERSION >= v"1.13.1-DEV"
 
 function strip_tracked_pointers(@nospecialize(T::LLVM.LLVMType))
     if !any_jltypes(T)
@@ -102,7 +172,7 @@ function strip_tracked_pointers(@nospecialize(T::LLVM.LLVMType))
         end
     end
     if isa(T, LLVM.ArrayType)
-    	return LLVM.ArrayType(strip_tracked_pointers(eltype(T)), length(T))
+        return LLVM.ArrayType(strip_tracked_pointers(eltype(T)), length(T))
     end
 
     if isa(T, LLVM.VectorType)
@@ -114,7 +184,7 @@ function strip_tracked_pointers(@nospecialize(T::LLVM.LLVMType))
         for (i, t) in enumerate(LLVM.elements(T))
             push!(subtypes, strip_tracked_pointers(t))
         end
-        return LLVM.StructType(subtypes; packed=LLVM.ispacked(T))
+        return LLVM.StructType(subtypes; packed = LLVM.ispacked(T))
     end
 
     throw(AssertionError("Unknown composite type"))
@@ -127,7 +197,7 @@ function store_nonjl_types!(B::LLVM.IRBuilder, @nospecialize(startval::LLVM.Valu
     if p != nothing
         push!(vals, p)
     end
-    todo = Tuple{Tuple,LLVM.Value}[((), startval)]
+    todo = Tuple{Tuple, LLVM.Value}[((), startval)]
     while length(todo) != 0
         path, cur = popfirst!(todo)
         ty = value_type(cur)
@@ -138,7 +208,7 @@ function store_nonjl_types!(B::LLVM.IRBuilder, @nospecialize(startval::LLVM.Valu
         end
         if isa(ty, LLVM.ArrayType)
             if any_jltypes(ty)
-                for i = 1:length(ty)
+                for i in 1:length(ty)
                     ev = extract_value!(B, cur, i - 1)
                     push!(todo, ((path..., i - 1), ev))
                 end
@@ -200,7 +270,7 @@ function get_julia_inner_types(B::LLVM.IRBuilder, @nospecialize(p::Union{Nothing
         end
         if isa(ty, LLVM.ArrayType)
             if any_jltypes(ty)
-                for i = 1:length(ty)
+                for i in 1:length(ty)
                     ev = extract_value!(B, cur, i - 1)
                     if isa(ev, LLVM.Instruction)
                         push!(added, ev.ref)

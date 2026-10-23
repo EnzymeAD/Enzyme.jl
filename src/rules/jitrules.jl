@@ -639,7 +639,16 @@ function nonzero_active_data(x::T) where {T}
     return false
 end
 
-function body_runtime_generic_rev(N, Width, Atomic, wrapped, primttypes, shadowargs, active_refs)
+function body_runtime_generic_rev(
+    N,
+    Width,
+    Atomic,
+    wrapped,
+    primttypes,
+    shadowargs,
+    active_refs,
+    dfns,
+)
     outs = Vector{Expr}(undef, N*Width)
     for i = 1:N
         for w = 1:Width
@@ -701,15 +710,11 @@ function body_runtime_generic_rev(N, Width, Atomic, wrapped, primttypes, shadowa
             end
         end
     else
-        fargs = [:df]
-        for i = 2:Width
-            push!(fargs, Symbol("df_$i"))
-        end
         quote
             if df isa Base.RefValue && !(f isa Base.RefValue)
-                BatchMixedDuplicated(f, ($(fargs...),))
+                BatchMixedDuplicated(f, ($(dfns...),))
             else
-                BatchDuplicated(f, ($(fargs...),))
+                BatchDuplicated(f, ($(dfns...),))
             end
         end
     end
@@ -756,6 +761,8 @@ function body_runtime_generic_rev(N, Width, Atomic, wrapped, primttypes, shadowa
 
             annotation = if $Width != 1 && annotation0 <: Duplicated
                 BatchDuplicated{rt,$Width}
+            elseif $Width != 1 && annotation0 <: MixedDuplicated
+                BatchMixedDuplicated{rt, $Width}
             else
                 annotation0
             end
@@ -801,7 +808,16 @@ function func_runtime_generic_rev(N, Width, Atomic)
     _, _, primtypes, allargs, typeargs, wrapped, batchshadowargs, _, active_refs, dfns =
         setup_macro_wraps(false, N, Width)
     body =
-        body_runtime_generic_rev(N, Width, Atomic, wrapped, primtypes, batchshadowargs, active_refs)
+        body_runtime_generic_rev(
+            N,
+            Width,
+            Atomic,
+            wrapped,
+            primtypes,
+            batchshadowargs,
+            active_refs,
+            dfns,
+        )
 
     quote
         function runtime_generic_rev(
@@ -844,6 +860,7 @@ end
         primtypes,
         batchshadowargs,
         active_refs,
+        dfns,
     )
 end
 
@@ -1875,7 +1892,8 @@ function generic_setup(
     gutils,
     start,
     B::LLVM.IRBuilder,
-    lookup;
+        lookup,
+        enzyme_ctx::EnzymeContext;
     sret = nothing,
     tape = nothing,
     firstconst = false,
@@ -2007,8 +2025,8 @@ function generic_setup(
     if runtime_activity
         pushfirst!(vals, unsafe_to_llvm(B, Val(get_runtime_activity(gutils))))
     end
-    etup0 = emit_tuple!(B, ActivityList)
-    etup = emit_apply_type!(B, Base.Val, LLVM.Value[etup0])
+    etup0 = emit_tuple!(B, ActivityList, enzyme_ctx)
+    etup = emit_apply_type!(B, Base.Val, LLVM.Value[etup0], enzyme_ctx)
     if isa(etup, LLVM.Instruction)
         @assert length(collect(LLVM.uses(etup0))) == 1
     end
@@ -2042,6 +2060,7 @@ function generic_setup(
 end
 
 function common_generic_fwd(offset, B, orig, gutils, normalR, shadowR)
+    enzyme_ctx = enzyme_context()
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     shadow =
@@ -2075,6 +2094,7 @@ function common_generic_fwd(offset, B, orig, gutils, normalR, shadowR)
         offset,
         B,
         false,
+        enzyme_ctx,
     ) #=start=#
     AT = LLVM.ArrayType(T_prjlvalue, 1 + Int(width))
     if unsafe_load(shadowR) != C_NULL
@@ -2122,6 +2142,7 @@ end
 end
 
 function common_generic_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
+    enzyme_ctx = enzyme_context()
     normal =
         (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) : nothing
     shadow =
@@ -2154,6 +2175,7 @@ function common_generic_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
         offset,
         B,
         false,
+        enzyme_ctx,
     ) #=start=#
     AT = LLVM.ArrayType(T_prjlvalue, 2 + Int(width))
 
@@ -2222,6 +2244,7 @@ end
 end
 
 function common_generic_rev(offset, B, orig, gutils, tape)::Cvoid
+    enzyme_ctx = enzyme_context()
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(
@@ -2239,7 +2262,7 @@ function common_generic_rev(offset, B, orig, gutils, tape)::Cvoid
 
     @assert tape !== C_NULL
     width = get_width(gutils)
-    generic_setup(orig, runtime_generic_rev, Nothing, gutils, offset, B, true; tape) #=start=#
+    generic_setup(orig, runtime_generic_rev, Nothing, gutils, offset, B, true, enzyme_ctx; tape) #=start=#
     return nothing
 end
 
@@ -2257,6 +2280,7 @@ end
 end
 
 function common_apply_latest_fwd(offset, B, orig, gutils, normalR, shadowR)
+    enzyme_ctx = enzyme_context()
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(
@@ -2286,6 +2310,7 @@ function common_apply_latest_fwd(offset, B, orig, gutils, normalR, shadowR)
         offset + 1,
         B,
         false,
+        enzyme_ctx,
     ) #=start=#
 
     if unsafe_load(shadowR) != C_NULL
@@ -2327,6 +2352,7 @@ function common_apply_latest_fwd(offset, B, orig, gutils, normalR, shadowR)
 end
 
 function common_apply_latest_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
+    enzyme_ctx = enzyme_context()
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(
@@ -2356,6 +2382,7 @@ function common_apply_latest_augfwd(offset, B, orig, gutils, normalR, shadowR, t
         offset + 1,
         B,
         false,
+        enzyme_ctx,
     ) #=start=#
 
     if unsafe_load(shadowR) != C_NULL
@@ -2403,6 +2430,7 @@ function common_apply_latest_augfwd(offset, B, orig, gutils, normalR, shadowR, t
 end
 
 function common_apply_latest_rev(offset, B, orig, gutils, tape)::Cvoid
+    enzyme_ctx = enzyme_context()
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(
@@ -2419,7 +2447,7 @@ function common_apply_latest_rev(offset, B, orig, gutils, tape)::Cvoid
     end
     if !is_constant_value(gutils, orig) || !is_constant_inst(gutils, orig)
         width = get_width(gutils)
-        generic_setup(orig, runtime_generic_rev, Nothing, gutils, offset + 1, B, true; tape) #=start=#
+        generic_setup(orig, runtime_generic_rev, Nothing, gutils, offset + 1, B, true, enzyme_ctx; tape) #=start=#
     end
 
     return nothing
@@ -2450,7 +2478,27 @@ end
     return nothing
 end
 
+# `invoke_in_world(world, f, args...)` (`_call_in_world` before Julia 1.12) is
+# `_call_latest` with the world in front; the runtime-generic path calls `f`
+# in the current world, as it does for `_call_latest`.
+@register_fwd function invoke_in_world_fwd(B, orig, gutils, normalR, shadowR)
+    @assert LLVM.callconv(orig) == 37
+    return common_apply_latest_fwd(2, B, orig, gutils, normalR, shadowR)
+end
+
+@register_aug function invoke_in_world_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    @assert LLVM.callconv(orig) == 37
+    return common_apply_latest_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
+end
+
+@register_rev function invoke_in_world_rev(B, orig, gutils, tape)
+    @assert LLVM.callconv(orig) == 37
+    common_apply_latest_rev(2, B, orig, gutils, tape)
+    return nothing
+end
+
 function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
+    enzyme_ctx = enzyme_context()
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(
@@ -2466,9 +2514,9 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
         return true
     end
 
-    v, isiter = absint(operands(orig)[offset+1])
+    v, isiter = absint(operands(orig)[offset + 1], enzyme_ctx)
     isiter = unbind(isiter)
-    v2, istup = absint(operands(orig)[offset+2])
+    v2, istup = absint(operands(orig)[offset + 2], enzyme_ctx)
     istup = unbind(istup)
 
     width = get_width(gutils)
@@ -2550,6 +2598,7 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
             offset + 2,
             B,
             false,
+            enzyme_ctx,
         ) #=start=#
         AT = LLVM.ArrayType(T_prjlvalue, 1 + Int(width))
         if unsafe_load(shadowR) != C_NULL
@@ -2604,6 +2653,7 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
 end
 
 function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
+    enzyme_ctx = enzyme_context()
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(
@@ -2619,8 +2669,8 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
         return true
     end
 
-    v, isiter = absint(operands(orig)[offset+1])
-    v2, istup = absint(operands(orig)[offset+2])
+    v, isiter = absint(operands(orig)[offset + 1], enzyme_ctx)
+    v2, istup = absint(operands(orig)[offset + 2], enzyme_ctx)
     isiter = unbind(isiter)
     istup = unbind(istup)
 
@@ -2638,6 +2688,7 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
             offset + 2,
             B,
             false,
+            enzyme_ctx,
         ) #=start=#
         AT = LLVM.ArrayType(T_prjlvalue, 2 + Int(width))
 
@@ -2710,6 +2761,7 @@ function common_apply_iterate_augfwd(offset, B, orig, gutils, normalR, shadowR, 
 end
 
 function common_apply_iterate_rev(offset, B, orig, gutils, tape)
+    enzyme_ctx = enzyme_context()
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(
@@ -2727,7 +2779,7 @@ function common_apply_iterate_rev(offset, B, orig, gutils, tape)
 
     @assert tape !== C_NULL
     width = get_width(gutils)
-    generic_setup(orig, runtime_iterate_rev, Nothing, gutils, offset + 2, B, true; tape) #=start=#
+    generic_setup(orig, runtime_iterate_rev, Nothing, gutils, offset + 2, B, true, enzyme_ctx; tape) #=start=#
     return nothing
 end
 
@@ -2745,6 +2797,7 @@ end
 end
 
 function common_invoke_fwd(offset, B, orig, gutils, normalR, shadowR)
+    enzyme_ctx = enzyme_context()
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(
@@ -2772,6 +2825,7 @@ function common_invoke_fwd(offset, B, orig, gutils, normalR, shadowR)
         offset + 1,
         B,
         false,
+        enzyme_ctx,
     ) #=start=#
     AT = LLVM.ArrayType(T_prjlvalue, 1 + Int(width))
 
@@ -2814,6 +2868,7 @@ function common_invoke_fwd(offset, B, orig, gutils, normalR, shadowR)
 end
 
 function common_invoke_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
+    enzyme_ctx = enzyme_context()
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(
@@ -2847,6 +2902,7 @@ function common_invoke_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
         offset + 1,
         B,
         false,
+        enzyme_ctx,
     ) #=start=#
     AT = LLVM.ArrayType(T_prjlvalue, 2 + Int(width))
 
@@ -2896,6 +2952,7 @@ function common_invoke_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
 end
 
 function common_invoke_rev(offset, B, orig, gutils, tape)
+    enzyme_ctx = enzyme_context()
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(
@@ -2912,7 +2969,7 @@ function common_invoke_rev(offset, B, orig, gutils, tape)
     end
 
     width = get_width(gutils)
-    generic_setup(orig, runtime_generic_rev, Nothing, gutils, offset + 1, B, true; tape) #=start=#
+    generic_setup(orig, runtime_generic_rev, Nothing, gutils, offset + 1, B, true, enzyme_ctx; tape) #=start=#
 
     return nothing
 end

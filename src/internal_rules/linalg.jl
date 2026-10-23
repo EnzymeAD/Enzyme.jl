@@ -21,6 +21,60 @@ end
 
 @inline onedimensionalize(::Type{T}) where {T<:Array} = Vector{eltype(T)}
 
+# Triangular solves for derivatives. For a strided triangular BLAS matrix, `ldiv!` and `\`
+# call LAPACK's trtrs, which besides solving checks the matrix for singularity, which the
+# primal computation already did. OpenBLAS also runs trtrs multithreaded for any matrix with
+# more than one right-hand side, so that solving a 2×2 system took microseconds. Solve with
+# BLAS's trsv/trsm instead, which compute the same result.
+const _EnzymeTriangular{T, S} = Union{
+    LowerTriangular{T, S},
+    UpperTriangular{T, S},
+    UnitLowerTriangular{T, S},
+    UnitUpperTriangular{T, S},
+}
+
+_tri_uplo(::Union{LowerTriangular, UnitLowerTriangular}) = 'L'
+_tri_uplo(::Union{UpperTriangular, UnitUpperTriangular}) = 'U'
+_tri_diag(::Union{LowerTriangular, UpperTriangular}) = 'N'
+_tri_diag(::Union{UnitLowerTriangular, UnitUpperTriangular}) = 'U'
+_flip_uplo(uplo::Char) = uplo == 'L' ? 'U' : 'L'
+
+# The stored matrix, and the uplo, trans and diag arguments, with which BLAS solves with A, or
+# nothing if it cannot.
+_tri_blas_args(A) = nothing
+_tri_blas_args(A::_EnzymeTriangular{T, <:StridedMatrix{T}}) where {T <: LinearAlgebra.BlasFloat} =
+    (A.data, _tri_uplo(A), 'N', _tri_diag(A))
+# The triangle used of the transpose of the stored matrix is the opposite one of the stored matrix.
+_tri_blas_args(A::_EnzymeTriangular{T, <:Transpose{T, <:StridedMatrix{T}}}) where {T <: LinearAlgebra.BlasFloat} =
+    (parent(A.data), _flip_uplo(_tri_uplo(A)), 'T', _tri_diag(A))
+_tri_blas_args(A::_EnzymeTriangular{T, <:Adjoint{T, <:StridedMatrix{T}}}) where {T <: LinearAlgebra.BlasFloat} =
+    (parent(A.data), _flip_uplo(_tri_uplo(A)), 'C', _tri_diag(A))
+_tri_blas_args(A::Transpose{T, <:_EnzymeTriangular{T, <:StridedMatrix{T}}}) where {T <: LinearAlgebra.BlasFloat} =
+    (parent(A).data, _tri_uplo(parent(A)), 'T', _tri_diag(parent(A)))
+_tri_blas_args(A::Adjoint{T, <:_EnzymeTriangular{T, <:StridedMatrix{T}}}) where {T <: LinearAlgebra.BlasFloat} =
+    (parent(A).data, _tri_uplo(parent(A)), 'C', _tri_diag(parent(A)))
+
+# Like `ldiv!(A, B)`, for A triangular.
+_trisolve!(A, B) = ldiv!(A, B)
+function _trisolve!(A::AbstractMatrix{T}, B::StridedVecOrMat{T}) where {T <: LinearAlgebra.BlasFloat}
+    args = _tri_blas_args(A)
+    if args === nothing || stride(args[1], 1) != 1 || stride(B, 1) != 1
+        return ldiv!(A, B)
+    end
+    data, uplo, trans, diag = args
+    if B isa AbstractVector
+        BLAS.trsv!(uplo, trans, diag, data, B)
+    else
+        BLAS.trsm!('L', uplo, trans, diag, one(T), data, B)
+    end
+    return B
+end
+
+# Like `A \ B`, for A triangular.
+_trisolve(A, B) = A \ B
+_trisolve(A::AbstractMatrix{T}, B::StridedVecOrMat{T}) where {T <: LinearAlgebra.BlasFloat} =
+    _tri_blas_args(A) === nothing ? A \ B : _trisolve!(A, copy(B))
+
 # y=inv(A) B
 #   dA −= z y^T
 #   dB += z, where  z = inv(A^T) dy
@@ -150,7 +204,7 @@ function EnzymeRules.reverse(
     end
 
     for (dA, db, dy) in zip(dAs, dbs, dys)
-        z = transpose(cache_A) \ dy
+        z = _trisolve(transpose(cache_A), dy)
         if !(typeof(A) <: Const)
             dA .-= z * transpose(y)
         end
@@ -209,7 +263,7 @@ function EnzymeRules.reverse(
         (cache_Yout, cache_A, cache_B) = cache
         for b = 1:EnzymeRules.width(config)
             dY = EnzymeRules.width(config) == 1 ? Y.dval : Y.dval[b]
-            z = adjoint(cache_A) \ dY
+            z = _trisolve(adjoint(cache_A), dY)
             if !isa(B, Const)
                 dB = EnzymeRules.width(config) == 1 ? B.dval : B.dval[b]
                 dB .+= z
@@ -222,6 +276,50 @@ function EnzymeRules.reverse(
         end
     end
     return (nothing, nothing, nothing)
+end
+
+# `dB .-= A * B` for A triangular, using `tmp`, which is like B, as scratch. Unlike `mul!`, this
+# uses BLAS also when A wraps the transpose or adjoint of a matrix, except for tiny products,
+# for which the generic `mul!` is faster than a BLAS call (n^2 m <= 128, as measured with
+# OpenBLAS).
+_trimul_sub!(dB, A, B, tmp) = mul!(dB, A, B, -1, 1)
+function _trimul_sub!(
+        dB::StridedVecOrMat{T}, A::AbstractMatrix{T}, B::StridedVecOrMat{T}, tmp::StridedVecOrMat{T}
+    ) where {T <: LinearAlgebra.BlasFloat}
+    args = _tri_blas_args(A)
+    if args === nothing || stride(args[1], 1) != 1 || stride(tmp, 1) != 1 ||
+            size(A, 1)^2 * size(B, 2) <= 128
+        return mul!(dB, A, B, -1, 1)
+    end
+    data, uplo, trans, diag = args
+    copyto!(tmp, B)
+    if tmp isa AbstractVector
+        BLAS.trmv!(uplo, trans, diag, data, tmp)
+    else
+        BLAS.trmm!('L', uplo, trans, diag, one(T), data, tmp)
+    end
+    dB .-= tmp
+    return dB
+end
+
+# Solve with, or multiply by, the lower (`Val(:L)`) or upper (`Val(:U)`) triangular factor of a
+# Cholesky factorization C. Unlike `C.L` and `C.U`, these do not copy the factor that is not
+# stored, but use its adjoint. They branch on `C.uplo` so that each branch has concrete types.
+function _chol_trisolve!(C::Cholesky, ::Val{:L}, B)
+    return C.uplo == 'L' ? _trisolve!(LowerTriangular(C.factors), B) :
+        _trisolve!(LowerTriangular(C.factors'), B)
+end
+function _chol_trisolve!(C::Cholesky, ::Val{:U}, B)
+    return C.uplo == 'U' ? _trisolve!(UpperTriangular(C.factors), B) :
+        _trisolve!(UpperTriangular(C.factors'), B)
+end
+function _chol_trimul_sub!(dB, C::Cholesky, ::Val{:L}, B, tmp)
+    return C.uplo == 'L' ? _trimul_sub!(dB, LowerTriangular(C.factors), B, tmp) :
+        _trimul_sub!(dB, LowerTriangular(C.factors'), B, tmp)
+end
+function _chol_trimul_sub!(dB, C::Cholesky, ::Val{:U}, B, tmp)
+    return C.uplo == 'U' ? _trimul_sub!(dB, UpperTriangular(C.factors), B, tmp) :
+        _trimul_sub!(dB, UpperTriangular(C.factors'), B, tmp)
 end
 
 # y = inv(A) B
@@ -248,29 +346,29 @@ function EnzymeRules.forward(
         N = EnzymeRules.width(config)
         retval = B.val
 
-        L = fact.val.L
-        U = fact.val.U
+        # Scratch for the products with the factors' shadows, shared by all lanes
+        tmp = fact isa Const ? nothing : similar(B.val)
 
-        ldiv!(L, B.val)
+        _chol_trisolve!(fact.val, Val(:L), B.val)
         ntuple(Val(N)) do b
             Base.@_inline_meta
             dB = N == 1 ? B.dval : B.dval[b]
             if !(fact isa Const)
-                dL = N == 1 ? fact.dval.L : fact.dval[b].L
-                mul!(dB, dL, B.val, -1, 1)
+                dfact = N == 1 ? fact.dval : fact.dval[b]
+                _chol_trimul_sub!(dB, dfact, Val(:L), B.val, tmp)
             end
-            ldiv!(L, dB)
+            _chol_trisolve!(fact.val, Val(:L), dB)
         end
 
-        ldiv!(U, B.val)
+        _chol_trisolve!(fact.val, Val(:U), B.val)
         dretvals = ntuple(Val(N)) do b
             Base.@_inline_meta
             dB = N == 1 ? B.dval : B.dval[b]
             if !(fact isa Const)
-                dU = N == 1 ? fact.dval.U : fact.dval[b].U
-                mul!(dB, dU, B.val, -1, 1)
+                dfact = N == 1 ? fact.dval : fact.dval[b]
+                _chol_trimul_sub!(dB, dfact, Val(:U), B.val, tmp)
             end
-            ldiv!(U, dB)
+            _chol_trisolve!(fact.val, Val(:U), dB)
             return dB
         end
 
@@ -487,25 +585,132 @@ function EnzymeRules.reverse(
     return (nothing, nothing, nothing, dα, dβ)
 end
 
-function cofactor(A)
-    cofA     = similar(A)
-    minorAij = similar(A, size(A, 1) - 1, size(A, 2) - 1)
-    for i in 1:size(A, 1), j in 1:size(A, 2)
-        fill!(minorAij, zero(eltype(A)))
-
-        # build minor matrix
-        for k in 1:size(A, 1), l in 1:size(A, 2)
-            if !(k == i || l == j)
-                ki = k < i ? k : k - 1
-                li = l < j ? l : l - 1
-                @inbounds minorAij[ki, li] = A[k, l]
-            end
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(det)},
+    ::Type{RT},
+    A::Annotation{AT},
+) where {RT,AT<:StridedMatrix}
+    cache_A = EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
+    res = det(A.val)
+    retres = EnzymeRules.needs_primal(config) ? res : nothing
+    dres = if EnzymeRules.width(config) == 1 && EnzymeRules.needs_shadow(config)
+        zero(res)
+    elseif EnzymeRules.width(config) > 1 && EnzymeRules.needs_shadow(config)
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            zero(res)
         end
-        @inbounds cofA[i, j] = (-1)^(i - 1 + j - 1) * det(minorAij)
+    else
+        nothing
     end
-    return cofA
+    cache = (res, cache_A)
+    return EnzymeRules.AugmentedReturn(retres, dres, cache)
 end
 
-# partial derivative of the determinant is the matrix of cofactors
-EnzymeRules.@easy_rule(LinearAlgebra.det(A::AbstractMatrix), (cofactor(A),))
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(det)},
+    dret::Active,
+    cache,
+    A::Annotation{<:StridedMatrix},
+)
+    ret, cache_A = cache
+    if !isa(A, Const)
+        A.dval .+= inv(cache_A)' * dot(ret, dret.val)
+    end
+    return (nothing,)
+end
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(det)},
+    ::Type{<:Const},
+    cache,
+    A::Annotation{<:Array},
+)
+    return (nothing,)
+end
 
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(det)},
+    ::Type{RT},
+    A::Annotation{<:StridedMatrix},
+) where {RT}
+    res = det(A.val)
+    dres = !isa(A, Const) ? res * sum(diag(A.val \ A.dval)) : zero(res)
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return Duplicated(res, dres)
+    elseif EnzymeRules.needs_primal(config)
+        return res
+    elseif EnzymeRules.needs_shadow(config)
+        return dres
+    else
+        return nothing
+    end
+end
+
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(logdet)},
+    ::Type{RT},
+    A::Annotation{AT},
+) where {RT,AT<:StridedMatrix}
+    cache_A = EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
+    res = logdet(A.val)
+    retres = EnzymeRules.needs_primal(config) ? res : nothing
+    dres = if EnzymeRules.width(config) == 1 && EnzymeRules.needs_shadow(config)
+        zero(res)
+    elseif EnzymeRules.width(config) > 1 && EnzymeRules.needs_shadow(config)
+        ntuple(Val(EnzymeRules.width(config))) do i
+            Base.@_inline_meta
+            zero(res)
+        end
+    else
+        nothing
+    end
+    return EnzymeRules.AugmentedReturn(retres, dres, cache_A)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(logdet)},
+    dret::Active,
+    cache_A,
+    A::Annotation{<:StridedMatrix},
+)
+    !isa(A, Const) && (A.dval .+= dret.val * inv(cache_A)')
+    return (nothing,)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    func::Const{typeof(logdet)},
+    ::Type{<:Const},
+    cache,
+    A::Annotation{<:StridedMatrix},
+)
+    return (nothing,)
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{typeof(logdet)},
+    ::Type{RT},
+    A::Annotation{<:StridedMatrix},
+) where {RT}
+    res = logdet(A.val)
+    dres = !isa(A, Const) ? sum(diag(A.val \ A.dval)) : zero(res)
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return Duplicated(res, dres)
+    elseif EnzymeRules.needs_primal(config)
+        return res
+    elseif EnzymeRules.needs_shadow(config)
+        return dres
+    else
+        return nothing
+    end
+end
+
+EnzymeRules.has_easy_rule(::typeof(logdet), ::StridedMatrix) = true
+EnzymeRules.has_easy_rule(::typeof(det), ::StridedMatrix) = true

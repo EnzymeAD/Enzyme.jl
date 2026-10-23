@@ -1,3 +1,31 @@
+# Home of the C-callable trampolines that enzyme-core calls back into.
+#
+# `@register_aug` and friends pair every rule with a `<rule>_cfunc` shim, and
+# `register_llvm_rules` hands enzyme-core a `@cfunction` pointer to each of the
+# 115 shims. A `@cfunction` target must be compiled eagerly, and the shims call
+# their rule through an `@inline` boundary, so building them in `Compiler` drags
+# every rule body through inference and codegen while the package precompiles.
+# That is roughly 22 of the 33 seconds Enzyme spends precompiling its module
+# body, and it buys very little: the rules are ordinary Julia functions that
+# would be compiled on demand anyway, the first time a differentiation reaches
+# one.
+#
+# Defining the shims here instead leaves the `@inline` unresolved, so only the
+# shim itself is compiled ahead of time and each rule is compiled on first use,
+# at full optimization, in `Compiler` where it is defined. The shims themselves
+# are pure argument forwarding, so `optimize = 0` costs nothing measurable, and
+# the extra dynamic dispatch is one per call enzyme-core hands to a rule.
+module RuleTrampolines
+
+    Base.Experimental.@compiler_options compile = min optimize = 0 infer = false
+
+    import ...Compiler
+    import ..LLVM
+    import ..API
+    import ..GradientUtils
+
+end # module RuleTrampolines
+
 macro register_aug(expr)
     decl = string(expr.args[1])
     name = decl[1:prevind(decl, findfirst('(', decl))]
@@ -7,7 +35,7 @@ macro register_aug(expr)
 
     expr2 = :(@inline $expr)
     res = quote
-        function $cname(
+        @eval RuleTrampolines function $cname(
                 B::LLVM.API.LLVMBuilderRef,
                 OrigCI::LLVM.API.LLVMValueRef,
                 gutils::API.EnzymeGradientUtilsRef,
@@ -16,7 +44,7 @@ macro register_aug(expr)
                 tapeR::Ptr{LLVM.API.LLVMValueRef},
             )::UInt8
             return UInt8(
-                $name(
+                Compiler.$name(
                     LLVM.IRBuilder(B),
                     LLVM.CallInst(OrigCI),
                     GradientUtils(gutils),
@@ -39,13 +67,13 @@ macro register_rev(expr)
     cname = Symbol(cname)
     expr2 = :(@inline $expr)
     res = quote
-        function $cname(
+        @eval RuleTrampolines function $cname(
                 B::LLVM.API.LLVMBuilderRef,
                 OrigCI::LLVM.API.LLVMValueRef,
                 gutils::API.EnzymeGradientUtilsRef,
                 tape::LLVM.API.LLVMValueRef,
             )::Cvoid
-            $name(
+            Compiler.$name(
                 LLVM.IRBuilder(B),
                 LLVM.CallInst(OrigCI),
                 GradientUtils(gutils),
@@ -65,7 +93,7 @@ macro register_fwd(expr)
     cname = Symbol(cname)
     expr2 = :(@inline $expr)
     res = quote
-        function $cname(
+        @eval RuleTrampolines function $cname(
                 B::LLVM.API.LLVMBuilderRef,
                 OrigCI::LLVM.API.LLVMValueRef,
                 gutils::API.EnzymeGradientUtilsRef,
@@ -73,7 +101,7 @@ macro register_fwd(expr)
                 shadowR::Ptr{LLVM.API.LLVMValueRef},
             )::UInt8
             return UInt8(
-                $name(
+                Compiler.$name(
                     LLVM.IRBuilder(B),
                     LLVM.CallInst(OrigCI),
                     GradientUtils(gutils),
@@ -94,7 +122,7 @@ macro register_diffuse(expr)
     cname = Symbol(cname)
     expr2 = :(@inline $expr)
     res = quote
-        function $cname(
+        @eval RuleTrampolines function $cname(
                 OrigCI::LLVM.API.LLVMValueRef,
                 gutils::API.EnzymeGradientUtilsRef,
                 val::LLVM.API.LLVMValueRef,
@@ -102,7 +130,7 @@ macro register_diffuse(expr)
                 mode::API.CDerivativeMode,
                 useDefault::Ptr{UInt8},
             )::UInt8
-            res = $name(
+            res = Compiler.$name(
                 LLVM.CallInst(OrigCI),
                 GradientUtils(gutils),
                 LLVM.Value(val),
@@ -141,6 +169,10 @@ include("parallelrules.jl")
             )
             return common_apply_latest_fwd(2, B, orig, gutils, normalR, shadowR)
         end
+        # `invoke_in_world(world, f, args...)`: skip the world operand too
+        if in(name, ("ijl_f_invoke_in_world", "jl_f_invoke_in_world", "ijl_f__call_in_world", "jl_f__call_in_world"))
+            return common_apply_latest_fwd(3, B, orig, gutils, normalR, shadowR)
+        end
         if in(name, ("ijl_new_structv", "jl_new_structv"))
             return common_newstructv_fwd(2, B, orig, gutils, normalR, shadowR)
         end
@@ -169,7 +201,7 @@ include("parallelrules.jl")
 
     pf = LLVM.parent(LLVM.parent(orig))::LLVM.Function
     mi, _ = enzyme_custom_extract_mi(pf, false) #=error=#
-    world = enzyme_extract_world(pf)
+    world = enzyme_world()
 
     if mi !== nothing
         err = emit_error(
@@ -236,6 +268,10 @@ end
             )
             return common_apply_latest_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
+        # `invoke_in_world(world, f, args...)`: skip the world operand too
+        if in(name, ("ijl_f_invoke_in_world", "jl_f_invoke_in_world", "ijl_f__call_in_world", "jl_f__call_in_world"))
+            return common_apply_latest_augfwd(3, B, orig, gutils, normalR, shadowR, tapeR)
+        end
         if in(name, ("ijl_new_structv", "jl_new_structv"))
             return common_newstructv_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
@@ -264,7 +300,7 @@ end
 
     pf = LLVM.parent(LLVM.parent(orig))::LLVM.Function
     mi, _ = enzyme_custom_extract_mi(pf, false) #=error=#
-    world = enzyme_extract_world(pf)
+    world = enzyme_world()
 
     if mi !== nothing
         err = emit_error(
@@ -331,6 +367,11 @@ end
             common_apply_latest_rev(2, B, orig, gutils, tape)
             return nothing
         end
+        # `invoke_in_world(world, f, args...)`: skip the world operand too
+        if in(name, ("ijl_f_invoke_in_world", "jl_f_invoke_in_world", "ijl_f__call_in_world", "jl_f__call_in_world"))
+            common_apply_latest_rev(3, B, orig, gutils, tape)
+            return nothing
+        end
         if in(name, ("ijl_new_structv", "jl_new_structv"))
             common_newstructv_rev(2, B, orig, gutils, tape)
             return nothing
@@ -366,7 +407,7 @@ end
 
     pf = LLVM.parent(LLVM.parent(orig))::LLVM.Function
     mi, _ = enzyme_custom_extract_mi(pf, false) #=error=#
-    world = enzyme_extract_world(pf)
+    world = enzyme_world()
 
     if mi !== nothing
         err = emit_error(
@@ -493,6 +534,7 @@ function post_arraycopy_memset(B, callv, _, _)
 end
 
 @register_fwd function arraycopy_fwd(B, orig, gutils, normalR, shadowR)
+    enzyme_ctx = enzyme_context()
     ctx = LLVM.context(orig)
 
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
@@ -508,7 +550,7 @@ end
     shadowres =
         UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
 
-    found, arty, byref = abs_typeof(origops[1])
+    found, arty, byref = abs_typeof(origops[1], enzyme_ctx)
 
     needs_runtime_zero = !found && !(eltype(arty) <: Base.IEEEFloat)
 
@@ -529,7 +571,7 @@ end
 
 # Optionally takes a length if requested
 # If this is a memory, pass memoryptr=<underlying data>
-function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = nothing, memoryptr = nothing)
+function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst, enzyme_ctx::EnzymeContext; len = nothing, memoryptr = nothing)
     memory = memoryptr != nothing
     primalsrc = shadowsrc
     needsShadowP = Ref{UInt8}(0)
@@ -572,7 +614,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = noth
         emit_error(
             B,
             orig,
-            "Enzyme: Unknown concrete type in arraycopy_common. tt: " * string(tt) * " " * string(orig) * " " * string(abs_typeof(orig)),
+            "Enzyme: Unknown concrete type in arraycopy_common. tt: " * string(tt) * " " * string(orig) * " " * string(abs_typeof(orig, enzyme_ctx)),
         )
         return nothing
     end
@@ -607,7 +649,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = noth
     end
 
     elSize = if memory
-        get_memory_elsz(B0, actualOp)
+        get_memory_elsz(B0, actualOp, enzyme_ctx)
     else
         get_array_elsz(B0, actualOp)
     end
@@ -616,7 +658,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = noth
 
     if len == nothing
         if memory
-            len = get_memory_len(B0, actualOp)
+            len = get_memory_len(B0, actualOp, enzyme_ctx)
         else
             len = get_array_len(B0, actualOp)
         end
@@ -770,6 +812,7 @@ function arraycopy_common(fwd, B, orig, shadowsrc, gutils, shadowdst; len = noth
 end
 
 @register_aug function arraycopy_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    enzyme_ctx = enzyme_context()
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
@@ -779,25 +822,27 @@ end
 
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
         shadowres = LLVM.Value(unsafe_load(shadowR))
-        arraycopy_common(true, B, orig, origops[1], gutils, shadowres)
+        arraycopy_common(true, B, orig, origops[1], gutils, shadowres, enzyme_ctx)
     end
 
     return false
 end
 
 @register_rev function arraycopy_rev(B, orig, gutils, tape)
+    enzyme_ctx = enzyme_context()
     origops = LLVM.operands(orig)
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
-        arraycopy_common(false, B, orig, origops[1], gutils, nothing)
+        arraycopy_common(false, B, orig, origops[1], gutils, nothing, enzyme_ctx)
     end
 
     return nothing
 end
 
 function post_genericmemcpy_memset(B, callv, args, _)
+    enzyme_ctx = enzyme_context()
     _, _, len = args
 
-    elSize = get_memory_elsz(B, callv)
+    elSize = get_memory_elsz(B, callv, enzyme_ctx)
     elSize = LLVM.zext!(B, elSize, LLVM.IntType(8 * sizeof(Csize_t)))
     length = LLVM.mul!(B, len, elSize)
 
@@ -814,6 +859,7 @@ function post_genericmemcpy_memset(B, callv, args, _)
 end
 
 @register_fwd function genericmemory_copy_slice_fwd(B, orig, gutils, normalR, shadowR)
+    enzyme_ctx = enzyme_context()
     ctx = LLVM.context(orig)
 
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
@@ -829,7 +875,7 @@ end
     len = new_from_original(gutils, origops[3])
 
 
-    found, arty, byref = abs_typeof(origops[1])
+    found, arty, byref = abs_typeof(origops[1], enzyme_ctx)
 
     needs_runtime_zero = !found && !(eltype(arty) <: Base.IEEEFloat)
 
@@ -849,6 +895,7 @@ end
 end
 
 @register_aug function genericmemory_copy_slice_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    enzyme_ctx = enzyme_context()
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
         return true
     end
@@ -861,18 +908,19 @@ end
 
         len = new_from_original(gutils, origops[3])
         memoryptr = origops[2]        
-        arraycopy_common(true, B, orig, origops[1], gutils, shadowres; len, memoryptr)
+        arraycopy_common(true, B, orig, origops[1], gutils, shadowres, enzyme_ctx; len, memoryptr)
     end
 
     return false
 end
 
 @register_rev function genericmemory_copy_slice_rev(B, orig, gutils, tape)
+    enzyme_ctx = enzyme_context()
     origops = LLVM.operands(orig)
     if !is_constant_value(gutils, origops[1]) && !is_constant_value(gutils, orig)
         len = new_from_original(gutils, origops[3])
         memoryptr = origops[2]
-        arraycopy_common(false, B, orig, origops[1], gutils, nothing; len, memoryptr)
+        arraycopy_common(false, B, orig, origops[1], gutils, nothing, enzyme_ctx; len, memoryptr)
     end
 
     return nothing
@@ -1211,6 +1259,7 @@ function error_if_active(::Type{T}) where {T}
 end
 
 @register_aug function eqtableget_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    enzyme_ctx = enzyme_context()
     if is_constant_value(gutils, orig)
         return true
     end
@@ -1245,21 +1294,21 @@ end
                 " " *
                 string(orig) *
                 " result: " *
-                string(absint(orig)) *
+                string(absint(orig, enzyme_ctx)) *
                 " " *
-                string(abs_typeof(orig, true)) *
+                string(abs_typeof(orig, enzyme_ctx, true)) *
                 " dict: " *
-                string(absint(origh)) *
+                string(absint(origh, enzyme_ctx)) *
                 " " *
-                string(abs_typeof(origh, true)) *
+                string(abs_typeof(origh, enzyme_ctx, true)) *
                 " key " *
-                string(absint(origkey)) *
+                string(absint(origkey, enzyme_ctx)) *
                 " " *
-                string(abs_typeof(origkey, true)) *
+                string(abs_typeof(origkey, enzyme_ctx, true)) *
                 " dflt " *
-                string(absint(origdflt)) *
+                string(absint(origdflt, enzyme_ctx)) *
                 " " *
-                string(abs_typeof(origdflt, true)),
+                string(abs_typeof(origdflt, enzyme_ctx, true)),
         )
     end
 
@@ -1267,18 +1316,16 @@ end
 
     shadowdflt = if is_constant_value(gutils, origdflt)
         shadowdflt2 = julia_error(
-            Base.unsafe_convert(
-                Cstring,
-                "Mixed activity for default of jl_eqtable_get " *
-                    string(orig) *
-                    " " *
-                    string(origdflt),
-            ),
+            "Mixed activity for default of jl_eqtable_get " *
+                string(orig) *
+                " " *
+                string(origdflt),
             orig.ref,
             API.ET_MixedActivityError,
             gutils.ref,
             origdflt.ref,
             B.ref,
+            enzyme_ctx,
         )
         if shadowdflt2 != C_NULL
             LLVM.Value(shadowdflt2)
@@ -1302,9 +1349,10 @@ end
     newvals = API.CValueType[API.VT_Shadow, API.VT_Primal, API.VT_Shadow]
 
     function post_err_if_active(B, cal, args)
+        enzyme_ctx = enzyme_context()
         emit_apply_generic!(
             B,
-            LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, cal)],
+            LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, cal, enzyme_ctx)],
         )
     end
 
@@ -1358,15 +1406,17 @@ end
 end
 
 function eqtable_shadow_active(B, args)
+    enzyme_ctx = enzyme_context()
     _, _, shadowval, _ = args
     emit_apply_generic!(
         B,
-        LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, shadowval)],
+        LLVM.Value[unsafe_to_llvm(B, error_if_active), emit_jltypeof!(B, shadowval, enzyme_ctx)],
     )
     return nothing
 end
 
 @register_aug function eqtableput_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    enzyme_ctx = enzyme_context()
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
@@ -1382,18 +1432,16 @@ end
 
     shadowval = if is_constant_value(gutils, origval)
         shadowdflt2 = julia_error(
-            Base.unsafe_convert(
-                Cstring,
-                "Mixed activity for val of jl_eqtable_put " *
-                    string(orig) *
-                    " " *
-                    string(origval),
-            ),
+            "Mixed activity for val of jl_eqtable_put " *
+                string(orig) *
+                " " *
+                string(origval),
             orig.ref,
             API.ET_MixedActivityError,
             gutils.ref,
             origval.ref,
             B.ref,
+            enzyme_ctx,
         )
         if shadowdflt2 != C_NULL
             LLVM.Value(shadowdflt2)
@@ -1653,6 +1701,7 @@ end
 end
 
 @register_rev function jl_array_del_end_rev(B, orig, gutils, tape)
+    enzyme_ctx = enzyme_context()
     if !is_constant_value(gutils, operands(orig)[1])
         width = get_width(gutils)
         origops = arg_operands_view(orig)
@@ -1705,7 +1754,7 @@ end
 
             args = LLVM.Value[anti, offset]
 
-            found, arty, byref = abs_typeof(origops[1])
+            found, arty, byref = abs_typeof(origops[1], enzyme_ctx)
             anti = shadowin
             elSize = if found
                 LLVM.ConstantInt(Csize_t(actual_size(eltype(arty))))
@@ -1815,12 +1864,13 @@ end
 end
 
 @register_fwd function genericmemory_copyto_fwd(B, orig, gutils, normalR, shadowR)
+    enzyme_ctx = enzyme_context()
     if is_constant_inst(gutils, orig)
         return true
     end
     width = get_width(gutils)
 
-    legal, dest_ty, _ = abs_typeof(first(operands(orig)))
+    legal, dest_ty, _ = abs_typeof(first(operands(orig)), enzyme_ctx)
 
     if !legal
         emit_error(B, orig, "Enzyme: could not deduce element type of value within generic_memory_copyto of " * string(first(operands(orig))) * " within " * string(orig))
@@ -1831,7 +1881,7 @@ end
     ET = eltype(dest_ty)
 
     fn = LLVM.parent(LLVM.parent(orig))
-    world = enzyme_extract_world(fn)
+    world = enzyme_world()
     if !guaranteed_nonactive(ET, world)
         emit_error(B, orig, "Enzyme: element type $ET of generic_memory_copyto is potentially active ($reg) and not presently supported")
     end
@@ -2188,7 +2238,7 @@ macro augfunc(f)
     cname = Symbol(string(f) * "_cfunc")
     return :(
         @cfunction(
-            $cname,
+            RuleTrampolines.$cname,
             UInt8,
             (
                 LLVM.API.LLVMBuilderRef,
@@ -2206,7 +2256,7 @@ macro revfunc(f)
     cname = Symbol(string(f) * "_cfunc")
     return :(
         @cfunction(
-            $cname,
+            RuleTrampolines.$cname,
             Cvoid,
             (
                 LLVM.API.LLVMBuilderRef,
@@ -2222,7 +2272,7 @@ macro fwdfunc(f)
     cname = Symbol(string(f) * "_cfunc")
     return :(
         @cfunction(
-            $cname,
+            RuleTrampolines.$cname,
             UInt8,
             (
                 LLVM.API.LLVMBuilderRef,
@@ -2239,7 +2289,7 @@ macro diffusefunc(f)
     cname = Symbol(string(f) * "_cfunc")
     return :(
         @cfunction(
-            Compiler.$cname,
+            RuleTrampolines.$cname,
             UInt8,
             (
                 LLVM.API.LLVMValueRef,
@@ -2287,6 +2337,12 @@ end
         @augfunc(apply_latest_augfwd),
         @revfunc(apply_latest_rev),
         @fwdfunc(apply_latest_fwd),
+    )
+    register_handler!(
+        ("jl_f_invoke_in_world", "jl_f__call_in_world"),
+        @augfunc(invoke_in_world_augfwd),
+        @revfunc(invoke_in_world_rev),
+        @fwdfunc(invoke_in_world_fwd),
     )
     register_handler!(
         ("jl_threadsfor",),
@@ -2424,6 +2480,7 @@ end
         (
             "jl_get_binding_or_error", "ijl_get_binding_or_error",
             "jl_get_binding_value_seqcst", "ijl_get_binding_value_seqcst",
+            "jl_eval_globalref", "ijl_eval_globalref",
         ),
         @augfunc(get_binding_or_error_augfwd),
         @revfunc(get_binding_or_error_rev),

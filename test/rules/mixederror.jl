@@ -30,9 +30,11 @@ function handle_infinities(workfunc, f, s)
                         den = 1 / (1 - t)
                         return f(s0 - oneunit(s1) * t * den) * den * den * oneunit(s1)
                     end,
-                    reverse(map(s) do x
-                        1 / (1 + oneunit(x) / (s0 - x))
-                    end),
+                    reverse(
+                        map(s) do x
+                            1 / (1 + oneunit(x) / (s0 - x))
+                        end
+                    ),
                     t -> s0 - oneunit(s1) * t / (1 - t),
                 )
             else # x = s0 + t / (1 - t)
@@ -60,8 +62,8 @@ function inner(f::F, xs) where {F}  # remove type annotation => problem solved
 end
 
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.RevConfig, ::Const{typeof(inner)}, ::Type, f, xs
-)
+        config::EnzymeRules.RevConfig, ::Const{typeof(inner)}, ::Type, f, xs
+    )
     true_primal = inner(f.val, xs.val)
     primal = EnzymeRules.needs_primal(config) ? true_primal : nothing
     shadow = if EnzymeRules.needs_shadow(config)
@@ -77,8 +79,8 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    ::EnzymeRules.RevConfig, ::Const{typeof(inner)}, shadow::Active, tape, f, xs
-)
+        ::EnzymeRules.RevConfig, ::Const{typeof(inner)}, shadow::Active, tape, f, xs
+    )
     return ((f isa Active) ? f : nothing, (xs isa Active) ? xs : nothing)
 end
 
@@ -87,11 +89,11 @@ F_bad(x) = outer(y -> [cos(y)], 0.0, x)[1][1]
 
 @testset "Mixed Return Rule Error" begin
     @static if VERSION < v"1.12"
-    @test_throws Enzyme.Compiler.MixedReturnException autodiff(Reverse, F_good, Active(0.3))
-    @test_throws Enzyme.Compiler.MixedReturnException autodiff(Reverse, F_bad, Active(0.3))
+        @test_throws Enzyme.Compiler.MixedReturnException autodiff(Reverse, F_good, Active(0.3))
+        @test_throws Enzyme.Compiler.MixedReturnException autodiff(Reverse, F_bad, Active(0.3))
     else
-    @test_throws MethodError autodiff(Reverse, F_good, Active(0.3))
-    @test_throws MethodError autodiff(Reverse, F_bad, Active(0.3))
+        @test_throws MethodError autodiff(Reverse, F_good, Active(0.3))
+        @test_throws MethodError autodiff(Reverse, F_bad, Active(0.3))
     end
 end
 

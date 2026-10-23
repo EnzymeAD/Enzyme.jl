@@ -124,6 +124,7 @@ export EnzymeRules
 include("pmap.jl")
 
 import LLVM
+using ScopedValues: ScopedValue, @with
 include("api.jl")
 
 Base.convert(::Type{API.CDerivativeMode}, ::ReverseMode) = API.DEM_ReverseModeCombined
@@ -132,15 +133,97 @@ Base.convert(::Type{API.CDerivativeMode}, ::ForwardMode) = API.DEM_ForwardMode
 
 function guess_activity end
 
+"""
+    EnzymeContext
+
+The state one differentiation of one module accumulates: the modules
+`nested_codegen!` emitted and has yet to link, the edges the resulting
+`CodeInstance` must depend on, the cache of already emitted nested
+functions, the cached thunks already imported into one of those modules, and
+the Julia values the module's global slots refer to and their addresses
+(`julia_values` and `julia_slot_addrs`, keyed by the name of the slot; see
+`Compiler.record_julia_values!`), and the Julia values Enzyme refers to by name
+from the code it generates (`inserted_values`, keyed by the name of the `ejl_`
+global without the prefix; see `insert_julia_value!`). On GPUCompiler 2.x the
+values of the slots are read straight from the relocation records of the
+modules the compilation emitted (`relocations`), and `bakes` says whether the
+back-end lets their host addresses into the code.
+
+A context belongs to a single `compile_unhooked` invocation, and holds the
+world age that compilation runs in. It is not passed as an argument:
+`compile_unhooked` binds it to the [`ENZYME_CONTEXT`](@ref) scoped value for
+the duration of the compilation, and everything running under it -- the rule
+handlers Enzyme calls back into, in particular -- reaches it with
+[`enzyme_context`](@ref) and [`enzyme_world`](@ref). A nested compilation binds
+its own context, which the outer one gets back when the nested compilation
+returns.
+"""
 mutable struct EnzymeContext
+    world::UInt
     modules_to_link::Vector{LLVM.Module}
     edges::Vector{Any}
     nested_cache::Dict{Core.MethodInstance, String}
-    EnzymeContext() = new(
+    imported_thunks::Dict{Ptr{Cvoid}, String}
+    julia_values::Dict{String, Any}
+    julia_slot_addrs::Dict{String, Ptr{Cvoid}}
+    inserted_values::Dict{String, Any}
+    relocations::Vector{Any}
+    bakes::Bool
+    EnzymeContext(world::Integer) = new(
+        world,
         LLVM.Module[],
         Any[],
-        Dict{Core.MethodInstance, String}()
+        Dict{Core.MethodInstance, String}(),
+        Dict{Ptr{Cvoid}, String}(),
+        Dict{String, Any}(),
+        Dict{String, Ptr{Cvoid}}(),
+        Dict{String, Any}(),
+        Any[],
+        true
     )
+end
+
+"""
+    ENZYME_CONTEXT
+
+The [`EnzymeContext`](@ref) of the compilation running in the current dynamic
+scope. Bound by `compile_unhooked`; read with [`enzyme_context`](@ref).
+"""
+const ENZYME_CONTEXT = ScopedValue{EnzymeContext}()
+
+"""
+    enzyme_context()
+
+Return the [`EnzymeContext`](@ref) of the compilation running in the current
+dynamic scope. It is an error to call this outside of a compilation.
+"""
+function enzyme_context()
+    if !isassigned(ENZYME_CONTEXT)
+        error("Enzyme: no EnzymeContext is active; this must be called during a compilation")
+    end
+    return ENZYME_CONTEXT[]
+end
+
+"""
+    enzyme_world()
+
+The world age the compilation running in the current dynamic scope was entered
+with, that is, the world every method lookup Enzyme makes for it must use. It
+is an error to call this outside of a compilation.
+"""
+enzyme_world()::UInt = enzyme_context().world
+
+"""
+    enzyme_world_if_active()
+
+[`enzyme_world`](@ref), or `nothing` when no compilation is running in the
+current dynamic scope. For code that must not fail when it cannot find a world,
+such as the construction of an error message, and for the LLVM passes that run
+after a compilation has already returned its module.
+"""
+function enzyme_world_if_active()::Union{Nothing, UInt}
+    isassigned(ENZYME_CONTEXT) || return nothing
+    return ENZYME_CONTEXT[].world
 end
 
 include("logic.jl")
@@ -424,7 +507,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
                     #=ShadowInit=#true
                 }(),
                 FA,
-                Duplicated{rt},
+                width == 1 ? Duplicated{rt} : BatchDuplicated{rt, width},
                 (tt′).parameters...
             )
             res = forward(f, args...)
@@ -534,7 +617,7 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
     ) #=ShadowInit=#
 
     if A0 <: Active
-        args = (args..., Compiler.default_adjoint(rt))
+        args = (args..., Compiler.default_adjoint(rt, Val(width)))
     end
     thunk(f, args...)
 end
@@ -756,13 +839,15 @@ code, as well as high-order differentiation.
                     ErrIfFuncWritten,
                     #=ShadowInit=#true
                 }()
-            TapeType = tape_type(rs, FA, Duplicated{rt},
+            rt_annotation = width == 1 ? Duplicated{rt} : BatchDuplicated{rt, width}
+            TapeType = tape_type(
+                rs, FA, rt_annotation,
                 (tt′).parameters...)
             forward, adjoint = autodiff_deferred_thunk(
                 rs,
                 TapeType,
                 FA,
-                Duplicated{rt},
+                rt_annotation,
                 (tt′).parameters...
             )
             res = forward(f, args...)
@@ -815,7 +900,7 @@ code, as well as high-order differentiation.
     thunk =
         Compiler.CombinedAdjointThunk{Ptr{Cvoid},FA,A2,tt′,width,ReturnPrimal}(adjoint_ptr)
     if A <: Active
-        args = (args..., Compiler.default_adjoint(rt))
+        args = (args..., Compiler.default_adjoint(rt, Val(width)))
     elseif A <: Duplicated ||
            A <: DuplicatedNoNeed ||
            A <: BatchDuplicated ||
@@ -1332,7 +1417,12 @@ import .Compiler: remove_innerty, UnknownTapeType
         params = GPUCompiler.nest_params(params, parent_job.config.params)
     end
 
-    job = GPUCompiler.CompilerJob(mi, GPUCompiler.CompilerConfig(target, params; kernel = false))
+    # With a parent job, the tape belongs to a derivative that the parent compiles as a deferred job
+    # (`autodiff_deferred_thunk` in a kernel), i.e. not top-level: no target libraries are linked
+    # before differentiation (on CUDA, libdevice's `__nv_*` bodies), so the tape type must come from
+    # the same, non-top-level compilation.
+    config = GPUCompiler.CompilerConfig(target, params; kernel = false, toplevel = parent_job === nothing)
+    job = GPUCompiler.CompilerJob(mi, config)
 
 
     key = hash(parent_job, hash(job))
@@ -1594,6 +1684,7 @@ macro import_rrule(args...)
     return _import_rrule(args...)
 end
 
+include("late_generated.jl")
 include("precompile.jl")
 
 end # module

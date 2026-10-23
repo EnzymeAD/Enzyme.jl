@@ -16,8 +16,13 @@ import Enzyme:
     eltype,
     API,
     EnzymeContext,
+    ENZYME_CONTEXT,
+    enzyme_context,
+    enzyme_world,
+    enzyme_world_if_active,
     TypeTree,
     typetree,
+    typetree_in_world,
     TypeTreeTable,
     only!,
     shift!,
@@ -35,6 +40,7 @@ import Enzyme:
     arg_operands_view
 
 using Enzyme
+using ScopedValues: @with
 
 import EnzymeCore
 import EnzymeCore: EnzymeRules, ABI, FFIABI, DefaultABI
@@ -176,45 +182,83 @@ GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) 
 # GPUCompiler.isintrinsic(::CompilerJob{EnzymeTarget}, fn::String) = true
 # GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
 
-# TODO: encode debug build or not in the compiler job
-#       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
-GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
+# GPUCompiler 2.x moved the code-instance cache onto CompilerCaching.jl and renamed the hooks:
+# `ci_cache_token` became `cache_owner`, `ci_cache` (Julia 1.10) became `get_code_cache`,
+# `runtime_slug` and `codegen` are gone, and `compile_method_instance` drives inference
+# through `drive_inference!`, which it only provides for its own interpreter. Enzyme supports
+# both majors; every version split below keys on this one probe.
+const HAS_GPUCOMPILER_2 = isdefined(GPUCompiler, :cache_owner)
+
+# GPUCompiler 1.x names the runtime library per back-end; 2.x derives it from the cache owner.
+@static if !HAS_GPUCOMPILER_2
+    # TODO: encode debug build or not in the compiler job
+    #       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
+    GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme"
+end
+
+# The method tables a method table view looks up methods in, in order of priority. Unlike
+# the view, which is bound to a world, this identifies the lookup across worlds and
+# sessions, as required for a cache token. Back-ends can stack method tables in their
+# `GPUCompiler.method_table_view`, so the view has to be considered and not just
+# `GPUCompiler.method_table`: jobs with the same main table but different stacks would
+# otherwise share inference results.
+method_tables(::Core.Compiler.InternalMethodTable) = ()
+method_tables(view::Core.Compiler.OverlayMethodTable) = (view.mt,)
+method_tables(view::GPUCompiler.StackedMethodTable) = (view.mt, method_tables(view.parent)...)
+@static if isdefined(Core.Compiler, :CachedMethodTable)
+    method_tables(view::Core.Compiler.CachedMethodTable) = method_tables(view.table)
+end
+# other views are specific to a world, so only share inference results within that world
+method_tables(@nospecialize(view::Core.Compiler.MethodTableView)) = (view,)
 
 # provide a specific interpreter to use.
 if VERSION >= v"1.11.0-DEV.1552"
+    # The owner of the CodeInstances produced by an `EnzymeInterpreter`, compared with
+    # `jl_egal`. It only carries the inputs that change what the interpreter infers: the
+    # method tables it looks up methods in (see `method_tables`), and the set of rules
+    # visible in the world for the mode in question.
+    # The compiler target and params types deliberately are not part of it: one `autodiff`
+    # call builds interpreters from several differently-typed jobs (the `EnzymeTarget`
+    # thunk job, the unwrapped primal job, `primal_interp_world`) that all infer the same
+    # way, and keying on those types made each of them re-infer the whole call graph.
     struct EnzymeCacheToken
-        target_type::Type
-        always_inline::Any
-        method_table::Core.MethodTable
-        param_type::Type
+        method_tables::Tuple
         last_fwd_rule_world::Union{Nothing, Tuple}
         last_rev_rule_world::Union{Nothing, Tuple}
         last_ina_rule_world::Union{Nothing, Tuple}
     end
 
-    @inline EnzymeCacheToken(target_type::Type, always_inline::Any, method_table::Core.MethodTable, param_type::Type, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
-        EnzymeCacheToken(target_type, always_inline, method_table, param_type,
+    @inline EnzymeCacheToken(method_tables::Tuple, world::UInt, is_forward::Bool, is_reverse::Bool, inactive_rule::Bool) =
+        EnzymeCacheToken(
+        method_tables,
             is_forward ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.forward, Tuple{<:EnzymeCore.EnzymeRules.FwdConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
             is_reverse ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.augmented_primal, Tuple{<:EnzymeCore.EnzymeRules.RevConfig, <:Annotation, Type{<:Annotation}, Vararg{Annotation}}, world)...,) : nothing,
             inactive_rule ? (Enzyme.Compiler.Interpreter.get_rule_signatures(EnzymeRules.inactive, Tuple{Vararg{Any}}, world)...,) : nothing
         )
 
-    GPUCompiler.ci_cache_token(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
+    # The owner of the code instances Enzyme infers for `job`. GPUCompiler asks for it through
+    # a hook whose name differs between its majors.
+    enzyme_cache_owner(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
         EnzymeCacheToken(
-            typeof(job.config.target),
-            job.config.always_inline,
-            GPUCompiler.method_table(job),
-            typeof(job.config.params),
+        method_tables(GPUCompiler.method_table_view(job)),
             job.world,
             job.config.params.mode == API.DEM_ForwardMode,
             job.config.params.mode != API.DEM_ForwardMode,
             true
         )
 
+    @static if HAS_GPUCOMPILER_2
+        GPUCompiler.cache_owner(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            enzyme_cache_owner(job)
+    else
+        GPUCompiler.ci_cache_token(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            enzyme_cache_owner(job)
+    end
+
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         Interpreter.EnzymeInterpreter(
-            GPUCompiler.ci_cache_token(job),
-            GPUCompiler.method_table(job),
+        enzyme_cache_owner(job),
+            GPUCompiler.method_table_view(job),
             job.world,
             job.config.params.mode,
             true
@@ -234,13 +278,18 @@ else
         end
     end
 
-    GPUCompiler.ci_cache(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
-        enzyme_ci_cache(job)
+    @static if HAS_GPUCOMPILER_2
+        GPUCompiler.get_code_cache(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            enzyme_ci_cache(job)
+    else
+        GPUCompiler.ci_cache(job::CompilerJob{<:Any, <:AbstractEnzymeCompilerParams}) =
+            enzyme_ci_cache(job)
+    end
 
     GPUCompiler.get_interpreter(job::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) =
         Interpreter.EnzymeInterpreter(
             enzyme_ci_cache(job),
-            GPUCompiler.method_table(job),
+            GPUCompiler.method_table_view(job),
             job.world,
             job.config.params.mode,
             true
@@ -281,6 +330,13 @@ const known_ops = Dict{DataType,Tuple{Symbol,Int,Union{Nothing,Tuple{Symbol,Data
     typeof(Base.expm1) => (:expm1, 1, nothing),
     typeof(Base.exp10) => (:exp10, 1, nothing),
     typeof(Base.FastMath.exp_fast) => (:exp, 1, nothing),
+    typeof(Base.FastMath.exp2_fast) => (:exp2, 1, nothing),
+    typeof(Base.FastMath.exp10_fast) => (:exp10, 1, nothing),
+    # the implementations the FastMath versions forward to manipulate the float's bits,
+    # which Enzyme cannot differentiate; in GPU kernels only these may be left after inlining
+    typeof(Base.Math.exp_fast) => (:exp, 1, nothing),
+    typeof(Base.Math.exp2_fast) => (:exp2, 1, nothing),
+    typeof(Base.Math.exp10_fast) => (:exp10, 1, nothing),
     typeof(Base.log) => (:log, 1, nothing),
     typeof(Base.FastMath.log) => (:log, 1, nothing),
     typeof(Base.log1p) => (:log1p, 1, nothing),
@@ -531,17 +587,13 @@ include("llvm/transforms.jl")
 include("llvm/passes.jl")
 include("typeutils/make_zero.jl")
 
-function nested_codegen!(enzyme_context::EnzymeContext, mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type), world::UInt)
-    funcspec = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, typeof(f), tt, world)
-    nested_codegen!(enzyme_context, mode, mod, funcspec, world)
+function nested_codegen!(mode::API.CDerivativeMode, mod::LLVM.Module, @nospecialize(f), @nospecialize(tt::Type))
+    funcspec = my_methodinstance(mode == API.DEM_ForwardMode ? Forward : Reverse, typeof(f), tt, enzyme_world())
+    return nested_codegen!(mode, mod, funcspec)
 end
 
 
-function prepare_llvm(interp, mod::LLVM.Module, job, meta)
-    for f in functions(mod)
-        attributes = function_attributes(f)
-        push!(attributes, StringAttribute("enzymejl_world", string(job.world)))
-    end
+function prepare_llvm(interp, mod::LLVM.Module, job, meta, enzyme_ctx::EnzymeContext)
     for (mi, k) in meta.compiled
         k_name = GPUCompiler.safe_name(k.specfunc)
         if !haskey(functions(mod), k_name)
@@ -555,6 +607,11 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
         returnRoots = returnRoots0 !== nothing
 
         attributes = function_attributes(llvmfn)
+        # A function that already carries `enzymejl_mi` is not this emission's
+        # output: a derivative embedded for nested differentiation may reuse
+        # the name of a fresh function, since Julia's function name counters
+        # restart per compilation.
+        fresh = !has_fn_attr(llvmfn, StringAttribute("enzymejl_mi"))
         push!(
             attributes,
             StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))),
@@ -563,13 +620,20 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
             attributes,
             StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(RT)))),
         )
-        if EnzymeRules.has_easy_rule_from_sig(Interpreter.simplify_kw(mi.specTypes); job.world)
+        if cached_has_easy_rule(Interpreter.simplify_kw(mi.specTypes), job.world)
             push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
+            # The rule accesses no more than the body does, so Enzyme may keep
+            # inferring the function's full parameter attributes from the body.
+            push!(attributes, LLVM.StringAttribute("enzyme_custom_full_attributes"))
         end
 
 	if startswith(LLVM.name(llvmfn), "japi3") || startswith(LLVM.name(llvmfn), "japi1") || startswith(LLVM.name(llvmfn), "jlcapi")
 	   continue
 	end
+
+        if fresh
+            check_emitted_specsig(mod, llvmfn, mi, RT)
+        end
 
         if is_sret_union(RT)
             attr = StringAttribute("enzymejl_sret_union_bytes", string(union_alloca_type(RT)))
@@ -605,7 +669,7 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
                 continue
             end
             if LLVM.name(fn) == "julia.gc_alloc_obj"
-                legal, RT, _ = abs_typeof(inst)
+                legal, RT, _ = abs_typeof(inst, enzyme_ctx)
                 if legal
                     metadata(inst)["enzymejl_gc_alloc_rt"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
                 end
@@ -616,12 +680,682 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta)
     return rewrite_abi_converter_calls!(mod)
 end
 
+const FRULE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
+const RRULE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
+const INACTIVE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
+const EASY_RULE_CACHE = Dict{Tuple{Type, UInt}, Bool}()
+const NOALIAS_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
+
+function cached_has_easy_rule(specTypes::Type, world::UInt)
+    key = (specTypes, world)
+    val = get(EASY_RULE_CACHE, key, nothing)
+    if val !== nothing
+        return val::Bool
+    end
+    func = specTypes.parameters[1]
+    if func isa Core.Builtin
+        EASY_RULE_CACHE[key] = false
+        return false
+    end
+    res = EnzymeRules.has_easy_rule_from_sig(specTypes; world)
+    EASY_RULE_CACHE[key] = res
+    return res
+end
+
+function cached_has_frule(specTypes::Type, world::UInt, method_table)
+    key = (specTypes, world, method_table)
+    val = get(FRULE_CACHE, key, nothing)
+    if val !== nothing
+        return val::Bool
+    end
+    func = specTypes.parameters[1]
+    if func isa Core.Builtin
+        FRULE_CACHE[key] = false
+        return false
+    end
+    res = EnzymeRules.has_frule_from_sig(specTypes; world, method_table)
+    FRULE_CACHE[key] = res
+    return res
+end
+
+function cached_has_rrule(specTypes::Type, world::UInt, method_table)
+    key = (specTypes, world, method_table)
+    val = get(RRULE_CACHE, key, nothing)
+    if val !== nothing
+        return val::Bool
+    end
+    func = specTypes.parameters[1]
+    if func isa Core.Builtin
+        RRULE_CACHE[key] = false
+        return false
+    end
+    res = EnzymeRules.has_rrule_from_sig(specTypes; world, method_table)
+    RRULE_CACHE[key] = res
+    return res
+end
+
+function cached_is_inactive(specTypes::Type, world::UInt, method_table)
+    key = (specTypes, world, method_table)
+    val = get(INACTIVE_CACHE, key, nothing)
+    if val !== nothing
+        return val::Bool
+    end
+    func = specTypes.parameters[1]
+    if func isa Core.Builtin
+        INACTIVE_CACHE[key] = false
+        return false
+    end
+    res = EnzymeRules.is_inactive_from_sig(specTypes; world, method_table)
+    INACTIVE_CACHE[key] = res
+    return res
+end
+
+function cached_noalias(specTypes::Type, world::UInt, method_table)
+    key = (specTypes, world, method_table)
+    val = get(NOALIAS_CACHE, key, nothing)
+    if val !== nothing
+        return val::Bool
+    end
+    func = specTypes.parameters[1]
+    if func isa Core.Builtin
+        NOALIAS_CACHE[key] = false
+        return false
+    end
+    res = EnzymeRules.noalias_from_sig(specTypes; world, method_table)
+    NOALIAS_CACHE[key] = res
+    return res
+end
+
 include("compiler/optimize.jl")
 include("compiler/interpreter.jl")
+include("compiler/callconv.jl")
 include("compiler/validation.jl")
 include("typeutils/inference.jl")
 
 import .Interpreter: isKWCallSignature
+
+"""
+    record_julia_values!(ctx, job, meta)
+
+Make the Julia value each global slot of a freshly emitted module refers to known to `ctx`.
+
+That is the authoritative answer to "which object is this global?", and unlike an address
+decoded from an initializer it does not depend on the address having been written into the IR,
+which no back-end has before Enzyme is done (see [`emit_unresolved_llvm`](@ref) and
+[`make_slots_symbolic!`](@ref)). GPUCompiler 1.x reports the address of the object behind each
+slot as `gv_to_value`, keyed by the name of the slot, which is copied into the tables of `ctx`.
+GPUCompiler 2.x reports a relocation record per slot, keyed the same way, whose target is the
+value: `ctx` keeps the records themselves, and whether the back-end of `job` lets host addresses
+into the module (see [`bakes_julia_values`](@ref)). Either way `absint` and `abs_typeof` read
+the value through [`slot_value`](@ref), [`resolve_slots!`](@ref) writes the address back in
+from [`slot_address`](@ref), and the context keeps the values rooted for the duration of the
+compilation.
+"""
+function record_julia_values!(ctx::EnzymeContext, @nospecialize(job::CompilerJob), meta)
+    @static if HAS_GPUCOMPILER_2
+        push!(ctx.relocations, meta.relocations)
+        ctx.bakes = bakes_julia_values(job)
+    else
+        for (name, ptr) in meta.gv_to_value
+            # A slot whose initializer GPUCompiler could not match to an object.
+            ptr == C_NULL && continue
+            record_julia_value!(ctx, name, Base.unsafe_pointer_to_objref(ptr), ptr)
+        end
+    end
+    return nothing
+end
+
+# The relocation record of the slot called `name` in the modules the compilation emitted, if it
+# has one and it refers to a Julia value (GPUCompiler 2.x).
+function slot_record(ctx::EnzymeContext, name::String)
+    @static if HAS_GPUCOMPILER_2
+        for relocs in ctx.relocations
+            rec = GPUCompiler.find_relocation(relocs, name)
+            rec === nothing && continue
+            rec.kind === GPUCompiler.SlotSite && rec.target isa GPUCompiler.JuliaValueRef && return rec
+        end
+    end
+    return nothing
+end
+
+"""
+    slot_value(ctx, name)::Union{Some{Any}, Nothing}
+
+The Julia value the slot called `name` refers to, as the compilation `ctx` knows it: from its
+tables (GPUCompiler 1.x's `gv_to_value`, or a module compiled earlier, see
+[`merge_julia_value_table!`](@ref)), or from the relocation records of the modules it emitted
+(GPUCompiler 2.x); `nothing` if neither knows the slot.
+"""
+function slot_value(ctx::EnzymeContext, name::String)::Union{Some{Any}, Nothing}
+    haskey(ctx.julia_values, name) && return Some{Any}(ctx.julia_values[name])
+    rec = slot_record(ctx, name)
+    rec === nothing && return nothing
+    return Some{Any}(rec.target.value)
+end
+
+"""
+    slot_address(ctx, name)::Union{Ptr{Cvoid}, Nothing}
+
+The address [`resolve_slots!`](@ref) writes into the slot called `name`, or `nothing` if the
+compilation `ctx` has none: it does not know the slot, or the back-end keeps it symbolic
+(GPUCompiler 2.x's `:patch` and `:table`), in which case a host address must not go into the
+module. On GPUCompiler 2.x the address is that of the instance GPUCompiler roots, which gives an
+`isbits` value a box whose address stays valid.
+"""
+function slot_address(ctx::EnzymeContext, name::String)::Union{Ptr{Cvoid}, Nothing}
+    ptr = get(ctx.julia_slot_addrs, name, nothing)
+    ptr === nothing || return ptr
+    @static if HAS_GPUCOMPILER_2
+        ctx.bakes || return nothing
+        rec = slot_record(ctx, name)
+        rec === nothing && return nothing
+        return Ptr{Cvoid}(GPUCompiler.resolve_relocation_target(rec.target))
+    else
+        return nothing
+    end
+end
+
+# The type a small type tag stands for: codegen refers to some types by their tag in Julia's
+# table rather than by their address, and a box's header holds the tag of such a type.
+function small_typeof(tag::UInt)::Union{Some{Any}, Nothing}
+    tag < UInt(64 << 4) || return nothing   # jl_max_tags << 4
+    table = cglobal(:jl_small_typeof, Ptr{Cvoid})
+    ptr = unsafe_load(table, tag ÷ sizeof(Ptr{Cvoid}) + 1)
+    ptr == C_NULL && return nothing
+    return Some{Any}(Base.unsafe_pointer_to_objref(ptr))
+end
+
+# The bytes of the constant `c`, an array of `i8`.
+function constant_bytes(c::LLVM.Constant)::Union{Vector{UInt8}, Nothing}
+    T = value_type(c)
+    isa(T, LLVM.ArrayType) && eltype(T) == LLVM.Int8Type() || return nothing
+    isa(c, LLVM.ConstantAggregateZero) && return zeros(UInt8, length(T))
+    isa(c, LLVM.ConstantDataArray) || return nothing
+    bytes = Vector{UInt8}(undef, length(T))
+    for i in 1:length(T)
+        b = LLVM.Value(LLVM.API.LLVMGetElementAsConstant(c, i - 1))
+        isa(b, LLVM.ConstantInt) || return nothing
+        bytes[i] = convert(UInt8, convert(UInt, b))
+    end
+    return bytes
+end
+
+"""
+    materialized_box_value(ctx, gv)::Union{Some{Any}, Nothing}
+
+The value of the box the slot `gv` points into, if GPUCompiler 2.x materialized one for it: in
+device code it gives an `isbits` value a box in the module instead of the address of a host
+one, `{[padding,] header, bytes}`, and points the initializer of the slot at its bytes. The
+type is the header's small type tag, or, for a type that has none, the target of the relocation
+record of the header in the modules `ctx` emitted. The value only lives in the module: analysis
+can read it, but no host address stands for it, so a load of the slot is never folded.
+"""
+function materialized_box_value(ctx::EnzymeContext, gv::LLVM.GlobalVariable)::Union{Some{Any}, Nothing}
+    init = LLVM.initializer(gv)
+    init === nothing && return nothing
+    while isa(init, LLVM.ConstantExpr) &&
+            opcode(init) in (LLVM.API.LLVMAddrSpaceCast, LLVM.API.LLVMBitCast)
+        init = operands(init)[1]
+    end
+    isa(init, LLVM.ConstantExpr) && opcode(init) == LLVM.API.LLVMGetElementPtr || return nothing
+    ops = operands(init)
+    length(ops) == 3 || return nothing
+    box = ops[1]
+    isa(box, LLVM.GlobalVariable) && isa(ops[3], LLVM.ConstantInt) || return nothing
+    boxinit = LLVM.initializer(box)
+    isa(boxinit, LLVM.ConstantStruct) || return nothing
+    fields = operands(boxinit)
+    payload_idx = convert(Int, ops[3])
+    payload_idx >= 1 && payload_idx < length(fields) || return nothing
+    header = fields[payload_idx]
+    isa(header, LLVM.ConstantInt) || return nothing
+    tag = convert(UInt, header)
+    T = if tag != 0
+        small_typeof(tag)
+    else
+        found = nothing
+        @static if HAS_GPUCOMPILER_2
+            # The box has one record, for its header. It is matched by the name of the box
+            # alone: the offset of a field is numbered from 0 or from 1 depending on the major
+            # of LLVM.jl that GPUCompiler pairs with.
+            boxname = LLVM.name(box)
+            for relocs in ctx.relocations, rec in relocs.records
+                rec.name == boxname && rec.kind === GPUCompiler.InteriorSite || continue
+                rec.target isa GPUCompiler.JuliaValueRef || continue
+                found = Some{Any}(rec.target.value)
+                break
+            end
+        end
+        found
+    end
+    T === nothing && return nothing
+    T = something(T)
+    isa(T, DataType) && isbitstype(T) || return nothing
+    bytes = constant_bytes(fields[payload_idx + 1])
+    bytes === nothing && return nothing
+    length(bytes) == sizeof(T) || return nothing
+    return Some{Any}(reinterpret(T, bytes)[1])
+end
+
+"""
+    bakes_julia_values(job)
+
+Whether the back-end of `job` lets the host addresses of Julia values into the code it
+compiles. GPUCompiler 1.x always does; 2.x asks the back-end's `relocation_lowering`, which keeps
+them symbolic on `:patch` and `:table`.
+
+The strategy is asked of a `kernel = true` flavour of the job: a deferred derivative is
+linked into the kernel that requested it, and a back-end whose strategy depends on
+`kernel` (Metal answers `:table` for kernels only) would otherwise report `:bake` for the
+non-kernel primal job Enzyme holds and let host addresses into a persisted kernel.
+"""
+function bakes_julia_values(@nospecialize(job::CompilerJob))::Bool
+    @static if HAS_GPUCOMPILER_2
+        kernel_job = CompilerJob(job; config = CompilerConfig(job.config; kernel = true))
+        return GPUCompiler.relocation_lowering(kernel_job) === :bake
+    else
+        return true
+    end
+end
+
+function record_julia_value!(ctx::EnzymeContext, name::String, @nospecialize(val), ptr::Ptr{Cvoid})
+    ctx.julia_values[name] = val
+    ctx.julia_slot_addrs[name] = ptr
+    return nothing
+end
+
+"""
+    JuliaValueTable
+
+The Julia values one module refers to by name, the part of a compilation's tables that module
+needs once the compilation is over:
+
+- `slots`: the value, and its address, behind each symbolic `julia.constgv` slot, keyed by the
+  name of the slot (see [`make_slots_symbolic!`](@ref));
+- `inserted`: the value each `ejl_<key>` global Enzyme inserted stands for, keyed by `key`
+  (see `insert_julia_value!`).
+
+[`julia_value_table`](@ref) takes it out of the context. `_thunk` resolves the module it
+compiled with it, and `autodiff_cache` keeps it next to the bitcode of the thunk, so that a
+later compilation importing the bitcode ([`import_cached_autodiff!`](@ref)) can take the values
+up into its own tables. Holding the values keeps them rooted for as long as the bitcode refers
+to them by name.
+"""
+struct JuliaValueTable
+    slots::Dict{String, Tuple{Any, Ptr{Cvoid}}}
+    inserted::Dict{String, Any}
+end
+JuliaValueTable() = JuliaValueTable(Dict{String, Tuple{Any, Ptr{Cvoid}}}(), Dict{String, Any}())
+
+"""
+    julia_value_table(ctx, mod)::JuliaValueTable
+
+The entries of the tables of `ctx` for what `mod` refers to by name: its slots that are still
+symbolic, and the `ejl_` globals Enzyme inserted into it.
+"""
+function julia_value_table(ctx::EnzymeContext, mod::LLVM.Module)::JuliaValueTable
+    table = JuliaValueTable()
+    for gv in globals(mod)
+        name = LLVM.name(gv)
+        if haskey(metadata(gv), "julia.constgv")
+            LLVM.isdeclaration(gv) || continue
+            ptr = slot_address(ctx, name)
+            ptr === nothing && continue
+            table.slots[name] = (something(slot_value(ctx, name)), ptr)
+        elseif startswith(name, "ejl_")
+            key = name[(ncodeunits("ejl_") + 1):end]
+            haskey(ctx.inserted_values, key) || continue
+            table.inserted[key] = ctx.inserted_values[key]
+        end
+    end
+    return table
+end
+
+"""
+    merge_julia_value_table!(ctx, table::JuliaValueTable)
+
+Take the values of a module compiled earlier, which is being linked into this compilation's,
+up into the tables of `ctx`.
+"""
+function merge_julia_value_table!(ctx::EnzymeContext, table::JuliaValueTable)
+    for (name, (val, ptr)) in table.slots
+        record_julia_value!(ctx, name, val, ptr)
+    end
+    Base.merge!(ctx.inserted_values, table.inserted)
+    return nothing
+end
+
+"""
+    make_slots_symbolic!(mod, ctx)
+
+Drop the address GPUCompiler 1.x writes into each `julia.constgv` slot of `mod` whose value is
+recorded in the table of `ctx`, leaving the slot a declaration: the shape GPUCompiler 2.x
+emits for a job compiled on behalf of another, with the value known only by name. Enzyme works
+on the module through the table of Julia values, and [`resolve_slots!`](@ref) writes the
+addresses back in once the module is linked into what runs: late, as GPUCompiler 2.x resolves
+its relocations.
+"""
+function make_slots_symbolic!(mod::LLVM.Module, ctx::EnzymeContext)
+    for gv in globals(mod)
+        haskey(metadata(gv), "julia.constgv") || continue
+        name = LLVM.name(gv)
+        slot_value(ctx, name) === nothing && continue
+        if LLVM.initializer(gv) !== nothing
+            # Only an address the table has can be written back in.
+            slot_address(ctx, name) === nothing && continue
+            linkage!(gv, LLVM.API.LLVMExternalLinkage)
+            LLVM.initializer!(gv, nothing)
+        end
+        # GPUCompiler 2.x emits the slot as a declaration to begin with.
+        mark_symbolic_slot!(gv)
+    end
+    return nothing
+end
+
+"""
+    mark_symbolic_slot!(gv)
+
+Tell Enzyme what the initializer of the `julia.constgv` slot `gv` said before it became a
+declaration: the slot never changes (`constant`), and as it only ever holds the address of a
+Julia value, it is inactive. Activity analysis inferred that from a constant initializer; a
+declaration gives it nothing to go by, and an active-looking slot would need a shadow global.
+Type analysis is kept from accumulating information on the slot, which every load of it shares
+(as for the globals `unsafe_to_llvm` inserts); a load LLVM folded into the address
+gave it none either.
+"""
+function mark_symbolic_slot!(gv::LLVM.GlobalVariable)
+    constant!(gv, true)
+    API.SetMD(gv, "enzyme_inactive", MDNode(LLVM.Metadata[]))
+    API.SetMD(gv, "enzyme_ta_norecur", MDNode(LLVM.Metadata[]))
+    return nothing
+end
+
+"""
+    resolve_slots!(mod, table::JuliaValueTable)
+
+Write the address of its value back into every `julia.constgv` slot of `mod` that
+[`make_slots_symbolic!`](@ref) left a declaration, from the module's table (see
+[`julia_value_table`](@ref)). This is the resolver for GPUCompiler 1.x, which resolves nothing itself:
+it runs where the module is linked into code that runs, so that everything before sees the
+slots as names.
+"""
+function resolve_slots!(mod::LLVM.Module, table::JuliaValueTable)
+    slots = table.slots
+    for gv in globals(mod)
+        haskey(metadata(gv), "julia.constgv") || continue
+        LLVM.isdeclaration(gv) || continue
+        entry = get(slots, LLVM.name(gv), nothing)
+        entry === nothing && continue
+        addr = LLVM.ConstantInt(reinterpret(UInt, entry[2]))
+        LLVM.initializer!(gv, LLVM.const_inttoptr(addr, global_value_type(gv)))
+        linkage!(gv, LLVM.API.LLVMPrivateLinkage)
+        constant!(gv, true)
+    end
+    return nothing
+end
+
+"""
+    ejl_value(key, inserted)::Union{Some{Any}, Nothing}
+
+The Julia value the global `ejl_<key>` stands for: a well-known Julia global
+(`JuliaGlobalNameMap`), one Enzyme knows when it loads (`JuliaEnzymeNameMap`), or one the
+compilation inserted (`inserted`, see `insert_julia_value!`); `nothing` if none. A load folded
+through a binding (Julia 1.10) stands for the binding's value.
+"""
+function ejl_value(key::AbstractString, inserted::Dict{String, Any})::Union{Some{Any}, Nothing}
+    val = if haskey(JuliaGlobalNameMap, key)
+        JuliaGlobalNameMap[key]
+    elseif haskey(JuliaEnzymeNameMap, key)
+        JuliaEnzymeNameMap[key]
+    elseif haskey(inserted, key)
+        inserted[key]
+    else
+        return nothing
+    end
+    return Some{Any}(unbind(val))
+end
+
+# Replace the global `g`, which stands for the Julia value `val`, with the address of the value.
+# `unsafe_to_ptr` roots the value for good, as the code holds its address.
+function bake_julia_value_global!(g::LLVM.GlobalVariable, @nospecialize(val))
+    T_pjlvalue = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]))
+    addr = LLVM.ConstantInt(reinterpret(UInt, unsafe_to_ptr(val)))
+    replace_uses!(g, LLVM.const_addrspacecast(LLVM.const_inttoptr(addr, T_pjlvalue), value_type(g)))
+    LLVM.erase!(g)
+    return nothing
+end
+
+"""
+    bake_julia_value_globals!(mod, inserted)
+
+Replace each `ejl_<key>` global of the device module `mod`, which stands for the Julia value
+`JuliaGlobalNameMap[key]`, `JuliaEnzymeNameMap[key]` or `inserted[key]` (the values the
+compilation inserted, see `unsafe_to_llvm`), with the address of that value. On the host the JIT
+resolves the well-known names, and the module the values were inserted into gets their addresses
+when it is linked ([`bake_inserted_values!`](@ref)); GPUCompiler 1.x resolves nothing in device
+code, so the address is written in when the derivative is handed to the kernel that requested
+it.
+"""
+function bake_julia_value_globals!(mod::LLVM.Module, inserted::Dict{String, Any})
+    for g in collect(globals(mod))
+        name = LLVM.name(g)
+        startswith(name, "ejl_") || continue
+        found = ejl_value(name[(ncodeunits("ejl_") + 1):end], inserted)
+        found === nothing && continue
+        bake_julia_value_global!(g, something(found))
+    end
+    return nothing
+end
+
+"""
+    bake_inserted_values!(mod, inserted)
+
+Write the address of each Julia value the compilation inserted (`inserted`, see
+`insert_julia_value!`) into `mod`, which refers to it as `ejl_<key>`, as the module is linked into
+code that runs. The names stay local to the module and its table until then, so there is nothing
+to keep of them in a global; the well-known names (`JuliaGlobalNameMap`, `JuliaEnzymeNameMap`)
+the JIT resolves.
+"""
+function bake_inserted_values!(mod::LLVM.Module, inserted::Dict{String, Any})
+    for (key, val) in inserted
+        haskey(globals(mod), "ejl_" * key) || continue
+        bake_julia_value_global!(globals(mod)["ejl_" * key], unbind(val))
+    end
+    return nothing
+end
+
+# GPUCompiler 2.x's `compile_method_instance` drives inference through this hook, which
+# GPUCompiler only defines for its own `GPUInterpreter`.
+@static if HAS_GPUCOMPILER_2
+    @static if VERSION >= v"1.11.0-DEV.1552"
+        GPUCompiler.drive_inference!(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance) =
+            GPUCompiler.CompilerCaching.typeinf!(interp, mi)
+    else
+        # Mirrors GPUCompiler's own `CodeCache`-based `drive_inference!` (jlgen.jl), which
+        # is typed on `GPUInterpreter` and therefore cannot be reused for ours.
+        function GPUCompiler.drive_inference!(interp::Interpreter.EnzymeInterpreter, mi::Core.MethodInstance)
+            src = Core.Compiler.typeinf_ext_toplevel(interp, mi)
+            @assert src !== nothing "Inference of $mi failed"
+
+            # For const-return CIs the inference result wasn't recorded; set it from the
+            # returned source so callers re-using the CI don't need to re-infer.
+            wvc = Core.Compiler.code_cache(interp)
+            if Core.Compiler.haskey(wvc, mi)
+                ci = Core.Compiler.getindex(wvc, mi)
+                if ci.inferred === nothing
+                    @atomic ci.inferred = src
+                end
+            end
+            return nothing
+        end
+    end
+end
+
+# Whether the constant `c` is, or is a constant expression over, the global `g`.
+function refers_to(@nospecialize(c::LLVM.Value), g::LLVM.GlobalVariable)::Bool
+    c == g && return true
+    isa(c, LLVM.ConstantExpr) || return false
+    return any(Base.Fix2(refers_to, g), operands(c))
+end
+
+# Rebuild the constant `c` as instructions emitted by `B`, with `val` in place of `g`.
+function rebuild_without!(B::LLVM.IRBuilder, @nospecialize(c::LLVM.Value), g::LLVM.GlobalVariable, val::LLVM.Value)::LLVM.Value
+    c == g && return val
+    refers_to(c, g) || return c
+    ops = LLVM.Value[rebuild_without!(B, op, g, val) for op in operands(c)]
+    op = opcode(c)
+    if op in (LLVM.API.LLVMBitCast, LLVM.API.LLVMAddrSpaceCast, LLVM.API.LLVMPtrToInt, LLVM.API.LLVMIntToPtr)
+        return LLVM.Value(LLVM.API.LLVMBuildCast(B, op, ops[1], value_type(c), ""))
+    elseif op == LLVM.API.LLVMGetElementPtr
+        srcty = LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(c))
+        if LLVM.API.LLVMIsInBounds(c) != 0
+            return inbounds_gep!(B, srcty, ops[1], ops[2:end])
+        end
+        return gep!(B, srcty, ops[1], ops[2:end])
+    elseif op == LLVM.API.LLVMICmp
+        return icmp!(B, LLVM.API.LLVMGetICmpPredicate(c), ops[1], ops[2])
+    end
+    error("Enzyme internal error: cannot rebuild the constant expression $(string(c)) over $(LLVM.name(g)) as instructions")
+end
+
+"""
+    relocate_julia_value_globals!(mod, relocs, inserted)
+
+Hand the Julia values Enzyme refers to in the device module `mod` to GPUCompiler 2.x's
+relocation machinery.
+
+Enzyme refers to a Julia value through a global `ejl_<key>` whose address is the value
+(`JuliaGlobalNameMap[key]`, `JuliaEnzymeNameMap[key]`, or `inserted[key]` for the values the
+compilation inserted, see `unsafe_to_llvm`). On the host the JIT resolves the well-known ones and
+the module gets the addresses of the inserted ones when it is linked (`bake_inserted_values!`);
+nothing does in device code. Replace the global
+with what codegen emits for a Julia value: a load of a word-sized slot, here
+`ejl_slot_<key>`, with a relocation record for the value. The job that requested the
+derivative then lowers it with its own strategy, as it does Julia's own slots: bakes the
+address in, or leaves it for its loader.
+"""
+function relocate_julia_value_globals!(mod::LLVM.Module, relocs, inserted::Dict{String, Any})
+    T_slot = LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]))
+    for g in collect(globals(mod))
+        name = LLVM.name(g)
+        startswith(name, "ejl_") || continue
+        key = name[(ncodeunits("ejl_") + 1):end]
+        found = ejl_value(key, inserted)
+        found === nothing && continue
+        val = something(found)
+
+        # The instructions using `g`, directly or through constant expressions.
+        users = Set{LLVM.Instruction}()
+        todo = LLVM.Value[g]
+        while !isempty(todo)
+            v = pop!(todo)
+            for u in LLVM.uses(v)
+                user = LLVM.user(u)
+                if isa(user, LLVM.Instruction)
+                    push!(users, user)
+                elseif isa(user, LLVM.ConstantExpr)
+                    push!(todo, user)
+                else
+                    error("Enzyme internal error: cannot relocate $name, used by $(string(user))")
+                end
+            end
+        end
+        isempty(users) && continue
+
+        slot_name = "ejl_slot_" * GPUCompiler.safe_name(key)
+        slot = if haskey(globals(mod), slot_name)
+            globals(mod)[slot_name]
+        else
+            GlobalVariable(mod, T_slot, slot_name)
+        end
+        GPUCompiler.add_relocation!(relocs, GPUCompiler.SlotSite, slot_name, 0, GPUCompiler.JuliaValueRef(val))
+
+        @dispose B = IRBuilder() begin
+            for inst in users
+                for (i, op) in enumerate(operands(inst))
+                    refers_to(op, g) || continue
+                    # A phi needs the value at the end of the incoming block.
+                    at = if isa(inst, LLVM.PHIInst)
+                        terminator(LLVM.BasicBlock(LLVM.API.LLVMGetIncomingBlock(inst, i - 1)))
+                    else
+                        inst
+                    end
+                    position!(B, at)
+                    word = load!(B, T_slot, slot)
+                    loaded = addrspacecast!(B, word, value_type(g))
+                    operands(inst)[i] = rebuild_without!(B, op, g, loaded)
+                end
+            end
+        end
+        # What still uses `g` are constant expressions nothing uses any more.
+        replace_uses!(g, LLVM.UndefValue(value_type(g)))
+        LLVM.erase!(g)
+    end
+    return nothing
+end
+
+"""
+    emit_unresolved_llvm(job)
+
+`GPUCompiler.emit_llvm(job)`, without resolving the references to Julia values on GPUCompiler
+2.x: what it returns for a job compiled on behalf of another, also for a toplevel one, so that
+nothing is baked into the module before Enzyme is done with it. The relocation records say
+what each slot holds; [`link_julia_values!`](@ref) resolves them once the module is linked.
+GPUCompiler 1.x always resolves; [`make_slots_symbolic!`](@ref) undoes it.
+"""
+function emit_unresolved_llvm(@nospecialize(job::CompilerJob))
+    @static if HAS_GPUCOMPILER_2
+        return GPUCompiler.emit_llvm(job; resolve_relocations = false)
+    else
+        return GPUCompiler.emit_llvm(job)
+    end
+end
+
+"""
+    record_symbolic_slots!(mod, relocs, ctx)
+
+Give every slot of `mod` that is still a declaration, and whose value the table of `ctx`
+knows, a relocation record in `relocs`, unless it has one. The slots of the primal module come
+with records; those of a module linked in later (`nested_codegen!`, an imported thunk) do not,
+and whoever resolves the records must see them too.
+"""
+function record_symbolic_slots!(mod::LLVM.Module, relocs, ctx::EnzymeContext)
+    @static if HAS_GPUCOMPILER_2
+        named = Set{String}(rec.name for rec in relocs.records)
+        for gv in globals(mod)
+            haskey(metadata(gv), "julia.constgv") || continue
+            LLVM.isdeclaration(gv) || continue
+            name = LLVM.name(gv)
+            name in named && continue
+            found = slot_value(ctx, name)
+            found === nothing && continue
+            GPUCompiler.add_relocation!(relocs, GPUCompiler.SlotSite, name, 0, GPUCompiler.JuliaValueRef(something(found)))
+        end
+    end
+    return nothing
+end
+
+"""
+    link_julia_values!(mod, meta)
+
+Resolve the Julia values the toplevel module `mod` refers to, as it is linked into what runs:
+on GPUCompiler 2.x by baking its relocation records (`meta.relocations`), which also cover
+what is not a slot of a Julia value, and from the module's table (`meta.value_table`): its
+slots ([`resolve_slots!`](@ref)) and the values the compilation inserted
+([`bake_inserted_values!`](@ref)).
+"""
+function link_julia_values!(mod::LLVM.Module, meta)
+    @static if HAS_GPUCOMPILER_2
+        relocs = meta.relocations
+        if !isempty(relocs)
+            GPUCompiler.prune_dead_relocations!(mod, relocs)
+            GPUCompiler.bake_relocations!(mod, relocs)
+        end
+    end
+    resolve_slots!(mod, meta.value_table)
+    bake_inserted_values!(mod, meta.value_table.inserted)
+    return nothing
+end
 
 
 mutable struct HandlerState
@@ -653,20 +1387,18 @@ function handleCustom(state::HandlerState, custom, k_name::String, llvmfn::LLVM.
     nothing
 end
 
-function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, mode::API.CDerivativeMode, world::UInt, method_table, custom::Dict{String, LLVM.API.LLVMLinkage}, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type))::Nothing
+function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, mode::API.CDerivativeMode, world::UInt, method_table, custom::Dict{String, LLVM.API.LLVMLinkage}, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type), enzyme_ctx::EnzymeContext)::Nothing
     has_custom_rule = false
 
     specTypes = Interpreter.simplify_kw(mi.specTypes)
 
     if mode == API.DEM_ForwardMode
-        has_custom_rule =
-            EnzymeRules.has_frule_from_sig(specTypes; world, method_table)
+        has_custom_rule = cached_has_frule(specTypes, world, method_table)
         if has_custom_rule
             @safe_debug "Found frule for" mi.specTypes
         end
     else
-        has_custom_rule =
-            EnzymeRules.has_rrule_from_sig(specTypes; world, method_table)
+        has_custom_rule = cached_has_rrule(specTypes, world, method_table)
         if has_custom_rule
             @safe_debug "Found rrule for" mi.specTypes
         end
@@ -681,7 +1413,7 @@ function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, m
         state.actualRetType = rettype
     end
 
-    if EnzymeRules.noalias_from_sig(mi.specTypes; world, method_table)
+    if cached_noalias(specTypes, world, method_table)
         push!(edges, mi)
         push!(return_attributes(llvmfn), EnumAttribute("noalias"))
         for u in LLVM.uses(llvmfn)
@@ -1101,6 +1833,7 @@ end
             run_enzyme,
             world,
             mi,
+            enzyme_ctx,
         )
         if cur
             state.primalf = llvmfn
@@ -1134,7 +1867,64 @@ end
     return
 end
 
-function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLVM.Function}, job, edges, run_enzyme, mode::API.CDerivativeMode)::Tuple{Dict{String,LLVM.API.LLVMLinkage}, HandlerState}
+is_untyped_alloca_type(T::LLVM.LLVMType) =
+    T isa LLVM.IntegerType || (T isa LLVM.ArrayType && eltype(T) isa LLVM.IntegerType)
+
+"""
+    byref_alloca_type(inst::LLVM.AllocaInst, DL)
+
+The Julia type of the untyped alloca `inst` (`iN` or `[N x iM]`), if it is passed
+(possibly through casts) by reference (`BITS_REF`) as an argument of calls whose
+parameter type is known (`enzymejl_parmtype`), all agreeing on one concrete
+immutable type of the alloca's size. Otherwise `nothing`.
+"""
+function byref_alloca_type(inst::LLVM.AllocaInst, DL)
+    at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(inst))
+    is_untyped_alloca_type(at) || return nothing
+    RT = nothing
+    todo = LLVM.Value[inst]
+    while !isempty(todo)
+        v = pop!(todo)
+        for u in LLVM.uses(v)
+            user = LLVM.user(u)
+            if isa(user, LLVM.AddrSpaceCastInst) || isa(user, LLVM.BitCastInst)
+                push!(todo, user)
+                continue
+            end
+            isa(user, LLVM.CallInst) || continue
+            fn = LLVM.called_operand(user)
+            fn isa LLVM.Function || continue
+            ops = operands(user)
+            for i in 1:min(length(ops) - 1, length(parameters(fn)))
+                ops[i] == v || continue
+                ty = nothing
+                ref = nothing
+                for attr in collect(parameter_attributes(fn, i))
+                    attr isa LLVM.StringAttribute || continue
+                    if kind(attr) == "enzymejl_parmtype"
+                        ty = LLVM.value(attr)
+                    elseif kind(attr) == "enzymejl_parmtype_ref"
+                        ref = parse(UInt, LLVM.value(attr))
+                    end
+                end
+                (ty === nothing || ref != UInt(GPUCompiler.BITS_REF)) && continue
+                T = Base.unsafe_pointer_to_objref(reinterpret(Ptr{Cvoid}, parse(UInt, ty)))
+                (T isa DataType && isconcretetype(T) && !ismutabletype(T)) || return nothing
+                LLVM.sizeof(DL, convert(LLVMType, T)) == LLVM.sizeof(DL, at) || return nothing
+                (RT === nothing || RT == T) || return nothing
+                RT = T
+            end
+        end
+    end
+    return RT
+end
+
+function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLVM.Function}, job, edges, run_enzyme, mode::API.CDerivativeMode, enzyme_ctx::EnzymeContext)::Tuple{Dict{String, LLVM.API.LLVMLinkage}, HandlerState}
+    # One memo table for the whole module: the argument and return types of
+    # its functions overlap heavily (the same model / array types recur in
+    # every kernel), and building a TypeTree walks the type's fields through
+    # the C API each time.
+    seen = TypeTreeTable()
 
     for f in functions(mod)
         if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1") || startswith(LLVM.name(f), "jlcapi")
@@ -1142,6 +1932,10 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
         end
         mi, RT = enzyme_custom_extract_mi(f, false)
         if mi === nothing
+            continue
+        end
+
+        if has_fn_attr(f, StringAttribute(LOWERED_CONVENTION_ATTR_KIND))
             continue
         end
 
@@ -1160,7 +1954,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
             continue
         end
 
-        world = enzyme_extract_world(f)
+        world = enzyme_world()
 
         jlargs = classify_arguments(
             mi.specTypes,
@@ -1189,13 +1983,15 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
                         string(convert(UInt, unsafe_to_pointer(arg.typ))),
                     ),
                 )
-                push!(
-                    parameter_attributes(f, arg.codegen.i),
-                    StringAttribute(
-                        "enzymejl_parmtype_str",
-                        string(arg.typ),
-                    ),
-                )
+                if EmitTypeNames[]
+                    push!(
+                        parameter_attributes(f, arg.codegen.i),
+                        StringAttribute(
+                            "enzymejl_parmtype_str",
+                            string(arg.typ),
+                        ),
+                    )
+                end
                 push!(
                     parameter_attributes(f, arg.codegen.i),
                     StringAttribute("enzymejl_parmtype_ref", string(UInt(arg.cc))),
@@ -1209,14 +2005,23 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
 
                 byref = arg.cc
 
-                rest = copy(typetree(arg.typ, ctx, dl))
+                rest = copy(typetree_in_world(world, arg.typ, ctx, dl, seen))
 
                 if byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
                     # adjust first path to size of type since if arg.typ is {[-1]:Int}, that doesn't mean the broader
                     # object passing this in by ref isnt a {[-1]:Pointer, [-1,-1]:Int}
                     # aka the next field after this in the bigger object isn't guaranteed to also be the same.
                     if allocatedinline(arg.typ)
-                        shift!(rest, dl, 0, sizeof(arg.typ), 0)
+                        # An aggregate with inline roots is passed as a pointer to its
+                        # data half only, whose buffer since Julia 1.13.1 omits the
+                        # trailing tracked slots (`split_value_size`). Bound the type
+                        # tree by that buffer, not by the full layout.
+                        sz = if byref == GPUCompiler.BITS_REF && inline_roots_type(arg.typ) != 0
+                            split_value_size(LLVM.DataLayout(dl), convert(LLVMType, arg.typ))
+                        else
+                            sizeof(arg.typ)
+                        end
+                        shift!(rest, dl, 0, sz, 0)
                     end
                     merge!(rest, TypeTree(API.DT_Pointer, ctx))
                     only!(rest, -1)
@@ -1236,7 +2041,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
                 if !in(0, parmsRemoved)
                     @assert sret <: Ptr
                     sret_et = eltype(sret)
-                    rest = copy(typetree(sret_et, ctx, dl))
+                    rest = copy(typetree_in_world(world, sret_et, ctx, dl, seen))
                     shift!(rest, dl, 0, LLVM.sizeof(LLVM.DataLayout(dl), sret_ty(f, 1)), 0)
                     merge!(rest, TypeTree(API.DT_Pointer, ctx))
                     only!(rest, -1)
@@ -1261,12 +2066,12 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
                LLVM.return_type(LLVM.function_type(f)) != LLVM.VoidType()
                 @assert !retRemoved
                 rest = if llRT == Ptr{RT}
-                    typeTree = copy(typetree(RT, ctx, dl))
+                    typeTree = copy(typetree_in_world(world, RT, ctx, dl, seen))
                     merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
                     only!(typeTree, -1)
                     typeTree
                 else
-                    typetree(RT, ctx, dl)
+                    typetree_in_world(world, RT, ctx, dl)
                 end
                 push!(return_attributes(f), StringAttribute("enzyme_type", string(rest)))
             end
@@ -1295,6 +2100,9 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
             continue
         end
         fn = functions(mod)[fname]
+        if has_fn_attr(fn, StringAttribute(LOWERED_CONVENTION_ATTR_KIND))
+            continue
+        end
         attributes = function_attributes(fn)
         mi = nothing
         RT = nothing
@@ -1311,7 +2119,7 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
             end
         end
         if mi !== nothing && RT !== nothing
-            handle_compiled(state, edges, run_enzyme, mode, world, method_table, custom, mod, mi, fname, RT)
+            handle_compiled(state, edges, run_enzyme, mode, world, method_table, custom, mod, mi, fname, RT, enzyme_ctx)
         end
     end
 
@@ -1323,20 +2131,20 @@ const DumpPreNestedOpt = Ref(false)
 const DumpPostNestedOpt = Ref(false)
 
 function nested_codegen!(
-    enzyme_context::EnzymeContext,
     mode::API.CDerivativeMode,
     mod::LLVM.Module,
     funcspec::Core.MethodInstance,
-    world::UInt,
     alwaysinline::Bool=false,
 )
+    enzyme_ctx = enzyme_context()
+    world = enzyme_ctx.world
     cache_key = funcspec
-    if haskey(enzyme_context.nested_cache, cache_key)
-        fname = enzyme_context.nested_cache[cache_key]
+    if haskey(enzyme_ctx.nested_cache, cache_key)
+        fname = enzyme_ctx.nested_cache[cache_key]
         if haskey(functions(mod), fname)
             return functions(mod)[fname]
         end
-        for m in enzyme_context.modules_to_link
+        for m in enzyme_ctx.modules_to_link
             if haskey(functions(m), fname)
                 return functions(m)[fname]
             end
@@ -1354,10 +2162,12 @@ function nested_codegen!(
     job = CompilerJob(funcspec, CompilerConfig(target, params; kernel = false, libraries = true, toplevel = true, optimize = false, cleanup = false, only_entry = false, validate = false, entry_abi = :specfunc), world)
 
     GPUCompiler.prepare_job!(job)
-    otherMod, meta = GPUCompiler.emit_llvm(job)
+    otherMod, meta = emit_unresolved_llvm(job)
+    record_julia_values!(enzyme_ctx, job, meta)
+    make_slots_symbolic!(otherMod, enzyme_ctx)
     
     interp = GPUCompiler.get_interpreter(job)
-    prepare_llvm(interp, otherMod, job, meta)
+    prepare_llvm(interp, otherMod, job, meta, enzyme_ctx)
 
     entry = name(meta.entry)
 
@@ -1365,7 +2175,7 @@ function nested_codegen!(
         permit_inlining!(f)
     end
 
-    edges = enzyme_context.edges
+    edges = enzyme_ctx.edges
     push!(edges, funcspec)
 
     LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
@@ -1380,8 +2190,8 @@ function nested_codegen!(
 	API.EnzymeDumpModuleRef(otherMod.ref)
     end
 
-    check_ir(interp, job, otherMod)
-            
+    check_ir(interp, job, otherMod, enzyme_ctx)
+
     if DumpPreNestedOpt[]
 	API.EnzymeDumpModuleRef(otherMod.ref)
     end
@@ -1389,21 +2199,24 @@ function nested_codegen!(
     # Skipped inline of blas
 
     run_enzyme = false
-    set_module_types!(interp, otherMod, nothing, job, edges, run_enzyme, mode)
+    set_module_types!(interp, otherMod, nothing, job, edges, run_enzyme, mode, enzyme_ctx)
 
     # Apply first stage of optimization's so that this module is at the same stage as `mod`
-    optimize!(otherMod, JIT.get_tm())
+    optimize!(otherMod, JIT.get_tm(), enzyme_ctx)
     
     if DumpPostNestedOpt[]
 	API.EnzymeDumpModuleRef(otherMod.ref)
     end
     
     # 4) Record module to link
-    push!(enzyme_context.modules_to_link, otherMod)
+    push!(enzyme_ctx.modules_to_link, otherMod)
 
     # Declare the function in mod so it can be called
     lfn = functions(otherMod)[entry]
     if alwaysinline
+        # A method declared `@noinline` carries that attribute. Remove it: this
+        # path always inlines, and `noinline` conflicts with `alwaysinline`.
+        delete!(function_attributes(lfn), EnumAttribute("noinline"))
         push!(function_attributes(lfn), EnumAttribute("alwaysinline"))
     end
 
@@ -1428,7 +2241,7 @@ function nested_codegen!(
         push!(return_attributes(decl), attr)
     end
 
-    enzyme_context.nested_cache[cache_key] = LLVM.name(decl)
+    enzyme_ctx.nested_cache[cache_key] = LLVM.name(decl)
     return decl
 end
 
@@ -1744,11 +2557,12 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
 end
 
 function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradientUtilsRef, Orig::LLVM.API.LLVMValueRef, idx::UInt64, prev::API.LLVMValueRef, used::UInt8)
+    enzyme_ctx = enzyme_context()
     used = used != 0
     V = LLVM.CallInst(V)
     gutils = GradientUtils(gutils)
     mode = get_mode(gutils)
-    has, Ty, byref = abs_typeof(V)
+    has, Ty, byref = abs_typeof(V, enzyme_ctx)
     partial = false
     count = nothing
     if !has
@@ -1770,7 +2584,14 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
 		   
 		   arg = operands(arg)[3]
 
-	           if isa(arg, LLVM.CallInst)
+                ntuple = abs_ntuple_type(arg, enzyme_ctx)
+                if ntuple !== nothing
+                    Ty = ntuple[2]
+                    # count should represent {the total size in bytes, the aligned size of each element}
+                    alignsize = LLVM.ConstantInt(value_type(totalsize), Base.aligned_sizeof(Ty))
+                    count = (totalsize, alignsize)
+                    has = true
+                elseif isa(arg, LLVM.CallInst)
 			fn = LLVM.called_operand(arg)
 			nm = ""
 			if isa(fn, LLVM.Function)
@@ -1786,10 +2607,10 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
 			    if nm == "jl_f_apply_type" || nm == "ijl_f_apply_type"
 				index += 1
 				found = Any[]
-				legal, Ty = absint(operands(arg)[index], partial)
+                            legal, Ty = absint(operands(arg)[index], enzyme_ctx, partial)
 				Ty = unbind(Ty)
 				if legal && Ty == NTuple
-				   legal, Ty = absint(operands(arg)[index+2])
+                                legal, Ty = absint(operands(arg)[index + 2], enzyme_ctx)
 				   Ty = unbind(Ty)
 				   if legal
 					# count should represent {the total size in bytes, the aligned size of each element}
@@ -1816,9 +2637,7 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
     if mode == API.DEM_ReverseModePrimal ||
        mode == API.DEM_ReverseModeGradient ||
        mode == API.DEM_ReverseModeCombined
-        fn = LLVM.parent(LLVM.parent(V))
-        world = enzyme_extract_world(fn)
-        if !guaranteed_nonactive(Ty, world)
+        if !guaranteed_nonactive(Ty, enzyme_world())
             B = LLVM.IRBuilder()
             position!(B, V)
             operands(V)[3] = unsafe_to_llvm(B, Base.RefValue{Ty})
@@ -2183,14 +3002,11 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
             # Obtain tag
             tag = unsafe_to_llvm(B, ETT)
         else
-            if sizeof(Int) == sizeof(Int64)
-                boxed_count = emit_box_int64!(B, Count)
-            else
-                T_size_t = convert(LLVM.LLVMType, Int)
+            T_size_t = convert(LLVM.LLVMType, Int)
+            if value_type(Count) != T_size_t
                 Count = trunc!(B, Count, T_size_t)
-                boxed_count = emit_box_int32!(B, Count)
             end
-            tag = emit_apply_type!(B, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(B, TT)])
+            tag = emit_ntuple_type!(B, Count, TT)
         end
 
         # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
@@ -2485,23 +3301,27 @@ function GPUCompiler.nest_params(params::AbstractEnzymeCompilerParams, parent::A
     )
 end
 
+# Backends define `method_table` and `method_table_view` for their own
+# `CompilerJob{Target, Params}` (e.g. CUDA.jl for
+# `CompilerJob{PTXCompilerTarget, CUDACompilerParams}`). An Enzyme job wraps both the
+# target and the params, so those definitions would not apply and the job would silently
+# fall back to the global method table, while the primal code emitted for it (see
+# `codegen`) is compiled under the backend's overlay table(s). Unwrap the job so both agree.
+function unwrap_enzyme_job(@nospecialize(job::CompilerJob{<:EnzymeTarget, <:EnzymeCompilerParams}))
+    primal_config = CompilerConfig(job.config; target = job.config.target.target, params = job.config.params.params)
+    return CompilerJob(job.source, primal_config, job.world)
+end
+GPUCompiler.method_table(@nospecialize(job::CompilerJob{<:EnzymeTarget, <:EnzymeCompilerParams})) =
+    GPUCompiler.method_table(unwrap_enzyme_job(job))
+GPUCompiler.method_table_view(@nospecialize(job::CompilerJob{<:EnzymeTarget, <:EnzymeCompilerParams})) =
+    GPUCompiler.method_table_view(unwrap_enzyme_job(job))
+
 struct UnknownTapeType end
 
 
 ##
 # Enzyme compiler step
 ##
-
-function enzyme_extract_world(fn::LLVM.Function)::UInt
-    for fattr in collect(function_attributes(fn))
-        if isa(fattr, LLVM.StringAttribute)
-            if kind(fattr) == "enzymejl_world"
-                return parse(UInt, LLVM.value(fattr))
-            end
-        end
-    end
-    throw(AssertionError("Enzyme: could not find world in $(string(fn))"))
-end
 
 function enzyme_custom_extract_mi(orig::LLVM.CallInst, error::Bool = true)
     operand = LLVM.called_operand(orig)
@@ -2563,7 +3383,6 @@ const DumpPostEnzyme = Ref(false)
 const DumpPostWrap = Ref(false)
 
 function enzyme!(
-    enzyme_context::EnzymeContext,
     job::CompilerJob,
     interp,
     mod::LLVM.Module,
@@ -2580,11 +3399,11 @@ function enzyme!(
     loweredArgs::Set{Int},
     boxedArgs::Set{Int},
     removedRoots::Set{Int},
+        enzyme_ctx::EnzymeContext,
 )
     if DumpPreEnzyme[]
         API.EnzymeDumpModuleRef(mod.ref)
     end
-    world = job.world
     rt = job.config.params.rt
     runtimeActivity = job.config.params.runtimeActivity
     strongZero = job.config.params.strongZero
@@ -2676,7 +3495,7 @@ function enzyme!(
         else
             error("illegal annotation type $T")
         end
-        typeTree = typetree(source_typ, ctx, dl, seen)
+        typeTree = typetree_in_world(job.world, source_typ, ctx, dl, seen)
         if isboxed
             typeTree = copy(typeTree)
             merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
@@ -2686,7 +3505,7 @@ function enzyme!(
         push!(uncacheable_args, modifiedBetween[i])
         push!(args_known_values, API.IntList())
 	if inline_root
-           typeTree = typetree(Any, ctx, dl, seen)
+            typeTree = typetree_in_world(job.world, Any, ctx, dl, seen)
            push!(args_typeInfo, typeTree)
            push!(uncacheable_args, modifiedBetween[i])
            push!(args_known_values, API.IntList())
@@ -2716,8 +3535,7 @@ function enzyme!(
         convert(API.CDIFFE_TYPE, rt)
     end
 
-    GC.@preserve enzyme_context begin
-    LLVM.@dispose logic  = Logic(enzyme_context) begin
+    LLVM.@dispose logic = Logic() begin
 
     TA = TypeAnalysis(logic)
 
@@ -2726,7 +3544,7 @@ function enzyme!(
             in(Any, actualRetType.parameters)
         TypeTree()
     else
-        typeTree = typetree(actualRetType, ctx, dl, seen)
+            typeTree = typetree_in_world(job.world, actualRetType, ctx, dl, seen)
         if !isa(actualRetType, Union) && GPUCompiler.deserves_retbox(actualRetType)
             typeTree = copy(typeTree)
             merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
@@ -2749,6 +3567,7 @@ function enzyme!(
                 rt <: BatchMixedDuplicated
             )
         returnUsed &= returnPrimal
+        nowrite_shadows = zeros(UInt8, length(uncacheable_args))
         augmented = API.EnzymeCreateAugmentedPrimal(
             logic,
             primalf,
@@ -2759,6 +3578,7 @@ function enzyme!(
             shadowReturnUsed,            #=shadowReturnUsed=#
             typeInfo,
             uncacheable_args,
+            nowrite_shadows,
             false,
             runtimeActivity,
             strongZero,
@@ -2785,7 +3605,6 @@ function enzyme!(
 
         if wrap
             augmented_primalf = create_abi_wrapper(
-                enzyme_context,
                 augmented_primalf,
                 TT,
                 rt,
@@ -2795,9 +3614,9 @@ function enzyme!(
                 width,
                 returnPrimal,
                 shadow_init,
-                world,
                 interp,
                 runtimeActivity,
+                    enzyme_ctx,
             )
         end
 
@@ -2828,7 +3647,6 @@ function enzyme!(
         ) #=atomicAdd=#
         if wrap
             adjointf = create_abi_wrapper(
-                enzyme_context,
                 adjointf,
                 TT,
                 rt,
@@ -2838,9 +3656,9 @@ function enzyme!(
                 width,
                 false,
                 shadow_init,
-                world,
                 interp,
-                runtimeActivity
+                    runtimeActivity,
+                    enzyme_ctx,
             ) #=returnPrimal=#
         end
     elseif mode == API.DEM_ReverseModeCombined
@@ -2870,7 +3688,6 @@ function enzyme!(
         augmented_primalf = nothing
         if wrap
             adjointf = create_abi_wrapper(
-                enzyme_context,
                 adjointf,
                 TT,
                 rt,
@@ -2880,9 +3697,9 @@ function enzyme!(
                 width,
                 returnPrimal,
                 shadow_init,
-                world,
                 interp,
-                runtimeActivity
+                    runtimeActivity,
+                    enzyme_ctx,
             )
         end
     elseif mode == API.DEM_ForwardMode
@@ -2916,7 +3733,6 @@ function enzyme!(
         if wrap
             pf = adjointf
             adjointf = create_abi_wrapper(
-                enzyme_context,
                 adjointf,
                 TT,
                 rt,
@@ -2926,9 +3742,9 @@ function enzyme!(
                 width,
                 returnPrimal,
                 shadow_init,
-                world,
                 interp,
-                runtimeActivity
+                    runtimeActivity,
+                    enzyme_ctx,
             )
         end
     else
@@ -2980,7 +3796,6 @@ function enzyme!(
 
     return adjointf, augmented_primalf, TapeType
     end # @dispose logic
-    end # GC.preserve enzyme_context
 end
 
 function get_subprogram(f::LLVM.Function)
@@ -3000,7 +3815,6 @@ function set_subprogram!(f::LLVM.Function, sp)
 end
 
 function create_abi_wrapper(
-    enzyme_context::EnzymeContext,
     enzymefn::LLVM.Function,
     @nospecialize(TT::Type),
     @nospecialize(rettype::Type),
@@ -3010,10 +3824,11 @@ function create_abi_wrapper(
     width::Int,
     returnPrimal::Bool,
     shadow_init::Bool,
-    world::UInt,
     interp,
-    runtime_activity::Bool
+        runtime_activity::Bool,
+        enzyme_ctx::EnzymeContext,
 )
+    world = enzyme_world()
     is_adjoint = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModeCombined
     is_split = Mode == API.DEM_ReverseModeGradient || Mode == API.DEM_ReverseModePrimal
     needs_tape = Mode == API.DEM_ReverseModeGradient
@@ -3193,6 +4008,18 @@ function create_abi_wrapper(
         end
         # shadow return
         if existed[3] != 0
+            # A non-batch activity describes a single shadow, so it is only legal at
+            # width one; a batch activity must agree with the width it was built for.
+            if rettype <: Duplicated ||
+                    rettype <: DuplicatedNoNeed ||
+                    rettype <: MixedDuplicated
+                @assert width == 1
+            elseif rettype <: BatchDuplicated ||
+                    rettype <: BatchDuplicatedNoNeed ||
+                    rettype <: BatchDuplicatedFunc ||
+                    rettype <: BatchMixedDuplicated
+                @assert width == batch_size(rettype)
+            end
             if rettype <: Duplicated ||
                rettype <: DuplicatedNoNeed ||
                rettype <: BatchDuplicated ||
@@ -3312,12 +4139,6 @@ function create_abi_wrapper(
 
     realparms = LLVM.Value[]
     i = 1
-
-    for attr in collect(function_attributes(enzymefn))
-        if kind(attr) == "enzymejl_world"
-            push!(function_attributes(llvm_f), attr)
-        end
-    end
 
     if returnRoots
         sret = params[i]
@@ -3513,7 +4334,7 @@ function create_abi_wrapper(
 	    end
             Func = get_func(T)
             funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, Func, Tuple{}, world)
-            llvmf = nested_codegen!(enzyme_context, Mode, mod, funcspec, world)
+            llvmf = nested_codegen!(Mode, mod, funcspec)
             push!(function_attributes(llvmf), EnumAttribute("alwaysinline", 0))
             Func_RT = return_type(interp, funcspec)
             @assert Func_RT == NTuple{width,T′}
@@ -3585,7 +4406,7 @@ function create_abi_wrapper(
         if existed[3] != 0 &&
            sret_union &&
            active_reg(pactualRetType, world; justActive=true, UnionSret=true) == ActiveState
-            rewrite_union_returns_as_ref(enzymefn, data[3], world, width)
+            rewrite_union_returns_as_ref(enzymefn, data[3], world, width, enzyme_ctx)
         end
         returnNum = 0
         for i = 1:3
@@ -3796,7 +4617,7 @@ function create_abi_wrapper(
                     end
                 else
                     ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(twidth, SPT0)))
-                    for idx = t:width
+                    for idx in 1:twidth
                         pv = extract_value!(builder, eval, idx - 1)
                         pv0 = pv
                         pv = bitcast!(builder, pv, LLVM.PointerType(SPT0, addrspace(value_type(pv))))
@@ -3966,6 +4787,7 @@ end
     RootPointerToSRetPointer = 3,
     NullifySRetValue = 4,
     RootAndSRetPointerToValue = 5,
+    ValueToSRetAndRootPointers = 6,
    )
 
 function to_llvm(lst::Vector{Cuint})
@@ -4002,7 +4824,9 @@ function create_rooted_array(builder::LLVM.IRBuilder, array_ty::LLVM.ArrayType, 
     return create_rooted_array(builder, length(array_ty), name)
 end
     
-function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value, root_ty::LLVM.LLVMType, rootRet::Union{LLVM.Value, Nothing}, direction::SRetRootMovement; must_cache::Bool = false)
+function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value, root_ty::LLVM.LLVMType, rootRet::Union{LLVM.Value, Nothing}, direction::SRetRootMovement; must_cache::Bool = false, dst::Union{LLVM.Value, Nothing} = nothing)
+        # For `ValueToSRetAndRootPointers`, `sret` is the value and `dst` the buffer.
+        @assert (dst !== nothing) == (direction == ValueToSRetAndRootPointers)
         count = 0
         todo = Tuple{Vector{Cuint},LLVM.LLVMType}[(
 	    Cuint[],
@@ -4020,13 +4844,13 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
 	# aka bfs/etc
         while length(todo) != 0
             path, ty = popfirst!(todo)
-            if !any_jltypes(ty) && direction != RootAndSRetPointerToValue
+            if !any_jltypes(ty) && direction != RootAndSRetPointerToValue && direction != ValueToSRetAndRootPointers
                 continue
             end
 
             if isa(ty, LLVM.PointerType) && any_jltypes(ty)
 
-        		if direction == SRetPointerToRootPointer || direction == SRetValueToRootPointer || direction == RootPointerToSRetPointer || direction == RootPointerToSRetValue || direction == RootAndSRetPointerToValue
+        		if direction == SRetPointerToRootPointer || direction == SRetValueToRootPointer || direction == RootPointerToSRetPointer || direction == RootPointerToSRetValue || direction == RootAndSRetPointerToValue || direction == ValueToSRetAndRootPointers
                           T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
                           T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
                           loc = inbounds_gep!(
@@ -4044,7 +4868,7 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
 		                API.SetMustCache!(outloc)
 			    end
                             store!(builder, outloc, loc)
-        		elseif direction == SRetValueToRootPointer
+        		elseif direction == SRetValueToRootPointer || direction == ValueToSRetAndRootPointers
         		    outloc = Enzyme.API.e_extract_value!(builder, sret, path)
                             store!(builder, outloc, loc)
         		elseif direction == RootPointerToSRetValue || direction == RootAndSRetPointerToValue
@@ -4100,6 +4924,9 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
 			API.SetMustCache!(outloc)
 		    end
         	    val = Enzyme.API.e_insert_value!(builder, val, outloc, path)
+	    elseif direction == ValueToSRetAndRootPointers
+		    outloc = inbounds_gep!(builder, jltype, dst, to_llvm(path))
+		    store!(builder, Enzyme.API.e_extract_value!(builder, sret, path), outloc)
 	    end
         end
 
@@ -4113,6 +4940,16 @@ function move_sret_tofrom_roots!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType,
 	return val
 end
 
+"""
+    nullify_rooted_values!(builder, sret)
+
+Return the value `sret` with every GC-tracked field replaced by a null reference.
+
+Used where only the inline data of a value is wanted, and the tracked fields are
+either held elsewhere (in a `returnRoots` array, see [`extract_roots_from_value!`](@ref))
+or known not to be needed, so that leaving the original pointers in place would
+root objects that must not be kept alive.
+"""
 function nullify_rooted_values!(builder::LLVM.IRBuilder, sret::LLVM.Value)
    jltype = value_type(sret)
    tracked = CountTrackedPointers(jltype)
@@ -4122,6 +4959,23 @@ function nullify_rooted_values!(builder::LLVM.IRBuilder, sret::LLVM.Value)
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, nothing, NullifySRetValue)
 end
 
+"""
+    recombine_value!(builder, sret, roots; must_cache=false)
+
+Rebuild a whole return value from the two halves the `sret`/`returnRoots` calling
+convention splits it into.
+
+A callee returning a type with both GC-tracked and inline fields writes the tracked
+pointers into the `returnRoots` array and the remaining data into the `sret` buffer,
+leaving the tracked slots of `sret` undefined. `sret` here is the *value* already
+loaded out of that buffer and `roots` the pointer to the root array; the tracked
+fields are loaded from `roots` and inserted back into their slots, and the completed
+value is returned. This is the inverse of [`extract_roots_from_value!`](@ref); see
+[`recombine_value_ptr!`](@ref) for the variant that takes `sret` as a pointer.
+
+`must_cache` marks the loads from `roots` as must-cache, for a caller that needs the
+recombined value to survive into the reverse pass.
+"""
 function recombine_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM.Value; must_cache::Bool=false)::LLVM.Value
    jltype = value_type(sret)
    tracked = CountTrackedPointers(jltype)
@@ -4131,6 +4985,46 @@ function recombine_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, RootPointerToSRetValue; must_cache)
 end
 
+"""
+    roots_follow(args, ai, removedRoots) -> Bool
+
+Whether the classified argument after `args[ai]` carries the inline roots of
+`args[ai]` and is folded back into it (`removedRoots`), so that `args[ai]` is
+handled through its data pointer rather than loaded whole.
+"""
+function roots_follow(args, ai::Int, removedRoots)::Bool
+    ai < length(args) || return false
+    nxt = args[ai+1]
+    return nxt.rooted_typ !== nothing && nxt.rooted_arg_i == args[ai].arg_i && nxt.arg_i in removedRoots
+end
+
+"""
+    split_value_into!(builder, val, sret, roots)
+
+Store the value `val` through the `sret`/`returnRoots` convention: its GC-tracked
+fields into the `roots` array and every other field into the `sret` buffer, leaving
+the tracked slots of the buffer alone, as a caller reads them from `roots` only.
+The inverse of [`recombine_value_ptr!`](@ref).
+"""
+function split_value_into!(builder::LLVM.IRBuilder, val::LLVM.Value, sret::LLVM.Value, roots::LLVM.Value)
+   jltype = value_type(val)
+   tracked = CountTrackedPointers(jltype)
+   @assert tracked.count > 0
+   @assert !tracked.all "Not tracked.all, jltype ($(string(jltype)))"
+   root_ty = convert(LLVMType, AnyArray(Int(tracked.count)))
+   move_sret_tofrom_roots!(builder, jltype, val, root_ty, roots, ValueToSRetAndRootPointers; dst=sret)
+   return nothing
+end
+
+"""
+    recombine_value_ptr!(builder, jltype, sret, roots; must_cache=false)
+
+Like [`recombine_value!`](@ref), but loads the inline half out of the `sret` buffer
+rather than taking it as an already-loaded value.
+
+Both `sret` and `roots` are pointers; a fresh `jltype` value is built by loading the
+untracked fields from `sret` and the tracked ones from `roots`.
+"""
 function recombine_value_ptr!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sret::LLVM.Value, roots::LLVM.Value; must_cache::Bool=false)::LLVM.Value
    tracked = CountTrackedPointers(jltype)
    @assert tracked.count > 0
@@ -4139,6 +5033,16 @@ function recombine_value_ptr!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, sr
    move_sret_tofrom_roots!(builder, jltype, sret, root_ty, roots, RootAndSRetPointerToValue; must_cache)
 end
 
+"""
+    extract_roots_from_value!(builder, sret, roots)
+
+Store the GC-tracked fields of the value `sret` into the `returnRoots` array `roots`,
+which must have room for `CountTrackedPointers(value_type(sret)).count` entries.
+
+This is the split [`recombine_value!`](@ref) undoes: a caller that needs to hand a
+value on through the `sret`/`returnRoots` convention writes the tracked pointers here
+and the inline data into the `sret` buffer separately.
+"""
 function extract_roots_from_value!(builder::LLVM.IRBuilder, sret::LLVM.Value, roots::LLVM.Value)
    jltype = value_type(sret)
    tracked = CountTrackedPointers(jltype)
@@ -4391,6 +5295,48 @@ function copy_struct_into!(builder::LLVM.IRBuilder, jltype::LLVM.LLVMType, dst::
     return nothing
 end
 
+# The operand of an `!enzyme_inactive` tag records why Enzyme.jl made the
+# instruction inactive. Enzyme only checks that the tag is present.
+#
+# - `INACTIVE_GUARANTEED_CONST`: the Julia type of the value cannot hold
+#   derivative data. This is true at every derivative order.
+# - `INACTIVE_FROM_ACTIVITY`: `lower_convention` restates a `Const` annotation
+#   of the autodiff call being compiled on the stack slot it creates for a
+#   by-value argument or for the sret. This is only valid for the current compilation.
+#   Enzyme leaves the tag on the derivative it emits, and
+#   nested differentiation (see `autodiff_cache`) differentiates that
+#   derivative again with its own activities. If the tag stays, the outer differentiation
+#   treats every load of the slot as constant and silently zeroes the gradient
+#   (EnzymeAD/Enzyme.jl#3617). `strip_activity_inactive_md!` removes these tags
+#   after `enzyme!` has consumed them.
+#
+# A tag without an operand (for example one set by Enzyme itself) is treated
+# like `INACTIVE_GUARANTEED_CONST` and stays.
+const INACTIVE_GUARANTEED_CONST = "guaranteed_const"
+const INACTIVE_FROM_ACTIVITY = "activity_derived"
+
+inactive_md(reason::String) = MDNode(LLVM.Metadata[MDString(reason)])
+
+function inactive_reason(md::LLVM.Metadata)
+    isa(md, MDNode) || return nothing
+    ops = operands(md)
+    (length(ops) == 1 && isa(ops[1], MDString)) || return nothing
+    return convert(String, ops[1])
+end
+
+function strip_activity_inactive_md!(mod::LLVM.Module)
+    # This also finds copies Enzyme made of a tag (for example onto the heap
+    # allocation that replaces a stack slot, see `enzyme_fromstack`).
+    for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+        md = metadata(inst)
+        haskey(md, "enzyme_inactive") || continue
+        if inactive_reason(md["enzyme_inactive"]) == INACTIVE_FROM_ACTIVITY
+            delete!(md, "enzyme_inactive")
+        end
+    end
+    return
+end
+
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(
     @nospecialize(functy::Type),
@@ -4402,6 +5348,7 @@ function lower_convention(
     run_enzyme::Bool,
     world::UInt,
     mi::Core.MethodInstance,
+        enzyme_ctx::EnzymeContext,
 )
     entry_ft = LLVM.function_type(entry_f)
 
@@ -4580,12 +5527,6 @@ function lower_convention(
         end
     end
 
-    for attr in collect(function_attributes(entry_f))
-        if kind(attr) == "enzymejl_world"
-            push!(function_attributes(wrapper_f), attr)
-        end
-    end
-
     seen = TypeTreeTable()
     # emit IR performing the "conversions"
     let builder = IRBuilder()
@@ -4602,11 +5543,15 @@ function lower_convention(
             if swiftself
                 push!(nops, ops[1+sret+returnRoots])
             end
-            for arg in args
+            for (ai, arg) in enumerate(args)
                 parm = ops[arg.codegen.i]
 		if arg.arg_i in removedRoots
 		    if arg.rooted_arg_i in loweredArgs
-		        nops[end] = recombine_value!(builder, nops[end], parm)
+		        # `nops[end]` is the pointer to the data half of the argument
+		        # (see `roots_follow` below); rebuild the value from it and
+		        # the roots `parm` field by field, which never reads the
+		        # tracked slots a Julia 1.13.1+ data buffer omits.
+		        nops[end] = recombine_value_ptr!(builder, convert(LLVMType, arg.rooted_typ), nops[end], parm)
 		    elseif arg.rooted_arg_i in raisedArgs
                 jltype = convert(LLVMType, arg.rooted_typ)
                 tracked = CountTrackedPointers(jltype)
@@ -4620,7 +5565,11 @@ function lower_convention(
 		elseif (arg.arg_i) in removedRoots && (arg.rooted_arg_i in loweredArgs || arg)
 		    continue
 		elseif arg.arg_i in loweredArgs
-                    push!(nops, load!(builder, convert(LLVMType, arg.typ), parm))
+		    if roots_follow(args, ai, removedRoots)
+		        push!(nops, parm)
+		    else
+                        push!(nops, load!(builder, convert(LLVMType, arg.typ), parm))
+		    end
                 elseif arg.arg_i in raisedArgs
                     obj = emit_allocobj!(builder, arg.typ, "raisedArg")
                     bc = bitcast!(
@@ -4648,7 +5597,15 @@ function lower_convention(
                 if !LLVM.is_opaque(value_type(ops[1]))
                     @assert value_type(res) == eltype(value_type(ops[1]))
                 end
-                store!(builder, res, ops[1])
+                if returnRoots && VERSION >= v"1.12"
+                    # Since Julia 1.12 the caller reads the tracked pointers from
+                    # its `returnRoots` array and only the remaining data from the
+                    # `sret` buffer; a plain store of the whole value would leave
+                    # the array unset. Before 1.12 the buffer holds the whole value.
+                    split_value_into!(builder, res, ops[1], ops[2])
+                else
+                    store!(builder, res, ops[1])
+                end
             else
                 LLVM.replace_uses!(ci, res)
             end
@@ -4687,10 +5644,10 @@ function lower_convention(
                 )
                 ctx = LLVM.context(entry_f)
                 if RetActivity <: Const
-                    metadata(sretPtr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
+                    metadata(sretPtr)["enzyme_inactive"] = inactive_md(INACTIVE_FROM_ACTIVITY)
                 end
         
-                typeTree = copy(typetree(actualRetType, ctx, dl, seen))
+                typeTree = copy(typetree_in_world(world, actualRetType, ctx, dl, seen))
                 merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
                 only!(typeTree, -1)
                 metadata(sretPtr)["enzyme_type"] = to_md(typeTree, ctx)
@@ -4719,11 +5676,11 @@ function lower_convention(
 		root_ty = convert(LLVMType, arg.typ)
 		ptr = create_rooted_array(builder, root_ty, LLVM.name(parm)*".innerparm")
                 if TT !== nothing && TT.parameters[arg.arg_jl_i] <: Const
-                    metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
+                    metadata(ptr)["enzyme_inactive"] = inactive_md(INACTIVE_FROM_ACTIVITY)
                 end
                 
                 ctx = LLVM.context(entry_f)
-		typeTree = copy(typetree(arg.typ, ctx, dl, seen))
+                typeTree = copy(typetree_in_world(world, arg.typ, ctx, dl, seen))
                 merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
                 only!(typeTree, -1)
                 metadata(ptr)["enzyme_type"] = to_md(typeTree, ctx)
@@ -4767,11 +5724,11 @@ function lower_convention(
 
                 ptr = alloca!(builder, elty_foralloca, LLVM.name(parm) * ".innerparm")
                 if TT !== nothing && TT.parameters[arg.arg_jl_i] <: Const
-                    metadata(ptr)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
+                    metadata(ptr)["enzyme_inactive"] = inactive_md(INACTIVE_FROM_ACTIVITY)
                 end
                 ctx = LLVM.context(entry_f)
         
-                typeTree = copy(typetree(arg.typ, ctx, dl, seen))
+                typeTree = copy(typetree_in_world(world, arg.typ, ctx, dl, seen))
                 merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
                 only!(typeTree, -1)
                 metadata(ptr)["enzyme_type"] = to_md(typeTree, ctx)
@@ -4785,7 +5742,7 @@ function lower_convention(
                     parameter_attributes(wrapper_f, wrapper_idx - 1),
                     StringAttribute(
                         "enzyme_type",
-                        string(typetree(arg.typ, ctx, dl, seen)),
+                        string(typetree_in_world(world, arg.typ, ctx, dl, seen)),
                     ),
                 )
                 push!(
@@ -4815,7 +5772,7 @@ function lower_convention(
                 wrapparm = load!(builder, convert(LLVMType, arg.typ), wrapparm)
                 ctx = LLVM.context(wrapparm)
                 push!(wrapper_args, wrapparm)
-                typeTree = copy(typetree(arg.typ, ctx, dl, seen))
+                typeTree = copy(typetree_in_world(world, arg.typ, ctx, dl, seen))
                 merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
                 only!(typeTree, -1)
                 push!(
@@ -4942,7 +5899,7 @@ function lower_convention(
                 position!(builder, def)
                 ret!(builder, extract_value!(builder, res, 0))
 
-				ret_tt0 = typetree(actualRetType, ctx, dl, seen)
+                ret_tt0 = typetree_in_world(world, actualRetType, ctx, dl, seen)
 
                 push!(
                     return_attributes(wrapper_f),
@@ -4958,13 +5915,15 @@ function lower_convention(
                         string(convert(UInt, unsafe_to_pointer(actualRetType))),
                     ),
                 )
-                push!(
-                    return_attributes(wrapper_f),
-                    StringAttribute(
-                        "enzymejl_parmtype_str",
-                        string(actualRetType),
-                    ),
-                )
+                if EmitTypeNames[]
+                    push!(
+                        return_attributes(wrapper_f),
+                        StringAttribute(
+                            "enzymejl_parmtype_str",
+                            string(actualRetType),
+                        ),
+                    )
+                end
                 push!(
                     return_attributes(wrapper_f),
                     StringAttribute(
@@ -4981,7 +5940,7 @@ function lower_convention(
                     return_attributes(wrapper_f),
                     StringAttribute(
                         "enzyme_type",
-                        string(typetree(actualRetType, ctx, dl, seen)),
+                        string(typetree_in_world(world, actualRetType, ctx, dl, seen)),
                     ),
                 )
                 push!(
@@ -4991,13 +5950,15 @@ function lower_convention(
                         string(convert(UInt, unsafe_to_pointer(actualRetType))),
                     ),
                 )
-                push!(
-                    return_attributes(wrapper_f),
-                    StringAttribute(
-                        "enzymejl_parmtype_str",
-                        string(actualRetType),
-                    ),
-                )
+                if EmitTypeNames[]
+                    push!(
+                        return_attributes(wrapper_f),
+                        StringAttribute(
+                            "enzymejl_parmtype_str",
+                            string(actualRetType),
+                        ),
+                    )
+                end
                 push!(
                     return_attributes(wrapper_f),
                     StringAttribute(
@@ -5023,7 +5984,7 @@ function lower_convention(
                     return_attributes(wrapper_f),
                     StringAttribute(
                         "enzyme_type",
-                        string(typetree(eltype(RetActivity), ctx, dl, seen)),
+                        string(typetree_in_world(world, eltype(RetActivity), ctx, dl, seen)),
                     ),
                 )
                 push!(
@@ -5033,13 +5994,15 @@ function lower_convention(
                         string(convert(UInt, unsafe_to_pointer(expected_RT))),
                     ),
                 )
-                push!(
-                    return_attributes(wrapper_f),
-                    StringAttribute(
-                        "enzymejl_parmtype_str",
-                        string(expected_RT),
-                    ),
-                )
+                if EmitTypeNames[]
+                    push!(
+                        return_attributes(wrapper_f),
+                        StringAttribute(
+                            "enzymejl_parmtype_str",
+                            string(expected_RT),
+                        ),
+                    )
+                end
                 push!(
                     return_attributes(wrapper_f),
                     StringAttribute(
@@ -5047,7 +6010,7 @@ function lower_convention(
                         string(UInt(GPUCompiler.BITS_VALUE)),
                     ),
                 )
-                ty = emit_jltypeof!(builder, res)
+                ty = emit_jltypeof!(builder, res, enzyme_ctx)
                 cmp = icmp!(builder, LLVM.API.LLVMIntEQ, ty, unsafe_to_llvm(builder, expected_RT))
                 cmpret = BasicBlock(wrapper_f, "ret")
                 failure = BasicBlock(wrapper_f, "fail")
@@ -5065,7 +6028,7 @@ function lower_convention(
                 unreachable!(builder)
             else
                 llactualRetType = get_return_info(actualRetType)[1]
-                ret_tt0 = typetree(actualRetType, ctx, dl, seen)
+                ret_tt0 = typetree_in_world(world, actualRetType, ctx, dl, seen)
                 ret_tt = if llactualRetType == Ptr{actualRetType}
                     typeTree = copy(ret_tt0)
                     merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
@@ -5110,6 +6073,7 @@ function lower_convention(
 
     mi, rt = enzyme_custom_extract_mi(entry_f)
     attributes = function_attributes(wrapper_f)
+    push!(attributes, StringAttribute(LOWERED_CONVENTION_ATTR_KIND))
     push!(
         attributes,
         StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))),
@@ -5118,8 +6082,9 @@ function lower_convention(
         attributes,
         StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(rt)))),
     )
-    if EnzymeRules.has_easy_rule_from_sig(Interpreter.simplify_kw(mi.specTypes); world)
+    if cached_has_easy_rule(Interpreter.simplify_kw(mi.specTypes), world)
         push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
+        push!(attributes, LLVM.StringAttribute("enzyme_custom_full_attributes"))
     end
     for prev in collect(function_attributes(entry_f))
         if kind(prev) == kind(StringAttribute("enzyme_ta_norecur"))
@@ -5301,7 +6266,7 @@ function lower_convention(
         LLVM.run!(pb, mod)
     end
 
-    ModulePassManager() do pm
+    @dispose pm = ModulePassManager() begin
         LLVM.run!(pm, mod)
     end
     if haskey(globals(mod), "llvm.used")
@@ -5382,13 +6347,77 @@ function link_split_existing!(mod::LLVM.Module, newmod::LLVM.Module)
 end
 
 function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeTarget})
+    # Every compilation runs under its own context; a nested compilation gets
+    # its own and hands the outer one back when it returns.
+    mod, meta = @with ENZYME_CONTEXT => EnzymeContext(job.world) begin
+        compile_unhooked_impl(output, job)
+    end
+    # A host derivative compiled on behalf of another job is linked into that job's module:
+    # the module of the compilation in progress, for `autodiff_deferred` in the function it
+    # differentiates, which takes up the values this compilation inserted. Without one, nothing
+    # knows them where the module goes: write their addresses in.
+    inserted = meta.value_table.inserted
+    if !job.config.toplevel && !isempty(inserted)
+        if isassigned(ENZYME_CONTEXT)
+            Base.merge!(ENZYME_CONTEXT[].inserted_values, inserted)
+        else
+            bake_inserted_values!(mod, inserted)
+        end
+    end
+    return mod, meta
+end
+
+"""
+    memtransfer_truetype(world, ptr, sz, enzyme_ctx)
+
+The `enzyme_truetype` metadata for a memcpy/memmove/memset of `sz` bytes at
+`ptr`, or `nothing` if `ptr` cannot be traced back to a Julia object of known
+concrete type. The type is read off the Julia layout, so it is not limited to the
+offsets Enzyme's type analysis keeps.
+"""
+function memtransfer_truetype(world::UInt, @nospecialize(ptr::LLVM.Value), @nospecialize(sz::LLVM.Value), enzyme_ctx::EnzymeContext)
+    base, offset = get_base_and_offset(ptr)
+    legal, jTy, byref = abs_typeof(base, enzyme_ctx)
+    legal || return nothing
+    if byref == GPUCompiler.BITS_VALUE && jTy <: Ptr
+        ET = eltype(jTy)
+        if Base.isconcretetype(ET)
+            sz_et = actual_size(ET)
+            if sz_et > 0
+                jTy = ET
+                byref = GPUCompiler.MUT_REF
+                offset = Base.mod(offset, sz_et)
+            end
+        end
+    end
+    Base.isconcretetype(jTy) || return nothing
+    if jTy isa UnionAll ||
+            jTy isa Union ||
+            jTy == Union{} ||
+            jTy === Tuple ||
+            (is_concrete_tuple(jTy) && any(T2 isa Core.TypeofVararg for T2 in jTy.parameters))
+        return nothing
+    end
+    size = Compiler.datatype_layoutsize(jTy)
+    @assert offset >= 0
+    if offset < size && isa(sz, LLVM.ConstantInt) && size - offset >= convert(Int, sz)
+        @assert byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
+        return to_fullmd(world, jTy, offset, convert(Int, sz))
+    elseif byref == GPUCompiler.BITS_VALUE && jTy <: Ptr && eltype(jTy) == Any
+        # Todo generalize this
+        return to_fullmd(world, jTy, 0, sizeof(Ptr{Cvoid}))
+    end
+    return nothing
+end
+
+function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     @assert output == :llvm
     
     config = job.config
 
     params = config.params
 
-    enzyme_context = EnzymeContext()
+    enzyme_ctx = enzyme_context()
 
     expectedTapeType = params.expectedTapeType
     mode = params.mode
@@ -5436,14 +6465,24 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     primal_job = CompilerJob(primal, primal_config, job.world)
     @safe_debug "Emit LLVM with" primal_job
     GPUCompiler.prepare_job!(primal_job)
-    mod, meta = GPUCompiler.emit_llvm(primal_job)
-    edges = enzyme_context.edges
+    mod, meta = emit_unresolved_llvm(primal_job)
+    # `emit_llvm` is not concretely inferred, so without this assertion every
+    # subsequent use of `mod` (e.g. `LLVM.context(mod)`) is a dynamic dispatch
+    # through jl_apply_generic, which forces boxing and GC-rooting across it.
+    mod = mod::LLVM.Module
+    record_julia_values!(enzyme_ctx, primal_job, meta)
+    make_slots_symbolic!(mod, enzyme_ctx)
+    edges = enzyme_ctx.edges
 
     primal_interp = GPUCompiler.get_interpreter(primal_job)
-    prepare_llvm(primal_interp, mod, primal_job, meta)
+    prepare_llvm(primal_interp, mod, primal_job, meta, enzyme_ctx)
     for f in functions(mod)
         permit_inlining!(f)
     end
+
+    # A derivative linked into this module as a deferred job calls its rules
+    # natively. Differentiating it again needs their bodies.
+    materialize_native_invokes!(mode, mod)
 
     LLVM.@dispose pb=LLVM.NewPMPassBuilder() begin
         registerEnzymeAndPassPipeline!(pb)
@@ -5458,10 +6497,13 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
         API.EnzymeDumpModuleRef(mod.ref)
     end
     interp = GPUCompiler.get_interpreter(job)
-    check_ir(interp, job, mod)
+    check_ir(interp, job, mod, enzyme_ctx)
     if DumpPostCheck[]
         API.EnzymeDumpModuleRef(mod.ref)
     end
+    # `check_ir` links in the derivatives that `enzyme_call` embeds. Their
+    # natively called rules need bodies too.
+    materialize_native_invokes!(mode, mod)
 
     disableFallback = String[]
 
@@ -5562,7 +6604,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
 	run!(GlobalOptPass(), mod)
     end
 
-    custom, state = set_module_types!(interp, mod, primalf, job, edges, params.run_enzyme, mode)
+    custom, state = set_module_types!(interp, mod, primalf, job, edges, params.run_enzyme, mode, enzyme_ctx)
 
     primalf = state.primalf
     must_wrap = state.must_wrap
@@ -5643,7 +6685,6 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             dispose(builder)
         end
         attributes = function_attributes(wrapper_f)
-        push!(attributes, StringAttribute("enzymejl_world", string(job.world)))
         push!(
             attributes,
             StringAttribute("enzymejl_mi", string(convert(UInt, pointer_from_objref(mi)))),
@@ -5671,6 +6712,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
             params.run_enzyme,
             job.world,
             job.source,
+            enzyme_ctx,
         )
     end
 
@@ -5701,7 +6743,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     end
 
     # annotate
-    replace_builtin_fptr!(mod)
+    replace_builtin_fptr!(mod, enzyme_ctx)
     annotate!(mod)
     for name in ("gpu_report_exception", "report_exception")
         if haskey(functions(mod), name)
@@ -5717,10 +6759,18 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
     end
 
     # Run early pipeline
-    optimize!(mod, target_machine, target_info)
+    optimize!(mod, target_machine, enzyme_ctx, target_info)
 
     if process_module
         GPUCompiler.optimize_module!(primal_job, mod)
+    end
+
+    # The Julia pipeline above folds a phi of loaded roots into a load through a
+    # phi of the root arrays; undo that before Enzyme promotes the allocas among
+    # them (see `unfold_root_phi_loads!`).
+    for f in functions(mod)
+        isempty(blocks(f)) && continue
+        unfold_root_phi_loads!(f)
     end
 
     for name in ("gpu_report_exception", "report_exception")
@@ -5761,20 +6811,21 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
 
         if valid_type
             size = Compiler.datatype_layoutsize(RT)
-            md = to_fullmd(RT, 0, size)
+            md = to_fullmd(job.world, RT, 0, size)
             for bb in blocks(f)
                 term = terminator(bb)
                 if term !== nothing && LLVM.API.LLVMIsAReturnInst(term) != C_NULL && !isempty(operands(term))
                     cur = operands(term)[1]
-                    if LLVM.API.LLVMIsAInsertValueInst(cur) != C_NULL
-                        metadata(term)["enzyme_truetype"] = md
-                        metadata(f)["enzyme_truetype"] = md
+                    while LLVM.API.LLVMIsAInsertValueInst(cur) != C_NULL
+                        metadata(cur)["enzyme_truetype"] = md
+                        cur = operands(cur)[1]
                     end
                 end
             end
         end
     end
 
+    retype_allocas = Set{LLVM.Function}()
     for f in functions(mod), bb in blocks(f), inst in instructions(bb)
         fn = isa(inst, LLVM.CallInst) ? LLVM.called_operand(inst) : nothing
        
@@ -5828,17 +6879,38 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
                         lRT = convert(LLVMType, RT)
                         if LLVM.sizeof(DL, lRT) == LLVM.sizeof(DL, at)
                             metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
-                            metadata(inst)["enzymejl_allocart_name"] = MDNode(LLVM.Metadata[MDString(string(RT))])
+                            if EmitTypeNames[]
+                                metadata(inst)["enzymejl_allocart_name"] = MDNode(LLVM.Metadata[MDString(string(RT))])
+                            end
                         end
                     end
                 end
             end
         end
 
+        # Julia >= 1.12 emits the stack slot of an immutable struct (e.g. a closure
+        # object built with `new`) as an untyped `[N x i64]` alloca. If it is passed
+        # by reference to calls whose parameter type is known, record that type, so
+        # that `restore_alloca_type!` gives the alloca the struct's type. Otherwise
+        # every word copied into it, pointers included, is an untyped integer that
+        # type analysis cannot follow past `maxtypeoffset` or across padding.
+        if !API.HasFromStack(inst) && isa(inst, LLVM.AllocaInst) &&
+                !haskey(metadata(inst), "enzymejl_allocart") &&
+                !haskey(metadata(inst), "enzymejl_gc_alloc_rt")
+            RT = byref_alloca_type(inst, DL)
+            if RT !== nothing
+                metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
+                if EmitTypeNames[]
+                    metadata(inst)["enzymejl_allocart_name"] = MDNode(LLVM.Metadata[MDString(string(RT))])
+                end
+                push!(retype_allocas, f)
+            end
+        end
+
         if !API.HasFromStack(inst) &&
            ((isa(inst, LLVM.CallInst) &&
              (!isa(fn, LLVM.Function) || isempty(blocks(fn))) ) || isa(inst, LLVM.LoadInst) || isa(inst, LLVM.AllocaInst) || isa(inst, LLVM.ExtractValueInst))
-            legal, source_typ, byref = abs_typeof(inst)
+            legal, source_typ, byref = abs_typeof(inst, enzyme_ctx)
             codegen_typ = value_type(inst)
             if legal
                 if codegen_typ isa LLVM.PointerType || codegen_typ isa LLVM.IntegerType
@@ -5849,7 +6921,7 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
                     source_typ
                 end
 
-                ec = typetree(source_typ, ctx, dl, seen)
+                ec = typetree_in_world(job.world, source_typ, ctx, dl, seen)
                 if byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF
                     ec = copy(ec)
                     merge!(ec, TypeTree(API.DT_Pointer, ctx))
@@ -5866,12 +6938,17 @@ function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeT
                     )
                 else
                     metadata(inst)["enzyme_type"] = to_md(ec, ctx)
-                    metadata(inst)["enzymejl_source_type_$(source_typ)"] = MDNode(LLVM.Metadata[])
+                    if EmitTypeNames[]
+                        metadata(inst)["enzymejl_source_type_$(source_typ)"] = MDNode(LLVM.Metadata[])
+                    end
                     metadata(inst)["enzymejl_byref_$(byref)"] = MDNode(LLVM.Metadata[])
+                    if isa(inst, LLVM.LoadInst)
+                        mark_load_dereferenceable!(inst, source_typ, byref)
+                    end
             
 @static if VERSION < v"1.11-"
 else    
-                    legal2, obj = absint(inst)
+                        legal2, obj = absint(inst, enzyme_ctx)
 		    obj = unbind(obj)
 		    if legal2 && is_memory_instance(obj)
                         metadata(inst)["nonnull"] = MDNode(LLVM.Metadata[])
@@ -5889,7 +6966,7 @@ end
                     )
                 else
                     metadata(inst)["enzyme_type"] =
-                        to_md(typetree(Ptr{Cvoid}, ctx, dl, seen), ctx)
+                        to_md(typetree_in_world(job.world, Ptr{Cvoid}, ctx, dl, seen), ctx)
                 end
             end
         end
@@ -5907,52 +6984,16 @@ end
             if intr == LLVM.Intrinsic("llvm.memcpy").id ||
                intr == LLVM.Intrinsic("llvm.memmove").id ||
                intr == LLVM.Intrinsic("llvm.memset").id
-                base, offset = get_base_and_offset(operands(inst)[1])
-                legal, jTy, byref = abs_typeof(base)
-                sz =
-                    if intr == LLVM.Intrinsic("llvm.memcpy").id ||
-                       intr == LLVM.Intrinsic("llvm.memmove").id
-                        operands(inst)[3]
-                    else
-                        operands(inst)[3]
-                    end
-                if legal && byref == GPUCompiler.BITS_VALUE && jTy <: Ptr
-                    ET = eltype(jTy)
-                    if Base.isconcretetype(ET)
-		        sz_et = actual_size(ET)
-                        if sz_et > 0
-                            jTy = ET
-                            byref = GPUCompiler.MUT_REF
-                            offset = offset % sz_et
-                        end
-                    end
+                sz = operands(inst)[3]
+                md = memtransfer_truetype(job.world, operands(inst)[1], sz, enzyme_ctx)
+                if md === nothing && intr != LLVM.Intrinsic("llvm.memset").id
+                    # The destination is often a fresh stack slot with no Julia
+                    # type of its own, being filled piecewise from an object that
+                    # does have one; the source can then still tell us the type.
+                    md = memtransfer_truetype(job.world, operands(inst)[2], sz, enzyme_ctx)
                 end
-
-                if legal && Base.isconcretetype(jTy)
-                    if !(
-                        jTy isa UnionAll ||
-                        jTy isa Union ||
-                        jTy == Union{} ||
-                        jTy === Tuple ||
-                        (
-                            is_concrete_tuple(jTy) &&
-                            any(T2 isa Core.TypeofVararg for T2 in jTy.parameters)
-                        )
-                    )
-
-			 size = Compiler.datatype_layoutsize(jTy)
-                        if offset < size && isa(sz, LLVM.ConstantInt) && size - offset >= convert(Int, sz)
-                            lim = convert(Int, sz)
-                            md = to_fullmd(jTy, offset, lim)
-                            @assert byref == GPUCompiler.BITS_REF ||
-                                    byref == GPUCompiler.MUT_REF
-                            metadata(inst)["enzyme_truetype"] = md
-			elseif byref == GPUCompiler.BITS_VALUE && jTy <: Ptr && eltype(jTy) == Any
-			    # Todo generalize this
-			    md = to_fullmd(jTy, 0, sizeof(Ptr{Cvoid}))
-                            metadata(inst)["enzyme_truetype"] = md
-                        end
-                    end
+                if md !== nothing
+                    metadata(inst)["enzyme_truetype"] = md
                 end
             end
         end
@@ -5962,7 +7003,7 @@ end
             continue
         end
 
-        legal, jTy, byref = abs_typeof(inst, true)
+        legal, jTy, byref = abs_typeof(inst, enzyme_ctx, true)
         if !legal
             continue
         end
@@ -5977,8 +7018,13 @@ end
                 StringAttribute("enzyme_inactive"),
             )
         else
-            metadata(inst)["enzyme_inactive"] = MDNode(LLVM.Metadata[])
+            metadata(inst)["enzyme_inactive"] = inactive_md(INACTIVE_GUARANTEED_CONST)
         end
+    end
+    # give the allocas annotated above their struct type, before their copies are
+    # turned into loads and stores (memcpy_alloca_to_loadstore)
+    for f in retype_allocas
+        restore_alloca_type!(f)
     end
 
 
@@ -6009,7 +7055,7 @@ end
                     end
 
                     if !mayWriteToMemory(user)
-                        slegal, foundv, byref = abs_typeof(user)
+                        slegal, foundv, byref = abs_typeof(user, enzyme_ctx)
                         if slegal
                             reg2 = active_reg(foundv, job.world)
                             if reg2 == ActiveState || reg2 == AnyState
@@ -6037,7 +7083,7 @@ end
                         end
                         # we are storing into the variable
                         if operands(user)[2] == cur
-                            slegal, foundv, byref = abs_typeof(operands(user)[1])
+                            slegal, foundv, byref = abs_typeof(operands(user)[1], enzyme_ctx)
                             if slegal
                                 reg2 = active_reg(foundv, job.world)
                                 if reg2 == AnyState
@@ -6073,7 +7119,7 @@ end
                                 continue
                             end
                             if is_readonly(called)
-                                slegal, foundv, byref = abs_typeof(user)
+                                slegal, foundv, byref = abs_typeof(user, enzyme_ctx)
                                 if slegal
                                     reg2 = active_reg(foundv, job.world)
                                     if reg2 == ActiveState || reg2 == AnyState
@@ -6091,7 +7137,7 @@ end
                                         push!(todo, parm)
                                     end
                                 end
-                                slegal, foundv, byref = abs_typeof(user)
+                                slegal, foundv, byref = abs_typeof(user, enzyme_ctx)
                                 if slegal
                                     reg2 = active_reg(foundv, job.world)
                                     if reg2 == ActiveState || reg2 == AnyState
@@ -6111,12 +7157,16 @@ end
                         string(user) *
                         ", using " *
                         string(cur)
-                    slegal, foundv = absint(cur)
+                    slegal, foundv = absint(cur, enzyme_ctx)
                     if slegal
 		    	foundv = unbind(foundv)
                         resstr *= "of type " * string(foundv)
                     end
                     emit_error(builder, user, resstr, EnzymeMutabilityException)
+                    # Optimization may have proven the function `nounwind`
+                    # before the throw existed. Left in place, that would
+                    # let LLVM delete the throw and the write it guards.
+                    clear_nounwind!(LLVM.parent(LLVM.parent(user)))
                 end
             end
         end
@@ -6124,12 +7174,12 @@ end
 
     if params.run_enzyme
         # Generate the adjoint
-        memcpy_alloca_to_loadstore(mod)
+        erase_memcpy_from_undef!(mod)
+        memcpy_alloca_to_loadstore(mod, job.world, enzyme_ctx)
         force_recompute!(mod)
         API.EnzymeDetectReadonlyOrThrow(mod)
 
         adjointf, augmented_primalf, TapeType = enzyme!(
-            enzyme_context,
             job,
 	    interp,
             mod,
@@ -6146,13 +7196,16 @@ end
             loweredArgs,
             boxedArgs,
 	    removedRoots,
+            enzyme_ctx,
         )
+        # The activity hints that must not reach an outer differentiation of the result.
+        strip_activity_inactive_md!(mod)
 
         # Link deferred modules
-        for otherMod in enzyme_context.modules_to_link
+        for otherMod in enzyme_ctx.modules_to_link
             link_split_existing!(mod, otherMod)
         end
-        empty!(enzyme_context.modules_to_link)
+        empty!(enzyme_ctx.modules_to_link)
         toremove = String[]
         # Inline the wrapper
         for f in functions(mod)
@@ -6239,15 +7292,15 @@ end
             fname = String(name) * pf
             if haskey(functions(mod), fname)
                 funcspec = my_methodinstance(Mode == API.DEM_ForwardMode ? Forward : Reverse, fnty, Tuple{JT}, job.world)
-                llvmf = nested_codegen!(enzyme_context, mode, mod, funcspec, job.world)
+                llvmf = nested_codegen!(mode, mod, funcspec)
 
                 llvmf = LLVM.name(llvmf)
 
                 # Link deferred modules generated by fnsToInject
-                for otherMod in enzyme_context.modules_to_link
+                for otherMod in enzyme_ctx.modules_to_link
                     link_split_existing!(mod, otherMod)
                 end
-                empty!(enzyme_context.modules_to_link)
+                empty!(enzyme_ctx.modules_to_link)
 
                 llvmf = functions(mod)[llvmf]
 
@@ -6257,6 +7310,10 @@ end
     end
 
     API.EnzymeReplaceFunctionImplementation(mod)
+
+    # Every deferred module is linked by now, so nothing declares the entry of
+    # an imported cached thunk any more.
+    internalize_imported_thunks!(mod)
 
     for (fname, lnk) in custom
         haskey(functions(mod), fname) || continue
@@ -6295,8 +7352,11 @@ end
     end
 
     if !device_module
-        # Don't restore pointers when we are doing GPU compilation
-        restore_lookups(mod)
+        # Don't restore pointers when we are doing GPU compilation. The
+        # declarations of natively called rules stay symbolic until `_thunk`
+        # compiles the module, so that an outer differentiation can still
+        # recognize them (see `materialize_native_invokes!`).
+        restore_lookups(mod; native_invokes = false)
     end
 
     if !(primal_target isa GPUCompiler.NativeCompilerTarget)
@@ -6325,7 +7385,32 @@ end
 
     use_primal = mode == API.DEM_ReverseModePrimal
     entry = use_primal ? augmented_primalf : adjointf
-    return mod, (; adjointf, augmented_primalf, entry, compiled = meta.compiled, TapeType, edges)
+    # A derivative compiled on behalf of another job is linked into it here. A toplevel one is
+    # linked by `_thunk`, once it has kept the symbolic bitcode. A host derivative's inserted
+    # values are handed on with the module (`compile_unhooked`).
+    @static if !HAS_GPUCOMPILER_2
+        # GPUCompiler 1.x resolves nothing: resolve the slots, and write the addresses of Julia
+        # values into device code, where nothing resolves their names.
+        if !job.config.toplevel
+            resolve_slots!(mod, julia_value_table(enzyme_ctx, mod))
+            device_module && bake_julia_value_globals!(mod, enzyme_ctx.inserted_values)
+        end
+    end
+    # What is still symbolic leaves the compilation with the module.
+    value_table = julia_value_table(enzyme_ctx, mod)
+    # GPUCompiler 2.x hands every Julia value a derivative compiled on behalf of another job
+    # refers to on as a relocation, which the requesting job lowers with its own strategy:
+    # `link_relocatable!` reads the records off this tuple.
+    relocations = @static if HAS_GPUCOMPILER_2
+        relocs = meta.relocations
+        record_symbolic_slots!(mod, relocs, enzyme_ctx)
+        # Nothing resolves the names of Julia values in device code: they become relocations.
+        device_module && relocate_julia_value_globals!(mod, relocs, enzyme_ctx.inserted_values)
+        relocs
+    else
+        nothing
+    end
+    return mod, (; adjointf, augmented_primalf, entry, compiled = meta.compiled, TapeType, edges, value_table, relocations)
 end
 
 # Compiler result
@@ -6465,6 +7550,8 @@ include("typeutils/recursive_add.jl")
         )
     end
 end
+@inline default_adjoint(::Type{T}, ::Val{1}) where {T} = default_adjoint(T)
+@inline default_adjoint(::Type{T}, ::Val{W}) where {T,W} = ntuple(Returns(default_adjoint(T)), Val(W))
 
 const DumpLLVMCall = Ref(false)
 
@@ -6546,11 +7633,38 @@ const DumpLLVMCall = Ref(false)
                 end
             end
 
+            # An argument whose static type is wider than expected (for example
+            # a tape stored as `Any` by a rule and then invoked through its
+            # specialized signature) may still hold the right value. If every
+            # argument is either narrower or wider than expected, assert the
+            # expected types and dispatch again on the narrowed ones, so that
+            # only a genuinely mismatched call is rejected.
+            mismatched = false
+            narrowable = true
             for (expected, found) in zip(argtys, (fn, args...))
                 if !(found <: expected)
+                    mismatched = true
+                    if !(expected <: found)
+                        narrowable = false
+                    end
+                end
+            end
+            if mismatched
+                if !narrowable
                     return quote
                         throw(ThunkCallError($CC, $fn, $args, $truety, $hint))
                     end
+                end
+                narrowed = Expr[]
+                for i in 1:length(args)
+                    push!(narrowed, :(args[$i]::$(argtys[i + 1])))
+                end
+                return quote
+                    Base.@_inline_meta
+                    enzyme_call(
+                        Val($RawCall), fptr, $CC, Val($width), Val($returnPrimal),
+                        tt, rt, fn::$(argtys[1]), $TapeType, $(narrowed...),
+                    )
                 end
             end
         end
@@ -6800,8 +7914,10 @@ const DumpLLVMCall = Ref(false)
                 push!(sret_types, Nothing)
             end
             if rettype <: Duplicated || rettype <: DuplicatedNoNeed
+                @assert width == 1
                 push!(sret_types, jlRT)
             elseif rettype <: MixedDuplicated
+                @assert width == 1
                 rty = if Base.isconcretetype(jlRT)
                     Base.RefValue{jlRT}
                 else
@@ -6809,8 +7925,10 @@ const DumpLLVMCall = Ref(false)
                 end
                 push!(sret_types, rty)
             elseif rettype <: BatchDuplicated || rettype <: BatchDuplicatedNoNeed
+                @assert width == batch_size(rettype)
                 push!(sret_types, AnonymousStruct(NTuple{width,jlRT}))
             elseif rettype <: BatchMixedDuplicated
+                @assert width == batch_size(rettype)
                 rty = if Base.isconcretetype(jlRT)
                     Base.RefValue{jlRT}
                 else
@@ -6864,7 +7982,12 @@ const DumpLLVMCall = Ref(false)
             returnRoots = deserves_rooting(jltype)
         end
 
-        if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
+        # With `InlineABI` the code of the thunk is linked in below, and Julia inlines it into
+        # the caller. That code needs a pgcstack, so take the one of the caller as an argument.
+        inline_abi = GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT)
+        if inline_abi
+            pushfirst!(llvmtys, convert(LLVMType, Ptr{Cvoid}))
+        else
             pushfirst!(llvmtys, convert(LLVMType, PT))
         end
 
@@ -6886,9 +8009,11 @@ const DumpLLVMCall = Ref(false)
         position!(builder, entry)
         callparams = collect(LLVM.Value, parameters(llvm_f))
 
-        if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
-            lfn = callparams[1]
-            deleteat!(callparams, 1)
+        if inline_abi
+            # The pgcstack, which `use_gcstack_arg!` hands to the code of the thunk.
+            pgcstack = popfirst!(callparams)
+        else
+            lfn = popfirst!(callparams)
         end
 
         if returnRoots
@@ -6936,7 +8061,7 @@ const DumpLLVMCall = Ref(false)
             end
         end
 
-        if !(GPUCompiler.isghosttype(PT) || Core.Compiler.isconstType(PT))
+        if !inline_abi
             FT = LLVM.FunctionType(
                 returnRoots ? T_void : T_ret,
                 [value_type(x) for x in callparams],
@@ -6948,8 +8073,22 @@ const DumpLLVMCall = Ref(false)
             # TODO, consider optimization
             # However, julia will optimize after this, so no need
             submod = parse(LLVM.Module, String(submod))
+            # Julia's llvmcall links this module as is into every caller, so any external
+            # definition in it (e.g. the `ccalllib_*` library handle cache that Julia's
+            # codegen emits for a `ccall`) would be defined once per caller, and the JIT
+            # aborts with a duplicate symbol. Only this function uses the module, so all its
+            # definitions can be local to the caller.
+            for gv in Iterators.flatten((globals(submod), functions(submod)))
+                LLVM.isdeclaration(gv) && continue
+                LLVM.name(gv) == String(subname) && continue
+                if !(linkage(gv) in (LLVM.API.LLVMInternalLinkage, LLVM.API.LLVMPrivateLinkage))
+                    linkage!(gv, LLVM.API.LLVMInternalLinkage)
+                end
+            end
             LLVM.link!(mod, submod)
             lfn = functions(mod)[String(subname)]
+            # Only this function calls the thunk, so the inliner can drop it afterwards.
+            linkage!(lfn, LLVM.API.LLVMInternalLinkage)
             FT = LLVM.function_type(lfn)
         end
 
@@ -6977,7 +8116,12 @@ const DumpLLVMCall = Ref(false)
         else
             ret!(builder)
         end
-        reinsert_gcmarker!(llvm_f)
+        # Julia inlines this function into its caller. A `julia.get_pgcstack` call in it
+        # would delay the push of the caller's GC frame on 1.13 (see `use_gcstack_arg!`).
+        # Without `InlineABI` this function needs no pgcstack, since the thunk gets its own.
+        if inline_abi
+            use_gcstack_arg!(llvm_f, pgcstack)
+        end
 
 	Enzyme.Compiler.JIT.prepare!(mod)
 	if DumpLLVMCall[]
@@ -7012,7 +8156,8 @@ const DumpLLVMCall = Ref(false)
             Base.llvmcall(
                 ($ir, $fn),
                 $combinedReturn,
-                Tuple{$(types...)},
+                Tuple{Ptr{Cvoid}, $(types...)},
+                current_pgcstack(),
                 $(ccexprs...),
             )
         end
@@ -7034,8 +8179,8 @@ function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module
     end
 
     # Now invoke the JIT
-    jitted_mod = JIT.add!(mod)
-    adjoint_addr = JIT.lookup(adjoint_name)
+    jit_dylib = JIT.add!(mod)
+    adjoint_addr = JIT.lookup(jit_dylib, adjoint_name)
 
     adjoint_ptr = pointer(adjoint_addr)
     if adjoint_ptr === C_NULL
@@ -7049,7 +8194,7 @@ function _link(@nospecialize(job::CompilerJob{<:EnzymeTarget}), mod::LLVM.Module
     if primal_name isa Nothing
         primal_ptr = C_NULL
     else
-        primal_addr = JIT.lookup(primal_name)
+        primal_addr = JIT.lookup(jit_dylib, primal_name)
         primal_ptr = pointer(primal_addr)
         if primal_ptr === C_NULL
             throw(
@@ -7068,11 +8213,12 @@ const DumpPrePostOpt = Ref(false)
 const DumpPostOpt = Ref(false)
 
 # actual compilation
-function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, String, Union{String, Nothing}, Type, String}
+function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, String, Union{String, Nothing}, Type, String, JuliaValueTable}
     config = CompilerConfig(job.config; optimize=false)
     job = CompilerJob(job.source, config, job.world)
     mod, meta = compile(:llvm, job)
     adjointf, augmented_primalf = meta.adjointf, meta.augmented_primalf
+    value_table = meta.value_table
 
 
     adjoint_name = name(adjointf)
@@ -7083,7 +8229,7 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
         primal_name = nothing
     end
 
-    LLVM.ModulePassManager() do pm
+    LLVM.@dispose pm = LLVM.ModulePassManager() begin
         add!(pm, FunctionPass("ReinsertGCMarker", reinsert_gcmarker_pass!))
         LLVM.run!(pm, mod)
     end
@@ -7105,8 +8251,17 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
                     end
                 end
             end
-            string(mod)
+            # Kept for nested differentiation (see autodiff_cache); bitcode
+            # is far cheaper to write than textual IR and parses faster.
+            buf = convert(MemoryBuffer, mod)
+            bytes = convert(Vector{UInt8}, buf)
+            dispose(buf)
+            String(bytes)
         end
+        # The bitcode keeps its slots symbolic for a differentiation that imports it, which
+        # takes `value_table` along; the code that runs gets the addresses, before it is
+        # optimized.
+        link_julia_values!(mod, meta)
         if job.config.params.ABI <: FFIABI || job.config.params.ABI <: NonGenABI
             if DumpPrePostOpt[]
                 API.EnzymeDumpModuleRef(mod.ref)
@@ -7116,19 +8271,39 @@ function _thunk(job, postopt::Bool = true)::Tuple{LLVM.Module, Vector{Any}, Stri
                 API.EnzymeDumpModuleRef(mod.ref)
             end
         else
+            define_ntuple_type!(mod)
             propagate_returned!(mod)
             Compiler.JIT.prepare!(mod)
         end
         mstr
     else
+        link_julia_values!(mod, meta)
         ""
     end
-    return (mod, meta.edges, adjoint_name, primal_name, meta.TapeType, prepost)
+    # The module string above keeps the rule declarations symbolic for nested
+    # differentiation; the compiled module binds them to their addresses.
+    restore_native_invokes!(mod)
+    return (mod, meta.edges, adjoint_name, primal_name, meta.TapeType, prepost, value_table)
 end
 
 const cache = Dict{UInt,CompileResult}()
 
-const autodiff_cache = Dict{Ptr{Cvoid},Tuple{String, String}}()
+"""
+    CachedThunk
+
+What `autodiff_cache` keeps of a thunk for a later compilation to import (see
+[`import_cached_autodiff!`](@ref)): the name of the function to call (`entry`), the bitcode
+of the module before post-optimization (`bitcode`), which refers to Julia values by name, and
+those values (`value_table`, see [`JuliaValueTable`](@ref)).
+"""
+struct CachedThunk
+    entry::String
+    bitcode::String
+    value_table::JuliaValueTable
+end
+
+# adjoint/primal pointer => the thunk's IR, for nested differentiation
+const autodiff_cache = Dict{Ptr{Cvoid}, CachedThunk}()
 
 const cache_lock = ReentrantLock()
 @inline function cached_compilation(@nospecialize(job::CompilerJob))::CompileResult
@@ -7139,19 +8314,109 @@ const cache_lock = ReentrantLock()
     try
         obj = get(cache, key, nothing)
         if obj === nothing
-            asm = _thunk(job)
-            obj = _link(job, asm...)
+            mod, edges, adjoint_name, primal_name, TapeType, prepost, value_table = _thunk(job)
+            obj = _link(job, mod, edges, adjoint_name, primal_name, TapeType, prepost)
             if obj.adjoint isa Ptr{Nothing}
-                autodiff_cache[obj.adjoint] = (asm[3], asm[6])
+                autodiff_cache[obj.adjoint] = CachedThunk(adjoint_name, prepost, value_table)
             end
-            if obj.primal isa Ptr{Nothing} && asm[4] isa String
-                autodiff_cache[obj.primal] = (asm[4], asm[6])
+            if obj.primal isa Ptr{Nothing} && primal_name isa String
+                autodiff_cache[obj.primal] = CachedThunk(primal_name, prepost, value_table)
             end
             cache[key] = obj
         end
         obj
     finally
         unlock(cache_lock)
+    end
+end
+
+"""
+    clear_caches!()
+
+Empty every cache Enzyme keeps in a global, dropping what this session compiled, looked up
+and rooted along with them.
+
+Nearly all of it means something only to the session that filled it. A `CompileResult` holds
+the address the JIT gave a thunk, `captured_constants` roots objects because their addresses
+were written into that code, the rule and activity memos are keyed on world ages, and the
+`jl_load_and_lookup` handles are ones this process opened. Anything outliving the session
+must not carry them, which is why Enzyme's precompile workload ends with this call: what it
+left behind would otherwise be serialized into Enzyme's package image and inherited, dead,
+by every session that loads it.
+
+This is meant for the end of precompilation and not for a live session. It hands back the
+thunks the JIT compiled and unroots the objects their code refers to by address, so a thunk
+still held anywhere is left pointing at objects that may now be collected.
+
+Caches filled by `__init__` rather than by compiling are left alone: they are rebuilt per
+session and so never reach an image.
+"""
+function clear_caches!()
+    # Thunks, held as the addresses the JIT gave them, and the objects rooted because those
+    # addresses were written into their code.
+    empty!(cache)
+    empty!(autodiff_cache)
+    empty!(Enzyme.tape_cache)
+    empty!(Enzyme.captured_constants)
+
+    # Which rules apply, memoized against the world the methods were read in.
+    empty!(FRULE_CACHE)
+    empty!(RRULE_CACHE)
+    empty!(INACTIVE_CACHE)
+    empty!(EASY_RULE_CACHE)
+    empty!(NOALIAS_CACHE)
+    empty!(Interpreter.SigCache)
+    Interpreter.LastFwdWorld[] = Base.IdSet{Type}()
+    Interpreter.LastRevWorld[] = Base.IdSet{Type}()
+    Interpreter.LastInaWorld[] = Base.IdSet{Type}()
+
+    # Activity, and the world its `inactive_type` methods were last checked in. Left set, it
+    # tells a later session its own worlds need no check.
+    empty!(ActivityCache)
+    empty!(ActivityMethodCache)
+    ActivityWorldCache[] = 0
+
+    # The library handles `ejlstr$` and `ejlptr$` symbols were resolved through.
+    empty!(JIT.hnd_string_map)
+    empty!(JIT.hnd_int_map)
+
+    @static if VERSION < v"1.11.0-DEV.1552"
+        # Inference results, kept by Enzyme itself on versions where Julia's own cache does
+        # not hold them. The `CodeInstance`s carry `invoke` and `specptr` addresses.
+        empty!(GLOBAL_FWD_CACHE.dict)
+        empty!(GLOBAL_REV_CACHE.dict)
+    end
+    return nothing
+end
+
+"""
+    instantiate_annotation(A, rt, width)
+
+Fill in the free parameters of a (possibly partially applied) activity annotation
+`A` with element type `rt` and batch width `width`.
+
+The batch annotations take a second parameter carrying the batch width. Applying
+only `A{rt}` to them leaves that parameter free, and a subsequent `A{rt}` binds the
+*element type* to it, yielding an annotation whose `batch_size` is a type rather
+than the width. Filling both explicitly keeps `batch_size(A) == width`, which the
+shadow-return ABI in `create_abi_wrapper` and `enzyme_call` asserts.
+"""
+@inline function instantiate_annotation(
+        @nospecialize(A::Type{<:Annotation}),
+        @nospecialize(rt::Type),
+        width::Int,
+    )
+    A isa UnionAll || return A
+    return if A <: BatchDuplicated
+        BatchDuplicated{rt, width}
+    elseif A <: BatchDuplicatedNoNeed
+        BatchDuplicatedNoNeed{rt, width}
+    elseif A <: BatchDuplicatedFunc
+        BatchDuplicatedFunc{rt, width}
+    elseif A <: BatchMixedDuplicated
+        BatchMixedDuplicated{rt, width}
+    else
+        A{rt}
     end
 end
 
@@ -7219,7 +8484,7 @@ end
     rt2 = if !run_enzyme
         Const{rrt}
     elseif A2 isa UnionAll
-        A2{rrt}
+        instantiate_annotation(A2, rrt, width)
     else
         @assert A isa DataType
         # Can we relax this condition?
@@ -7452,37 +8717,7 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
     return ci
 end
 
-@eval @inline function thunk(
-    fakeworld::Val{0},
-    fa::Type{FA},
-    a::Type{A},
-    tt::Type{TT},
-    mode::Val{Mode},
-    width::Val{Width},
-    modifiedbetween::Val{ModifiedBetween},
-    returnprimal::Val{ReturnPrimal},
-    shadowinit::Val{ShadowInit},
-    abi::Type{ABI},
-    erriffuncwritten::Val{ErrIfFuncWritten},
-    runtimeactivity::Val{RuntimeActivity},
-    strongzero::Val{StrongZero}
-) where {
-    FA<:Annotation,
-    A<:Annotation,
-    TT,
-    Mode,
-    Width,
-    ModifiedBetween,
-    ReturnPrimal,
-    ShadowInit,
-    ABI,
-    ErrIfFuncWritten,
-    RuntimeActivity,
-    StrongZero
-}
-    $(Expr(:meta, :generated_only))
-    $(Expr(:meta, :generated, thunk_generator))
-end
+# The generated wrapper `thunk` is defined in src/late_generated.jl; see the note there.
 
 import GPUCompiler: deferred_codegen_jobs
 
@@ -7524,7 +8759,7 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
                 error($estr)
             end
         end
-        A{rrt}
+        instantiate_annotation(A, rrt, Width)
     else
         @assert A isa DataType
         A
@@ -7562,36 +8797,7 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
     return ci
 end
 
-@eval @inline function deferred_id_codegen(
-    fa::Type{FA},
-    a::Type{A},
-    tt::Type{TT},
-    mode::Val{Mode},
-    width::Val{Width},
-    modifiedbetween::Val{ModifiedBetween},
-    returnprimal::Val{ReturnPrimal},
-    shadowinit::Val{ShadowInit},
-    expectedtapetype::Type{ExpectedTapeType},
-    erriffuncwritten::Val{ErrIfFuncWritten},
-    runtimeactivity::Val{RuntimeActivity},
-    strongzero::Val{StrongZero}
-) where {
-    FA<:Annotation,
-    A<:Annotation,
-    TT,
-    Mode,
-    Width,
-    ModifiedBetween,
-    ReturnPrimal,
-    ShadowInit,
-    ExpectedTapeType,
-    ErrIfFuncWritten,
-    RuntimeActivity,
-    StrongZero
-}
-    $(Expr(:meta, :generated_only))
-    $(Expr(:meta, :generated, deferred_id_generator))
-end
+# The generated wrapper `deferred_id_codegen` is defined in src/late_generated.jl; see the note there.
 
 @inline function deferred_codegen(
     @nospecialize(fa::Type),

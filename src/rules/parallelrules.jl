@@ -185,7 +185,7 @@ function runtime_pfor_rev(
     return nothing
 end
 
-@inline function threadsfor_common(orig, gutils, B, mode, tape = nothing)
+@inline function threadsfor_common(orig, gutils, B, mode, enzyme_ctx, tape = nothing)
 
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
@@ -220,12 +220,46 @@ end
 
     funcT = mi.specTypes.parameters[2]
 
+    # Since JuliaLang/julia#63184, `threading_run` does not specialize on the loop
+    # body, so the body is passed boxed and its type is only known at the call site.
+    # One `threading_run` is then shared by every loop, so the derivatives compiled
+    # for this loop are recorded on the call rather than on the function.
+    boxed = funcT === Any
+    if boxed
+        legal, funcT, _ = abs_typeof(operands(orig)[1], enzyme_ctx)
+        if !legal
+            throw(AssertionError("Could not determine the type of the Threads.@threads loop body $(string(operands(orig)[1]))"))
+        end
+        fwdmodenm = nothing
+        augfwdnm = nothing
+        adjointnm = nothing
+        TapeType = nothing
+        attributes = function_attributes(orig)
+        for fattr in collect(attributes)
+            if isa(fattr, LLVM.StringAttribute)
+                if kind(fattr) == "enzymejl_tapetype"
+                    ptr = reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(fattr)))
+                    TapeType = Base.unsafe_pointer_to_objref(ptr)
+                end
+                if kind(fattr) == "enzymejl_forward"
+                    fwdmodenm = value(fattr)
+                end
+                if kind(fattr) == "enzymejl_augforward"
+                    augfwdnm = value(fattr)
+                end
+                if kind(fattr) == "enzymejl_adjoint"
+                    adjointnm = value(fattr)
+                end
+            end
+        end
+    end
+
 
     # TODO actually do modifiedBetween
     e_tt = Tuple{Const{Int}}
     modifiedBetween = (mode != API.DEM_ForwardMode, false)
 
-    world = enzyme_extract_world(LLVM.parent(position(B)))
+    world = enzyme_world()
 
     pfuncT = funcT
 
@@ -241,7 +275,7 @@ end
     if dupClosure
 	if is_constant_value(gutils, operands(orig)[1])
 	    dupClosure = false
-	    if inline_roots_type(funcT) != 0
+            if !boxed && inline_roots_type(funcT) != 0
 	        if !is_constant_value(gutils, operands(orig)[2])
 		    dupClosure = true
 		end
@@ -280,9 +314,10 @@ end
                 world,
             )
 
-            cmod, edges, fwdmodenm, _, _, _ = _thunk(ejob, false) #=postopt=#
+            cmod, edges, fwdmodenm, _, _, _, value_table = _thunk(ejob, false) #=postopt=#
 
             LLVM.link!(mod, cmod)
+            merge_julia_value_table!(enzyme_ctx, value_table)
 
             push!(attributes, StringAttribute("enzymejl_forward", fwdmodenm))
             push!(
@@ -340,9 +375,10 @@ end
                 world,
             )
 
-            cmod, edges, adjointnm, augfwdnm, TapeType, _ = _thunk(ejob, false) #=postopt=#
+            cmod, edges, adjointnm, augfwdnm, TapeType, _, value_table = _thunk(ejob, false) #=postopt=#
 
             LLVM.link!(mod, cmod)
+            merge_julia_value_table!(enzyme_ctx, value_table)
 
             push!(attributes, StringAttribute("enzymejl_augforward", augfwdnm))
             push!(
@@ -460,11 +496,14 @@ end
 	    end
 	    
             if value_type(v) != pllty
+                if boxed
+                    v = addrspacecast!(fwdbuilder, v, LLVM.PointerType(pllty, Derived))
+                end
                 pv = v
                 v = load!(fwdbuilder, pllty, v)
             end
 	    
-	    if inline_roots_type(ppfuncT) != 0
+            if !boxed && inline_roots_type(ppfuncT) != 0
 		v2 = new_from_original(gutils, operands(orig)[2])
 		v = recombine_value!(fwdbuilder, v, v2)
 	    end
@@ -527,13 +566,36 @@ end
                 spllty = LLVM.LLVMType(API.EnzymeGetShadowType(width, pllty))
                 pv = nothing
 	        
-                dv2 = if inline_roots_type(ppfuncT) != 0
+                dv2 = if !boxed && inline_roots_type(ppfuncT) != 0
                    invert_pointer(gutils, operands(orig)[2], B)
                 end
 
-                if value_type(dv) != spllty
+                # The closure's tracked pointers live in the roots array, so its bits
+                # fields alone can make it inactive. Its shadow is then the primal
+                # itself, so in forward mode start from zero rather than copying the
+                # primal floats.
+                const_bits = mode == API.DEM_ForwardMode && dv2 !== nothing &&
+                    is_constant_value(gutils, operands(orig)[1])
+
+                if const_bits
+                    if width == 1
+                        dv = recombine_value!(fwdbuilder, LLVM.null(spllty), dv2)
+                    else
+                        shadowres = UndefValue(spllty)
+                        for idx = 1:width
+                            arg2 = extract_value!(fwdbuilder, dv2, idx - 1)
+                            arg = recombine_value!(fwdbuilder, LLVM.null(pllty), arg2)
+                            shadowres = insert_value!(fwdbuilder, shadowres, arg, idx - 1)
+                        end
+                        dv = shadowres
+                    end
+                elseif value_type(dv) != spllty
                     pv = dv
                     if width == 1
+                        if boxed
+                            dv = addrspacecast!(fwdbuilder, dv, LLVM.PointerType(spllty, Derived))
+                            pv = dv
+                        end
                         dv = load!(fwdbuilder, spllty, dv)
 			            if dv2 !== nothing
                            dv = recombine_value!(fwdbuilder, dv, dv2)
@@ -542,6 +604,9 @@ end
                         shadowres = UndefValue(spllty)
                         for idx = 1:width
                             arg = extract_value!(fwdbuilder, dv, idx - 1)
+                            if boxed
+                                arg = addrspacecast!(fwdbuilder, arg, LLVM.PointerType(pllty, Derived))
+                            end
                             arg = load!(fwdbuilder, pllty, arg)
                             if dv2 !== nothing
                               arg2 = extract_value!(fwdbuilder, dv2, idx - 1)
@@ -635,13 +700,11 @@ end
         (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
 
     _, sname, dfuncT, vals, thunkTy, _, _ =
-        threadsfor_common(orig, gutils, B, API.DEM_ForwardMode)
+        threadsfor_common(orig, gutils, B, API.DEM_ForwardMode, enzyme_context())
 
     tt = Tuple{thunkTy,dfuncT,Bool}
     mode = get_mode(gutils)
-    world = enzyme_extract_world(LLVM.parent(position(B)))
-    enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
-    entry = nested_codegen!(enzyme_ctx, mode, mod, runtime_pfor_fwd, tt, world)
+    entry = nested_codegen!(mode, mod, runtime_pfor_fwd, tt)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
     pval = functions(mod)[sname]
@@ -678,7 +741,7 @@ end
         (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) : nothing
 
     byRef, sname, dfuncT, vals, thunkTy, _, copies =
-        threadsfor_common(orig, gutils, B, API.DEM_ReverseModePrimal)
+        threadsfor_common(orig, gutils, B, API.DEM_ReverseModePrimal, enzyme_context())
 
     tt = Tuple{
         thunkTy,
@@ -688,9 +751,7 @@ end
         Bool,
     }
     mode = get_mode(gutils)
-    world = enzyme_extract_world(LLVM.parent(position(B)))
-    enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
-    entry = nested_codegen!(enzyme_ctx, mode, mod, runtime_pfor_augfwd, tt, world)
+    entry = nested_codegen!(mode, mod, runtime_pfor_augfwd, tt)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
     pval = functions(mod)[sname]
@@ -726,13 +787,12 @@ end
 
 @register_rev function threadsfor_rev(B, orig, gutils, tape)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
-    world = enzyme_extract_world(LLVM.parent(position(B)))
     if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return
     end
 
     byRef, sname, dfuncT, vals, thunkTy, TapeType, copies =
-        threadsfor_common(orig, gutils, B, API.DEM_ReverseModeGradient, tape)
+        threadsfor_common(orig, gutils, B, API.DEM_ReverseModeGradient, enzyme_context(), tape)
 
     STT = if !any_jltypes(TapeType)
         Ptr{TapeType}
@@ -749,8 +809,7 @@ end
         Bool,
     }
     mode = get_mode(gutils)
-    enzyme_ctx = Enzyme.enzyme_context(get_logic(gutils))
-    entry = nested_codegen!(enzyme_ctx, mode, mod, runtime_pfor_rev, tt, world)
+    entry = nested_codegen!(mode, mod, runtime_pfor_rev, tt)
     push!(function_attributes(entry), EnumAttribute("alwaysinline"))
 
     pval = functions(mod)[sname]
@@ -779,7 +838,6 @@ end
     width = get_width(gutils)
     mode = get_mode(gutils)
 
-    world = enzyme_extract_world(LLVM.parent(position(B)))
 
     vals = LLVM.Value[
         unsafe_to_llvm(B, runtime_newtask_fwd),
@@ -833,7 +891,6 @@ end
     uncacheable = get_uncacheable(gutils, orig)
     ModifiedBetween = (uncacheable[1] != 0,)
 
-    world = enzyme_extract_world(LLVM.parent(position(B)))
 
     vals = LLVM.Value[
         unsafe_to_llvm(B, runtime_newtask_augfwd),

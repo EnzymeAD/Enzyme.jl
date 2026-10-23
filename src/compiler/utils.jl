@@ -1,4 +1,13 @@
 
+"""
+    EmitTypeNames[] = true
+
+Also write the printed Julia type next to each type Enzyme records in the IR (the
+`enzymejl_parmtype_str` attribute, and the `enzymejl_source_type_<T>` and
+`enzymejl_allocart_name` metadata). They help reading IR dumps.
+"""
+const EmitTypeNames = Ref(false)
+
 @enum(AllocFnKindEnum,
       AFKE_Unknown = 0,
       AFKE_Alloc = 1,
@@ -68,6 +77,12 @@ const NoEffects = MemoryEffect(
     (MRI_NoModRef << getLocationPos(InaccessibleMem)) |
     (MRI_NoModRef << getLocationPos(Other)),
 )
+const ReadArgMemReadWriteInaccessibleEffects = MemoryEffect(
+    (MRI_Ref << getLocationPos(ArgMem)) |
+        (MRI_ModRef << getLocationPos(InaccessibleMem)) |
+        (MRI_NoModRef << getLocationPos(Other)),
+)
+
 const ReadArgMemWriteInaccessibleEffects = MemoryEffect(
     (MRI_Ref << getLocationPos(ArgMem)) |
     (MRI_Mod << getLocationPos(InaccessibleMem)) |
@@ -117,7 +132,7 @@ end
 function set_readonly(effect::MemoryEffect)::MemoryEffect
     data = UInt32(0)
     for loc in (ArgMem, InaccessibleMem, Other)
-        data = UInt32(set_readonly(getModRef(effect, loc))) << getLocationPos(loc)
+        data |= UInt32(set_readonly(getModRef(effect, loc))) << getLocationPos(loc)
     end
     return MemoryEffect(data)
 end
@@ -160,6 +175,67 @@ Base.@assume_effects :removable :foldable :nothrow function is_nounwind(f::LLVM.
     return false
 end
 
+"""
+    clear_nounwind!(f::LLVM.Function)
+
+Remove `nounwind` from `f`, from every call of `f`, and from each calling
+function in turn, so that a throw inserted into `f` may unwind through its
+callers.
+
+Enzyme's preprocessing marks every call it differentiates `willreturn`, and
+inlining a `nounwind` function marks the calls it inlines `nounwind`. A
+`noreturn` throw that is also `nounwind` and `willreturn` can neither return,
+unwind nor run forever, so LLVM treats it as unreachable and deletes it,
+together with every path that leads to it.
+"""
+function clear_nounwind!(f::LLVM.Function)
+    idx = reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex)
+    nounwind = kind(EnumAttribute("nounwind"))
+    todo = LLVM.Function[f]
+    done = Set{LLVM.Function}()
+    while !isempty(todo)
+        cur = pop!(todo)
+        if cur in done
+            continue
+        end
+        push!(done, cur)
+        LLVM.API.LLVMRemoveEnumAttributeAtIndex(cur, idx, nounwind)
+        for u in LLVM.uses(cur)
+            call = LLVM.user(u)
+            if !isa(call, LLVM.CallBase) || LLVM.called_operand(call) != cur
+                continue
+            end
+            LLVM.API.LLVMRemoveCallSiteEnumAttribute(call, idx, nounwind)
+            push!(todo, LLVM.parent(LLVM.parent(call)))
+        end
+    end
+    return nothing
+end
+
+"""
+    is_readonly(attr::LLVM.Attribute)::Bool
+
+Whether `attr` on its own establishes that the function or argument position it
+is attached to is only read from. That is `readonly` / `readnone`, and on LLVM
+16+ a `memory` effect whose modref is read-only.
+"""
+Base.@assume_effects :removable :foldable :nothrow function is_readonly(attr::LLVM.Attribute)::Bool
+    if kind(attr) == kind(EnumAttribute("readonly"))
+        return true
+    end
+    if kind(attr) == kind(EnumAttribute("readnone"))
+        return true
+    end
+    if LLVM.version().major > 15 && isa(attr, LLVM.EnumAttribute)
+        if kind(attr) == kind(EnumAttribute("memory"))
+            if is_readonly(MemoryEffect(value(attr)))
+                return true
+            end
+        end
+    end
+    return false
+end
+
 Base.@assume_effects :removable :foldable :nothrow function is_readonly(f::LLVM.Function)::Bool
     intr = LLVM.API.LLVMGetIntrinsicID(f)
     if intr == LLVM.Intrinsic("llvm.lifetime.start").id
@@ -176,18 +252,8 @@ Base.@assume_effects :removable :foldable :nothrow function is_readonly(f::LLVM.
         return true
     end
     for attr in collect(function_attributes(f))
-        if kind(attr) == kind(EnumAttribute("readonly"))
+        if is_readonly(attr)
             return true
-        end
-        if kind(attr) == kind(EnumAttribute("readnone"))
-            return true
-        end
-        if LLVM.version().major > 15
-            if kind(attr) == kind(EnumAttribute("memory"))
-                if is_readonly(MemoryEffect(value(attr)))
-                    return true
-                end
-            end
         end
     end
     return false
@@ -333,7 +399,22 @@ end
 
 function get_pgcstack(func::LLVM.Function)
     entry_bb = first(blocks(func))
-    pgcstack_func = declare_pgcstack!(LLVM.parent(func))
+    mod = LLVM.parent(func)
+    pgcstack_func, _ = declare_pgcstack!(mod)
+
+    # A @cfunction wrapper fetches its pgcstack with julia.get_pgcstack_or_new,
+    # which adopts the calling thread when it is not a Julia thread yet. It has
+    # to stay the first getter of the entry block: FinalLowerGC roots the GC
+    # frame in whichever getter comes first, and a plain getter placed ahead of
+    # the adopting one dereferences a NULL pgcstack on a foreign thread.
+    if haskey(functions(mod), "julia.get_pgcstack_or_new")
+        or_new = functions(mod)["julia.get_pgcstack_or_new"]
+        for I in instructions(entry_bb)
+            if I isa LLVM.CallInst && called_operand(I) == or_new
+                return I
+            end
+        end
+    end
 
     for I in instructions(entry_bb)
         if I isa LLVM.CallInst && called_operand(I) == pgcstack_func
@@ -385,6 +466,74 @@ function reinsert_gcmarker!(func::LLVM.Function, @nospecialize(PB::Union{Nothing
     end
 end
 
+# `offsetof(jl_task_t, gcstack)`, which is fixed for a build of Julia. Declaring it foldable
+# lets inference turn the load into a constant.
+Base.@assume_effects :foldable :nothrow task_gcstack_offset() = Int(unsafe_load(cglobal(:jl_task_gcstack_offset, Cint)))
+
+"""
+    current_pgcstack() -> Ptr{Cvoid}
+
+Give the pgcstack of the running task, for an llvmcall that takes it as an argument (see
+[`use_gcstack_arg!`](@ref)).
+
+Julia computes `current_task()` from the pgcstack of the function that this is inlined into
+(on 1.13 that is the `"gcstack"` argument of the function). So the function gets no
+`julia.get_pgcstack` call from this. An llvmcall of `julia.get_pgcstack` would not do: Julia
+inlines it where it is called, which is the problem that [`use_gcstack_arg!`](@ref) avoids.
+"""
+@inline current_pgcstack() = pointer_from_objref(current_task()) + task_gcstack_offset()
+
+"""
+    use_gcstack_arg!(f::LLVM.Function, arg::LLVM.Argument)
+
+Make the llvmcall `f` use its argument `arg` as the pgcstack of the code it inlines. The
+caller gives this argument with [`current_pgcstack`](@ref), as a `Ptr{Cvoid}`.
+
+Julia inlines an llvmcall into its caller, together with the `alwaysinline` functions that
+the llvmcall calls. A `julia.get_pgcstack` call in that code thus goes into the middle of
+the caller. On 1.13 the caller takes its pgcstack as its own `"gcstack"` argument. But the
+GC lowering prefers a `julia.get_pgcstack` call in the entry block to that argument, and
+pushes the GC frame of the caller only after the call. Then no safepoint before the call
+has the roots of the caller.
+
+Thus inline the `alwaysinline` functions into `f` here, and replace every
+`julia.get_pgcstack` call in `f` with `arg`, as `LowerPTLS` does for a function that takes
+its pgcstack as an argument.
+"""
+function use_gcstack_arg!(f::LLVM.Function, arg::LLVM.Argument)
+    mod = LLVM.parent(f)
+    run!(AlwaysInlinerPass(), mod)
+    if !haskey(functions(mod), "julia.get_pgcstack")
+        return
+    end
+    getter = functions(mod)["julia.get_pgcstack"]
+    calls = LLVM.CallInst[]
+    for use in uses(getter)
+        call = user(use)
+        if call isa LLVM.CallInst && LLVM.parent(LLVM.parent(call)) == f
+            push!(calls, call)
+        end
+    end
+    if isempty(calls)
+        return
+    end
+    B = IRBuilder()
+    position!(B, first(instructions(first(blocks(f)))))
+    T_pgcstack = LLVM.return_type(LLVM.function_type(getter))
+    # Before 1.12, a `Ptr{Cvoid}` is an integer in Julia's IR.
+    pgcstack = if value_type(arg) isa LLVM.IntegerType
+        inttoptr!(B, arg, T_pgcstack)
+    else
+        bitcast!(B, arg, T_pgcstack)
+    end
+    dispose(B)
+    for call in calls
+        replace_uses!(call, pgcstack)
+        LLVM.API.LLVMInstructionEraseFromParent(call)
+    end
+    return
+end
+
 @inline enum_attr_kind(kind::String) = LLVM.API.LLVMGetEnumAttributeKindForName(kind, Csize_t(length(kind)))
 
 const swiftself_kind = enum_attr_kind("swiftself")
@@ -401,6 +550,42 @@ Base.@assume_effects :removable :foldable :nothrow function has_swiftself(fn::LL
     end
     return false
 end
+
+"""
+    gcstack_arg_index(fn::LLVM.Function) -> Int
+
+Give the index of the `pgcstack` parameter of `fn`, or `0` when `fn` has none.
+
+Julia's codegen marks that parameter `swiftself` where the target supports the
+swift calling convention, and turns the convention off where it does not
+(`jl_codegen_output_t::use_swiftcc`, false on RISC-V). Julia 1.13 also gives
+the parameter a `gcstack` string attribute, which `specsig` writes on every
+version. Hence recognize either mark.
+"""
+Base.@assume_effects :removable :foldable :nothrow function gcstack_arg_index(fn::LLVM.Function)::Int
+    for i in 1:length(LLVM.parameters(fn))
+        for attr in collect(LLVM.parameter_attributes(fn, i))
+            if attr isa LLVM.EnumAttribute
+                if kind(attr) == swiftself_kind
+                    return i
+                end
+            elseif attr isa LLVM.StringAttribute
+                if kind(attr) == "gcstack"
+                    return i
+                end
+            end
+        end
+    end
+    return 0
+end
+
+"""
+    has_gcstack_arg(fn::LLVM.Function) -> Bool
+
+Say if `fn` takes `pgcstack` as a parameter (see [`gcstack_arg_index`](@ref)).
+"""
+Base.@assume_effects :removable :foldable :nothrow has_gcstack_arg(fn::LLVM.Function)::Bool = gcstack_arg_index(fn) != 0
+
 Base.@assume_effects :removable :foldable :nothrow function has_fn_attr(fn::LLVM.Function, attr::LLVM.EnumAttribute)::Bool
     ekind = LLVM.kind(attr)
     for attr in collect(function_attributes(fn))
@@ -437,6 +622,39 @@ Base.@assume_effects :removable :foldable :nothrow function has_arg_attr(fn::LLV
     return false
 end
 
+"""
+    precedes(a, b)
+
+Whether instruction `a` comes before `b` in their common basic block.
+"""
+function precedes(a::LLVM.Instruction, b::LLVM.Instruction)::Bool
+    @assert LLVM.parent(a) == LLVM.parent(b)
+    for inst in instructions(LLVM.parent(a))
+        inst == a && return true
+        inst == b && return false
+    end
+    return false
+end
+
+"""
+    copy_metadata!(dst, src)
+
+Attach every metadata node of the instruction `src`, except its debug location,
+to `dst`.
+"""
+function copy_metadata!(dst::LLVM.Instruction, src::LLVM.Instruction)
+    num = Ref{Csize_t}()
+    entries = LLVM.API.LLVMInstructionGetAllMetadataOtherThanDebugLoc(src, num)
+    ctx = LLVM.context(src)
+    for i in 1:num[]
+        kind = LLVM.API.LLVMValueMetadataEntriesGetKind(entries, i - 1)
+        md = LLVM.API.LLVMValueMetadataEntriesGetMetadata(entries, i - 1)
+        LLVM.API.LLVMSetMetadata(dst, kind, LLVM.API.LLVMMetadataAsValue(ctx, md))
+    end
+    num[] > 0 && LLVM.API.LLVMDisposeValueMetadataEntries(entries)
+    return nothing
+end
+
 function eraseInst(bb::LLVM.BasicBlock, @nospecialize(inst::LLVM.Instruction))
     @static if isdefined(LLVM, Symbol("erase!"))
         LLVM.erase!(inst)
@@ -461,7 +679,7 @@ end
 
 function unique_gcmarker!(func::LLVM.Function)
     entry_bb = first(blocks(func))
-    pgcstack_func = declare_pgcstack!(LLVM.parent(func))
+    pgcstack_func, _ = declare_pgcstack!(LLVM.parent(func))
 
     found = LLVM.CallInst[]
     for I in instructions(entry_bb)

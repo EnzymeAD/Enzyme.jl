@@ -6,7 +6,7 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [compat]
 GPUArraysCore = "=0.2.0"
-Oceananigans = "=0.101.0"
+Oceananigans = "=0.112.0"
 
 [sources]
 Enzyme = { path = "../../.." }

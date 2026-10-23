@@ -36,7 +36,8 @@ jobs:
 
       - name: Install Runic
         run: |
-          julia --project=@runic -e 'using Pkg; Pkg.add("Runic")'
+          # Keep in sync with .pre-commit-config.yaml
+          julia --project=@runic -e 'using Pkg; Pkg.add(name="Runic", version="1.11.1")'
           curl -o git-runic https://raw.githubusercontent.com/fredrikekre/Runic.jl/master/bin/git-runic
           chmod +x git-runic
           sudo mv git-runic /usr/local/bin

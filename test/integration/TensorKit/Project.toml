@@ -1,0 +1,18 @@
+[deps]
+Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
+EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
+EnzymeTestUtils = "12d8515a-0907-448a-8884-5fe00fdf1c5a"
+FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
+StableRNGs = "860ef19b-820b-49d6-a774-d7a799459cd3"
+TensorKit = "07d1fe3e-3e46-537d-9eac-e9e13d0d4cec"
+TupleTools = "9d95972d-f1c8-5527-a6e0-b4b365fa01f6"
+
+[sources]
+Enzyme = {path = "../../.."}
+EnzymeCore = {path = "../../../lib/EnzymeCore"}
+
+[compat]
+FiniteDifferences = "0.12.32"
+StableRNGs = "1.0.2"
+TensorKit = "=0.17.2"
+TupleTools = "1.6"

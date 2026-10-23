@@ -24,7 +24,7 @@ end
         Enzyme.Compiler.recursive_accumulate(x, y)
         @test x.a ≈ 4.0
         @test x.b == 2
-        
+
         # Test NestedMut
         x = NestedMut(1.0, SimpleMut(2.0, 3))
         y = NestedMut(4.0, SimpleMut(5.0, 6))
@@ -43,27 +43,27 @@ end
         @test x.a ≈ 5.0
         @test x.arr ≈ [7.0, 9.0]
         @test x.arr === arr # pointer identity
-        
+
         # Test Core.Box
         b1 = Core.Box(SimpleMut(1.0, 2))
         b2 = Core.Box(SimpleMut(3.0, 4))
         Enzyme.Compiler.recursive_accumulate(b1, b2)
         @test b1.contents.a ≈ 4.0
         @test b1.contents.b == 2
-        
+
         # Test RefValue
         r1 = Ref(1.0)
         r2 = Ref(2.0)
         Enzyme.Compiler.recursive_accumulate(r1, r2)
         @test r1[] ≈ 3.0
-        
+
         # Test Ref{Tuple{Tuple{Float64, Float32}}}
         r1 = Ref(((1.0, 2.0f0),))
         r2 = Ref(((3.0, 4.0f0),))
         Enzyme.Compiler.recursive_accumulate(r1, r2)
         @test r1[][1][1] ≈ 4.0
         @test r1[][1][2] ≈ 6.0f0
-        
+
         # Test with custom function f
         x = ArrayMut(1.0, [2.0, 3.0])
         y = ArrayMut(4.0, [5.0, 6.0])
@@ -79,26 +79,26 @@ end
         Enzyme.Compiler.recursive_accumulate(x, y, Val(true))
         @test x.a ≈ 4.0
         @test x.b == 2
-        
+
         # Test Array directly
         arr1 = [2.0, 3.0]
         arr2 = [5.0, 6.0]
         Enzyme.Compiler.recursive_accumulate(arr1, arr2, Val(true))
         @test arr1 ≈ [7.0, 9.0]
-        
+
         # Test RefValue
         r1 = Ref(1.0)
         r2 = Ref(2.0)
         Enzyme.Compiler.recursive_accumulate(r1, r2, Val(true))
         @test r1[] ≈ 3.0
-        
+
         # Test Ref{Tuple{Tuple{Float64, Float32}}}
         r1 = Ref(((1.0, 2.0f0),))
         r2 = Ref(((3.0, 4.0f0),))
         Enzyme.Compiler.recursive_accumulate(r1, r2, Val(true))
         @test r1[][1][1] ≈ 4.0
         @test r1[][1][2] ≈ 6.0f0
-        
+
         # Test with custom function f on Array
         arr1 = [2.0, 3.0]
         arr2 = [5.0, 6.0]

@@ -1,8 +1,8 @@
-using Enzyme, Test
+using Enzyme, Test, InteractiveUtils
 using Enzyme: EnzymeRules
 
 @noinline function force_stup(A)
-    A11 = A[];
+    A11 = A[]
     return (A11, 0.0)
 end
 
@@ -11,9 +11,9 @@ end
 
     A11 = Aelements[1]
 
-    unsafe_store!(y, A11*A11)
+    unsafe_store!(y, A11 * A11)
 
-    nothing
+    return nothing
 end
 
 function f_exc(x)
@@ -27,11 +27,11 @@ function f_exc(x)
 end
 
 @testset "No JLValueT Calling Conv" begin
-	y = Ref(1.0)
-	f_x = make_zero(y)
-	Enzyme.autodiff(Reverse, f_exc, Duplicated(y, f_x))
+    y = Ref(1.0)
+    f_x = make_zero(y)
+    Enzyme.autodiff(Reverse, f_exc, Duplicated(y, f_x))
 
-	@test f_x[] ≈ 4.0
+    @test f_x[] ≈ 4.0
 end
 
 struct Inner
@@ -81,7 +81,7 @@ end
     @test dy ≈ 6.0
 end
 
-struct MyFill{T,A}
+struct MyFill{T, A}
     val::T
     axes::A
 end
@@ -91,8 +91,8 @@ struct MyTrnc
 end
 @noinline function trnc(l::Float64)
     # Call a C function from libc that takes a double and returns a double to block constprop
-	lcdf = ccall("extern sin", llvmcall, Float64, (Float64,), l)
-    MyTrnc(lcdf, lcdf)
+    lcdf = ccall("extern sin", llvmcall, Float64, (Float64,), l)
+    return MyTrnc(lcdf, lcdf)
 end
 @noinline function lpdf(dists::MyFill, x::Vector{Float64})
     sz = length(dists.axes)
@@ -130,6 +130,95 @@ end
     ps = ((1.0, 1.0), (2.0, 2.0))
     dx = Enzyme.gradient(Reverse, objective, y0[1], ps)
     @test dx == (1.0, ((0.0, 0.0), (0.0, 0.0)))
+end
+
+struct ResultOk{A <: AbstractArray}
+    x::A
+    ok::Bool
+end
+@noinline scale_ok(v::Vector{Float64}) = ResultOk(v .* 2, true)
+f_sret_roots_struct(v) = sum(scale_ok(v).x)
+
+@noinline scale_sum(v::Vector{Float64}) = (v .* 2, sum(v))
+f_sret_roots_tuple(v) = last(scale_sum(v))
+f_sret_roots_tuple_arr(v) = sum(first(scale_sum(v)))
+
+struct TwoRooted{A, B}
+    a::A
+    b::B
+    n::Int
+    s::Float64
+end
+@noinline two_rooted(v::Vector{Float64}) = TwoRooted(v .* 2, v .* 3, length(v), sum(v))
+f_sret_roots_two(v) = sum(two_rooted(v).a) + sum(two_rooted(v).b)
+
+# A return value that needs both an `sret` buffer and a `returnRoots` array: Julia 1.12+
+# leaves the GC-tracked slots of the buffer undefined and passes those pointers through
+# the roots array only, spelling the write of the remaining inline data as one untyped
+# memcpy. `fixup_1p12_sret!` has to split that memcpy so the undefined bytes never reach
+# the tracked slots (#3566).
+@testset "Sret With ReturnRoots" begin
+    for (f, expected) in (
+            (f_sret_roots_struct, [2.0, 2.0, 2.0]),
+            (f_sret_roots_tuple, [1.0, 1.0, 1.0]),
+            (f_sret_roots_tuple_arr, [2.0, 2.0, 2.0]),
+            (f_sret_roots_two, [5.0, 5.0, 5.0]),
+        )
+        v = [1.0, 2.0, 3.0]
+        dv = zero(v)
+        Enzyme.autodiff(Reverse, f, Active, Duplicated(v, dv))
+        @test dv ≈ expected
+        @test Enzyme.autodiff(Forward, f, Duplicated(v, [1.0, 0.0, 0.0]))[1] ≈ expected[1]
+    end
+end
+
+# A layout whose GC-tracked pointers sit at its very end. Since Julia 1.13.1
+# (JuliaLang/julia#60388) the data half of such a value -- the buffer behind the
+# by-reference argument pointer, or the `sret` buffer next to `returnRoots` -- is
+# shrink-wrapped to the bytes before the trailing pointers. Enzyme's type trees,
+# and the loads and stores it emits for those buffers, must stop there too.
+struct TrailingRoots
+    x::Float64
+    v::Vector{Float64}
+end
+@noinline trailing_arg(s::TrailingRoots, y) = s.x * s.v[1] * y
+f_trailing_arg(v, y) = trailing_arg(TrailingRoots(2.0 * y, v), y)
+
+@noinline trailing_nt_arg(t) = t.a * t.b[1]
+f_trailing_nt_arg(v, a) = trailing_nt_arg((a = a, b = v, c = "str"))
+
+@noinline trailing_ret(v) = TrailingRoots(sum(v), v .* 2)
+f_trailing_ret(v) = trailing_ret(v).x + sum(trailing_ret(v).v)
+
+@noinline function rec_trailing_ret(v, n)
+    n == 0 && return TrailingRoots(sum(v), v .* 2)
+    r = rec_trailing_ret(v, n - 1)
+    return TrailingRoots(2 * r.x, r.v)
+end
+
+@testset "Split layout with trailing roots" begin
+    v = [1.0, 2.0, 3.0]
+    dv = zero(v)
+    _, dy = Enzyme.autodiff(Reverse, f_trailing_arg, Active, Duplicated(v, dv), Active(3.0))[1]
+    @test dv ≈ [18.0, 0.0, 0.0]
+    @test dy ≈ 12.0
+    @test Enzyme.autodiff(Forward, f_trailing_arg, Duplicated(v, [1.0, 0.0, 0.0]), Const(3.0))[1] ≈ 18.0
+
+    dv = zero(v)
+    _, da = Enzyme.autodiff(Reverse, f_trailing_nt_arg, Active, Duplicated(v, dv), Active(3.0))[1]
+    @test dv ≈ [3.0, 0.0, 0.0]
+    @test da ≈ 1.0
+
+    dv = zero(v)
+    Enzyme.autodiff(Reverse, f_trailing_ret, Active, Duplicated(v, dv))
+    @test dv ≈ [3.0, 3.0, 3.0]
+    @test Enzyme.autodiff(Forward, f_trailing_ret, Duplicated(v, [1.0, 0.0, 0.0]))[1] ≈ 3.0
+
+    # The differentiated function itself returns through `sret`/`returnRoots` and
+    # calls itself, so its own call sites go through the recombined convention.
+    res = Enzyme.autodiff(Forward, rec_trailing_ret, Duplicated(v, [1.0, 0.0, 0.0]), Const(2))[1]
+    @test res.x ≈ 4.0
+    @test res.v ≈ [2.0, 0.0, 0.0]
 end
 
 const M_test = [1.0 0.2 0.0; 0.0 1.0 0.1; 0.3 0.0 1.0]
@@ -178,13 +267,13 @@ EnzymeRules.inactive(::typeof(getindices_callconv), args...) = nothing
 end
 
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.RevConfigWidth,
-    func::Const{typeof(my_nuft_callconv!)},
-    ::Type{<:Const},
-    out::EnzymeRules.Annotation,
-    A::EnzymeRules.Annotation,
-    b::EnzymeRules.Annotation,
-)
+        config::EnzymeRules.RevConfigWidth,
+        func::Const{typeof(my_nuft_callconv!)},
+        ::Type{<:Const},
+        out::EnzymeRules.Annotation,
+        A::EnzymeRules.Annotation,
+        b::EnzymeRules.Annotation,
+    )
     primal = EnzymeRules.needs_primal(config) ? out.val : nothing
     shadow = EnzymeRules.needs_shadow(config) ? out.dval : nothing
     func.val(out.val, A.val, b.val)
@@ -192,14 +281,14 @@ function EnzymeRules.augmented_primal(
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfigWidth,
-    ::Const{typeof(my_nuft_callconv!)},
-    ::Type{RT},
-    tape,
-    out::EnzymeRules.Annotation,
-    A::EnzymeRules.Annotation,
-    b::EnzymeRules.Annotation,
-) where {RT}
+        config::EnzymeRules.RevConfigWidth,
+        ::Const{typeof(my_nuft_callconv!)},
+        ::Type{RT},
+        tape,
+        out::EnzymeRules.Annotation,
+        A::EnzymeRules.Annotation,
+        b::EnzymeRules.Annotation,
+    ) where {RT}
     b.dval .+= out.dval .* A.val.b
     fill!(out.dval, 0)
     return (nothing, nothing, nothing)
@@ -290,7 +379,7 @@ end
 
 mutable struct MutableUnion
     u::Vector{Float64}
-    conv::Union{Nothing,Bool}     # Union{Nothing,Int} triggers it too; a plain Bool does NOT
+    conv::Union{Nothing, Bool}     # Union{Nothing,Int} triggers it too; a plain Bool does NOT
 end
 @noinline dispatch(x)::MutableUnion = Base.inferencebarrier(MutableUnion([x], nothing))   # runtime dispatch required
 
@@ -298,4 +387,139 @@ f_mutunion(x) = (m = dispatch(x); m.u[1]^2)
 
 @testset "Typed Alloca restore_alloca_type! with Any field" begin
     @test Enzyme.gradient(Enzyme.Reverse, f_mutunion, 3.0)[1] ≈ 6.0
+end
+
+f_pgcstack_marker(x) = x[1] * x[1]
+
+function caller_pgcstack_marker(x)
+    dx = zero(x)
+    Enzyme.autodiff(Enzyme.Reverse, f_pgcstack_marker, Active, Duplicated(x, dx))
+    return dx
+end
+
+function caller_pgcstack_marker_inline(x)
+    dx = zero(x)
+    Enzyme.autodiff(
+        Enzyme.set_abi(Enzyme.Reverse, Enzyme.InlineABI),
+        f_pgcstack_marker,
+        Active,
+        Duplicated(x, dx),
+    )
+    return dx
+end
+
+caller_pgcstack_marker_onehot(x) = Enzyme.onehot(x)
+
+@testset "No pgcstack marker in the llvmcalls" begin
+    # Julia inlines an llvmcall into its caller. On 1.13 a `julia.get_pgcstack` call in
+    # the caller's entry block delays the push of its GC frame until after that call,
+    # which left `dx` unrooted during the preceding safepoints.
+    for caller in (caller_pgcstack_marker, caller_pgcstack_marker_inline, caller_pgcstack_marker_onehot)
+        ir = sprint() do io
+            InteractiveUtils.code_llvm(
+                io, caller, Tuple{Vector{Float64}};
+                raw = true, optimize = false, dump_module = true
+            )
+        end
+        # Enzyme names the `julia.get_pgcstack` calls it emits `newly_emitted_pgc_stack`.
+        @test !occursin(r"newly_emitted_pgc_stack\S* = call", ir)
+    end
+    @test caller_pgcstack_marker([3.0]) ≈ [6.0]
+    @test caller_pgcstack_marker_inline([3.0]) ≈ [6.0]
+    @test caller_pgcstack_marker_onehot([3.0]) == ([1.0],)
+end
+
+f_gcframe_alloc(x) = sum(abs2, x .* 2.0)
+
+@noinline zero_gcframe(x) = zero(x)
+
+# Collect, then hand the freed cells to arrays of the same size.
+@noinline function gc_and_refill(x)
+    GC.gc(true)
+    keep = Vector{Float64}[]
+    for _ in 1:10_000
+        push!(keep, fill(NaN, length(x)))
+    end
+    return keep
+end
+
+function caller_gcframe(x)
+    dx = zero_gcframe(x)
+    keep = gc_and_refill(x)
+    Enzyme.autodiff(Enzyme.Reverse, f_gcframe_alloc, Active, Duplicated(x, dx))
+    return dx, keep
+end
+
+function caller_gcframe_inline(x)
+    dx = zero_gcframe(x)
+    keep = gc_and_refill(x)
+    Enzyme.autodiff(
+        Enzyme.set_abi(Enzyme.Reverse, Enzyme.InlineABI),
+        f_gcframe_alloc,
+        Active,
+        Duplicated(x, dx),
+    )
+    return dx, keep
+end
+
+@noinline copy_gcframe(x) = copy(x)
+
+function caller_gcframe_onehot(x)
+    y = copy_gcframe(x)
+    keep = gc_and_refill(x)
+    return y, keep, Enzyme.onehot(x)
+end
+
+@testset "Caller roots survive a GC before the llvmcall" begin
+    # The callers are a single block, so the code that Julia inlines from the llvmcall
+    # lands in their entry block. With `InlineABI` that code allocates with the pgcstack
+    # the caller passes to the llvmcall.
+    for caller in (caller_gcframe, caller_gcframe_inline)
+        for _ in 1:5
+            dx, keep = caller([1.0, 2.0])
+            @test dx == [8.0, 16.0]
+            @test all(k -> all(isnan, k), keep)
+        end
+    end
+    # `onehot` allocates its result in an llvmcall of its own.
+    for _ in 1:5
+        y, keep, oh = caller_gcframe_onehot([1.0, 2.0])
+        @test y == [1.0, 2.0]
+        @test all(k -> all(isnan, k), keep)
+        @test oh == ([1.0, 0.0], [0.0, 1.0])
+    end
+end
+
+const libm_inline_ccall = Base.Math.libm
+
+# Julia's codegen caches the library handle of a `ccall` in a `ccalllib_*` global.
+f_inline_ccall(x) = ccall((:erfc, libm_inline_ccall), Float64, (Float64,), x)
+
+const ForwardInline = Enzyme.set_abi(Forward, Enzyme.InlineABI)
+
+d1_inline_ccall(x) = only(autodiff(ForwardInline, f_inline_ccall, Duplicated(x, 1.0)))
+d2_inline_ccall(x) = only(autodiff(ForwardInline, d1_inline_ccall, Duplicated(x, 1.0)))
+d3_inline_ccall(x) = only(autodiff(ForwardInline, d2_inline_ccall, Duplicated(x, 1.0)))
+
+function sum_d1_inline_ccall(xs)
+    s = 0.0
+    for x in xs
+        s += only(autodiff(ForwardInline, f_inline_ccall, Duplicated(x, 1.0)))
+    end
+    return s
+end
+
+d1_default_ccall(x) = only(autodiff(Forward, f_inline_ccall, Duplicated(x, 1.0)))
+d2_default_ccall(x) = only(autodiff(Forward, d1_default_ccall, Duplicated(x, 1.0)))
+d3_default_ccall(x) = only(autodiff(Forward, d2_default_ccall, Duplicated(x, 1.0)))
+
+@testset "InlineABI derivative of a ccall in several callers" begin
+    # With `InlineABI` every caller links in the module of the derivative. A definition
+    # of the `ccalllib_*` global in each of them made the JIT abort with a duplicate symbol.
+    x = 0.3
+    @test d1_inline_ccall(x) ≈ -2 / sqrt(pi) * exp(-x^2)
+    @test d1_inline_ccall(x) ≈ d1_default_ccall(x)
+    @test d2_inline_ccall(x) ≈ d2_default_ccall(x)
+    @test d3_inline_ccall(x) ≈ d3_default_ccall(x)
+    @test sum_d1_inline_ccall([x, x]) ≈ 2 * d1_default_ccall(x)
 end

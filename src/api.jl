@@ -408,6 +408,7 @@ function EnzymeCreateAugmentedPrimal(
     shadowReturnUsed,
     typeInfo,
     uncacheable_args,
+    nowrite_shadows,
     forceAnonymousTape,
     runtimeActivity,
     strongZero,
@@ -433,6 +434,8 @@ function EnzymeCreateAugmentedPrimal(
             UInt8,
             Ptr{UInt8},
             Csize_t,
+            Ptr{UInt8},
+            Csize_t,
             UInt8,
             UInt8,
             UInt8,
@@ -453,6 +456,8 @@ function EnzymeCreateAugmentedPrimal(
         subsequent_calls_may_write,
         uncacheable_args,
         length(uncacheable_args),
+        nowrite_shadows,
+        length(nowrite_shadows),
         forceAnonymousTape,
         runtimeActivity,
         strongZero,
@@ -821,6 +826,15 @@ EnzymeGradientUtilsGetReturnDiffeType(gutils, orig, needsPrimalP, needsShadowP, 
         mode,
     )
 
+EnzymeGradientUtilsGetAugmentedPrimalReturnUsed(gutils, orig) =
+    ccall(
+    (:EnzymeGradientUtilsGetAugmentedPrimalReturnUsed, libEnzyme),
+    UInt8,
+    (EnzymeGradientUtilsRef, LLVMValueRef),
+    gutils,
+    orig,
+)
+
 EnzymeGradientUtilsSubTransferHelper(
     gutils,
     mode,
@@ -1031,14 +1045,6 @@ end
 
 function FreeLogic(logic)
     ccall((:FreeEnzymeLogic, libEnzyme), Cvoid, (EnzymeLogicRef,), logic)
-end
-
-function LogicSetExternalContext(logic, ctx)
-    ccall((:EnzymeLogicSetExternalContext, libEnzyme), Cvoid, (EnzymeLogicRef, Ptr{Cvoid}), logic, ctx)
-end
-
-function LogicGetExternalContext(logic)
-    ccall((:EnzymeLogicGetExternalContext, libEnzyme), Ptr{Cvoid}, (EnzymeLogicRef,), logic)
 end
 
 function EnzymeExtractReturnInfo(ret, data, existed)

@@ -51,10 +51,7 @@ using InteractiveUtils
 function code_typed_helper(mi::Core.MethodInstance, world::UInt, mode::Enzyme.API.CDerivativeMode = Enzyme.API.DEM_ReverseModeCombined; interactive::Bool=false, kwargs...)
     CT = @static if VERSION >= v"1.11.0-DEV.1552"
         EnzymeCacheToken(
-            typeof(DefaultCompilerTarget()),
-            false,
-            GPUCompiler.GLOBAL_METHOD_TABLE, #=job.config.always_inline=#
-            EnzymeCompilerParams,
+            (GPUCompiler.GLOBAL_METHOD_TABLE,),
             world,
             mode == API.DEM_ForwardMode,
             mode != API.DEM_ForwardMode,
@@ -719,12 +716,16 @@ function Base.showerror(io::IO, ece::IllegalTypeAnalysisException)
         print(io, " This usually indicates the use of a Union type, which is not fully supported with Enzyme.API.strictAliasing set to true [the default].\n")
         print(io, " Ideally, remove the union (which will also make your code faster), or try setting Enzyme.API.strictAliasing!(false) before any autodiff call.\n")
         print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
-            if ece.mi !== nothing
-            print(io, " Failure within method: ", ece.mi, "\n")
+        if ece.mi !== nothing
+            print(io, "Failure within method:\n")
+            println(io)
+            pretty_print_mi(ece.mi, io)
+            println(io)
+            println(io)
             printstyled(io, "Hint"; bold = true, color = :cyan)
             printstyled(
                 io,
-                ": catch this exception as `err` and call `code_typed(err)` to inspect the erroneous code.\nIf you have Cthulhu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.";
+                ": catch this exception as `err` and call `code_typed(err)` to inspect the erroneous code.\nIf you have Cthulhu.jl loaded you can also use `code_typed(err; interactive = true)` to interactively introspect the code.\n";
                 color = :cyan,
             )
         end
@@ -938,7 +939,11 @@ function Base.showerror(io::IO, ece::EnzymeNoTypeError)
         print(io, msg, '\n')
     end
     if ece.mi !== nothing
-        print(io, " Failure within method: ", ece.mi, "\n")
+        print(io, "Failure within method:\n")
+        println(io)
+        pretty_print_mi(ece.mi, io)
+        println(io)
+        println(io)
         printstyled(io, "Hint"; bold = true, color = :cyan)
         printstyled(
             io,
@@ -1021,9 +1026,12 @@ function julia_error(
     B::LLVM.API.LLVMBuilderRef,
 )::LLVM.API.LLVMValueRef
     msg = Base.unsafe_string(cstr)
-    julia_error(msg, val, errtype, data, data2, B)
+    # Enzyme also reports from passes that run after the compilation is over (`post_optimize!`).
+    enzyme_ctx = isassigned(ENZYME_CONTEXT) ? ENZYME_CONTEXT[] : nothing
+    julia_error(msg, val, errtype, data, data2, B, enzyme_ctx)
 end
 
+# `enzyme_ctx` is the compilation that ran into the error, `nothing` once it is over.
 function julia_error(
     msg::String,
     val::LLVM.API.LLVMValueRef,
@@ -1031,6 +1039,7 @@ function julia_error(
     data::Ptr{Cvoid},
     data2::LLVM.API.LLVMValueRef,
     B::LLVM.API.LLVMBuilderRef,
+    enzyme_ctx::Union{EnzymeContext, Nothing},
 )::LLVM.API.LLVMValueRef
     bt = nothing
     ir = nothing
@@ -1060,19 +1069,18 @@ function julia_error(
                 end
             end
         elseif val isa LLVM.Function
-            # Need to convert function to string, since when the error is going to be printed
-            # the module might have been destroyed
-            ir = string(val)
+            ir = val
         elseif val isa LLVM.GlobalVariable
-            # Need to convert global to string, since when the error is going to be printed
-            # the module might have been destroyed
-            ir = string(val)
+            ir = val
         else
-            # Need to convert function to string, since when the error is going to be printed
-            # the module might have been destroyed
-            ir = string(parent_scope(val)::LLVM.Function)
+            ir = parent_scope(val)::LLVM.Function
         end
     end
+    # `ir` holds the value whose IR is reported. It is converted to a string,
+    # since when the error is printed the module might have been destroyed --
+    # but only on the paths below that actually report it: printing a whole
+    # function is expensive, and most calls here are recoverable warnings.
+    irstr() = ir === nothing ? nothing : string(ir)
 
     if errtype == API.ET_NoDerivative
         if occursin("No create nofree of empty function", msg) ||
@@ -1085,9 +1093,10 @@ function julia_error(
         if B != C_NULL
             B = IRBuilder(B)
             msg2 = sprint() do io
-                if ir !== nothing
+                scope = irstr()
+                if scope !== nothing
                     print(io, "Current scope: \n")
-                    print(io, ir)
+                    print(io, scope)
                 end
                 print(io, '\n', msg, '\n')
                 if bt !== nothing
@@ -1113,14 +1122,14 @@ function julia_error(
                     f,
                     false,
                 ) #=error=#
-                world = enzyme_extract_world(f)
+                world = enzyme_world()
             elseif isa(val, LLVM.Argument)
                 f = parent_scope(val)::LLVM.Function
                 mi, rt = enzyme_custom_extract_mi(
                     f,
                     false,
                 ) #=error=#
-                world = enzyme_extract_world(f)
+                world = enzyme_world()
             end
             if mi !== nothing
                 emit_error(B, nothing, (msg2, mi, world), EnzymeNoDerivativeError{Core.MethodInstance, UInt}, data2)
@@ -1130,18 +1139,18 @@ function julia_error(
 
             return C_NULL
         end
-        throw(NoDerivativeException(msg, ir, bt))
+        throw(NoDerivativeException(msg, irstr(), bt))
     elseif errtype == API.ET_NoShadow
         gutils = GradientUtils(API.EnzymeGradientUtilsRef(data))
 
         msgN = sprint() do io::IO
             if isa(val, LLVM.Argument)
                 fn = parent_scope(val)::LLVM.Function
-                ir = string(LLVM.name(fn)) * string(function_type(fn))
+                scope = string(LLVM.name(fn)) * string(function_type(fn))
                 print(io, "Current scope: \n")
-                print(io, ir)
+                print(io, scope)
             end
-	    legal, obj = absint(val)
+            legal, obj = absint(val, enzyme_ctx)
 	    if legal
 		obj0 = obj
 		obj = unbind(obj)
@@ -1183,16 +1192,16 @@ function julia_error(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         elseif isa(val, LLVM.Argument)
             f = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         end
-        throw(IllegalTypeAnalysisException(msg, mi, world, sval, ir, bt))
+        throw(IllegalTypeAnalysisException(msg, mi, world, sval, irstr(), bt))
     elseif errtype == API.ET_NoType
         @assert B != C_NULL
         B = IRBuilder(B)
@@ -1204,9 +1213,10 @@ function julia_error(
 
         msg2 = sprint() do io::IO
             if !occursin("Cannot deduce single type of store", msg)
-                if ir !== nothing
+                scope = irstr()
+                if scope !== nothing
                     print(io, "Current scope: \n")
-                    print(io, ir)
+                    print(io, scope)
                 end
                 print(io, "\n Type analysis state: \n")
                 write(io, sval)
@@ -1233,14 +1243,14 @@ function julia_error(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         elseif isa(val, LLVM.Argument)
             f = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         end
         if mi !== nothing
             emit_error(B, nothing, (msg2, mi, world), EnzymeNoTypeError{Core.MethodInstance, UInt})
@@ -1249,7 +1259,7 @@ function julia_error(
         end
         return C_NULL
     elseif errtype == API.ET_IllegalFirstPointer
-        throw(IllegalFirstPointerException(msg, ir, bt))
+        throw(IllegalFirstPointerException(msg, irstr(), bt))
     elseif errtype == API.ET_NoAccumulate
         world = nothing
         mi = nothing
@@ -1260,21 +1270,21 @@ function julia_error(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         elseif isa(val, LLVM.Argument)
             f = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         end
 
         err = if mi !== nothing
-            EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world)
+            EnzymeInternalError{Core.MethodInstance, UInt}(msg, irstr(), bt, mi, world)
         else
 	    world = nothing
-            EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world)
+            EnzymeInternalError{Nothing, Nothing}(msg, irstr(), bt, mi, world)
         end
         throw(err)
     elseif errtype == API.ET_InternalError || errtype == API.ET_ShowInternalError
@@ -1287,21 +1297,21 @@ function julia_error(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         elseif isa(val, LLVM.Argument)
             f = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         end
 
         err = if mi !== nothing
-            EnzymeInternalError{Core.MethodInstance, UInt}(msg, ir, bt, mi, world)
+            EnzymeInternalError{Core.MethodInstance, UInt}(msg, irstr(), bt, mi, world)
         else
 	    world = nothing
-            EnzymeInternalError{Nothing, Nothing}(msg, ir, bt, mi, world)
+            EnzymeInternalError{Nothing, Nothing}(msg, irstr(), bt, mi, world)
         end
                             
         if errtype == API.ET_InternalError 
@@ -1363,7 +1373,7 @@ function julia_error(
             println(io, val)
             println(io, data2)
         end
-        throw(EnzymeInternalError(msg2, ir, bt))
+        throw(EnzymeInternalError(msg2, irstr(), bt))
     elseif errtype == API.ET_MixedActivityError
         data2 = LLVM.Value(data2)
         badval = nothing
@@ -1372,7 +1382,7 @@ function julia_error(
         seen = Dict{LLVM.Value,LLVM.Value}()
         illegal = false
         created = LLVM.Instruction[]
-        world = enzyme_extract_world(LLVM.parent(position(IRBuilder(B))))
+        world = enzyme_world()
         width = get_width(gutils)
         function make_batched(@nospecialize(cur::LLVM.Value), B::LLVM.IRBuilder)::LLVM.Value
             if width == 1
@@ -1438,7 +1448,7 @@ function julia_error(
 else   
             if isa(cur, LLVM.ConstantExpr)
                 larg, off = get_base_and_offset(operands(cur)[1]; inst=first(instructions(position(prevbb))))
-                legal2, obj = absint(larg)
+                    legal2, obj = absint(larg, enzyme_ctx)
                 obj = unbind(obj)
                 if legal2 && is_memory_instance(obj)
                     return make_batched(ncur, prevbb)
@@ -1447,13 +1457,13 @@ else
 
             if isa(cur, LLVM.LoadInst)
                 larg, off = get_base_and_offset(operands(cur)[1]; inst=cur)
-                legal2, obj = absint(larg)
+                    legal2, obj = absint(larg, enzyme_ctx)
                 obj = unbind(obj)
                 if legal2 && is_memory_instance(obj)
                     return make_batched(ncur, prevbb)
                 end
                 if isa(larg, LLVM.LoadInst)
-                    legal2, obj = absint(larg)
+                        legal2, obj = absint(larg, enzyme_ctx)
                     obj = unbind(obj)
                     if legal2 && is_memory_instance(obj)
                         return make_batched(ncur, prevbb)
@@ -1462,14 +1472,14 @@ else
             end
 end
 
-            legal, TT, byref = abs_typeof(cur, true)
+            legal, TT, byref = abs_typeof(cur, enzyme_ctx, true)
 
             if legal
                 if guaranteed_const_nongen(TT, world)
                     return make_batched(ncur, prevbb)
                 end
 
-                legal2, obj = absint(cur)
+                legal2, obj = absint(cur, enzyme_ctx)
 		obj0 = obj
                 # Only do so for the immediate operand/etc to a phi, since otherwise we will make multiple
                 if legal2
@@ -1809,14 +1819,14 @@ end
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         elseif isa(val, LLVM.Argument)
             f = parent_scope(val)::LLVM.Function
             mi, rt = enzyme_custom_extract_mi(
                 f,
                 false,
             ) #=error=#
-            world = enzyme_extract_world(f)
+            world = enzyme_world()
         end
         mode = Enzyme.API.DEM_ReverseModeCombined
 
