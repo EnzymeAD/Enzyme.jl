@@ -13,6 +13,8 @@ export get_trampoline
 
 struct CompilerInstance
     jit::LLVM.JuliaOJIT
+    # the dylib everything is added to, which also defines Enzyme's globals
+    jd::LLVM.JITDylib
     lctm::Union{LLVM.LazyCallThroughManager,Nothing}
     ism::Union{LLVM.IndirectStubsManager,Nothing}
 end
@@ -93,7 +95,9 @@ function setup_globals()
     LLVM.asm_verbosity!(tempTM, true)
     tm[] = tempTM
 
-    jd_main = JITDylib(lljit)
+    # On Julia >= 1.14.0-DEV.2171 this creates a new dylib, so only do it once. Before that,
+    # it is the external dylib of Julia's JIT (and the name is ignored).
+    jd_main = JITDylib(lljit, "enzyme")
 
     prefix = LLVM.get_prefix(lljit)
     dg = LLVM.CreateDynamicLibrarySearchGeneratorForProcess(prefix)
@@ -103,10 +107,10 @@ function setup_globals()
     try
         lctm = LLVM.LocalLazyCallThroughManager(triple(lljit), es)
         ism = LLVM.LocalIndirectStubsManager(triple(lljit))
-        jit[] = CompilerInstance(lljit, lctm, ism)
+        jit[] = CompilerInstance(lljit, jd_main, lctm, ism)
     catch err
         @warn "OrcV2 initialization failed with" err
-        jit[] = CompilerInstance(lljit, nothing, nothing)
+        jit[] = CompilerInstance(lljit, jd_main, nothing, nothing)
     end
 
     jd_main, lljit
@@ -208,7 +212,7 @@ function get_trampoline(job)
     use_primal = mode == API.DEM_ReverseModePrimal
 
     # We could also use one dylib per job
-    jd = JITDylib(lljit)
+    jd = compiler.jd
 
     sym = String(gensym(:func))
     _sym = String(gensym(:func))
@@ -265,15 +269,14 @@ end
 function add!(mod)
     prepare!(mod)
     lljit = jit[].jit
-    jd = LLVM.JITDylib(lljit)
+    jd = jit[].jd
     tsm = move_to_threadsafe(mod)
     LLVM.add!(lljit, jd, tsm)
     return jd
 end
 
 function lookup(name)
-    lljit = jit[].jit
-    LLVM.lookup(lljit, JITDylib(lljit), name)
+    return LLVM.lookup(jit[].jit, jit[].jd, name)
 end
 
 function lookup(jd::JITDylib, name)
