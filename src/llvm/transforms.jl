@@ -67,13 +67,18 @@ end
 
 # Rewrite calls with "jl_roots" to only have the jl_value_t attached and not  { { {} addrspace(10)*, [1 x [2 x i64]], i64, i64 }, [2 x i64] } %unbox110183_replacementA
 function rewrite_ccalls!(mod::LLVM.Module)
+    @dispose B = IRBuilder() begin
+        rewrite_ccalls!(B, mod)
+    end
+    return
+end
+function rewrite_ccalls!(B::IRBuilder, mod::LLVM.Module)
     for f in collect(functions(mod))
         replaceAndErase = Tuple{Instruction, Instruction}[]
         for bb in blocks(f), inst in instructions(bb)
             if isa(inst, LLVM.CallInst)
                 fn = called_operand(inst)
                 changed = false
-                B = IRBuilder()
                 position!(B, inst)
                 if isa(fn, LLVM.Function) && LLVM.name(fn) == "llvm.julia.gc_preserve_begin"
                     uservals = LLVM.Value[]
@@ -1395,30 +1400,34 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
             offs = Union{LLVM.Value, Nothing}[]
             blks = LLVM.BasicBlock[]
 
-            B = LLVM.IRBuilder()
-            position!(B, v)
-
             sPT = if !LLVM.is_opaque(value_type(v))
                 LLVM.PointerType(eltype(value_type(v)), 10)
             else
                 LLVM.PointerType(10)
             end
-            vphi = phi!(B, sPT, "nondecay.vphi." * LLVM.name(v))
-            ophi = phi!(B, value_type(offset), "nondecay.ophi" * LLVM.name(v))
+            vphi, ophi = @dispose B = LLVM.IRBuilder() begin
+                position!(B, v)
+                (
+                    phi!(B, sPT, "nondecay.vphi." * LLVM.name(v)),
+                    phi!(B, value_type(offset), "nondecay.ophi" * LLVM.name(v)),
+                )
+            end
             st.phicache[v] = (vphi, ophi)
 
             bbcache = Dict{BasicBlock, Value}()
             for (vt, bb) in LLVM.incoming(v)
-                b2 = IRBuilder()
-                position!(b2, terminator(bb))
-                v2, o2, hl2 = nodecayed_getparent(st, b2, vt, offset, hasload)
-                if value_type(v2) != sPT
-                    if haskey(bbcache, bb)
-                        v2 = bbcache[bb]
-                    else
-                        v2 = bitcast!(b2, v2, sPT)
-                        bbcache[bb] = v2
+                v2, o2 = @dispose b2 = IRBuilder() begin
+                    position!(b2, terminator(bb))
+                    v2, o2, hl2 = nodecayed_getparent(st, b2, vt, offset, hasload)
+                    if value_type(v2) != sPT
+                        if haskey(bbcache, bb)
+                            v2 = bbcache[bb]
+                        else
+                            v2 = bitcast!(b2, v2, sPT)
+                            bbcache[bb] = v2
+                        end
                     end
+                    (v2, o2)
                 end
 
                 @assert sPT == value_type(v2)
@@ -2527,16 +2536,7 @@ function mayWriteToMemory(@nospecialize(inst::LLVM.Instruction); err_is_readonly
         return true
     end
     if isa(inst, LLVM.CallInst) || isa(inst, LLVM.InvokeInst) || isa(inst, LLVM.CallBrInst)
-        idx = reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex)
-        count = LLVM.API.LLVMGetCallSiteAttributeCount(inst, idx)
-
-        Attrs = Base.unsafe_convert(
-            Ptr{LLVM.API.LLVMAttributeRef},
-            Libc.malloc(sizeof(LLVM.API.LLVMAttributeRef) * count),
-        )
-        LLVM.API.LLVMGetCallSiteAttributes(inst, idx, Attrs)
-        for j in 1:count
-            attr = LLVM.Attribute(unsafe_load(Attrs, j))
+        for attr in collect(function_attributes(inst))
             if kind(attr) == READNONE_ATTR_KIND
                 return false
             end
@@ -2553,7 +2553,6 @@ function mayWriteToMemory(@nospecialize(inst::LLVM.Instruction); err_is_readonly
                 end
             end
         end
-        Libc.free(Attrs)
         return true
     end
     # Ignoring load unordered case

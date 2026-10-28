@@ -434,10 +434,11 @@ function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Boo
                 continue
             end
 	    if opcode(larg) == LLVM.API.LLVMGetElementPtr && pinst isa LLVM.Instruction
-		    b = LLVM.IRBuilder()
-		    position!(b, pinst)
-		    offty = LLVM.IntType(8 * sizeof(Int))
-		    offset2 = API.EnzymeComputeByteOffsetOfGEP(b, larg, offty)
+                offset2 = @dispose b = LLVM.IRBuilder() begin
+                    position!(b, pinst)
+                    offty = LLVM.IntType(8 * sizeof(Int))
+                    API.EnzymeComputeByteOffsetOfGEP(b, larg, offty)
+                end
 		    if isa(offset2, LLVM.ConstantInt)
 			val = convert(Int, offset2)
 			if offsetAllowed || val == 0
@@ -470,10 +471,11 @@ function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Boo
         end
         if isa(larg, LLVM.GetElementPtrInst) &&
                 all(Base.Fix2(isa, LLVM.ConstantInt), operands(larg)[2:end])
-            b = LLVM.IRBuilder()
-            position!(b, larg)
-            offty = LLVM.IntType(8 * sizeof(Int))
-            offset2 = API.EnzymeComputeByteOffsetOfGEP(b, larg, offty)
+            offset2 = @dispose b = LLVM.IRBuilder() begin
+                position!(b, larg)
+                offty = LLVM.IntType(8 * sizeof(Int))
+                API.EnzymeComputeByteOffsetOfGEP(b, larg, offty)
+            end
             if isa(offset2, LLVM.ConstantInt)
                 val = convert(Int, offset2)
                 if offsetAllowed || val == 0
@@ -1050,26 +1052,30 @@ function abs_typeof(
                     indices = operands(arg)[2:end]
 		    if length(indices) == 1 && value_type(indices[1]) isa LLVM.IntegerType
                         idx = indices[1]
-                        
-                        b = LLVM.IRBuilder()
-                        position!(b, arg)
-                        
+
                         source_type = LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(arg))
                         base_ptr = operands(arg)[1]
-                        
-                        tmp_indices_0 = LLVM.Value[LLVM.ConstantInt(value_type(idx), 0)]
-                        tmp_gep_0 = LLVM.gep!(b, source_type, base_ptr, tmp_indices_0)
-                        
-                        tmp_indices_1 = LLVM.Value[LLVM.ConstantInt(value_type(idx), 1)]
-                        tmp_gep_1 = LLVM.gep!(b, source_type, base_ptr, tmp_indices_1)
-                        
-                        offty = LLVM.IntType(8 * sizeof(Int))
-                        offset_0_val = API.EnzymeComputeByteOffsetOfGEP(b, tmp_gep_0, offty)
-                        offset_1_val = API.EnzymeComputeByteOffsetOfGEP(b, tmp_gep_1, offty)
-                        
-                        LLVM.API.LLVMInstructionEraseFromParent(tmp_gep_0)
-                        LLVM.API.LLVMInstructionEraseFromParent(tmp_gep_1)
-                        
+
+                        offset_0_val, offset_1_val = @dispose b = LLVM.IRBuilder() begin
+                            position!(b, arg)
+
+                            tmp_indices_0 = LLVM.Value[LLVM.ConstantInt(value_type(idx), 0)]
+                            tmp_gep_0 = LLVM.gep!(b, source_type, base_ptr, tmp_indices_0)
+
+                            tmp_indices_1 = LLVM.Value[LLVM.ConstantInt(value_type(idx), 1)]
+                            tmp_gep_1 = LLVM.gep!(b, source_type, base_ptr, tmp_indices_1)
+
+                            offty = LLVM.IntType(8 * sizeof(Int))
+                            offsets = (
+                                API.EnzymeComputeByteOffsetOfGEP(b, tmp_gep_0, offty),
+                                API.EnzymeComputeByteOffsetOfGEP(b, tmp_gep_1, offty),
+                            )
+
+                            LLVM.API.LLVMInstructionEraseFromParent(tmp_gep_0)
+                            LLVM.API.LLVMInstructionEraseFromParent(tmp_gep_1)
+                            offsets
+                        end
+
                         if isa(offset_0_val, LLVM.ConstantInt) && isa(offset_1_val, LLVM.ConstantInt)
                             C = convert(Int, offset_0_val)
                             stride = convert(Int, offset_1_val) - C
