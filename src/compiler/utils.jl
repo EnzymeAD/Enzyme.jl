@@ -367,6 +367,12 @@ function get_function!(
         end
     else
         F = LLVM.Function(mod, name, FT)
+        if LLVM.name(F) != name
+            # another kind of global value uses the name, so LLVM gave the function a
+            # different one that nothing would define
+            LLVM.erase!(F)
+            throw(ArgumentError("Module already contains a global value called \"$name\" that is not a function"))
+        end
         for attr in attrs
             push!(function_attributes(F), attr)
         end
