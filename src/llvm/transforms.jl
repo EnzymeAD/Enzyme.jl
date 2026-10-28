@@ -2547,7 +2547,7 @@ function mayWriteToMemory(@nospecialize(inst::LLVM.Instruction); err_is_readonly
             if kind(attr) == kind(StringAttribute("enzyme_error")) && err_is_readonly
                 return false
             end
-            if kind(attr) == kind(StringAttribute("memory"))
+            if LLVM.version().major > 15 && kind(attr) == kind(EnumAttribute("memory"))
                 if is_readonly(MemoryEffect(value(attr)))
                     return false
                 end
