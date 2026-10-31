@@ -9,8 +9,10 @@ module FFI
         using LinearAlgebra
         using ObjectFile
         using Libdl
-        function __init__()
-            return global blas_handle = Libdl.dlopen(BLAS.libblastrampoline)
+        const blas_handle = Ref{Ptr{Cvoid}}(C_NULL)
+        function init!()
+            blas_handle[] = Libdl.dlopen(BLAS.libblastrampoline)
+            return nothing
         end
         function get_blas_symbols()
             symbols = BLAS.get_config().exported_symbols
@@ -21,13 +23,16 @@ module FFI
         end
 
         function lookup_blas_symbol(name::String)
-            return Libdl.dlsym(blas_handle::Ptr{Cvoid}, name; throw_error = false)
+            return Libdl.dlsym(blas_handle[], name; throw_error = false)
         end
     end
 
     const ptr_map = Dict{Ptr{Cvoid}, String}()
 
-    function __init__()
+    # Filled the first time the compiler is used, see `Compiler.ensure_compiler_init!`.
+    function init!()
+        BLASSupport.init!()
+        empty!(ptr_map)
         known_names = (
             "jl_alloc_array_1d",
             "jl_alloc_array_2d",

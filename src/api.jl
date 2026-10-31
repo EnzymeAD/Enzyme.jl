@@ -1457,7 +1457,9 @@ function EnzymeHasCustomAllocatorSupport()
     return true
 end
 
-function __init__()
+# Process-wide settings of enzyme-core. Done when the compiler is first used rather than in
+# `__init__`; see `Compiler.ensure_compiler_init!`.
+function init!()
     ptr = cglobal((:EnzymeJuliaAddrLoad, libEnzyme))
     val = true
     ccall((:EnzymeSetCLBool, libEnzyme), Cvoid, (Ptr{Cvoid}, UInt8), ptr, val)

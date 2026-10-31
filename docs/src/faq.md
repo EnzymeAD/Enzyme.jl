@@ -780,3 +780,66 @@ but finalizers are often used for resource management (like manually allocating 
 to the shadow object. Instead, we define finalizers to be inactive (contain no instructions that are relevant with respect to AD),
 yet we must attach them to the shadow object to release resources attached to them. 
 
+
+## [Standalone binaries with `juliac --trim`](@id faq-juliac)
+
+Enzyme works in programs compiled ahead of time by `juliac` (Julia 1.12 and later),
+including with `--trim`. Nothing special is needed on the Julia side: differentiate with
+`Reverse`, `Forward` and friends as usual.
+
+```julia
+using Enzyme
+
+cubic(x) = x * x * x
+
+Base.@ccallable function d_cubic(x::Float64)::Float64
+    return Enzyme.autodiff(Reverse, cubic, Active(x))[1][1]
+end
+
+Base.@ccallable function main()::Cint
+    println(Core.stdout, d_cubic(2.0))
+    return 0
+end
+```
+
+```
+julia --project=. $(julia -e 'print(Sys.BINDIR)')/../share/julia/juliac/juliac.jl \
+    --output-exe app --experimental --trim=safe --compile-ccallable app.jl
+```
+
+A trimmed program contains no compiler, neither Julia's nor Enzyme's, so Enzyme generates
+every derivative while `juliac` builds the program, and links it into the code that calls it
+(the [`InlineABI`](@ref), which stands in for the default [`FFIABI`](@ref) when trimming; the
+latter calls the derivative through an address of the build process, which means nothing in
+the program). The trimmed binary thus depends neither on Enzyme's nor on LLVM's shared
+libraries. Everything that `--trim` requires of the Julia code it compiles, it requires of
+the code you differentiate too: it must be statically typed enough for the verifier to
+resolve every call.
+
+Known limitations, none of them specific to Enzyme:
+
+- The `__init__` of two packages that Enzyme loads, Pkg's REPL extension (Pkg is a
+  dependency of LazyArtifacts, REPL one of GPUCompiler) and GPUCompiler itself, do not yet
+  pass the trim verifier. Until they are fixed, define them away in your program, the way
+  `juliac-trim-stdlib.jl` does for Pkg itself:
+
+  ```julia
+  using Enzyme
+  let
+      Pkg = Base.maybe_root_module(Base.PkgId(Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b78f"), "Pkg"))
+      if Pkg !== nothing
+          REPLExt = Base.get_extension(Pkg, :REPLExt)
+          REPLExt === nothing || @eval REPLExt __init__() = Base.time_ns()
+      end
+      GPUCompiler = Base.maybe_root_module(Base.PkgId(Base.UUID("61eb1bfa-7361-4325-ad38-22787b887f55"), "GPUCompiler"))
+      GPUCompiler === nothing || @eval GPUCompiler __init__() = Base.time_ns()
+  end
+  ```
+
+- On Linux, a derivative that calls the C math library (the derivative of `sin` calls `cos`)
+  needs it named on the link line, which `juliac` does not do. Tell `juliac` to link it:
+  `JULIA_CC="cc -Wl,--no-as-needed -lm"`.
+
+- `autodiff_deferred` and the code paths that compile on demand (GPU kernels, nested
+  differentiation through `deferred_codegen`) need a JIT, and are not available in a trimmed
+  program.
