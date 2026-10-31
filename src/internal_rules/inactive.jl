@@ -164,3 +164,6 @@ end
 @inline EnzymeRules.inactive_type(v::Type{Core.Compiler.WorldRange}) = true
 @inline EnzymeRules.inactive_type(v::Type{Core.MethodInstance}) = true
 @inline EnzymeRules.inactive_type(v::Type{T}) where {T <: IO} = true
+# An IdSet holds only keys, which, like those of an IdDict, are compared by
+# identity and carry no derivative.
+@inline EnzymeRules.inactive_type(v::Type{T}) where {T <: Base.IdSet} = true

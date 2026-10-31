@@ -241,6 +241,14 @@ const nofreefns = Set{String}((
     "ijl_field_isdefined_checked",
     "jl_idset_peek_bp",
     "ijl_idset_peek_bp",
+        # The rest of IdSet. Like the keys of an IdDict, its keys are compared only by
+        # identity, so these are inactive.
+        "jl_idset_put_key",
+        "ijl_idset_put_key",
+        "jl_idset_put_idx",
+        "ijl_idset_put_idx",
+        "jl_idset_pop",
+        "ijl_idset_pop",
 ))
 
 const inactivefns = Set{String}((
@@ -398,6 +406,14 @@ const inactivefns = Set{String}((
     "ijl_field_isdefined_checked",
     "jl_idset_peek_bp",
     "ijl_idset_peek_bp",
+        # The rest of IdSet. Like the keys of an IdDict, its keys are compared only by
+        # identity, so these are inactive.
+        "jl_idset_put_key",
+        "ijl_idset_put_key",
+        "jl_idset_put_idx",
+        "ijl_idset_put_idx",
+        "jl_idset_pop",
+        "ijl_idset_pop",
     # "jl_"
 ))
 
