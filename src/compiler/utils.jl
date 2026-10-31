@@ -483,6 +483,11 @@ inlines it where it is called, which is the problem that [`use_gcstack_arg!`](@r
 """
 @inline current_pgcstack() = pointer_from_objref(current_task()) + task_gcstack_offset()
 
+# Whether Julia's GC lowering (`getPGCstack` in `llvm-pass-helpers.cpp`) takes the pgcstack
+# of a function from an argument with the `"gcstack"` attribute. Before 1.13 it only looks
+# for a `julia.get_pgcstack` call in the entry block.
+const gc_lowering_finds_gcstack_arg = VERSION >= v"1.13-"
+
 """
     use_gcstack_arg!(f::LLVM.Function, arg::LLVM.Argument)
 
@@ -499,10 +504,24 @@ has the roots of the caller.
 Thus inline the `alwaysinline` functions into `f` here, and replace every
 `julia.get_pgcstack` call in `f` with `arg`, as `LowerPTLS` does for a function that takes
 its pgcstack as an argument.
+
+`f` is not only inlined. The compiler of an image (a package image, or the output of
+`juliac`) partitions the functions of a module to compile them in parallel, and gives `f`,
+which is a function of its own until then, a partition of its own, where it is compiled as
+a function: there the GC lowering must find the pgcstack of `f` by itself, or it leaves the
+intrinsics of `f`, `julia.safepoint` among them, unlowered, and the image does not link.
+From 1.13 the lowering finds an argument with the `"gcstack"` attribute, which `arg` gets.
+Before, it only finds a `julia.get_pgcstack` call in the entry block: when compiling an
+image on those versions, keep one there, and make the inlined code use it instead of `arg`.
+That is the arrangement the paragraph above avoids, and it is fine on those versions: their
+callers get their pgcstack from a call of their own in their entry block, which the lowering
+finds first.
 """
 function use_gcstack_arg!(f::LLVM.Function, arg::LLVM.Argument)
     mod = LLVM.parent(f)
     run!(AlwaysInlinerPass(), mod)
+    argidx = findfirst(==(arg), collect(parameters(f)))
+    push!(parameter_attributes(f, argidx), StringAttribute("gcstack"))
     if !haskey(functions(mod), "julia.get_pgcstack")
         return
     end
@@ -520,8 +539,10 @@ function use_gcstack_arg!(f::LLVM.Function, arg::LLVM.Argument)
     B = IRBuilder()
     position!(B, first(instructions(first(blocks(f)))))
     T_pgcstack = LLVM.return_type(LLVM.function_type(getter))
-    # Before 1.12, a `Ptr{Cvoid}` is an integer in Julia's IR.
-    pgcstack = if value_type(arg) isa LLVM.IntegerType
+    pgcstack = if !gc_lowering_finds_gcstack_arg && generating_output()
+        call!(B, LLVM.function_type(getter), getter, LLVM.Value[], "pgcstack")
+    elseif value_type(arg) isa LLVM.IntegerType
+        # Before 1.12, a `Ptr{Cvoid}` is an integer in Julia's IR.
         inttoptr!(B, arg, T_pgcstack)
     else
         bitcast!(B, arg, T_pgcstack)

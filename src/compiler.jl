@@ -2136,6 +2136,7 @@ function nested_codegen!(
     funcspec::Core.MethodInstance,
     alwaysinline::Bool=false,
 )
+    ensure_compiler_init!()
     enzyme_ctx = enzyme_context()
     world = enzyme_ctx.world
     cache_key = funcspec
@@ -3175,7 +3176,32 @@ for (k, v) in (
     JuliaEnzymeNameMap[k] = v
 end
 
-function __init__()
+##
+# Compiler initialization
+##
+
+# Everything the compiler needs set up in the process, the handlers enzyme-core calls back
+# into, the rule registrations, the ORC JIT, and the symbol tables of `FFI`, used to be done
+# in `__init__`. It is now done the first time something compiles, see
+# `ensure_compiler_init!`. `__init__` methods are roots of an AOT image, and under
+# `juliac --trim` every one of them is compiled, verified and kept. The `@cfunction`s of
+# `init_compiler!` alone reach the whole compiler (and LLVM.jl with it), which is neither
+# verifiable nor wanted in a trimmed binary: the derivatives of a trimmed program are generated
+# while it is built (see `InlineABI`), so its runtime has no use for the compiler. Keeping
+# `__init__` out of the compiler keeps the compiler out of the image, and out of the verifier.
+#
+# Whether the compiler is initialized is per process. The process that compiles may be one that
+# generates an image, Enzyme's own precompilation or a `juliac` build, and the state it leaves
+# must not be inherited: `Base.OncePerProcess` resets itself when serialized. On Julia before
+# 1.12 the pid of the process that initialized stands in, cleared by `__init__` besides, since
+# a process that generates a system image defers `__init__` (see `deferred_module_inits`) and
+# would otherwise inherit the state of the process that precompiled Enzyme.
+
+@noinline function init_compiler!()
+    run_deferred_inits!()
+    API.init!()
+    JIT.init!()
+    FFI.init!()
     API.memmove_warning!(false)
     API.typeWarning!(false)
     API.EnzymeNonPower2Cache!(false)
@@ -3278,6 +3304,126 @@ function __init__()
     )
     register_alloc_rules()
     register_llvm_rules()
+    return nothing
+end
+
+"""
+    ensure_compiler_init!()
+
+Initialize the compiler in this process if that has not been done yet (see
+[`init_compiler!`](@ref)): register the handlers and rules with enzyme-core, set up the JIT,
+and fill the symbol tables of `FFI`. Called at the entry points of compilation. Cheap when
+already initialized.
+"""
+function ensure_compiler_init! end
+
+@static if VERSION >= v"1.12-"
+    const compiler_init_once = Base.OncePerProcess{Nothing}(init_compiler!)
+    @inline ensure_compiler_init!() = compiler_init_once()
+else
+    # The pid of the process that initialized the compiler, 0 for none.
+    const compiler_initialized_pid = Ref(0)
+    const compiler_init_lock = ReentrantLock()
+
+    function __init__()
+        compiler_initialized_pid[] = 0
+        return nothing
+    end
+
+    @inline function ensure_compiler_init!()
+        compiler_initialized_pid[] == getpid() && return nothing
+        return ensure_compiler_init_slow!()
+    end
+
+    @noinline function ensure_compiler_init_slow!()
+        lock(compiler_init_lock)
+        try
+            if compiler_initialized_pid[] != getpid()
+                init_compiler!()
+                compiler_initialized_pid[] = getpid()
+            end
+        finally
+            unlock(compiler_init_lock)
+        end
+        return nothing
+    end
+end
+
+"""
+    deferred_module_inits() -> Bool
+
+Say if Julia defers the `__init__` of the packages this process loads to the start of the
+image it generates. It does so in a process that generates a system image, `--output-o`
+without `--output-incremental`, which is how `juliac` runs: nothing has initialized in that
+process, in particular no JLL has located its library.
+"""
+deferred_module_inits()::Bool = generating_output() && Base.JLOptions().incremental == 0
+
+"""
+    init_jll!(jll::Module, libs::Symbol...)
+
+Run the deferred `__init__` of the JLL `jll`, so that `ccall`s into its libraries `libs` find
+them in this process. The image `__init__` was deferred to runs it again at its start, and
+keeps a library path it finds already set; unset the paths `__init__` found here so that the
+image looks the libraries up where it runs, not where it was built.
+"""
+function init_jll!(jll::Module, libs::Symbol...)
+    isdefined(jll, :__init__) || return nothing
+    jll.__init__()
+    for lib in libs
+        path = Symbol(lib, :_path)
+        if isdefined(jll, path)
+            setglobal!(jll, path, nothing)
+        end
+    end
+    return nothing
+end
+
+"""
+    with_depot_path(f)
+
+Call `f()` with `DEPOT_PATH` set. The build script of `juliac` empties `DEPOT_PATH` (and
+`LOAD_PATH`) before the image is compiled, so that the image does not carry the depots of the
+machine it was built on, and the generated functions of Enzyme are expanded after that; the
+JLLs locate their libraries through the artifacts of a depot. Set the depots up the way the
+build script did, with `Base.init_depot_path`, for the duration of `f`, and empty them again.
+"""
+function with_depot_path(f::F) where {F}
+    isempty(DEPOT_PATH) || return f()
+    Base.init_depot_path()
+    try
+        return f()
+    finally
+        empty!(DEPOT_PATH)
+    end
+end
+
+"""
+    run_deferred_inits!()
+
+Under [`deferred_module_inits`](@ref), initialize what the compiler links against, which
+Julia would otherwise do only when the generated image starts: the JLLs of Enzyme's and LLVM's
+libraries (see [`init_jll!`](@ref)), so that the `ccall`s into them find them, and the error
+handlers of LLVM.jl, which turn a fatal error of LLVM into an exception. The compiler runs in
+this process when a generated function of Enzyme is expanded, which is how the derivatives of
+a `juliac` program are built.
+
+The rest of the `__init__` of LLVM.jl and GPUCompiler is not needed here: they register
+`atexit` hooks, which a process that is already exiting, as the one that compiles its output
+is, refuses.
+"""
+function run_deferred_inits!()
+    deferred_module_inits() || return nothing
+    with_depot_path() do
+        if isdefined(LLVM.API, :LLVMExtra_jll)
+            init_jll!(LLVM.API.LLVMExtra_jll, :libLLVMExtra)
+        end
+        init_jll!(Enzyme_jll, :libEnzyme, :libEnzymeBCLoad)
+    end
+    if isdefined(LLVM, :_install_handlers)
+        LLVM._install_handlers()
+    end
+    return nothing
 end
 
 # FIXME: Use params.parent in more places where we rely on the behavior of the underlying 
@@ -3401,6 +3547,7 @@ function enzyme!(
     removedRoots::Set{Int},
         enzyme_ctx::EnzymeContext,
 )
+    ensure_compiler_init!()
     if DumpPreEnzyme[]
         API.EnzymeDumpModuleRef(mod.ref)
     end
@@ -6347,6 +6494,7 @@ function link_split_existing!(mod::LLVM.Module, newmod::LLVM.Module)
 end
 
 function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeTarget})
+    ensure_compiler_init!()
     # Every compilation runs under its own context; a nested compilation gets
     # its own and hands the outer one back when it returns.
     mod, meta = @with ENZYME_CONTEXT => EnzymeContext(job.world) begin
@@ -8420,6 +8568,37 @@ shadow-return ABI in `create_abi_wrapper` and `enzyme_call` asserts.
     end
 end
 
+"""
+    trimming() -> Bool
+
+Say if this process compiles a trimmed AOT image (`juliac --trim`). What it compiles then
+runs in a binary without Julia's compiler, and without Enzyme's: no code can be generated or
+looked up at run time, and no address of this process means anything there.
+"""
+@static if VERSION >= v"1.12-" && hasfield(Base.JLOptions, :trim)
+    trimming()::Bool = generating_output() && Base.JLOptions().trim != 0
+else
+    trimming()::Bool = false
+end
+
+"""
+    aot_abi(ABI) -> Type{<:ABI}
+
+The ABI a thunk requested with `ABI` is compiled under in this process.
+
+`FFIABI` calls the derivative through the address the JIT gave it, which is baked into the
+code of the caller. Under [`trimming`](@ref) that code is all that reaches the binary, and the
+address is dead there. `InlineABI` links the derivative into the code of the caller instead,
+as `Base.llvmcall` IR, which the AOT compiler takes along with everything else; it stands in
+for `FFIABI` when trimming. Other ABIs are kept as requested.
+"""
+@inline function aot_abi(@nospecialize(ABI::Type))
+    if ABI <: FFIABI && trimming()
+        return InlineABI
+    end
+    return ABI
+end
+
 @inline function thunkbase(
     mi::Core.MethodInstance,
     World::Union{UInt, Nothing},
@@ -8437,6 +8616,8 @@ end
     StrongZero::Bool,
     edges::Union{Nothing, Vector{Any}}
 )
+    ensure_compiler_init!()
+    ABI = aot_abi(ABI)
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(
         Tuple{FA,TT.parameters...},

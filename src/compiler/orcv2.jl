@@ -31,8 +31,20 @@ end
 const jit = Ref{CompilerInstance}()
 const tm = Ref{TargetMachine}() # for opt pipeline
 
-get_tm() = tm[]
-get_jit() = jit[].jit
+# The JIT is set up the first time the compiler is used, see
+# `Compiler.ensure_compiler_init!`; every accessor of it goes through that.
+function get_tm()
+    Compiler.ensure_compiler_init!()
+    return tm[]
+end
+function get_jit()
+    Compiler.ensure_compiler_init!()
+    return jit[].jit
+end
+function get_instance()
+    Compiler.ensure_compiler_init!()
+    return jit[]
+end
 
 symbol_pair_type() =
     LLVM.version() >= v"15" ? LLVM.API.LLVMOrcCSymbolMapPair : LLVM.API.LLVMJITCSymbolMapPair
@@ -112,7 +124,7 @@ function setup_globals()
     jd_main, lljit
 end
 
-function __init__()
+function init!()
     jd_main, lljit = setup_globals()
 
     if Sys.iswindows() && Int === Int64
@@ -133,9 +145,15 @@ function __init__()
     end
     LLVM.define(jd_main, LLVM.absolute_symbols(pairs))
 
-    atexit() do
-        dispose(tm[])
+    # A process that generates output runs its `atexit` hooks before it compiles that output
+    # (`jl_atexit_hook`), and the generated functions of Enzyme compile then: the target
+    # machine must outlive the hooks there.
+    if !Compiler.generating_output()
+        atexit() do
+            dispose(tm[])
+        end
     end
+    return nothing
 end
 
 function move_to_threadsafe(ir)
@@ -198,7 +216,7 @@ function prepare!(mod)
 end
 
 function get_trampoline(job)
-    compiler = jit[]
+    compiler = get_instance()
     lljit = compiler.jit
     lctm = compiler.lctm
     ism = compiler.ism
@@ -267,7 +285,7 @@ end
 
 function add!(mod)
     prepare!(mod)
-    lljit = jit[].jit
+    lljit = get_jit()
     jd = LLVM.JITDylib(lljit)
     tsm = move_to_threadsafe(mod)
     LLVM.add!(lljit, jd, tsm)
@@ -275,12 +293,12 @@ function add!(mod)
 end
 
 function lookup(name)
-    lljit = jit[].jit
+    lljit = get_jit()
     LLVM.lookup(lljit, JITDylib(lljit), name)
 end
 
 function lookup(jd::JITDylib, name)
-    LLVM.lookup(jit[].jit, jd, name)
+    return LLVM.lookup(get_jit(), jd, name)
 end
 
 end # module
