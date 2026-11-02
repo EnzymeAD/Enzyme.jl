@@ -291,9 +291,14 @@ function typetree_inner(
     seen::TypeTreeTable,
 ) where {T}
     tt = copy(typetree(T == UInt8 ? Nothing : T, ctx, dl, seen))
-    if !allocatedinline(T) && Base.isconcretetype(T)
+    @static if Base.USE_GPL_LIBS
+        cholmod_exception = T != SparseArrays.cholmod_dense_struct && T != SparseArrays.cholmod_sparse_struct && T != SparseArrays.cholmod_factor_struct
+    else
+        cholmod_exception = true
+    end
+    if !allocatedinline(T) && Base.isconcretetype(T) && cholmod_exception
         merge!(tt, TypeTree(API.DT_Pointer, ctx))
-        only!(tt, 0)
+        only!(tt, -1)
     end
     merge!(tt, TypeTree(API.DT_Pointer, ctx))
     only!(tt, -1)
@@ -305,6 +310,11 @@ end
         offset = 0
 
         tt = copy(typetree(Ptr{T}, ctx, dl, seen))
+        if !allocatedinline(T)
+            st0 = TypeTree(API.DT_Pointer, -1, ctx)
+            only!(st0, -1)
+            merge!(tt, st0)
+        end
         shift!(tt, dl, 0, sizeof(Int), offset)
 
         offset += sizeof(Ptr{Cvoid})
