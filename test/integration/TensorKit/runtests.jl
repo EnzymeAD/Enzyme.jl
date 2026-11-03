@@ -1,22 +1,25 @@
-using Test, TensorKit, Random, Enzyme, EnzymeTestUtils, TupleTools
+using Test, TensorKit, Random, StableRNGs, Enzyme, EnzymeTestUtils, TupleTools
 using TensorKit.VectorInterface: One, Zero
+
+Random.seed!(123456)
+const rng = StableRNG(123456)
 
 Enzyme.Compiler.RunAttributor[] = false
 
 default_tol(::Type{<:Union{Float32, Complex{Float32}}}) = 1.0e-2
 default_tol(::Type{<:Union{Float64, Complex{Float64}}}) = 1.0e-5
 
-function randindextuple(N::Int, k::Int = rand(0:N))
+function randindextuple(N::Int, k::Int = rand(rng, 0:N))
     @assert 0 ≤ k ≤ N
-    _p = randperm(N)
+    _p = randperm(rng, N)
     return (tuple(_p[1:k]...), tuple(_p[(k + 1):end]...))
 end
 
-function randcircshift(N₁::Int, N₂::Int, k::Int = rand(0:(N₁ + N₂)))
+function randcircshift(N₁::Int, N₂::Int, k::Int = rand(rng, 0:(N₁ + N₂)))
     N = N₁ + N₂
     @assert 0 ≤ k ≤ N
     p = TupleTools.vcat(ntuple(identity, N₁), reverse(ntuple(identity, N₂) .+ N₁))
-    n = rand(0:N)
+    n = rand(rng, 0:N)
     _p = TupleTools.circshift(p, n)
     return (tuple(_p[1:k]...), reverse(tuple(_p[(k + 1):end]...)))
 end
