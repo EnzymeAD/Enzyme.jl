@@ -377,6 +377,46 @@ function add_edge!(edges::Vector{Any}, mi::Core.MethodInstance)
     return edges
 end
 
+"""
+    add_dispatch_edge!(edges, sig, world)
+
+Add the edge for a call of signature `sig` dispatched in `world`: the method instance the
+call resolves to, so that a method defined later that takes the call over invalidates the
+code, or, when no method matches, the signature itself, so that defining one does.
+
+A generator that calls a function packages add methods to, and bakes the result into the
+code it returns, records the call with this so that the code is only as old as the methods
+it was built from.
+"""
+function add_dispatch_edge!(edges::Vector{Any}, @nospecialize(sig::Type), world::UInt)
+    match = Base._which(sig; world, raise = false)
+    if match === nothing
+        return add_edge!(edges, sig)
+    end
+    mi = Core.Compiler.specialize_method(match::Core.MethodMatch)
+    return add_edge!(edges, mi::Core.MethodInstance)
+end
+
+"""
+    lower_generated_body(mod, stub, world, source, ex)
+
+Lower the expression `ex` a generator built into the `Core.CodeInfo` the generator
+returns, so that the generator can set the `CodeInfo`'s edges. The `stub` names the slots
+(`Core.GeneratedFunctionStub(identity, slotnames, Core.svec())`); `ex` must not refer to
+static parameters, the generator interpolates their values instead.
+
+Since Julia 1.12 the stub lowers the expression itself. Before, the runtime lowered the
+expression after the generator returned, which is too late to set edges.
+"""
+function lower_generated_body(mod::Module, stub::Core.GeneratedFunctionStub, world::UInt, source::Union{Method, LineNumberNode}, @nospecialize(ex))
+    @static if VERSION >= v"1.12-"
+        return stub(world, source, ex)::Core.CodeInfo
+    else
+        lam = stub(world, source, ex)
+        return ccall(:jl_expand_and_resolve, Any, (Any, Any, Any), lam, mod, Core.svec())::Core.CodeInfo
+    end
+end
+
 @inline function my_methodinstance(@nospecialize(method_table::Union{Core.Compiler.MethodTableView, Nothing}), @nospecialize(ft::Type), @nospecialize(tt::Type), world::UInt, min_world::Union{Nothing, Base.RefValue{UInt}}=nothing, max_world::Union{Nothing, Base.RefValue{UInt}}=nothing)::Union{Core.MethodInstance, Nothing}
 
     if min_world === nothing

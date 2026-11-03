@@ -197,7 +197,119 @@ end
     end
 end
 
-"""
+# The generator of `gradient(::ReverseMode, f, x, args...)`.
+#
+# How an argument is annotated follows from the activity of its type, which depends on the
+# methods of `world` (the hooks packages add methods to). The generator computes it with
+# `active_reg_with_deps` in `world` and gives the code it returns edges to those methods.
+# A `@generated` function cannot do either: its generator runs in the world its method was
+# defined in, and it returns an expression that carries no edges.
+function gradient_generator(world::UInt, source::Union{Method, LineNumberNode}, F, ty_0, ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, N, self, rm, f, x, args)
+    @nospecialize
+    rargs = Union{Symbol,Expr}[:x]
+    gentys = Type[ty_0]
+    acts = Symbol[Symbol("act_0")]
+
+    for i = 1:N
+        argidx = quote
+            args[$i]
+        end
+        push!(rargs, argidx)
+        sym = Symbol("act_$i")
+        push!(acts, sym)
+        push!(gentys, args[i])
+    end
+
+    toemit = Expr[]
+    states = Compiler.ActivityState[]
+    edges = Any[]
+
+    for (argidx, act, genty) in zip(rargs, acts, gentys)
+        if genty <: Enzyme.Const
+            push!(
+                toemit,
+                quote
+                    $act = false
+                end
+            )
+            push!(states, Compiler.AnyState)
+        else
+            state, deps = Compiler.active_reg_with_deps(genty, world, false, false, false)
+            Compiler.add_activity_edges!(edges, deps, world)
+            push!(states, state)
+        end
+    end
+
+    idx = 0
+    enz_args = Union{Expr,Symbol}[]
+    resargs = Union{Expr,Symbol}[]
+    for (i, (arg, act, state, genty)) in enumerate(zip(rargs, acts, states, gentys))
+        shad = Symbol("shad_$i")
+        if genty <: Enzyme.Const
+            push!(enz_args, arg)
+            push!(resargs, :nothing)
+        elseif state == Compiler.MixedState
+            push!(toemit, quote
+                $shad = Ref(make_zero($arg))
+            end)
+            push!(enz_args, quote
+                MixedDuplicated($arg, $shad)
+            end)
+            push!(resargs, quote
+                $shad[]
+            end)
+        elseif state == Compiler.DupState
+            push!(toemit, quote
+                $shad = make_zero($arg)
+            end)
+            push!(enz_args, quote
+                Duplicated($arg, $shad)
+            end)
+            push!(resargs, quote
+                $shad
+            end)
+        elseif state == Compiler.ActiveState
+            push!(enz_args, quote
+                Active($arg)
+            end)
+            push!(resargs, quote
+                res[1][$i]
+            end)
+        else
+            @assert state == Compiler.AnyState
+            push!(enz_args, quote
+                Const($arg)
+            end)
+            push!(resargs, :nothing)
+        end
+        idx += 1
+    end
+    push!(toemit, quote
+        res = autodiff(rm, f, Active, $(enz_args...))
+    end)
+
+    body = if ReturnPrimal
+        quote
+            Base.@_inline_meta
+            $(toemit...)
+            (; derivs = ($(resargs...),), val = res[2])
+        end
+    else
+        quote
+            Base.@_inline_meta
+            $(toemit...)
+            ($(resargs...),)
+        end
+    end
+
+    slotnames = Core.svec(Symbol("#self#"), :rm, :f, :x, :args)
+    stub = Core.GeneratedFunctionStub(identity, slotnames, Core.svec())
+    ci = lower_generated_body(@__MODULE__, stub, world, source, body)
+    ci.edges = edges
+    return ci
+end
+
+@eval @doc """
     gradient(::ReverseMode, f, args...)
 
 Compute the gradient of a real-valued function `f` using reverse mode.
@@ -273,108 +385,14 @@ grad = gradient(ReverseWithPrimal, mul, [2.0], Const([3.0]))
 (derivs = ([3.0], nothing), val = 6.0)
 ```
 
-"""
-@generated function gradient(
-    rm::ReverseMode{ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten},
-    f::F,
-    x::ty_0,
-    args::Vararg{Any,N},
-) where {F,ty_0,ReturnPrimal,RuntimeActivity,StrongZero,ABI,Holomorphic,ErrIfFuncWritten,N}
-    # TODO eventually add an invalidation edge here from inactive_type
-    rargs = Union{Symbol,Expr}[:x]
-    gentys = Type[x]
-    acts = Symbol[Symbol("act_0")]
-
-    for i = 1:N
-        argidx = quote
-            args[$i]
-        end
-        push!(rargs, argidx)
-        sym = Symbol("act_$i")
-        push!(acts, sym)
-        push!(gentys, args[i])
-    end
-
-    toemit = Expr[]
-    states = Compiler.ActivityState[]
-
-    for (argidx, act, genty) in zip(rargs, acts, gentys)
-        if genty <: Enzyme.Const
-            push!(
-                toemit,
-                quote
-                    $act = false
-                end
-            )
-            push!(states, Compiler.AnyState)
-        else
-            # TODO we need to make this call the worldage one
-            state = Compiler.active_reg_nothrow(genty)
-            push!(states, state)
-        end
-    end
-
-    idx = 0
-    enz_args = Union{Expr,Symbol}[]
-    resargs = Union{Expr,Symbol}[]
-    for (i, (arg, act, state, genty)) in enumerate(zip(rargs, acts, states, gentys))
-        shad = Symbol("shad_$i")
-        if genty <: Enzyme.Const
-            push!(enz_args, arg)
-            push!(resargs, :nothing)
-        elseif state == Compiler.MixedState
-            push!(toemit, quote
-                $shad = Ref(make_zero($arg))
-            end)
-            push!(enz_args, quote
-                MixedDuplicated($arg, $shad)
-            end)
-            push!(resargs, quote
-                $shad[]
-            end)
-        elseif state == Compiler.DupState
-            push!(toemit, quote
-                $shad = make_zero($arg)
-            end)
-            push!(enz_args, quote
-                Duplicated($arg, $shad)
-            end)
-            push!(resargs, quote
-                $shad
-            end)
-        elseif state == Compiler.ActiveState
-            push!(enz_args, quote
-                Active($arg)
-            end)
-            push!(resargs, quote
-                res[1][$i]
-            end)
-        else
-            @assert state == Compiler.AnyState
-            push!(enz_args, quote
-                Const($arg)
-            end)
-            push!(resargs, :nothing)
-        end
-        idx += 1
-    end
-    push!(toemit, quote
-        res = autodiff(rm, f, Active, $(enz_args...))
-    end)
-
-    if ReturnPrimal
-        return quote
-            Base.@_inline_meta
-            $(toemit...)
-            (; derivs = ($(resargs...),), val = res[2])
-        end
-    else
-        return quote
-            Base.@_inline_meta
-            $(toemit...)
-            ($(resargs...),)
-        end
-    end
+""" function gradient(
+        rm::ReverseMode{ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten},
+        f::F,
+        x::ty_0,
+        args::Vararg{Any, N},
+    ) where {F, ty_0, ReturnPrimal, RuntimeActivity, StrongZero, ABI, Holomorphic, ErrIfFuncWritten, N}
+    $(Expr(:meta, :generated_only))
+    $(Expr(:meta, :generated, gradient_generator))
 end
 
 """
