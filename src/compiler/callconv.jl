@@ -625,7 +625,7 @@ function invoke_codegen!(
 end
 
 """
-    materialize_native_invokes!(mode, mod)
+    materialize_native_invokes!(mode, mod, method_table)
 
 Give every natively called function that `mod` declares a body, so that
 the differentiation of `mod` can differentiate through it.
@@ -639,10 +639,19 @@ is an opaque call to the outer differentiation. This emits the rule with
 `nested_codegen!`, as an `:inline` rule, and defines the declaration as an
 always-inline wrapper that forwards to it. The wrapper drops the
 `pgcstack` parameter when the emitted rule takes none.
+
+Neither a derivative-free callee nor one the differentiation of `mod` has a
+custom rule for (see `bind_native_callees!`) needs a body: `mod` calls the
+rule, or the declaration as is. A function with a custom rule only for
+another mode, such as the primal of a reverse rule in a derivative that is
+differentiated in forward mode, gets one like a rule, and loses the marks
+the inner differentiation gave it for the rule handlers (see
+[`drop_stale_custom_marks!`](@ref)).
 """
-function materialize_native_invokes!(mode::API.CDerivativeMode, mod::LLVM.Module)
+function materialize_native_invokes!(mode::API.CDerivativeMode, mod::LLVM.Module, method_table)
     enzyme_ctx = enzyme_context()
     world = enzyme_ctx.world
+    drop_stale_custom_marks!(mode, mod, world, method_table)
     marker = StringAttribute("enzymejl_native_invoke")
     for fn in collect(functions(mod))
         isdeclaration(fn) || continue
@@ -650,6 +659,8 @@ function materialize_native_invokes!(mode::API.CDerivativeMode, mod::LLVM.Module
         # A callee Enzyme never differentiates needs no body (see `bind_native_callees!`).
         has_fn_attr(fn, StringAttribute("enzymejl_native_inactive")) && continue
         mi, RT = enzyme_custom_extract_mi(fn)
+        # Nor does one the rule handlers handle (see `handle_compiled`).
+        has_mode_rule(mode, mi, world, method_table) && continue
         llvmf = nested_codegen!(mode, mod, mi, true)
         check_specsig(llvmf, mi, enzyme_custom_extract_mi(llvmf)[2])
         # `nested_codegen!` defers linking the emitted module until after
@@ -694,6 +705,52 @@ function materialize_native_invokes!(mode::API.CDerivativeMode, mod::LLVM.Module
         delete!(fattrs, marker)
         push!(fattrs, EnumAttribute("alwaysinline"))
         linkage!(fn, LLVM.API.LLVMInternalLinkage)
+    end
+    return nothing
+end
+
+"""
+    has_mode_rule(mode, mi, world, method_table) -> Bool
+
+Say if differentiating in `mode` applies a custom rule to calls of `mi`: a forward
+rule in forward mode and a reverse rule otherwise, as `handle_compiled` decides.
+"""
+function has_mode_rule(mode::API.CDerivativeMode, mi::Core.MethodInstance, world::UInt, method_table)::Bool
+    specTypes = Interpreter.simplify_kw(mi.specTypes)
+    if mode == API.DEM_ForwardMode
+        return cached_has_frule(specTypes, world, method_table)
+    else
+        return cached_has_rrule(specTypes, world, method_table)
+    end
+end
+
+"""
+    drop_stale_custom_marks!(mode, mod, world, method_table)
+
+Remove the marks `handle_compiled` gives a function with a custom rule (`enzyme_math`
+set to `enzyme_custom`, and the preserved primal) from every function of `mod` that the
+differentiation of `mod` in `mode` has no rule for. Only a derivative linked into `mod`
+for nested differentiation has such marks yet: its own differentiation, in another mode,
+had a rule for the function. The differentiation of `mod` must differentiate through
+the function instead, and `handle_compiled` marks again the functions it does have a
+rule for.
+"""
+function drop_stale_custom_marks!(mode::API.CDerivativeMode, mod::LLVM.Module, world::UInt, method_table)
+    for fn in functions(mod)
+        is_custom = false
+        for attr in collect(function_attributes(fn))
+            if attr isa StringAttribute && kind(attr) == "enzyme_math" && LLVM.value(attr) == "enzyme_custom"
+                is_custom = true
+                break
+            end
+        end
+        is_custom || continue
+        mi, _ = enzyme_custom_extract_mi(fn, false)
+        mi isa Core.MethodInstance || continue
+        has_mode_rule(mode, mi, world, method_table) && continue
+        fattrs = function_attributes(fn)
+        delete!(fattrs, StringAttribute("enzyme_math"))
+        delete!(fattrs, StringAttribute(PRESERVEPRIMAL_ATTR_KIND))
     end
     return nothing
 end
