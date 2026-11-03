@@ -39,6 +39,9 @@ using EnzymeCore
     @testset "Mode modification" begin
         include("mode_modification.jl")
     end
+    @testset "Adapt" begin
+        include("adapt.jl")
+    end
 end
 
 @testset "within_autodiff" begin
