@@ -1629,12 +1629,11 @@ end
     return fmi, (args, TT, fwd_RT, kwtup, RT, needsPrimal, RealRt, origNeedsPrimal, activity, C)
 end
 
-@inline function has_easy_rule_from_call(orig::LLVM.CallInst, gutils::GradientUtils)::Bool
-    fn = LLVM.parent(LLVM.parent(orig))
+@inline function has_readonly_rule_from_call(orig::LLVM.CallInst, gutils::GradientUtils)::Bool
     world = enzyme_world()
-    mi, RealRt = enzyme_custom_extract_mi(orig)
+    mi, _ = enzyme_custom_extract_mi(orig)
     specTypes = Interpreter.simplify_kw(mi.specTypes)
-    return EnzymeRules.has_easy_rule_from_sig(specTypes; world)
+    return cached_has_readonly_rule(specTypes, world)
 end
 
 @inline function has_rule(orig::LLVM.CallInst, gutils::GradientUtils)::Bool
@@ -1649,8 +1648,8 @@ end
         end
     end
 
-    # Having an easy rule for a constant instruction -> no rule override
-    if has_easy_rule_from_call(orig, gutils) && is_constant_inst(gutils, orig)
+    # Having a readonly rule for a constant instruction -> no rule override
+    if has_readonly_rule_from_call(orig, gutils) && is_constant_inst(gutils, orig)
         return false
     end
 

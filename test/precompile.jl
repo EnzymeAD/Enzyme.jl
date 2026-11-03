@@ -178,7 +178,7 @@ end
         C = Enzyme.Compiler
         sizes = (length(C.cache), length(C.autodiff_cache), length(Enzyme.tape_cache),
                  length(C.FRULE_CACHE), length(C.RRULE_CACHE), length(C.INACTIVE_CACHE),
-                 length(C.EASY_RULE_CACHE), length(C.NOALIAS_CACHE),
+                 length(C.ATTRIBUTE_PRESERVING_RULE_CACHE), length(C.READONLY_RULE_CACHE), length(C.NOALIAS_CACHE),
                  length(C.Interpreter.SigCache), length(C.ActivityCache),
                  length(C.ActivityMethodCache), Int(C.ActivityWorldCache[]),
                  length(C.JIT.hnd_string_map), length(C.JIT.hnd_int_map))

@@ -228,7 +228,8 @@ mycube(x) = x^3
 EnzymeRules.@easy_rule(mycube(x::LocalFloat), (3 * x^2,))
 
 @testset "EasyRule with an argument type of the calling module" begin
-    @test EnzymeRules.has_easy_rule(mycube, 2.0)
+    @test EnzymeRules.has_readonly_rule(mycube, 2.0)
+    @test EnzymeRules.has_attribute_preserving_rule(mycube, 2.0)
     @test autodiff(Forward, mycube, Duplicated(2.0, 1.0))[1] ≈ 12.0
     @test autodiff(Reverse, mycube, Active, Active(2.0))[1][1] ≈ 12.0
 end

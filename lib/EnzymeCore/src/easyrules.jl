@@ -1,13 +1,40 @@
 ############################################################################################
 ### @easy_rule
 
-function has_easy_rule end
+"""
+    has_attribute_preserving_rule(func::typeof(f), args...; kwargs...)
 
-function has_easy_rule_from_sig(@nospecialize(TT);
+Mark a function with a custom rule as accessing no more of its arguments in the custom rule
+than its primal body accesses (enabling full parameter attribute inference from the body).
+Automatically defined by [`EnzymeRules.@easy_rule`](@ref).
+
+This function is currently considered internal/experimental and may not respect semver.
+"""
+function has_attribute_preserving_rule end
+
+function has_attribute_preserving_rule_from_sig(@nospecialize(TT);
                               world::UInt=Base.get_world_counter(),
                               method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
                               caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
-    return isapplicable(has_easy_rule, TT; world, method_table, caller)
+    return isapplicable(has_attribute_preserving_rule, TT; world, method_table, caller)
+end
+
+"""
+    has_readonly_rule(func::typeof(f), args...; kwargs...)
+
+Mark a function with a custom rule as only reading its arguments locally (or throwing) and
+allowing constant calls to bypass the rule. Automatically defined by
+[`EnzymeRules.@easy_rule`](@ref).
+
+This function is currently considered internal/experimental and may not respect semver.
+"""
+function has_readonly_rule end
+
+function has_readonly_rule_from_sig(@nospecialize(TT);
+                              world::UInt=Base.get_world_counter(),
+                              method_table::Union{Nothing,Core.Compiler.MethodTableView}=nothing,
+                              caller::Union{Nothing,Core.MethodInstance,Core.Compiler.MethodLookupResult}=nothing)
+    return isapplicable(has_readonly_rule, TT; world, method_table, caller)
 end
 
 
@@ -759,7 +786,8 @@ macro easy_rule(call, maybe_setup, partials...)
 
     # Final return: building the expression to insert in the place of this macro
     quote
-        EnzymeRules.has_easy_rule(::Core.Typeof($f), $(esc.(normal_inputs)...)) = true
+        EnzymeRules.has_readonly_rule(::Core.Typeof($f), $(esc.(normal_inputs)...)) = true
+        EnzymeRules.has_attribute_preserving_rule(::Core.Typeof($f), $(esc.(normal_inputs)...)) = true
         $(frule_expr)
         $(rrule_expr)
     end

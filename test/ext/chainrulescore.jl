@@ -159,4 +159,45 @@ rdiff(f, x::MockModule.MockType) = autodiff(Reverse, f, Active, Active(x))[1][1]
         # test_reverse(Base.sort, BatchDuplicated, (x, Const))
         # test_reverse(Base.sort, BatchDuplicatedNoNeed, (x, Const))
     end
+
+    @testset "unread GC-tracked struct field read by rrule" begin
+        @test Enzyme.EnzymeRules.has_readonly_rule(MockModule.mock_function, MockModule.MockType(1.0f0))
+        @test !Enzyme.EnzymeRules.has_attribute_preserving_rule_from_sig(Tuple{typeof(MockModule.mock_function), MockModule.MockType})
+    end
+end
+
+struct RRulePartialArg
+    mode::Int
+    weights::Vector{Float64}
+end
+
+const rrule_partial_calls = Ref(0)
+
+@noinline rrule_partial(p::RRulePartialArg, u::Vector{Float64}) = p.mode .* u
+
+function ChainRulesCore.rrule(::typeof(rrule_partial), p::RRulePartialArg, u::Vector{Float64})
+    rrule_partial_calls[] += 1
+    y = p.weights .* (p.mode .* u)
+    function rrule_partial_pullback(dy)
+        dy_unthunked = ChainRulesCore.unthunk(dy)
+        return NoTangent(), NoTangent(), dy_unthunked .* (p.mode .* p.weights)
+    end
+    return y, rrule_partial_pullback
+end
+
+Enzyme.@import_rrule typeof(rrule_partial) RRulePartialArg Vector{Float64}
+
+rrule_partial_loss(u) = sum(rrule_partial(RRulePartialArg(2, [3.0, 5.0]), u))
+function rrule_partial_const_call(u)
+    _ = rrule_partial(RRulePartialArg(2, [3.0, 5.0]), [1.0, 1.0])
+    return sum(u)
+end
+
+@testset "import_rrule preserves unread GC-tracked struct fields" begin
+    @test Enzyme.gradient(Reverse, rrule_partial_loss, [1.0, 2.0])[1] ≈ [6.0, 10.0]
+    @test Enzyme.gradient(Enzyme.set_runtime_activity(Reverse), rrule_partial_loss, [1.0, 2.0])[1] ≈ [6.0, 10.0]
+
+    rrule_partial_calls[] = 0
+    @test Enzyme.gradient(Reverse, rrule_partial_const_call, [1.0, 2.0])[1] ≈ [1.0, 1.0]
+    @test rrule_partial_calls[] == 0
 end
