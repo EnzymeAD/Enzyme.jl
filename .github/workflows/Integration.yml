@@ -45,25 +45,16 @@ jobs:
           import os
           import subprocess
 
-          ALL_PACKAGES = [
-              "Bijectors",
-              "Checkpointing",
-              "DifferentiationInterface",
-              "Distributions",
-              "DynamicExpressions",
-              "SymbolicRegression",
-              "Flux",
-              "Lux",
-              "Oceananigans",
-              "SciML",
-              "KernelAbstractions",
-              "MatrixAlgebraKit",
-              "Molly",
-              "MPI",
-              "Comrade",
-              "TensorKit",
-              "Turing",
-          ]
+          INTEGRATION_DIR = "test/integration"
+          ALL_PACKAGES = sorted(
+              (
+                  entry
+                  for entry in os.listdir(INTEGRATION_DIR)
+                  if not entry.startswith(".")
+                  and os.path.isdir(os.path.join(INTEGRATION_DIR, entry))
+              ),
+              key=lambda s: (s.lower(), s),
+          )
           ALL_PACKAGES_SET = set(ALL_PACKAGES)
 
           RUN_ALL_PREFIXES = (
@@ -129,9 +120,16 @@ jobs:
                   if path.startswith("test/integration/"):
                       rest = path[len("test/integration/"):]
                       parts = rest.split("/", 1)
-                      if len(parts) == 2 and parts[0] in ALL_PACKAGES_SET:
-                          if os.path.isdir(os.path.join("test/integration", parts[0])):
+                      if len(parts) == 2:
+                          if parts[0] in ALL_PACKAGES_SET:
                               touched_pkgs.add(parts[0])
+                          elif not os.path.exists(os.path.join(INTEGRATION_DIR, parts[0])):
+                              # Integration test directory was deleted; nothing to run for it.
+                              continue
+                          else:
+                              run_all = True
+                              reason = f"shared/unrecognized integration path changed (`{path}`)"
+                              break
                       else:
                           run_all = True
                           reason = f"shared/unrecognized integration path changed (`{path}`)"
