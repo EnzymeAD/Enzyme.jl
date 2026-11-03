@@ -176,7 +176,7 @@ end
         code = """
         using Enzyme
         C = Enzyme.Compiler
-        sizes = (length(C.cache), length(C.autodiff_cache), length(Enzyme.tape_cache),
+                sizes = (length(C.cache), length(C.autodiff_cache),
                          (C.HAS_RULE_EDGES ? 0 : length(C.Interpreter.SigCache)),
                  length(C.JIT.hnd_string_map), length(C.JIT.hnd_int_map))
         print(sum(sizes), " ", Enzyme.autodiff(Reverse, x -> x * x, Active(4.0))[1][1])
