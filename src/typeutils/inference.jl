@@ -25,13 +25,14 @@ function primal_interp_world(
             world,
             false,
             true,
-            true
+            true,
+            NATIVE_CALLEES
         )
     else
-        Enzyme.Compiler.GLOBAL_REV_CACHE
+        Enzyme.Compiler.enzyme_ci_cache(mode, NATIVE_CALLEES)
     end
 
-    return Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true)
+    return Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true; native_callees = NATIVE_CALLEES)
 end
 
 function primal_interp_world(
@@ -46,13 +47,14 @@ function primal_interp_world(
             world,
             true,
             false,
-            true
+            true,
+            NATIVE_CALLEES
         )
     else
-        Enzyme.Compiler.GLOBAL_FWD_CACHE
+        Enzyme.Compiler.enzyme_ci_cache(mode, NATIVE_CALLEES)
     end
 
-    return Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true)
+    return Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true; native_callees = NATIVE_CALLEES)
 end
 
 @inline primal_interp_world(

@@ -55,17 +55,14 @@ function code_typed_helper(mi::Core.MethodInstance, world::UInt, mode::Enzyme.AP
             world,
             mode == API.DEM_ForwardMode,
             mode != API.DEM_ForwardMode,
-            true
+            true,
+            NATIVE_CALLEES
         )
     else
-        if mode == API.DEM_ForwardMode
-            GLOBAL_FWD_CACHE
-        else
-            GLOBAL_REV_CACHE
-        end
+        enzyme_ci_cache(mode, NATIVE_CALLEES)
     end
 
-    interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true)
+    interp = Enzyme.Compiler.Interpreter.EnzymeInterpreter(CT, nothing, world, mode, true; native_callees = NATIVE_CALLEES)
 
     sig = mi.specTypes  # XXX: can we just use the method instance?
     if interactive

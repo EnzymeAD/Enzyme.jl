@@ -84,6 +84,10 @@ struct EnzymeInterpreter{T} <: AbstractInterpreter
     # When false, leave the check for within_autodiff to the handler.
     within_autodiff_rewrite::Bool
 
+    # Call derivative-free callees natively instead of inferring and emitting them (see
+    # native_callees.jl). Only for code for the host; part of the cache token on 1.11+.
+    native_callees::Bool
+
     handler::T
 end
 
@@ -136,16 +140,17 @@ const LastRevWorld = Ref(Base.IdSet{Type}())
 const LastInaWorld = Ref(Base.IdSet{Type}())
 
 function EnzymeInterpreter(
-    cache_or_token,
-    mt::Union{Nothing, Core.MethodTable, Core.Compiler.MethodTableView},
-    world::UInt,
-    forward_rules::Bool,
-    reverse_rules::Bool,
-    inactive_rules::Bool,
-    broadcast_rewrite::Bool = true,
-    within_autodiff_rewrite::Bool = true,
-    handler = nothing
-)
+        cache_or_token,
+        mt::Union{Nothing, Core.MethodTable, Core.Compiler.MethodTableView},
+        world::UInt,
+        forward_rules::Bool,
+        reverse_rules::Bool,
+        inactive_rules::Bool,
+        broadcast_rewrite::Bool = true,
+        within_autodiff_rewrite::Bool = true,
+        handler = nothing;
+        native_callees::Bool = false
+    )
     @assert world <= Base.get_world_counter()
 
     parms = @static if VERSION >= v"1.12.0-DEV.1017"
@@ -234,6 +239,7 @@ function EnzymeInterpreter(
         inactive_rules::Bool,
         broadcast_rewrite::Bool,
         within_autodiff_rewrite::Bool,
+        native_callees,
         handler
     )
 end
@@ -246,26 +252,32 @@ EnzymeInterpreter(
     inactive_rules::Bool,
     broadcast_rewrite::Bool = true,
     within_autodiff_rewrite::Bool = true,
-    handler = nothing
-) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, inactive_rules, broadcast_rewrite, within_autodiff_rewrite, handler)
+    handler = nothing;
+    native_callees::Bool = false
+) = EnzymeInterpreter(cache_or_token, mt, world, mode == API.DEM_ForwardMode, mode == API.DEM_ReverseModeCombined || mode == API.DEM_ReverseModePrimal || mode == API.DEM_ReverseModeGradient, inactive_rules, broadcast_rewrite, within_autodiff_rewrite, handler; native_callees)
 
-function EnzymeInterpreter(interp::EnzymeInterpreter;
-    cache_or_token = (@static if HAS_INTEGRATED_CACHE
-        interp.token
-    else
-        interp.code_cache
-    end),
-    mt = interp.method_table,
-    local_cache = interp.local_cache,
-    world = interp.world,
-    inf_params = interp.inf_params,
-    opt_params = interp.opt_params,
-    forward_rules = interp.forward_rules,
-    reverse_rules = interp.reverse_rules,
-    inactive_rules = interp.inactive_rules,
-    broadcast_rewrite = interp.broadcast_rewrite,
-    within_autodiff_rewrite = interp.within_autodiff_rewrite,
-    handler = interp.handler)
+function EnzymeInterpreter(
+        interp::EnzymeInterpreter;
+        cache_or_token = (
+            @static if HAS_INTEGRATED_CACHE
+                interp.token
+            else
+                interp.code_cache
+            end
+        ),
+        mt = interp.method_table,
+        local_cache = interp.local_cache,
+        world = interp.world,
+        inf_params = interp.inf_params,
+        opt_params = interp.opt_params,
+        forward_rules = interp.forward_rules,
+        reverse_rules = interp.reverse_rules,
+        inactive_rules = interp.inactive_rules,
+        broadcast_rewrite = interp.broadcast_rewrite,
+        within_autodiff_rewrite = interp.within_autodiff_rewrite,
+        native_callees = interp.native_callees,
+        handler = interp.handler
+    )
     return EnzymeInterpreter(
         cache_or_token,
         mt,
@@ -278,6 +290,7 @@ function EnzymeInterpreter(interp::EnzymeInterpreter;
         inactive_rules,
         broadcast_rewrite,
         within_autodiff_rewrite,
+        native_callees,
         handler
     )
 end

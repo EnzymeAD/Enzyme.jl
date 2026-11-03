@@ -225,4 +225,32 @@ end
     @test dst.data == [2.0, 4.0]
 end
 
+# `@nospecialize` widens the call to `boxed_scale(::Any, ::Float64)` and the inference
+# barrier hides the type of the box, so the rule takes and returns batched shadows of
+# `Any`, which `BatchDuplicated{Any, N}` holds in a boxed tuple.
+mutable struct ScaleBox
+    v::Float64
+end
+@noinline boxed_scale(@nospecialize(b), s::Float64) = ScaleBox(b.v * s)
+function forward(config, ::Const{typeof(boxed_scale)}, ::Type, b::Union{Duplicated, BatchDuplicated}, s::Const)
+    p = boxed_scale(b.val, s.val)
+    N = EnzymeRules.width(config)
+    d = N == 1 ? ScaleBox(b.dval.v * s.val) : ntuple(i -> ScaleBox(b.dval[i].v * s.val), Val(N))
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return N == 1 ? Duplicated(p, d) : BatchDuplicated(p, d)
+    elseif EnzymeRules.needs_shadow(config)
+        return d
+    else
+        return p
+    end
+end
+boxed_scale_val(x) = boxed_scale(Base.inferencebarrier(ScaleBox(x)), 3.0).v
+boxed_scale_sq(x) = (r = boxed_scale(Base.inferencebarrier(ScaleBox(x)), 3.0); r.v * r.v)
+
+@testset "Batched forward rule with shadows of Any" begin
+    @test autodiff(Forward, boxed_scale_val, Duplicated(1.0, 1.0))[1] ≈ 3.0
+    @test collect(autodiff(Forward, boxed_scale_val, BatchDuplicated(1.0, (1.0, 2.0)))[1]) ≈ [3.0, 6.0]
+    @test collect(autodiff(Forward, boxed_scale_sq, BatchDuplicated(1.0, (1.0, 2.0)))[1]) ≈ [18.0, 36.0]
+end
+
 end # module ForwardRules

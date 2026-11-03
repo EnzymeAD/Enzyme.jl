@@ -1544,35 +1544,9 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                         end
                         tys = flib.specTypes.parameters
                     end
-                    if is_inactive(tys, world, method_table)
-                        inactive = LLVM.StringAttribute("enzyme_inactive", "")
-                        LLVM.API.LLVMAddCallSiteAttribute(
-                            inst,
-                            reinterpret(
-                                LLVM.API.LLVMAttributeIndex,
-                                LLVM.API.LLVMAttributeFunctionIndex,
-                            ),
-                            inactive,
-                        )
-                        nofree = LLVM.EnumAttribute("nofree")
-                        LLVM.API.LLVMAddCallSiteAttribute(
-                            inst,
-                            reinterpret(
-                                LLVM.API.LLVMAttributeIndex,
-                                LLVM.API.LLVMAttributeFunctionIndex,
-                            ),
-                            nofree,
-                        )
-                        no_escaping_alloc =
-                            LLVM.StringAttribute("enzyme_no_escaping_allocation")
-                        LLVM.API.LLVMAddCallSiteAttribute(
-                            inst,
-                            reinterpret(
-                                LLVM.API.LLVMAttributeIndex,
-                                LLVM.API.LLVMAttributeFunctionIndex,
-                            ),
-                            no_escaping_alloc,
-                        )
+                    native = native_edge(interp, flib)
+                    if native !== nothing || is_inactive(tys, world, method_table)
+                        mark_inactive_invoke!(inst, native)
                     end
                 end
             end
@@ -1713,37 +1687,9 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                     end
                     tys = flib.specTypes.parameters
                 end
-                if is_inactive(tys, world, method_table)
-                    ofn = LLVM.parent(LLVM.parent(inst))
-                    mod = LLVM.parent(ofn)
-                    inactive = LLVM.StringAttribute("enzyme_inactive", "")
-                    LLVM.API.LLVMAddCallSiteAttribute(
-                        inst,
-                        reinterpret(
-                            LLVM.API.LLVMAttributeIndex,
-                            LLVM.API.LLVMAttributeFunctionIndex,
-                        ),
-                        inactive,
-                    )
-                    nofree = LLVM.EnumAttribute("nofree")
-                    LLVM.API.LLVMAddCallSiteAttribute(
-                        inst,
-                        reinterpret(
-                            LLVM.API.LLVMAttributeIndex,
-                            LLVM.API.LLVMAttributeFunctionIndex,
-                        ),
-                        nofree,
-                    )
-                    no_escaping_alloc =
-                        LLVM.StringAttribute("enzyme_no_escaping_allocation")
-                    LLVM.API.LLVMAddCallSiteAttribute(
-                        inst,
-                        reinterpret(
-                            LLVM.API.LLVMAttributeIndex,
-                            LLVM.API.LLVMAttributeFunctionIndex,
-                        ),
-                        no_escaping_alloc,
-                    )
+                native = native_edge(interp, flib)
+                if native !== nothing || is_inactive(tys, world, method_table)
+                    mark_inactive_invoke!(inst, native)
                 end
             end
         end

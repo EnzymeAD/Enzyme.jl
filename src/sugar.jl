@@ -17,13 +17,15 @@ end
         Base.@_inline_meta
 
         target = Compiler.DefaultCompilerTarget()
-        params = Compiler.PrimalCompilerParams(API.DEM_ForwardMode)
+        # The module is compiled by `llvmcall` and not under an `EnzymeContext`, so
+        # nothing binds a natively called callee to its native code: emit every callee.
+        params = Compiler.PrimalCompilerParams(API.DEM_ForwardMode; native_callees = false)
         mi = my_methodinstance(nothing, fn, Tuple{T, Int})
         job = GPUCompiler.CompilerJob(mi, GPUCompiler.CompilerConfig(target, params; kernel = false, libraries = true, toplevel = true, optimize = false, cleanup = false, only_entry = false, validate = false))
 
         GPUCompiler.prepare_job!(job)
         mod, meta = GPUCompiler.emit_llvm(job)
-        
+
         copysetfn = meta.entry
         blk = first(LLVM.blocks(copysetfn))
         iter = LLVM.API.LLVMGetFirstInstruction(blk)

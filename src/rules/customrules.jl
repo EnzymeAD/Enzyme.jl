@@ -304,6 +304,51 @@ function push_box_for_argument!(
     return al0
 end
 
+"""
+    boxed_batch_shadow(T, width) -> Bool
+
+Say if the `width` shadows of a value of type `T` are held in a boxed tuple by the batch
+annotations and returns of a rule: `NTuple{width, T}` of a `T` that is not concrete is not
+stored inline, and the shadows are then boxed values themselves.
+"""
+function boxed_batch_shadow(@nospecialize(T::Type), width)::Bool
+    width == 1 && return false
+    Base.allocatedinline(NTuple{Int(width), T}) && return false
+    T_prjlvalue = LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
+    return convert(LLVMType, T; allow_boxed = true) == T_prjlvalue
+end
+
+"""
+    box_batch_shadow!(B, shadow, width) -> LLVM.Value
+
+Box the array of `width` shadows Enzyme holds into the tuple a batch annotation holds them
+in (see [`boxed_batch_shadow`](@ref)).
+"""
+function box_batch_shadow!(B::LLVM.IRBuilder, @nospecialize(shadow::LLVM.Value), width)::LLVM.Value
+    elts = Vector{LLVM.Value}(undef, Int(width))
+    for i in 1:Int(width)
+        elts[i] = extract_value!(B, shadow, i - 1)
+    end
+    return emit_tuple!(B, elts, enzyme_context())
+end
+
+"""
+    unbox_batch_shadow!(B, shadow, width) -> LLVM.Value
+
+Return the array of `width` shadows Enzyme holds for the boxed tuple a rule returns them in
+(see [`boxed_batch_shadow`](@ref)). Its fields are read with `getfield`, as their layout
+follows the types they have at run time.
+"""
+function unbox_batch_shadow!(B::LLVM.IRBuilder, @nospecialize(shadow::LLVM.Value), width)::LLVM.Value
+    T_prjlvalue = LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
+    @assert value_type(shadow) == T_prjlvalue
+    agg = UndefValue(LLVM.ArrayType(T_prjlvalue, Int(width)))
+    for i in 1:Int(width)
+        agg = insert_value!(B, agg, emit_nthfield!(B, shadow, i - 1), i - 1)
+    end
+    return agg
+end
+
 function enzyme_custom_setup_args(
     @nospecialize(B::Union{Nothing, LLVM.IRBuilder}),
     orig::LLVM.CallInst,
@@ -1000,6 +1045,10 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                     push!(mixeds, (ptr_val, arg.typ, refal))
                 end
 
+                if !mixed && boxed_batch_shadow(shadowty, width)
+                    ival = box_batch_shadow!(B, ival, width)
+                end
+
                 @assert ival !== nothing
                 just_primal_rooting = true
                 al = push_box_for_argument!(alloctx, B, Ty, val, roots_val, arg, args, uncacheable, true, ogval, roots_cache, shadow_roots, just_primal_rooting)
@@ -1379,7 +1428,11 @@ end
 		    end
                 end
             else
-                shadowV = res.ref
+                shadowV = res
+                if boxed_batch_shadow(RealRt, width)
+                    shadowV = unbox_batch_shadow!(B, shadowV, width)
+                end
+                shadowV = shadowV.ref
             end
         else
             ST = if width == 1
@@ -1437,7 +1490,11 @@ end
                 end
             else
                 normalV = extract_value!(B, res, 0).ref
-                shadowV = extract_value!(B, res, 1).ref
+                shadowV = extract_value!(B, res, 1)
+                if boxed_batch_shadow(RealRt, width)
+                    shadowV = unbox_batch_shadow!(B, shadowV, width)
+                end
+                shadowV = shadowV.ref
             end
         end
     end
@@ -2593,14 +2650,8 @@ function enzyme_custom_common_rev(
                     end
                     shadowV = C_NULL
                 else
-                    if value_type(shadowV) != shadowType && isabstracttype(RealRt)
-                        @assert value_type(shadowV) == T_prjlvalue
-                        shadowV_agg = UndefValue(shadowType)
-                        for i = 1:width
-                            elem = emit_nthfield!(B, shadowV, Int(i - 1))
-                            shadowV_agg = insert_value!(B, shadowV_agg, elem, Int(i - 1))
-                        end
-                        shadowV = shadowV_agg
+                    if value_type(shadowV) != shadowType && boxed_batch_shadow(RealRt, width)
+                        shadowV = unbox_batch_shadow!(B, shadowV, width)
                     end
                     @assert value_type(shadowV) == shadowType
                     shadowV = shadowV.ref

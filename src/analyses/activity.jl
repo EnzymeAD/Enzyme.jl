@@ -158,7 +158,7 @@ Base.@nospecializeinfer @inline function active_reg_inner(
         return AnyState
     end
 
-    if T <: Complex && !(T isa UnionAll)
+    if T isa DataType && T <: Complex
         return active_reg_inner(
             ptreltype(T),
             seen,
