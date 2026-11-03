@@ -418,7 +418,7 @@ function enzyme_custom_setup_args(
             roots_op = ops[arg.codegen.i + 1]
             roots_activep = API.EnzymeGradientUtilsGetDiffeType(gutils, roots_op, false)
 	    
-	    kwarg_inactive = isKWCall && arg.arg_jl_i == 2 && EnzymeRules.is_inactive_kwarg_from_sig(Interpreter.simplify_kw(mi.specTypes); world)
+            kwarg_inactive = isKWCall && arg.arg_jl_i == 2 && cached_is_inactive_kwarg(Interpreter.simplify_kw(mi.specTypes), world)
 	    
 	    if kwarg_inactive
                roots_activep = API.DFT_CONSTANT
@@ -632,7 +632,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
 
         if isKWCall && arg.arg_jl_i == 2
 
-            if EnzymeRules.is_inactive_kwarg_from_sig(Interpreter.simplify_kw(mi.specTypes); world)
+            if cached_is_inactive_kwarg(Interpreter.simplify_kw(mi.specTypes), world)
                 activep = API.DFT_CONSTANT
             end
 
@@ -1634,7 +1634,7 @@ end
     world = enzyme_world()
     mi, RealRt = enzyme_custom_extract_mi(orig)
     specTypes = Interpreter.simplify_kw(mi.specTypes)
-    return EnzymeRules.has_easy_rule_from_sig(specTypes; world)
+    return cached_has_easy_rule(specTypes, world)
 end
 
 @inline function has_rule(orig::LLVM.CallInst, gutils::GradientUtils)::Bool
