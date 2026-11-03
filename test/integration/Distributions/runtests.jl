@@ -61,6 +61,22 @@ function TestCase(
     return TestCase(d, value, name, runtime_activity, broken, splat)
 end
 
+# Enzyme computes structure gradients (differentiating with respect to the backing storage
+# `parent(x)`), whereas FiniteDifferences >= 0.12.35 projects Symmetric/Hermitian cotangents
+# onto the symmetric/hermitian subspace under the Frobenius inner product (halving off-diagonals).
+_sym_wrapper(::Symmetric) = Symmetric
+_sym_wrapper(::Hermitian) = Hermitian
+
+_grad_array(x) = collect(x)
+_grad_array(x::Union{Symmetric, Hermitian}) = parent(x)
+
+function _fd_grad(fdm, f, x::Union{Symmetric, Hermitian})
+    W = _sym_wrapper(x)
+    uplo = Symbol(x.uplo)
+    return FiniteDifferences.grad(fdm, data -> f(W(data, uplo)), parent(x))[1]
+end
+_fd_grad(fdm, f, x...) = collect(FiniteDifferences.grad(fdm, f, x...)[1])
+
 """
 Test Enzyme.gradient, both Forward and Reverse mode, against FiniteDifferences.grad.
 """
@@ -69,9 +85,7 @@ function test_grad(case::TestCase; rtol = 1.0e-6, atol = 1.0e-6)
     f = case.func
     # We'll call the function as f(x...), so wrap in a singleton tuple if need be.
     x = case.splat ? case.value : (case.value,)
-    finitediff = collect(
-        FiniteDifferences.grad(FiniteDifferences.central_fdm(4, 1), f, x...)[1]
-    )
+    finitediff = _fd_grad(FiniteDifferences.central_fdm(4, 1), f, x...)
 
     f_mode = if (case.runtime_activity === Both || case.runtime_activity === Forward)
         Enzyme.set_runtime_activity(Enzyme.Forward)
@@ -86,13 +100,13 @@ function test_grad(case::TestCase; rtol = 1.0e-6, atol = 1.0e-6)
 
     if case.broken === Both || case.broken === Forward
         @test_broken(
-            collect(Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
+            _grad_array(Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
             rtol = rtol,
             atol = atol,
         )
     else
         @test(
-            collect(Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
+            _grad_array(Enzyme.gradient(f_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
             rtol = rtol,
             atol = atol,
         )
@@ -100,13 +114,13 @@ function test_grad(case::TestCase; rtol = 1.0e-6, atol = 1.0e-6)
 
     if case.broken === Both || case.broken === Reverse
         @test_broken(
-            collect(Enzyme.gradient(r_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
+            _grad_array(Enzyme.gradient(r_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
             rtol = rtol,
             atol = atol,
         )
     else
         @test(
-            collect(Enzyme.gradient(r_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
+            _grad_array(Enzyme.gradient(r_mode, Enzyme.Const(f), x...)[1]) ≈ finitediff,
             rtol = rtol,
             atol = atol,
         )
