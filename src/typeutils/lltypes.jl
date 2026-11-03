@@ -9,7 +9,7 @@ function struct_to_llvm(@nospecialize(Ty::Type))
             LLVM.LLVMType(
             ccall(
                 :jl_struct_to_llvm, LLVM.API.LLVMTypeRef,
-                (Any, LLVM.Context, Ptr{Bool}), Ty, LLVM.context(), isboxed_ref
+                (Any, LLVM.API.LLVMContextRef, Ptr{Bool}), Ty, LLVM.context(), isboxed_ref
             )
         )
         return llvmtyp
