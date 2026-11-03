@@ -1,7 +1,7 @@
 name: Integration
 on:
   pull_request:
-    paths:
+    paths: &paths
       - '.github/workflows/Integration.yml'
       - 'ext/**'
       - 'lib/**'
@@ -11,14 +11,8 @@ on:
   push:
     branches:
       - main
-    paths:
       - release-*
-      - '.github/workflows/Integration.yml'
-      - 'ext/**'
-      - 'lib/**'
-      - 'src/**'
-      - 'test/integration/**'
-      - 'Project.toml'
+    paths: *paths
     tags: '*'
 
 concurrency:
@@ -28,7 +22,147 @@ concurrency:
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
 jobs:
+  select-packages:
+    name: Select Integration Packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      packages: ${{ steps.select.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Determine integration packages to test
+        id: select
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          python3 - << 'EOF'
+          import json
+          import os
+          import subprocess
+
+          ALL_PACKAGES = [
+              "Bijectors",
+              "Checkpointing",
+              "DifferentiationInterface",
+              "Distributions",
+              "DynamicExpressions",
+              "SymbolicRegression",
+              "Flux",
+              "Lux",
+              "Oceananigans",
+              "SciML",
+              "KernelAbstractions",
+              "MatrixAlgebraKit",
+              "Molly",
+              "MPI",
+              "Comrade",
+              "TensorKit",
+              "Turing",
+          ]
+          ALL_PACKAGES_SET = set(ALL_PACKAGES)
+
+          RUN_ALL_PREFIXES = (
+              "src/",
+              "ext/",
+              "lib/",
+          )
+          RUN_ALL_EXACT = {
+              ".github/workflows/Integration.yml",
+              "Project.toml",
+          }
+
+          def get_changed_files():
+              event = os.environ.get("GITHUB_EVENT_NAME", "")
+              ref = os.environ.get("GITHUB_REF", "")
+              if ref.startswith("refs/tags/"):
+                  print(f"Tag push ({ref}): running all integration tests.")
+                  return None
+
+              if event == "pull_request":
+                  base_ref = os.environ.get("BASE_REF", "")
+                  if not base_ref:
+                      print("Missing BASE_REF on pull_request: running all integration tests.")
+                      return None
+                  cmd = ["git", "diff", "--no-renames", "--name-only", "-z", f"origin/{base_ref}...HEAD"]
+              elif event == "push":
+                  before = os.environ.get("BEFORE_SHA", "")
+                  after = os.environ.get("AFTER_SHA", "")
+                  if not before or set(before) == {"0"} or not after:
+                      print(f"Push without prior commit ({before}): running all integration tests.")
+                      return None
+                  cmd = ["git", "diff", "--no-renames", "--name-only", "-z", before, after]
+              else:
+                  print(f"Event '{event}': running all integration tests.")
+                  return None
+
+              proc = subprocess.run(cmd, capture_output=True)
+              if proc.returncode != 0:
+                  err = proc.stderr.decode("utf-8", errors="replace").strip()
+                  print(f"::warning::git diff failed ({err}); running all integration tests.")
+                  return None
+
+              raw = proc.stdout.decode("utf-8", errors="surrogateescape")
+              files = [f for f in raw.split("\0") if f]
+              print("Changed files:")
+              for f in files:
+                  print(f"  {f}")
+              return files
+
+          changed = get_changed_files()
+          if changed is None:
+              selected = ALL_PACKAGES
+              reason = "full suite (event/fallback)"
+          else:
+              run_all = False
+              touched_pkgs = set()
+              reason = ""
+              for path in changed:
+                  if path in RUN_ALL_EXACT or path.startswith(RUN_ALL_PREFIXES):
+                      run_all = True
+                      reason = f"core path changed (`{path}`)"
+                      break
+                  if path.startswith("test/integration/"):
+                      rest = path[len("test/integration/"):]
+                      parts = rest.split("/", 1)
+                      if len(parts) == 2 and parts[0] in ALL_PACKAGES_SET:
+                          if os.path.isdir(os.path.join("test/integration", parts[0])):
+                              touched_pkgs.add(parts[0])
+                      else:
+                          run_all = True
+                          reason = f"shared/unrecognized integration path changed (`{path}`)"
+                          break
+
+              if run_all:
+                  selected = ALL_PACKAGES
+              else:
+                  selected = [pkg for pkg in ALL_PACKAGES if pkg in touched_pkgs]
+                  reason = "selected touched integration package(s)" if selected else "no integration packages affected"
+
+          packages_json = json.dumps(selected)
+          print(f"Selected packages ({reason}): {packages_json}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"packages={packages_json}\n")
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as summary:
+                  summary.write(
+                      f"### Integration Test Selection\n"
+                      f"- **Reason:** {reason}\n"
+                      f"- **Packages ({len(selected)}/{len(ALL_PACKAGES)}):** "
+                      f"{', '.join(selected) if selected else '*(none)*'}\n"
+                  )
+          EOF
+
   integration:
+    needs: select-packages
+    if: ${{ needs.select-packages.outputs.packages != '[]' && needs.select-packages.outputs.packages != '' }}
     timeout-minutes: 45
     name: Integration Tests - ${{ matrix.package }} - Julia ${{ matrix.version }}
     runs-on: ${{ matrix.os }}
@@ -46,24 +180,7 @@ jobs:
           - '1.13'
         os:
           - linux-x86-n4-32
-        package:
-          - Bijectors
-          - Checkpointing
-          - DifferentiationInterface
-          - Distributions
-          - DynamicExpressions
-          - SymbolicRegression
-          - Flux
-          - Lux
-          - Oceananigans
-          - SciML
-          - KernelAbstractions
-          - MatrixAlgebraKit
-          - Molly
-          - MPI
-          - Comrade
-          - TensorKit
-          - Turing
+        package: ${{ fromJson(needs.select-packages.outputs.packages) }}
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
