@@ -45,7 +45,7 @@ jobs:
           - '1.12'
           - '1.13'
         os:
-          - linux-x86-n2-32
+          - linux-x86-n4-32
         package:
           - Bijectors
           - Checkpointing
