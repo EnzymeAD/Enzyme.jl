@@ -770,3 +770,30 @@ end
         LLVM.dispose(mod)
     end
 end
+
+struct NestedVecSol
+    u::Vector{Vector{Float64}}
+    t::Vector{Float64}
+    x::Float64
+end
+
+@noinline copy_nested_sol(s::NestedVecSol) = NestedVecSol(copy(s.u), s.t, s.x)
+
+@noinline function pack_nested_sol!(dest::Matrix{Float64}, s::NestedVecSol, flag::Bool)
+    s2 = flag ? copy_nested_sol(s) : s
+    for j in axes(dest, 2), i in axes(dest, 1)
+        @inbounds dest[i, j] = s2.u[j][i]
+    end
+    return dest
+end
+
+function nested_vec_phi_loss(p::Vector{Float64})
+    s = NestedVecSol([[p[1], 2 * p[2]], [3 * p[1], 4 * p[2]], [5 * p[1], 6 * p[2]]], [0.0, 0.5, 1.0], 1.0)
+    dest = Matrix{Float64}(undef, 2, 3)
+    pack_nested_sol!(dest, s, false)
+    return sum(dest)
+end
+
+@testset "Dynamic index of nested Vector across aggregate PHI" begin
+    @test Enzyme.gradient(set_runtime_activity(Reverse), nested_vec_phi_loss, [1.0, 2.0])[1] ≈ [9.0, 12.0]
+end
