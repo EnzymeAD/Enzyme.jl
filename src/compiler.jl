@@ -2017,7 +2017,9 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
                         # trailing tracked slots (`split_value_size`). Bound the type
                         # tree by that buffer, not by the full layout.
                         sz = if byref == GPUCompiler.BITS_REF && inline_roots_type(arg.typ) != 0
-                            split_value_size(LLVM.DataLayout(dl), convert(LLVMType, arg.typ))
+                            @dispose layout = LLVM.DataLayout(dl) begin
+                                split_value_size(layout, convert(LLVMType, arg.typ))
+                            end
                         else
                             sizeof(arg.typ)
                         end
@@ -2042,7 +2044,10 @@ function set_module_types!(interp, mod::LLVM.Module, primalf::Union{Nothing, LLV
                     @assert sret <: Ptr
                     sret_et = eltype(sret)
                     rest = copy(typetree_in_world(world, sret_et, ctx, dl, seen))
-                    shift!(rest, dl, 0, LLVM.sizeof(LLVM.DataLayout(dl), sret_ty(f, 1)), 0)
+                    sret_size = @dispose layout = LLVM.DataLayout(dl) begin
+                        LLVM.sizeof(layout, sret_ty(f, 1))
+                    end
+                    shift!(rest, dl, 0, sret_size, 0)
                     merge!(rest, TypeTree(API.DT_Pointer, ctx))
                     only!(rest, -1)
                     push!(
@@ -7999,138 +8004,138 @@ const DumpLLVMCall = Ref(false)
         #     T_ret = T_prjlvalue
         # end
         llvm_f, _ = LLVM.Interop.create_function(T_ret, llvmtys)
-        push!(function_attributes(llvm_f), EnumAttribute("alwaysinline", 0))
+        @dispose mod = LLVM.parent(llvm_f) builder = LLVM.IRBuilder() begin
+            push!(function_attributes(llvm_f), EnumAttribute("alwaysinline", 0))
 
-        mod = LLVM.parent(llvm_f)
-        i64 = LLVM.IntType(64)
+            i64 = LLVM.IntType(64)
 
-        builder = LLVM.IRBuilder()
-        entry = BasicBlock(llvm_f, "entry")
-        position!(builder, entry)
-        callparams = collect(LLVM.Value, parameters(llvm_f))
+            entry = BasicBlock(llvm_f, "entry")
+            position!(builder, entry)
+            callparams = collect(LLVM.Value, parameters(llvm_f))
 
-        if inline_abi
-            # The pgcstack, which `use_gcstack_arg!` hands to the code of the thunk.
-            pgcstack = popfirst!(callparams)
-        else
-            lfn = popfirst!(callparams)
-        end
+            if inline_abi
+                # The pgcstack, which `use_gcstack_arg!` hands to the code of the thunk.
+                pgcstack = popfirst!(callparams)
+            else
+                lfn = popfirst!(callparams)
+            end
 
-        if returnRoots
-            tracked = CountTrackedPointers(jltype)
-            pushfirst!(
-                callparams,
-                alloca!(builder, LLVM.ArrayType(T_prjlvalue, tracked.count), "enzyme_call.return_roots")
-            )
-	    jltype_foralloca = if VERSION >= v"1.12"
-	       strip_tracked_pointers(jltype)
-	    else
-	       jltype
-	    end
-            pushfirst!(callparams, alloca!(builder, jltype_foralloca, "enzyme_call.sret"))
-        end
-
-        if needs_tape && !(isghostty(TapeType) || Core.Compiler.isconstType(TapeType))
-            tape = callparams[end]
-            if TapeType <: EnzymeTapeToLoad
-                llty = Compiler.from_tape_type(eltype(TapeType))
-	        
-		        arg_roots = inline_roots_type(llty)
-                if needs_rooting && arg_roots != 0
-                    throw(AssertionError("Should check about rooted tape calling conv"))
-                end
-
-                tape = bitcast!(
-                    builder,
-                    tape,
-                    LLVM.PointerType(llty, LLVM.addrspace(value_type(tape))),
+            if returnRoots
+                tracked = CountTrackedPointers(jltype)
+                pushfirst!(
+                    callparams,
+                    alloca!(builder, LLVM.ArrayType(T_prjlvalue, tracked.count), "enzyme_call.return_roots")
                 )
-                tape = load!(builder, llty, tape)
-                API.SetMustCache!(tape)
-                callparams[end] = tape
-
-            else
-                llty = Compiler.from_tape_type(TapeType)
-                arg_roots = inline_roots_type(llty)
-                if needs_rooting && arg_roots != 0
-                    tape = callparams[end-1]
+                jltype_foralloca = if VERSION >= v"1.12"
+                    strip_tracked_pointers(jltype)
+                else
+                    jltype
                 end
-		if value_type(tape) != llty
-		   throw(AssertionError("MisMatched Tape type, expected $(string(value_type(tape))) found $(string(llty)) from $TapeType arg_roots=$arg_roots"))
-		end
+                pushfirst!(callparams, alloca!(builder, jltype_foralloca, "enzyme_call.sret"))
             end
-        end
 
-        if !inline_abi
-            FT = LLVM.FunctionType(
-                returnRoots ? T_void : T_ret,
-                [value_type(x) for x in callparams],
-            )
-            lfn = inttoptr!(builder, lfn, LLVM.PointerType(FT))
-        else
-            val_inner(::Type{Val{V}}) where {V} = V
-            submod, subname = val_inner(PT)
-            # TODO, consider optimization
-            # However, julia will optimize after this, so no need
-            submod = parse(LLVM.Module, String(submod))
-            # Julia's llvmcall links this module as is into every caller, so any external
-            # definition in it (e.g. the `ccalllib_*` library handle cache that Julia's
-            # codegen emits for a `ccall`) would be defined once per caller, and the JIT
-            # aborts with a duplicate symbol. Only this function uses the module, so all its
-            # definitions can be local to the caller.
-            for gv in Iterators.flatten((globals(submod), functions(submod)))
-                LLVM.isdeclaration(gv) && continue
-                LLVM.name(gv) == String(subname) && continue
-                if !(linkage(gv) in (LLVM.API.LLVMInternalLinkage, LLVM.API.LLVMPrivateLinkage))
-                    linkage!(gv, LLVM.API.LLVMInternalLinkage)
+            if needs_tape && !(isghostty(TapeType) || Core.Compiler.isconstType(TapeType))
+                tape = callparams[end]
+                if TapeType <: EnzymeTapeToLoad
+                    llty = Compiler.from_tape_type(eltype(TapeType))
+
+                    arg_roots = inline_roots_type(llty)
+                    if needs_rooting && arg_roots != 0
+                        throw(AssertionError("Should check about rooted tape calling conv"))
+                    end
+
+                    tape = bitcast!(
+                        builder,
+                        tape,
+                        LLVM.PointerType(llty, LLVM.addrspace(value_type(tape))),
+                    )
+                    tape = load!(builder, llty, tape)
+                    API.SetMustCache!(tape)
+                    callparams[end] = tape
+
+                else
+                    llty = Compiler.from_tape_type(TapeType)
+                    arg_roots = inline_roots_type(llty)
+                    if needs_rooting && arg_roots != 0
+                        tape = callparams[end - 1]
+                    end
+                    if value_type(tape) != llty
+                        throw(AssertionError("MisMatched Tape type, expected $(string(value_type(tape))) found $(string(llty)) from $TapeType arg_roots=$arg_roots"))
+                    end
                 end
             end
-            LLVM.link!(mod, submod)
-            lfn = functions(mod)[String(subname)]
-            # Only this function calls the thunk, so the inliner can drop it afterwards.
-            linkage!(lfn, LLVM.API.LLVMInternalLinkage)
-            FT = LLVM.function_type(lfn)
-        end
 
-        r = call!(builder, FT, lfn, callparams)
-
-        if returnRoots
-            attr = if LLVM.version().major >= 12
-                TypeAttribute("sret", jltype)
+            if !inline_abi
+                FT = LLVM.FunctionType(
+                    returnRoots ? T_void : T_ret,
+                    [value_type(x) for x in callparams],
+                )
+                lfn = inttoptr!(builder, lfn, LLVM.PointerType(FT))
             else
-                EnumAttribute("sret")
+                val_inner(::Type{Val{V}}) where {V} = V
+                submod, subname = val_inner(PT)
+                # TODO, consider optimization
+                # However, julia will optimize after this, so no need
+                submod = parse(LLVM.Module, String(submod))
+                # Julia's llvmcall links this module as is into every caller, so any external
+                # definition in it (e.g. the `ccalllib_*` library handle cache that Julia's
+                # codegen emits for a `ccall`) would be defined once per caller, and the JIT
+                # aborts with a duplicate symbol. Only this function uses the module, so all its
+                # definitions can be local to the caller.
+                for gv in Iterators.flatten((globals(submod), functions(submod)))
+                    LLVM.isdeclaration(gv) && continue
+                    LLVM.name(gv) == String(subname) && continue
+                    if !(linkage(gv) in (LLVM.API.LLVMInternalLinkage, LLVM.API.LLVMPrivateLinkage))
+                        linkage!(gv, LLVM.API.LLVMInternalLinkage)
+                    end
+                end
+                LLVM.link!(mod, submod)
+                lfn = functions(mod)[String(subname)]
+                # Only this function calls the thunk, so the inliner can drop it afterwards.
+                linkage!(lfn, LLVM.API.LLVMInternalLinkage)
+                FT = LLVM.function_type(lfn)
             end
-            LLVM.API.LLVMAddCallSiteAttribute(r, LLVM.API.LLVMAttributeIndex(1), attr)
-            if !LLVM.is_opaque(value_type(callparams[1]))
-                @assert eltype(value_type(callparams[1])) == jltype
+
+            r = call!(builder, FT, lfn, callparams)
+
+            if returnRoots
+                attr = if LLVM.version().major >= 12
+                    TypeAttribute("sret", jltype)
+                else
+                    EnumAttribute("sret")
+                end
+                LLVM.API.LLVMAddCallSiteAttribute(r, LLVM.API.LLVMAttributeIndex(1), attr)
+                if !LLVM.is_opaque(value_type(callparams[1]))
+                    @assert eltype(value_type(callparams[1])) == jltype
+                end
+                r = @static if VERSION >= v"1.12"
+                    recombine_value_ptr!(builder, jltype, callparams[1], callparams[2])
+                else
+                    load!(builder, jltype, callparams[1])
+                end
             end
-	    r = @static if VERSION >= v"1.12"
-	        recombine_value_ptr!(builder, jltype, callparams[1], callparams[2])
-	    else
-                load!(builder, jltype, callparams[1])
-	    end
-        end
 
-        if T_ret != T_void
-            ret!(builder, r)
-        else
-            ret!(builder)
-        end
-        # Julia inlines this function into its caller. A `julia.get_pgcstack` call in it
-        # would delay the push of the caller's GC frame on 1.13 (see `use_gcstack_arg!`).
-        # Without `InlineABI` this function needs no pgcstack, since the thunk gets its own.
-        if inline_abi
-            use_gcstack_arg!(llvm_f, pgcstack)
-        end
+            if T_ret != T_void
+                ret!(builder, r)
+            else
+                ret!(builder)
+            end
+            # Julia inlines this function into its caller. A `julia.get_pgcstack` call in it
+            # would delay the push of the caller's GC frame on 1.13 (see `use_gcstack_arg!`).
+            # Without `InlineABI` this function needs no pgcstack, since the thunk gets its own.
+            if inline_abi
+                use_gcstack_arg!(llvm_f, pgcstack)
+            end
 
-	Enzyme.Compiler.JIT.prepare!(mod)
-	if DumpLLVMCall[]
-	   API.EnzymeDumpModuleRef(mod.ref)
-	end
+            Enzyme.Compiler.JIT.prepare!(mod)
+            if DumpLLVMCall[]
+                API.EnzymeDumpModuleRef(mod.ref)
+            end
 
-        ir = string(mod)
-        fn = LLVM.name(llvm_f)
-        (ir, fn, combinedReturn)
+            ir = string(mod)
+            fn = LLVM.name(llvm_f)
+            (ir, fn, combinedReturn)
+        end
     finally
         deactivate(ctx)
         dispose(ts_ctx)
