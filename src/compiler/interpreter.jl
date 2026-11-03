@@ -18,7 +18,7 @@ const HAS_INTEGRATED_CACHE = VERSION >= v"1.11.0-DEV.1552"
 import ..Enzyme
 import ..EnzymeRules
 import ..cached_has_frule, ..cached_has_rrule, ..cached_is_inactive
-import ..HAS_RULE_EDGES, ..push_rule_query_edge!, ..has_frule_gen, ..has_rrule_gen, ..is_inactive_gen
+import ..HAS_RULE_EDGES, ..push_query_edge!, ..has_frule_gen, ..has_rrule_gen, ..is_inactive_gen
 
 @static if VERSION ≥ v"1.11.0-DEV.1498"
     import Core.Compiler: get_inference_world
@@ -454,7 +454,8 @@ end
 function add_rule_query_edge!(sv::Union{Nothing, AbsIntState}, gen, @nospecialize(specTypes), world::UInt)
     @static if HAS_RULE_EDGES
         sv === nothing && return nothing
-        push_rule_query_edge!(sv.edges, gen, specTypes, world)
+        specTypes.parameters[1] isa Core.Builtin && return nothing
+        push_query_edge!(sv.edges, Tuple{typeof(gen), Type{specTypes}}, world)
     end
     return nothing
 end
