@@ -1098,3 +1098,25 @@ end
         end
     end
 end
+
+@testset "get_function! doesn't rename a clashing declaration" begin
+    LLVM.Context() do ctx
+        mod = parse(
+            LLVM.Module, """
+            @abort = external global i8
+
+            declare void @existing(i64)
+            """
+        )
+        FT = LLVM.FunctionType(LLVM.VoidType())
+        @test_throws ArgumentError Enzyme.Compiler.get_function!(mod, "abort", FT)
+        @test !haskey(LLVM.functions(mod), "abort.1")
+
+        existing = LLVM.functions(mod)["existing"]
+        F, _ = Enzyme.Compiler.get_function!(mod, "existing", LLVM.FunctionType(LLVM.VoidType(), [LLVM.Int64Type()]))
+        @test F == existing
+
+        F, _ = Enzyme.Compiler.get_function!(mod, "fresh", FT)
+        @test LLVM.name(F) == "fresh"
+    end
+end

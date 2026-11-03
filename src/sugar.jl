@@ -61,59 +61,60 @@ end
         # and also https://github.com/JuliaLang/julia/pull/48620
         needs_dynamic_size_workaround = !(VERSION >= v"1.10.5")
 
-        builder = LLVM.IRBuilder()
-        entry = LLVM.BasicBlock(llvm_f, "entry")
-        LLVM.position!(builder, entry)
-        pgcstack, inp, lstart, len = collect(LLVM.Value, LLVM.parameters(llvm_f))
+        LLVM.@dispose builder = LLVM.IRBuilder() begin
+            entry = LLVM.BasicBlock(llvm_f, "entry")
+            LLVM.position!(builder, entry)
+            pgcstack, inp, lstart, len = collect(LLVM.Value, LLVM.parameters(llvm_f))
 
-        boxed_count = if sizeof(Int) == sizeof(Int64)
-            Compiler.emit_box_int64!(builder, len)
-        else
-            Compiler.emit_box_int32!(builder, len)
+            boxed_count = if sizeof(Int) == sizeof(Int64)
+                Compiler.emit_box_int64!(builder, len)
+            else
+                Compiler.emit_box_int32!(builder, len)
+            end
+
+            tag = Compiler.emit_apply_type!(builder, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(builder, T)], #=enzyme_ctx=# nothing)
+
+            fullsize = LLVM.nuwmul!(builder, len, LLVM.ConstantInt(sizeof(Int)))
+            obj = Compiler.emit_allocobj!(builder, tag, fullsize, needs_dynamic_size_workaround)
+
+            T_int8 = LLVM.Int8Type()
+            LLVM.memset!(builder, obj, LLVM.ConstantInt(T_int8, 0), fullsize, 0)
+
+            alloc = LLVM.pointercast!(builder, obj, LLVM.PointerType(jlvaluet, Tracked))
+            alloc = LLVM.pointercast!(builder, alloc, LLVM.PointerType(jlvaluet, 11))
+
+            loop = LLVM.BasicBlock(llvm_f, "loop")
+            exit = LLVM.BasicBlock(llvm_f, "exit")
+
+            LLVM.br!(builder, LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, LLVM.ConstantInt(0), len), exit, loop)
+
+            LLVM.position!(builder, loop)
+            idx = LLVM.phi!(builder, ity, "onehot.idx")
+
+            push!(LLVM.incoming(idx), (LLVM.ConstantInt(0), entry))
+            inc = LLVM.add!(builder, idx, LLVM.ConstantInt(1))
+            push!(LLVM.incoming(idx), (inc, loop))
+            rval = LLVM.add!(builder, inc, lstart)
+            res = LLVM.call!(builder, LLVM.function_type(copysetfn), copysetfn, [inp, rval])
+            if !hasNoRet
+                gidx = LLVM.gep!(builder, jlvaluet, alloc, [idx])
+                LLVM.store!(builder, res, gidx)
+                Compiler.emit_writebarrier!(builder, Compiler.get_julia_inner_types(builder, obj, res))
+            end
+
+            LLVM.br!(builder, LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, inc, len), exit, loop)
+
+
+            T_int32 = LLVM.Int32Type()
+
+            LLVM.position!(builder, exit)
+            LLVM.ret!(builder, obj)
+
+            Compiler.use_gcstack_arg!(llvm_f, pgcstack)
+            Compiler.JIT.prepare!(mod)
+
+            string(mod)
         end
-
-        tag = Compiler.emit_apply_type!(builder, NTuple, LLVM.Value[boxed_count, unsafe_to_llvm(builder, T)], #=enzyme_ctx=# nothing)
-
-        fullsize = LLVM.nuwmul!(builder, len, LLVM.ConstantInt(sizeof(Int)))
-        obj = Compiler.emit_allocobj!(builder, tag, fullsize, needs_dynamic_size_workaround)
-
-        T_int8 = LLVM.Int8Type()
-        LLVM.memset!(builder, obj,  LLVM.ConstantInt(T_int8, 0), fullsize, 0)
-
-        alloc = LLVM.pointercast!(builder, obj, LLVM.PointerType(jlvaluet, Tracked))
-        alloc = LLVM.pointercast!(builder, alloc, LLVM.PointerType(jlvaluet, 11))
-
-        loop = LLVM.BasicBlock(llvm_f, "loop")
-        exit = LLVM.BasicBlock(llvm_f, "exit")
-
-        LLVM.br!(builder, LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, LLVM.ConstantInt(0), len), exit, loop)
-
-        LLVM.position!(builder, loop)
-        idx = LLVM.phi!(builder, ity, "onehot.idx")
-
-        push!(LLVM.incoming(idx), (LLVM.ConstantInt(0), entry))
-        inc = LLVM.add!(builder, idx, LLVM.ConstantInt(1))
-        push!(LLVM.incoming(idx), (inc, loop))
-        rval = LLVM.add!(builder, inc, lstart)
-        res = LLVM.call!(builder, LLVM.function_type(copysetfn), copysetfn, [inp, rval])
-        if !hasNoRet
-            gidx = LLVM.gep!(builder, jlvaluet, alloc, [idx])
-            LLVM.store!(builder, res, gidx)
-            Compiler.emit_writebarrier!(builder, Compiler.get_julia_inner_types(builder, obj, res))
-        end
-
-        LLVM.br!(builder, LLVM.icmp!(builder, LLVM.API.LLVMIntEQ, inc, len), exit, loop)
-
-
-        T_int32 = LLVM.Int32Type()
-
-        LLVM.position!(builder, exit)
-        LLVM.ret!(builder, obj)
-	
-        Compiler.use_gcstack_arg!(llvm_f, pgcstack)
-	Compiler.JIT.prepare!(mod)
-
-        string(mod)
     end
     return quote
         Base.@_inline_meta
