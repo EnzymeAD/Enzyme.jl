@@ -151,6 +151,48 @@ end
     @test dy ≈ [2.0]
 end
 
+usef(t) = t[1] * t[2]
+tupf(a, b) = usef((Base.inferencebarrier(a), b))::Float64
+
+scale_copy(W, M, B) = (y = copy(B); y .*= M[1, 1]; y)
+splat_call(f, xs...) = f(xs...)
+
+@testset "Forward Tuple Construction with a constant element" begin
+    # Without runtime activity, the shadow of a constant element of a boxed tuple was
+    # its primal, which code reading it back took as its tangent.
+    x = [2.0]
+    y = [3.0]
+    @test autodiff(Forward, tupq, Const(x), Duplicated(y, [5.0]))[1] ≈ 10.0
+    res = autodiff(Forward, tupq, Const(x), BatchDuplicated(y, ([5.0], [7.0])))[1]
+    @test res[1] ≈ 10.0
+    @test res[2] ≈ 14.0
+    @test autodiff(set_runtime_activity(Forward), tupq, Const(x), Duplicated(y, [5.0]))[1] ≈ 10.0
+    @test autodiff(Forward, tupq, Duplicated(x, [1.0]), Duplicated(y, [5.0]))[1] ≈ 13.0
+    @test x == [2.0]
+    @test y == [3.0]
+
+    @test autodiff(Forward, tupf, Const(2.0), Duplicated(3.0, 5.0))[1] ≈ 10.0
+
+    # A type in the varargs makes Julia box the vararg tuple: the tangent of copy(B)
+    # started from B's values.
+    M = [3.5 0.2; 0.4 3.2]
+    B = [0.3, -0.7]
+    dM = [1.0 0.0; 0.0 0.0]
+    @testset for W in (Vector, Matrix)
+        @test autodiff(
+            Forward, splat_call, Duplicated, Const(scale_copy), Const(W),
+            Duplicated(M, dM), Const(B)
+        )[1] ≈ B
+    end
+    res = autodiff(
+        Forward, splat_call, BatchDuplicated, Const(scale_copy), Const(Vector),
+        BatchDuplicated(M, (dM, 2 .* dM)), Const(B)
+    )[1]
+    @test res[1] ≈ B
+    @test res[2] ≈ 2 .* B
+    @test B == [0.3, -0.7]
+end
+
 @noinline function setone(rany)
    rany[] = 1.0
    nothing

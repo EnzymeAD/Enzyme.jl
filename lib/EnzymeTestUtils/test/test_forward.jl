@@ -12,6 +12,8 @@ function f_mut_fwd!(y, x, a)
     return y
 end
 
+scale_copy(W, M, B) = (y = copy(B); y .*= M[1, 1]; y)
+
 f_kwargs_fwd(x; a=3.0, kwargs...) = a .* x .^ 2
 
 function f_kwargs_fwd!(x; kwargs...)
@@ -232,6 +234,17 @@ end
                     test_forward((c, Tc), Tret, (y, Ty); atol, rtol)
                 end
             end
+        end
+    end
+
+    @testset "Const type argument next to a Const array" begin
+        # Passed through a vararg tuple, the Const array got its primal as shadow:
+        # the tangent of copy(B) started from B's values.
+        @testset for Tret in (Duplicated, BatchDuplicated), W in (Vector, LowerTriangular)
+            M = randn(2, 2)
+            B = randn(2)
+            TM = Tret <: Duplicated ? Duplicated : BatchDuplicated
+            test_forward(scale_copy, Tret, (W, Const), (M, TM), (B, Const))
         end
     end
 

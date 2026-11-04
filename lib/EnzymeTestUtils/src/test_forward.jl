@@ -64,7 +64,6 @@ function test_forward(
     runtime_activity::Bool=false
 )
     call_with_copy = CallWithCopyKWargs(fkwargs)
-    call_with_kwargs = CallWithKWargs(fkwargs)
     if testset_name === nothing
         testset_name = "test_forward: $f with return activity $ret_activity on $(_string_activity(args))"
     end
@@ -93,7 +92,9 @@ function test_forward(
         else
             ret_activity
         end
-        y_and_dy_ad = autodiff(mode, call_with_kwargs, ret_activity2, activities...)
+        y_and_dy_ad = autodiff(
+            mode, Const(call_with_kwargs), ret_activity2, Const(fkwargs), activities...
+        )
         if ret_activity <: Union{Duplicated,BatchDuplicated}
             @test_msg(
                 "For return type $ret_activity the return value and derivative must be returned",

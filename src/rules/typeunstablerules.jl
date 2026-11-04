@@ -505,7 +505,31 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR, e
         return true
     end
 
-    shadowsin = LLVM.Value[invert_pointer(gutils, o, B) for o in @view arg_operands_view(orig)[offset:end]]
+    shadowsin = LLVM.Value[invert_pointer(gutils, operands(orig)[offset], B)]
+    T_prjlvalue = LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
+    for (o, icv, (found_partial, typ_partial, _)) in zip(ops, icvs, abs_partial)
+        # In forward mode without runtime activity, the shadow of a constant element is
+        # its primal (invert_pointer), and code that reads the element back from this
+        # active struct takes the primal as its tangent. The tangent of a constant is
+        # zero, so use a zero-filled copy unless the type holds no differentiable data.
+        if fwd && icv && !get_runtime_activity(gutils) && value_type(o) == T_prjlvalue &&
+                !(found_partial && guaranteed_const_nongen(typ_partial, world))
+            no = new_from_original(gutils, o)
+            zargs = LLVM.Value[unsafe_to_llvm(B, Enzyme.make_zero), no]
+            zshadow = if width == 1
+                emit_apply_generic!(B, zargs)
+            else
+                zs = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, T_prjlvalue)))
+                for idx in 1:width
+                    zs = insert_value!(B, zs, emit_apply_generic!(B, zargs), idx - 1)
+                end
+                zs
+            end
+            push!(shadowsin, zshadow)
+        else
+            push!(shadowsin, invert_pointer(gutils, o, B))
+        end
+    end
     if width == 1
         if offset != 1
             pushfirst!(shadowsin, LLVM.operands(orig)[1])
