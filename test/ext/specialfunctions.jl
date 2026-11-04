@@ -58,6 +58,7 @@ end
         test_scalar((y) -> SpecialFunctions.bessely(2, y), x)
 
         if x isa Real
+            test_scalar((y) -> SpecialFunctions.besselk(2, y), x)
             test_scalar((y) -> SpecialFunctions.besselyx(2, y), x)
             test_scalar((y) -> SpecialFunctions.besselkx(2, y), x)
         end
@@ -125,4 +126,29 @@ end
         test_scalar(b -> first(SpecialFunctions.beta_inc_inv(a, b, p)), b)
         test_scalar(p -> first(SpecialFunctions.beta_inc_inv(a, b, p)), p)
     end
+end
+
+@testset "Real-order Bessel & spherical Bessel (#2267)" begin
+    for nu in (0.5, 1.5, 2.5), x in (0.7, 2.3)
+        test_scalar(y -> SpecialFunctions.besseli(nu, y), x)
+        test_scalar(y -> SpecialFunctions.besselj(nu, y), x)
+        test_scalar(y -> SpecialFunctions.bessely(nu, y), x)
+        test_scalar(y -> SpecialFunctions.besselk(nu, y), x)
+    end
+
+    spherical_gl(k, r, L) = -k * r * SpecialFunctions.sphericalbessely(L, k * r)
+    function spherical_calc(k, r, Lmax)
+        Lrange = Vector(LinRange(0, Lmax, Lmax + 1))
+        out = zeros(Float64, Lmax + 1)
+        for L in Lrange
+            out[Int(L + 1)] = Enzyme.gradient(Forward, x -> spherical_gl(k, x, L), r)[1]
+        end
+        return out
+    end
+    @noinline spherical_wrap(p, Lmax) = spherical_calc(p[1], 1.5, Lmax)
+
+    J = Enzyme.jacobian(set_runtime_activity(Reverse), p -> spherical_wrap(p, 2), [0.7])[1]
+    eps_fd = 1.0e-6
+    J_fd = (spherical_wrap([0.7 + eps_fd], 2) .- spherical_wrap([0.7 - eps_fd], 2)) ./ (2 * eps_fd)
+    @test vec(J) ≈ J_fd rtol = 1.0e-5
 end
