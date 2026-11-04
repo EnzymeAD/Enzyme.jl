@@ -48,7 +48,9 @@ end
     # Inference under the Enzyme job now sees the backend's overlay, as the primal job does.
     @test Enzyme.Compiler.return_type(interp, mi) === String
     @static if VERSION >= v"1.11.0-DEV.1552"
-        @test Enzyme.Compiler.enzyme_cache_owner(backend_job).method_tables === (mt_test_table,)
+        # GPUCompiler adds its shared method table below the method table of the backend.
+        @test Enzyme.Compiler.enzyme_cache_owner(backend_job).method_tables ===
+            (mt_test_table, GPUCompiler.SHARED_METHOD_TABLE)
     end
 end
 
@@ -76,6 +78,13 @@ mt_test_stacked_caller(x::Float64) = (mt_test_fn(x), mt_shared_fn(x))
     interp = GPUCompiler.get_interpreter(job)
     @test Core.Compiler.method_table(interp) isa GPUCompiler.StackedMethodTable
     @test Enzyme.Compiler.return_type(interp, mi) === Tuple{String, String}
+
+    # Method lookups (e.g. for the primal of a kernel) go through every table in the stack.
+    view = Core.Compiler.method_table(interp)
+    shared_mi = Enzyme.my_methodinstance(view, typeof(mt_shared_fn), Tuple{Float64}, world)
+    @test shared_mi.def !== which(mt_shared_fn, Tuple{Float64})
+    caller_mi = Enzyme.my_methodinstance(view, typeof(mt_test_stacked_caller), Tuple{Float64}, world)
+    @test caller_mi.def === which(mt_test_stacked_caller, Tuple{Float64})
 
     @static if VERSION >= v"1.11.0-DEV.1552"
         # The cache token covers the whole stack, so it differs from that of a backend that
