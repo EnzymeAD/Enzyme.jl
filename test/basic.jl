@@ -935,3 +935,20 @@ end
     @test out[1] != UUIDs.UUID(0)
     @test Enzyme.autodiff(Reverse, make_uuid4, Active(2.0), Const(out)) == ((2.0, nothing),)
 end
+
+# Issue #3868: on Julia 1.13.2+, copying small float tuples into a mutable struct
+# is lowered via integer chunks (load i64 / store i64) and packed via SROA
+# (zext + shl + or disjoint). Differentiating the packed integer requires handling
+# the disjoint `or`.
+mutable struct Prob3868
+    tspan::Tuple{Float32, Float32}
+end
+make3868(t) = Prob3868((t[1], t[2]))
+f3868(a, b) = (p = Base.inferencebarrier(make3868)((a, b))::Prob3868; p.tspan[1] * p.tspan[2])
+
+@testset "Packed float tuple in mutable struct (issue #3868)" begin
+    @test autodiff(Reverse, f3868, Active, Active(2.0f0), Active(3.0f0)) == ((3.0f0, 2.0f0),)
+    @test autodiff(Forward, f3868, Duplicated, Duplicated(2.0f0, 1.0f0), Const(3.0f0))[1] ≈ 3.0f0
+    @test autodiff(Forward, f3868, Duplicated, Const(2.0f0), Duplicated(3.0f0, 1.0f0))[1] ≈ 2.0f0
+end
+
