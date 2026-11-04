@@ -209,6 +209,17 @@ method_tables(view::GPUCompiler.StackedMethodTable) = (view.mt, method_tables(vi
 @inline function Enzyme.has_method(@nospecialize(sig::Type), world::UInt, view::GPUCompiler.StackedMethodTable)
     return Enzyme.has_method(sig, view.world, view.mt) || Enzyme.has_method(sig, view.world, view.parent)
 end
+@inline function Enzyme.lookup_world(
+    @nospecialize(sig::Type),
+    world::UInt,
+    view::GPUCompiler.StackedMethodTable,
+    min_world::Ref{UInt},
+    max_world::Ref{UInt},
+)
+    res = Enzyme.lookup_world(sig, view.world, view.mt, min_world, max_world)
+    res !== nothing && return res
+    return Enzyme.lookup_world(sig, view.world, view.parent, min_world, max_world)
+end
 @static if isdefined(Core.Compiler, :CachedMethodTable)
     method_tables(view::Core.Compiler.CachedMethodTable) = method_tables(view.table)
 end
