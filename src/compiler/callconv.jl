@@ -399,6 +399,8 @@ function check_emitted_specsig(mod::LLVM.Module, llvmf::LLVM.Function, mi::Core.
     return nothing
 end
 
+const DISABLE_NATIVE_INVOKE = ScopedValue(false)
+
 """
     native_invoke_available(mod::LLVM.Module) -> Bool
 
@@ -407,7 +409,7 @@ Say if functions called from `mod` may be bound to natively compiled code (see
 precompilation, and only for modules that target the host.
 """
 function native_invoke_available(mod::LLVM.Module)::Bool
-    return !generating_output() && module_targets_host(mod)
+    return !generating_output() && !DISABLE_NATIVE_INVOKE[] && module_targets_host(mod)
 end
 
 """
