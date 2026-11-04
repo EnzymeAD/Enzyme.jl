@@ -217,17 +217,25 @@ function absint(@nospecialize(arg::LLVM.Value), enzyme_ctx::Union{EnzymeContext,
                 end
 
                 if legal
-                    res = Ty{found...}
-                    # A `Vararg` must not be wrapped in a `UnionAll` directly (deprecated),
-                    # so build the binding environment around a `Tuple` and rewrap `res`
-                    # into it. `rewrap_unionall` dispatches on `Core.TypeofVararg` and
-                    # pushes the bindings into the element type, leaving the `Vararg`
-                    # itself unwrapped; for every other `Ty` it is the plain loop.
-                    env = Tuple{res}
-                    for u in unionalls
-                        env = UnionAll(u, env)
+                    res = try
+                        applied = Ty{found...}
+                        # A `Vararg` must not be wrapped in a `UnionAll` directly (deprecated),
+                        # so build the binding environment around a `Tuple` and rewrap `applied`
+                        # into it. `rewrap_unionall` dispatches on `Core.TypeofVararg` and
+                        # pushes the bindings into the element type, leaving the `Vararg`
+                        # itself unwrapped; for every other `Ty` it is the plain loop.
+                        env = Tuple{applied}
+                        for u in unionalls
+                            env = UnionAll(u, env)
+                        end
+                        Base.rewrap_unionall(applied, env)
+                    catch
+                        # The parameters do not apply (`Tuple{T, Union{}}`, too many of them, one
+                        # outside its bound, a negative `Vararg` length), so the call throws when
+                        # it runs. Julia emits such a call on paths that never run too, so it has
+                        # no value rather than being an error, as in inference's `apply_type_tfunc`.
+                        return (false, nothing)
                     end
-                    res = Base.rewrap_unionall(res, env)
                     return (true, res)
                 end
             end

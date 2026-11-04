@@ -878,6 +878,33 @@ end
     end
 end
 
+# Each helper always throws from `apply_type`, so Julia compiles it to the `apply_type` call
+# followed by a trap. The functions calling it are valid wherever that branch is not taken.
+@noinline bottom_tuple(::Type{T}) where {T} = Tuple{T, Union{}}
+@noinline too_many_parameters(::Type{T}) where {T} = Vector{T, 2}
+@noinline out_of_bound(::Type{T}) where {T} = Complex{String}
+@noinline negative_vararg(::Type{T}) where {T} = NTuple{-1, T}
+
+untaken_bottom_tuple(x, take) = take ? (bottom_tuple(typeof(x)); x) : 2x
+untaken_too_many_parameters(x, take) = take ? (too_many_parameters(typeof(x)); x) : 2x
+untaken_out_of_bound(x, take) = take ? (out_of_bound(typeof(x)); x) : 2x
+untaken_negative_vararg(x, take) = take ? (negative_vararg(typeof(x)); x) : 2x
+
+@testset "Absint of an apply_type that throws ($f)" for (f, err) in (
+        (untaken_bottom_tuple, ErrorException),
+        (untaken_too_many_parameters, ErrorException),
+        (untaken_out_of_bound, TypeError),
+        (untaken_negative_vararg, ErrorException),
+    )
+    @test f(1.5, false) == 3.0
+    @test_throws err f(1.5, true)
+    @test autodiff(Reverse, f, Active, Active(1.5), Const(false))[1][1] == 2.0
+    @test autodiff(set_runtime_activity(Reverse), f, Active, Active(1.5), Const(false))[1][1] == 2.0
+    @test autodiff(Forward, f, Duplicated(1.5, 1.0), Const(false))[1] == 2.0
+    # The branch still throws where it runs.
+    @test_throws err autodiff(Reverse, f, Active, Active(1.5), Const(true))
+end
+
 struct NestedVecSol
     u::Vector{Vector{Float64}}
     t::Vector{Float64}
