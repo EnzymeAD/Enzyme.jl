@@ -40,12 +40,9 @@ function Enzyme._import_frule(fn, tys...)
     primals = []
     tangents = []
     tangentsi = []
-    anns = []
     for (i, ty) in enumerate(tys)
         val = Symbol("arg_$i")
-        TA = Symbol("AN_$i")
-        e = :($val::$TA)
-        push!(anns, :($TA <: Annotation{<:$(esc(ty))}))
+        e = :($val::Annotation{<:$(esc(ty))})
         push!(vals, val)
         push!(exprs, e)
         push!(primals, :($val.val))
@@ -54,7 +51,7 @@ function Enzyme._import_frule(fn, tys...)
     end
 
     return quote
-        function EnzymeRules.forward(config, fn::FA, ::Type{RetAnnotation}, $(exprs...); kwargs...) where {RetAnnotation, FA <: Annotation{<:$(esc(fn))}, $(anns...)}
+        function EnzymeRules.forward(config, fn::Annotation{<:$(esc(fn))}, ::Type{RetAnnotation}, $(exprs...); kwargs...) where {RetAnnotation <: Annotation}
             batchsize = same_or_one(1, $(vals...))
             return if batchsize == 1
                 dfn = fn isa Const ? $ChainRulesCore.NoTangent() : fn.dval
@@ -141,7 +138,6 @@ function Enzyme._import_rrule(fn, tys...)
     primals = []
     tangents = []
     tangentsi = []
-    anns = []
     nothings = []
     ntys = length(tys)
     act_res = Expr[:(fn isa Active ? res[1] : nothing)]
@@ -163,10 +159,8 @@ function Enzyme._import_rrule(fn, tys...)
     for (i, ty) in enumerate(tys)
         push!(nothings, :(nothing))
         val = Symbol("arg_$i")
-        TA = Symbol("AN_$i")
-        e = :($val::$TA)
+        e = :($val::Annotation{<:$(esc(ty))})
         push!(ptys, :(::$(esc(ty))))
-        push!(anns, :($TA <: Annotation{<:$(esc(ty))}))
         push!(vals, val)
         push!(exprs, e)
         primal = Symbol("primcopy_$i")
@@ -191,7 +185,7 @@ function Enzyme._import_rrule(fn, tys...)
     return quote
         EnzymeRules.has_readonly_rule(::$(esc(fn)), $(ptys...)) = true
 
-        function EnzymeRules.augmented_primal(config, fn::FA, ::Type{RetAnnotation}, $(exprs...); kwargs...) where {RetAnnotation, FA <: Annotation{<:$(esc(fn))}, $(anns...)}
+        function EnzymeRules.augmented_primal(config, fn::Annotation{<:$(esc(fn))}, ::Type{RetAnnotation}, $(exprs...); kwargs...) where {RetAnnotation <: Annotation}
             $(valtys...)
 
             @assert !(RetAnnotation <: Const)
@@ -233,7 +227,7 @@ function Enzyme._import_rrule(fn, tys...)
             return EnzymeRules.augmented_rule_return_type(config, RetAnnotation){typeof(cache)}(primal, shadow, cache)
         end
 
-        function EnzymeRules.reverse(config, fn::FA, ::Type{RetAnnotation}, tape::TapeTy, $(exprs...); kwargs...) where {RetAnnotation, TapeTy, FA <: Annotation{<:$(esc(fn))}, $(anns...)}
+        function EnzymeRules.reverse(config, fn::Annotation{<:$(esc(fn))}, ::Type{RetAnnotation}, tape, $(exprs...); kwargs...) where {RetAnnotation <: Annotation}
             if !(RetAnnotation <: Const)
                 shadow, pullback, byref = tape
 
@@ -268,7 +262,7 @@ function Enzyme._import_rrule(fn, tys...)
             return ($(nothings...),)
         end
 
-        function EnzymeRules.reverse(config, fn::FA, dval::Active{RetAnnotation}, tape::TapeTy, $(exprs...); kwargs...) where {RetAnnotation, TapeTy, FA <: Annotation{<:$(esc(fn))}, $(anns...)}
+        function EnzymeRules.reverse(config, fn::Annotation{<:$(esc(fn))}, dval::Active, tape, $(exprs...); kwargs...)
             oldshadow, pullback = tape
 
             shadow = dval.val

@@ -201,3 +201,25 @@ end
     @test Enzyme.gradient(Reverse, rrule_partial_const_call, [1.0, 2.0])[1] ≈ [1.0, 1.0]
     @test rrule_partial_calls[] == 0
 end
+
+rrule_typed_scale(z::Matrix{T}, s::Int) where {T <: AbstractFloat} = T(s) .* z
+@noinline rrule_untyped_scale(z::Matrix{T}, s::Int) where {T <: AbstractFloat} = Base.inferencebarrier(T(s) .* z)
+
+for fn in (:rrule_typed_scale, :rrule_untyped_scale)
+    @eval function ChainRulesCore.rrule(::typeof($fn), z::Matrix{T}, s::Int) where {T <: AbstractFloat}
+        y = $fn(z, s)
+        pb(Δ) = (NoTangent(), T(s) .* T.(ChainRulesCore.unthunk(Δ)), NoTangent())
+        return y, pb
+    end
+    @eval Enzyme.@import_rrule typeof($fn) Matrix{Float32} Int
+end
+
+const rrule_scale_weights = Float32[1 0.5; -1 2]
+rrule_typed_loss(x) = sum(rrule_scale_weights .* rrule_typed_scale(x, 3))
+rrule_untyped_loss(x) = sum(rrule_scale_weights .* (rrule_untyped_scale(x, 3)::Matrix{Float32}))
+
+@testset "import_rrule non-concrete cache tuple (#2503)" begin
+    z = Float32[1 2; 3 4]
+    @test Enzyme.gradient(Reverse, rrule_typed_loss, z)[1] ≈ 3.0f0 .* rrule_scale_weights
+    @test Enzyme.gradient(Reverse, rrule_untyped_loss, z)[1] ≈ 3.0f0 .* rrule_scale_weights
+end
