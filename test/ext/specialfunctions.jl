@@ -62,11 +62,73 @@ end
             test_scalar((y) -> SpecialFunctions.besselkx(2, y), x)
         end
 
-        # No derivative defined in Enzyme for libc atm
-        # test_scalar(SpecialFunctions.gamma, x)
-        # test_scalar(SpecialFunctions.digamma, x)
+        # Complex gamma-family functions and trigamma are not tested here.
         # test_scalar(SpecialFunctions.trigamma, x)
     end
+end
+
+@testset "gamma and digamma derivatives" begin
+    test_scalar(gamma, 2.5)
+    test_scalar(gamma, -2.5)
+    test_scalar(digamma, 2.5)
+    test_scalar(digamma, -2.5)
+    for T in (Float16, Float32, Float64), value in (-2.5, -0.5, 0.5, 1.0, 2.5, 10.0)
+        x = T(value)
+        expected = T(gamma(Float64(x)) * digamma(Float64(x)))
+        rtol = 5 * eps(T)
+        @test isapprox(Enzyme.gradient(Reverse, Const(gamma), x)[1], expected; rtol)
+        @test isapprox(Enzyme.gradient(Forward, Const(gamma), x)[1], expected; rtol)
+        expected_digamma = T(trigamma(Float64(x)))
+        @test isapprox(Enzyme.gradient(Reverse, Const(digamma), x)[1], expected_digamma; rtol)
+        @test isapprox(Enzyme.gradient(Forward, Const(digamma), x)[1], expected_digamma; rtol)
+
+        forward = autodiff(ForwardWithPrimal, Const(gamma), Duplicated(x, T(2)))
+        @test forward[2] == gamma(x)
+        @test isapprox(forward[1], 2 * expected; rtol)
+        reverse = autodiff(ReverseWithPrimal, Const(gamma), Active, Active(x))
+        @test reverse[2] == gamma(x)
+        @test isapprox(reverse[1][1], expected; rtol)
+
+        batch = autodiff(Forward, Const(gamma), BatchDuplicated(x, (T(2), T(-3))))[1]
+        @test isapprox(batch[1], 2 * expected; rtol)
+        @test isapprox(batch[2], -3 * expected; rtol)
+    end
+
+    # loggamma makes libEnzyme's external digamma available, which used to hide
+    # the missing-symbol error and expose the tgamma rule's missing gamma factor.
+    gamma_and_loggamma(x) = gamma(x) + loggamma(x)
+    for mode in (Forward, Reverse)
+        @test Enzyme.gradient(mode, Const(gamma_and_loggamma), 2.5)[1] ≈ (gamma(2.5) + 1) * digamma(2.5)
+    end
+
+    dgamma(x) = autodiff(Reverse, Const(gamma), Active, Active(x))[1][1]
+    dgamma_forward(x) = autodiff(Forward, Const(gamma), Duplicated(x, one(x)))[1]
+    for x in (-2.5, -0.5, 0.5, 2.5, 10.0, 2.5f0)
+        second = gamma(x) * (digamma(x)^2 + trigamma(x))
+        @test autodiff(Forward, Const(dgamma), Duplicated(x, one(x)))[1] ≈ second
+        @test autodiff(Forward, Const(dgamma_forward), Duplicated(x, one(x)))[1] ≈ second
+    end
+
+    # Higher gamma derivatives must also follow the analytic polygamma chain.
+    ddgamma_forward(x) = autodiff(Forward, Const(dgamma_forward), Duplicated(x, one(x)))[1]
+    dddgamma_forward(x) = autodiff(Forward, Const(ddgamma_forward), Duplicated(x, one(x)))[1]
+    for x in (-2.5, -0.5, 2.5)
+        ψ, ψ1, ψ2, ψ3 = digamma(x), trigamma(x), polygamma(2, x), polygamma(3, x)
+        third = gamma(x) * (ψ^3 + 3 * ψ * ψ1 + ψ2)
+        fourth = gamma(x) * (ψ^4 + 6 * ψ^2 * ψ1 + 3 * ψ1^2 + 4 * ψ * ψ2 + ψ3)
+        @test dddgamma_forward(x) ≈ third
+        @test autodiff(Forward, Const(dddgamma_forward), Duplicated(x, one(x)))[1] ≈ fourth
+    end
+
+    # Split reverse must retain the argument's contribution until the pullback,
+    # and add it to an existing shadow with the caller's output seed.
+    gamma_vector(x) = [gamma(x[1])]
+    fwd, rev = autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(gamma_vector)}, Duplicated, Duplicated{Vector{Float64}})
+    x, dx = [2.5], [7.0]
+    tape, _, shadow = fwd(Const(gamma_vector), Duplicated(x, dx))
+    shadow[1] = 3.0
+    rev(Const(gamma_vector), Duplicated(x, dx), tape)
+    @test dx[1] ≈ 7 + 3 * gamma(2.5) * digamma(2.5)
 end
 
 # SpecialFunctions 0.7->0.8 changes:

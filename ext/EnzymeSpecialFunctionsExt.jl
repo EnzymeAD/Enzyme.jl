@@ -11,6 +11,25 @@ function __init__()
     Enzyme.Compiler.cmplx_known_ops[typeof(SpecialFunctions.besselk)] = (:cmplx_kn, 2, nothing)
 end
 
+# libEnzyme's tgamma rule calls an external digamma and omits the gamma factor.
+# Use Julia's digamma so the derivative also works without a loggamma call nearby.
+EnzymeRules.@easy_rule(
+    SpecialFunctions.gamma(x::Real),
+    (Ω * SpecialFunctions.digamma(x),),
+)
+
+# The reflection formulas for digamma and polygamma contain inv(tanpi(x)).
+# At half-integers tanpi(x) is infinite, so differentiating that intermediate
+# gives NaN although these functions and all their derivatives are finite.
+# Keep nested differentiation on the analytic polygamma identities as well.
+EnzymeRules.@easy_rule(SpecialFunctions.digamma(x::Real), (SpecialFunctions.trigamma(x),))
+EnzymeRules.@easy_rule(SpecialFunctions.trigamma(x::Real), (SpecialFunctions.polygamma(2, x),))
+EnzymeRules.@easy_rule(
+    SpecialFunctions.polygamma(n::Integer, x::Real),
+    @setup(n < 0 && SpecialFunctions.polygamma(n, x)),
+    (@Constant, SpecialFunctions.polygamma(n + 1, x)),
+)
+
 # Exponentially scaled Bessel functions (x/ref: https://github.com/EnzymeAD/Enzyme.jl/issues/2880)
 # besselix(nu, x) = besseli(nu, x) * exp(-abs(x)) for real x, hence the extra -sign(x)*Ω term.
 EnzymeRules.@easy_rule(
