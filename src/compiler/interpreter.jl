@@ -943,6 +943,75 @@ end
     return dest
 end
 
+# Sum `f` over a tuple of concatenation operands. The overrides below are often
+# inferred inside a reduction such as `reduce(vcat, xs; init)`. Base's `sum`
+# would enter `mapfoldl_impl` again there, and inference widens that recursive
+# call to `Any`, which makes the reduction's result type `Any`.
+@inline concat_sum(f, ::Tuple{}) = 0
+@inline concat_sum(f, arrays::Tuple) = f(first(arrays)) + concat_sum(f, Base.tail(arrays))
+
+# Iterating over the vararg tuple in Base's dense-vector vcat joins constant
+# and active arrays at the loop phi. Keep each copy tied to its tuple field.
+@inline copy_vcat!(out, offset, ::Tuple{}) = out
+
+@inline function copy_vcat!(out, offset, arrays::Tuple)
+    a = first(arrays)
+    n = length(a)
+    @assert offset + n <= 1 + length(out) # Concurrent modification of arrays?
+    Base.unsafe_copyto!(out, offset, a, 1, n)
+    return copy_vcat!(out, offset + n, Base.tail(arrays))
+end
+
+@inline function override_vcat(arrays::Vector{T}...) where {T}
+    out = Vector{T}(undef, concat_sum(length, arrays))
+    return copy_vcat!(out, 1, arrays)
+end
+
+const DENSE_VCAT_METHOD = which(Base.vcat, Tuple{Vararg{Vector{T}}} where {T})
+
+include("concatenation.jl")
+include("foreach.jl")
+
+concat_rewrite(interp::EnzymeInterpreter, f, argtypes, sv::AbsIntState) = nothing
+
+function concat_rewrite(interp::EnzymeInterpreter, f::DenseConcatFunction, argtypes, sv::AbsIntState)
+    length(argtypes) > 1 || return nothing
+    if f === Core.kwcall
+        length(argtypes) == 4 || return nothing
+        Core.Compiler.widenconst(argtypes[3]) === typeof(Base.stack) || return nothing
+    end
+    sig = Core.Compiler.argtypes_to_type(argtypes)
+    Base.isdispatchtuple(sig) || return nothing
+    replacement = concat_replacement(f, sig)
+    replacement === nothing && return nothing
+    return checked_method_rewrite(interp, f, sig, sv, replacement)
+end
+
+function checked_method_rewrite(interp::EnzymeInterpreter, f, sig, sv::AbsIntState, replacement)
+    # Keep user rules and more-specific methods authoritative, and invalidate
+    # rewritten callers when method selection changes.
+    enzyme_call_kind(interp, simplify_kw(sig)) === nothing || return nothing
+
+    result = Core.Compiler.findall(sig, Core.Compiler.method_table(interp); limit = 1)
+    (result === nothing || result === missing) && return nothing
+    @static if isdefined(Core.Compiler, :MethodMatchResult)
+        matches = result.matches
+    else
+        matches = result
+    end
+    Core.Compiler.length(matches) == 1 || return nothing
+    match = Core.Compiler.getindex(matches, 1)
+    match.method === first(replacement) || return nothing
+    @static if isdefined(Core.Compiler, :add_mt_backedge!)
+        Core.Compiler.add_mt_backedge!(sv, typeof(f).name.mt, sig)
+        Core.Compiler.add_backedge!(sv, Core.Compiler.specialize_method(match))
+    else
+        info = Core.Compiler.MethodMatchInfo(matches, Core.methodtable, sig, true)
+        Core.Compiler.add_edges!(sv.edges, info)
+    end
+    return last(replacement)
+end
+
 @generated function same_sized(x::Tuple)
     result = :true
     prev = nothing
@@ -1465,6 +1534,25 @@ function abstract_call_known(
     end
 
     if interp.broadcast_rewrite
+        replacement = concat_rewrite(interp, f, argtypes, sv)
+        if replacement === nothing
+            replacement = foreach_rewrite(interp, f, argtypes, sv)
+        end
+        if replacement !== nothing
+            arginfo2 = ArgInfo(
+                fargs isa Nothing ? nothing :
+                    [QuoteNode(replacement), fargs[2:end]...],
+                [Core.Const(replacement), argtypes[2:end]...],
+            )
+            return Base.@invoke abstract_call_known(
+                interp::AbstractInterpreter,
+                replacement::Any,
+                arginfo2::ArgInfo,
+                si::StmtInfo,
+                sv::AbsIntState,
+                max_methods::Int,
+            )
+        end
         if f === Base.copyto! && length(argtypes) == 3
             # Ideally we just override uses of the AbstractArray base class, but
             # I don't know how to override the method in base, without accidentally overridding
