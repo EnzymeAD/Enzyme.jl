@@ -37,7 +37,8 @@ import Enzyme:
     ismutabletype,
     create_fresh_codeinfo,
     add_edge!,
-    arg_operands_view
+    arg_operands_view,
+    splatcall
 
 using Enzyme
 using ScopedValues: @with
@@ -7714,113 +7715,134 @@ end
 @inline (thunk::PrimalErrorThunk{PT,FA,RT,TT,Width,ReturnPrimal})(
     fn,
     args...,
-) where {PT,FA,RT,TT,Width,ReturnPrimal} = enzyme_call(
-    Val(false),
-    thunk.adjoint,
-    PrimalErrorThunk{PT,FA,RT,TT,Width,ReturnPrimal},
-    Val(Width),
-    Val(ReturnPrimal),
-    TT,
-    RT,
-    fn,
-    Cvoid,
-    args...,
+) where {PT, FA, RT, TT, Width, ReturnPrimal} = splatcall(
+    enzyme_call,
+    (
+        Val(false),
+        thunk.adjoint,
+        PrimalErrorThunk{PT, FA, RT, TT, Width, ReturnPrimal},
+        Val(Width),
+        Val(ReturnPrimal),
+        TT,
+        RT,
+        fn,
+        Cvoid,
+    ),
+    args,
 )
 
 @inline (thunk::CombinedAdjointThunk{PT,FA,RT,TT,Width,ReturnPrimal})(
     fn,
     args...,
-) where {PT,FA,Width,RT,TT,ReturnPrimal} = enzyme_call(
-    Val(false),
-    thunk.adjoint,
-    CombinedAdjointThunk{PT,FA,RT,TT,Width,ReturnPrimal},
-    Val(Width),
-    Val(ReturnPrimal),
-    TT,
-    RT,
-    fn,
-    Cvoid,
-    args...,
+) where {PT, FA, Width, RT, TT, ReturnPrimal} = splatcall(
+    enzyme_call,
+    (
+        Val(false),
+        thunk.adjoint,
+        CombinedAdjointThunk{PT, FA, RT, TT, Width, ReturnPrimal},
+        Val(Width),
+        Val(ReturnPrimal),
+        TT,
+        RT,
+        fn,
+        Cvoid,
+    ),
+    args,
 )
 
 @inline (thunk::ForwardModeThunk{PT,FA,RT,TT,Width,ReturnPrimal})(
     fn,
     args...,
-) where {PT,FA,Width,RT,TT,ReturnPrimal} = enzyme_call(
-    Val(false),
-    thunk.adjoint,
-    ForwardModeThunk{PT,FA,RT,TT,Width,ReturnPrimal},
-    Val(Width),
-    Val(ReturnPrimal),
-    TT,
-    RT,
-    fn,
-    Cvoid,
-    args...,
+) where {PT, FA, Width, RT, TT, ReturnPrimal} = splatcall(
+    enzyme_call,
+    (
+        Val(false),
+        thunk.adjoint,
+        ForwardModeThunk{PT, FA, RT, TT, Width, ReturnPrimal},
+        Val(Width),
+        Val(ReturnPrimal),
+        TT,
+        RT,
+        fn,
+        Cvoid,
+    ),
+    args,
 )
 
 @inline (thunk::AdjointThunk{PT,FA,RT,TT,Width,TapeT})(
     fn,
     args...,
-) where {PT,FA,Width,RT,TT,TapeT} = enzyme_call(
-    Val(false),
-    thunk.adjoint,
-    AdjointThunk{PT,FA,RT,TT,Width,TapeT},
-    Val(Width),
-    Val(false),
-    TT,
-    RT,
-    fn,
-    TapeT,
-    args...,
+) where {PT, FA, Width, RT, TT, TapeT} = splatcall(
+    enzyme_call,
+    (
+        Val(false),
+        thunk.adjoint,
+        AdjointThunk{PT, FA, RT, TT, Width, TapeT},
+        Val(Width),
+        Val(false),
+        TT,
+        RT,
+        fn,
+        TapeT,
+    ),
+    args,
 ) #=ReturnPrimal=#
 @inline raw_enzyme_call(
     thunk::AdjointThunk{PT,FA,RT,TT,Width,TapeT},
     fn::FA,
     args...,
-) where {PT,FA,Width,RT,TT,TapeT} = enzyme_call(
-    Val(true),
-    thunk.adjoint,
-    AdjointThunk{PT,FA,RT,TT,Width,TapeT},
-    Val(Width),
-    Val(false),
-    TT,
-    RT,
-    fn,
-    TapeT,
-    args...,
+) where {PT, FA, Width, RT, TT, TapeT} = splatcall(
+    enzyme_call,
+    (
+        Val(true),
+        thunk.adjoint,
+        AdjointThunk{PT, FA, RT, TT, Width, TapeT},
+        Val(Width),
+        Val(false),
+        TT,
+        RT,
+        fn,
+        TapeT,
+    ),
+    args,
 ) #=ReturnPrimal=#
 
 @inline (thunk::AugmentedForwardThunk{PT,FA,RT,TT,Width,ReturnPrimal,TapeT})(
     fn,
     args...,
-) where {PT,FA,Width,RT,TT,ReturnPrimal,TapeT} = enzyme_call(
-    Val(false),
-    thunk.primal,
-    AugmentedForwardThunk{PT,FA,RT,TT,Width,ReturnPrimal,TapeT},
-    Val(Width),
-    Val(ReturnPrimal),
-    TT,
-    RT,
-    fn,
-    TapeT,
-    args...,
+) where {PT, FA, Width, RT, TT, ReturnPrimal, TapeT} = splatcall(
+    enzyme_call,
+    (
+        Val(false),
+        thunk.primal,
+        AugmentedForwardThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeT},
+        Val(Width),
+        Val(ReturnPrimal),
+        TT,
+        RT,
+        fn,
+        TapeT,
+    ),
+    args,
 )
 @inline raw_enzyme_call(
     thunk::AugmentedForwardThunk{PT,FA,RT,TT,Width,ReturnPrimal,TapeT},
     fn::FA,
     args...,
-) where {PT,FA,Width,RT,TT,ReturnPrimal,TapeT} = enzyme_call(
-    Val(true),
-    thunk.primal,
-    AugmentedForwardThunk{PT,FA,RT,TT,Width,ReturnPrimal,TapeT},
-    Val(Width),
-    Val(ReturnPrimal),
-    TT,
-    RT,
-    fn,
-    TapeT,
-    args...,
+) where {PT, FA, Width, RT, TT, ReturnPrimal, TapeT} = splatcall(
+    enzyme_call,
+    (
+        Val(true),
+        thunk.primal,
+        AugmentedForwardThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeT},
+        Val(Width),
+        Val(ReturnPrimal),
+        TT,
+        RT,
+        fn,
+        TapeT,
+    ),
+    args,
 )
 
 include("typeutils/recursive_add.jl")

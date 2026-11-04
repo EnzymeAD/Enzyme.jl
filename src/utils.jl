@@ -56,6 +56,31 @@ end
     (T2 <: Tuple) && !(T2 === Tuple) && !(T2 isa UnionAll)
 export is_concrete_tuple
 
+"""
+    splatcall(f, ts::Tuple...)
+
+Call `f(ts[1]..., ts[2]..., ...)`, passing every tuple element as its own argument.
+
+Julia's optimizer turns a splatted call into a direct call only while each splatted tuple
+has at most `max_tuple_splat` (32) elements. A longer splat stays a `Core._apply_iterate`
+call, which boxes every argument and dispatches at run time. The entry points forward
+their argument tuples through `splatcall` so that a call with more than 32 annotated
+arguments stays statically dispatched and allocation-free.
+"""
+@inline function splatcall(f::F, ts::Vararg{Tuple, N}) where {F, N}
+    if @generated
+        args = Expr[]
+        for (k, T) in enumerate(ts)
+            for i in 1:fieldcount(T)
+                push!(args, :(getfield(getfield(ts, $k), $i)))
+            end
+        end
+        return :(f($(args...)))
+    else
+        return Core._apply_iterate(iterate, f, ts...)
+    end
+end
+
 const Tracked = 10
 const Derived = 11
 export Tracked, Derived
