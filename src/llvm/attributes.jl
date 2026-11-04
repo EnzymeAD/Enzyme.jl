@@ -979,6 +979,22 @@ function annotate!(mod::LLVM.Module)
             for fn in funcs[fname]
                 push!(return_attributes(fn), LLVM.EnumAttribute("noalias", 0))
                 push!(return_attributes(fn), LLVM.EnumAttribute("nonnull", 0))
+                # These constructors initialize a pointer to fresh owned data.
+                # The backend can distinguish writes to that data from writes
+                # to memory read before the allocation, even through the header.
+                if VERSION < v"1.11-" && fname in (
+                        "jl_alloc_array_1d", "ijl_alloc_array_1d",
+                        "jl_alloc_array_2d", "ijl_alloc_array_2d",
+                        "jl_alloc_array_3d", "ijl_alloc_array_3d",
+                        "jl_new_array", "ijl_new_array",
+                    )
+                    push!(function_attributes(fn), StringAttribute("enzyme_fresh_pointer", "0"))
+                elseif fname in (
+                        "jl_alloc_genericmemory", "ijl_alloc_genericmemory",
+                        "jl_alloc_genericmemory_unchecked", "ijl_alloc_genericmemory_unchecked",
+                    )
+                    push!(function_attributes(fn), StringAttribute("enzyme_fresh_pointer", string(sizeof(Csize_t))))
+                end
                 push!(function_attributes(fn), no_escaping_alloc)
                 push!(function_attributes(fn), LLVM.EnumAttribute("mustprogress"))
                 push!(function_attributes(fn), LLVM.EnumAttribute("willreturn"))
