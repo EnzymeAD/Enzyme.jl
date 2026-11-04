@@ -839,3 +839,174 @@ function calling_conv_fixup(
     end
     throw(AssertionError(msg2))
 end
+
+function has_sret_union_arg_attr(
+        usr::LLVM.CallInst,
+        @nospecialize(fop::LLVM.Value),
+        args::Vector{Int},
+    )::Bool
+    for i in args
+        for attr in collect(argument_attributes(usr, i))
+            if isa(attr, LLVM.StringAttribute) && kind(attr) == "enzymejl_sret_union_bytes"
+                return true
+            end
+        end
+        if isa(fop, LLVM.Function)
+            for attr in collect(parameter_attributes(fop, i))
+                if isa(attr, LLVM.StringAttribute) && kind(attr) == "enzymejl_sret_union_bytes"
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+# True if every instruction that may write to `alloca` is in `allowed_calls` (or `llvm.memset`).
+function sret_alloca_only_written_by_calls(
+        alloca::LLVM.AllocaInst,
+        allowed_calls::Set{LLVM.CallInst},
+    )::Bool
+    worklist = LLVM.Value[alloca]
+    seen = Set{LLVM.Value}()
+    while !isempty(worklist)
+        cur = pop!(worklist)
+        cur in seen && continue
+        push!(seen, cur)
+        for u in LLVM.uses(cur)
+            usr = LLVM.user(u)
+            if isa(usr, LLVM.BitCastInst) ||
+                    isa(usr, LLVM.AddrSpaceCastInst) ||
+                    isa(usr, LLVM.GetElementPtrInst) ||
+                    isa(usr, LLVM.PHIInst) ||
+                    isa(usr, LLVM.SelectInst) ||
+                    isa(usr, LLVM.FreezeInst)
+                push!(worklist, usr)
+            elseif isa(usr, LLVM.LoadInst) ||
+                    isa(usr, LLVM.ICmpInst) ||
+                    isa(usr, LLVM.PtrToIntInst)
+                continue
+            elseif isa(usr, LLVM.CallInst)
+                usr in allowed_calls && continue
+                fop = LLVM.called_operand(usr)
+                if isa(fop, LLVM.Function)
+                    intr = LLVM.API.LLVMGetIntrinsicID(fop)
+                    if intr == LLVM.Intrinsic("llvm.lifetime.start").id ||
+                            intr == LLVM.Intrinsic("llvm.lifetime.end").id ||
+                            intr == LLVM.Intrinsic("llvm.invariant.start").id ||
+                            intr == LLVM.Intrinsic("llvm.invariant.end").id ||
+                            intr == LLVM.Intrinsic("llvm.assume").id ||
+                            intr == LLVM.Intrinsic("llvm.memset").id
+                        continue
+                    end
+                    if intr == LLVM.Intrinsic("llvm.memcpy").id ||
+                            intr == LLVM.Intrinsic("llvm.memmove").id
+                        if operands(usr)[1] != cur && operands(usr)[2] == cur
+                            continue
+                        end
+                        return false
+                    end
+                end
+                args = Int[]
+                for (idx, op) in enumerate(arg_operands_view(usr))
+                    if op == cur
+                        push!(args, idx)
+                    end
+                end
+                if !isempty(args) && !has_sret_union_arg_attr(usr, fop, args) && decay_args_readonly(usr, fop, args)
+                    continue
+                end
+                return false
+            else
+                return false
+            end
+        end
+    end
+    return true
+end
+
+# True if every instruction that may write to `alloca` is inactive (`enzyme_inactive`).
+function sret_alloca_writers_inactive(alloca::LLVM.AllocaInst)::Bool
+    haskey(metadata(alloca), "enzyme_inactive") && return true
+    worklist = LLVM.Value[alloca]
+    seen = Set{LLVM.Value}()
+    while !isempty(worklist)
+        cur = pop!(worklist)
+        cur in seen && continue
+        push!(seen, cur)
+        for u in LLVM.uses(cur)
+            usr = LLVM.user(u)
+            if isa(usr, LLVM.BitCastInst) ||
+                    isa(usr, LLVM.AddrSpaceCastInst) ||
+                    isa(usr, LLVM.GetElementPtrInst) ||
+                    isa(usr, LLVM.PHIInst) ||
+                    isa(usr, LLVM.SelectInst) ||
+                    isa(usr, LLVM.FreezeInst)
+                push!(worklist, usr)
+            elseif isa(usr, LLVM.LoadInst) ||
+                    isa(usr, LLVM.ICmpInst) ||
+                    isa(usr, LLVM.PtrToIntInst)
+                continue
+            elseif isa(usr, LLVM.CallInst)
+                fop = LLVM.called_operand(usr)
+                if isa(fop, LLVM.Function)
+                    intr = LLVM.API.LLVMGetIntrinsicID(fop)
+                    if intr == LLVM.Intrinsic("llvm.lifetime.start").id ||
+                            intr == LLVM.Intrinsic("llvm.lifetime.end").id ||
+                            intr == LLVM.Intrinsic("llvm.invariant.start").id ||
+                            intr == LLVM.Intrinsic("llvm.invariant.end").id ||
+                            intr == LLVM.Intrinsic("llvm.assume").id ||
+                            intr == LLVM.Intrinsic("llvm.memset").id
+                        continue
+                    end
+                    if intr == LLVM.Intrinsic("llvm.memcpy").id ||
+                            intr == LLVM.Intrinsic("llvm.memmove").id
+                        if operands(usr)[1] != cur && operands(usr)[2] == cur
+                            continue
+                        end
+                        return false
+                    end
+                end
+                args = Int[]
+                for (idx, op) in enumerate(arg_operands_view(usr))
+                    if op == cur
+                        push!(args, idx)
+                    end
+                end
+                isempty(args) && return false
+                if !has_sret_union_arg_attr(usr, fop, args) && decay_args_readonly(usr, fop, args)
+                    continue
+                end
+                for i in args
+                    arg_inactive = false
+                    for attr in collect(argument_attributes(usr, i))
+                        if isa(attr, LLVM.StringAttribute) && kind(attr) == "enzyme_inactive"
+                            arg_inactive = true
+                            break
+                        end
+                    end
+                    if !arg_inactive && isa(fop, LLVM.Function)
+                        for attr in collect(parameter_attributes(fop, i))
+                            if isa(attr, LLVM.StringAttribute) && kind(attr) == "enzyme_inactive"
+                                arg_inactive = true
+                                break
+                            end
+                        end
+                        if !arg_inactive
+                            for attr in collect(function_attributes(fop))
+                                if isa(attr, LLVM.StringAttribute) && kind(attr) == "enzyme_inactive"
+                                    arg_inactive = true
+                                    break
+                                end
+                            end
+                        end
+                    end
+                    arg_inactive || return false
+                end
+            else
+                return false
+            end
+        end
+    end
+    return true
+end

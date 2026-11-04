@@ -436,6 +436,21 @@ function union_alloca_type(@nospecialize(UT::Type))
     return nbytes
 end
 
+function single_sret_union_eltype(@nospecialize(UT::Type))::Union{Nothing, Type}
+    found = nothing
+    multiple = false
+    for_each_uniontype_small(UT) do jlrettype
+        if !(Base.issingletontype(jlrettype) && isa(jlrettype, DataType))
+            if found === nothing || found === jlrettype
+                found = jlrettype
+            else
+                multiple = true
+            end
+        end
+    end
+    return multiple ? nothing : found
+end
+
 
 # From https://github.com/JuliaLang/julia/blob/e6bf81f39a202eedc7bd4f310c1ab60b5b86c251/src/codegen.cpp#L6447
 function is_sret(@nospecialize(jlrettype::Type))

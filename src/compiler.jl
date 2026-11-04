@@ -6884,6 +6884,14 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
                                 end
                             end
                         end
+                        if !hassret
+                            for attr in collect(argument_attributes(u, i))
+                                if isa(attr, LLVM.StringAttribute) && kind(attr) == "enzymejl_sret_union_bytes"
+                                    hassret = true
+                                    break
+                                end
+                            end
+                        end
                         if hassret
                             push!(calluse, u)
                         end
@@ -6896,21 +6904,34 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
                     _, RT = enzyme_custom_extract_mi(cu, false)
                     push!(RTs, RT)
                 end
-                @assert all(RTs[1] == RT for RT in RTs)
-                RT = RTs[1]
-                if RT !== nothing
-                    llrt, sret, returnRoots = get_return_info(RT)
-                    at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(inst))
-                    if !(sret isa Nothing) && !is_sret_union(RT)
-                        if is_returnroots
-                            @assert returnRoots !== nothing
-                            RT = equivalent_rooted_type(RT)
-                        end
-                        lRT = convert(LLVMType, RT)
-                        if LLVM.sizeof(DL, lRT) == LLVM.sizeof(DL, at)
-                            metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
-                            if EmitTypeNames[]
-                                metadata(inst)["enzymejl_allocart_name"] = MDNode(LLVM.Metadata[MDString(string(RT))])
+                if all(RTs[1] == RT for RT in RTs)
+                    RT = RTs[1]
+                    if RT !== nothing
+                        llrt, sret, returnRoots = get_return_info(RT)
+                        at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(inst))
+                        if !(sret isa Nothing) && !is_sret_union(RT)
+                            if is_returnroots
+                                @assert returnRoots !== nothing
+                                RT = equivalent_rooted_type(RT)
+                            end
+                            lRT = convert(LLVMType, RT)
+                            if LLVM.sizeof(DL, lRT) == LLVM.sizeof(DL, at)
+                                metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(RT))))])
+                                if EmitTypeNames[]
+                                    metadata(inst)["enzymejl_allocart_name"] = MDNode(LLVM.Metadata[MDString(string(RT))])
+                                end
+                            end
+                        elseif !(sret isa Nothing) && is_sret_union(RT) && !is_returnroots
+                            single_ty = single_sret_union_eltype(RT)
+                            if single_ty !== nothing &&
+                                    LLVM.sizeof(DL, convert(LLVMType, single_ty)) == LLVM.sizeof(DL, at) &&
+                                    sret_alloca_only_written_by_calls(inst, Set{LLVM.CallInst}(calluse))
+                                metadata(inst)["enzymejl_allocart"] = MDNode(LLVM.Metadata[MDString(string(convert(UInt, unsafe_to_pointer(single_ty))))])
+                                if EmitTypeNames[]
+                                    metadata(inst)["enzymejl_allocart_name"] = MDNode(LLVM.Metadata[MDString(string(single_ty))])
+                                end
+                            elseif guaranteed_const_nongen(RT, job.world) && sret_alloca_writers_inactive(inst)
+                                metadata(inst)["enzyme_inactive"] = inactive_md(INACTIVE_GUARANTEED_CONST)
                             end
                         end
                     end
