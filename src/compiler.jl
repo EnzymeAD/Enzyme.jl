@@ -6116,6 +6116,14 @@ function lower_convention(
             push!(attributes, LLVM.StringAttribute("enzyme_custom_full_attributes"))
         end
     end
+    reads_argmem = !isempty(raisedArgs)
+    for i in removedRoots
+        if !((i - 1) in loweredArgs)
+            reads_argmem = true
+            break
+        end
+    end
+    allocs_return = sret_union && !retRemoved
     for prev in collect(function_attributes(entry_f))
         if kind(prev) == kind(StringAttribute("enzyme_ta_norecur"))
             push!(attributes, prev)
@@ -6129,29 +6137,43 @@ function lower_convention(
         if kind(prev) == kind(StringAttribute("enzyme_shouldrecompute"))
             push!(attributes, prev)
         end
-        if LLVM.version().major <= 15
-            if kind(prev) == kind(EnumAttribute("readonly"))
-                push!(attributes, prev)
-            end
-            if kind(prev) == kind(EnumAttribute("readnone"))
-                push!(attributes, prev)
-            end
-            if kind(prev) == kind(EnumAttribute("argmemonly"))
-                push!(attributes, prev)
-            end
-            if kind(prev) == kind(EnumAttribute("inaccessiblememonly"))
-                push!(attributes, prev)
-            end
-        end
-        if LLVM.version().major > 15
-            if kind(prev) == kind(EnumAttribute("memory"))
-                old = MemoryEffect(value(attr))
-                mem = MemoryEffect(
-                    (set_writing(getModRef(old, ArgMem)) << getLocationPos(ArgMem)) |
-                    (getModRef(old, InaccessibleMem) << getLocationPos(InaccessibleMem)) |
-                    (getModRef(old, Other) << getLocationPos(Other)),
-                )
-                push!(attributes, EnumAttribute("memory", mem.data))
+        # `sret`, `returnRoots`, and `loweredArgs` only load/store local non-escaping
+        # allocas inside `wrapper_f`. Only `raisedArgs` / mixed `removedRoots` additionally
+        # read from `wrapper_f`'s pointer parameters (`ArgMem`), while `sret_union` (boxing)
+        # and `loweredReturn` (unboxing / type-mismatch error) may allocate or access heap.
+        if !allocs_return && !loweredReturn
+            if LLVM.version().major <= 15
+                if kind(prev) == kind(EnumAttribute("readonly"))
+                    push!(attributes, prev)
+                end
+                if kind(prev) == kind(EnumAttribute("readnone"))
+                    if reads_argmem
+                        push!(attributes, EnumAttribute("readonly"))
+                        push!(attributes, EnumAttribute("argmemonly"))
+                    else
+                        push!(attributes, prev)
+                    end
+                end
+                if kind(prev) == kind(EnumAttribute("argmemonly"))
+                    push!(attributes, prev)
+                end
+                if !reads_argmem && kind(prev) == kind(EnumAttribute("inaccessiblememonly"))
+                    push!(attributes, prev)
+                end
+            else
+                if kind(prev) == kind(EnumAttribute("memory"))
+                    if reads_argmem
+                        old = MemoryEffect(value(prev))
+                        mem = MemoryEffect(
+                            (set_reading(getModRef(old, ArgMem)) << getLocationPos(ArgMem)) |
+                                (getModRef(old, InaccessibleMem) << getLocationPos(InaccessibleMem)) |
+                                (getModRef(old, Other) << getLocationPos(Other)),
+                        )
+                        push!(attributes, EnumAttribute("memory", mem.data))
+                    else
+                        push!(attributes, prev)
+                    end
+                end
             end
         end
         if kind(prev) == kind(EnumAttribute("speculatable"))
