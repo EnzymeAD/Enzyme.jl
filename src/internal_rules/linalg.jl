@@ -942,59 +942,118 @@ function EnzymeRules.forward(
     end
 end
 
+# Matrix logdet rules also apply to dense real symmetric and Hermitian wrappers. Their
+# shadows are backing storage, so reverse mode must fold the reflected triangle
+# into the triangle selected by uplo.
+# Complex Symmetric logdet can infer a Real/Complex union return on Julia 1.12,
+# which the custom-rule calling convention cannot lower.
+const _LogDetMatrix = Union{
+    StridedMatrix,
+    Symmetric{<:Real, <:StridedMatrix},
+    Hermitian{<:Any, <:StridedMatrix},
+}
+
+_logdet_reflect(::Symmetric, x) = x
+_logdet_reflect(::Hermitian, x) = conj(x)
+_logdet_diagonal(::Symmetric, x) = x
+_logdet_diagonal(::Hermitian, x) = real(x)
+
+function _logdet_add!(dA::StridedMatrix, seed, invA)
+    for j in axes(dA, 2), i in axes(dA, 1)
+        dA[i, j] += _project(eltype(dA), seed * conj(invA[j, i]))
+    end
+    return nothing
+end
+
+function _logdet_add!(dA::Union{Symmetric, Hermitian}, seed, invA)
+    data = parent(dA)
+    for j in axes(data, 2)
+        data[j, j] += _project(eltype(data), _logdet_diagonal(dA, seed * conj(invA[j, j])))
+        rows = dA.uplo == 'U' ? (firstindex(data, 1):(j - 1)) : ((j + 1):lastindex(data, 1))
+        for i in rows
+            g = seed * conj(invA[j, i])
+            reflected = _logdet_reflect(dA, seed * conj(invA[i, j]))
+            data[i, j] += _project(eltype(data), g + reflected)
+        end
+    end
+    return nothing
+end
+
+struct _LogDetForward{T, A}
+    primal::A
+end
+function (f::_LogDetForward{T})(dA) where {T}
+    return dA === f.primal ? zero(T) : _project(T, tr(f.primal \ dA))
+end
+
 function EnzymeRules.augmented_primal(
-    config::EnzymeRules.RevConfig,
-    func::Const{typeof(logdet)},
-    ::Type{RT},
-    A::Annotation{AT},
-) where {RT,AT<:StridedMatrix}
-    cache_A = EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(logdet)},
+        ::Type{RT},
+        A::Annotation{AT},
+    ) where {RT, AT <: _LogDetMatrix}
     res = logdet(A.val)
+    # Keep the derivative itself: a wrapper can retain its identity while its
+    # backing storage is overwritten between the forward and reverse passes.
+    cache = !isa(A, Const) && !(RT <: Const) ? inv(A.val) : nothing
     retres = EnzymeRules.needs_primal(config) ? res : nothing
     dres = if EnzymeRules.width(config) == 1 && EnzymeRules.needs_shadow(config)
         zero(res)
     elseif EnzymeRules.width(config) > 1 && EnzymeRules.needs_shadow(config)
-        ntuple(Val(EnzymeRules.width(config))) do i
-            Base.@_inline_meta
-            zero(res)
-        end
+        ntuple(Returns(zero(res)), Val(EnzymeRules.width(config)))
     else
         nothing
     end
-    return EnzymeRules.AugmentedReturn(retres, dres, cache_A)
+    return EnzymeRules.AugmentedReturn(retres, dres, cache)
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfig,
-    func::Const{typeof(logdet)},
-    dret::Active,
-    cache_A,
-    A::Annotation{<:StridedMatrix},
-)
-    !isa(A, Const) && (A.dval .+= dret.val * inv(cache_A)')
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(logdet)},
+        dret::Union{Active, NTuple{<:Any, Active}},
+        invA,
+        A::Annotation{<:_LogDetMatrix},
+    )
+    if !isa(A, Const)
+        N = EnzymeRules.width(config)
+        for b in 1:N
+            dA = _lapack_shadow(A, b, N)
+            dA === nothing && continue
+            seed = N == 1 ? dret.val : dret[b].val
+            _logdet_add!(dA, seed, invA)
+        end
+    end
     return (nothing,)
 end
 
 function EnzymeRules.reverse(
-    config::EnzymeRules.RevConfig,
-    func::Const{typeof(logdet)},
-    ::Type{<:Const},
-    cache,
-    A::Annotation{<:StridedMatrix},
-)
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(logdet)},
+        ::Type{<:Const},
+        cache,
+        A::Annotation{<:_LogDetMatrix},
+    )
     return (nothing,)
 end
 
 function EnzymeRules.forward(
-    config::EnzymeRules.FwdConfig,
-    func::Const{typeof(logdet)},
-    ::Type{RT},
-    A::Annotation{<:StridedMatrix},
-) where {RT}
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(logdet)},
+        ::Type{RT},
+        A::Annotation{<:_LogDetMatrix},
+    ) where {RT}
     res = logdet(A.val)
-    dres = !isa(A, Const) ? sum(diag(A.val \ A.dval)) : zero(res)
+    N = EnzymeRules.width(config)
+    dres = if !EnzymeRules.needs_shadow(config)
+        nothing
+    elseif isa(A, Const)
+        N == 1 ? zero(res) : ntuple(Returns(zero(res)), Val(N))
+    else
+        tangent = _LogDetForward{typeof(res), typeof(A.val)}(A.val)
+        N == 1 ? tangent(A.dval) : map(tangent, A.dval)
+    end
     if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
-        return Duplicated(res, dres)
+        return N == 1 ? Duplicated(res, dres) : BatchDuplicated(res, dres)
     elseif EnzymeRules.needs_primal(config)
         return res
     elseif EnzymeRules.needs_shadow(config)
@@ -1004,7 +1063,7 @@ function EnzymeRules.forward(
     end
 end
 
-EnzymeRules.has_readonly_rule(::typeof(logdet), ::StridedMatrix) = true
-EnzymeRules.has_attribute_preserving_rule(::typeof(logdet), ::StridedMatrix) = true
+EnzymeRules.has_readonly_rule(::typeof(logdet), ::_LogDetMatrix) = true
+EnzymeRules.has_attribute_preserving_rule(::typeof(logdet), ::_LogDetMatrix) = true
 EnzymeRules.has_readonly_rule(::typeof(det), ::StridedMatrix) = true
 EnzymeRules.has_attribute_preserving_rule(::typeof(det), ::StridedMatrix) = true
