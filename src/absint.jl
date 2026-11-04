@@ -804,15 +804,21 @@ function abs_typeof(
             end
         end
 
+        # The value a Julia function returns directly, i.e. without an sret
+        # buffer. A boxed return is a tracked pointer to the object. `japi1` and
+        # `jlcapi` wrappers carry the same `enzymejl_rt` but box every return,
+        # so the call's LLVM type must match the specsig return as well.
         _, RT = enzyme_custom_extract_mi(arg, false)
-        if RT !== nothing
+        if RT !== nothing && isconcretetype(RT)
             llrt, sret, returnRoots = get_return_info(RT)
-            if sret !== nothing
-                if llrt == RT
+            if sret === nothing
+                ty = value_type(arg)
+                tracked = isa(ty, LLVM.PointerType) && LLVM.addrspace(ty) == Tracked
+                if llrt == RT && !tracked && ty == convert(LLVMType, RT)
                     return (true, RT, GPUCompiler.BITS_VALUE)
-                elseif llrt == Ptr{RT}
+                elseif llrt == Ptr{RT} && tracked
                     return (true, RT, GPUCompiler.MUT_REF)
-                elseif llrt == Any
+                elseif llrt == Any && tracked
                     return (true, RT, GPUCompiler.BITS_REF)
                 end
             end
