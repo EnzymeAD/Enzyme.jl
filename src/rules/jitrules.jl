@@ -318,6 +318,14 @@ function setup_macro_wraps(
     dfns
 end
 
+function module_lookup_aug_shadow(res::RT) where {RT}
+    activity = active_reg_nothrow(RT)
+    if activity == ActiveState || activity == MixedState
+        return Ref{RT}(make_zero(res))
+    end
+    return make_zero(res)
+end
+
 function body_runtime_generic_fwd(N, Width, wrapped, primtypes, dfns)
     nnothing = Vector{Nothing}(undef, Width + 1)
     nres = Vector{Expr}(undef, Width + 1)
@@ -327,10 +335,13 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes, dfns)
     fill!(ModifiedBetween, false)
     ElTypes = Vector{Expr}(undef, N)
     Types = Vector{Expr}(undef, N)
+    globalargs = Vector{Expr}(undef, N)
     for i = 1:N
         @inbounds ElTypes[i] = :(eltype(Core.Typeof(args[$i])))
         @inbounds Types[i] = :(Core.Typeof(args[$i]))
+        @inbounds globalargs[i] = :(args[$i].val)
     end
+    globalshadows = fill(:(RuntimeActivity ? gv : make_zero(gv)), Width)
 
     retres = if Width == 1
         :(return ReturnType((res[2], res[1])))
@@ -349,6 +360,13 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes, dfns)
     end
 
     return quote
+        args = ($(wrapped...),)
+        if f isa typeof(Core.getglobal)
+            # A module has no shadow. Read once, including the optional order,
+            # and avoid recursively differentiating the builtin wrapper.
+            gv = Core.getglobal($(globalargs...))
+            return ReturnType((gv, $(globalshadows...)))
+        end
         f = if f isa Core.Builtin
             BuiltinWrapper(f)
         else
@@ -451,7 +469,9 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs,
     MakeTypes = Vector{Expr}(undef, N)
     Types = Vector{Symbol}(undef, N)
     MixedTypes = Vector{Expr}(undef, N)
+    globalargs = Vector{Expr}(undef, N)
     for i = 1:N
+        @inbounds globalargs[i] = :(args[$i].val)
         @inbounds ElTypes[i] = :(eltype($(Symbol("type_$i"))))
         @inbounds MakeTypes[i] = :($(Symbol("type_$i")) = Core.Typeof(args[$i]))
         @inbounds Types[i] = Symbol("type_$i")
@@ -460,6 +480,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs,
             $(Symbol("type_$i"))
         )
     end
+    globalshadows = fill(:(module_lookup_aug_shadow(gv)), Width)
 
     ending = if Width == 1
         quote
@@ -566,9 +587,9 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs,
 
 
         internal_tape, origRet, initShadow, annotation = if f_unwrapped isa typeof(Core.getglobal)
-            gv = Core.getglobal(args[1].val, args[2].val)
-            @assert sizeof(gv) == 0
-            (nothing, gv, nothing, Const)
+            gv = Core.getglobal($(globalargs...))
+            tape = Tape{Nothing, Nothing, typeof(gv)}(nothing, nothing)
+            return ReturnType((gv, $(globalshadows...), tape))
         else
 
             tt = Tuple{$(ElTypes...)}

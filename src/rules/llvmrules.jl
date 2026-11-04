@@ -179,7 +179,7 @@ include("parallelrules.jl")
         if in(name, ("ijl_f_tuple", "jl_f_tuple"))
             return common_f_tuple_fwd(2, B, orig, gutils, normalR, shadowR)
         end
-        if in(name, ("ijl_f_getfield", "jl_f_getfield"))
+        if in(name, ("ijl_f_getfield", "jl_f_getfield", "ijl_f_getglobal", "jl_f_getglobal"))
             return common_jl_getfield_fwd(2, B, orig, gutils, normalR, shadowR)
         end
         if in(name, ("ijl_f_setfield", "jl_f_setfield"))
@@ -278,7 +278,7 @@ end
         if in(name, ("ijl_f_tuple", "jl_f_tuple"))
             return common_f_tuple_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
-        if in(name, ("ijl_f_getfield", "jl_f_getfield"))
+        if in(name, ("ijl_f_getfield", "jl_f_getfield", "ijl_f_getglobal", "jl_f_getglobal"))
             return common_jl_getfield_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
         if in(name, ("ijl_f_setfield", "jl_f_setfield"))
@@ -380,7 +380,7 @@ end
             common_f_tuple_rev(2, B, orig, gutils, tape)
             return nothing
         end
-        if in(name, ("ijl_f_getfield", "jl_f_getfield"))
+        if in(name, ("ijl_f_getfield", "jl_f_getfield", "ijl_f_getglobal", "jl_f_getglobal"))
             common_jl_getfield_rev(2, B, orig, gutils, tape)
             return nothing
         end

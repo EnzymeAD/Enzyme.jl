@@ -1126,6 +1126,24 @@ end
     return nothing
 end
 
+function module_lookup_shadow!(B, orig, gutils, reverse)
+    # Use the value the primal actually read, including its load ordering and
+    # exceptions. Each batch lane needs its own mutable zero shadow.
+    normal = new_from_original(gutils, orig)
+    position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
+    fn = reverse ? module_lookup_aug_shadow : Enzyme.make_zero
+    args = LLVM.Value[unsafe_to_llvm(B, fn), normal]
+    width = get_width(gutils)
+    if width == 1
+        return emit_apply_generic!(B, args)
+    end
+    shadow = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+    for idx in 1:width
+        shadow = insert_value!(B, shadow, emit_apply_generic!(B, args), idx - 1)
+    end
+    return shadow
+end
+
 function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
     enzyme_ctx = enzyme_context()
     if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
@@ -1184,6 +1202,13 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
         end
         unsafe_store!(shadowR, shadowres.ref)
     else
+
+        legal, TT, _ = abs_typeof(ops[2], enzyme_ctx)
+        if !get_runtime_activity(gutils) && legal && TT <: Module
+            shadowres = module_lookup_shadow!(B, orig, gutils, false)
+            unsafe_store!(shadowR, shadowres.ref)
+            return false
+        end
 
 		if !get_runtime_activity(gutils)
 			estr = "Mismatched activity for: " * string(orig) * " const input " *string(ops[2]) * ", differentiable return"
@@ -1526,6 +1551,13 @@ function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, ta
     ops = @view operands(orig)[offset:end]
     width = get_width(gutils)
 
+    legal, TT, _ = abs_typeof(ops[2], enzyme_ctx)
+    if legal && TT <: Module
+        shadowres = module_lookup_shadow!(B, orig, gutils, true)
+        unsafe_store!(shadowR, shadowres.ref)
+        return false
+    end
+
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     T_int8 = LLVM.Int8Type()
@@ -1622,6 +1654,12 @@ function common_jl_getfield_rev(offset, B, orig, gutils, tape)
 
     ops = @view operands(orig)[offset:end]
     width = get_width(gutils)
+
+    legal, TT, _ = abs_typeof(ops[2], enzyme_ctx)
+    if legal && TT <: Module
+        # Modules are not differentiated containers.
+        return nothing
+    end
 
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
