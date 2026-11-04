@@ -3581,7 +3581,7 @@ function checkNoAssumeFalse(mod::LLVM.Module, shouldshow::Bool = false)
     return
 end
 
-function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, post_gc_fixup::Bool)
+function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, post_gc_fixup::Bool; attributor::Bool = RunAttributor[])
     # We need to run globalopt first. This is because remove dead args will otherwise
     # take internal functions and replace their args with undef. Then on LLVM up to
     # and including 12 (but fixed 13+), Attributor will incorrectly change functions that
@@ -3860,8 +3860,8 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
         LLVM.run!(pb, mod)
     end
     propagate_returned!(mod)
-    pre_attr!(mod, RunAttributor[])
-    if RunAttributor[]
+    pre_attr!(mod, attributor)
+    if attributor
         API.EnzymeDetectReadonlyOrThrow(mod)
         LLVM.@dispose pb = NewPMPassBuilder() begin
             register!(pb, EnzymeAttributorPass())
@@ -3884,7 +3884,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
                 add!(fpm, RestoreAllocaType())
                 add!(fpm, SROAPass())
             end
-            if RunAttributor[]
+            if attributor
                 add!(mpm, EnzymeAttributorPass())
             end
             add!(mpm, NewPMFunctionPassManager()) do fpm
@@ -3894,7 +3894,7 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
         LLVM.run!(pb, mod)
     end
     API.EnzymeDetectReadonlyOrThrow(mod)
-    post_attr!(mod, RunAttributor[])
+    post_attr!(mod, attributor)
     propagate_returned!(mod)
 
     for u in LLVM.uses(rwfunc)
