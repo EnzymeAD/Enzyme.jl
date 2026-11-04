@@ -138,6 +138,63 @@ Base.@nospecializeinfer @inline function unwrapped_number_type(@nospecialize(T::
     return T.parameters[1]
 end
 
+function _all_immutable_nonabstract(@nospecialize(T))::Bool
+    if T isa Union
+        return _all_immutable_nonabstract(T.a) && _all_immutable_nonabstract(T.b)
+    end
+    uw = Base.unwrap_unionall(T)
+    return uw isa DataType && !Base.isabstracttype(uw) && !ismutabletype(uw) &&
+        !(uw <: Tuple) && !(uw <: Ptr) && !(uw <: Core.LLVMPtr) && !(uw <: Type) &&
+        Base.datatype_fieldcount(uw) !== nothing
+end
+
+function _boxed_immutable_has_active_reg(
+        @nospecialize(T),
+        seen::Base.IdSet{Type},
+        world::UInt,
+    )::Bool
+    if T isa Union
+        _all_immutable_nonabstract(T) || return false
+        return _boxed_immutable_has_active_reg(T.a, seen, world) ||
+            _boxed_immutable_has_active_reg(T.b, seen, world)
+    end
+    uw = Base.unwrap_unionall(T)
+    if uw isa DataType && uw <: Tuple
+        for p in uw.parameters
+            pT = Base.unwrap_unionall(p)
+            if pT isa Core.TypeofVararg
+                vaT = isdefined(pT, :T) ? pT.T : Any
+                if vaT isa Type && !(vaT isa TypeVar)
+                    if active_reg_inner(vaT, seen, world, true, false, false) == ActiveState ||
+                            _boxed_immutable_has_active_reg(vaT, seen, world)
+                        return true
+                    end
+                end
+            elseif p isa Type && !(p isa TypeVar)
+                if active_reg_inner(p, seen, world, true, false, false) == ActiveState ||
+                        _boxed_immutable_has_active_reg(p, seen, world)
+                    return true
+                end
+            end
+        end
+        return false
+    end
+    _all_immutable_nonabstract(T) || return false
+    T in seen && return false
+    seen2 = copy(seen)
+    push!(seen2, T)
+    nf = Base.datatype_fieldcount(uw)
+    nf === nothing && return false
+    for i in 1:nf
+        ft = fieldtype(T, i)
+        if active_reg_inner(ft, seen2, world, true, false, false) == ActiveState ||
+                _boxed_immutable_has_active_reg(ft, seen2, world)
+            return true
+        end
+    end
+    return false
+end
+
 Base.@nospecializeinfer @inline function active_reg_inner(
     @nospecialize(T::Type),
     seen::Base.IdSet{Type},
@@ -405,6 +462,10 @@ Base.@nospecializeinfer @inline function active_reg_inner(
 
         if reftype
             sub = DupState
+        elseif sub == DupState && !Base.isconcretetype(subT) &&
+                !Base.allocatedinline(subT) &&
+                _boxed_immutable_has_active_reg(subT, seen2, world)
+            sub = MixedState
         end
 
         ty |= sub

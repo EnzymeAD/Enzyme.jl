@@ -771,3 +771,98 @@ function EnzymeRules.reverse(
     end
     return (nothing,)
 end
+
+
+@inline function _override_getfield_aug_one(dx_item, primal_x, ::Val{fidx}, ::Val{isconst}) where {fidx, isconst}
+    inactive = isconst || (!isa(dx_item, Base.RefValue) && dx_item === primal_x) || (isa(dx_item, Base.RefValue) && dx_item[] === primal_x)
+    src = inactive ? primal_x : (dx_item isa Base.RefValue ? dx_item[] : dx_item)
+    val = Core.getfield(src, fidx)
+    RT = Core.Typeof(val)
+    actreg = Enzyme.Compiler.active_reg_nothrow(RT)
+    if actreg == Enzyme.Compiler.ActiveState || (inactive && actreg == Enzyme.Compiler.MixedState)
+        return Base.RefValue{RT}(Enzyme.make_zero(val))::Any
+    elseif actreg == Enzyme.Compiler.MixedState
+        return Base.RefValue{RT}(Enzyme.Compiler.recursive_add(val, val, -, Enzyme.Compiler.guaranteed_nonactive))::Any
+    elseif inactive
+        return Enzyme.make_zero(val)::Any
+    else
+        return val::Any
+    end
+end
+
+@inline function _override_getfield_rev_one!(dx_item, primal_x, dret_item, ::Val{fidx}) where {fidx}
+    if dret_item === nothing || (!isa(dx_item, Base.RefValue) && dx_item === primal_x) || (isa(dx_item, Base.RefValue) && dx_item[] === primal_x)
+        return nothing
+    end
+    cur = if dx_item isa Base.RefValue
+        Core.getfield(dx_item[], fidx)
+    else
+        Core.getfield(dx_item, fidx)
+    end
+    RT = Core.Typeof(cur)
+    actreg = Enzyme.Compiler.active_reg_nothrow(RT)
+    if actreg == Enzyme.Compiler.ActiveState || actreg == Enzyme.Compiler.MixedState
+        if dx_item isa Base.RefValue
+            vload = dx_item[]
+            dRT = Core.Typeof(vload)
+            dx_item[] = Enzyme.Compiler.recursive_index_add(dRT, vload, Val(fidx), dret_item[])
+        elseif ismutable(dx_item)
+            newv = Enzyme.Compiler.recursive_add(cur, dret_item[], identity, Enzyme.Compiler.guaranteed_nonactive)
+            if Base.isconst(Core.Typeof(dx_item), fidx)
+                ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), dx_item, fidx - 1, newv)
+            else
+                setfield!(dx_item, fidx, newv)
+            end
+        end
+    end
+    return nothing
+end
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfig,
+        ::Const{typeof(Enzyme.Compiler.Interpreter._override_getfield)},
+        ::Type{RT},
+        x::Annotation{S},
+        ::Const{Val{fidx}},
+    ) where {RT, S, fidx}
+    primal = EnzymeRules.needs_primal(config) ? Core.getfield(x.val, fidx) : nothing
+    W = EnzymeRules.width(config)
+    isconst = x isa Const || x isa Active
+    shadow = if EnzymeRules.needs_shadow(config)
+        if W == 1
+            dx1 = isconst ? x.val : x.dval
+            _override_getfield_aug_one(dx1, x.val, Val(fidx), Val(isconst))
+        else
+            ntuple(Val(W)) do b
+                dx_b = isconst ? x.val : x.dval[b]
+                _override_getfield_aug_one(dx_b, x.val, Val(fidx), Val(isconst))
+            end
+        end
+    else
+        nothing
+    end
+    PrimalT = EnzymeRules.needs_primal(config) ? Any : Nothing
+    ShadowT = EnzymeRules.needs_shadow(config) ? (W == 1 ? Any : NTuple{W, Any}) : Nothing
+    return EnzymeRules.AugmentedReturn{PrimalT, ShadowT, ShadowT}(primal, shadow, shadow)
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfig,
+        ::Const{typeof(Enzyme.Compiler.Interpreter._override_getfield)},
+        ::Type{RT},
+        tape,
+        x::Annotation{S},
+        ::Const{Val{fidx}},
+    ) where {RT, S, fidx}
+    if !(x isa Const) && !(x isa Active) && tape !== nothing
+        W = EnzymeRules.width(config)
+        if W == 1
+            _override_getfield_rev_one!(x.dval, x.val, tape, Val(fidx))
+        else
+            for b in 1:W
+                _override_getfield_rev_one!(x.dval[b], x.val, tape[b], Val(fidx))
+            end
+        end
+    end
+    return (nothing, nothing)
+end

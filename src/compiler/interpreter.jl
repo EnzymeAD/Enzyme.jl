@@ -1346,6 +1346,66 @@ function (bcr::broadcast_rewriter)(interp, sv)
 end
 end
 
+struct OverrideGetfieldCallInfo <: CallInfo
+    info::CallInfo
+    fn::Any
+    OverrideGetfieldCallInfo(@nospecialize(info::CallInfo), @nospecialize(fn)) = new(info, fn)
+end
+Core.Compiler.nsplit_impl(info::OverrideGetfieldCallInfo) = Core.Compiler.nsplit(info.info)
+Core.Compiler.getsplit_impl(info::OverrideGetfieldCallInfo, idx::Int) =
+    Core.Compiler.getsplit(info.info, idx)
+Core.Compiler.getresult_impl(info::OverrideGetfieldCallInfo, idx::Int) =
+    Core.Compiler.getresult(info.info, idx)
+if VERSION >= v"1.12.0-DEV.1531"
+    Core.Compiler.add_edges_impl(edges::Vector{Any}, info::OverrideGetfieldCallInfo) =
+        Core.Compiler.add_edges!(edges, info.info)
+end
+
+struct WrapOverrideGetfield
+    fn::Any
+end
+@inline function (w::WrapOverrideGetfield)(ret::Core.Compiler.CallMeta, @nospecialize(interp::AbstractInterpreter), sv::AbsIntState)
+    callinfo = OverrideGetfieldCallInfo(ret.info, w.fn)
+    @static if VERSION >= v"1.11-"
+        return Core.Compiler.CallMeta(ret.rt, ret.exct, ret.effects, callinfo)
+    else
+        return Core.Compiler.CallMeta(ret.rt, ret.effects, callinfo)
+    end
+end
+
+function Core.Compiler.optimize(
+        interp::EnzymeInterpreter,
+        opt::Core.Compiler.OptimizationState,
+        caller::Core.Compiler.InferenceResult,
+    )
+    for pc in 1:length(opt.stmt_info)
+        info = opt.stmt_info[pc]
+        if info isa OverrideGetfieldCallInfo
+            stmt = opt.src.code[pc]
+            if stmt isa Expr && stmt.head === :call
+                stmt = copy(stmt)
+                stmt.args[1] = QuoteNode(info.fn)
+                opt.src.code[pc] = stmt
+            end
+            opt.stmt_info[pc] = info.info
+        end
+    end
+    return @invoke Core.Compiler.optimize(
+        interp::AbstractInterpreter,
+        opt::Core.Compiler.OptimizationState,
+        caller::Core.Compiler.InferenceResult,
+    )
+end
+
+@noinline _override_getfield(x, ::Val{fidx}) where {fidx} = Base.inferencebarrier(Core.getfield(x, fidx))
+
+struct OverrideGetfield{fidx, FT}
+end
+@inline (::OverrideGetfield{fidx, FT})(x, fld) where {fidx, FT} =
+    Core.typeassert(_override_getfield(x, Val(fidx)), FT)
+@inline (::OverrideGetfield{fidx, FT})(x, fld, third) where {fidx, FT} =
+    Core.typeassert(_override_getfield(x, Val(fidx)), FT)
+
 struct FuncWrapperRewriter{Ret, ArgsT}
 end
 
@@ -1442,6 +1502,40 @@ function abstract_call_known(
                     sv::AbsIntState,
                     max_methods::Int,
                 )
+            end
+        end
+    end
+
+    if interp.reverse_rules && f === Core.getfield &&
+            !(sv isa Core.Compiler.InferenceState && sv.linfo.def isa Method && sv.linfo.def.name === :_override_getfield) &&
+            (length(argtypes) == 3 || (length(argtypes) == 4 && (widenconst(argtypes[4]) === Bool || argtypes[4] == Core.Const(:not_atomic))))
+        sT = widenconst(argtypes[2])
+        if sT isa DataType && Base.isconcretetype(sT) && !(sT <: Tuple) && !(sT <: Module) && !(sT <: Type) &&
+                sT.name.atomicfields == C_NULL && argtypes[3] isa Core.Const
+            fld = argtypes[3].val
+            fidx = fld isa Int ? fld : (fld isa Symbol ? Base.fieldindex(sT, fld, false) : 0)
+            if 1 <= fidx <= fieldcount(sT)
+                fT = fieldtype(sT, fidx)
+                if !Base.isconcretetype(fT) && !Base.allocatedinline(fT) &&
+                        Enzyme.Compiler._boxed_immutable_has_active_reg(fT, Base.IdSet{Type}(), interp.world)
+                    fn2 = OverrideGetfield{fidx, fT}()
+                    arginfo2 = ArgInfo(
+                        fargs isa Nothing ? nothing : [:(fn2), fargs[2:end]...],
+                        [Core.Const(fn2), argtypes[2:end]...],
+                    )
+                    ret_gf = Base.@invoke abstract_call_known(
+                        interp::AbstractInterpreter,
+                        fn2::Any,
+                        arginfo2::ArgInfo,
+                        si::StmtInfo,
+                        sv::AbsIntState,
+                        max_methods::Int,
+                    )
+                    if isdefined(Core.Compiler, :Future)
+                        return Core.Compiler.Future{Core.Compiler.CallMeta}(WrapOverrideGetfield(fn2), ret_gf, interp, sv)
+                    end
+                    return WrapOverrideGetfield(fn2)(ret_gf, interp, sv)
+                end
             end
         end
     end
