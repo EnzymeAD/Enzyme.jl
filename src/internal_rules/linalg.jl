@@ -548,6 +548,149 @@ function EnzymeRules.reverse(
     return (nothing, nothing, nothing, nothing, nothing)
 end
 
+# LAPACK routines that overwrite C with op(Q) C (side 'L') or C op(Q) (side 'R'), where Q
+# is a unitary matrix stored as Householder reflectors and trans chooses op(Q) as Q ('N'),
+# Qᵀ ('T', real) or Qᴴ ('C', complex). `lmul!` and `rmul!` call them for the Q of every
+# BLAS-typed factorization, and so do `*` and `Matrix` through them: `gemqrt!` for
+# `qr(A).Q` (QRCompactWYQ), `ormqr!` for `qr(A, ColumnNorm()).Q` (QRPackedQ), `ormlq!` for
+# `lq(A).Q`, and `ormhr!` and `ormtr!` for `hessenberg(A).Q`. Enzyme had no derivative for
+# any of them. With Q held constant the product is linear in C: the tangent of C is op(Q)
+# times the tangent of C, and the adjoint of C is op(Q)ᴴ times the adjoint of C, so these
+# rules call the routine itself on each shadow, with trans flipped in reverse mode.
+# Differentiating a rule again (forward over reverse) therefore reaches these rules.
+#
+# Each entry is a routine and its arguments before the two arrays that store Q, as
+# (name, annotation type) pairs; every routine's last argument is C.
+const _HOUSEHOLDER_MULTIPLIES = (
+    (:gemqrt!, ((:side, AbstractChar), (:trans, AbstractChar))),
+    (:ormqr!, ((:side, AbstractChar), (:trans, AbstractChar))),
+    (:ormlq!, ((:side, AbstractChar), (:trans, AbstractChar))),
+    (:ormql!, ((:side, AbstractChar), (:trans, AbstractChar))),
+    (:ormrq!, ((:side, AbstractChar), (:trans, AbstractChar))),
+    (:ormrz!, ((:side, AbstractChar), (:trans, AbstractChar))),
+    (:ormhr!, ((:side, AbstractChar), (:trans, AbstractChar), (:ilo, Integer), (:ihi, Integer))),
+    (:ormtr!, ((:side, AbstractChar), (:uplo, AbstractChar), (:trans, AbstractChar))),
+)
+
+# The trans of op(Q)ᴴ.
+_householder_adjoint_trans(::Type{<:Real}, trans::AbstractChar) = trans == 'N' ? 'T' : 'N'
+_householder_adjoint_trans(::Type{<:Complex}, trans::AbstractChar) = trans == 'N' ? 'C' : 'N'
+
+# The routine's arguments before the arrays that store Q, with trans flipped.
+_householder_adjoint_flags(::typeof(LinearAlgebra.LAPACK.ormtr!), ::Type{T}, flags) where {T} =
+    (flags[1], flags[2], _householder_adjoint_trans(T, flags[3]))
+_householder_adjoint_flags(::Any, ::Type{T}, flags) where {T} =
+    (flags[1], _householder_adjoint_trans(T, flags[2]), Base.tail(Base.tail(flags))...)
+
+# Whether a stored array has a derivative these rules would have to handle: in some batch
+# lane, a shadow of its own (not the array itself), which in Forward mode must also be
+# nonzero, since a zero tangent of the reflectors contributes nothing to the tangent of C.
+# Nested modes produce such zero tangents: an outer Forward pass over a Reverse pass reads
+# constant reflectors back from the inner pass's tape, which it cannot prove inactive.
+_householder_carries_derivative(::Const, N, forward::Bool) = false
+function _householder_carries_derivative(A::Annotation, N, forward::Bool)
+    for b in 1:N
+        dA = _lapack_shadow(A, b, N)
+        dA === nothing || (forward && iszero(dA)) || return true
+    end
+    return false
+end
+
+# The rules differentiate with respect to C only. A derivative with respect to the stored
+# reflectors needs the derivative of the Householder product itself, which these rules do
+# not compute, so refuse rather than drop it.
+function _householder_refuse_factor_derivative(f, N, A, τ, forward::Bool)
+    if _householder_carries_derivative(A, N, forward) ||
+            _householder_carries_derivative(τ, N, forward)
+        throw(
+            ArgumentError(
+                "Enzyme differentiates LinearAlgebra.LAPACK.$(nameof(f)) with respect to C only, " *
+                    "not with respect to the Householder reflectors that store Q, but they carry a " *
+                    "derivative here. Pass the factorization, or its Q, as Const when no derivative " *
+                    "with respect to it is needed."
+            )
+        )
+    end
+    return nothing
+end
+
+function _householder_forward(config, f, flags, A, τ, C)
+    N = EnzymeRules.width(config)
+    _householder_refuse_factor_derivative(f, N, A, τ, true)
+    X = f(flags..., A.val, τ.val, C.val)
+    for b in 1:N
+        dC = _lapack_shadow(C, b, N)
+        dC === nothing || f(flags..., A.val, τ.val, dC)
+    end
+    return _lapack_inplace_forward_return(config, X, C)
+end
+
+function _householder_augmented_primal(config, f, flags, A, τ, C)
+    N = EnzymeRules.width(config)
+    _householder_refuse_factor_derivative(f, N, A, τ, false)
+    X = f(flags..., A.val, τ.val, C.val)
+    # The adjoint multiplies by Q again. Argument 1 of `overwritten` is the function, so A
+    # and τ follow the flags.
+    overwritten = EnzymeRules.overwritten(config)
+    k = length(flags) + 2
+    cache_A = !(C isa Const) && overwritten[k] ? copy(A.val) : nothing
+    cache_τ = !(C isa Const) && overwritten[k + 1] ? copy(τ.val) : nothing
+    primal = EnzymeRules.needs_primal(config) ? X : nothing
+    shadow = EnzymeRules.needs_shadow(config) ? C.dval : nothing
+    return EnzymeRules.AugmentedReturn(primal, shadow, (cache_A, cache_τ))
+end
+
+function _householder_reverse(config, f, flags, cache, A, τ, C)
+    cache_A, cache_τ = cache
+    Aval = cache_A === nothing ? A.val : cache_A
+    τval = cache_τ === nothing ? τ.val : cache_τ
+    adjoint_flags = _householder_adjoint_flags(f, eltype(Aval), flags)
+    N = EnzymeRules.width(config)
+    for b in 1:N
+        dC = _lapack_shadow(C, b, N)
+        dC === nothing || f(adjoint_flags..., Aval, τval, dC)
+    end
+    return ntuple(Returns(nothing), Val(length(flags) + 3))
+end
+
+for (name, flag_args) in _HOUSEHOLDER_MULTIPLIES
+    flag_sig = [:($s::Const{<:$T}) for (s, T) in flag_args]
+    flag_vals = Expr(:tuple, [:($s.val) for (s, _) in flag_args]...)
+    array_sig = (
+        :(A::Annotation{<:AbstractMatrix{T}}),
+        :(τ::Annotation{<:AbstractVecOrMat{T}}),
+        :(C::Annotation{<:AbstractVecOrMat{T}}),
+    )
+    func_sig = :(func::Const{typeof(LinearAlgebra.LAPACK.$name)})
+    @eval begin
+        function EnzymeRules.forward(
+                config::EnzymeRules.FwdConfig, $func_sig,
+                RT::Type{
+                    <:Union{
+                        Const, Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed,
+                    },
+                },
+                $(flag_sig...), $(array_sig...),
+            ) where {T <: LinearAlgebra.BlasFloat}
+            return _householder_forward(config, func.val, $flag_vals, A, τ, C)
+        end
+
+        function EnzymeRules.augmented_primal(
+                config::EnzymeRules.RevConfig, $func_sig, ::Type{RT},
+                $(flag_sig...), $(array_sig...),
+            ) where {RT, T <: LinearAlgebra.BlasFloat}
+            return _householder_augmented_primal(config, func.val, $flag_vals, A, τ, C)
+        end
+
+        function EnzymeRules.reverse(
+                config::EnzymeRules.RevConfig, $func_sig, ::Type{RT}, cache,
+                $(flag_sig...), $(array_sig...),
+            ) where {RT, T <: LinearAlgebra.BlasFloat}
+            return _householder_reverse(config, func.val, $flag_vals, cache, A, τ, C)
+        end
+    end
+end
+
 function EnzymeRules.augmented_primal(
         config::EnzymeRules.RevConfig,
         func::Const{typeof(LinearAlgebra.mul!)},
