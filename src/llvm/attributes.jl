@@ -1,4 +1,6 @@
 const nofreefns = Set{String}((
+        "jl_dlsym",
+        "ijl_dlsym",
     "jl_get_abi_converter",
     "ijl_get_abi_converter",
     "jl_f__compute_sparams",
@@ -244,6 +246,8 @@ const nofreefns = Set{String}((
 ))
 
 const inactivefns = Set{String}((
+        "jl_dlsym",
+        "ijl_dlsym",
     "jl_f__compute_sparams",
     "ijl_f__compute_sparams",
     

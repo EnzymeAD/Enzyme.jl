@@ -7,6 +7,37 @@ end
 
 # Frequently asked questions
 
+## Supplying a gradient
+
+Use [`WithGradient`](@ref) when a scalar-valued function already has a gradient,
+including a native library whose implementation Enzyme cannot differentiate.
+Wrapping the function explicitly selects the supplied derivative:
+
+```@example supplied_gradient
+using Enzyme
+
+quadratic(x) = sum(abs2, x)
+quadratic_with_gradient(x) = (quadratic(x), 2 .* x)
+f = WithGradient(quadratic, quadratic_with_gradient)
+x = [1.0, -2.0, 3.0]
+
+@assert f(x) == 14.0
+@assert gradient(Reverse, Const(f), x) == ([2.0, -4.0, 6.0],)
+@assert autodiff(Forward, Const(f), Duplicated(x, ones(3))) == (4.0,)
+```
+
+The provider returns the value and gradient together. Both callables must leave
+the input unchanged and agree on the value. An array gradient must have the
+input's axes. Enzyme treats captured data as constant, contracts the gradient
+with Forward tangents, and accumulates seeded Reverse gradients into existing
+adjoints. Reverse mode copies an array gradient into its tape, allowing the
+provider to reuse its output buffer.
+
+The wrapper supports floating-point scalars and arrays, including batched
+derivatives. Its work and storage are linear in the input size; it does not
+construct a Jacobian. Higher derivatives require differentiable provider code
+or derivative rules for the provider.
+
 ## Implementing pullbacks
 
 In combined reverse mode, Enzyme's [`autodiff`](@ref) function can only handle functions with scalar output (this is not true for split reverse mode, aka `autodiff_thunk`).
