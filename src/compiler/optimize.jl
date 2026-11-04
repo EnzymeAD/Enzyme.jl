@@ -404,7 +404,6 @@ function addMachinePasses!(mpm::LLVM.NewPMPassManager)
     end
     return add!(mpm, NewPMFunctionPassManager()) do fpm
         add!(fpm, DemoteFloat16Pass())
-        add!(fpm, GVNPass())
     end
 end
 
