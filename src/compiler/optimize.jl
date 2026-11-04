@@ -535,6 +535,83 @@ function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
     return
 end
 
+# Since LLVM 18 the loop vectorizer hoists the runtime alias checks of an inner
+# loop into its outer loop (`-hoist-runtime-checks`). The hoisted checks assume
+# that the outer loop walks memory forwards: for one that walks it backwards
+# they add a stride check that always fails, so the vectorized inner loop never
+# runs. A reverse pass walks the loop nest of its primal backwards, so the
+# post-AD pipeline does not hoist the checks, as before LLVM 18. The option is a
+# global of Julia's LLVM, so it is only turned off while Enzyme's passes run.
+const HoistRuntimeChecksLock = ReentrantLock()
+const HoistRuntimeChecksUsers = Ref(0)
+const HoistRuntimeChecksDefault = Ref(false)
+const HoistRuntimeChecksWarned = Ref(false)
+
+# The address of `llvm::VectorizerParams::HoistRuntimeChecks`, or `C_NULL` if
+# Julia's LLVM predates the option (LLVM 16 and earlier) or does not export it.
+function hoist_runtime_checks_ptr()
+    handle = Libdl.dlopen(String(Base.libllvm_path()))
+    ptr = Libdl.dlsym(handle, :_ZN4llvm16VectorizerParams18HoistRuntimeChecksE; throw_error = false)
+    return ptr === nothing ? Ptr{Bool}(C_NULL) : Ptr{Bool}(ptr)
+end
+
+# LLVM 18 and later have the option, so a failed lookup there means this build
+# of Julia's LLVM does not export it. Say so once rather than silently keeping
+# the hoisting on. Nothing is said while precompiling: the flag would be
+# serialized as spent and every later session would stay silent.
+function warn_missing_runtime_check_hoisting!()
+    if LLVM.version().major < 18 || generating_output()
+        return
+    end
+    lock(HoistRuntimeChecksLock)
+    warned = true
+    try
+        warned = HoistRuntimeChecksWarned[]
+        HoistRuntimeChecksWarned[] = true
+    finally
+        unlock(HoistRuntimeChecksLock)
+    end
+    if !warned
+        @safe_warn "Enzyme could not find llvm::VectorizerParams::HoistRuntimeChecks in Julia's LLVM $(LLVM.version()); runtime-check hoisting stays on, so reverse-mode derivatives of loop nests may always take the scalar fallback of their vectorized inner loops"
+    end
+    return
+end
+
+function disable_runtime_check_hoisting!()
+    ptr = hoist_runtime_checks_ptr()
+    if ptr == C_NULL
+        warn_missing_runtime_check_hoisting!()
+        return ptr
+    end
+    lock(HoistRuntimeChecksLock)
+    try
+        if HoistRuntimeChecksUsers[] == 0
+            HoistRuntimeChecksDefault[] = unsafe_load(ptr)
+            unsafe_store!(ptr, false)
+        end
+        HoistRuntimeChecksUsers[] += 1
+    finally
+        unlock(HoistRuntimeChecksLock)
+    end
+    return ptr
+end
+
+function restore_runtime_check_hoisting!(ptr::Ptr{Bool})
+    if ptr == C_NULL
+        return
+    end
+    lock(HoistRuntimeChecksLock)
+    try
+        HoistRuntimeChecksUsers[] -= 1
+        if HoistRuntimeChecksUsers[] == 0
+            unsafe_store!(ptr, HoistRuntimeChecksDefault[])
+        end
+    finally
+        unlock(HoistRuntimeChecksLock)
+    end
+    return
+end
+
 function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, machine::Bool = true; callconv::Bool = true, tti = nothing)
     define_ntuple_type!(mod)
     if callconv
@@ -583,7 +660,12 @@ function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}
                 addMachinePasses!(mpm)
             end
         end
-        run!(pb, mod, tm)
+        hoisting = disable_runtime_check_hoisting!()
+        try
+            run!(pb, mod, tm)
+        finally
+            restore_runtime_check_hoisting!(hoisting)
+        end
     end
     for f in functions(mod)
         if isempty(blocks(f))
