@@ -1097,13 +1097,22 @@ function enzyme_custom_setup_ret(
         activep = API.EnzymeGradientUtilsGetDiffeType(gutils, operands(orig)[1+swiftself], false) #=isforeign=#
         needsPrimal = activep == API.DFT_DUP_ARG || activep == API.DFT_CONSTANT
         needsShadowP[] = activep == API.DFT_DUP_ARG || activep == API.DFT_DUP_NONEED
+        # A return holding both tracked pointers and inline data comes back
+        # through an sret with a roots array. Its shadow lives in memory (the
+        # shadow sret and roots), so the rule sees a Duplicated return on every
+        # Julia version; the adjoint of the inline data accumulates in the
+        # shadow sret, which a Duplicated rule does not read.
+        if returnRoots !== nothing
+            may_have_active_reg = false
+        end
 	if returnRoots !== nothing && VERSION >= v"1.12"
         	roots_activep = API.EnzymeGradientUtilsGetDiffeType(gutils, operands(orig)[2+swiftself], false) #=isforeign=#
-		may_have_active_reg = false
 		if activep == API.DFT_CONSTANT
 		    activep = roots_activep
         	    needsPrimal |= activep == API.DFT_DUP_ARG || activep == API.DFT_CONSTANT
 		    needsShadowP[] = activep == API.DFT_DUP_ARG || activep == API.DFT_DUP_NONEED
+		elseif roots_activep == API.DFT_CONSTANT && active_reg(RealRt, world) == MixedState
+		    roots_activep = activep
 		end
             	if roots_activep != activep
 		    if B !== nothing
@@ -1753,6 +1762,127 @@ function nthfield_if_byref!(B, isboxed, sret_union_type, res)
     return call!(B, fty, func, [isboxed, sret_union_type, res])
 end
 
+function zero_and_check_inline_floats!(B::LLVM.IRBuilder, val::LLVM.Value, check_nonzero::Bool)
+    ty = value_type(val)
+    if ty isa LLVM.FloatingPointType
+        z = LLVM.null(ty)
+        nz = check_nonzero ? fcmp!(B, LLVM.API.LLVMRealUNE, val, z) : nothing
+        return z, true, nz
+    elseif ty isa LLVM.VectorType
+        ety = eltype(ty)
+        if ety isa LLVM.FloatingPointType
+            z = LLVM.null(ty)
+            any_nz = nothing
+            if check_nonzero
+                ez = LLVM.null(ety)
+                for i = 1:size(ty)
+                    ev = extract_element!(B, val, LLVM.ConstantInt(LLVM.Int32Type(), i - 1))
+                    nz = fcmp!(B, LLVM.API.LLVMRealUNE, ev, ez)
+                    any_nz = any_nz === nothing ? nz : or!(B, any_nz, nz)
+                end
+            end
+            return z, true, any_nz
+        end
+        return val, false, nothing
+    elseif ty isa LLVM.ArrayType
+        any_nz = nothing
+        any_changed = false
+        cur = val
+        for i = 1:length(ty)
+            sub = extract_value!(B, cur, i - 1)
+            sub2, changed, nz = zero_and_check_inline_floats!(B, sub, check_nonzero)
+            if changed
+                cur = insert_value!(B, cur, sub2, i - 1)
+                any_changed = true
+            end
+            if nz !== nothing
+                any_nz = any_nz === nothing ? nz : or!(B, any_nz, nz)
+            end
+        end
+        return cur, any_changed, any_nz
+    elseif ty isa LLVM.StructType
+        any_nz = nothing
+        any_changed = false
+        cur = val
+        for (i, _) in enumerate(LLVM.elements(ty))
+            sub = extract_value!(B, cur, i - 1)
+            sub2, changed, nz = zero_and_check_inline_floats!(B, sub, check_nonzero)
+            if changed
+                cur = insert_value!(B, cur, sub2, i - 1)
+                any_changed = true
+            end
+            if nz !== nothing
+                any_nz = any_nz === nothing ? nz : or!(B, any_nz, nz)
+            end
+        end
+        return cur, any_changed, any_nz
+    else
+        return val, false, nothing
+    end
+end
+
+function emit_conditional_mixed_return_throw!(
+    B::LLVM.IRBuilder,
+    cond::LLVM.Value,
+    @nospecialize(RealRt::Type),
+    orig::LLVM.Instruction,
+    mi::Core.MethodInstance,
+    world::UInt,
+)
+    curent_bb = position(B)
+    caller_fn = LLVM.parent(curent_bb)
+    mod = LLVM.parent(caller_fn)
+    if occursin("ptx", LLVM.triple(mod)) || occursin("amdgcn", LLVM.triple(mod))
+        return nothing
+    end
+    strty = LLVM.PointerType(LLVM.Int8Type())
+    FT = LLVM.FunctionType(LLVM.VoidType(), [strty, LLVM.Int1Type()])
+    bt = GPUCompiler.backtrace(orig)
+    msg2 = sprint(Base.Fix2(Base.show_backtrace, bt))
+    strv = globalstring_ptr!(B, msg2, "enz_mixed_ret_bt")
+    errty = MixedReturnException{RealRt}
+    name = string("jl_cond_mixed_ret_", UInt(pointer_from_objref(mi)), "_", world, "_", objectid(RealRt))
+    if haskey(functions(mod), name)
+        fn = functions(mod)[name]
+    else
+        fn = LLVM.Function(mod, name, FT)
+        linkage!(fn, LLVM.API.LLVMInternalLinkage)
+        rstr, rcond = LLVM.parameters(fn)
+        builder = LLVM.IRBuilder()
+        entry = BasicBlock(fn, "entry")
+        errb = BasicBlock(fn, "err")
+        exitb = BasicBlock(fn, "ok")
+        position!(builder, entry)
+        br!(builder, rcond, errb, exitb)
+        position!(builder, errb)
+        err = emit_allocobj!(builder, errty)
+        err2 = bitcast!(builder, err, LLVM.PointerType(strty, Tracked))
+        err2 = addrspacecast!(builder, err2, LLVM.PointerType(strty, Derived))
+        store!(builder, rstr, err2)
+        g1 = LLVM.inbounds_gep!(builder, strty, err2, [LLVM.ConstantInt(1)])
+        ts1 = unsafe_to_llvm(builder, mi)
+        g1 = LLVM.bitcast!(builder, g1, LLVM.PointerType(value_type(ts1), Derived))
+        store!(builder, ts1, g1)
+        g2 = LLVM.inbounds_gep!(builder, strty, err2, [LLVM.ConstantInt(2)])
+        ts2 = LLVM.ConstantInt(world)
+        g2 = LLVM.bitcast!(builder, g2, LLVM.PointerType(value_type(ts2), Derived))
+        store!(builder, ts2, g2)
+        T_jlvalue = LLVM.StructType(LLVMType[])
+        thrown = emit_jl_throw!(builder, addrspacecast!(builder, err, LLVM.PointerType(T_jlvalue, 12)))
+        LLVM.API.LLVMAddCallSiteAttribute(
+            thrown,
+            reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
+            EnumAttribute("noreturn"),
+        )
+        unreachable!(builder)
+        position!(builder, exitb)
+        ret!(builder)
+        push!(LLVM.function_attributes(fn), LLVM.EnumAttribute("alwaysinline", 0))
+    end
+    call!(B, FT, fn, LLVM.Value[strv, cond])
+    return nothing
+end
+
 function enzyme_custom_common_rev(
     forward::Bool,
     B::LLVM.IRBuilder,
@@ -2204,6 +2334,39 @@ function enzyme_custom_common_rev(
                 insert!(args, active_idx + 1, ral)
             end
 
+        elseif RT <: Union{Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed} &&
+               active_reg(RealRt, world) == MixedState
+            _, prim_sret, prim_roots = get_return_info(RealRt)
+            if prim_sret !== nothing &&
+               prim_roots !== nothing &&
+               !is_constant_value(gutils, operands(orig)[1+orig_swiftself])
+                prim_sret_lty = convert(LLVMType, eltype(prim_sret))
+                prim_sret_lty_foralloca = if VERSION >= v"1.12"
+                    strip_tracked_pointers(prim_sret_lty)
+                else
+                    prim_sret_lty
+                end
+                sret_dptr = lookup_value(
+                    gutils,
+                    invert_pointer(gutils, operands(orig)[1+orig_swiftself], B),
+                    B,
+                )
+                any_nz = nothing
+                for idx = 1:width
+                    ev = (width == 1) ? sret_dptr : extract_value!(B, sret_dptr, idx - 1)
+                    ld = load!(B, prim_sret_lty_foralloca, ev, "mixed_sret_dval")
+                    ld_zeroed, changed, nz = zero_and_check_inline_floats!(B, ld, true)
+                    if changed
+                        store!(B, ld_zeroed, ev)
+                    end
+                    if nz !== nothing
+                        any_nz = any_nz === nothing ? nz : or!(B, any_nz, nz)
+                    end
+                end
+                if any_nz !== nothing
+                    emit_conditional_mixed_return_throw!(B, any_nz, RealRt, orig, mi, world)
+                end
+            end
         end
     end
 
@@ -2565,14 +2728,16 @@ function enzyme_custom_common_rev(
 			invert_pointer(gutils, operands(orig)[1+orig_swiftself], B)
 		    end
 
-		    droots = if prim_roots !== nothing && VERSION >= v"1.12"
-			@assert !is_constant_value(gutils, operands(orig)[2+orig_swiftself])
+		    droots = if prim_roots !== nothing && VERSION >= v"1.12" && !is_constant_value(gutils, operands(orig)[2+orig_swiftself])
                     	invert_pointer(gutils, operands(orig)[2+orig_swiftself], B)
 		    end
 
 		    for idx = 1:width
                         to_store =
                             (width == 1) ? shadowV : extract_value!(B, shadowV, idx - 1)
+                        if prim_roots !== nothing && active_reg(RealRt, world) == MixedState
+                            to_store, _, _ = zero_and_check_inline_floats!(B, to_store, false)
+                        end
 
 
 			if prim_roots !== nothing && VERSION >= v"1.12"
@@ -2581,9 +2746,10 @@ function enzyme_custom_common_rev(
 				extract_nonjlvalues_into!(B, value_type(to_store), store_ptr, to_store)
 			    end
 
-                            rval = (width == 1) ? droots : extract_value!(B, droots, idx - 1)
-
-			    extract_roots_from_value!(B, to_store, rval)
+                            if droots !== nothing
+                                rval = (width == 1) ? droots : extract_value!(B, droots, idx - 1)
+			        extract_roots_from_value!(B, to_store, rval)
+                            end
 			else
 			    @assert dval !== nothing
                             store_ptr = (width == 1) ? dval : extract_value!(B, dval, idx - 1)
