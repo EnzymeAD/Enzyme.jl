@@ -620,11 +620,15 @@ function prepare_llvm(interp, mod::LLVM.Module, job, meta, enzyme_ctx::EnzymeCon
             attributes,
             StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(RT)))),
         )
-        if cached_has_easy_rule(Interpreter.simplify_kw(mi.specTypes), job.world)
-            push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
-            # The rule accesses no more than the body does, so Enzyme may keep
-            # inferring the function's full parameter attributes from the body.
-            push!(attributes, LLVM.StringAttribute("enzyme_custom_full_attributes"))
+        let simp_spec = Interpreter.simplify_kw(mi.specTypes)
+            if cached_has_readonly_rule(simp_spec, job.world)
+                push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
+            end
+            if cached_has_attribute_preserving_rule(simp_spec, job.world)
+                # The rule accesses no more than the body does, so Enzyme may keep
+                # inferring the function's full parameter attributes from the body.
+                push!(attributes, LLVM.StringAttribute("enzyme_custom_full_attributes"))
+            end
         end
 
 	if startswith(LLVM.name(llvmfn), "japi3") || startswith(LLVM.name(llvmfn), "japi1") || startswith(LLVM.name(llvmfn), "jlcapi")
@@ -683,22 +687,39 @@ end
 const FRULE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
 const RRULE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
 const INACTIVE_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
-const EASY_RULE_CACHE = Dict{Tuple{Type, UInt}, Bool}()
+const ATTRIBUTE_PRESERVING_RULE_CACHE = Dict{Tuple{Type, UInt}, Bool}()
+const READONLY_RULE_CACHE = Dict{Tuple{Type, UInt}, Bool}()
 const NOALIAS_CACHE = Dict{Tuple{Type, UInt, Any}, Bool}()
 
-function cached_has_easy_rule(specTypes::Type, world::UInt)
+function cached_has_attribute_preserving_rule(specTypes::Type, world::UInt)
     key = (specTypes, world)
-    val = get(EASY_RULE_CACHE, key, nothing)
+    val = get(ATTRIBUTE_PRESERVING_RULE_CACHE, key, nothing)
     if val !== nothing
         return val::Bool
     end
     func = specTypes.parameters[1]
     if func isa Core.Builtin
-        EASY_RULE_CACHE[key] = false
+        ATTRIBUTE_PRESERVING_RULE_CACHE[key] = false
         return false
     end
-    res = EnzymeRules.has_easy_rule_from_sig(specTypes; world)
-    EASY_RULE_CACHE[key] = res
+    res = EnzymeRules.has_attribute_preserving_rule_from_sig(specTypes; world)
+    ATTRIBUTE_PRESERVING_RULE_CACHE[key] = res
+    return res
+end
+
+function cached_has_readonly_rule(specTypes::Type, world::UInt)
+    key = (specTypes, world)
+    val = get(READONLY_RULE_CACHE, key, nothing)
+    if val !== nothing
+        return val::Bool
+    end
+    func = specTypes.parameters[1]
+    if func isa Core.Builtin
+        READONLY_RULE_CACHE[key] = false
+        return false
+    end
+    res = EnzymeRules.has_readonly_rule_from_sig(specTypes; world)
+    READONLY_RULE_CACHE[key] = res
     return res
 end
 
@@ -6087,9 +6108,13 @@ function lower_convention(
         attributes,
         StringAttribute("enzymejl_rt", string(convert(UInt, unsafe_to_pointer(rt)))),
     )
-    if cached_has_easy_rule(Interpreter.simplify_kw(mi.specTypes), world)
-        push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
-        push!(attributes, LLVM.StringAttribute("enzyme_custom_full_attributes"))
+    let simp_spec = Interpreter.simplify_kw(mi.specTypes)
+        if cached_has_readonly_rule(simp_spec, world)
+            push!(attributes, LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow"))
+        end
+        if cached_has_attribute_preserving_rule(simp_spec, world)
+            push!(attributes, LLVM.StringAttribute("enzyme_custom_full_attributes"))
+        end
     end
     for prev in collect(function_attributes(entry_f))
         if kind(prev) == kind(StringAttribute("enzyme_ta_norecur"))
@@ -8368,7 +8393,8 @@ function clear_caches!()
     empty!(FRULE_CACHE)
     empty!(RRULE_CACHE)
     empty!(INACTIVE_CACHE)
-    empty!(EASY_RULE_CACHE)
+    empty!(ATTRIBUTE_PRESERVING_RULE_CACHE)
+    empty!(READONLY_RULE_CACHE)
     empty!(NOALIAS_CACHE)
     empty!(Interpreter.SigCache)
     Interpreter.LastFwdWorld[] = Base.IdSet{Type}()

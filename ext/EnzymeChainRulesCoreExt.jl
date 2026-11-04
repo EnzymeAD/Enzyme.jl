@@ -189,7 +189,7 @@ function Enzyme._import_rrule(fn, tys...)
     end
 
     return quote
-        EnzymeRules.has_easy_rule(::$(esc(fn)), $(ptys...)) = true
+        EnzymeRules.has_readonly_rule(::$(esc(fn)), $(ptys...)) = true
 
         function EnzymeRules.augmented_primal(config, fn::FA, ::Type{RetAnnotation}, $(exprs...); kwargs...) where {RetAnnotation, FA <: Annotation{<:$(esc(fn))}, $(anns...)}
             $(valtys...)

@@ -617,4 +617,124 @@ split_scale_loss(v) = sum(Base.inferencebarrier(s -> split_scale(s))(SplitModeAr
     @test Enzyme.gradient(Reverse, split_scale_loss, [1.0, 2.0])[1] ≈ [2.0, 2.0]
 end
 
+# A hand-written rule whose primal only reads inline fields of a struct argument
+# while the custom rule also inspects its GC-tracked fields (as in
+# `DiffEqBase.solve_up`) declares `has_readonly_rule` rather than
+# `has_attribute_preserving_rule`, keeping `enzyme_LocalReadOnlyOrThrow` and
+# constant-call skipping without allowing DSE/readnone inference to drop unread
+# GC-tracked struct fields.
+struct ReadonlyRuleArg
+    mode::Int
+    weights::Vector{Float64}
+end
+
+const readonly_rule_calls = Ref(0)
+
+@noinline function readonly_rule_partial(p::ReadonlyRuleArg, u::Vector{Float64})
+    return p.mode .* u
+end
+
+EnzymeRules.has_readonly_rule(::typeof(readonly_rule_partial), ::ReadonlyRuleArg, ::Vector{Float64}) = nothing
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig, ::Const{typeof(readonly_rule_partial)},
+        ::Type{RT}, p::Annotation{ReadonlyRuleArg}, u::Annotation{Vector{Float64}}
+    ) where {RT}
+    readonly_rule_calls[] += 1
+    res = p.val.weights .* (p.val.mode .* u.val)
+    dp = p isa Const ? zero(res) : (p.dval.weights .* (p.val.mode .* u.val))
+    du = u isa Const ? zero(res) : p.val.weights .* (p.val.mode .* u.dval)
+    dres = dp .+ du
+    if EnzymeRules.needs_primal(config)
+        return EnzymeRules.needs_shadow(config) ? Duplicated(res, dres) : res
+    else
+        return EnzymeRules.needs_shadow(config) ? dres : nothing
+    end
+end
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfigWidth{1}, ::Const{typeof(readonly_rule_partial)},
+        RTA::Type{<:Duplicated}, p::Annotation{ReadonlyRuleArg}, u::Annotation{Vector{Float64}}
+    )
+    readonly_rule_calls[] += 1
+    res = p.val.weights .* (p.val.mode .* u.val)
+    dres = EnzymeRules.needs_shadow(config) ? zero(res) : nothing
+    tape = (dres, copy(p.val.weights), copy(u.val))
+    return EnzymeRules.augmented_rule_return_type(config, RTA)(
+        EnzymeRules.needs_primal(config) ? res : nothing, dres, tape
+    )
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfigWidth{1}, ::Const{typeof(readonly_rule_partial)},
+        ::Type{<:Duplicated}, tape, p::Annotation{ReadonlyRuleArg}, u::Annotation{Vector{Float64}}
+    )
+    dres, w, uval = tape
+    rta = EnzymeRules.runtime_activity(config)
+    if p isa Duplicated && !(rta && p.dval.weights === p.val.weights)
+        p.dval.weights .+= dres .* (p.val.mode .* uval)
+    end
+    if !(u isa Const) && !(rta && u.dval === u.val)
+        u.dval .+= dres .* (p.val.mode .* w)
+    end
+    fill!(dres, 0.0)
+    return (nothing, nothing)
+end
+
+readonly_rule_const_prob_loss(u) = sum(readonly_rule_partial(ReadonlyRuleArg(2, [3.0, 5.0]), u))
+readonly_rule_active_prob_loss(w, u) = sum(readonly_rule_partial(ReadonlyRuleArg(2, w), u))
+readonly_rule_split_loss(u) = sum(Base.inferencebarrier((p, x) -> readonly_rule_partial(p, x))(ReadonlyRuleArg(2, [3.0, 5.0]), u))
+function readonly_rule_const_call(u)
+    _ = readonly_rule_partial(ReadonlyRuleArg(2, [3.0, 5.0]), [1.0, 1.0])
+    return sum(u)
+end
+
+@testset "has_readonly_rule preserves unread GC-tracked struct fields" begin
+    @test EnzymeRules.has_readonly_rule_from_sig(Tuple{typeof(readonly_rule_partial), ReadonlyRuleArg, Vector{Float64}})
+    @test !EnzymeRules.has_attribute_preserving_rule_from_sig(Tuple{typeof(readonly_rule_partial), ReadonlyRuleArg, Vector{Float64}})
+    ir = sprint(io -> Enzyme.Compiler.enzyme_code_llvm(
+        io, readonly_rule_const_prob_loss, Active, Tuple{Duplicated{Vector{Float64}}};
+        run_enzyme = false, raw = true, dump_module = true
+    ))
+    @test occursin("enzyme_ReadOnlyOrThrow", ir) || occursin("enzyme_LocalReadOnlyOrThrow", ir)
+    @test !occursin("enzyme_custom_full_attributes", ir)
+
+    @test Enzyme.gradient(Reverse, readonly_rule_const_prob_loss, [1.0, 2.0])[1] ≈ [6.0, 10.0]
+    @test Enzyme.gradient(Enzyme.set_runtime_activity(Reverse), readonly_rule_const_prob_loss, [1.0, 2.0])[1] ≈ [6.0, 10.0]
+    @test Enzyme.gradient(Enzyme.set_runtime_activity(Reverse), readonly_rule_split_loss, [1.0, 2.0])[1] ≈ [6.0, 10.0]
+
+    w = [3.0, 5.0]
+    dw = zeros(2)
+    u = [4.0, 7.0]
+    du = zeros(2)
+    Enzyme.autodiff(
+        Reverse, readonly_rule_active_prob_loss, Active,
+        Duplicated(w, dw), Duplicated(u, du)
+    )
+    @test dw ≈ [8.0, 14.0]
+    @test du ≈ [6.0, 10.0]
+
+    fill!(dw, 0.0)
+    fill!(du, 0.0)
+    Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Reverse), readonly_rule_active_prob_loss, Active,
+        Duplicated(w, dw), Duplicated(u, du)
+    )
+    @test dw ≈ [8.0, 14.0]
+    @test du ≈ [6.0, 10.0]
+
+    fwd_d = Enzyme.autodiff(
+        Forward, readonly_rule_active_prob_loss, Duplicated,
+        Duplicated([3.0, 5.0], [1.0, -1.0]), Duplicated([4.0, 7.0], [0.5, 2.0])
+    )
+    @test fwd_d[1] ≈ 17.0
+
+    # Constant calls still bypass a `has_readonly_rule` custom rule in both Reverse and Forward.
+    readonly_rule_calls[] = 0
+    @test Enzyme.gradient(Reverse, readonly_rule_const_call, [1.0, 2.0])[1] ≈ [1.0, 1.0]
+    @test readonly_rule_calls[] == 0
+    @test Enzyme.gradient(Forward, readonly_rule_const_call, [1.0, 2.0])[1] ≈ [1.0, 1.0]
+    @test readonly_rule_calls[] == 0
+end
+
 end # ReverseRules

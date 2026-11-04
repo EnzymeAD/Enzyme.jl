@@ -712,5 +712,7 @@ function EnzymeRules.forward(
     end
 end
 
-EnzymeRules.has_easy_rule(::typeof(logdet), ::StridedMatrix) = true
-EnzymeRules.has_easy_rule(::typeof(det), ::StridedMatrix) = true
+EnzymeRules.has_readonly_rule(::typeof(logdet), ::StridedMatrix) = true
+EnzymeRules.has_attribute_preserving_rule(::typeof(logdet), ::StridedMatrix) = true
+EnzymeRules.has_readonly_rule(::typeof(det), ::StridedMatrix) = true
+EnzymeRules.has_attribute_preserving_rule(::typeof(det), ::StridedMatrix) = true
