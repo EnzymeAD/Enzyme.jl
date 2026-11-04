@@ -2557,9 +2557,16 @@ function enzyme_custom_common_rev(
                 shadowV = extract_value!(B, resV, idx)
 	        _, prim_sret, prim_roots = get_return_info(RealRt)
                 if prim_sret !== nothing
-                    dval = if is_constant_value(gutils, operands(orig)[1+orig_swiftself])
+                    # With the roots of the return in their own array, the sret
+                    # buffer holds inline data alone. Its shadow is not written
+                    # here: shadow floats are only read in the reverse pass,
+                    # and Enzyme zero-initializes the shadow wherever it
+                    # creates it. In split mode it may create it in the reverse
+                    # pass alone (the forward pass only has a placeholder for
+                    # it, later replaced by undef), so there is nothing to
+                    # store through here anyway.
+                    dval = if (prim_roots !== nothing && VERSION >= v"1.12") || is_constant_value(gutils, operands(orig)[1+orig_swiftself])
                         @assert prim_roots !== nothing && VERSION >= v"1.12"
-                        @assert !is_constant_value(gutils, operands(orig)[2+orig_swiftself])
 		    	nothing
 		    else
 			invert_pointer(gutils, operands(orig)[1+orig_swiftself], B)
@@ -2576,10 +2583,6 @@ function enzyme_custom_common_rev(
 
 
 			if prim_roots !== nothing && VERSION >= v"1.12"
-			    if !is_constant_value(gutils, operands(orig)[1+orig_swiftself])
-			        store_ptr = (width == 1) ? dval : extract_value!(B, dval, idx - 1)
-				extract_nonjlvalues_into!(B, value_type(to_store), store_ptr, to_store)
-			    end
 
                             rval = (width == 1) ? droots : extract_value!(B, droots, idx - 1)
 
