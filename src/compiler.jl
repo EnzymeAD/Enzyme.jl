@@ -3038,6 +3038,19 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
     func = LLVM.parent(position(B))
     mod = LLVM.parent(func)
 
+    # A cache is sized by the trip counts of its enclosing loops, and Enzyme
+    # allocates it before an outer loop when an inner loop's count does not
+    # change across that loop. The count is only meaningful where the inner
+    # loop runs: for a loop that is skipped it can be negative (`for i in 2:m`
+    # with `m == 0` counts `m - 1 == -1`). Such a cache holds no element, so
+    # size it as empty rather than as an `NTuple` of negative length, which
+    # overflows the type's allocation.
+    if !isa(Count, LLVM.ConstantInt)
+        no_elements = LLVM.ConstantInt(value_type(Count), 0)
+        is_negative = icmp!(B, LLVM.API.LLVMIntSLT, Count, no_elements)
+        Count = select!(B, is_negative, no_elements, Count)
+    end
+
     Size = nuwmul!(B, Count, AlignedSize) # should be nsw, nuw
     T_int8 = LLVM.Int8Type()
 
