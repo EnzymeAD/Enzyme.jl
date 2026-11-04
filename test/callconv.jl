@@ -523,3 +523,36 @@ d3_default_ccall(x) = only(autodiff(Forward, d2_default_ccall, Duplicated(x, 1.0
     @test d3_inline_ccall(x) ≈ d3_default_ccall(x)
     @test sum_d1_inline_ccall([x, x]) ≈ 2 * d1_default_ccall(x)
 end
+
+@noinline function step_loop_1988(xx::Vector{Float64}, nx::Int, nt::Int, M0::Float64)
+    h = zeros(nx + 1)
+    M = zeros(nx + 1)
+    M .= M0 .+ xx
+    for _ in 1:nt
+        d = -((h[1:nx] .+ h[2:(nx + 1)]) .* 0.5) .* (h[2:(nx + 1)] .- h[1:nx])
+        h[2:nx] .= h[2:nx] .+ M[2:nx] .* 1.0e-4 .- 1.0e-4 .* (d[2:nx] .- d[1:(nx - 1)])
+    end
+    return sum(h)
+end
+
+integrate_1988(M0::Float64) = step_loop_1988(zeros(11), 10, 2_000, M0)
+
+@testset "Large constant-sized GC tape allocations (#1988)" begin
+    ir = sprint() do io
+        Enzyme.Compiler.enzyme_code_llvm(
+            io,
+            integrate_1988,
+            Active,
+            Tuple{Active{Float64}};
+            dump_module = true,
+        )
+    end
+    @test occursin("jl_gc_alloc_typed", ir)
+    for m in eachmatch(r"%gcframe\S*\s*=\s*alloca\s+\S+,\s*i(?:32|64)\s+(\d+)", ir)
+        @test parse(Int, m.captures[1]) < 500
+    end
+
+    fd = (integrate_1988(0.004 + 1.0e-6) - integrate_1988(0.004 - 1.0e-6)) / 2.0e-6
+    rev = autodiff(Reverse, integrate_1988, Active, Active(0.004))[1][1]
+    @test isapprox(rev, fd; rtol = 1.0e-6)
+end
