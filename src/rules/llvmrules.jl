@@ -1549,6 +1549,214 @@ end
     return nothing
 end
 
+# Base.IdSet (Julia 1.11 and later) keeps its keys in a Memory{Any} and their positions
+# in a hash index of the keys' identities. jl_idset_put_key, jl_idset_put_idx and
+# jl_idset_pop update those, and are repeated on the shadow set so that its keys sit in
+# the same slots as the primal's; the shadow of a key read back out of the set is then
+# the right one. Each helper receives the primal's operands and result too: a shadow that
+# is the primal itself, as an inactive set has, was already updated by the primal call.
+
+function idset_shadow_put_key(keys, nkeys, skeys, skey)
+    # Every empty set shares one empty Memory, which jl_idset_put_key replaces rather than
+    # writes to, so only a nonempty one shows that the shadow is the primal.
+    skeys === keys && !isempty(keys::Memory{Any}) && return nkeys
+    return ccall(:jl_idset_put_key, Any, (Any, Any, Ptr{Int}), skeys, skey, Ref(0))
+end
+
+function idset_shadow_put_idx(idxs, nidxs, skeys, sidxs, idx::Int)
+    # As for the keys, an empty index is shared and replaced rather than written to.
+    sidxs === idxs && !isempty(idxs::Memory) && return nidxs
+    return ccall(:jl_idset_put_idx, Any, (Any, Any, Int), skeys, sidxs, idx)
+end
+
+function idset_shadow_pop(keys, skeys, idxs, sidxs, skey, idx::Int)
+    (idx == -1 || skeys === keys) && return nothing
+    if sidxs !== idxs
+        ccall(:jl_idset_pop, Int, (Any, Any, Any), skeys, sidxs, skey)
+    end
+    # Clear the slot the primal cleared, whether or not the shadow index found the key.
+    Base._unsetindex!(skeys::Memory{Any}, idx + 1)
+    return nothing
+end
+
+# The shadow of `val`, or `val` itself when it is inactive.
+function idset_shadow_operand(B, gutils, @nospecialize(val::LLVM.Value))
+    if !is_constant_value(gutils, val)
+        return invert_pointer(gutils, val, B)
+    end
+    nval = new_from_original(gutils, val)
+    width = get_width(gutils)
+    width == 1 && return nval
+    shadow = LLVM.UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(nval))))
+    for i in 1:width
+        shadow = insert_value!(B, shadow, nval, i - 1)
+    end
+    return shadow
+end
+
+# Calls `helper` once per shadow, after the primal call: each of `args` is either a primal
+# value, or a shadow (`isshadow`) from which that batch's element is taken.
+function idset_shadow_calls!(B, orig, gutils, helper, args::Vector{LLVM.Value}, isshadow::Vector{Bool})
+    width = get_width(gutils)
+    results = LLVM.Value[]
+    for i in 1:width
+        callargs = LLVM.Value[unsafe_to_llvm(B, helper)]
+        for (a, s) in zip(args, isshadow)
+            push!(callargs, s && width > 1 ? extract_value!(B, a, i - 1) : a)
+        end
+        res = emit_apply_generic!(B, callargs)
+        if i == 1
+            API.moveBefore(new_from_original(gutils, orig), res, B)
+        end
+        push!(results, res)
+    end
+    width == 1 && return results[1]
+    shadow = LLVM.UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+    for i in 1:width
+        shadow = insert_value!(B, shadow, results[i], i - 1)
+    end
+    return shadow
+end
+
+# The shadow of the key being inserted. An inactive key is stored as is, as a store of it
+# would be: with runtime activity, or otherwise when its type allows.
+function idset_shadow_key(B, orig, gutils, @nospecialize(key::LLVM.Value))
+    is_constant_value(gutils, key) || return invert_pointer(gutils, key, B)
+    get_runtime_activity(gutils) && return idset_shadow_operand(B, gutils, key)
+    enzyme_ctx = enzyme_context()
+    shadow = julia_error(
+        "Mixed activity for key of jl_idset_put_key " * string(orig) * " " * string(key),
+        orig.ref,
+        API.ET_MixedActivityError,
+        gutils.ref,
+        key.ref,
+        B.ref,
+        enzyme_ctx,
+    )
+    shadow != C_NULL && return LLVM.Value(shadow)
+    return idset_shadow_operand(B, gutils, key)
+end
+
+function idset_put_key_shadow!(B, orig, gutils, shadowR)
+    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+        return true
+    end
+    origkeys, origkey, _ = arg_operands_view(orig)
+    shadow = idset_shadow_calls!(
+        B, orig, gutils, idset_shadow_put_key,
+        LLVM.Value[
+            new_from_original(gutils, origkeys),
+            new_from_original(gutils, orig),
+            idset_shadow_operand(B, gutils, origkeys),
+            idset_shadow_key(B, orig, gutils, origkey),
+        ],
+        Bool[false, false, true, true],
+    )
+    if shadowR != C_NULL
+        unsafe_store!(shadowR, shadow.ref)
+    end
+    return false
+end
+
+function idset_put_idx_shadow!(B, orig, gutils, shadowR)
+    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+        return true
+    end
+    origkeys, origidxs, origidx = arg_operands_view(orig)
+    shadow = idset_shadow_calls!(
+        B, orig, gutils, idset_shadow_put_idx,
+        LLVM.Value[
+            new_from_original(gutils, origidxs),
+            new_from_original(gutils, orig),
+            idset_shadow_operand(B, gutils, origkeys),
+            idset_shadow_operand(B, gutils, origidxs),
+            emit_box_int64!(B, new_from_original(gutils, origidx)),
+        ],
+        Bool[false, false, true, true, false],
+    )
+    if shadowR != C_NULL
+        unsafe_store!(shadowR, shadow.ref)
+    end
+    return false
+end
+
+function idset_pop_shadow!(B, orig, gutils, normalR, shadowR)
+    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
+        return true
+    end
+    origkeys, origidxs, origkey = arg_operands_view(orig)
+    newo = new_from_original(gutils, orig)
+    width = get_width(gutils)
+    shadowkeys = idset_shadow_operand(B, gutils, origkeys)
+    shadowidxs = idset_shadow_operand(B, gutils, origidxs)
+    shadowkey = idset_shadow_operand(B, gutils, origkey)
+    # The shadow calls read the primal's result, so must follow it.
+    idx = emit_box_int64!(B, newo)
+    API.moveBefore(newo, idx, B)
+    for i in 1:width
+        skeys, sidxs, skey = shadowkeys, shadowidxs, shadowkey
+        if width > 1
+            skeys = extract_value!(B, skeys, i - 1)
+            sidxs = extract_value!(B, sidxs, i - 1)
+            skey = extract_value!(B, skey, i - 1)
+        end
+        emit_apply_generic!(
+            B,
+            LLVM.Value[
+                unsafe_to_llvm(B, idset_shadow_pop),
+                new_from_original(gutils, origkeys),
+                skeys,
+                new_from_original(gutils, origidxs),
+                sidxs,
+                skey,
+                idx,
+            ],
+        )
+    end
+    # The result is an index, which has no derivative.
+    if shadowR != C_NULL
+        shadow = newo
+        if width > 1
+            shadow = LLVM.UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+            for i in 1:width
+                shadow = insert_value!(B, shadow, newo, i - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadow.ref)
+    end
+    return false
+end
+
+@register_fwd function idsetputkey_fwd(B, orig, gutils, normalR, shadowR)
+    return idset_put_key_shadow!(B, orig, gutils, shadowR)
+end
+@register_aug function idsetputkey_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    return idset_put_key_shadow!(B, orig, gutils, shadowR)
+end
+@register_rev function idsetputkey_rev(B, orig, gutils, tape)
+    return nothing
+end
+
+@register_fwd function idsetputidx_fwd(B, orig, gutils, normalR, shadowR)
+    return idset_put_idx_shadow!(B, orig, gutils, shadowR)
+end
+@register_aug function idsetputidx_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    return idset_put_idx_shadow!(B, orig, gutils, shadowR)
+end
+@register_rev function idsetputidx_rev(B, orig, gutils, tape)
+    return nothing
+end
+
+@register_fwd function idsetpop_fwd(B, orig, gutils, normalR, shadowR)
+    return idset_pop_shadow!(B, orig, gutils, normalR, shadowR)
+end
+@register_aug function idsetpop_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    return idset_pop_shadow!(B, orig, gutils, normalR, shadowR)
+end
+@register_rev function idsetpop_rev(B, orig, gutils, tape)
+    return nothing
+end
+
 @register_fwd function jl_array_grow_end_fwd(B, orig, gutils, normalR, shadowR)
     if is_constant_value(gutils, operands(orig)[1])
         return true
@@ -2451,6 +2659,24 @@ end
         @augfunc(idtablerehash_augfwd),
         @revfunc(idtablerehash_rev),
         @fwdfunc(idtablerehash_fwd),
+    )
+    register_handler!(
+        ("jl_idset_put_key", "ijl_idset_put_key"),
+        @augfunc(idsetputkey_augfwd),
+        @revfunc(idsetputkey_rev),
+        @fwdfunc(idsetputkey_fwd),
+    )
+    register_handler!(
+        ("jl_idset_put_idx", "ijl_idset_put_idx"),
+        @augfunc(idsetputidx_augfwd),
+        @revfunc(idsetputidx_rev),
+        @fwdfunc(idsetputidx_fwd),
+    )
+    register_handler!(
+        ("jl_idset_pop", "ijl_idset_pop"),
+        @augfunc(idsetpop_augfwd),
+        @revfunc(idsetpop_rev),
+        @fwdfunc(idsetpop_fwd),
     )
     register_handler!(
         ("jl_f__apply_iterate", "ijl_f__apply_iterate"),
