@@ -7261,6 +7261,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     # annotate
     replace_builtin_fptr!(mod, enzyme_ctx)
     annotate!(mod)
+    annotate_tuple_splats!(mod, enzyme_ctx)
     for name in ("gpu_report_exception", "report_exception")
         if haskey(functions(mod), name)
             exc = functions(mod)[name]

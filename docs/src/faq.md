@@ -827,4 +827,3 @@ Now the question is what should Enzyme do with the finalizer for the shadow obje
 but finalizers are often used for resource management (like manually allocating memory) and thus we would leak resources that are attached
 to the shadow object. Instead, we define finalizers to be inactive (contain no instructions that are relevant with respect to AD),
 yet we must attach them to the shadow object to release resources attached to them. 
-

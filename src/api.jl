@@ -1303,7 +1303,11 @@ end
 """
     fast_math!(val::Bool)
 
-Whether generated derivatives have fast math on or off, default on.
+Whether generated derivatives may use fast-math transformations. Off by default
+in the dogfood compiler. Setting `true` permits reassociation and assumptions about
+nonfinite values and signed zero; these can change results, including underflowing
+an otherwise representable derivative. Set this before compiling a derivative;
+changing it does not invalidate already compiled derivatives.
 """
 function fast_math!(val)
     ptr = cglobal((:EnzymeFastMath, libEnzyme))

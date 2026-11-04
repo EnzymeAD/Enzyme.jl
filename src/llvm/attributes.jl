@@ -1228,6 +1228,98 @@ function annotate!(mod::LLVM.Module)
     end
 end
 
+"""
+    annotate_tuple_splats!(mod::LLVM.Module, enzyme_ctx)
+
+Mark each `Core._apply_iterate(Base.iterate, Core.tuple, args...)` call whose
+splatted `args` the builtin reads directly as writing only memory it allocates
+(`enzyme_LocalReadOnlyOrThrow`). Julia emits such a call to build a tuple from
+pieces of others, as `Base.reduced_indices` and `ntuple` with a run-time length
+do on Julia 1.10 for `sum(A; dims = d)`. For a tuple, named tuple, `SimpleVector`,
+`Array` or `GenericMemory` argument the builtin copies the elements without
+calling `iterate` (`do_apply` in Julia's `src/builtins.c`, 1.10 through 1.13),
+then calls `tuple`, so the call only allocates its result. Without the mark,
+every function reaching it counted as writing unknown memory, so a reverse pass
+cached every load of the operands of a call made before it. Any other splat may
+call `iterate` methods or a function that writes memory and stays unmarked.
+"""
+function annotate_tuple_splats!(mod::LLVM.Module, enzyme_ctx)
+    local_readonly = LLVM.StringAttribute("enzyme_LocalReadOnlyOrThrow")
+    for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+        is_tuple_splat(inst, enzyme_ctx) || continue
+        LLVM.API.LLVMAddCallSiteAttribute(
+            inst,
+            reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
+            local_readonly,
+        )
+    end
+    return nothing
+end
+
+function is_tuple_splat(@nospecialize(inst::LLVM.Instruction), enzyme_ctx)::Bool
+    isa(inst, LLVM.CallInst) || return false
+    jlcall = LLVM.called_operand(inst)
+    (isa(jlcall, LLVM.Function) && LLVM.name(jlcall) == "julia.call") || return false
+    ops = operands(inst)
+    # julia.call(builtin, F, iterate, combine, args..., julia.call)
+    length(ops) >= 5 || return false
+    fn = ops[1]
+    (isa(fn, LLVM.Function) && LLVM.name(fn) in ("jl_f__apply_iterate", "ijl_f__apply_iterate")) || return false
+    legal, iterfn = absint(ops[3], enzyme_ctx)
+    (legal && unbind(iterfn) === Base.iterate) || return false
+    legal, combfn = absint(ops[4], enzyme_ctx)
+    (legal && unbind(combfn) === Core.tuple) || return false
+    seen = Set{LLVM.PHIInst}()
+    for i in 5:(length(ops) - 1)
+        splat_read_directly(ops[i], enzyme_ctx, seen) || return false
+    end
+    return true
+end
+
+# Whether `_apply_iterate` reads the elements of `val` without calling `iterate`.
+# A phi qualifies when every incoming value does, as when the tuple sliced off
+# depends on a run-time dimension.
+function splat_read_directly(@nospecialize(val::LLVM.Value), enzyme_ctx, seen::Set{LLVM.PHIInst})::Bool
+    if isa(val, LLVM.PHIInst)
+        val in seen && return true
+        push!(seen, val)
+        for (v, _) in LLVM.incoming(val)
+            splat_read_directly(v, enzyme_ctx, seen) || return false
+        end
+        return true
+    end
+    returns_tuple(val, enzyme_ctx) && return true
+    legal, typ, _ = abs_typeof(val, enzyme_ctx)
+    if !legal && isa(val, LLVM.CallInst)
+        # abs_typeof names only a concrete return type. Every object a Julia
+        # function returns boxed is an instance of its declared return type,
+        # such as the `Tuple` `ntuple` builds with a run-time length.
+        _, RT = enzyme_custom_extract_mi(val, false)
+        ty = value_type(val)
+        if RT isa Type && isa(ty, LLVM.PointerType) && LLVM.addrspace(ty) == Tracked
+            legal, typ = true, RT
+        end
+    end
+    (legal && typ !== Union{}) || return false
+    return typ <: Union{Tuple, NamedTuple, Core.SimpleVector, Array} ||
+        (isdefined(Core, :GenericMemory) && typ <: Core.GenericMemory)
+end
+
+# Whether `val` is a call of the `tuple` builtin, directly or through a splat,
+# whatever its arguments: either returns a tuple.
+function returns_tuple(@nospecialize(val::LLVM.Value), enzyme_ctx)::Bool
+    isa(val, LLVM.CallInst) || return false
+    jlcall = LLVM.called_operand(val)
+    (isa(jlcall, LLVM.Function) && LLVM.name(jlcall) == "julia.call") || return false
+    ops = operands(val)
+    fn = ops[1]
+    isa(fn, LLVM.Function) || return false
+    LLVM.name(fn) in ("jl_f_tuple", "ijl_f_tuple") && return true
+    (LLVM.name(fn) in ("jl_f__apply_iterate", "ijl_f__apply_iterate") && length(ops) >= 5) || return false
+    legal, combfn = absint(ops[4], enzyme_ctx)
+    return legal && unbind(combfn) === Core.tuple
+end
+
 function mark_gpu_intrinsics!(target, mod::LLVM.Module)
     if target isa GPUCompiler.PTXCompilerTarget
     

@@ -1,0 +1,12 @@
+# The libEnzyme build this dogfood commit runs against: the dogfood libEnzyme
+# line, which is libEnzyme at the source of the Enzyme_jll version Project.toml
+# pins, plus reviewed libEnzyme repairs that no Enzyme_jll release carries yet.
+#
+# The KB resolver's dogfood overlay points Enzyme_jll's `libEnzyme_path` and
+# `libEnzymeBCLoad_path` preferences at the consumer host's build of `commit`
+# for the consumer's LLVM version, and refuses to resolve when that build is
+# missing. Every jll pin move rebases the branch, and every new repair is one
+# more cherry-pick; either way `commit` changes here in the same landing.
+commit = "3425ed9c64639fcdded264704a590b00e5e7de62"
+branch = "dogfood-jll"
+repository = "https://github.com/nsiccha/Enzyme"
