@@ -405,7 +405,7 @@ function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
     try
         fieldcount(T)
     catch
-        GPUCompiler.@safe_warn "Type does not have a definite number of fields" T
+        @safe_warn "Type does not have a definite number of fields" T
         return TypeTree()
     end
 

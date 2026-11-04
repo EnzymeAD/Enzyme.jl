@@ -2640,7 +2640,7 @@ function enzyme_custom_common_rev(
         if length(actives) >= 1 &&
            !isa(value_type(res), LLVM.StructType) &&
            !isa(value_type(res), LLVM.ArrayType)
-            GPUCompiler.@safe_error "Shadow arg calling convention mismatch found return ",
+            @safe_error "Shadow arg calling convention mismatch found return ",
             res
             return tapeV
         end

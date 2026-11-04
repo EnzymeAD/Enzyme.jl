@@ -41,6 +41,7 @@ import Enzyme:
 
 using Enzyme
 using ScopedValues: @with
+import ScopedValues
 
 import EnzymeCore
 import EnzymeCore: EnzymeRules, ABI, FFIABI, DefaultABI
@@ -305,7 +306,7 @@ else
         )
 end
 
-import GPUCompiler: @safe_debug, @safe_info, @safe_warn, @safe_error
+import ..Enzyme: @safe_debug, @safe_info, @safe_warn, @safe_error
 
 include("compiler/utils.jl")
 
@@ -3056,7 +3057,7 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
 
         TT = Compiler.tape_type(LLVMType)
         if esizeof(TT) != convert(Int, AlignedSize)
-            GPUCompiler.@safe_error "Enzyme aligned size and Julia size disagree" AlignedSize =
+            @safe_error "Enzyme aligned size and Julia size disagree" AlignedSize =
                 convert(Int, AlignedSize) esizeof(TT) fieldtypes(TT) LLVMType=strip(string(LLVMType))
             emit_error(B, nothing, "Enzyme: Tape allocation failed.") # TODO: Pick appropriate orig
             return LLVM.API.LLVMValueRef(LLVM.UndefValue(LLVMType).ref)
@@ -3067,7 +3068,7 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
 
             ETT = N == 1 ? TT : NTuple{N,TT}
             if sizeof(ETT) != N * convert(Int, AlignedSize)
-                GPUCompiler.@safe_error "Size of Enzyme tape is incorrect. Please report this issue" ETT sizeof(
+                @safe_error "Size of Enzyme tape is incorrect. Please report this issue" ETT sizeof(
                     ETT,
                 ) TargetSize = N * convert(Int, AlignedSize) LLVMType
                 emit_error(B, nothing, "Enzyme: Tape allocation failed.") # TODO: Pick appropriate orig
@@ -3405,7 +3406,7 @@ function enzyme_custom_extract_mi(orig::LLVM.CallInst, error::Bool = true)
     if isa(operand, LLVM.Function)
         return enzyme_custom_extract_mi(operand::LLVM.Function, error)
     elseif error
-        GPUCompiler.@safe_error "Enzyme: Custom handler, could not find fn", orig
+        @safe_error "Enzyme: Custom handler, could not find fn", orig
     end
     return nothing, nothing
 end
@@ -3426,7 +3427,7 @@ function enzyme_custom_extract_mi(orig::LLVM.Function, error::Bool = true)
         end
     end
     if error && mi === nothing
-        GPUCompiler.@safe_error "Enzyme: Custom handler, could not find mi", orig
+        @safe_error "Enzyme: Custom handler, could not find mi", orig
     end
     return mi, RT
 end
@@ -3446,7 +3447,7 @@ function enzyme_extract_parm_type(fn::LLVM.Function, idx::Int, error::Bool = tru
         end
     end
     if error && (byref === nothing || ty === nothing)
-        GPUCompiler.@safe_error "Enzyme: Custom handler, could not find parm type at index",
+        @safe_error "Enzyme: Custom handler, could not find parm type at index",
         idx,
         fn
     end
@@ -6427,7 +6428,50 @@ function link_split_existing!(mod::LLVM.Module, newmod::LLVM.Module)
     return nothing
 end
 
+"""
+    logger_in_world()
+
+Whether the task's logger has methods in the world the calling code runs in.
+
+On Julia 1.10, ScopedValues.jl keeps scoped values in the task's logger, so binding
+[`ENZYME_CONTEXT`](@ref) asks that logger for its level. A compilation inside a generated
+function runs in the world the generated method was defined in: `thunk` compiles there when
+Enzyme differentiates code that itself calls `autodiff`. A logger type whose methods were
+defined later, such as Test's `TestLogger` when Test is loaded after Enzyme, has no methods
+in that world. The `MethodError` failed the generator, Julia inferred the call to `thunk` as
+`Any`, and the inner derivative was compiled at run time, as a call the outer derivative
+cannot differentiate (`No derivative available for indirect call through an inactive
+function pointer`).
+"""
+function logger_in_world()
+    logger = ScopedValues.current_logger()
+    return hasmethod(
+        Base.CoreLogging.min_enabled_level, Tuple{typeof(logger)};
+        world = GPUCompiler.tls_world_age(),
+    )
+end
+
+"""
+    CompileUnhooked(output, job)
+
+`GPUCompiler.compile_unhooked(output, job)` as a function of no arguments, to run under
+another logger with `ScopedValues.with_logger`.
+"""
+struct CompileUnhooked <: Function
+    output::Symbol
+    job::CompilerJob
+end
+
+(c::CompileUnhooked)() = GPUCompiler.compile_unhooked(c.output, c.job)
+
 function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeTarget})
+    if !logger_in_world()
+        # Compile under a logger of Base, at the task logger's level and with the scoped
+        # values bound around this call, as `@safe_warn` and friends log from generators.
+        level = Base.CoreLogging.current_logstate().min_enabled_level
+        logger = Base.CoreLogging.SimpleLogger(Core.stderr, level)
+        return ScopedValues.with_logger(CompileUnhooked(output, job), logger)
+    end
     # Every compilation runs under its own context; a nested compilation gets
     # its own and hands the outer one back when it returns.
     mod, meta = @with ENZYME_CONTEXT => EnzymeContext(job.world) begin
@@ -6981,7 +7025,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
                 )
             end
         end
-        GPUCompiler.@safe_warn "Using fallback BLAS replacements for ($found), performance may be degraded"
+        @safe_warn "Using fallback BLAS replacements for ($found), performance may be degraded"
 	run!(GlobalOptPass(), mod)
     end
 

@@ -767,7 +767,7 @@ end
     if !any_jltypes(EnzymeRules.tape_type(thunkTy))
         if value_type(tape) != convert(LLVMType, Ptr{Cvoid})
             tape = LLVM.ConstantInt(0)
-            GPUCompiler.@safe_warn "Illegal calling convention for threadsfor augfwd"
+            @safe_warn "Illegal calling convention for threadsfor augfwd"
         end
     end
 
@@ -884,7 +884,7 @@ end
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
-    GPUCompiler.@safe_warn "active variables passed by value to jl_new_task are not yet supported"
+    @safe_warn "active variables passed by value to jl_new_task are not yet supported"
     width = get_width(gutils)
     mode = get_mode(gutils)
 

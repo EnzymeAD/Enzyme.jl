@@ -374,7 +374,7 @@ function classify_arguments(
             if last_cc == RemovedParam
                 # TODO(wmoses,vchuravy) if a parameter is removed, it is not possible to know if it was byref or not, we will assume it is byref for now.
                 # Note that getting this wrong can result in segfaults, invalid IR, or worse.
-                GPUCompiler.@safe_warn "TODO: Removed parameter with rooting cannot be known without calling convention. This is a bug which requires a fix in Julia (1.12+) itself"
+                @safe_warn "TODO: Removed parameter with rooting cannot be known without calling convention. This is a bug which requires a fix in Julia (1.12+) itself"
             elseif last_cc == GPUCompiler.BITS_VALUE
                 byref = false
             end
@@ -610,4 +610,3 @@ end
 	return false
    end
 end
-

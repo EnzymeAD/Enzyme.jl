@@ -1777,7 +1777,7 @@ end
                     print(io, "\nCaused by:")
                     Base.show_backtrace(io, bt)
                 end
-                GPUCompiler.@safe_warn "TODO reverse jl_array_del_end zero-set used memset rather than runtime type of $((found, arty)) in $(string(origops[1])) $btstr"
+                @safe_warn "TODO reverse jl_array_del_end zero-set used memset rather than runtime type of $((found, arty)) in $(string(origops[1])) $btstr"
             end
             toset = get_array_data(B, anti)
             toset = gep!(B, i8, toset, LLVM.Value[length])

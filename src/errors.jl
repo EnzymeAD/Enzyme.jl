@@ -1359,7 +1359,7 @@ function julia_error(
                 println(io, "cur = ", string(data))
             end
         end
-        GPUCompiler.@safe_warn msgN
+        @safe_warn msgN
         return C_NULL
     elseif errtype == API.ET_TypeDepthExceeded
         msg2 = sprint() do io
@@ -1378,7 +1378,7 @@ function julia_error(
                 Base.show_backtrace(io, bt)
             end
         end
-        GPUCompiler.@safe_warn msg2
+        @safe_warn msg2
         return C_NULL
     elseif errtype == API.ET_IllegalReplaceFicticiousPHIs
         data2 = LLVM.Value(data2)

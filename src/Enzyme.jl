@@ -231,6 +231,7 @@ function enzyme_world_if_active()::Union{Nothing, UInt}
     return ENZYME_CONTEXT[].world
 end
 
+include("safe_logging.jl")
 include("logic.jl")
 include("analyses/type.jl")
 include("typetree.jl")

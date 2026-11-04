@@ -7,10 +7,10 @@ using Core.Compiler:
     InferenceState,
     OptimizationParams,
     MethodInstance
-using GPUCompiler: @safe_debug
+import ..Enzyme: @safe_debug
 using GPUCompiler
 if VERSION < v"1.11.0-DEV.1552"
-    using GPUCompiler: CodeCache, @safe_debug
+    using GPUCompiler: CodeCache
     using Core.Compiler: WorldView
 end
 const HAS_INTEGRATED_CACHE = VERSION >= v"1.11.0-DEV.1552"
