@@ -2589,6 +2589,9 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
     gutils = GradientUtils(gutils)
     mode = get_mode(gutils)
     has, Ty, byref = abs_typeof(V, enzyme_ctx)
+    if !has && (haskey(metadata(V), "enzymejl_untyped_box") || (Orig != C_NULL && haskey(metadata(LLVM.Instruction(Orig)), "enzymejl_untyped_box")))
+        return nothing
+    end
     partial = false
     count = nothing
     if !has

@@ -1103,6 +1103,223 @@ struct NoDecayedPhiState
     nextvs::Dict{LLVM.PHIInst, LLVM.PHIInst}
     goffsets::Dict{LLVM.PHIInst, LLVM.PHIInst}
     phicache::Dict{LLVM.PHIInst, Tuple{LLVM.PHIInst, LLVM.PHIInst}}
+    enzyme_ctx::Union{EnzymeContext, Nothing}
+    allocacache::Dict{Tuple{LLVM.BasicBlock, LLVM.AllocaInst}, LLVM.Value}
+end
+
+# True if no transitive user of `root_phi` mutates memory through it.
+function phi_users_readonly(root_phi::LLVM.PHIInst)::Bool
+    worklist = LLVM.Value[root_phi]
+    seen = Set{LLVM.Value}()
+    while !isempty(worklist)
+        cur = pop!(worklist)
+        cur in seen && continue
+        push!(seen, cur)
+        for u in LLVM.uses(cur)
+            usr = LLVM.user(u)
+            if isa(usr, LLVM.BitCastInst) ||
+                    isa(usr, LLVM.AddrSpaceCastInst) ||
+                    isa(usr, LLVM.GetElementPtrInst) ||
+                    isa(usr, LLVM.PHIInst) ||
+                    isa(usr, LLVM.SelectInst) ||
+                    isa(usr, LLVM.FreezeInst)
+                push!(worklist, usr)
+            elseif isa(usr, LLVM.LoadInst) ||
+                    isa(usr, LLVM.ICmpInst) ||
+                    isa(usr, LLVM.PtrToIntInst)
+                continue
+            elseif isa(usr, LLVM.CallInst)
+                fop = LLVM.called_operand(usr)
+                if isa(fop, LLVM.Function)
+                    intr = LLVM.API.LLVMGetIntrinsicID(fop)
+                    if intr == LLVM.Intrinsic("llvm.lifetime.start").id ||
+                            intr == LLVM.Intrinsic("llvm.lifetime.end").id ||
+                            intr == LLVM.Intrinsic("llvm.invariant.start").id ||
+                            intr == LLVM.Intrinsic("llvm.invariant.end").id ||
+                            intr == LLVM.Intrinsic("llvm.assume").id
+                        continue
+                    end
+                    if intr == LLVM.Intrinsic("llvm.memcpy").id ||
+                            intr == LLVM.Intrinsic("llvm.memmove").id
+                        if operands(usr)[1] != cur && operands(usr)[2] == cur
+                            continue
+                        end
+                        return false
+                    end
+                    if LLVM.name(fop) == "julia.pointer_from_objref"
+                        push!(worklist, usr)
+                        continue
+                    end
+                end
+                args = Int[]
+                for (idx, op) in enumerate(arg_operands_view(usr))
+                    if op == cur
+                        push!(args, idx)
+                    end
+                end
+                if !isempty(args) && decay_args_readonly(usr, fop, args)
+                    continue
+                end
+                return false
+            else
+                return false
+            end
+        end
+    end
+    return true
+end
+
+# True if every instruction that may write to `alloca` is inactive (`enzyme_inactive`).
+function alloca_writers_inactive(alloca::LLVM.AllocaInst)::Bool
+    haskey(metadata(alloca), "enzyme_inactive") && return true
+    worklist = LLVM.Value[alloca]
+    seen = Set{LLVM.Value}()
+    while !isempty(worklist)
+        cur = pop!(worklist)
+        cur in seen && continue
+        push!(seen, cur)
+        for u in LLVM.uses(cur)
+            usr = LLVM.user(u)
+            if isa(usr, LLVM.BitCastInst) ||
+                    isa(usr, LLVM.AddrSpaceCastInst) ||
+                    isa(usr, LLVM.GetElementPtrInst) ||
+                    isa(usr, LLVM.PHIInst) ||
+                    isa(usr, LLVM.SelectInst) ||
+                    isa(usr, LLVM.FreezeInst)
+                push!(worklist, usr)
+            elseif isa(usr, LLVM.LoadInst) ||
+                    isa(usr, LLVM.ICmpInst) ||
+                    isa(usr, LLVM.PtrToIntInst)
+                continue
+            elseif isa(usr, LLVM.CallInst)
+                fop = LLVM.called_operand(usr)
+                if isa(fop, LLVM.Function)
+                    intr = LLVM.API.LLVMGetIntrinsicID(fop)
+                    if intr == LLVM.Intrinsic("llvm.lifetime.start").id ||
+                            intr == LLVM.Intrinsic("llvm.lifetime.end").id ||
+                            intr == LLVM.Intrinsic("llvm.invariant.start").id ||
+                            intr == LLVM.Intrinsic("llvm.invariant.end").id ||
+                            intr == LLVM.Intrinsic("llvm.assume").id ||
+                            intr == LLVM.Intrinsic("llvm.memset").id
+                        continue
+                    end
+                    if intr == LLVM.Intrinsic("llvm.memcpy").id ||
+                            intr == LLVM.Intrinsic("llvm.memmove").id
+                        if operands(usr)[1] != cur && operands(usr)[2] == cur
+                            continue
+                        end
+                        return false
+                    end
+                end
+                args = Int[]
+                for (idx, op) in enumerate(arg_operands_view(usr))
+                    if op == cur
+                        push!(args, idx)
+                    end
+                end
+                isempty(args) && return false
+                if decay_args_readonly(usr, fop, args)
+                    continue
+                end
+                for i in args
+                    arg_inactive = false
+                    for attr in collect(argument_attributes(usr, i))
+                        if isa(attr, LLVM.StringAttribute) && kind(attr) == "enzyme_inactive"
+                            arg_inactive = true
+                            break
+                        end
+                    end
+                    if !arg_inactive && isa(fop, LLVM.Function)
+                        for attr in collect(parameter_attributes(fop, i))
+                            if isa(attr, LLVM.StringAttribute) && kind(attr) == "enzyme_inactive"
+                                arg_inactive = true
+                                break
+                            end
+                        end
+                        if !arg_inactive
+                            for attr in collect(function_attributes(fop))
+                                if isa(attr, LLVM.StringAttribute) && kind(attr) == "enzyme_inactive"
+                                    arg_inactive = true
+                                    break
+                                end
+                            end
+                        end
+                    end
+                    arg_inactive || return false
+                end
+            else
+                return false
+            end
+        end
+    end
+    return true
+end
+
+# Snapshot a pointer-free constant-size stack `AllocaInst` (such as an `sret_box` from Julia's
+# `sret_union` calling convention) into a GC-tracked `addrspace(10)` object at predecessor `b`.
+function emit_alloca_snapshot!(
+        st::NoDecayedPhiState,
+        b::LLVM.IRBuilder,
+        base0::LLVM.AllocaInst,
+    )::Union{LLVM.Value, Nothing}
+    alty = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(base0))
+    any_jltypes(alty) && return nothing
+    arrsz = operands(base0)[1]
+    isa(arrsz, LLVM.ConstantInt) || return nothing
+    dl = datalayout(LLVM.parent(st.f))
+    nbytes = Int(LLVM.sizeof(dl, alty)) * convert(Int, arrsz)
+    (0 <= nbytes <= 4096) || return nothing
+    phi_users_readonly(st.inst) || return nothing
+
+    pb = LLVM.position(b)
+    key = (pb, base0)
+    if haskey(st.allocacache, key)
+        return st.allocacache[key]
+    end
+
+    if nbytes == 0
+        empty_obj = unsafe_to_llvm(
+            b,
+            ();
+            insert_name_if_not_exists = st.enzyme_ctx === nothing ? nothing : "nodecayed_empty",
+            enzyme_ctx = st.enzyme_ctx,
+        )
+        st.allocacache[key] = empty_obj
+        return empty_obj
+    end
+
+    BytesTy = (nbytes % 8 == 0) ? NTuple{nbytes ÷ 8, UInt64} : NTuple{nbytes, UInt8}
+    BoxTy = Base.RefValue{BytesTy}
+    tag = unsafe_to_llvm(
+        b,
+        BoxTy;
+        insert_name_if_not_exists = st.enzyme_ctx === nothing ? nothing : "nodecayed_box",
+        enzyme_ctx = st.enzyme_ctx,
+    )
+    T_size_t = convert(LLVM.LLVMType, UInt)
+    box = emit_allocobj!(b, tag, LLVM.ConstantInt(T_size_t, nbytes), false, "nodecayed.alloca")
+    metadata(box)["enzymejl_untyped_box"] = MDNode(LLVM.Metadata[])
+    if alloca_writers_inactive(base0)
+        LLVM.API.LLVMAddCallSiteAttribute(
+            box,
+            LLVM.API.LLVMAttributeReturnIndex,
+            StringAttribute("enzyme_inactive"),
+        )
+        if !haskey(metadata(base0), "enzyme_inactive")
+            metadata(base0)["enzyme_inactive"] = MDNode(LLVM.Metadata[MDString("guaranteed_const")])
+        end
+    end
+    T_int8 = LLVM.Int8Type()
+    memcpy!(
+        b,
+        bitcast!(b, box, LLVM.PointerType(T_int8, Tracked)),
+        0,
+        bitcast!(b, base0, LLVM.PointerType(T_int8, 0)),
+        0,
+        LLVM.ConstantInt(nbytes),
+    )
+    st.allocacache[key] = box
+    return box
 end
 
 # Walk `v` back to its addrspace-10 parent, returning (parent, byte offset, hasload).
@@ -1276,26 +1493,70 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
             else
                 LLVM.PointerType(eltype(value_type(v)), 10)
             end
-            v2 = addrspacecast!(
-                b,
-                operands(v)[1],
-                PT
-            )
-            return v2, offset, hasload
+            p0 = operands(v)[1]
+            off0 = offset
+            while true
+                if isa(p0, LLVM.BitCastInst)
+                    p0 = operands(p0)[1]
+                elseif isa(p0, LLVM.GetElementPtrInst)
+                    if !all(x -> (isa(x, LLVM.ConstantInt) && convert(Int, x) == 0), operands(p0)[2:end])
+                        off0 = nuwadd!(b, off0, API.EnzymeComputeByteOffsetOfGEP(b, p0, st.offty))
+                    end
+                    p0 = operands(p0)[1]
+                elseif isa(p0, LLVM.ConstantExpr) && opcode(p0) == LLVM.API.LLVMBitCast
+                    p0 = operands(p0)[1]
+                elseif isa(p0, LLVM.ConstantExpr) && opcode(p0) == LLVM.API.LLVMGetElementPtr
+                    off0 = nuwadd!(b, off0, API.EnzymeComputeByteOffsetOfGEP(b, p0, st.offty))
+                    p0 = operands(p0)[1]
+                else
+                    break
+                end
+            end
+            if isa(p0, LLVM.AllocaInst)
+                if st.addr == 11 && !hasload
+                    snap = emit_alloca_snapshot!(st, b, p0)
+                    if snap !== nothing
+                        v2 = value_type(snap) == PT ? snap : bitcast!(b, snap, PT)
+                        return v2, off0, hasload
+                    end
+                end
+            elseif isa(p0, LLVM.Argument)
+                # Raw stack/sret/C pointer argument has no Julia GC header.
+            elseif isa(p0, LLVM.CallInst) &&
+                    isa(LLVM.called_operand(p0), LLVM.Function) &&
+                    LLVM.name(LLVM.called_operand(p0)) == "julia.pointer_from_objref"
+                nv, noffset, nhasload = nodecayed_getparent(st, b, operands(p0)[1], off0, hasload)
+                if !is_opaque(value_type(nv)) && eltype(value_type(nv)) != eltype(value_type(v))
+                    nv = bitcast!(b, nv, LLVM.PointerType(eltype(value_type(v)), addrspace(value_type(nv))))
+                end
+                return nv, noffset, nhasload
+            elseif !(
+                    isa(p0, LLVM.CallInst) &&
+                        isa(LLVM.called_operand(p0), LLVM.Function) &&
+                        in(LLVM.name(LLVM.called_operand(p0)), ("malloc", "calloc", "realloc"))
+                )
+                v2 = addrspacecast!(
+                    b,
+                    p0,
+                    PT
+                )
+                return v2, off0, hasload
+            end
+        else
+            nv, noffset, nhasload =
+                nodecayed_getparent(st, b, operands(v)[1], offset, hasload)
+            if !is_opaque(value_type(nv)) && eltype(value_type(nv)) != eltype(value_type(v))
+                nv = bitcast!(
+                    b,
+                    nv,
+                    LLVM.PointerType(
+                        eltype(value_type(v)),
+                        addrspace(value_type(nv)),
+                    ),
+                )
+            end
+            return nv, noffset, nhasload
         end
-        nv, noffset, nhasload =
-            nodecayed_getparent(st, b, operands(v)[1], offset, hasload)
-        if !is_opaque(value_type(nv)) && eltype(value_type(nv)) != eltype(value_type(v))
-            nv = bitcast!(
-                b,
-                nv,
-                LLVM.PointerType(
-                    eltype(value_type(v)),
-                    addrspace(value_type(nv)),
-                ),
-            )
-        end
-        return nv, noffset, nhasload
     end
 
     if isa(v, LLVM.BitCastInst)
@@ -1385,7 +1646,7 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
     end
 
     if isa(v, LLVM.PHIInst) && !hasload && haskey(st.goffsets, v)
-        offset = nuwadd!(b, offset, st.goffsets[v])
+        offset = (isa(offset, LLVM.ConstantInt) && convert(Int, offset) == 0) ? st.goffsets[v] : nuwadd!(b, offset, st.goffsets[v])
         nv = st.nextvs[v]
         return nv, offset, st.addr == 13
     end
@@ -1479,7 +1740,7 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
             end
         end
         return select!(b, operands(v)[1], lhs_v, rhs_v),
-            select!(b, operands(v)[1], lhs_offset, rhs_offset),
+            (lhs_offset == rhs_offset ? lhs_offset : select!(b, operands(v)[1], lhs_offset, rhs_offset)),
             lhs_skipload
     end
 
@@ -1667,7 +1928,7 @@ function nodecayed_cut_failed!(f::LLVM.Function, failed::Vector{Tuple{LLVM.PHIIn
     return nothing
 end
 
-function nodecayed_phis!(mod::LLVM.Module)
+function nodecayed_phis!(mod::LLVM.Module, enzyme_ctx::Union{EnzymeContext, Nothing} = nothing)
     # Simple handler to fix addrspace 11
     #complex handler for addrspace 13, which itself comes from a load of an
     # addrspace 10
@@ -1737,6 +1998,7 @@ function nodecayed_phis!(mod::LLVM.Module)
             failed = Tuple{LLVM.PHIInst, EnzymeInternalError}[]
             mtodo = Vector{LLVM.PHIInst}[]
             goffsets = Dict{LLVM.PHIInst, LLVM.PHIInst}()
+            allocacache = Dict{Tuple{LLVM.BasicBlock, LLVM.AllocaInst}, LLVM.Value}()
             nonphis = LLVM.Instruction[]
             anyV = false
             for bb in blocks(f)
@@ -1811,7 +2073,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                             position!(b, terminator(pb))
 
                             phicache = Dict{LLVM.PHIInst, Tuple{LLVM.PHIInst, LLVM.PHIInst}}()
-                            st = NoDecayedPhiState(addr, offty, ctx, f, inst, v0, nextvs, goffsets, phicache)
+                            st = NoDecayedPhiState(addr, offty, ctx, f, inst, v0, nextvs, goffsets, phicache, enzyme_ctx, allocacache)
                             v, offset, hadload = nodecayed_getparent(st, b, v, LLVM.ConstantInt(offty, 0), false)
 
                             if addr == 13
@@ -1838,9 +2100,19 @@ function nodecayed_phis!(mod::LLVM.Module)
                     position!(nb, nonphi)
 
                     offset = goffsets[inst]
-                    append!(LLVM.incoming(offset), offsets)
-                    if all(x -> x[1] == offsets[1][1], offsets)
-                        offset = offsets[1][1]
+                    non_self_offs = LLVM.Value[x[1] for x in offsets if x[1] != offset]
+                    if !isempty(non_self_offs) &&
+                            all(==(non_self_offs[1]), non_self_offs) &&
+                            (length(non_self_offs) == length(offsets) || isa(non_self_offs[1], LLVM.Constant)) &&
+                            (!isa(non_self_offs[1], LLVM.Instruction) || length(offsets) == 1)
+                        replace_uses!(offset, non_self_offs[1])
+                        LLVM.API.LLVMInstructionEraseFromParent(offset)
+                        offset = non_self_offs[1]
+                    else
+                        append!(LLVM.incoming(offset), offsets)
+                        if all(x -> x[1] == offsets[1][1], offsets)
+                            offset = offsets[1][1]
+                        end
                     end
 
                     nphi = nextvs[inst]
@@ -1923,6 +2195,7 @@ function is_sret_like_attr(attr::LLVM.Attribute)::Bool
     k = kind(attr)
     return k == sretkind ||
         k == kind(StringAttribute("enzyme_sret")) ||
+        k == kind(StringAttribute("enzymejl_sret_union_bytes")) ||
         k == kind(StringAttribute("enzymejl_returnRoots")) ||
         k == kind(StringAttribute("enzymejl_rooted_typ"))
 end

@@ -245,7 +245,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enz
 
     run!(GCInvariantVerifierPass(strong = false), mod)
 
-    nodecayed_phis!(mod)
+    nodecayed_phis!(mod, enzyme_ctx)
 
     return run!(GCInvariantVerifierPass(strong = false), mod)
 end
