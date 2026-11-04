@@ -479,6 +479,62 @@ end
     @test autodiff(Reverse, Duplicated(c2, RWClos2([2.7])), Active(3.0))[1][1] ≈ 1.0
 end
 
+function scale_captured!(xs, g)
+    for i in eachindex(xs)
+        xs[i] *= g
+    end
+    return nothing
+end
+
+@noinline function scale_captured_noinline!(xs, g)
+    scale_captured!(xs, g)
+    return nothing
+end
+
+@noinline function scale_captured_outer!(xs, g)
+    scale_captured_noinline!(xs, g)
+    return nothing
+end
+
+function sum_captured(xs, g)
+    s = 0.0
+    for i in eachindex(xs)
+        s += xs[i] * g
+    end
+    return s
+end
+
+# These closures cannot throw, so they are compiled `nounwind` before the
+# readonly check inserts its error.
+loop_write_rev(xs) = autodiff(Reverse, g -> (scale_captured!(xs, g); sum(xs)), Active, Active(0.7))
+loop_write_rev_primal(xs) = autodiff(ReverseWithPrimal, g -> (scale_captured!(xs, g); sum(xs)), Active, Active(0.7))
+loop_write_fwd(xs) = autodiff(Forward, g -> (scale_captured!(xs, g); sum(xs)), Duplicated(0.7, 1.0))
+broadcast_write_rev(xs) = autodiff(Reverse, g -> (xs .*= g; sum(xs)), Active, Active(0.7))
+fill_write_rev(xs) = autodiff(Reverse, g -> (fill!(xs, g); sum(xs)), Active, Active(0.7))
+helper_write_rev(xs) = autodiff(Reverse, g -> (scale_captured_outer!(xs, g); sum(xs)), Active, Active(0.7))
+helper_write_fwd(xs) = autodiff(Forward, g -> (scale_captured_outer!(xs, g); sum(xs)), Duplicated(0.7, 1.0))
+const_loop_write_rev(xs) = autodiff(Reverse, Const(g -> (scale_captured!(xs, g); sum(xs))), Active, Active(0.7))
+loop_read_rev(xs) = autodiff(Reverse, g -> sum_captured(xs, g), Active, Active(0.7))
+
+@testset "Readonly error for a closure that writes its capture without throwing" begin
+    for f in (
+            loop_write_rev, loop_write_rev_primal, loop_write_fwd, broadcast_write_rev,
+            fill_write_rev, helper_write_rev, helper_write_fwd,
+        )
+        xs = sin.(1:5)
+        @test_throws Enzyme.Compiler.EnzymeMutabilityException f(xs)
+        @test xs == sin.(1:5)
+    end
+
+    xs = sin.(1:5)
+    const_loop_write_rev(xs)
+    @test xs ≈ 0.7 .* sin.(1:5)
+
+    xs = sin.(1:5)
+    @test loop_read_rev(xs)[1][1] ≈ sum(sin.(1:5))
+    @test xs == sin.(1:5)
+end
+
 
 @testset "Promotion" begin
     x = [1.0, 2.0]; dx_1 = [1.0, 0.0]; dx_2 = [0.0, 1.0]

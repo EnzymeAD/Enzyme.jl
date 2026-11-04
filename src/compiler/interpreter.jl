@@ -311,6 +311,24 @@ end
 
 Core.Compiler.method_table(@nospecialize(interp::EnzymeInterpreter)) = interp.method_table
 
+# Set in the task-local storage of a task while an `EnzymeInterpreter` infers on it. A
+# generated `thunk` inferred there compiles its derivative in place instead of on its
+# first call (see `Compiler.compiles_lazily`).
+const IN_ENZYME_INFERENCE = :__enzyme_in_inference__
+
+in_enzyme_inference() = get(task_local_storage(), IN_ENZYME_INFERENCE, false)::Bool
+
+function Core.Compiler.typeinf(interp::EnzymeInterpreter, frame::InferenceState)
+    tls = task_local_storage()
+    outer = get(tls, IN_ENZYME_INFERENCE, false)::Bool
+    tls[IN_ENZYME_INFERENCE] = true
+    try
+        return @invoke Core.Compiler.typeinf(interp::AbstractInterpreter, frame::InferenceState)
+    finally
+        tls[IN_ENZYME_INFERENCE] = outer
+    end
+end
+
 function is_alwaysinline_func(@nospecialize(TT))::Bool
     isa(TT, DataType) || return false
     @static if VERSION ≥ v"1.11-"

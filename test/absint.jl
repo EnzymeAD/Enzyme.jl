@@ -367,6 +367,113 @@ end
     @test dp.caches == [0.0]
 end
 
+# A closure passed to `autodiff` unannotated must be proven not to write what it
+# captures. On Julia 1.11+ a loop reads `xs[i]` at byte offset `8i - 8`, or at
+# an `or`/phi offset once the loop is unrolled; unless that load is typed as an
+# element of `xs`, the proof follows the loaded float into the result it is
+# stored in and rejects the closure.
+@inline function absint_closure_scale(xs, g)
+    r = similar(xs)
+    for i in eachindex(xs)
+        r[i] = xs[i] * g
+    end
+    return r
+end
+
+@inline function absint_closure_scan(xs, g)
+    r = similar(xs)
+    isempty(xs) && return r
+    c = xs[1] * g
+    r[1] = c
+    for i in 2:length(xs)
+        c = muladd(xs[i], g, c)
+        r[i] = c
+    end
+    return r
+end
+
+@inline function absint_closure_fixed(xs, g)
+    r = Vector{Float64}(undef, 8)
+    fill!(r, 0.0)
+    @inbounds for i in eachindex(xs)
+        r[i] = xs[i] * g
+    end
+    return r
+end
+
+@inline function absint_closure_simd(xs, g)
+    r = similar(xs)
+    @inbounds @simd for i in eachindex(xs)
+        r[i] = xs[i] * g
+    end
+    return r
+end
+
+absint_closure_broadcast(xs, g) = xs .* g
+
+@inline function absint_closure_nested(vs, g)
+    r = zeros(length(vs))
+    for i in eachindex(vs)
+        r[i] = vs[i][1] * g
+    end
+    return r
+end
+
+@inline function absint_closure_shift!(ys, g)
+    for i in 2:length(ys)
+        ys[i] = ys[i - 1] * g
+    end
+    return sum(ys)
+end
+
+struct AbsintClosureHolder
+    v::Vector{Float64}
+end
+
+absint_closure_field(h, g) = absint_closure_scale(h.v, g)
+
+absint_closure_reverse(kernel, data) =
+    autodiff(ReverseWithPrimal, g -> sum(kernel(data, g)), Active, Active(0.7))
+
+absint_closure_forward(kernel, data) =
+    autodiff(Forward, g -> sum(kernel(data, g)), Duplicated(0.7, 1.0))[1]
+
+@testset "Absint loop loads from an array captured by a read-only closure" begin
+    for n in (1, 5, 64)
+        xs = sin.(1:n)
+        for (kernel, expected) in (
+                (absint_closure_scale, sum(xs)),
+                (absint_closure_scan, sum(cumsum(xs))),
+                (absint_closure_simd, sum(xs)),
+                (absint_closure_broadcast, sum(xs)),
+            )
+            ((d,), value) = absint_closure_reverse(kernel, xs)
+            @test d ≈ expected
+            @test value ≈ sum(kernel(xs, 0.7))
+            @test absint_closure_forward(kernel, xs) ≈ expected
+        end
+    end
+    # Previously no error was raised here, but the primal and both derivatives
+    # were silently 0.0.
+    xs = sin.(1:5)
+    ((d,), value) = absint_closure_reverse(absint_closure_fixed, xs)
+    @test d ≈ sum(xs)
+    @test value ≈ 0.7 * sum(xs)
+    @test absint_closure_forward(absint_closure_fixed, xs) ≈ sum(xs)
+
+    vs = [sin.(1:3) .* i for i in 1:5]
+    @test absint_closure_reverse(absint_closure_nested, vs)[1][1] ≈ sum(v[1] for v in vs)
+    h = AbsintClosureHolder(sin.(1:5))
+    @test absint_closure_reverse(absint_closure_field, h)[1][1] ≈ sum(h.v)
+
+    # Refused: the closure writes the array it captures, so it must be passed
+    # as `Duplicated` or `Const` (Enzyme FAQ, "Activity of temporary storage").
+    ys = sin.(1:5)
+    @test_throws Enzyme.Compiler.EnzymeMutabilityException autodiff(
+        Reverse, g -> absint_closure_shift!(ys, g), Active, Active(0.7)
+    )
+end
+
 abstract type SlotAbs end
 struct SlotConst{T} <: SlotAbs
     σ::T

@@ -458,6 +458,23 @@ Enzyme.gradient(set_strong_zero(Reverse), f, 0.0)
 (-0.0,)
 ```
 
+## [Multithreading and atomic accumulation](@id faq-atomic-add)
+
+In reverse mode, Enzyme adds derivatives into shadow memory: `autodiff(Reverse, f, Active, Duplicated(x, dx))` performs updates like `dx[i] += ...`. If several threads may update the same shadow at the same time, for example because `autodiff` is called on several threads with one shared `dx`, these updates must be atomic, or some of them are lost.
+
+By default Enzyme therefore compiles every CPU derivative with atomic updates whenever Julia runs with more than one thread (`Threads.nthreads() > 1`), whether or not that derivative is ever run concurrently. An atomic floating-point add is a compare-and-swap loop on most CPUs and keeps loops from vectorizing, so a derivative can run several times slower in a multithreaded Julia process than with `--threads=1`.
+
+If no shadow is updated concurrently while the derivative runs, use [`set_atomic_add`](@ref) to accumulate with plain updates instead:
+
+```julia
+f(x) = sum(abs2, x)
+x = rand(1000)
+dx = zero(x)
+autodiff(set_atomic_add(Reverse, false), f, Active, Duplicated(x, dx))
+```
+
+The setting works for every reverse mode (`ReverseWithPrimal`, the split modes of [`autodiff_thunk`](@ref), [`gradient`](@ref), ...). It applies to the function being differentiated: the bodies of `Threads.@threads` loops and spawned tasks, and dynamically dispatched callees, are compiled separately and keep the default. A function that itself starts or waits for a task or runs a threaded loop cannot opt out, because the reverse pass of a task runs concurrently with its caller's; `set_atomic_add(Reverse, false)` on such a function throws an `EnzymeAtomicAddError` instead of silently using atomics. GPU code always uses atomic updates. `set_atomic_add(Reverse, true)` requests atomic updates even when Julia runs a single thread, and `set_atomic_add(Reverse, nothing)` restores the default.
+
 ## Complex numbers
 
 Differentiation of a function which returns a complex number is ambiguous, because there are several different gradients which may be desired. Rather than assume a specific of these conventions and potentially result in user error when the resulting derivative is not the desired one, Enzyme forces users to specify the desired convention by returning a real number instead.

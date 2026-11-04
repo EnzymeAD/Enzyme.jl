@@ -496,14 +496,40 @@ function get_base_and_offset(@nospecialize(larg::LLVM.Value); offsetAllowed::Boo
     end
     return larg, offset
 end
-function is_multiple_of(@nospecialize(val::LLVM.Value), sz::Int, stride::Int)::Bool
+# Whether `val * stride` is always a multiple of `sz`. Every recursive case is a
+# conjunction that fails as soon as one operand does, so a phi already in `seen`
+# can be assumed a multiple: if all its incoming values are multiples given that
+# it is, then by induction it is on every iteration. Keying `seen` on the stride
+# modulo `sz` keeps it finite when a cycle multiplies the stride.
+function is_multiple_of(
+        @nospecialize(val::LLVM.Value), sz::Int, stride::Int,
+        seen::Set{Tuple{LLVM.Value, Int}} = Set{Tuple{LLVM.Value, Int}}()
+    )::Bool
     if val isa LLVM.ConstantInt
         return (convert(Int, val) * stride) % sz == 0
     elseif val isa LLVM.Instruction
         opc = opcode(val)
         if opc == LLVM.API.LLVMSelect
-            return is_multiple_of(operands(val)[2], sz, stride) &&
-                   is_multiple_of(operands(val)[3], sz, stride)
+            return is_multiple_of(operands(val)[2], sz, stride, seen) &&
+                is_multiple_of(operands(val)[3], sz, stride, seen)
+        elseif opc == LLVM.API.LLVMAdd || opc == LLVM.API.LLVMSub
+            # e.g. the `-sizeof(T)` adjustment of a 1-based memoryref offset.
+            return is_multiple_of(operands(val)[1], sz, stride, seen) &&
+                is_multiple_of(operands(val)[2], sz, stride, seen)
+        elseif opc == LLVM.API.LLVMOr && ispow2(sz)
+            # e.g. an unrolled loop's `or disjoint` offset. Multiples of a power of
+            # two have no low bits set, so neither does their bitwise or.
+            return is_multiple_of(operands(val)[1], sz, stride, seen) &&
+                is_multiple_of(operands(val)[2], sz, stride, seen)
+        elseif opc == LLVM.API.LLVMPHI
+            # e.g. a loop's byte offset, or an unrolled loop's remainder offset.
+            key = (val, mod(stride, sz))
+            key in seen && return true
+            push!(seen, key)
+            for (v, _) in LLVM.incoming(val::LLVM.PHIInst)
+                is_multiple_of(v, sz, stride, seen) || return false
+            end
+            return true
         elseif opc == LLVM.API.LLVMShl
             if operands(val)[2] isa LLVM.ConstantInt
                 shift_amt = convert(Int, operands(val)[2])
@@ -517,13 +543,13 @@ function is_multiple_of(@nospecialize(val::LLVM.Value), sz::Int, stride::Int)::B
                 if (c * stride) % sz == 0
                     return true
                 end
-                return is_multiple_of(operands(val)[2], sz, c * stride)
+                return is_multiple_of(operands(val)[2], sz, c * stride, seen)
             elseif operands(val)[2] isa LLVM.ConstantInt
                 c = convert(Int, operands(val)[2])
                 if (c * stride) % sz == 0
                     return true
                 end
-                return is_multiple_of(operands(val)[1], sz, c * stride)
+                return is_multiple_of(operands(val)[1], sz, c * stride, seen)
             end
         end
     end

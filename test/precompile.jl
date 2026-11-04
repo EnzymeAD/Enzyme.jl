@@ -2,15 +2,17 @@ using Enzyme, Test
 
 # Enzyme keeps what it compiles in globals of its own, and a thunk is held as the address of
 # the code the JIT emitted for it. Neither survives the process that produced it, so a
-# package that differentiates while it precompiles writes an image that refers to a dead
-# session (EnzymeAD/Enzyme.jl#1549). What follows pins down which parts of that already work
-# and which do not: the `@test_broken` cases are what precompilation support has to fix, and
-# the plain `@test` cases are what it must not regress.
+# package that differentiates while it precompiles could write an image that refers to a dead
+# session (EnzymeAD/Enzyme.jl#1549). What follows pins down that it no longer does for the
+# derivatives `autodiff` compiles; these cases are what precompilation support must not
+# regress.
 #
-# One of them Enzyme can already keep out of an image, and does: the caches its own workload
-# fills are emptied before the image is written. What no cache can help with is an address
-# baked into code that was compiled during precompilation, which is what the remaining broken
-# cases are.
+# Enzyme keeps the caches its own workload fills out of an image by emptying them before the
+# image is written. The derivatives of combined reverse mode and forward mode are compiled
+# at their first call, and one first called while precompiling is not kept by the code that
+# calls it (see `Enzyme.Compiler.LazyThunk`), so no address of that session reaches an image
+# that way. A split-mode thunk (`autodiff_thunk` with `ReverseSplit...`) is still compiled
+# while its caller is inferred and held by its address, and this file does not cover it.
 
 # Write the packages into a directory of their own and put it first on the child's load
 # path. The depot is the one this test runs under, so the packages precompile next to the
@@ -150,15 +152,15 @@ end
             end
         end
 
-        # Differentiating again from a loaded image is what does not work yet. The thunk the
-        # package image refers to was compiled by the process that precompiled it, so the
-        # call goes to an address that means nothing here and the child dies on it.
+        # Differentiating again from a loaded image works too. The derivatives were first
+        # called while the package precompiled, so the code the image holds kept no address
+        # of that process and compiles them again here.
         call_code = """
         using Enzyme, EnzymePrecompileAtBuild
         print(EnzymePrecompileAtBuild.rev(3.0), " ", EnzymePrecompileAtBuild.fwd(3.0))
         """
         ok, fields = run_child(load_path, call_code)
-        @test_broken ok
+        @test ok
         if ok
             rev3, fwd3 = fields
             @test parse(Float64, rev3) ≈ rev_at_3
@@ -195,9 +197,9 @@ end
         end
 
         # An emptied cache is not the whole of it. The workload differentiates a function
-        # that stays in Enzyme, and the thunk that call goes through was compiled while
-        # Enzyme precompiled, so Enzyme's own image bakes in an address of that session just
-        # as a package image does. Asking for that derivative again calls it.
+        # that stays in Enzyme, and Enzyme's own image holds the code of that call just as a
+        # package image does. The derivative was first called while Enzyme precompiled, so
+        # that code kept no address of that session, and asking for it again compiles it.
         workload_code = """
         using Enzyme
         mods = [getfield(Enzyme, n) for n in names(Enzyme; all = true) if
@@ -214,7 +216,7 @@ end
         if ok && fields == ["none"]
             @test_skip ok
         else
-            @test_broken ok
+            @test ok
         end
     end
 end

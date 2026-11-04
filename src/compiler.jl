@@ -128,14 +128,20 @@ struct EnzymeCompilerParams{Params<:AbstractCompilerParams} <: AbstractEnzymeCom
     expectedTapeType::Type
     # Whether to use the pointer ABI, default true
     ABI::Type{<:ABI}
-    # Whether to error if the function is written to
-    err_if_func_written::Bool
+    # Whether to error if the function is written to: `true` / `false`, or, as the
+    # rules of a dynamic call ask, one entry per argument (the function first)
+    # marking the arguments whose data must not be written
+    err_if_func_written::Union{Bool, Tuple}
 
     # Whether runtime activity is enabled
     runtimeActivity::Bool
 
     # Whether to enforce that a zero derivative propagates as a zero (and never a nan)
     strongZero::Bool
+
+    # Whether to accumulate into shadow memory atomically: `true`, `false`, or `nothing` to
+    # decide in `codegen` (see `atomic_add_for`)
+    atomicAdd::Union{Bool, Nothing}
 end
 
 # FIXME: Should this take something like PTXCompilerParams/CUDAParams?
@@ -146,7 +152,9 @@ end
 function EnzymeCompilerParams(TT, mode, width, rt, run_enzyme, abiwrap,
                               modifiedBetween, returnPrimal, shadowInit,
                               expectedTapeType, ABI,
-                              err_if_func_written, runtimeActivity, strongZero)
+        err_if_func_written, runtimeActivity, strongZero,
+        atomicAdd = nothing
+    )
     params = PrimalCompilerParams(mode)
     EnzymeCompilerParams(
         params,
@@ -163,7 +171,8 @@ function EnzymeCompilerParams(TT, mode, width, rt, run_enzyme, abiwrap,
         ABI,
         err_if_func_written,
         runtimeActivity,
-        strongZero
+        strongZero,
+        atomicAdd
     )
 end
 
@@ -1390,6 +1399,47 @@ mutable struct HandlerState
     fnsToInject::Vector{Tuple{Symbol,Type}}
 end
 
+
+# The calls by which differentiated code runs work on other threads: the runtime's task
+# constructor, and the calls that `handle_compiled` marks with these `enzyme_math` names.
+const parallel_runtime_functions = ("jl_new_task", "ijl_new_task")
+const parallel_enzyme_math = ("jl_threadsfor", "jl_enq_work", "jl_wait")
+
+# The name of the first call in `mod` that starts or waits for work on another thread, or
+# `nothing` when there is none.
+function parallel_work_in(mod::LLVM.Module)
+    for f in functions(mod)
+        name = LLVM.name(f)
+        name in parallel_runtime_functions && return name
+        attr = LLVM.API.LLVMGetStringAttributeAtIndex(
+            f, reinterpret(LLVM.API.LLVMAttributeIndex, LLVM.API.LLVMAttributeFunctionIndex),
+            "enzyme_math", length("enzyme_math"),
+        )
+        if attr != C_NULL
+            math = LLVM.value(LLVM.StringAttribute(attr))
+            math in parallel_enzyme_math && return math
+        end
+    end
+    return nothing
+end
+
+# Whether a CPU derivative accumulates into shadow memory atomically, given the mode's
+# `AtomicAdd` setting (see `EnzymeCore.set_atomic_add`). By default it does whenever Julia runs
+# more than one thread, because a shadow may then be updated from several threads at once,
+# for instance by `autodiff` calls on different threads that share one shadow. `false` is the
+# caller's promise that this does not happen. It cannot hold for a function that runs work in
+# parallel itself, since the reverse of a task runs while the caller's reverse pass continues,
+# so that is refused rather than compiled with atomics anyway. The bodies of threaded loops
+# and tasks are compiled as their own jobs, which do not carry the caller's setting.
+function atomic_add_for(setting::Union{Bool, Nothing}, mod::LLVM.Module, mi::Core.MethodInstance)
+    setting === true && return true
+    if setting === false
+        call = parallel_work_in(mod)
+        call === nothing && return false
+        throw(EnzymeAtomicAddError(call, mi))
+    end
+    return Base.Threads.nthreads() > 1
+end
 
 function handleCustom(state::HandlerState, custom, k_name::String, llvmfn::LLVM.Function, name::String, attrs::Vector{LLVM.Attribute} = LLVM.Attribute[], setlink::Bool = true, noinl::Bool = true)
     attributes = function_attributes(llvmfn)
@@ -3324,6 +3374,7 @@ function GPUCompiler.nest_params(params::AbstractEnzymeCompilerParams, parent::A
         params.err_if_func_written,
         params.runtimeActivity,
         params.strongZero,
+        params.atomicAdd,
     )
 end
 
@@ -6440,6 +6491,306 @@ function memtransfer_truetype(world::UInt, @nospecialize(ptr::LLVM.Value), @nosp
     return nothing
 end
 
+"""
+    readonly_walk!(todo, rootfn, world, enzyme_ctx, state, emit::Bool)::Tuple{Bool, Bool}
+
+The walk of the readonly check (`err_if_func_written`). Follow the values in `todo`,
+which hold data of a checked argument, through their uses, and find each instruction
+that may write that data. With `emit`, insert an `EnzymeMutabilityException` throw
+before each one and walk on. Without, change nothing and stop at the first. Returns
+whether one was found, and whether the data reached a `ret` of `rootfn`.
+
+A callee with a body is walked from the parameters that receive the data. With a
+single call site, its body is part of this walk. A callee called from several sites
+is walked separately without `emit`, since a throw in its body would also fire for
+callers that pass other data. `state` caches that walk per callee and parameter
+positions. If it finds a possible write, the throw goes before the call. Otherwise
+the call only reads the data, and its result holds the data if the data reaches the
+callee's `ret`.
+
+Data that may have been thrown can come back through a `catch`: once the walk has met
+that, the walk with `emit` follows what the module's `catch` blocks read as well.
+"""
+function readonly_walk!(
+        todo::Vector{LLVM.Value}, @nospecialize(rootfn::Union{Nothing, LLVM.Function}), world::UInt,
+        enzyme_ctx::EnzymeContext, state::ReadonlyWalkState, emit::Bool,
+    )::Tuple{Bool, Bool}
+    wrote = false
+    returned = false
+    done = Set{LLVM.Value}()
+    doneInst = Set{LLVM.Instruction}()
+    # The single call of each callee whose body is walked below.
+    callsites = Dict{LLVM.Function, LLVM.CallInst}()
+    while true
+        if isempty(todo)
+            (emit && state.thrown[] && !isempty(state.caught)) || break
+            append!(todo, state.caught)
+            empty!(state.caught)
+        end
+        cur = pop!(todo)
+        if cur in done
+            continue
+        end
+        push!(done, cur)
+        # Floating-point data cannot refer to memory. Storing it into
+        # memory of the argument is found from the pointer side.
+        if is_float_data(value_type(cur))
+            continue
+        end
+        for u in LLVM.uses(cur)
+            user = LLVM.user(u)
+            if user in doneInst
+                continue
+            end
+            if LLVM.API.LLVMIsAReturnInst(user) != C_NULL
+                # Data of the argument is returned from a walked callee,
+                # so the result of its call holds it too.
+                fn = LLVM.parent(LLVM.parent(user))
+                call = get(callsites, fn, nothing)
+                if call !== nothing
+                    slegal, foundv, byref = abs_typeof(call, enzyme_ctx)
+                    if slegal
+                        reg2 = active_reg(foundv, world)
+                        if reg2 == ActiveState || reg2 == AnyState
+                            continue
+                        end
+                    end
+                    push!(todo, call)
+                elseif fn == rootfn
+                    returned = true
+                end
+                continue
+            end
+
+            # A runtime copy of elements without references only reads
+            # the argument, and fills fresh memory with bytes: nothing
+            # done to the copy reaches memory of the argument.
+            if isa(user, LLVM.CallInst)
+                if is_pointerfree_runtime_copy(user, cur, enzyme_ctx)
+                    continue
+                end
+                # Throwing writes nothing, and nothing follows it here.
+                if is_throw_runtime_call(user)
+                    state.thrown[] = true
+                    continue
+                end
+            end
+
+            if !mayWriteToMemory(user)
+                slegal, foundv, byref = abs_typeof(user, enzyme_ctx)
+                if slegal
+                    reg2 = active_reg(foundv, world)
+                    if reg2 == ActiveState || reg2 == AnyState
+                        continue
+                    end
+                end
+                push!(todo, user)
+                continue
+            end
+
+            if isa(user, LLVM.StoreInst)
+                base = local_memory_base(operands(user)[2])
+                # we are capturing the variable
+                if operands(user)[1] == cur
+                    # Into a stack slot, or into an object allocated here
+                    # (the box Julia makes of a value passed to a dynamic
+                    # call): follow where that memory goes.
+                    if base !== nothing
+                        push!(doneInst, user)
+                        push!(todo, base)
+                        continue
+                    end
+                end
+                # we are storing into the variable
+                if operands(user)[2] == cur
+                    # A stack slot of this function, such as the copy of a
+                    # by-value argument that `lower_convention` stores into
+                    # (`.innerparm`), or an object it allocates, is reached
+                    # here only because it holds data of the argument.
+                    # Storing into it writes local memory, not memory the
+                    # argument refers to.
+                    if base !== nothing
+                        continue
+                    end
+                    slegal, foundv, byref = abs_typeof(operands(user)[1], enzyme_ctx)
+                    if slegal
+                        reg2 = active_reg(foundv, world)
+                        if reg2 == AnyState
+                            continue
+                        end
+                    end
+                end
+            end
+
+            if isa(user, LLVM.CallInst)
+                # The method a dynamic call reaches is known only at run
+                # time. Its rules compile that method's derivative with
+                # this check on the operands holding data of the argument.
+                # What it returns may hold that data too, as may what a
+                # runtime call that writes nothing returns. In a body called
+                # from several sites the mark on the call holds for every
+                # caller: the method reached is then checked on what any of
+                # them passes there. That method may throw the data.
+                deferred = defer_readonly_operand!(user, cur)
+                if deferred
+                    state.thrown[] = true
+                end
+                if deferred || is_nonwriting_runtime_call(user)
+                    slegal, foundv, byref = abs_typeof(user, enzyme_ctx)
+                    if slegal
+                        reg2 = active_reg(foundv, world)
+                        if reg2 == ActiveState || reg2 == AnyState
+                            continue
+                        end
+                    end
+                    push!(todo, user)
+                    continue
+                end
+                called = LLVM.called_operand(user)
+                if isa(called, LLVM.Function)
+                    intr = LLVM.API.LLVMGetIntrinsicID(called)
+                    if intr == LLVM.Intrinsic("llvm.memset").id
+                        if cur != operands(user)[1]
+                            continue
+                        end
+                    end
+                    # A copy into local memory, as for a store: of data of
+                    # the argument (follow the copy), or into memory reached
+                    # because it holds such data (Julia 1.12 unboxes a
+                    # tuple a dynamic call returns this way).
+                    if intr == LLVM.Intrinsic("llvm.memcpy").id ||
+                            intr == LLVM.Intrinsic("llvm.memmove").id
+                        pointerfree = is_pointerfree_copy(user, enzyme_ctx)
+                        base = local_memory_base(operands(user)[1])
+                        if base !== nothing
+                            if operands(user)[2] == cur && !pointerfree
+                                push!(doneInst, user)
+                                push!(todo, base)
+                            end
+                            continue
+                        end
+                        # Copying bytes without references out of data of
+                        # the argument only reads it.
+                        if pointerfree && operands(user)[1] != cur
+                            continue
+                        end
+                    end
+
+                    nm = LLVM.name(called)
+                    if nm == "ijl_alloc_array_1d" ||
+                            nm == "jl_alloc_array_1d" ||
+                            nm == "ijl_alloc_array_2d" ||
+                            nm == "jl_alloc_array_2d" ||
+                            nm == "ijl_alloc_array_3d" ||
+                            nm == "jl_alloc_array_3d" ||
+                            nm == "ijl_new_array" ||
+                            nm == "jl_new_array" ||
+                            nm == "jl_alloc_genericmemory" ||
+                            nm == "ijl_alloc_genericmemory" ||
+                            nm == "jl_alloc_genericmemory_unchecked" ||
+                            nm == "ijl_alloc_genericmemory_unchecked"
+                        continue
+                    end
+                    # The callee's parameter type says what it receives
+                    # through `cur`. A type that cannot hold derivative
+                    # data is not followed, as for the values above,
+                    # whether or not the body is walked below (a function
+                    # with a custom rule called from several sites).
+                    if is_inactive_operand(user, called, cur, world)
+                        continue
+                    end
+                    if is_readonly(called)
+                        slegal, foundv, byref = abs_typeof(user, enzyme_ctx)
+                        if slegal
+                            reg2 = active_reg(foundv, world)
+                            if reg2 == ActiveState || reg2 == AnyState
+                                continue
+                            end
+                        end
+                        push!(todo, user)
+                        continue
+                    end
+                    if !isempty(blocks(called)) &&
+                            length(collect(LLVM.uses(called))) == 1
+                        for (parm, op) in
+                            zip(LLVM.parameters(called), arg_operands_view(user))
+                            if op == cur
+                                push!(todo, parm)
+                            end
+                        end
+                        # The result holds data of the argument only if the
+                        # walk of the body reaches a `ret` (handled above),
+                        # not whenever the callee reads the argument: a call
+                        # such as `Matrix + UniformScaling` returns a fresh
+                        # array.
+                        callsites[called] = user
+                        continue
+                    end
+                    if !isempty(blocks(called))
+                        # Called from several sites: walk the body on its own.
+                        parms = collect(LLVM.parameters(called))
+                        positions = Int[]
+                        for (i, op) in enumerate(arg_operands_view(user))
+                            if op == cur
+                                push!(positions, i)
+                            end
+                        end
+                        if !isempty(positions) && last(positions) <= length(parms)
+                            key = (called, positions)
+                            res = get(state.shared, key, nothing)
+                            if res === nothing
+                                # Reached again while its own walk runs (recursion):
+                                # assume a write.
+                                state.shared[key] = (true, true)
+                                roots = LLVM.Value[]
+                                for i in positions
+                                    push!(roots, parms[i])
+                                end
+                                res = readonly_walk!(roots, called, world, enzyme_ctx, state, false)
+                                state.shared[key] = res
+                            end
+                            callee_wrote, callee_returned = res
+                            if !callee_wrote
+                                if callee_returned
+                                    slegal, foundv, byref = abs_typeof(user, enzyme_ctx)
+                                    reg2 = slegal ? active_reg(foundv, world) : nothing
+                                    if reg2 != ActiveState && reg2 != AnyState
+                                        push!(todo, user)
+                                    end
+                                end
+                                continue
+                            end
+                        end
+                    end
+                end
+            end
+
+            wrote = true
+            if !emit
+                return (wrote, returned)
+            end
+            builder = LLVM.IRBuilder()
+            position!(builder, user)
+            resstr =
+                "Function argument passed to autodiff cannot be proven readonly.\nIf the the function argument cannot contain derivative data, instead call autodiff(Mode, Const(f), ...)\nSee https://enzyme.mit.edu/index.fcgi/julia/stable/faq/#Activity-of-temporary-storage for more information.\nThe potentially writing call is " *
+                string(user) *
+                ", using " *
+                string(cur)
+            slegal, foundv = absint(cur, enzyme_ctx)
+            if slegal
+                foundv = unbind(foundv)
+                resstr *= "of type " * string(foundv)
+            end
+            emit_error(builder, user, resstr, EnzymeMutabilityException)
+            # Optimization may have proven the function `nounwind`
+            # before the throw existed. Left in place, that would
+            # let LLVM delete the throw and the write it guards.
+            clear_nounwind!(LLVM.parent(LLVM.parent(user)))
+        end
+    end
+    return (wrote, returned)
+end
+
 function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     @assert output == :llvm
     
@@ -6759,8 +7110,8 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     parallel = false
     process_module = false
     device_module = false
-    if primal_target isa GPUCompiler.NativeCompilerTarget 
-        parallel = Base.Threads.nthreads() > 1 
+    if primal_target isa GPUCompiler.NativeCompilerTarget
+        parallel = atomic_add_for(job.config.params.atomicAdd, mod, job.source)
     else
         # All other targets are GPU targets
         parallel = true
@@ -7060,145 +7411,10 @@ end
 
     TapeType::Type = Cvoid
 
-    if params.err_if_func_written
-        FT = TT.parameters[1]
-        Ty = eltype(FT)
-        reg = active_reg(Ty, job.world)
-        if reg == DupState || reg == MixedState
-            swiftself = has_swiftself(primalf)
-            todo = LLVM.Value[parameters(primalf)[1+swiftself]]
-            done = Set{LLVM.Value}()
-            doneInst = Set{LLVM.Instruction}()
-            while length(todo) != 0
-                cur = pop!(todo)
-                if cur in done
-                    continue
-                end
-                push!(done, cur)
-                for u in LLVM.uses(cur)
-                    user = LLVM.user(u)
-                    if user in doneInst
-                        continue
-                    end
-                    if LLVM.API.LLVMIsAReturnInst(user) != C_NULL
-                        continue
-                    end
-
-                    if !mayWriteToMemory(user)
-                        slegal, foundv, byref = abs_typeof(user, enzyme_ctx)
-                        if slegal
-                            reg2 = active_reg(foundv, job.world)
-                            if reg2 == ActiveState || reg2 == AnyState
-                                continue
-                            end
-                        end
-                        push!(todo, user)
-                        continue
-                    end
-
-                    if isa(user, LLVM.StoreInst)
-                        # we are capturing the variable
-                        if operands(user)[1] == cur
-                            base = operands(user)[2]
-                            while isa(base, LLVM.BitCastInst) ||
-                                      isa(base, LLVM.AddrSpaceCastInst) ||
-                                      isa(base, LLVM.GetElementPtrInst)
-                                base = operands(base)[1]
-                            end
-                            if isa(base, LLVM.AllocaInst)
-                                push!(doneInst, user)
-                                push!(todo, base)
-                                continue
-                            end
-                        end
-                        # we are storing into the variable
-                        if operands(user)[2] == cur
-                            slegal, foundv, byref = abs_typeof(operands(user)[1], enzyme_ctx)
-                            if slegal
-                                reg2 = active_reg(foundv, job.world)
-                                if reg2 == AnyState
-                                    continue
-                                end
-                            end
-                        end
-                    end
-
-                    if isa(user, LLVM.CallInst)
-                        called = LLVM.called_operand(user)
-                        if isa(called, LLVM.Function)
-                            intr = LLVM.API.LLVMGetIntrinsicID(called)
-                            if intr == LLVM.Intrinsic("llvm.memset").id
-                                if cur != operands(user)[1]
-                                    continue
-                                end
-                            end
-
-                            nm = LLVM.name(called)
-                            if nm == "ijl_alloc_array_1d" ||
-                               nm == "jl_alloc_array_1d" ||
-                               nm == "ijl_alloc_array_2d" ||
-                               nm == "jl_alloc_array_2d" ||
-                               nm == "ijl_alloc_array_3d" ||
-                               nm == "jl_alloc_array_3d" ||
-                               nm == "ijl_new_array" ||
-                               nm == "jl_new_array" ||
-                               nm == "jl_alloc_genericmemory" ||
-                               nm == "ijl_alloc_genericmemory" ||
-			       nm == "jl_alloc_genericmemory_unchecked" ||
-			       nm == "ijl_alloc_genericmemory_unchecked"
-                                continue
-                            end
-                            if is_readonly(called)
-                                slegal, foundv, byref = abs_typeof(user, enzyme_ctx)
-                                if slegal
-                                    reg2 = active_reg(foundv, job.world)
-                                    if reg2 == ActiveState || reg2 == AnyState
-                                        continue
-                                    end
-                                end
-                                push!(todo, user)
-                                continue
-                            end
-                            if !isempty(blocks(called)) &&
-                               length(collect(LLVM.uses(called))) == 1
-                                for (parm, op) in
-                                    zip(LLVM.parameters(called), arg_operands_view(user))
-                                    if op == cur
-                                        push!(todo, parm)
-                                    end
-                                end
-                                slegal, foundv, byref = abs_typeof(user, enzyme_ctx)
-                                if slegal
-                                    reg2 = active_reg(foundv, job.world)
-                                    if reg2 == ActiveState || reg2 == AnyState
-                                        continue
-                                    end
-                                end
-                                push!(todo, user)
-                                continue
-                            end
-                        end
-                    end
-
-                    builder = LLVM.IRBuilder()
-                    position!(builder, user)
-                    resstr =
-                        "Function argument passed to autodiff cannot be proven readonly.\nIf the the function argument cannot contain derivative data, instead call autodiff(Mode, Const(f), ...)\nSee https://enzyme.mit.edu/index.fcgi/julia/stable/faq/#Activity-of-temporary-storage for more information.\nThe potentially writing call is " *
-                        string(user) *
-                        ", using " *
-                        string(cur)
-                    slegal, foundv = absint(cur, enzyme_ctx)
-                    if slegal
-		    	foundv = unbind(foundv)
-                        resstr *= "of type " * string(foundv)
-                    end
-                    emit_error(builder, user, resstr, EnzymeMutabilityException)
-                    # Optimization may have proven the function `nounwind`
-                    # before the throw existed. Left in place, that would
-                    # let LLVM delete the throw and the write it guards.
-                    clear_nounwind!(LLVM.parent(LLVM.parent(user)))
-                end
-            end
+    if params.err_if_func_written !== false
+        checked = readonly_checked_params(primalf, TT, params.err_if_func_written, job.world)
+        if !isempty(checked)
+            readonly_walk!(checked, primalf, job.world, enzyme_ctx, ReadonlyWalkState(mod), true)
         end
     end
 
@@ -8451,23 +8667,31 @@ shadow-return ABI in `create_abi_wrapper` and `enzyme_call` asserts.
     end
 end
 
-@inline function thunkbase(
-    mi::Core.MethodInstance,
-    World::Union{UInt, Nothing},
-    @nospecialize(FA::Type{<:Annotation}),
-    @nospecialize(A::Type{<:Annotation}),
-    @nospecialize(TT::Type),
-    Mode::API.CDerivativeMode,
-    width::Int,
-    @nospecialize(ModifiedBetween::(NTuple{N, Bool} where N)),
-    ReturnPrimal::Bool,
-    ShadowInit::Bool,
-    @nospecialize(ABI::Type),
-    ErrIfFuncWritten::Bool,
-    RuntimeActivity::Bool,
-    StrongZero::Bool,
-    edges::Union{Nothing, Vector{Any}}
-)
+"""
+    thunk_job(mi, World, FA, A, TT, Mode, width, ModifiedBetween, ReturnPrimal, ShadowInit,
+              ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero, AtomicAdd)
+
+Infer the primal return type of `mi` and build the `CompilerJob` that compiles its
+derivative. Return the job, the return annotation the thunk is typed with, and whether
+Enzyme runs at all (it does not when the primal never returns).
+"""
+function thunk_job(
+        mi::Core.MethodInstance,
+        World::Union{UInt, Nothing},
+        @nospecialize(FA::Type{<:Annotation}),
+        @nospecialize(A::Type{<:Annotation}),
+        @nospecialize(TT::Type),
+        Mode::API.CDerivativeMode,
+        width::Int,
+        @nospecialize(ModifiedBetween::(NTuple{N, Bool} where {N})),
+        ReturnPrimal::Bool,
+        ShadowInit::Bool,
+        @nospecialize(ABI::Type),
+        ErrIfFuncWritten::Union{Bool, Tuple},
+        RuntimeActivity::Bool,
+        StrongZero::Bool,
+        AtomicAdd::Union{Bool, Nothing},
+    )
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(
         Tuple{FA,TT.parameters...},
@@ -8483,7 +8707,8 @@ end
         ABI,
         ErrIfFuncWritten,
         RuntimeActivity,
-        StrongZero
+        StrongZero,
+        AtomicAdd
     ) #=abiwrap=#
     tmp_job = if World isa Nothing
         jb = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false))
@@ -8509,7 +8734,7 @@ end
 
     if run_enzyme && !(A2 <: Const) && (World isa Nothing ? guaranteed_const(rrt) : guaranteed_const_nongen(rrt, World))
         estr = "Return type `$rrt` not marked Const, but type is guaranteed to be constant"
-        return error(estr)
+        error(estr)
     end
 
     rt2 = if !run_enzyme
@@ -8537,7 +8762,8 @@ end
         ABI,
         ErrIfFuncWritten,
         RuntimeActivity,
-        StrongZero
+        StrongZero,
+        AtomicAdd
     ) #=abiwrap=#
     job = if World isa Nothing
         Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false))
@@ -8549,7 +8775,73 @@ end
     # This is counter-intuitive since we would expect the cache to be split
     # by the primal, but we want the generated code to be invalidated by
     # invalidations of the primal, which is managed by GPUCompiler.
+    return job, rt2, run_enzyme
+end
 
+"""
+    untaped_thunk_type(Mode, run_enzyme, PT, FA, RT, TT, width, ReturnPrimal)
+
+The type of the single thunk returned for `Mode` when its compiled entry point has type
+`PT`, for the modes whose thunk carries no tape: combined reverse mode and forward mode,
+and any mode in which Enzyme does not run. It does not depend on anything but the entry
+point's type, so it is known before the derivative is compiled (see [`LazyThunk`](@ref)).
+"""
+function untaped_thunk_type(
+        Mode::API.CDerivativeMode,
+        run_enzyme::Bool,
+        @nospecialize(PT::Type),
+        @nospecialize(FA::Type),
+        @nospecialize(RT::Type),
+        @nospecialize(TT::Type),
+        width::Int,
+        ReturnPrimal::Bool,
+    )
+    if !run_enzyme
+        return PrimalErrorThunk{PT, FA, RT, TT, width, ReturnPrimal}
+    elseif Mode == API.DEM_ReverseModeCombined
+        return CombinedAdjointThunk{PT, FA, RT, Tuple{TT.parameters...}, width, ReturnPrimal}
+    elseif Mode == API.DEM_ForwardMode
+        return ForwardModeThunk{PT, FA, RT, Tuple{TT.parameters...}, width, ReturnPrimal}
+    else
+        throw(AssertionError("mode $Mode has a tape or no single thunk"))
+    end
+end
+
+@inline function thunkbase(
+        mi::Core.MethodInstance,
+        World::Union{UInt, Nothing},
+        @nospecialize(FA::Type{<:Annotation}),
+        @nospecialize(A::Type{<:Annotation}),
+        @nospecialize(TT::Type),
+        Mode::API.CDerivativeMode,
+        width::Int,
+        @nospecialize(ModifiedBetween::(NTuple{N, Bool} where {N})),
+        ReturnPrimal::Bool,
+        ShadowInit::Bool,
+        @nospecialize(ABI::Type),
+        ErrIfFuncWritten::Union{Bool, Tuple},
+        RuntimeActivity::Bool,
+        StrongZero::Bool,
+        AtomicAdd::Union{Bool, Nothing},
+        edges::Union{Nothing, Vector{Any}}
+    )
+    job, rt2, run_enzyme = thunk_job(
+        mi,
+        World,
+        FA,
+        A,
+        TT,
+        Mode,
+        width,
+        ModifiedBetween,
+        ReturnPrimal,
+        ShadowInit,
+        ABI,
+        ErrIfFuncWritten,
+        RuntimeActivity,
+        StrongZero,
+        AtomicAdd,
+    )
 
     compile_result = cached_compilation(job)
     if edges !== nothing
@@ -8557,56 +8849,270 @@ end
             push!(edges, e)
         end
     end
-    if !run_enzyme
-        ErrT = PrimalErrorThunk{typeof(compile_result.adjoint),FA,rt2,TT,width,ReturnPrimal}
-        if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
-            return (ErrT(compile_result.adjoint), ErrT(compile_result.adjoint))
-        else
-            return ErrT(compile_result.adjoint)
-        end
-    elseif Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
-        TapeType = compile_result.TapeType
-        AugT = AugmentedForwardThunk{
-            typeof(compile_result.primal),
-            FA,
-            rt2,
-            Tuple{params.TT.parameters[2:end]...},
-            width,
-            ReturnPrimal,
-            TapeType,
-        }
-        AdjT = AdjointThunk{
-            typeof(compile_result.adjoint),
-            FA,
-            rt2,
-            Tuple{params.TT.parameters[2:end]...},
-            width,
-            TapeType,
-        }
-        return (AugT(compile_result.primal), AdjT(compile_result.adjoint))
-    elseif Mode == API.DEM_ReverseModeCombined
-        CAdjT = CombinedAdjointThunk{
-            typeof(compile_result.adjoint),
-            FA,
-            rt2,
-            Tuple{params.TT.parameters[2:end]...},
-            width,
-            ReturnPrimal,
-        }
-        return CAdjT(compile_result.adjoint)
-    elseif Mode == API.DEM_ForwardMode
-        FMT = ForwardModeThunk{
-            typeof(compile_result.adjoint),
-            FA,
-            rt2,
-            Tuple{params.TT.parameters[2:end]...},
-            width,
-            ReturnPrimal,
-        }
-        return FMT(compile_result.adjoint)
-    else
-        @assert false
+    if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
+        return split_thunks(compile_result, run_enzyme, FA, rt2, TT, width, ReturnPrimal)
     end
+    ThunkT = untaped_thunk_type(Mode, run_enzyme, typeof(compile_result.adjoint), FA, rt2, TT, width, ReturnPrimal)
+    return ThunkT(compile_result.adjoint)
+end
+
+"""
+    split_thunks(compile_result, run_enzyme, FA, RT, TT, width, ReturnPrimal)
+
+The augmented forward and adjoint thunks of a split-mode derivative, typed with the tape
+type its compilation found.
+"""
+function split_thunks(
+        compile_result::CompileResult,
+        run_enzyme::Bool,
+        @nospecialize(FA::Type),
+        @nospecialize(RT::Type),
+        @nospecialize(TT::Type),
+        width::Int,
+        ReturnPrimal::Bool,
+    )
+    if !run_enzyme
+        ErrT = PrimalErrorThunk{typeof(compile_result.adjoint), FA, RT, TT, width, ReturnPrimal}
+        return (ErrT(compile_result.adjoint), ErrT(compile_result.adjoint))
+    end
+    TapeType = compile_result.TapeType
+    AugT = AugmentedForwardThunk{
+        typeof(compile_result.primal),
+        FA,
+        RT,
+        Tuple{TT.parameters...},
+        width,
+        ReturnPrimal,
+        TapeType,
+    }
+    AdjT = AdjointThunk{
+        typeof(compile_result.adjoint),
+        FA,
+        RT,
+        Tuple{TT.parameters...},
+        width,
+        TapeType,
+    }
+    return (AugT(compile_result.primal), AdjT(compile_result.adjoint))
+end
+
+"""
+    LazyCompiled{V}
+
+What a [`LazyThunk`](@ref) or [`LazySplitThunks`](@ref) compiled, `value`, and the
+`CodeInstance` that says whether it is still valid: [`track_validity`](@ref) gave it the
+compilation's edges, so Julia invalidates it exactly when it would have invalidated a
+derivative compiled inside the generator.
+"""
+struct LazyCompiled{V}
+    value::V
+    validity::Core.CodeInstance
+end
+
+@static if Base.isfieldatomic(Core.CodeInstance, :max_world)
+    @inline lazy_valid(compiled::LazyCompiled) = getfield(compiled.validity, :max_world, :acquire) == typemax(UInt)
+else
+    @inline lazy_valid(compiled::LazyCompiled) = compiled.validity.max_world == typemax(UInt)
+end
+
+"""
+    LazyThunk{T}
+
+A derivative of thunk type `T` whose compilation is deferred from type inference to the
+first call that needs it.
+
+[`thunk_generator`](@ref) runs while Julia infers a call to `thunk`. When the runtime
+triggers that inference (the first call of a function that differentiates something, or a
+dynamic dispatch to one), Julia holds a process-wide lock for its whole duration: the
+codegen lock on 1.10, the type-inference lock on 1.11 to 1.13. A derivative compiled inside
+the generator then keeps every other thread from compiling or inferring anything until it
+is done. For the modes whose thunk type is known before compiling (see
+[`untaped_thunk_type`](@ref)), the generator emits a call to [`lazy_thunk`](@ref) on one of
+these instead, which compiles the derivative in the calling task the first time it runs.
+
+What the compiled derivative depends on (rules, natively compiled callees, nested
+derivatives) is only known once it is compiled, so it cannot be an edge of the generated
+code. The cell keeps it in a [`LazyCompiled`](@ref) instead, and compiles again when that
+is invalidated.
+"""
+mutable struct LazyThunk{T}
+    @atomic compiled::Union{Nothing, LazyCompiled{Ptr{Cvoid}}}
+    const job::CompilerJob
+    LazyThunk{T}(job::CompilerJob) where {T} = new{T}(nothing, job)
+end
+
+"""
+    LazySplitThunks
+
+The split-mode counterpart of [`LazyThunk`](@ref), for `runtime_thunk`: the augmented
+forward and adjoint thunks of a derivative, compiled the first time they are asked for.
+Their type carries the tape type, which only compiling finds, so the code holding one of
+these gets them untyped. Only Enzyme's run-time rules ask for them, which use the thunks
+through dynamic dispatch anyway.
+"""
+mutable struct LazySplitThunks
+    @atomic compiled::Union{Nothing, LazyCompiled{Any}}
+    const job::CompilerJob
+    const run_enzyme::Bool
+    const FA::Type
+    const RT::Type
+    const TT::Type
+    const width::Int
+    const ReturnPrimal::Bool
+    function LazySplitThunks(
+            job::CompilerJob,
+            run_enzyme::Bool,
+            @nospecialize(FA::Type),
+            @nospecialize(RT::Type),
+            @nospecialize(TT::Type),
+            width::Int,
+            ReturnPrimal::Bool,
+        )
+        return new(nothing, job, run_enzyme, FA, RT, TT, width, ReturnPrimal)
+    end
+end
+
+@inline function lazy_thunk(cell::LazyThunk{T}) where {T}
+    compiled = @atomic :acquire cell.compiled
+    if compiled === nothing || !lazy_valid(compiled)
+        return T(compile_lazy_thunk!(cell))
+    end
+    return T(compiled.value)
+end
+
+@inline function lazy_split_thunks(cell::LazySplitThunks)::Tuple{Any, Any}
+    compiled = @atomic :acquire cell.compiled
+    if compiled === nothing || !lazy_valid(compiled)
+        return compile_lazy_thunk!(cell)
+    end
+    return compiled.value
+end
+
+# Both kinds of cell compile one at a time, so that two first calls compile once.
+const LAZY_THUNK_LOCK = ReentrantLock()
+
+@noinline function compile_lazy_thunk!(cell::LazyThunk)::Ptr{Cvoid}
+    # NOTE: no use of lock(::Function)/@lock to keep stack traces clean
+    lock(LAZY_THUNK_LOCK)
+    try
+        compiled = @atomic :acquire cell.compiled
+        if compiled !== nothing && lazy_valid(compiled)
+            return compiled.value
+        end
+        compile_result, validity = lazy_compilation(cell.job)
+        adjoint = compile_result.adjoint::Ptr{Cvoid}
+        if validity !== nothing
+            @atomic :release cell.compiled = LazyCompiled{Ptr{Cvoid}}(adjoint, validity)
+        end
+        return adjoint
+    finally
+        unlock(LAZY_THUNK_LOCK)
+    end
+end
+
+@noinline function compile_lazy_thunk!(cell::LazySplitThunks)::Tuple{Any, Any}
+    lock(LAZY_THUNK_LOCK)
+    try
+        compiled = @atomic :acquire cell.compiled
+        if compiled !== nothing && lazy_valid(compiled)
+            return compiled.value
+        end
+        compile_result, validity = lazy_compilation(cell.job)
+        thunks = split_thunks(compile_result, cell.run_enzyme, cell.FA, cell.RT, cell.TT, cell.width, cell.ReturnPrimal)
+        if validity !== nothing
+            @atomic :release cell.compiled = LazyCompiled{Any}(thunks, validity)
+        end
+        return thunks
+    finally
+        unlock(LAZY_THUNK_LOCK)
+    end
+end
+
+"""
+    lazy_compilation(job) -> (compile_result, validity)
+
+Compile `job` in the world the calling task runs in, and register what the result depends
+on (see [`track_validity`](@ref)).
+
+The job's own world is the one its caller was inferred in, which may be long gone: a
+method change since then that left the caller's code valid is one the derivative is free
+to see, and in a session that loaded the caller from a package image it is a world of the
+process that precompiled it. `validity` is `nothing` while precompiling, where nothing
+compiled may be kept (an address in this process's JIT means nothing to the session that
+loads the image), and when the result was invalidated before it could be tracked.
+"""
+function lazy_compilation(job::CompilerJob)
+    world = GPUCompiler.tls_world_age()
+    check_activity_cache_invalidations(world)
+    job = CompilerJob(job.source, job.config, world)
+    ts_ctx = JuliaContext()
+    ctx = context(ts_ctx)
+    activate(ctx)
+    compile_result = try
+        cached_compilation(job)
+    finally
+        deactivate(ctx)
+        dispose(ts_ctx)
+    end
+    validity = generating_output() ? nothing : track_validity(compile_result.edges)
+    return compile_result, validity
+end
+
+const LAZY_VALIDITY_EDGES = Dict{UInt, Vector{Any}}()
+const LAZY_VALIDITY_EDGES_LOCK = Threads.SpinLock()
+const LAZY_VALIDITY_ID = Threads.Atomic{UInt}(0)
+
+function lazy_validity end
+
+# A generator may not switch tasks, so the edges are handed over under a spin lock.
+function lazy_validity_generator(world::UInt, source::Union{Method, LineNumberNode}, id::UInt, @nospecialize(self), @nospecialize(idtype))
+    @nospecialize
+    lock(LAZY_VALIDITY_EDGES_LOCK)
+    edges = try
+        get(LAZY_VALIDITY_EDGES, id, nothing)
+    finally
+        unlock(LAZY_VALIDITY_EDGES_LOCK)
+    end
+    slotnames = Core.svec(Symbol("#self#"), :id)
+    ci = create_fresh_codeinfo(lazy_validity, source, world, slotnames, Any[Core.Compiler.ReturnNode(nothing)])
+    ci.edges = edges === nothing ? Any[] : edges
+    return ci
+end
+
+"""
+    track_validity(edges) -> Union{Nothing, Core.CodeInstance}
+
+A `CodeInstance` that Julia invalidates when any of `edges` is invalidated: that of a fresh
+specialization of the generated `lazy_validity`, whose generator gives its code exactly
+these edges. `nothing` if it was invalidated before it could be looked up.
+"""
+function track_validity(edges::Vector{Any})::Union{Nothing, Core.CodeInstance}
+    id = Threads.atomic_add!(LAZY_VALIDITY_ID, UInt(1))
+    lock(LAZY_VALIDITY_EDGES_LOCK)
+    try
+        LAZY_VALIDITY_EDGES[id] = edges
+    finally
+        unlock(LAZY_VALIDITY_EDGES_LOCK)
+    end
+    try
+        Base.invokelatest(lazy_validity, Val(id))
+    finally
+        lock(LAZY_VALIDITY_EDGES_LOCK)
+        try
+            delete!(LAZY_VALIDITY_EDGES, id)
+        finally
+            unlock(LAZY_VALIDITY_EDGES_LOCK)
+        end
+    end
+    world = Base.get_world_counter()
+    method = which(lazy_validity, Tuple{Val{id}})
+    mi = Core.Compiler.specialize_method(method, Tuple{typeof(lazy_validity), Val{id}}, Core.svec(id))
+    ci = @static if VERSION >= v"1.12-"
+        ccall(:jl_rettype_inferred, Any, (Any, Any, UInt, UInt), nothing, mi, world, world)
+    else
+        ccall(:jl_rettype_inferred, Any, (Any, UInt, UInt), mi, world, world)
+    end
+    return ci isa Core.CodeInstance ? ci : nothing
 end
 
 @inline function thunk(
@@ -8622,7 +9128,8 @@ end
     ::Type{ABI},
     ::Val{ErrIfFuncWritten},
     ::Val{RuntimeActivity},
-    ::Val{StrongZero}
+        ::Val{StrongZero},
+        ::Val{AtomicAdd}
 ) where {
     FA<:Annotation,
     A<:Annotation,
@@ -8635,7 +9142,8 @@ end
     ABI,
     ErrIfFuncWritten,
     RuntimeActivity,
-    StrongZero
+        StrongZero,
+        AtomicAdd,
 }
     ts_ctx = JuliaContext()
     ctx = context(ts_ctx)
@@ -8656,6 +9164,7 @@ end
             ErrIfFuncWritten,
             RuntimeActivity,
             StrongZero,
+            AtomicAdd,
             nothing
         )
     finally
@@ -8666,13 +9175,71 @@ end
 
 function thunk end
 
-function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where N)), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ABI::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, StrongZero::Bool, @nospecialize(self), @nospecialize(fakeworld), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(abi::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type), @nospecialize(strongzero::Type))
+"""
+    runtime_thunk(fakeworld, fa, a, tt, mode, width, modifiedbetween, returnprimal, shadowinit,
+                  abi, erriffuncwritten, runtimeactivity, strongzero[, atomicadd])
+
+`thunk` for Enzyme's run-time rules, which build a derivative for a callee they reach by
+dynamic dispatch and use what they get back through dynamic dispatch too. It differs from
+`thunk` only in split mode, where it compiles the derivative at its first call (see
+[`LazySplitThunks`](@ref)) and so returns the thunks untyped.
+"""
+function runtime_thunk end
+
+# Callers that predate the `AtomicAdd` argument leave the choice to `codegen`.
+for fn in (:thunk, :runtime_thunk)
+    @eval @inline $fn(
+        mi::Union{Val{0}, Core.MethodInstance}, fa::Type{FA}, a::Type{A}, tt::Type{TT},
+        mode::Val, width::Val, modifiedbetween::Val, returnprimal::Val, shadowinit::Val,
+        abi::Type{ABI}, erriffuncwritten::Val, runtimeactivity::Val, strongzero::Val,
+    ) where {FA, A, TT, ABI} = $fn(
+        mi, fa, a, tt, mode, width, modifiedbetween, returnprimal, shadowinit, abi,
+        erriffuncwritten, runtimeactivity, strongzero, Val(nothing),
+    )
+end
+
+"""
+    compiles_lazily(Mode, ABI, untyped_split)
+
+Say if the generator of `thunk` (or, with `untyped_split`, of `runtime_thunk`) defers
+compiling the derivative to its first call (see [`LazyThunk`](@ref)) instead of compiling it
+while the call is inferred.
+
+Combined reverse mode and forward mode qualify, since their thunk type is known before
+compiling; split mode only when its thunks may be returned untyped. Only the FFI ABI does,
+whose thunk holds the derivative's address as a run-time value. Inference by an
+`EnzymeInterpreter` always compiles in place: that is Enzyme differentiating code that
+itself calls `autodiff`, and the outer derivative needs the inner one's address as a
+constant to differentiate through it.
+"""
+function compiles_lazily(Mode::API.CDerivativeMode, @nospecialize(ABI::Type), untyped_split::Bool)
+    if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
+        untyped_split || return false
+    elseif !(Mode == API.DEM_ReverseModeCombined || Mode == API.DEM_ForwardMode)
+        return false
+    end
+    ABI <: FFIABI || return false
+    return !Interpreter.in_enzyme_inference()
+end
+
+function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where {N})), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ABI::Type), ErrIfFuncWritten::Union{Bool, Tuple}, RuntimeActivity::Bool, StrongZero::Bool, AtomicAdd::Union{Bool, Nothing}, @nospecialize(self), @nospecialize(fakeworld), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(abi::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type), @nospecialize(strongzero::Type), @nospecialize(atomicadd::Type))
     @nospecialize
+    return thunk_codeinfo(thunk, false, world, source, FA, A, TT, Mode, Width, ModifiedBetween, ReturnPrimal, ShadowInit, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero, AtomicAdd)
+end
+
+function runtime_thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where {N})), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ABI::Type), ErrIfFuncWritten::Union{Bool, Tuple}, RuntimeActivity::Bool, StrongZero::Bool, AtomicAdd::Union{Bool, Nothing}, @nospecialize(self), @nospecialize(fakeworld), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(abi::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type), @nospecialize(strongzero::Type), @nospecialize(atomicadd::Type))
+    @nospecialize
+    return thunk_codeinfo(runtime_thunk, true, world, source, FA, A, TT, Mode, Width, ModifiedBetween, ReturnPrimal, ShadowInit, ABI, ErrIfFuncWritten, RuntimeActivity, StrongZero, AtomicAdd)
+end
+
+# The body of the generators of `thunk` and `runtime_thunk`.
+function thunk_codeinfo(@nospecialize(fn), untyped_split::Bool, world::UInt, source::Union{Method, LineNumberNode}, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where {N})), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ABI::Type), ErrIfFuncWritten::Union{Bool, Tuple}, RuntimeActivity::Bool, StrongZero::Bool, AtomicAdd::Union{Bool, Nothing})
     
     slotnames = Core.svec(Symbol("#self#"), 
                     :fakeworld, :fa, :a, :tt, :mode, :width,
                     :modifiedbetween, :returnprimal, :shadowinit,
-                    :abi, :erriffuncwritten, :runtimeactivity, :strongzero)
+        :abi, :erriffuncwritten, :runtimeactivity, :strongzero, :atomicadd
+    )
     stub = Core.GeneratedFunctionStub(identity, slotnames, Core.svec())
 
     ft = eltype(FA)
@@ -8690,12 +9257,9 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
 
     edges = Any[]
     add_edge!(edges, mi)
-    
-    ts_ctx = JuliaContext()
-    ctx = context(ts_ctx)
-    activate(ctx)
-    result = try
-        thunkbase(
+
+    code = if compiles_lazily(Mode, ABI, untyped_split)
+        job, rt2, run_enzyme = thunk_job(
             mi,
             world,
             FA,
@@ -8710,15 +9274,46 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
             ErrIfFuncWritten,
             RuntimeActivity,
             StrongZero,
-            edges
+            AtomicAdd,
         )
-    finally
-        deactivate(ctx)
-        dispose(ts_ctx)
+        call = if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
+            cell = LazySplitThunks(job, run_enzyme, FA, rt2, TT, Width, ReturnPrimal)
+            Expr(:call, GlobalRef(Compiler, :lazy_split_thunks), cell)
+        else
+            ThunkT = untaped_thunk_type(Mode, run_enzyme, Ptr{Cvoid}, FA, rt2, TT, Width, ReturnPrimal)
+            Expr(:call, GlobalRef(Compiler, :lazy_thunk), LazyThunk{ThunkT}(job))
+        end
+        Any[call, Core.Compiler.ReturnNode(Core.SSAValue(1))]
+    else
+        ts_ctx = JuliaContext()
+        ctx = context(ts_ctx)
+        activate(ctx)
+        result = try
+            thunkbase(
+                mi,
+                world,
+                FA,
+                A,
+                TT,
+                Mode,
+                Width,
+                ModifiedBetween,
+                ReturnPrimal,
+                ShadowInit,
+                ABI,
+                ErrIfFuncWritten,
+                RuntimeActivity,
+                StrongZero,
+                AtomicAdd,
+                edges
+            )
+        finally
+            deactivate(ctx)
+            dispose(ts_ctx)
+        end
+        Any[Core.Compiler.ReturnNode(result)]
     end
-
-    code = Any[Core.Compiler.ReturnNode(result)]
-    ci = create_fresh_codeinfo(thunk, source, world, slotnames, code)
+    ci = create_fresh_codeinfo(fn, source, world, slotnames, code)
 
 
 
@@ -8748,19 +9343,20 @@ function thunk_generator(world::UInt, source::Union{Method, LineNumberNode}, @no
     return ci
 end
 
-# The generated wrapper `thunk` is defined in src/late_generated.jl; see the note there.
+# The generated wrappers `thunk` and `runtime_thunk` are defined in src/late_generated.jl; see the note there.
 
 import GPUCompiler: deferred_codegen_jobs
 
 function deferred_id_codegen end
 
-function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode}, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where N)), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ExpectedTapeType::Type), ErrIfFuncWritten::Bool, RuntimeActivity::Bool, StrongZero::Bool, @nospecialize(self), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(expectedtapetype::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type), @nospecialize(strongzero::Type))
+function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode}, @nospecialize(FA::Type), @nospecialize(A::Type), @nospecialize(TT::Type), Mode::Enzyme.API.CDerivativeMode, Width::Int, @nospecialize(ModifiedBetween::(NTuple{N, Bool} where {N})), ReturnPrimal::Bool, ShadowInit::Bool, @nospecialize(ExpectedTapeType::Type), ErrIfFuncWritten::Union{Bool, Tuple}, RuntimeActivity::Bool, StrongZero::Bool, AtomicAdd::Union{Bool, Nothing}, @nospecialize(self), @nospecialize(fa::Type), @nospecialize(a::Type), @nospecialize(tt::Type), @nospecialize(mode::Type), @nospecialize(width::Type), @nospecialize(modifiedbetween::Type), @nospecialize(returnprimal::Type), @nospecialize(shadowinit::Type), @nospecialize(expectedtapetype::Type), @nospecialize(erriffuncwritten::Type), @nospecialize(runtimeactivity::Type), @nospecialize(strongzero::Type), @nospecialize(atomicadd::Type))
     @nospecialize
     
     slotnames = Core.svec(Symbol("#self#"),
                           :fa, :a, :tt, :mode, :width, :modifiedbetween,
                           :returnprimal, :shadowinit, :expectedtapetype,
-                          :erriffuncwritten, :runtimeactivity, :strongzero)
+        :erriffuncwritten, :runtimeactivity, :strongzero, :atomicadd
+    )
 
     stub = Core.GeneratedFunctionStub(identity, slotnames, Core.svec())
 
@@ -8811,7 +9407,8 @@ function deferred_id_generator(world::UInt, source::Union{Method, LineNumberNode
         FFIABI,
         ErrIfFuncWritten,
         RuntimeActivity,
-        StrongZero
+        StrongZero,
+        AtomicAdd
     ) #=abiwrap=#
     job =
         Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false), world)
@@ -8842,9 +9439,10 @@ end
     @nospecialize(expectedtapetype::Type),
     @nospecialize(erriffuncwritten::Val),
     @nospecialize(runtimeactivity::Val),
-    @nospecialize(strongzero::Val)
+        @nospecialize(strongzero::Val),
+        @nospecialize(atomicadd::Val = Val(nothing))
 )
-    id = deferred_id_codegen(fa, a, tt, mode, width, modifiedbetween, returnprimal, shadowinit, expectedtapetype, erriffuncwritten, runtimeactivity, strongzero)
+    id = deferred_id_codegen(fa, a, tt, mode, width, modifiedbetween, returnprimal, shadowinit, expectedtapetype, erriffuncwritten, runtimeactivity, strongzero, atomicadd)
     return _deferred_codegen_call(Val(id))
 end
 

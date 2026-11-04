@@ -52,7 +52,7 @@ function runtime_newtask_augfwd(
     # TODO make this AD subcall type stable
     FT = Core.Typeof(fn)
     ghos = guaranteed_const(FT)
-    forward, adjoint = thunk(
+    forward, adjoint = runtime_thunk(
         Val(0),
         (ghos ? Const : Duplicated){FT},
         Const,
