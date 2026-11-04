@@ -55,6 +55,215 @@ EnzymeRules.@easy_rule(
     (@Constant, Ω - (SpecialFunctions.besselkx(nu - 1, x) + SpecialFunctions.besselkx(nu + 1, x)) / 2),
 )
 
+## Scaled complementary error function: derivatives of every order
+#
+# erfcx(x) = exp(x^2) erfc(x), and its derivatives y_k = erfcx^(k)(x) satisfy
+#
+#     y_1 = 2x y_0 - 2/sqrt(pi),    y_{k+1} = 2x y_k + 2k y_{k-1}  (k >= 1).
+#
+# libEnzyme's built-in rule for `Faddeeva_erfcx_re` is the first identity, and a higher
+# order differentiates it again. For x > 0 its two terms nearly cancel, because
+# x erfcx(x) -> 1/sqrt(pi): the first derivative loses about log10(2x^2) digits, and every
+# further order loses as many again. At x = exp(20) not one digit of the first derivative
+# is right, and the second is wrong by a factor of 1e17.
+#
+# Where every term of the recurrence has one sign (x <= 0), or 2x^2 is small (x <= 1),
+# it loses at most a few ulps and is used as it stands. Elsewhere the ratios
+# p_k = -y_k / (2 y_{k-1}) satisfy p_k = (k/2) / (x + p_{k+1}), with every term
+# positive: p_n is Laplace's continued fraction, an S-fraction that converges for every
+# x > 0, and y_n = erfcx(x) (-2 p_1) ... (-2 p_n) involves no subtraction at all.
+#
+# y_n falls like x^-(n+1), so it leaves Float64's range long before the product it is
+# needed for does. In log(erfcx(exp(x))) the partial erfcx'(exp(x)) is below the smallest
+# subnormal from x = 372 on, while the cotangent 1/erfcx(exp(x)) that multiplies it is
+# just as large as the partial is small, and their product is about -exp(-x). A rule that
+# returns y_n for Enzyme to multiply by the seed therefore gives a zero gradient there, and
+# Hessians and third derivatives that are off by O(1) or NaN much earlier (measured from
+# x = 237 and x = 170). So the rules never form y_n alone: their partial is a
+# `_ErfcxTimes`, and multiplying it by a seed (which `@easy_rule` does through
+# `multiply_fwd_into` and `multiply_rev_into`) evaluates s 2^e y_n with `_erfcx_seeded`,
+# which keeps every factor's binary exponent apart from its significand until the end. The seeds a nested mode multiplies in are folded into
+# s and e the same way, by `_scale2`, so a product of several large seeds cannot overflow.
+# `_erfcx_seeded` has a rule of its own, giving order n + 1, so a nested mode of any
+# order reaches this evaluation rather than differentiating it.
+
+# Widen, compute, narrow, as `erfcx` itself does for Float16 and Float32.
+@inline _erfcx_work(x::Union{Float16, Float32}) = Float64(x)
+@inline _erfcx_work(x::AbstractFloat) = x
+
+# erfcx(x) as (m, e) with erfcx(x) = m 2^e. erfcx(x) is below floatmin only for
+# x > 2.5e307, where SpecialFunctions returns 1 / (sqrt(pi) x) rounded to a subnormal;
+# that formula is exact to Float64 precision there, so it is evaluated without the
+# rounding.
+@inline function _erfcx_frexp(x::T, y0::T) where {T <: AbstractFloat}
+    if x > 0 && isfinite(x) && y0 < floatmin(T)
+        (mx, ex) = frexp(x)
+        (m, e) = frexp(inv(sqrt(T(π))) / mx)
+        return (m, e - ex)
+    end
+    return frexp(y0)
+end
+
+@inline _isnormal(v::AbstractFloat) = isfinite(v) && abs(v) >= floatmin(v)
+
+# (m, e) times a / b, with a / b formed from b's significand.
+@inline function _frexp_times_ratio(m::T, e::Int, a::T, b::T) where {T <: AbstractFloat}
+    (mb, eb) = frexp(b)
+    (m2, e2) = frexp(m * (a / mb))
+    return (m2, e + e2 - eb)
+end
+
+# erfcx^(n)(x) as (m, e) with erfcx^(n)(x) = m 2^e.
+function _erfcx_derivative_frexp(n::Int, x::T) where {T <: AbstractFloat}
+    n >= 0 || throw(DomainError(n, "the order of a derivative of erfcx must be nonnegative"))
+    y0 = SpecialFunctions.erfcx(x)
+    (n == 0 || isnan(x)) && return _erfcx_frexp(x, y0)
+    # The first step's relative error is about (2x y_0 + 2/sqrt(pi)) / |y_1| ulps, 20 at
+    # x = 2, so a first derivative takes the recurrence that far; each later step can
+    # multiply the error by 2x^2 / (k + 1), so higher orders stop at x = 1. Every y_k is
+    # within Float64's range there, unless erfcx(x) itself overflows (x < -26.6).
+    if x <= (n == 1 ? T(2) : one(T))
+        two_x = 2x
+        prev = y0
+        y = muladd(two_x, y0, -2 / sqrt(T(π)))
+        for k in 1:(n - 1)
+            (prev, y) = (y, muladd(two_x, y, 2k * prev))
+        end
+        return frexp(y)
+    end
+    isinf(x) && return (zero(T), 0)
+    # p_n = (n/2) / f with f = x + a_1 / (x + a_2 / (x + ...)), a_j = (n + j)/2. The tail
+    # changes f by less than a_1 / x^2 relative to x, under eps/8 once x^2 eps > 4(n + 1),
+    # and there f is x. Below that, the modified Lentz method: its tail contracts by about
+    # exp(-2 sqrt(2) x (sqrt(j) - sqrt(n))) after j terms, so at most a few hundred are
+    # needed for Float64 at x > 1. The cap allows four times that bound and only guards
+    # against a defect.
+    if x * x * eps(T) > 4 * (n + 1)
+        f = x
+    else
+        maxiter = 100 + 4 * ceil(Int, (sqrt(T(n)) + (precision(T) * log(T(2)) + 5) / (2 * sqrt(T(2)) * x))^2)
+        f = x
+        C = x
+        D = zero(T)
+        j = 0
+        while true
+            j += 1
+            j > maxiter && error("erfcx derivative of order $n at $x: continued fraction did not converge in $maxiter terms")
+            a = T(n + j) / 2
+            D = inv(x + a * D)
+            C = x + a / C
+            Δ = C * D
+            f *= Δ
+            abs(Δ - one(T)) <= eps(T) && break
+        end
+    end
+    # y_n = y_0 (-n / f) (-(n - 1) / (x + p_n)) ... (-1 / (x + p_2)), as -2 p_k = -k / (x + p_{k+1}).
+    # The factors shrink with k, so the partial products rise and then fall: where y_0 and
+    # y_n are normal numbers, so is every partial product, and the plain product has the
+    # same bits as the scaled one below.
+    y = y0 * (-T(n) / f)
+    p = T(n) / 2 / f
+    for k in (n - 1):-1:1
+        den = x + p
+        p = T(k) / 2 / den
+        y *= -T(k) / den
+    end
+    _isnormal(y0) && _isnormal(y) && return frexp(y)
+    (m, e) = _erfcx_frexp(x, y0)
+    (m, e) = _frexp_times_ratio(m, e, -T(n), f)
+    p = T(n) / 2 / f
+    for k in (n - 1):-1:1
+        den = x + p
+        p = T(k) / 2 / den
+        (m, e) = _frexp_times_ratio(m, e, -T(k), den)
+    end
+    return (m, e)
+end
+
+# s 2^e erfcx^(n)(x), rounded once at the end: the result is exact to Float64 precision
+# whenever it is a normal number, however far outside the range y_n and s 2^e are.
+function _erfcx_seeded(x::Real, n::Int, s::Real, e::Int)
+    T = float(promote_type(typeof(x), typeof(s)))
+    return T(_erfcx_seeded_work(_erfcx_work(T(x)), n, _erfcx_work(T(s)), e))
+end
+
+function _erfcx_seeded_work(x::T, n::Int, s::T, e::Int) where {T <: AbstractFloat}
+    (m, k) = _erfcx_derivative_frexp(n, x)
+    (ms, ks) = frexp(s)
+    return ldexp(m * ms, k + ks + e)
+end
+
+# v 2^k, with a rule that applies 2^k to the seed rather than forming it (2^k overflows
+# for the k that normalizes a subnormal seed).
+@inline _scale2(v::Real, k::Int) = ldexp(float(v), k)
+
+# The binary exponent that `_scale2` normalizes a seed with; 0 where there is none.
+@inline _exponent2(v::Real) = (iszero(v) || !isfinite(v)) ? 0 : exponent(v)
+EnzymeRules.inactive(::typeof(_exponent2), args...) = true
+
+# The partial of s 2^e erfcx^(n)(x) with respect to x, so s 2^e erfcx^(n+1)(x); for
+# erfcx(x) itself n = 0, s = 1 and e = 0.
+struct _ErfcxTimes{T, S}
+    x::T
+    n::Int
+    s::S
+    e::Int
+end
+
+# The partial of s 2^e erfcx^(n)(x) with respect to s, so 2^e erfcx^(n)(x).
+struct _ErfcxScaled{T}
+    x::T
+    n::Int
+    e::Int
+end
+
+# The partial of v 2^k with respect to v.
+struct _Scale2Times
+    k::Int
+end
+
+# A seed whose product with another such seed is a normal number (or zero).
+@inline _moderate(v::AbstractFloat) = iszero(v) || (sqrt(floatmin(v)) <= abs(v) <= sqrt(floatmax(v)))
+@inline _moderate(v::Real) = _moderate(float(v))
+
+# Each partial times a seed d. Seeds of moderate size multiply as they are; otherwise the
+# significands of s and d multiply to a number in [1, 4), and their exponents go to e.
+@inline function _times_seed(p::_ErfcxTimes, d::Real)
+    _moderate(p.s) && _moderate(d) && return _erfcx_seeded(p.x, p.n + 1, p.s * d, p.e)
+    ks = _exponent2(p.s)
+    kd = _exponent2(d)
+    s = _scale2(p.s, -ks) * _scale2(d, -kd)
+    return _erfcx_seeded(p.x, p.n + 1, s, p.e + ks + kd)
+end
+@inline _times_seed(p::_ErfcxScaled, d::Real) = _erfcx_seeded(p.x, p.n, d, p.e)
+@inline _times_seed(p::_Scale2Times, d::Real) = _scale2(d, p.k)
+
+# `@easy_rule` starts each sum from the type of its result.
+@inline _add_into(prev::Type, v) = prev(v)
+@inline _add_into(prev, v) = prev + v
+
+for P in (:_ErfcxTimes, :_ErfcxScaled, :_Scale2Times)
+    @eval begin
+        @inline EnzymeRules.multiply_fwd_into(prev, p::$P, d::Real) = _add_into(prev, _times_seed(p, d))
+        @inline EnzymeRules.multiply_rev_into(prev, p::$P, d::Real) = _add_into(prev, _times_seed(p, d))
+    end
+end
+
+EnzymeRules.@easy_rule(
+    SpecialFunctions.erfcx(x::Real),
+    (_ErfcxTimes(x, 0, one(x), 0),),
+)
+
+EnzymeRules.@easy_rule(
+    _erfcx_seeded(x::Real, n::Int, s::Real, e::Int),
+    (_ErfcxTimes(x, n, s, e), @Constant, _ErfcxScaled(x, n, e), @Constant),
+)
+
+EnzymeRules.@easy_rule(
+    _scale2(v::Real, k::Int),
+    (_Scale2Times(k), @Constant),
+)
+
 # x/ref: https://github.com/JuliaMath/SpecialFunctions.jl/pull/506
 ## Incomplete beta derivatives via Boik & Robinson-Cox
 #
