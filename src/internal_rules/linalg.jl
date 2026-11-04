@@ -399,6 +399,155 @@ _zero_unused_elements!(X, ::LowerTriangular) = tril!(X)
 _zero_unused_elements!(X, ::UnitUpperTriangular) = triu!(X, 1)
 _zero_unused_elements!(X, ::UnitLowerTriangular) = tril!(X, -1)
 
+# LAPACK.trtrs!(uplo, trans, diag, A, B) overwrites B with X = op(A) \ B, where op is chosen
+# by trans and only the uplo triangle of A is read, its diagonal taken as ones when diag is
+# 'U'. It is what `\` and `ldiv!` call for a strided triangular BLAS matrix. Enzyme's BLAS
+# rules differentiate the LAPACK call in reverse mode only, so forward mode had no derivative
+# for it, and neither had forward over reverse, which differentiates the trtrs call that the
+# reverse pass solves with. These rules handle both in Julia and solve with trtrs! itself, so
+# that differentiating a rule again (forward over reverse, forward over forward) reaches these
+# rules rather than the LAPACK call.
+
+# The shadow of A in batch lane b, or nothing if A is inactive. A shadow that is the primal
+# itself holds no derivative: Enzyme passes one for data that is inactive at run time.
+_lapack_shadow(::Const, b, N) = nothing
+function _lapack_shadow(A::Annotation, b, N)
+    dA = N == 1 ? A.dval : A.dval[b]
+    return dA === A.val ? nothing : dA
+end
+
+# What a forward rule returns for a LAPACK routine that overwrites B with its result X.
+function _lapack_inplace_forward_return(config::EnzymeRules.FwdConfig, X, B)
+    N = EnzymeRules.width(config)
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return N == 1 ? Duplicated(X, B.dval) : BatchDuplicated(X, B.dval)
+    elseif EnzymeRules.needs_shadow(config)
+        return B.dval
+    elseif EnzymeRules.needs_primal(config)
+        return X
+    else
+        return nothing
+    end
+end
+
+# The part of dA that trtrs! reads.
+function _trtrs_used_part(uplo::AbstractChar, diag::AbstractChar, dA::AbstractMatrix)
+    M = copyto!(similar(dA, size(dA)), dA)
+    k = diag == 'U' ? 1 : 0
+    return uplo == 'L' ? tril!(M, -k) : triu!(M, k)
+end
+
+# dB -= op(M) * X
+function _trtrs_sub_op_mul!(dB, trans::AbstractChar, M, X)
+    α, β = -one(eltype(dB)), one(eltype(dB))
+    if trans == 'N'
+        mul!(dB, M, X, α, β)
+    elseif trans == 'T'
+        mul!(dB, transpose(M), X, α, β)
+    else
+        mul!(dB, adjoint(M), X, α, β)
+    end
+    return dB
+end
+
+# dA[i, j] -= G[i, j] over the part of dA that trtrs! reads.
+function _trtrs_sub_used_part!(dA, uplo::AbstractChar, diag::AbstractChar, G)
+    n = size(dA, 1)
+    k = diag == 'U' ? 1 : 0
+    for j in 1:n
+        rows = uplo == 'L' ? ((j + k):n) : (1:(j - k))
+        for i in rows
+            @inbounds dA[i, j] -= G[i, j]
+        end
+    end
+    return dA
+end
+
+# Tangent of X = op(A) \ B, into dB: dX = op(A) \ (dB - op(dA) X).
+function _trtrs_tangent!(uplo, trans, diag, A, dA, X, dB)
+    if dA !== nothing
+        _trtrs_sub_op_mul!(dB, trans, _trtrs_used_part(uplo, diag, dA), X)
+    end
+    LinearAlgebra.LAPACK.trtrs!(uplo, trans, diag, A, dB)
+    return dB
+end
+
+# Adjoint of X = op(A) \ B for real A, given dB = the adjoint of X. The adjoint of B is
+# Z = op(A)ᵀ \ dB, solved in place in dB, and dA decreases by Z Xᵀ (trans 'N') or X Zᵀ.
+function _trtrs_adjoint!(uplo, trans, diag, A, dA, X, dB)
+    LinearAlgebra.LAPACK.trtrs!(uplo, trans == 'N' ? 'T' : 'N', diag, A, dB)
+    if dA !== nothing
+        G = trans == 'N' ? dB * transpose(X) : X * transpose(dB)
+        _trtrs_sub_used_part!(dA, uplo, diag, G)
+    end
+    return dB
+end
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(LinearAlgebra.LAPACK.trtrs!)},
+        RT::Type{<:Union{Const, Duplicated, BatchDuplicated}},
+        uplo::Const{<:AbstractChar},
+        trans::Const{<:AbstractChar},
+        diag::Const{<:AbstractChar},
+        A::Annotation{<:AbstractMatrix{T}},
+        B::Annotation{<:AbstractVecOrMat{T}},
+    ) where {T <: LinearAlgebra.BlasFloat}
+    N = EnzymeRules.width(config)
+    X = func.val(uplo.val, trans.val, diag.val, A.val, B.val)
+    for b in 1:N
+        dB = _lapack_shadow(B, b, N)
+        if dB !== nothing
+            _trtrs_tangent!(uplo.val, trans.val, diag.val, A.val, _lapack_shadow(A, b, N), X, dB)
+        end
+    end
+    return _lapack_inplace_forward_return(config, X, B)
+end
+
+# Reverse mode is for real matrices only: complex trtrs keeps its previous handling.
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(LinearAlgebra.LAPACK.trtrs!)},
+        ::Type{RT},
+        uplo::Const{<:AbstractChar},
+        trans::Const{<:AbstractChar},
+        diag::Const{<:AbstractChar},
+        A::Annotation{<:AbstractMatrix{T}},
+        B::Annotation{<:AbstractVecOrMat{T}},
+    ) where {RT, T <: LinearAlgebra.BlasReal}
+    X = func.val(uplo.val, trans.val, diag.val, A.val, B.val)
+    # The adjoint solves with A, and the adjoint of A also needs X.
+    cache_A = !(B isa Const) && EnzymeRules.overwritten(config)[5] ? copy(A.val) : nothing
+    cache_X = !(B isa Const) && !(A isa Const) && EnzymeRules.overwritten(config)[6] ? copy(X) : nothing
+    primal = EnzymeRules.needs_primal(config) ? X : nothing
+    shadow = EnzymeRules.needs_shadow(config) ? B.dval : nothing
+    return EnzymeRules.AugmentedReturn(primal, shadow, (cache_A, cache_X))
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(LinearAlgebra.LAPACK.trtrs!)},
+        ::Type{RT},
+        cache,
+        uplo::Const{<:AbstractChar},
+        trans::Const{<:AbstractChar},
+        diag::Const{<:AbstractChar},
+        A::Annotation{<:AbstractMatrix{T}},
+        B::Annotation{<:AbstractVecOrMat{T}},
+    ) where {RT, T <: LinearAlgebra.BlasReal}
+    cache_A, cache_X = cache
+    Aval = cache_A === nothing ? A.val : cache_A
+    X = cache_X === nothing ? B.val : cache_X
+    N = EnzymeRules.width(config)
+    for b in 1:N
+        dB = _lapack_shadow(B, b, N)
+        if dB !== nothing
+            _trtrs_adjoint!(uplo.val, trans.val, diag.val, Aval, _lapack_shadow(A, b, N), X, dB)
+        end
+    end
+    return (nothing, nothing, nothing, nothing, nothing)
+end
+
 function EnzymeRules.augmented_primal(
         config::EnzymeRules.RevConfig,
         func::Const{typeof(LinearAlgebra.mul!)},
