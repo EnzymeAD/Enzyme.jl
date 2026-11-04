@@ -191,6 +191,38 @@ struct WithIO{F}  # issue 2091
     end
 end
 
+mutable struct AtomicAccumulator
+    @atomic x::Float64
+    @atomic n::Int
+    v::Vector{Float64}
+end
+
+struct LockedData
+    lock::ReentrantLock
+    data::Vector{Float64}
+end
+
+# Run `f()` while another task holds `l`; that task keeps `[1.0]` in its
+# task-local storage, so a test can check that make_zero left it alone.
+function with_lock_held_elsewhere(f, l)
+    started = Base.Event()
+    release = Base.Event()
+    holder = Threads.@spawn begin
+        task_local_storage(:make_zero_test, [1.0])
+        lock(l)
+        notify(started)
+        wait(release)
+        unlock(l)
+    end
+    wait(started)
+    try
+        return f(holder)
+    finally
+        notify(release)
+        wait(holder)
+    end
+end
+
 macro test_noerr(expr)
     return quote
         @test_nowarn try
@@ -551,6 +583,51 @@ function test_make_zero()
         @test d2_makez[k] !== d2[k]
         @test first(keys(d2_makez)) === k
     end
+    @testset "@atomic fields" begin
+        a = AtomicAccumulator(3.0, 7, [1.0, 2.0])
+        a_makez = make_zero(a)
+        @test a_makez !== a
+        @test (@atomic a_makez.x) === 0.0
+        @test (@atomic a_makez.n) === 7
+        @test a_makez.v == [0.0, 0.0]
+        @test (@atomic a.x) === 3.0  # no mutation of original
+        @test a.v == [1.0, 2.0]      # no mutation of original
+        c = Channel{Float64}(2)
+        put!(c, 1.5)
+        @test make_zero(c).data == [0.0]
+        @test take!(c) === 1.5
+    end
+    @testset "locks, tasks and bindings" begin
+        d = LockedData(ReentrantLock(), [1.0, 2.0])
+        d_makez = make_zero(d)
+        @test d_makez.lock !== d.lock
+        @test !islocked(d_makez.lock)
+        @test d_makez.data == [0.0, 0.0]
+        # The owner of a held lock is shared, not copied: a copied `Task` crashes the GC.
+        with_lock_held_elsewhere(d.lock) do holder
+            d_makez = make_zero(d)
+            @test (@atomic d_makez.lock.locked_by) === holder
+            GC.gc()
+        end
+        @test !islocked(d.lock)
+        t = @task nothing
+        @test make_zero(t) === t
+        @test make_zero(t, Val(true)) === t
+        @test make_zero((t, [1.0]))[1] === t
+        tasks = [make_zero(t) for _ in 1:200]
+        GC.gc(true)
+        @test all(z -> z === t, tasks)
+        cond = Threads.Condition()
+        @test make_zero(cond).lock !== cond.lock
+        g = GlobalRef(Base, :sin)
+        @test make_zero(g) === g
+        @test make_zero(g).binding === g.binding
+        ex = Expr(:call, g, 1.5)
+        ex_makez = make_zero(ex)
+        @test ex_makez.args[1] === g
+        @test ex_makez.args[2] === 0.0
+        @test ex.args[2] === 1.5  # no mutation of original
+    end
     return nothing
 end
 
@@ -750,6 +827,36 @@ function test_make_zero!(make_zero! = Enzyme.make_zero!)
         @test fwrapped[1] === f
         @test fwrapped[1].v == [0.0, 0.0]
     end
+    @testset "@atomic fields" begin
+        a = AtomicAccumulator(3.0, 7, [1.0, 2.0])
+        make_zero!(a)
+        @test (@atomic a.x) === 0.0
+        @test (@atomic a.n) === 7
+        @test a.v == [0.0, 0.0]
+    end
+    @testset "locks, tasks and bindings" begin
+        # A held lock's owner keeps its task-local storage: the task is not zeroed.
+        d = LockedData(ReentrantLock(), [1.0, 2.0])
+        with_lock_held_elsewhere(d.lock) do holder
+            dwrapped = [d]
+            make_zero!(dwrapped)
+            @test dwrapped[1].lock === d.lock
+            @test dwrapped[1].data == [0.0, 0.0]
+            @test (@atomic d.lock.locked_by) === holder
+            @test holder.storage[:make_zero_test] == [1.0]
+        end
+        t = @task nothing
+        @test make_zero!(t) === nothing
+        twrapped = Any[t, [1.0]]
+        make_zero!(twrapped)
+        @test twrapped[1] === t
+        @test twrapped[2] == [0.0]
+        g = GlobalRef(Base, :sin)
+        gwrapped = Any[g, [1.0]]
+        make_zero!(gwrapped)
+        @test gwrapped[1] === g
+        @test gwrapped[2] == [0.0]
+    end
     return nothing
 end
 
@@ -835,6 +942,23 @@ end
 @testset "forward inactivity of make_zero shadow-init builtins" begin
     # both fields defined -> s = 2x, derivative 2
     @test Enzyme.autodiff(Forward, isdefined_field_walk, Duplicated(2.0, 1.0)) == (2.0,)
+end
+
+# A callable that holds an `Expr` with a `GlobalRef`, as a RuntimeGeneratedFunction
+# does. Its shadow, made with `make_zero` by the run-time rule for `invokelatest`,
+# shares the global's binding.
+struct WithBody
+    body::Expr
+    w::Vector{Float64}
+end
+(c::WithBody)(x) = sum(c.w .* x .* x)
+
+@testset "Reverse through invokelatest of a callable holding a GlobalRef" begin
+    c = WithBody(Expr(:call, GlobalRef(Base, :sin), 1.5), [3.0, 4.0])
+    x = [1.0, 2.0]
+    dx = zero(x)
+    Enzyme.autodiff(Reverse, y -> Base.invokelatest(c, y), Active, Duplicated(x, dx))
+    @test dx == [6.0, 16.0]
 end
 
 end  # module MakeZeroTests

@@ -156,3 +156,30 @@ end
     @test log == [(:d, :trylock)]
     @test !islocked(d.lock)
 end
+
+# A callable that holds a lock, differentiated through `invokelatest`: the run-time
+# rule makes the callable's shadow with `make_zero`, which copies the lock's
+# `@atomic` fields and shares the task that holds it.
+struct LockedModel
+    lock::ReentrantLock
+    w::Vector{Float64}
+end
+(m::LockedModel)(x) = sum(m.w .* x .* x)
+
+@testset "Reverse through invokelatest of a callable holding a lock" begin
+    m = LockedModel(ReentrantLock(), [3.0, 4.0])
+    x = [1.0, 2.0]
+    for held in (false, true)
+        held && lock(m.lock)
+        dx = zero(x)
+        Enzyme.autodiff(Reverse, y -> Base.invokelatest(m, y), Active, Duplicated(x, dx))
+        @test dx == [6.0, 16.0]
+        dm = Enzyme.make_zero(m)
+        dx = zero(x)
+        Enzyme.autodiff(Reverse, (c, y) -> Base.invokelatest(c, y), Active, Duplicated(m, dm), Duplicated(x, dx))
+        @test dx == [6.0, 16.0]
+        @test dm.w == [1.0, 4.0]
+        held && unlock(m.lock)
+        @test !islocked(m.lock)
+    end
+end

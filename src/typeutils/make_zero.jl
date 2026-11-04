@@ -278,6 +278,38 @@ end
     return res
 end
 
+# Runtime objects that make_zero shares with the primal instead of copying, also
+# under `copy_if_inactive`. A
+# `Task` holds no derivative, and a field-wise copy is not a task: it is smaller
+# than the runtime's task struct, so the next garbage collection reads past it
+# and crashes. A `Core.Binding` is the identity of a global variable. Both are
+# reached from data through a lock's owner, a condition's wait queue, or a
+# `GlobalRef`. `Task` stays active: the rules for spawned tasks make their own
+# shadow tasks.
+const MakeZeroShared = Union{Task, Core.Binding}
+
+@inline function EnzymeCore.make_zero(
+        ::Type{RT},
+        seen::IdDict,
+        prev::RT,
+        ::Val{copy_if_inactive} = Val(false),
+    )::RT where {copy_if_inactive, RT <: MakeZeroShared}
+    return prev
+end
+
+# Write `v` into field `i` of the mutable struct `x`: a `const` field through the
+# runtime, an `@atomic` field with an atomic store, any other with `setfield!`.
+@inline function make_zero_setfield!(x::T, i::Int, @nospecialize(v)) where {T}
+    if Base.isconst(T, i)
+        ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), x, i - 1, v)
+    elseif Base.isfieldatomic(T, i)
+        setfield!(x, i, v, :sequentially_consistent)
+    else
+        setfield!(x, i, v)
+    end
+    return nothing
+end
+
 @inline function EnzymeCore.make_zero(
         ::Type{RT},
         seen::IdDict,
@@ -301,11 +333,7 @@ end
                 xi = getfield(prev, i)
                 T = Core.Typeof(xi)
                 xi = EnzymeCore.make_zero(T, seen, xi, Val(copy_if_inactive))
-                if Base.isconst(RT, i)
-                    ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), y, i - 1, xi)
-                else
-                    setfield!(y, i, xi)
-                end
+                make_zero_setfield!(y, i, xi)
             end
         end
         return y
@@ -650,6 +678,10 @@ macro register_make_zero_inplace(sym)
             return nothing
         end
 
+        @inline function $sym(prev::MakeZeroShared, seen::ST)::Nothing where {ST}
+            return nothing
+        end
+
         @inline $sym(prev) = $sym(prev, Base.IdSet())
     end
 end
@@ -680,11 +712,7 @@ end
             if activitystate == AnyState  # guaranteed_const
             elseif ismutabletype(T) && !ismutabletype(SBT)
                 yi = make_zero_immutable!(xi, seen)
-                if Base.isconst(T, i)
-                    ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), prev, i - 1, yi)
-                else
-                    setfield!(prev, i, yi)
-                end
+                make_zero_setfield!(prev, i, yi)
             elseif activitystate == DupState
                 EnzymeCore.make_zero!(xi, seen)
             else
@@ -720,11 +748,7 @@ end
             if activitystate == AnyState  # guaranteed_const
             elseif ismutabletype(T) && !ismutabletype(SBT)
                 yi = make_zero_immutable!(xi, seen)
-                if Base.isconst(T, i)
-                    ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), prev, i - 1, yi)
-                else
-                    setfield!(prev, i, yi)
-                end
+                make_zero_setfield!(prev, i, yi)
             elseif activitystate == DupState
                 EnzymeCore.make_zero!(xi, seen)
             elseif activitystate == MixedState
