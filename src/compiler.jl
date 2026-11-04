@@ -3468,6 +3468,7 @@ const DumpPreEnzyme = Ref(false)
 const DumpPostEnzyme = Ref(false)
 const DumpPostWrap = Ref(false)
 
+include("compiler/fold_type_tests.jl")
 include("compiler/constant_fields.jl")
 include("compiler/slot_field_types.jl")
 
@@ -3490,6 +3491,7 @@ function enzyme!(
     removedRoots::Set{Int},
         enzyme_ctx::EnzymeContext,
 )
+    fold_type_tests!(mod, enzyme_ctx)
     if DumpPreEnzyme[]
         API.EnzymeDumpModuleRef(mod.ref)
     end
