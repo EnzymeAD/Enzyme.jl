@@ -7035,6 +7035,13 @@ end
                     metadata(inst)["enzyme_type"] =
                         to_md(typetree_in_world(job.world, Ptr{Cvoid}, ctx, dl, seen), ctx)
                 end
+            elseif isa(inst, LLVM.AllocaInst)
+                at = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(inst))
+                tracked = CountTrackedPointers(at)
+                if tracked.all && tracked.count > 0
+                    metadata(inst)["enzyme_type"] =
+                        to_md(typetree_in_world(job.world, Ptr{Ptr{Cvoid}}, ctx, dl, seen), ctx)
+                end
             end
         end
 
