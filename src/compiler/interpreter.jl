@@ -901,6 +901,9 @@ end
     end
 end
 
+@inline override_bc_preprocess(dest, x) =
+    Base.Broadcast.extrude(Base.Broadcast.broadcast_unalias(dest, x))
+
 # Override Base.copyto!(dest::AbstractArray, bc::Broadcasted{Nothing}) with
 #  a form which provides better analysis of loop indices
 @inline function override_bc_copyto!(dest::AbstractArray, bc::Base.Broadcast.Broadcasted{Nothing})
@@ -1463,6 +1466,25 @@ function abstract_call_known(
                 return Base.@invoke abstract_call_known(
                     interp::AbstractInterpreter,
                     Enzyme.Compiler.Interpreter.override_bc_copyto!::Any,
+                    arginfo2::ArgInfo,
+                    si::StmtInfo,
+                    sv::AbsIntState,
+                    max_methods::Int,
+                )
+            end
+        end
+
+        @static if v"1.11-" <= VERSION < v"1.12-"
+            if f === Base.Broadcast.preprocess && length(argtypes) == 3 &&
+                    widenconst(argtypes[3]) <: Union{Array, SubArray, Base.ReshapedArray, Number, Base.RefValue}
+                arginfo2 = ArgInfo(
+                    fargs isa Nothing ? nothing :
+                        [:(Enzyme.Compiler.Interpreter.override_bc_preprocess), fargs[2:end]...],
+                    [Core.Const(Enzyme.Compiler.Interpreter.override_bc_preprocess), argtypes[2:end]...],
+                )
+                return Base.@invoke abstract_call_known(
+                    interp::AbstractInterpreter,
+                    Enzyme.Compiler.Interpreter.override_bc_preprocess::Any,
                     arginfo2::ArgInfo,
                     si::StmtInfo,
                     sv::AbsIntState,
