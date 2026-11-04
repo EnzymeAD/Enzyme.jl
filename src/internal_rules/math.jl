@@ -1,7 +1,27 @@
-_hypotforward(x::Const) = zero(x.val)
-_hypotforward(x) = real(conj(x.val) * x.dval)
-_hypotforward(x::Const, i) = zero(x.val)
-_hypotforward(x, i) = real(conj(x.val) * x.dval[i])
+_hypotvalue(x) = x.val
+
+# Change the evaluation order when x * dx leaves the normal range. Always
+# normalizing first can instead lose a tiny x / h that a large seed rescales.
+function _hypotmul(x, dx, h)
+    product = x * dx
+    if isfinite(product) && abs(product) >= floatmin(real(product))
+        return product / h
+    else
+        return (x / h) * dx
+    end
+end
+
+_hypotforward(x::Const, h, i) = zero(real(x.val))
+function _hypotforward(x, h, i)
+    dx = i === nothing ? x.dval : x.dval[i]
+    return real(_hypotmul(conj(x.val), dx, h))
+end
+
+struct HypotForward{A, H}
+    args::A
+    h::H
+end
+(f::HypotForward)(i) = sum(_hypotforward.(f.args, f.h, i))
 
 function EnzymeRules.forward(
         config::EnzymeRules.FwdConfig,
@@ -9,34 +29,22 @@ function EnzymeRules.forward(
         RT,
         x::Annotation,
         y::Annotation,
-        z::Annotation,
         xs::Vararg{Annotation, N}
     ) where {N}
+    args = (x, y, xs...)
     if EnzymeRules.needs_shadow(config)
-        h = func.val(x.val, y.val, z.val, map(x -> x.val, xs)...)
+        h = func.val(map(_hypotvalue, args)...)
         n = iszero(h) ? one(h) : h
+        tangent = HypotForward(args, n)
         if EnzymeRules.width(config) == 1
-            dh = (
-                _hypotforward(x) +
-                    _hypotforward(y) +
-                    _hypotforward(z) +
-                    sum(_hypotforward, xs, init = zero(real(x.val)))
-            ) / n
+            dh = tangent(nothing)
             if EnzymeRules.needs_primal(config)
                 return Duplicated(h, dh)
             else
                 return dh
             end
         else
-            dh = ntuple(
-                i -> (
-                    _hypotforward(x, i) +
-                        _hypotforward(y, i) +
-                        _hypotforward(z, i) +
-                        sum(x -> _hypotforward(x, i), xs; init = zero(real(x.val)))
-                ) / n,
-                Val(EnzymeRules.width(config)),
-            )
+            dh = ntuple(tangent, Val(EnzymeRules.width(config)))
             if EnzymeRules.needs_primal(config)
                 return BatchDuplicated(h, dh)
             else
@@ -44,15 +52,15 @@ function EnzymeRules.forward(
             end
         end
     elseif EnzymeRules.needs_primal(config)
-        return func.val(x.val, y.val, z.val, map(x -> x.val, xs)...)
+        return func.val(map(_hypotvalue, args)...)
     else
         return nothing
     end
 end
 
-_hypotreverse(x::Const, ::Val{W}, dret::Const, h) where {W} = nothing
+_hypotreverse(x::Const, ::Val{W}, ::Type{<:Const}, h) where {W} = nothing
 _hypotreverse(x::Const, ::Val{W}, dret, h) where {W} = nothing
-function _hypotreverse(x, w::Val{W}, dret::Const, h) where {W}
+function _hypotreverse(x, w::Val{W}, ::Type{<:Const}, h) where {W}
     if W == 1
         return zero(x.val)
     else
@@ -61,11 +69,23 @@ function _hypotreverse(x, w::Val{W}, dret::Const, h) where {W}
 end
 function _hypotreverse(x, w::Val{W}, dret, h) where {W}
     if W == 1
-        return x.val * dret.val / h
+        return _hypotreverse_seed((x.val, h), dret)
     else
-        return ntuple(i -> x.val * dret.val[i] / h, w)
+        return map(Base.Fix1(_hypotreverse_seed, (x.val, h)), dret)
     end
 end
+
+function _hypotreverse_seed(x_h, dret)
+    x, h = x_h
+    return oftype(x, _hypotmul(x, dret.val, h))
+end
+
+struct HypotReverse{W, D, H}
+    width::Val{W}
+    dret::D
+    h::H
+end
+(r::HypotReverse)(x) = _hypotreverse(x, r.width, r.dret, r.h)
 
 function EnzymeRules.augmented_primal(
         config::EnzymeRules.RevConfig,
@@ -73,10 +93,9 @@ function EnzymeRules.augmented_primal(
         ::Type,
         x::Annotation,
         y::Annotation,
-        z::Annotation,
         xs::Vararg{Annotation, N}
     ) where {N}
-    h = hypot(x.val, y.val, z.val, map(x -> x.val, xs)...)
+    h = hypot(map(_hypotvalue, (x, y, xs...))...)
     primal = needs_primal(config) ? h : nothing
     return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
 end
@@ -88,15 +107,11 @@ function EnzymeRules.reverse(
         tape,
         x::Annotation,
         y::Annotation,
-        z::Annotation,
         xs::Vararg{Annotation, N}
     ) where {N}
-    h = hypot(x.val, y.val, z.val, map(x -> x.val, xs)...)
+    args = (x, y, xs...)
+    h = hypot(map(_hypotvalue, args)...)
     n = iszero(h) ? one(h) : h
     w = Val(EnzymeRules.width(config))
-    dx = _hypotreverse(x, w, dret, n)
-    dy = _hypotreverse(y, w, dret, n)
-    dz = _hypotreverse(z, w, dret, n)
-    dxs = map(x -> _hypotreverse(x, w, dret, n), xs)
-    return (dx, dy, dz, dxs...)
+    return map(HypotReverse(w, dret, n), args)
 end
