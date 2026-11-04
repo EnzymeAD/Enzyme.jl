@@ -799,8 +799,8 @@ end
         @test w ≈ [1.0]
         @test dw ≈ [3.0]
     else
-        # TODO broken should not throw
-        @test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.autodiff(Reverse, inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
+        # On Julia 1.11 the conditional `copy(x)` phi may or may not require runtime
+        # activity depending on codegen (e.g. `--check-bounds`).
         Enzyme.autodiff(set_runtime_activity(Reverse), inactiveArg, Active, Duplicated(w, dw), Const(x), Const(false))
     end
 
@@ -818,8 +818,6 @@ end
         dw = Enzyme.autodiff(Reverse, loss, Active, Active(1.0), Const(x), Const(false))[1]
 
     else
-        # TODO broken should not throw
-        @test_throws Enzyme.Compiler.EnzymeRuntimeActivityError Enzyme.autodiff(Reverse, loss, Active, Active(1.0), Const(x), Const(false))[1]
         dw = Enzyme.autodiff(set_runtime_activity(Reverse), loss, Active, Active(1.0), Const(x), Const(false))[1]
     end
 

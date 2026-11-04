@@ -364,3 +364,21 @@ end
         @test dA ≈ T[0 0 6; 8 20 24]
     end
 end
+
+function inactive_arg_3089(w, x, cond)
+    if cond
+        x = copy(x)
+    end
+    return w[1] * x[1]
+end
+
+@testset "Conditional copy of inactive Array argument (#3089)" begin
+    for cond in (false, true)
+        x = Float32[3]
+        w = Float32[1]
+        dw = zero(w)
+        autodiff(Reverse, inactive_arg_3089, Active, Duplicated(w, dw), Const(x), Const(cond))
+        @test dw ≈ Float32[3]
+        @test autodiff(Forward, inactive_arg_3089, Duplicated(w, Float32[2]), Const(x), Const(cond))[1] ≈ 6.0f0
+    end
+end
