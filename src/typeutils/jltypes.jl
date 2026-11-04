@@ -94,6 +94,10 @@ function inline_roots_type(@nospecialize(T::Type))::Int
 	   if Base.isabstracttype(T)
 		return 0
 	   end
+        # Julia boxes aggregates too large to allocate inline, so they have no separate roots argument.
+        if !Base.allocatedinline(T)
+            return 0
+        end
 	   if isghostty(T) || Core.Compiler.isconstType(T)
 		return 0
 	   end

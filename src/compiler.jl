@@ -5653,10 +5653,6 @@ function lower_convention(
             else
 
                 elty = convert(LLVMType, arg.typ)
-                if !LLVM.is_opaque(typ)
-                    @assert elty == eltype(typ)
-                end
-
                 push!(wrapper_types, elty)
                 push!(wrapper_attrs, LLVM.Attribute[])
                 push!(loweredArgs, arg.arg_i)
@@ -5736,7 +5732,12 @@ function lower_convention(
 		    if roots_follow(args, ai, removedRoots)
 		        push!(nops, parm)
 		    else
-                        push!(nops, load!(builder, convert(LLVMType, arg.typ), parm))
+                        elty = convert(LLVMType, arg.typ)
+                        # Julia can erase the pointee type of large by-reference arguments.
+                        if !LLVM.is_opaque(value_type(parm)) && eltype(value_type(parm)) != elty
+                            parm = bitcast!(builder, parm, LLVM.PointerType(elty, addrspace(value_type(parm))))
+                        end
+                        push!(nops, load!(builder, elty, parm))
 		    end
                 elseif arg.arg_i in raisedArgs
                     obj = emit_allocobj!(builder, arg.typ, "raisedArg")
@@ -5880,10 +5881,6 @@ function lower_convention(
                 end
 
                 elty = convert(LLVMType, arg.typ)
-                if !LLVM.is_opaque(ty)
-                    @assert elty == eltype(ty)
-                end
-
                 elty_foralloca = if VERSION >= v"1.12" && arg.rooted_typ !== nothing
                     strip_tracked_pointers(elty)
                 else
@@ -5901,10 +5898,14 @@ function lower_convention(
                 only!(typeTree, -1)
                 metadata(ptr)["enzyme_type"] = to_md(typeTree, ctx)
                 if LLVM.addrspace(ty) != 0
-                    ptr = addrspacecast!(builder, ptr, ty)
+                    ptr = addrspacecast!(builder, ptr, LLVM.is_opaque(ty) ? ty : LLVM.PointerType(elty_foralloca, LLVM.addrspace(ty)))
                 end
                 @assert elty == value_type(wrapparm)
                 store!(builder, wrapparm, ptr)
+                # Preserve the original pointer type when calling the Julia function.
+                if !LLVM.is_opaque(ty) && eltype(ty) != elty_foralloca
+                    ptr = bitcast!(builder, ptr, ty)
+                end
                 push!(wrapper_args, ptr)
                 push!(
                     parameter_attributes(wrapper_f, wrapper_idx - 1),
