@@ -680,11 +680,12 @@ end
 @testset "Broadcast noalias" begin
     x = ones(30)
 
-    @static if VERSION < v"1.11-"
-        autodiff(Reverse, bc0_test_function, Active, Const(x))
-    else
-        # TODO
+    @static if v"1.11-" <= VERSION < v"1.12-"
+        # TODO; not measured on Julia 1.11 since a constant argument merged by Base's
+        # unalias phi has a zero-filled shadow.
         @test_broken autodiff(Reverse, bc0_test_function, Active, Const(x))
+    else
+        @test autodiff(Reverse, bc0_test_function, Active, Const(x)) == ((nothing,),)
     end
 
     x = rand(Float32, 2, 3)

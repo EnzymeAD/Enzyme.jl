@@ -566,6 +566,9 @@ end
 
 const TypesNotToDisect = Set{Type}([BigFloat])
 
+# The Julia type of the values a load returns, set by `type_slot_field_loads!`.
+const SLOT_FIELD_TYPE = "enzymejl_slot_field_type"
+
 function abs_typeof(
         @nospecialize(arg::LLVM.Value), enzyme_ctx::Union{EnzymeContext, Nothing},
         partial::Bool = false, seenphis = Set{LLVM.PHIInst}()
@@ -826,6 +829,14 @@ function abs_typeof(
     end
 
     if isa(arg, LLVM.LoadInst)
+        # A pointer reloaded from a stack slot whose writes all store values of
+        # one Julia type (`type_slot_field_loads!`).
+        md = metadata(arg)
+        if haskey(md, SLOT_FIELD_TYPE)
+            ops = operands(md[SLOT_FIELD_TYPE])
+            T = Base.unsafe_pointer_to_objref(reinterpret(Ptr{Cvoid}, parse(UInt, convert(String, ops[1]::MDString))))
+            return (true, T, GPUCompiler.ArgumentCC(parse(Int, convert(String, ops[2]::MDString))))
+        end
         ce, _ = get_base_and_offset(operands(arg)[1]; offsetAllowed = false, inttoptr = true)
         if isa(ce, GlobalVariable)
             found = julia_value_of_slot(ce, enzyme_ctx)

@@ -1794,6 +1794,115 @@ function first_non_phi(bb::LLVM.BasicBlock)::LLVM.Instruction
     error("block without a terminator")
 end
 
+# Julia 1.11+ can keep both an Array phi and a separate phi of the raw data
+# pointers stored in those Arrays. Recreate the latter from the former when each
+# Array has exactly one write to its data field. This lets Enzyme use the Array's
+# shadow for the data pointer as well.
+function array_data_store(alloc::LLVM.CallInst, array_phi::LLVM.PHIInst)
+    called_function_name(alloc) in GC_OBJECT_ALLOCATORS || return nothing
+    data = nothing
+    todo = LLVM.Value[alloc]
+    seen = Set{LLVM.Value}()
+    while !isempty(todo)
+        cur = pop!(todo)
+        cur in seen && continue
+        push!(seen, cur)
+        for use in LLVM.uses(cur)
+            user = LLVM.user(use)
+            if isa(user, LLVM.BitCastInst) || isa(user, LLVM.AddrSpaceCastInst) ||
+                    isa(user, LLVM.GetElementPtrInst)
+                push!(todo, user)
+            elseif isa(user, LLVM.StoreInst)
+                operands(user)[1] == cur && return nothing
+                base, off = get_base_and_offset(operands(user)[2])
+                base == alloc || return nothing
+                if off == 0
+                    data === nothing || return nothing
+                    data = operands(user)[1]
+                end
+            elseif isa(user, LLVM.CallInst)
+                if readonly_noreturn_use(user, cur)
+                    continue
+                end
+                memoff = sizeof(Ptr{Cvoid})
+                if writes_beside_memory_field(user, cur, alloc, memoff)
+                    _, off = get_base_and_offset(cur)
+                    off >= memoff && continue
+                end
+                return nothing
+            elseif user == array_phi || isa(user, LLVM.LoadInst)
+                continue
+            else
+                return nothing
+            end
+        end
+    end
+    return data
+end
+
+function matching_array_data_phi(raw_phi::LLVM.PHIInst, phis::Vector{LLVM.PHIInst})
+    raw_incoming = LLVM.incoming(raw_phi)
+    for array_phi in phis
+        ty = value_type(array_phi)
+        (isa(ty, LLVM.PointerType) && LLVM.addrspace(ty) == Tracked) || continue
+        array_incoming = LLVM.incoming(array_phi)
+        length(raw_incoming) == length(array_incoming) || continue
+        matched = true
+        for ((raw, raw_bb), (array, array_bb)) in zip(raw_incoming, array_incoming)
+            if raw_bb != array_bb
+                matched = false
+                break
+            end
+            alloc, off = get_base_and_offset(array; offsetAllowed = false)
+            if off != 0 || !(isa(alloc, LLVM.CallInst)) ||
+                    array_data_store(alloc, array_phi) != raw
+                matched = false
+                break
+            end
+        end
+        matched && return array_phi
+    end
+    return nothing
+end
+
+function fold_array_data_phis!(mod::LLVM.Module)
+    @static if VERSION < v"1.11-"
+        return nothing
+    else
+        for fn in functions(mod), bb in blocks(fn)
+            phis = LLVM.PHIInst[]
+            for inst in instructions(bb)
+                isa(inst, LLVM.PHIInst) || break
+                push!(phis, inst)
+            end
+            for raw_phi in phis
+                ty = value_type(raw_phi)
+                (isa(ty, LLVM.PointerType) && LLVM.addrspace(ty) == 0) || continue
+                # A load in this block cannot replace a phi incoming from a
+                # different predecessor, since it would not dominate that edge.
+                has_phi_user = false
+                for use in LLVM.uses(raw_phi)
+                    if isa(LLVM.user(use), LLVM.PHIInst)
+                        has_phi_user = true
+                        break
+                    end
+                end
+                has_phi_user && continue
+                array_phi = matching_array_data_phi(raw_phi, phis)
+                array_phi === nothing && continue
+                B = IRBuilder()
+                position!(B, first_non_phi(bb))
+                ptrty = LLVM.PointerType(LLVM.Int8Type())
+                data_field = pointercast!(B, array_phi, LLVM.PointerType(ptrty, 11))
+                data = load!(B, ty, data_field)
+                replace_uses!(raw_phi, data)
+                LLVM.API.LLVMInstructionEraseFromParent(raw_phi)
+            end
+        end
+        return nothing
+    end
+end
+
 function nodecayed_phis!(mod::LLVM.Module)
     # Simple handler to fix addrspace 11
     #complex handler for addrspace 13, which itself comes from a load of an

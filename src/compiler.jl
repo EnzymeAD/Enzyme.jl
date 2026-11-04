@@ -3119,7 +3119,7 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
         if ZI != C_NULL
             unsafe_store!(
                 ZI,
-                zero_allocation(B, TT, LLVMType, obj, AlignedSize, Size, false),
+                zero_allocation(B, TT, LLVMType, obj, AlignedSize, Size, false, true),
             ) #=ZeroAll=#
         end
         AS = Tracked
@@ -3461,6 +3461,9 @@ const DumpPreEnzyme = Ref(false)
 const DumpPostEnzyme = Ref(false)
 const DumpPostWrap = Ref(false)
 
+include("compiler/constant_fields.jl")
+include("compiler/slot_field_types.jl")
+
 function enzyme!(
     job::CompilerJob,
     interp,
@@ -3601,6 +3604,11 @@ function enzyme!(
                 throw(AssertionError(msg))
     end
     @assert length(args_typeInfo) == length(collect(parameters(primalf)))
+
+    if !runtimeActivity
+        type_slot_field_loads!(mod, enzyme_ctx)
+        mark_constant_fields!(mod, primalf, args_activity)
+    end
 
     # The return of createprimal and gradient has this ABI
     #  It returns a struct containing the following values
@@ -5393,6 +5401,9 @@ end
 # like `INACTIVE_GUARANTEED_CONST` and stays.
 const INACTIVE_GUARANTEED_CONST = "guaranteed_const"
 const INACTIVE_FROM_ACTIVITY = "activity_derived"
+# A load of a field that only holds constant data (`mark_constant_fields!`). Like
+# `INACTIVE_FROM_ACTIVITY`, it is derived from the current activities.
+const INACTIVE_CONSTANT_FIELD = "constant_field"
 
 inactive_md(reason::String) = MDNode(LLVM.Metadata[MDString(reason)])
 
@@ -5408,9 +5419,76 @@ function strip_activity_inactive_md!(mod::LLVM.Module)
     # allocation that replaces a stack slot, see `enzyme_fromstack`).
     for f in functions(mod), bb in blocks(f), inst in instructions(bb)
         md = metadata(inst)
+        haskey(md, CONSTANT_FIELD_STORE) && delete!(md, CONSTANT_FIELD_STORE)
         haskey(md, "enzyme_inactive") || continue
-        if inactive_reason(md["enzyme_inactive"]) == INACTIVE_FROM_ACTIVITY
+        if inactive_reason(md["enzyme_inactive"]) in (INACTIVE_FROM_ACTIVITY, INACTIVE_CONSTANT_FIELD)
             delete!(md, "enzyme_inactive")
+        end
+    end
+    return
+end
+
+# Enzyme tags the loads and stores of its caches with `!invariant.group`, which
+# lets LLVM assume that every access to the same cache slot sees the same value.
+# The cache that records which branch a loop iteration took breaks that
+# assumption: the iteration's first block stores a default into the slot and
+# the branch taken overwrites it, all under one tag. That is harmless while LLVM
+# cannot tell that two accesses hit the same slot.
+#
+# An error inserted by `emit_error` into a block that would otherwise continue
+# (for example the runtime-activity error on the constant edge of a phi) makes
+# the rest of that path unreachable. Post-optimization can then prove that a
+# loop runs exactly once, so every slot index is the constant 0. GVN forwards
+# the default to the reverse pass, which takes the wrong branch and silently
+# drops the derivative of the path that does run.
+#
+# So the tags are removed from every function that contains such an error, and
+# from every function that calls one of those (inlining moves the error into
+# the caller). Removing `!invariant.group` only forgoes optimizations.
+function calls_any(f::LLVM.Function, names::Set{String})::Bool
+    for bb in blocks(f), inst in instructions(bb)
+        isa(inst, LLVM.CallInst) || continue
+        callee = called_operand(inst)
+        if isa(callee, LLVM.Function) && LLVM.name(callee) in names
+            return true
+        end
+    end
+    return false
+end
+
+function has_inserted_error(f::LLVM.Function)::Bool
+    for bb in blocks(f), inst in instructions(bb)
+        is_inserted_error(inst) && return true
+    end
+    return false
+end
+
+function strip_invariant_group_after_inserted_errors!(mod::LLVM.Module)
+    tainted = Set{String}()
+    for f in functions(mod)
+        if has_inserted_error(f)
+            push!(tainted, LLVM.name(f))
+        end
+    end
+    isempty(tainted) && return
+    grew = true
+    while grew
+        grew = false
+        for f in functions(mod)
+            LLVM.name(f) in tainted && continue
+            if calls_any(f, tainted)
+                push!(tainted, LLVM.name(f))
+                grew = true
+            end
+        end
+    end
+    for f in functions(mod)
+        LLVM.name(f) in tainted || continue
+        for bb in blocks(f), inst in instructions(bb)
+            md = metadata(inst)
+            if haskey(md, LLVM.MD_invariant_group)
+                delete!(md, LLVM.MD_invariant_group)
+            end
         end
     end
     return
@@ -7466,6 +7544,15 @@ end
     if params.run_enzyme
         # Generate the adjoint
         erase_memcpy_from_undef!(mod)
+        # Before Julia 1.12 an `sret` buffer holds its GC-tracked pointers inline, and a
+        # callee returning (a copy of) an argument fills it with one `memcpy`. Enzyme
+        # copies the pointers of a constant source into the shadow unchanged, so the
+        # shadow of e.g. `unalias(dest, view(c, i))` pointed into the `Const` array `c`.
+        # Field-wise stores reach the mixed-activity handler like any other store of a
+        # constant pointer. Julia 1.12+ passes those pointers in `returnRoots` instead.
+        @static if VERSION < v"1.12"
+            memcpy_sret_split!(mod)
+        end
         memcpy_alloca_to_loadstore(mod, job.world, enzyme_ctx)
         force_recompute!(mod)
         API.EnzymeDetectReadonlyOrThrow(mod)
@@ -7497,6 +7584,7 @@ end
             link_split_existing!(mod, otherMod)
         end
         empty!(enzyme_ctx.modules_to_link)
+        strip_invariant_group_after_inserted_errors!(mod)
         toremove = String[]
         # Inline the wrapper
         for f in functions(mod)
