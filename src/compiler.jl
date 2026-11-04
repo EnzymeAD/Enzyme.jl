@@ -2912,7 +2912,7 @@ function zero_allocation(
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_prjlvalue_UT = LLVM.PointerType(T_jlvalue)
 
-    name = "zeroType." * string(jlType)
+    name = "zeroType." * string(objectid(jlType), base = 16)
     if atomic
 	name = name * ".atomic"
     end
