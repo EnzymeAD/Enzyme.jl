@@ -1120,3 +1120,87 @@ end
         @test LLVM.name(F) == "fresh"
     end
 end
+
+@testset "nodecayed_phis! snapshots stack alloca feeding addrspace(11) phi" begin
+    LLVM.Context() do ctx
+        mod = parse(
+            LLVM.Module, """
+            source_filename = "start"
+            target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+            target triple = "x86_64-linux-gnu"
+
+            declare void @fill_sret([16 x i8]* nocapture "enzymejl_sret_union_bytes"="16")
+
+            define i64 @sret_union_phi(i1 %cond, i1 %is_box, {} addrspace(10)* %boxed, {} addrspace(10)* %other) #0 {
+            top:
+              %sret_box = alloca [16 x i8], align 8
+              br i1 %cond, label %a, label %b
+
+            a:
+              call void @fill_sret([16 x i8]* nocapture "enzymejl_sret_union_bytes"="16" %sret_box)
+              %cast_box = addrspacecast [16 x i8]* %sret_box to [16 x i8] addrspace(11)*
+              %cast_obj = addrspacecast {} addrspace(10)* %boxed to [16 x i8] addrspace(11)*
+              %sel = select i1 %is_box, [16 x i8] addrspace(11)* %cast_obj, [16 x i8] addrspace(11)* %cast_box
+              br label %merge
+
+            b:
+              %cast_other = addrspacecast {} addrspace(10)* %other to [16 x i8] addrspace(11)*
+              br label %merge
+
+            merge:
+              %phi = phi [16 x i8] addrspace(11)* [ %sel, %a ], [ %cast_other, %b ]
+              %ptr = bitcast [16 x i8] addrspace(11)* %phi to i64 addrspace(11)*
+              %val = load i64, i64 addrspace(11)* %ptr, align 8
+              ret i64 %val
+            }
+
+            define void @sret_union_phi_mutated(i1 %cond, {} addrspace(10)* %other) #0 {
+            top:
+              %sret_box = alloca [16 x i8], align 8
+              br i1 %cond, label %a, label %b
+
+            a:
+              %cast_box = addrspacecast [16 x i8]* %sret_box to [16 x i8] addrspace(11)*
+              br label %merge
+
+            b:
+              %cast_other = addrspacecast {} addrspace(10)* %other to [16 x i8] addrspace(11)*
+              br label %merge
+
+            merge:
+              %phi = phi [16 x i8] addrspace(11)* [ %cast_box, %a ], [ %cast_other, %b ]
+              %ptr = bitcast [16 x i8] addrspace(11)* %phi to i64 addrspace(11)*
+              store i64 1, i64 addrspace(11)* %ptr, align 8
+              ret void
+            }
+
+            attributes #0 = { "enzymejl_world"="1" }
+            """
+        )
+
+        @test @filecheck begin
+            @check_label "@sret_union_phi"
+            @check "@julia.gc_alloc_obj"
+            @check_same "!enzymejl_untyped_box"
+            @check "@llvm.memcpy"
+            @check "merge:"
+            @check_not "nodecayedoff"
+            @check "%nodecayed.phi = phi"
+            @check_same "addrspace(10)"
+            Enzyme.Compiler.nodecayed_phis!(mod)
+            string(mod)
+        end
+
+        @test LLVM.verify(mod) === nothing
+
+        # Never forge an `addrspace(0) -> addrspace(10)` cast on a stack alloca.
+        for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+            if isa(inst, LLVM.AddrSpaceCastInst)
+                @test !(
+                    LLVM.addrspace(value_type(operands(inst)[1])) == 0 &&
+                        LLVM.addrspace(value_type(inst)) == 10
+                )
+            end
+        end
+    end
+end

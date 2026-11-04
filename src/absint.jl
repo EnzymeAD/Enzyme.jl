@@ -625,6 +625,9 @@ function abs_typeof(
         if nm == "julia.gc_alloc_obj" ||
                 nm == "jl_gc_alloc_typed" ||
                 nm == "ijl_gc_alloc_typed"
+            if haskey(metadata(arg), "enzymejl_untyped_box")
+                return (false, nothing, nothing)
+            end
             vals = absint(operands(arg)[3], enzyme_ctx, partial, false, #=typetag=# true)
 	    @assert !(vals[2] isa Core.Binding)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.BITS_REF : nothing)

@@ -170,3 +170,73 @@ unrooted_phi_loss(x, n) = unrooted_phi_sum(UnrootedPhiArg(x, true), n)
     @test autodiff(Forward, unrooted_phi_loss, Duplicated(2.0, 1.0), Const(0))[1] == 2.0
     @test_throws Enzyme.Compiler.EnzymeRuntimeExceptionMI autodiff(Reverse, unrooted_phi_loss, Active, Active(2.0), Const(1))
 end
+
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3924
+# Julia 1.10's `sret_union` calling convention uses a stack `[N x i8]` alloca and
+# selects between `addrspacecast` of that alloca and a boxed `addrspace(10)` union
+# return, feeding an `addrspace(11)` phi in `_foldl_impl`. `nodecayed_phis!` must
+# snapshot the read-only stack alloca into a real GC object rather than casting
+# the raw stack pointer to `addrspace(10)` (which corrupts GC marking when cached
+# onto a split-mode tape).
+struct SretUnionElem3924
+    val::Int
+end
+struct SretUnionIter3924
+    n::Int
+end
+@noinline Base.iterate(it::SretUnionIter3924, state::Int = 1)::Union{Nothing, Tuple{SretUnionElem3924, Int}} =
+    state <= it.n ? (SretUnionElem3924(state), state + 1) : nothing
+
+@noinline sret_map_elem_3924(c::Float64, b::SretUnionElem3924) = c^b.val
+@noinline sret_inner_sum_3924(it::SretUnionIter3924, c::Float64) = sum(sret_map_elem_3924(c, b) for b in it)
+
+@noinline function sret_mul_into_gc_3924!(x::Vector{Float64}, s::Float64)
+    x[1] *= s
+    GC.gc(true)
+    return nothing
+end
+
+function sret_outer_3924!(x::Vector{Float64}, it::SretUnionIter3924, c::Float64)
+    s = sret_inner_sum_3924(it, c)
+    sret_mul_into_gc_3924!(x, s)
+    return nothing
+end
+
+struct SretUnionActiveElem3924
+    w::Float64
+    idx::Int
+end
+struct SretUnionActiveIter3924
+    scale::Float64
+    n::Int
+end
+@noinline Base.iterate(it::SretUnionActiveIter3924, state::Int = 1)::Union{Nothing, Tuple{SretUnionActiveElem3924, Int}} =
+    state <= it.n ? (SretUnionActiveElem3924(it.scale * state^2, state), state + 1) : nothing
+
+@noinline sret_use_active_3924(c::Float64, elem::SretUnionActiveElem3924) = (c^2) * (elem.w^3)
+@noinline sret_active_sum_3924(scale::Float64, c::Float64, n::Int) =
+    sum(sret_use_active_3924(c, e) for e in SretUnionActiveIter3924(scale, n))
+
+function sret_outer_active_3924!(out::Vector{Float64}, scale::Float64, c::Float64, n::Int)
+    s = sret_active_sum_3924(scale, c, n)
+    sret_mul_into_gc_3924!(out, s)
+    return nothing
+end
+
+@testset "sret_union stack alloca feeding addrspace(11) phi (#3924)" begin
+    x = [3.0]
+    dx = [1.0]
+    c = 2.0
+    res = autodiff(Reverse, sret_outer_3924!, Const, Duplicated(x, dx), Const(SretUnionIter3924(8)), Active(c))
+    @test x[1] ≈ 3.0 * sum(c^k for k in 1:8)
+    @test res[1][3] ≈ 3.0 * sum(k * c^(k - 1) for k in 1:8)
+
+    out = [2.0]
+    dout = [1.0]
+    sc = 1.5
+    c2 = 2.5
+    res2 = autodiff(Reverse, sret_outer_active_3924!, Const, Duplicated(out, dout), Active(sc), Active(c2), Const(10))
+    @test out[1] ≈ 2.0 * sum((c2^2) * ((sc * k^2)^3) for k in 1:10)
+    @test res2[1][2] ≈ 2.0 * sum((c2^2) * 3 * (sc * k^2)^2 * k^2 for k in 1:10)
+    @test res2[1][3] ≈ 2.0 * sum(2 * c2 * ((sc * k^2)^3) for k in 1:10)
+end

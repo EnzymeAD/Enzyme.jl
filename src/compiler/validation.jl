@@ -1822,6 +1822,7 @@ function rewrite_union_returns_as_ref(enzymefn::LLVM.Function, off::Int64, world
             end
 
             if nm == "julia.gc_alloc_obj"
+                haskey(metadata(cur), "enzymejl_untyped_box") && continue
                 legal, Ty, byref = abs_typeof(cur, enzyme_ctx)
                 @assert legal
                 if !guaranteed_nonactive(Ty, world)
