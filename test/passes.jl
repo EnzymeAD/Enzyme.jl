@@ -1172,3 +1172,73 @@ end
     @test dres_b2[1] ≈ [1.0, -0.5]
     @test dres_b2[2] ≈ [-2.0, 1.0]
 end
+
+@static if VERSION >= v"1.11-"
+    @testset "nodecayed_phis! inline vs heap GenericMemory @julia.gc_loaded (#3904)" begin
+        int_ty = "i$(8 * sizeof(Int))"
+        ptr_sz = sizeof(Int)
+        data_in_off = 2 * sizeof(Int)
+        LLVM.Context() do ctx
+            mod = parse(
+                LLVM.Module, """
+                source_filename = "start"
+                target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+                target triple = "x86_64-linux-gnu"
+
+                declare nonnull {}* @julia.pointer_from_objref({} addrspace(11)*) #0
+                declare {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)*, {} addrspace(10)**) #0
+
+                define double @inline_vs_heap(i1 %cond, {} addrspace(10)* %mem_in, {} addrspace(10)* %mem_hp) #1 {
+                top:
+                  br i1 %cond, label %inline_bb, label %heap_bb
+
+                inline_bb:
+                  %ac1 = addrspacecast {} addrspace(10)* %mem_in to {} addrspace(11)*
+                  %pfo = call nonnull {}* @julia.pointer_from_objref({} addrspace(11)* %ac1)
+                  %pfo_i8 = bitcast {}* %pfo to i8*
+                  %data_in_i8 = getelementptr inbounds i8, i8* %pfo_i8, $int_ty $data_in_off
+                  %data_in = bitcast i8* %data_in_i8 to {} addrspace(10)**
+                  %gc_in = call {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* %mem_in, {} addrspace(10)** %data_in)
+                  br label %merge
+
+                heap_bb:
+                  %ac2 = addrspacecast {} addrspace(10)* %mem_hp to {} addrspace(11)*
+                  %ac2_i8 = bitcast {} addrspace(11)* %ac2 to i8 addrspace(11)*
+                  %slot_i8 = getelementptr inbounds i8, i8 addrspace(11)* %ac2_i8, $int_ty $ptr_sz
+                  %slot = bitcast i8 addrspace(11)* %slot_i8 to {} addrspace(10)** addrspace(11)*
+                  %data_hp = load {} addrspace(10)**, {} addrspace(10)** addrspace(11)* %slot, align $ptr_sz
+                  %gc_hp = call {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* %mem_hp, {} addrspace(10)** %data_hp)
+                  br label %merge
+
+                merge:
+                  %p = phi {} addrspace(10)* addrspace(13)* [ %gc_in, %inline_bb ], [ %gc_hp, %heap_bb ]
+                  %pf64 = bitcast {} addrspace(10)* addrspace(13)* %p to double addrspace(13)*
+                  %v = load double, double addrspace(13)* %pf64, align 8
+                  ret double %v
+                }
+
+                attributes #0 = { nounwind readnone willreturn }
+                attributes #1 = { "enzymejl_world"="1" }
+                """
+            )
+            Enzyme.Compiler.nodecayed_phis!(mod)
+            @test LLVM.verify(mod) === nothing
+            @test @filecheck begin
+                @check_label "inline_bb:"
+                @check "ptrtoint"
+                @check_same "!enzyme_type"
+                @check "ptrtoint"
+                @check_same "!enzyme_type"
+                @check "sub nuw $int_ty"
+                @check_label "merge:"
+                @check "%nodecayed.p = phi"
+                @check "%nodecayedoff.p = phi $int_ty"
+                @check "@julia.gc_loaded("
+                @check_same "%nodecayed.p,"
+                @check "getelementptr i8,"
+                @check_same "%nodecayedoff.p"
+                string(mod)
+            end
+        end
+    end
+end
