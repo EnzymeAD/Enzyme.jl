@@ -58,10 +58,11 @@ function fix_ptr_lookup(name)
     return nothing
 end
 
-function define_absolute_symbol(jd, name)
+# Define `name` in the JIT as the address of the symbol with that name in the process.
+function define_absolute_symbol(jd, lljit, name::String)
     ptr = LLVM.find_symbol(name)
     if ptr !== C_NULL
-        define!(jd, absolute_symbols(name => ptr))
+        define!(jd, absolute_symbols(mangle(lljit, name) => ptr))
         return true
     end
     return false
@@ -112,7 +113,7 @@ function __init__()
 
     if Sys.iswindows() && Int === Int64
         # TODO can we check isGNU?
-        define_absolute_symbol(jd_main, mangle(lljit, "___chkstk_ms"))
+        define_absolute_symbol(jd_main, lljit, "___chkstk_ms")
     end
 
     # The well-known Julia values, defined in one go.
