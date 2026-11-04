@@ -1068,7 +1068,7 @@ function enzyme_custom_setup_ret(
                 needsShadowP,
                 cmode,
             )
-        if mode == API.DEM_ReverseModeGradient
+        if mode == API.DEM_ReverseModeGradient && API.has_augmented_primal_return_used()
             # The rule's config and return activity must be the ones the
             # augmented pass chose, as they select the rule method and the
             # tape layout. This pass's own analysis can differ from it.

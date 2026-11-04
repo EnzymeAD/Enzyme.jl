@@ -835,6 +835,14 @@ EnzymeGradientUtilsGetAugmentedPrimalReturnUsed(gutils, orig) =
     orig,
 )
 
+# `EnzymeGradientUtilsGetAugmentedPrimalReturnUsed` first ships in Enzyme_jll
+# 0.0.303, whose libEnzyme segfaults on Julia 1.12 (EnzymeAD/Enzyme.jl#3824), so
+# dogfood still allows an older libEnzyme without it.
+has_augmented_primal_return_used() =
+    Libdl.dlsym(
+    Libdl.dlopen(libEnzyme), :EnzymeGradientUtilsGetAugmentedPrimalReturnUsed; throw_error = false
+) !== nothing
+
 EnzymeGradientUtilsSubTransferHelper(
     gutils,
     mode,

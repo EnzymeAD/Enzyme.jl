@@ -614,7 +614,13 @@ end
 split_scale_loss(v) = sum(Base.inferencebarrier(s -> split_scale(s))(SplitModeArg(2.0, v)))
 
 @testset "Custom rule in split mode through a dynamic call" begin
-    @test Enzyme.gradient(Reverse, split_scale_loss, [1.0, 2.0])[1] ≈ [2.0, 2.0]
+    # The reverse pass needs libEnzyme's record of the augmented pass's choice
+    # (EnzymeAD/Enzyme#3442), which an Enzyme_jll older than 0.0.303 lacks
+    if Enzyme.API.has_augmented_primal_return_used()
+        @test Enzyme.gradient(Reverse, split_scale_loss, [1.0, 2.0])[1] ≈ [2.0, 2.0]
+    else
+        @test_broken Enzyme.gradient(Reverse, split_scale_loss, [1.0, 2.0])[1] ≈ [2.0, 2.0]
+    end
 end
 
 # A hand-written rule whose primal only reads inline fields of a struct argument
