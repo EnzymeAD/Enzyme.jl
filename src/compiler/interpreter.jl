@@ -311,6 +311,45 @@ end
 
 Core.Compiler.method_table(@nospecialize(interp::EnzymeInterpreter)) = interp.method_table
 
+@static if VERSION < v"1.11-"
+    function Core.Compiler.edge_matches_sv(
+            interp::EnzymeInterpreter,
+            frame::Core.Compiler.AbsIntState,
+            method::Method,
+            @nospecialize(sig),
+            sparams::Core.SimpleVector,
+            hardlimit::Bool,
+            sv::Core.Compiler.AbsIntState,
+        )
+        matches = @invoke Core.Compiler.edge_matches_sv(
+            interp::AbstractInterpreter,
+            frame::Core.Compiler.AbsIntState,
+            method::Method,
+            sig::Any,
+            sparams::Core.SimpleVector,
+            hardlimit::Bool,
+            sv::Core.Compiler.AbsIntState,
+        )
+        if matches && !hardlimit && !isdefined(method, :recursion_relation)
+            previous = Core.Compiler.frame_instance(frame).specTypes
+            length_limit = length(Base.unwrap_unionall(previous).parameters)
+            # Mutual recursion is normally limited against the unspecialized
+            # method signature. This loses unchanged keyword argument types in
+            # sum(sum, arrays), even as the array element type becomes simpler.
+            # Keep an edge whose signature is already bounded by its earlier
+            # occurrence. The same limiter still rejects new parameter values
+            # and increasing type depth; exact cycles use the compiler's usual
+            # fixed-point inference.
+            bounded = Core.Compiler.limit_type_size(
+                sig, previous, previous,
+                InferenceParams(interp).tuple_complexity_limit_depth, length_limit,
+            )
+            bounded === sig && return false
+        end
+        return matches
+    end
+end
+
 # Set in the task-local storage of a task while an `EnzymeInterpreter` infers on it. A
 # generated `thunk` inferred there compiles its derivative in place instead of on its
 # first call (see `Compiler.compiles_lazily`).
