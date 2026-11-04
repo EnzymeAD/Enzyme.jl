@@ -304,6 +304,87 @@ function push_box_for_argument!(
     return al0
 end
 
+# Whether the callee never reads through pointer parameter `i` (1-based) of
+# `orig`, as stated by `readnone` on the called function or the call site.
+# Enzyme infers it from the body of a function whose rule is declared to
+# access no more than the body does (`enzyme_custom_full_attributes`).
+function is_readnone_param(orig::LLVM.CallInst, i::Int)::Bool
+    rn = kind(EnumAttribute("readnone"))
+    cv = LLVM.called_operand(orig)
+    if cv isa LLVM.Function
+        for attr in collect(parameter_attributes(cv, i))
+            if attr isa LLVM.EnumAttribute && kind(attr) == rn
+                return true
+            end
+        end
+    end
+    idx = LLVM.API.LLVMAttributeIndex(i)
+    count = LLVM.API.LLVMGetCallSiteAttributeCount(orig, idx)
+    if count > 0
+        attrs = Vector{LLVM.API.LLVMAttributeRef}(undef, count)
+        LLVM.API.LLVMGetCallSiteAttributes(orig, idx, attrs)
+        for a in attrs
+            attr = LLVM.Attribute(a)
+            if attr isa LLVM.EnumAttribute && kind(attr) == rn
+                return true
+            end
+        end
+    end
+    return false
+end
+
+# A placeholder for data the callee never reads: zero for inline data and
+# null for every GC-tracked slot (as in a fresh roots array), so the value
+# is safe to root and a rule that reads a tracked field anyway faults on
+# null rather than on stale memory.
+function unread_placeholder(@nospecialize(ty::LLVM.LLVMType))::LLVM.Value
+    return LLVM.null(ty)
+end
+
+function has_inline_floats(@nospecialize(ty::LLVM.LLVMType))::Bool
+    if ty isa LLVM.FloatingPointType
+        return true
+    elseif ty isa LLVM.VectorType
+        return eltype(ty) isa LLVM.FloatingPointType
+    elseif ty isa LLVM.ArrayType
+        return length(ty) > 0 && has_inline_floats(eltype(ty))
+    elseif ty isa LLVM.StructType
+        for subty in LLVM.elements(ty)
+            if has_inline_floats(subty)
+                return true
+            end
+        end
+        return false
+    else
+        return false
+    end
+end
+
+function zero_inline_floats!(B::LLVM.IRBuilder, val::LLVM.Value)::LLVM.Value
+    ty = value_type(val)
+    has_inline_floats(ty) || return val
+    if ty isa LLVM.FloatingPointType || ty isa LLVM.VectorType
+        return LLVM.null(ty)
+    elseif ty isa LLVM.ArrayType
+        cur = val
+        for i in 1:length(ty)
+            sub = zero_inline_floats!(B, extract_value!(B, cur, i - 1))
+            cur = insert_value!(B, cur, sub, i - 1)
+        end
+        return cur
+    elseif ty isa LLVM.StructType
+        cur = val
+        for (i, subty) in enumerate(LLVM.elements(ty))
+            if has_inline_floats(subty)
+                sub = zero_inline_floats!(B, extract_value!(B, cur, i - 1))
+                cur = insert_value!(B, cur, sub, i - 1)
+            end
+        end
+        return cur
+    end
+    return val
+end
+
 function enzyme_custom_setup_args(
     @nospecialize(B::Union{Nothing, LLVM.IRBuilder}),
     orig::LLVM.CallInst,
@@ -432,7 +513,7 @@ function enzyme_custom_setup_args(
                 end
             end
 
-            if roots_activep != activep && activep == API.DFT_CONSTANT && !any_active
+            if roots_activep != activep && activep == API.DFT_CONSTANT
                 if roots_activep != API.DFT_DUP_ARG
                     if B !== nothing
                         bt = GPUCompiler.backtrace(orig)
@@ -448,7 +529,9 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has constant non-roo
                     end
                 end
                 activep = roots_activep
-                any_active_data = false
+                if !any_active
+                    any_active_data = false
+                end
             end
 
             if roots_activep != activep && !kwarg_inactive
@@ -524,26 +607,46 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
         # val will contain nothing
         ogval = val
         roots_cache = nothing
+        readnone_data = false
+        readnone_roots = false
         if arg.cc == GPUCompiler.BITS_REF
             @assert value_type(val) == LLVM.PointerType(arty, Derived)
+
+            # The callee may never read the argument, or its roots array (e.g.
+            # inferred from the body of a function with an easy rule, whose
+            # rule accesses no more than the body). The caller is then free to
+            # drop its stores into that memory, so it must not be read here
+            # either: the rule is handed a placeholder instead. A rule that
+            # reads it anyway sees zeros and null references rather than
+            # whatever the memory happens to hold.
+            readnone_data = is_readnone_param(orig, arg.codegen.i)
+            readnone_roots = roots_op !== nothing && is_readnone_param(orig, arg.codegen.i + 1)
+            if readnone_roots && B !== nothing
+                roots_val = create_rooted_array(alloctx, roots, "roots_op_unread_")
+            end
 
             if uncacheable[arg.codegen.i] != 0
                 # If is overwritten
                 if !reverse
                     if B !== nothing
-                        val = load!(B, arty, val, "rules_load_ref_unc")
-                        metadata(val)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                        val = if readnone_data
+                            unread_placeholder(arty)
+                        else
+                            ld = load!(B, arty, val, "rules_load_ref_unc")
+                            metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                            ld
+                        end
  
                         # Since we will be caching this value (and thus GC pointers need to be valid),
                         # if the roots aren't here, we need to recombine before we stash on tape.
                         # However, as an optimization, if the roots aren't overwritten we don't need to actually
                         # recombine, we can get away with filling with any valid gc pointer
                         if roots_op != nothing
-                            if uncacheable[arg.codegen.i + 1] != 0
+                            if uncacheable[arg.codegen.i + 1] != 0 && !readnone_roots
                                 # Roots are overwritten, recombine with root
                                 val = recombine_value!(B, val, roots_val; must_cache = true)
                             else
-                                # Roots are not overwritten, put placeholder valid GC value
+                                # Roots are not overwritten (or never read), put placeholder valid GC value
                                 val = nullify_rooted_values!(B, val)
                             end
                         end
@@ -558,7 +661,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                         @assert value_type(val) == arty
                         push!(byval_tapes, val)
 
-                        if roots_val !== nothing
+                        if roots_val !== nothing && !readnone_roots
                             if uncacheable[arg.codegen.i + 1] != 0
                                 # The roots were overwritten, so the forward pass recombined
                                 # them into the cached value. Rebuild the roots array from
@@ -583,7 +686,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                 # As a result, we may need to take care of rooting before performing lookups
                 #
                 # Let's also check if we need to cache the rooting, storing it if so.
-                if roots_op !== nothing
+                if roots_op !== nothing && !readnone_roots
                     if uncacheable[arg.codegen.i + 1] != 0
                         # Roots are is overwritten
 
@@ -616,7 +719,11 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                 # even if val itself is not
 
                 val = nothing
-                if reverse && B !== nothing
+                if readnone_data
+                    if B !== nothing
+                        val = unread_placeholder(arty)
+                    end
+                elseif reverse && B !== nothing
                     ogval = lookup_value(gutils, ogval, B)
                 end
             end
@@ -725,16 +832,17 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                 ival = if is_constant_value(gutils, op)
                     @assert orig_activep != activep
                     @assert orig_activep == API.DFT_CONSTANT
-                    if val == nothing
-                        ld = load!(B, iarty, ogval, "rules_ival_load")
-                        metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
-			if roots_op !== nothing
-                            ld = nullify_rooted_values!(B, ld)
-                        end
-                        ld
+                    ld = if val == nothing
+                        ld0 = load!(B, arty, ogval, "rules_ival_load")
+                        metadata(ld0)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                        ld0
                     else
                         val
                     end
+                    if roots_op !== nothing
+                        ld = nullify_rooted_values!(B, ld)
+                    end
+                    zero_inline_floats!(B, ld)
                 else
                     invert_pointer(gutils, op, B)
                 end
@@ -754,7 +862,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                     ival = lookup_value(gutils, ival, B)
                 end
                 if roots_op !== nothing
-                    roots_ival = if is_constant_value(gutils, roots_op)
+                    roots_ival = if is_constant_value(gutils, roots_op) || readnone_roots
                         if width == 1
                             roots_val
                         else
@@ -837,21 +945,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                 if arg.cc == GPUCompiler.BITS_REF && !mixed
                     @assert n_shadow_roots == (width + 1) * n_primal_roots
 
-                    ptr_val = if !is_constant_value(gutils, op)
-                        @assert ival !== nothing
-                         ival
-                    else
-                        if val == nothing
-                            ld = load!(B, iarty, ogval, "rules_bitsref_nonmixed")
-                            metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
-			    if roots_op !== nothing
-                                ld = nullify_rooted_values!(B, ld)
-                            end
-                            ld
-                        else
-                            val
-                        end
-                    end
+                    ptr_val = ival
                     @assert ptr_val !== nothing
                     ival = UndefValue(siarty)
                     @assert ival !== nothing
@@ -870,7 +964,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                                     ld0 = load!(B, iarty, ev, "rules_shadow_load")
                                     metadata(ld0)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
                                     if roots_op != nothing
-                                        if uncacheable[arg.codegen.i + 1] != 0
+                                        if uncacheable[arg.codegen.i + 1] != 0 && !readnone_roots
                                             ld0 = recombine_value!(B, ld0, local_shadow_root; must_cache = true)
                                         else
                                             ld0 = nullify_rooted_values!(B, ld0)
@@ -891,7 +985,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                                 # As above, the shadow by-ref memory has no valid
                                 # inline-rooted pointer fields.
                                 if roots_op != nothing
-                                    if uncacheable[arg.codegen.i + 1] != 0
+                                    if uncacheable[arg.codegen.i + 1] != 0 && !readnone_roots
                                         ld0 = recombine_value!(B, ld0, local_shadow_root)
                                     else
                                         ld0 = nullify_rooted_values!(B, ld0)
@@ -950,7 +1044,6 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                 
 
                 if mixed
-                    @assert !is_constant_value(gutils, op)
                     @assert arg.cc == GPUCompiler.BITS_REF
                     RefTy = arg.typ
                     if width != 1
@@ -966,16 +1059,28 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                     )
 
                     ptr_val = ival
-                    ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llrty)))
-                    for idx = 1:width
-                        ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
-                        ld = load!(B, llrty, ev, "rules_mixed_shadow_load")
-                        metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
-                        if n_primal_roots > 0
-                            sroots = (width == 1) ? roots_ival : extract_value!(B, roots_ival, idx - 1)
-                            ld = recombine_value!(B, ld, sroots)
+                    if is_constant_value(gutils, op)
+                        ival = UndefValue(llrty)
+                        for idx = 1:width
+                            ld = ptr_val
+                            if n_primal_roots > 0
+                                sroots = (width == 1) ? roots_ival : extract_value!(B, roots_ival, idx - 1)
+                                ld = recombine_value!(B, ld, sroots)
+                            end
+                            ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
                         end
-                        ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
+                    else
+                        ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llrty)))
+                        for idx = 1:width
+                            ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
+                            ld = load!(B, llrty, ev, "rules_mixed_shadow_load")
+                            metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
+                            if n_primal_roots > 0
+                                sroots = (width == 1) ? roots_ival : extract_value!(B, roots_ival, idx - 1)
+                                ld = recombine_value!(B, ld, sroots)
+                            end
+                            ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
+                        end
                     end
                     store!(B, ival, refal)
 
@@ -997,7 +1102,9 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                     end
 
                     ival = refal0
-                    push!(mixeds, (ptr_val, arg.typ, refal))
+                    if !is_constant_value(gutils, op)
+                        push!(mixeds, (ptr_val, arg.typ, refal))
+                    end
                 end
 
                 @assert ival !== nothing
