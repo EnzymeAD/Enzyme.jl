@@ -43,6 +43,15 @@ function EnzymeRules.forward(
 end
 
 
+# The shadow as it was when the rule ran, for its reverse pass. Since Julia 1.11 an in-place
+# resize after the call (`resize!`, `unique!`, `push!`, `deleteat!`, ...) rewrites the shadow
+# `Array`'s `size` and `ref` fields too, and the reverse pass does not undo that, while the
+# derivatives themselves do flow back into the memory the shadow had at the call.
+shadow_at_call(dval::AbstractArray) = dval
+@static if VERSION >= v"1.11"
+    shadow_at_call(dval::Array) = Base.wrap(Array, dval.ref, size(dval))
+end
+
 function EnzymeRules.augmented_primal(
         config::EnzymeRules.RevConfigWidth{1},
         ::Const{typeof(sort!)},
@@ -63,7 +72,7 @@ function EnzymeRules.augmented_primal(
     else
         shadow = xs.dval
     end
-    return EnzymeRules.AugmentedReturn(primal, shadow, inds)
+    return EnzymeRules.AugmentedReturn(primal, shadow, (inds, shadow_at_call(xs.dval)))
 end
 
 function EnzymeRules.reverse(
@@ -74,9 +83,9 @@ function EnzymeRules.reverse(
         xs::Duplicated{T};
         kwargs...,
     ) where {T <: AbstractArray{<:AbstractFloat}}
-    inds = tape
+    inds, dval = tape
     back_inds = sortperm(inds)
-    xs.dval .= xs.dval[back_inds]
+    dval .= dval[back_inds]
     return (nothing,)
 end
 
@@ -167,7 +176,7 @@ function EnzymeRules.augmented_primal(
     else
         shadow = kv isa Integer ? xs.dval[kv] : view(xs.dval, kv)
     end
-    return EnzymeRules.AugmentedReturn(primal, shadow, inds)
+    return EnzymeRules.AugmentedReturn(primal, shadow, (inds, shadow_at_call(xs.dval)))
 end
 
 function EnzymeRules.reverse(
@@ -179,16 +188,16 @@ function EnzymeRules.reverse(
         k::Const{<:Union{Integer, OrdinalRange}};
         kwargs...,
     ) where {T <: AbstractArray{<:AbstractFloat}}
-    inds = tape
+    inds, dval = tape
     kv = k.val
     if dret isa Active
         if kv isa Integer
-            xs.dval[kv] += dret.val
+            dval[kv] += dret.val
         else
-            xs.dval[kv] .+= dret.val
+            dval[kv] .+= dret.val
         end
     end
     back_inds = sortperm(inds)
-    xs.dval .= xs.dval[back_inds]
+    dval .= dval[back_inds]
     return (nothing, nothing)
 end

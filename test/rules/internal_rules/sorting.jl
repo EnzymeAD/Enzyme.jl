@@ -72,3 +72,95 @@ end
     @test dd.dval[3].a ≈ 0
     @test dd.dval[3].b ≈ 0
 end
+
+function sort_resize(x)
+    l = copy(x)
+    sort!(l)
+    resize!(l, 2)
+    return l[1] + 2 * l[2]
+end
+
+function sort_unique(x)
+    l = copy(x)
+    push!(l, x[1])
+    unique!(sort!(l))
+    return l[1] + 2 * l[2]
+end
+
+function sort_push_pop(x)
+    l = copy(x)
+    sort!(l)
+    push!(l, 0.0)
+    pop!(l)
+    return l[1] + 2 * l[2]
+end
+
+function sort_push(x)
+    l = copy(x)
+    sort!(l)
+    for _ in 1:20
+        push!(l, 1.0)
+    end
+    return l[1] + 2 * l[2]
+end
+
+function sort_popfirst(x)
+    l = copy(x)
+    sort!(l)
+    popfirst!(l)
+    return l[1] + 2 * l[2]
+end
+
+function sort_deleteat(x)
+    l = copy(x)
+    sort!(l)
+    deleteat!(l, 1)
+    return l[1] + 2 * l[2]
+end
+
+function partialsort_resize(x)
+    l = copy(x)
+    partialsort!(l, 1:2)
+    resize!(l, 2)
+    return l[1] + 2 * l[2]
+end
+
+function partialsort_index_resize(x)
+    l = copy(x)
+    m = partialsort!(l, 2)
+    resize!(l, 1)
+    return 3 * m + l[1]
+end
+
+function sort_data(k, d)
+    l = Float64[d[j] for j in eachindex(d)]
+    push!(l, d[1] + 1.0)
+    unique!(sort!(l))
+    s = 0.0
+    for v in l
+        s += k[1] * v
+    end
+    return s
+end
+
+@testset "Sort rules followed by an in-place resize" begin
+    x = [3.0, 1.0, 4.0, 2.0, 5.0]
+    two_smallest = [0.0, 1.0, 0.0, 2.0, 0.0]
+    second_and_third = [2.0, 0.0, 0.0, 1.0, 0.0]
+    @test Enzyme.gradient(Reverse, sort_resize, x)[1] == two_smallest
+    @test Enzyme.gradient(Reverse, sort_unique, x)[1] == two_smallest
+    @test Enzyme.gradient(Reverse, sort_push_pop, x)[1] == two_smallest
+    @test Enzyme.gradient(Reverse, sort_push, x)[1] == two_smallest
+    if VERSION >= v"1.11"
+        @test Enzyme.gradient(Reverse, sort_popfirst, x)[1] == second_and_third
+        @test Enzyme.gradient(Reverse, sort_deleteat, x)[1] == second_and_third
+    else
+        # no reverse rule for jl_array_del_beg / jl_array_del_at on Julia 1.10
+        @test_broken Enzyme.gradient(Reverse, sort_popfirst, x)[1] == second_and_third
+        @test_broken Enzyme.gradient(Reverse, sort_deleteat, x)[1] == second_and_third
+    end
+    @test Enzyme.gradient(Reverse, partialsort_resize, x)[1] == two_smallest
+    @test Enzyme.gradient(Reverse, partialsort_index_resize, x)[1] == [0.0, 1.0, 0.0, 3.0, 0.0]
+    @test Enzyme.gradient(Reverse, sort_data, [2.0], Const([3.0, 1.0, 3.0, 2.0]))[1] == [10.0]
+    @test x == [3.0, 1.0, 4.0, 2.0, 5.0]
+end
