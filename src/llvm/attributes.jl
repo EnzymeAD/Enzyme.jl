@@ -409,6 +409,37 @@ const inactiveglobs = Set{String}((
     "ijl_boxed_int8_cache",
     "jl_boxed_int8_cache",
     "jl_nothing",
+    "ijl_nothing",
+    "jl_true",
+    "ijl_true",
+    "jl_false",
+    "ijl_false",
+    "jl_emptytuple",
+    "ijl_emptytuple",
+    "jl_emptysvec",
+    "ijl_emptysvec",
+    "jl_an_empty_string",
+    "ijl_an_empty_string",
+    "jl_an_empty_vec_any",
+    "ijl_an_empty_vec_any",
+    "jl_an_empty_memory_any",
+    "ijl_an_empty_memory_any",
+    "jl_small_typeof",
+    "ijl_small_typeof",
+    "jl_diverror_exception",
+    "ijl_diverror_exception",
+    "jl_undefref_exception",
+    "ijl_undefref_exception",
+    "jl_interrupt_exception",
+    "ijl_interrupt_exception",
+    "jl_stackovf_exception",
+    "ijl_stackovf_exception",
+    "jl_memory_exception",
+    "ijl_memory_exception",
+    "jl_readonlymemory_exception",
+    "ijl_readonlymemory_exception",
+    "jl_precompilable_error",
+    "ijl_precompilable_error",
 ))
 
 function annotate!(mod::LLVM.Module)
@@ -445,9 +476,12 @@ function annotate!(mod::LLVM.Module)
 
     for gname in keys(JuliaGlobalNameMap)
         globs = LLVM.globals(mod)
-        if haskey(globs, gname)
-            glob = globs[gname]
-            API.SetMD(glob, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
+        for cand in (gname, "i" * gname)
+            if haskey(globs, cand)
+                glob = globs[cand]
+                API.SetMD(glob, "enzyme_ta_norecur", LLVM.MDNode(LLVM.Metadata[]))
+                API.SetMD(glob, "enzyme_inactive", LLVM.MDNode(LLVM.Metadata[]))
+            end
         end
     end
 
