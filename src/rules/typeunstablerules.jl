@@ -1170,22 +1170,27 @@ function common_jl_getfield_fwd(offset, B, orig, gutils, normalR, shadowR)
 			end
 		end
 
-	    normal = new_from_original(gutils, orig)
-
-        if width == 1
-            shadowres = normal
-        else
-            shadowres = UndefValue(
-                LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
-            )
-            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
-            for idx = 1:width
-                shadowres = insert_value!(B, shadowres, normal, idx - 1)
-            end
-        end
+        shadowres = _getfield_normal_as_shadow!(B, gutils, orig, width)
         unsafe_store!(shadowR, shadowres.ref)
     end
     return false
+end
+
+function _getfield_normal_as_shadow!(B, gutils, orig, width)
+    normal = new_from_original(gutils, orig)
+    if width == 1
+        return normal
+    else
+        sel = select!(B, LLVM.ConstantInt(LLVM.Int1Type(), 1), normal, normal)
+        API.moveBefore(normal, sel, B)
+        shadowres = UndefValue(
+            LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
+        )
+        for idx in 1:width
+            shadowres = insert_value!(B, shadowres, sel, idx - 1)
+        end
+        return shadowres
+    end
 end
 
 @generated function ntuple_ref_zero(::Val{N}, ::Type{RT}, res) where {N,RT}
@@ -1231,11 +1236,11 @@ end
 
 function rt_jl_getfield_aug(
     ::Val{NT},
-    dptr::T,
+        dptr,
     ::Type{Val{symname}},
     ::Val{isconst},
-    dptrs::Vararg{T,Nargs},
-) where {NT,T,Nargs,symname,isconst}
+        dptrs::Vararg{Any, Nargs},
+    ) where {NT, Nargs, symname, isconst}
     res = if dptr isa Base.RefValue
         Base.getfield(dptr[], symname)
     else
@@ -1279,11 +1284,11 @@ end
 
 function idx_jl_getfield_aug(
     ::Val{NT},
-    dptr::T,
+        dptr,
     ::Type{Val{symname}},
     ::Val{isconst},
-    dptrs::Vararg{T,Nargs},
-) where {NT,T,Nargs,symname,isconst}
+        dptrs::Vararg{Any, Nargs},
+    ) where {NT, Nargs, symname, isconst}
     res = if dptr isa Base.RefValue
         Base.getfield(dptr[], symname + 1)
     else
@@ -1346,61 +1351,51 @@ end
     end
 end
 
-function rt_jl_getfield_rev(
-    dptr::T,
-    dret,
+@inline function _rt_jl_getfield_rev_lane!(
+        dp,
+        dr,
     ::Type{Val{symname}},
     ::Val{isconst},
-    dptrs::Vararg{T,Nargs},
-) where {T,Nargs,symname,isconst}
-    cur = if dptr isa Base.RefValue
-        getfield(dptr[], symname)
-    else
-        getfield(dptr, symname)
+    ) where {symname, isconst}
+    if dp === nothing || isconst
+        return nothing
     end
-
+    cur = if dp isa Base.RefValue
+        Base.getfield(dp[], symname)
+    else
+        Base.getfield(dp, symname)
+    end
     RT = Core.Typeof(cur)
-
     actreg = active_reg_nothrow(RT)
-    if (actreg == ActiveState || actreg == MixedState) && !isconst
-        if length(dptrs) == 0
-            if dptr isa Base.RefValue
-                vload = dptr[]
-                dRT = Core.Typeof(vload)
-                dptr[] = recursive_field_add(dRT, vload, Val(symname), dret[])
-            else
-                setfield!(
-                    dptr,
-                    symname,
-                    recursive_add(cur, dret[], identity, guaranteed_nonactive),
-                )
-            end
-        else
-            if dptr isa Base.RefValue
-                vload = dptr[]
-                dRT = Core.Typeof(vload)
-                dptr[] = recursive_field_add(dRT, vload, Val(symname), dret[1][])
-            else
-                setfield!(dptr, symname, recursive_add(cur, dret[1][]))
-            end
-            for i = 1:length(dptrs)
-                if dptrs[i] isa Base.RefValue
-                    vload = dptrs[i][]
-                    dRT = Core.Typeof(vload)
-                    dptrs[i][] = recursive_field_add(dRT, vload, Val(symname), dret[1+i][])
-                else
-                    curi = if dptr isa Base.RefValue
-                        Base.getfield(dptrs[i][], symname)
-                    else
-                        Base.getfield(dptrs[i], symname)
-                    end
-                    setfield!(
-                        dptrs[i],
-                        symname,
-                        recursive_add(curi, dret[1+i][], identity, guaranteed_nonactive),
-                    )
-                end
-            end
+    if (actreg == ActiveState || actreg == MixedState) && dr isa Base.RefValue
+        if dp isa Base.RefValue
+            vload = dp[]
+            dRT = Core.Typeof(vload)
+            dp[] = recursive_field_add(dRT, vload, Val(symname), dr[])
+        elseif ismutable(dp)
+            setfield!(
+                dp,
+                symname,
+                recursive_add(cur, dr[], identity, guaranteed_nonactive),
+            )
+        end
+    end
+    return nothing
+end
+
+function rt_jl_getfield_rev(
+        dptr,
+        dret,
+        ::Type{Val{symname}},
+        ::Val{isconst},
+        dptrs::Vararg{Any, Nargs},
+    ) where {Nargs, symname, isconst}
+    if Nargs == 0
+        _rt_jl_getfield_rev_lane!(dptr, dret, Val{symname}, Val(isconst))
+    else
+        _rt_jl_getfield_rev_lane!(dptr, dret[1], Val{symname}, Val(isconst))
+        for i in 1:Nargs
+            _rt_jl_getfield_rev_lane!(dptrs[i], dret[1 + i], Val{symname}, Val(isconst))
         end
     end
     return nothing
@@ -1428,66 +1423,51 @@ end
     end
 end
 
-function idx_jl_getfield_rev(
-    dptr::T,
-    dret,
+@inline function _idx_jl_getfield_rev_lane!(
+        dp,
+        dr,
     ::Type{Val{symname}},
     ::Val{isconst},
-    dptrs::Vararg{T,Nargs},
-) where {T,Nargs,symname,isconst}
-    cur = if dptr isa Base.RefValue
-        Base.getfield(dptr[], symname + 1)
-    else
-        Base.getfield(dptr, symname + 1)
+    ) where {symname, isconst}
+    if dp === nothing || isconst
+        return nothing
     end
-
+    cur = if dp isa Base.RefValue
+        Base.getfield(dp[], symname + 1)
+    else
+        Base.getfield(dp, symname + 1)
+    end
     RT = Core.Typeof(cur)
-
     actreg = active_reg_nothrow(RT)
-    if (actreg == ActiveState || actreg == MixedState) && !isconst
-        if length(dptrs) == 0
-            if dptr isa Base.RefValue
-                vload = dptr[]
-                dRT = Core.Typeof(vload)
-                dptr[] = recursive_index_add(dRT, vload, Val(symname + 1), dret[])
-            else
-                setfield!(
-                    dptr,
-                    symname + 1,
-                    recursive_add(cur, dret[], identity, guaranteed_nonactive),
-                )
-            end
-        else
-            if dptr isa Base.RefValue
-                vload = dptr[]
-                dRT = Core.Typeof(vload)
-                dptr[] = recursive_index_add(dRT, vload, Val(symname + 1), dret[1][])
-            else
-                setfield!(
-                    dptr,
-                    symname + 1,
-                    recursive_add(cur, dret[1][], identity, guaranteed_nonactive),
-                )
-            end
-            for i = 1:length(dptrs)
-                if dptrs[i] isa Base.RefValue
-                    vload = dptrs[i][]
-                    dRT = Core.Typeof(vload)
-                    dptrs[i][] =
-                        recursive_index_add(dRT, vload, Val(symname + 1), dret[1+i][])
-                else
-                    curi = if dptr isa Base.RefValue
-                        Base.getfield(dptrs[i][], symname + 1)
-                    else
-                        Base.getfield(dptrs[i], symname + 1)
-                    end
-                    setfield!(
-                        dptrs[i],
-                        symname + 1,
-                        recursive_add(curi, dret[1+i][], identity, guaranteed_nonactive),
-                    )
-                end
-            end
+    if (actreg == ActiveState || actreg == MixedState) && dr isa Base.RefValue
+        if dp isa Base.RefValue
+            vload = dp[]
+            dRT = Core.Typeof(vload)
+            dp[] = recursive_index_add(dRT, vload, Val(symname + 1), dr[])
+        elseif ismutable(dp)
+            setfield!(
+                dp,
+                symname + 1,
+                recursive_add(cur, dr[], identity, guaranteed_nonactive),
+            )
+        end
+    end
+    return nothing
+end
+
+function idx_jl_getfield_rev(
+        dptr,
+        dret,
+        ::Type{Val{symname}},
+        ::Val{isconst},
+        dptrs::Vararg{Any, Nargs},
+    ) where {Nargs, symname, isconst}
+    if Nargs == 0
+        _idx_jl_getfield_rev_lane!(dptr, dret, Val{symname}, Val(isconst))
+    else
+        _idx_jl_getfield_rev_lane!(dptr, dret[1], Val{symname}, Val(isconst))
+        for i in 1:Nargs
+            _idx_jl_getfield_rev_lane!(dptrs[i], dret[1 + i], Val{symname}, Val(isconst))
         end
     end
     return nothing
@@ -1502,16 +1482,23 @@ function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, ta
     ops = @view operands(orig)[offset:end]
     width = get_width(gutils)
 
+    if is_constant_value(gutils, ops[2]) && get_runtime_activity(gutils)
+        shadowres = _getfield_normal_as_shadow!(B, gutils, orig, width)
+        unsafe_store!(shadowR, shadowres.ref)
+        return false
+    end
+
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     T_int8 = LLVM.Int8Type()
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
+    prim_obj = new_from_original(gutils, ops[2])
     if !is_constant_value(gutils, ops[2])
         inp = invert_pointer(gutils, ops[2], B)
         if width == 1
-            inps = [inp]
+            inps = LLVM.Value[inp]
         else
             inps = LLVM.Value[]
             for w = 1:width
@@ -1519,7 +1506,7 @@ function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, ta
             end
         end
     else
-        inps = [new_from_original(gutils, ops[2])]
+        inps = LLVM.Value[prim_obj]
     end
 
     AA = Val(AnyArray(Int(width)))
@@ -1544,6 +1531,12 @@ function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, ta
 
     if width == 1
         shadowres = cal
+        if get_runtime_activity(gutils) && !is_constant_value(gutils, ops[2])
+            is_inactive = icmp!(B, LLVM.API.LLVMIntEQ, inps[1], prim_obj)
+            newval = new_from_original(gutils, orig)
+            shadowres = select!(B, is_inactive, newval, shadowres)
+            API.moveBefore(newval, shadowres, B)
+        end
     else
         AT = LLVM.ArrayType(T_prjlvalue, Int(width))
 
@@ -1555,6 +1548,16 @@ function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, ta
 
         ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
         shadow = LLVM.UndefValue(ST)
+        all_inactive = if get_runtime_activity(gutils) && !is_constant_value(gutils, ops[2])
+            cond = icmp!(B, LLVM.API.LLVMIntEQ, inps[1], prim_obj)
+            for w in 2:width
+                cond = and!(B, cond, icmp!(B, LLVM.API.LLVMIntEQ, inps[w], prim_obj))
+            end
+            cond
+        else
+            nothing
+        end
+        newval = all_inactive !== nothing ? new_from_original(gutils, orig) : nothing
         for i = 1:width
             if !is_constant_value(gutils, ops[2])
                 gep = LLVM.inbounds_gep!(
@@ -1564,6 +1567,12 @@ function common_jl_getfield_augfwd(offset, B, orig, gutils, normalR, shadowR, ta
                     [LLVM.ConstantInt(0), LLVM.ConstantInt(i - 1)],
                 )
                 ld = LLVM.load!(B, T_prjlvalue, gep)
+                if all_inactive !== nothing
+                    ld = select!(B, all_inactive, newval, ld)
+                    if i == 1
+                        API.moveBefore(newval, ld, B)
+                    end
+                end
             else
                 ld = forgep
             end
@@ -1582,6 +1591,10 @@ function common_jl_getfield_rev(offset, B, orig, gutils, tape)
     if is_constant_value(gutils, orig)
         return
     end
+    ops = @view operands(orig)[offset:end]
+    if is_constant_value(gutils, ops[2]) && get_runtime_activity(gutils)
+        return
+    end
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
 
@@ -1596,7 +1609,6 @@ function common_jl_getfield_rev(offset, B, orig, gutils, tape)
         return
     end
 
-    ops = @view operands(orig)[offset:end]
     width = get_width(gutils)
 
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
@@ -1605,17 +1617,29 @@ function common_jl_getfield_rev(offset, B, orig, gutils, tape)
         inp = invert_pointer(gutils, ops[2], B)
         inp = lookup_value(gutils, inp, B)
         if width == 1
-            inps = [inp]
+            inps = LLVM.Value[inp]
         else
             inps = LLVM.Value[]
             for w = 1:width
                 push!(inps, extract_value!(B, inp, w - 1))
             end
         end
+        if get_runtime_activity(gutils)
+            prim_obj = lookup_value(gutils, new_from_original(gutils, ops[2]), B)
+            null_jl = unsafe_to_llvm(B, nothing)
+            for w in 1:width
+                inps[w] = select!(
+                    B,
+                    icmp!(B, LLVM.API.LLVMIntEQ, inps[w], prim_obj),
+                    null_jl,
+                    inps[w],
+                )
+            end
+        end
     else
         inp = new_from_original(gutils, ops[2])
         inp = lookup_value(gutils, inp, B)
-        inps = [inp]
+        inps = LLVM.Value[inp]
     end
 
     vals = LLVM.Value[]
@@ -1675,18 +1699,7 @@ end
 
         unsafe_store!(shadowR, shadowres.ref)
     else
-        normal = new_from_original(gutils, orig)
-        if width == 1
-            shadowres = normal
-        else
-            shadowres = UndefValue(
-                LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
-            )
-            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
-            for idx = 1:width
-                shadowres = insert_value!(B, shadowres, normal, idx - 1)
-            end
-        end
+        shadowres = _getfield_normal_as_shadow!(B, gutils, orig, width)
         unsafe_store!(shadowR, shadowres.ref)
     end
     return false
@@ -1699,16 +1712,23 @@ end
 
     width = get_width(gutils)
 
+    if is_constant_value(gutils, operands(orig)[1]) && get_runtime_activity(gutils)
+        shadowres = _getfield_normal_as_shadow!(B, gutils, orig, width)
+        unsafe_store!(shadowR, shadowres.ref)
+        return false
+    end
+
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
 
     T_int8 = LLVM.Int8Type()
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
+    prim_obj = new_from_original(gutils, operands(orig)[1])
     if !is_constant_value(gutils, operands(orig)[1])
         inp = invert_pointer(gutils, operands(orig)[1], B)
         if width == 1
-            inps = [inp]
+            inps = LLVM.Value[inp]
         else
             inps = LLVM.Value[]
             for w = 1:width
@@ -1716,7 +1736,7 @@ end
             end
         end
     else
-        inps = [new_from_original(gutils, operands(orig)[1])]
+        inps = LLVM.Value[prim_obj]
     end
 
     AA = Val(AnyArray(Int(width)))
@@ -1728,7 +1748,6 @@ end
     sym = emit_apply_type!(B, Base.Val, LLVM.Value[sym], enzyme_ctx)
     push!(vals, sym)
 
-    # TODO properly handle runtime activity here
     push!(vals, unsafe_to_llvm(B, Val(is_constant_value(gutils, operands(orig)[1]))))
 
     for v in inps[2:end]
@@ -1743,6 +1762,12 @@ end
 
     if width == 1
         shadowres = cal
+        if get_runtime_activity(gutils) && !is_constant_value(gutils, operands(orig)[1])
+            is_inactive = icmp!(B, LLVM.API.LLVMIntEQ, inps[1], prim_obj)
+            newval = new_from_original(gutils, orig)
+            shadowres = select!(B, is_inactive, newval, shadowres)
+            API.moveBefore(newval, shadowres, B)
+        end
     else
         AT = LLVM.ArrayType(T_prjlvalue, Int(width))
         forgep = cal
@@ -1753,6 +1778,17 @@ end
 
         ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
         shadow = LLVM.UndefValue(ST)
+        all_inactive =
+        if get_runtime_activity(gutils) && !is_constant_value(gutils, operands(orig)[1])
+            cond = icmp!(B, LLVM.API.LLVMIntEQ, inps[1], prim_obj)
+            for w in 2:width
+                cond = and!(B, cond, icmp!(B, LLVM.API.LLVMIntEQ, inps[w], prim_obj))
+            end
+            cond
+        else
+            nothing
+        end
+        newval = all_inactive !== nothing ? new_from_original(gutils, orig) : nothing
         for i = 1:width
             if !is_constant_value(gutils, operands(orig)[1])
                 gep = LLVM.inbounds_gep!(
@@ -1762,6 +1798,12 @@ end
                     [LLVM.ConstantInt(0), LLVM.ConstantInt(i - 1)],
                 )
                 ld = LLVM.load!(B, T_prjlvalue, gep)
+                if all_inactive !== nothing
+                    ld = select!(B, all_inactive, newval, ld)
+                    if i == 1
+                        API.moveBefore(newval, ld, B)
+                    end
+                end
             else
                 ld = forgep
             end
@@ -1777,6 +1819,9 @@ end
 @register_rev function jl_nthfield_rev(B, orig, gutils, tape)
     enzyme_ctx = enzyme_context()
     if is_constant_value(gutils, orig)
+        return
+    end
+    if is_constant_value(gutils, operands(orig)[1]) && get_runtime_activity(gutils)
         return
     end
 
@@ -1804,17 +1849,29 @@ end
         inp = invert_pointer(gutils, operands(orig)[1], B)
         inp = lookup_value(gutils, inp, B)
         if width == 1
-            inps = [inp]
+            inps = LLVM.Value[inp]
         else
             inps = LLVM.Value[]
             for w = 1:width
                 push!(inps, extract_value!(B, inp, w - 1))
             end
         end
+        if get_runtime_activity(gutils)
+            prim_obj = lookup_value(gutils, new_from_original(gutils, operands(orig)[1]), B)
+            null_jl = unsafe_to_llvm(B, nothing)
+            for w in 1:width
+                inps[w] = select!(
+                    B,
+                    icmp!(B, LLVM.API.LLVMIntEQ, inps[w], prim_obj),
+                    null_jl,
+                    inps[w],
+                )
+            end
+        end
     else
         inp = new_from_original(gutils, operands(orig)[1])
         inp = lookup_value(gutils, inp, B)
-        inps = [inp]
+        inps = LLVM.Value[inp]
     end
 
     vals = LLVM.Value[]
