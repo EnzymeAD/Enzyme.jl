@@ -93,6 +93,7 @@ end
         @static if VERSION < v"1.11-"
             @test tt(Vector{Vector{Float32}}) == "{[0]:Pointer, [0,-1]:Pointer, [0,-1,0]:Pointer, [0,-1,0,-1]:Float@float, [0,-1,8]:Integer, [0,-1,9]:Integer, [0,-1,10]:Integer, [0,-1,11]:Integer, [0,-1,12]:Integer, [0,-1,13]:Integer, [0,-1,14]:Integer, [0,-1,15]:Integer, [0,-1,16]:Integer, [0,-1,17]:Integer, [0,-1,18]:Integer, [0,-1,19]:Integer, [0,-1,20]:Integer, [0,-1,21]:Integer, [0,-1,22]:Integer, [0,-1,23]:Integer, [0,-1,24]:Integer, [0,-1,25]:Integer, [0,-1,26]:Integer, [0,-1,27]:Integer, [0,-1,28]:Integer, [0,-1,29]:Integer, [0,-1,30]:Integer, [0,-1,31]:Integer, [0,-1,32]:Integer, [0,-1,33]:Integer, [0,-1,34]:Integer, [0,-1,35]:Integer, [0,-1,36]:Integer, [0,-1,37]:Integer, [0,-1,38]:Integer, [0,-1,39]:Integer, [8]:Integer, [9]:Integer, [10]:Integer, [11]:Integer, [12]:Integer, [13]:Integer, [14]:Integer, [15]:Integer, [16]:Integer, [17]:Integer, [18]:Integer, [19]:Integer, [20]:Integer, [21]:Integer, [22]:Integer, [23]:Integer, [24]:Integer, [25]:Integer, [26]:Integer, [27]:Integer, [28]:Integer, [29]:Integer, [30]:Integer, [31]:Integer, [32]:Integer, [33]:Integer, [34]:Integer, [35]:Integer, [36]:Integer, [37]:Integer, [38]:Integer, [39]:Integer}"
             @test tt(Vector{Any}) == "{[0]:Pointer, [0,-1]:Pointer, [8]:Integer, [9]:Integer, [10]:Integer, [11]:Integer, [12]:Integer, [13]:Integer, [14]:Integer, [15]:Integer, [16]:Integer, [17]:Integer, [18]:Integer, [19]:Integer, [20]:Integer, [21]:Integer, [22]:Integer, [23]:Integer, [24]:Integer, [25]:Integer, [26]:Integer, [27]:Integer, [28]:Integer, [29]:Integer, [30]:Integer, [31]:Integer, [32]:Integer, [33]:Integer, [34]:Integer, [35]:Integer, [36]:Integer, [37]:Integer, [38]:Integer, [39]:Integer}"
+            @test tt(Vector{Union{}}) == "{[0]:Pointer, [8]:Integer, [9]:Integer, [10]:Integer, [11]:Integer, [12]:Integer, [13]:Integer, [14]:Integer, [15]:Integer, [16]:Integer, [17]:Integer, [18]:Integer, [19]:Integer, [20]:Integer, [21]:Integer, [22]:Integer, [23]:Integer, [24]:Integer, [25]:Integer, [26]:Integer, [27]:Integer, [28]:Integer, [29]:Integer, [30]:Integer, [31]:Integer, [32]:Integer, [33]:Integer, [34]:Integer, [35]:Integer, [36]:Integer, [37]:Integer, [38]:Integer, [39]:Integer}"
             @test tt(Vector{Wrapper}) == "{[0]:Pointer, [0,-1]:Pointer, [8]:Integer, [9]:Integer, [10]:Integer, [11]:Integer, [12]:Integer, [13]:Integer, [14]:Integer, [15]:Integer, [16]:Integer, [17]:Integer, [18]:Integer, [19]:Integer, [20]:Integer, [21]:Integer, [22]:Integer, [23]:Integer, [24]:Integer, [25]:Integer, [26]:Integer, [27]:Integer, [28]:Integer, [29]:Integer, [30]:Integer, [31]:Integer, [32]:Integer, [33]:Integer, [34]:Integer, [35]:Integer, [36]:Integer, [37]:Integer, [38]:Integer, [39]:Integer}"
         else
             @test tt(MemoryRef{Float32}) == "{[-1]:Pointer, [0,-1]:Float@float, [8,0]:Integer, [8,1]:Integer, [8,2]:Integer, [8,3]:Integer, [8,4]:Integer, [8,5]:Integer, [8,6]:Integer, [8,7]:Integer, [8,8]:Pointer, [8,8,-1]:Float@float}"
@@ -120,6 +121,7 @@ end
 
 
             @test tt(Memory{Any}) == "{[0]:Integer, [1]:Integer, [2]:Integer, [3]:Integer, [4]:Integer, [5]:Integer, [6]:Integer, [7]:Integer, [8]:Pointer, [8,-1]:Pointer}"
+            @test tt(Memory{Union{}}) == "{[0]:Integer, [1]:Integer, [2]:Integer, [3]:Integer, [4]:Integer, [5]:Integer, [6]:Integer, [7]:Integer, [8]:Pointer}"
 
             @test tt(Memory{Float64}) == "{[0]:Integer, [1]:Integer, [2]:Integer, [3]:Integer, [4]:Integer, [5]:Integer, [6]:Integer, [7]:Integer, [8]:Pointer, [8,-1]:Float@double}"
 
@@ -198,4 +200,36 @@ Enzyme.get_offsets(::Type{ExtPtr}) = ((Enzyme.API.DT_Pointer, 0),)
     tt, md = ext_typetree(Tuple{Float64, ExtPtr})
     @test tt == "{[0]:Float@double, [8]:Pointer, [8,-1]:Float@double}"
     @test occursin("Pointer", md)
+end
+
+struct UninhabitedBroadcastSentinel <: Real end
+
+function dead_bottom_array_branch!(out::Vector{Float32}, y::Matrix{Float32}, case::Int)
+    tmp = UninhabitedBroadcastSentinel()
+    arr = if case == 1
+        2f0 .* y
+    elseif case == 2
+        y .* tmp
+    else
+        error("unknown case")
+    end
+    sum!(reshape(out, :, 1), arr)
+    return nothing
+end
+
+@testset "Array{Union{}} phi merge in TypeAnalysis" begin
+    y = Float32[1.0 2.0; 3.0 4.0]
+    dy = Float32[0.5 -1.0; 2.0 0.25]
+    out = zeros(Float32, 2)
+    dout = zeros(Float32, 2)
+    autodiff(
+        Forward,
+        dead_bottom_array_branch!,
+        Const,
+        Duplicated(out, dout),
+        Duplicated(y, dy),
+        Const(1),
+    )
+    @test out ≈ Float32[6.0, 14.0]
+    @test dout ≈ Float32[-1.0, 4.5]
 end
