@@ -34,6 +34,13 @@ end
 @inline is_arrayorvararg_ty(::Type{Ptr{T}}) where {T} = true
 @inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{T,N}}) where {T,N} = true
 @inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{T,N} where N}) where {T} = true
+# Untyped LLVM pointers (opaque `ptr` lowered to `Core.LLVMPtr{Cvoid,N}` by `to_tape_type`,
+# or `i8*` lowered to `Core.LLVMPtr{UInt8,N}`) may point to active memory such as Enzyme
+# sub-tapes, matching `typetree_inner` in `typetree.jl`.
+@inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{Cvoid, N}}) where {N} = false
+@inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{Cvoid, N} where {N}}) = false
+@inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{UInt8, N}}) where {N} = false
+@inline is_arrayorvararg_ty(::Type{Core.LLVMPtr{UInt8, N} where {N}}) = false
 @inline is_arrayorvararg_ty(::Type{Base.RefValue{T}}) where {T} = true
 @inline is_arrayorvararg_ty(::Type{IdDict{K,V}}) where {K,V} = true
 @inline is_arrayorvararg_ty(::Type{IdDict{K,V} where K}) where {V} = true
