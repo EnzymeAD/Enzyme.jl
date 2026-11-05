@@ -3,6 +3,8 @@ using EnzymeTestUtils
 using LinearAlgebra
 using Test
 
+_splat_call(f, args...) = (f(args...); nothing)
+
 @testset "BLAS rules" begin
     RTs = (Float32, Float64)
     RCs = (ComplexF32, ComplexF64)
@@ -67,6 +69,18 @@ using Test
             m, k = 4, 3
             A = randn(T, side == 'L' ? m : k, side == 'L' ? m : k)
             B = randn(T, m, k)
+            # On Julia < 1.12, calling the rule through a varargs function, as `test_forward`
+            # does, fails with a complex α and constant A:
+            # https://github.com/EnzymeAD/Enzyme.jl/issues/3127
+            if VERSION < v"1.12" && T <: Complex && TA === Const
+                α = Tα === Const ? Const(T(0.7)) : Duplicated(T(0.7), one(T))
+                @test_broken Enzyme.autodiff(
+                    Forward, _splat_call, Const, Const(BLAS.trmm!),
+                    Const(side), Const(uplo), Const(transa), Const(diag),
+                    α, Const(A), Duplicated(B, randn(T, m, k))
+                ) isa Tuple
+                continue
+            end
             test_forward(
                 BLAS.trmm!, TB, side, uplo, transa, diag, (T(0.7), Tα), (A, TA), (B, TB);
                 atol = 0, rtol = sqrt(eps(real(T)))
