@@ -1478,6 +1478,8 @@ end
             LLVM.Attribute[StringAttribute(PRESERVEPRIMAL_ATTR_KIND, "*")],
         )
         return
+    else
+        strip_custom_rule_attrs!(llvmfn)
     end
 
 
@@ -5363,6 +5365,41 @@ function strip_activity_inactive_md!(mod::LLVM.Module)
     return
 end
 
+# `"enzyme_math"="enzyme_custom"` is mode-dependent (`cached_has_frule` in forward
+# mode vs `cached_has_rrule` in reverse mode). Strip it after `enzyme!` has consumed
+# it so that bitcode cached in `autodiff_cache` for nested differentiation (e.g.
+# forward-over-reverse through a function with an `rrule` but no `frule`, or vice
+# versa) does not dispatch to a nonexistent rule in the outer mode; the outer
+# compilation's `set_module_types!` re-applies `"enzyme_custom"` if and only if a
+# rule exists for the outer mode.
+function strip_custom_rule_attrs!(fn::LLVM.Function)
+    attributes = function_attributes(fn)
+    had_custom = false
+    for fattr in collect(attributes)
+        if isa(fattr, LLVM.StringAttribute) &&
+           kind(fattr) == "enzyme_math" &&
+           LLVM.value(fattr) == "enzyme_custom"
+            delete!(attributes, fattr)
+            had_custom = true
+        end
+    end
+    if had_custom
+        for fattr in collect(attributes)
+            if isa(fattr, LLVM.StringAttribute) && kind(fattr) == PRESERVEPRIMAL_ATTR_KIND
+                delete!(attributes, fattr)
+            end
+        end
+    end
+    return had_custom
+end
+
+function strip_custom_rule_attrs!(mod::LLVM.Module)
+    for f in functions(mod)
+        strip_custom_rule_attrs!(f)
+    end
+    return
+end
+
 # Modified from GPUCompiler/src/irgen.jl:365 lower_byval
 function lower_convention(
     @nospecialize(functy::Type),
@@ -7344,6 +7381,7 @@ end
     # Every deferred module is linked by now, so nothing declares the entry of
     # an imported cached thunk any more.
     internalize_imported_thunks!(mod)
+    strip_custom_rule_attrs!(mod)
 
     for (fname, lnk) in custom
         haskey(functions(mod), fname) || continue

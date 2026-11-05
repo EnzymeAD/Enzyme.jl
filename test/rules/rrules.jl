@@ -692,10 +692,12 @@ end
 @testset "has_readonly_rule preserves unread GC-tracked struct fields" begin
     @test EnzymeRules.has_readonly_rule_from_sig(Tuple{typeof(readonly_rule_partial), ReadonlyRuleArg, Vector{Float64}})
     @test !EnzymeRules.has_attribute_preserving_rule_from_sig(Tuple{typeof(readonly_rule_partial), ReadonlyRuleArg, Vector{Float64}})
-    ir = sprint(io -> Enzyme.Compiler.enzyme_code_llvm(
-        io, readonly_rule_const_prob_loss, Active, Tuple{Duplicated{Vector{Float64}}};
-        run_enzyme = false, raw = true, dump_module = true
-    ))
+    ir = sprint(
+        io -> Enzyme.Compiler.enzyme_code_llvm(
+            io, readonly_rule_const_prob_loss, Active, Tuple{Duplicated{Vector{Float64}}};
+            run_enzyme = false, raw = true, dump_module = true
+        )
+    )
     @test occursin("enzyme_ReadOnlyOrThrow", ir) || occursin("enzyme_LocalReadOnlyOrThrow", ir)
     @test !occursin("enzyme_custom_full_attributes", ir)
 
@@ -735,6 +737,111 @@ end
     @test readonly_rule_calls[] == 0
     @test Enzyme.gradient(Forward, readonly_rule_const_call, [1.0, 2.0])[1] ≈ [1.0, 1.0]
     @test readonly_rule_calls[] == 0
+end
+
+function rrule_only_op!(y::Vector{Float64}, w::Vector{Float64}, x::Vector{Float64}, save_x::Bool)
+    @inbounds for i in eachindex(y, w, x)
+        y[i] = tanh(w[i] * x[i])
+    end
+    return nothing
+end
+
+function augmented_primal(
+        cfg::RevConfigWidth{1},
+        ::Const{typeof(rrule_only_op!)},
+        ::Type{Const{Nothing}},
+        y::Annotation{Vector{Float64}},
+        w::Annotation{Vector{Float64}},
+        x::Annotation{Vector{Float64}},
+        save_x::Const{Bool},
+    )
+    rrule_only_op!(y.val, w.val, x.val, save_x.val)
+    cache = save_x.val ? (2, copy(x.val)) : (1, nothing)
+    return AugmentedReturn(nothing, nothing, cache)
+end
+
+function reverse(
+        cfg::RevConfigWidth{1},
+        ::Const{typeof(rrule_only_op!)},
+        ::Type{Const{Nothing}},
+        cache,
+        y::Annotation{Vector{Float64}},
+        w::Annotation{Vector{Float64}},
+        x::Annotation{Vector{Float64}},
+        ::Const{Bool},
+    )
+    if !(y isa Const)
+        dy = y.dval
+        @inbounds for i in eachindex(dy)
+            sech2 = 1.0 - y.val[i]^2
+            dl = dy[i] * sech2
+            if !(w isa Const) && w.dval !== w.val
+                w.dval[i] += dl * x.val[i]
+            end
+            if !(x isa Const) && x.dval !== x.val
+                x.dval[i] += dl * w.val[i]
+            end
+            dy[i] = 0.0
+        end
+    end
+    return (nothing, nothing, nothing, nothing)
+end
+
+function _apply_rrule_only_chain(w::Vector{Float64}, x::Vector{Float64})
+    y = similar(x)
+    rrule_only_op!(y, w, x, false)
+    return sum(abs2, y)
+end
+
+@testset "Forward-over-Reverse through rrule without frule" begin
+    @test EnzymeRules.has_rrule_from_sig(
+        Tuple{typeof(rrule_only_op!), Vector{Float64}, Vector{Float64}, Vector{Float64}, Bool}
+    )
+    @test !EnzymeRules.has_frule_from_sig(
+        Tuple{typeof(rrule_only_op!), Vector{Float64}, Vector{Float64}, Vector{Float64}, Bool}
+    )
+
+    w0 = [0.6, -0.4]
+    x0 = [1.2, 0.8]
+    vw = [0.3, -0.7]
+
+    # Exact HVP of f(w) = sum_i tanh(w_i * x_i)^2:
+    # df/dw_i = 2 * tanh(z_i) * sech^2(z_i) * x_i
+    # d2f/dw_i^2 = 2 * x_i^2 * sech^2(z_i) * (sech^2(z_i) - 2 * tanh^2(z_i))
+    g_exact = [
+        let z = w0[i] * x0[i], t = tanh(z), s2 = 1.0 - t^2
+            2.0 * t * s2 * x0[i]
+        end for i in eachindex(w0)
+    ]
+    hv_exact = [
+        let z = w0[i] * x0[i], t = tanh(z), s2 = 1.0 - t^2
+            2.0 * x0[i]^2 * s2 * (s2 - 2.0 * t^2) * vw[i]
+        end for i in eachindex(w0)
+    ]
+
+    loss_fn = w -> _apply_rrule_only_chain(w, x0)
+    g = zeros(2)
+    hv = zeros(2)
+    Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Forward),
+        Const(
+            (g_out, w_in) -> begin
+                fill!(g_out, 0.0)
+                Enzyme.autodiff(
+                    Enzyme.set_runtime_activity(Reverse),
+                    Const(loss_fn),
+                    Active,
+                    Duplicated(w_in, g_out),
+                )
+                return nothing
+            end
+        ),
+        Const,
+        Duplicated(g, hv),
+        Duplicated(copy(w0), copy(vw)),
+    )
+    @test g ≈ g_exact rtol = 1.0e-12
+    @test hv ≈ hv_exact rtol = 1.0e-12
 end
 
 end # ReverseRules
