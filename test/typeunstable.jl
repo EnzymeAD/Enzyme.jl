@@ -507,3 +507,25 @@ end
     @test dx ≈ 1 ./ x
     @test (@allocated sum_log_gradient!(dx, x)) == 0
 end
+
+nonconcrete_tup_global = 3.0
+@noinline consume_nonconcrete_tup(t::Tuple) = (t[1]::Float64) * (t[2]::Float64)
+make_nonconcrete_tup(x) = consume_nonconcrete_tup((nonconcrete_tup_global, x[1], 1))
+
+@testset "Non-concrete Tuple with inactive Any element" begin
+    x = [2.0]
+    dx = [0.0]
+    autodiff(set_runtime_activity(Reverse), make_nonconcrete_tup, Active, Duplicated(x, dx))
+    @test dx ≈ [3.0]
+
+    dx1 = [0.0]
+    dx2 = [0.0]
+    autodiff(
+        set_runtime_activity(Reverse),
+        make_nonconcrete_tup,
+        Active,
+        BatchDuplicated(x, (dx1, dx2)),
+    )
+    @test dx1 ≈ [3.0]
+    @test dx2 ≈ [3.0]
+end

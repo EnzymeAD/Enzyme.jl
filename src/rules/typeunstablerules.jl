@@ -229,7 +229,7 @@ function body_construct_rev(
 
             out = :(
                 # Inactive argument, don't need to update anything
-                if !($shad === nothing && $prim !== nothing)
+                if ActivityTup[$i] && !($shad === nothing && $prim !== nothing)
                     if $(Symbol("active_ref_$i")) == MixedState ||
                        $(Symbol("active_ref_$i")) == ActiveState
                         if $shad isa Base.RefValue
@@ -477,9 +477,9 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR, e
                     # stored.
                     if !guaranteed_nonactive(typ_partial, world; AbstractIsMixed=true)
                         bypass = false
-                        if legalRT
+                        if legalRT && structRT isa DataType && Base.isconcretetype(structRT) && structRT.layout != C_NULL && idx <= fieldcount(structRT)
                             desc = Base.DataTypeFieldDesc(structRT)
-                            if desc[idx].isptr
+                            if desc[Int(idx)].isptr
                                 bypass = true
                             end
                         end
