@@ -495,6 +495,46 @@ function fixup_callconv!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
         end
         run!(pb, mod, tm)
     end
+    sretkind = kind(
+        if LLVM.version().major >= 12
+            TypeAttribute("sret", LLVM.Int32Type())
+        else
+            EnumAttribute("sret")
+        end,
+    )
+    for f in functions(mod)
+        isempty(blocks(f)) && continue
+        mi, rt = enzyme_custom_extract_mi(f, false)
+        mi === nothing && continue
+        _, parmsRemoved = removed_ret_parms(f)
+        isempty(parmsRemoved) && continue
+        _, sret, returnRoots = get_return_info(rt)
+        changed = false
+        if sret !== nothing && (UInt64(0) in parmsRemoved)
+            if length(parameters(f)) >= 1 &&
+                    any(kind(a) == sretkind for a in collect(parameter_attributes(f, 1)))
+                filter!(!=(UInt64(0)), parmsRemoved)
+                changed = true
+            end
+        end
+        if returnRoots !== nothing && (UInt64(1) in parmsRemoved)
+            rroots_idx = (UInt64(0) in parmsRemoved) ? 1 : 2
+            if length(parameters(f)) >= rroots_idx &&
+                    has_arg_attr(f, rroots_idx, StringAttribute("enzymejl_returnRoots"))
+                filter!(!=(UInt64(1)), parmsRemoved)
+                changed = true
+            end
+        end
+        if changed
+            delete!(LLVM.function_attributes(f), StringAttribute("enzyme_parmremove"))
+            if !isempty(parmsRemoved)
+                push!(
+                    LLVM.function_attributes(f),
+                    StringAttribute("enzyme_parmremove", join(parmsRemoved, ",")),
+                )
+            end
+        end
+    end
     if DumpPostCallConv[]
         API.EnzymeDumpModuleRef(mod.ref)
     end
