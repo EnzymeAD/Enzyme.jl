@@ -2407,7 +2407,7 @@ function julia_post_cache_store(
         p = pn
 
         vals = get_julia_inner_types(B, p, v, added = added)
-        r = emit_writebarrier!(B, vals)
+        r = emit_writebarrier!(B, vals; added = added)
         @assert isa(r, LLVM.Instruction)
         push!(added, r.ref)
     end
