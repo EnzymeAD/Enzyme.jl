@@ -292,7 +292,7 @@ function typetree_inner(
 ) where {T}
     tt = copy(typetree(T == UInt8 ? Nothing : T, ctx, dl, seen))
     @static if Base.USE_GPL_LIBS
-        cholmod_exception = T != SparseArrays.cholmod_dense_struct && T != SparseArrays.cholmod_sparse_struct && T != SparseArrays.cholmod_factor_struct
+        cholmod_exception = T != SparseArrays.LibSuiteSparse.cholmod_dense_struct && T != SparseArrays.LibSuiteSparse.cholmod_sparse_struct && T != SparseArrays.LibSuiteSparse.cholmod_factor_struct
     else
         cholmod_exception = true
     end
