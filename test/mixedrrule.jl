@@ -108,4 +108,48 @@ end
     @test x[1] ≈ 0.0
 end
 
+@noinline function batch_mix_void!(tup::Tuple{Float64, Vector{Float64}})
+    tup[2][1] *= tup[1]
+    return nothing
+end
+
+function EnzymeRules.augmented_primal(
+        config::RevConfigWidth{2}, func::Const{typeof(batch_mix_void!)},
+        ::Type{Const{Nothing}}, tup::BatchMixedDuplicated{Tuple{Float64, Vector{Float64}}, 2}
+    )
+    orig = copy(tup.val[2])
+    func.val(tup.val)
+    return AugmentedReturn(nothing, nothing, orig)
+end
+
+function EnzymeRules.reverse(
+        config::RevConfigWidth{2}, func::Const{typeof(batch_mix_void!)},
+        ::Type{Const{Nothing}}, orig, tup::BatchMixedDuplicated{Tuple{Float64, Vector{Float64}}, 2}
+    )
+    for idx in 1:2
+        prev = tup.dval[idx][]
+        dy = prev[2][1]
+        tup.dval[idx][] = (prev[1] + orig[1] * dy, prev[2])
+        prev[2][1] = dy * tup.val[1]
+    end
+    return (nothing,)
+end
+
+@testset "BatchMixedDuplicated activity rule" begin
+    t_prim = (3.0, [4.0])
+    dt1 = Ref((1.0, [2.0]))
+    dt2 = Ref((5.0, [7.0]))
+    autodiff(
+        Reverse,
+        batch_mix_void!,
+        Const,
+        BatchMixedDuplicated(t_prim, (dt1, dt2)),
+    )
+    @test t_prim[2] ≈ [12.0]
+    @test dt1[][1] ≈ 1.0 + 4.0 * 2.0
+    @test dt1[][2] ≈ [6.0]
+    @test dt2[][1] ≈ 5.0 + 4.0 * 7.0
+    @test dt2[][2] ≈ [21.0]
+end
+
 end # ReverseMixedRules

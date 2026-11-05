@@ -325,7 +325,7 @@ function enzyme_custom_setup_args(
 
     actives = LLVM.Value[]
 
-    mixeds = Tuple{LLVM.Value,Type,LLVM.Value}[]
+    mixeds = Tuple{LLVM.Value,Type,Vector{LLVM.Value}}[]
     uncacheable = get_uncacheable(gutils, orig)
     mode = get_mode(gutils)
 
@@ -952,22 +952,23 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                 if mixed
                     @assert !is_constant_value(gutils, op)
                     @assert arg.cc == GPUCompiler.BITS_REF
-                    RefTy = arg.typ
-                    if width != 1
-                        RefTy = NTuple{Int(width),RefTy}
-                    end
-                    llrty = convert(LLVMType, RefTy)
-                    RefTy = Base.RefValue{RefTy}
-                    refal0 = refal = emit_allocobj!(B, RefTy, "mixed.$RefTy")
-                    refal = bitcast!(
-                        B,
-                        refal,
-                        LLVM.PointerType(llrty, addrspace(value_type(refal))),
-                    )
-
+                    llrty = convert(LLVMType, arg.typ)
+                    RefTy = Base.RefValue{arg.typ}
                     ptr_val = ival
-                    ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llrty)))
+                    refals = LLVM.Value[]
+                    if width != 1
+                        ival = UndefValue(LLVM.ArrayType(T_prjlvalue, Int(width)))
+                    end
+                    if n_shadow_roots != 0
+                        @assert n_shadow_roots == n_primal_roots + width
+                    end
                     for idx = 1:width
+                        refal0 = refal = emit_allocobj!(B, RefTy, "mixed.$RefTy")
+                        refal = bitcast!(
+                            B,
+                            refal,
+                            LLVM.PointerType(llrty, addrspace(value_type(refal))),
+                        )
                         ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
                         ld = load!(B, llrty, ev, "rules_mixed_shadow_load")
                         metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
@@ -975,29 +976,27 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                             sroots = (width == 1) ? roots_ival : extract_value!(B, roots_ival, idx - 1)
                             ld = recombine_value!(B, ld, sroots)
                         end
-                        ival = (width == 1) ? ld : insert_value!(B, ival, ld, idx - 1)
+                        store!(B, ld, refal)
+
+                        emit_writebarrier!(B, get_julia_inner_types(B, refal0, ld))
+
+                        if n_shadow_roots != 0
+                            rptr = inbounds_gep!(
+                                B,
+                                sroots_ty,
+                                shadow_roots,
+                                [
+                                    LLVM.ConstantInt(LLVM.IntType(64), 0),
+                                    LLVM.ConstantInt(LLVM.IntType(32), n_primal_roots + idx - 1),
+                                ]
+                            )
+                            store!(B, refal0, rptr)
+                        end
+
+                        ival = (width == 1) ? refal0 : insert_value!(B, ival, refal0, idx - 1)
+                        push!(refals, refal)
                     end
-                    store!(B, ival, refal)
-
-                    emit_writebarrier!(B, get_julia_inner_types(B, refal0, ival))
-
-                    if n_shadow_roots != 0
-                        @assert n_shadow_roots == n_primal_roots + 1
-
-                        rptr = inbounds_gep!(
-                            B,
-                            LLVM.ArrayType(T_prjlvalue, n_primal_roots),
-                            shadow_roots,
-                            [
-                                LLVM.ConstantInt(LLVM.IntType(64), 0),
-                                LLVM.ConstantInt(LLVM.IntType(32), n_shadow_roots - 1),
-                            ]
-                        )
-                        store!(B, refal0, rptr)
-                    end
-
-                    ival = refal0
-                    push!(mixeds, (ptr_val, arg.typ, refal))
+                    push!(mixeds, (ptr_val, arg.typ, refals))
                 end
 
                 @assert ival !== nothing
@@ -2677,16 +2676,11 @@ function enzyme_custom_common_rev(
             idx += 1
         end
 
-        for (ptr_val, argTyp, refal) in mixeds
-            RefTy = argTyp
-            if width != 1
-                RefTy = NTuple{Int(width),RefTy}
-            end
-            curs = load!(B, convert(LLVMType, RefTy), refal, "rules_mixed_prestore")
-
+        for (ptr_val, argTyp, refals) in mixeds
+            llrty = convert(LLVMType, argTyp)
             for idx = 1:width
                 evp = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
-                evcur = (width == 1) ? curs : extract_value!(B, curs, idx - 1)
+                evcur = load!(B, llrty, refals[idx], "rules_mixed_prestore")
                 store_nonjl_types!(B, evcur, evp)
             end
         end
