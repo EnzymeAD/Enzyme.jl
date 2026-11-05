@@ -38,6 +38,35 @@ end
         end
     end
 
+    @static if VERSION >= v"1.11-"
+        @testset "Memory" begin
+            @testset for T in (Float32, Float64, ComplexF32, ComplexF64)
+                m = Memory{T}(undef, 5)
+                copyto!(m, randn(T, 5))
+                test_to_vec(m)
+                t = (m, m)
+                v, from_vec = to_vec(t)
+                @test length(v) == (T <: Real ? 5 : 10)
+                t2 = from_vec(v)
+                @test t2[1] === t2[2]
+            end
+            m_any = Memory{Any}(undef, 3)
+            m_any[1] = randn(2)
+            m_any[3] = 4.0
+            v, from_vec = to_vec(m_any)
+            @test v == vcat(m_any[1], m_any[3])
+            m_any2 = from_vec(v)
+            @test m_any2 isa Memory{Any}
+            @test m_any2[1] == m_any[1]
+            @test !isassigned(m_any2, 2)
+            @test m_any2[3] == m_any[3]
+            t_any = (m_any, m_any)
+            v_any, from_vec_any = to_vec(t_any)
+            t_any2 = from_vec_any(v_any)
+            @test t_any2[1] === t_any2[2]
+        end
+    end
+
     @testset "struct" begin
         v = randn(2, 3)
         x = TestStruct(1, TestStruct("foo", v))

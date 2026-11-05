@@ -51,39 +51,46 @@ _fd_forward(fdm, f, ::Type{<:Const}, y, activities) = ()
 
 function multi_tovec(active_return, vals)
     if active_return
-        v0, v1 = vals[1], Base.tail(vals)
-        res = vcat(to_vec(v0)[1], to_vec(v1)[1])
+        v0 = to_vec(vals[1])[1]
+        v1 = to_vec(Base.tail(vals))[1]
+        T = Base.promote_type(eltype(v0), eltype(v1))
+        res = Vector{T}(undef, length(v0) + length(v1))
+        copyto!(res, 1, v0, 1, length(v0))
+        copyto!(res, length(v0) + 1, v1, 1, length(v1))
         return res
     else
-        to_vec(vals)[1]
+        return to_vec(Base.tail(vals))[1]
     end
 end
 
+function _weighted_sum(y, ȳ)
+    T = promote_type(eltype(y), eltype(ȳ))
+    acc = zero(T)
+    @inbounds for i in eachindex(y, ȳ)
+        tp = ȳ[i]
+        if isfinite(tp) && !iszero(tp)
+            acc += T(y[i]) * T(tp)
+        end
+    end
+    return acc
+end
+
 function j′vp(fdm, f_vec, ȳ, x)
-  ẏs = map(eachindex(x)) do n
-    return fdm(zero(eltype(x))) do ε
+    result = zero(x)
+    isempty(x) && return result
+    any(tp -> isfinite(tp) && !iszero(tp), ȳ) || return result
+    for n in eachindex(x)
         xn = x[n]
-        try
-            x[n] = xn + ε
-            return copy(f_vec(x))  # copy required incase `f(x)` returns something that aliases `x`
-        finally
-            x[n] = xn  # Can't do `x[n] -= ϵ` as floating-point math is not associative
+        result[n] = fdm(zero(eltype(x))) do ε
+            try
+                x[n] = xn + ε
+                return _weighted_sum(f_vec(x), ȳ)
+            finally
+                x[n] = xn  # Can't do `x[n] -= ϵ` as floating-point math is not associative
+            end
         end
     end
-  end
-  mat = if isempty(ẏs)
-          similar(x, 0, length(ȳ))
-        else
-          transpose(reduce(hcat, ẏs))
-        end
-  result = zero(x)
-  for i in 1:length(ȳ)
-    tp = @inbounds ȳ[i] 
-    if isfinite(tp) && !iszero(tp)
-      result .+= mat[:, i] .* tp
-    end
-  end
-  return result
+    return result
 end
 
 #=
@@ -209,17 +216,51 @@ function _wrap_reverse_function(active_return, f, xs, ignores)
         # if an arg and a return alias, do not consider the contribution from the arg as returned here,
         # it will already be taken into account. This is implemented using the deepcopy_internal, which
         # will add all objects inside the return into the dict `zeros`.
-        zeros = IdDict()
         origRet = Base.deepcopy_internal(f, inputs)(callargs...)
-        Base.deepcopy_internal(origRet, zeros)
 
         # we will now explicitly zero all objects returned, and replace any of the args with this
         # zero, if the input and output alias.
         if active_return
-            for k in keys(zeros)
-                zeros[k] = zero_tangent(k)
+            zeros = IdDict()
+            Base.deepcopy_internal(origRet, zeros)
+            @static if VERSION >= v"1.11-"
+                replaced_mems = IdDict()
+                for k in collect(keys(zeros))
+                    if k isa Array
+                        zk = zero_tangent(k)
+                        zeros[k] = zk
+                        if haskey(zeros, k.ref.mem)
+                            zeros[k.ref.mem] = zk.ref.mem
+                            replaced_mems[k.ref.mem] = true
+                        end
+                    end
+                end
+                for k in collect(keys(zeros))
+                    if !(k isa Array) && !haskey(replaced_mems, k)
+                        zeros[k] = zero_tangent(k)
+                    end
+                end
+            else
+                for k in keys(zeros)
+                    zeros[k] = zero_tangent(k)
+                end
             end
-            return (origRet, Base.deepcopy_internal(retargs, zeros)...)
+            retargs_out = map(retargs) do r
+                if haskey(zeros, r)
+                    return zeros[r]
+                end
+                @static if VERSION >= v"1.11-"
+                    if r isa Array && isbitstype(eltype(r)) && !haskey(zeros, r.ref.mem)
+                        return r
+                    end
+                else
+                    if r isa Array && isbitstype(eltype(r))
+                        return r
+                    end
+                end
+                return Base.deepcopy_internal(r, zeros)
+            end
+            return (origRet, retargs_out...)
         else
             return (origRet, retargs...)
         end
