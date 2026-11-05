@@ -294,22 +294,11 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
         TestCase(MvNormal([0.2, 0.3], Hermitian(Diagonal([0.5, 0.4]))), [-0.1, 0.05]),
         TestCase(MvNormal([0.2, 0.3], Symmetric(Diagonal([0.5, 0.4]))), [-0.1, 0.05]),
         TestCase(MvNormal([0.2, 0.3], Diagonal([0.5, 0.4])), [-0.1, 0.05]),
-        # TODO Broken tests, see https://github.com/EnzymeAD/Enzyme.jl/issues/1991
-        TestCase(
-            MvNormal([-0.15], _pdmat([1.1]')), [-0.05];
-            broken = (VERSION < v"1.12" ? Forward : Neither)
-        ),
-        TestCase(
-            MvNormal([0.2, -0.15], _pdmat([1.0 0.9; 0.7 1.1])), [0.05, -0.05];
-            broken = Forward
-        ),
+        TestCase(MvNormal([-0.15], _pdmat([1.1]')), [-0.05]),
+        TestCase(MvNormal([0.2, -0.15], _pdmat([1.0 0.9; 0.7 1.1])), [0.05, -0.05]),
         TestCase(MvNormal([0.2, -0.3], [0.5, 0.6]), [0.4, -0.3]),
         TestCase(MvNormalCanon([0.1, -0.1], _pdmat([0.5 0.4; 0.45 1.0])), [0.2, -0.25]),
-        # TODO Broken tests, see https://github.com/EnzymeAD/Enzyme.jl/issues/1991
-        TestCase(
-            MvLogNormal(MvNormal([0.2, -0.1], _pdmat([1.0 0.9; 0.7 1.1]))), [0.5, 0.1];
-            broken = Forward
-        ),
+        TestCase(MvLogNormal(MvNormal([0.2, -0.1], _pdmat([1.0 0.9; 0.7 1.1]))), [0.5, 0.1]),
         TestCase(product_distribution([Normal()]), [0.3]),
         TestCase(
             product_distribution([Normal(), Uniform()]), [-0.4, 0.3];

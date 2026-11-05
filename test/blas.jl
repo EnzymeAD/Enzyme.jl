@@ -89,6 +89,24 @@ using Test
             )
         end
     end
+
+    @testset "trtrs! forward" begin
+        @testset for T in (Float64, ComplexF64),
+                uplo in ('U', 'L'), trans in ('N', 'T', 'C'), diag in ('N', 'U'),
+                nrhs in (nothing, 3),
+                TA in (Const, Duplicated, BatchDuplicated),
+                TB in (Duplicated, BatchDuplicated)
+
+            are_activities_compatible(TB, TA, TB) || continue
+            # Well-conditioned also for diag == 'N'
+            A = randn(T, 4, 4) + 4I
+            B = nrhs === nothing ? randn(T, 4) : randn(T, 4, nrhs)
+            test_forward(
+                LAPACK.trtrs!, TB, uplo, trans, diag, (A, TA), (B, TB);
+                atol = 0, rtol = sqrt(eps(real(T)))
+            )
+        end
+    end
 end
 
 # Call BLAS directly, so that the forward rules for `BLAS.trmm!` and `BLAS.trmv!` do not apply
@@ -141,4 +159,13 @@ end
     # The forward rule for `BLAS.trmm!` is used, without a fallback BLAS warning
     dx = @test_nowarn Enzyme.gradient(Forward, g, vec(U))[1]
     @test dx ≈ Enzyme.gradient(Reverse, g, vec(U))[1]
+end
+
+# https://github.com/EnzymeAD/Enzyme.jl/issues/1991
+@testset "Triangular solve in forward mode" begin
+    x, L, µ = [0.6, 0.98], [1.0 0.5; 0.5 1.0], [-0.79, 0.47]
+    f(x, L, µ) = LowerTriangular(L) \ (x .- µ)
+    # `\` calls `LAPACK.trtrs!`, for which the forward rule is used
+    J = @test_nowarn Enzyme.gradient(Forward, f, x, Const(L), Const(µ))[1]
+    @test J ≈ inv(LowerTriangular(L))
 end

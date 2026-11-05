@@ -852,6 +852,45 @@ function EnzymeRules.forward(
     return _fwd_return(config, x.val, x.dval)
 end
 
+# B = op(A) \ B: dB = op(A) \ (dB - op(tri(dA)) B), with B the output.
+# Enzyme's native trtrs rule does not support forward mode, and unlike for BLAS functions there
+# is no fallback implementation of LAPACK functions. The tangents are solved with trsv/trsm
+# instead of trtrs, see `_trisolve!`.
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(LAPACK.trtrs!)},
+        RT::Type,
+        uplo::Const{<:AbstractChar},
+        trans::Const{<:AbstractChar},
+        diag::Const{<:AbstractChar},
+        A::Annotation{<:StridedMatrix{T}},
+        B::Annotation{<:StridedVecOrMat{T}},
+    ) where {T <: LinearAlgebra.BlasFloat}
+    ul, tA, dg = Char(uplo.val), Char(trans.val), Char(diag.val)
+    # Throws for singular A, as without differentiation
+    func.val(ul, tA, dg, A.val, B.val)
+    if _isconst(config, B)
+        return _fwd_return(config, B.val, B isa Const ? nothing : B.dval)
+    end
+
+    A_const = _isconst(config, A)
+    tmp = A_const ? nothing : similar(B.val)
+    N = EnzymeRules.width(config)
+    for i in 1:N
+        dB = N == 1 ? B.dval : B.dval[i]
+        if !A_const
+            dA = N == 1 ? A.dval : A.dval[i]
+            dB .-= _tri_mul_tangent!(tmp, 'L', ul, tA, dg, true, dA, B.val)
+        end
+        if dB isa AbstractVector
+            BLAS.trsv!(ul, tA, dg, A.val, dB)
+        else
+            BLAS.trsm!('L', ul, tA, dg, one(T), A.val, dB)
+        end
+    end
+    return _fwd_return(config, B.val, B.dval)
+end
+
 EnzymeRules.has_readonly_rule(::typeof(logdet), ::StridedMatrix) = true
 EnzymeRules.has_attribute_preserving_rule(::typeof(logdet), ::StridedMatrix) = true
 EnzymeRules.has_readonly_rule(::typeof(det), ::StridedMatrix) = true
