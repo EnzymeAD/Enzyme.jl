@@ -3,112 +3,112 @@ using Enzyme, Test
 @eval construct_splatnew(T, fields) = $(Expr(:splatnew, :T, :fields))
 
 struct ActivePair
-	x::Float32
-	y::Float64
+    x::Float32
+    y::Float64
 end
 
 function toactivepair(x, y)
-	tup = Base.inferencebarrier((x, y))
-	pair = construct_splatnew(ActivePair, tup)
-	(pair.x * pair.y)::Float64
+    tup = Base.inferencebarrier((x, y))
+    pair = construct_splatnew(ActivePair, tup)
+    return (pair.x * pair.y)::Float64
 end
 
 struct VectorPair
-	x::Vector{Float32}
-	y::Vector{Float64}
+    x::Vector{Float32}
+    y::Vector{Float64}
 end
 
 
 function tovectorpair(x, y)
-	tup = Base.inferencebarrier((x, y))
-	pair = construct_splatnew(VectorPair, tup)
-	(pair.x[1] * pair.y[1])::Float64
+    tup = Base.inferencebarrier((x, y))
+    pair = construct_splatnew(VectorPair, tup)
+    return (pair.x[1] * pair.y[1])::Float64
 end
 
 
 function toactivepair!(res, x, y)
-	tup = Base.inferencebarrier((x[1], y[1]))
-	pair = construct_splatnew(ActivePair, tup)
-	res[] = (pair.x * pair.y)::Float64
-	nothing
+    tup = Base.inferencebarrier((x[1], y[1]))
+    pair = construct_splatnew(ActivePair, tup)
+    res[] = (pair.x * pair.y)::Float64
+    return nothing
 end
 
 function tovectorpair!(res, x, y)
-	tup = Base.inferencebarrier((x, y))
-	pair = construct_splatnew(VectorPair, tup)
-	res[] = (pair.x[1] * pair.y[1])::Float64
-	nothing
+    tup = Base.inferencebarrier((x, y))
+    pair = construct_splatnew(VectorPair, tup)
+    res[] = (pair.x[1] * pair.y[1])::Float64
+    return nothing
 end
 
 @testset "Reverse Unstable newstructt" begin
-	res = Enzyme.autodiff(Reverse, toactivepair, Active(2.7f0), Active(3.1))
-	@test res[1][1] ≈ 3.1f0
-	@test res[1][2] ≈ 2.700000047683716
+    res = Enzyme.autodiff(Reverse, toactivepair, Active(2.7f0), Active(3.1))
+    @test res[1][1] ≈ 3.1f0
+    @test res[1][2] ≈ 2.700000047683716
 
-	x = Float32[2.7f0]
-	dx = Float32[0.0f0]
-	y = Float64[3.1]
-	dy = Float64[0.0]
+    x = Float32[2.7f0]
+    dx = Float32[0.0f0]
+    y = Float64[3.1]
+    dy = Float64[0.0]
 
-	Enzyme.autodiff(Reverse, tovectorpair, Duplicated(x, dx), Duplicated(y, dy))
-	@test dx[1] ≈ 3.1f0
-	@test dy[1] ≈ 2.700000047683716
+    Enzyme.autodiff(Reverse, tovectorpair, Duplicated(x, dx), Duplicated(y, dy))
+    @test dx[1] ≈ 3.1f0
+    @test dy[1] ≈ 2.700000047683716
 
-	x = Float32[2.7f0]
-	dx = Float32[0.0f0]
-	dx2 = Float32[0.0f0]
-	y = Float64[3.1]
-	dy = Float64[0.0]
-	dy2 = Float64[0.0]
+    x = Float32[2.7f0]
+    dx = Float32[0.0f0]
+    dx2 = Float32[0.0f0]
+    y = Float64[3.1]
+    dy = Float64[0.0]
+    dy2 = Float64[0.0]
 
-	res = Ref(0.0)
-	dres = Ref(1.0)
-	dres2 = Ref(3.0)
+    res = Ref(0.0)
+    dres = Ref(1.0)
+    dres2 = Ref(3.0)
 
-	Enzyme.autodiff(Reverse, toactivepair!, BatchDuplicated(res, (dres, dres2)), BatchDuplicated(x, (dx, dx2)), BatchDuplicated(y, (dy, dy2)))
+    Enzyme.autodiff(Reverse, toactivepair!, BatchDuplicated(res, (dres, dres2)), BatchDuplicated(x, (dx, dx2)), BatchDuplicated(y, (dy, dy2)))
 
-	@test dx[1] ≈ 3.1f0
-	@test dy[1] ≈ 2.700000047683716
+    @test dx[1] ≈ 3.1f0
+    @test dy[1] ≈ 2.700000047683716
 
-	@test dx2[1] ≈ 3.1f0 * 3
-	@test dy2[1] ≈ 2.700000047683716 * 3
+    @test dx2[1] ≈ 3.1f0 * 3
+    @test dy2[1] ≈ 2.700000047683716 * 3
 
 
-	x = Float32[2.7f0]
-	dx = Float32[0.0f0]
-	dx2 = Float32[0.0f0]
-	y = Float64[3.1]
-	dy = Float64[0.0]
-	dy2 = Float64[0.0]
+    x = Float32[2.7f0]
+    dx = Float32[0.0f0]
+    dx2 = Float32[0.0f0]
+    y = Float64[3.1]
+    dy = Float64[0.0]
+    dy2 = Float64[0.0]
 
-	res = Ref(0.0)
-	dres = Ref(1.0)
-	dres2 = Ref(3.0)
+    res = Ref(0.0)
+    dres = Ref(1.0)
+    dres2 = Ref(3.0)
 
-	Enzyme.autodiff(Reverse, tovectorpair!, BatchDuplicated(res, (dres, dres2)), BatchDuplicated(x, (dx, dx2)), BatchDuplicated(y, (dy, dy2)))
+    Enzyme.autodiff(Reverse, tovectorpair!, BatchDuplicated(res, (dres, dres2)), BatchDuplicated(x, (dx, dx2)), BatchDuplicated(y, (dy, dy2)))
 
-	@test dx[1] ≈ 3.1f0
-	@test dy[1] ≈ 2.700000047683716
+    @test dx[1] ≈ 3.1f0
+    @test dy[1] ≈ 2.700000047683716
 
-	@test dx2[1] ≈ 3.1f0 * 3
-	@test dy2[1] ≈ 2.700000047683716 * 3
+    @test dx2[1] ≈ 3.1f0 * 3
+    @test dy2[1] ≈ 2.700000047683716 * 3
 
 end
 
 @testset "Forward Unstable newstructt" begin
-	res = Enzyme.autodiff(Forward, toactivepair, Duplicated(2.7f0, 2.0f0), Duplicated(3.1, 3.0))
-	@test res[1] ≈ 2.7f0 * 3.0 + 2.0f0 * 3.1
-	res = Enzyme.autodiff(Forward, toactivepair, BatchDuplicated(2.7f0, (2.0f0, 5.0f0)), BatchDuplicated(3.1, (3.0, 7.0)))
-	@test res[1][1] ≈ 2.7f0 * 3.0 + 2.0f0 * 3.1
-	@test res[1][2] ≈ 2.7f0 * 7.0 + 5.0f0 * 3.1	
+    res = Enzyme.autodiff(Forward, toactivepair, Duplicated(2.7f0, 2.0f0), Duplicated(3.1, 3.0))
+    @test res[1] ≈ 2.7f0 * 3.0 + 2.0f0 * 3.1
+    res = Enzyme.autodiff(Forward, toactivepair, BatchDuplicated(2.7f0, (2.0f0, 5.0f0)), BatchDuplicated(3.1, (3.0, 7.0)))
+    @test res[1][1] ≈ 2.7f0 * 3.0 + 2.0f0 * 3.1
+    @test res[1][2] ≈ 2.7f0 * 7.0 + 5.0f0 * 3.1
 end
 
-struct InsFwdNormal1{T<:Real}
-	σ::T
+struct InsFwdNormal1{T <: Real}
+    σ::T
 end
 
-struct InsFwdNormal2{T<:Real}
-	σ::T
+struct InsFwdNormal2{T <: Real}
+    σ::T
 end
 
 insfwdlogpdf(d, x) = d.σ
@@ -124,14 +124,14 @@ end
 end
 
 function use(x)
-    use(x[1]) * use(x[2])
+    return use(x[1]) * use(x[2])
 end
 function use(x::Vector{Float64})
-    @inbounds x[1]
+    return @inbounds x[1]
 end
 function tupq(x, y)
     res = (Base.inferencebarrier(x), y)
-    use(res)::Float64
+    return use(res)::Float64
 end
 
 @testset "Runtime Activity Tuple Construction" begin
@@ -145,33 +145,33 @@ end
     y = [3.0]
     dy = [0.0]
     Enzyme.autodiff(set_runtime_activity(Reverse), tupq, Const(x), Duplicated(y, dy))
-    
+
     @test x ≈ [2.0]
     @test y ≈ [3.0]
     @test dy ≈ [2.0]
 end
 
 @noinline function setone(rany)
-   rany[] = 1.0
-   nothing
+    rany[] = 1.0
+    return nothing
 end
 
 function typeunstable_constant_shadow()
-        rany = Ref{Any}()
-        setone(rany)
-        return rany[]
+    rany = Ref{Any}()
+    setone(rany)
+    return rany[]
 end
 
 @testset "Zero type unstable shadow" begin
-   fwd, _ = autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(typeunstable_constant_shadow)}, Active{Float64})
-   _, _, shad = fwd(Const(typeunstable_constant_shadow))
+    fwd, _ = autodiff_thunk(ReverseSplitNoPrimal, Const{typeof(typeunstable_constant_shadow)}, Active{Float64})
+    _, _, shad = fwd(Const(typeunstable_constant_shadow))
 end
 
 kwcallee(x; saveat) = x + saveat # callee takes a keyword argument
 typeunstable_kwloss(x, r) = kwcallee(x; saveat = r[])
 
 @testset "Inactive argument to new struct" begin
-	@test Enzyme.gradient(Enzyme.Reverse, typeunstable_kwloss, 2.7, Enzyme.Const(Base.RefValue{Any}(3.1)))[1] ≈ 1.0
+    @test Enzyme.gradient(Enzyme.Reverse, typeunstable_kwloss, 2.7, Enzyme.Const(Base.RefValue{Any}(3.1)))[1] ≈ 1.0
 end
 
 @noinline newstruct_runtime_any()::Any = Base.inferencebarrier(Ref(1.0))
@@ -229,21 +229,21 @@ Prob3246{iip}(u0, tspan, p) where {iip} =
 @noinline build_3246(u0, tspan, p, flag) = Prob3246{flag}(u0, tspan, p)
 
 function loss_3246(p, flag)
-    sum(abs2, build_3246([1.0, 2.0], (0.0, 1.0), p, flag).p)
+    return sum(abs2, build_3246([1.0, 2.0], (0.0, 1.0), p, flag).p)
 end
 
 @testset "Issue 3246 HVP with runtime activity" begin
     RA_R = Enzyme.set_runtime_activity(Enzyme.Reverse)
     RA_F = Enzyme.set_runtime_activity(Enzyme.Forward)
-    
+
     FLAG = Ref(true)
     runtime_iip() = FLAG[]
-    
+
     grad(x) = Enzyme.gradient(RA_R, p -> loss_3246(p, runtime_iip()), x)[1]
-    
+
     x0 = [1.0, 2.0, 3.0]
     v = [1.0, 0.0, 0.0]
-    
+
     res = Enzyme.autodiff(RA_F, Enzyme.Const(grad), Enzyme.Duplicated(x0, v))
     @test res[1] ≈ [2.0, 0.0, 0.0]
 end
@@ -275,15 +275,18 @@ end
 function loss_3280(p)
     prob = MiniProblem3280([1.0], (0.0, 1.0), p, pairs((;)))
     active_field = Enzyme.Compiler.idx_jl_getfield_aug(
-        Val(NamedTuple{(1,)}), prob, Val{2}, Val(false))
+        Val(NamedTuple{(1,)}), prob, Val{2}, Val(false)
+    )
     return sum(abs2, active_field)
 end
 
 @testset "idx_jl_getfield_aug calling convention (Issue 3280 reproducer)" begin
     p = [0.5]
     dp = zero(p)
-    Enzyme.autodiff(set_runtime_activity(Reverse), Enzyme.Const(loss_3280), Enzyme.Active,
-        Enzyme.Duplicated(p, dp))
+    Enzyme.autodiff(
+        set_runtime_activity(Reverse), Enzyme.Const(loss_3280), Enzyme.Active,
+        Enzyme.Duplicated(p, dp)
+    )
     @test dp ≈ [1.0]
 end
 
@@ -506,4 +509,183 @@ end
     sum_log_gradient!(dx, x)
     @test dx ≈ 1 ./ x
     @test (@allocated sum_log_gradient!(dx, x)) == 0
+end
+
+@noinline dyn_scaled_vec(x) = Base.inferencebarrier(2.0 .* x)
+dyn_sum_abs2_vec(x) = sum(abs2, dyn_scaled_vec(x))::Float64
+
+@noinline dyn_scaled_mat(x) = Base.inferencebarrier(reshape(2.0 .* x, 2, :))
+dyn_sum_abs2_mat(x) = sum(abs2, dyn_scaled_mat(x))::Float64
+
+@testset "Forward-over-Reverse through dynamic call with LLVMPtr sub-tape" begin
+    # Untyped LLVM pointers on Enzyme tapes (`Core.LLVMPtr{Cvoid, 0}` on opaque-pointer
+    # LLVM, `Core.LLVMPtr{UInt8, 0}` on typed-pointer LLVM) may point to active sub-tape
+    # buffers and must be classified `DupState` (`!guaranteed_const`), while `Ptr{Cvoid}`
+    # C handles remain `AnyState` (`guaranteed_const`).
+    @test !Enzyme.Compiler.guaranteed_const(Core.LLVMPtr{Cvoid, 0})
+    @test !Enzyme.Compiler.guaranteed_const(Core.LLVMPtr{UInt8, 0})
+    @test Enzyme.Compiler.guaranteed_nonactive(Core.LLVMPtr{Cvoid, 0})
+    @test Enzyme.Compiler.guaranteed_const(Ptr{Cvoid})
+
+    for (loss_fn, x, v) in (
+            (dyn_sum_abs2_vec, [1.0, 2.0], [0.5, -0.25]),
+            (dyn_sum_abs2_vec, [1.0, 2.0, 3.0], [0.5, -0.25, 0.75]),
+            (dyn_sum_abs2_mat, [1.0, 2.0, 3.0, 4.0], [0.5, -0.25, 0.75, -0.5]),
+        )
+        dx = zero(x)
+        hv = zero(x)
+        Enzyme.autodiff(
+            Enzyme.set_runtime_activity(Forward),
+            (g, u) -> begin
+                fill!(g, 0.0)
+                Enzyme.autodiff(
+                    Enzyme.set_runtime_activity(Reverse),
+                    loss_fn,
+                    Active,
+                    Duplicated(u, g),
+                )
+                return nothing
+            end,
+            Const,
+            Duplicated(dx, hv),
+            Duplicated(x, v),
+        )
+        # loss(x) = 4 * sum(abs2, x) => grad = 8 * x, H * v = 8 * v
+        @test dx ≈ 8.0 .* x
+        @test hv ≈ 8.0 .* v
+    end
+end
+
+struct FoRMockProb{U, T, P, K}
+    u0::U
+    tspan::T
+    p::P
+    kwargs::K
+end
+
+@noinline function build_for_mock_prob(u0, tspan, p; kwargs...)
+    tup = Base.inferencebarrier((u0, tspan, p, kwargs))
+    return construct_splatnew(FoRMockProb{typeof(u0), typeof(tspan), typeof(p), typeof(kwargs)}, tup)
+end
+
+@noinline function solve_for_mock_prob(prob; saveat = nothing, abstol = 1.0e-6)
+    u0 = prob.u0
+    t0, t1 = prob.tspan
+    dt = (t1 - t0) / (saveat === nothing ? 1.0 : Float64(length(saveat)))
+    p = prob.p
+    return [
+        u0[1] * exp(p[1] * dt) + p[3] * tanh(u0[2] + p[2] * dt),
+        u0[2] * exp(p[2] * dt) + p[4] * (u0[1] + p[1] * dt)^2,
+    ]
+end
+
+const for_u0_const = [1.0, 0.5]
+const for_tspan_const = (0.0, 0.5)
+const for_saveat_const = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
+
+for_u0_nonconst = [1.0, 0.5]
+for_tspan_nonconst = (0.0, 0.5)
+for_saveat_nonconst = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
+
+for_loss_const(p) = sum(
+    abs2,
+    solve_for_mock_prob(
+        build_for_mock_prob(for_u0_const, for_tspan_const, p; abstol = 1.0e-9);
+        saveat = for_saveat_const,
+    ),
+)
+for_loss_nonconst(p) = sum(
+    abs2,
+    solve_for_mock_prob(
+        build_for_mock_prob(for_u0_nonconst, for_tspan_nonconst, p; abstol = 1.0e-9);
+        saveat = for_saveat_nonconst,
+    ),
+)
+
+@testset "Forward-over-Reverse with non-const globals, kwargs, and newstructt" begin
+    p0 = [0.2, -0.3, 0.4, -0.1]
+    v1 = [0.5, -0.25, 0.1, 0.75]
+    v2 = [-0.2, 0.4, 0.3, -0.5]
+
+    g_ref = zero(p0)
+    hv1_ref = zero(p0)
+    hv2_ref = zero(p0)
+    Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Forward),
+        (g, x) -> begin
+            fill!(g, 0.0)
+            Enzyme.autodiff(
+                Enzyme.set_runtime_activity(Reverse),
+                for_loss_const,
+                Active,
+                Duplicated(x, g),
+            )
+            return nothing
+        end,
+        Const,
+        BatchDuplicated(g_ref, (hv1_ref, hv2_ref)),
+        BatchDuplicated(copy(p0), (copy(v1), copy(v2))),
+    )
+
+    g_nc = zero(p0)
+    hv1_nc = zero(p0)
+    Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Forward),
+        (g, x) -> begin
+            fill!(g, 0.0)
+            Enzyme.autodiff(
+                Enzyme.set_runtime_activity(Reverse),
+                for_loss_nonconst,
+                Active,
+                Duplicated(x, g),
+            )
+            return nothing
+        end,
+        Const,
+        Duplicated(g_nc, hv1_nc),
+        Duplicated(copy(p0), copy(v1)),
+    )
+    @test g_nc ≈ g_ref rtol = 1.0e-13
+    @test hv1_nc ≈ hv1_ref rtol = 1.0e-13
+
+    g_b = zero(p0)
+    hv1_b = zero(p0)
+    hv2_b = zero(p0)
+    Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Forward),
+        (g, x) -> begin
+            fill!(g, 0.0)
+            Enzyme.autodiff(
+                Enzyme.set_runtime_activity(Reverse),
+                for_loss_nonconst,
+                Active,
+                Duplicated(x, g),
+            )
+            return nothing
+        end,
+        Const,
+        BatchDuplicated(g_b, (hv1_b, hv2_b)),
+        BatchDuplicated(copy(p0), (copy(v1), copy(v2))),
+    )
+    @test g_b ≈ g_ref rtol = 1.0e-13
+    @test hv1_b ≈ hv1_ref rtol = 1.0e-13
+    @test hv2_b ≈ hv2_ref rtol = 1.0e-13
+
+    # Dynamic tuple indexing where the tuple is an LLVM PHI node under runtime activity
+    @noinline _make_het_tup1(x::Vector{Float64}) = (2.0 .* x, Base.inferencebarrier(:a))
+    @noinline _make_het_tup2(x::Vector{Float64}) = (3.0 .* x, Base.inferencebarrier("b"))
+    function phi_nthfield_rtact(x::Vector{Float64}, flag::Bool, idx::Int)
+        tup = flag ? _make_het_tup1(x) : _make_het_tup2(x)
+        return sum(getfield(tup, idx)::Vector{Float64})
+    end
+    dx_phi = zeros(2)
+    Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Reverse),
+        phi_nthfield_rtact,
+        Active,
+        Duplicated([1.5, -0.5], dx_phi),
+        Const(true),
+        Const(1),
+    )
+    @test dx_phi ≈ [2.0, 2.0]
 end

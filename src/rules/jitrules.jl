@@ -1,3 +1,135 @@
+@inline function runtime_zero_inactive(x::T) where {T<:Tuple}
+    aref = active_reg_nothrow(T)
+    if aref == AnyState || aref == DupState
+        return x
+    elseif aref == ActiveState
+        return Enzyme.make_zero(x)
+    else
+        return ntuple(Val(length(x))) do i
+            Base.@_inline_meta
+            runtime_zero_inactive(x[i])
+        end
+    end
+end
+
+@inline function runtime_zero_inactive(x::NamedTuple{names,TT}) where {names,TT}
+    aref = active_reg_nothrow(NamedTuple{names,TT})
+    if aref == AnyState || aref == DupState
+        return x
+    elseif aref == ActiveState
+        return Enzyme.make_zero(x)
+    else
+        return NamedTuple{names,TT}(runtime_zero_inactive(Tuple(x)))
+    end
+end
+
+@inline function runtime_zero_inactive(x::T) where {T}
+    aref = active_reg_nothrow(T)
+    if aref == AnyState || aref == DupState
+        return x
+    elseif aref == ActiveState
+        return Enzyme.make_zero(x)
+    else
+        @assert !ismutabletype(T)
+        nf = fieldcount(T)
+        if nf == 0
+            return x
+        end
+        all_def = all(ntuple(Val(nf)) do i
+            Base.@_inline_meta
+            isdefined(x, i)
+        end)
+        if all_def
+            return splatnew(T, ntuple(Val(nf)) do i
+                Base.@_inline_meta
+                runtime_zero_inactive(getfield(x, i))
+            end)
+        else
+            flds = Vector{Any}(undef, nf)
+            for i in 1:nf
+                if isdefined(x, i)
+                    flds[i] = runtime_zero_inactive(getfield(x, i))
+                else
+                    nf = i - 1
+                    break
+                end
+            end
+            return ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), T, flds, nf)::T
+        end
+    end
+end
+
+@inline function has_distinct_dup_shadow(prim::T, shad::T)::Bool where {T}
+    aref = active_reg_nothrow(T)
+    if aref == AnyState || aref == ActiveState
+        return false
+    end
+    if ismutabletype(T) || T <: Ptr || T <: Core.LLVMPtr || is_arrayorvararg_ty(T) || is_mutable_array(T)
+        return !(prim === shad)
+    end
+    nf = fieldcount(T)
+    for i in 1:nf
+        if isdefined(prim, i) && isdefined(shad, i)
+            if has_distinct_dup_shadow(getfield(prim, i), getfield(shad, i))
+                return true
+            end
+        end
+    end
+    return false
+end
+
+@inline function has_any_distinct_dup_shadow(prim, shads)::Bool
+    for w in 1:length(shads)
+        if has_distinct_dup_shadow(prim, shads[w])
+            return true
+        end
+    end
+    return false
+end
+
+@inline function has_any_distinct_dup_shadow_ref(prim, shads)::Bool
+    for w in 1:length(shads)
+        if has_distinct_dup_shadow(prim, shads[w][])
+            return true
+        end
+    end
+    return false
+end
+
+@inline all_const_annotations() = true
+@inline all_const_annotations(::Const, rest::Annotation...) = all_const_annotations(rest...)
+@inline all_const_annotations(::Annotation, rest::Annotation...) = false
+
+@inline normalize_single_shadow_fwd(prim::PT, shad::PT) where {PT} = shad
+@inline normalize_single_shadow_fwd(prim::PT, ::Nothing) where {PT} = runtime_zero_inactive(prim)
+@inline normalize_single_shadow_fwd(::Nothing, ::Nothing) = nothing
+
+@inline normalize_batch_shadow_fwd(prim::PT, shads::NTuple{W,PT}) where {W,PT} = shads
+@inline function normalize_batch_shadow_fwd(prim::PT, shads::NTuple{W,Any}) where {W,PT}
+    ntuple(Val(W)) do w
+        Base.@_inline_meta
+        normalize_single_shadow_fwd(prim, shads[w])
+    end
+end
+
+@inline normalize_batch_shadow_dup(prim::PT, shads::NTuple{W,PT}) where {W,PT} = shads
+@inline function normalize_batch_shadow_dup(prim::PT, shads::NTuple{W,Any}) where {W,PT}
+    ntuple(Val(W)) do w
+        Base.@_inline_meta
+        s = shads[w]
+        (s === nothing && prim !== nothing) ? prim : s::PT
+    end
+end
+
+@inline normalize_batch_shadow_mix(prim::PT, shads::NTuple{W,Base.RefValue{PT}}) where {W,PT} = shads
+@inline function normalize_batch_shadow_mix(prim::PT, shads::NTuple{W,Any}) where {W,PT}
+    ntuple(Val(W)) do w
+        Base.@_inline_meta
+        s = shads[w]
+        s isa Base.RefValue{PT} ? s : Base.RefValue{PT}(runtime_zero_inactive(prim))
+    end
+end
+
 struct BuiltinWrapper{F}
     f::F
 end
@@ -26,24 +158,27 @@ end
             if Width == 1
                 return quote
                     Base.@_inline_meta
-                    MixedDuplicated(primarg, shadowarg)
+                    MixedDuplicated(
+                        primarg,
+                        shadowarg isa Base.RefValue{PT} ? shadowarg : Base.RefValue{PT}(runtime_zero_inactive(primarg)),
+                    )
                 end
             else
                 return quote
                     Base.@_inline_meta
-                    BatchMixedDuplicated(primarg, shadowarg)
+                    BatchMixedDuplicated(primarg, normalize_batch_shadow_mix(primarg, shadowarg))
                 end
             end
         else
             if Width == 1
                 return quote
                     Base.@_inline_meta
-                    Duplicated(primarg, shadowarg)
+                    Duplicated(primarg, (shadowarg === nothing && primarg !== nothing) ? primarg : shadowarg)
                 end
             else
                 return quote
                     Base.@_inline_meta
-                    BatchDuplicated(primarg, shadowarg)
+                    BatchDuplicated(primarg, normalize_batch_shadow_dup(primarg, shadowarg))
                 end
             end
         end
@@ -215,11 +350,16 @@ function setup_macro_wraps(
             end
         else
             if forwardMode
+                normshad = if Width == 1
+                    :(normalize_single_shadow_fwd($(primargs[i]), $(shadowargs[i])))
+                else
+                    :(normalize_batch_shadow_fwd($(primargs[i]), $(shadowargs[i])))
+                end
                 quote
                     if ActivityTup[$i+1] && !guaranteed_const($(primtypes[i]))
                         $((Width == 1) ? :Duplicated : :BatchDuplicated)(
                             $(primargs[i]),
-                            $(shadowargs[i]),
+                            $normshad,
                         )
                     else
                         Const($(primargs[i]))
@@ -280,14 +420,24 @@ function body_runtime_generic_fwd(N, Width, wrapped, primtypes, dfns)
     end
 
     retres = if Width == 1
-        :(return ReturnType((res[2], res[1])))
+        quote
+            if RuntimeActivity && !any(ActivityTup) && !has_distinct_dup_shadow(res[2], res[1])
+                return ReturnType((res[2], res[2]))
+            end
+            return ReturnType((res[2], res[1]))
+        end
     else
-        :(return ReturnType((res[2], res[1]...)))
+        quote
+            if RuntimeActivity && !any(ActivityTup) && !has_any_distinct_dup_shadow(res[2], res[1])
+                return ReturnType(allSame(Val($(Width + 1)), res[2]))
+            end
+            return ReturnType((res[2], res[1]...))
+        end
     end
     dup = if Width == 1
-        :(Duplicated(f, df))
+        :(Duplicated(f, normalize_single_shadow_fwd(f, df)))
     else
-        :(BatchDuplicated(f, ($(dfns...),)))
+        :(BatchDuplicated(f, normalize_batch_shadow_fwd(f, ($(dfns...),))))
     end
     dupty = if Width == 1
         :(Duplicated{FT})
@@ -417,6 +567,9 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs,
                     internal_tape,
                     shadow_return,
                 )
+                if RuntimeActivity && !any(ActivityTup) && !has_distinct_dup_shadow(origRet, initShadow[])
+                    return ReturnType((origRet, origRet, tape))
+                end
                 return ReturnType((origRet, shadow_return, tape))
             else
                 shadow_return = nothing
@@ -424,6 +577,9 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs,
                     internal_tape,
                     shadow_return,
                 )
+                if RuntimeActivity && !any(ActivityTup) && !has_distinct_dup_shadow(origRet, initShadow)
+                    return ReturnType((origRet, origRet, tape))
+                end
                 return ReturnType((origRet, initShadow, tape))
             end
         end
@@ -435,6 +591,9 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs,
                     internal_tape,
                     shadow_return,
                 )
+                if RuntimeActivity && !any(ActivityTup) && !has_any_distinct_dup_shadow_ref(origRet, initShadow)
+                    return ReturnType(($(nres...), tape))
+                end
                 return ReturnType((origRet, initShadow..., tape))
             else
                 shadow_return = nothing
@@ -442,6 +601,9 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs,
                     internal_tape,
                     shadow_return,
                 )
+                if RuntimeActivity && !any(ActivityTup) && !has_any_distinct_dup_shadow(origRet, initShadow)
+                    return ReturnType(($(nres...), tape))
+                end
                 return ReturnType((origRet, initShadow..., tape))
             end
         end
@@ -454,31 +616,41 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs,
     end
 
     shadowretret = if Width == 1
-        :(return ReturnType((origRet, shadow_return, tape)))
+        quote
+            if RuntimeActivity && !any(ActivityTup)
+                return ReturnType((origRet, origRet, tape))
+            end
+            return ReturnType((origRet, shadow_return, tape))
+        end
     else
-        :(return ReturnType((origRet, shadow_return..., tape)))
+        quote
+            if RuntimeActivity && !any(ActivityTup)
+                return ReturnType(($(nres...), tape))
+            end
+            return ReturnType((origRet, shadow_return..., tape))
+        end
     end
 
     dup = if Width == 1
         quote
-            if df isa Base.RefValue && !(f isa Base.RefValue)
-                MixedDuplicated(f, df)
+            if active_reg_nothrow(FT) == MixedState
+                MixedDuplicated(f, df isa Base.RefValue ? df : Base.RefValue{FT}(runtime_zero_inactive(f)))
             else
-                Duplicated(f, df)
+                Duplicated(f, (df === nothing && f !== nothing) ? f : df)
             end
         end
     else
         quote
-            if df isa Base.RefValue && !(f isa Base.RefValue)
-                BatchMixedDuplicated(f, ($(dfns...),))
+            if active_reg_nothrow(FT) == MixedState
+                BatchMixedDuplicated(f, normalize_batch_shadow_mix(f, ($(dfns...),)))
             else
-                BatchDuplicated(f, ($(dfns...),))
+                BatchDuplicated(f, normalize_batch_shadow_dup(f, ($(dfns...),)))
             end
         end
     end
     dupty = if Width == 1
         quote
-            if df isa Base.RefValue && !(f isa Base.RefValue)
+            if active_reg_nothrow(FT) == MixedState
                 MixedDuplicated{FT}
             else
                 Duplicated{FT}
@@ -486,7 +658,7 @@ function body_runtime_generic_augfwd(N, Width, wrapped, primttypes, active_refs,
         end
     else
         quote
-            if df isa Base.RefValue && !(f isa Base.RefValue)
+            if active_reg_nothrow(FT) == MixedState
                 BatchMixedDuplicated{FT,$Width}
             else
                 BatchDuplicated{FT,$Width}
@@ -660,6 +832,7 @@ function body_runtime_generic_rev(
             shad = shadowargs[i][w]
             out = quote
                 if tup[$i] === nothing
+                elseif RuntimeActivity && $shad === nothing
                 elseif $shad isa Base.RefValue
                     if $Atomic
                         Compiler.recursive_accumulate($shad, Base.RefValue($expr), Val(true))
@@ -703,24 +876,24 @@ function body_runtime_generic_rev(
 
     dup = if Width == 1
         quote
-            if df isa Base.RefValue && !(f isa Base.RefValue)
-                MixedDuplicated(f, df)
+            if active_reg_nothrow(FT) == MixedState
+                MixedDuplicated(f, df isa Base.RefValue ? df : Base.RefValue{FT}(runtime_zero_inactive(f)))
             else
-                Duplicated(f, df)
+                Duplicated(f, (df === nothing && f !== nothing) ? f : df)
             end
         end
     else
         quote
-            if df isa Base.RefValue && !(f isa Base.RefValue)
-                BatchMixedDuplicated(f, ($(dfns...),))
+            if active_reg_nothrow(FT) == MixedState
+                BatchMixedDuplicated(f, normalize_batch_shadow_mix(f, ($(dfns...),)))
             else
-                BatchDuplicated(f, ($(dfns...),))
+                BatchDuplicated(f, normalize_batch_shadow_dup(f, ($(dfns...),)))
             end
         end
     end
     dupty = if Width == 1
         quote
-            if df isa Base.RefValue && !(f isa Base.RefValue)
+            if active_reg_nothrow(FT) == MixedState
                 MixedDuplicated{FT}
             else
                 Duplicated{FT}
@@ -728,7 +901,7 @@ function body_runtime_generic_rev(
         end
     else
         quote
-            if df isa Base.RefValue && !(f isa Base.RefValue)
+            if active_reg_nothrow(FT) == MixedState
                 BatchMixedDuplicated{FT,$Width}
             else
                 BatchDuplicated{FT,$Width}
@@ -894,7 +1067,8 @@ end
     end
 end
 
-@inline function iterate_unwrap_fwd_dup(args, dargs)
+@inline function iterate_unwrap_fwd_dup(args, dargs0)
+    dargs = normalize_single_shadow_fwd(args, dargs0)
     ntuple(Val(length(args))) do i
         Base.@_inline_meta
         arg = args[i]
@@ -908,7 +1082,8 @@ end
 end
 
 
-@inline function iterate_unwrap_fwd_batchdup(::Val{Width}, args, dargs) where {Width}
+@inline function iterate_unwrap_fwd_batchdup(::Val{Width}, args, dargs0) where {Width}
+    dargs = normalize_batch_shadow_fwd(args, dargs0)
     ntuple(Val(length(args))) do i
         Base.@_inline_meta
         arg = args[i]
@@ -969,8 +1144,9 @@ end
     ::Val{reverse},
     vals,
     args,
-    dargs,
+    dargs0,
 ) where {reverse}
+    dargs = (dargs0 === nothing && args !== nothing) ? args : dargs0
     map(PushInnerStruct{reverse, typeof(vals)}(vals), args, dargs)
 end
 
@@ -979,8 +1155,9 @@ end
     vals,
     ::Val{Width},
     args,
-    dargs,
+    dargs0,
 ) where {reverse,Width}
+    dargs = normalize_batch_shadow_dup(args, dargs0)
     ntuple(Val(length(args))) do i
         Base.@_inline_meta
         arg = args[i]
@@ -1014,7 +1191,7 @@ end
     args,
     dargs0,
 ) where {reverse}
-    dargs = dargs0[]
+    dargs = dargs0 isa Base.RefValue ? dargs0[] : runtime_zero_inactive(args)
     ntuple(Val(length(args))) do i
         Base.@_inline_meta
         arg = args[i]
@@ -1041,8 +1218,9 @@ end
     vals,
     ::Val{Width},
     args,
-    dargs,
+    dargs0,
 ) where {reverse,Width}
+    dargs = normalize_batch_shadow_mix(args, dargs0)
     ntuple(Val(length(args))) do i
         Base.@_inline_meta
         arg = args[i]
@@ -1125,9 +1303,9 @@ function fwddiff_with_return(
 
     fa = if dupClosure
         if width == 1
-            Duplicated(f, df)
+            Duplicated(f, normalize_single_shadow_fwd(f, df))
         else
-            BatchDuplicated(f, df)
+            BatchDuplicated(f, normalize_batch_shadow_fwd(f, df))
         end
     else
         Const(f)
@@ -1154,9 +1332,17 @@ function fwddiff_with_return(
         ReturnType(allFirst(Val(width + 1), res))
     else
         if width == 1
-            ReturnType((res[2], res[1]))
+            if RuntimeActivity && !dupClosure && all_const_annotations(args...) && !has_distinct_dup_shadow(res[2], res[1])
+                ReturnType((res[2], res[2]))
+            else
+                ReturnType((res[2], res[1]))
+            end
         else
-            ReturnType((res[2], res[1]...))
+            if RuntimeActivity && !dupClosure && all_const_annotations(args...) && !has_any_distinct_dup_shadow(res[2], res[1])
+                ReturnType(allSame(Val(width + 1), res[2]))
+            else
+                ReturnType((res[2], res[1]...))
+            end
         end
     end
 end
@@ -1247,7 +1433,7 @@ end
     expr = Vector{Expr}(undef, Nargs)
     for i = 1:Nargs
         @inbounds expr[i] = if args[i] <: Const
-            :(args[$i].val)
+            :(runtime_zero_inactive(args[$i].val))
         elseif args[i] <: Active
             :(Enzyme.make_zero(args[$i].val))
         elseif args[i] <: MixedDuplicated
@@ -1276,7 +1462,7 @@ end
         expr = Vector{Expr}(undef, Nargs)
         for i = 1:Nargs
             @inbounds expr[i] = if args[i] <: Const
-                :(args[$i].val)
+                :(runtime_zero_inactive(args[$i].val))
             elseif args[i] <: Active
                 :(Enzyme.make_zero(args[$i].val))
             elseif args[i] <: BatchMixedDuplicated
@@ -1359,9 +1545,9 @@ function augfwd_with_return(
 
         fa = if dupClosure
             if width == 1
-                Duplicated(f, df)
+                Duplicated(f, (df === nothing && f !== nothing) ? f : df)
             else
-                BatchDuplicated(f, df)
+                BatchDuplicated(f, normalize_batch_shadow_dup(f, df))
             end
         else
             Const(f)
@@ -1390,6 +1576,7 @@ function augfwd_with_return(
     end
 
     resT = typeof(origRet)
+    all_inactive = RuntimeActivity && !(dupClosure0 && !guaranteed_const(FT)) && all_const_annotations(args...)
 
     if annotation0 <: Const
         shadow_return = nothing
@@ -1408,7 +1595,9 @@ function augfwd_with_return(
             internal_tape,
             shadow_return,
         )
-        if width == 1
+        if all_inactive
+            return ReturnType((allSame(Val(width + 1), origRet)..., tape))
+        elseif width == 1
             return ReturnType((origRet, shadow_return, tape))
         else
             return ReturnType((origRet, shadow_return..., tape))
@@ -1422,6 +1611,9 @@ function augfwd_with_return(
                 internal_tape,
                 shadow_return,
             )
+            if all_inactive && !has_distinct_dup_shadow(origRet, initShadow[])
+                return ReturnType((origRet, origRet, tape))
+            end
             return ReturnType((origRet, initShadow, tape))
         else
             shadow_return = nothing
@@ -1429,6 +1621,9 @@ function augfwd_with_return(
                 internal_tape,
                 shadow_return,
             )
+            if all_inactive && !has_distinct_dup_shadow(origRet, initShadow)
+                return ReturnType((origRet, origRet, tape))
+            end
             return ReturnType((origRet, initShadow, tape))
         end
     else
@@ -1438,6 +1633,9 @@ function augfwd_with_return(
                 internal_tape,
                 shadow_return,
             )
+            if all_inactive && !has_any_distinct_dup_shadow_ref(origRet, initShadow)
+                return ReturnType((allSame(Val(width + 1), origRet)..., tape))
+            end
             return ReturnType((origRet, initShadow..., tape))
         else
             shadow_return = nothing
@@ -1445,6 +1643,9 @@ function augfwd_with_return(
                 internal_tape,
                 shadow_return,
             )
+            if all_inactive && !has_any_distinct_dup_shadow(origRet, initShadow)
+                return ReturnType((allSame(Val(width + 1), origRet)..., tape))
+            end
             return ReturnType((origRet, initShadow..., tape))
         end
     end
@@ -1616,7 +1817,8 @@ end
                 quote
                     idx_of_vec, idx_in_vec = $(lengths[i])
                     vec = @inbounds shadowargs[idx_of_vec][$w]
-                    if vec isa Base.RefValue
+                    if RuntimeActivity && vec === nothing
+                    elseif vec isa Base.RefValue
                         vecld = vec[]
                         T = Core.Typeof(vecld)
                         @assert !(vecld isa Base.RefValue)
@@ -1948,16 +2150,24 @@ function generic_setup(
                 inverted = lookup_value(gutils, inverted, B)
             end
             if get_runtime_activity(gutils)
-                inv_0 = if width == 1
-                    inverted
+                any_ne = if width == 1
+                    icmp!(B, LLVM.API.LLVMIntNE, val, inverted)
                 else
-                    extract_value!(B, inverted, 0)
+                    cond = icmp!(B, LLVM.API.LLVMIntNE, val, extract_value!(B, inverted, 0))
+                    for w = 2:width
+                        cond = or!(
+                            B,
+                            cond,
+                            icmp!(B, LLVM.API.LLVMIntNE, val, extract_value!(B, inverted, w - 1)),
+                        )
+                    end
+                    cond
                 end
                 push!(
                     ActivityList,
                     select!(
                         B,
-                        icmp!(B, LLVM.API.LLVMIntNE, val, inv_0),
+                        any_ne,
                         unsafe_to_llvm(B, true),
                         unsafe_to_llvm(B, false),
                     ),
@@ -1974,6 +2184,9 @@ function generic_setup(
                     ev = inverted
                 else
                     ev = extract_value!(B, inverted, w - 1)
+                end
+                if get_runtime_activity(gutils)
+                    ev = select!(B, icmp!(B, LLVM.API.LLVMIntEQ, val, ev), fill_val, ev)
                 end
             end
 
@@ -2525,7 +2738,9 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
        v2 &&
        isiter == Base.iterate &&
        istup == Base.tuple &&
-       length(operands(orig)) >= offset + 4
+       length(operands(orig)) >= offset + 4 &&
+       !get_runtime_activity(gutils) &&
+       all(i -> !is_constant_value(gutils, arg_operands_view(orig)[i]), (offset+3):length(arg_operands_view(orig)))
         origops = arg_operands_view(orig)
         shadowins =
             [invert_pointer(gutils, origops[i], B) for i = (offset+3):length(origops)]

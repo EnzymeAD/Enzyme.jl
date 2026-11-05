@@ -6,7 +6,7 @@
     f::F = identity,
     forcelhs::F2 = guaranteed_const,
 ) where {T,F,F2}
-    if forcelhs(T)
+    if forcelhs(T) || fieldcount(T) == 0
         return x
     end
     splatnew(T, ntuple(Val(fieldcount(T))) do i
