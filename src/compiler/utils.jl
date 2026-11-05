@@ -715,6 +715,73 @@ Base.@assume_effects :removable :foldable :nothrow function recursive_eltype(@no
     return ty
 end
 
+function has_boxed_subtape(@nospecialize(T::Type))::Bool
+    (T === Any || !(T isa DataType) || isprimitivetype(T)) && return false
+    !Base.allocatedinline(T) && return true
+    for i in 1:fieldcount(T)
+        has_boxed_subtape(fieldtype(T, i)) && return true
+    end
+    return false
+end
+
+function pack_tape_for_abi(
+        builder::LLVM.IRBuilder,
+        @nospecialize(eval::LLVM.Value),
+        @nospecialize(jlty::Type),
+        box_self::Bool,
+    )::LLVM.Value
+    T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    if jlty === Any
+        return value_type(eval) == T_prjlvalue ? eval : pointercast!(builder, eval, T_prjlvalue)
+    elseif jlty === Bool
+        target = convert(LLVM.LLVMType, Bool)
+        return value_type(eval) == target ? eval : zext!(builder, eval, target)
+    elseif jlty <: Core.LLVMPtr
+        target = convert(LLVM.LLVMType, jlty)
+        return value_type(eval) == target ? eval : pointercast!(builder, eval, target)
+    end
+    sub_llty = convert(LLVM.LLVMType, jlty)
+    if value_type(eval) == sub_llty && !has_boxed_subtape(jlty)
+        return eval
+    end
+    res = if value_type(eval) == sub_llty
+        eval
+    elseif jlty isa DataType && (jlty <: Tuple || jlty <: NamedTuple) && !(value_type(eval) isa LLVM.VectorType)
+        acc = LLVM.UndefValue(sub_llty)
+        abi_idx = 0
+        for k in 1:fieldcount(jlty)
+            ft = fieldtype(jlty, k)
+            isghostty(ft) && continue
+            elem = extract_value!(builder, eval, k - 1)
+            elem_abi = pack_tape_for_abi(
+                builder,
+                elem,
+                ft,
+                ft !== Any && !Base.allocatedinline(ft),
+            )
+            acc = insert_value!(builder, acc, elem_abi, abi_idx)
+            abi_idx += 1
+        end
+        acc
+    else
+        eval
+    end
+    if box_self
+        obj = emit_allocobj!(builder, jlty, "boxed_subtape")
+        bc = addrspacecast!(builder, obj, LLVM.PointerType(sub_llty, Derived))
+        extract_struct_into!(builder, bc, res, "boxed_subtape_store")
+        if any_jltypes(sub_llty)
+            inners = get_julia_inner_types(builder, obj, res)
+            if length(inners) > 1
+                emit_writebarrier!(builder, inners)
+            end
+        end
+        return obj
+    end
+    return res
+end
+
 # Fix calling convention within julia that Tuple{Float,Float} ->[2 x float] rather than {float, float}
 # and that Bool -> i8, not i1
 function calling_conv_fixup(
@@ -736,6 +803,26 @@ function calling_conv_fixup(
         else
             return API.e_insert_value!(builder, prev, val, ridxs)
         end
+    end
+
+    if (isa(tape, LLVM.StructType) || isa(tape, LLVM.ArrayType)) &&
+            isa(ctype, LLVM.PointerType) &&
+            LLVM.addrspace(ctype) == Tracked
+        box_ptr = length(lidxs) != 0 ? API.e_extract_value!(builder, val, lidxs) : val
+        sub_jlty = tape_type(tape)
+        sub_llty = convert(LLVM.LLVMType, sub_jlty; allow_boxed = true)
+        p_derived = addrspacecast!(builder, box_ptr, LLVM.PointerType(sub_llty, Derived))
+        loaded = load!(builder, sub_llty, p_derived)
+        unpacked = calling_conv_fixup(
+            builder,
+            loaded,
+            tape,
+            LLVM.UndefValue(tape),
+            Cuint[],
+            Cuint[],
+            emesg,
+        )
+        return length(ridxs) == 0 ? unpacked : API.e_insert_value!(builder, prev, unpacked, ridxs)
     end
 
     if isa(tape, LLVM.StructType)

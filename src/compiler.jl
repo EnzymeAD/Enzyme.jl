@@ -4142,9 +4142,10 @@ function create_abi_wrapper(
         end
         if tape != C_NULL
             tape = LLVM.LLVMType(tape)
-            jltape = convert(LLVM.LLVMType, Compiler.tape_type(tape); allow_boxed = true)
+            tape_jlty = Compiler.tape_type(tape)
+            jltape = convert(LLVM.LLVMType, tape_jlty; allow_boxed = true)
             push!(T_wrapperargs, jltape)
-            arg_roots = inline_roots_type(tape)
+            arg_roots = inline_roots_type(tape_jlty)
             if arg_rooting && arg_roots != 0
                push!(T_wrapperargs, convert(LLVMType, AnyArray(arg_roots)))
             end
@@ -4518,6 +4519,14 @@ function create_abi_wrapper(
                     end
                 end
                 eval = fixup_abi(i, eval)
+                if i == 1 && !(sret_types[1] <: EnzymeTapeToLoad) && has_boxed_subtape(sret_types[1])
+                    eval = pack_tape_for_abi(
+                        builder,
+                        eval,
+                        sret_types[1],
+                        !allocatedinline(sret_types[1]),
+                    )
+                end
                 ptr = inbounds_gep!(
                     builder,
                     jltype,
@@ -8025,7 +8034,7 @@ const DumpLLVMCall = Ref(false)
             push!(llvmtys, convert(LLVMType, x; allow_boxed = true))
             arg_roots = inline_roots_type(x)
             if needs_rooting && arg_roots != 0
-                push!(llvmtys, convert(LLVMType, AnyArray(3)))
+                push!(llvmtys, convert(LLVMType, AnyArray(arg_roots)))
             end
         end
 
@@ -8117,8 +8126,10 @@ const DumpLLVMCall = Ref(false)
                     callparams[end] = tape
 
                 else
-                    llty = Compiler.from_tape_type(TapeType)
-                    arg_roots = inline_roots_type(llty)
+                    llty = Compiler.has_boxed_subtape(TapeType) ?
+                        convert(LLVM.LLVMType, TapeType; allow_boxed = true) :
+                        Compiler.from_tape_type(TapeType)
+                    arg_roots = inline_roots_type(TapeType)
                     if needs_rooting && arg_roots != 0
                         tape = callparams[end - 1]
                     end
