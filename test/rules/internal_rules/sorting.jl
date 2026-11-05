@@ -71,4 +71,51 @@ end
     @test dd.dval[2].b ≈ 0
     @test dd.dval[3].a ≈ 0
     @test dd.dval[3].b ≈ 0
+
+    z = Float32[3.0 1.0 -2.0; 2.0 4.0 0.5; 0.5 2.5 1.5]
+    w = Float32[0.7 -1.2 0.3; 1.1 0.4 -0.8; -0.5 0.9 0.2]
+    dx1 = Float32[1 0 0; 0 1 0; 0 0 1]
+    dx2 = Float32[0 1 0; 0 0 1; 1 0 0]
+
+    for d in (1, 2), rev in (false, true)
+        inds = sortperm(z; dims = d, rev = rev)
+        expected_grad = zeros(Float32, size(z))
+        copyto!(view(expected_grad, inds), w)
+
+        f_sort(x, wt) = sum(wt .* sort(x; dims = d, rev = rev))
+        f_sort_accum(x, wt) = sum(wt .* sort(x; dims = d, rev = rev)) + 2 * sum(x)
+        f_sort!(x, wt) = (y = copy(x); sort!(y; dims = d, rev = rev); sum(wt .* y))
+
+        gz = zero(z)
+        autodiff(Reverse, f_sort, Active, Duplicated(z, gz), Const(w))
+        @test gz ≈ expected_grad
+
+        gz_accum = zero(z)
+        autodiff(Reverse, f_sort_accum, Active, Duplicated(z, gz_accum), Const(w))
+        @test gz_accum ≈ expected_grad .+ 2
+
+        gz1, gz2 = zero(z), zero(z)
+        autodiff(Reverse, f_sort, Active, BatchDuplicated(z, (gz1, gz2)), Const(w))
+        @test gz1 ≈ expected_grad
+        @test gz2 ≈ expected_grad
+
+        @test autodiff(Forward, f_sort, Duplicated(z, dx1), Const(w))[1] ≈ sum(expected_grad .* dx1)
+        bdup = autodiff(Forward, f_sort, BatchDuplicated(z, (dx1, dx2)), Const(w))[1]
+        @test bdup[1] ≈ sum(expected_grad .* dx1)
+        @test bdup[2] ≈ sum(expected_grad .* dx2)
+
+        gz_const = zero(w)
+        autodiff(Reverse, f_sort, Active, Const(z), Duplicated(w, gz_const))
+        @test gz_const ≈ sort(z; dims = d, rev = rev)
+        @test autodiff(Forward, f_sort, Const(z), Duplicated(w, w))[1] ≈ sum(w .* sort(z; dims = d, rev = rev))
+
+        gz_inplace = zero(z)
+        autodiff(Reverse, f_sort!, Active, Duplicated(z, gz_inplace), Const(w))
+        @test gz_inplace ≈ expected_grad
+
+        gzi1, gzi2 = zero(z), zero(z)
+        autodiff(Reverse, f_sort!, Active, BatchDuplicated(z, (gzi1, gzi2)), Const(w))
+        @test gzi1 ≈ expected_grad
+        @test gzi2 ≈ expected_grad
+    end
 end
