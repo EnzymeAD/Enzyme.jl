@@ -11,6 +11,29 @@ function __init__()
     Enzyme.Compiler.cmplx_known_ops[typeof(SpecialFunctions.besselk)] = (:cmplx_kn, 2, nothing)
 end
 
+# Real-order, real-argument Bessel functions: avoid complex promotion to cmplx_*
+# whose AssertingInactiveArg crashes when static ActivityAnalysis cannot prove
+# a constant Float64 order (e.g. loaded from Vector(LinRange(...))) inactive.
+EnzymeRules.@easy_rule(
+    SpecialFunctions.besseli(nu::Real, x::Real),
+    (@Constant, (SpecialFunctions.besseli(nu - 1, x) + SpecialFunctions.besseli(nu + 1, x)) / 2),
+)
+
+EnzymeRules.@easy_rule(
+    SpecialFunctions.besselj(nu::Real, x::Real),
+    (@Constant, (SpecialFunctions.besselj(nu - 1, x) - SpecialFunctions.besselj(nu + 1, x)) / 2),
+)
+
+EnzymeRules.@easy_rule(
+    SpecialFunctions.bessely(nu::Real, x::Real),
+    (@Constant, (SpecialFunctions.bessely(nu - 1, x) - SpecialFunctions.bessely(nu + 1, x)) / 2),
+)
+
+EnzymeRules.@easy_rule(
+    SpecialFunctions.besselk(nu::Real, x::Real),
+    (@Constant, -(SpecialFunctions.besselk(nu - 1, x) + SpecialFunctions.besselk(nu + 1, x)) / 2),
+)
+
 # Exponentially scaled Bessel functions (x/ref: https://github.com/EnzymeAD/Enzyme.jl/issues/2880)
 # besselix(nu, x) = besseli(nu, x) * exp(-abs(x)) for real x, hence the extra -sign(x)*Ω term.
 EnzymeRules.@easy_rule(
