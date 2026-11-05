@@ -1408,21 +1408,44 @@ function handleCustom(state::HandlerState, custom, k_name::String, llvmfn::LLVM.
     nothing
 end
 
-function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, mode::API.CDerivativeMode, world::UInt, method_table, custom::Dict{String, LLVM.API.LLVMLinkage}, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type), enzyme_ctx::EnzymeContext)::Nothing
-    has_custom_rule = false
+# Whether Enzyme differentiates calls of `mi` with a custom rule in `mode`.
+function has_custom_rule(mi::Core.MethodInstance, mode::API.CDerivativeMode, world::UInt, method_table)::Bool
+    specTypes = Interpreter.simplify_kw(mi.specTypes)
+    if mode == API.DEM_ForwardMode
+        return cached_has_frule(specTypes, world, method_table)
+    else
+        return cached_has_rrule(specTypes, world, method_table)
+    end
+end
 
+# Whether `fn` is called, possibly indirectly, from code that Enzyme differentiates, i.e., not
+# only from functions that Enzyme replaces with custom rules.
+function called_outside_custom_rules(
+        fn::LLVM.Function, mode::API.CDerivativeMode, world::UInt, method_table,
+        seen::Set{LLVM.Function} = Set{LLVM.Function}()
+    )::Bool
+    fn in seen && return false
+    push!(seen, fn)
+    isempty(LLVM.uses(fn)) && return true
+    for u in LLVM.uses(fn)
+        user = LLVM.user(u)
+        user isa LLVM.Instruction || return true
+        caller = LLVM.parent(LLVM.parent(user))
+        mi, _ = enzyme_custom_extract_mi(caller, false)
+        if mi !== nothing && has_custom_rule(mi, mode, world, method_table)
+            continue
+        end
+        called_outside_custom_rules(caller, mode, world, method_table, seen) && return true
+    end
+    return false
+end
+
+function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, mode::API.CDerivativeMode, world::UInt, method_table, custom::Dict{String, LLVM.API.LLVMLinkage}, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type), enzyme_ctx::EnzymeContext)::Nothing
     specTypes = Interpreter.simplify_kw(mi.specTypes)
 
-    if mode == API.DEM_ForwardMode
-        has_custom_rule = cached_has_frule(specTypes, world, method_table)
-        if has_custom_rule
-            @safe_debug "Found frule for" mi.specTypes
-        end
-    else
-        has_custom_rule = cached_has_rrule(specTypes, world, method_table)
-        if has_custom_rule
-            @safe_debug "Found rrule for" mi.specTypes
-        end
+    custom_rule = has_custom_rule(mi, mode, world, method_table)
+    if custom_rule
+        @safe_debug "Found $(mode == API.DEM_ForwardMode ? "frule" : "rrule") for" mi.specTypes
     end
 
     if !haskey(functions(mod), k_name)
@@ -1468,7 +1491,7 @@ end
     jlmod = meth.module
 
     julia_activity_rule(llvmfn, method_table)
-    if has_custom_rule
+    if custom_rule
         handleCustom(
             state,
             custom,
@@ -6572,7 +6595,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     # natively called rules need bodies too.
     materialize_native_invokes!(mode, mod)
 
-    disableFallback = String[]
+    nativeBlas = String[]
 
     ForwardModeDerivatives =
         ("nrm2", "dot", "gemm", "gemv", "axpy", "copy", "scal", "symv", "symm", "syrk", "potrf")
@@ -6594,24 +6617,55 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     )
     ForwardModeTypes = ("s", "d", "c", "z")
     ReverseModeTypes = ("s", "d")
-    # Tablegen BLAS does not support forward mode yet
-    if !(mode == API.DEM_ForwardMode && params.runtimeActivity)
-        for ty in (mode == API.DEM_ForwardMode ? ForwardModeTypes : ReverseModeTypes)
-            for func in (
+    for ty in (mode == API.DEM_ForwardMode ? ForwardModeTypes : ReverseModeTypes)
+        for func in (
                 mode == API.DEM_ForwardMode ? ForwardModeDerivatives :
-                ReverseModeDerivatives
+                    ReverseModeDerivatives
             )
-                for prefix in ("", "cblas_")
-                    for ending in ("", "_", "64_", "_64_")
-                        push!(disableFallback, prefix * ty * func * ending)
-                    end
+            for prefix in ("", "cblas_")
+                for ending in ("", "_", "64_", "_64_")
+                    push!(nativeBlas, prefix * ty * func * ending)
                 end
             end
         end
     end
+    # Tablegen BLAS does not support forward mode yet
+    disableFallback = mode == API.DEM_ForwardMode && params.runtimeActivity ? String[] : nativeBlas
     found = String[]
     if bitcode_replacement() &&
        API.EnzymeBitcodeReplacement(mod, disableFallback, found) != 0
+        # Replaced functions that are not only called from functions with custom rules
+        world = job.world
+        method_table = Core.Compiler.method_table(interp)
+        used = String[]
+        for f in functions(mod)
+            fname = name(f)
+            for attr in collect(function_attributes(f))
+                if attr isa LLVM.StringAttribute && kind(attr) == "enzyme_math"
+                    fname = value(attr)
+                    break
+                end
+            end
+            if fname in found && !(fname in used) &&
+                    called_outside_custom_rules(f, mode, world, method_table)
+                push!(used, fname)
+            end
+        end
+
+        # Inline replaced `ejlstr$` wrappers, whose `enzyme_math` would select Enzyme's BLAS rule
+        # also for functions without one in this mode
+        for f in functions(mod)
+            isempty(blocks(f)) && continue
+            for attr in collect(function_attributes(f))
+                if attr isa LLVM.StringAttribute && kind(attr) == "enzyme_math" &&
+                        value(attr) in found && !(value(attr) in nativeBlas)
+                    delete!(function_attributes(f), attr)
+                    push!(function_attributes(f), EnumAttribute("alwaysinline"))
+                    linkage!(f, LLVM.API.LLVMInternalLinkage)
+                    break
+                end
+            end
+        end
         run!(InstCombinePass(), mod)
         toremove = String[]
         for f in functions(mod)
@@ -6667,7 +6721,9 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
                 )
             end
         end
-        GPUCompiler.@safe_warn "Using fallback BLAS replacements for ($found), performance may be degraded"
+        if !isempty(used)
+            GPUCompiler.@safe_warn "Using fallback BLAS replacements for ($used), performance may be degraded"
+        end
 	run!(GlobalOptPass(), mod)
     end
 
