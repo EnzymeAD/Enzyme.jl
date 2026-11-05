@@ -342,7 +342,9 @@ function _annotate(@nospecialize(T))
             return Vararg{T}
         end
     else
-        return TypeVar(gensym(), Annotation{T})
+        # Tuples are covariant, so this matches every annotation of `T`. A free TypeVar
+        # here intersected with rule signatures before Julia 1.14, but not since.
+        return Annotation{T}
     end
 end
 function _annotate_tt(@nospecialize(TT0))
