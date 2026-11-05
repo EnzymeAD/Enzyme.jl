@@ -389,6 +389,9 @@ function make_zero_immutable!(prev::T, seen::S)::T where {T, S}
     @assert !Base.isabstracttype(T)
     @assert Base.isconcretetype(T)
     nf = fieldcount(T)
+    if nf == 0
+        return prev
+    end
     flds = Vector{Any}(undef, nf)
     for i in 1:nf
         if isdefined(prev, i)

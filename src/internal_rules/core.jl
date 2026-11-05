@@ -314,6 +314,9 @@ end
         return seen[into]
     else
         nf = fieldcount(RT)
+        if nf == 0
+            return (into, from)
+        end
         flds_into = Vector{Any}(undef, nf)
         flds_from = Vector{Any}(undef, nf)
         nf_def = nf
