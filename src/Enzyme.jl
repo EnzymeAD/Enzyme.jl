@@ -111,7 +111,7 @@ export autodiff,
     make_zero!,
     remake_zero!
 
-export jacobian, gradient, gradient!, hvp, hvp!, hvp_and_gradient!
+export jacobian, gradient, gradient!, hvp, hvp!, hvp_and_gradient!, hessian, hessian!
 export batch_size, onehot, chunkedonehot
 
 using LinearAlgebra
