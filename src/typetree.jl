@@ -310,7 +310,7 @@ end
         offset = 0
 
         tt = copy(typetree(Ptr{T}, ctx, dl, seen))
-        if !allocatedinline(T)
+        if !allocatedinline(T) && T != Union{}
             st0 = TypeTree(API.DT_Pointer, -1, ctx)
             only!(st0, -1)
             merge!(tt, st0)
@@ -338,7 +338,7 @@ else
     ) where {kind,T}
         tt = copy(typetree(Ptr{T}, ctx, dl, seen))
 
-        if !allocatedinline(T)
+        if !allocatedinline(T) && T != Union{}
             st0 = TypeTree(API.DT_Pointer, -1, ctx)
             only!(st0, -1)
             merge!(tt, st0)
