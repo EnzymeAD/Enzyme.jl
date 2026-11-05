@@ -30,23 +30,22 @@ function emit_allocobj!(
     )
 
 
-    @static if VERSION < v"1.11.0-"    
+    if needs_workaround
         ptls_field = inbounds_gep!(B, T_pjlvalue, ct, [LLVM.ConstantInt(current_ptls_offset())])
         T_ppint8 = LLVM.PointerType(T_pint8)
         ptls = load!(B, T_pint8, bitcast!(B, ptls_field, T_ppint8))
-    else
-        ct = bitcast!(B, ct, T_pjlvalue)
-    end
-
-    if needs_workaround
         T_size_t = convert(LLVM.LLVMType, Int)
-        # This doesn't allow for optimizations
+        # This doesn't allow for optimizations (prevents AllocOptPass stack promotion)
         alty = LLVM.FunctionType(T_prjlvalue, [T_pint8, T_size_t, T_prjlvalue])
         alloc_obj, _ = get_function!(mod, "jl_gc_alloc_typed", alty)
         if value_type(Size) != T_size_t # Fix Int32/Int64 issues on 32bit systems
             Size = trunc!(B, Size, T_size_t)
         end
-        return call!(B, alty, alloc_obj, LLVM.Value[ptls, Size, tag])
+        return call!(B, alty, alloc_obj, LLVM.Value[ptls, Size, tag], name)
+    end
+
+    @static if VERSION >= v"1.11.0-"
+        ct = bitcast!(B, ct, T_pjlvalue)
     end
 
     T_size_t = convert(LLVM.LLVMType, Int)

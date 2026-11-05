@@ -3037,21 +3037,25 @@ function julia_allocator(B::LLVM.IRBuilder, @nospecialize(LLVMType::LLVM.LLVMTyp
             tag = emit_ntuple_type!(B, Count, TT)
         end
 
-        # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
-        # and also https://github.com/JuliaLang/julia/pull/47076
-        # and also https://github.com/JuliaLang/julia/pull/48620
-        @static if VERSION >= v"1.10.5"
-            needs_dynamic_size_workaround = false
-        else
-            needs_dynamic_size_workaround =
-                !isa(Size, LLVM.ConstantInt) || convert(Int, Size) != 1
-        end
-
         T_size_t = convert(LLVM.LLVMType, Int)
         allocSize = if value_type(Size) != T_size_t
             trunc!(B, Size, T_size_t)
         else
             Size
+        end
+
+        # Check if Julia version has https://github.com/JuliaLang/julia/pull/46914
+        # and also https://github.com/JuliaLang/julia/pull/47076
+        # and also https://github.com/JuliaLang/julia/pull/48620
+        # Also bypass julia.gc_alloc_obj for large constant-sized GC tape allocations
+        # (> 2048 bytes) so Julia's AllocOptPass does not stack-promote dozens of large
+        # tape arrays into a multi-megabyte %gcframe alloca that overflows the stack.
+        @static if VERSION >= v"1.10.5"
+            needs_dynamic_size_workaround =
+                isa(allocSize, LLVM.ConstantInt) && convert(Int, allocSize) > 2048
+        else
+            needs_dynamic_size_workaround =
+                !isa(Size, LLVM.ConstantInt) || convert(Int, Size) != 1
         end
 
         obj = emit_allocobj!(B, tag, allocSize, needs_dynamic_size_workaround)
