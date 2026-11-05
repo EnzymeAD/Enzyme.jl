@@ -1427,17 +1427,30 @@ function called_outside_custom_rules(
     fn in seen && return false
     push!(seen, fn)
     isempty(LLVM.uses(fn)) && return true
-    for u in LLVM.uses(fn)
-        user = LLVM.user(u)
-        user isa LLVM.Instruction || return true
-        caller = LLVM.parent(LLVM.parent(user))
-        mi, _ = enzyme_custom_extract_mi(caller, false)
-        if mi !== nothing && has_custom_rule(mi, mode, world, method_table)
-            continue
-        end
-        called_outside_custom_rules(caller, mode, world, method_table, seen) && return true
+    return any(LLVM.uses(fn)) do u
+        used_outside_custom_rules(LLVM.user(u), mode, world, method_table, seen)
     end
-    return false
+end
+
+# Whether `user`, which uses a function, is in code that Enzyme differentiates. Constant
+# expressions are looked through, such as the bitcasts of called functions with typed pointers
+# (Julia < 1.12).
+function used_outside_custom_rules(
+        user::LLVM.Value, mode::API.CDerivativeMode, world::UInt, method_table,
+        seen::Set{LLVM.Function}
+    )::Bool
+    if user isa LLVM.ConstantExpr
+        return any(LLVM.uses(user)) do u
+            used_outside_custom_rules(LLVM.user(u), mode, world, method_table, seen)
+        end
+    end
+    user isa LLVM.Instruction || return true
+    caller = LLVM.parent(LLVM.parent(user))
+    mi, _ = enzyme_custom_extract_mi(caller, false)
+    if mi !== nothing && has_custom_rule(mi, mode, world, method_table)
+        return false
+    end
+    return called_outside_custom_rules(caller, mode, world, method_table, seen)
 end
 
 function handle_compiled(state::HandlerState, edges::Vector, run_enzyme::Bool, mode::API.CDerivativeMode, world::UInt, method_table, custom::Dict{String, LLVM.API.LLVMLinkage}, mod::LLVM.Module, mi::Core.MethodInstance, k_name::String, @nospecialize(rettype::Type), enzyme_ctx::EnzymeContext)::Nothing
