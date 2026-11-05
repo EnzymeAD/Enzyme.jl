@@ -74,11 +74,14 @@ _splat_call(f, args...) = (f(args...); nothing)
             # https://github.com/EnzymeAD/Enzyme.jl/issues/3127
             if VERSION < v"1.12" && T <: Complex && TA === Const
                 α = Tα === Const ? Const(T(0.7)) : Duplicated(T(0.7), one(T))
-                @test_broken Enzyme.autodiff(
-                    Forward, _splat_call, Const, Const(BLAS.trmm!),
-                    Const(side), Const(uplo), Const(transa), Const(diag),
-                    α, Const(A), Duplicated(B, randn(T, m, k))
-                ) isa Tuple
+                @test_broken begin
+                    Enzyme.autodiff(
+                        Forward, _splat_call, Const, Const(BLAS.trmm!),
+                        Const(side), Const(uplo), Const(transa), Const(diag),
+                        α, Const(A), Duplicated(B, randn(T, m, k))
+                    )
+                    true
+                end
                 continue
             end
             test_forward(
@@ -173,6 +176,23 @@ end
     # The forward rule for `BLAS.trmm!` is used, without a fallback BLAS warning
     dx = @test_nowarn Enzyme.gradient(Forward, g, vec(U))[1]
     @test dx ≈ Enzyme.gradient(Reverse, g, vec(U))[1]
+end
+
+# With runtime activity, an array whose shadow is itself is constant, but a scalar whose tangent
+# equals its value is not.
+@testset "trmm! forward with runtime activity" begin
+    A = [2.0 1.0; 0.0 3.0]
+    B = [1.0 2.0; 3.0 4.0]
+    f!(α, A, B) = (BLAS.trmm!('L', 'U', 'N', 'N', α, A, B); nothing)
+    mode = set_runtime_activity(Forward)
+
+    dB = zeros(2, 2)
+    Enzyme.autodiff(mode, f!, Duplicated(1.0, 1.0), Const(A), Duplicated(copy(B), dB))
+    @test dB ≈ UpperTriangular(A) * B
+
+    dB = ones(2, 2)
+    Enzyme.autodiff(mode, f!, Const(1.0), Duplicated(A, A), Duplicated(copy(B), dB))
+    @test dB ≈ UpperTriangular(A) * ones(2, 2)
 end
 
 # https://github.com/EnzymeAD/Enzyme.jl/issues/1991

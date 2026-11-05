@@ -712,9 +712,9 @@ function EnzymeRules.forward(
     end
 end
 
-# Whether a rule can treat x as constant, also if with runtime activity its shadow is its
-# primal value.
-_isconst(config, x::Annotation) =
+# Whether the array x is constant. With runtime activity, x is also constant if its shadow is
+# itself.
+_isconst(config::EnzymeRules.FwdConfig, x::Annotation{<:AbstractArray}) =
     x isa Const || (EnzymeRules.runtime_activity(config) && x.dval === x.val)
 
 function _fwd_return(config::EnzymeRules.FwdConfig, primal, shadow)
@@ -733,31 +733,32 @@ function _fwd_return(config::EnzymeRules.FwdConfig, primal, shadow)
     end
 end
 
-# X = α op(A) X (side 'L') or X = α X op(A) (side 'R'); trmv only supports side 'L' and α = 1.
+# X = op(A) X (side 'L') or X = X op(A) (side 'R'). For a vector x, side must be 'L'.
 function _tri_mul!(
-        side::Char, uplo::Char, trans::Char, diag::Char, α::Number,
+        side::Char, uplo::Char, trans::Char, diag::Char,
         A::StridedMatrix{T}, X::StridedMatrix{T}
     ) where {T <: LinearAlgebra.BlasFloat}
-    return BLAS.trmm!(side, uplo, trans, diag, α, A, X)
+    return BLAS.trmm!(side, uplo, trans, diag, one(T), A, X)
 end
 function _tri_mul!(
-        ::Char, uplo::Char, trans::Char, diag::Char, ::Number,
+        side::Char, uplo::Char, trans::Char, diag::Char,
         A::StridedMatrix{T}, x::StridedVector{T}
     ) where {T <: LinearAlgebra.BlasFloat}
+    side == 'L' || throw(ArgumentError("side must be 'L' for a vector, got '$side'"))
     return BLAS.trmv!(uplo, trans, diag, A, x)
 end
 
-# tmp = α op(tri(dA)) X0 (side 'L') or α X0 op(tri(dA)) (side 'R'), where tri(dA) is the triangle
+# tmp = op(tri(dA)) X0 (side 'L') or X0 op(tri(dA)) (side 'R'), where tri(dA) is the triangle
 # of dA that trmm and trmv read, without the diagonal if diag == 'U'. The strict triangle of dA
 # is the triangle of a submatrix of dA shifted by one row or column, so it is multiplied with
 # that submatrix instead of subtracting the unit diagonal afterwards, which would cancel.
 function _tri_mul_tangent!(
-        tmp::StridedVecOrMat{T}, side::Char, uplo::Char, trans::Char, diag::Char, α::Number,
+        tmp::StridedVecOrMat{T}, side::Char, uplo::Char, trans::Char, diag::Char,
         dA::StridedMatrix{T}, X0::StridedVecOrMat{T}
     ) where {T <: LinearAlgebra.BlasFloat}
     if diag == 'N'
         copyto!(tmp, X0)
-        return _tri_mul!(side, uplo, trans, 'N', α, dA, tmp)
+        return _tri_mul!(side, uplo, trans, 'N', dA, tmp)
     end
     fill!(tmp, zero(T))
     n = size(dA, 1)
@@ -770,7 +771,7 @@ function _tri_mul_tangent!(
     out, in = upper == (side == 'L') ? (lo, hi) : (hi, lo)
     tmp_out = selectdim(tmp, dim, out)
     copyto!(tmp_out, selectdim(X0, dim, in))
-    _tri_mul!(side, uplo, trans, 'N', α, block, tmp_out)
+    _tri_mul!(side, uplo, trans, 'N', block, tmp_out)
     return tmp
 end
 
@@ -796,7 +797,7 @@ function EnzymeRules.forward(
     end
 
     A_const = _isconst(config, A)
-    α_const = _isconst(config, alpha)
+    α_const = alpha isa Const
     B0 = A_const ? nothing : copy(B.val)
     # op(A) B, for the derivative with respect to α
     opAB0 = α_const ? nothing : BLAS.trmm(s, ul, tA, dg, one(T), A.val, B.val)
@@ -809,7 +810,7 @@ function EnzymeRules.forward(
         func.val(s, ul, tA, dg, α, A.val, dB)
         if !A_const
             dA = N == 1 ? A.dval : A.dval[i]
-            dB .+= _tri_mul_tangent!(tmp, s, ul, tA, dg, α, dA, B0)
+            dB .+= α .* _tri_mul_tangent!(tmp, s, ul, tA, dg, dA, B0)
         end
         if !α_const
             dB .+= (N == 1 ? alpha.dval : alpha.dval[i]) .* opAB0
@@ -846,7 +847,7 @@ function EnzymeRules.forward(
         func.val(ul, tA, dg, A.val, dx)
         if !A_const
             dA = N == 1 ? A.dval : A.dval[i]
-            dx .+= _tri_mul_tangent!(tmp, 'L', ul, tA, dg, true, dA, x0)
+            dx .+= _tri_mul_tangent!(tmp, 'L', ul, tA, dg, dA, x0)
         end
     end
     return _fwd_return(config, x.val, x.dval)
@@ -860,13 +861,13 @@ function EnzymeRules.forward(
         config::EnzymeRules.FwdConfig,
         func::Const{typeof(LAPACK.trtrs!)},
         RT::Type,
-        uplo::Const{<:AbstractChar},
-        trans::Const{<:AbstractChar},
-        diag::Const{<:AbstractChar},
+        uplo::Const{Char},
+        trans::Const{Char},
+        diag::Const{Char},
         A::Annotation{<:StridedMatrix{T}},
         B::Annotation{<:StridedVecOrMat{T}},
     ) where {T <: LinearAlgebra.BlasFloat}
-    ul, tA, dg = Char(uplo.val), Char(trans.val), Char(diag.val)
+    ul, tA, dg = uplo.val, trans.val, diag.val
     # Throws for singular A, as without differentiation
     func.val(ul, tA, dg, A.val, B.val)
     if _isconst(config, B)
@@ -880,7 +881,7 @@ function EnzymeRules.forward(
         dB = N == 1 ? B.dval : B.dval[i]
         if !A_const
             dA = N == 1 ? A.dval : A.dval[i]
-            dB .-= _tri_mul_tangent!(tmp, 'L', ul, tA, dg, true, dA, B.val)
+            dB .-= _tri_mul_tangent!(tmp, 'L', ul, tA, dg, dA, B.val)
         end
         if dB isa AbstractVector
             BLAS.trsv!(ul, tA, dg, A.val, dB)
