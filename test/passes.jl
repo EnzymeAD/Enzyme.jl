@@ -232,7 +232,7 @@ end
         Enzyme.Compiler.autodiff_cache[ptr] = Enzyme.Compiler.CachedThunk("thunk", bitcode, Enzyme.Compiler.JuliaValueTable())
         try
             Enzyme.@with Enzyme.Compiler.ENZYME_CONTEXT =>
-                    Enzyme.Compiler.EnzymeContext(GPUCompiler.tls_world_age()) begin
+                Enzyme.Compiler.EnzymeContext(GPUCompiler.tls_world_age()) begin
                 FT = LLVM.FunctionType(LLVM.Int64Type(), [LLVM.Int64Type()])
 
                 first_mod = LLVM.Module("first")
@@ -1119,4 +1119,56 @@ end
         F, _ = Enzyme.Compiler.get_function!(mod, "fresh", FT)
         @test LLVM.name(F) == "fresh"
     end
+end
+
+@noinline _any_vec_or_bool(x::Vector{Float64}, cond::Bool)::Any = cond ? Base.inferencebarrier(2.0 .* x) : (x[1] > 0.0)
+
+@testset "Julia runtime singleton globals marked enzyme_inactive" begin
+    LLVM.Context() do ctx
+        mod = parse(
+            LLVM.Module,
+            """
+            @jl_true = external global i8
+            @ijl_false = external global i8
+            @jl_small_typeof = external global i8
+            @jl_undefref_exception = external global i8
+            @jl_float64_type = external global i8
+            """,
+        )
+        Enzyme.Compiler.annotate!(mod)
+        for gname in ("jl_true", "ijl_false", "jl_small_typeof", "jl_undefref_exception", "jl_float64_type")
+            gv = LLVM.globals(mod)[gname]
+            @test haskey(LLVM.metadata(gv), "enzyme_inactive")
+        end
+        @test haskey(LLVM.metadata(LLVM.globals(mod)["jl_float64_type"]), "enzyme_ta_norecur")
+    end
+
+    # Boxed runtime Bool (@jl_true / @jl_false) merged into Any return across widths 1 and 2
+    # in the same ORC JIT session must not emit duplicate @jl_true_shadow / @jl_false_shadow globals.
+    th_b1 = Enzyme.autodiff_thunk(
+        Enzyme.set_runtime_activity(ForwardWithPrimal),
+        Const{typeof(_any_vec_or_bool)},
+        Duplicated{Any},
+        Duplicated{Vector{Float64}},
+        Const{Bool},
+    )
+    dres_b1, pres_b1 = th_b1(Const(_any_vec_or_bool), Duplicated([1.0, 2.0], [0.5, -0.25]), Const(true))
+    @test pres_b1 ≈ [2.0, 4.0]
+    @test dres_b1 ≈ [1.0, -0.5]
+
+    th_b2 = Enzyme.autodiff_thunk(
+        Enzyme.set_runtime_activity(ForwardWithPrimal),
+        Const{typeof(_any_vec_or_bool)},
+        BatchDuplicated{Any, 2},
+        BatchDuplicated{Vector{Float64}, 2},
+        Const{Bool},
+    )
+    dres_b2, pres_b2 = th_b2(
+        Const(_any_vec_or_bool),
+        BatchDuplicated([1.0, 2.0], ([0.5, -0.25], [-1.0, 0.5])),
+        Const(true),
+    )
+    @test pres_b2 ≈ [2.0, 4.0]
+    @test dres_b2[1] ≈ [1.0, -0.5]
+    @test dres_b2[2] ≈ [-2.0, 1.0]
 end
