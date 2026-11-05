@@ -7741,7 +7741,7 @@ const DumpLLVMCall = Ref(false)
                         push!(types, F_ABI)
                     end
                 else
-                    if F_ABI <: BatchMixedDuplicated
+                if FA <: BatchMixedDuplicated
                         F_ABI = Base.RefValue{F_ABI}
                     end
                     F_ABI = NTuple{width, F_ABI}
