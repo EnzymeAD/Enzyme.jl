@@ -40,7 +40,7 @@ import Enzyme:
     arg_operands_view
 
 using Enzyme
-using ScopedValues: @with
+using ScopedValues: ScopedValue, @with
 
 import EnzymeCore
 import EnzymeCore: EnzymeRules, ABI, FFIABI, DefaultABI
@@ -498,6 +498,47 @@ include("typeutils/jltypes.jl")
 include("typeutils/lltypes.jl")
 
 include("analyses/activity.jl")
+
+const SESSION_ID = Ref{UInt64}(0)
+
+"""
+    PrecompiledThunkPtr
+
+Relocatable handle standing in for a raw JIT code address inside an [`AbstractThunk`](@ref)
+when `thunkbase` runs during package precompilation (`generating_output()`).
+
+Storing a raw `Ptr{Cvoid}` inside a thunk returned from the `@generated` `thunk` function
+causes Julia's constant propagation to bake that transient JIT address into the compiled
+package image, segfaulting when called in a subsequent session (EnzymeAD/Enzyme.jl#681).
+Instead, `PrecompiledThunkPtr` holds plain integer bits (`session`, `ptr`) plus the
+compilation parameters needed to materialize the thunk lazily on first call in each new
+process (`p.session != SESSION_ID[]`), and serves subsequent calls from `p.ptr` via a
+single atomic session check.
+"""
+mutable struct PrecompiledThunkPtr
+    @atomic session::UInt64
+    @atomic ptr::UInt
+    const mi::Core.MethodInstance
+    const FA::Type
+    const rt2::Type
+    const TT::Type
+    const mode::API.CDerivativeMode
+    const width::Int
+    const modified_between::Tuple{Vararg{Bool}}
+    const return_primal::Bool
+    const shadow_init::Bool
+    const ABI::Type
+    const err_if_func_written::Bool
+    const runtime_activity::Bool
+    const strong_zero::Bool
+    const run_enzyme::Bool
+    const is_primal::Bool
+    const expected_tape_type::Type
+end
+
+const PRECOMPILED_THUNK_PTRS = PrecompiledThunkPtr[]
+
+function resolve_thunk_ptr end
 
 # User facing interface
 abstract type AbstractThunk{FA,RT,TT,Width} end
@@ -7489,117 +7530,226 @@ struct CompileResult{AT,PT}
     edges::Vector{Any}
 end
 
-@inline (thunk::PrimalErrorThunk{PT,FA,RT,TT,Width,ReturnPrimal})(
-    fn,
-    args...,
-) where {PT,FA,RT,TT,Width,ReturnPrimal} = enzyme_call(
-    Val(false),
-    thunk.adjoint,
-    PrimalErrorThunk{PT,FA,RT,TT,Width,ReturnPrimal},
-    Val(Width),
-    Val(ReturnPrimal),
-    TT,
-    RT,
-    fn,
-    Cvoid,
-    args...,
-)
+@inline resolve_thunk_ptr(ptr) = ptr
 
-@inline (thunk::CombinedAdjointThunk{PT,FA,RT,TT,Width,ReturnPrimal})(
-    fn,
-    args...,
-) where {PT,FA,Width,RT,TT,ReturnPrimal} = enzyme_call(
-    Val(false),
-    thunk.adjoint,
-    CombinedAdjointThunk{PT,FA,RT,TT,Width,ReturnPrimal},
-    Val(Width),
-    Val(ReturnPrimal),
-    TT,
-    RT,
-    fn,
-    Cvoid,
-    args...,
-)
+@noinline function resolve_thunk_ptr(p::PrecompiledThunkPtr)::Ptr{Cvoid}
+    sid = SESSION_ID[]
+    if (@atomic :acquire p.session) === sid && sid != 0
+        return reinterpret(Ptr{Cvoid}, @atomic :monotonic p.ptr)
+    end
+    return Base.invokelatest(_materialize_thunk_ptr!, p)::Ptr{Cvoid}
+end
 
-@inline (thunk::ForwardModeThunk{PT,FA,RT,TT,Width,ReturnPrimal})(
-    fn,
-    args...,
-) where {PT,FA,Width,RT,TT,ReturnPrimal} = enzyme_call(
-    Val(false),
-    thunk.adjoint,
-    ForwardModeThunk{PT,FA,RT,TT,Width,ReturnPrimal},
-    Val(Width),
-    Val(ReturnPrimal),
-    TT,
-    RT,
-    fn,
-    Cvoid,
-    args...,
-)
+function _materialize_thunk_ptr!(p::PrecompiledThunkPtr)::Ptr{Cvoid}
+    lock(cache_lock)
+    try
+        sid = SESSION_ID[]
+        if (@atomic :acquire p.session) === sid && sid != 0
+            return reinterpret(Ptr{Cvoid}, @atomic :monotonic p.ptr)
+        end
+        if sid == 0
+            JIT.setup_globals()
+            sid = SESSION_ID[]
+        end
+        ts_ctx = JuliaContext()
+        ctx = context(ts_ctx)
+        activate(ctx)
+        res = try
+            target = Compiler.EnzymeTarget()
+            params = Compiler.EnzymeCompilerParams(
+                p.TT,
+                p.mode,
+                p.width,
+                p.rt2,
+                p.run_enzyme,
+                true,
+                p.modified_between,
+                p.return_primal,
+                p.shadow_init,
+                UnknownTapeType,
+                p.ABI,
+                p.err_if_func_written,
+                p.runtime_activity,
+                p.strong_zero,
+            )
+            ft = eltype(p.FA)
+            primal_tt = Tuple{map(eltype, p.TT.parameters[2:end])...}
+            world = Base.get_world_counter()
+            min_world = Ref{UInt}(typemin(UInt))
+            max_world = Ref{UInt}(typemax(UInt))
+            mi = my_methodinstance(
+                p.mode == API.DEM_ForwardMode ? Forward : Reverse,
+                ft,
+                primal_tt,
+                world,
+                min_world,
+                max_world,
+            )
+            if mi === nothing
+                mi = p.mi
+            end
+            job = Compiler.CompilerJob(mi, CompilerConfig(target, params; kernel = false))
+            check_activity_cache_invalidations(job.world)
+            r = cached_compilation(job)
+            if p.expected_tape_type !== UnknownTapeType && r.TapeType !== p.expected_tape_type
+                @with DISABLE_NATIVE_INVOKE => true begin
+                    mod, edges, adjoint_name, primal_name, TapeType, prepost, value_table = _thunk(job)
+                    r = _link(job, mod, edges, adjoint_name, primal_name, TapeType, prepost)
+                    if r.adjoint isa Ptr{Nothing}
+                        autodiff_cache[r.adjoint] = CachedThunk(adjoint_name, prepost, value_table)
+                    end
+                    if r.primal isa Ptr{Nothing} && primal_name isa String
+                        autodiff_cache[r.primal] = CachedThunk(primal_name, prepost, value_table)
+                    end
+                    cache[hash(job)] = r
+                end
+            end
+            r
+        finally
+            deactivate(ctx)
+            dispose(ts_ctx)
+        end
+        raw_ptr = (p.is_primal ? res.primal : res.adjoint)::Ptr{Cvoid}
+        @atomic :monotonic p.ptr = reinterpret(UInt, raw_ptr)
+        @atomic :release p.session = sid
+        return raw_ptr
+    finally
+        unlock(cache_lock)
+    end
+end
 
-@inline (thunk::AdjointThunk{PT,FA,RT,TT,Width,TapeT})(
+@inline function (thunk::PrimalErrorThunk{PT, FA, RT, TT, Width, ReturnPrimal})(
     fn,
     args...,
-) where {PT,FA,Width,RT,TT,TapeT} = enzyme_call(
-    Val(false),
-    thunk.adjoint,
-    AdjointThunk{PT,FA,RT,TT,Width,TapeT},
-    Val(Width),
-    Val(false),
-    TT,
-    RT,
-    fn,
-    TapeT,
-    args...,
-) #=ReturnPrimal=#
-@inline raw_enzyme_call(
+    ) where {PT, FA, RT, TT, Width, ReturnPrimal}
+    fptr = resolve_thunk_ptr(thunk.adjoint)
+    return enzyme_call(
+        Val(false),
+        fptr,
+        PrimalErrorThunk{typeof(fptr), FA, RT, TT, Width, ReturnPrimal},
+        Val(Width),
+        Val(ReturnPrimal),
+        TT,
+        RT,
+        fn,
+        Cvoid,
+        args...,
+    )
+end
+
+@inline function (thunk::CombinedAdjointThunk{PT, FA, RT, TT, Width, ReturnPrimal})(
+        fn,
+        args...,
+    ) where {PT, FA, Width, RT, TT, ReturnPrimal}
+    fptr = resolve_thunk_ptr(thunk.adjoint)
+    return enzyme_call(
+        Val(false),
+        fptr,
+        CombinedAdjointThunk{typeof(fptr), FA, RT, TT, Width, ReturnPrimal},
+        Val(Width),
+        Val(ReturnPrimal),
+        TT,
+        RT,
+        fn,
+        Cvoid,
+        args...,
+    )
+end
+
+@inline function (thunk::ForwardModeThunk{PT, FA, RT, TT, Width, ReturnPrimal})(
+        fn,
+        args...,
+    ) where {PT, FA, Width, RT, TT, ReturnPrimal}
+    fptr = resolve_thunk_ptr(thunk.adjoint)
+    return enzyme_call(
+        Val(false),
+        fptr,
+        ForwardModeThunk{typeof(fptr), FA, RT, TT, Width, ReturnPrimal},
+        Val(Width),
+        Val(ReturnPrimal),
+        TT,
+        RT,
+        fn,
+        Cvoid,
+        args...,
+    )
+end
+
+@inline function (thunk::AdjointThunk{PT, FA, RT, TT, Width, TapeT})(
+        fn,
+        args...,
+    ) where {PT, FA, Width, RT, TT, TapeT}
+    fptr = resolve_thunk_ptr(thunk.adjoint)
+    return enzyme_call(
+        Val(false),
+        fptr,
+        AdjointThunk{typeof(fptr), FA, RT, TT, Width, TapeT},
+        Val(Width),
+        Val(false),
+        TT,
+        RT,
+        fn,
+        TapeT,
+        args...,
+    ) #=ReturnPrimal=#
+end
+@inline function raw_enzyme_call(
     thunk::AdjointThunk{PT,FA,RT,TT,Width,TapeT},
     fn::FA,
     args...,
-) where {PT,FA,Width,RT,TT,TapeT} = enzyme_call(
-    Val(true),
-    thunk.adjoint,
-    AdjointThunk{PT,FA,RT,TT,Width,TapeT},
-    Val(Width),
-    Val(false),
-    TT,
-    RT,
-    fn,
-    TapeT,
-    args...,
-) #=ReturnPrimal=#
+    ) where {PT, FA, Width, RT, TT, TapeT}
+    fptr = resolve_thunk_ptr(thunk.adjoint)
+    return enzyme_call(
+        Val(true),
+        fptr,
+        AdjointThunk{typeof(fptr), FA, RT, TT, Width, TapeT},
+        Val(Width),
+        Val(false),
+        TT,
+        RT,
+        fn,
+        TapeT,
+        args...,
+    ) #=ReturnPrimal=#
+end
 
-@inline (thunk::AugmentedForwardThunk{PT,FA,RT,TT,Width,ReturnPrimal,TapeT})(
+@inline function (thunk::AugmentedForwardThunk{PT, FA, RT, TT, Width, ReturnPrimal, TapeT})(
     fn,
     args...,
-) where {PT,FA,Width,RT,TT,ReturnPrimal,TapeT} = enzyme_call(
-    Val(false),
-    thunk.primal,
-    AugmentedForwardThunk{PT,FA,RT,TT,Width,ReturnPrimal,TapeT},
-    Val(Width),
-    Val(ReturnPrimal),
-    TT,
-    RT,
-    fn,
-    TapeT,
-    args...,
-)
-@inline raw_enzyme_call(
+    ) where {PT, FA, Width, RT, TT, ReturnPrimal, TapeT}
+    fptr = resolve_thunk_ptr(thunk.primal)
+    return enzyme_call(
+        Val(false),
+        fptr,
+        AugmentedForwardThunk{typeof(fptr), FA, RT, TT, Width, ReturnPrimal, TapeT},
+        Val(Width),
+        Val(ReturnPrimal),
+        TT,
+        RT,
+        fn,
+        TapeT,
+        args...,
+    )
+end
+@inline function raw_enzyme_call(
     thunk::AugmentedForwardThunk{PT,FA,RT,TT,Width,ReturnPrimal,TapeT},
     fn::FA,
     args...,
-) where {PT,FA,Width,RT,TT,ReturnPrimal,TapeT} = enzyme_call(
-    Val(true),
-    thunk.primal,
-    AugmentedForwardThunk{PT,FA,RT,TT,Width,ReturnPrimal,TapeT},
-    Val(Width),
-    Val(ReturnPrimal),
-    TT,
-    RT,
-    fn,
-    TapeT,
-    args...,
-)
+    ) where {PT, FA, Width, RT, TT, ReturnPrimal, TapeT}
+    fptr = resolve_thunk_ptr(thunk.primal)
+    return enzyme_call(
+        Val(true),
+        fptr,
+        AugmentedForwardThunk{typeof(fptr), FA, RT, TT, Width, ReturnPrimal, TapeT},
+        Val(Width),
+        Val(ReturnPrimal),
+        TT,
+        RT,
+        fn,
+        TapeT,
+        args...,
+    )
+end
 
 include("typeutils/recursive_add.jl")
 
@@ -8455,6 +8605,14 @@ function clear_caches!()
         empty!(GLOBAL_FWD_CACHE.dict)
         empty!(GLOBAL_REV_CACHE.dict)
     end
+
+    for p in PRECOMPILED_THUNK_PTRS
+        @atomic :monotonic p.ptr = UInt(0)
+        @atomic :release p.session = UInt64(0)
+    end
+    empty!(PRECOMPILED_THUNK_PTRS)
+    SESSION_ID[] = UInt64(0)
+
     return nothing
 end
 
@@ -8506,6 +8664,8 @@ end
     StrongZero::Bool,
     edges::Union{Nothing, Vector{Any}}
 )
+    precompiling = generating_output()
+    eff_ABI = precompiling && ABI <: EnzymeCore.InlineABI ? FFIABI : ABI
     target = Compiler.EnzymeTarget()
     params = Compiler.EnzymeCompilerParams(
         Tuple{FA,TT.parameters...},
@@ -8518,7 +8678,7 @@ end
         ReturnPrimal,
         ShadowInit,
         UnknownTapeType,
-        ABI,
+        eff_ABI,
         ErrIfFuncWritten,
         RuntimeActivity,
         StrongZero
@@ -8572,7 +8732,7 @@ end
         ReturnPrimal,
         ShadowInit,
         UnknownTapeType,
-        ABI,
+        eff_ABI,
         ErrIfFuncWritten,
         RuntimeActivity,
         StrongZero
@@ -8595,17 +8755,52 @@ end
             push!(edges, e)
         end
     end
+    wrap_ptr = function (raw_ptr, is_primal::Bool, expected_tape_type::Type = UnknownTapeType)
+        if precompiling && raw_ptr isa Ptr{Cvoid}
+            p = PrecompiledThunkPtr(
+                SESSION_ID[],
+                reinterpret(UInt, raw_ptr),
+                mi,
+                FA,
+                rt2,
+                params.TT,
+                Mode,
+                width,
+                ModifiedBetween,
+                ReturnPrimal,
+                ShadowInit,
+                eff_ABI,
+                ErrIfFuncWritten,
+                RuntimeActivity,
+                StrongZero,
+                run_enzyme,
+                is_primal,
+                expected_tape_type,
+            )
+            lock(cache_lock)
+            try
+                push!(PRECOMPILED_THUNK_PTRS, p)
+            finally
+                unlock(cache_lock)
+            end
+            return p
+        end
+        return raw_ptr
+    end
     if !run_enzyme
-        ErrT = PrimalErrorThunk{typeof(compile_result.adjoint),FA,rt2,TT,width,ReturnPrimal}
+        adj_ptr = wrap_ptr(compile_result.adjoint, false)
+        ErrT = PrimalErrorThunk{typeof(adj_ptr), FA, rt2, TT, width, ReturnPrimal}
         if Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
-            return (ErrT(compile_result.adjoint), ErrT(compile_result.adjoint))
+            return (ErrT(adj_ptr), ErrT(adj_ptr))
         else
-            return ErrT(compile_result.adjoint)
+            return ErrT(adj_ptr)
         end
     elseif Mode == API.DEM_ReverseModePrimal || Mode == API.DEM_ReverseModeGradient
         TapeType = compile_result.TapeType
+        prim_ptr = wrap_ptr(compile_result.primal, true, TapeType)
+        adj_ptr = wrap_ptr(compile_result.adjoint, false, TapeType)
         AugT = AugmentedForwardThunk{
-            typeof(compile_result.primal),
+            typeof(prim_ptr),
             FA,
             rt2,
             Tuple{params.TT.parameters[2:end]...},
@@ -8614,34 +8809,36 @@ end
             TapeType,
         }
         AdjT = AdjointThunk{
-            typeof(compile_result.adjoint),
+            typeof(adj_ptr),
             FA,
             rt2,
             Tuple{params.TT.parameters[2:end]...},
             width,
             TapeType,
         }
-        return (AugT(compile_result.primal), AdjT(compile_result.adjoint))
+        return (AugT(prim_ptr), AdjT(adj_ptr))
     elseif Mode == API.DEM_ReverseModeCombined
+        adj_ptr = wrap_ptr(compile_result.adjoint, false)
         CAdjT = CombinedAdjointThunk{
-            typeof(compile_result.adjoint),
+            typeof(adj_ptr),
             FA,
             rt2,
             Tuple{params.TT.parameters[2:end]...},
             width,
             ReturnPrimal,
         }
-        return CAdjT(compile_result.adjoint)
+        return CAdjT(adj_ptr)
     elseif Mode == API.DEM_ForwardMode
+        adj_ptr = wrap_ptr(compile_result.adjoint, false)
         FMT = ForwardModeThunk{
-            typeof(compile_result.adjoint),
+            typeof(adj_ptr),
             FA,
             rt2,
             Tuple{params.TT.parameters[2:end]...},
             width,
             ReturnPrimal,
         }
-        return FMT(compile_result.adjoint)
+        return FMT(adj_ptr)
     else
         @assert false
     end
