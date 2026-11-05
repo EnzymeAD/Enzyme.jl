@@ -776,7 +776,8 @@ function _tri_mul_tangent!(
 end
 
 # B = α op(A) B (side 'L') or α B op(A) (side 'R'):
-# dB = α op(A) dB + α op(tri(dA)) B + dα op(A) B, with B the input
+# dB = op(A) (α dB + dα B) + α op(tri(dA)) B (side 'L', analogously for side 'R'), with B the
+# input
 function EnzymeRules.forward(
         config::EnzymeRules.FwdConfig,
         func::Const{typeof(BLAS.trmm!)},
@@ -798,22 +799,23 @@ function EnzymeRules.forward(
 
     A_const = _isconst(config, A)
     α_const = alpha isa Const
-    B0 = A_const ? nothing : copy(B.val)
-    # op(A) B, for the derivative with respect to α
-    opAB0 = α_const ? nothing : BLAS.trmm(s, ul, tA, dg, one(T), A.val, B.val)
+    B0 = A_const && α_const ? nothing : copy(B.val)
     tmp = A_const ? nothing : similar(B.val)
     func.val(s, ul, tA, dg, α, A.val, B.val)
 
     N = EnzymeRules.width(config)
     for i in 1:N
         dB = N == 1 ? B.dval : B.dval[i]
-        func.val(s, ul, tA, dg, α, A.val, dB)
+        if α_const
+            func.val(s, ul, tA, dg, α, A.val, dB)
+        else
+            dα = N == 1 ? alpha.dval : alpha.dval[i]
+            dB .= α .* dB .+ dα .* B0
+            func.val(s, ul, tA, dg, one(T), A.val, dB)
+        end
         if !A_const
             dA = N == 1 ? A.dval : A.dval[i]
             dB .+= α .* _tri_mul_tangent!(tmp, s, ul, tA, dg, dA, B0)
-        end
-        if !α_const
-            dB .+= (N == 1 ? alpha.dval : alpha.dval[i]) .* opAB0
         end
     end
     return _fwd_return(config, B.val, B.dval)
