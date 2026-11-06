@@ -126,3 +126,62 @@ end
         test_scalar(p -> first(SpecialFunctions.beta_inc_inv(a, b, p)), p)
     end
 end
+
+@testset "incomplete gamma: shape and rate partials" begin
+    # 2a integer and a <= x takes gamma_inc_fsum, where a is only a loop count
+    for a in (0.5, 1.0, 1.5, 2.0)
+        test_scalar(a -> first(SpecialFunctions.gamma_inc(a, 2.0)), a)
+        test_scalar(a -> last(SpecialFunctions.gamma_inc(a, 2.0)), a)
+    end
+
+    # neighbouring shapes, unaffected by that branch
+    for a in (0.25, 1.25)
+        test_scalar(a -> first(SpecialFunctions.gamma_inc(a, 2.0)), a)
+    end
+
+    # x partial, on both outputs
+    for x in (0.5, 2.0, 5.0)
+        test_scalar(x -> first(SpecialFunctions.gamma_inc(1.0, x)), x)
+        test_scalar(x -> last(SpecialFunctions.gamma_inc(2.5, x)), x)
+    end
+
+    # tolerances set by the Float32 finite difference, as for logabsgamma above
+    test_scalar(a -> first(SpecialFunctions.gamma_inc(a, 2.0f0)), 1.0f0; rtol = 1.0e-5, atol = 1.0e-5)
+    test_scalar(x -> first(SpecialFunctions.gamma_inc(1.0f0, x)), 2.0f0; rtol = 1.0e-5, atol = 1.0e-5)
+
+    # ind only sets the primal's accuracy target
+    da2 = Enzyme.autodiff(Reverse, a -> first(SpecialFunctions.gamma_inc(a, 2.0)), Active, Active(1.0))[1][1]
+    da3 = Enzyme.autodiff(Reverse, a -> first(SpecialFunctions.gamma_inc(a, 2.0, 1)), Active, Active(1.0))[1][1]
+    @test da3 == da2
+
+    # dP/da is -dQ/da on the upper branch
+    dP_da(k, x) = autodiff(
+        Reverse, t -> first(SpecialFunctions.gamma_inc(t, x)), Active, Active(k)
+    )[1][1]
+
+    # primal Q underflows here, so dQ/da is rebuilt in log space
+    dQa_sub = autodiff(
+        Reverse, t -> last(SpecialFunctions.gamma_inc(t, 745.5)), Active, Active(1.0)
+    )[1][1]
+    @test 0.0 < dQa_sub < 1.0e-322
+
+    # either side of the x = a + 1 branch boundary
+    for a in (0.5, 2.0, 10.0, 100.0)
+        lo, hi = dP_da(a, prevfloat(a + 1.0)), dP_da(a, a + 1.0)
+        @test isapprox(lo, hi; rtol = 1.0e-12)
+    end
+
+    # x = 0: P(a, 0) = 0, so the shape partial is zero. The x partial is the
+    # Gamma(a, 1) density there, which diverges for a < 1 and is not asserted.
+    for a in (0.5, 1.0, 2.0)
+        @test autodiff(
+            Reverse, t -> first(SpecialFunctions.gamma_inc(t, 0.0)), Active, Active(a)
+        )[1][1] == 0.0
+    end
+    @test autodiff(
+        Reverse, x -> first(SpecialFunctions.gamma_inc(2.0, x)), Active, Active(0.0)
+    )[1][1] == 0.0
+    @test autodiff(
+        Reverse, x -> first(SpecialFunctions.gamma_inc(1.0, x)), Active, Active(0.0)
+    )[1][1] == 1.0
+end
