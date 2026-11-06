@@ -13,7 +13,9 @@ using Enzyme.EnzymeCore.EnzymeRules:
 Rules for the two reduction entry points GPUArrays owns.
 
 `sum`/`mapreduce` over a GPU array land in `GPUArrays._mapreduce`, which
-allocates the output and calls `GPUArrays.mapreducedim!` to fill it. Both are
+allocates the output and, before GPUArrays 12, calls `GPUArrays.mapreducedim!`
+to fill it. GPUArrays 12 reduces with AcceleratedKernels instead and has no
+`mapreducedim!` hook, so there only the `_mapreduce` rule applies. Both are
 backend-agnostic: the bodies below only need `fill!`, broadcast, and a call back
 into the same function on the shadows, so one rule per entry point covers every
 `AbstractGPUArray` backend. Without them Enzyme descends into the backend
@@ -41,6 +43,10 @@ kernel.
 # primal, so its derivative is zero.
 @inline _dinit(::Nothing) = nothing
 @inline _dinit(init) = zero(init)
+# GPUArrays 12 marks a missing `init` with `_NoInit()` (`nothing` is a value there).
+@static if isdefined(GPUArrays, :_NoInit)
+    @inline _dinit(init::GPUArrays._NoInit) = init
+end
 
 # The tangent of `_mapreduce` for one batch element.
 @inline function _mapreduce_shadow(config, ofn, f, op, A, dA, dims, init)
@@ -49,109 +55,113 @@ kernel.
     return _isconst(config, A) ? zero(res) : res
 end
 
-#=
-`mapreducedim!(identity, add_sum, R, A; init)` writes `sum(A)` over the reduced
-dims into `R`. `init` has no default here on purpose: GPUArrays only passes it
-from `_mapreduce`, where `R` is a fresh buffer that `init` initializes. A call
-that omits it accumulates onto `R`'s existing contents instead, and the reverse
-rule's unconditional zeroing of `dR` would be wrong for that case, so leave
-those calls to the kernel.
+@static if isdefined(GPUArrays, :mapreducedim!)
 
-The derivative is the same reduction on the shadows: the map is `identity` and
-the reduction is a sum, so `dR = sum(dA)` and `dA += dR`.
-=#
-function EnzymeRules.forward(
-        config,
-        ofn::Const{typeof(GPUArrays.mapreducedim!)},
-        ::Type{RT},
-        f::Const{typeof(Base.identity)},
-        op::Const{typeof(Base.add_sum)},
-        R::Annotation{<:AnyGPUArray{T}},
-        A::Annotation;
-        init,
-    ) where {RT, T}
-    if !(R isa DuplicatedNoNeed || R isa BatchDuplicatedNoNeed)
+    #=
+    `mapreducedim!(identity, add_sum, R, A; init)` writes `sum(A)` over the reduced
+    dims into `R`. `init` has no default here on purpose: GPUArrays only passes it
+    from `_mapreduce`, where `R` is a fresh buffer that `init` initializes. A call
+    that omits it accumulates onto `R`'s existing contents instead, and the reverse
+    rule's unconditional zeroing of `dR` would be wrong for that case, so leave
+    those calls to the kernel.
+
+    The derivative is the same reduction on the shadows: the map is `identity` and
+    the reduction is a sum, so `dR = sum(dA)` and `dA += dR`.
+    =#
+    function EnzymeRules.forward(
+            config,
+            ofn::Const{typeof(GPUArrays.mapreducedim!)},
+            ::Type{RT},
+            f::Const{typeof(Base.identity)},
+            op::Const{typeof(Base.add_sum)},
+            R::Annotation{<:AnyGPUArray{T}},
+            A::Annotation;
+            init,
+        ) where {RT, T}
+        if !(R isa DuplicatedNoNeed || R isa BatchDuplicatedNoNeed)
+            ofn.val(f.val, op.val, R.val, A.val; init)
+        end
+
+        if !_isconst(config, R)
+            N = width(config)
+            ntuple(Val(N)) do i
+                Base.@_inline_meta
+                dR = _bget(R.dval, Val(N), i)
+                # A `Const` input contributes nothing, and `init` means `R`'s prior
+                # contents don't either, so the output shadow is zero.
+                if _isconst(config, A)
+                    Base.fill!(dR, zero(T))
+                else
+                    ofn.val(
+                        f.val, op.val, dR, _bget(A.dval, Val(N), i);
+                        init = _dinit(init),
+                    )
+                end
+                nothing
+            end
+        end
+
+        return if needs_primal(config) && needs_shadow(config)
+            R
+        elseif needs_shadow(config)
+            R.dval
+        elseif needs_primal(config)
+            R.val
+        else
+            nothing
+        end
+    end
+
+    function EnzymeRules.augmented_primal(
+            config,
+            ofn::Const{typeof(GPUArrays.mapreducedim!)},
+            ::Type{RT},
+            f::Const{typeof(Base.identity)},
+            op::Const{typeof(Base.add_sum)},
+            R::Annotation{<:AnyGPUArray{T}},
+            A::Annotation;
+            init,
+        ) where {RT, T}
         ofn.val(f.val, op.val, R.val, A.val; init)
+
+        primal = needs_primal(config) ? R.val : nothing
+        shadow = needs_shadow(config) ? R.dval : nothing
+        return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
     end
 
-    if !_isconst(config, R)
-        N = width(config)
-        ntuple(Val(N)) do i
-            Base.@_inline_meta
-            dR = _bget(R.dval, Val(N), i)
-            # A `Const` input contributes nothing, and `init` means `R`'s prior
-            # contents don't either, so the output shadow is zero.
-            if _isconst(config, A)
+    function EnzymeRules.reverse(
+            config,
+            ofn::Const{typeof(GPUArrays.mapreducedim!)},
+            ::Type{RT},
+            tape,
+            f::Const{typeof(Base.identity)},
+            op::Const{typeof(Base.add_sum)},
+            R::Annotation{<:AnyGPUArray{T}},
+            A::Annotation;
+            init,
+        ) where {RT, T}
+        if !_isconst(config, R)
+            a_const = _isconst(config, A)
+            N = width(config)
+            ntuple(Val(N)) do i
+                Base.@_inline_meta
+                dR = _bget(R.dval, Val(N), i)
+                # Each entry of `A` feeds exactly one entry of `R`, so the cotangent
+                # broadcasts back along the reduced dims.
+                if !a_const
+                    _bget(A.dval, Val(N), i) .+= dR
+                end
+                # `init` overwrites `R`, so its cotangent is consumed here even
+                # when `A` is constant.
                 Base.fill!(dR, zero(T))
-            else
-                ofn.val(
-                    f.val, op.val, dR, _bget(A.dval, Val(N), i);
-                    init = _dinit(init),
-                )
+                nothing
             end
-            nothing
         end
+
+        return (nothing, nothing, nothing, nothing)
     end
 
-    return if needs_primal(config) && needs_shadow(config)
-        R
-    elseif needs_shadow(config)
-        R.dval
-    elseif needs_primal(config)
-        R.val
-    else
-        nothing
-    end
-end
-
-function EnzymeRules.augmented_primal(
-        config,
-        ofn::Const{typeof(GPUArrays.mapreducedim!)},
-        ::Type{RT},
-        f::Const{typeof(Base.identity)},
-        op::Const{typeof(Base.add_sum)},
-        R::Annotation{<:AnyGPUArray{T}},
-        A::Annotation;
-        init,
-    ) where {RT, T}
-    ofn.val(f.val, op.val, R.val, A.val; init)
-
-    primal = needs_primal(config) ? R.val : nothing
-    shadow = needs_shadow(config) ? R.dval : nothing
-    return EnzymeRules.AugmentedReturn(primal, shadow, nothing)
-end
-
-function EnzymeRules.reverse(
-        config,
-        ofn::Const{typeof(GPUArrays.mapreducedim!)},
-        ::Type{RT},
-        tape,
-        f::Const{typeof(Base.identity)},
-        op::Const{typeof(Base.add_sum)},
-        R::Annotation{<:AnyGPUArray{T}},
-        A::Annotation;
-        init,
-    ) where {RT, T}
-    if !_isconst(config, R)
-        a_const = _isconst(config, A)
-        N = width(config)
-        ntuple(Val(N)) do i
-            Base.@_inline_meta
-            dR = _bget(R.dval, Val(N), i)
-            # Each entry of `A` feeds exactly one entry of `R`, so the cotangent
-            # broadcasts back along the reduced dims.
-            if !a_const
-                _bget(A.dval, Val(N), i) .+= dR
-            end
-            # `init` overwrites `R`, so its cotangent is consumed here even
-            # when `A` is constant.
-            Base.fill!(dR, zero(T))
-            nothing
-        end
-    end
-
-    return (nothing, nothing, nothing, nothing)
-end
+end # isdefined(GPUArrays, :mapreducedim!)
 
 #=
 `_mapreduce(identity, add_sum, A; dims, init)` allocates its own output, so
@@ -239,6 +249,96 @@ function EnzymeRules.reverse(
         end
     end
 
+    return (nothing, nothing, nothing)
+end
+
+# Builds one fresh zero shadow per batch element of `x`.
+struct _ZeroLike{X}
+    x::X
+end
+@inline (z::_ZeroLike)(::Int) = zero(z.x)
+
+#=
+With `dims`, `_mapreduce` returns an array `R`, so its cotangent is not handed
+to `reverse` but accumulated by the caller into the shadow returned here. Keep
+that shadow on the tape. Each entry of `A` feeds exactly one entry of `R`, so
+`dA += dR`, broadcast back along the reduced dims; `init` is a constant offset
+and contributes nothing.
+
+The primal runs even when it isn't needed, since its shape and eltype define
+the shadow.
+=#
+function EnzymeRules.augmented_primal(
+        config,
+        ofn::Const{typeof(GPUArrays._mapreduce)},
+        ::Type{RT},
+        f::Const{typeof(Base.identity)},
+        op::Const{typeof(Base.add_sum)},
+        A::Annotation{<:AnyGPUArray{T}};
+        dims::D,
+        init,
+    ) where {
+        RT <: Union{Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed},
+        T, D,
+    }
+    R = ofn.val(f.val, op.val, A.val; dims, init)
+    N = width(config)
+    dR = N == 1 ? zero(R) : ntuple(_ZeroLike(R), Val(N))
+    primal = needs_primal(config) ? R : nothing
+    shadow = needs_shadow(config) ? dR : nothing
+    return EnzymeRules.AugmentedReturn(primal, shadow, dR)
+end
+
+function EnzymeRules.reverse(
+        config,
+        ofn::Const{typeof(GPUArrays._mapreduce)},
+        ::Type{RT},
+        tape,
+        f::Const{typeof(Base.identity)},
+        op::Const{typeof(Base.add_sum)},
+        A::Annotation{<:AnyGPUArray{T}};
+        dims::D,
+        init,
+    ) where {
+        RT <: Union{Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed},
+        T, D,
+    }
+    if !_isconst(config, A)
+        N = width(config)
+        for i in 1:N
+            _bget(A.dval, Val(N), i) .+= _bget(tape, Val(N), i)
+        end
+    end
+    return (nothing, nothing, nothing)
+end
+
+# A result that carries no derivative, e.g. one that is never used, has no
+# cotangent to propagate.
+function EnzymeRules.augmented_primal(
+        config,
+        ofn::Const{typeof(GPUArrays._mapreduce)},
+        ::Type{<:Const},
+        f::Const{typeof(Base.identity)},
+        op::Const{typeof(Base.add_sum)},
+        A::Annotation{<:AnyGPUArray{T}};
+        dims::D,
+        init,
+    ) where {T, D}
+    primal = needs_primal(config) ? ofn.val(f.val, op.val, A.val; dims, init) : nothing
+    return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+end
+
+function EnzymeRules.reverse(
+        config,
+        ofn::Const{typeof(GPUArrays._mapreduce)},
+        ::Type{<:Const},
+        tape,
+        f::Const{typeof(Base.identity)},
+        op::Const{typeof(Base.add_sum)},
+        A::Annotation{<:AnyGPUArray{T}};
+        dims::D,
+        init,
+    ) where {T, D}
     return (nothing, nothing, nothing)
 end
 

@@ -474,6 +474,58 @@ test/ext/jlarrays.jl for why, and for the rest of the coverage).
         @test Array(db) ≈ a0
     end
 
+    # `sum` with `dims` returns an array, whose cotangent reaches the `_mapreduce`
+    # rule through its shadow (#3808). The losses stay off broadcasts: reverse-mode
+    # broadcast on a CuArray isn't differentiable through CUDA's kernel launch rules
+    # yet, so `2 .* sum(X; dims)` would fail for reasons unrelated to these rules.
+    @testset "sum with dims, reverse" begin
+        X0 = randn(Float32, 3, 4)
+        sum1(X) = 2.0f0 * sum(sum(X; dims = 1))
+        sum2(X) = 2.0f0 * sum(sum(X; dims = 2))
+        sum12(X) = 2.0f0 * sum(sum(X; dims = (1, 2)))
+        # weights the reduced entries differently, so a cotangent that ends up
+        # in the wrong place shows
+        wsum1(w, X) = dot(w, vec(sum(X; dims = 1)))
+
+        @testset "$(nameof(g))" for g in (sum1, sum2, sum12)
+            dX = cu(zero(X0))
+            Enzyme.autodiff(Reverse, g, Active, Duplicated(cu(X0), dX))
+            @test Array(dX) ≈ fill(2.0f0, 3, 4)
+        end
+
+        @testset "weighted" begin
+            w = Float32[1, 2, 3, 4]
+            dX = cu(zero(X0))
+            Enzyme.autodiff(Reverse, wsum1, Active, Const(cu(w)), Duplicated(cu(X0), dX))
+            @test Array(dX) ≈ repeat(w', 3)
+        end
+
+        @testset "batched" begin
+            d1, d2 = cu(zero(X0)), cu(zero(X0))
+            Enzyme.autodiff(Reverse, sum1, Active, BatchDuplicated(cu(X0), (d1, d2)))
+            @test Array(d1) ≈ fill(2.0f0, 3, 4)
+            @test Array(d2) ≈ fill(2.0f0, 3, 4)
+        end
+    end
+
+    # #3807: `fill!` on a Float32 CuArray used to be ambiguous between Enzyme's
+    # GPUArrays rule and CUDA's own. CUDA 6.5 dropped its rule, so this only checks
+    # that `fill!` differentiates; the sum keeps it off broadcasts too. Before 6.5,
+    # `fill!` reaches `cuMemsetD32Async`, which Enzyme has no derivative for.
+    if pkgversion(CUDA) >= v"6.5"
+        @testset "fill! is not ambiguous" begin
+            function fill_sum(x)
+                y = similar(x)
+                fill!(y, 0.0f0)
+                return sum(x) + sum(y)
+            end
+            x = CUDA.rand(Float32, 4)
+            dx = CUDA.zeros(Float32, 4)
+            Enzyme.autodiff(Reverse, fill_sum, Active, Duplicated(x, dx))
+            @test Array(dx) == ones(Float32, 4)
+        end
+    end
+
     # Symmetric/Hermitian operands aren't supported yet; the rule rejects them
     # instead of returning the full matrix's cotangent.
     @testset "Symmetric operand is rejected" begin
