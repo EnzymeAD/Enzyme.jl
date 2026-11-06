@@ -768,8 +768,10 @@ function reverse(
         y::Annotation{Vector{Float64}},
         w::Annotation{Vector{Float64}},
         x::Annotation{Vector{Float64}},
-        ::Const{Bool},
+        save_x::Const{Bool},
     )
+    expected_tag = save_x.val ? 2 : 1
+    cache[1] == expected_tag || error("corrupted rrule_only_op! tape")
     if !(y isa Const)
         dy = y.dval
         @inbounds for i in eachindex(dy)
@@ -787,9 +789,9 @@ function reverse(
     return (nothing, nothing, nothing, nothing)
 end
 
-function _apply_rrule_only_chain(w::Vector{Float64}, x::Vector{Float64})
+function _apply_rrule_only_chain(w::Vector{Float64}, x::Vector{Float64}, save_x::Bool = false)
     y = similar(x)
-    rrule_only_op!(y, w, x, false)
+    rrule_only_op!(y, w, x, save_x)
     return sum(abs2, y)
 end
 
@@ -819,29 +821,34 @@ end
         end for i in eachindex(w0)
     ]
 
-    loss_fn = w -> _apply_rrule_only_chain(w, x0)
-    g = zeros(2)
-    hv = zeros(2)
-    Enzyme.autodiff(
-        Enzyme.set_runtime_activity(Forward),
-        Const(
-            (g_out, w_in) -> begin
-                fill!(g_out, 0.0)
-                Enzyme.autodiff(
-                    Enzyme.set_runtime_activity(Reverse),
-                    Const(loss_fn),
-                    Active,
-                    Duplicated(w_in, g_out),
-                )
-                return nothing
-            end
-        ),
-        Const,
-        Duplicated(g, hv),
-        Duplicated(copy(w0), copy(vw)),
-    )
-    @test g ≈ g_exact rtol = 1.0e-12
-    @test hv ≈ hv_exact rtol = 1.0e-12
+    for loss_fn in (
+            w -> _apply_rrule_only_chain(w, x0),
+            w -> _apply_rrule_only_chain(w, x0, false),
+            w -> _apply_rrule_only_chain(w, x0, true),
+        )
+        g = zeros(2)
+        hv = zeros(2)
+        Enzyme.autodiff(
+            Enzyme.set_runtime_activity(Forward),
+            Const(
+                (g_out, w_in) -> begin
+                    fill!(g_out, 0.0)
+                    Enzyme.autodiff(
+                        Enzyme.set_runtime_activity(Reverse),
+                        Const(loss_fn),
+                        Active,
+                        Duplicated(w_in, g_out),
+                    )
+                    return nothing
+                end
+            ),
+            Const,
+            Duplicated(g, hv),
+            Duplicated(copy(w0), copy(vw)),
+        )
+        @test g ≈ g_exact rtol = 1.0e-12
+        @test hv ≈ hv_exact rtol = 1.0e-12
+    end
 end
 
 end # ReverseRules

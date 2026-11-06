@@ -1656,11 +1656,41 @@ end
     return true
 end
 
+function single_aug_tape_type(@nospecialize(aug_RT))
+    if (
+            aug_RT <: EnzymeRules.AugmentedReturn ||
+                aug_RT <: EnzymeRules.AugmentedReturnFlexShadow
+        ) &&
+            !(aug_RT isa UnionAll) &&
+            !(aug_RT isa Union) &&
+            !(aug_RT === Union{})
+        return EnzymeRules.tape_type(aug_RT)
+    elseif (aug_RT isa UnionAll) &&
+            (aug_RT <: EnzymeRules.AugmentedReturn) && hasfield(typeof(aug_RT.body), :name) &&
+            aug_RT.body.name == EnzymeCore.EnzymeRules.AugmentedReturn.body.body.body.name
+        if aug_RT.body.parameters[3] isa TypeVar
+            return aug_RT.body.parameters[3].ub
+        else
+            return Any
+        end
+    elseif (aug_RT isa UnionAll) &&
+            (aug_RT <: EnzymeRules.AugmentedReturnFlexShadow) && hasfield(typeof(aug_RT.body), :name) &&
+            aug_RT.body.name ==
+            EnzymeCore.EnzymeRules.AugmentedReturnFlexShadow.body.body.body.name
+        if aug_RT.body.parameters[3] isa TypeVar
+            return aug_RT.body.parameters[3].ub
+        else
+            return Any
+        end
+    else
+        return Any
+    end
+end
+
 function sret_union_tape_type(@nospecialize(aug_RT))
     InnerTypes = Type[]
-    for_each_uniontype_small(aug_RT) do T
-        TapeT = EnzymeRules.tape_type(T)
-        push!(InnerTypes, TapeT)
+    for T in Base.uniontypes(aug_RT)
+        push!(InnerTypes, single_aug_tape_type(T))
     end
     return Union{InnerTypes...}
 end
@@ -1703,54 +1733,133 @@ function box_inline_union!(B::LLVM.IRBuilder, alloctx::LLVM.IRBuilder, val::LLVM
     return result
 end
 
-function nthfield_if_byref!(B, isboxed, sret_union_type, res) 
+function extract_sret_union_tape!(B::LLVM.IRBuilder, @nospecialize(miRT::Type), sret::LLVM.Value, res::LLVM.Value)
     mod = LLVM.parent(LLVM.parent(position(B)))
-    
-    # Types
+
     T_jlvalue = LLVM.StructType(LLVMType[])
     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
     T_int8 = LLVM.Int8Type()
-    T_int1 = LLVM.Int1Type()
+    T_pint8 = LLVM.PointerType(T_int8)
+    T_int64 = LLVM.Int64Type()
     T_res = LLVM.StructType([T_prjlvalue, T_int8])
-    
-    # Function name
-    func_name = "enzyme.nthfield_if_byref"
-    
-    # Get or create declaration
-    fty = LLVM.FunctionType(T_prjlvalue, [T_int1, T_prjlvalue, T_res])
+
+    func_name = "enzyme.sret_union_tape." * GPUCompiler.safe_name(string(miRT)) * "." * string(objectid(miRT); base = 16)
+    fty = LLVM.FunctionType(T_prjlvalue, [T_pint8, T_res])
     func, _ = get_function!(mod, func_name, fty)
-    
+
     if isempty(blocks(func))
         linkage!(func, LLVM.API.LLVMInternalLinkage)
-        
-        # Build body
+        push!(function_attributes(func), EnumAttribute("alwaysinline"))
+
         B2 = LLVM.IRBuilder()
         entry = BasicBlock(func, "entry")
-        then = BasicBlock(func, "then")
-        merge = BasicBlock(func, "merge")
-        
+        boxed_bb = BasicBlock(func, "boxed")
+
         position!(B2, entry)
-        
-        # Extract arguments
-        isboxed2 = parameters(func)[1]
-        sret_union_type2 = parameters(func)[2]
-        res2 = parameters(func)[3]
-        
-        br!(B2, isboxed2, then, merge)
-        
-        position!(B2, then)
+        sret2 = parameters(func)[1]
+        res2 = parameters(func)[2]
+        idxv = extract_value!(B2, res2, 1)
+        sw = switch!(B2, idxv, boxed_bb)
+
+        counter = 1
+        function inner(@nospecialize(aug_arm::Type))
+            arm_bb = BasicBlock(func, "unbox_arm_$counter")
+            position!(B2, arm_bb)
+            jlrettype = EnzymeRules.tape_type(aug_arm)
+            # A singleton tape, such as `nothing`, is its instance and must not
+            # be allocated: `tape === nothing` compares identities.
+            if Base.issingletontype(jlrettype)
+                ret!(B2, unsafe_to_llvm(B2, jlrettype.instance))
+            else
+                box = emit_allocobj!(B2, jlrettype, "sret_union.tape.$jlrettype")
+                src_ptr = gep!(B2, T_int8, sret2, LLVM.Value[LLVM.ConstantInt(T_int64, fieldoffset(aug_arm, 3))])
+                memcpy!(
+                    B2,
+                    bitcast!(B2, box, LLVM.PointerType(T_int8, Tracked)),
+                    0,
+                    src_ptr,
+                    0,
+                    LLVM.ConstantInt(T_int64, sizeof(jlrettype)),
+                )
+                ret!(B2, box)
+            end
+            LLVM.API.LLVMAddCase(sw, LLVM.ConstantInt(value_type(idxv), counter), arm_bb)
+            counter += 1
+            return
+        end
+        for_each_uniontype_small(inner, miRT)
+
+        position!(B2, boxed_bb)
         obj = extract_value!(B2, res2, 0)
-        boxed_tape = emit_nthfield!(B2, obj, LLVM.ConstantInt(LLVM.IntType(8*sizeof(Int)), 2))
-        br!(B2, merge)
-        
-        position!(B2, merge)
-        ret = phi!(B2, T_prjlvalue)
-        append!(LLVM.incoming(ret), [(sret_union_type2, entry), (boxed_tape, then)])
-        
-        ret!(B2, ret)
+        boxed_tape = emit_nthfield!(B2, obj, LLVM.ConstantInt(LLVM.IntType(8 * sizeof(Int)), 2))
+        ret!(B2, boxed_tape)
+        dispose(B2)
     end
-    
-    return call!(B, fty, func, [isboxed, sret_union_type, res])
+
+    sret_i8 = bitcast!(B, sret, T_pint8)
+    return call!(B, fty, func, [sret_i8, res])
+end
+
+function load_struct_if_byref!(B, StructTy, isboxed, sret, res)
+    mod = LLVM.parent(LLVM.parent(position(B)))
+
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+    T_int8 = LLVM.Int8Type()
+    T_pint8 = LLVM.PointerType(T_int8)
+    T_int1 = LLVM.Int1Type()
+    T_res = LLVM.StructType([T_prjlvalue, T_int8])
+
+    func_name = "enzyme.load_struct_if_byref." * string(StructTy)
+    fty = LLVM.FunctionType(StructTy, [T_int1, T_pint8, T_res])
+    func, _ = get_function!(mod, func_name, fty)
+
+    if isempty(blocks(func))
+        linkage!(func, LLVM.API.LLVMInternalLinkage)
+        push!(function_attributes(func), EnumAttribute("alwaysinline"))
+
+        B2 = LLVM.IRBuilder()
+        entry = BasicBlock(func, "entry")
+        then_bb = BasicBlock(func, "then")
+        else_bb = BasicBlock(func, "else")
+        merge = BasicBlock(func, "merge")
+
+        position!(B2, entry)
+        isboxed2 = parameters(func)[1]
+        sret2 = parameters(func)[2]
+        res2 = parameters(func)[3]
+        br!(B2, isboxed2, then_bb, else_bb)
+
+        position!(B2, then_bb)
+        obj = extract_value!(B2, res2, 0)
+        v_boxed = load!(
+            B2,
+            StructTy,
+            bitcast!(B2, obj, LLVM.PointerType(StructTy, Tracked)),
+            "rules_nonvoid_struct_boxed",
+        )
+        API.SetMustCache!(v_boxed)
+        br!(B2, merge)
+
+        position!(B2, else_bb)
+        v_sret = load!(
+            B2,
+            StructTy,
+            bitcast!(B2, sret2, LLVM.PointerType(StructTy)),
+            "rules_nonvoid_struct_sret",
+        )
+        API.SetMustCache!(v_sret)
+        br!(B2, merge)
+
+        position!(B2, merge)
+        ret = phi!(B2, StructTy)
+        append!(LLVM.incoming(ret), [(v_boxed, then_bb), (v_sret, else_bb)])
+        ret!(B2, ret)
+        dispose(B2)
+    end
+
+    sret_i8 = bitcast!(B, sret, T_pint8)
+    return call!(B, fty, func, [isboxed, sret_i8, res])
 end
 
 function enzyme_custom_common_rev(
@@ -1850,41 +1959,15 @@ function enzyme_custom_common_rev(
 
     rev_TT = nothing
 
-    TapeT = Nothing
+    aug_sret_union = (
+        aug_RT <: EnzymeRules.AugmentedReturn ||
+            aug_RT <: EnzymeRules.AugmentedReturnFlexShadow
+    ) && is_sret_union(aug_RT)
 
-
-    if (
-           aug_RT <: EnzymeRules.AugmentedReturn ||
-           aug_RT <: EnzymeRules.AugmentedReturnFlexShadow
-       ) &&
-       !(aug_RT isa UnionAll) &&
-       !(aug_RT isa Union) &&
-       !(aug_RT === Union{})
-        TapeT = EnzymeRules.tape_type(aug_RT)
-    elseif (
-           aug_RT <: EnzymeRules.AugmentedReturn ||
-           aug_RT <: EnzymeRules.AugmentedReturnFlexShadow
-       ) && is_sret_union(aug_RT)
-        TapeT = sret_union_tape_type(aug_RT)
-    elseif (aug_RT isa UnionAll) &&
-           (aug_RT <: EnzymeRules.AugmentedReturn) && hasfield(typeof(aug_RT.body), :name) &&
-           aug_RT.body.name == EnzymeCore.EnzymeRules.AugmentedReturn.body.body.body.name
-        if aug_RT.body.parameters[3] isa TypeVar
-            TapeT = aug_RT.body.parameters[3].ub
-        else
-            TapeT = Any
-        end
-    elseif (aug_RT isa UnionAll) &&
-           (aug_RT <: EnzymeRules.AugmentedReturnFlexShadow) && hasfield(typeof(aug_RT.body), :name) &&
-           aug_RT.body.name ==
-           EnzymeCore.EnzymeRules.AugmentedReturnFlexShadow.body.body.body.name
-        if aug_RT.body.parameters[3] isa TypeVar
-            TapeT = aug_RT.body.parameters[3].ub
-        else
-            TapeT = Any
-        end
+    TapeT = if aug_sret_union
+        sret_union_tape_type(aug_RT)
     else
-        TapeT = Any
+        single_aug_tape_type(aug_RT)
     end
 
     llvmf = nothing
@@ -1945,11 +2028,15 @@ function enzyme_custom_common_rev(
 
     needsTape = !isghostty(TapeT) && !Core.Compiler.isconstType(TapeT)
 
+    T_jlvalue = LLVM.StructType(LLVMType[])
+    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+
     tapeV = C_NULL
     if forward
         if length(byval_tapes) == 0
             if needsTape
-                tapeV = LLVM.UndefValue(convert(LLVMType, TapeT; allow_boxed = true)).ref
+                jltapeType = aug_sret_union ? T_prjlvalue : convert(LLVMType, TapeT; allow_boxed = true)
+                tapeV = LLVM.UndefValue(jltapeType).ref
             else
                 tapeV = C_NULL
             end
@@ -1959,7 +2046,7 @@ function enzyme_custom_common_rev(
                 push!(tapetys, value_type(v))
             end
             if needsTape
-                jltapeType = convert(LLVMType, TapeT; allow_boxed = true)
+                jltapeType = aug_sret_union ? T_prjlvalue : convert(LLVMType, TapeT; allow_boxed = true)
                 push!(tapetys, jltapeType)
             end
             tapeV = LLVM.UndefValue(LLVM.StructType(tapetys))
@@ -2075,24 +2162,35 @@ function enzyme_custom_common_rev(
                     throw(AssertionError(msg))
                 end
                 llty = convert(LLVMType, TapeT; allow_boxed = true)
+                if aug_sret_union && value_type(tape) == T_prjlvalue
+                    @assert llty != T_prjlvalue
+                    tape = load!(
+                        B,
+                        llty,
+                        bitcast!(B, tape, LLVM.PointerType(llty, addrspace(value_type(tape)))),
+                        "sret_union_tape_unbox",
+                    )
+                end
 
                 # The rule takes the tape by reference as readonly nocapture, so
                 # the tape goes in a stack slot, like every argument. On 1.12+
                 # the tracked pointers go through a rooted array, and the slot
                 # holds the layout with the pointer fields stripped.
-                tape_roots = inline_roots_type(TapeT)
-                if tape_roots != 0
-                    tape_al = create_rooted_array(alloctx, tape_roots)
-                    extract_roots_from_value!(B, tape, tape_al)
-                    llty_foralloca = strip_tracked_pointers(llty)
-                    al = alloca!(alloctx, llty_foralloca, "tape.$TapeT")
-                    extract_nonjlvalues_into!(B, llty, al, tape)
-                else
-                    llty_foralloca = llty
-                    al = alloca!(alloctx, llty, "tape.$TapeT")
-                    store!(B, tape, al)
+                if innerTy != value_type(tape)
+                    tape_roots = inline_roots_type(TapeT)
+                    if tape_roots != 0
+                        tape_al = create_rooted_array(alloctx, tape_roots)
+                        extract_roots_from_value!(B, tape, tape_al)
+                        llty_foralloca = strip_tracked_pointers(llty)
+                        al = alloca!(alloctx, llty_foralloca, "tape.$TapeT")
+                        extract_nonjlvalues_into!(B, llty, al, tape)
+                    else
+                        llty_foralloca = llty
+                        al = alloca!(alloctx, llty, "tape.$TapeT")
+                        store!(B, tape, al)
+                    end
+                    tape = addrspacecast!(B, al, LLVM.PointerType(llty_foralloca, Derived))
                 end
-                tape = addrspacecast!(B, al, LLVM.PointerType(llty_foralloca, Derived))
             end
             insert!(args, tape_idx, tape)
             if tape_al !== nothing
@@ -2318,6 +2416,8 @@ function enzyme_custom_common_rev(
     end
 
     sret_union_tape = nothing
+    sret_isboxed = nothing
+    sret_orig_res = nothing
     
     if sret_union && forward
 
@@ -2347,68 +2447,15 @@ function enzyme_custom_common_rev(
             throw(AssertionError("Unexpected augmented rule return computation\nST = $ST\nER = $(EnzymeRules.augmented_rule_return_type(C, RT, TapeT))\nC = $C\nRT = $RT\nTapeT = $TapeT"))
         end
 
-        cur = nothing
-        cur_size = nothing
-        cur_offset = nothing
-        # A singleton tape, such as `nothing`, is its instance and must not
-        # be allocated: `tape === nothing` compares identities.
-        T_int1 = LLVM.Int1Type()
-        cur_singleton = nothing
-        cur_singleton_val = nothing
-        any_singleton = false
-
-        counter = 1
-
         idxv = extract_value!(B, res, 1)
-
-        function inner(@nospecialize(aug_RT::Type))
-            jlrettype = EnzymeRules.tape_type(aug_RT)
-            if cur_size == nothing
-                cur_size = sizeof(jlrettype)
-            elseif cur_size != sizeof(jlrettype)
-                same_size = false
-            end
-            singleton = Base.issingletontype(jlrettype)
-            any_singleton |= singleton
-            singleton_val = unsafe_to_llvm(B, singleton ? jlrettype.instance : nothing)
-
-            if cur === nothing
-                cur = unsafe_to_llvm(B, jlrettype)
-                cur_size = LLVM.ConstantInt(sizeof(jlrettype))
-                cur_offset = LLVM.ConstantInt(fieldoffset(aug_RT, 3))
-                cur_singleton = LLVM.ConstantInt(T_int1, singleton)
-                cur_singleton_val = singleton_val
-            else
-                cmpv = icmp!(B, LLVM.API.LLVMIntEQ, idxv, LLVM.ConstantInt(value_type(idxv), counter))
-                cur = select!(B, cmpv, unsafe_to_llvm(B, jlrettype), cur)
-                cur_size = select!(B, cmpv, LLVM.ConstantInt(sizeof(jlrettype)), cur_size)
-                cur_offset = select!(B, cmpv, LLVM.ConstantInt(fieldoffset(aug_RT, 3)), cur_offset)
-                cur_singleton = select!(B, cmpv, LLVM.ConstantInt(T_int1, singleton), cur_singleton)
-                cur_singleton_val = select!(B, cmpv, singleton_val, cur_singleton_val)
-            end
-
-            counter += 1
-            return
-        end
-        for_each_uniontype_small(inner, miRT)
-
         isboxed = icmp!(B, LLVM.API.LLVMIntEQ, and!(B, idxv, LLVM.ConstantInt(value_type(idxv), 128)), LLVM.ConstantInt(value_type(idxv), 128))
-        cur = select!(B, isboxed, unsafe_to_llvm(B, UInt8), cur)
-        cur_size = select!(B, isboxed, LLVM.ConstantInt(sizeof(UInt8)), cur_size)
+        sret_union_tape = extract_sret_union_tape!(B, miRT, sret, res)
 
-        sret_union_tape = emit_allocobj!(B, cur, cur_size, false)
-        T_int8 = LLVM.Int8Type()
-        memcpy!(B, bitcast!(B, sret_union_tape, LLVM.PointerType(T_int8, Tracked)), 0, gep!(B, T_int8, bitcast!(B, sret, LLVM.PointerType(T_int8)), LLVM.Value[cur_offset]), 0, cur_size)
-
-        sret_union_tape = nthfield_if_byref!(B, isboxed, sret_union_tape, res)
-        if any_singleton
-            use_singleton = and!(B, cur_singleton, not!(B, isboxed))
-            sret_union_tape = select!(B, use_singleton, cur_singleton_val, sret_union_tape)
-        end
-        
+        sret_isboxed = isboxed
+        sret_orig_res = res
         res = sret
 
-    elseif sret !== nothing
+    elseif sret !== nothing && !sret_union
         sty = sret_ty(llvmf, 1)
         if LLVM.version().major >= 12
             attr = TypeAttribute("sret", sty)
@@ -2509,18 +2556,24 @@ function enzyme_custom_common_rev(
                 },
             )
             if StructTy != LLVM.VoidType()
-                lresV = load!(
-                    B,
-                    StructTy,
-                    bitcast!(
+                if sret_union
+                    @assert sret_isboxed !== nothing
+                    @assert sret_orig_res !== nothing
+                    load_struct_if_byref!(B, StructTy, sret_isboxed, res, sret_orig_res)
+                else
+                    lresV = load!(
                         B,
-                        res,
-                        LLVM.PointerType(StructTy, addrspace(value_type(res))),
-                    ),
-                    "rules_nonvoid_struct"
-                )
-                API.SetMustCache!(lresV)
-                lresV
+                        StructTy,
+                        bitcast!(
+                            B,
+                            res,
+                            LLVM.PointerType(StructTy, addrspace(value_type(res))),
+                        ),
+                        "rules_nonvoid_struct"
+                    )
+                    API.SetMustCache!(lresV)
+                    lresV
+                end
             else
                 res
             end
