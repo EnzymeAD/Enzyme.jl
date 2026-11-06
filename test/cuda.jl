@@ -504,6 +504,9 @@ end
         dx = CUDA.zeros(Float64, 4)
         autodiff(Reverse, f, Active, Duplicated(x, dx))
         GC.gc(true)
+        # since CUDA 6.5, finalizers only queue arrays for release, so the views'
+        # references are dropped by a later task; `reclaim` releases them now.
+        CUDA.reclaim()
         @test refcount(x) == 1
         @test refcount(dx) == 1
         @test Array(dx) == (name == "view" ? [1.0, 1.0, 0.0, 0.0] : ones(4))
