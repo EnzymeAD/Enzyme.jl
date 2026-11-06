@@ -162,7 +162,7 @@ function specsig(mi::Core.MethodInstance, @nospecialize(RT::Type); gcstack_arg::
         # A `Union` whose members are all ghosts returns only the selector
         # byte (the `Ghosts` return convention of `get_specsig_function`).
         retty = T_int8
-    elseif rt === Any || GPUCompiler.deserves_retbox(RT)
+    elseif rt === Any || deserves_argbox(RT)
         retty = T_prjlvalue
     else
         retty = convert(LLVMType, rt)

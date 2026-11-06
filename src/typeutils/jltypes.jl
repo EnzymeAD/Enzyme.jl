@@ -88,7 +88,7 @@ function inline_roots_type(@nospecialize(T::Type))::Int
 	   if T === Union{}
 		return 0
 	   end
-	   if GPUCompiler.deserves_argbox(T)
+	   if deserves_argbox(T)
 		return 0
 	   end
 	   if Base.isabstracttype(T)
@@ -453,7 +453,7 @@ function is_sret(@nospecialize(jlrettype::Type))
             return true
         end
         return false
-    elseif !GPUCompiler.deserves_retbox(jlrettype)
+    elseif !deserves_argbox(jlrettype)
         rt = convert(LLVMType, jlrettype)
         if !isa(rt, LLVM.VoidType) && GPUCompiler.deserves_sret(jlrettype, rt)
             return true
@@ -513,7 +513,7 @@ function get_return_info(
         # `Tuple{Vararg{Any, N}} where N`, or one with an `Any` element) is
         # returned boxed.
         rt = Any
-    elseif !GPUCompiler.deserves_retbox(jlrettype)
+    elseif !deserves_argbox(jlrettype)
         lRT = convert(LLVMType, jlrettype)
         if !isa(lRT, LLVM.VoidType) && GPUCompiler.deserves_sret(jlrettype, lRT)
             sret = Ptr{jlrettype}
