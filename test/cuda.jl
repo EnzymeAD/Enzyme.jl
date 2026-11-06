@@ -474,6 +474,36 @@ test/ext/jlarrays.jl for why, and for the rest of the coverage).
         @test Array(db) ≈ a0
     end
 
+    # `sum` with `dims` returns an array, whose cotangent reaches the `_mapreduce`
+    # rule through its shadow (#3808). The weights put a different cotangent on
+    # each column, which broadcasts back along the reduced rows.
+    @testset "sum with dims, reverse" begin
+        X0 = randn(Float32, 3, 4)
+        w = cu(Float32[1 2 3 4])
+        @testset "dims = $dims" for dims in (1, 2, (1, 2))
+            dX = cu(zero(X0))
+            Enzyme.autodiff(Reverse, X -> sum(2.0f0 .* sum(X; dims)), Active, Duplicated(cu(X0), dX))
+            @test Array(dX) ≈ fill(2.0f0, 3, 4)
+        end
+        dX = cu(zero(X0))
+        Enzyme.autodiff(Reverse, X -> sum(w .* sum(X; dims = 1)), Active, Duplicated(cu(X0), dX))
+        @test Array(dX) ≈ repeat(Float32[1 2 3 4], 3)
+    end
+
+    # #3807: `fill!` on a fresh `similar` buffer followed by an in-place add.
+    @testset "fill! then accumulate" begin
+        function fill_add(x)
+            y = similar(x)
+            fill!(y, 0)
+            y .+= x
+            return sum(y)
+        end
+        x = CUDA.rand(Float32, 4)
+        dx = CUDA.zeros(Float32, 4)
+        Enzyme.autodiff(set_runtime_activity(Reverse), Const(fill_add), Active, Duplicated(x, dx))
+        @test Array(dx) == ones(Float32, 4)
+    end
+
     # Symmetric/Hermitian operands aren't supported yet; the rule rejects them
     # instead of returning the full matrix's cotangent.
     @testset "Symmetric operand is rejected" begin

@@ -252,6 +252,96 @@ function EnzymeRules.reverse(
     return (nothing, nothing, nothing)
 end
 
+# Builds one fresh zero shadow per batch element of `x`.
+struct _ZeroLike{X}
+    x::X
+end
+@inline (z::_ZeroLike)(::Int) = zero(z.x)
+
+#=
+With `dims`, `_mapreduce` returns an array `R`, so its cotangent is not handed
+to `reverse` but accumulated by the caller into the shadow returned here. Keep
+that shadow on the tape. Each entry of `A` feeds exactly one entry of `R`, so
+`dA += dR`, broadcast back along the reduced dims; `init` is a constant offset
+and contributes nothing.
+
+The primal runs even when it isn't needed, since its shape and eltype define
+the shadow.
+=#
+function EnzymeRules.augmented_primal(
+        config,
+        ofn::Const{typeof(GPUArrays._mapreduce)},
+        ::Type{RT},
+        f::Const{typeof(Base.identity)},
+        op::Const{typeof(Base.add_sum)},
+        A::Annotation{<:AnyGPUArray{T}};
+        dims::D,
+        init,
+    ) where {
+        RT <: Union{Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed},
+        T, D,
+    }
+    R = ofn.val(f.val, op.val, A.val; dims, init)
+    N = width(config)
+    dR = N == 1 ? zero(R) : ntuple(_ZeroLike(R), Val(N))
+    primal = needs_primal(config) ? R : nothing
+    shadow = needs_shadow(config) ? dR : nothing
+    return EnzymeRules.AugmentedReturn(primal, shadow, dR)
+end
+
+function EnzymeRules.reverse(
+        config,
+        ofn::Const{typeof(GPUArrays._mapreduce)},
+        ::Type{RT},
+        tape,
+        f::Const{typeof(Base.identity)},
+        op::Const{typeof(Base.add_sum)},
+        A::Annotation{<:AnyGPUArray{T}};
+        dims::D,
+        init,
+    ) where {
+        RT <: Union{Duplicated, DuplicatedNoNeed, BatchDuplicated, BatchDuplicatedNoNeed},
+        T, D,
+    }
+    if !_isconst(config, A)
+        N = width(config)
+        for i in 1:N
+            _bget(A.dval, Val(N), i) .+= _bget(tape, Val(N), i)
+        end
+    end
+    return (nothing, nothing, nothing)
+end
+
+# A result that carries no derivative, e.g. one that is never used, has no
+# cotangent to propagate.
+function EnzymeRules.augmented_primal(
+        config,
+        ofn::Const{typeof(GPUArrays._mapreduce)},
+        ::Type{<:Const},
+        f::Const{typeof(Base.identity)},
+        op::Const{typeof(Base.add_sum)},
+        A::Annotation{<:AnyGPUArray{T}};
+        dims::D,
+        init,
+    ) where {T, D}
+    primal = needs_primal(config) ? ofn.val(f.val, op.val, A.val; dims, init) : nothing
+    return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+end
+
+function EnzymeRules.reverse(
+        config,
+        ofn::Const{typeof(GPUArrays._mapreduce)},
+        ::Type{<:Const},
+        tape,
+        f::Const{typeof(Base.identity)},
+        op::Const{typeof(Base.add_sum)},
+        A::Annotation{<:AnyGPUArray{T}};
+        dims::D,
+        init,
+    ) where {T, D}
+    return (nothing, nothing, nothing)
+end
+
 # GPUArrays counts the arrays that share a buffer in `rc.count`, a `Threads.Atomic{Int}`.
 # That type is inactive, so the `retain` done by `view` and `reshape` (through
 # `copy(::DataRef)`) updates only the primal count. The shadow array that the view makes
