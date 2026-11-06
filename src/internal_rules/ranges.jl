@@ -186,6 +186,25 @@ function EnzymeRules.reverse(
     return (dstart, dstep, dstop)
 end
 
+# The StepRangeLen returned by `range_start_stop_length` stores its value at
+# index `offset` (not necessarily the first element) in `ref`. Indexing into the
+# shadow reuses the integer `offset` of the primal, so the tangent of `ref` must be
+# taken at that same index.
+function _range_sslen_shadow(primal::StepRangeLen, dstart, dstop)
+    len = primal.len
+    off = primal.offset
+    if len < 2
+        dref = dstart
+        dstep = zero(dstart)
+    else
+        dstep = (dstop - dstart) / (len - 1)
+        dref = dstart + (off - 1) * dstep
+    end
+    R = typeof(primal.ref)
+    S = typeof(primal.step)
+    return typeof(primal)(R(dref), S(dstep), len, off)
+end
+
 function EnzymeRules.forward(
         config::EnzymeRules.FwdConfig,
         func::Const{typeof(Base.range_start_stop_length)},
@@ -194,48 +213,35 @@ function EnzymeRules.forward(
         stop::Annotation{T},
         len::Annotation{<:Integer},
     ) where {T <: Base.IEEEFloat}
-    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
-        if EnzymeRules.width(config) == 1
-            return Duplicated(
-                func.val(start.val, stop.val, len.val),
-                func.val(
-                    start isa Const ? zero(start.val) : -start.dval,
-                    stop isa Const ? zero(stop.val) : stop.dval,
-                    len.val
-                )
-            )
-        else
-            return BatchDuplicated(
-                func.val(start.val, stop.val, len.val),
-                ntuple(
-                    i -> func.val(
-                        start isa Const ? zero(start.val) : -start.dval[i],
-                        stop isa Const ? zero(stop.val) : stop.dval[i],
-                        len.val,
-                    ),
-                    Val(EnzymeRules.width(config)),
-                ),
-            )
-        end
-    elseif EnzymeRules.needs_shadow(config)
-        if EnzymeRules.width(config) == 1
-            return func.val(
-                start isa Const ? zero(start.val) : -start.dval,
+    primal = func.val(start.val, stop.val, len.val)
+    if EnzymeRules.needs_shadow(config)
+        shadow = if EnzymeRules.width(config) == 1
+            _range_sslen_shadow(
+                primal,
+                start isa Const ? zero(start.val) : start.dval,
                 stop isa Const ? zero(stop.val) : stop.dval,
-                len.val
             )
         else
-            return ntuple(
-                i -> func.val(
-                    start isa Const ? zero(start.val) : -start.dval[i],
+            ntuple(
+                i -> _range_sslen_shadow(
+                    primal,
+                    start isa Const ? zero(start.val) : start.dval[i],
                     stop isa Const ? zero(stop.val) : stop.dval[i],
-                    len.val,
                 ),
                 Val(EnzymeRules.width(config)),
             )
         end
+        if EnzymeRules.needs_primal(config)
+            if EnzymeRules.width(config) == 1
+                return Duplicated(primal, shadow)
+            else
+                return BatchDuplicated(primal, shadow)
+            end
+        else
+            return shadow
+        end
     elseif EnzymeRules.needs_primal(config)
-        return func.val(start.val, stop.val, len.val)
+        return primal
     else
         return nothing
     end
@@ -249,12 +255,25 @@ function EnzymeRules.augmented_primal(
         stop::Annotation{T},
         len::Annotation{<:Base.Integer},
     ) where {RT, T <: Base.IEEEFloat}
-    if EnzymeRules.needs_primal(config)
-        primal = func.val(start.val, stop.val, len.val)
-    else
-        primal = nothing
+    r = func.val(start.val, stop.val, len.val)
+    primal = EnzymeRules.needs_primal(config) ? r : nothing
+    # the reverse pass needs to know at which index `ref` is stored
+    return EnzymeRules.AugmentedReturn(primal, nothing, r.offset)
+end
+
+# Float16/Float32 ranges store `ref`/`step` as plain Float64, Float64 ones as TwicePrecision
+_range_hi(x::Base.TwicePrecision) = x.hi
+_range_hi(x::AbstractFloat) = x
+
+# Adjoint of `ref = start + (offset - 1) * step` and `step = (stop - start) / (len - 1)`.
+function _range_sslen_pullback(::Type{T}, dr::StepRangeLen, len, off) where {T}
+    dref = T(_range_hi(dr.ref))
+    if len < 2
+        return dref, zero(T)
     end
-    return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+    dstep = T(_range_hi(dr.step)) + (off - 1) * dref
+    dstop = dstep / (len - 1)
+    return dref - dstop, dstop
 end
 
 function EnzymeRules.reverse(
@@ -266,26 +285,30 @@ function EnzymeRules.reverse(
         stop::Annotation{T},
         len::Annotation{T3},
     ) where {T <: Base.IEEEFloat, T3 <: Integer}
-    dstart = if start isa Const
-        nothing
-    elseif EnzymeRules.width(config) == 1
-        T(dret.val.ref.hi) - T(dret.val.step.hi) / (len.val - 1)
+    off = tape
+    grads = if EnzymeRules.width(config) == 1
+        _range_sslen_pullback(T, dret.val, len.val, off)
     else
         ntuple(Val(EnzymeRules.width(config))) do i
             Base.@_inline_meta
-            T(dret.val[i].ref.hi) - T(dret.val[i].step.hi) / (len.val - 1)
+            _range_sslen_pullback(T, dret.val[i], len.val, off)
         end
+    end
+
+    dstart = if start isa Const
+        nothing
+    elseif EnzymeRules.width(config) == 1
+        grads[1]
+    else
+        ntuple(i -> grads[i][1], Val(EnzymeRules.width(config)))
     end
 
     dstop = if stop isa Const
         nothing
     elseif EnzymeRules.width(config) == 1
-        T(dret.val.step.hi) / (len.val - 1)
+        grads[2]
     else
-        ntuple(Val(EnzymeRules.width(config))) do i
-            Base.@_inline_meta
-            T(dret.val[i].step.hi) / (len.val - 1)
-        end
+        ntuple(i -> grads[i][2], Val(EnzymeRules.width(config)))
     end
 
     return (dstart, dstop, nothing)
