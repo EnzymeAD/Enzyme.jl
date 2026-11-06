@@ -210,12 +210,12 @@ method_tables(view::GPUCompiler.StackedMethodTable) = (view.mt, method_tables(vi
     return Enzyme.has_method(sig, view.world, view.mt) || Enzyme.has_method(sig, view.world, view.parent)
 end
 @inline function Enzyme.lookup_world(
-    @nospecialize(sig::Type),
-    world::UInt,
-    view::GPUCompiler.StackedMethodTable,
-    min_world::Ref{UInt},
-    max_world::Ref{UInt},
-)
+        @nospecialize(sig::Type),
+        world::UInt,
+        view::GPUCompiler.StackedMethodTable,
+        min_world::Ref{UInt},
+        max_world::Ref{UInt},
+    )
     res = Enzyme.lookup_world(sig, view.world, view.mt, min_world, max_world)
     res !== nothing && return res
     return Enzyme.lookup_world(sig, view.world, view.parent, min_world, max_world)
@@ -2316,7 +2316,9 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
 
     isboxed_ref = Ref{Bool}()
     LLVMType = LLVM.LLVMType(ccall(:jl_type_to_llvm, LLVM.API.LLVMTypeRef,
-                (Any, LLVM.API.LLVMContextRef, Ptr{Bool}), Ty, LLVM.context(), isboxed_ref))
+            (Any, LLVM.API.LLVMContextRef, Ptr{Bool}), Ty, LLVM.context(), isboxed_ref
+        )
+    )
 
     if !isboxed_ref[]
         zeroAll = false
@@ -6707,7 +6709,9 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
 
         if !API.HasFromStack(inst) &&
            ((isa(inst, LLVM.CallInst) &&
-             (!isa(fn, LLVM.Function) || isempty(fn.blocks)) ) || isa(inst, LLVM.LoadInst) || isa(inst, LLVM.AllocaInst) || isa(inst, LLVM.ExtractValueInst))
+                        (!isa(fn, LLVM.Function) || isempty(fn.blocks))
+                ) || isa(inst, LLVM.LoadInst) || isa(inst, LLVM.AllocaInst) || isa(inst, LLVM.ExtractValueInst)
+            )
             legal, source_typ, byref = abs_typeof(inst, enzyme_ctx)
             codegen_typ = inst.value_type
             if legal

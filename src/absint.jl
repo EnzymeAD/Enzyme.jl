@@ -1034,7 +1034,7 @@ function abs_typeof(
                     indices = arg.operands[2:end]
                     if length(indices) == 1 && indices[1].value_type isa LLVM.IntegerType
                         idx = indices[1]
-                        
+
                         source_type = arg.source_element_type
                         base_ptr = arg.operands[1]
                         dl = arg.parent.parent.parent.datalayout

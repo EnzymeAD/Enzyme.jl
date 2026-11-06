@@ -276,7 +276,7 @@ end
         if is_constant_value(gutils, orig.operands[1])
 	    dupClosure = false
             if !boxed && inline_roots_type(funcT) != 0
-	        if !is_constant_value(gutils, orig.operands[2])
+                if !is_constant_value(gutils, orig.operands[2])
 		    dupClosure = true
 		end
 	    end
@@ -504,7 +504,7 @@ end
             end
 	    
             if !boxed && inline_roots_type(ppfuncT) != 0
-		v2 = new_from_original(gutils, orig.operands[2])
+                v2 = new_from_original(gutils, orig.operands[2])
 		v = recombine_value!(fwdbuilder, v, v2)
 	    end
 
@@ -567,7 +567,7 @@ end
                 pv = nothing
 	        
                 dv2 = if !boxed && inline_roots_type(ppfuncT) != 0
-                   invert_pointer(gutils, orig.operands[2], B)
+                    invert_pointer(gutils, orig.operands[2], B)
                 end
 
                 # The closure's tracked pointers live in the roots array, so its bits
