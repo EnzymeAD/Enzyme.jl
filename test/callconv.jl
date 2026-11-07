@@ -523,3 +523,48 @@ d3_default_ccall(x) = only(autodiff(Forward, d2_default_ccall, Duplicated(x, 1.0
     @test d3_inline_ccall(x) ≈ d3_default_ccall(x)
     @test sum_d1_inline_ccall([x, x]) ≈ 2 * d1_default_ccall(x)
 end
+
+# Returns `Union{Nothing, NTuple{3, Int}}`; the tuple member comes back unboxed, with a
+# null box pointer next to the selector.
+@noinline function union_tape_next_coord((d, r, c), R, C)
+    if d == 1
+        return (2, r, mod1(c + 1, C))
+    elseif d == 2
+        return (3, mod1(r + 1, R), c)
+    elseif d == 3
+        return (4, r, mod1(c - 1, C))
+    elseif d == 4
+        return (1, mod1(r - 1, R), c)
+    end
+end
+
+function union_tape_outer(x, coord)
+    c2 = union_tape_next_coord(coord, size(x, 2), size(x, 3))
+    return x[coord...]^2 * x[c2...]
+end
+
+@testset "Split mode tape starting with an unboxed union" begin
+    # The tape caches the union value as (box, selector) first. Its box pointer is null,
+    # and an unset `return_roots` slot made Julia take the whole returned tape for
+    # `#undef` (an `UndefRefError` unpacking `(tape, primal, shadow)`).
+    x0 = reshape(collect(1.0:16.0), 4, 2, 2)
+    for coord in ((1, 1, 1), (2, 1, 2), (4, 2, 1))
+        x = copy(x0)
+        dx = zero(x)
+        fwd, rev = autodiff_thunk(
+            ReverseSplitWithPrimal, Const{typeof(union_tape_outer)}, Active{Float64},
+            Duplicated{typeof(x)}, Const{typeof(coord)}
+        )
+        res = fwd(Const(union_tape_outer), Duplicated(x, dx), Const(coord))
+        @test isdefined(res, 1)
+        tape, primal, _ = res
+        GC.gc()
+        rev(Const(union_tape_outer), Duplicated(x, dx), Const(coord), 1.0, tape)
+        c2 = union_tape_next_coord(coord, 2, 2)
+        expected = zero(x0)
+        expected[coord...] += 2 * x0[coord...] * x0[c2...]
+        expected[c2...] += x0[coord...]^2
+        @test primal ≈ x0[coord...]^2 * x0[c2...]
+        @test dx ≈ expected
+    end
+end
