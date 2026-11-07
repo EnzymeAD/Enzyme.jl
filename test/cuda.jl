@@ -509,3 +509,108 @@ end
         @test Array(dx) == (name == "view" ? [1.0, 1.0, 0.0, 0.0] : ones(4))
     end
 end
+
+struct MixedDevParams{FT}
+    α::FT
+    β::FT
+end
+
+@noinline function mixed_dev_body!(out, c, p::MixedDevParams, i)
+    @inbounds out[i] = p.α * c[i]^2 + p.β * sin(c[i])
+    return nothing
+end
+
+function mixed_dev_kernel!(out, dout, c, p, dp)
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+    if i <= length(out)
+        autodiff_deferred(
+            Reverse, Const(mixed_dev_body!), Const, Duplicated(out, dout), Const(c),
+            MixedDuplicatedPtr(p, pointer(dp)), Const(i),
+        )
+    end
+    return nothing
+end
+
+@testset "MixedDuplicatedPtr with a device pointer" begin
+    n = 1024
+    c = rand(n)
+    p = MixedDevParams(2.0, 3.0)
+    out = CUDA.zeros(Float64, n)
+    dout = CUDA.ones(Float64, n)
+    dp = CuArray([MixedDevParams(0.0, 0.0)])
+    @cuda threads = 256 blocks = cld(n, 256) mixed_dev_kernel!(out, dout, CuArray(c), p, dp)
+    res = Array(dp)[1]
+    @test res.α ≈ sum(abs2, c)
+    @test res.β ≈ sum(sin, c)
+    @test Array(out) ≈ @. p.α * c^2 + p.β * sin(c)
+end
+
+function batch_mixed_dev_kernel!(out, d1, d2, c, p, dp)
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+    if i <= length(out)
+        autodiff_deferred(
+            Reverse, Const(mixed_dev_body!), Const, BatchDuplicated(out, (d1, d2)), Const(c),
+            BatchMixedDuplicatedPtr(p, (pointer(dp, 1), pointer(dp, 2))), Const(i),
+        )
+    end
+    return nothing
+end
+
+const BATCH_MIXED_DEV_MODE = ReverseSplitModified(ReverseSplitWithPrimal, Val((false, true, false, false, false)))
+
+function batch_mixed_dev_split_kernel!(out, d1, d2, c, p, dp, ::Val{TapeType}) where {TapeType}
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+    if i <= length(out)
+        bd = BatchDuplicated(out, (d1, d2))
+        md = BatchMixedDuplicatedPtr(p, (pointer(dp, 1), pointer(dp, 2)))
+        fwd, rev = autodiff_deferred_thunk(
+            BATCH_MIXED_DEV_MODE, TapeType, Const{typeof(mixed_dev_body!)}, Const{Nothing},
+            typeof(bd), Const{typeof(c)}, typeof(md), Const{Int},
+        )
+        tape = fwd(Const(mixed_dev_body!), bd, Const(c), md, Const(i))[1]
+        rev(Const(mixed_dev_body!), bd, Const(c), md, Const(i), tape)
+    end
+    return nothing
+end
+
+@testset "BatchMixedDuplicatedPtr with device pointers" begin
+    n = 1024
+    c = rand(n)
+    p = MixedDevParams(2.0, 3.0)
+    s1 = ones(n)
+    s2 = collect(range(-1.0, 2.0; length = n))
+
+    # CPU reference
+    r1 = Ref(MixedDevParams(0.0, 0.0))
+    r2 = Ref(MixedDevParams(0.0, 0.0))
+    Enzyme.autodiff(
+        Reverse, (out, c, p) -> (for i in eachindex(out); mixed_dev_body!(out, c, p, i); end; nothing),
+        Const, BatchDuplicated(zeros(n), (copy(s1), copy(s2))), Const(c), BatchMixedDuplicated(p, (r1, r2)),
+    )
+    @test r1[].α ≈ sum(s1 .* c .^ 2)
+    @test r2[].β ≈ sum(s2 .* sin.(c))
+
+    function check(dp)
+        res = Array(dp)
+        for (lane, ref) in ((1, r1[]), (2, r2[]))
+            @test res[lane].α ≈ ref.α
+            @test res[lane].β ≈ ref.β
+        end
+    end
+
+    out = CUDA.zeros(Float64, n)
+    dc = CuArray(c)
+    dp = CuArray([MixedDevParams(0.0, 0.0), MixedDevParams(0.0, 0.0)])
+    @cuda threads = 256 blocks = cld(n, 256) batch_mixed_dev_kernel!(out, CuArray(s1), CuArray(s2), dc, p, dp)
+    check(dp)
+
+    job = Enzyme.EnzymeCore.compiler_job_from_backend(CUDABackend(), typeof(() -> return), Tuple{})
+    TapeType = Enzyme.EnzymeCore.tape_type(
+        job, BATCH_MIXED_DEV_MODE, Const{typeof(mixed_dev_body!)}, Const{Nothing},
+        BatchDuplicated{typeof(cudaconvert(out)), 2}, Const{typeof(cudaconvert(dc))},
+        BatchMixedDuplicatedPtr{MixedDevParams{Float64}, 2, Core.LLVMPtr{MixedDevParams{Float64}, 1}}, Const{Int},
+    )
+    fill!(dp, MixedDevParams(0.0, 0.0))
+    @cuda threads = 256 blocks = cld(n, 256) batch_mixed_dev_split_kernel!(out, CuArray(s1), CuArray(s2), dc, p, dp, Val(TapeType))
+    check(dp)
+end

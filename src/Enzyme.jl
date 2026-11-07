@@ -87,8 +87,8 @@ export Annotation,
 import EnzymeCore: BatchDuplicatedFunc
 export BatchDuplicatedFunc
 
-import EnzymeCore: MixedDuplicated, BatchMixedDuplicated
-export MixedDuplicated, BatchMixedDuplicated
+import EnzymeCore: MixedDuplicated, BatchMixedDuplicated, MixedDuplicatedPtr, BatchMixedDuplicatedPtr
+export MixedDuplicated, BatchMixedDuplicated, MixedDuplicatedPtr, BatchMixedDuplicatedPtr
 
 import EnzymeCore: batch_size, get_func
 export batch_size, get_func
@@ -256,9 +256,9 @@ end
         arg = @inbounds args[i]
         if arg isa Active
             return true
-        elseif arg isa MixedDuplicated
+        elseif arg isa MixedDuplicated || arg isa MixedDuplicatedPtr
             return true
-        elseif arg isa BatchMixedDuplicated
+        elseif arg isa BatchMixedDuplicated || arg isa BatchMixedDuplicatedPtr
             return true
         else
             return false
@@ -309,6 +309,13 @@ end
 @inline same_or_one_rec(
     current,
     arg::Type{BatchMixedDuplicated{T,N}},
+    args...,
+) where {T,N} = same_or_one_rec(same_or_one_helper(current, N), args...)
+@inline same_or_one_rec(current, arg::BatchMixedDuplicatedPtr{T,N}, args...) where {T,N} =
+    same_or_one_rec(same_or_one_helper(current, N), args...)
+@inline same_or_one_rec(
+    current,
+    arg::Type{<:BatchMixedDuplicatedPtr{T,N}},
     args...,
 ) where {T,N} = same_or_one_rec(same_or_one_helper(current, N), args...)
 @inline same_or_one_rec(current, arg::BatchDuplicatedFunc{T,N}, args...) where {T,N} =
