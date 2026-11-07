@@ -1,6 +1,54 @@
 const VERBOSE_ERRORS = Ref(false)
 
 """
+    ERROR_DUMP_LIMIT
+
+Maximum number of bytes of LLVM IR, respectively of type analysis, that is
+embedded into the message of an error that Enzyme reports at runtime (such as
+[`EnzymeNoTypeError`](@ref)). Such errors are recoverable at compile time and
+may be emitted for many values of one function, each with its own copy of the
+message, so the full IR of a large function can otherwise take many GB.
+Set to `typemax(Int)` for no limit.
+"""
+const ERROR_DUMP_LIMIT = Ref(1 << 20)
+
+# The IR and type analysis reported with VERBOSE_ERRORS for an error that is
+# emitted into the code (such as EnzymeNoTypeError), produced once per function
+# and type analysis and referenced from the error messages by a marker line,
+# rather than embedding a copy of them into the module for every such error.
+const ERROR_DUMPS = Dict{Tuple{UInt,UInt},String}()
+const ERROR_DUMPS_LOCK = ReentrantLock()
+const ERROR_DUMP_MARKER = "[Enzyme error dump "
+
+function error_dump_marker(f::Function, key::Tuple{UInt,UInt})
+    lock(ERROR_DUMPS_LOCK) do
+        get!(f, ERROR_DUMPS, key)
+    end
+    return string(ERROR_DUMP_MARKER, key[1], ' ', key[2], "]")
+end
+
+# Print msg, replacing the marker lines by the dumps they refer to.
+function print_with_dumps(io::IO, msg::AbstractString)
+    for line in eachsplit(msg, '\n'; keepempty = true)
+        if startswith(line, ERROR_DUMP_MARKER) && endswith(line, "]")
+            ks = split(chop(line; head = length(ERROR_DUMP_MARKER), tail = 1))
+            key = (parse(UInt, ks[1]), parse(UInt, ks[2]))
+            dump = lock(() -> get(ERROR_DUMPS, key, nothing), ERROR_DUMPS_LOCK)
+            println(io, dump === nothing ? line : dump)
+        else
+            println(io, line)
+        end
+    end
+end
+
+function truncate_dump(s::String, limit::Int = ERROR_DUMP_LIMIT[])
+    sizeof(s) <= limit && return s
+    i = thisind(s, max(limit, 1))
+    return string(s[1:i], "\n... [truncated ", sizeof(s) - i,
+                  " bytes, see Enzyme.Compiler.ERROR_DUMP_LIMIT]\n")
+end
+
+"""
     EnzymeError
 
 Common supertype for Enzyme-specific errors.
@@ -936,7 +984,7 @@ function Base.showerror(io::IO, ece::EnzymeNoTypeError)
     print(io, " To toggle more information for debugging (needed for bug reports), set Enzyme.Compiler.VERBOSE_ERRORS[] = true (default false)\n")
     if VERBOSE_ERRORS[]
         msg = Base.unsafe_string(ece.msg)
-        print(io, msg, '\n')
+        print_with_dumps(io, msg)
     end
     if ece.mi !== nothing
         print(io, "Failure within method:\n")
@@ -1081,6 +1129,8 @@ function julia_error(
     # but only on the paths below that actually report it: printing a whole
     # function is expensive, and most calls here are recoverable warnings.
     irstr() = ir === nothing ? nothing : string(ir)
+    # For errors that are emitted into the code, possibly many times.
+    irstr_bounded() = ir === nothing ? nothing : truncate_dump(string(ir))
 
     if errtype == API.ET_NoDerivative
         if occursin("No create nofree of empty function", msg) ||
@@ -1093,7 +1143,7 @@ function julia_error(
         if B != C_NULL
             B = IRBuilder(B)
             msg2 = sprint() do io
-                scope = irstr()
+                scope = irstr_bounded()
                 if scope !== nothing
                     print(io, "Current scope: \n")
                     print(io, scope)
@@ -1207,30 +1257,47 @@ function julia_error(
         B = IRBuilder(B)
 
         data = API.EnzymeTypeAnalyzerRef(data)
-        ip = API.EnzymeTypeAnalyzerToString(data)
-        sval = Base.unsafe_string(ip)
-        API.EnzymeStringFree(ip)
 
         msg2 = sprint() do io::IO
-            if !occursin("Cannot deduce single type of store", msg)
-                scope = irstr()
-                if scope !== nothing
-                    print(io, "Current scope: \n")
-                    print(io, scope)
+            # The message is only shown with VERBOSE_ERRORS (see showerror),
+            # so do not compute the (possibly huge) scope and type analysis
+            # otherwise. This error is not fatal at compile time and can be
+            # reported for many values of one function, each embedding its own
+            # copy of the message into the module.
+            if VERBOSE_ERRORS[] && !occursin("Cannot deduce single type of store", msg)
+                key = (UInt(data), ir === nothing ? UInt(0) : UInt(ir.ref))
+                marker = error_dump_marker(key) do
+                    sprint() do io::IO
+                        scope = irstr_bounded()
+                        if scope !== nothing
+                            print(io, "Current scope: \n")
+                            print(io, scope)
+                        end
+                        ip = API.EnzymeTypeAnalyzerToString(data)
+                        sval = Base.unsafe_string(ip)
+                        API.EnzymeStringFree(ip)
+                        print(io, "\n Type analysis state: \n")
+                        write(io, truncate_dump(sval))
+                    end
                 end
-                print(io, "\n Type analysis state: \n")
-                write(io, sval)
+                println(io, marker)
             end
-            print(io, '\n', msg, '\n')
+            # libEnzyme <= 0.0.301 appends the whole function and type
+            # analysis to msg as well.
+            print(io, '\n', VERBOSE_ERRORS[] ? truncate_dump(msg) : truncate_dump(msg, 4096), '\n')
             if bt !== nothing
                 print(io, "\nCaused by:")
                 Base.show_backtrace(io, bt)
                 println(io)
             end
-            pscope = parent_scope(val)::LLVM.Function
-            mi, rt = enzyme_custom_extract_mi(pscope, false) #=error=#
-            if mi !== nothing
-                println(io, "within ", mi)
+            # Printing the method instance can be slow for large argument
+            # types; showerror prints it (from the error's mi) anyway.
+            if VERBOSE_ERRORS[]
+                pscope = parent_scope(val)::LLVM.Function
+                mi, rt = enzyme_custom_extract_mi(pscope, false) #=error=#
+                if mi !== nothing
+                    println(io, "within ", mi)
+                end
             end
         end
 	    
