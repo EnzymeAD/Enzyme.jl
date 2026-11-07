@@ -32,6 +32,7 @@ end
 
 const jit = Ref{CompilerInstance}()
 const tm = Ref{TargetMachine}() # for opt pipeline
+const fast_tm = Ref{TargetMachine}() # CodeGenOptLevel::None for huge modules
 
 get_tm() = tm[]
 get_jit() = jit[].jit
@@ -95,6 +96,13 @@ function setup_globals()
     LLVM.asm_verbosity!(tempTM, true)
     tm[] = tempTM
 
+    fastTM = LLVM.JITTargetMachine(LLVM.triple(lljit), cpu_name(), cpu_features(); optlevel = LLVM.API.LLVMCodeGenLevelNone)
+    @static if isdefined(LLVM.API, :LLVMSetTargetMachineFastISel)
+        LLVM.API.LLVMSetTargetMachineFastISel(fastTM, 1)
+    end
+    LLVM.asm_verbosity!(fastTM, true)
+    fast_tm[] = fastTM
+
     # On Julia >= 1.14.0-DEV.2171 this creates a new dylib, so only do it once. Before that,
     # it is the external dylib of Julia's JIT (and the name is ignored).
     jd_main = JITDylib(lljit, "enzyme")
@@ -139,6 +147,7 @@ function __init__()
 
     atexit() do
         dispose(tm[])
+        dispose(fast_tm[])
     end
 end
 
@@ -266,10 +275,48 @@ function get_trampoline(job)
     return addr
 end
 
+function _needs_fast_codegen(mod)
+    total_insts = 0
+    for f in functions(mod)
+        isempty(LLVM.blocks(f)) && continue
+        fn_insts = 0
+        for bb in LLVM.blocks(f)
+            bb_insts = 0
+            for _ in LLVM.instructions(bb)
+                bb_insts += 1
+            end
+            bb_insts > 1500 && return true
+            fn_insts += bb_insts
+        end
+        fn_insts > 15000 && return true
+        total_insts += fn_insts
+        total_insts > 50000 && return true
+    end
+    return false
+end
+
 function add!(mod)
     prepare!(mod)
     lljit = jit[].jit
     jd = jit[].jd
+    if _needs_fast_codegen(mod)
+        LLVM.verify(mod)
+        LLVM.decorate_module(mod)
+        out_error = Ref{Cstring}()
+        out_membuf = Ref{LLVM.API.LLVMMemoryBufferRef}()
+        status = Bool(
+            LLVM.API.LLVMTargetMachineEmitToMemoryBuffer(
+                fast_tm[], mod, LLVM.API.LLVMObjectFile, out_error, out_membuf
+            )
+        )
+        if status
+            err = LLVM.unsafe_message(out_error[])
+            throw(LLVM.LLVMException(err))
+        end
+        membuf = LLVM.mark_alloc(LLVM.MemoryBuffer(out_membuf[]))
+        LLVM.add!(lljit, jd, membuf)
+        return jd
+    end
     tsm = move_to_threadsafe(mod)
     LLVM.add!(lljit, jd, tsm)
     return jd

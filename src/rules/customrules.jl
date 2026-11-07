@@ -245,9 +245,9 @@ function push_box_for_argument!(
         else
 	        cur_inline_roots, eTy = if just_primal_rooting
                 @assert activity_wrap
-                inline_roots_type(eltype(Ty)), "primal.$(eltype(Ty))"
+                inline_roots_type(eltype(Ty)), "primal." * string(objectid(eltype(Ty)), base = 16)
 	        else
-	            num_inline_roots, string(Ty)
+                num_inline_roots, string(objectid(Ty), base = 16)
 	        end
 	    
 	        if cur_inline_roots != 0
@@ -271,7 +271,7 @@ function push_box_for_argument!(
        llty
     end
 
-    al0 = alloca!(alloctx, llty_foralloca, "arg.$Ty")
+    al0 = alloca!(alloctx, llty_foralloca, "arg." * string(objectid(Ty), base = 16))
 
     ptr = if activity_wrap
         inbounds_gep!(
@@ -827,7 +827,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                 sroots_ty = nothing
                 shadow_roots = if n_shadow_roots != 0
                     sroots_ty = convert(LLVMType, AnyArray(n_shadow_roots))
-                    create_rooted_array(alloctx, n_shadow_roots, "roots.arg.$Ty")
+                    create_rooted_array(alloctx, n_shadow_roots, "roots.arg." * string(objectid(Ty), base = 16))
                 end
 
 
@@ -958,7 +958,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                     end
                     llrty = convert(LLVMType, RefTy)
                     RefTy = Base.RefValue{RefTy}
-                    refal0 = refal = emit_allocobj!(B, RefTy, "mixed.$RefTy")
+                    refal0 = refal = emit_allocobj!(B, RefTy, "mixed." * string(objectid(RefTy), base = 16))
                     refal = bitcast!(
                         B,
                         refal,
@@ -1690,7 +1690,7 @@ function box_inline_union!(B::LLVM.IRBuilder, alloctx::LLVM.IRBuilder, val::LLVM
         if Base.issingletontype(T)
             push!(boxed, unsafe_to_llvm(B, T.instance))
         else
-            box = emit_allocobj!(B, T, "union.tape.$T")
+            box = emit_allocobj!(B, T, "union.tape." * string(objectid(T), base = 16))
             memcpy!(B, box, 0, payload, 0, LLVM.ConstantInt(T_int64, sizeof(T)))
             push!(boxed, box)
         end
@@ -2085,11 +2085,11 @@ function enzyme_custom_common_rev(
                     tape_al = create_rooted_array(alloctx, tape_roots)
                     extract_roots_from_value!(B, tape, tape_al)
                     llty_foralloca = strip_tracked_pointers(llty)
-                    al = alloca!(alloctx, llty_foralloca, "tape.$TapeT")
+                    al = alloca!(alloctx, llty_foralloca, "tape." * string(objectid(TapeT), base = 16))
                     extract_nonjlvalues_into!(B, llty, al, tape)
                 else
                     llty_foralloca = llty
-                    al = alloca!(alloctx, llty, "tape.$TapeT")
+                    al = alloca!(alloctx, llty, "tape." * string(objectid(TapeT), base = 16))
                     store!(B, tape, al)
                 end
                 tape = addrspacecast!(B, al, LLVM.PointerType(llty_foralloca, Derived))
@@ -2153,7 +2153,7 @@ function enzyme_custom_common_rev(
                 end
             end
 
-            al0 = al = emit_allocobj!(B, nRT, "activeRT.$RT")
+            al0 = al = emit_allocobj!(B, nRT, "activeRT." * string(objectid(RT), base = 16))
             al = bitcast!(B, al, LLVM.PointerType(llty, addrspace(value_type(al))))
             al = addrspacecast!(B, al, LLVM.PointerType(llty, Derived))
 

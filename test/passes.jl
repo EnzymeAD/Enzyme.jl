@@ -1172,3 +1172,54 @@ end
     @test dres_b2[1] ≈ [1.0, -0.5]
     @test dres_b2[2] ≈ [-2.0, 1.0]
 end
+
+@testset "Fast codegen for huge modules and compact type-hash symbol names (#2334)" begin
+    GPUCompiler.JuliaContext() do ctx
+        small_mod = LLVM.Module("small_2334")
+        small_fn = LLVM.Function(small_mod, "small_bb_add_2334", LLVM.FunctionType(LLVM.Int64Type(), [LLVM.Int64Type()]))
+        LLVM.IRBuilder() do B
+            LLVM.position!(B, LLVM.BasicBlock(small_fn, "entry"))
+            v = LLVM.add!(B, collect(LLVM.parameters(small_fn))[1], LLVM.ConstantInt(LLVM.Int64Type(), 1))
+            LLVM.ret!(B, v)
+        end
+        @test !Enzyme.Compiler.JIT._needs_fast_codegen(small_mod)
+        LLVM.dispose(small_mod)
+
+        big_mod = LLVM.Module("big_2334")
+        big_fn = LLVM.Function(big_mod, "big_bb_add_2334", LLVM.FunctionType(LLVM.Int64Type(), [LLVM.Int64Type()]))
+        LLVM.IRBuilder() do B
+            LLVM.position!(B, LLVM.BasicBlock(big_fn, "entry"))
+            acc = collect(LLVM.parameters(big_fn))[1]
+            one = LLVM.ConstantInt(LLVM.Int64Type(), 1)
+            for _ in 1:1505
+                acc = LLVM.add!(B, acc, one)
+            end
+            LLVM.ret!(B, acc)
+        end
+        @test Enzyme.Compiler.JIT._needs_fast_codegen(big_mod)
+        jd = Enzyme.Compiler.JIT.add!(big_mod)
+        LLVM.dispose(big_mod)
+        mangled = Enzyme.Compiler.JIT.mangle(Enzyme.Compiler.JIT.get_jit(), "big_bb_add_2334")
+        addr = Enzyme.Compiler.JIT.lookup(jd, mangled)
+        @test ccall(pointer(addr), Int64, (Int64,), 7) == 1512
+    end
+
+    LLVM.Context() do ctx
+        HugeT = Tuple{NTuple{32, Float64}, Vector{Float64}}
+        mod = LLVM.Module("zero_alloc_2334")
+        T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, 10)
+        llty = LLVM.StructType([LLVM.ArrayType(LLVM.DoubleType(), 32), T_prjlvalue])
+        fn = LLVM.Function(mod, "caller", LLVM.FunctionType(LLVM.VoidType(), [T_prjlvalue, LLVM.Int64Type()]))
+        LLVM.IRBuilder() do B
+            LLVM.position!(B, LLVM.BasicBlock(fn, "entry"))
+            params = collect(LLVM.parameters(fn))
+            Enzyme.Compiler.zero_allocation(B, HugeT, llty, params[1], params[2], params[2], true)
+            LLVM.ret!(B)
+        end
+        expected_name = "zeroType." * string(objectid(HugeT), base = 16)
+        @test haskey(LLVM.functions(mod), expected_name)
+        @test !any(f -> occursin("NTuple", LLVM.name(f)), LLVM.functions(mod))
+        LLVM.dispose(mod)
+    end
+end
