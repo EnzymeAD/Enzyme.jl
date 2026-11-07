@@ -797,3 +797,72 @@ end
 @testset "Dynamic index of nested Vector across aggregate PHI" begin
     @test Enzyme.gradient(set_runtime_activity(Reverse), nested_vec_phi_loss, [1.0, 2.0])[1] ≈ [9.0, 12.0]
 end
+
+@testset "fold_typeof_icmp! and _typed_hcat / mapreduce hcat (#2287)" begin
+    LLVM.Context() do ctx
+        T_jlvalue = LLVM.StructType(LLVM.LLVMType[])
+        T_pjlvalue = LLVM.PointerType(T_jlvalue)
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, 10)
+
+        mod = LLVM.Module("typeof_fold")
+        tup_gv = LLVM.GlobalVariable(mod, T_pjlvalue, "slot_tup")
+        ty_gv = LLVM.GlobalVariable(mod, T_pjlvalue, "slot_ty")
+        nth_ft = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue, LLVM.Int64Type()])
+        nth_fn = LLVM.Function(mod, "ijl_get_nth_field_checked", nth_ft)
+        typeof_ft = LLVM.FunctionType(T_prjlvalue, [T_prjlvalue])
+        typeof_fn = LLVM.Function(mod, "julia.typeof", typeof_ft)
+        fn = LLVM.Function(mod, "f", LLVM.FunctionType(LLVM.Int1Type()))
+
+        LLVM.IRBuilder() do B
+            LLVM.position!(B, LLVM.BasicBlock(fn, "entry"))
+            tup = LLVM.addrspacecast!(B, LLVM.load!(B, T_pjlvalue, tup_gv), T_prjlvalue)
+            fld = LLVM.call!(B, nth_ft, nth_fn, [tup, LLVM.ConstantInt(LLVM.Int64Type(), 0)])
+            lty = LLVM.call!(B, typeof_ft, typeof_fn, [fld])
+            rty = LLVM.addrspacecast!(B, LLVM.load!(B, T_pjlvalue, ty_gv), T_prjlvalue)
+            cmp = LLVM.icmp!(B, LLVM.API.LLVMIntEQ, lty, rty)
+            LLVM.ret!(B, cmp)
+        end
+        @test LLVM.verify(mod) === nothing
+
+        enzyme_ctx = Enzyme.Compiler.EnzymeContext(Base.get_world_counter())
+        enzyme_ctx.julia_values["slot_tup"] = ([1.0], 2.0)
+        enzyme_ctx.julia_values["slot_ty"] = Vector{Float64}
+        @test Enzyme.Compiler.fold_typeof_icmp!(fn, enzyme_ctx)
+        @test occursin("ret i1 true", string(fn))
+        LLVM.dispose(mod)
+    end
+
+    x = reshape(collect(1.0:6.0), 2, 3)
+    f_typed_hcat_2287(x) = sum(abs2, Base._typed_hcat(Float64, (x, x[:, 1])))
+    dx = zero(x)
+    autodiff(Reverse, f_typed_hcat_2287, Active, Duplicated(x, dx))
+    expected = 2 .* x
+    expected[:, 1] .+= 2 .* x[:, 1]
+    @test dx ≈ expected
+
+    h1_2287(v::AbstractVector) = reshape(v, :, 1)
+    f_id_2287(x) = sum(abs2, mapreduce(identity, hcat, eachcol(x)))
+    f_h1_2287(x) = sum(abs2, mapreduce(h1_2287, hcat, eachcol(x)))
+    # As in #2287, runtime activity is needed since the first `eachcol` element may be
+    # stored directly into the differentiable `hcat` accumulator.
+    mode_2287 = set_runtime_activity(Reverse)
+    try
+        Enzyme.API.strictAliasing!(false)
+        dx .= 0
+        autodiff(mode_2287, f_id_2287, Active, Duplicated(x, dx))
+        @test dx ≈ 2 .* x
+
+        # Pre-existing type analysis limitation on Julia 1.10 with opaque pointers
+        # (`cannot handle unknown binary operator` in `_typed_hcat`), unrelated to #2287.
+        typed_ptrs_2287 = GPUCompiler.JuliaContext() do ctx
+            GPUCompiler.supports_typed_pointers(ctx)
+        end
+        if VERSION >= v"1.11-" || typed_ptrs_2287
+            dx .= 0
+            autodiff(mode_2287, f_h1_2287, Active, Duplicated(x, dx))
+            @test dx ≈ 2 .* x
+        end
+    finally
+        Enzyme.API.strictAliasing!(true)
+    end
+end

@@ -6,11 +6,10 @@
 const JL_MAX_TAGS = 64 # see `enum jl_small_typeof_tags` in julia.h
 
 function unbind(@nospecialize(val))
-   if val isa Core.Binding
-       return val.value
-   else
-       return val
-   end
+    if val isa Core.Binding
+        isdefined(val, :value) && return val.value
+    end
+    return val
 end
 
 """
@@ -133,6 +132,16 @@ function absint(@nospecialize(arg::LLVM.Value), enzyme_ctx::Union{EnzymeContext,
         end
     end
 
+    if isa(arg, LLVM.LoadInst)
+        gv = operands(arg)[1]
+        if isa(gv, LLVM.GlobalVariable)
+            found = julia_value_of_slot(gv, enzyme_ctx)
+            if found !== nothing && !isa(something(found), Core.Binding)
+                return (true, something(found))
+            end
+        end
+    end
+
     if isa(arg, ConstantExpr)
         if opcode(arg) == LLVM.API.LLVMAddrSpaceCast || opcode(arg) == LLVM.API.LLVMBitCast
             return absint(operands(arg)[1], enzyme_ctx, partial, false, typetag, phis)
@@ -179,6 +188,13 @@ function absint(@nospecialize(arg::LLVM.Value), enzyme_ctx::Union{EnzymeContext,
         if nm == "jl_typeof" || nm == "ijl_typeof"
             vals = abs_typeof(operands(arg)[1], enzyme_ctx, partial)
             return (vals[1], vals[2])
+        end
+        if nm == "julia.typeof"
+            vals = abs_typeof(operands(arg)[1], enzyme_ctx, partial)
+            if vals[1] && (partial || Base.isconcretetype(vals[2]))
+                return (true, vals[2])
+            end
+            return (false, nothing)
         end
         ntuple = abs_ntuple_type(arg, enzyme_ctx)
         if ntuple !== nothing
@@ -757,6 +773,20 @@ function abs_typeof(
         if nm == "jl_reshape_array" || nm == "ijl_reshape_array"
             vals = absint(operands(arg)[1], enzyme_ctx, partial, false, #=typetag=# true)
             return (vals[1], vals[2], vals[1] ? GPUCompiler.MUT_REF : nothing)
+        end
+
+        if nm == "jl_get_nth_field_checked" || nm == "ijl_get_nth_field_checked"
+            legal, tupT, _ = abs_typeof(operands(arg)[1], enzyme_ctx, partial, seenphis)
+            if legal && Base.isconcretetype(tupT) && isa(operands(arg)[2], LLVM.ConstantInt)
+                idx = convert(Int, operands(arg)[2]) + 1
+                if 1 <= idx <= fieldcount(tupT)
+                    ft = fieldtype(tupT, idx)
+                    if Base.isconcretetype(ft)
+                        return (true, ft, Base.ismutabletype(ft) ? GPUCompiler.MUT_REF : GPUCompiler.BITS_REF)
+                    end
+                end
+            end
+            return (false, nothing, nothing)
         end
         @static if VERSION < v"1.11-"
         else
