@@ -3842,6 +3842,30 @@ function set_subprogram!(f::LLVM.Function, sp)
     end
 end
 
+"""
+    box_tape_if_not_inline!(builder, TapeType, tape)
+
+Return the value to store for the tape in the `(tape, primal, shadow)` returned by an
+augmented forward pass.
+
+Julia stores a field inline only if its type is `allocatedinline`. A large tape holding GC
+pointers is not: its field descriptors need 32 bits (`fielddesc_type == 2`), and Julia
+keeps such an immutable boxed as a field. The return then has a single pointer where the
+tape goes, so the tape is allocated as an object of `TapeType` and the box stored instead
+of the tape itself, which would not fit.
+"""
+function box_tape_if_not_inline!(builder::LLVM.IRBuilder, @nospecialize(TapeType), @nospecialize(tape::LLVM.Value))::LLVM.Value
+    TapeType isa DataType || return tape
+    (isconcretetype(TapeType) && !ismutabletype(TapeType)) || return tape
+    Base.allocatedinline(TapeType) && return tape
+    isa(value_type(tape), LLVM.PointerType) && return tape
+    box = emit_allocobj!(builder, TapeType, "boxedtape")
+    dst = bitcast!(builder, box, LLVM.PointerType(value_type(tape), addrspace(value_type(box))))
+    store!(builder, tape, dst)
+    emit_writebarrier!(builder, get_julia_inner_types(builder, box, tape))
+    return box
+end
+
 function create_abi_wrapper(
     enzymefn::LLVM.Function,
     @nospecialize(TT::Type),
@@ -4518,6 +4542,9 @@ function create_abi_wrapper(
                     end
                 end
                 eval = fixup_abi(i, eval)
+                if i == 1
+                    eval = box_tape_if_not_inline!(builder, sret_types[1], eval)
+                end
                 ptr = inbounds_gep!(
                     builder,
                     jltype,
