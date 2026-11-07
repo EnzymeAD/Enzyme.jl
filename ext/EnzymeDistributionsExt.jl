@@ -8,9 +8,9 @@ using Enzyme: Enzyme
 # distributions, which hold the active parameters, and the data `x`, which is
 # constant, and Enzyme can only differentiate a struct mixing active and
 # constant pointers with runtime activity on. When Enzyme compiles the method it
-# instead finds this one, which adds the same terms in the same order (Base's
-# pairwise summation: blocks of at most 1024 terms left to right, longer ranges
-# split in half) without the closure.
+# instead finds this one, which adds the terms in a plain loop. The sum is
+# sequential where Base's is pairwise, so the last bits may differ from the
+# value computed outside Enzyme.
 Base.Experimental.@overlay Enzyme.Compiler.GPUCompiler.GLOBAL_METHOD_TABLE function Distributions._logpdf(
         d::Product, x::AbstractVector{<:Real}
     )
@@ -19,19 +19,11 @@ Base.Experimental.@overlay Enzyme.Compiler.GPUCompiler.GLOBAL_METHOD_TABLE funct
         # What `sum(map(logpdf, dists, x))` gives, without zipping `dists` with `x`.
         return zero(Base.promote_op(logpdf, eltype(dists), eltype(x)))
     end
-    return product_logpdf(dists, x, 1, length(d))
-end
-
-function product_logpdf(dists, x, lo::Int, hi::Int)
-    if hi - lo < 1024
-        s = logpdf(dists[lo], x[lo])
-        for n in (lo + 1):hi
-            s += logpdf(dists[n], x[n])
-        end
-        return s
+    s = logpdf(dists[1], x[1])
+    for n in 2:length(d)
+        s += logpdf(dists[n], x[n])
     end
-    mid = lo + (hi - lo) >> 1
-    return product_logpdf(dists, x, lo, mid) + product_logpdf(dists, x, mid + 1, hi)
+    return s
 end
 
 end
