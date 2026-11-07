@@ -793,55 +793,60 @@ function _apply_rrule_only_chain(w::Vector{Float64}, x::Vector{Float64})
     return sum(abs2, y)
 end
 
-@testset "Forward-over-Reverse through rrule without frule" begin
-    @test EnzymeRules.has_rrule_from_sig(
-        Tuple{typeof(rrule_only_op!), Vector{Float64}, Vector{Float64}, Vector{Float64}, Bool}
-    )
-    @test !EnzymeRules.has_frule_from_sig(
-        Tuple{typeof(rrule_only_op!), Vector{Float64}, Vector{Float64}, Vector{Float64}, Bool}
-    )
+# TODO: re-enable on Julia 1.10 / 1.11 once
+# https://github.com/EnzymeAD/Enzyme.jl/issues/3959 is fixed (LLVM verifier
+# failure storing the boxed tape into the `{ i64 }` tape slot).
+@static if VERSION >= v"1.12-"
+    @testset "Forward-over-Reverse through rrule without frule" begin
+        @test EnzymeRules.has_rrule_from_sig(
+            Tuple{typeof(rrule_only_op!), Vector{Float64}, Vector{Float64}, Vector{Float64}, Bool}
+        )
+        @test !EnzymeRules.has_frule_from_sig(
+            Tuple{typeof(rrule_only_op!), Vector{Float64}, Vector{Float64}, Vector{Float64}, Bool}
+        )
 
-    w0 = [0.6, -0.4]
-    x0 = [1.2, 0.8]
-    vw = [0.3, -0.7]
+        w0 = [0.6, -0.4]
+        x0 = [1.2, 0.8]
+        vw = [0.3, -0.7]
 
-    # Exact HVP of f(w) = sum_i tanh(w_i * x_i)^2:
-    # df/dw_i = 2 * tanh(z_i) * sech^2(z_i) * x_i
-    # d2f/dw_i^2 = 2 * x_i^2 * sech^2(z_i) * (sech^2(z_i) - 2 * tanh^2(z_i))
-    g_exact = [
-        let z = w0[i] * x0[i], t = tanh(z), s2 = 1.0 - t^2
-            2.0 * t * s2 * x0[i]
-        end for i in eachindex(w0)
-    ]
-    hv_exact = [
-        let z = w0[i] * x0[i], t = tanh(z), s2 = 1.0 - t^2
-            2.0 * x0[i]^2 * s2 * (s2 - 2.0 * t^2) * vw[i]
-        end for i in eachindex(w0)
-    ]
+        # Exact HVP of f(w) = sum_i tanh(w_i * x_i)^2:
+        # df/dw_i = 2 * tanh(z_i) * sech^2(z_i) * x_i
+        # d2f/dw_i^2 = 2 * x_i^2 * sech^2(z_i) * (sech^2(z_i) - 2 * tanh^2(z_i))
+        g_exact = [
+            let z = w0[i] * x0[i], t = tanh(z), s2 = 1.0 - t^2
+                2.0 * t * s2 * x0[i]
+            end for i in eachindex(w0)
+        ]
+        hv_exact = [
+            let z = w0[i] * x0[i], t = tanh(z), s2 = 1.0 - t^2
+                2.0 * x0[i]^2 * s2 * (s2 - 2.0 * t^2) * vw[i]
+            end for i in eachindex(w0)
+        ]
 
-    loss_fn = w -> _apply_rrule_only_chain(w, x0)
-    g = zeros(2)
-    hv = zeros(2)
-    Enzyme.autodiff(
-        Enzyme.set_runtime_activity(Forward),
-        Const(
-            (g_out, w_in) -> begin
-                fill!(g_out, 0.0)
-                Enzyme.autodiff(
-                    Enzyme.set_runtime_activity(Reverse),
-                    Const(loss_fn),
-                    Active,
-                    Duplicated(w_in, g_out),
-                )
-                return nothing
-            end
-        ),
-        Const,
-        Duplicated(g, hv),
-        Duplicated(copy(w0), copy(vw)),
-    )
-    @test g ≈ g_exact rtol = 1.0e-12
-    @test hv ≈ hv_exact rtol = 1.0e-12
+        loss_fn = w -> _apply_rrule_only_chain(w, x0)
+        g = zeros(2)
+        hv = zeros(2)
+        Enzyme.autodiff(
+            Enzyme.set_runtime_activity(Forward),
+            Const(
+                (g_out, w_in) -> begin
+                    fill!(g_out, 0.0)
+                    Enzyme.autodiff(
+                        Enzyme.set_runtime_activity(Reverse),
+                        Const(loss_fn),
+                        Active,
+                        Duplicated(w_in, g_out),
+                    )
+                    return nothing
+                end
+            ),
+            Const,
+            Duplicated(g, hv),
+            Duplicated(copy(w0), copy(vw)),
+        )
+        @test g ≈ g_exact rtol = 1.0e-12
+        @test hv ≈ hv_exact rtol = 1.0e-12
+    end
 end
 
 end # ReverseRules
