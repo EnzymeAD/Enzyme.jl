@@ -26,3 +26,8 @@ end
 VERSION >= v"1.11.0" && @testset "nonblocking_halo" for np in (1, 2, 4)
     run(`$(mpiexec()) -n $np $(Base.julia_cmd()) --project=$(@__DIR__) $(joinpath(@__DIR__, "nonblocking_halo.jl"))`)
 end
+
+# Test MultiRequest with a non-blocking halo exchange pattern
+VERSION >= v"1.11.0" && @testset "multi_request" for np in (1, 2, 4)
+    run(`$(mpiexec()) -n $np $(Base.julia_cmd()) --project=$(@__DIR__) $(joinpath(@__DIR__, "multi_request.jl"))`)
+end
