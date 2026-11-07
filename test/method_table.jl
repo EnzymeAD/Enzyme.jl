@@ -87,3 +87,16 @@ mt_test_stacked_caller(x::Float64) = (mt_test_fn(x), mt_shared_fn(x))
         @test token !== Enzyme.Compiler.enzyme_cache_owner(other_job)
     end
 end
+
+# An overlay in the global method table (as Enzyme's own extensions add, e.g. for
+# Distributions) is used by the code Enzyme differentiates, not only by its inference. The
+# primal return-type inference that precedes compilation shares the compilation's cache
+# owner, so it has to look methods up in the same table, or compilation reuses its result.
+mt_global_fn(x::Float64) = x * x
+mt_global_caller(x::Float64) = mt_global_fn(x) + 1
+Base.Experimental.@overlay GPUCompiler.GLOBAL_METHOD_TABLE mt_global_fn(x::Float64) = x * x * x
+
+@testset "global method table overlay is differentiated" begin
+    @test Enzyme.autodiff(Reverse, mt_global_caller, Active, Active(2.0))[1][1] == 12.0
+    @test Enzyme.autodiff(Forward, mt_global_caller, Duplicated(2.0, 1.0))[1] == 12.0
+end
