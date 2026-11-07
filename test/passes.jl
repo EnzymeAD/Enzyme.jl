@@ -4,6 +4,43 @@ import Libdl
 import GPUCompiler
 
 
+@testset "Attributor keeps GC-tracked stores into fresh objects (#3793)" begin
+    # The Attributor treats `julia.gc_alloc_obj` as a local allocation and deletes stores
+    # into it that no LLVM-visible load reads. The GC still marks the fields of the object,
+    # so the store of `ref.mem` must survive `enzyme_attributor_pass!`, and it must not be
+    # left volatile.
+    LLVM.Context() do ctx
+        mod = parse(
+            LLVM.Module, """
+            source_filename = "start"
+            target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+            target triple = "x86_64-linux-gnu"
+
+            declare {}*** @julia.get_pgcstack()
+            declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj({}*, i64, {} addrspace(10)*)
+
+            define {} addrspace(10)* @f({} addrspace(10)* %mem, {} addrspace(10)* %T) {
+            top:
+              %pgcstack = call {}*** @julia.get_pgcstack()
+              %task = bitcast {}*** %pgcstack to {}*
+              %a = call noalias nonnull dereferenceable(24) {} addrspace(10)* @julia.gc_alloc_obj({}* %task, i64 24, {} addrspace(10)* %T)
+              %p = bitcast {} addrspace(10)* %a to { i8*, {} addrspace(10)* } addrspace(10)*
+              %q = addrspacecast { i8*, {} addrspace(10)* } addrspace(10)* %p to { i8*, {} addrspace(10)* } addrspace(11)*
+              %ref.mem = getelementptr inbounds { i8*, {} addrspace(10)* }, { i8*, {} addrspace(10)* } addrspace(11)* %q, i64 0, i32 1
+              store {} addrspace(10)* %mem, {} addrspace(10)* addrspace(11)* %ref.mem, align 8
+              %b = call noalias nonnull dereferenceable(8) {} addrspace(10)* @julia.gc_alloc_obj({}* %task, i64 8, {} addrspace(10)* %T)
+              ret {} addrspace(10)* %b
+            }
+            """
+        )
+        Enzyme.Compiler.enzyme_attributor_pass!(mod)
+        stores = [i for bb in blocks(functions(mod)["f"]) for i in instructions(bb) if i isa LLVM.StoreInst]
+        @test length(stores) == 1
+        @test !Bool(LLVM.API.LLVMGetVolatile(only(stores)))
+        @test !haskey(metadata(only(stores)), "enzymejl_attr_volatile")
+    end
+end
+
 @testset "Partial return preservation" begin
     @test @filecheck begin
         # Both stores into the freshly allocated struct must be preserved.
