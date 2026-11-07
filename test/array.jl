@@ -364,3 +364,98 @@ end
         @test dA ≈ T[0 0 6; 8 20 24]
     end
 end
+
+function residual_unalias_2553(x, dln, n)
+    resd = zeros(eltype(x), 3, 3n)
+    resd[:, (2n + 1):3n] .= reshape(x, 3, n) .* 2.0 .- dln
+    return sum(abs2, resd)
+end
+
+function aliased_unalias_2553!(A, dln)
+    A .= 2.0 .* @view(A[end:-1:1]) .- dln
+    return sum(abs2, A)
+end
+
+function aliased_rt_const_src_2553!(dest, src)
+    dest .= 2.0 .* src
+    return sum(abs2, dest)
+end
+
+@testset "Base.unalias broadcast and aliasing (#2553)" begin
+    x = ones(12)
+    dx1 = ones(12)
+    dx2 = collect(1.0:12.0)
+    dln = ones(3, 4)
+    n = 4
+
+    (df,) = autodiff(Forward, residual_unalias_2553, Duplicated(x, dx1), Const(dln), Const(n))
+    @test df ≈ 48.0
+
+    (bdf,) = autodiff(Forward, residual_unalias_2553, BatchDuplicated(x, (dx1, dx2)), Const(dln), Const(n))
+    @test bdf[1] ≈ 48.0
+    @test bdf[2] ≈ 4.0 * sum(dx2)
+
+    gx = zeros(12)
+    autodiff(Reverse, residual_unalias_2553, Active, Duplicated(x, gx), Const(dln), Const(n))
+    @test gx ≈ fill(4.0, 12)
+
+    gx1, gx2 = zeros(12), zeros(12)
+    autodiff(Reverse, residual_unalias_2553, Active, BatchDuplicated(x, (gx1, gx2)), Const(dln), Const(n))
+    @test gx1 ≈ fill(4.0, 12)
+    @test gx2 ≈ fill(4.0, 12)
+
+    A0 = [1.0, 2.0, 3.0, 4.0]
+    dA0 = [0.5, -1.0, 1.5, 0.25]
+    dA2 = [1.0, 0.0, -0.5, 2.0]
+    c = [0.1, 0.2, 0.3, 0.4]
+    y_after = 2.0 .* reverse(A0) .- c
+    expected_grad_A = 4.0 .* reverse(y_after)
+
+    (df_alias,) = autodiff(Forward, aliased_unalias_2553!, Duplicated(copy(A0), copy(dA0)), Const(c))
+    @test df_alias ≈ sum(expected_grad_A .* dA0)
+
+    (bdf_alias,) = autodiff(
+        Forward,
+        aliased_unalias_2553!,
+        BatchDuplicated(copy(A0), (copy(dA0), copy(dA2))),
+        Const(c),
+    )
+    @test bdf_alias[1] ≈ sum(expected_grad_A .* dA0)
+    @test bdf_alias[2] ≈ sum(expected_grad_A .* dA2)
+
+    gA = zeros(4)
+    autodiff(Reverse, aliased_unalias_2553!, Active, Duplicated(copy(A0), gA), Const(c))
+    @test gA ≈ expected_grad_A
+
+    gA1, gA2 = zeros(4), zeros(4)
+    autodiff(Reverse, aliased_unalias_2553!, Active, BatchDuplicated(copy(A0), (gA1, gA2)), Const(c))
+    @test gA1 ≈ expected_grad_A
+    @test gA2 ≈ expected_grad_A
+
+    # Runtime activity with `dval === aval` (const-like `Duplicated(arr, arr)`)
+    gx_rt = zeros(12)
+    dln_rt = copy(dln)
+    autodiff(
+        set_runtime_activity(Reverse),
+        residual_unalias_2553,
+        Active,
+        Duplicated(x, gx_rt),
+        Duplicated(dln_rt, dln_rt),
+        Const(n),
+    )
+    @test gx_rt ≈ fill(4.0, 12)
+    @test dln_rt == dln
+
+    B_rt = copy(A0)
+    dB_rt = ones(4)
+    v_rt = @view(B_rt[end:-1:1])
+    autodiff(
+        set_runtime_activity(Reverse),
+        aliased_rt_const_src_2553!,
+        Active,
+        Duplicated(B_rt, dB_rt),
+        Duplicated(v_rt, v_rt),
+    )
+    @test B_rt ≈ 2.0 .* reverse(A0)
+    @test dB_rt ≈ zeros(4)
+end
