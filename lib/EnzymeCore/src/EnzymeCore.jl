@@ -677,6 +677,64 @@ from being propagated through `x`.
 end
 
 """
+    checkpoint_for(scheme::Ptr{Cvoid}, data::Ptr{Cvoid}, start::Int, n::Int, body)
+
+Run `body(i)` for `i` in `start:start+n-1`.
+
+Differentiated in reverse mode, Enzyme does not keep the tape of every
+iteration: the checkpointing scheme `scheme` (a table of callbacks, see
+`enzyme/checkpoint.h`) with its data `data` decides which iterations to take
+snapshots before, which to recompute and when to turn around, and Enzyme keeps
+the tape of one iteration at a time. Checkpointing.jl provides such schemes.
+
+`data` must stay valid until the reverse pass has run.
+"""
+@inline function checkpoint_for(
+        scheme::Ptr{Cvoid}, data::Ptr{Cvoid}, start::Int, n::Int, body::B
+    ) where {B}
+    _checkpoint_for(scheme, data, start, n, Ref(body))
+    return nothing
+end
+
+# The loop Enzyme rewrites. `body` is boxed so that a scheme that copies the
+# state itself (Checkpointing.jl) finds it: the box is the first argument of
+# the step after the index.
+@noinline function _checkpoint_for(
+        scheme::Ptr{Cvoid}, data::Ptr{Cvoid}, start::Int, n::Int, box::Base.RefValue{B}
+    ) where {B}
+    for i in start:(start + n - 1)
+        checkpoint_step(box, i)
+    end
+    return nothing
+end
+
+"""
+    checkpoint_while(scheme::Ptr{Cvoid}, data::Ptr{Cvoid}, body)
+
+Run `body()` until it returns `false` (at least once). As [`checkpoint_for`](@ref),
+but the number of iterations is only known when the loop ends, so `scheme` must
+be able to schedule a loop of unknown length.
+"""
+@inline function checkpoint_while(scheme::Ptr{Cvoid}, data::Ptr{Cvoid}, body::B) where {B}
+    _checkpoint_while(scheme, data, Ref(body))
+    return nothing
+end
+
+@noinline function _checkpoint_while(
+        scheme::Ptr{Cvoid}, data::Ptr{Cvoid}, box::Base.RefValue{B}
+    ) where {B}
+    while checkpoint_while_step(box)
+    end
+    return nothing
+end
+
+# One iteration of `checkpoint_while`: whether to go on.
+@noinline checkpoint_while_step(box::Base.RefValue{B}) where {B} = box[]()::Bool
+
+# One iteration of `checkpoint_for`: the step Enzyme differentiates on its own.
+@noinline checkpoint_step(box::Base.RefValue{B}, i::Int) where {B} = (box[](i); nothing)
+
+"""
     set_err_if_func_written(::Mode)
 
 Return a new mode which throws an error for any attempt to write into an unannotated function object.
