@@ -324,7 +324,7 @@ end
                 function_attributes(functions(mod)[fwdmodenm]),
                 EnumAttribute("alwaysinline"),
             )
-            permit_inlining!(functions(mod)[fwdmodenm])
+            permit_inlining!(functions(mod)[fwdmodenm]; strip_argument_aa = true)
         end
         thunkTy = ForwardModeThunk{
             Ptr{Cvoid},
@@ -385,14 +385,14 @@ end
                 function_attributes(functions(mod)[augfwdnm]),
                 EnumAttribute("alwaysinline"),
             )
-            permit_inlining!(functions(mod)[augfwdnm])
+            permit_inlining!(functions(mod)[augfwdnm]; strip_argument_aa = true)
 
             push!(attributes, StringAttribute("enzymejl_adjoint", adjointnm))
             push!(
                 function_attributes(functions(mod)[adjointnm]),
                 EnumAttribute("alwaysinline"),
             )
-            permit_inlining!(functions(mod)[adjointnm])
+            permit_inlining!(functions(mod)[adjointnm]; strip_argument_aa = true)
 
             push!(
                 attributes,

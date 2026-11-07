@@ -2200,7 +2200,7 @@ function nested_codegen!(
     entry = name(meta.entry)
 
     for f in functions(otherMod)
-        permit_inlining!(f)
+        permit_inlining!(f; strip_argument_aa = true)
     end
 
     edges = enzyme_ctx.edges
