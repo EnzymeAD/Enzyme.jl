@@ -149,6 +149,104 @@ EnzymeTypeTreeToString(tt) =
     ccall((:EnzymeTypeTreeToString, libEnzyme), Cstring, (CTypeTreeRef,), tt)
 EnzymeStringFree(str) = ccall((:EnzymeStringFree, libEnzyme), Cvoid, (Cstring,), str)
 
+# Function summaries (EnzymeSummary.h): what a function does to floating-point data,
+# computed from its LLVM body alone without changing it. Only libEnzyme builds with
+# `EnzymeComputeFunctionSummary` have them; check with `has_function_summary`.
+const EnzymeFunctionSummaryRef = Ptr{Cvoid}
+
+# bits of EnzymeFunctionSummaryArgEffects
+const SUMMARY_ARG_READ_FP = 0x01
+const SUMMARY_ARG_WRITE_FP = 0x02
+const SUMMARY_ARG_WRITE_ANY = 0x04
+const SUMMARY_ARG_ESCAPE = 0x08
+
+# bits of EnzymeFunctionSummaryFlags
+const SUMMARY_UNKNOWN = UInt32(1) << 0
+const SUMMARY_UNKNOWN_WRITE = UInt32(1) << 1
+const SUMMARY_FREES = UInt32(1) << 2
+const SUMMARY_RETURNS_FP = UInt32(1) << 3
+const SUMMARY_RETURNS_POINTER = UInt32(1) << 4
+const SUMMARY_TOUCHES_FP = UInt32(1) << 5
+const SUMMARY_ALLOCATES = UInt32(1) << 6
+const SUMMARY_MEMTRANSFER = UInt32(1) << 7
+const SUMMARY_INACTIVE = UInt32(1) << 8
+const SUMMARY_NOFREE = UInt32(1) << 9
+const SUMMARY_NO_ESCAPING_ALLOCATION = UInt32(1) << 10
+
+@cenum(
+    CSummaryGlobals::Cint,
+    SUMMARY_GLOBALS_READ_FP = 0,
+    SUMMARY_GLOBALS_WRITE_FP = 1,
+    SUMMARY_GLOBALS_WRITE_ANY = 2,
+)
+
+"""
+    has_function_summary()
+
+Whether the loaded libEnzyme provides function summaries.
+"""
+function has_function_summary()
+    handle = Libdl.dlopen(libEnzyme)
+    return Libdl.dlsym(handle, :EnzymeComputeFunctionSummary; throw_error = false) !== nothing
+end
+
+EnzymeComputeFunctionSummary(f) = ccall(
+    (:EnzymeComputeFunctionSummary, libEnzyme),
+    EnzymeFunctionSummaryRef,
+    (LLVMValueRef,),
+    f,
+)
+EnzymeFreeFunctionSummary(s) =
+    ccall((:EnzymeFreeFunctionSummary, libEnzyme), Cvoid, (EnzymeFunctionSummaryRef,), s)
+EnzymeFunctionSummaryNumArgs(s) =
+    ccall((:EnzymeFunctionSummaryNumArgs, libEnzyme), Csize_t, (EnzymeFunctionSummaryRef,), s)
+EnzymeFunctionSummaryArgEffects(s, i) = ccall(
+    (:EnzymeFunctionSummaryArgEffects, libEnzyme),
+    UInt8,
+    (EnzymeFunctionSummaryRef, Csize_t),
+    s,
+    i,
+)
+EnzymeFunctionSummaryFlags(s) =
+    ccall((:EnzymeFunctionSummaryFlags, libEnzyme), UInt32, (EnzymeFunctionSummaryRef,), s)
+EnzymeFunctionSummaryFlow(s, out) = ccall(
+    (:EnzymeFunctionSummaryFlow, libEnzyme),
+    Cvoid,
+    (EnzymeFunctionSummaryRef, Ptr{UInt8}),
+    s,
+    out,
+)
+EnzymeFunctionSummaryPointsTo(s, out) = ccall(
+    (:EnzymeFunctionSummaryPointsTo, libEnzyme),
+    Cvoid,
+    (EnzymeFunctionSummaryRef, Ptr{UInt8}),
+    s,
+    out,
+)
+EnzymeFunctionSummaryNumGlobals(s, kind) = ccall(
+    (:EnzymeFunctionSummaryNumGlobals, libEnzyme),
+    Csize_t,
+    (EnzymeFunctionSummaryRef, CSummaryGlobals),
+    s,
+    kind,
+)
+EnzymeFunctionSummaryGlobal(s, kind, i) = ccall(
+    (:EnzymeFunctionSummaryGlobal, libEnzyme),
+    Cstring,
+    (EnzymeFunctionSummaryRef, CSummaryGlobals, Csize_t),
+    s,
+    kind,
+    i,
+)
+EnzymeFunctionSummaryToJSON(s) = ccall(
+    (:EnzymeFunctionSummaryToJSON, libEnzyme),
+    Cstring,
+    (EnzymeFunctionSummaryRef,),
+    s,
+)
+EnzymeModuleSummaryToJSON(mod) =
+    ccall((:EnzymeModuleSummaryToJSON, libEnzyme), Cstring, (LLVMModuleRef,), mod)
+
 struct CFnTypeInfo
     arguments::Ptr{CTypeTreeRef}
     ret::CTypeTreeRef
