@@ -812,7 +812,7 @@ function abs_typeof(
             # to a julia object, which are not inline by type but appear so, like SparseArrays, this is a problem
             # and merits further investigation. x/ref https://github.com/EnzymeAD/Enzyme.jl/issues/2085
             @static if Base.USE_GPL_LIBS
-                cholmod_exception = typ != SparseArrays.cholmod_dense_struct && typ != SparseArrays.cholmod_sparse_struct && typ != SparseArrays.cholmod_factor_struct
+                cholmod_exception = typ != SparseArrays.LibSuiteSparse.cholmod_dense_struct && typ != SparseArrays.LibSuiteSparse.cholmod_sparse_struct && typ != SparseArrays.LibSuiteSparse.cholmod_factor_struct
             else
                 cholmod_exception = true
             end

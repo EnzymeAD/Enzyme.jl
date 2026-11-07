@@ -62,12 +62,9 @@ end
 
 # 2. Ensure that an appropriate LLVM_full_jll is installed
 Pkg.activate(; temp = true)
-llvm_assertions = try
-    cglobal((:_ZN4llvm24DisableABIBreakingChecksE, Base.libllvm_path()), Cvoid)
-    false
-catch
-    true
-end
+# Look the symbol up through Libdl: `cglobal` with a non-constant library throws on Julia 1.14,
+# which made every build look like one with LLVM assertions.
+llvm_assertions = Libdl.dlsym_e(Libdl.dlopen(Base.libllvm_path()), :_ZN4llvm24DisableABIBreakingChecksE) == C_NULL
 llvm_pkg_version = "$(Base.libllvm_version.major).$(Base.libllvm_version.minor)"
 LLVM = if llvm_assertions
     Pkg.add(name = "LLVM_full_assert_jll", version = llvm_pkg_version)
