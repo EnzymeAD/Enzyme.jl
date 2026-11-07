@@ -2211,7 +2211,7 @@ function nested_codegen!(
         LLVM.add!(pb, LLVM.NewPMModulePassManager()) do mpm
             LLVM.add!(mpm, PreserveNVVMPass())
         end
-        LLVM.run!(pb, mod)
+        LLVM.run!(pb, otherMod)
     end
     
     if DumpPreNestedCheck[]
@@ -2219,6 +2219,14 @@ function nested_codegen!(
     end
 
     check_ir(interp, job, otherMod, enzyme_ctx)
+
+    LLVM.@dispose pb = LLVM.NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+        LLVM.add!(pb, LLVM.NewPMModulePassManager()) do mpm
+            LLVM.add!(mpm, PreserveNVVMPass())
+        end
+        LLVM.run!(pb, otherMod)
+    end
 
     if DumpPreNestedOpt[]
 	API.EnzymeDumpModuleRef(otherMod.ref)
@@ -6571,6 +6579,17 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     # `check_ir` links in the derivatives that `enzyme_call` embeds. Their
     # natively called rules need bodies too.
     materialize_native_invokes!(mode, mod)
+
+    # Re-run `PreserveNVVMPass` so custom derivative registrations and
+    # annotations imported from `.llvmbc` sections during `check_ir` are
+    # converted into function metadata before `optimize!` / GlobalDCE.
+    LLVM.@dispose pb = LLVM.NewPMPassBuilder() begin
+        registerEnzymeAndPassPipeline!(pb)
+        LLVM.add!(pb, LLVM.NewPMModulePassManager()) do mpm
+            LLVM.add!(mpm, PreserveNVVMPass())
+        end
+        LLVM.run!(pb, mod)
+    end
 
     disableFallback = String[]
 

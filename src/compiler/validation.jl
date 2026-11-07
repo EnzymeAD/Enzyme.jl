@@ -943,7 +943,9 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
             end
         end
         for g in globals(inmod)
-            linkage!(g, LLVM.API.LLVMExternalLinkage)
+            if !startswith(LLVM.name(g), "llvm.")
+                linkage!(g, LLVM.API.LLVMExternalLinkage)
+            end
         end
         # override libdevice's triple and datalayout to avoid warnings
         triple!(inmod, triple(mod))
@@ -1622,7 +1624,12 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
 
                     lfn = nothing
                     if found
-                        lfn = replaceWith
+                        lfn = LLVM.API.LLVMConstBitCast(
+                            replaceWith,
+                            LLVM.PointerType(
+                                LLVM.FunctionType(LLVM.API.LLVMGetCalledFunctionType(inst)),
+                            ),
+                        )
                     else
                         fn = FFI.memoize!(ptr, fn)
 
