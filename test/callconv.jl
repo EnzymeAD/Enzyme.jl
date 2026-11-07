@@ -523,3 +523,33 @@ d3_default_ccall(x) = only(autodiff(Forward, d2_default_ccall, Duplicated(x, 1.0
     @test d3_inline_ccall(x) ≈ d3_default_ccall(x)
     @test sum_d1_inline_ccall([x, x]) ≈ 2 * d1_default_ccall(x)
 end
+
+# `LongName{Val{Symbol("x"^1200)}}` has a name of more than the 1024 characters LLVM keeps
+# of a local value name. The type is spelled out at the use, since Julia prints an alias of
+# a type by the name of the alias.
+struct LongName{T}
+    x::Float64
+end
+
+f_longname(a::LongName{T}, b::LongName{T}) where {T} = a.x * b.x
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig, ::Const{typeof(f_longname)}, ::Type{<:DuplicatedNoNeed},
+        a::Duplicated{LongName{T}}, b::Duplicated{LongName{T}}
+    ) where {T}
+    return a.dval.x * b.val.x + a.val.x * b.dval.x
+end
+
+@testset "InlineABI custom rule with long argument type names" begin
+    # The rule boxes every argument into an alloca. Named after the argument type, the two
+    # allocas got names that agree on the first 1024 characters. The text round trip of
+    # `InlineABI` resolved the uses of the second one to the first, so the rule saw `b`
+    # twice, or it failed with "multiple definition of local value".
+    T = LongName{Val{Symbol("x"^1200)}}
+    a = T(2.0)
+    b = T(3.0)
+    da = T(1.0)
+    db = T(0.5)
+    @test only(autodiff(ForwardInline, f_longname, Duplicated(a, da), Duplicated(b, db))) ≈ 1.0 * 3.0 + 2.0 * 0.5
+    @test only(autodiff(Forward, f_longname, Duplicated(a, da), Duplicated(b, db))) ≈ 1.0 * 3.0 + 2.0 * 0.5
+end
