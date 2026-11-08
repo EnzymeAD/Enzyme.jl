@@ -17,6 +17,7 @@ const HAS_INTEGRATED_CACHE = VERSION >= v"1.11.0-DEV.1552"
 
 import ..Enzyme
 import ..EnzymeRules
+import ..SparseArrays
 import ..cached_has_frule, ..cached_has_rrule, ..cached_is_inactive
 
 @static if VERSION ≥ v"1.11.0-DEV.1498"
@@ -1122,6 +1123,80 @@ function bc_mapreduce(f::F, op::OP, A::Base.AbstractArrayOrBroadcasted) where {F
     end
 end
 
+function is_concrete_spdiagm_pairs(argtypes::Vector{Any}, start_idx::Int)::Bool
+    for i in start_idx:length(argtypes)
+        t = argtypes[i]
+        Core.Compiler.isvarargtype(t) && return false
+        wt = widenconst(t)
+        (Base.isconcretetype(wt) && wt <: Pair{<:Integer, <:AbstractVector}) || return false
+    end
+    return true
+end
+
+@inline override_spdiagm(kv::Vararg{Pair{<:Integer, <:AbstractVector}, N}) where {N} =
+    override__spdiagm(nothing, kv)
+@inline override_spdiagm(m::Integer, n::Integer, kv::Vararg{Pair{<:Integer, <:AbstractVector}, N}) where {N} =
+    override__spdiagm((Int(m), Int(n)), kv)
+
+@inline override__spdiagm_vararg(size, kv::Vararg{Pair{<:Integer, <:AbstractVector}, N}) where {N} =
+    override__spdiagm(size, kv)
+
+@inline function override__spdiagm(size, kv::NTuple{N, Pair{<:Integer, <:AbstractVector}}) where {N}
+    I, J, V, mmax, nmax = _spdiagm_internal(kv)
+    mnmax = max(mmax, nmax)
+    m, n = something(size, (mnmax, mnmax))
+    (m ≥ mmax && n ≥ nmax) || throw(SparseArrays.DimensionMismatch("invalid size=$size"))
+    return SparseArrays.sparse(I, J, V, m, n)
+end
+
+@inline override_spdiagm_internal(kv::Vararg{Pair{<:Integer, <:AbstractVector}, N}) where {N} =
+    _spdiagm_internal(kv)
+
+@generated function _spdiagm_internal(kv::NTuple{N, Pair{<:Integer, <:AbstractVector}}) where {N}
+    T = promote_type(map(P -> eltype(fieldtype(P, 2)), kv.parameters)...)
+    ncoeffs_exprs = [:(ncoeffs += SparseArrays._nnz(kv[$idx].second)) for idx in 1:N]
+    loop_exprs = [
+        quote
+            let p = kv[$idx]
+                k = p.first
+                v = p.second
+                if k < 0
+                    row = -k
+                    col = 0
+                elseif k > 0
+                    row = 0
+                    col = k
+                else
+                    row = 0
+                    col = 0
+                end
+                numel = SparseArrays._nnz(v)
+                r = (1 + i):(numel + i)
+                I_r, J_r = SparseArrays._indices(v, row, col)
+                I[r] = I_r
+                J[r] = J_r
+                copyto!(view(V, r), SparseArrays._nzvals(v))
+                veclen = length(v)
+                m = max(m, row + veclen)
+                n = max(n, col + veclen)
+                i += numel
+            end
+        end for idx in 1:N
+    ]
+    return quote
+        ncoeffs = 0
+        $(ncoeffs_exprs...)
+        I = Vector{Int}(undef, ncoeffs)
+        J = Vector{Int}(undef, ncoeffs)
+        V = Vector{$T}(undef, ncoeffs)
+        i = 0
+        m = 0
+        n = 0
+        $(loop_exprs...)
+        return I, J, V, m, n
+    end
+end
+
 
 struct MultiOp{Position, NumUsed, F1, F2}
     f1::F1
@@ -1561,6 +1636,67 @@ function abstract_call_known(
                 max_methods::Int,
             )
         end
+    end
+
+    if f === SparseArrays.spdiagm && (
+            (length(argtypes) >= 2 && is_concrete_spdiagm_pairs(argtypes, 2)) ||
+                (
+                length(argtypes) >= 4 &&
+                    !Core.Compiler.isvarargtype(argtypes[2]) &&
+                    !Core.Compiler.isvarargtype(argtypes[3]) &&
+                    widenconst(argtypes[2]) <: Integer &&
+                    widenconst(argtypes[3]) <: Integer &&
+                    is_concrete_spdiagm_pairs(argtypes, 4)
+            )
+        )
+        arginfo2 = ArgInfo(
+            fargs isa Nothing ? nothing :
+                [:(Enzyme.Compiler.Interpreter.override_spdiagm), fargs[2:end]...],
+            [Core.Const(Enzyme.Compiler.Interpreter.override_spdiagm), argtypes[2:end]...],
+        )
+        return Base.@invoke abstract_call_known(
+            interp::AbstractInterpreter,
+            Enzyme.Compiler.Interpreter.override_spdiagm::Any,
+            arginfo2::ArgInfo,
+            si::StmtInfo,
+            sv::AbsIntState,
+            max_methods::Int,
+        )
+    end
+
+    if f === SparseArrays._spdiagm && length(argtypes) >= 3 &&
+            !Core.Compiler.isvarargtype(argtypes[2]) &&
+            is_concrete_spdiagm_pairs(argtypes, 3)
+        arginfo2 = ArgInfo(
+            fargs isa Nothing ? nothing :
+                [:(Enzyme.Compiler.Interpreter.override__spdiagm_vararg), fargs[2:end]...],
+            [Core.Const(Enzyme.Compiler.Interpreter.override__spdiagm_vararg), argtypes[2:end]...],
+        )
+        return Base.@invoke abstract_call_known(
+            interp::AbstractInterpreter,
+            Enzyme.Compiler.Interpreter.override__spdiagm_vararg::Any,
+            arginfo2::ArgInfo,
+            si::StmtInfo,
+            sv::AbsIntState,
+            max_methods::Int,
+        )
+    end
+
+    if f === SparseArrays.spdiagm_internal && length(argtypes) >= 2 &&
+            is_concrete_spdiagm_pairs(argtypes, 2)
+        arginfo2 = ArgInfo(
+            fargs isa Nothing ? nothing :
+                [:(Enzyme.Compiler.Interpreter.override_spdiagm_internal), fargs[2:end]...],
+            [Core.Const(Enzyme.Compiler.Interpreter.override_spdiagm_internal), argtypes[2:end]...],
+        )
+        return Base.@invoke abstract_call_known(
+            interp::AbstractInterpreter,
+            Enzyme.Compiler.Interpreter.override_spdiagm_internal::Any,
+            arginfo2::ArgInfo,
+            si::StmtInfo,
+            sv::AbsIntState,
+            max_methods::Int,
+        )
     end
     if interp.broadcast_rewrite && f === Base.materialize && length(argtypes) == 2
             bcty = widenconst(argtypes[2])
