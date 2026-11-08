@@ -52,9 +52,16 @@ function runtime_newtask_augfwd(
     # TODO make this AD subcall type stable
     FT = Core.Typeof(fn)
     ghos = guaranteed_const(FT)
+    FA = if ghos
+        Const{FT}
+    elseif dfn isa Base.RefValue && !(fn isa Base.RefValue)
+        MixedDuplicated{FT}
+    else
+        Duplicated{FT}
+    end
     forward, adjoint = thunk(
         Val(0),
-        (ghos ? Const : Duplicated){FT},
+        FA,
         Const,
         Tuple{},
         Val(API.DEM_ReverseModePrimal),
@@ -67,7 +74,13 @@ function runtime_newtask_augfwd(
         runtimeActivity,
         strongZero
     ) #=erriffuncwritten=#
-    ft = ghos ? Const(fn) : Duplicated(fn, dfn)
+    ft = if ghos
+        Const(fn)
+    elseif dfn isa Base.RefValue && !(fn isa Base.RefValue)
+        MixedDuplicated(fn, dfn)
+    else
+        Duplicated(fn, dfn)
+    end
     taperef = Ref{Any}()
 
     function fclosure()

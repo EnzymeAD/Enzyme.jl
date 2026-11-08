@@ -195,3 +195,24 @@ end
     @test 8.0 ≈ res[1]
     @test 16.0 ≈ res[2]
 end
+
+@testset "Threads.@spawn with active-by-value closure capture (#3226)" begin
+    function f_spawn_unused(x)
+        y = (x, 2.0)
+        t = Threads.@spawn y[1]^2
+        wait(t)
+        return y[1]
+    end
+    function f_spawn_active(x)
+        r = Ref(0.0)
+        y = (x, 2.0)
+        t = Threads.@spawn begin
+            r[] = y[1]^2 * y[2]
+            nothing
+        end
+        wait(t)
+        return r[]
+    end
+    @test only(only(autodiff(set_runtime_activity(Reverse), f_spawn_unused, Active, Active(2.0)))) ≈ 1.0
+    @test only(only(autodiff(set_runtime_activity(Reverse), f_spawn_active, Active, Active(3.0)))) ≈ 12.0
+end
