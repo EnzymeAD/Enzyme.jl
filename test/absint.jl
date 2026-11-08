@@ -797,3 +797,18 @@ end
 @testset "Dynamic index of nested Vector across aggregate PHI" begin
     @test Enzyme.gradient(set_runtime_activity(Reverse), nested_vec_phi_loss, [1.0, 2.0])[1] ≈ [9.0, 12.0]
 end
+
+@noinline halves_vec_3854(x) = [view(x, 1:2, :), view(x, 3:4, :)]
+@noinline halves_tuple_3854(x) = (view(x, 1:2, :), view(x, 3:4, :))
+f_vec_views_3854(x) = (v = halves_vec_3854(x); sum(v[1] .* v[2]))
+f_tuple_views_3854(x) = (v = halves_tuple_3854(x); sum(v[1] .* v[2]))
+
+@testset "Vector of views returned from @noinline call (#3854)" begin
+    x = Float32[1 2 3; 4 5 6; 7 8 9; 10 11 12]
+    dx = zero(x)
+    dx_tuple = zero(x)
+    autodiff(Reverse, f_vec_views_3854, Active, Duplicated(x, dx))
+    autodiff(Reverse, f_tuple_views_3854, Active, Duplicated(x, dx_tuple))
+    @test dx ≈ dx_tuple
+    @test dx ≈ Float32[7 8 9; 10 11 12; 1 2 3; 4 5 6]
+end

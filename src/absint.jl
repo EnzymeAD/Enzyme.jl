@@ -773,7 +773,7 @@ function abs_typeof(
         _, RT = enzyme_custom_extract_mi(arg, false)
         if RT !== nothing
             llrt, sret, returnRoots = get_return_info(RT)
-            if sret !== nothing
+            if sret === nothing
                 if llrt == RT
                     return (true, RT, GPUCompiler.BITS_VALUE)
                 elseif llrt == Ptr{RT}
