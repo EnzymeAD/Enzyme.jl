@@ -160,6 +160,7 @@ returns.
 """
 mutable struct EnzymeContext
     world::UInt
+    job::Any
     modules_to_link::Vector{LLVM.Module}
     edges::Vector{Any}
     nested_cache::Dict{Core.MethodInstance, String}
@@ -169,8 +170,9 @@ mutable struct EnzymeContext
     inserted_values::Dict{String, Any}
     relocations::Vector{Any}
     bakes::Bool
-    EnzymeContext(world::Integer) = new(
+    EnzymeContext(world::Integer, @nospecialize(job::Any = nothing)) = new(
         world,
+        job,
         LLVM.Module[],
         Any[],
         Dict{Core.MethodInstance, String}(),

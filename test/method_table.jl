@@ -87,3 +87,100 @@ mt_test_stacked_caller(x::Float64) = (mt_test_fn(x), mt_shared_fn(x))
         @test token !== Enzyme.Compiler.enzyme_cache_owner(other_job)
     end
 end
+
+module Issue3962DummyRuntime
+    signal_exception() = return
+    malloc(sz) = C_NULL
+    report_oom(sz) = return
+    report_exception(ex) = return
+    report_exception_name(ex) = return
+    report_exception_frame(idx, func, file, line) = return
+end
+
+Base.Experimental.@MethodTable(issue3962_device_table)
+struct Issue3962CUDAJobParams <: GPUCompiler.AbstractCompilerParams end
+GPUCompiler.method_table(::CompilerJob{<:Any, Issue3962CUDAJobParams}) = issue3962_device_table
+GPUCompiler.runtime_module(::CompilerJob{<:Any, Issue3962CUDAJobParams}) = Issue3962DummyRuntime
+
+@noinline function issue3962_dev_only(x::Float64)
+    x < 0.0 && error("Host fallback called instead of @overlay!")
+    return x
+end
+Base.Experimental.@overlay issue3962_device_table @inline issue3962_dev_only(x::Float64) = 1.0 - x * x
+
+@noinline issue3962_g(x::Float64) = issue3962_dev_only(x)
+
+function Enzyme.EnzymeRules.forward(
+        config::Enzyme.EnzymeRules.FwdConfig,
+        ::Const{typeof(issue3962_g)},
+        ::Type{<:Annotation},
+        x::Duplicated{Float64},
+    )
+    y = issue3962_g(x.val)
+    dy = -2.0 / sqrt(π) * exp(-x.val^2) * x.dval
+    Enzyme.EnzymeRules.needs_primal(config) && Enzyme.EnzymeRules.needs_shadow(config) && return Duplicated(y, dy)
+    Enzyme.EnzymeRules.needs_shadow(config) && return dy
+    return y
+end
+
+function Enzyme.EnzymeRules.augmented_primal(
+        config::Enzyme.EnzymeRules.RevConfig,
+        ::Const{typeof(issue3962_g)},
+        ::Type{<:Annotation},
+        x::Active{Float64},
+    )
+    primal = Enzyme.EnzymeRules.needs_primal(config) ? issue3962_g(x.val) : nothing
+    return Enzyme.EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+end
+
+function Enzyme.EnzymeRules.reverse(
+        config::Enzyme.EnzymeRules.RevConfig,
+        ::Const{typeof(issue3962_g)},
+        dret::Active{Float64},
+        tape,
+        x::Active{Float64},
+    )
+    scale = issue3962_dev_only(x.val)
+    return (scale * exp(-x.val^2) * dret.val,)
+end
+
+issue3962_f(x::Float64) = issue3962_g(x) + x
+issue3962_h(x::Float64) = issue3962_dev_only(x) + x
+
+function issue3962_kern_no_rule(out::Ptr{Float64}, x::Ptr{Float64})
+    v = unsafe_load(x, 1)
+    d = Enzyme.autodiff_deferred(Enzyme.Forward, Const(issue3962_h), Duplicated, Duplicated(v, 1.0))[1]
+    unsafe_store!(out, d, 1)
+    return nothing
+end
+
+function issue3962_kern_fwd_rule(out::Ptr{Float64}, x::Ptr{Float64})
+    v = unsafe_load(x, 1)
+    d = Enzyme.autodiff_deferred(Enzyme.Forward, Const(issue3962_f), Duplicated, Duplicated(v, 1.0))[1]
+    unsafe_store!(out, d, 1)
+    return nothing
+end
+
+function issue3962_kern_rev_rule(out::Ptr{Float64}, x::Ptr{Float64})
+    v = unsafe_load(x, 1)
+    d = Enzyme.autodiff_deferred(Enzyme.Reverse, Const(issue3962_f), Active, Active(v))[1][1]
+    unsafe_store!(out, d, 1)
+    return nothing
+end
+
+@testset "Custom rule in GPU CompilerJob nested_codegen! (#3962)" begin
+    target = GPUCompiler.PTXCompilerTarget(; cap = v"7.5")
+    params = Issue3962CUDAJobParams()
+    sig = Tuple{Ptr{Float64}, Ptr{Float64}}
+
+    for fn in (issue3962_kern_no_rule, issue3962_kern_fwd_rule, issue3962_kern_rev_rule)
+        source = GPUCompiler.methodinstance(typeof(fn), sig)
+        config = CompilerConfig(target, params; kernel = true)
+        job = CompilerJob(source, config)
+        ir_str = GPUCompiler.JuliaContext() do ctx
+            ir, _ = GPUCompiler.compile(:llvm, job)
+            string(ir)
+        end
+        @test !occursin("Host fallback called", ir_str)
+    end
+end

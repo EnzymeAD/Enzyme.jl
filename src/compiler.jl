@@ -2185,6 +2185,41 @@ const DumpPreNestedCheck = Ref(false)
 const DumpPreNestedOpt = Ref(false)
 const DumpPostNestedOpt = Ref(false)
 
+function nested_compiler_job(
+        funcspec::Core.MethodInstance,
+        mode::API.CDerivativeMode,
+        world::UInt = enzyme_world(),
+        enzyme_ctx::EnzymeContext = enzyme_context(),
+    )
+    if enzyme_ctx.job !== nothing
+        outer_job = enzyme_ctx.job::CompilerJob
+        target = outer_job.config.target isa EnzymeTarget ? outer_job.config.target.target : outer_job.config.target
+        outer_params = outer_job.config.params isa EnzymeCompilerParams ? outer_job.config.params.params : outer_job.config.params
+        params = outer_params isa PrimalCompilerParams ? PrimalCompilerParams(mode) : outer_params
+        toplevel = outer_job.config.toplevel
+        always_inline = outer_job.config.always_inline
+    else
+        target = DefaultCompilerTarget()
+        params = PrimalCompilerParams(mode)
+        toplevel = true
+        always_inline = false
+    end
+    config = CompilerConfig(
+        target,
+        params;
+        kernel = false,
+        libraries = true,
+        toplevel,
+        always_inline,
+        optimize = false,
+        cleanup = false,
+        only_entry = false,
+        validate = false,
+        entry_abi = :specfunc,
+    )
+    return CompilerJob(funcspec, config, world)
+end
+
 function nested_codegen!(
     mode::API.CDerivativeMode,
     mod::LLVM.Module,
@@ -2209,12 +2244,10 @@ function nested_codegen!(
 
     # 3) Use the MI to create the correct augmented fwd/reverse
     # TODO:
-    #  - GPU support
     #  - When OrcV2 only use a MaterializationUnit to avoid mutation of the module here
 
-    target = DefaultCompilerTarget()
-    params = PrimalCompilerParams(mode)
-    job = CompilerJob(funcspec, CompilerConfig(target, params; kernel = false, libraries = true, toplevel = true, optimize = false, cleanup = false, only_entry = false, validate = false, entry_abi = :specfunc), world)
+    job = nested_compiler_job(funcspec, mode, world, enzyme_ctx)
+    target = job.config.target
 
     GPUCompiler.prepare_job!(job)
     otherMod, meta = emit_unresolved_llvm(job)
@@ -2238,7 +2271,7 @@ function nested_codegen!(
         LLVM.add!(pb, LLVM.NewPMModulePassManager()) do mpm
             LLVM.add!(mpm, PreserveNVVMPass())
         end
-        LLVM.run!(pb, mod)
+        LLVM.run!(pb, otherMod)
     end
     
     if DumpPreNestedCheck[]
@@ -2254,10 +2287,44 @@ function nested_codegen!(
     # Skipped inline of blas
 
     run_enzyme = false
-    set_module_types!(interp, otherMod, nothing, job, edges, run_enzyme, mode, enzyme_ctx)
+    custom, _ = set_module_types!(interp, otherMod, nothing, job, edges, run_enzyme, mode, enzyme_ctx)
 
     # Apply first stage of optimization's so that this module is at the same stage as `mod`
-    optimize!(otherMod, JIT.get_tm(), enzyme_ctx)
+    target_machine = GPUCompiler.llvm_machine(target)
+    target_info = if isdefined(GPUCompiler, :llvm_targetinfo)
+        GPUCompiler.llvm_targetinfo(target)
+    else
+        nothing
+    end
+    replace_builtin_fptr!(otherMod, enzyme_ctx)
+    annotate!(otherMod)
+    for name in ("gpu_report_exception", "report_exception")
+        if haskey(functions(otherMod), name)
+            exc = functions(otherMod)[name]
+            if !isempty(blocks(exc))
+                linkage!(exc, LLVM.API.LLVMExternalLinkage)
+            end
+        end
+    end
+    optimize!(otherMod, target_machine, enzyme_ctx, target_info)
+    if target isa GPUCompiler.GCNCompilerTarget || target isa GPUCompiler.MetalCompilerTarget
+        GPUCompiler.optimize_module!(job, otherMod)
+    end
+    for name in ("gpu_report_exception", "report_exception")
+        if haskey(functions(otherMod), name)
+            exc = functions(otherMod)[name]
+            if !isempty(blocks(exc))
+                linkage!(exc, LLVM.API.LLVMInternalLinkage)
+            end
+        end
+    end
+    replace_nothing_loads!(otherMod)
+    for (fname, lnk) in custom
+        haskey(functions(otherMod), fname) || continue
+        f = functions(otherMod)[fname]
+        linkage!(f, lnk)
+        delete!(function_attributes(f), EnumAttribute("noinline"))
+    end
     
     if DumpPostNestedOpt[]
 	API.EnzymeDumpModuleRef(otherMod.ref)
@@ -6443,7 +6510,7 @@ end
 function GPUCompiler.compile_unhooked(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     # Every compilation runs under its own context; a nested compilation gets
     # its own and hands the outer one back when it returns.
-    mod, meta = @with ENZYME_CONTEXT => EnzymeContext(job.world) begin
+    mod, meta = @with ENZYME_CONTEXT => EnzymeContext(job.world, job) begin
         compile_unhooked_impl(output, job)
     end
     # A host derivative compiled on behalf of another job is linked into that job's module:
