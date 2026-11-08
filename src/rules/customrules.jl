@@ -1386,7 +1386,7 @@ end
                     if value_type(res) != shadow_ret_ty && value_type(res) == T_prjlvalue
                         dval = UndefValue(shadow_ret_ty)
                         for idx in 1:width
-                            elem = emit_nthfield!(B, res, ConstantInt(idx - 1))
+                            elem = emit_nthfield!(B, res, Int(idx - 1))
                             dval = insert_value!(B, dval, elem, idx - 1)
                         end
                         res = dval
@@ -1458,7 +1458,7 @@ end
                     if value_type(dval) != shadow_ret_ty && value_type(dval) == T_prjlvalue
                         unpacked = UndefValue(shadow_ret_ty)
                         for idx in 1:width
-                            elem = emit_nthfield!(B, dval, ConstantInt(idx - 1))
+                            elem = emit_nthfield!(B, dval, Int(idx - 1))
                             unpacked = insert_value!(B, unpacked, elem, idx - 1)
                         end
                         dval = unpacked
