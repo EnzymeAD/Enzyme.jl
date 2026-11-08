@@ -832,6 +832,21 @@ end
     end
 end
 
+mutable struct PtrFieldHolder
+    p::Ptr{Float64}
+    x::Float64
+end
+
+@testset "make_zero! and remake_zero! preserve Ptr fields (#3806)" begin
+    buf = [1.0, 2.0]
+    for zero! in (make_zero!, remake_zero!)
+        h = PtrFieldHolder(pointer(buf), 3.0)
+        zero!(h)
+        @test h.p == pointer(buf)
+        @test h.x == 0.0
+    end
+end
+
 @testset "forward inactivity of make_zero shadow-init builtins" begin
     # both fields defined -> s = 2x, derivative 2
     @test Enzyme.autodiff(Forward, isdefined_field_walk, Duplicated(2.0, 1.0)) == (2.0,)

@@ -521,3 +521,9 @@ end
         @test Array(dx) == (name == "view" ? [1.0, 1.0, 0.0, 0.0] : ones(4))
     end
 end
+
+@testset "remake_zero! on AbstractGPUArray (#3806)" begin
+    dx = JLArray(fill(7.0f0, 4))
+    Enzyme.remake_zero!(dx)
+    @test all(iszero, Array(dx))
+end

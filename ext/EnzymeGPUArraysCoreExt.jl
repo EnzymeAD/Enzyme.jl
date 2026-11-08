@@ -117,6 +117,23 @@ end
     return nothing
 end
 
+@inline function EnzymeCore.remake_zero!(
+        prev::AbstractGPUArray{FT}, seen::ST
+    )::Nothing where {FT, ST}
+    if !isnothing(seen)
+        if prev in seen
+            return nothing
+        end
+        push!(seen, prev)
+    end
+    if _bulk_zeroable(FT)
+        fill!(prev, zero(FT))
+    elseif !Enzyme.Compiler.guaranteed_const(FT)
+        copyto!(prev, map(EnzymeCore.make_zero, Array(prev)))
+    end
+    return nothing
+end
+
 @inline _bget(x, ::Val{1}, ::Int) = x
 @inline _bget(x, ::Val{N}, i::Int) where {N} = x[i]
 
