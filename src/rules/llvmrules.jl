@@ -182,6 +182,9 @@ include("parallelrules.jl")
         if in(name, ("ijl_f_getfield", "jl_f_getfield"))
             return common_jl_getfield_fwd(2, B, orig, gutils, normalR, shadowR)
         end
+        if in(name, ("ijl_f_arrayref", "jl_f_arrayref"))
+            return common_jl_arrayref_fwd(2, B, orig, gutils, normalR, shadowR)
+        end
         if in(name, ("ijl_f_setfield", "jl_f_setfield"))
             return common_setfield_fwd(2, B, orig, gutils, normalR, shadowR)
         end
@@ -280,6 +283,9 @@ end
         end
         if in(name, ("ijl_f_getfield", "jl_f_getfield"))
             return common_jl_getfield_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
+        end
+        if in(name, ("ijl_f_arrayref", "jl_f_arrayref"))
+            return common_jl_arrayref_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
         end
         if in(name, ("ijl_f_setfield", "jl_f_setfield"))
             return common_setfield_augfwd(2, B, orig, gutils, normalR, shadowR, tapeR)
@@ -382,6 +388,10 @@ end
         end
         if in(name, ("ijl_f_getfield", "jl_f_getfield"))
             common_jl_getfield_rev(2, B, orig, gutils, tape)
+            return nothing
+        end
+        if in(name, ("ijl_f_arrayref", "jl_f_arrayref"))
+            common_jl_arrayref_rev(2, B, orig, gutils, tape)
             return nothing
         end
         if in(name, ("ijl_f_setfield", "jl_f_setfield"))
@@ -2520,6 +2530,12 @@ end
         @augfunc(jl_getfield_augfwd),
         @revfunc(jl_getfield_rev),
         @fwdfunc(jl_getfield_fwd),
+    )
+    register_handler!(
+        ("jl_f_arrayref", "ijl_f_arrayref"),
+        @augfunc(jl_arrayref_augfwd),
+        @revfunc(jl_arrayref_rev),
+        @fwdfunc(jl_arrayref_fwd),
     )
     register_handler!(
         ("ijl_get_nth_field_checked", "jl_get_nth_field_checked"),

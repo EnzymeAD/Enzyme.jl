@@ -3192,6 +3192,8 @@ for (k, v) in (
     ("enz_runtime_tuple_rev", Enzyme.Compiler.runtime_tuple_rev),
     ("enz_runtime_jl_getfield_aug", Enzyme.Compiler.rt_jl_getfield_aug),
     ("enz_runtime_jl_getfield_rev", Enzyme.Compiler.rt_jl_getfield_rev),
+        ("enz_runtime_jl_arrayref_aug", Enzyme.Compiler.rt_jl_arrayref_aug),
+        ("enz_runtime_jl_arrayref_rev", Enzyme.Compiler.rt_jl_arrayref_rev),
     ("enz_runtime_idx_jl_getfield_aug", Enzyme.Compiler.idx_jl_getfield_aug),
     ("enz_runtime_idx_jl_getfield_rev", Enzyme.Compiler.idx_jl_getfield_rev),
     ("enz_runtime_jl_setfield_aug", Enzyme.Compiler.rt_jl_setfield_aug),

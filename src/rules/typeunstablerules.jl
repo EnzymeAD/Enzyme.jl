@@ -1852,6 +1852,259 @@ end
     common_jl_getfield_rev(1, B, orig, gutils, tape)
 end
 
+function common_jl_arrayref_fwd(offset, B, orig, gutils, normalR, shadowR)
+    enzyme_ctx = enzyme_context()
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
+        return true
+    end
+
+    ops = @view operands(orig)[offset:end]
+    width = get_width(gutils)
+    if !is_constant_value(gutils, ops[3])
+        shadowin = invert_pointer(gutils, ops[3], B)
+        if width == 1
+            args = LLVM.Value[
+                new_from_original(gutils, ops[1]),
+                new_from_original(gutils, ops[2]),
+                shadowin,
+            ]
+            for a in @view arg_operands_view(orig)[(offset + 3):end]
+                push!(args, new_from_original(gutils, a))
+            end
+            if offset != 1
+                pushfirst!(args, first(operands(orig)))
+            end
+            shadowres = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), args)
+            callconv!(shadowres, callconv(orig))
+            if get_runtime_activity(gutils)
+                is_inactive = icmp!(B, LLVM.API.LLVMIntEQ, shadowin, new_from_original(gutils, ops[3]))
+                newval = new_from_original(gutils, orig)
+                shadowres = select!(B, is_inactive, newval, shadowres)
+                API.moveBefore(newval, shadowres, B)
+            end
+        else
+            shadowres =
+                UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+            for idx in 1:width
+                shadowin_idx = extract_value!(B, shadowin, idx - 1)
+                args = LLVM.Value[
+                    new_from_original(gutils, ops[1]),
+                    new_from_original(gutils, ops[2]),
+                    shadowin_idx,
+                ]
+                for a in @view arg_operands_view(orig)[(offset + 3):end]
+                    push!(args, new_from_original(gutils, a))
+                end
+                if offset != 1
+                    pushfirst!(args, first(operands(orig)))
+                end
+                tmp = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), args)
+                callconv!(tmp, callconv(orig))
+
+                if get_runtime_activity(gutils)
+                    is_inactive = icmp!(B, LLVM.API.LLVMIntEQ, shadowin_idx, new_from_original(gutils, ops[3]))
+                    newval = new_from_original(gutils, orig)
+                    tmp = select!(B, is_inactive, newval, tmp)
+                    if idx == 1
+                        API.moveBefore(newval, tmp, B)
+                    end
+                end
+
+                shadowres = insert_value!(B, shadowres, tmp, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
+    else
+        if !get_runtime_activity(gutils)
+            estr = "Mismatched activity for: " * string(orig) * " const input " * string(ops[3]) * ", differentiable return"
+            shadowres = julia_error(estr, orig.ref, API.ET_MixedActivityError, gutils.ref, orig.ref, B.ref, enzyme_ctx)
+            if shadowres != C_NULL
+                unsafe_store!(shadowR, shadowres)
+                return true
+            end
+        end
+
+        normal = new_from_original(gutils, orig)
+
+        if width == 1
+            shadowres = normal
+        else
+            shadowres = UndefValue(
+                LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
+            )
+            position!(B, LLVM.Instruction(LLVM.API.LLVMGetNextInstruction(normal)))
+            for idx in 1:width
+                shadowres = insert_value!(B, shadowres, normal, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
+    end
+    return false
+end
+
+function rt_jl_arrayref_aug(
+        primal_arr::Array,
+        dptr::Array,
+        ::Val{isconst},
+        boundscheck::Bool,
+        inds::Vararg{Int, Ninds},
+    ) where {isconst, Ninds}
+    res = Core.arrayref(boundscheck, dptr, inds...)
+    RT = Core.Typeof(res)
+
+    isconst_rt = isconst || (dptr === primal_arr)
+    actreg = active_reg_nothrow(RT)
+    if actreg == ActiveState || (isconst_rt && actreg == MixedState)
+        return Ref{RT}(make_zero(res))
+    elseif actreg == MixedState
+        return Ref{RT}(res)
+    elseif isconst
+        return make_zero(res)
+    else
+        return res
+    end
+end
+
+function rt_jl_arrayref_rev(
+        primal_arr::Array,
+        dptr::Array,
+        dret,
+        ::Val{isconst},
+        boundscheck::Bool,
+        inds::Vararg{Int, Ninds},
+    ) where {isconst, Ninds}
+    cur = Core.arrayref(boundscheck, dptr, inds...)
+    RT = Core.Typeof(cur)
+
+    isconst_rt = isconst || (dptr === primal_arr)
+    actreg = active_reg_nothrow(RT)
+    if (actreg == ActiveState || actreg == MixedState) && !isconst_rt
+        Core.arrayset(
+            boundscheck,
+            dptr,
+            recursive_add(cur, dret[], identity, guaranteed_nonactive),
+            inds...,
+        )
+    end
+    return nothing
+end
+
+function common_jl_arrayref_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)::Bool
+    if is_constant_value(gutils, orig) || unsafe_load(shadowR) == C_NULL
+        return true
+    end
+
+    ops = @view operands(orig)[offset:end]
+    width = get_width(gutils)
+
+    primal_arr = new_from_original(gutils, ops[3])
+    isconst_arr = is_constant_value(gutils, ops[3])
+    if !isconst_arr
+        inp = invert_pointer(gutils, ops[3], B)
+    end
+
+    boundscheck = new_from_original(gutils, ops[2])
+    ind_vals = LLVM.Value[
+        new_from_original(gutils, a) for a in @view arg_operands_view(orig)[(offset + 3):end]
+    ]
+
+    if width == 1
+        dptr = isconst_arr ? primal_arr : inp
+        vals = LLVM.Value[
+            unsafe_to_llvm(B, rt_jl_arrayref_aug),
+            primal_arr,
+            dptr,
+            unsafe_to_llvm(B, Val(isconst_arr)),
+            boundscheck,
+        ]
+        append!(vals, ind_vals)
+        shadowres = emit_apply_generic!(B, vals)
+        debug_from_orig!(gutils, shadowres, orig)
+    else
+        ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+        shadowres = LLVM.UndefValue(ST)
+        for w in 1:width
+            dptr = isconst_arr ? primal_arr : extract_value!(B, inp, w - 1)
+            vals = LLVM.Value[
+                unsafe_to_llvm(B, rt_jl_arrayref_aug),
+                primal_arr,
+                dptr,
+                unsafe_to_llvm(B, Val(isconst_arr)),
+                boundscheck,
+            ]
+            append!(vals, ind_vals)
+            cal = emit_apply_generic!(B, vals)
+            debug_from_orig!(gutils, cal, orig)
+            shadowres = insert_value!(B, shadowres, cal, w - 1)
+        end
+    end
+
+    unsafe_store!(shadowR, shadowres.ref)
+    unsafe_store!(tapeR, shadowres.ref)
+    return false
+end
+
+function common_jl_arrayref_rev(offset, B, orig, gutils, tape)
+    if is_constant_value(gutils, orig)
+        return nothing
+    end
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(
+        gutils,
+        orig,
+        needsPrimalP,
+        needsShadowP,
+        API.DEM_ReverseModePrimal,
+    )
+    if needsShadowP[] == 0
+        return nothing
+    end
+
+    ops = @view operands(orig)[offset:end]
+    isconst_arr = is_constant_value(gutils, ops[3])
+    if isconst_arr
+        return nothing
+    end
+
+    width = get_width(gutils)
+    primal_arr = lookup_value(gutils, new_from_original(gutils, ops[3]), B)
+    inp = lookup_value(gutils, invert_pointer(gutils, ops[3], B), B)
+    boundscheck = lookup_value(gutils, new_from_original(gutils, ops[2]), B)
+    ind_vals = LLVM.Value[
+        lookup_value(gutils, new_from_original(gutils, a), B) for
+            a in @view arg_operands_view(orig)[(offset + 3):end]
+    ]
+
+    for w in 1:width
+        dptr = (width == 1) ? inp : extract_value!(B, inp, w - 1)
+        tval = (width == 1) ? tape : extract_value!(B, tape, w - 1)
+        vals = LLVM.Value[
+            unsafe_to_llvm(B, rt_jl_arrayref_rev),
+            primal_arr,
+            dptr,
+            tval,
+            unsafe_to_llvm(B, Val(isconst_arr)),
+            boundscheck,
+        ]
+        append!(vals, ind_vals)
+        cal = emit_apply_generic!(B, vals)
+        debug_from_orig!(gutils, cal, orig)
+    end
+    return nothing
+end
+
+@register_fwd function jl_arrayref_fwd(B, orig, gutils, normalR, shadowR)
+    common_jl_arrayref_fwd(1, B, orig, gutils, normalR, shadowR)
+end
+@register_aug function jl_arrayref_augfwd(B, orig, gutils, normalR, shadowR, tapeR)
+    common_jl_arrayref_augfwd(1, B, orig, gutils, normalR, shadowR, tapeR)
+end
+@register_rev function jl_arrayref_rev(B, orig, gutils, tape)
+    common_jl_arrayref_rev(1, B, orig, gutils, tape)
+end
+
 function common_setfield_fwd(offset, B, orig, gutils, normalR, shadowR)
     origops = @view operands(orig)[offset:end]
     width = get_width(gutils)

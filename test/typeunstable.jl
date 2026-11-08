@@ -507,3 +507,44 @@ end
     @test dx ≈ 1 ./ x
     @test (@allocated sum_log_gradient!(dx, x)) == 0
 end
+
+struct MyType1944
+    a::Array{Float64}
+end
+f_1944(m::MyType1944) = m.a[1]
+f_1944_2d(m::MyType1944) = m.a[2, 1]
+
+@testset "Abstractly-typed Array indexing jl_f_arrayref (#1944)" begin
+    dm = MyType1944([0.0, 0.0])
+    autodiff(Reverse, f_1944, Active, Duplicated(MyType1944([2.0, 3.0]), dm))
+    @test dm.a == [1.0, 0.0]
+
+    @test autodiff(Forward, f_1944, Duplicated(MyType1944([2.0, 3.0]), MyType1944([5.0, 7.0]))) == (5.0,)
+
+    @test autodiff(Reverse, (m, x) -> m.a[1] * x, Active, Const(MyType1944([2.0, 3.0])), Active(4.0)) == ((nothing, 2.0),)
+
+    dm2 = MyType1944(zeros(2, 2))
+    autodiff(Reverse, f_1944_2d, Active, Duplicated(MyType1944([1.0 2.0; 3.0 4.0]), dm2))
+    @test dm2.a == [0.0 0.0; 1.0 0.0]
+
+    dm2_a = MyType1944(zeros(2, 2))
+    dm2_b = MyType1944(zeros(2, 2))
+    autodiff(Reverse, f_1944_2d, Active, BatchDuplicated(MyType1944([1.0 2.0; 3.0 4.0]), (dm2_a, dm2_b)))
+    @test dm2_a.a == [0.0 0.0; 1.0 0.0]
+    @test dm2_b.a == [0.0 0.0; 1.0 0.0]
+
+    @test autodiff(Forward, f_1944_2d, Duplicated(MyType1944([1.0 2.0; 3.0 4.0]), MyType1944([5.0 6.0; 7.0 8.0])))[1] == 7.0
+    @test Tuple(
+        autodiff(
+            Forward,
+            f_1944_2d,
+            BatchDuplicated(
+                MyType1944([1.0 2.0; 3.0 4.0]),
+                (MyType1944([5.0 6.0; 7.0 8.0]), MyType1944([9.0 10.0; 11.0 12.0])),
+            ),
+        )[1],
+    ) == (7.0, 11.0)
+
+    @test autodiff(Reverse, (m, x) -> m.a[2, 1] * x, Active, Const(MyType1944([1.0 2.0; 3.0 4.0])), Active(4.0)) == ((nothing, 3.0),)
+    @test autodiff(Forward, (m, x) -> m.a[2, 1] * x, Const(MyType1944([1.0 2.0; 3.0 4.0])), Duplicated(4.0, 1.0))[1] == 3.0
+end

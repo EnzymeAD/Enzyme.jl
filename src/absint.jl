@@ -670,6 +670,18 @@ function abs_typeof(
                 return (true, Bool, GPUCompiler.MUT_REF)
             end
 
+            if (nm == "jl_f_arrayref" || nm == "ijl_f_arrayref") && length(arg_operands_view(arg)) >= index + 2
+                slegal, arty, _ = abs_typeof(operands(arg)[index + 2], enzyme_ctx, true, seenphis)
+                if slegal && arty <: Array
+                    ET = eltype(arty)
+                    if Base.isconcretetype(ET)
+                        return (true, ET, Base.allocatedinline(ET) ? GPUCompiler.BITS_REF : GPUCompiler.MUT_REF)
+                    elseif partial && !(ET isa TypeVar)
+                        return (true, ET, GPUCompiler.MUT_REF)
+                    end
+                end
+            end
+
             if nm == "jl_new_structv" || nm == "ijl_new_structv"
                 @assert index == 2
                 vals = absint(operands(arg)[index], enzyme_ctx, partial, false, #=typetag=# true)
