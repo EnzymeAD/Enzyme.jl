@@ -79,6 +79,64 @@ function define_absolute_symbol(jd, name)
     return false
 end
 
+const FP16_RUNTIME_SYMBOLS = (
+    ("__truncdfhf2", ("julia__truncdfhf2",)),
+    ("__truncsfhf2", ("julia__truncsfhf2", "julia__gnu_f2h_ieee")),
+    ("__extendhfsf2", ("julia__extendhfsf2", "julia__gnu_h2f_ieee")),
+    ("__extendhfdf2", ("julia__extendhfdf2",)),
+    ("__gnu_f2h_ieee", ("julia__gnu_f2h_ieee", "julia__truncsfhf2")),
+    ("__gnu_h2f_ieee", ("julia__gnu_h2f_ieee", "julia__extendhfsf2")),
+    ("__truncsfbf2", ("julia__truncsfbf2",)),
+    ("__truncdfbf2", ("julia__truncdfbf2",)),
+)
+
+function _lookup_runtime_symbol(name::AbstractString)::Ptr{Cvoid}
+    ptr = LLVM.find_symbol(name)
+    if ptr != C_NULL
+        return ptr
+    end
+    for hnd in (
+            unsafe_load(cglobal(:jl_libjulia_internal_handle, Ptr{Cvoid})),
+            unsafe_load(cglobal(:jl_libjulia_handle, Ptr{Cvoid})),
+        )
+        hnd == C_NULL && continue
+        sym = Libdl.dlsym(hnd, name; throw_error = false)
+        if sym !== nothing && sym != C_NULL
+            return sym
+        end
+    end
+    return C_NULL
+end
+
+_fp16_symbol_candidates(entry::Tuple{<:AbstractString, <:Tuple}) = entry
+_fp16_symbol_candidates(name::AbstractString) = (name, ("julia" * name,))
+
+function register_fp16_symbols!(
+        lljit,
+        jd,
+        pairs = symbol_pair_type()[];
+        symbols = FP16_RUNTIME_SYMBOLS,
+    )
+    for entry in symbols
+        name, candidates = _fp16_symbol_candidates(entry)
+        ptr = C_NULL
+        for cand in candidates
+            ptr = _lookup_runtime_symbol(cand)
+            ptr != C_NULL && break
+        end
+        if ptr == C_NULL
+            ptr = _lookup_runtime_symbol(name)
+        end
+        if ptr != C_NULL
+            if LLVM.find_symbol(name) == C_NULL || Sys.iswindows()
+                LLVM.API.LLVMAddSymbol(name, ptr)
+            end
+            push!(pairs, absolute_symbol_pair(mangle(lljit, name), ptr))
+        end
+    end
+    return pairs
+end
+
 function setup_globals()
     opt_level = Base.JLOptions().opt_level
     if opt_level < 2
@@ -135,6 +193,7 @@ function __init__()
         ptr = Compiler.unsafe_to_ptr(Compiler.unbind(v))
         push!(pairs, absolute_symbol_pair(mangle(lljit, "ejl_" * k), ptr))
     end
+    register_fp16_symbols!(lljit, jd_main, pairs)
     LLVM.define(jd_main, LLVM.absolute_symbols(pairs))
 
     atexit() do
