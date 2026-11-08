@@ -14,6 +14,50 @@ end
 
 f_kwargs_fwd(x; a=3.0, kwargs...) = a .* x .^ 2
 
+struct Space3127
+    dims::Tuple{Int, Int}
+    dual::Bool
+end
+
+struct Tensor3127{N1, N2}
+    data::Vector{Float64}
+    codom::NTuple{N1, Space3127}
+    dom::NTuple{N2, Space3127}
+end
+
+EnzymeTestUtils.test_approx(x::Tensor3127, y::Tensor3127, msg = ""; kwargs...) =
+    EnzymeTestUtils.test_approx(x.data, y.data, msg; kwargs...)
+
+add3127!(C::Tensor3127, A::Tensor3127) = add3127!(C, A, 1.0, 1.0)
+function add3127!(C::Tensor3127, A::Tensor3127, α::Number, β::Number)
+    C.data .= β .* C.data .+ α .* A.data
+    return C
+end
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfigWidth{1},
+        func::Const{typeof(add3127!)},
+        ::Type{RT},
+        C::Annotation,
+        A::Annotation,
+        α::Annotation{<:Number},
+        β::Annotation{<:Number},
+    ) where {RT}
+    !isa(C, Const) && !isa(A, Const) && add3127!(C.dval, A.dval, α.val, β.val)
+    !isa(C, Const) && !isa(α, Const) && add3127!(C.dval, A.val, α.dval, 1.0)
+    !isa(C, Const) && !isa(β, Const) && add3127!(C.dval, C.val, β.dval, 1.0)
+    add3127!(C.val, A.val, α.val, β.val)
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return C
+    elseif EnzymeRules.needs_primal(config)
+        return C.val
+    elseif EnzymeRules.needs_shadow(config)
+        return C.dval
+    else
+        return nothing
+    end
+end
+
 function f_kwargs_fwd!(x; kwargs...)
     copyto!(x, f_kwargs_fwd(x; kwargs...))
     return nothing
@@ -294,5 +338,20 @@ end
                 test_forward(f_kwargs_fwd, Tret, (x, Tx); fkwargs)
             end
         end
+    end
+
+    @testset "mixed-activity split-root structs (#3127, #3197)" begin
+        sp2 = (Space3127((2, 2), false), Space3127((2, 2), false))
+        sp3 = (Space3127((2, 2), true), Space3127((2, 2), true), Space3127((2, 2), true))
+        C = Tensor3127(randn(8), sp2, sp3)
+        A = Tensor3127(randn(8), sp2, sp3)
+        test_forward(
+            add3127!,
+            Duplicated,
+            (Tensor3127(copy(C.data), C.codom, C.dom), Duplicated),
+            (A, Const);
+            atol = 1.0e-6,
+            rtol = 1.0e-6,
+        )
     end
 end
