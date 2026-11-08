@@ -1078,3 +1078,21 @@ end
     g = Enzyme.gradient(Reverse, (B, A_val) -> sum(cholesky(A_val) \ B), B, Const(A))[1]
     @test g ≈ [0.4 0.6; 0.6 0.2]
 end
+
+@testset "filter! sizehint! (#3908)" begin
+    function keep_nonnegative!(x::Vector{Float64})
+        filter!(!signbit, x)
+        return x
+    end
+    function objective_3908(x::Vector{Float64})
+        y = x .- 2.0
+        keep_nonnegative!(y)
+        return y[1] + 2.0 * y[2] + 3.0 * y[end]
+    end
+    for _ in 1:5
+        x = [1.0, 2.0, 3.0, 4.0]
+        dx = zeros(length(x))
+        autodiff(Reverse, objective_3908, Active, Duplicated(x, dx))
+        @test dx ≈ [0.0, 1.0, 2.0, 3.0]
+    end
+end
