@@ -20,6 +20,9 @@ using Test
             test_forward(hypot, RT, (x, Tx), (y, Ty))
             test_forward(hypot, RT, (x, Tx), (y, Ty), (z, Tz))
             test_forward(hypot, RT, (x, Tx), (y, Ty), (z, Tz), (xs, Txs))
+
+            test_forward(hypot, RT, (1.0f0, Tx), (2.0, Ty), (3.0, Tz); rtol = 1.0e-3, atol = 1.0e-3)
+            test_forward(hypot, RT, (1.0f0 + 2.0f0im, Tx), (2.0, Ty), (3.0, Tz); rtol = 1.0e-3, atol = 1.0e-3)
         end
     end
     @testset "reverse" begin
@@ -38,6 +41,9 @@ using Test
             test_reverse(hypot, RT, (x, Tx), (y, Ty))
             test_reverse(hypot, RT, (x, Tx), (y, Ty), (z, Tz))
             test_reverse(hypot, RT, (x, Tx), (y, Ty), (z, Tz), (xs, Txs))
+
+            test_reverse(hypot, RT, (1.0f0, Tx), (2.0, Ty), (3.0, Tz); rtol = 1.0e-3, atol = 1.0e-3)
+            test_reverse(hypot, RT, (1.0f0 + 2.0f0im, Tx), (2.0, Ty), (3.0, Tz); rtol = 1.0e-3, atol = 1.0e-3)
         end
     end
 end
