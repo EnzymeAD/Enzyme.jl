@@ -942,7 +942,11 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
                 push!(internalize, name(fn))
             end
         end
+        internalize_g = String[]
         for g in globals(inmod)
+            if !LLVM.isdeclaration(g)
+                push!(internalize_g, name(g))
+            end
             linkage!(g, LLVM.API.LLVMExternalLinkage)
         end
         # override libdevice's triple and datalayout to avoid warnings
@@ -952,6 +956,9 @@ function try_import_llvmbc(mod::LLVM.Module, flib::String, fname::String, import
         for n in internalize
             linkage!(functions(mod)[n], LLVM.API.LLVMInternalLinkage)
             push!(imported, n)
+        end
+        for n in internalize_g
+            linkage!(globals(mod)[n], LLVM.API.LLVMInternalLinkage)
         end
     end
     replaceWith = functions(mod)[fname]

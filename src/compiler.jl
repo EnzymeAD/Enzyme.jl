@@ -6721,6 +6721,11 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     found = String[]
     if bitcode_replacement() &&
        API.EnzymeBitcodeReplacement(mod, disableFallback, found) != 0
+        for g in globals(mod)
+            if !LLVM.isdeclaration(g) && LLVM.linkage(g) == LLVM.API.LLVMExternalLinkage
+                LLVM.linkage!(g, LLVM.API.LLVMInternalLinkage)
+            end
+        end
         run!(InstCombinePass(), mod)
         toremove = String[]
         for f in functions(mod)
