@@ -216,3 +216,28 @@ end
     @test only(only(autodiff(set_runtime_activity(Reverse), f_spawn_unused, Active, Active(2.0)))) ≈ 1.0
     @test only(only(autodiff(set_runtime_activity(Reverse), f_spawn_active, Active, Active(3.0)))) ≈ 12.0
 end
+
+const ALLOW_SPAWN_REF_3834 = Ref(true)
+use_spawn_ref_3834() = Threads.nthreads(:default) > 1 && ALLOW_SPAWN_REF_3834[]
+ntasks_ref_3834(len::Int) = len < 2^18 || !use_spawn_ref_3834() ? 1 : Threads.nthreads(:default)
+f_nthreads_ref_3834(x) = sum(x) * ntasks_ref_3834(length(x))
+
+@static if isdefined(Base, :ScopedValues)
+    const ALLOW_SPAWN_3834 = Base.ScopedValues.ScopedValue(true)
+    use_spawn_3834() = Threads.nthreads(:default) > 1 && ALLOW_SPAWN_3834[]
+    ntasks_3834(len::Int) = len < 2^18 || !use_spawn_3834() ? 1 : Threads.nthreads(:default)
+    f_nthreads_3834(x) = sum(x) * ntasks_3834(length(x))
+end
+
+@testset "Hoisted Threads.nthreads(:default) call debug location (#3834)" begin
+    x = randn(3, 4)
+    dx = zero(x)
+    autodiff(Reverse, f_nthreads_ref_3834, Active, Duplicated(x, dx))
+    @test dx ≈ ones(3, 4)
+
+    @static if isdefined(Base, :ScopedValues)
+        fill!(dx, 0.0)
+        autodiff(Reverse, f_nthreads_3834, Active, Duplicated(x, dx))
+        @test dx ≈ ones(3, 4)
+    end
+end

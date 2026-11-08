@@ -3827,6 +3827,7 @@ function enzyme!(
     for fn in to_delete
         LLVM.erase!(fn)
     end
+        ensure_call_debug_locations!(mod)
     LLVM.verify(mod)
 
     API.EnzymeLogicErasePreprocessedFunctions(logic)

@@ -39,6 +39,40 @@ end
 MarkLoadsDereferenceablePass(enzyme_ctx::Union{EnzymeContext, Nothing}) =
     NewPMFunctionPass("enzyme_mark_loads_dereferenceable", MarkLoadsDereferenceable(enzyme_ctx))
 
+function ensure_call_debug_locations_fn!(caller::LLVM.Function)
+    sp = get_subprogram(caller)
+    sp === nothing && return false
+    loc = nothing
+    changed = false
+    for bb in blocks(caller)
+        for inst in instructions(bb)
+            if inst isa LLVM.CallBase
+                callee = called_operand(inst)
+                if callee isa LLVM.Function && get_subprogram(callee) !== nothing
+                    if !haskey(metadata(inst), LLVM.MD_dbg)
+                        if loc === nothing
+                            loc = DILocation(0, 0, sp)
+                        end
+                        metadata(inst)[LLVM.MD_dbg] = loc
+                        changed = true
+                    end
+                end
+            end
+        end
+    end
+    return changed
+end
+
+function ensure_call_debug_locations!(mod::LLVM.Module)
+    changed = false
+    for caller in functions(mod)
+        changed |= ensure_call_debug_locations_fn!(caller)
+    end
+    return changed
+end
+
+EnsureCallDebugLocationsPass() = NewPMFunctionPass("ensure_call_debug_locations", ensure_call_debug_locations_fn!)
+
 # `enzyme_ctx` is the compilation `mod` belongs to, `nothing` outside of one.
 function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enzyme_ctx::Union{EnzymeContext, Nothing}, tti = nothing)
     @dispose pb = NewPMPassBuilder() begin
@@ -49,6 +83,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enz
         register!(pb, Addr13NoAliasPass())
         register!(pb, RestoreAllocaType())
         register!(pb, RemoveAlwaysInlineRootsPass())
+        register!(pb, EnsureCallDebugLocationsPass())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
@@ -61,6 +96,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enz
                 add!(fpm, PropagateJuliaAddrspacesPass())
                 add!(fpm, SimplifyCFGPass())
                 add!(fpm, DCEPass())
+                add!(fpm, EnsureCallDebugLocationsPass())
             end
             add!(mpm, CPUFeaturesPass())
             add!(mpm, NewPMFunctionPassManager()) do fpm
@@ -112,6 +148,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enz
             registerEnzymeAndPassPipeline!(pb)
             register!(pb, RestoreAllocaType())
             register!(pb, MarkLoadsDereferenceablePass(enzyme_ctx))
+            register!(pb, EnsureCallDebugLocationsPass())
             add!(pb, NewPMAAManager()) do aam
                 add!(aam, ScopedNoAliasAA())
                 add!(aam, TypeBasedAA())
@@ -247,6 +284,8 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enz
 
     nodecayed_phis!(mod)
 
+    ensure_call_debug_locations!(mod)
+
     return run!(GCInvariantVerifierPass(strong = false), mod)
 end
 
@@ -271,6 +310,7 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         add!(fpm, SimplifyCFGPass())
         add!(fpm, DCEPass())
         add!(fpm, SROAPass())
+        add!(fpm, EnsureCallDebugLocationsPass())
     end
     add!(mpm, RemoveAlwaysInlineRootsPass())
     add!(mpm, AlwaysInlinerPass())
@@ -377,6 +417,7 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
         add!(fpm, ADCEPass())
         # Unroll vectorized loops, as well as loops that failed to vectorize.
         add!(fpm, LoopUnrollPass(opt_level = 2))
+        add!(fpm, EnsureCallDebugLocationsPass())
     end
 end
 
@@ -448,6 +489,7 @@ function addJuliaLegalizationPasses!(mpm::LLVM.NewPMPassManager, lower_intrinsic
             add!(fpm, InstCombinePass())
             add!(fpm, JLInstSimplifyPass())
             add!(fpm, SimplifyCFGPass(; aggressiveSimplifyCFGOptions...))
+            add!(fpm, EnsureCallDebugLocationsPass())
         end
     else
         add!(mpm, RemoveNIPass())
@@ -547,6 +589,8 @@ function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}
 
     removeDeadArgs!(mod, tm, #=post_gc_fixup=# true)
 
+    ensure_call_debug_locations!(mod)
+
     @dispose pb = NewPMPassBuilder() begin
         if tti !== nothing
             LLVM.target_transform_info!(pb, tti)
@@ -556,6 +600,7 @@ function post_optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}
         register!(pb, SafeAtomicToRegularStorePass())
         register!(pb, RestoreAllocaType())
         register!(pb, RemoveAlwaysInlineRootsPass())
+        register!(pb, EnsureCallDebugLocationsPass())
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
