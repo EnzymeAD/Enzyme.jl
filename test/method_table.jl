@@ -169,14 +169,29 @@ function issue3962_kern_rev_rule(out::Ptr{Float64}, x::Ptr{Float64})
 end
 
 @testset "Custom rule in GPU CompilerJob nested_codegen! (#3962)" begin
-    target = GPUCompiler.PTXCompilerTarget(; cap = v"7.5")
+    world = Base.get_world_counter()
+    ptx_target = GPUCompiler.PTXCompilerTarget(; cap = v"7.5")
     params = Issue3962CUDAJobParams()
     sig = Tuple{Ptr{Float64}, Ptr{Float64}}
 
+    # Verify nested_compiler_job preserves both target (e.g. PTXCompilerTarget) and params
+    source_ptx = GPUCompiler.methodinstance(typeof(issue3962_kern_fwd_rule), sig)
+    outer_ptx_job = CompilerJob(source_ptx, CompilerConfig(ptx_target, params; kernel = true), world)
+    rule_mi = GPUCompiler.methodinstance(typeof(issue3962_g), Tuple{Float64})
+    nested_ptx_job = Enzyme.Compiler.@with Enzyme.Compiler.ENZYME_CONTEXT => Enzyme.Compiler.EnzymeContext(world, outer_ptx_job) begin
+        Enzyme.Compiler.nested_compiler_job(rule_mi, API.DEM_ForwardMode, world)
+    end
+    @test nested_ptx_job.config.target === ptx_target
+    @test nested_ptx_job.config.params === params
+    @test nested_ptx_job.config.kernel === false
+    @test GPUCompiler.method_table(nested_ptx_job) === issue3962_device_table
+
+    # Verify full nested_codegen! compilation through GPUCompiler.compile(:llvm, job)
+    host_target = GPUCompiler.DefaultCompilerTarget()
     for fn in (issue3962_kern_no_rule, issue3962_kern_fwd_rule, issue3962_kern_rev_rule)
         source = GPUCompiler.methodinstance(typeof(fn), sig)
-        config = CompilerConfig(target, params; kernel = true)
-        job = CompilerJob(source, config)
+        config = CompilerConfig(host_target, params; kernel = false)
+        job = CompilerJob(source, config, world)
         ir_str = GPUCompiler.JuliaContext() do ctx
             ir, _ = GPUCompiler.compile(:llvm, job)
             string(ir)
