@@ -6700,6 +6700,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
         for attr in collect(function_attributes(llvmfn))
             push!(function_attributes(wrapper_f), attr)
         end
+        delete!(function_attributes(wrapper_f), EnumAttribute("noinline"))
 
         for attr in collect(return_attributes(llvmfn))
             push!(return_attributes(wrapper_f), attr)
@@ -7437,6 +7438,7 @@ end
 
     # API.EnzymeRemoveTrivialAtomicIncrements(adjointf)
 
+    delete!(function_attributes(adjointf), EnumAttribute("noinline"))
     push!(function_attributes(adjointf), EnumAttribute("alwaysinline", 0))
     if augmented_primalf !== nothing
         augmented_primalf = functions(mod)[augmented_primalf_name]

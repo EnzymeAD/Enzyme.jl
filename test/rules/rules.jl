@@ -225,4 +225,18 @@ end
     @test dst.data == [2.0, 4.0]
 end
 
+mustwrap_mapreduce(f, op, A...; kwargs...) = mapreduce(f, op, A...; kwargs...)
+function EnzymeRules.forward(config, ::Const{typeof(mustwrap_mapreduce)}, RT, f::Const, op::Const, A...; kwargs...)
+    dA = ntuple(i -> A[i].dval, Val(length(A)))
+    return mustwrap_mapreduce(f.val, op.val, dA...; kwargs...)
+end
+
+@testset "Top-level mustwrap custom rule attribute compatibility (#2638)" begin
+    x = ones(10)
+    dx = zeros(10)
+    dx[1] = 1.0
+    @test autodiff(Forward, mustwrap_mapreduce, Duplicated, Const(identity), Const(+), Duplicated(x, dx)) == (1.0,)
+    @test_throws MethodError autodiff(Forward, mustwrap_mapreduce, Duplicated, Const(identity), Const(+), Duplicated(x, dx), Const(zeros(10)))
+end
+
 end # module ForwardRules
