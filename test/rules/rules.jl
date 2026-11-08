@@ -316,7 +316,22 @@ end
 
 K_m_constprop(m::Float64) = K_m_0_constprop(0.0, m)
 
-@testset "Custom rule returning constant not DCEd (#3006)" begin
+square_616(x) = 3.0
+function EnzymeRules.forward(
+        config,
+        ::Const{typeof(square_616)},
+        ::Type{<:DuplicatedNoNeed},
+        x::Duplicated,
+    )
+    return 2 * x.val * x.dval
+end
+call_square_616(x) = square_616(x)
+
+myidentity_714(x) = x
+EnzymeRules.inactive(::typeof(myidentity_714), args...) = nothing
+call_myidentity_714(x) = myidentity_714(x^2)
+
+@testset "Custom rule returning constant not DCEd (#3006, #616, #714)" begin
     @test autodiff(Reverse, K_m, Active, Active(0.0)) == ((0.5,),)
     @test autodiff(ReverseWithPrimal, K_m, Active, Active(0.0)) == ((0.5,), 0.0)
     @test autodiff(Forward, K_m, Duplicated(0.0, 1.0)) == (0.5,)
@@ -324,6 +339,11 @@ K_m_constprop(m::Float64) = K_m_0_constprop(0.0, m)
 
     @test autodiff(Reverse, K_m_constprop, Active, Active(0.0)) == ((0.5,),)
     @test autodiff(Forward, K_m_constprop, Duplicated(0.0, 1.0)) == (0.5,)
+
+    @test autodiff(Forward, call_square_616, Duplicated(3.0, 1.0)) == (6.0,)
+
+    @test autodiff(Reverse, call_myidentity_714, Active, Active(2.0)) == ((0.0,),)
+    @test autodiff(Forward, call_myidentity_714, Duplicated(2.0, 1.0)) == (0.0,)
 end
 
 end # module ForwardRules
