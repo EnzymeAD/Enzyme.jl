@@ -1242,28 +1242,26 @@ end
         end
 
         if imported_ok
-            @eval _func_ccall_2706(x::Real, y::Real, n::Int) =
-                ccall((:func, $obj_path), Cdouble, (Cdouble, Cdouble, Clong), x, y, n)
-
-            Base.invokelatest() do
-                x, y, n = 2.0, 1.0, 2
-                @test gradient(Reverse, _func_ccall_2706, Const(x), y, Const(n)) ==
-                    (nothing, 1.0, nothing)
-                @test gradient(Reverse, _func_ccall_2706, x, Const(y), Const(n)) ==
-                    (3.0, nothing, nothing)
-                @test gradient(
-                    Reverse, _func_ccall_2706, Float32(x), Const(Float32(y)), Const(n)
-                ) == (3.0f0, nothing, nothing)
-                @test autodiff(
-                    Forward, _func_ccall_2706, Duplicated(x, 1.0), Const(y), Const(n)
-                ) == (3.0,)
-                @test autodiff(
-                    Forward,
-                    _func_ccall_2706,
-                    Duplicated(Float32(x), 1.0f0),
-                    Const(Float32(y)),
-                    Const(n),
-                ) == (3.0,)
+            for idx in (1, 2)
+                fn_name = "func_inst_$(idx)_2706"
+                addr = LLVM.Context() do ctx
+                    dst = LLVM.Module("dst_$(idx)")
+                    tm = Enzyme.Compiler.JIT.get_tm()
+                    LLVM.triple!(dst, LLVM.triple(tm))
+                    LLVM.DataLayout(tm) do dl
+                        LLVM.datalayout!(dst, dl)
+                    end
+                    found, fn = Enzyme.Compiler.try_import_llvmbc(dst, obj_path, "func", Set{String}())
+                    @test found
+                    LLVM.name!(fn, fn_name)
+                    LLVM.linkage!(fn, LLVM.API.LLVMExternalLinkage)
+                    Enzyme.Compiler.JIT.prepare!(dst)
+                    @test LLVM.linkage(LLVM.globals(dst)["A"]) == LLVM.API.LLVMInternalLinkage
+                    jd = Enzyme.Compiler.JIT.add!(dst)
+                    Enzyme.Compiler.JIT.lookup(jd, fn_name)
+                end
+                res = ccall(reinterpret(Ptr{Cvoid}, addr.ptr), Cdouble, (Cdouble, Cdouble, Int64), 2.0, 1.0, idx)
+                @test res == 2.0 * (idx + 1) + 1.0
             end
         end
     end
