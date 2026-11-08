@@ -1829,30 +1829,35 @@ end
 end
 
 @register_fwd function jl_ptr_to_array_fwd(B, orig, gutils, normalR, shadowR)
-    if is_constant_inst(gutils, orig)
+    if is_constant_value(gutils, orig) && is_constant_inst(gutils, orig)
         return true
     end
-    width = get_width(gutils)
-    shadowin = invert_pointer(gutils, operands(orig)[2], B)
+    if unsafe_load(shadowR) != C_NULL
+        width = get_width(gutils)
+        shadowin = if is_constant_value(gutils, operands(orig)[2])
+            new_from_original(gutils, operands(orig)[2])
+        else
+            invert_pointer(gutils, operands(orig)[2], B)
+        end
 
-    valTys = API.CValueType[
-        API.VT_Primal,
-        API.VT_Shadow,
-        API.VT_Primal,
-        API.VT_Primal,
-    ]
+        valTys = API.CValueType[
+            API.VT_Primal,
+            API.VT_Shadow,
+            API.VT_Primal,
+            API.VT_Primal,
+        ]
 
-    args = LLVM.Value[
-        new_from_original(gutils, operands(orig)[1]),
-        shadowin, # data
-        new_from_original(gutils, operands(orig)[3]),
-        new_from_original(gutils, operands(orig)[4]),
-    ]
+        args = LLVM.Value[
+            new_from_original(gutils, operands(orig)[1]),
+            shadowin, # data
+            new_from_original(gutils, operands(orig)[3]),
+            new_from_original(gutils, operands(orig)[4]),
+        ]
 
-    shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false, "ptr_to_array"; cmpidx = 2)::LLVM.Value
+        shadowres = batch_call_same_with_inverted_arg_if_active!(B, gutils, orig, args, valTys, false, "ptr_to_array"; cmpidx = 2)::LLVM.Value
 
-    unsafe_store!(shadowR, shadowres.ref)
-
+        unsafe_store!(shadowR, shadowres.ref)
+    end
     return false
 end
 
