@@ -6454,6 +6454,15 @@ function memtransfer_truetype(world::UInt, @nospecialize(ptr::LLVM.Value), @nosp
                 jTy = ET
                 byref = GPUCompiler.MUT_REF
                 offset = Base.mod(offset, sz_et)
+                if isa(sz, LLVM.ConstantInt)
+                    sz_int = convert(Int, sz)
+                    if offset + sz_int > sz_et && allocatedinline(ET)
+                        nel = cld(offset + sz_int, sz_et)
+                        if nel <= 64
+                            jTy = NTuple{nel, ET}
+                        end
+                    end
+                end
             end
         end
     end

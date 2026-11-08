@@ -390,3 +390,25 @@ end
         @test dA ≈ T[0 0 6; 8 20 24]
     end
 end
+
+struct MixedFloatIntElem3708
+    a::Float64
+    n::Int
+end
+
+msum_3708(w) = sum(k * w[k].a for k in eachindex(w))
+f_deleteat_3708(v) = (deleteat!(v, 4:5); msum_3708(v))
+
+@testset "Multi-element memmove in deleteat! on mixed struct vector (#3708)" begin
+    v = [MixedFloatIntElem3708(k, k) for k in 1:12]
+    dv = [MixedFloatIntElem3708(0.0, 0) for _ in 1:12]
+    @static if VERSION >= v"1.11-"
+        dm = dv.ref
+        autodiff(Reverse, f_deleteat_3708, Active, Duplicated(v, dv))
+        res = [memoryref(dm, k)[].a for k in 1:12]
+        @test res ≈ [1.0, 2.0, 3.0, 0.0, 0.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+    else
+        autodiff(Reverse, f_deleteat_3708, Active, Duplicated(v, dv))
+        @test [dv[k].a for k in 1:3] ≈ [1.0, 2.0, 3.0]
+    end
+end
