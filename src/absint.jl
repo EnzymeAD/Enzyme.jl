@@ -1180,6 +1180,314 @@ function abs_typeof(
     return (false, nothing, nothing)
 end
 
+function extracted_from_inactive(
+        @nospecialize(arg::LLVM.Value),
+        enzyme_ctx::Union{EnzymeContext, Nothing},
+        world::UInt,
+        seen = Set{LLVM.Value}(),
+    )::Bool
+    if arg in seen
+        return false
+    end
+    push!(seen, arg)
+
+    if isa(arg, ConstantExpr)
+        if opcode(arg) == LLVM.API.LLVMAddrSpaceCast ||
+                opcode(arg) == LLVM.API.LLVMBitCast ||
+                opcode(arg) == LLVM.API.LLVMIntToPtr ||
+                opcode(arg) == LLVM.API.LLVMGetElementPtr
+            return extracted_from_inactive(operands(arg)[1], enzyme_ctx, world, seen)
+        end
+    end
+    if isa(arg, LLVM.BitCastInst) ||
+            isa(arg, LLVM.AddrSpaceCastInst) ||
+            isa(arg, LLVM.IntToPtrInst) ||
+            isa(arg, LLVM.PtrToIntInst) ||
+            isa(arg, LLVM.GetElementPtrInst)
+        return extracted_from_inactive(operands(arg)[1], enzyme_ctx, world, seen)
+    end
+
+    if isa(arg, LLVM.CallInst)
+        fn = LLVM.called_operand(arg)
+        if isa(fn, LLVM.Function)
+            nm = LLVM.name(fn)
+            if nm == "julia.pointer_from_objref"
+                return extracted_from_inactive(operands(arg)[1], enzyme_ctx, world, seen)
+            elseif nm == "julia.gc_loaded"
+                return extracted_from_inactive(operands(arg)[2], enzyme_ctx, world, seen)
+            end
+        end
+    end
+
+    if isa(arg, LLVM.PHIInst)
+        inc = LLVM.incoming(arg)
+        isempty(inc) && return false
+        any_checked = false
+        for (v, _) in inc
+            v in seen && continue
+            any_checked = true
+            if !extracted_from_inactive(v, enzyme_ctx, world, copy(seen))
+                return false
+            end
+        end
+        return any_checked
+    end
+
+    if isa(arg, LLVM.ExtractValueInst)
+        larg = operands(arg)[1]
+        if extracted_from_inactive(larg, enzyme_ctx, world, seen)
+            return true
+        end
+        indptrs = LLVM.API.LLVMGetIndices(arg)
+        numind = LLVM.API.LLVMGetNumIndices(arg)
+        offset = Cuint[unsafe_load(indptrs, i) for i in 1:numind]
+        found, typ, byref = abs_typeof(larg, enzyme_ctx, true)
+        if !found
+            return false
+        end
+        if Core._call_in_world_total(world, EnzymeCore.EnzymeRules.inactive_type, typ)
+            return true
+        end
+        if byref == GPUCompiler.BITS_VALUE
+            for ind in offset
+                if !Base.isconcretetype(typ) || in(typ, TypesNotToDisect)
+                    return false
+                end
+                cnt = 0
+                desc = Base.DataTypeFieldDesc(typ)
+                for i in 1:fieldcount(typ)
+                    styp = typed_fieldtype(typ, i)
+                    if isghostty(styp)
+                        continue
+                    end
+
+                    inline_union = !desc[i].isptr && styp isa Union
+                    if cnt == ind
+                        typ = styp
+                        if inline_union
+                            typ = remove_nothing_from_union_type(typ)
+                        end
+                        break
+                    end
+                    cnt += 1
+                    if inline_union
+                        if cnt == ind
+                            typ = UInt8
+                            break
+                        end
+                        cnt += 1
+                    end
+                end
+                if Core._call_in_world_total(world, EnzymeCore.EnzymeRules.inactive_type, typ)
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    if isa(arg, LLVM.LoadInst)
+        ptr_op = operands(arg)[1]
+        if extracted_from_inactive(ptr_op, enzyme_ctx, world, seen)
+            return true
+        end
+        larg, offset = get_base_and_offset(ptr_op)
+        if larg != ptr_op && extracted_from_inactive(larg, enzyme_ctx, world, seen)
+            return true
+        end
+        legal, typ, byref = abs_typeof(larg, enzyme_ctx, false)
+        if !legal
+            return false
+        end
+        if Core._call_in_world_total(world, EnzymeCore.EnzymeRules.inactive_type, typ)
+            return true
+        end
+
+        dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(arg))))
+        shouldLoad = true
+
+        if typ <: Ptr && Base.isconcretetype(typ) && byref == GPUCompiler.BITS_VALUE
+            ET = eltype(typ)
+            if Core._call_in_world_total(world, EnzymeCore.EnzymeRules.inactive_type, ET)
+                return true
+            end
+            byref = GPUCompiler.MUT_REF
+            typ = ET
+            @static if Base.USE_GPL_LIBS
+                cholmod_exception = typ != SparseArrays.cholmod_dense_struct && typ != SparseArrays.cholmod_sparse_struct && typ != SparseArrays.cholmod_factor_struct
+            else
+                cholmod_exception = true
+            end
+            if !Base.allocatedinline(typ) && cholmod_exception
+                shouldLoad = false
+                offset = Base.mod(offset, sizeof(Int))
+            else
+                sz = max(1, actual_size(ET))
+                offset = Base.mod(offset, sz)
+            end
+        end
+
+        if (byref == GPUCompiler.MUT_REF || byref == GPUCompiler.BITS_REF) && Base.isconcretetype(typ)
+            if shouldLoad
+                byref = GPUCompiler.BITS_VALUE
+            end
+
+            sz = value_type(arg) == LLVM.IntType(1) ? 1 : sizeof(dl, value_type(arg))
+            is_padded = false
+
+            while offset != 0 && legal
+                @assert Base.isconcretetype(typ)
+                seen_field = false
+                lasti = 1
+                parent_typ = typ
+
+                for i in 1:typed_fieldcount(parent_typ)
+                    fo = typed_fieldoffset(parent_typ, i)
+                    if fo == offset && (i == typed_fieldcount(parent_typ) || typed_fieldoffset(parent_typ, i + 1) != offset)
+                        offset = 0
+                        if in(parent_typ, TypesNotToDisect)
+                            legal = false
+                        end
+                        next_offset = i == typed_fieldcount(parent_typ) ? actual_size(parent_typ) : typed_fieldoffset(parent_typ, i + 1)
+                        typ = typed_fieldtype(parent_typ, i)
+                        if Core._call_in_world_total(world, EnzymeCore.EnzymeRules.inactive_type, typ)
+                            return true
+                        end
+                        if sz > actual_size(typ) && fo + sz <= next_offset
+                            is_padded = true
+                        else
+                            is_padded = false
+                        end
+                        if !Base.allocatedinline(typ)
+                            if byref != GPUCompiler.BITS_VALUE
+                                legal = false
+                            end
+                            byref = GPUCompiler.MUT_REF
+                        end
+                        seen_field = true
+                        break
+                    elseif fo > offset
+                        offset = offset - typed_fieldoffset(parent_typ, lasti)
+                        if in(parent_typ, TypesNotToDisect)
+                            legal = false
+                        end
+                        next_offset = fo
+                        cur_fo = typed_fieldoffset(parent_typ, lasti)
+                        typ = typed_fieldtype(parent_typ, lasti)
+                        if Core._call_in_world_total(world, EnzymeCore.EnzymeRules.inactive_type, typ)
+                            return true
+                        end
+                        if offset == 0
+                            if sz > actual_size(typ) && cur_fo + sz <= next_offset
+                                is_padded = true
+                            else
+                                is_padded = false
+                            end
+                            if !Base.allocatedinline(typ)
+                                if byref != GPUCompiler.BITS_VALUE
+                                    legal = false
+                                end
+                                byref = GPUCompiler.MUT_REF
+                            end
+                        else
+                            is_padded = false
+                            if !Base.isconcretetype(typ) || !Base.allocatedinline(typ)
+                                legal = false
+                            end
+                        end
+                        seen_field = true
+                        break
+                    end
+
+                    if (i != typed_fieldcount(parent_typ) && fo != typed_fieldoffset(parent_typ, i + 1)) ||
+                            (i == typed_fieldcount(parent_typ) && fo != actual_size(parent_typ))
+                        lasti = i
+                    end
+                end
+                if !seen_field && typed_fieldcount(parent_typ) > 0
+                    offset = offset - typed_fieldoffset(parent_typ, lasti)
+                    if in(parent_typ, TypesNotToDisect)
+                        legal = false
+                    end
+                    next_offset = actual_size(parent_typ)
+                    cur_fo = typed_fieldoffset(parent_typ, lasti)
+                    typ = typed_fieldtype(parent_typ, lasti)
+                    if Core._call_in_world_total(world, EnzymeCore.EnzymeRules.inactive_type, typ)
+                        return true
+                    end
+                    if offset == 0
+                        if sz > actual_size(typ) && cur_fo + sz <= next_offset
+                            is_padded = true
+                        else
+                            is_padded = false
+                        end
+                        if !Base.allocatedinline(typ)
+                            if byref != GPUCompiler.BITS_VALUE
+                                legal = false
+                            end
+                            byref = GPUCompiler.MUT_REF
+                        end
+                    else
+                        is_padded = false
+                        if !Base.isconcretetype(typ) || !Base.allocatedinline(typ)
+                            legal = false
+                        end
+                    end
+                    seen_field = true
+                end
+                if !seen_field
+                    legal = false
+                end
+            end
+
+            typ2 = typ
+            while legal
+                if byref != GPUCompiler.BITS_VALUE && sz != sizeof(Int)
+                    legal = false
+                    break
+                end
+                should_recurse(typ2, value_type(arg), byref, dl) || break
+                if is_padded
+                    break
+                end
+                if !Base.isconcretetype(typ2)
+                    legal = false
+                    break
+                end
+                idx, _ = first_non_ghost(typ2)
+                if idx != -1
+                    if in(typ2, TypesNotToDisect)
+                        legal = false
+                    end
+                    typ2 = typed_fieldtype(typ2, idx)
+                    if Core._call_in_world_total(world, EnzymeCore.EnzymeRules.inactive_type, typ2)
+                        return true
+                    end
+                    if Base.allocatedinline(typ2)
+                        if byref == GPUCompiler.BITS_VALUE
+                            continue
+                        end
+                        legal = false
+                        break
+                    else
+                        if byref != GPUCompiler.BITS_VALUE
+                            legal = false
+                            break
+                        end
+                        byref = GPUCompiler.MUT_REF
+                        continue
+                    end
+                end
+                legal = false
+                break
+            end
+        end
+        return false
+    end
+
+    return false
+end
+
 @inline function is_zero(@nospecialize(x::LLVM.Value))::Bool
     if x isa LLVM.ConstantInt
         return convert(UInt, x) == 0

@@ -910,6 +910,7 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module, world::UInt, enzyme_ctx::E
                     T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
 
                     legal, source_typ, byref = abs_typeof(src, enzyme_ctx)
+                    from_inactive = extracted_from_inactive(src, enzyme_ctx, world)
                     codegen_typ = value_type(src)
                     if legal
                         if codegen_typ isa LLVM.PointerType || codegen_typ isa LLVM.IntegerType
@@ -942,6 +943,9 @@ function memcpy_alloca_to_loadstore(mod::LLVM.Module, world::UInt, enzyme_ctx::E
                     elseif codegen_typ == T_prjlvalue
                         metadata(src)["enzyme_type"] =
                             to_md(typetree_in_world(world, Ptr{Cvoid}, ctx, dl, seen), ctx)
+                    end
+                    if from_inactive || (legal && guaranteed_const_nongen(source_typ, world))
+                        metadata(src)["enzyme_inactive"] = inactive_md(INACTIVE_GUARANTEED_CONST)
                     end
                     FT = LLVM.FunctionType(
                         LLVM.VoidType(),

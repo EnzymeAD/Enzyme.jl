@@ -122,6 +122,10 @@ function get_offsets(@nospecialize(T::Type))
         end
     end
 
+    if EnzymeCore.EnzymeRules.inactive_type(T)
+        return ()
+    end
+
     @assert !(T <: AbstractFloat)
 
     if fieldcount(T) == 0
@@ -387,6 +391,10 @@ import Base: ismutabletype
 
 function typetree_inner(@nospecialize(T::Type), ctx, dl, seen::TypeTreeTable)
     if T isa UnionAll || T isa Union || T == Union{} || Base.isabstracttype(T)
+        return TypeTree()
+    end
+
+    if EnzymeCore.EnzymeRules.inactive_type(T)
         return TypeTree()
     end
 

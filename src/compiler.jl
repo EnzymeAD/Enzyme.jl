@@ -6974,6 +6974,11 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
             end
         end
 
+        from_inactive =
+            !API.HasFromStack(inst) &&
+            (isa(inst, LLVM.ExtractValueInst) || isa(inst, LLVM.LoadInst)) &&
+            extracted_from_inactive(inst, enzyme_ctx, job.world)
+
         if !API.HasFromStack(inst) &&
            ((isa(inst, LLVM.CallInst) &&
              (!isa(fn, LLVM.Function) || isempty(blocks(fn))) ) || isa(inst, LLVM.LoadInst) || isa(inst, LLVM.AllocaInst) || isa(inst, LLVM.ExtractValueInst))
@@ -7070,13 +7075,11 @@ end
             continue
         end
 
-        legal, jTy, byref = abs_typeof(inst, enzyme_ctx, true)
-        if !legal
-            continue
-        end
-
-        if !guaranteed_const_nongen(jTy, job.world)
-            continue
+        if !from_inactive
+            legal, jTy, byref = abs_typeof(inst, enzyme_ctx, true)
+            if !legal || !guaranteed_const_nongen(jTy, job.world)
+                continue
+            end
         end
         if isa(inst, LLVM.CallInst)
             LLVM.API.LLVMAddCallSiteAttribute(
