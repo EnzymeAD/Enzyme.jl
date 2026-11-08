@@ -318,10 +318,36 @@ for RTA in (false, true)
     end
 end
 
+@noinline function extract_unsafe_wrap(colptr::Vector{Int}, nzval::Vector{Float64})
+    pcol = Base.unsafe_convert(Ptr{Int}, colptr)
+    pnz = Base.unsafe_convert(Ptr{Float64}, nzval)
+    return (
+        Base.unsafe_wrap(Array, pcol, length(colptr)),
+        Base.unsafe_wrap(Array, pcol, (length(colptr), 1)),
+        Base.unsafe_wrap(Array, pnz, length(nzval)),
+        Base.unsafe_wrap(Array, pnz, (length(nzval), 1)),
+    )
+end
+
+function unsafe_wrap_tuple_test(colptr::Vector{Int}, nzval::Vector{Float64})
+    return GC.@preserve colptr nzval begin
+        c1, c2, v1, v2 = extract_unsafe_wrap(colptr, nzval)
+        v1[c1[1]] + 2.0 * v2[c2[1, 1], 1]
+    end
+end
+
 @testset "Unsafe wrap" begin
     autodiff(Forward, unsafe_wrap_test, Duplicated(zeros(1), zeros(1)), Const(1), Duplicated(1.0, 2.0))
 
-    # TODO test for batch and reverse
+    colptr = [2, 3]
+    nzval = [3.0, 5.0]
+    dnzval = zeros(2)
+    @test autodiff(Forward, unsafe_wrap_tuple_test, Const(colptr), Duplicated(nzval, [0.0, 1.0]))[1] ≈ 3.0
+    autodiff(Reverse, unsafe_wrap_tuple_test, Active, Const(colptr), Duplicated(nzval, dnzval))
+    @test dnzval ≈ [0.0, 3.0]
+    fill!(dnzval, 0.0)
+    autodiff(set_runtime_activity(Reverse), unsafe_wrap_tuple_test, Active, Const(colptr), Duplicated(nzval, dnzval))
+    @test dnzval ≈ [0.0, 3.0]
 end
 
 # `__cat_offset!` copies an aggregate with inline roots through a critical edge
