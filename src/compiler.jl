@@ -1487,6 +1487,7 @@ end
     if func == typeof(Base.eps) ||
        func == typeof(Base.nextfloat) ||
        func == typeof(Base.prevfloat)
+        has_ptr = any(p -> value_type(p) isa LLVM.PointerType, parameters(llvmfn))
         if LLVM.version().major <= 15
             handleCustom(
                 state,
@@ -1496,7 +1497,7 @@ end
                 "jl_inactive_inout",
                 LLVM.Attribute[
                     StringAttribute("enzyme_inactive"),
-                    EnumAttribute("readnone"),
+                    EnumAttribute(has_ptr ? "readonly" : "readnone"),
                     EnumAttribute("speculatable"),
                     EnumAttribute("willreturn"),
                     EnumAttribute("nosync"),
@@ -1514,7 +1515,7 @@ end
                 "jl_inactive_inout",
                 LLVM.Attribute[
                     StringAttribute("enzyme_inactive"),
-                    EnumAttribute("memory", NoEffects.data),
+                    EnumAttribute("memory", (has_ptr ? ReadOnlyEffects : NoEffects).data),
                     EnumAttribute("speculatable"),
                     EnumAttribute("willreturn"),
                     EnumAttribute("nosync"),

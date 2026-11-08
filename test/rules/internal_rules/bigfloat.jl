@@ -70,4 +70,14 @@ end
     # construction inside `nextfloat`/`_duplicate` when it has to differentiate it.
     epsconst(x) = x * x + zero(eps(BigFloat))
     @test autodiff(Enzyme.Forward, epsconst, Duplicated, Duplicated(a, da))[:1] ≈ 2 * a * da
+
+    function eps_branch!(out)
+        out[1] = eps(BigFloat) > 0 ? 1.0 : 0.0
+        out[2] = nextfloat(BigFloat(1.0)) > 1.0 ? 1.0 : 0.0
+        out[3] = prevfloat(BigFloat(1.0)) < 1.0 ? 1.0 : 0.0
+        return nothing
+    end
+    out = zeros(3)
+    autodiff(Enzyme.Forward, Const(eps_branch!), Const(out))
+    @test out == [1.0, 1.0, 1.0]
 end
