@@ -2319,47 +2319,66 @@ function julia_sanitize(
     B::LLVM.API.LLVMBuilderRef,
     mask::LLVM.API.LLVMValueRef,
 )::LLVM.API.LLVMValueRef
-    orig = LLVM.Value(orig)
     val = LLVM.Value(val)
     B = LLVM.IRBuilder(B)
     if CheckNan[]
-        curent_bb = position(B)
-        fn = LLVM.parent(curent_bb)
-        mod = LLVM.parent(fn)
         ty = LLVM.value_type(val)
-        vt = LLVM.VoidType()
-        FT = LLVM.FunctionType(vt, [ty, LLVM.PointerType(LLVM.Int8Type())])
+        is_fp = ty isa LLVM.FloatingPointType
+        is_fp_vec = ty isa LLVM.VectorType && eltype(ty) isa LLVM.FloatingPointType
+        if is_fp || is_fp_vec
+            curent_bb = position(B)
+            fn = LLVM.parent(curent_bb)
+            mod = LLVM.parent(fn)
+            vt = LLVM.VoidType()
+            FT = LLVM.FunctionType(vt, [ty, LLVM.PointerType(LLVM.Int8Type())])
 
-        stringv = "Enzyme: Found nan while computing derivative of " * string(orig)
-        if orig !== nothing && isa(orig, LLVM.Instruction)
-            bt = GPUCompiler.backtrace(orig)
-            stringv *= sprint(Base.Fix2(Base.show_backtrace, bt))
-        end
-
-        fn, _ = get_function!(mod, "julia.sanitize." * string(ty), FT)
-        if isempty(blocks(fn))
-            let builder = IRBuilder()
-                entry = BasicBlock(fn, "entry")
-                good = BasicBlock(fn, "good")
-                bad = BasicBlock(fn, "bad")
-                position!(builder, entry)
-                inp, sval = collect(parameters(fn))
-                cmp = fcmp!(builder, LLVM.API.LLVMRealUNO, inp, inp)
-
-                br!(builder, cmp, bad, good)
-
-                position!(builder, good)
-                ret!(builder)
-
-                position!(builder, bad)
-
-                emit_error(builder, nothing, sval, EnzymeNoDerivativeError{Nothing, Nothing})
-                unreachable!(builder)
-                dispose(builder)
+            stringv = "Enzyme: Found nan while computing derivative of "
+            if orig != C_NULL
+                orig_v = LLVM.Value(orig)
+                stringv *= string(orig_v)
+                if isa(orig_v, LLVM.Instruction)
+                    bt = GPUCompiler.backtrace(orig_v)
+                    stringv *= sprint(Base.Fix2(Base.show_backtrace, bt))
+                end
             end
+
+            fn, _ = get_function!(mod, "julia.sanitize." * string(ty), FT)
+            if isempty(blocks(fn))
+                let builder = IRBuilder()
+                    entry = BasicBlock(fn, "entry")
+                    good = BasicBlock(fn, "good")
+                    bad = BasicBlock(fn, "bad")
+                    position!(builder, entry)
+                    inp, sval = collect(parameters(fn))
+                    cmp = fcmp!(builder, LLVM.API.LLVMRealUNO, inp, inp)
+                    if is_fp_vec
+                        len = length(ty)
+                        res = extract_element!(builder, cmp, ConstantInt(Int32(0)))
+                        for i in 1:(len - 1)
+                            res = or!(
+                                builder,
+                                res,
+                                extract_element!(builder, cmp, ConstantInt(Int32(i))),
+                            )
+                        end
+                        cmp = res
+                    end
+
+                    br!(builder, cmp, bad, good)
+
+                    position!(builder, good)
+                    ret!(builder)
+
+                    position!(builder, bad)
+
+                    emit_error(builder, nothing, sval, EnzymeNoDerivativeError{Nothing, Nothing})
+                    unreachable!(builder)
+                    dispose(builder)
+                end
+            end
+            # val =
+            call!(B, FT, fn, LLVM.Value[val, globalstring_ptr!(B, stringv)])
         end
-        # val = 
-        call!(B, FT, fn, LLVM.Value[val, globalstring_ptr!(B, stringv)])
     end
     return val.ref
 end
@@ -8375,7 +8394,7 @@ const autodiff_cache = Dict{Ptr{Cvoid}, CachedThunk}()
 
 const cache_lock = ReentrantLock()
 @inline function cached_compilation(@nospecialize(job::CompilerJob))::CompileResult
-    key = hash(job)
+    key = hash(job, UInt(CheckNan[]))
 
     # NOTE: no use of lock(::Function)/@lock/get! to keep stack traces clean
     lock(cache_lock)

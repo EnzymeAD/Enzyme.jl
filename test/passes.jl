@@ -1172,3 +1172,65 @@ end
     @test dres_b2[1] ≈ [1.0, -0.5]
     @test dres_b2[2] ≈ [-2.0, 1.0]
 end
+
+@testset "CheckNan julia_sanitize non-FP and vector types + cache invalidation (#3865)" begin
+    LLVM.Context() do ctx
+        mod = parse(
+            LLVM.Module,
+            """
+            define i64 @test_int(i64 %x) {
+            entry:
+              ret i64 %x
+            }
+            define <2 x double> @test_vec(<2 x double> %v) {
+            entry:
+              ret <2 x double> %v
+            }
+            define double @test_fp(double %d) {
+            entry:
+              ret double %d
+            }
+            """,
+        )
+        prev = Enzyme.Compiler.CheckNan[]
+        try
+            Enzyme.Compiler.CheckNan[] = true
+            for fname in ("test_int", "test_vec", "test_fp")
+                f = LLVM.functions(mod)[fname]
+                bb = first(LLVM.blocks(f))
+                term = LLVM.terminator(bb)
+                B = LLVM.IRBuilder()
+                LLVM.position!(B, term)
+                arg = first(LLVM.parameters(f))
+                Enzyme.Compiler.julia_sanitize(
+                    LLVM.API.LLVMValueRef(C_NULL),
+                    arg.ref,
+                    B.ref,
+                    LLVM.API.LLVMValueRef(C_NULL),
+                )
+                LLVM.dispose(B)
+            end
+            @test LLVM.verify(mod) === nothing
+            ir = string(mod)
+            @test !occursin("julia.sanitize.i64", ir)
+            @test occursin("julia.sanitize.<2 x double>", ir)
+            @test occursin("julia.sanitize.double", ir)
+        finally
+            Enzyme.Compiler.CheckNan[] = prev
+        end
+    end
+
+    _nan_f(x) = x[1] * x[1]
+    prev = Enzyme.Compiler.CheckNan[]
+    try
+        Enzyme.Compiler.CheckNan[] = true
+        x = [NaN]
+        dx = [0.0]
+        @test_throws Enzyme.Compiler.EnzymeNoDerivativeError autodiff(
+            Reverse, _nan_f, Active, Duplicated(x, dx)
+        )
+    finally
+        Enzyme.Compiler.CheckNan[] = prev
+    end
+end
+
