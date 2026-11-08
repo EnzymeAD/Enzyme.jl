@@ -16,12 +16,15 @@ function EnzymeRules.forward(
         h = func.val(x.val, y.val, z.val, map(x -> x.val, xs)...)
         n = iszero(h) ? one(h) : h
         if EnzymeRules.width(config) == 1
-            dh = (
-                _hypotforward(x) +
-                    _hypotforward(y) +
-                    _hypotforward(z) +
-                    sum(_hypotforward, xs, init = zero(real(x.val)))
-            ) / n
+            dh = convert(
+                typeof(h),
+                (
+                    _hypotforward(x) +
+                        _hypotforward(y) +
+                        _hypotforward(z) +
+                        sum(_hypotforward, xs, init = zero(real(x.val)))
+                ) / n,
+            )
             if EnzymeRules.needs_primal(config)
                 return Duplicated(h, dh)
             else
@@ -29,12 +32,15 @@ function EnzymeRules.forward(
             end
         else
             dh = ntuple(
-                i -> (
-                    _hypotforward(x, i) +
-                        _hypotforward(y, i) +
-                        _hypotforward(z, i) +
-                        sum(x -> _hypotforward(x, i), xs; init = zero(real(x.val)))
-                ) / n,
+                i -> convert(
+                    typeof(h),
+                    (
+                        _hypotforward(x, i) +
+                            _hypotforward(y, i) +
+                            _hypotforward(z, i) +
+                            sum(x -> _hypotforward(x, i), xs; init = zero(real(x.val)))
+                    ) / n,
+                ),
                 Val(EnzymeRules.width(config)),
             )
             if EnzymeRules.needs_primal(config)
@@ -61,9 +67,9 @@ function _hypotreverse(x, w::Val{W}, dret::Const, h) where {W}
 end
 function _hypotreverse(x, w::Val{W}, dret, h) where {W}
     if W == 1
-        return x.val * dret.val / h
+        return convert(typeof(x.val), x.val * dret.val / h)
     else
-        return ntuple(i -> x.val * dret.val[i] / h, w)
+        return ntuple(i -> convert(typeof(x.val), x.val * dret.val[i] / h), w)
     end
 end
 
