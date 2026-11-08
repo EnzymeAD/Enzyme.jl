@@ -225,4 +225,105 @@ end
     @test dst.data == [2.0, 4.0]
 end
 
+@noinline K_m_0(m::Float64) = 0.0
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfigWidth{1},
+        func::Const{typeof(K_m_0)},
+        ::Type{<:Active},
+        m::Active,
+    )
+    primal = EnzymeRules.needs_primal(config) ? func.val(m.val) : nothing
+    return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfigWidth{1},
+        ::Const{typeof(K_m_0)},
+        dret::Active,
+        tape,
+        m::Active{Float64},
+    )
+    return (0.5 * dret.val,)
+end
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(K_m_0)},
+        ::Type{RT},
+        m::Duplicated{Float64},
+    ) where {RT}
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return Duplicated(func.val(m.val), 0.5 * m.dval)
+    elseif EnzymeRules.needs_shadow(config)
+        return 0.5 * m.dval
+    elseif EnzymeRules.needs_primal(config)
+        return func.val(m.val)
+    else
+        return nothing
+    end
+end
+
+function K_m(m::Float64)
+    if abs(m) == 0.0
+        return K_m_0(m)
+    else
+        return (1.0 - sqrt(1.0 - m)) / m
+    end
+end
+
+@noinline K_m_0_constprop(c::Float64, m::Float64) = c
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfigWidth{1},
+        func::Const{typeof(K_m_0_constprop)},
+        ::Type{<:Active},
+        c::Const{Float64},
+        m::Active{Float64},
+    )
+    primal = EnzymeRules.needs_primal(config) ? func.val(c.val, m.val) : nothing
+    return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfigWidth{1},
+        ::Const{typeof(K_m_0_constprop)},
+        dret::Active,
+        tape,
+        c::Const{Float64},
+        m::Active{Float64},
+    )
+    return (nothing, 0.5 * dret.val)
+end
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(K_m_0_constprop)},
+        ::Type{RT},
+        c::Const{Float64},
+        m::Duplicated{Float64},
+    ) where {RT}
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return Duplicated(func.val(c.val, m.val), 0.5 * m.dval)
+    elseif EnzymeRules.needs_shadow(config)
+        return 0.5 * m.dval
+    elseif EnzymeRules.needs_primal(config)
+        return func.val(c.val, m.val)
+    else
+        return nothing
+    end
+end
+
+K_m_constprop(m::Float64) = K_m_0_constprop(0.0, m)
+
+@testset "Custom rule returning constant not DCEd (#3006)" begin
+    @test autodiff(Reverse, K_m, Active, Active(0.0)) == ((0.5,),)
+    @test autodiff(ReverseWithPrimal, K_m, Active, Active(0.0)) == ((0.5,), 0.0)
+    @test autodiff(Forward, K_m, Duplicated(0.0, 1.0)) == (0.5,)
+    @test autodiff(ForwardWithPrimal, K_m, Duplicated(0.0, 1.0)) == (0.5, 0.0)
+
+    @test autodiff(Reverse, K_m_constprop, Active, Active(0.0)) == ((0.5,),)
+    @test autodiff(Forward, K_m_constprop, Duplicated(0.0, 1.0)) == (0.5,)
+end
+
 end # module ForwardRules

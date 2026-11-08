@@ -375,8 +375,12 @@ end
 Core.Compiler.nsplit_impl(info::NoInlineCallInfo) = Core.Compiler.nsplit(info.info)
 Core.Compiler.getsplit_impl(info::NoInlineCallInfo, idx::Int) =
     Core.Compiler.getsplit(info.info, idx)
-Core.Compiler.getresult_impl(info::NoInlineCallInfo, idx::Int) =
-    Core.Compiler.getresult(info.info, idx)
+function Core.Compiler.getresult_impl(info::NoInlineCallInfo, idx::Int)
+    if info.kind === :frule || info.kind === :rrule
+        return nothing
+    end
+    return Core.Compiler.getresult(info.info, idx)
+end
 if VERSION >= v"1.12.0-DEV.1531"
     Core.Compiler.add_edges_impl(edges::Vector{Any}, info::NoInlineCallInfo) =
         Core.Compiler.add_edges!(edges, info.info)
@@ -438,18 +442,91 @@ end
 @inline function (closure::FutureCallinfoByType)(ret::Core.Compiler.CallMeta, @nospecialize(interp::AbstractInterpreter), sv::AbsIntState)
     atype = closure.atype
     callinfo = ret.info
+    rt = ret.rt
+    effects = ret.effects
 
     kind = enzyme_call_kind(interp, simplify_kw(atype))
     if kind === :alwaysinline
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
     elseif kind !== nothing
         callinfo = NoInlineCallInfo(callinfo, atype, kind)
+        if kind === :frule || kind === :rrule
+            rt = Core.Compiler.widenconst(rt)
+            effects = Core.Compiler.Effects(
+                effects;
+                consistent = Core.Compiler.ALWAYS_FALSE,
+                effect_free = Core.Compiler.ALWAYS_FALSE,
+            )
+        end
     end
     @static if VERSION ≥ v"1.11-"
-        return Core.Compiler.CallMeta(ret.rt, ret.exct, ret.effects, callinfo)
+        return Core.Compiler.CallMeta(rt, ret.exct, effects, callinfo)
     else
-        return Core.Compiler.CallMeta(ret.rt, ret.effects, callinfo)
+        return Core.Compiler.CallMeta(rt, effects, callinfo)
     end
+end
+
+@static if VERSION ≥ v"1.11-"
+    function Core.Compiler.type_annotate!(
+            @nospecialize(interp::EnzymeInterpreter),
+            sv::InferenceState,
+        )
+        @invoke Core.Compiler.type_annotate!(
+            interp::AbstractInterpreter,
+            sv::InferenceState,
+        )
+        kind = enzyme_call_kind(interp, simplify_kw(sv.linfo.specTypes))
+        if kind === :frule || kind === :rrule
+            sv.ipo_effects = sv.result.ipo_effects = Core.Compiler.Effects(
+                sv.result.ipo_effects;
+                consistent = Core.Compiler.ALWAYS_FALSE,
+                effect_free = Core.Compiler.ALWAYS_FALSE,
+            )
+        end
+        return nothing
+    end
+else
+    function Core.Compiler.finish(
+            me::InferenceState,
+            @nospecialize(interp::EnzymeInterpreter),
+        )
+        res = @invoke Core.Compiler.finish(
+            me::InferenceState,
+            interp::AbstractInterpreter,
+        )
+        kind = enzyme_call_kind(interp, simplify_kw(me.linfo.specTypes))
+        if kind === :frule || kind === :rrule
+            me.ipo_effects = me.result.ipo_effects = Core.Compiler.Effects(
+                me.result.ipo_effects;
+                consistent = Core.Compiler.ALWAYS_FALSE,
+                effect_free = Core.Compiler.ALWAYS_FALSE,
+            )
+        end
+        return res
+    end
+end
+
+function Core.Compiler.finish(
+        @nospecialize(interp::EnzymeInterpreter),
+        opt::Core.Compiler.OptimizationState,
+        ir::Core.Compiler.IRCode,
+        caller::InferenceResult,
+    )
+    res = @invoke Core.Compiler.finish(
+        interp::AbstractInterpreter,
+        opt::Core.Compiler.OptimizationState,
+        ir::Core.Compiler.IRCode,
+        caller::InferenceResult,
+    )
+    kind = enzyme_call_kind(interp, simplify_kw(caller.linfo.specTypes))
+    if kind === :frule || kind === :rrule
+        caller.ipo_effects = Core.Compiler.Effects(
+            caller.ipo_effects;
+            consistent = Core.Compiler.ALWAYS_FALSE,
+            effect_free = Core.Compiler.ALWAYS_FALSE,
+        )
+    end
+    return res
 end
 
 function Core.Compiler.abstract_call_gf_by_type(
