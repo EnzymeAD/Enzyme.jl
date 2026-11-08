@@ -616,13 +616,16 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
 
     vals = Union{Symbol,Expr}[]
     consts = Union{Symbol,Expr}[]
+    states = Compiler.ActivityState[]
     for (arg, ty) in zip(syms, tys)
         if ty <: Const
             push!(vals, :($arg.val))
             push!(consts, arg)
+            push!(states, Compiler.AnyState)
         else
             push!(vals, arg)
             push!(consts, :(Const($arg)))
+            push!(states, Compiler.active_reg_nothrow(ty))
         end
     end
 
@@ -651,6 +654,8 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
             for (j, arg2) in enumerate(syms)
                 if i == j
                     push!(dargs, :(Duplicated($arg, one($arg))))
+                elseif states[j] == Compiler.DupState || states[j] == Compiler.MixedState
+                    push!(dargs, :(Duplicated($arg2, make_zero($arg2))))
                 else
                     push!(dargs, consts[j])
                 end
@@ -673,6 +678,9 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
             for (j, arg2) in enumerate(syms)
                 if i == j
                     push!(dargs, :(BatchDuplicated($arg, $(shads[i]))))
+                elseif states[j] == Compiler.DupState || states[j] == Compiler.MixedState
+                    zexprs = Expr[:(make_zero($arg2)) for _ in 1:argnum]
+                    push!(dargs, :(BatchDuplicated($arg2, ($(zexprs...),))))
                 else
                     push!(dargs, consts[j])
                 end
@@ -704,6 +712,8 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
                 for (j, arg2) in enumerate(syms)
                     if i == j
                         push!(dargs, :(Duplicated($arg, $(shads[i])[$an])))
+                    elseif states[j] == Compiler.DupState || states[j] == Compiler.MixedState
+                        push!(dargs, :(Duplicated($arg2, make_zero($arg2))))
                     else
                         push!(dargs, consts[j])
                     end
@@ -724,10 +734,14 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
         else
             subderivatives = Union{Symbol,Expr}[]
             for an in 1:argnum
+                bsize = length(ST.parameters[i].parameters[an].parameters)
                 dargs = Union{Symbol,Expr}[]
                 for (j, arg2) in enumerate(syms)
                     if i == j
                         push!(dargs, :(BatchDuplicated($arg, $(shads[i])[$an])))
+                    elseif states[j] == Compiler.DupState || states[j] == Compiler.MixedState
+                        zexprs = Expr[:(make_zero($arg2)) for _ in 1:bsize]
+                        push!(dargs, :(BatchDuplicated($arg2, ($(zexprs...),))))
                     else
                         push!(dargs, consts[j])
                     end

@@ -677,3 +677,36 @@ end
     # @show J_r_3(u, A, x)
     # @show J_f_3(u, A, x)
 end
+
+@testset "Forward gradient with mutated scratch arg (#2354)" begin
+    function sum_update(y, x, theta)
+        y .= x .* theta
+        return sum(y)
+    end
+    y = zeros(3)
+    x = [2.0, 2.0, 2.0]
+    theta = [3.0, 3.0, 3.0]
+
+    res = gradient(Forward, sum_update, y, x, Const(theta))
+    @test res[1] == [0.0, 0.0, 0.0]
+    @test res[2] == [3.0, 3.0, 3.0]
+    @test res[3] === nothing
+
+    res_primal = gradient(ForwardWithPrimal, sum_update, y, x, Const(theta))
+    @test res_primal.val == 18.0
+    @test res_primal.derivs[1] == [0.0, 0.0, 0.0]
+    @test res_primal.derivs[2] == [3.0, 3.0, 3.0]
+    @test res_primal.derivs[3] === nothing
+
+    for chunk in (Val(1), Val(2), Val(3))
+        res_c = gradient(Forward, sum_update, y, x, Const(theta); chunk)
+        @test res_c[1] == [0.0, 0.0, 0.0]
+        @test res_c[2] == [3.0, 3.0, 3.0]
+        @test res_c[3] === nothing
+    end
+
+    res_scalar = gradient(Forward, sum_update, zeros(3), [1.0, 2.0, 3.0], 0.5)
+    @test res_scalar[1] == [0.0, 0.0, 0.0]
+    @test res_scalar[2] == [0.5, 0.5, 0.5]
+    @test res_scalar[3] == 6.0
+end
