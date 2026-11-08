@@ -149,9 +149,9 @@ function EnzymeInterpreter(
     @assert world <= Base.get_world_counter()
 
     parms = @static if VERSION >= v"1.12.0-DEV.1017"
-        InferenceParams()
+        InferenceParams(; max_tuple_splat = 512)
     else
-        InferenceParams(; unoptimize_throw_blocks=false)
+        InferenceParams(; unoptimize_throw_blocks = false, max_tuple_splat = 512)
     end
     
     @static if HAS_INTEGRATED_CACHE
@@ -228,7 +228,7 @@ function EnzymeInterpreter(
 
         # parameters for inference and optimization
         parms,
-        OptimizationParams(),
+        OptimizationParams(; max_tuple_splat = 512),
         forward_rules::Bool,
         reverse_rules::Bool,
         inactive_rules::Bool,
