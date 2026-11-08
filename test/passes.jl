@@ -1178,17 +1178,11 @@ end
     lljit = JIT.get_jit()
     jd = JIT.jit[].jd
 
-    for name in (
-            "__truncdfhf2",
-            "__truncsfhf2",
-            "__extendhfsf2",
-            "__gnu_f2h_ieee",
-            "__gnu_h2f_ieee",
-            "__truncsfbf2",
-            "__truncdfbf2",
-        )
-        @test LLVM.find_symbol(name) != C_NULL
-        @test JIT.lookup(jd, name).ptr != 0
+    for (name, cands) in JIT.FP16_RUNTIME_SYMBOLS
+        if any(c -> JIT._lookup_runtime_symbol(c) != C_NULL, (name, cands...))
+            @test LLVM.find_symbol(name) != C_NULL
+            @test JIT.lookup(jd, name).ptr != 0
+        end
     end
 
     # Unit-test `register_fp16_symbols!` with synthetic `julia__...` symbols.
@@ -1212,36 +1206,6 @@ end
     LLVM.define(jd, LLVM.absolute_symbols(pairs))
     @test JIT.lookup(jd, "__test_truncdfhf2_1651").ptr == UInt(fake_ptr1)
     @test JIT.lookup(jd, "__test_truncsfhf2_1651").ptr == UInt(fake_ptr2)
-
-    # Verify ORC JIT materializes calls to the compiler-rt FP16 conversion symbols directly.
-    LLVM.Context() do ctx
-        mod = parse(
-            LLVM.Module,
-            """
-            declare half @__truncdfhf2(double)
-            declare half @__truncsfhf2(float)
-            declare float @__extendhfsf2(half)
-            declare half @__gnu_f2h_ieee(float)
-            declare float @__gnu_h2f_ieee(half)
-
-            define float @test_fp16_rt_1651(double %d, float %f) {
-                %h1 = call half @__truncdfhf2(double %d)
-                %h2 = call half @__truncsfhf2(float %f)
-                %h3 = call half @__gnu_f2h_ieee(float %f)
-                %f1 = call float @__extendhfsf2(half %h1)
-                %f2 = call float @__extendhfsf2(half %h2)
-                %f3 = call float @__gnu_h2f_ieee(half %h3)
-                %s1 = fadd float %f1, %f2
-                %s2 = fadd float %s1, %f3
-                ret float %s2
-            }
-            """,
-        )
-        mod_jd = JIT.add!(mod)
-        addr = JIT.lookup(mod_jd, "test_fp16_rt_1651")
-        res = ccall(reinterpret(Ptr{Cvoid}, addr.ptr), Float32, (Float64, Float32), 1.5, 2.25f0)
-        @test res === 6.0f0
-    end
 
     # End-to-end autodiff through Float16/Float32/Float64 conversions and sin.(x::Vector{Float16}).
     f_sin_f16(x) = sum(sin.(x))

@@ -81,11 +81,11 @@ end
 
 const FP16_RUNTIME_SYMBOLS = (
     ("__truncdfhf2", ("julia__truncdfhf2",)),
-    ("__truncsfhf2", ("julia__truncsfhf2", "julia__gnu_f2h_ieee")),
-    ("__extendhfsf2", ("julia__extendhfsf2", "julia__gnu_h2f_ieee")),
+    ("__truncsfhf2", ("julia__truncsfhf2",)),
+    ("__extendhfsf2", ("julia__extendhfsf2",)),
     ("__extendhfdf2", ("julia__extendhfdf2",)),
-    ("__gnu_f2h_ieee", ("julia__gnu_f2h_ieee", "julia__truncsfhf2")),
-    ("__gnu_h2f_ieee", ("julia__gnu_h2f_ieee", "julia__extendhfsf2")),
+    ("__gnu_f2h_ieee", ("julia__gnu_f2h_ieee",)),
+    ("__gnu_h2f_ieee", ("julia__gnu_h2f_ieee",)),
     ("__truncsfbf2", ("julia__truncsfbf2",)),
     ("__truncdfbf2", ("julia__truncdfbf2",)),
 )
@@ -119,16 +119,15 @@ function register_fp16_symbols!(
     )
     for entry in symbols
         name, candidates = _fp16_symbol_candidates(entry)
-        ptr = C_NULL
-        for cand in candidates
-            ptr = _lookup_runtime_symbol(cand)
-            ptr != C_NULL && break
-        end
+        ptr = _lookup_runtime_symbol(name)
         if ptr == C_NULL
-            ptr = _lookup_runtime_symbol(name)
+            for cand in candidates
+                ptr = _lookup_runtime_symbol(cand)
+                ptr != C_NULL && break
+            end
         end
         if ptr != C_NULL
-            if LLVM.find_symbol(name) == C_NULL || Sys.iswindows()
+            if LLVM.find_symbol(name) == C_NULL
                 LLVM.API.LLVMAddSymbol(name, ptr)
             end
             push!(pairs, absolute_symbol_pair(mangle(lljit, name), ptr))
