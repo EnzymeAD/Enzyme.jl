@@ -1379,6 +1379,19 @@ end
 		    end
                 end
             else
+                if width > 1
+                    T_jlvalue = LLVM.StructType(LLVMType[])
+                    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+                    shadow_ret_ty = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+                    if value_type(res) != shadow_ret_ty && value_type(res) == T_prjlvalue
+                        dval = UndefValue(shadow_ret_ty)
+                        for idx in 1:width
+                            elem = emit_nthfield!(B, res, ConstantInt(idx - 1))
+                            dval = insert_value!(B, dval, elem, idx - 1)
+                        end
+                        res = dval
+                    end
+                end
                 shadowV = res.ref
             end
         else
@@ -1436,8 +1449,23 @@ end
 		    end
                 end
             else
-                normalV = extract_value!(B, res, 0).ref
-                shadowV = extract_value!(B, res, 1).ref
+                val = extract_value!(B, res, 0)
+                dval = extract_value!(B, res, 1)
+                if width > 1
+                    T_jlvalue = LLVM.StructType(LLVMType[])
+                    T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+                    shadow_ret_ty = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+                    if value_type(dval) != shadow_ret_ty && value_type(dval) == T_prjlvalue
+                        unpacked = UndefValue(shadow_ret_ty)
+                        for idx in 1:width
+                            elem = emit_nthfield!(B, dval, ConstantInt(idx - 1))
+                            unpacked = insert_value!(B, unpacked, elem, idx - 1)
+                        end
+                        dval = unpacked
+                    end
+                end
+                normalV = val.ref
+                shadowV = dval.ref
             end
         end
     end

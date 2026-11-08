@@ -225,4 +225,60 @@ end
     @test dst.data == [2.0, 4.0]
 end
 
+@noinline function numeric_sol_2796(θ::Vector{Float64})::AbstractVector{Float64}
+    return Base.inferencebarrier([2.0 * θ[1], 3.0 * θ[2]])::AbstractVector{Float64}
+end
+
+function EnzymeRules.forward(
+        config::FwdConfig,
+        func::Const{typeof(numeric_sol_2796)},
+        ::Type{RT},
+        θ::Annotation{<:AbstractVector{T}},
+    ) where {RT, T}
+    w = EnzymeRules.width(config)
+    np = EnzymeRules.needs_primal(config)
+    ns = EnzymeRules.needs_shadow(config)
+    x_vals = func.val(θ.val)
+    θ isa Const && return (np ? x_vals : nothing)
+    seeds = w == 1 ? (θ.dval,) : θ.dval
+    x_dvals = ntuple(Val(w)) do i
+        Base.inferencebarrier([2.0 * seeds[i][1], 3.0 * seeds[i][2]])::AbstractVector{T}
+    end::NTuple{w, AbstractVector{T}}
+    if np && ns
+        return w == 1 ? Duplicated{eltype(RT)}(x_vals, x_dvals[1]) : BatchDuplicated{eltype(RT), w}(x_vals, x_dvals)
+    elseif np
+        return x_vals
+    elseif ns
+        return w == 1 ? x_dvals[1] : x_dvals
+    end
+end
+
+@testset "BatchDuplicated custom forward rule with abstract return (#2796)" begin
+    θ = [1.5, 2.5]
+    @test autodiff(Forward, numeric_sol_2796, Duplicated(θ, [1.0, 0.0]))[1] == [2.0, 0.0]
+    res_dup = autodiff(ForwardWithPrimal, numeric_sol_2796, Duplicated(θ, [1.0, 0.0]))
+    @test res_dup[1] == [2.0, 0.0]
+    @test res_dup[2] == [3.0, 7.5]
+
+    @test jacobian(Forward, numeric_sol_2796, θ) == ([2.0 0.0; 0.0 3.0],)
+
+    res1 = autodiff(Forward, numeric_sol_2796, BatchDuplicated, BatchDuplicated(θ, ([1.0, 0.0], [0.0, 1.0])))
+    @test res1[1][1] == [2.0, 0.0]
+    @test res1[1][2] == [0.0, 3.0]
+
+    res2 = autodiff(Forward, numeric_sol_2796, BatchDuplicated, BatchDuplicatedNoNeed(θ, ([1.0, 0.0], [0.0, 1.0])))
+    @test res2[1][1] == [2.0, 0.0]
+    @test res2[1][2] == [0.0, 3.0]
+
+    res3 = autodiff(ForwardWithPrimal, numeric_sol_2796, BatchDuplicated, BatchDuplicated(θ, ([1.0, 0.0], [0.0, 1.0])))
+    @test res3[1][1] == [2.0, 0.0]
+    @test res3[1][2] == [0.0, 3.0]
+    @test res3[2] == [3.0, 7.5]
+
+    res4 = autodiff(ForwardWithPrimal, numeric_sol_2796, BatchDuplicated, BatchDuplicatedNoNeed(θ, ([1.0, 0.0], [0.0, 1.0])))
+    @test res4[1][1] == [2.0, 0.0]
+    @test res4[1][2] == [0.0, 3.0]
+    @test res4[2] == [3.0, 7.5]
+end
+
 end # module ForwardRules
