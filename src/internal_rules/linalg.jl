@@ -427,16 +427,14 @@ function EnzymeRules.augmented_primal(
     end
 
 
-    # Check if A is overwritten and B is active (and thus required)
+    # Cache A / B whenever the other argument and C are active
     cache_A = (
-            EnzymeRules.overwritten(config)[3]
-            && !(typeof(B) <: Const)
+            !(typeof(B) <: Const)
             && !(typeof(C) <: Const)
         ) ? copy(A.val) : nothing
 
     cache_B = (
-            EnzymeRules.overwritten(config)[4]
-            && !(typeof(A) <: Const)
+            !(typeof(A) <: Const)
             && !(typeof(C) <: Const)
         ) ? copy(B.val) : nothing
 
@@ -546,7 +544,7 @@ function EnzymeRules.reverse(
                     Targs = promote_type(eltype(Aval), eltype(dCs), typeof(α.val))
                     _muladdproject!(Targs, dBs, Aval', dCs, conj(α.val))
                 else
-                    Targs = promote_type(eltype(Aval[i]), eltype(dCs[i]), typeof(α.val))
+                    Targs = promote_type(eltype(Aval), eltype(dCs[i]), typeof(α.val))
                     _muladdproject!(Targs, dBs[i], Aval', dCs[i], conj(α.val))
                 end
             end

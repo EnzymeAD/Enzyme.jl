@@ -148,3 +148,41 @@ end
     @test U_sparse_test.A1.nzval == [1.0]
 end
 
+@testset "Sparse mul! with overwritten dense input (#3725)" begin
+    K0 = sparse([1.0 2.0; 0.0 3.0])
+    function f_overwritten_vec(v, K0)
+        K = SparseMatrixCSC(2, 2, K0.colptr, K0.rowval, v)
+        x = [1.0, 1.0]
+        y = zeros(eltype(v), 2)
+        mul!(y, K, x)
+        s = sum(y)
+        x .= 0
+        return s
+    end
+    v = [1.0, 2.0, 3.0]
+    @test Enzyme.gradient(Enzyme.Reverse, f_overwritten_vec, v, Const(K0))[1] ≈ [1.0, 1.0, 1.0]
+
+    K3 = sparse([0.8 0.2 0.0; 0.0 0.7 0.3; 0.1 0.0 0.9])
+    x3 = [0.5, 1.0, 1.5]
+    w3 = [1.0, -2.0, 0.5]
+    function f_overwritten_loop(v, K3, x3, w3)
+        K = SparseMatrixCSC(3, 3, K3.colptr, K3.rowval, v)
+        p = collect(eltype(v), x3)
+        q = similar(p)
+        acc = zero(eltype(v))
+        for _ in 1:10
+            mul!(q, K, p)
+            acc += dot(w3, q)
+            p .= q
+        end
+        return acc
+    end
+    v3 = copy(nonzeros(K3))
+    enz_loop = Enzyme.gradient(Enzyme.Reverse, f_overwritten_loop, v3, Const(K3), Const(x3), Const(w3))[1]
+    for i in eachindex(v3)
+        ei = [j == i ? 1.0 : 0.0 for j in eachindex(v3)]
+        @test enz_loop[i] ≈ central_fdm(5, 1)(t -> f_overwritten_loop(v3 .+ t .* ei, K3, x3, w3), 0.0)
+    end
+end
+
+
