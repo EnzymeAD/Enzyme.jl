@@ -1379,7 +1379,18 @@ end
 		    end
                 end
             else
-                shadowV = res.ref
+                sval = res
+                shadowType = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+                if value_type(sval) != shadowType && isabstracttype(RealRt)
+                    @assert value_type(sval) == T_prjlvalue
+                    sval_agg = UndefValue(shadowType)
+                    for i in 1:width
+                        elem = emit_nthfield!(B, sval, Int(i - 1))
+                        sval_agg = insert_value!(B, sval_agg, elem, Int(i - 1))
+                    end
+                    sval = sval_agg
+                end
+                shadowV = sval.ref
             end
         else
             ST = if width == 1
@@ -1437,7 +1448,18 @@ end
                 end
             else
                 normalV = extract_value!(B, res, 0).ref
-                shadowV = extract_value!(B, res, 1).ref
+                sval = extract_value!(B, res, 1)
+                shadowType = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+                if value_type(sval) != shadowType && isabstracttype(RealRt)
+                    @assert value_type(sval) == T_prjlvalue
+                    sval_agg = UndefValue(shadowType)
+                    for i in 1:width
+                        elem = emit_nthfield!(B, sval, Int(i - 1))
+                        sval_agg = insert_value!(B, sval_agg, elem, Int(i - 1))
+                    end
+                    sval = sval_agg
+                end
+                shadowV = sval.ref
             end
         end
     end

@@ -158,3 +158,21 @@ const U0_test = [2.0]
         @test U0_test ≈ [2.0]
     end
 end
+
+struct DeepcopyWithVec3529
+    v::Vector{Float64}
+    x::Float64
+end
+struct DeepcopyWithScalar3529
+    x::Float64
+end
+
+@testset "Batched Forward deepcopy of Const struct (#3529)" begin
+    f1(y, d) = (dd = deepcopy(d); sum(abs2, y .- dd.v) * dd.x)
+    f2(y, d) = (dd = deepcopy(d); dd.x * sum(abs2, y))
+    y = [0.3, 0.2, 0.4]
+    g1 = Enzyme.gradient(Enzyme.set_runtime_activity(Enzyme.Forward), f1, y, Const(DeepcopyWithVec3529(zeros(3), 1.0)))
+    @test g1[1] ≈ 2.0 .* y
+    g2 = Enzyme.gradient(Enzyme.Forward, f2, y, Const(DeepcopyWithScalar3529(0.5)))
+    @test g2[1] ≈ 1.0 .* y
+end
