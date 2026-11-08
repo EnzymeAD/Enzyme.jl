@@ -233,3 +233,19 @@ end
     @test out ≈ Float32[6.0, 14.0]
     @test dout ≈ Float32[-1.0, 4.5]
 end
+
+struct StructWithInlineNothingUnion{T}
+    vals::NTuple{3, T}
+    n_items::Union{Int, Nothing}
+    groups::Vector{Vector{Int}}
+end
+
+function struct_inline_nothing_union_norm(x)
+    s = StructWithInlineNothingUnion((x, 2x, 3x), 4, Vector{Int}[])
+    return sum(abs2, s.vals)
+end
+
+@testset "Struct with inline Union{Int, Nothing} field (#3476)" begin
+    @test only(only(autodiff(Reverse, struct_inline_nothing_union_norm, Active, Active(1.0)))) ≈ 28.0
+    @test only(autodiff(Forward, struct_inline_nothing_union_norm, Duplicated(1.0, 1.0))) ≈ 28.0
+end
