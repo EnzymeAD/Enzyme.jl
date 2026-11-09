@@ -1,5 +1,6 @@
 using Enzyme
 using EnzymeTestUtils
+using FiniteDifferences
 using LinearAlgebra
 using SparseArrays
 using Test
