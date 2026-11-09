@@ -2360,76 +2360,29 @@ function pre_attr!(mod::LLVM.Module, run_attr)
                 continue
             end
 
-            if linkage(fn) == LLVM.API.LLVMInternalLinkage
-                push!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_internal"))
-                linkage!(fn, LLVM.API.LLVMExternalLinkage)
-            end
-
-            if linkage(fn) == LLVM.API.LLVMPrivateLinkage
-                push!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_private"))
-                linkage!(fn, LLVM.API.LLVMExternalLinkage)
-            end
-            continue
-
-            if !has_fn_attr(fn, EnumAttribute("noinline"))
-                push!(LLVM.function_attributes(fn), EnumAttribute("noinline"))
-                push!(LLVM.function_attributes(fn), StringAttribute("remove_noinline"))
-            end
-
-            if !has_fn_attr(fn, EnumAttribute("optnone"))
-                push!(LLVM.function_attributes(fn), EnumAttribute("optnone"))
-                push!(LLVM.function_attributes(fn), StringAttribute("remove_optnone"))
-            end
+            # `LLVMExternalLinkage` still has `isDefinitionExact() == true`, allowing
+            # LLVM's Attributor to propagate primal return values into callers (and
+            # delete readonly calls) before custom AD rules run. Temporarily mark the
+            # definition interposable (`LLVMWeakAnyLinkage`) while Attributor runs.
+            push!(
+                LLVM.function_attributes(fn),
+                StringAttribute("enzyme_restorelinkage", string(UInt(linkage(fn)))),
+            )
+            linkage!(fn, LLVM.API.LLVMWeakAnyLinkage)
         end
     end
     return nothing
-
-    for fn in collect(functions(mod))
-        if isempty(blocks(fn))
-            continue
-        end
-        if linkage(fn) != LLVM.API.LLVMInternalLinkage &&
-                linkage(fn) != LLVM.API.LLVMPrivateLinkage
-            continue
-        end
-
-        fty = LLVM.FunctionType(fn)
-        nfn = LLVM.Function(mod, "enzyme_attr_prev_" * LLVM.name(enzymefn), fty)
-        LLVM.IRBuilder() do builder
-            entry = BasicBlock(nfn, "entry")
-            position!(builder, entry)
-            cv = call!(fn, [LLVM.UndefValue(ty) for ty in parameters(fty)])
-            LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1), attr)
-            if LLVM.return_type(fty) == LLVM.VoidType()
-                ret!(builder)
-            else
-                ret!(builder, cv)
-            end
-        end
-    end
 end
 
 function post_attr!(mod::LLVM.Module, run_attr)
     if run_attr
         for fn in functions(mod)
-            if has_fn_attr(fn, StringAttribute("restorelinkage_internal"))
-                delete!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_internal"))
-                linkage!(fn, LLVM.API.LLVMInternalLinkage)
-            end
-
-            if has_fn_attr(fn, StringAttribute("restorelinkage_private"))
-                delete!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_private"))
-                linkage!(fn, LLVM.API.LLVMPrivateLinkage)
-            end
-
-            if has_fn_attr(fn, StringAttribute("remove_noinline"))
-                delete!(LLVM.function_attributes(fn), EnumAttribute("noinline"))
-                delete!(LLVM.function_attributes(fn), StringAttribute("remove_noinline"))
-            end
-
-            if has_fn_attr(fn, StringAttribute("remove_optnone"))
-                delete!(LLVM.function_attributes(fn), EnumAttribute("optnone"))
-                delete!(LLVM.function_attributes(fn), StringAttribute("remove_optnone"))
+            for attr in collect(LLVM.function_attributes(fn))
+                if isa(attr, LLVM.StringAttribute) && kind(attr) == "enzyme_restorelinkage"
+                    orig_link = LLVM.API.LLVMLinkage(parse(UInt, LLVM.value(attr)))
+                    delete!(LLVM.function_attributes(fn), attr)
+                    linkage!(fn, orig_link)
+                end
             end
         end
     end
@@ -2692,7 +2645,8 @@ function propagate_returned!(mod::LLVM.Module)
             # Don't bother with functions we're about to delete anyways
             if has_user
                 for (i, arg) in enumerate(parameters(fn))
-                    if any(
+                    if !prevent &&
+                            any(
                             kind(attr) == RETURNED_ATTR_KIND for
                                 attr in collect(parameter_attributes(fn, i))
                         )
@@ -2982,7 +2936,8 @@ function propagate_returned!(mod::LLVM.Module)
                 end
             end
             #if the function return has no users whatsoever, remove it
-            if argn === nothing &&
+            if !prevent &&
+                    argn === nothing &&
                     !hasAnyUse &&
                     LLVM.return_type(LLVM.function_type(fn)) != LLVM.VoidType()
                 argn = -1
@@ -3611,9 +3566,11 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
         LLVM.run!(pb, mod)
     end
     propagate_returned!(mod)
-    pre_attr!(mod, RunAttributor[])
     if RunAttributor[]
         API.EnzymeDetectReadonlyOrThrow(mod)
+    end
+    pre_attr!(mod, RunAttributor[])
+    if RunAttributor[]
         LLVM.@dispose pb = NewPMPassBuilder() begin
             register!(pb, EnzymeAttributorPass())
             add!(pb, NewPMModulePassManager()) do mpm
@@ -3644,8 +3601,8 @@ function removeDeadArgs!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing
         end
         LLVM.run!(pb, mod)
     end
-    API.EnzymeDetectReadonlyOrThrow(mod)
     post_attr!(mod, RunAttributor[])
+    API.EnzymeDetectReadonlyOrThrow(mod)
     propagate_returned!(mod)
 
     for u in LLVM.uses(rwfunc)

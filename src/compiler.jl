@@ -1480,6 +1480,16 @@ end
         return
     else
         strip_custom_rule_attrs!(llvmfn)
+        has_other_rule = if mode == API.DEM_ForwardMode
+            cached_has_rrule(specTypes, world, method_table)
+        else
+            cached_has_frule(specTypes, world, method_table)
+        end
+        if has_other_rule
+            push!(function_attributes(llvmfn), StringAttribute(PRESERVEPRIMAL_ATTR_KIND, "*"))
+        elseif has_fn_attr(llvmfn, StringAttribute(PRESERVEPRIMAL_ATTR_KIND))
+            delete!(function_attributes(llvmfn), StringAttribute(PRESERVEPRIMAL_ATTR_KIND))
+        end
     end
 
 
@@ -5396,7 +5406,10 @@ end
 # forward-over-reverse through a function with an `rrule` but no `frule`, or vice
 # versa) does not dispatch to a nonexistent rule in the outer mode; the outer
 # compilation's `set_module_types!` re-applies `"enzyme_custom"` if and only if a
-# rule exists for the outer mode.
+# rule exists for the outer mode. Keep `PRESERVEPRIMAL_ATTR_KIND` until
+# `post_optimize!` (after `autodiff_cache` captures the pre-postopt bitcode) so
+# `fixup_callconv!`'s `removeDeadArgs!` does not strip unused parameters from
+# functions that an outer differentiation may dispatch to a custom rule.
 function strip_custom_rule_attrs!(fn::LLVM.Function)
     attributes = function_attributes(fn)
     had_custom = false
@@ -5406,13 +5419,6 @@ function strip_custom_rule_attrs!(fn::LLVM.Function)
            LLVM.value(fattr) == "enzyme_custom"
             delete!(attributes, fattr)
             had_custom = true
-        end
-    end
-    if had_custom
-        for fattr in collect(attributes)
-            if isa(fattr, LLVM.StringAttribute) && kind(fattr) == PRESERVEPRIMAL_ATTR_KIND
-                delete!(attributes, fattr)
-            end
         end
     end
     return had_custom

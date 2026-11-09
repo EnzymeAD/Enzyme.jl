@@ -225,4 +225,100 @@ end
     @test dst.data == [2.0, 4.0]
 end
 
+struct Cache4005
+    buf::Vector{Float64}
+end
+get_buf_4005(c::Cache4005, x::Float64) = c.buf
+get_vec_4005(c::Vector{Float64}, x::Float64) = c
+
+const SHADOW_4005 = Ref(zeros(1))
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        ::Const{typeof(get_buf_4005)},
+        ::Type{<:Annotation},
+        c::Annotation{<:Cache4005},
+        x::Annotation,
+    )
+    primal = get_buf_4005(c.val, x.val)
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return Duplicated(primal, SHADOW_4005[])
+    elseif EnzymeRules.needs_shadow(config)
+        return SHADOW_4005[]
+    elseif EnzymeRules.needs_primal(config)
+        return primal
+    else
+        return nothing
+    end
+end
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        ::Const{typeof(get_vec_4005)},
+        ::Type{<:Annotation},
+        c::Annotation{<:Vector{Float64}},
+        x::Annotation,
+    )
+    primal = get_vec_4005(c.val, x.val)
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return Duplicated(primal, SHADOW_4005[])
+    elseif EnzymeRules.needs_shadow(config)
+        return SHADOW_4005[]
+    elseif EnzymeRules.needs_primal(config)
+        return primal
+    else
+        return nothing
+    end
+end
+
+function loss_cache_4005(x, c)
+    b = get_buf_4005(c, x)
+    b[1] = x
+    return b[1]^2
+end
+dloss_cache_4005(x, c) = only(autodiff(Forward, loss_cache_4005, Duplicated(x, 1.0), Const(c)))
+
+function loss_vec_4005(x, c)
+    b = get_vec_4005(c, x)
+    b[1] = x
+    return b[1]^2
+end
+dloss_vec_4005(x, c) = only(autodiff(Forward, loss_vec_4005, Duplicated(x, 1.0), Const(c)))
+
+@noinline get_vec_active_4005(c::Vector{Float64}, x::Float64) = c
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        ::Const{typeof(get_vec_active_4005)},
+        ::Type{<:Annotation},
+        c::Annotation{<:Vector{Float64}},
+        x::Annotation{Float64},
+    )
+    primal = get_vec_active_4005(c.val, x.val)
+    dc = c isa Const ? zeros(length(primal)) : c.dval
+    dx = x isa Const ? 0.0 : x.dval
+    shadow = dc .+ 10.0 * dx
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return Duplicated(primal, shadow)
+    elseif EnzymeRules.needs_shadow(config)
+        return shadow
+    elseif EnzymeRules.needs_primal(config)
+        return primal
+    else
+        return nothing
+    end
+end
+loss_vec_active_4005(x, c) = x * get_vec_active_4005(c, x)[1]
+dloss_vec_active_4005(x, c) = only(autodiff(Forward, loss_vec_active_4005, Duplicated(x, 1.0), Const(c)))
+
+@testset "Nested forward mode through custom rule with unused primal arg (#4005)" begin
+    @test dloss_cache_4005(0.3, Cache4005(zeros(1))) ≈ 0.6
+    @test autodiff(Forward, Const(dloss_cache_4005), Duplicated(0.3, 1.0), Const(Cache4005(zeros(1)))) == (2.0,)
+
+    @test dloss_vec_4005(0.3, zeros(1)) ≈ 0.6
+    @test autodiff(Forward, Const(dloss_vec_4005), Duplicated(0.3, 1.0), Const(zeros(1))) == (2.0,)
+
+    @test dloss_vec_active_4005(0.3, [5.0]) ≈ 8.0
+    @test autodiff(Forward, Const(dloss_vec_active_4005), Duplicated(0.3, 1.0), Const([5.0]))[1] ≈ 20.0
+end
+
 end # module ForwardRules
