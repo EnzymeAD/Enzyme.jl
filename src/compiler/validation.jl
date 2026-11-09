@@ -228,6 +228,20 @@ function resolve_symbol_name(fn::String, file::String, ptr::Ptr{Cvoid})::Symbol
     return resolved == ptr ? (:match) : (:mismatch)
 end
 
+function lookup_dl_path(ptr::Ptr{Cvoid}, file::String)::String
+    @static if !Sys.iswindows()
+        info = Ref(DlInfo(C_NULL, C_NULL, C_NULL, C_NULL))
+        if ccall(:dladdr, Cint, (Ptr{Cvoid}, Ref{DlInfo}), ptr, info) != 0 &&
+                info[].fname != C_NULL
+            dl_file = unsafe_string(info[].fname)
+            if isfile(dl_file)
+                return dl_file
+            end
+        end
+    end
+    return file
+end
+
 """
     restore_native_invokes!(mod::LLVM.Module)
 
@@ -1613,9 +1627,10 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
                 fn = string(fn)
 
                 if fromC
+                    dl_file = lookup_dl_path(ptr, string(file))
 
                     found, replaceWith = if length(fn) > 0
-                        try_import_llvmbc(mod, string(file), fn, imported)
+                        try_import_llvmbc(mod, dl_file, fn, imported)
                     else
                         false, nothing
                     end
