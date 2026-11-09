@@ -771,3 +771,192 @@ function EnzymeRules.reverse(
     end
     return (nothing,)
 end
+
+# Array unaliasing (`Base.unalias` and `Base.Broadcast.broadcast_unalias`)
+#
+# When `Base.unalias(dest, A)` or `Base.Broadcast.broadcast_unalias(dest, A)` is
+# inlined into a broadcast or `copyto!` call for `A::Array`, it produces a branch
+# merging `A` with a freshly allocated `unaliascopy(A)` (or `dest === A ? A :
+# unalias(dest, A)`). If `A` is `Const` and another argument in the same caller
+# performs an active write or `memmove` (such as unaliasing an active view or
+# writing into `dest`), static `ActivityAnalysis` conservatively marks the
+# unaliased arm active while `A` is `Const`, raising a spurious `Mismatched
+# activity` error on the merge phi (#2553). Handling `Array` sources via custom
+# rules keeps the conditional copy inside the rule boundary while leaving
+# wrapper views (`SubArray`, etc., which may return via `sret`) inlined so they
+# delegate to `copy(parent)` on the underlying `Array`.
+
+const _UnaliasFuncs = Union{typeof(Base.unalias), typeof(Base.Broadcast.broadcast_unalias)}
+
+@inline _unalias_is_aliased(::typeof(Base.unalias), dest, A) = Base.mightalias(dest, A)
+@inline _unalias_is_aliased(::typeof(Base.Broadcast.broadcast_unalias), dest, A) =
+    dest !== A && Base.mightalias(dest, A)
+
+@inline function _unalias_fwd_shadow(
+        primal_res::AT,
+        aval::AT,
+        dval::AT,
+        aliased::Bool,
+        ::Val{rtact},
+    )::AT where {AT <: Array, rtact}
+    if !aliased
+        return dval
+    elseif rtact && dval === aval
+        return primal_res
+    else
+        return Base.unaliascopy(dval)
+    end
+end
+
+@inline function _unalias_accumulate!(
+        into::AT,
+        from::AT,
+        primal::AT,
+        ::Val{rtact},
+    )::Tuple{AT, AT} where {AT <: Array, rtact}
+    return accumulate_into(into, IdDict(), from, primal, Val(rtact))
+end
+
+@inline function _unalias_zero_active(config, arg::Annotation)
+    if arg isa Active
+        if EnzymeRules.width(config) == 1
+            return Enzyme.make_zero(arg.val)
+        else
+            return ntuple(Val(EnzymeRules.width(config))) do _
+                Enzyme.make_zero(arg.val)
+            end
+        end
+    end
+    return nothing
+end
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{<:_UnaliasFuncs},
+        ::Type{RT},
+        dest::Annotation,
+        A::Annotation{AT},
+    ) where {RT, AT <: Array}
+    aliased = _unalias_is_aliased(func.val, dest.val, A.val)
+    primal_res = aliased ? Base.unaliascopy(A.val) : A.val
+    if !EnzymeRules.needs_shadow(config)
+        return EnzymeRules.needs_primal(config) ? primal_res : nothing
+    end
+    rtact = Val(EnzymeRules.runtime_activity(config))
+    shadow = if A isa Const
+        if EnzymeRules.width(config) == 1
+            Enzyme.make_zero(primal_res)
+        else
+            ntuple(Val(EnzymeRules.width(config))) do _
+                Enzyme.make_zero(primal_res)
+            end
+        end
+    else
+        if EnzymeRules.width(config) == 1
+            _unalias_fwd_shadow(primal_res, A.val, A.dval, aliased, rtact)
+        else
+            ntuple(Val(EnzymeRules.width(config))) do i
+                _unalias_fwd_shadow(primal_res, A.val, A.dval[i], aliased, rtact)
+            end
+        end
+    end
+    if EnzymeRules.needs_primal(config)
+        return EnzymeRules.forward_rule_return_type(config, RT)(primal_res, shadow)
+    else
+        return shadow
+    end
+end
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfig,
+        func::Const{<:_UnaliasFuncs},
+        ::Type{RT},
+        dest::Annotation,
+        A::Annotation{AT},
+    ) where {RT, AT <: Array}
+    aliased = _unalias_is_aliased(func.val, dest.val, A.val)
+    primal_res = aliased ? Base.unaliascopy(A.val) : A.val
+    primal = EnzymeRules.needs_primal(config) ? primal_res : nothing
+    if !EnzymeRules.needs_shadow(config)
+        return EnzymeRules.augmented_rule_return_type(config, RT)(primal, nothing, nothing)
+    end
+    @assert !(A isa Active)
+    if A isa Const
+        shadow = if EnzymeRules.width(config) == 1
+            Enzyme.make_zero(primal_res, Val(!EnzymeRules.needs_primal(config)))
+        else
+            ntuple(Val(EnzymeRules.width(config))) do _
+                Base.@_inline_meta
+                Enzyme.make_zero(primal_res, Val(!EnzymeRules.needs_primal(config)))
+            end
+        end
+        return EnzymeRules.augmented_rule_return_type(config, RT)(primal, shadow, nothing)
+    else
+        rtact = EnzymeRules.runtime_activity(config)
+        shadow = if EnzymeRules.width(config) == 1
+            if !aliased
+                A.dval
+            elseif rtact && A.dval === A.val
+                primal_res
+            else
+                Enzyme.make_zero(primal_res, Val(!EnzymeRules.needs_primal(config)))
+            end
+        else
+            ntuple(Val(EnzymeRules.width(config))) do i
+                Base.@_inline_meta
+                dvali = A.dval[i]
+                if !aliased
+                    dvali
+                elseif rtact && dvali === A.val
+                    primal_res
+                else
+                    Enzyme.make_zero(primal_res, Val(!EnzymeRules.needs_primal(config)))
+                end
+            end
+        end
+        tape = (aliased, shadow)
+        return EnzymeRules.augmented_rule_return_type(config, RT)(primal, shadow, tape)
+    end
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfig,
+        ::Const{<:_UnaliasFuncs},
+        ::Type{RT},
+        tape,
+        dest::Annotation,
+        A::Annotation{AT},
+    ) where {RT, AT <: Array}
+    ddest = _unalias_zero_active(config, dest)
+    if EnzymeRules.needs_shadow(config) && !(A isa Const)
+        aliased, dcp = tape
+        if aliased
+            rtact = Val(EnzymeRules.runtime_activity(config))
+            if EnzymeRules.width(config) == 1
+                _unalias_accumulate!(A.dval, dcp, A.val, rtact)
+            else
+                for i in 1:EnzymeRules.width(config)
+                    _unalias_accumulate!(A.dval[i], dcp[i], A.val, rtact)
+                end
+            end
+        end
+        return (ddest, nothing)
+    elseif A isa Active
+        return (ddest, _unalias_zero_active(config, A))
+    else
+        return (ddest, nothing)
+    end
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfig,
+        ::Const{<:_UnaliasFuncs},
+        dret::Active,
+        tape,
+        dest::Annotation,
+        A::Annotation{AT},
+    ) where {AT <: Array}
+    ddest = _unalias_zero_active(config, dest)
+    dA = A isa Active ? dret.val : nothing
+    return (ddest, dA)
+end
