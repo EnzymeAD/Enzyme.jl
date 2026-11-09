@@ -1487,14 +1487,16 @@ end
     if func == typeof(Base.eps) ||
        func == typeof(Base.nextfloat) ||
        func == typeof(Base.prevfloat)
-        has_ptr = false
-        for p in parameters(llvmfn)
-            if value_type(p) isa LLVM.PointerType
-                has_ptr = true
-                break
+        has_ptr = LLVM.return_type(LLVM.function_type(llvmfn)) isa LLVM.PointerType
+        if !has_ptr
+            for p in parameters(llvmfn)
+                if value_type(p) isa LLVM.PointerType
+                    has_ptr = true
+                    break
+                end
             end
         end
-        if LLVM.version().major <= 15
+        if has_ptr
             handleCustom(
                 state,
                 custom,
@@ -1503,7 +1505,23 @@ end
                 "jl_inactive_inout",
                 LLVM.Attribute[
                     StringAttribute("enzyme_inactive"),
-                    EnumAttribute(has_ptr ? "readonly" : "readnone"),
+                    EnumAttribute("willreturn"),
+                    EnumAttribute("nosync"),
+                    EnumAttribute("nofree"),
+                    EnumAttribute("nounwind"),
+                    StringAttribute("enzyme_shouldrecompute"),
+                ],
+            )
+        elseif LLVM.version().major <= 15
+            handleCustom(
+                state,
+                custom,
+                k_name,
+                llvmfn,
+                "jl_inactive_inout",
+                LLVM.Attribute[
+                    StringAttribute("enzyme_inactive"),
+                    EnumAttribute("readnone"),
                     EnumAttribute("speculatable"),
                     EnumAttribute("willreturn"),
                     EnumAttribute("nosync"),
@@ -1521,7 +1539,7 @@ end
                 "jl_inactive_inout",
                 LLVM.Attribute[
                     StringAttribute("enzyme_inactive"),
-                    EnumAttribute("memory", (has_ptr ? ReadOnlyEffects : NoEffects).data),
+                    EnumAttribute("memory", NoEffects.data),
                     EnumAttribute("speculatable"),
                     EnumAttribute("willreturn"),
                     EnumAttribute("nosync"),
