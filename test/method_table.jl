@@ -187,7 +187,7 @@ end
     @test GPUCompiler.method_table(nested_ptx_job) === issue3962_device_table
 
     # Verify full nested_codegen! compilation through GPUCompiler.compile(:llvm, job)
-    host_target = isdefined(GPUCompiler, :NativeCompilerTarget) ? GPUCompiler.NativeCompilerTarget() : GPUCompiler.DefaultCompilerTarget()
+    host_target = isdefined(GPUCompiler, :NativeCompilerTarget) ? GPUCompiler.NativeCompilerTarget(; jlruntime = true) : GPUCompiler.DefaultCompilerTarget()
     for fn in (issue3962_kern_no_rule, issue3962_kern_fwd_rule, issue3962_kern_rev_rule)
         source = GPUCompiler.methodinstance(typeof(fn), sig)
         config = CompilerConfig(host_target, params; kernel = false)
