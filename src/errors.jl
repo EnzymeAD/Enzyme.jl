@@ -1,13 +1,6 @@
 const VERBOSE_ERRORS = Ref(false)
 
-"""
-    EnzymeError
-
-Common supertype for Enzyme-specific errors.
-
-This type is made public so that downstream packages can add custom [error hints](https://docs.julialang.org/en/v1/base/base/#Base.Experimental.register_error_hint) for the most common exceptions thrown by Enzyme.
-"""
-abstract type EnzymeError <: Base.Exception end
+import EnzymeCore: EnzymeError, EnzymeRuntimeActivityError
 
 abstract type CompilationException <: EnzymeError end
 
@@ -852,12 +845,6 @@ function Base.showerror(io::IO, ece::EnzymeMutabilityException)
     end
     msg = Base.unsafe_string(ece.msg)
     print(io, "EnzymeMutabilityException: ", msg, '\n')
-end
-
-struct EnzymeRuntimeActivityError{ST, MT,WT} <: EnzymeError
-    msg::ST
-    mi::MT
-    world::WT
 end
 
 function Base.showerror(io::IO, ece::EnzymeRuntimeActivityError)

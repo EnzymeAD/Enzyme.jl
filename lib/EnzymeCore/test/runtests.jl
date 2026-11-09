@@ -48,3 +48,12 @@ end
 @testset "ignore_derivatives" begin
     @test EnzymeCore.ignore_derivatives(3) == 3
 end
+
+@testset "EnzymeError and EnzymeRuntimeActivityError (#3478)" begin
+    @test EnzymeError <: Exception
+    @test EnzymeRuntimeActivityError <: EnzymeError
+    err = EnzymeRuntimeActivityError("msg", nothing, UInt(1))
+    @test err isa EnzymeError
+    @test err isa EnzymeRuntimeActivityError
+    @test err.msg == "msg"
+end
