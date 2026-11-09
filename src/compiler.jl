@@ -6449,7 +6449,7 @@ function memtransfer_truetype(world::UInt, @nospecialize(ptr::LLVM.Value), @nosp
     if byref == GPUCompiler.BITS_VALUE && jTy <: Ptr
         ET = eltype(jTy)
         if Base.isconcretetype(ET)
-            sz_et = actual_size(ET)
+            sz_et = allocatedinline(ET) ? Base.aligned_sizeof(ET) : actual_size(ET)
             if sz_et > 0
                 jTy = ET
                 byref = GPUCompiler.MUT_REF
@@ -6457,10 +6457,7 @@ function memtransfer_truetype(world::UInt, @nospecialize(ptr::LLVM.Value), @nosp
                 if isa(sz, LLVM.ConstantInt)
                     sz_int = convert(Int, sz)
                     if offset + sz_int > sz_et && allocatedinline(ET)
-                        nel = cld(offset + sz_int, sz_et)
-                        if nel <= 64
-                            jTy = NTuple{nel, ET}
-                        end
+                        return to_fullmd(world, ET, offset, sz_int, sz_et)
                     end
                 end
             end
