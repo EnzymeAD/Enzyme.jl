@@ -1487,7 +1487,13 @@ end
     if func == typeof(Base.eps) ||
        func == typeof(Base.nextfloat) ||
        func == typeof(Base.prevfloat)
-        has_ptr = any(p -> value_type(p) isa LLVM.PointerType, parameters(llvmfn))
+        has_ptr = false
+        for p in parameters(llvmfn)
+            if value_type(p) isa LLVM.PointerType
+                has_ptr = true
+                break
+            end
+        end
         if LLVM.version().major <= 15
             handleCustom(
                 state,

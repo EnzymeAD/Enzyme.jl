@@ -71,13 +71,16 @@ end
     epsconst(x) = x * x + zero(eps(BigFloat))
     @test autodiff(Enzyme.Forward, epsconst, Duplicated, Duplicated(a, da))[:1] ≈ 2 * a * da
 
-    function eps_branch!(out)
-        out[1] = eps(BigFloat) > 0 ? 1.0 : 0.0
-        out[2] = nextfloat(BigFloat(1.0)) > 1.0 ? 1.0 : 0.0
-        out[3] = prevfloat(BigFloat(1.0)) < 1.0 ? 1.0 : 0.0
+    function eps_store!(out, one_bf)
+        out[1] = eps(BigFloat)
+        out[2] = nextfloat(one_bf)
+        out[3] = prevfloat(one_bf)
         return nothing
     end
-    out = zeros(3)
-    autodiff(Enzyme.Forward, Const(eps_branch!), Const(out))
-    @test out == [1.0, 1.0, 1.0]
+    one_bf = BigFloat(1.0)
+    out = Vector{BigFloat}(undef, 3)
+    autodiff(Enzyme.Forward, Const(eps_store!), Const(out), Const(one_bf))
+    @test out[1] == eps(BigFloat)
+    @test out[2] == nextfloat(one_bf)
+    @test out[3] == prevfloat(one_bf)
 end
