@@ -2504,7 +2504,7 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
     LLVMType = LLVM.LLVMType(ccall(:jl_type_to_llvm, LLVM.API.LLVMTypeRef,
                 (Any, LLVM.Context, Ptr{Bool}), Ty, LLVM.context(), isboxed_ref))
 
-    if !isboxed_ref[]
+    return if !isboxed_ref[] || count !== nothing
         zeroAll = false
         prev = bitcast!(B, prev, LLVM.PointerType(LLVMType, addrspace(value_type(prev))))
         prev = addrspacecast!(B, prev, LLVM.PointerType(LLVMType, Derived))
@@ -2515,7 +2515,7 @@ function create_recursive_stores(B::LLVM.IRBuilder, @nospecialize(Ty::DataType),
 	    nothing
 	else
 	    (Size, AlignedSize) = count
-	    zero_allocation(B, Ty, LLVMType, prev, AlignedSize, Size, zeroAll, atomic)
+            zero_allocation(B, isboxed_ref[] ? Any : Ty, LLVMType, prev, AlignedSize, Size, zeroAll, atomic)
 	    nothing
 	end
     else
@@ -2641,7 +2641,8 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
                 if ntuple !== nothing
                     Ty = ntuple[2]
                     # count should represent {the total size in bytes, the aligned size of each element}
-                    alignsize = LLVM.ConstantInt(value_type(totalsize), Base.aligned_sizeof(Ty))
+                    el_alignsize = Base.allocatedinline(Ty) ? Base.aligned_sizeof(Ty) : sizeof(Ptr{Cvoid})
+                    alignsize = LLVM.ConstantInt(value_type(totalsize), el_alignsize)
                     count = (totalsize, alignsize)
                     has = true
                 elseif isa(arg, LLVM.CallInst)
@@ -2669,7 +2670,8 @@ function shadow_alloc_rewrite(V::LLVM.API.LLVMValueRef, gutils::API.EnzymeGradie
 					# count should represent {the total size in bytes, the aligned size of each element}
 					B = LLVM.IRBuilder()
 					position!(B, V)
-					alignsize = LLVM.ConstantInt(value_type(totalsize), Base.aligned_sizeof(Ty))
+                                    el_alignsize = Base.allocatedinline(Ty) ? Base.aligned_sizeof(Ty) : sizeof(Ptr{Cvoid})
+                                    alignsize = LLVM.ConstantInt(value_type(totalsize), el_alignsize)
 					count = (totalsize, alignsize)
 					has = true
 				end
