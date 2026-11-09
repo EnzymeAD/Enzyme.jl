@@ -523,7 +523,11 @@ Enzyme.autodiff(ReverseWithPrimal, x->x*x, Active(3.0))
            A0 <: BatchDuplicated ||
            A0 <: BatchDuplicatedNoNeed ||
            A0 <: BatchDuplicatedFunc
-        throw(ErrorException("Duplicated Returns not yet handled"))
+        throw(
+            ErrorException(
+                "Duplicated Returns not yet handled (inferred return type: $rt; pass `Active` or `Const` explicitly as the return activity to `autodiff`, e.g. `autodiff(mode, f, Active, args...)`, or ensure the return type is concretely inferred)",
+            ),
+        )
     end
 
     opt_mi = if RABI <: NonGenABI
@@ -863,7 +867,11 @@ code, as well as high-order differentiation.
            A <: BatchDuplicated ||
            A <: BatchDuplicatedNoNeed ||
            A <: BatchDuplicatedFunc
-        throw(ErrorException("Duplicated Returns not yet handled"))
+        throw(
+            ErrorException(
+                "Duplicated Returns not yet handled (inferred return type: $rt; pass `Active` or `Const` explicitly as the return activity to `autodiff_deferred`, e.g. `autodiff_deferred(mode, f, Active, args...)`, or ensure the return type is concretely inferred)",
+            ),
+        )
     end
 
     if (A <: Active && rt <: Complex) && rt != Union{}
@@ -905,7 +913,11 @@ code, as well as high-order differentiation.
            A <: DuplicatedNoNeed ||
            A <: BatchDuplicated ||
            A <: BatchDuplicatedNoNeed
-        throw(ErrorException("Duplicated Returns not yet handled"))
+        throw(
+            ErrorException(
+                "Duplicated Returns not yet handled (inferred return type: $rt; pass `Active` or `Const` explicitly as the return activity to `autodiff_deferred`, e.g. `autodiff_deferred(mode, f, Active, args...)`, or ensure the return type is concretely inferred)",
+            ),
+        )
     end
     thunk(f, args...)
 end

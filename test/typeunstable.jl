@@ -507,3 +507,18 @@ end
     @test dx ≈ 1 ./ x
     @test (@allocated sum_log_gradient!(dx, x)) == 0
 end
+
+uninferred_scalar_2194(x) = Base.inferencebarrier(2.0 * x)
+
+@testset "Actionable error for inferred Duplicated return (#2194)" begin
+    err = try
+        Enzyme.autodiff(Reverse, uninferred_scalar_2194, Active(3.0))
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("Duplicated Returns not yet handled", err.msg)
+    @test occursin("inferred return type: Any", err.msg)
+    @test occursin("pass `Active` or `Const` explicitly", err.msg)
+end
