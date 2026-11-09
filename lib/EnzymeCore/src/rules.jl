@@ -1,12 +1,22 @@
 module EnzymeRules
 
 import EnzymeCore
-import EnzymeCore: Annotation, Const, Duplicated, BatchDuplicated, Active, Mode
+import EnzymeCore:
+    Annotation,
+    Const,
+    Duplicated,
+    DuplicatedNoNeed,
+    BatchDuplicated,
+    BatchDuplicatedNoNeed,
+    Active,
+    MixedDuplicated,
+    BatchMixedDuplicated,
+    Mode
 export RevConfig, RevConfigWidth
 export FwdConfig, FwdConfigWidth
 export AugmentedReturn
-import ..EnzymeCore: needs_primal
-export needs_primal, needs_shadow, width, overwritten, runtime_activity
+import ..EnzymeCore: needs_primal, runtime_activity, strong_zero
+export needs_primal, needs_shadow, width, overwritten, runtime_activity, runtime_active, strong_zero
 export primal_type, shadow_type, tape_type, easy_scalar_rule, forward_rule_return_type, augmented_rule_return_type
 
 import Base: unwrapva, isvarargtype, unwrap_unionall, rewrap_unionall
@@ -81,7 +91,9 @@ Get the size of a batch.
 @inline width(::Type{<:FwdConfig{<:Any, <:Any, Width}}) where Width = Width
 
 @inline runtime_activity(::FwdConfig{<:Any, <:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
+@inline runtime_activity(::Type{<:FwdConfig{<:Any, <:Any, <:Any, RuntimeActivity}}) where {RuntimeActivity} = RuntimeActivity
 @inline strong_zero(::FwdConfig{<:Any, <:Any, <:Any, <:Any, StrongZero}) where StrongZero = StrongZero
+@inline strong_zero(::Type{<:FwdConfig{<:Any, <:Any, <:Any, <:Any, StrongZero}}) where {StrongZero} = StrongZero
 
 
 """
@@ -121,7 +133,29 @@ between).
 @inline overwritten(::Type{<:RevConfig{<:Any, <:Any, <:Any, Overwritten}}) where Overwritten = Overwritten
 
 @inline runtime_activity(::RevConfig{<:Any, <:Any, <:Any, <:Any, RuntimeActivity}) where RuntimeActivity = RuntimeActivity
+@inline runtime_activity(::Type{<:RevConfig{<:Any, <:Any, <:Any, <:Any, RuntimeActivity}}) where {RuntimeActivity} = RuntimeActivity
 @inline strong_zero(::RevConfig{<:Any, <:Any, <:Any, <:Any, <:Any, StrongZero}) where StrongZero = StrongZero
+@inline strong_zero(::Type{<:RevConfig{<:Any, <:Any, <:Any, <:Any, <:Any, StrongZero}}) where {StrongZero} = StrongZero
+
+"""
+    runtime_active(config, x::Annotation)
+
+Check whether an annotated argument `x` is active at runtime.
+Returns `false` if `x isa Const`, or if `runtime_activity(config)` is enabled and `x`'s shadow aliases its primal (`x.dval === x.val`).
+"""
+@inline runtime_active(config, ::Const) = false
+@inline runtime_active(config, ::Active) = true
+@inline runtime_active(config, ::Union{MixedDuplicated, BatchMixedDuplicated}) = true
+@inline runtime_active(config, x::Union{Duplicated, DuplicatedNoNeed}) = !(runtime_activity(config) && x.dval === x.val)
+@inline function runtime_active(config, x::Union{BatchDuplicated, BatchDuplicatedNoNeed})
+    runtime_activity(config) || return true
+    for d in x.dval
+        if d !== x.val
+            return true
+        end
+    end
+    return false
+end
 
 """
     primal_type(::FwdConfig, ::Type{<:Annotation{RT}})
