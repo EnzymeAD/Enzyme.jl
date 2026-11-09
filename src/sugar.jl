@@ -508,6 +508,17 @@ end
 	res
 end
 
+@inline _unalias_shadow(dval, val) = (ismutable(val) && dval === val) ? make_zero(val) : dval
+
+@generated function _unalias_shadows(dvals::T, val) where {T <: Tuple}
+    N = fieldcount(T)
+    exprs = [:(_unalias_shadow(dvals[$i], val)) for i in 1:N]
+    return quote
+        Base.@_inline_meta
+        ($(exprs...),)
+    end
+end
+
 @inline specialize_output(output, input) = output
 
 """
@@ -637,7 +648,7 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
     primal = nothing
     derivatives = Union{Symbol,Expr}[]
 
-    primmode = :(fm)
+    primmode = RuntimeActivity ? :(WithPrimal(fm)) : :(fm)
     for (i, (arg, ty)) in enumerate(zip(syms, tys))
         if ty <: Const
             push!(derivatives, :(nothing))
@@ -662,10 +673,12 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
             end)
             if ReturnPrimal && primal == nothing
                 primal = :($resp[2])
-                primmode = NoPrimal(fm())
+                if !RuntimeActivity
+                    primmode = NoPrimal(fm())
+                end
             end
 
-            :($resp[1])
+            RuntimeActivity ? :(_unalias_shadow($resp[1], $resp[2])) : :($resp[1])
         elseif argnum == 0
             vals[i]
         elseif CS == Nothing
@@ -693,10 +706,12 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
             end)
             if ReturnPrimal && primal == nothing
                 primal = :($resp[2])
-                primmode = NoPrimal(fm())
+                if !RuntimeActivity
+                    primmode = NoPrimal(fm())
+                end
             end
 
-            :(values($resp[1]))
+            RuntimeActivity ? :(_unalias_shadows(values($resp[1]), $resp[2])) : :(values($resp[1]))
         elseif CS == Val{1}
             subderivatives = Union{Symbol,Expr}[]
             for an in 1:argnum
@@ -715,10 +730,12 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
                 end)
                 if ReturnPrimal && primal == nothing
                     primal = :($resp[2])
-                    primmode = NoPrimal(fm())
+                    if !RuntimeActivity
+                        primmode = NoPrimal(fm())
+                    end
                 end
 
-                push!(subderivatives, :(values($resp[1])))
+                push!(subderivatives, RuntimeActivity ? :(_unalias_shadow(values($resp[1]), $resp[2])) : :(values($resp[1])))
             end
             :(($(subderivatives...),))
         else
@@ -739,10 +756,12 @@ gradient(Forward, mul, [2.0, 3.0], Const([2.7, 3.1]))
                 end)
                 if ReturnPrimal && primal == nothing
                     primal = :($resp[2])
-                    primmode = NoPrimal(fm())
+                    if !RuntimeActivity
+                        primmode = NoPrimal(fm())
+                    end
                 end
 
-                push!(subderivatives, :(values($resp[1])))
+                push!(subderivatives, RuntimeActivity ? :(_unalias_shadows(values($resp[1]), $resp[2])) : :(values($resp[1])))
             end
             :(tupleconcat($(subderivatives...)))
         end
@@ -804,13 +823,13 @@ Equivalent to gradient(::ForwardMode, args...; kwargs...)
 end
 
 @generated function jacobian_helper(
-    mode::ReverseMode{ReturnPrimal},
+        mode::ReverseMode{ReturnPrimal, RuntimeActivity},
     RT::RType,
     n_outs::OutType,
     chunk::CT,
     f::F,
     xs::Vararg{Any, Nargs}
-) where {ReturnPrimal,RType, F,Nargs,OutType,CT}
+    ) where {ReturnPrimal, RuntimeActivity, RType, F, Nargs, OutType, CT}
     fty = if f <: Enzyme.Annotation
         f.parameters[1]
     else
@@ -1024,10 +1043,30 @@ end
         push!(postexprs, Expr(:(=), ressym, Expr(:call, (chunksize != 1 && i == num) ? :primal2 : :primal, cst_fn, args...)))
 
         if batchcnt == 1
-            push!(postexprs, :(zerosetfn!($ressym[3], $curidx, Compiler.default_adjoint(eltype(typeof($ressym[3]))))))
+            if RuntimeActivity
+                push!(
+                    postexprs, :(
+                        if !($ressym[3] === $ressym[2])
+                            zerosetfn!($ressym[3], $curidx, Compiler.default_adjoint(eltype(typeof($ressym[3]))))
+                        end
+                    )
+                )
+            else
+                push!(postexprs, :(zerosetfn!($ressym[3], $curidx, Compiler.default_adjoint(eltype(typeof($ressym[3]))))))
+            end
         else
             for k in 1:batchcnt
-                push!(postexprs, :(zerosetfn!($ressym[3][$k], $(curidx+k-1), Compiler.default_adjoint(eltype(typeof($ressym[3][$k]))))))
+                if RuntimeActivity
+                    push!(
+                        postexprs, :(
+                            if !($ressym[3][$k] === $ressym[2])
+                                zerosetfn!($ressym[3][$k], $(curidx + k - 1), Compiler.default_adjoint(eltype(typeof($ressym[3][$k]))))
+                            end
+                        )
+                    )
+                else
+                    push!(postexprs, :(zerosetfn!($ressym[3][$k], $(curidx + k - 1), Compiler.default_adjoint(eltype(typeof($ressym[3][$k]))))))
+                end
             end
         end
 
@@ -1117,6 +1156,8 @@ end
         end)
     end
 
+    split_mode_expr = RuntimeActivity ? :(EnzymeCore.WithPrimal(mode)) : :(EnzymeCore.NoPrimal(mode))
+
     prim2 = if chunksize == 1
         quote end
     else
@@ -1126,13 +1167,14 @@ end
             end    
         else
             BNN2 = if last_size == 1
-                :(DuplicatedNoNeed{RT})
+                RuntimeActivity ? :(Duplicated{RT}) : :(DuplicatedNoNeed{RT})
             else
-                :(BatchDuplicatedNoNeed{RT, $last_size})
+                RuntimeActivity ? :(BatchDuplicated{RT, $last_size}) : :(BatchDuplicatedNoNeed{RT, $last_size})
             end 
             quote
                 primal2, adjoint2 = autodiff_thunk(
-                    EnzymeCore.Split(EnzymeCore.NoPrimal(mode),
+                    EnzymeCore.Split(
+                        $split_mode_expr,
                         #=ReturnShadow=#Val(true),
                         #=Width=#Val($last_size),
                         #=ModifiedBetween=#Val(ModifiedBetweenT),
@@ -1147,9 +1189,9 @@ end
     end
 
     DRT = if chunksize == 1
-        :(DuplicatedNoNeed{RT})
+        RuntimeActivity ? :(Duplicated{RT}) : :(DuplicatedNoNeed{RT})
     else
-        :(BatchDuplicatedNoNeed{RT, $chunksize})
+        RuntimeActivity ? :(BatchDuplicated{RT, $chunksize}) : :(BatchDuplicatedNoNeed{RT, $chunksize})
     end
 
     return quote
@@ -1160,7 +1202,8 @@ end
         FA = Core.Typeof($cst_fn)
 
         primal, adjoint = autodiff_thunk(
-            EnzymeCore.Split(EnzymeCore.NoPrimal(mode),
+            EnzymeCore.Split(
+                $split_mode_expr,
                 #=ReturnShadow=#Val(true),
                 #=Width=#Val($chunksize),
                 #=ModifiedBetween=#Val(ModifiedBetweenT),
