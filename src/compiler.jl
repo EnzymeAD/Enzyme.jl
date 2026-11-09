@@ -1487,7 +1487,32 @@ end
     if func == typeof(Base.eps) ||
        func == typeof(Base.nextfloat) ||
        func == typeof(Base.prevfloat)
-        if LLVM.version().major <= 15
+        has_ptr = LLVM.return_type(LLVM.function_type(llvmfn)) isa LLVM.PointerType
+        if !has_ptr
+            for p in parameters(llvmfn)
+                if value_type(p) isa LLVM.PointerType
+                    has_ptr = true
+                    break
+                end
+            end
+        end
+        if has_ptr
+            handleCustom(
+                state,
+                custom,
+                k_name,
+                llvmfn,
+                "jl_inactive_inout",
+                LLVM.Attribute[
+                    StringAttribute("enzyme_inactive"),
+                    EnumAttribute("willreturn"),
+                    EnumAttribute("nosync"),
+                    EnumAttribute("nofree"),
+                    EnumAttribute("nounwind"),
+                    StringAttribute("enzyme_shouldrecompute"),
+                ],
+            )
+        elseif LLVM.version().major <= 15
             handleCustom(
                 state,
                 custom,
