@@ -521,3 +521,59 @@ end
         @test Array(dx) == (name == "view" ? [1.0, 1.0, 0.0, 0.0] : ones(4))
     end
 end
+
+import EnzymeTestUtils
+
+sum_2676(A) = sum(A)
+sum_dims_2676(A) = sum(A; dims = 1)
+mul_ret_2676!(C, A, B) = (mul!(C, A, B); C)
+tup_mul_2676!(C, A, B) = (mul!(C, A, B); (C, B))
+
+@testset "EnzymeTestUtils GPUArraysCore extension (#2676)" begin
+    JLArrays.allowscalar(false)
+    try
+        r = JLArray(randn(2, 3))
+        vr, from_vr = EnzymeTestUtils.to_vec(r)
+        @test vr isa Vector{Float64}
+        @test length(vr) == 6
+        r2 = from_vr(vr)
+        @test r2 isa JLArray{Float64, 2}
+        @test Array(r2) == Array(r)
+
+        c = JLArray(randn(ComplexF64, 2, 2))
+        vc, from_vc = EnzymeTestUtils.to_vec(c)
+        @test vc isa Vector{Float64}
+        @test length(vc) == 8
+        c2 = from_vc(vc)
+        @test c2 isa JLArray{ComplexF64, 2}
+        @test Array(c2) == Array(c)
+
+        nested = JLArray([(1.0, 2.0), (3.0, 4.0)])
+        vn, from_vn = EnzymeTestUtils.to_vec(nested)
+        @test vn isa Vector{Float64}
+        @test length(vn) == 4
+        nested2 = from_vn(vn)
+        @test nested2 isa JLArray{Tuple{Float64, Float64}, 1}
+        @test Array(nested2) == Array(nested)
+
+        for T in (Float64, ComplexF64)
+            C = JLArray(zeros(T, 3, 2))
+            A = JLArray(randn(T, 3, 4))
+            B = JLArray(randn(T, 4, 2))
+            EnzymeTestUtils.test_forward(
+                sum_dims_2676, Duplicated, (A, Duplicated)
+            )
+            EnzymeTestUtils.test_reverse(
+                sum_2676, Active, (A, Duplicated)
+            )
+            EnzymeTestUtils.test_reverse(
+                mul_ret_2676!, Duplicated, (C, Duplicated), (A, Duplicated), (B, Duplicated)
+            )
+            EnzymeTestUtils.test_reverse(
+                tup_mul_2676!, Duplicated, (C, Duplicated), (A, Duplicated), (B, Duplicated)
+            )
+        end
+    finally
+        JLArrays.allowscalar(true)
+    end
+end
