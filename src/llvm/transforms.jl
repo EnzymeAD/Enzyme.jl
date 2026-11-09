@@ -612,6 +612,128 @@ function rewrite_abi_converter_calls!(mod::LLVM.Module)
     return nothing
 end
 
+"""
+    is_gc_loaded_operand(v)
+
+Whether `v` is an operand of a `julia.gc_loaded(mem, data)` call: the data
+pointer or the `GenericMemory` object that owns it. Both are loaded from the
+same array header and only change together, so when Enzyme reloads the data
+pointer in the reverse pass instead of caching it (see [`force_recompute!`](@ref)),
+the owning memory can be reloaded in the same way.
+"""
+function is_gc_loaded_operand(@nospecialize(v::LLVM.Value))::Bool
+    for u in LLVM.uses(v)
+        user = LLVM.user(u)
+        if isa(user, LLVM.CallInst)
+            cf = LLVM.called_operand(user)
+            if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded"
+                ops = operands(user)
+                if ops[1] == v || ops[2] == v
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+"""
+    constant_gep_offset(gep, dl)
+
+The byte offset of the constant-indexed GEP `gep`, or `nothing` if an index is
+not a constant.
+"""
+function constant_gep_offset(gep::LLVM.GetElementPtrInst, dl::LLVM.DataLayout)::Union{Nothing, Int}
+    ops = operands(gep)
+    ty = LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(gep))
+    offset = 0
+    for (k, idx) in enumerate(ops[2:end])
+        idx isa LLVM.ConstantInt || return nothing
+        i = convert(Int, idx)
+        if k == 1
+            offset += i * Int(LLVM.sizeof(dl, ty))
+        elseif ty isa LLVM.StructType
+            offset += Int(LLVM.offsetof(dl, ty, i))
+            ty = elements(ty)[i + 1]
+        elseif ty isa LLVM.ArrayType || ty isa LLVM.VectorType
+            ty = eltype(ty)
+            offset += i * Int(LLVM.sizeof(dl, ty))
+        else
+            return nothing
+        end
+    end
+    return offset
+end
+
+"""
+    mark_matrix_size_loads!(mod::LLVM.Module)
+
+Mark the loads of the `size` fields of every `Array{T, N}` argument with
+`N >= 2` as `enzyme_nocache`. Only vectors can be resized, so these loads read a
+value that does not change over the function, and Enzyme may reload it in the
+reverse pass instead of caching one copy per iteration: Julia re-reads the size
+at every indexing after a call it cannot see through (an inactive function, say),
+and in a loop whose trip count Enzyme cannot bound each such load becomes a
+tape that grows by `realloc`.
+"""
+function mark_matrix_size_loads!(mod::LLVM.Module)
+    # Julia 1.11 moved arrays to a `MemoryRef` plus a `size` tuple; the 1.10
+    # `jl_array_t` holds its dimensions after mutable bookkeeping fields.
+    VERSION >= v"1.11" || return nothing
+    dl = datalayout(mod)
+    size_offset = 2 * sizeof(Int) # after the data pointer and the memory
+    for f in functions(mod)
+        isempty(blocks(f)) && continue
+        for (i, arg) in enumerate(parameters(f))
+            T = nothing
+            ref = nothing
+            for attr in collect(parameter_attributes(f, i))
+                attr isa LLVM.StringAttribute || continue
+                if kind(attr) == "enzymejl_parmtype"
+                    T = Base.unsafe_pointer_to_objref(reinterpret(Ptr{Cvoid}, parse(UInt, LLVM.value(attr))))
+                elseif kind(attr) == "enzymejl_parmtype_ref"
+                    ref = parse(UInt, LLVM.value(attr))
+                end
+            end
+            (T isa DataType && T <: Array && ndims(T) >= 2 && ref == UInt(GPUCompiler.MUT_REF)) || continue
+            size_end = size_offset + ndims(T) * sizeof(Int)
+            todo = Tuple{LLVM.Value, Int}[(arg, 0)]
+            while !isempty(todo)
+                v, off = pop!(todo)
+                for u in LLVM.uses(v)
+                    user = LLVM.user(u)
+                    if isa(user, LLVM.AddrSpaceCastInst) || isa(user, LLVM.BitCastInst)
+                        push!(todo, (user, off))
+                    elseif isa(user, LLVM.GetElementPtrInst)
+                        goff = constant_gep_offset(user, dl)
+                        goff === nothing && continue
+                        push!(todo, (user, off + goff))
+                    elseif isa(user, LLVM.LoadInst) && operands(user)[1] == v
+                        lt = value_type(user)
+                        lt isa LLVM.IntegerType || continue
+                        off >= size_offset && off + Int(LLVM.sizeof(dl, lt)) <= size_end || continue
+                        metadata(user)["enzyme_nocache"] = MDNode(LLVM.Metadata[])
+                    end
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+"""
+    force_recompute!(mod::LLVM.Module)
+
+Mark the loads of an array's data pointer and of its owning memory (the two
+operands of `julia.gc_loaded`, possibly through a bitcast) with `enzyme_nocache`,
+so Enzyme reloads them in the reverse pass rather than storing one copy per
+iteration on the tape.
+
+Without the `mem` operand being marked, a loop whose trip count Enzyme cannot
+bound (e.g. a `while` over random draws) caches the shadow array's memory
+object in a GC-allocated, exponentially grown tape with a write barrier per
+iteration, while the data pointer next to it is simply reloaded.
+"""
 function force_recompute!(mod::LLVM.Module)
     for f in functions(mod), bb in blocks(f)
         iter = LLVM.API.LLVMGetFirstInstruction(bb)
@@ -619,26 +741,13 @@ function force_recompute!(mod::LLVM.Module)
             inst = LLVM.Instruction(iter)
             iter = LLVM.API.LLVMGetNextInstruction(iter)
             if isa(inst, LLVM.LoadInst)
-                has_loaded = false
-                for u in LLVM.uses(inst)
-                    v = LLVM.user(u)
-                    if isa(v, LLVM.CallInst)
-                        cf = LLVM.called_operand(v)
-                        if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded" && operands(v)[2] == inst
+                has_loaded = is_gc_loaded_operand(inst)
+                if !has_loaded
+                    for u in LLVM.uses(inst)
+                        v = LLVM.user(u)
+                        if isa(v, LLVM.BitCastInst) && is_gc_loaded_operand(v)
                             has_loaded = true
                             break
-                        end
-                    end
-                    if isa(v, LLVM.BitCastInst)
-                        for u2 in LLVM.uses(v)
-                            v2 = LLVM.user(u2)
-                            if isa(v2, LLVM.CallInst)
-                                cf = LLVM.called_operand(v2)
-                                if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded" && operands(v2)[2] == v
-                                    has_loaded = true
-                                    break
-                                end
-                            end
                         end
                     end
                 end

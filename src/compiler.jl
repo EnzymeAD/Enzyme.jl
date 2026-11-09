@@ -7275,6 +7275,7 @@ end
         erase_memcpy_from_undef!(mod)
         memcpy_alloca_to_loadstore(mod, job.world, enzyme_ctx)
         force_recompute!(mod)
+        mark_matrix_size_loads!(mod)
         API.EnzymeDetectReadonlyOrThrow(mod)
 
         adjointf, augmented_primalf, TapeType = enzyme!(
