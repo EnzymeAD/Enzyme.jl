@@ -1,16 +1,62 @@
 using LinearAlgebra
 
+function _all_fields_defined(x::Tuple, nf::Int)
+    for i in 1:nf
+        for xi in x
+            isdefined(xi, i) || return false
+        end
+    end
+    return true
+end
+
 # recursively apply f to all fields of x for which f is implemented; all other fields are
 # left unchanged
 function map_fields_recursive(f, x::T...) where {T}
-    fields = map(ConstructionBase.getfields, x)
-    all(isempty, fields) && return first(x)
-    new_fields = map(fields...) do xi...
-        return map_fields_recursive(f, xi...)
+    nf = fieldcount(T)
+    nf == 0 && return first(x)
+    if _all_fields_defined(x, nf)
+        fields = map(ConstructionBase.getfields, x)
+        new_fields = map(fields...) do xi...
+            return map_fields_recursive(f, xi...)
+        end
+        return _construct(T, new_fields...)
+    elseif ismutabletype(T)
+        y = ccall(:jl_new_struct_uninit, Any, (Any,), T)
+        for i in 1:nf
+            if all(Base.Fix2(isdefined, i), x)
+                val = map_fields_recursive(f, map(Base.Fix2(getfield, i), x)...)
+                ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), y, i - 1, val)
+            end
+        end
+        return y
+    else
+        nf_def = 0
+        for i in 1:nf
+            if all(Base.Fix2(isdefined, i), x)
+                nf_def = i
+            else
+                break
+            end
+        end
+        nf_def == 0 && return first(x)
+        flds = Vector{Any}(undef, nf_def)
+        for i in 1:nf_def
+            flds[i] = map_fields_recursive(f, map(Base.Fix2(getfield, i), x)...)
+        end
+        return ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), T, flds, nf_def)
     end
-    return _construct(T, new_fields...)
 end
-function map_fields_recursive(f, x::T...) where {T<:Union{Array,Tuple,NamedTuple}}
+function map_fields_recursive(f, x::T...) where {T <: Array}
+    x1 = first(x)
+    out = similar(x1)
+    for i in eachindex(x1)
+        if all(Base.Fix2(isassigned, i), x)
+            out[i] = map_fields_recursive(f, map(Base.Fix2(getindex, i), x)...)
+        end
+    end
+    return out
+end
+function map_fields_recursive(f, x::T...) where {T <: Union{Tuple, NamedTuple}}
     map(x...) do xi...
         map_fields_recursive(f, xi...)
     end
