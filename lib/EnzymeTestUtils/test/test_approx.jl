@@ -75,4 +75,44 @@ end
             end
         end
     end
+    @testset "cyclic mutable structures (#3116)" begin
+        mutable struct CyclicApproxNode
+            val::Float64
+            prev::CyclicApproxNode
+            next::CyclicApproxNode
+            function CyclicApproxNode(v::Float64)
+                n = new(v)
+                n.prev = n
+                n.next = n
+                return n
+            end
+        end
+        a1 = CyclicApproxNode(1.0)
+        b1 = CyclicApproxNode(2.0)
+        a1.next = b1
+        a1.prev = b1
+        b1.next = a1
+        b1.prev = a1
+
+        a2 = CyclicApproxNode(1.0)
+        b2 = CyclicApproxNode(2.0 + 1.0e-9)
+        a2.next = b2
+        a2.prev = b2
+        b2.next = a2
+        b2.prev = a2
+
+        test_approx(a1, a2; atol = 1.1e-9)
+        @test fails() do
+            test_approx(a1, a2; atol = 0.9e-9)
+        end
+
+        cyc_arr1 = Any[1.0]
+        push!(cyc_arr1, cyc_arr1)
+        cyc_arr2 = Any[1.0 + 1.0e-9]
+        push!(cyc_arr2, cyc_arr2)
+        test_approx(cyc_arr1, cyc_arr2; atol = 1.1e-9)
+        @test fails() do
+            test_approx(cyc_arr1, cyc_arr2; atol = 0.9e-9)
+        end
+    end
 end
