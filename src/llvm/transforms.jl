@@ -1667,12 +1667,378 @@ function nodecayed_cut_failed!(f::LLVM.Function, failed::Vector{Tuple{LLVM.PHIIn
     return nothing
 end
 
+function _unfold_phi_deref_bytes(@nospecialize(base::LLVM.Value), dl::LLVM.DataLayout)::Int
+    if isa(base, LLVM.AllocaInst)
+        cnt = operands(base)[1]
+        if isa(cnt, LLVM.ConstantInt)
+            elty = LLVM.LLVMType(LLVM.API.LLVMGetAllocatedType(base))
+            return Int(LLVM.sizeof(dl, elty)) * convert(Int, cnt)
+        end
+        return 0
+    elseif isa(base, LLVM.Argument)
+        f = LLVM.Function(LLVM.API.LLVMGetParamParent(base))
+        idx = findfirst(==(base), collect(parameters(f)))
+        idx === nothing && return 0
+        derefkind = LLVM.API.LLVMGetEnumAttributeKindForName("dereferenceable", Csize_t(15))
+        for attr in collect(LLVM.parameter_attributes(f, idx))
+            if isa(attr, LLVM.EnumAttribute) && LLVM.kind(attr) == derefkind
+                return Int(LLVM.value(attr))
+            end
+        end
+        return 0
+    elseif isa(base, LLVM.CallInst)
+        derefkind = LLVM.API.LLVMGetEnumAttributeKindForName("dereferenceable", Csize_t(15))
+        count = LLVM.API.LLVMGetCallSiteAttributeCount(base, LLVM.API.LLVMAttributeReturnIndex)
+        if count > 0
+            attrs = Vector{LLVM.API.LLVMAttributeRef}(undef, count)
+            LLVM.API.LLVMGetCallSiteAttributes(base, LLVM.API.LLVMAttributeReturnIndex, attrs)
+            for aref in attrs
+                if Bool(LLVM.API.LLVMIsEnumAttribute(aref)) && LLVM.API.LLVMGetEnumAttributeKind(aref) == derefkind
+                    return Int(LLVM.API.LLVMGetEnumAttributeValue(aref))
+                end
+            end
+        end
+        callee = get_callee(base)
+        if callee !== nothing && LLVM.name(callee) == "julia.gc_alloc_obj" && length(operands(base)) >= 3
+            sz = operands(base)[2]
+            if isa(sz, LLVM.ConstantInt)
+                return convert(Int, sz)
+            end
+        end
+        return 0
+    end
+    return 0
+end
+
+function _unfold_phi_is_local_alloc(@nospecialize(base::LLVM.Value))::Bool
+    isa(base, LLVM.AllocaInst) && return true
+    if isa(base, LLVM.CallInst)
+        noaliaskind = LLVM.API.LLVMGetEnumAttributeKindForName("noalias", Csize_t(7))
+        count = LLVM.API.LLVMGetCallSiteAttributeCount(base, LLVM.API.LLVMAttributeReturnIndex)
+        if count > 0
+            attrs = Vector{LLVM.API.LLVMAttributeRef}(undef, count)
+            LLVM.API.LLVMGetCallSiteAttributes(base, LLVM.API.LLVMAttributeReturnIndex, attrs)
+            for aref in attrs
+                if Bool(LLVM.API.LLVMIsEnumAttribute(aref)) && LLVM.API.LLVMGetEnumAttributeKind(aref) == noaliaskind
+                    return true
+                end
+            end
+        end
+        callee = get_callee(base)
+        if callee !== nothing
+            for attr in collect(LLVM.return_attributes(callee))
+                if isa(attr, LLVM.EnumAttribute) && LLVM.kind(attr) == noaliaskind
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+function _unfold_phi_forwarded_store(
+        pred::LLVM.BasicBlock,
+        @nospecialize(inc_base::LLVM.Value),
+        target_off::Int,
+        lty::LLVM.LLVMType,
+        dl::LLVM.DataLayout,
+    )::Union{Nothing, LLVM.Value}
+    lsz = Int(LLVM.sizeof(dl, lty))
+    insts = collect(instructions(pred))
+    for k in (length(insts) - 1):-1:1
+        inst = insts[k]
+        if isa(inst, LLVM.StoreInst) && !Bool(LLVM.API.LLVMGetVolatile(inst)) && !LLVM.is_atomic(inst)
+            sbase, soff = get_base_and_offset(operands(inst)[2])
+            while isa(sbase, LLVM.BitCastInst) || isa(sbase, LLVM.AddrSpaceCastInst)
+                sbase = operands(sbase)[1]
+            end
+            sval = operands(inst)[1]
+            if sbase == inc_base
+                if soff == target_off && value_type(sval) == lty
+                    return sval
+                end
+                ssz = Int(LLVM.sizeof(dl, value_type(sval)))
+                if soff + ssz <= target_off || target_off + lsz <= soff
+                    continue
+                end
+            end
+        end
+        if root_path_may_write(inst)
+            return nothing
+        end
+    end
+    return nothing
+end
+
+function unfold_heterogeneous_addr11_phi_loads!(f::LLVM.Function)::Bool
+    dl = LLVM.datalayout(LLVM.parent(f))
+    entry_bb = LLVM.entry(f)
+    changed = false
+    for bb in blocks(f)
+        for phi in collect(instructions(bb))
+            isa(phi, LLVM.PHIInst) || break
+            pty = value_type(phi)
+            (isa(pty, LLVM.PointerType) && (LLVM.addrspace(pty) == 10 || LLVM.addrspace(pty) == 11)) || continue
+            LLVM.addrspace(pty) == 11 && nodecayed_all_args(phi) && continue
+
+            incs = collect(LLVM.incoming(phi))
+            length(incs) >= 2 || continue
+
+            has_special = false
+            base_offs = Tuple{LLVM.Value, Int, Bool}[]
+            for (v, _) in incs
+                undeforpoison = isa(v, LLVM.UndefValue) || isa(v, LLVM.PointerNull)
+                @static if LLVM.version() >= v"12"
+                    undeforpoison |= isa(v, LLVM.PoisonValue)
+                end
+                if undeforpoison
+                    has_special = true
+                    break
+                end
+                base, off = get_base_and_offset(v; inst = phi)
+                while isa(base, LLVM.BitCastInst) || isa(base, LLVM.AddrSpaceCastInst)
+                    base = operands(base)[1]
+                end
+                bty = value_type(base)
+                has_const_base = isa(bty, LLVM.PointerType) && (LLVM.addrspace(bty) == 10 || LLVM.addrspace(bty) == 0)
+                push!(base_offs, (base, off, has_const_base))
+            end
+            has_special && continue
+
+            same_base = all(x -> x[3] && x[1] == base_offs[1][1], base_offs)
+            same_base && continue
+            same_const_off = all(x -> x[3] && x[2] == base_offs[1][2], base_offs)
+            if same_const_off && !any(x -> _unfold_phi_is_local_alloc(x[1]), base_offs)
+                continue
+            end
+
+            # Reachable users must be plain (non-volatile, non-atomic) loads of non-decayed
+            # values (directly or via casts and constant-offset GEPs) in blocks dominated by
+            # `bb` with no intervening write. For `addrspace(10)` phis, uses in `unreachable`
+            # error blocks (such as `throw_boundserror`) may remain on the original phi.
+            accesses = Tuple{LLVM.LoadInst, Int}[]
+            dead_chain = LLVM.Instruction[]
+            ok = true
+            worklist = Tuple{LLVM.Instruction, LLVM.Value, Int}[(LLVM.user(u), phi, 0) for u in LLVM.uses(phi)]
+            while !isempty(worklist)
+                inst, parent_val, cur_off = pop!(worklist)
+                ibb = LLVM.parent(inst)
+                if LLVM.addrspace(pty) == 10 && !isa(inst, LLVM.PHIInst) && isa(terminator(ibb), LLVM.UnreachableInst)
+                    continue
+                end
+                if (isa(inst, LLVM.BitCastInst) || isa(inst, LLVM.AddrSpaceCastInst)) && operands(inst)[1] == parent_val
+                    push!(dead_chain, inst)
+                    for u2 in LLVM.uses(inst)
+                        push!(worklist, (LLVM.user(u2), inst, cur_off))
+                    end
+                elseif isa(inst, LLVM.GetElementPtrInst) && operands(inst)[1] == parent_val &&
+                        all(isa(op, LLVM.ConstantInt) for op in operands(inst)[2:end])
+                    off2 = @dispose b = LLVM.IRBuilder() begin
+                        position!(b, inst)
+                        offty = LLVM.IntType(8 * sizeof(Int))
+                        API.EnzymeComputeByteOffsetOfGEP(b, inst, offty)
+                    end
+                    if !isa(off2, LLVM.ConstantInt)
+                        ok = false
+                        break
+                    end
+                    push!(dead_chain, inst)
+                    noff = cur_off + convert(Int, off2)
+                    for u2 in LLVM.uses(inst)
+                        push!(worklist, (LLVM.user(u2), inst, noff))
+                    end
+                elseif isa(inst, LLVM.LoadInst) && operands(inst)[1] == parent_val &&
+                        !Bool(LLVM.API.LLVMGetVolatile(inst)) && !LLVM.is_atomic(inst) &&
+                        !(isa(value_type(inst), LLVM.PointerType) && LLVM.addrspace(value_type(inst)) in (11, 13))
+                    push!(accesses, (inst, cur_off))
+                else
+                    ok = false
+                    break
+                end
+            end
+            (ok && !isempty(accesses)) || continue
+
+            for (ld, _) in accesses
+                lbb = LLVM.parent(ld)
+                if lbb == bb
+                    for inst in instructions(bb)
+                        inst == ld && break
+                        if root_path_may_write(inst)
+                            ok = false
+                            break
+                        end
+                    end
+                else
+                    visited = Set{LLVM.BasicBlock}([lbb])
+                    q = LLVM.BasicBlock[lbb]
+                    while !isempty(q) && ok
+                        cur = pop!(q)
+                        if cur == entry_bb
+                            ok = false
+                            break
+                        end
+                        preds = predecessors(cur)
+                        if isempty(preds)
+                            ok = false
+                            break
+                        end
+                        for p in preds
+                            p == bb && continue
+                            if !(p in visited)
+                                push!(visited, p)
+                                push!(q, p)
+                            end
+                        end
+                    end
+                    ok || break
+                    for inst in instructions(bb)
+                        if root_path_may_write(inst)
+                            ok = false
+                            break
+                        end
+                    end
+                    ok || break
+                    for mbb in visited
+                        for inst in instructions(mbb)
+                            mbb == lbb && inst == ld && break
+                            if root_path_may_write(inst)
+                                ok = false
+                                break
+                            end
+                        end
+                        ok || break
+                    end
+                end
+                ok || break
+            end
+            ok || continue
+
+            hoisted = any(((ld, _),) -> LLVM.parent(ld) != bb, accesses)
+            for (idx, (_, pred)) in enumerate(incs)
+                term = terminator(pred)
+                if term === nothing || !(isa(term, LLVM.BrInst) || isa(term, LLVM.SwitchInst))
+                    ok = false
+                    break
+                end
+                nsucc = length(collect(successors(term)))
+                inc_base, inc_off, _ = base_offs[idx]
+                for (ld, ld_off) in accesses
+                    lty = value_type(ld)
+                    if _unfold_phi_forwarded_store(pred, inc_base, inc_off + ld_off, lty, dl) !== nothing
+                        continue
+                    end
+                    if hoisted || nsucc != 1
+                        lsz = Int(LLVM.sizeof(dl, lty))
+                        tot_off = inc_off + ld_off
+                        if tot_off < 0 || tot_off + lsz > _unfold_phi_deref_bytes(inc_base, dl)
+                            ok = false
+                            break
+                        end
+                    end
+                end
+                ok || break
+            end
+            ok || continue
+
+            builder = LLVM.IRBuilder()
+            for (ld, ld_off) in accesses
+                lty = value_type(ld)
+                las = LLVM.addrspace(value_type(operands(ld)[1]))
+                spec_ld = LLVM.parent(ld) != bb
+                newphi = let
+                    position!(builder, phi)
+                    phi!(builder, lty, LLVM.name(ld))
+                end
+                done = Dict{LLVM.BasicBlock, LLVM.Value}()
+                for (idx, (v, pred)) in enumerate(incs)
+                    inc_base, inc_off, _ = base_offs[idx]
+                    nval = get!(done, pred) do
+                        fwd = _unfold_phi_forwarded_store(pred, inc_base, inc_off + ld_off, lty, dl)
+                        if fwd !== nothing
+                            return fwd
+                        end
+                        position!(builder, terminator(pred))
+                        vas = LLVM.addrspace(value_type(v))
+                        ptr = v
+                        if LLVM.is_opaque(value_type(v))
+                            if vas != las
+                                ptr = addrspacecast!(builder, ptr, LLVM.PointerType(las))
+                            end
+                            if ld_off != 0
+                                ptr = gep!(builder, LLVM.Int8Type(), ptr, [LLVM.ConstantInt(LLVM.Int64Type(), ld_off)])
+                            end
+                        else
+                            if ld_off != 0
+                                i8_vas = LLVM.PointerType(LLVM.Int8Type(), vas)
+                                if value_type(ptr) != i8_vas
+                                    ptr = bitcast!(builder, ptr, i8_vas)
+                                end
+                                if vas != las
+                                    ptr = addrspacecast!(builder, ptr, LLVM.PointerType(LLVM.Int8Type(), las))
+                                end
+                                ptr = gep!(builder, LLVM.Int8Type(), ptr, [LLVM.ConstantInt(LLVM.Int64Type(), ld_off)])
+                                lty_ptr = LLVM.PointerType(lty, las)
+                                if value_type(ptr) != lty_ptr
+                                    ptr = bitcast!(builder, ptr, lty_ptr)
+                                end
+                            else
+                                lty_vas = LLVM.PointerType(lty, vas)
+                                if value_type(ptr) != lty_vas
+                                    ptr = bitcast!(builder, ptr, lty_vas)
+                                end
+                                if vas != las
+                                    ptr = addrspacecast!(builder, ptr, LLVM.PointerType(lty, las))
+                                end
+                            end
+                        end
+                        nld = load!(builder, lty, ptr)
+                        alignment!(nld, alignment(ld))
+                        nsucc = length(collect(successors(terminator(pred))))
+                        if !(spec_ld || nsucc != 1)
+                            copy_metadata!(nld, ld)
+                        else
+                            for k in ("tbaa", "enzyme_type", "enzyme_inactive", "enzyme_active")
+                                if haskey(metadata(ld), k)
+                                    metadata(nld)[k] = metadata(ld)[k]
+                                end
+                            end
+                        end
+                        return nld
+                    end
+                    push!(LLVM.incoming(newphi), (nval, pred))
+                end
+                for k in ("enzyme_type", "enzyme_inactive", "enzyme_active")
+                    if haskey(metadata(ld), k)
+                        metadata(newphi)[k] = metadata(ld)[k]
+                    end
+                end
+                replace_uses!(ld, newphi)
+                LLVM.erase!(ld)
+            end
+            erased = Set{LLVM.Instruction}()
+            for inst in reverse(dead_chain)
+                if !(inst in erased) && isempty(collect(LLVM.uses(inst)))
+                    push!(erased, inst)
+                    LLVM.erase!(inst)
+                end
+            end
+            if isempty(collect(LLVM.uses(phi)))
+                LLVM.erase!(phi)
+            end
+            dispose(builder)
+            changed = true
+        end
+    end
+    return changed
+end
+
 function nodecayed_phis!(mod::LLVM.Module)
     # Simple handler to fix addrspace 11
     #complex handler for addrspace 13, which itself comes from a load of an
     # addrspace 10
     ctx = LLVM.context(mod)
     for f in functions(mod)
+        isempty(blocks(f)) && continue
 
         guaranteedInactive = false
 
@@ -1730,6 +2096,8 @@ function nodecayed_phis!(mod::LLVM.Module)
 
         offty = LLVM.IntType(8 * sizeof(Int))
         i8 = LLVM.IntType(8)
+
+        unfold_heterogeneous_addr11_phi_loads!(f)
 
         for addr in (11, 13)
 

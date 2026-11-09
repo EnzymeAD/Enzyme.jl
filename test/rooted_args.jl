@@ -165,8 +165,27 @@ end
 
 unrooted_phi_loss(x, n) = unrooted_phi_sum(UnrootedPhiArg(x, true), n)
 
+@noinline function unrooted_phi_sel_sum(s1::UnrootedPhiArg, s2::UnrootedPhiArg, n::Int)
+    acc = 0.0
+    for i in 1:n
+        if s1.flag
+            t = deepcopy(s1)
+        else
+            t = s2.flag ? s1 : s2
+        end
+        s2.x < 0.0 && break
+        acc += t.x
+    end
+    return acc + 2 * s1.x
+end
+
+unrooted_phi_sel_loss(x, n) = unrooted_phi_sel_sum(UnrootedPhiArg(x, true), UnrootedPhiArg(x, false), n)
+
 @testset "Unrootable phi becomes a runtime error" begin
     @test autodiff(Reverse, unrooted_phi_loss, Active, Active(2.0), Const(0))[1][1] == 2.0
     @test autodiff(Forward, unrooted_phi_loss, Duplicated(2.0, 1.0), Const(0))[1] == 2.0
-    @test_throws Enzyme.Compiler.EnzymeRuntimeExceptionMI autodiff(Reverse, unrooted_phi_loss, Active, Active(2.0), Const(1))
+    @test autodiff(Reverse, unrooted_phi_loss, Active, Active(2.0), Const(1))[1][1] == 3.0
+    @test autodiff(Reverse, unrooted_phi_sel_loss, Active, Active(2.0), Const(0))[1][1] == 2.0
+    @test autodiff(Forward, unrooted_phi_sel_loss, Duplicated(2.0, 1.0), Const(0))[1] == 2.0
+    @test_throws Enzyme.Compiler.EnzymeRuntimeExceptionMI autodiff(Reverse, unrooted_phi_sel_loss, Active, Active(2.0), Const(1))
 end

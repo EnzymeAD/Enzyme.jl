@@ -1172,3 +1172,128 @@ end
     @test dres_b2[1] ≈ [1.0, -0.5]
     @test dres_b2[2] ≈ [-2.0, 1.0]
 end
+
+@testset "unfold_heterogeneous_addr11_phi_loads! (#3089)" begin
+    LLVM.Context() do ctx
+        mod = parse(
+            LLVM.Module, """
+            source_filename = "start"
+            target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+            target triple = "x86_64-linux-gnu"
+
+            define i64 @hetero_load(i1 %cond, {} addrspace(10)* %mem10, {} addrspace(10)* %arr10) #0 {
+            top:
+              br i1 %cond, label %copy_bb, label %orig_bb
+
+            copy_bb:
+              %mem11 = addrspacecast {} addrspace(10)* %mem10 to i8 addrspace(11)*
+              %mem_ptr_i8 = getelementptr inbounds i8, i8 addrspace(11)* %mem11, i64 8
+              %mem_ptr = bitcast i8 addrspace(11)* %mem_ptr_i8 to i64 addrspace(11)*
+              br label %merge
+
+            orig_bb:
+              %arr_ptr = addrspacecast {} addrspace(10)* %arr10 to i64 addrspace(11)*
+              br label %merge
+
+            merge:
+              %p = phi i64 addrspace(11)* [ %mem_ptr, %copy_bb ], [ %arr_ptr, %orig_bb ]
+              %ld = load i64, i64 addrspace(11)* %p, align 8
+              %g = getelementptr inbounds i64, i64 addrspace(11)* %p, i64 1
+              %ld2 = load i64, i64 addrspace(11)* %g, align 8
+              %sum = add i64 %ld, %ld2
+              ret i64 %sum
+            }
+
+            define i64 @hetero_blocked_by_store(i1 %cond, {} addrspace(10)* %mem10, {} addrspace(10)* %arr10, i64* %out) {
+            top:
+              br i1 %cond, label %copy_bb, label %orig_bb
+
+            copy_bb:
+              %mem11 = addrspacecast {} addrspace(10)* %mem10 to i8 addrspace(11)*
+              %mem_ptr_i8 = getelementptr inbounds i8, i8 addrspace(11)* %mem11, i64 8
+              %mem_ptr = bitcast i8 addrspace(11)* %mem_ptr_i8 to i64 addrspace(11)*
+              br label %merge
+
+            orig_bb:
+              %arr_ptr = addrspacecast {} addrspace(10)* %arr10 to i64 addrspace(11)*
+              br label %merge
+
+            merge:
+              %p = phi i64 addrspace(11)* [ %mem_ptr, %copy_bb ], [ %arr_ptr, %orig_bb ]
+              store i64 1, i64* %out, align 8
+              %ld = load i64, i64 addrspace(11)* %p, align 8
+              ret i64 %ld
+            }
+
+            attributes #0 = { "enzymejl_world"="1" }
+            """
+        )
+
+        @test !Enzyme.Compiler.unfold_heterogeneous_addr11_phi_loads!(functions(mod)["hetero_blocked_by_store"])
+        LLVM.erase!(functions(mod)["hetero_blocked_by_store"])
+
+        Enzyme.Compiler.nodecayed_phis!(mod)
+        @test LLVM.verify(mod) === nothing
+        @test @filecheck begin
+            @check_label "define i64 @hetero_load"
+            @check_not "nodecayed"
+            @check_label "copy_bb:"
+            @check "load i64,"
+            @check "load i64,"
+            @check_label "orig_bb:"
+            @check "load i64,"
+            @check "load i64,"
+            @check_label "merge:"
+            @check "= phi i64 ["
+            @check "= phi i64 ["
+            @check "add i64"
+            string(mod)
+        end
+
+        mod10 = parse(
+            LLVM.Module, """
+            source_filename = "start"
+            target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
+            target triple = "x86_64-linux-gnu"
+
+            declare noalias nonnull dereferenceable(24) {} addrspace(10)* @julia.gc_alloc_obj({}*, i64, {} addrspace(10)*)
+            declare void @throw_oob({} addrspace(10)*)
+
+            define i64 @hetero_addr10_dom(i1 %cond, {} addrspace(10)* dereferenceable(24) %arg) #0 {
+            top:
+              br i1 %cond, label %alloc_bb, label %merge
+
+            alloc_bb:
+              %box = call noalias nonnull dereferenceable(24) {} addrspace(10)* @julia.gc_alloc_obj({}* null, i64 24, {} addrspace(10)* null)
+              %b11 = addrspacecast {} addrspace(10)* %box to i64 addrspace(11)*
+              store i64 42, i64 addrspace(11)* %b11, align 8
+              br label %merge
+
+            merge:
+              %p = phi {} addrspace(10)* [ %box, %alloc_bb ], [ %arg, %top ]
+              %c11 = addrspacecast {} addrspace(10)* %p to i8 addrspace(11)*
+              %g16 = getelementptr inbounds i8, i8 addrspace(11)* %c11, i64 16
+              %p16 = bitcast i8 addrspace(11)* %g16 to i64 addrspace(11)*
+              %len = load i64, i64 addrspace(11)* %p16, align 8
+              %isz = icmp eq i64 %len, 0
+              br i1 %isz, label %oob, label %ok_bb
+
+            oob:
+              call void @throw_oob({} addrspace(10)* %p)
+              unreachable
+
+            ok_bb:
+              %p0 = addrspacecast {} addrspace(10)* %p to i64 addrspace(11)*
+              %v0 = load i64, i64 addrspace(11)* %p0, align 8
+              ret i64 %v0
+            }
+
+            attributes #0 = { "enzymejl_world"="1" }
+            """
+        )
+        @test Enzyme.Compiler.unfold_heterogeneous_addr11_phi_loads!(functions(mod10)["hetero_addr10_dom"])
+        @test LLVM.verify(mod10) === nothing
+        ir10 = string(mod10)
+        @test occursin("[ 42, %alloc_bb ]", ir10)
+    end
+end
