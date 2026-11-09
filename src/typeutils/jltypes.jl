@@ -215,6 +215,13 @@ end
 
 struct RemovedParam end
 
+function llvm_type_allow_boxed(@nospecialize(T::Type))
+    if !(T <: Ptr || T <: Core.LLVMPtr) && GPUCompiler.deserves_argbox(T)
+        return LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
+    end
+    return convert(LLVMType, T; allow_boxed = true)
+end
+
 function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nospecialize(rooted_typ::Union{Nothing, Type}), source_i::Int, orig_i::Int, arg_jl_i::Int, codegen_i::Int, last_cc, parmsRemoved, @nospecialize(source_sig::Type))
     if isghostty(source_typ) || Core.Compiler.isconstType(source_typ)
         push!(args, (cc = GPUCompiler.GHOST, typ = source_typ, arg_i = source_i,
@@ -246,7 +253,7 @@ function handle_param(args, codegen_types, @nospecialize(source_typ::Type), @nos
     codegen_typ = codegen_types[codegen_i]
 
     if codegen_typ isa LLVM.PointerType
-        llvm_source_typ = convert(LLVMType, source_typ; allow_boxed = true)
+        llvm_source_typ = llvm_type_allow_boxed(source_typ)
         # pointers are used for multiple kinds of arguments
         # - literal pointer values
         if source_typ <: Ptr || source_typ <: Core.LLVMPtr
