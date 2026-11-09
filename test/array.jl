@@ -390,3 +390,30 @@ end
         @test dA ≈ T[0 0 6; 8 20 24]
     end
 end
+
+struct MixedFloatIntElem3708
+    a::Float64
+    n::Int
+end
+
+msum_3708(w) = sum(k * w[k].a for k in eachindex(w))
+f_copyto_3708(dst, src) = (unsafe_copyto!(dst, 1, src, 2, 70); msum_3708(dst))
+f_deleteat_3708(v) = (deleteat!(v, 4:5); msum_3708(v))
+
+@testset "Multi-element memtransfer on mixed struct vector (#3708)" begin
+    src = [MixedFloatIntElem3708(k, k) for k in 1:72]
+    dsrc = [MixedFloatIntElem3708(0.0, 0) for _ in 1:72]
+    dst = [MixedFloatIntElem3708(0.0, 0) for _ in 1:70]
+    ddst = [MixedFloatIntElem3708(0.0, 0) for _ in 1:70]
+    autodiff(Reverse, f_copyto_3708, Active, Duplicated(dst, ddst), Duplicated(src, dsrc))
+    @test [dsrc[k].a for k in 1:72] ≈ vcat(0.0, collect(1.0:70.0), 0.0)
+
+    @static if VERSION >= v"1.11-"
+        v = [MixedFloatIntElem3708(k, k) for k in 1:75]
+        dv = [MixedFloatIntElem3708(0.0, 0) for _ in 1:75]
+        dm = dv.ref
+        autodiff(Reverse, f_deleteat_3708, Active, Duplicated(v, dv))
+        res = [memoryref(dm, k)[].a for k in 1:75]
+        @test res ≈ vcat(1.0:3.0, [0.0, 0.0], 4.0:73.0)
+    end
+end
