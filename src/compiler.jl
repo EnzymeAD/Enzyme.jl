@@ -4445,10 +4445,12 @@ function create_abi_wrapper(
                 end
                 if i == 2 && actualRetType != literal_rt
                     if Base.isconcretetype(literal_rt) && !Base.isconcretetype(actualRetType)
-                        eval = addrspacecast!(builder, eval, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), Derived))
-                        lvalty = convert(LLVM.LLVMType, literal_rt)
-                        eval = bitcast!(builder, eval, LLVM.PointerType(lvalty, Derived))
-                        eval = load!(builder, lvalty, eval)
+                        if GPUCompiler.deserves_argbox(actualRetType) && !GPUCompiler.deserves_argbox(literal_rt)
+                            eval = addrspacecast!(builder, eval, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), Derived))
+                            lvalty = convert(LLVM.LLVMType, literal_rt; allow_boxed = true)
+                            eval = bitcast!(builder, eval, LLVM.PointerType(lvalty, Derived))
+                            eval = load!(builder, lvalty, eval)
+                        end
                     else
 			emit_error(builder, nothing, "Unexpected type inference from LLVM codegen. \nActual return type from GPUCompiler: $(actualRetType)\n Inferred return type: $(literal_rt)\n rettype=$(rettype)\n Mode=$Mode\n TT=$TT")
                     end 
@@ -4496,22 +4498,24 @@ function create_abi_wrapper(
                         eval = ival
                     elseif actualRetType != literal_rt
                         if Base.isconcretetype(literal_rt) && !Base.isconcretetype(actualRetType)
-                            lvalty = convert(LLVM.LLVMType, literal_rt)
-                            ival = UndefValue(
-                                LLVM.LLVMType(API.EnzymeGetShadowType(width, lvalty)),
-                            )
-                            for idx = 1:width
-                                pv =
-                                    (width == 1) ? eval : extract_value!(builder, eval, idx - 1)
-                                eval = addrspacecast!(builder, eval, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), Derived))
-                                eval = bitcast!(builder, eval, LLVM.PointerType(lvalty, Derived))
-                                eval = load!(builder, lvalty, eval)
+                            if GPUCompiler.deserves_argbox(actualRetType) && !GPUCompiler.deserves_argbox(literal_rt)
+                                lvalty = convert(LLVM.LLVMType, literal_rt; allow_boxed = true)
+                                ival = UndefValue(
+                                    LLVM.LLVMType(API.EnzymeGetShadowType(width, lvalty)),
+                                )
+                                for idx in 1:width
+                                    pv =
+                                        (width == 1) ? eval : extract_value!(builder, eval, idx - 1)
+                                    pv = addrspacecast!(builder, pv, LLVM.PointerType(LLVM.StructType(LLVM.LLVMType[]), Derived))
+                                    pv = bitcast!(builder, pv, LLVM.PointerType(lvalty, Derived))
+                                    pv = load!(builder, lvalty, pv)
 
-                                ival =
-                                    (width == 1) ? eval :
-                                    insert_value!(builder, ival, eval, idx - 1)
+                                    ival =
+                                        (width == 1) ? pv :
+                                        insert_value!(builder, ival, pv, idx - 1)
+                                end
+                                eval = ival
                             end
-                            eval = ival
                         else
 			    emit_error(builder, nothing, "Unexpected type inference from LLVM codegen. \nActual return type from GPUCompiler: $(actualRetType)\n Inferred return type: $(literal_rt)\n rettype=$(rettype)\n Mode=$Mode\n TT=$TT")
                         end 

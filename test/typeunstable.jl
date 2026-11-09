@@ -507,3 +507,52 @@ end
     @test dx ≈ 1 ./ x
     @test (@allocated sum_log_gradient!(dx, x)) == 0
 end
+
+function uninferred_vec_3465(x::AbstractVector{T}) where {T}
+    y = Vector{T}(undef, sum(length, (1:1, 2:2)))
+    y .= x
+    return y
+end
+const composed_vec_3465 = uninferred_vec_3465 ∘ identity
+
+@noinline uninferred_tup_3465(x::Vector{Float64}) = Base.inferencebarrier(([2.0 * x[1]], [3.0 * x[2]]))
+
+@testset "Issue 3465 batched split reverse uninferred concrete return" begin
+    jac = Enzyme.jacobian(Enzyme.Reverse, composed_vec_3465, ones(2))
+    @test only(jac) ≈ [1.0 0.0; 0.0 1.0]
+
+    mode = Enzyme.ReverseSplitWidth(Enzyme.ReverseSplitWithPrimal, Val(2))
+    fwd, rev = Enzyme.autodiff_thunk(
+        mode,
+        Enzyme.Const{typeof(composed_vec_3465)},
+        Enzyme.BatchDuplicated{Vector{Float64}, 2},
+        Enzyme.BatchDuplicated{Vector{Float64}, 2},
+    )
+    x = [3.0, 5.0]
+    dx1 = zeros(2)
+    dx2 = zeros(2)
+    tape, prim, dy = fwd(Enzyme.Const(composed_vec_3465), Enzyme.BatchDuplicated(x, (dx1, dx2)))
+    @test prim == [3.0, 5.0]
+    dy[1] .= [1.0, 0.0]
+    dy[2] .= [0.0, 1.0]
+    rev(Enzyme.Const(composed_vec_3465), Enzyme.BatchDuplicated(x, (dx1, dx2)), tape)
+    @test dx1 == [1.0, 0.0]
+    @test dx2 == [0.0, 1.0]
+
+    fwd_t, rev_t = Enzyme.autodiff_thunk(
+        mode,
+        Enzyme.Const{typeof(uninferred_tup_3465)},
+        Enzyme.BatchDuplicated{Tuple{Vector{Float64}, Vector{Float64}}, 2},
+        Enzyme.BatchDuplicated{Vector{Float64}, 2},
+    )
+    dx1_t = zeros(2)
+    dx2_t = zeros(2)
+    tape_t, prim_t, dy_t = fwd_t(Enzyme.Const(uninferred_tup_3465), Enzyme.BatchDuplicated(x, (dx1_t, dx2_t)))
+    @test prim_t[1] == [6.0]
+    @test prim_t[2] == [15.0]
+    dy_t[1][1][1] = 1.0
+    dy_t[2][2][1] = 1.0
+    rev_t(Enzyme.Const(uninferred_tup_3465), Enzyme.BatchDuplicated(x, (dx1_t, dx2_t)), tape_t)
+    @test dx1_t == [2.0, 0.0]
+    @test dx2_t == [0.0, 3.0]
+end
