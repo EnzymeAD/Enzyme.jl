@@ -390,3 +390,48 @@ end
         @test dA ≈ T[0 0 6; 8 20 24]
     end
 end
+
+@noinline function step_arg_nx_3904(nx::Int, nt::Int, M0::Float64)
+    M = zeros(nx + 1)
+    M .= M0
+    h = zeros(nx)
+    for _ in 1:nt
+        h .+= M[1:nx]
+    end
+    return sum(h)
+end
+
+loss_arg_nx_3904(M0::Float64, nt::Int) = step_arg_nx_3904(30, nt, M0)
+
+@inline clamp_above_3904(h::Float64, b::Float64) = h < b ? b : h
+
+@noinline function step_const_nx_3904(nt::Int, M0::Float64)
+    nx = 30
+    M = zeros(nx + 1)
+    b = [1.0 - 0.0001 * (i - 1) for i in 1:(nx + 1)]
+    M .= M0
+    h = copy(b)
+    hc = h .- b
+    for _ in 1:nt
+        h[2:nx] .= clamp_above_3904.(h[2:nx] .+ M[2:nx], b[2:nx])
+        hc .= h .- b
+    end
+    return sum(hc)
+end
+
+loss_const_nx_3904(M0::Float64, nt::Int) = step_const_nx_3904(nt, M0)
+
+@testset "GenericMemory inline vs heap @julia.gc_loaded phi (#3904)" begin
+    nt = 1_500
+    expected = 30.0 * nt
+    for _ in 1:4
+        junk = [fill(1.0e100, 64) for _ in 1:64]
+        GC.safepoint()
+        Base.donotdelete(junk)
+        @test autodiff(Forward, loss_arg_nx_3904, Duplicated(0.004, 1.0), Const(nt))[1] ≈ expected
+    end
+
+    fd = (loss_const_nx_3904(0.004 + 1.0e-6, 10) - loss_const_nx_3904(0.004 - 1.0e-6, 10)) / 2.0e-6
+    fwd = autodiff(Forward, loss_const_nx_3904, Duplicated(0.004, 1.0), Const(10))[1]
+    @test isapprox(fwd, fd; rtol = 1.0e-7)
+end

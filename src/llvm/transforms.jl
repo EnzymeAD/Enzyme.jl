@@ -1145,18 +1145,14 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
             cf = LLVM.called_operand(v)
             if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded"
                 ld = operands(v)[2]
-                ld0, o0, ol0 = nodecayed_getparent(st, b, ld, LLVM.ConstantInt(st.offty, 0), hasload)
-                v2 = ld0
-                # v2, o2, hl2 = nodecayed_getparent(st, b, operands(ld)[1], LLVM.ConstantInt(st.offty, 0), true)
-
-                rhs = LLVM.ConstantInt(st.offty, sizeof(Int))
-                o2 = o0
-
-                base_2, off_2 = get_base_and_offset(v2)
+                ld_base, ld_off = get_base_and_offset(ld)
                 base_1, off_1 = get_base_and_offset(operands(v)[1])
 
-                if o2 == rhs && base_1 == base_2 && off_1 == off_2
-                    return operands(v)[1], offset, true
+                if ld_off == 0 && isa(ld_base, LLVM.LoadInst)
+                    ptr_base, ptr_off = get_base_and_offset(operands(ld_base)[1])
+                    if base_1 == ptr_base && ptr_off - off_1 == sizeof(Int)
+                        return operands(v)[1], offset, true
+                    end
                 end
 
                 pty = TypeTree(API.DT_Pointer, LLVM.context(ld))
@@ -1164,7 +1160,7 @@ function nodecayed_getparent(st::NoDecayedPhiState, b::LLVM.IRBuilder, @nospecia
                 rhs = ptrtoint!(b, get_memory_data(b, operands(v)[1]), st.offty)
                 metadata(rhs)["enzyme_type"] = to_md(pty, st.ctx)
                 lhs = ptrtoint!(b, operands(v)[2], st.offty)
-                metadata(rhs)["enzyme_type"] = to_md(pty, st.ctx)
+                metadata(lhs)["enzyme_type"] = to_md(pty, st.ctx)
                 off2 = nuwsub!(b, lhs, rhs)
                 ity = TypeTree(API.DT_Integer, LLVM.context(ld))
                 only!(ity, -1)
