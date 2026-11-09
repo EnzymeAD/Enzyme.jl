@@ -357,7 +357,7 @@ autodiff(Reverse,
 # all ones). Using AD notation for reverse mode, this is
 
 # ```math 
-# \overline{\text{state\_now}} = \frac{\partial \text{out\_now}}{\partial \text{state\_now}}\right|_\text{state\_now} \overline{\text{out\_now} + \frac{\partial \text{out\_old}}{\partial \text{state\_now}}\right|_\text{state\_now} \overline{\text{out\_old}
+# \overline{\text{state\_now}} = \left.\frac{\partial \text{out\_now}}{\partial \text{state\_now}}\right|_\text{state\_now} \overline{\text{out\_now}} + \left.\frac{\partial \text{out\_old}}{\partial \text{state\_now}}\right|_\text{state\_now} \overline{\text{out\_old}}
 # ```
 
 # We note here that had we initialized `dstate_now` and `dstate_old` as something else, our results 
