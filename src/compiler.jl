@@ -3171,6 +3171,8 @@ function add_one_in_place(x)
         x[] = recursive_add(x[], default_adjoint(eltype(Core.Typeof(x))))
     elseif x isa (Array{T,0} where T)
         x[] = recursive_add(x[], default_adjoint(eltype(Core.Typeof(x))))
+    elseif !ismutable(x) && active_reg_nothrow(Core.Typeof(x)) == ActiveState
+        return nothing
     else
         throw(EnzymeNonScalarReturnException(x, ""))
     end
