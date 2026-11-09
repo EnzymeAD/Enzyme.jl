@@ -771,7 +771,7 @@ function abs_typeof(
         end
 
         _, RT = enzyme_custom_extract_mi(arg, false)
-        if RT !== nothing
+        if RT !== nothing && isconcretetype(RT)
             llrt, sret, returnRoots = get_return_info(RT)
             if sret === nothing
                 if llrt == RT
