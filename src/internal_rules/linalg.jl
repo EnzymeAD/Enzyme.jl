@@ -590,17 +590,14 @@ function EnzymeRules.augmented_primal(
     func::Const{typeof(det)},
     ::Type{RT},
     A::Annotation{AT},
-) where {RT,AT<:StridedMatrix}
+    ) where {RT, AT <: StridedMatrix}
     cache_A = EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
     res = det(A.val)
     retres = EnzymeRules.needs_primal(config) ? res : nothing
     dres = if EnzymeRules.width(config) == 1 && EnzymeRules.needs_shadow(config)
         zero(res)
     elseif EnzymeRules.width(config) > 1 && EnzymeRules.needs_shadow(config)
-        ntuple(Val(EnzymeRules.width(config))) do i
-            Base.@_inline_meta
-            zero(res)
-        end
+        ntuple(Returns(zero(res)), Val(EnzymeRules.width(config)))
     else
         nothing
     end
@@ -611,13 +608,20 @@ end
 function EnzymeRules.reverse(
     config::EnzymeRules.RevConfig,
     func::Const{typeof(det)},
-    dret::Active,
+        dret::Union{Active, NTuple{<:Any, <:Active}},
     cache,
     A::Annotation{<:StridedMatrix},
 )
     ret, cache_A = cache
     if !isa(A, Const)
-        A.dval .+= inv(cache_A)' * dot(ret, dret.val)
+        invA_adj = inv(cache_A)'
+        if EnzymeRules.width(config) == 1
+            A.dval .+= invA_adj .* dot(ret, dret.val)
+        else
+            for (dA, dr) in zip(A.dval, dret)
+                dA .+= invA_adj .* dot(ret, dr.val)
+            end
+        end
     end
     return (nothing,)
 end
@@ -626,9 +630,13 @@ function EnzymeRules.reverse(
     func::Const{typeof(det)},
     ::Type{<:Const},
     cache,
-    A::Annotation{<:Array},
+        A::Annotation{<:StridedMatrix},
 )
     return (nothing,)
+end
+
+@inline function _det_fwd((res, F), dA)
+    return oftype(res, res * tr(F \ dA))
 end
 
 function EnzymeRules.forward(
@@ -638,15 +646,21 @@ function EnzymeRules.forward(
     A::Annotation{<:StridedMatrix},
 ) where {RT}
     res = det(A.val)
-    dres = !isa(A, Const) ? res * sum(diag(A.val \ A.dval)) : zero(res)
-    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
-        return Duplicated(res, dres)
-    elseif EnzymeRules.needs_primal(config)
-        return res
-    elseif EnzymeRules.needs_shadow(config)
-        return dres
+    if !EnzymeRules.needs_shadow(config)
+        return EnzymeRules.needs_primal(config) ? res : nothing
+    end
+    N = EnzymeRules.width(config)
+    if N == 1
+        dres = isa(A, Const) ? zero(res) : oftype(res, res * tr(A.val \ A.dval))
+        return EnzymeRules.needs_primal(config) ? Duplicated(res, dres) : dres
     else
-        return nothing
+        dres = if isa(A, Const)
+            ntuple(Returns(zero(res)), Val(N))
+        else
+            F = compute_lu_cache(A.val, first(A.dval))
+            map(Base.Fix1(_det_fwd, (res, F)), A.dval)
+        end
+        return EnzymeRules.needs_primal(config) ? BatchDuplicated(res, dres) : dres
     end
 end
 
@@ -655,17 +669,14 @@ function EnzymeRules.augmented_primal(
     func::Const{typeof(logdet)},
     ::Type{RT},
     A::Annotation{AT},
-) where {RT,AT<:StridedMatrix}
+    ) where {RT, AT <: StridedMatrix}
     cache_A = EnzymeRules.overwritten(config)[2] ? copy(A.val) : A.val
     res = logdet(A.val)
     retres = EnzymeRules.needs_primal(config) ? res : nothing
     dres = if EnzymeRules.width(config) == 1 && EnzymeRules.needs_shadow(config)
         zero(res)
     elseif EnzymeRules.width(config) > 1 && EnzymeRules.needs_shadow(config)
-        ntuple(Val(EnzymeRules.width(config))) do i
-            Base.@_inline_meta
-            zero(res)
-        end
+        ntuple(Returns(zero(res)), Val(EnzymeRules.width(config)))
     else
         nothing
     end
@@ -675,11 +686,20 @@ end
 function EnzymeRules.reverse(
     config::EnzymeRules.RevConfig,
     func::Const{typeof(logdet)},
-    dret::Active,
+        dret::Union{Active, NTuple{<:Any, <:Active}},
     cache_A,
     A::Annotation{<:StridedMatrix},
 )
-    !isa(A, Const) && (A.dval .+= dret.val * inv(cache_A)')
+    if !isa(A, Const)
+        invA_adj = inv(cache_A)'
+        if EnzymeRules.width(config) == 1
+            A.dval .+= dret.val .* invA_adj
+        else
+            for (dA, dr) in zip(A.dval, dret)
+                dA .+= dr.val .* invA_adj
+            end
+        end
+    end
     return (nothing,)
 end
 
@@ -693,6 +713,10 @@ function EnzymeRules.reverse(
     return (nothing,)
 end
 
+@inline function _logdet_fwd((res, F), dA)
+    return oftype(res, tr(F \ dA))
+end
+
 function EnzymeRules.forward(
     config::EnzymeRules.FwdConfig,
     func::Const{typeof(logdet)},
@@ -700,15 +724,21 @@ function EnzymeRules.forward(
     A::Annotation{<:StridedMatrix},
 ) where {RT}
     res = logdet(A.val)
-    dres = !isa(A, Const) ? sum(diag(A.val \ A.dval)) : zero(res)
-    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
-        return Duplicated(res, dres)
-    elseif EnzymeRules.needs_primal(config)
-        return res
-    elseif EnzymeRules.needs_shadow(config)
-        return dres
+    if !EnzymeRules.needs_shadow(config)
+        return EnzymeRules.needs_primal(config) ? res : nothing
+    end
+    N = EnzymeRules.width(config)
+    if N == 1
+        dres = isa(A, Const) ? zero(res) : oftype(res, tr(A.val \ A.dval))
+        return EnzymeRules.needs_primal(config) ? Duplicated(res, dres) : dres
     else
-        return nothing
+        dres = if isa(A, Const)
+            ntuple(Returns(zero(res)), Val(N))
+        else
+            F = compute_lu_cache(A.val, first(A.dval))
+            map(Base.Fix1(_logdet_fwd, (res, F)), A.dval)
+        end
+        return EnzymeRules.needs_primal(config) ? BatchDuplicated(res, dres) : dres
     end
 end
 
