@@ -6826,7 +6826,7 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     end
 
     # Run early pipeline
-    optimize!(mod, target_machine, enzyme_ctx, target_info)
+    optimize!(mod, target_machine, enzyme_ctx, target_info, primal_target)
 
     if process_module
         GPUCompiler.optimize_module!(primal_job, mod)
