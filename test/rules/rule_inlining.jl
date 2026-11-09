@@ -486,3 +486,53 @@ end
         @test Enzyme.Compiler.check_specsig(decl, mi, RT) === nothing
     end
 end
+
+struct MockBackendParams1795 <: Enzyme.Compiler.GPUCompiler.AbstractCompilerParams end
+Base.Experimental.@MethodTable(MockMethodTable1795)
+Enzyme.Compiler.GPUCompiler.method_table(::Enzyme.Compiler.CompilerJob{<:Any, MockBackendParams1795}) =
+    MockMethodTable1795
+Enzyme.Compiler.GPUCompiler.runtime_module(::Enzyme.Compiler.CompilerJob{<:Any, MockBackendParams1795}) =
+    Enzyme.Compiler.Runtime
+
+@testset "nest_params preserves EnzymeInterpreter and backend method table (#1795, #683)" begin
+    world = Base.get_world_counter()
+    mi = Enzyme.Compiler.my_methodinstance(Forward, typeof(cube_inline), Tuple{Float64}, world)
+    target = Enzyme.Compiler.EnzymeTarget()
+    base_params = Enzyme.Compiler.EnzymeCompilerParams(
+        Tuple{Const{typeof(cube_inline)}, Duplicated{Float64}},
+        Enzyme.API.DEM_ForwardMode,
+        1,
+        Duplicated{Float64},
+        true,
+        true,
+        (false, false),
+        false,
+        false,
+        Enzyme.Compiler.UnknownTapeType,
+        Enzyme.Compiler.FFIABI,
+        false,
+        false,
+        false,
+    )
+    nested_params = Enzyme.Compiler.GPUCompiler.nest_params(base_params, MockBackendParams1795())
+    @test nested_params.params isa Enzyme.Compiler.PrimalCompilerParams{MockBackendParams1795}
+    @test nested_params.params.mode == Enzyme.API.DEM_ForwardMode
+
+    enzyme_cfg = Enzyme.Compiler.CompilerConfig(target, nested_params; kernel = false)
+    enzyme_job = Enzyme.Compiler.CompilerJob(mi, enzyme_cfg, world)
+    @test Enzyme.Compiler.GPUCompiler.method_table(enzyme_job) === MockMethodTable1795
+
+    primal_cfg = Enzyme.Compiler.CompilerConfig(
+        enzyme_cfg;
+        target = enzyme_cfg.target.target,
+        params = enzyme_cfg.params.params,
+        kernel = false,
+    )
+    primal_job = Enzyme.Compiler.CompilerJob(mi, primal_cfg, world)
+    @test Enzyme.Compiler.GPUCompiler.get_interpreter(primal_job) isa Enzyme.Compiler.Interpreter.EnzymeInterpreter
+    @test Enzyme.Compiler.GPUCompiler.method_table(primal_job) === MockMethodTable1795
+    @test Enzyme.Compiler.GPUCompiler.runtime_module(primal_job) === Enzyme.Compiler.Runtime
+
+    renested_params = Enzyme.Compiler.GPUCompiler.nest_params(base_params, nested_params)
+    @test renested_params.params isa Enzyme.Compiler.PrimalCompilerParams{MockBackendParams1795}
+end

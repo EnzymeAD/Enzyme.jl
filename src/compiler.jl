@@ -138,10 +138,11 @@ struct EnzymeCompilerParams{Params<:AbstractCompilerParams} <: AbstractEnzymeCom
     strongZero::Bool
 end
 
-# FIXME: Should this take something like PTXCompilerParams/CUDAParams?
-struct PrimalCompilerParams <: AbstractEnzymeCompilerParams
+struct PrimalCompilerParams{P <: Union{Nothing, AbstractCompilerParams}} <: AbstractEnzymeCompilerParams
     mode::API.CDerivativeMode
+    parent::P
 end
+PrimalCompilerParams(mode::API.CDerivativeMode) = PrimalCompilerParams{Nothing}(mode, nothing)
 
 function EnzymeCompilerParams(TT, mode, width, rt, run_enzyme, abiwrap,
                               modifiedBetween, returnPrimal, shadowInit,
@@ -179,6 +180,10 @@ end
 GPUCompiler.check_invocation(job::CompilerJob{EnzymeTarget}, entry::LLVM.Function) = nothing
 
 GPUCompiler.runtime_module(::CompilerJob{<:Any,<:AbstractEnzymeCompilerParams}) = Runtime
+function GPUCompiler.runtime_module(@nospecialize(job::CompilerJob{<:Any, <:PrimalCompilerParams{<:AbstractCompilerParams}}))
+    parent_config = CompilerConfig(job.config; params = job.config.params.parent)
+    return GPUCompiler.runtime_module(CompilerJob(job.source, parent_config, job.world))
+end
 # GPUCompiler.isintrinsic(::CompilerJob{EnzymeTarget}, fn::String) = true
 # GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
 
@@ -3333,10 +3338,20 @@ function __init__()
     register_llvm_rules()
 end
 
+function unwrap_primal_parent(@nospecialize(parent::AbstractCompilerParams))
+    if parent isa EnzymeCompilerParams
+        return unwrap_primal_parent(parent.params)
+    elseif parent isa PrimalCompilerParams
+        return parent.parent
+    else
+        return parent
+    end
+end
+
 # FIXME: Use params.parent in more places where we rely on the behavior of the underlying 
 function GPUCompiler.nest_params(params::AbstractEnzymeCompilerParams, parent::AbstractCompilerParams)
     EnzymeCompilerParams(
-        parent,
+        PrimalCompilerParams(params.mode, unwrap_primal_parent(parent)),
         params.TT,
         params.mode,
         params.width,
@@ -3361,13 +3376,25 @@ end
 # fall back to the global method table, while the primal code emitted for it (see
 # `codegen`) is compiled under the backend's overlay table(s). Unwrap the job so both agree.
 function unwrap_enzyme_job(@nospecialize(job::CompilerJob{<:EnzymeTarget, <:EnzymeCompilerParams}))
-    primal_config = CompilerConfig(job.config; target = job.config.target.target, params = job.config.params.params)
+    inner_params = job.config.params.params
+    if inner_params isa PrimalCompilerParams && inner_params.parent !== nothing
+        inner_params = inner_params.parent
+    end
+    primal_config = CompilerConfig(job.config; target = job.config.target.target, params = inner_params)
+    return CompilerJob(job.source, primal_config, job.world)
+end
+function unwrap_primal_job(@nospecialize(job::CompilerJob{<:Any, <:PrimalCompilerParams{<:AbstractCompilerParams}}))
+    primal_config = CompilerConfig(job.config; params = job.config.params.parent)
     return CompilerJob(job.source, primal_config, job.world)
 end
 GPUCompiler.method_table(@nospecialize(job::CompilerJob{<:EnzymeTarget, <:EnzymeCompilerParams})) =
     GPUCompiler.method_table(unwrap_enzyme_job(job))
 GPUCompiler.method_table_view(@nospecialize(job::CompilerJob{<:EnzymeTarget, <:EnzymeCompilerParams})) =
     GPUCompiler.method_table_view(unwrap_enzyme_job(job))
+GPUCompiler.method_table(@nospecialize(job::CompilerJob{<:Any, <:PrimalCompilerParams{<:AbstractCompilerParams}})) =
+    GPUCompiler.method_table(unwrap_primal_job(job))
+GPUCompiler.method_table_view(@nospecialize(job::CompilerJob{<:Any, <:PrimalCompilerParams{<:AbstractCompilerParams}})) =
+    GPUCompiler.method_table_view(unwrap_primal_job(job))
 
 struct UnknownTapeType end
 
