@@ -149,6 +149,17 @@ end
             end
         end
 
+        @testset "MixedDuplicated inputs and outputs (#2677)" begin
+            foo_mixed(A::Matrix) = (A .^ 2, norm(A))
+            bar_mixed(t::Tuple{Matrix{Float64}, Float64}) = t[1] .* t[2]
+            A = rand(4, 4)
+            t = (rand(3, 3), 2.5)
+            test_reverse(foo_mixed, MixedDuplicated, (A, Duplicated))
+            test_reverse(foo_mixed, BatchMixedDuplicated, (A, BatchDuplicated))
+            test_reverse(bar_mixed, Duplicated, (t, MixedDuplicated))
+            test_reverse(bar_mixed, BatchDuplicated, (t, BatchMixedDuplicated))
+        end
+
         @testset "mutating function" begin
             sz = (2, 3)
             @testset for Ty in (Const, Duplicated, BatchDuplicated),

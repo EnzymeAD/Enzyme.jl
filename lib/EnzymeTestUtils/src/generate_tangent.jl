@@ -65,7 +65,16 @@ function _build_activity(rng, primal, ::Type{<:Duplicated})
     return Duplicated(primal, rand_tangent(rng, primal))
 end
 function _build_activity(rng, primal, ::Type{<:BatchDuplicated})
-    return BatchDuplicated(primal, ntuple(_ -> rand_tangent(rng, primal), 2))
+    return BatchDuplicated(primal, (rand_tangent(rng, primal), rand_tangent(rng, primal)))
+end
+function _build_activity(rng, primal, ::Type{<:MixedDuplicated})
+    return MixedDuplicated(primal, Ref(rand_tangent(rng, primal)))
+end
+function _build_activity(rng, primal, ::Type{<:BatchMixedDuplicated})
+    return BatchMixedDuplicated(
+        primal,
+        (Ref(rand_tangent(rng, primal)), Ref(rand_tangent(rng, primal))),
+    )
 end
 function _build_activity(rng, primal, T::Type{<:Annotation})
     throw(ArgumentError("Unsupported activity type: $T"))

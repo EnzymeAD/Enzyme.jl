@@ -112,6 +112,10 @@ function _fd_reverse(fdm, f, ȳ, activities, active_return)
         if a isa Union{Const,Active}
             dval = ntuple(_ -> zero_tangent(a.val), batch_size)
             return is_batch ? dval : dval[1]
+        elseif a isa MixedDuplicated
+            return a.dval[]
+        elseif a isa BatchMixedDuplicated
+            return map(getindex, a.dval)
         else
             return a.dval
         end
