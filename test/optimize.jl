@@ -339,6 +339,47 @@ end
     @test autodiff(Reverse, horner_fixed, Active, Active(x))[1][1] ≈ sum(k * x^(k - 1) for k in 1:7)
 end
 
+@inline function rotate_pair_3883(a, b, c, s, k, inverse)
+    s = ifelse(inverse, -s, s)
+    return ifelse(k == 1, a * c - b * s, b * c + a * s)
+end
+
+function rotate_pairs_loss_3883(x, c, s, w)
+    half, len = size(x, 1) ÷ 2, size(x, 3)
+    pos = (1:len) .+ 2
+    cg = c[:, pos]
+    sg = s[:, pos]
+    xp = reshape(x, half, 2, size(x, 2), len, :)
+    y = rotate_pair_3883.(
+        view(xp, :, 1:1, :, :, :),
+        view(xp, :, 2:2, :, :, :),
+        reshape(cg, half, 1, 1, len, :),
+        reshape(sg, half, 1, 1, len, :),
+        reshape(1:2, 1, 2),
+        false,
+    )
+    return sum(w .* reshape(y, size(x)))
+end
+
+@testset "Post-optimization SimpleLoopUnswitchPass (#3883)" begin
+    Random.seed!(123)
+    c = randn(4, 10)
+    s = randn(4, 10)
+    x = randn(8, 2, 5, 3)
+    w = randn(size(x)...)
+    dx = zero(x)
+    dc = zero(c)
+    ds = zero(s)
+    autodiff(Reverse, rotate_pairs_loss_3883, Active, Duplicated(x, dx), Duplicated(c, dc), Duplicated(s, ds), Const(w))
+    vx, vc, vs = randn(size(x)...), randn(size(c)...), randn(size(s)...)
+    eps = 1.0e-5
+    fd = (
+        rotate_pairs_loss_3883(x + eps * vx, c + eps * vc, s + eps * vs, w) -
+            rotate_pairs_loss_3883(x - eps * vx, c - eps * vc, s - eps * vs, w)
+    ) / (2 * eps)
+    @test dot(dx, vx) + dot(dc, vc) + dot(ds, vs) ≈ fd rtol = 1.0e-5
+end
+
 function sum_squares_ptr(x)
     s = 0.0
     # Load through a pointer so the loop has no bounds checks, and vectorizes
