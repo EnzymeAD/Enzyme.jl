@@ -225,4 +225,76 @@ end
     @test dst.data == [2.0, 4.0]
 end
 
+@noinline sret_bits_3560(x::Float64) = (x, 2x, 3x, 4x, 5x)
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(sret_bits_3560)},
+        ::Type{RT},
+        x::Annotation{Float64},
+    ) where {RT}
+    v = func.val(x.val)
+    if x isa Const
+        if EnzymeRules.needs_primal(config)
+            return v
+        else
+            return nothing
+        end
+    elseif x isa Duplicated
+        dv = (x.dval, 2x.dval, 3x.dval, 4x.dval, 5x.dval)
+        return EnzymeRules.needs_primal(config) ? Duplicated(v, dv) : dv
+    else
+        N = EnzymeRules.width(config)
+        dvs = ntuple(Val(N)) do i
+            dx = x.dval[i]
+            (dx, 2dx, 3dx, 4dx, 5dx)
+        end
+        return EnzymeRules.needs_primal(config) ? BatchDuplicated(v, dvs) : dvs
+    end
+end
+
+@noinline mid_sret_bits_3560(x::Float64) = sret_bits_3560(2.0 * x)
+outer_sret_bits_3560(x::Float64) = (t = mid_sret_bits_3560(x); t[1] + t[5])
+
+@noinline sret_mixed_3560(x::Float64) = (x, [2x, 3x], 4x, 5x)
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(sret_mixed_3560)},
+        ::Type{RT},
+        x::Annotation{Float64},
+    ) where {RT}
+    v = func.val(x.val)
+    if x isa Duplicated
+        dv = (x.dval, [2x.dval, 3x.dval], 4x.dval, 5x.dval)
+        return EnzymeRules.needs_primal(config) ? Duplicated(v, dv) : dv
+    else
+        N = EnzymeRules.width(config)
+        dvs = ntuple(Val(N)) do i
+            dx = x.dval[i]
+            (dx, [2dx, 3dx], 4dx, 5dx)
+        end
+        return EnzymeRules.needs_primal(config) ? BatchDuplicated(v, dvs) : dvs
+    end
+end
+
+@noinline mid_sret_mixed_3560(x::Float64) = sret_mixed_3560(2.0 * x)
+outer_sret_mixed_3560(x::Float64) = (t = mid_sret_mixed_3560(x); t[1] + t[2][1] + t[4])
+
+@testset "Forward custom rule sret without primal (#3560)" begin
+    @test autodiff(Forward, outer_sret_bits_3560, Duplicated, Duplicated(2.0, 1.0)) == (12.0,)
+    @test values(
+        autodiff(
+            Forward, outer_sret_bits_3560, BatchDuplicated, BatchDuplicated(2.0, (1.0, 3.0))
+        )[1]
+    ) == (12.0, 36.0)
+
+    @test autodiff(Forward, outer_sret_mixed_3560, Duplicated, Duplicated(2.0, 1.0)) == (16.0,)
+    @test values(
+        autodiff(
+            Forward, outer_sret_mixed_3560, BatchDuplicated, BatchDuplicated(2.0, (1.0, 3.0))
+        )[1]
+    ) == (16.0, 48.0)
+end
+
 end # module ForwardRules
