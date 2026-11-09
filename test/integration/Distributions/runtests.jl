@@ -341,8 +341,6 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
             Symmetric(collect(_pdmat(randn(rng, 3, 3))));
             broken = Forward
         ),
-        # TODO Broken tests, see https://github.com/EnzymeAD/Enzyme.jl/issues/1820
-        # getrf derivative needed
         TestCase(
             MatrixTDist(
                 3.1,
@@ -350,16 +348,16 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
                 _pdmat(randn(rng, 2, 2)),
                 _pdmat(randn(rng, 3, 3)),
             ),
-            randn(rng, 2, 3);
-            broken = Forward
+            randn(rng, 2, 3),
         ),
-        TestCase(MatrixBeta(5, 6.0, 7.0), rand(rng, MatrixBeta(5, 6.0, 6.0)); broken = Forward),
+        TestCase(MatrixBeta(5, 6.0, 7.0), rand(rng, MatrixBeta(5, 6.0, 6.0))),
+        # TODO Broken tests, see https://github.com/EnzymeAD/Enzyme.jl/issues/1820
         TestCase(
             MatrixFDist(6.0, 7.0, _pdmat(randn(rng, 5, 5))),
             rand(rng, MatrixFDist(6.0, 7.0, _pdmat(randn(rng, 5, 5))));
             broken = Both
         ),
-        TestCase(LKJ(5, 1.1), rand(rng, LKJ(5, 1.1)); broken = Forward),
+        TestCase(LKJ(5, 1.1), rand(rng, LKJ(5, 1.1))),
 
         #
         # Miscellaneous others
@@ -406,11 +404,9 @@ _pdmat(A) = PDMat(_sym(A) + 5I)
             [2.1 0.7];
             name = "reshape"
         ),
-        # TODO Broken test, see https://github.com/EnzymeAD/Enzyme.jl/issues/1820
-        # needs getrf derivative
         TestCase(
             x -> logpdf(vec(LKJ(2, 1.1)), x), [1.0, 0.489, 0.489, 1.0];
-            name = "vec", broken = Forward
+            name = "vec"
         ),
         TestCase(
             function (X, v)
