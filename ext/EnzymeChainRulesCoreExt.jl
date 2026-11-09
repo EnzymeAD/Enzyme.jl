@@ -3,6 +3,41 @@ module EnzymeChainRulesCoreExt
 using ChainRulesCore
 using EnzymeCore
 using Enzyme
+using SparseArrays
+
+function _accumulate_cotangent!(dval, cr)
+    cr = ChainRulesCore.unthunk(cr)
+    if cr isa ChainRulesCore.AbstractZero
+        return nothing
+    end
+    if dval isa SparseArrays.SparseMatrixCSC
+        if cr isa SparseArrays.SparseMatrixCSC &&
+                dval.colptr == cr.colptr &&
+                dval.rowval == cr.rowval
+            SparseArrays.nonzeros(dval) .+= SparseArrays.nonzeros(cr)
+        else
+            rows = SparseArrays.rowvals(dval)
+            vals = SparseArrays.nonzeros(dval)
+            for j in axes(dval, 2), k in SparseArrays.nzrange(dval, j)
+                vals[k] += cr[rows[k], j]
+            end
+        end
+    elseif dval isa SparseArrays.SparseVector
+        if cr isa SparseArrays.SparseVector &&
+                SparseArrays.nonzeroinds(dval) == SparseArrays.nonzeroinds(cr)
+            SparseArrays.nonzeros(dval) .+= SparseArrays.nonzeros(cr)
+        else
+            inds = SparseArrays.nonzeroinds(dval)
+            vals = SparseArrays.nonzeros(dval)
+            for (k, i) in pairs(inds)
+                vals[k] += cr[i]
+            end
+        end
+    else
+        dval .+= cr
+    end
+    return nothing
+end
 
 
 """
@@ -246,16 +281,16 @@ function Enzyme._import_rrule(fn, tys...)
                     res = pullback(shad)
 
                     for (cr, en) in zip(res, (fn, $(vals...)))
-                        if en isa Const || cr isa $ChainRulesCore.NoTangent
+                        if en isa Const || cr isa $ChainRulesCore.AbstractZero
                             continue
                         end
                         if en isa Active
                             continue
                         end
                         if EnzymeRules.width(config) == 1
-                            en.dval .+= cr
+                            $_accumulate_cotangent!(en.dval, cr)
                         else
-                            en.dval[batch_i] .+= cr
+                            $_accumulate_cotangent!(en.dval[batch_i], cr)
                         end
                     end
 
@@ -279,16 +314,16 @@ function Enzyme._import_rrule(fn, tys...)
                 res = pullback(shad)
 
                 for (cr, en) in zip(res, (fn, $(vals...)))
-                    if en isa Const || cr isa $ChainRulesCore.NoTangent
+                    if en isa Const || cr isa $ChainRulesCore.AbstractZero
                         continue
                     end
                     if en isa Active
                         continue
                     end
                     if EnzymeRules.width(config) == 1
-                        en.dval .+= cr
+                        $_accumulate_cotangent!(en.dval, cr)
                     else
-                        en.dval[batch_i] .+= cr
+                        $_accumulate_cotangent!(en.dval[batch_i], cr)
                     end
                 end
 
