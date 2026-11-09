@@ -39,6 +39,41 @@ end
 MarkLoadsDereferenceablePass(enzyme_ctx::Union{EnzymeContext, Nothing}) =
     NewPMFunctionPass("enzyme_mark_loads_dereferenceable", MarkLoadsDereferenceable(enzyme_ctx))
 
+function fold_typeof_icmp!(fn::LLVM.Function, enzyme_ctx::Union{EnzymeContext, Nothing})::Bool
+    changed = false
+    for bb in blocks(fn)
+        for inst in collect(instructions(bb))
+            isa(inst, LLVM.ICmpInst) || continue
+            pred = LLVM.API.LLVMGetICmpPredicate(inst)
+            (pred == LLVM.API.LLVMIntEQ || pred == LLVM.API.LLVMIntNE) || continue
+            lhs = operands(inst)[1]
+            rhs = operands(inst)[2]
+            isa(value_type(lhs), LLVM.PointerType) || continue
+            l_ok, l_val = absint(lhs, enzyme_ctx)
+            l_ok || continue
+            r_ok, r_val = absint(rhs, enzyme_ctx)
+            r_ok || continue
+            l_val = unbind(l_val)
+            r_val = unbind(r_val)
+            (isa(l_val, Type) && isa(r_val, Type) && Base.isconcretetype(l_val) && Base.isconcretetype(r_val)) || continue
+            eq = (l_val === r_val)
+            res = (pred == LLVM.API.LLVMIntEQ) ? eq : !eq
+            replace_uses!(inst, LLVM.ConstantInt(value_type(inst), res ? 1 : 0))
+            LLVM.erase!(inst)
+            changed = true
+        end
+    end
+    return changed
+end
+
+struct FoldTypeofICmp
+    enzyme_ctx::Union{EnzymeContext, Nothing}
+end
+(pass::FoldTypeofICmp)(fn::LLVM.Function) = fold_typeof_icmp!(fn, pass.enzyme_ctx)
+
+FoldTypeofICmpPass(enzyme_ctx::Union{EnzymeContext, Nothing}) =
+    NewPMFunctionPass("enzyme_fold_typeof_icmp", FoldTypeofICmp(enzyme_ctx))
+
 # `enzyme_ctx` is the compilation `mod` belongs to, `nothing` outside of one.
 function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enzyme_ctx::Union{EnzymeContext, Nothing}, tti = nothing)
     @dispose pb = NewPMPassBuilder() begin
@@ -112,6 +147,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enz
             registerEnzymeAndPassPipeline!(pb)
             register!(pb, RestoreAllocaType())
             register!(pb, MarkLoadsDereferenceablePass(enzyme_ctx))
+            register!(pb, FoldTypeofICmpPass(enzyme_ctx))
             add!(pb, NewPMAAManager()) do aam
                 add!(aam, ScopedNoAliasAA())
                 add!(aam, TypeBasedAA())
@@ -121,6 +157,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enz
                 add!(mpm, CPUFeaturesPass()) # why is this duplicated?
 
                 add!(mpm, NewPMFunctionPassManager()) do fpm
+                    add!(fpm, FoldTypeofICmpPass(enzyme_ctx))
                     add!(fpm, InstCombinePass())
                     add!(fpm, JLInstSimplifyPass())
                     add!(fpm, SimplifyCFGPass())
@@ -139,6 +176,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enz
                     # Loaded pointers to heap objects of a known type are `dereferenceable`
                     # (see `mark_load_dereferenceable!`), so that LICM can hoist loads such as
                     # an array's `Memory` pointer out of loops.
+                    add!(fpm, FoldTypeofICmpPass(enzyme_ctx))
                     add!(fpm, MarkLoadsDereferenceablePass(enzyme_ctx))
                     add!(fpm, NewPMLoopPassManager(use_memory_ssa = true)) do lpm
                         add!(lpm, LoopIdiomRecognizePass())
