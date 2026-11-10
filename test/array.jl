@@ -318,10 +318,36 @@ for RTA in (false, true)
     end
 end
 
+@noinline function extract_unsafe_wrap(colptr::Vector{Int}, nzval::Vector{Float64})
+    pcol = Base.unsafe_convert(Ptr{Int}, colptr)
+    pnz = Base.unsafe_convert(Ptr{Float64}, nzval)
+    return (
+        Base.unsafe_wrap(Array, pcol, length(colptr)),
+        Base.unsafe_wrap(Array, pcol, (length(colptr), 1)),
+        Base.unsafe_wrap(Array, pnz, length(nzval)),
+        Base.unsafe_wrap(Array, pnz, (length(nzval), 1)),
+    )
+end
+
+function unsafe_wrap_tuple_test(colptr::Vector{Int}, nzval::Vector{Float64})
+    return GC.@preserve colptr nzval begin
+        c1, c2, v1, v2 = extract_unsafe_wrap(colptr, nzval)
+        v1[c1[1]] + 2.0 * v2[c2[1, 1], 1]
+    end
+end
+
 @testset "Unsafe wrap" begin
     autodiff(Forward, unsafe_wrap_test, Duplicated(zeros(1), zeros(1)), Const(1), Duplicated(1.0, 2.0))
 
-    # TODO test for batch and reverse
+    colptr = [2, 3]
+    nzval = [3.0, 5.0]
+    dnzval = zeros(2)
+    @test autodiff(Forward, unsafe_wrap_tuple_test, Const(colptr), Duplicated(nzval, [0.0, 1.0]))[1] ≈ 3.0
+    autodiff(Reverse, unsafe_wrap_tuple_test, Active, Const(colptr), Duplicated(nzval, dnzval))
+    @test dnzval ≈ [0.0, 3.0]
+    fill!(dnzval, 0.0)
+    autodiff(set_runtime_activity(Reverse), unsafe_wrap_tuple_test, Active, Const(colptr), Duplicated(nzval, dnzval))
+    @test dnzval ≈ [0.0, 3.0]
 end
 
 # `__cat_offset!` copies an aggregate with inline roots through a critical edge
@@ -362,5 +388,32 @@ end
         dA = zero(A)
         autodiff(Reverse, row_copy_self_sumsq, Active, Duplicated(A, dA))
         @test dA ≈ T[0 0 6; 8 20 24]
+    end
+end
+
+struct MixedFloatIntElem3708
+    a::Float64
+    n::Int
+end
+
+msum_3708(w) = sum(k * w[k].a for k in eachindex(w))
+f_copyto_3708(dst, src) = (unsafe_copyto!(dst, 1, src, 2, 70); msum_3708(dst))
+f_deleteat_3708(v) = (deleteat!(v, 4:5); msum_3708(v))
+
+@testset "Multi-element memtransfer on mixed struct vector (#3708)" begin
+    src = [MixedFloatIntElem3708(k, k) for k in 1:72]
+    dsrc = [MixedFloatIntElem3708(0.0, 0) for _ in 1:72]
+    dst = [MixedFloatIntElem3708(0.0, 0) for _ in 1:70]
+    ddst = [MixedFloatIntElem3708(0.0, 0) for _ in 1:70]
+    autodiff(Reverse, f_copyto_3708, Active, Duplicated(dst, ddst), Duplicated(src, dsrc))
+    @test [dsrc[k].a for k in 1:72] ≈ vcat(0.0, collect(1.0:70.0), 0.0)
+
+    @static if VERSION >= v"1.11-"
+        v = [MixedFloatIntElem3708(k, k) for k in 1:75]
+        dv = [MixedFloatIntElem3708(0.0, 0) for _ in 1:75]
+        dm = dv.ref
+        autodiff(Reverse, f_deleteat_3708, Active, Duplicated(v, dv))
+        res = [memoryref(dm, k)[].a for k in 1:75]
+        @test res ≈ vcat(1.0:3.0, [0.0, 0.0], 4.0:73.0)
     end
 end

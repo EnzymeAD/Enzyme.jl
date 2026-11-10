@@ -737,7 +737,7 @@ function annotate!(mod::LLVM.Module)
         end
     end
 
-    for fname in ("julia.get_pgcstack", "julia.ptls_states", "jl_get_ptls_states")
+    for fname in ("julia.get_pgcstack", "julia.get_pgcstack_or_new", "julia.ptls_states", "jl_get_ptls_states")
         if haskey(funcs, fname)
             for fn in funcs[fname]
                 # TODO per discussion w keno perhaps this should change to readonly / inaccessiblememonly
@@ -829,6 +829,7 @@ function annotate!(mod::LLVM.Module)
 
     for fname in (
         "julia.get_pgcstack",
+            "julia.get_pgcstack_or_new",
         "julia.ptls_states",
         "jl_get_ptls_states",
         "julia.safepoint",

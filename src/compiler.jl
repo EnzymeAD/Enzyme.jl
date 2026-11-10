@@ -1523,7 +1523,32 @@ end
     if func == typeof(Base.eps) ||
        func == typeof(Base.nextfloat) ||
        func == typeof(Base.prevfloat)
-        if LLVM.version().major <= 15
+        has_ptr = LLVM.return_type(LLVM.function_type(llvmfn)) isa LLVM.PointerType
+        if !has_ptr
+            for p in parameters(llvmfn)
+                if value_type(p) isa LLVM.PointerType
+                    has_ptr = true
+                    break
+                end
+            end
+        end
+        if has_ptr
+            handleCustom(
+                state,
+                custom,
+                k_name,
+                llvmfn,
+                "jl_inactive_inout",
+                LLVM.Attribute[
+                    StringAttribute("enzyme_inactive"),
+                    EnumAttribute("willreturn"),
+                    EnumAttribute("nosync"),
+                    EnumAttribute("nofree"),
+                    EnumAttribute("nounwind"),
+                    StringAttribute("enzyme_shouldrecompute"),
+                ],
+            )
+        elseif LLVM.version().major <= 15
             handleCustom(
                 state,
                 custom,
@@ -6485,11 +6510,17 @@ function memtransfer_truetype(world::UInt, @nospecialize(ptr::LLVM.Value), @nosp
     if byref == GPUCompiler.BITS_VALUE && jTy <: Ptr
         ET = eltype(jTy)
         if Base.isconcretetype(ET)
-            sz_et = actual_size(ET)
+            sz_et = allocatedinline(ET) ? Base.aligned_sizeof(ET) : actual_size(ET)
             if sz_et > 0
                 jTy = ET
                 byref = GPUCompiler.MUT_REF
                 offset = Base.mod(offset, sz_et)
+                if isa(sz, LLVM.ConstantInt)
+                    sz_int = convert(Int, sz)
+                    if offset + sz_int > sz_et && allocatedinline(ET)
+                        return to_fullmd(world, ET, offset, sz_int, sz_et)
+                    end
+                end
             end
         end
     end

@@ -145,6 +145,26 @@ function get_offsets(@nospecialize(T::Type))
     return results
 end
 
+function push_offset_md!(mds::Vector{LLVM.Metadata}, sT::API.CConcreteType, rel_off::Int)
+    if sT == API.DT_Pointer
+        push!(mds, LLVM.MDString("Pointer"))
+    elseif sT == API.DT_Integer
+        push!(mds, LLVM.MDString("Integer"))
+    elseif sT == API.DT_Half
+        push!(mds, LLVM.MDString("Float@half"))
+    elseif sT == API.DT_Float
+        push!(mds, LLVM.MDString("Float@float"))
+    elseif sT == API.DT_BFloat16
+        push!(mds, LLVM.MDString("Float@bf16"))
+    elseif sT == API.DT_Double
+        push!(mds, LLVM.MDString("Float@double"))
+    else
+        @assert false
+    end
+    push!(mds, LLVM.Metadata(LLVM.ConstantInt(rel_off)))
+    return nothing
+end
+
 """
     to_fullmd(world, T, offset, lim)
 
@@ -175,22 +195,55 @@ function to_fullmd(world::UInt, @nospecialize(T::Type), offset::Int, lim::Int)
         if sO >= lim + offset
             continue
         end
-        if sT == API.DT_Pointer
-            push!(mds, LLVM.MDString("Pointer"))
-        elseif sT == API.DT_Integer
-            push!(mds, LLVM.MDString("Integer"))
-        elseif sT == API.DT_Half
-            push!(mds, LLVM.MDString("Float@half"))
-        elseif sT == API.DT_Float
-            push!(mds, LLVM.MDString("Float@float"))
-        elseif sT == API.DT_BFloat16
-            push!(mds, LLVM.MDString("Float@bf16"))
-        elseif sT == API.DT_Double
-            push!(mds, LLVM.MDString("Float@double"))
+        push_offset_md!(mds, sT, max(0, sO - offset))
+    end
+    return LLVM.MDNode(mds)
+end
+
+"""
+    to_fullmd(world, ET, offset, lim, sz_et)
+
+Construct the full type metadata for `lim` bytes starting at byte `offset` (`0 <= offset < sz_et`)
+within a contiguous sequence of inline elements of type `ET` with byte stride `sz_et`.
+"""
+function to_fullmd(world::UInt, @nospecialize(ET::Type), offset::Int, lim::Int, sz_et::Int)
+    mds = LLVM.Metadata[]
+    offs = Core._call_in_world_total(world, get_offsets, ET)
+    isempty(offs) && return LLVM.MDNode(mds)
+
+    end_off = offset + lim
+    nel = cld(end_off, sz_et)
+
+    minoff = -1
+    for (_, sO) in offs
+        if sO >= offset
+            if sO == offset
+                minoff = sO
+            end
         else
-            @assert false
+            minoff = max(minoff, sO)
         end
-        push!(mds, LLVM.Metadata(LLVM.ConstantInt(max(0, sO - offset))))
+    end
+
+    for (sT, sO) in offs
+        if sO != minoff && sO < offset
+            continue
+        end
+        if sO >= end_off
+            continue
+        end
+        push_offset_md!(mds, sT, max(0, sO - offset))
+    end
+
+    for elem_idx in 1:(nel - 1)
+        base_off = elem_idx * sz_et
+        for (sT, sO) in offs
+            pos = base_off + sO
+            if pos >= end_off
+                continue
+            end
+            push_offset_md!(mds, sT, pos - offset)
+        end
     end
     return LLVM.MDNode(mds)
 end
