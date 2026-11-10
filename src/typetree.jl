@@ -174,7 +174,28 @@ Packages can add methods to `get_offsets`. Thus `to_fullmd` calls `get_offsets` 
 See [`typetree_in_world`](@ref).
 """
 function to_fullmd(world::UInt, @nospecialize(T::Type), offset::Int, lim::Int)
-    mds = LLVM.Metadata[]
+    return fullmd_entries_to_md(fullmd_entries(world, T, offset, lim))
+end
+
+"""
+    to_fullmd(world, ET, offset, lim, sz_et)
+
+Construct the full type metadata for `lim` bytes starting at byte `offset` (`0 <= offset < sz_et`)
+within a contiguous sequence of inline elements of type `ET` with byte stride `sz_et`.
+"""
+function to_fullmd(world::UInt, @nospecialize(ET::Type), offset::Int, lim::Int, sz_et::Int)
+    return fullmd_entries_to_md(fullmd_entries(world, ET, offset, lim, sz_et))
+end
+
+"""
+    fullmd_entries(world, T, offset, lim)
+    fullmd_entries(world, ET, offset, lim, sz_et)
+
+The `(type, offset)` entries of the corresponding [`to_fullmd`](@ref) method, with
+offsets relative to `offset`.
+"""
+function fullmd_entries(world::UInt, @nospecialize(T::Type), offset::Int, lim::Int)
+    entries = Tuple{API.CConcreteType, Int}[]
     offs = Core._call_in_world_total(world, get_offsets, T)
 
     minoff = -1
@@ -195,21 +216,15 @@ function to_fullmd(world::UInt, @nospecialize(T::Type), offset::Int, lim::Int)
         if sO >= lim + offset
             continue
         end
-        push_offset_md!(mds, sT, max(0, sO - offset))
+        push!(entries, (sT, max(0, sO - offset)))
     end
-    return LLVM.MDNode(mds)
+    return entries
 end
 
-"""
-    to_fullmd(world, ET, offset, lim, sz_et)
-
-Construct the full type metadata for `lim` bytes starting at byte `offset` (`0 <= offset < sz_et`)
-within a contiguous sequence of inline elements of type `ET` with byte stride `sz_et`.
-"""
-function to_fullmd(world::UInt, @nospecialize(ET::Type), offset::Int, lim::Int, sz_et::Int)
-    mds = LLVM.Metadata[]
+function fullmd_entries(world::UInt, @nospecialize(ET::Type), offset::Int, lim::Int, sz_et::Int)
+    entries = Tuple{API.CConcreteType, Int}[]
     offs = Core._call_in_world_total(world, get_offsets, ET)
-    isempty(offs) && return LLVM.MDNode(mds)
+    isempty(offs) && return entries
 
     end_off = offset + lim
     nel = cld(end_off, sz_et)
@@ -232,7 +247,7 @@ function to_fullmd(world::UInt, @nospecialize(ET::Type), offset::Int, lim::Int, 
         if sO >= end_off
             continue
         end
-        push_offset_md!(mds, sT, max(0, sO - offset))
+        push!(entries, (sT, max(0, sO - offset)))
     end
 
     for elem_idx in 1:(nel - 1)
@@ -242,8 +257,16 @@ function to_fullmd(world::UInt, @nospecialize(ET::Type), offset::Int, lim::Int, 
             if pos >= end_off
                 continue
             end
-            push_offset_md!(mds, sT, pos - offset)
+            push!(entries, (sT, pos - offset))
         end
+    end
+    return entries
+end
+
+function fullmd_entries_to_md(entries::Vector{Tuple{API.CConcreteType, Int}})
+    mds = LLVM.Metadata[]
+    for (sT, off) in entries
+        push_offset_md!(mds, sT, off)
     end
     return LLVM.MDNode(mds)
 end
