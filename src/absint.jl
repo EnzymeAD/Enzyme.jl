@@ -1050,7 +1050,7 @@ function abs_typeof(
                 end
                 if sz > 0
                     indices = operands(arg)[2:end]
-		    if length(indices) == 1 && value_type(indices[1]) isa LLVM.IntegerType
+                    if length(indices) == 1 && value_type(indices[1]) isa LLVM.IntegerType
                         idx = indices[1]
 
                         source_type = LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(arg))
@@ -1089,7 +1089,7 @@ function abs_typeof(
                                 elseif is_multiple_of(idx, sz, stride)
                                     is_multiple = true
                                 end
-                                
+
                                 if is_multiple
                                     return (true, typ, byref)
                                 end

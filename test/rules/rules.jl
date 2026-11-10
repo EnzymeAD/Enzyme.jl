@@ -255,7 +255,7 @@ function EnzymeRules.augmented_primal(
         config,
         ::Const{typeof(node_fn_3829)},
         ::Type{<:Active},
-        n::Duplicated{Node3829},
+        n::Union{Duplicated{Node3829}, MixedDuplicated{Node3829}},
     )
     primal = EnzymeRules.needs_primal(config) ? node_fn_3829(n.val) : nothing
     return EnzymeRules.AugmentedReturn(primal, nothing, n.val)
@@ -268,6 +268,20 @@ function EnzymeRules.reverse(
         tape::Node3829,
         n::Duplicated{Node3829},
     )
+    return (nothing,)
+end
+
+# Where `Node3829` is passed by reference (Julia 1.10) it is a `MixedDuplicated`
+# argument, whose shadow is a `Ref` the rule can accumulate into.
+function EnzymeRules.reverse(
+        config,
+        ::Const{typeof(node_fn_3829)},
+        dret::Active,
+        tape::Node3829,
+        n::MixedDuplicated{Node3829},
+    )
+    prev = n.dval[]
+    n.dval[] = Node3829(prev.value + 2 * tape.value * dret.val, prev.children)
     return (nothing,)
 end
 
