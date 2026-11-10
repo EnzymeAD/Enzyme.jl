@@ -612,6 +612,60 @@ function abs_typeof_variable_gep(arg::LLVM.GetElementPtrInst, enzyme_ctx::Union{
     return (false, nothing, nothing, 0)
 end
 
+"""
+    abs_typeof_invoke(arg, enzyme_ctx, seenphis)
+
+The return type of `arg = julia.call2(@ijl_invoke, mi, f, args...)`, or `nothing`.
+
+Julia calls a method instance that was not specialized on its argument types (e.g.
+because of `@nospecialize`) through `ijl_invoke`, which returns a boxed value with
+no type information. The instance's own return type is then often abstract, while
+the caller's inference knew the concrete type from the arguments. To recover it,
+re-infer the invoked method for the argument types that can be proven here.
+"""
+function abs_typeof_invoke(arg::LLVM.CallInst, enzyme_ctx::Union{EnzymeContext, Nothing}, seenphis)
+    enzyme_ctx === nothing && return nothing
+    ops = arg_operands_view(arg)
+    length(ops) >= 3 || return nothing
+    fn = ops[1]
+    (isa(fn, LLVM.Function) && LLVM.name(fn) in ("ijl_invoke", "jl_invoke")) || return nothing
+
+    legal, mi = absint(ops[2], enzyme_ctx)
+    legal || return nothing
+    mi = unbind(mi)
+    if mi isa Core.CodeInstance
+        mi = mi.def
+    end
+    mi isa Core.MethodInstance || return nothing
+    m = mi.def
+    m isa Method || return nothing
+
+    argtys = Vector{Any}(undef, length(ops) - 2)
+    for i in 3:length(ops)
+        legal, T, byref = abs_typeof(ops[i], enzyme_ctx, false, seenphis)
+        argtys[i - 2] = if legal && byref != GPUCompiler.BITS_VALUE && Base.isconcretetype(T)
+            T
+        else
+            Any
+        end
+    end
+    sig = Tuple{argtys...}
+    # The arguments must be ones the invoked instance accepts.
+    sig <: mi.specTypes || return nothing
+
+    rt = if sig == mi.specTypes
+        return_type(Core.Compiler.NativeInterpreter(enzyme_ctx.world), mi)
+    else
+        ti, env = ccall(:jl_type_intersection_with_env, Any, (Any, Any), sig, m.sig)::Core.SimpleVector
+        ti isa DataType || return nothing
+        smi = Core.Compiler.specialize_method(m, ti, env)
+        smi isa Core.MethodInstance || return nothing
+        return_type(Core.Compiler.NativeInterpreter(enzyme_ctx.world), smi)
+    end
+    Base.isconcretetype(rt) || return nothing
+    return rt
+end
+
 const TypesNotToDisect = Set{Type}([BigFloat])
 
 function abs_typeof(
@@ -814,6 +868,11 @@ function abs_typeof(
                     end
                 end
             end
+        end
+
+        if nm == "julia.call2"
+            rt = abs_typeof_invoke(arg, enzyme_ctx, seenphis)
+            rt === nothing || return (true, rt, GPUCompiler.MUT_REF)
         end
 
         if nm == "julia.call"
