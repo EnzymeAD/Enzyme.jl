@@ -216,7 +216,7 @@ end
 struct RemovedParam end
 
 function llvm_type_allow_boxed(@nospecialize(T::Type))
-    if !(T <: Ptr || T <: Core.LLVMPtr) && GPUCompiler.deserves_argbox(T)
+    if !(T <: Ptr || T <: Core.LLVMPtr) && deserves_argbox(T)
         return LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
     end
     return convert(LLVMType, T; allow_boxed = true)

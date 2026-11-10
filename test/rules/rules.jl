@@ -232,6 +232,8 @@ end
 
 node_fn_3829(n::Node3829) = n.value^2
 
+const reverse_rule_calls_3829 = Ref(0)
+
 function EnzymeRules.forward(
         config,
         ::Const{typeof(node_fn_3829)},
@@ -255,24 +257,15 @@ function EnzymeRules.augmented_primal(
         config,
         ::Const{typeof(node_fn_3829)},
         ::Type{<:Active},
-        n::Union{Duplicated{Node3829}, MixedDuplicated{Node3829}},
+        n::MixedDuplicated{Node3829},
     )
     primal = EnzymeRules.needs_primal(config) ? node_fn_3829(n.val) : nothing
     return EnzymeRules.AugmentedReturn(primal, nothing, n.val)
 end
 
-function EnzymeRules.reverse(
-        config,
-        ::Const{typeof(node_fn_3829)},
-        dret::Active,
-        tape::Node3829,
-        n::Duplicated{Node3829},
-    )
-    return (nothing,)
-end
-
-# Where `Node3829` is passed by reference (Julia 1.10) it is a `MixedDuplicated`
-# argument, whose shadow is a `Ref` the rule can accumulate into.
+# `Node3829` has both active (`value`) and duplicated (`children`) data, so in
+# reverse mode it is a `MixedDuplicated` argument, whether Julia passes it by
+# reference (1.10) or boxed (1.11+). Its shadow is a `Ref` to accumulate into.
 function EnzymeRules.reverse(
         config,
         ::Const{typeof(node_fn_3829)},
@@ -280,10 +273,13 @@ function EnzymeRules.reverse(
         tape::Node3829,
         n::MixedDuplicated{Node3829},
     )
+    reverse_rule_calls_3829[] += 1
     prev = n.dval[]
     n.dval[] = Node3829(prev.value + 2 * tape.value * dret.val, prev.children)
     return (nothing,)
 end
+
+wrapped_node_fn_3829(x) = node_fn_3829(Node3829(x, nothing))
 
 struct InactiveProb1067
     v::Vector{Float64}
@@ -346,6 +342,11 @@ end
     @test autodiff(Forward, node_fn_3829, Duplicated(n, dn)) == (6.0,)
     @test autodiff(ForwardWithPrimal, node_fn_3829, Duplicated(n, dn)) == (6.0, 9.0)
     @test autodiff(ReverseWithPrimal, node_fn_3829, Active, Duplicated(n, dn))[2] == 9.0
+    reverse_rule_calls_3829[] = 0
+    @test autodiff(Reverse, wrapped_node_fn_3829, Active, Active(3.0))[1][1] ≈ 6.0
+    # The gradient came from the rule, through its `MixedDuplicated` shadow.
+    @test reverse_rule_calls_3829[] == 1
+    @test autodiff(ReverseWithPrimal, wrapped_node_fn_3829, Active, Active(3.0)) == ((6.0,), 9.0)
 end
 
 @testset "EnzymeRules.inactive_arg forces Const on custom rule argument (#1067)" begin

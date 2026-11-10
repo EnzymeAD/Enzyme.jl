@@ -325,7 +325,7 @@ function enzyme_custom_setup_args(
 
     actives = LLVM.Value[]
 
-    mixeds = Tuple{LLVM.Value,Type,LLVM.Value}[]
+    mixeds = Tuple{LLVM.Value, Type, LLVM.Value, Bool}[]
     uncacheable = get_uncacheable(gutils, orig)
     mode = get_mode(gutils)
 
@@ -686,7 +686,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
             shadowty = arg.typ
             mixed = false
             if width == 1
-                if any_active_data && activity_state == MixedState && arg.cc == GPUCompiler.BITS_REF
+                if any_active_data && activity_state == MixedState && (arg.cc == GPUCompiler.BITS_REF || arg.cc == GPUCompiler.MUT_REF)
                     # TODO mixedupnoneed
                     shadowty = Base.RefValue{shadowty}
                     Ty = MixedDuplicated{arg.typ}
@@ -700,7 +700,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                     end
                 end
             else
-                if any_active_data && activity_state == MixedState && arg.cc == GPUCompiler.BITS_REF
+                if any_active_data && activity_state == MixedState && (arg.cc == GPUCompiler.BITS_REF || arg.cc == GPUCompiler.MUT_REF)
                     # TODO batchmixedupnoneed
                     shadowty = Base.RefValue{shadowty}
                     Ty = BatchMixedDuplicated{arg.typ,Int(width)}
@@ -722,7 +722,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
             siarty = LLVM.LLVMType(API.EnzymeGetShadowType(width, iarty))
 
             if mixed
-                @assert arg.cc == GPUCompiler.BITS_REF
+                @assert arg.cc == GPUCompiler.BITS_REF || arg.cc == GPUCompiler.MUT_REF
             end
             
             ival = nothing
@@ -957,12 +957,19 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
 
                 if mixed
                     @assert !is_constant_value(gutils, op)
-                    @assert arg.cc == GPUCompiler.BITS_REF
+                    # A boxed argument (an immutable that is not stored inline,
+                    # e.g. one with a non-isbits Union field) has a boxed shadow,
+                    # so the `Ref` holds the pointer to it rather than its data.
+                    boxed_mixed = arg.cc == GPUCompiler.MUT_REF
                     RefTy = arg.typ
                     if width != 1
                         RefTy = NTuple{Int(width),RefTy}
                     end
-                    llrty = convert(LLVMType, RefTy)
+                    llrty = if boxed_mixed
+                        LLVM.LLVMType(API.EnzymeGetShadowType(width, T_prjlvalue))
+                    else
+                        convert(LLVMType, RefTy)
+                    end
                     RefTy = Base.RefValue{RefTy}
                     refal0 = refal = emit_allocobj!(B, RefTy, "mixed.$RefTy")
                     refal = bitcast!(
@@ -972,8 +979,8 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                     )
 
                     ptr_val = ival
-                    ival = UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llrty)))
-                    for idx = 1:width
+                    ival = boxed_mixed ? ptr_val : UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, llrty)))
+                    for idx in (boxed_mixed ? (1:0) : (1:width))
                         ev = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
                         ld = load!(B, llrty, ev, "rules_mixed_shadow_load")
                         metadata(ld)["enzyme_mustcache"] = MDNode(LLVM.Metadata[])
@@ -1003,7 +1010,7 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                     end
 
                     ival = refal0
-                    push!(mixeds, (ptr_val, arg.typ, refal))
+                    push!(mixeds, (ptr_val, arg.typ, refal, boxed_mixed))
                 end
 
                 @assert ival !== nothing
@@ -2683,10 +2690,27 @@ function enzyme_custom_common_rev(
             idx += 1
         end
 
-        for (ptr_val, argTyp, refal) in mixeds
+        for (ptr_val, argTyp, refal, boxed_mixed) in mixeds
             RefTy = argTyp
             if width != 1
                 RefTy = NTuple{Int(width),RefTy}
+            end
+            if boxed_mixed
+                # The `Ref` holds the boxed shadow the rule left. Copy its
+                # non-pointer fields into the original boxed shadow, which is
+                # the memory the rest of the reverse pass accumulates into.
+                T_prjlvalue = LLVM.PointerType(LLVM.StructType(LLVMType[]), Tracked)
+                llargty = convert(LLVMType, argTyp)
+                curs = load!(B, LLVM.LLVMType(API.EnzymeGetShadowType(width, T_prjlvalue)), refal, "rules_mixed_prestore")
+                for idx in 1:width
+                    evp = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
+                    evcur = (width == 1) ? curs : extract_value!(B, curs, idx - 1)
+                    evp = bitcast!(B, evp, LLVM.PointerType(llargty, Tracked))
+                    evcur = bitcast!(B, evcur, LLVM.PointerType(llargty, Tracked))
+                    newval = load!(B, llargty, evcur, "rules_mixed_boxed_load")
+                    store_nonjl_types!(B, newval, evp)
+                end
+                continue
             end
             curs = load!(B, convert(LLVMType, RefTy), refal, "rules_mixed_prestore")
 
