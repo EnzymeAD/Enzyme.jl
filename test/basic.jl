@@ -952,3 +952,24 @@ f3868(a, b) = (p = Base.inferencebarrier(make3868)((a, b))::Prob3868; p.tspan[1]
     @test autodiff(Forward, f3868, Duplicated, Const(2.0f0), Duplicated(3.0f0, 1.0f0))[1] ≈ 2.0f0
 end
 
+
+# Issue #4018: a buffer fetched from an inactive `IdDict` (`jl_eqtable_get`) is
+# inactive, like one loaded from an inactive `Dict`, even if active data is then
+# written into it. Previously this hit "Not yet implemented constant table in
+# jl_eqtable_get" (fixed in EnzymeAD/Enzyme#3752).
+const IDDICT_4018 = IdDict{Any, Any}(:buf => zeros(1))
+const IDDICT_4018_GET = IdDict{Any, Any}()
+f4018(x) = (b = IDDICT_4018[:buf]::Vector{Float64}; b[1] = x; b[1]^2)
+f4018_get(x) = (b = get!(() -> zeros(1), IDDICT_4018_GET, :buf)::Vector{Float64}; b[1] = x; b[1]^2)
+f4018_tls(x) = (b = get!(() -> zeros(1), task_local_storage(), :buf4018)::Vector{Float64}; b[1] = x; b[1]^2)
+f4018_read(x) = (b = IDDICT_4018[:buf]::Vector{Float64}; x^2 + b[1])
+
+@testset "Inactive IdDict buffer (issue #4018)" begin
+    @test autodiff(Reverse, f4018, Active, Active(3.0)) == ((6.0,),)
+    @test autodiff(set_runtime_activity(Reverse), f4018, Active, Active(3.0)) == ((6.0,),)
+    @test autodiff(set_runtime_activity(Reverse), f4018_get, Active, Active(3.0)) == ((6.0,),)
+    @test autodiff(set_runtime_activity(Reverse), f4018_tls, Active, Active(3.0)) == ((6.0,),)
+    @test_throws Enzyme.Compiler.EnzymeRuntimeActivityError autodiff(Reverse, f4018_get, Active, Active(3.0))
+    IDDICT_4018[:buf][1] = 0.0
+    @test autodiff(Reverse, f4018_read, Active, Active(3.0)) == ((6.0,),)
+end
