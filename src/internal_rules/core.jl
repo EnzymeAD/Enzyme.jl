@@ -282,7 +282,8 @@ end
     if Enzyme.Compiler.guaranteed_const(RT)
         return (into, from)
     end
-    if rtact && into === primal
+    # Equal immutable scalar fields can still carry active adjoints.
+    if rtact && into === primal && Enzyme.Compiler.guaranteed_nonactive(RT)
         return (into, from)
     end
     if ismutable(into)
@@ -352,7 +353,11 @@ function EnzymeRules.reverse(
     rtact = EnzymeRules.runtime_activity(config)
     if EnzymeRules.needs_shadow(config)
         if EnzymeRules.width(config) == 1
-            accumulate_into(x.dval, IdDict(), shadow, x.val, Val(rtact))
+            if x isa MixedDuplicated
+                x.dval[] = accumulate_into(x.dval[], IdDict(), shadow, x.val, Val(rtact))[1]
+            else
+                accumulate_into(x.dval, IdDict(), shadow, x.val, Val(rtact))
+            end
         else
             for i = 1:EnzymeRules.width(config)
                 accumulate_into(x.dval[i], IdDict(), shadow[i], x.val, Val(rtact))
@@ -370,6 +375,9 @@ function EnzymeRules.reverse(
     shadow,
     x::Annotation,
 )
+    if x isa MixedDuplicated
+        return EnzymeRules.reverse(config, func, Duplicated{eltype(x)}, dret.val, x)
+    end
     return (dret.val,)
 end
 

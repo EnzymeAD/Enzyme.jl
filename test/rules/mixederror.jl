@@ -92,8 +92,8 @@ F_bad(x) = outer(y -> [cos(y)], 0.0, x)[1][1]
         @test_throws Enzyme.Compiler.MixedReturnException autodiff(Reverse, F_good, Active(0.3))
         @test_throws Enzyme.Compiler.MixedReturnException autodiff(Reverse, F_bad, Active(0.3))
     else
-        @test_throws MethodError autodiff(Reverse, F_good, Active(0.3))
-        @test_throws MethodError autodiff(Reverse, F_bad, Active(0.3))
+        @test_throws Enzyme.Compiler.ReverseRuleReturnError autodiff(Reverse, F_good, Active(0.3))
+        @test_throws Enzyme.Compiler.ReverseRuleReturnError autodiff(Reverse, F_bad, Active(0.3))
     end
 end
 
