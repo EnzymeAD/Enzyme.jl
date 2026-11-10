@@ -40,6 +40,27 @@ using Quaternions
         @test y.x.a.a != x.x.a.a
         @test y.a isa Vector{Float64}
         @test y.a != x.a
+
+        su = TestStruct2(2.0)
+        tu = rand_tangent(su)
+        @test tu isa TestStruct2
+        @test tu.x != su.x
+        @test !isdefined(tu, :a)
+        zu = zero_tangent(su)
+        @test zu isa TestStruct2
+        @test zu.x === 0.0
+        @test !isdefined(zu, :a)
+
+        mu = MutableTestStruct()
+        mu.x = 2.0
+        tmu = rand_tangent(mu)
+        @test tmu isa MutableTestStruct
+        @test tmu.x != mu.x
+        @test !isdefined(tmu, :a)
+        zmu = zero_tangent(mu)
+        @test zmu isa MutableTestStruct
+        @test zmu.x === 0.0
+        @test !isdefined(zmu, :a)
     end
 
     @testset "zero_tangent" begin

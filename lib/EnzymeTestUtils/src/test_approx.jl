@@ -32,7 +32,10 @@ function test_approx(x::AbstractArray, y::AbstractArray, msg; kwargs...)
     @test_msg "$msg: indices must match" eachindex(x) == eachindex(y)
     for i in eachindex(x)
         msg_new = "$msg: ::$(typeof(x))[$i]"
-        test_approx(x[i], y[i], msg_new; kwargs...)
+        @test_msg "$msg_new: definedness must match" isassigned(x, i) == isassigned(y, i)
+        if isassigned(x, i) && isassigned(y, i)
+            test_approx(x[i], y[i], msg_new; kwargs...)
+        end
     end
     return nothing
 end
@@ -70,7 +73,10 @@ function _test_fields_approx(x, y, msg; kwargs...)
             else
                 msg_new = "$msg: getfield(::$(typeof(x)), $k)"
             end
-            test_approx(getfield(x, k), getfield(y, k), msg_new; kwargs...)
+            @test_msg "$msg_new: definedness must match" isdefined(x, k) == isdefined(y, k)
+            if isdefined(x, k) && isdefined(y, k)
+                test_approx(getfield(x, k), getfield(y, k), msg_new; kwargs...)
+            end
         end
     end
     return nothing

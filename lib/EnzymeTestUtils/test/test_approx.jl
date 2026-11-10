@@ -75,4 +75,30 @@ end
             end
         end
     end
+    @testset "structs and arrays with undefined references (#1992)" begin
+        s1 = TestStruct2(1.0)
+        s2 = TestStruct2(1.0 + 1.0e-9)
+        test_approx(s1, s2; atol = 1.1e-9)
+        @test fails(() -> test_approx(s1, s2; atol = 1.0e-9))
+
+        m1 = MutableTestStruct()
+        m1.x = 1.0
+        m2 = MutableTestStruct()
+        m2.x = 1.0 + 1.0e-9
+        m3 = MutableTestStruct()
+        m3.x = 1.0
+        m3.a = [2.0]
+        test_approx(m1, m2; atol = 1.1e-9)
+        @test fails(() -> test_approx(m1, m2; atol = 1.0e-9))
+        @test fails(() -> test_approx(m1, m3))
+
+        a1 = Vector{Vector{Float64}}(undef, 2)
+        a1[1] = [1.0, 2.0]
+        a2 = Vector{Vector{Float64}}(undef, 2)
+        a2[1] = [1.0, 2.0 + 1.0e-9]
+        a3 = [[1.0, 2.0], [3.0]]
+        test_approx(a1, a2; atol = 1.1e-9)
+        @test fails(() -> test_approx(a1, a2; atol = 1.0e-9))
+        @test fails(() -> test_approx(a1, a3))
+    end
 end
