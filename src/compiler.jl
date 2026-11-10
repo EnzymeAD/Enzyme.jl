@@ -3600,7 +3600,7 @@ function enzyme!(
         TypeTree()
     else
             typeTree = typetree_in_world(job.world, actualRetType, ctx, dl, seen)
-        if !isa(actualRetType, Union) && GPUCompiler.deserves_retbox(actualRetType)
+            if !isa(actualRetType, Union) && deserves_argbox(actualRetType)
             typeTree = copy(typeTree)
             merge!(typeTree, TypeTree(API.DT_Pointer, ctx))
             only!(typeTree, -1)
@@ -3762,7 +3762,7 @@ function enzyme!(
 
         literal_rt = eltype(rt)
 
-        if !isghostty(literal_rt) && runtimeActivity && GPUCompiler.deserves_argbox(actualRetType) && !GPUCompiler.deserves_argbox(literal_rt)
+            if !isghostty(literal_rt) && runtimeActivity && deserves_argbox(actualRetType) && !deserves_argbox(literal_rt)
         else
             returnUsed &= returnPrimal        
         end
@@ -3935,7 +3935,7 @@ function create_abi_wrapper(
             continue
         end
 
-        isboxed = GPUCompiler.deserves_argbox(source_typ)
+        isboxed = deserves_argbox(source_typ)
         llvmT = isboxed ? T_prjlvalue : convert(LLVMType, source_typ)
         push!(T_wrapperargs, llvmT)
         arg_roots = isboxed ? inline_roots_type(source_typ) : 0
@@ -3961,7 +3961,7 @@ function create_abi_wrapper(
         elseif T <: Duplicated || T <: DuplicatedNoNeed || T <: BatchDuplicated || T <: BatchDuplicatedNoNeed
             push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, llvmT)))
             if inline_roots_type(source_typ) != 0
-                @assert isboxed == GPUCompiler.deserves_argbox(T)
+                @assert isboxed == deserves_argbox(T)
             end
             if arg_rooting && arg_roots != 0
                push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
@@ -3972,7 +3972,7 @@ function create_abi_wrapper(
         elseif T <: MixedDuplicated || T <: BatchMixedDuplicated
             push!(T_wrapperargs, LLVM.LLVMType(API.EnzymeGetShadowType(width, T_prjlvalue)))
             if inline_roots_type(source_typ) != 0
-                @assert isboxed == GPUCompiler.deserves_argbox(T)
+                @assert isboxed == deserves_argbox(T)
             end
             if arg_rooting && arg_roots != 0
                push!(T_wrapperargs, convert(LLVMType, AnyArray(width * arg_roots)))
@@ -4226,7 +4226,7 @@ function create_abi_wrapper(
             continue
         end
 
-        isboxed = GPUCompiler.deserves_argbox(T′)
+        isboxed = deserves_argbox(T′)
 
         llty = value_type(params[i])
 
@@ -4258,7 +4258,7 @@ function create_abi_wrapper(
 		 i += 1
 	    end
         elseif T <: Active
-            isboxed = GPUCompiler.deserves_argbox(T′)
+            isboxed = deserves_argbox(T′)
             if isboxed
 		@assert arg_roots == 0
                 if is_split
@@ -4307,7 +4307,7 @@ function create_abi_wrapper(
 	    # Julia expects   arg, root, darg, droot
 	    # We already pushed arg
 	    # now params[i] refers to root
-	    isboxed = (T <: BatchDuplicated || T <: BatchDuplicatedNoNeed) && GPUCompiler.deserves_argbox(NTuple{width,T′})
+            isboxed = (T <: BatchDuplicated || T <: BatchDuplicatedNoNeed) && deserves_argbox(NTuple{width, T′})
 	    darg = nothing
 	    root = nothing
 	    droot = nothing
@@ -4349,7 +4349,7 @@ function create_abi_wrapper(
 
             if T <: BatchMixedDuplicated
                 @assert Base.isconcretetype(T′)
-                if GPUCompiler.deserves_argbox(NTuple{width,Base.RefValue{T′}})
+                if deserves_argbox(NTuple{width, Base.RefValue{T′}})
                     njlvalue = LLVM.ArrayType(Int(width), T_prjlvalue)
                     parmsi = bitcast!(
                         builder,
@@ -4360,7 +4360,7 @@ function create_abi_wrapper(
                 end
             end
 
-            isboxed = GPUCompiler.deserves_argbox(T′)
+            isboxed = deserves_argbox(T′)
 
             resty = isboxed ? llty : LLVM.PointerType(llty, Derived)
 
@@ -4610,7 +4610,7 @@ function create_abi_wrapper(
         count_llvm_Sret = 0
         if !isghostty(actualRetType)
             if !Core.Compiler.isconstType(actualRetType)
-                if returnPrimal || (!isghostty(literal_rt) && runtime_activity && GPUCompiler.deserves_argbox(actualRetType) && !GPUCompiler.deserves_argbox(literal_rt))
+                if returnPrimal || (!isghostty(literal_rt) && runtime_activity && deserves_argbox(actualRetType) && !deserves_argbox(literal_rt))
                     count_llvm_Sret += 1
                 end
                 if !(rettype <: Const)
@@ -4633,14 +4633,14 @@ function create_abi_wrapper(
                 val
             else
                 @assert count_llvm_Sret > 1
-                if !returnPrimal && (runtime_activity && GPUCompiler.deserves_argbox(actualRetType) && !GPUCompiler.deserves_argbox(literal_rt))
+                if !returnPrimal && (runtime_activity && deserves_argbox(actualRetType) && !deserves_argbox(literal_rt))
                     extract_value!(builder, val, 1)
                 else
                     extract_value!(builder, val, 1 - returnNum)
                 end
             end
 
-            if count_llvm_Sret != 0 && GPUCompiler.deserves_argbox(actualRetType) && !GPUCompiler.deserves_argbox(literal_rt)
+            if count_llvm_Sret != 0 && deserves_argbox(actualRetType) && !deserves_argbox(literal_rt)
                 twidth = if width == 1
                     1
                 else
@@ -4656,7 +4656,7 @@ function create_abi_wrapper(
                 compare = nothing
 
                 # only compare for derivative (aka returnNum == 0), when runtime activity is on and required checking
-                if returnNum == 0 && runtime_activity && GPUCompiler.deserves_argbox(actualRetType) && !GPUCompiler.deserves_argbox(literal_rt)
+                if returnNum == 0 && runtime_activity && deserves_argbox(actualRetType) && !deserves_argbox(literal_rt)
                     compare = extract_value!(builder, val, 0)
                 end
 
@@ -4744,7 +4744,7 @@ function create_abi_wrapper(
         for (i, T) in enumerate(TT.parameters[2:end])
             if T <: Active
                 T′ = eltype(T)
-                isboxed = GPUCompiler.deserves_argbox(T′)
+                isboxed = deserves_argbox(T′)
                 if !isboxed
                     eval = extract_value!(builder, val, returnNum)
                     ptr = inbounds_gep!(
@@ -5529,7 +5529,7 @@ function lower_convention(
 	if arg.rooted_typ !== nothing
 
 	   # There cannot exist a root arg if the original arg was boxed
-	   @assert !GPUCompiler.deserves_argbox(arg.rooted_typ)
+            @assert !deserves_argbox(arg.rooted_typ)
 	   
 	   # There only can exist a rooting if the original argument was a bits_ref
 	   @assert arg.rooted_cc == GPUCompiler.BITS_REF
@@ -5552,7 +5552,7 @@ function lower_convention(
 	   @assert false "Unhandled rooted arg condition"
 	end
 
-	if GPUCompiler.deserves_argbox(arg.typ)
+        if deserves_argbox(arg.typ)
             push!(boxedArgs, arg.arg_i)
             push!(wrapper_types, typ)
             push!(wrapper_attrs, LLVM.Attribute[])
@@ -7864,7 +7864,7 @@ const DumpLLVMCall = Ref(false)
         ccexprs = Union{Expr,Symbol}[] # The expressions passed to the `llvmcall`
 
         if !isghostty(F) && !Core.Compiler.isconstType(F)
-            isboxed = GPUCompiler.deserves_argbox(F)
+        isboxed = deserves_argbox(F)
             argexpr = :(fn.val)
 
             if isboxed
@@ -7892,7 +7892,7 @@ const DumpLLVMCall = Ref(false)
                         F_ABI = Base.RefValue{F_ABI}
                     end
                     F_ABI = NTuple{width, F_ABI}
-                    isboxedvec = GPUCompiler.deserves_argbox(F_ABI)
+                isboxedvec = deserves_argbox(F_ABI)
                     if isboxedvec
                         push!(types, Any)
                     else
@@ -7919,7 +7919,7 @@ const DumpLLVMCall = Ref(false)
                 continue
             end
 
-            isboxed = GPUCompiler.deserves_argbox(source_typ)
+        isboxed = deserves_argbox(source_typ)
 
             argexpr = if RawCall
                 expr
@@ -7975,7 +7975,7 @@ const DumpLLVMCall = Ref(false)
                 else
                     argexpr = Expr(:., expr, QuoteNode(:dval))
                 end
-                isboxedvec = GPUCompiler.deserves_argbox(NTuple{width,source_typ})
+            isboxedvec = deserves_argbox(NTuple{width, source_typ})
                 if isboxedvec
                     push!(types, Any)
                 else
@@ -8005,7 +8005,7 @@ const DumpLLVMCall = Ref(false)
                     argexpr = Expr(:., expr, QuoteNode(:dval))
                 end
                 isboxedvec =
-                    GPUCompiler.deserves_argbox(NTuple{width,Base.RefValue{source_typ}})
+                deserves_argbox(NTuple{width, Base.RefValue{source_typ}})
                 if isboxedvec
                     push!(types, Any)
                 else
