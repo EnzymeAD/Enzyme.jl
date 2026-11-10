@@ -369,7 +369,12 @@ end
     # A pointer outside any loaded module cannot be attributed at all.
     heapptr = Libc.malloc(8)
     @test Enzyme.Compiler.resolve_symbol_name("mpfr_add", "", heapptr) == :unknown
+    @test Enzyme.Compiler.lookup_dl_path(heapptr, "/fallback/add.c") == "/fallback/add.c"
     Libc.free(heapptr)
+    @static if !Sys.iswindows()
+        @test realpath(Enzyme.Compiler.lookup_dl_path(p_add, "/not/a/library/add.c")) ==
+            realpath(libmpfr)
+    end
 
     LLVM.Context() do ctx
         mod = parse(
