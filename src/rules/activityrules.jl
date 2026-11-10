@@ -1,4 +1,22 @@
 
+function inactive_arg_indices(@nospecialize(specTypes::Type), world::UInt, method_table = nothing)
+    simp = Interpreter.simplify_kw(specTypes)
+    if !EnzymeRules.is_inactive_arg_from_sig(simp; world, method_table)
+        return ()
+    end
+    rt = primal_return_type_world(Forward, world, typeof(EnzymeRules.inactive_arg), simp)
+    if !(rt isa DataType && rt <: Tuple)
+        return ()
+    end
+    idxs = Int[]
+    for p in rt.parameters
+        if p isa DataType && p <: Val && length(p.parameters) == 1 && p.parameters[1] isa Int
+            push!(idxs, p.parameters[1]::Int)
+        end
+    end
+    return Tuple(idxs)
+end
+
 function julia_activity_rule(f::LLVM.Function, method_table)
     if startswith(LLVM.name(f), "japi3") || startswith(LLVM.name(f), "japi1") || startswith(LLVM.name(f), "jlcapi")
         return
@@ -32,12 +50,14 @@ function julia_activity_rule(f::LLVM.Function, method_table)
     )
 
     kwarg_inactive = false
+    isKW = isKWCallSignature(mi.specTypes)
 
-    if isKWCallSignature(mi.specTypes)
+    if isKW
         if EnzymeRules.is_inactive_kwarg_from_sig(Interpreter.simplify_kw(mi.specTypes); world, method_table)
             kwarg_inactive = true
         end
     end
+    inactive_args = inactive_arg_indices(mi.specTypes, world, method_table)
 
 
 
@@ -53,7 +73,8 @@ function julia_activity_rule(f::LLVM.Function, method_table)
             typ, _ = enzyme_extract_parm_type(f, arg.codegen.i)
             @assert typ == arg.typ
 
-	    if (kwarg_inactive && arg.arg_i == 2) || guaranteed_const_nongen(arg.typ, world) || (arg.rooted_typ !== nothing && guaranteed_const_nongen(arg.rooted_typ, world))
+            simp_idx = isKW ? (arg.arg_jl_i >= 3 ? arg.arg_jl_i - 2 : 0) : arg.arg_jl_i
+            if (kwarg_inactive && arg.arg_i == 2) || in(simp_idx, inactive_args) || guaranteed_const_nongen(arg.typ, world) || (arg.rooted_typ !== nothing && guaranteed_const_nongen(arg.rooted_typ, world))
                 push!(
                     parameter_attributes(f, arg.codegen.i),
                     StringAttribute("enzyme_inactive"),

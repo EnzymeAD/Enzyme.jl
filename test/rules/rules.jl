@@ -225,4 +225,138 @@ end
     @test dst.data == [2.0, 4.0]
 end
 
+struct Node3829
+    value::Float64
+    children::Union{Nothing, Vector{Node3829}}
+end
+
+node_fn_3829(n::Node3829) = n.value^2
+
+const reverse_rule_calls_3829 = Ref(0)
+
+function EnzymeRules.forward(
+        config,
+        ::Const{typeof(node_fn_3829)},
+        ::Type{RT},
+        n::Duplicated{Node3829},
+    ) where {RT}
+    y = node_fn_3829(n.val)
+    dy = 2 * n.val.value * n.dval.value
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return Duplicated(y, dy)
+    elseif EnzymeRules.needs_shadow(config)
+        return dy
+    elseif EnzymeRules.needs_primal(config)
+        return y
+    else
+        return nothing
+    end
+end
+
+function EnzymeRules.augmented_primal(
+        config,
+        ::Const{typeof(node_fn_3829)},
+        ::Type{<:Active},
+        n::MixedDuplicated{Node3829},
+    )
+    primal = EnzymeRules.needs_primal(config) ? node_fn_3829(n.val) : nothing
+    return EnzymeRules.AugmentedReturn(primal, nothing, n.val)
+end
+
+# `Node3829` has both active (`value`) and duplicated (`children`) data, so in
+# reverse mode it is a `MixedDuplicated` argument, whether Julia passes it by
+# reference (1.10) or boxed (1.11+). Its shadow is a `Ref` to accumulate into.
+function EnzymeRules.reverse(
+        config,
+        ::Const{typeof(node_fn_3829)},
+        dret::Active,
+        tape::Node3829,
+        n::MixedDuplicated{Node3829},
+    )
+    reverse_rule_calls_3829[] += 1
+    prev = n.dval[]
+    n.dval[] = Node3829(prev.value + 2 * tape.value * dret.val, prev.children)
+    return (nothing,)
+end
+
+wrapped_node_fn_3829(x) = node_fn_3829(Node3829(x, nothing))
+
+struct InactiveProb1067
+    v::Vector{Float64}
+end
+
+solve_up_1067(prob::InactiveProb1067, x::Float64) = prob.v[1] * x^2
+
+EnzymeRules.inactive_arg(::typeof(solve_up_1067), ::InactiveProb1067, ::Float64) = (Val(2),)
+
+function EnzymeRules.forward(
+        config,
+        ::Const{typeof(solve_up_1067)},
+        ::Type{RT},
+        prob::Const{InactiveProb1067},
+        x::Duplicated{Float64},
+    ) where {RT}
+    y = solve_up_1067(prob.val, x.val)
+    dy = 2 * prob.val.v[1] * x.val * x.dval
+    if EnzymeRules.needs_primal(config) && EnzymeRules.needs_shadow(config)
+        return Duplicated(y, dy)
+    elseif EnzymeRules.needs_shadow(config)
+        return dy
+    elseif EnzymeRules.needs_primal(config)
+        return y
+    else
+        return nothing
+    end
+end
+
+function EnzymeRules.augmented_primal(
+        config,
+        ::Const{typeof(solve_up_1067)},
+        ::Type{<:Active},
+        prob::Const{InactiveProb1067},
+        x::Active{Float64},
+    )
+    primal = EnzymeRules.needs_primal(config) ? solve_up_1067(prob.val, x.val) : nothing
+    return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+end
+
+function EnzymeRules.reverse(
+        config,
+        ::Const{typeof(solve_up_1067)},
+        dret::Active,
+        tape,
+        prob::Const{InactiveProb1067},
+        x::Active{Float64},
+    )
+    return (nothing, 2 * prob.val.v[1] * x.val * dret.val)
+end
+
+function outer_solve_1067(v::Vector{Float64}, x::Float64)
+    prob = InactiveProb1067(v)
+    return solve_up_1067(prob, x)
+end
+
+@testset "Immutable struct with non-isbits Union field in custom rule (#3829)" begin
+    n = Node3829(3.0, nothing)
+    dn = Node3829(1.0, nothing)
+    @test autodiff(Forward, node_fn_3829, Duplicated(n, dn)) == (6.0,)
+    @test autodiff(ForwardWithPrimal, node_fn_3829, Duplicated(n, dn)) == (6.0, 9.0)
+    @test autodiff(ReverseWithPrimal, node_fn_3829, Active, Duplicated(n, dn))[2] == 9.0
+    reverse_rule_calls_3829[] = 0
+    @test autodiff(Reverse, wrapped_node_fn_3829, Active, Active(3.0))[1][1] ≈ 6.0
+    # The gradient came from the rule, through its `MixedDuplicated` shadow.
+    @test reverse_rule_calls_3829[] == 1
+    @test autodiff(ReverseWithPrimal, wrapped_node_fn_3829, Active, Active(3.0)) == ((6.0,), 9.0)
+end
+
+@testset "EnzymeRules.inactive_arg forces Const on custom rule argument (#1067)" begin
+    v = [5.0]
+    dv = [1.0]
+    @test autodiff(Forward, outer_solve_1067, Duplicated(v, dv), Duplicated(3.0, 1.0)) == (30.0,)
+    dv .= 0.0
+    (_, dx) = autodiff(Reverse, outer_solve_1067, Active, Duplicated(v, dv), Active(3.0))[1]
+    @test dx ≈ 30.0
+    @test dv == [0.0]
+end
+
 end # module ForwardRules
