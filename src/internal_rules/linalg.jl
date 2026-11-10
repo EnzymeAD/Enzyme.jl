@@ -54,6 +54,34 @@ _tri_blas_args(A::Transpose{T, <:_EnzymeTriangular{T, <:StridedMatrix{T}}}) wher
 _tri_blas_args(A::Adjoint{T, <:_EnzymeTriangular{T, <:StridedMatrix{T}}}) where {T <: LinearAlgebra.BlasFloat} =
     (parent(A).data, _tri_uplo(parent(A)), 'C', _tri_diag(parent(A)))
 
+# X = op(A) X (side 'L') or X = X op(A) (side 'R') with BLAS, where op(A) is given by the BLAS
+# arguments uplo, trans and diag. For a vector x, side must be 'L'.
+function _blas_trimul!(
+        side::Char, uplo::Char, trans::Char, diag::Char,
+        A::StridedMatrix{T}, X::StridedMatrix{T}
+    ) where {T <: LinearAlgebra.BlasFloat}
+    return BLAS.trmm!(side, uplo, trans, diag, one(T), A, X)
+end
+function _blas_trimul!(
+        side::Char, uplo::Char, trans::Char, diag::Char,
+        A::StridedMatrix{T}, x::StridedVector{T}
+    ) where {T <: LinearAlgebra.BlasFloat}
+    side == 'L' || throw(ArgumentError(lazy"side must be 'L' for a vector, got '$side'"))
+    return BLAS.trmv!(uplo, trans, diag, A, x)
+end
+
+# B = op(A) \ B with BLAS, where op(A) is given by the BLAS arguments uplo, trans and diag.
+function _blas_trisolve!(
+        uplo::Char, trans::Char, diag::Char, A::StridedMatrix{T}, B::StridedMatrix{T}
+    ) where {T <: LinearAlgebra.BlasFloat}
+    return BLAS.trsm!('L', uplo, trans, diag, one(T), A, B)
+end
+function _blas_trisolve!(
+        uplo::Char, trans::Char, diag::Char, A::StridedMatrix{T}, b::StridedVector{T}
+    ) where {T <: LinearAlgebra.BlasFloat}
+    return BLAS.trsv!(uplo, trans, diag, A, b)
+end
+
 # Like `ldiv!(A, B)`, for A triangular.
 _trisolve!(A, B) = ldiv!(A, B)
 function _trisolve!(A::AbstractMatrix{T}, B::StridedVecOrMat{T}) where {T <: LinearAlgebra.BlasFloat}
@@ -62,12 +90,7 @@ function _trisolve!(A::AbstractMatrix{T}, B::StridedVecOrMat{T}) where {T <: Lin
         return ldiv!(A, B)
     end
     data, uplo, trans, diag = args
-    if B isa AbstractVector
-        BLAS.trsv!(uplo, trans, diag, data, B)
-    else
-        BLAS.trsm!('L', uplo, trans, diag, one(T), data, B)
-    end
-    return B
+    return _blas_trisolve!(uplo, trans, diag, data, B)
 end
 
 # Like `A \ B`, for A triangular.
@@ -293,12 +316,7 @@ function _trimul_sub!(
     end
     data, uplo, trans, diag = args
     copyto!(tmp, B)
-    if tmp isa AbstractVector
-        BLAS.trmv!(uplo, trans, diag, data, tmp)
-    else
-        BLAS.trmm!('L', uplo, trans, diag, one(T), data, tmp)
-    end
-    dB .-= tmp
+    dB .-= _blas_trimul!('L', uplo, trans, diag, data, tmp)
     return dB
 end
 
@@ -733,21 +751,6 @@ function _fwd_return(config::EnzymeRules.FwdConfig, primal, shadow)
     end
 end
 
-# X = op(A) X (side 'L') or X = X op(A) (side 'R'). For a vector x, side must be 'L'.
-function _tri_mul!(
-        side::Char, uplo::Char, trans::Char, diag::Char,
-        A::StridedMatrix{T}, X::StridedMatrix{T}
-    ) where {T <: LinearAlgebra.BlasFloat}
-    return BLAS.trmm!(side, uplo, trans, diag, one(T), A, X)
-end
-function _tri_mul!(
-        side::Char, uplo::Char, trans::Char, diag::Char,
-        A::StridedMatrix{T}, x::StridedVector{T}
-    ) where {T <: LinearAlgebra.BlasFloat}
-    side == 'L' || throw(ArgumentError("side must be 'L' for a vector, got '$side'"))
-    return BLAS.trmv!(uplo, trans, diag, A, x)
-end
-
 # tmp = op(tri(dA)) X0 (side 'L') or X0 op(tri(dA)) (side 'R'), where tri(dA) is the triangle
 # of dA that trmm and trmv read, without the diagonal if diag == 'U'. The strict triangle of dA
 # is the triangle of a submatrix of dA shifted by one row or column, so it is multiplied with
@@ -758,7 +761,7 @@ function _tri_mul_tangent!(
     ) where {T <: LinearAlgebra.BlasFloat}
     if diag == 'N'
         copyto!(tmp, X0)
-        return _tri_mul!(side, uplo, trans, 'N', dA, tmp)
+        return _blas_trimul!(side, uplo, trans, 'N', dA, tmp)
     end
     fill!(tmp, zero(T))
     n = size(dA, 1)
@@ -771,7 +774,7 @@ function _tri_mul_tangent!(
     out, in = upper == (side == 'L') ? (lo, hi) : (hi, lo)
     tmp_out = selectdim(tmp, dim, out)
     copyto!(tmp_out, selectdim(X0, dim, in))
-    _tri_mul!(side, uplo, trans, 'N', block, tmp_out)
+    _blas_trimul!(side, uplo, trans, 'N', block, tmp_out)
     return tmp
 end
 
@@ -858,7 +861,7 @@ end
 # B = op(A) \ B: dB = op(A) \ (dB - op(tri(dA)) B), with B the output.
 # Enzyme's native trtrs rule does not support forward mode, and unlike for BLAS functions there
 # is no fallback implementation of LAPACK functions. The tangents are solved with trsv/trsm
-# instead of trtrs, see `_trisolve!`.
+# instead of trtrs, as in `_trisolve!`.
 function EnzymeRules.forward(
         config::EnzymeRules.FwdConfig,
         func::Const{typeof(LAPACK.trtrs!)},
@@ -885,11 +888,7 @@ function EnzymeRules.forward(
             dA = N == 1 ? A.dval : A.dval[i]
             dB .-= _tri_mul_tangent!(tmp, 'L', ul, tA, dg, dA, B.val)
         end
-        if dB isa AbstractVector
-            BLAS.trsv!(ul, tA, dg, A.val, dB)
-        else
-            BLAS.trsm!('L', ul, tA, dg, one(T), A.val, dB)
-        end
+        _blas_trisolve!(ul, tA, dg, A.val, dB)
     end
     return _fwd_return(config, B.val, B.dval)
 end

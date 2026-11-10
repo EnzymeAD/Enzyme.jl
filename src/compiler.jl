@@ -6678,36 +6678,30 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
     found = String[]
     if bitcode_replacement() &&
        API.EnzymeBitcodeReplacement(mod, disableFallback, found) != 0
-        # Replaced functions that are not only called from functions with custom rules
         world = job.world
         method_table = Core.Compiler.method_table(interp)
-        used = String[]
+        # Replaced functions that are not only called from functions with custom rules
+        warn_fallback = String[]
         for f in functions(mod)
-            fname = name(f)
+            math = nothing
             for attr in collect(function_attributes(f))
                 if attr isa LLVM.StringAttribute && kind(attr) == "enzyme_math"
-                    fname = value(attr)
+                    math = attr
                     break
                 end
             end
-            if fname in found && !(fname in used) &&
+            fname = math === nothing ? name(f) : value(math)
+            fname in found || continue
+            if !(fname in warn_fallback) &&
                     called_outside_custom_rules(f, mode, world, method_table)
-                push!(used, fname)
+                push!(warn_fallback, fname)
             end
-        end
-
-        # Inline replaced `ejlstr$` wrappers, whose `enzyme_math` would select Enzyme's BLAS rule
-        # also for functions without one in this mode
-        for f in functions(mod)
-            isempty(blocks(f)) && continue
-            for attr in collect(function_attributes(f))
-                if attr isa LLVM.StringAttribute && kind(attr) == "enzyme_math" &&
-                        value(attr) in found && !(value(attr) in nativeBlas)
-                    delete!(function_attributes(f), attr)
-                    push!(function_attributes(f), EnumAttribute("alwaysinline"))
-                    linkage!(f, LLVM.API.LLVMInternalLinkage)
-                    break
-                end
+            # Inline replaced `ejlstr$` wrappers, whose `enzyme_math` would select Enzyme's BLAS
+            # rule also for functions without one in this mode
+            if math !== nothing && !isempty(blocks(f)) && !(fname in nativeBlas)
+                delete!(function_attributes(f), math)
+                push!(function_attributes(f), EnumAttribute("alwaysinline"))
+                linkage!(f, LLVM.API.LLVMInternalLinkage)
             end
         end
         run!(InstCombinePass(), mod)
@@ -6765,8 +6759,8 @@ function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})
                 )
             end
         end
-        if !isempty(used)
-            GPUCompiler.@safe_warn "Using fallback BLAS replacements for ($used), performance may be degraded"
+        if !isempty(warn_fallback)
+            GPUCompiler.@safe_warn "Using fallback BLAS replacements for ($warn_fallback), performance may be degraded"
         end
 	run!(GlobalOptPass(), mod)
     end
