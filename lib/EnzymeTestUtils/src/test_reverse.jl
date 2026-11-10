@@ -127,19 +127,27 @@ function test_reverse(
                 rtol,
             )
         end
-        if ret_activity <: Active
-            dx_ad = only(reverse(c_act, Const(fkwargs), activities..., ȳ, tape))
-        else
+        if !(ret_activity <: Active) && !(shadow_result === nothing)
             # if there's a shadow result, then we need to set it to our random adjoint
-            if !(shadow_result === nothing)
-                if !_any_batch_duplicated(ret_activity, map(typeof, activities)...)
-                    map_fields_recursive(copyto!, shadow_result, ȳ)
+            if !_any_batch_duplicated(ret_activity, map(typeof, activities)...)
+                if ret_activity <: MixedDuplicated
+                    shadow_result[] = map_fields_recursive(copyto!, shadow_result[], ȳ)
                 else
-                    for (sr, dy) in zip(shadow_result, ȳ)
+                    map_fields_recursive(copyto!, shadow_result, ȳ)
+                end
+            else
+                for (sr, dy) in zip(shadow_result, ȳ)
+                    if ret_activity <: BatchMixedDuplicated
+                        sr[] = map_fields_recursive(copyto!, sr[], dy)
+                    else
                         map_fields_recursive(copyto!, sr, dy)
                     end
                 end
             end
+        end
+        if ret_activity <: Union{Active, MixedDuplicated, BatchMixedDuplicated}
+            dx_ad = only(reverse(c_act, Const(fkwargs), activities..., ȳ, tape))
+        else
             dx_ad = only(reverse(c_act, Const(fkwargs), activities..., tape))
         end
         dx_ad = (dx_ad[1], dx_ad[3:end]...)
@@ -172,11 +180,20 @@ function test_reverse(
                 if act_i isa Duplicated
                     msg_deriv = "$target_str should agree with finite differences"
                     test_approx(act_i.dval, dx_fdm_i, msg_deriv; atol, rtol)
+                elseif act_i isa MixedDuplicated
+                    msg_deriv = "$target_str should agree with finite differences"
+                    test_approx(act_i.dval[], dx_fdm_i, msg_deriv; atol, rtol)
                 elseif act_i isa BatchDuplicated
                     @assert length(act_i.dval) == length(dx_fdm_i)
                     for (j, (act_i_j, dx_fdm_i_j)) in enumerate(zip(act_i.dval, dx_fdm_i))
                         msg_deriv = "$target_str for batch index $j should agree with finite differences"
                         test_approx(act_i_j, dx_fdm_i_j, msg_deriv; atol, rtol)
+                    end
+                elseif act_i isa BatchMixedDuplicated
+                    @assert length(act_i.dval) == length(dx_fdm_i)
+                    for (j, (act_i_j, dx_fdm_i_j)) in enumerate(zip(act_i.dval, dx_fdm_i))
+                        msg_deriv = "$target_str for batch index $j should agree with finite differences"
+                        test_approx(act_i_j[], dx_fdm_i_j, msg_deriv; atol, rtol)
                     end
                 end
             end
