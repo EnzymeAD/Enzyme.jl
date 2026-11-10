@@ -217,6 +217,135 @@ function EnzymeRules.reverse(
     return (nothing, nothing)
 end
 
+@inline function _ldiv_fwd_step(cache_A, res, dA, db)
+    if dA === nothing && db === nothing
+        return zero(res)
+    elseif dA === nothing
+        return (_trisolve(cache_A, db))::typeof(res)
+    elseif db === nothing
+        return (_trisolve(cache_A, -(dA * res)))::typeof(res)
+    else
+        return (_trisolve(cache_A, db - dA * res))::typeof(res)
+    end
+end
+
+@inline function _ldiv_fwd_batch((cache_A, res, dAs, dbs), i::Int)
+    return _ldiv_fwd_step(cache_A, res, dAs[i], dbs[i])
+end
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(\)},
+        ::Type{RT},
+        A::Annotation{AT},
+        b::Annotation{BT},
+    ) where {RT, AT <: Array, BT <: Array}
+    cache_A = compute_lu_cache(A.val, b.val)
+    res = (cache_A \ b.val)::eltype(RT)
+    if !EnzymeRules.needs_shadow(config)
+        return EnzymeRules.needs_primal(config) ? res : nothing
+    end
+    N = EnzymeRules.width(config)
+    if N == 1
+        dA = isa(A, Const) ? nothing : A.dval
+        db = isa(b, Const) ? nothing : b.dval
+        dres = _ldiv_fwd_step(cache_A, res, dA, db)
+        return EnzymeRules.needs_primal(config) ? Duplicated(res, dres) : dres
+    else
+        dAs = isa(A, Const) ? ntuple(Returns(nothing), Val(N)) : A.dval
+        dbs = isa(b, Const) ? ntuple(Returns(nothing), Val(N)) : b.dval
+        dres = ntuple(Base.Fix1(_ldiv_fwd_batch, (cache_A, res, dAs, dbs)), Val(N))
+        return EnzymeRules.needs_primal(config) ? BatchDuplicated(res, dres) : dres
+    end
+end
+
+EnzymeRules.has_readonly_rule(::typeof(\), ::Array, ::Array) = true
+EnzymeRules.has_attribute_preserving_rule(::typeof(\), ::Array, ::Array) = true
+
+@inline _zero_like(x, _) = zero(x)
+
+@inline function _inv_fwd((res,), dA)
+    return (-(res * dA * res))::typeof(res)
+end
+
+function EnzymeRules.forward(
+        config::EnzymeRules.FwdConfig,
+        func::Const{typeof(inv)},
+        ::Type{RT},
+        A::Annotation{AT},
+    ) where {RT, AT <: StridedMatrix}
+    res = inv(A.val)
+    if !EnzymeRules.needs_shadow(config)
+        return EnzymeRules.needs_primal(config) ? res : nothing
+    end
+    N = EnzymeRules.width(config)
+    if N == 1
+        dres = isa(A, Const) ? zero(res) : (-(res * A.dval * res))::typeof(res)
+        return EnzymeRules.needs_primal(config) ? Duplicated(res, dres) : dres
+    else
+        dres = if isa(A, Const)
+            ntuple(Base.Fix1(_zero_like, res), Val(N))
+        else
+            map(Base.Fix1(_inv_fwd, (res,)), A.dval)
+        end
+        return EnzymeRules.needs_primal(config) ? BatchDuplicated(res, dres) : dres
+    end
+end
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(inv)},
+        ::Type{RT},
+        A::Annotation{AT},
+    ) where {RT, AT <: StridedMatrix}
+    res = inv(A.val)
+    retres = EnzymeRules.needs_primal(config) ? res : nothing
+    cache_res = (EnzymeRules.needs_primal(config) && !isa(A, Const)) ? copy(res) : res
+    N = EnzymeRules.width(config)
+    dres = if !EnzymeRules.needs_shadow(config)
+        nothing
+    elseif N == 1
+        zero(res)
+    else
+        ntuple(Base.Fix1(_zero_like, res), Val(N))
+    end
+    return EnzymeRules.AugmentedReturn(retres, dres, (cache_res, dres))
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfig,
+        func::Const{typeof(inv)},
+        ::Type{RT},
+        cache,
+        A::Annotation{<:StridedMatrix},
+    ) where {RT}
+    y, dys = cache
+    if !EnzymeRules.needs_shadow(config)
+        return (nothing,)
+    end
+    N = EnzymeRules.width(config)
+    y_adj = y'
+    if N == 1
+        if !isa(A, Const)
+            A.dval .-= y_adj * dys * y_adj
+        end
+        make_zero!(dys)
+    else
+        if !isa(A, Const)
+            for (dA, dy) in zip(A.dval, dys)
+                dA .-= y_adj * dy * y_adj
+            end
+        end
+        for dy in dys
+            make_zero!(dy)
+        end
+    end
+    return (nothing,)
+end
+
+EnzymeRules.has_readonly_rule(::typeof(inv), ::StridedMatrix) = true
+EnzymeRules.has_attribute_preserving_rule(::typeof(inv), ::StridedMatrix) = true
+
 const EnzymeTriangulars = Union{
     UpperTriangular{<:Complex},
     LowerTriangular{<:Complex},
