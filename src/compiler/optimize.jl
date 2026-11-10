@@ -311,7 +311,9 @@ function addOptimizationPasses!(mpm::LLVM.NewPMPassManager)
             add!(lpm, LICMPass())
             # Runtime-activity checks compare loop-invariant pointers inside loops;
             # hoist them so the loop bodies can vectorize.
-            add!(lpm, SimpleLoopUnswitchPass(; nontrivial = true, trivial = true))
+            # On LLVM 15 (Julia 1.10), nontrivial loop unswitching can cause exponential
+            # loop/CFG duplication on 5D broadcast adjoints (#3883).
+            add!(lpm, SimpleLoopUnswitchPass(; nontrivial = LLVM.version().major >= 16, trivial = true))
             add!(lpm, JuliaLICMPass())
         end
         add!(fpm, InstCombinePass())
