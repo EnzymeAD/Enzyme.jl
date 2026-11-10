@@ -30,6 +30,8 @@ import Enzyme:
     merge!,
     to_md,
     to_fullmd,
+    fullmd_entries,
+    fullmd_entries_to_md,
     TypeAnalysis,
     FnTypeInfo,
     Logic,
@@ -6466,11 +6468,27 @@ The `enzyme_truetype` metadata for a memcpy/memmove/memset of `sz` bytes at
 `ptr`, or `nothing` if `ptr` cannot be traced back to a Julia object of known
 concrete type. The type is read off the Julia layout, so it is not limited to the
 offsets Enzyme's type analysis keeps.
+
+If `ptr` points into an untyped stack slot (e.g. one created by SROA), the type
+is instead taken from the memcpy/memmove(s) that fill those bytes of the slot.
 """
 function memtransfer_truetype(world::UInt, @nospecialize(ptr::LLVM.Value), @nospecialize(sz::LLVM.Value), enzyme_ctx::EnzymeContext)
+    nbytes = sz isa LLVM.ConstantInt ? convert(Int, sz) : nothing
+    entries = memtransfer_entries(world, ptr, nbytes, enzyme_ctx, 0, 0)
+    entries === nothing && return nothing
+    return fullmd_entries_to_md(entries)
+end
+
+function memtransfer_entries(world::UInt, @nospecialize(ptr::LLVM.Value), nbytes::Union{Int, Nothing}, enzyme_ctx::EnzymeContext, extra_offset::Int, depth::Int)
     base, offset = get_base_and_offset(ptr)
+    offset += extra_offset
     legal, jTy, byref = abs_typeof(base, enzyme_ctx)
-    legal || return nothing
+    if !legal
+        if base isa LLVM.AllocaInst && nbytes !== nothing && offset >= 0 && depth < 4
+            return alloca_memtransfer_entries(world, base, offset, nbytes, enzyme_ctx, depth)
+        end
+        return nothing
+    end
     if byref == GPUCompiler.BITS_VALUE && jTy <: Ptr
         ET = eltype(jTy)
         if Base.isconcretetype(ET)
@@ -6479,11 +6497,8 @@ function memtransfer_truetype(world::UInt, @nospecialize(ptr::LLVM.Value), @nosp
                 jTy = ET
                 byref = GPUCompiler.MUT_REF
                 offset = Base.mod(offset, sz_et)
-                if isa(sz, LLVM.ConstantInt)
-                    sz_int = convert(Int, sz)
-                    if offset + sz_int > sz_et && allocatedinline(ET)
-                        return to_fullmd(world, ET, offset, sz_int, sz_et)
-                    end
+                if nbytes !== nothing && offset + nbytes > sz_et && allocatedinline(ET)
+                    return fullmd_entries(world, ET, offset, nbytes, sz_et)
                 end
             end
         end
@@ -6498,14 +6513,77 @@ function memtransfer_truetype(world::UInt, @nospecialize(ptr::LLVM.Value), @nosp
     end
     size = Compiler.datatype_layoutsize(jTy)
     @assert offset >= 0
-    if offset < size && isa(sz, LLVM.ConstantInt) && size - offset >= convert(Int, sz)
+    if offset < size && nbytes !== nothing && size - offset >= nbytes
         @assert byref == GPUCompiler.BITS_REF || byref == GPUCompiler.MUT_REF
-        return to_fullmd(world, jTy, offset, convert(Int, sz))
+        return fullmd_entries(world, jTy, offset, nbytes)
     elseif byref == GPUCompiler.BITS_VALUE && jTy <: Ptr && eltype(jTy) == Any
         # Todo generalize this
-        return to_fullmd(world, jTy, 0, sizeof(Ptr{Cvoid}))
+        return fullmd_entries(world, jTy, 0, sizeof(Ptr{Cvoid}))
     end
     return nothing
+end
+
+"""
+    alloca_memtransfer_entries(world, alloca, offset, nbytes, enzyme_ctx, depth)
+
+The truetype entries for the `nbytes` bytes at `offset` into the untyped
+`alloca`, pieced together from the memcpy/memmove(s) whose destinations cover
+those bytes, or `nothing` if some byte is not covered by a copy from a typed source.
+"""
+function alloca_memtransfer_entries(world::UInt, alloca::LLVM.AllocaInst, offset::Int, nbytes::Int, enzyme_ctx::EnzymeContext, depth::Int)
+    # (destination offset, size, source pointer) of each copy into the alloca
+    copies = Tuple{Int, Int, LLVM.Value}[]
+    todo = LLVM.Value[alloca]
+    seen = Set{LLVM.Value}()
+    while !isempty(todo)
+        v = pop!(todo)
+        v in seen && continue
+        push!(seen, v)
+        for u in LLVM.uses(v)
+            user = LLVM.user(u)
+            if isa(user, LLVM.AddrSpaceCastInst) || isa(user, LLVM.BitCastInst) ||
+                    (isa(user, LLVM.GetElementPtrInst) && all(Base.Fix2(isa, LLVM.ConstantInt), operands(user)[2:end]))
+                push!(todo, user)
+                continue
+            end
+            isa(user, LLVM.CallInst) || continue
+            fn = LLVM.called_operand(user)
+            fn isa LLVM.Function || continue
+            intr = LLVM.API.LLVMGetIntrinsicID(fn)
+            (intr == LLVM.Intrinsic("llvm.memcpy").id || intr == LLVM.Intrinsic("llvm.memmove").id) || continue
+            ops = operands(user)
+            ops[1] == v || continue
+            ops[3] isa LLVM.ConstantInt || continue
+            dbase, doff = get_base_and_offset(ops[1])
+            dbase == alloca || continue
+            push!(copies, (doff, convert(Int, ops[3]), ops[2]))
+        end
+    end
+
+    entries = Tuple{API.CConcreteType, Int}[]
+    cur = offset
+    stop = offset + nbytes
+    while cur < stop
+        # the copy covering `cur` that reaches furthest
+        best = nothing
+        for c in copies
+            doff, csz, _ = c
+            if doff <= cur < doff + csz && (best === nothing || doff + csz > best[1] + best[2])
+                best = c
+            end
+        end
+        best === nothing && return nothing
+        doff, csz, src = best
+        len = min(doff + csz, stop) - cur
+        piece = memtransfer_entries(world, src, len, enzyme_ctx, cur - doff, depth + 1)
+        piece === nothing && return nothing
+        for (sT, off) in piece
+            off < len || continue
+            push!(entries, (sT, off + cur - offset))
+        end
+        cur += len
+    end
+    return entries
 end
 
 function compile_unhooked_impl(output::Symbol, job::CompilerJob{<:EnzymeTarget})

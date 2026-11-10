@@ -797,3 +797,58 @@ end
 @testset "Dynamic index of nested Vector across aggregate PHI" begin
     @test Enzyme.gradient(set_runtime_activity(Reverse), nested_vec_phi_loss, [1.0, 2.0])[1] ≈ [9.0, 12.0]
 end
+
+# Broadcasting over arrays of structs with an inline field that has padding: the element's
+# non-pointer bytes are copied untyped (as `[N x i64]` / through SROA stack slots), and the
+# element offset `(i - 1) * sizeof(T)` is folded to `add (mul %i, sizeof(T)), -sizeof(T)`.
+struct InlinePaddedSp
+    d::Int
+    dual::Bool
+end
+struct InlineDataSp
+    d::Int
+    e::Int
+end
+struct VecWithInline{S}
+    data::Vector{Float64}
+    sp::S
+end
+inline_same(t::VecWithInline) = VecWithInline(copy(t.data), t.sp)
+inline_reorder(t::VecWithInline) = VecWithInline(copy(t.data), (t.sp[end], Base.front(t.sp)...))
+inline_val(t::VecWithInline) = sum(abs2, t.data)
+inline_pairval(p) = inline_val(p[1]) + inline_val(p[2])
+inline_same_pair(p) = inline_same.(p)
+
+@testset "Broadcast over structs with an inline padded field" begin
+    sps = (
+        InlinePaddedSp(2, true),
+        InlineDataSp(2, 3),
+        (InlinePaddedSp(1, true), InlinePaddedSp(2, false), InlinePaddedSp(3, true)),
+        (InlineDataSp(1, 2), InlineDataSp(3, 4)),
+    )
+    @testset "$(typeof(sp)) $dims" for sp in sps, dims in ((4,), (2, 3))
+        fs = Any[
+            x -> sum(inline_val, inline_same.(x)),
+            x -> sum(inline_val, map(inline_same, x)),
+            x -> sum(inline_val, [inline_same(t) for t in x]),
+        ]
+        if sp isa Tuple
+            push!(fs, x -> sum(inline_val, inline_reorder.(x)))
+        end
+        for f in fs
+            x = [VecWithInline(randn(3), sp) for _ in CartesianIndices(dims)]
+            dx = Enzyme.make_zero(x)
+            autodiff(Reverse, Const(f), Active, Duplicated(x, dx))
+            @test all(dt.data ≈ 2 .* t.data for (t, dt) in zip(x, dx))
+        end
+    end
+    @testset "Matrix of tuples" for f in (
+            x -> sum(inline_pairval, map(inline_same_pair, x)),
+            x -> sum(inline_pairval, inline_same_pair.(x)),
+        )
+        x = [(VecWithInline(randn(3), InlinePaddedSp(1, true)), VecWithInline(randn(3), InlinePaddedSp(2, false))) for _ in 1:2, _ in 1:2]
+        dx = Enzyme.make_zero(x)
+        autodiff(Reverse, Const(f), Active, Duplicated(x, dx))
+        @test all(all(dt.data ≈ 2 .* t.data for (t, dt) in zip(p, dp)) for (p, dp) in zip(x, dx))
+    end
+end

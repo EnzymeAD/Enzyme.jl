@@ -504,6 +504,11 @@ function is_multiple_of(@nospecialize(val::LLVM.Value), sz::Int, stride::Int)::B
         if opc == LLVM.API.LLVMSelect
             return is_multiple_of(operands(val)[2], sz, stride) &&
                    is_multiple_of(operands(val)[3], sz, stride)
+        elseif opc == LLVM.API.LLVMAdd || opc == LLVM.API.LLVMSub
+            # e.g. `add (mul %i, sz), -sz`, as produced when LLVM folds the
+            # 1-based `(i - 1) * sz` memoryref offset.
+            return is_multiple_of(operands(val)[1], sz, stride) &&
+                is_multiple_of(operands(val)[2], sz, stride)
         elseif opc == LLVM.API.LLVMShl
             if operands(val)[2] isa LLVM.ConstantInt
                 shift_amt = convert(Int, operands(val)[2])
@@ -528,6 +533,83 @@ function is_multiple_of(@nospecialize(val::LLVM.Value), sz::Int, stride::Int)::B
         end
     end
     return false
+end
+
+"""
+    abs_typeof_variable_gep(arg, enzyme_ctx, partial, seenphis)
+
+For a GEP `arg` with a variable leading index (and possibly constant trailing
+indices) off a pointer of known type `Ptr{T}`, whose variable index always moves
+by whole elements of `T`, return `(true, Ptr{T}, BITS_VALUE, inner)`, where `inner`
+is the constant byte offset into the element. Otherwise `(false, nothing, nothing, 0)`.
+"""
+function abs_typeof_variable_gep(arg::LLVM.GetElementPtrInst, enzyme_ctx::Union{EnzymeContext, Nothing}, partial::Bool, seenphis)
+    indices = operands(arg)[2:end]
+    (
+        length(indices) >= 1 && value_type(indices[1]) isa LLVM.IntegerType &&
+            all(Base.Fix2(isa, LLVM.ConstantInt), indices[2:end])
+    ) || return (false, nothing, nothing, 0)
+    # The pointer being indexed may itself be a constant-offset gep off of the
+    # typed base (e.g. after licm hoists the `-sizeof(T)` memoryref adjustment
+    # out of the loop), so look through any such constant offsets here.
+    base, base_offset = get_base_and_offset(operands(arg)[1])
+    legal, typ, byref = abs_typeof(base, enzyme_ctx, partial, seenphis)
+    (legal && byref == GPUCompiler.BITS_VALUE && typ <: Ptr && Base.isconcretetype(typ)) || return (false, nothing, nothing, 0)
+    etyp = eltype(typ)
+    Base.isconcretetype(etyp) || return (false, nothing, nothing, 0)
+    sz = if !Base.allocatedinline(etyp)
+        sizeof(Ptr{Cvoid})
+    else
+        try
+            sizeof(etyp)
+        catch
+            0
+        end
+    end
+    sz > 0 || return (false, nothing, nothing, 0)
+    idx = indices[1]
+    rest = LLVM.Value[indices[2:end]...]
+
+    source_type = LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(arg))
+    base_ptr = operands(arg)[1]
+
+    offset_0_val, offset_1_val = @dispose b = LLVM.IRBuilder() begin
+        position!(b, arg)
+
+        tmp_indices_0 = LLVM.Value[LLVM.ConstantInt(value_type(idx), 0), rest...]
+        tmp_gep_0 = LLVM.gep!(b, source_type, base_ptr, tmp_indices_0)
+
+        tmp_indices_1 = LLVM.Value[LLVM.ConstantInt(value_type(idx), 1), rest...]
+        tmp_gep_1 = LLVM.gep!(b, source_type, base_ptr, tmp_indices_1)
+
+        offty = LLVM.IntType(8 * sizeof(Int))
+        offsets = (
+            API.EnzymeComputeByteOffsetOfGEP(b, tmp_gep_0, offty),
+            API.EnzymeComputeByteOffsetOfGEP(b, tmp_gep_1, offty),
+        )
+
+        LLVM.API.LLVMInstructionEraseFromParent(tmp_gep_0)
+        LLVM.API.LLVMInstructionEraseFromParent(tmp_gep_1)
+        offsets
+    end
+
+    (isa(offset_0_val, LLVM.ConstantInt) && isa(offset_1_val, LLVM.ConstantInt)) || return (false, nothing, nothing, 0)
+    C = convert(Int, offset_0_val)
+    stride = convert(Int, offset_1_val) - C
+
+    # The trailing constant indices select a byte offset `inner` into the element.
+    # Otherwise, C and base_offset must each individually be a multiple of the
+    # element size, they cannot be combined to form one.
+    inner = 0
+    if !isempty(rest)
+        inner = Base.mod(C, sz)
+        C -= inner
+    end
+    (C % sz == 0 && base_offset % sz == 0) || return (false, nothing, nothing, 0)
+    if stride % sz == 0 || is_multiple_of(idx, sz, stride)
+        return (true, typ, byref, inner)
+    end
+    return (false, nothing, nothing, 0)
 end
 
 const TypesNotToDisect = Set{Type}([BigFloat])
@@ -795,6 +877,14 @@ function abs_typeof(
         end
         larg, offset = get_base_and_offset(operands(arg)[1])
         legal, typ, byref = abs_typeof(larg, enzyme_ctx, false, seenphis)
+        if !legal && isa(larg, LLVM.GetElementPtrInst)
+            # e.g. `gep {ptr, i64}, %arrayptr, i64 %i, i32 1`: a field of an
+            # array element, at an offset `inner` into the element.
+            legal, typ, byref, inner = abs_typeof_variable_gep(larg, enzyme_ctx, false, seenphis)
+            if legal
+                offset += inner
+            end
+        end
 
         dl = LLVM.datalayout(LLVM.parent(LLVM.parent(LLVM.parent(arg))))
 
@@ -1031,73 +1121,9 @@ function abs_typeof(
     end
 
     if isa(arg, LLVM.GetElementPtrInst) && !all(Base.Fix2(isa, LLVM.ConstantInt), operands(arg)[2:end])
-        # The pointer being indexed may itself be a constant-offset gep off of the
-        # typed base (e.g. after licm hoists the `-sizeof(T)` memoryref adjustment
-        # out of the loop), so look through any such constant offsets here.
-        base, base_offset = get_base_and_offset(operands(arg)[1])
-        legal, typ, byref = abs_typeof(base, enzyme_ctx, partial, seenphis)
-        if legal && byref == GPUCompiler.BITS_VALUE && typ <: Ptr && Base.isconcretetype(typ)
-            etyp = eltype(typ)
-            if Base.isconcretetype(etyp)
-                sz = if !Base.allocatedinline(etyp)
-                    sizeof(Ptr{Cvoid})
-                else
-                    try
-                        sizeof(etyp)
-                    catch
-                        0
-                    end
-                end
-                if sz > 0
-                    indices = operands(arg)[2:end]
-		    if length(indices) == 1 && value_type(indices[1]) isa LLVM.IntegerType
-                        idx = indices[1]
-
-                        source_type = LLVM.LLVMType(LLVM.API.LLVMGetGEPSourceElementType(arg))
-                        base_ptr = operands(arg)[1]
-
-                        offset_0_val, offset_1_val = @dispose b = LLVM.IRBuilder() begin
-                            position!(b, arg)
-
-                            tmp_indices_0 = LLVM.Value[LLVM.ConstantInt(value_type(idx), 0)]
-                            tmp_gep_0 = LLVM.gep!(b, source_type, base_ptr, tmp_indices_0)
-
-                            tmp_indices_1 = LLVM.Value[LLVM.ConstantInt(value_type(idx), 1)]
-                            tmp_gep_1 = LLVM.gep!(b, source_type, base_ptr, tmp_indices_1)
-
-                            offty = LLVM.IntType(8 * sizeof(Int))
-                            offsets = (
-                                API.EnzymeComputeByteOffsetOfGEP(b, tmp_gep_0, offty),
-                                API.EnzymeComputeByteOffsetOfGEP(b, tmp_gep_1, offty),
-                            )
-
-                            LLVM.API.LLVMInstructionEraseFromParent(tmp_gep_0)
-                            LLVM.API.LLVMInstructionEraseFromParent(tmp_gep_1)
-                            offsets
-                        end
-
-                        if isa(offset_0_val, LLVM.ConstantInt) && isa(offset_1_val, LLVM.ConstantInt)
-                            C = convert(Int, offset_0_val)
-                            stride = convert(Int, offset_1_val) - C
-
-                            # C and base_offset must each individually be a multiple of
-                            # the element size, they cannot be combined to form one.
-                            if C % sz == 0 && base_offset % sz == 0
-                                is_multiple = false
-                                if stride % sz == 0
-                                    is_multiple = true
-                                elseif is_multiple_of(idx, sz, stride)
-                                    is_multiple = true
-                                end
-                                
-                                if is_multiple
-                                    return (true, typ, byref)
-                                end
-                            end
-                        end
-                    end
-                end
-            end
+        legal, typ, byref, inner = abs_typeof_variable_gep(arg, enzyme_ctx, partial, seenphis)
+        if legal && inner == 0
+            return (true, typ, byref)
         end
     end
 
