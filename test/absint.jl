@@ -852,3 +852,17 @@ inline_same_pair(p) = inline_same.(p)
         @test all(all(dt.data ≈ 2 .* t.data for (t, dt) in zip(p, dp)) for (p, dp) in zip(x, dx))
     end
 end
+
+# A `@nospecialize` callee is called through `ijl_invoke`, whose boxed result carries no
+# type. Its inline tuple field is then loaded as an untyped `[N x i64]` aggregate unless
+# the return type is re-inferred from the argument types.
+@noinline inline_same_nospec(@nospecialize(t)) = VecWithInline(copy(t.data), t.sp)
+
+@testset "Inline field of a value returned through ijl_invoke" begin
+    @testset "$S" for S in (InlinePaddedSp, InlineDataSp)
+        x = [VecWithInline(randn(3), ntuple(i -> S(2, isodd(i)), 5)) for _ in 1:4]
+        dx = Enzyme.make_zero(x)
+        autodiff(Reverse, Const(x -> sum(inline_val, map(inline_same_nospec, x))), Active, Duplicated(x, dx))
+        @test all(dt.data ≈ 2 .* t.data for (t, dt) in zip(x, dx))
+    end
+end
