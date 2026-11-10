@@ -832,4 +832,26 @@ end
 
 Combined(mode::ReverseMode) = mode
 
+"""
+    EnzymeError
+
+Common supertype for Enzyme-specific errors.
+
+This type is made public so that downstream packages can add custom [error hints](https://docs.julialang.org/en/v1/base/base/#Base.Experimental.register_error_hint) for the most common exceptions thrown by Enzyme.
+"""
+abstract type EnzymeError <: Base.Exception end
+
+"""
+    EnzymeRuntimeActivityError <: EnzymeError
+
+Exception thrown when Enzyme detects a potential need for runtime activity during differentiation.
+"""
+struct EnzymeRuntimeActivityError{ST, MT, WT} <: EnzymeError
+    msg::ST
+    mi::MT
+    world::WT
+end
+
+export EnzymeError, EnzymeRuntimeActivityError
+
 end # module EnzymeCore
