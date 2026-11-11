@@ -375,8 +375,12 @@ end
 Core.Compiler.nsplit_impl(info::NoInlineCallInfo) = Core.Compiler.nsplit(info.info)
 Core.Compiler.getsplit_impl(info::NoInlineCallInfo, idx::Int) =
     Core.Compiler.getsplit(info.info, idx)
-Core.Compiler.getresult_impl(info::NoInlineCallInfo, idx::Int) =
-    Core.Compiler.getresult(info.info, idx)
+function Core.Compiler.getresult_impl(info::NoInlineCallInfo, idx::Int)
+    if info.kind === :frule || info.kind === :rrule
+        return nothing
+    end
+    return Core.Compiler.getresult(info.info, idx)
+end
 if VERSION >= v"1.12.0-DEV.1531"
     Core.Compiler.add_edges_impl(edges::Vector{Any}, info::NoInlineCallInfo) =
         Core.Compiler.add_edges!(edges, info.info)
@@ -418,6 +422,8 @@ it: `FutureCallinfoByType` for an ordinary call, and `invoked_ci_needs_rule`
 for `invoke(f, ci, args...)`.
 """
 function enzyme_call_kind(@nospecialize(interp::EnzymeInterpreter), @nospecialize(specTypes))::Union{Nothing, Symbol}
+    specTypes = Base.unwrap_unionall(specTypes)
+    !(specTypes isa DataType) && return nothing
     is_primitive_func(specTypes) && return :primitive
     is_alwaysinline_func(specTypes) && return :alwaysinline
     method_table = Core.Compiler.method_table(interp)
@@ -435,21 +441,104 @@ struct FutureCallinfoByType
     atype::Any
 end
 
+function widenconst_limited(@nospecialize(t))
+    if t isa Core.Compiler.LimitedAccuracy
+        return Core.Compiler.LimitedAccuracy(Core.Compiler.widenconst(t.typ), t.causes)
+    end
+    return Core.Compiler.widenconst(t)
+end
+
 @inline function (closure::FutureCallinfoByType)(ret::Core.Compiler.CallMeta, @nospecialize(interp::AbstractInterpreter), sv::AbsIntState)
     atype = closure.atype
     callinfo = ret.info
+    rt = ret.rt
+    effects = ret.effects
 
     kind = enzyme_call_kind(interp, simplify_kw(atype))
     if kind === :alwaysinline
         callinfo = AlwaysInlineCallInfo(callinfo, atype)
     elseif kind !== nothing
         callinfo = NoInlineCallInfo(callinfo, atype, kind)
+        if kind === :frule || kind === :rrule
+            rt = widenconst_limited(rt)
+            effects = Core.Compiler.Effects(
+                effects;
+                consistent = Core.Compiler.ALWAYS_FALSE,
+                effect_free = Core.Compiler.ALWAYS_FALSE,
+            )
+        end
     end
     @static if VERSION ≥ v"1.11-"
-        return Core.Compiler.CallMeta(ret.rt, ret.exct, ret.effects, callinfo)
+        return Core.Compiler.CallMeta(rt, ret.exct, effects, callinfo)
     else
-        return Core.Compiler.CallMeta(ret.rt, ret.effects, callinfo)
+        return Core.Compiler.CallMeta(rt, effects, callinfo)
     end
+end
+
+@static if VERSION ≥ v"1.11-"
+    function Core.Compiler.type_annotate!(
+            @nospecialize(interp::EnzymeInterpreter),
+            sv::InferenceState,
+        )
+        @invoke Core.Compiler.type_annotate!(
+            interp::AbstractInterpreter,
+            sv::InferenceState,
+        )
+        kind = enzyme_call_kind(interp, simplify_kw(sv.linfo.specTypes))
+        if kind === :frule || kind === :rrule
+            sv.bestguess = widenconst_limited(sv.bestguess)
+            sv.result.result = widenconst_limited(sv.result.result)
+            sv.ipo_effects = sv.result.ipo_effects = Core.Compiler.Effects(
+                sv.result.ipo_effects;
+                consistent = Core.Compiler.ALWAYS_FALSE,
+                effect_free = Core.Compiler.ALWAYS_FALSE,
+            )
+        end
+        return nothing
+    end
+else
+    function Core.Compiler.finish(
+            me::InferenceState,
+            @nospecialize(interp::EnzymeInterpreter),
+        )
+        res = @invoke Core.Compiler.finish(
+            me::InferenceState,
+            interp::AbstractInterpreter,
+        )
+        kind = enzyme_call_kind(interp, simplify_kw(me.linfo.specTypes))
+        if kind === :frule || kind === :rrule
+            me.bestguess = widenconst_limited(me.bestguess)
+            me.result.result = widenconst_limited(me.result.result)
+            me.ipo_effects = me.result.ipo_effects = Core.Compiler.Effects(
+                me.result.ipo_effects;
+                consistent = Core.Compiler.ALWAYS_FALSE,
+                effect_free = Core.Compiler.ALWAYS_FALSE,
+            )
+        end
+        return res
+    end
+end
+
+function Core.Compiler.optimize(
+        @nospecialize(interp::EnzymeInterpreter),
+        opt::Core.Compiler.OptimizationState,
+        caller::InferenceResult,
+    )
+    res = @invoke Core.Compiler.optimize(
+        interp::AbstractInterpreter,
+        opt::Core.Compiler.OptimizationState,
+        caller::InferenceResult,
+    )
+    kind = enzyme_call_kind(interp, simplify_kw(caller.linfo.specTypes))
+    if kind === :frule || kind === :rrule
+        caller.result = widenconst_limited(caller.result)
+        caller.ipo_effects = Core.Compiler.Effects(
+            caller.ipo_effects;
+            consistent = Core.Compiler.ALWAYS_FALSE,
+            effect_free = Core.Compiler.ALWAYS_FALSE,
+        )
+    end
+    return res
 end
 
 function Core.Compiler.abstract_call_gf_by_type(

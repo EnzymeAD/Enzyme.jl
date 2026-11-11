@@ -2346,67 +2346,57 @@ function fix_decayaddr!(mod::LLVM.Module)
     return nothing
 end
 
+function returns_argument(fn::LLVM.Function)
+    params = parameters(fn)
+    if isempty(params)
+        return false
+    end
+    for bb in blocks(fn)
+        term = terminator(bb)
+        if isa(term, LLVM.RetInst) && !isempty(operands(term))
+            ret_val = operands(term)[1]
+            for p in params
+                if ret_val == p
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
 function pre_attr!(mod::LLVM.Module, run_attr)
     if run_attr
         for fn in functions(mod)
             if isempty(blocks(fn))
                 continue
             end
-            attrs = collect(function_attributes(fn))
-            prevent = any(
-                kind(attr) == PRESERVEPRIMAL_ATTR_KIND for attr in attrs
-            )
+            prevent = false
+            for attr in collect(function_attributes(fn))
+                k = kind(attr)
+                if k == PRESERVEPRIMAL_ATTR_KIND ||
+                        (k == "enzyme_inactive" && returns_argument(fn))
+                    prevent = true
+                    break
+                end
+            end
             if !prevent
                 continue
             end
 
             if linkage(fn) == LLVM.API.LLVMInternalLinkage
                 push!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_internal"))
-                linkage!(fn, LLVM.API.LLVMExternalLinkage)
-            end
-
-            if linkage(fn) == LLVM.API.LLVMPrivateLinkage
+                linkage!(fn, LLVM.API.LLVMWeakAnyLinkage)
+            elseif linkage(fn) == LLVM.API.LLVMPrivateLinkage
                 push!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_private"))
-                linkage!(fn, LLVM.API.LLVMExternalLinkage)
-            end
-            continue
-
-            if !has_fn_attr(fn, EnumAttribute("noinline"))
-                push!(LLVM.function_attributes(fn), EnumAttribute("noinline"))
-                push!(LLVM.function_attributes(fn), StringAttribute("remove_noinline"))
-            end
-
-            if !has_fn_attr(fn, EnumAttribute("optnone"))
-                push!(LLVM.function_attributes(fn), EnumAttribute("optnone"))
-                push!(LLVM.function_attributes(fn), StringAttribute("remove_optnone"))
+                linkage!(fn, LLVM.API.LLVMWeakAnyLinkage)
+            elseif linkage(fn) == LLVM.API.LLVMExternalLinkage
+                push!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_external"))
+                linkage!(fn, LLVM.API.LLVMWeakAnyLinkage)
             end
         end
     end
     return nothing
-
-    for fn in collect(functions(mod))
-        if isempty(blocks(fn))
-            continue
-        end
-        if linkage(fn) != LLVM.API.LLVMInternalLinkage &&
-                linkage(fn) != LLVM.API.LLVMPrivateLinkage
-            continue
-        end
-
-        fty = LLVM.FunctionType(fn)
-        nfn = LLVM.Function(mod, "enzyme_attr_prev_" * LLVM.name(enzymefn), fty)
-        LLVM.IRBuilder() do builder
-            entry = BasicBlock(nfn, "entry")
-            position!(builder, entry)
-            cv = call!(fn, [LLVM.UndefValue(ty) for ty in parameters(fty)])
-            LLVM.API.LLVMAddCallSiteAttribute(res, LLVM.API.LLVMAttributeIndex(1), attr)
-            if LLVM.return_type(fty) == LLVM.VoidType()
-                ret!(builder)
-            else
-                ret!(builder, cv)
-            end
-        end
-    end
 end
 
 function post_attr!(mod::LLVM.Module, run_attr)
@@ -2420,6 +2410,11 @@ function post_attr!(mod::LLVM.Module, run_attr)
             if has_fn_attr(fn, StringAttribute("restorelinkage_private"))
                 delete!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_private"))
                 linkage!(fn, LLVM.API.LLVMPrivateLinkage)
+            end
+
+            if has_fn_attr(fn, StringAttribute("restorelinkage_external"))
+                delete!(LLVM.function_attributes(fn), StringAttribute("restorelinkage_external"))
+                linkage!(fn, LLVM.API.LLVMExternalLinkage)
             end
 
             if has_fn_attr(fn, StringAttribute("remove_noinline"))
@@ -2560,6 +2555,11 @@ function mayWriteToMemory(@nospecialize(inst::LLVM.Instruction); err_is_readonly
 end
 
 function remove_readonly_unused_calls!(fn::LLVM.Function, next::Set{String})
+    for attr in collect(function_attributes(fn))
+        if kind(attr) == "enzyme_math" && value(attr) == "enzyme_custom"
+            return false
+        end
+    end
     calls = LLVM.CallInst[]
 
     hasUser = false
@@ -2679,11 +2679,15 @@ function propagate_returned!(mod::LLVM.Module)
                 has_user = true
                 break
             end
-            attrs = collect(function_attributes(fn))
-            prevent = any(
-                kind(attr) == PRESERVEPRIMAL_ATTR_KIND for
-                    attr in attrs
-            )
+            prevent = false
+            for attr in collect(function_attributes(fn))
+                k = kind(attr)
+                if k == PRESERVEPRIMAL_ATTR_KIND ||
+                        (k == "enzyme_inactive" && returns_argument(fn))
+                    prevent = true
+                    break
+                end
+            end
             # if any(kind(attr) == kind(EnumAttribute("noinline")) for attr in attrs)
             #     continue
             # end
@@ -2692,7 +2696,7 @@ function propagate_returned!(mod::LLVM.Module)
             # Don't bother with functions we're about to delete anyways
             if has_user
                 for (i, arg) in enumerate(parameters(fn))
-                    if any(
+                    if !prevent && any(
                             kind(attr) == RETURNED_ATTR_KIND for
                                 attr in collect(parameter_attributes(fn, i))
                         )
