@@ -1070,6 +1070,41 @@ function check_ir!(interp, @nospecialize(job::CompilerJob), errors::Vector{IRErr
     end
 
     if isa(dest, LLVM.Function)
+        mi_dest, _ = enzyme_custom_extract_mi(dest, false)
+        if mi_dest !== nothing && mi_dest.def isa Method &&
+                mi_dest.def.sig == Tuple{typeof(resolve_thunk_ptr), PrecompiledThunkPtr}
+            ops = arg_operands_view(inst)
+            if length(ops) >= 1
+                op1 = ops[1]
+                if isa(op1, LLVM.Instruction)
+                    op1 = try_replace_constant_load!(op1, enzyme_ctx; check_mutability = false, do_replace = false)
+                end
+                legal, val = absint(op1, enzyme_ctx)
+                val = unbind(val)
+                if legal && isa(val, PrecompiledThunkPtr)
+                    ptr = resolve_thunk_ptr(val)
+                    c_ptr = LLVM.ConstantInt(value_type(inst), reinterpret(UInt, ptr))
+                    for u in collect(LLVM.uses(inst))
+                        usr = LLVM.user(u)
+                        if isa(usr, LLVM.IntToPtrInst)
+                            ce = LLVM.const_inttoptr(c_ptr, value_type(usr))
+                            for u2 in collect(LLVM.uses(usr))
+                                cu = LLVM.user(u2)
+                                if isa(cu, LLVM.CallInst)
+                                    push!(calls, cu)
+                                end
+                            end
+                            replace_uses!(usr, ce)
+                            LLVM.API.LLVMInstructionEraseFromParent(usr)
+                        end
+                    end
+                    replace_uses!(inst, c_ptr)
+                    LLVM.API.LLVMInstructionEraseFromParent(inst)
+                    return errors
+                end
+            end
+        end
+
         fn = LLVM.name(dest)
 
         # some special handling for runtime functions that we don't implement

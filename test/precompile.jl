@@ -150,19 +150,66 @@ end
             end
         end
 
-        # Differentiating again from a loaded image is what does not work yet. The thunk the
-        # package image refers to was compiled by the process that precompiled it, so the
-        # call goes to an address that means nothing here and the child dies on it.
+        # Differentiating again from a loaded image recompiles the thunk lazily into the
+        # live session's JIT via `PrecompiledThunkPtr` instead of jumping to a dead address.
         call_code = """
         using Enzyme, EnzymePrecompileAtBuild
         print(EnzymePrecompileAtBuild.rev(3.0), " ", EnzymePrecompileAtBuild.fwd(3.0))
         """
         ok, fields = run_child(load_path, call_code)
-        @test_broken ok
+        @test ok
         if ok
             rev3, fwd3 = fields
             @test parse(Float64, rev3) ≈ rev_at_3
             @test parse(Float64, fwd3) ≈ fwd_at_3
+        end
+
+        # Higher-order AD over a precompiled derivative function and split-mode / InlineABI
+        # precompiled thunks should also work across sessions.
+        ho_pkg = """
+        module EnzymePrecompileExtended
+        using Enzyme
+
+        cube(x) = x * x * x
+        dcube(x) = Enzyme.autodiff(Reverse, cube, Active(x))[1][1]
+        inlabi(x) = Enzyme.autodiff(Enzyme.set_abi(Reverse, Enzyme.InlineABI), cube, Active, Active(x))[1][1]
+        function split_dcube(x)
+            fwd, rev = Enzyme.autodiff_thunk(ReverseSplitWithPrimal, Const{typeof(cube)}, Active, Active{typeof(x)})
+            tape, y = fwd(Const(cube), Active(x))
+            return y, rev(Const(cube), Active(x), 1.0, tape)[1][1]
+        end
+        function mut!(y, x)
+            y[1] = x[1]^2
+            return nothing
+        end
+        function run_mut(v)
+            x = [v]; dx = [0.0]; y = [0.0]; dy = [1.0]
+            Enzyme.autodiff(Reverse, mut!, Const, Duplicated(y, dy), Duplicated(x, dx))
+            return dx[1]
+        end
+
+        const BUILT = (dcube(2.0), inlabi(2.0), split_dcube(2.0)[2], run_mut(2.0))
+        end
+        """
+        write(joinpath(load_path, "EnzymePrecompileExtended.jl"), ho_pkg)
+        for _ in 1:2
+            ok_ext, fields_ext = run_child(
+                load_path, """
+                using Enzyme, EnzymePrecompileExtended
+                y, g = EnzymePrecompileExtended.split_dcube(3.0)
+                d2 = Enzyme.autodiff(Forward, EnzymePrecompileExtended.dcube, Duplicated(3.0, 1.0))[1]
+                print(EnzymePrecompileExtended.dcube(3.0), " ", EnzymePrecompileExtended.inlabi(3.0), " ", y, " ", g, " ", EnzymePrecompileExtended.run_mut(3.0), " ", d2)
+                """
+            )
+            @test ok_ext
+            if ok_ext
+                @test parse(Float64, fields_ext[1]) ≈ 27.0
+                @test parse(Float64, fields_ext[2]) ≈ 27.0
+                @test parse(Float64, fields_ext[3]) ≈ 27.0
+                @test parse(Float64, fields_ext[4]) ≈ 27.0
+                @test parse(Float64, fields_ext[5]) ≈ 6.0
+                @test parse(Float64, fields_ext[6]) ≈ 18.0
+            end
         end
     end
 end
@@ -214,7 +261,10 @@ end
         if ok && fields == ["none"]
             @test_skip ok
         else
-            @test_broken ok
+            @test ok
+            if ok
+                @test parse(Float64, fields[1]) ≈ 4.0
+            end
         end
     end
 end
