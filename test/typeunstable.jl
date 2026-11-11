@@ -507,3 +507,44 @@ end
     @test dx ≈ 1 ./ x
     @test (@allocated sum_log_gradient!(dx, x)) == 0
 end
+
+square_first_3832(x) = x[1]^2
+const g_ref_3832 = Ref{Any}(square_first_3832)
+function branch_const_scalar_3832(x)
+    x[1] > 1 && return Inf
+    return g_ref_3832[](x)
+end
+
+@noinline nonscalar_any_3832(x) = Base.inferencebarrier([x[1], 2.0 * x[1]])
+
+@testset "Issue 3832 runtime activity reverse Any return with constant scalar branch" begin
+    dx = [0.0]
+    Enzyme.autodiff(Reverse, branch_const_scalar_3832, Active, Duplicated([2.0], dx))
+    @test dx == [0.0]
+
+    dx = [0.0]
+    Enzyme.autodiff(Enzyme.set_runtime_activity(Reverse), branch_const_scalar_3832, Active, Duplicated([0.5], dx))
+    @test dx == [1.0]
+
+    dx = [0.0]
+    Enzyme.autodiff(Enzyme.set_runtime_activity(Reverse), branch_const_scalar_3832, Active, Duplicated([2.0], dx))
+    @test dx == [0.0]
+
+    dx = [0.0]
+    _, prim_active = Enzyme.autodiff(
+        Enzyme.set_runtime_activity(ReverseWithPrimal), branch_const_scalar_3832, Active, Duplicated([0.5], dx)
+    )
+    @test prim_active == 0.25
+    @test dx == [1.0]
+
+    dx = [0.0]
+    _, prim_const = Enzyme.autodiff(
+        Enzyme.set_runtime_activity(ReverseWithPrimal), branch_const_scalar_3832, Active, Duplicated([2.0], dx)
+    )
+    @test prim_const == Inf
+    @test dx == [0.0]
+
+    @test_throws Enzyme.Compiler.EnzymeNonScalarReturnException Enzyme.autodiff(
+        Enzyme.set_runtime_activity(Reverse), nonscalar_any_3832, Active, Duplicated([0.5], [0.0])
+    )
+end
