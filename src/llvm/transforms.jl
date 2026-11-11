@@ -3,11 +3,11 @@ function restore_alloca_type!(f::LLVM.Function)
     dl = datalayout(LLVM.parent(f))
     for bb in blocks(f), inst in instructions(bb)
         if isa(inst, LLVM.AllocaInst)
-            if haskey(metadata(inst), "enzymejl_allocart") || haskey(metadata(inst), "enzymejl_gc_alloc_rt")
-                mds = operands(metadata(inst)[haskey(metadata(inst), "enzymejl_allocart") ? "enzymejl_allocart" : "enzymejl_gc_alloc_rt"])[1]::MDString
-                mds = Base.convert(String, mds)
-                ptr = reinterpret(Ptr{Cvoid}, parse(UInt, mds))
-                RT = Base.unsafe_pointer_to_objref(ptr)
+            RT = type_from_metadata(inst, "enzymejl_allocart")
+            if RT === nothing
+                RT = type_from_metadata(inst, "enzymejl_gc_alloc_rt")
+            end
+            if RT !== nothing
                 if RT isa Union
                     continue
                 end
