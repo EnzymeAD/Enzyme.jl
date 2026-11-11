@@ -540,3 +540,26 @@ end
 @testset "Invoke within apply iterate" begin
     autodiff(set_runtime_activity(Reverse), invokeiter, Active, Active(1.0), Const(34))
 end
+
+function apply_iter_const_tup(x::Float64, @nospecialize(c))
+    tup = Core._apply_iterate(Base.iterate, Core.tuple, (x,), c)
+    return (tup[1]::Float64) + (tup[2]::Float64)
+end
+
+@testset "Forward apply_iterate tuple with constant and runtime-inactive operands" begin
+    c = Base.inferencebarrier((5.0,))
+    @test autodiff(Forward, apply_iter_const_tup, Duplicated(3.0, 1.0), Const(c)) == (1.0,)
+    @test autodiff(
+        Forward,
+        apply_iter_const_tup,
+        BatchDuplicated(3.0, (1.0, 2.0)),
+        Const(c),
+    ) == ((var"1" = 1.0, var"2" = 2.0),)
+    c_vec = Any[5.0]
+    @test autodiff(
+        set_runtime_activity(Forward),
+        apply_iter_const_tup,
+        Duplicated(3.0, 1.0),
+        Duplicated(c_vec, c_vec),
+    ) == (1.0,)
+end

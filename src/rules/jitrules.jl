@@ -2525,7 +2525,12 @@ function common_apply_iterate_fwd(offset, B, orig, gutils, normalR, shadowR)
        v2 &&
        isiter == Base.iterate &&
        istup == Base.tuple &&
-       length(operands(orig)) >= offset + 4
+            length(operands(orig)) >= offset + 4 &&
+            !get_runtime_activity(gutils) &&
+            all(
+            i -> !is_constant_value(gutils, arg_operands_view(orig)[i]),
+            (offset + 3):length(arg_operands_view(orig)),
+        )
         origops = arg_operands_view(orig)
         shadowins =
             [invert_pointer(gutils, origops[i], B) for i = (offset+3):length(origops)]
