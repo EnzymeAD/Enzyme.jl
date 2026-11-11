@@ -731,3 +731,116 @@ end
     @test Enzyme.Compiler.get_return_info(Tuple{Vararg{Any, N}} where {N}) == (Any, nothing, nothing)
     @test Enzyme.Compiler.get_return_info(Tuple{Vector{T}, T} where {T}) == (Any, nothing, nothing)
 end
+
+struct Basis3827
+    D::Matrix{Float64}
+end
+Enzyme.EnzymeRules.inactive_type(::Type{Basis3827}) = true
+
+struct Solver3827
+    basis::Basis3827
+    w::Vector{Float64}
+end
+
+mutable struct MutableSolver3827
+    basis::Basis3827
+    w::Vector{Float64}
+end
+
+struct MultiFieldBasis3827
+    D1::Matrix{Float64}
+    D2::Matrix{Float64}
+    scale::Float64
+end
+Enzyme.EnzymeRules.inactive_type(::Type{MultiFieldBasis3827}) = true
+
+struct MultiFieldSolver3827
+    w::Vector{Float64}
+    basis::MultiFieldBasis3827
+end
+
+mutable struct MutableBasis3827
+    D::Matrix{Float64}
+end
+Enzyme.EnzymeRules.inactive_type(::Type{MutableBasis3827}) = true
+
+struct SolverWithMutableBasis3827
+    basis::MutableBasis3827
+    w::Vector{Float64}
+end
+
+function rhs3827!(s, u::Vector{Float64})
+    D = s.basis.D
+    w = s.w
+    @inbounds for i in eachindex(u)
+        s_acc = 0.0
+        for j in eachindex(u)
+            s_acc += D[i, j] * u[j]
+        end
+        w[i] = s_acc
+    end
+    return nothing
+end
+
+function rhs_multi3827!(s::MultiFieldSolver3827, u::Vector{Float64})
+    D1 = s.basis.D1
+    D2 = s.basis.D2
+    sc = s.basis.scale
+    w = s.w
+    @inbounds for i in eachindex(u)
+        s_acc = 0.0
+        for j in eachindex(u)
+            s_acc += sc * (D1[i, j] + D2[i, j]) * u[j]
+        end
+        w[i] = s_acc
+    end
+    return nothing
+end
+
+@testset "Inactive type as struct field (#3827)" begin
+    for SolverT in (Solver3827, MutableSolver3827, SolverWithMutableBasis3827)
+        B_ctor = SolverT === SolverWithMutableBasis3827 ? MutableBasis3827 : Basis3827
+        D_orig = [1.0 2.0; 3.0 4.0]
+        s = SolverT(B_ctor(copy(D_orig)), zeros(2))
+        ds = Enzyme.make_zero(s)
+        @test ds.basis === s.basis
+        ds.w .= [1.0, 2.0]
+        u = [5.0, 6.0]
+        du = zeros(2)
+        autodiff(Reverse, rhs3827!, Const, Duplicated(s, ds), Duplicated(u, du))
+        @test s.basis.D == D_orig
+        @test du ≈ [7.0, 10.0]
+
+        s = SolverT(B_ctor(copy(D_orig)), zeros(2))
+        ds = Enzyme.make_zero(s)
+        @test ds.basis === s.basis
+        u = [5.0, 6.0]
+        du = [1.0, 2.0]
+        autodiff(Forward, rhs3827!, Const, Duplicated(s, ds), Duplicated(u, du))
+        @test s.basis.D == D_orig
+        @test s.w ≈ D_orig * u
+        @test ds.w ≈ D_orig * du
+    end
+
+    D1_orig = [1.0 2.0; 3.0 4.0]
+    D2_orig = [0.5 1.5; 2.5 3.5]
+    s = MultiFieldSolver3827(zeros(2), MultiFieldBasis3827(copy(D1_orig), copy(D2_orig), 2.0))
+    ds = Enzyme.make_zero(s)
+    @test ds.basis === s.basis
+    ds.w .= [1.0, 2.0]
+    u = [5.0, 6.0]
+    du = zeros(2)
+    autodiff(Reverse, rhs_multi3827!, Const, Duplicated(s, ds), Duplicated(u, du))
+    @test s.basis.D1 == D1_orig
+    @test s.basis.D2 == D2_orig
+    @test du ≈ 2.0 .* (D1_orig .+ D2_orig)' * [1.0, 2.0]
+
+    s = MultiFieldSolver3827(zeros(2), MultiFieldBasis3827(copy(D1_orig), copy(D2_orig), 2.0))
+    ds = Enzyme.make_zero(s)
+    u = [5.0, 6.0]
+    du = [1.0, 2.0]
+    autodiff(Forward, rhs_multi3827!, Const, Duplicated(s, ds), Duplicated(u, du))
+    @test s.basis.D1 == D1_orig
+    @test s.basis.D2 == D2_orig
+    @test ds.w ≈ 2.0 .* (D1_orig .+ D2_orig) * du
+end

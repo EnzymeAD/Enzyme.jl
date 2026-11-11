@@ -204,6 +204,26 @@ end
 
 struct UninhabitedBroadcastSentinel <: Real end
 
+struct InactiveFieldStruct3827
+    D::Matrix{Float64}
+    x::Float64
+end
+Enzyme.EnzymeRules.inactive_type(::Type{InactiveFieldStruct3827}) = true
+
+struct OuterWithInactiveField3827
+    inactive::InactiveFieldStruct3827
+    active::Float64
+end
+
+@testset "inactive_type in TypeTree and GetOffsets (#3827)" begin
+    @test tt(InactiveFieldStruct3827) == "{}"
+    @test Enzyme.get_offsets(InactiveFieldStruct3827) == ()
+    if Sys.WORD_SIZE == 64
+        @test tt(OuterWithInactiveField3827) == "{[16]:Float@double}"
+        @test Enzyme.get_offsets(OuterWithInactiveField3827) == [(Enzyme.API.DT_Double, 16)]
+    end
+end
+
 function dead_bottom_array_branch!(out::Vector{Float32}, y::Matrix{Float32}, case::Int)
     tmp = UninhabitedBroadcastSentinel()
     arr = if case == 1
