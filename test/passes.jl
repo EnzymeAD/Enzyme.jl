@@ -385,6 +385,57 @@ end
     end
 end
 
+@testset "lower_convention preserves memory attributes" begin
+    x = [1.0, 2.0]
+    dx = [0.0, 0.0]
+    v = view(x, 1:1)
+    dv = view(dx, 1:1)
+
+    # `Base.mightalias` gets `ReadOnlyEffects` via `handleCustom` + `must_wrap`, and
+    # `SubArray` triggers `lower_convention` (`loweredArgs` + `removedRoots`).
+    Enzyme.Compiler.JuliaContext() do ctx
+        entry_fn, _ = Enzyme.Compiler.reflect(
+            Base.mightalias,
+            Const,
+            Tuple{Duplicated{typeof(x)}, Duplicated{typeof(v)}};
+            optimize = false,
+            second_stage = false,
+            run_enzyme = false,
+        )
+        @test Enzyme.Compiler.is_readonly(entry_fn)
+    end
+
+    # Raising a by-value argument for `MixedDuplicated` adds an `ArgMem` read in the
+    # wrapper (`memory(none)` -> `memory(argmem: read)`), which remains read-only.
+    Enzyme.Compiler.JuliaContext() do ctx
+        _, mod = Enzyme.Compiler.reflect(
+            Base.eps,
+            Const,
+            Tuple{MixedDuplicated{Float64}};
+            optimize = false,
+            second_stage = false,
+        )
+        wrappers = [
+            f for f in LLVM.functions(mod) if
+                Enzyme.Compiler.has_fn_attr(f, LLVM.StringAttribute("enzyme_lowered_convention"))
+        ]
+        @test length(wrappers) == 1
+        @test Enzyme.Compiler.is_readonly(only(wrappers))
+        if LLVM.version().major > 15
+            mem_attrs = [
+                a for a in collect(LLVM.function_attributes(only(wrappers))) if
+                    LLVM.kind(a) == LLVM.kind(LLVM.EnumAttribute("memory"))
+            ]
+            @test length(mem_attrs) == 1
+            @test Enzyme.Compiler.MemoryEffect(LLVM.value(only(mem_attrs))) ==
+                Enzyme.Compiler.ReadOnlyArgMemEffects
+        end
+    end
+
+    @test autodiff(Reverse, Base.mightalias, Const, Duplicated(x, dx), Duplicated(v, dv)) ==
+        ((nothing, nothing),)
+end
+
 # https://github.com/EnzymeAD/Enzyme.jl/issues/3284
 # The `jl_get_abi_converter` lowering of `@cfunction` only exists on 1.12+, and
 # older Julia's LLVM cannot parse the opaque-pointer IR below.
