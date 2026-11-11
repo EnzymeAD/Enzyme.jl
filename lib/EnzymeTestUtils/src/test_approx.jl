@@ -7,6 +7,12 @@ function test_approx(x::Array{<:Number}, y::Array{<:Number}, msg; kwargs...)
     @test_msg msg isapprox(x, y; kwargs...)
     return nothing
 end
+@static if VERSION >= v"1.11-"
+    function test_approx(x::GenericMemory{kind, <:Number}, y::GenericMemory{kind, <:Number}, msg; kwargs...) where {kind}
+        @test_msg msg isapprox(x, y; kwargs...)
+        return nothing
+    end
+end
 using LinearAlgebra
 function zero_copy(x)
     y = zero(parent(x))

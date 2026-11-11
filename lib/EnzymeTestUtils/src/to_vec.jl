@@ -78,7 +78,8 @@ function to_vec(x::Array{<:ElementType}, seen_vecs::AliasDict)
         is_const && return x
         x_new = reshape(x_vec_new, sz)
         if Core.Typeof(x_new) != Core.Typeof(x)
-            x_new = Core.Typeof(x)(x_new)
+            x_new = Core.Typeof(x)(undef, sz)
+            copyto!(x_new, x_vec_new)
         end
         seen_xs[x] = x_new
         return x_new
@@ -215,9 +216,9 @@ function to_vec(x::GenericMemory, seen_vecs::AliasDict)
         if xor(has_seen, haskey(seen_xs, x))
             throw(ErrorException("Arrays must be reconstructed in the same order as they are vectorized."))
         end
-        has_seen && return reshape(seen_xs[x], size(x))
+            has_seen && return seen_xs[x]
         is_const && return x
-        x_new = typeof(x)(undef, size(x))
+            x_new = typeof(x)(undef, length(x))
         k = 1
         for i in eachindex(x)
             isassigned(x, i) || continue
@@ -232,59 +233,104 @@ function to_vec(x::GenericMemory, seen_vecs::AliasDict)
 end
 
 # basic containers: loop over defined elements, recursively converting them to vectors
-function to_vec(x::GenericMemory{<:ElementType}, seen_vecs::AliasDict)
+    function to_vec(x::GenericMemory{kind, <:ElementType}, seen_vecs::AliasDict) where {kind}
     has_seen = haskey(seen_vecs, x)
     is_const = Enzyme.Compiler.guaranteed_const(Core.Typeof(x))
     if has_seen || is_const
         x_vec = Float32[]
     else
-        seen_vecs[x] = collect(x)
+            x_vec = collect(x)
+            seen_vecs[x] = x_vec
     end
     function Memory_from_vec(x_vec_new::AbstractVector{<:ElementType}, seen_xs::AliasDict)
         if xor(has_seen, haskey(seen_xs, x))
             throw(ErrorException("Arrays must be reconstructed in the same order as they are vectorized."))
         end
-        has_seen && return reshape(seen_xs[x], size(x))
+            has_seen && return seen_xs[x]
         is_const && return x
-        x_new = typeof(x)(undef, size(x))
+            x_new = typeof(x)(undef, length(x))
         copyto!(x_new, x_vec_new)
         seen_xs[x] = x_new
         return x_new
     end
     return x_vec, Memory_from_vec
 end
+
+    function to_vec(x::GenericMemory{kind, <:Complex{<:ElementType}}, seen_vecs::AliasDict) where {kind}
+        has_seen = haskey(seen_vecs, x)
+        is_const = Enzyme.Compiler.guaranteed_const(Core.Typeof(x))
+        if has_seen || is_const
+            x_vec = Float32[]
+        else
+            len = length(x)
+            x_vec = Vector{real(eltype(x))}(undef, 2 * len)
+            @inbounds @simd for i in 1:len
+                xi = x[i]
+                x_vec[i] = real(xi)
+                x_vec[i + len] = imag(xi)
+            end
+            seen_vecs[x] = x_vec
+        end
+        function ComplexMemory_from_vec(x_vec_new::AbstractVector{<:ElementType}, seen_xs::AliasDict)
+            if xor(has_seen, haskey(seen_xs, x))
+                throw(ErrorException("Arrays must be reconstructed in the same order as they are vectorized."))
+            end
+            has_seen && return seen_xs[x]
+            is_const && return x
+            mlen = length(x)
+            x_new = typeof(x)(undef, mlen)
+            @inbounds @simd for i in 1:mlen
+                x_new[i] = eltype(x)(x_vec_new[i], x_vec_new[i + mlen])
+            end
+            seen_xs[x] = x_new
+            return x_new
+        end
+        return x_vec, ComplexMemory_from_vec
+    end
 end
 
 function to_vec(x::Tuple, seen_vecs::AliasDict)
     is_const = Enzyme.Compiler.guaranteed_const(Core.Typeof(x))
-    if is_const
+    if is_const || isempty(x)
         x_vec = Float32[]
-    else
-        x_vecs = nothing
-        from_vecs = []
+        from_vecs = Any[]
         subvec_inds = UnitRange{Int}[]
+    else
+        ntup = length(x)
+        xi_vecs = Vector{AbstractVector}(undef, ntup)
+        from_vecs = Vector{Any}(undef, ntup)
+        subvec_inds = Vector{UnitRange{Int}}(undef, ntup)
         l = 0
-        for xi in x
-            xi_vec, xi_from_vec = to_vec(xi, seen_vecs)
-            push!(subvec_inds, (l + 1):(l + length(xi_vec)))
-            push!(from_vecs, xi_from_vec)
-            x_vecs = append_or_merge(x_vecs, xi_vec)
+        ET = Float32
+        for i in 1:ntup
+            xi_vec, xi_from_vec = to_vec(x[i], seen_vecs)
+            xi_vecs[i] = xi_vec
+            from_vecs[i] = xi_from_vec
+            subvec_inds[i] = (l + 1):(l + length(xi_vec))
+            ET = i == 1 ? eltype(xi_vec) : Base.promote_type(ET, eltype(xi_vec))
             l += length(xi_vec)
         end
-        if x_vecs === nothing
-            x_vecs = (Float32[], true)
+        if ntup == 1 && eltype(xi_vecs[1]) === ET
+            x_vec = xi_vecs[1]
+        else
+            x_vec = Vector{ET}(undef, l)
+            pos = 1
+            for i in 1:ntup
+                v = xi_vecs[i]
+                nv = length(v)
+                if nv > 0
+                    acopyto!(@view(x_vec[pos:(pos + nv - 1)]), v)
+                    pos += nv
+                end
+            end
         end
-        x_vec = x_vecs[1]
         seen_vecs[x] = x_vec
     end
     function Tuple_from_vec(x_vec_new::AbstractVector{<:ElementType}, seen_xs::AliasDict)
-        is_const && return x
-        x_new = Vector{Any}(undef, length(x))
-        for i in 1:length(x)
-            xi = from_vecs[i](@view(x_vec_new[subvec_inds[i]]), seen_xs)
-            x_new[i] = xi
+        (is_const || isempty(x)) && return x
+        x_new = ntuple(length(x)) do i
+            from_vecs[i](@view(x_vec_new[subvec_inds[i]]), seen_xs)
         end
-        x_new = (x_new...,)
         seen_xs[x] = x_new
         return x_new
     end
