@@ -1172,3 +1172,90 @@ end
     @test dres_b2[1] ≈ [1.0, -0.5]
     @test dres_b2[2] ≈ [-2.0, 1.0]
 end
+
+module DummyGPURuntime3640
+    signal_exception() = return
+    malloc(sz) = C_NULL
+    report_oom(sz) = return
+    report_exception(ex) = return
+    report_exception_name(ex) = return
+    report_exception_frame(idx, func, file, line) = return
+end
+struct DummyGPUParams3640 <: GPUCompiler.AbstractCompilerParams end
+GPUCompiler.runtime_module(::GPUCompiler.CompilerJob{<:Any, DummyGPUParams3640}) = DummyGPURuntime3640
+
+function fma_kernel_3640!(y::Core.LLVMPtr{Float32, 1}, x::Core.LLVMPtr{Float32, 1})
+    Base.unsafe_store!(y, fma(Base.unsafe_load(x, 1), 2.0f0, 1.0f0), 1)
+    return nothing
+end
+
+function dfma_kernel_3640!(
+        y::Core.LLVMPtr{Float32, 1},
+        dy::Core.LLVMPtr{Float32, 1},
+        x::Core.LLVMPtr{Float32, 1},
+        dx::Core.LLVMPtr{Float32, 1},
+    )
+    autodiff_deferred(Reverse, Const(fma_kernel_3640!), Const, Duplicated(y, dy), Duplicated(x, dx))
+    return nothing
+end
+
+@testset "GPU target CPUFeatures lowering (#3640)" begin
+    for target in (
+            GPUCompiler.PTXCompilerTarget(; cap = v"7.5"),
+            GPUCompiler.MetalCompilerTarget(; macos = v"13.0.0", air = v"2.5.0", metal = v"3.0.0"),
+        )
+        LLVM.Context() do ctx
+            mod = parse(
+                LLVM.Module,
+                """
+                declare i1 @julia.cpu.have_fma.f16()
+                declare i1 @julia.cpu.have_fma.f32()
+                declare i1 @julia.cpu.have_fma.f64()
+
+                define i8 @check_fma() {
+                  %a = call i1 @julia.cpu.have_fma.f16()
+                  %b = call i1 @julia.cpu.have_fma.f32()
+                  %c = call i1 @julia.cpu.have_fma.f64()
+                  %ab = add i8 0, 0
+                  %za = zext i1 %a to i8
+                  %zb = zext i1 %b to i8
+                  %zc = zext i1 %c to i8
+                  %s1 = shl i8 %zb, 1
+                  %s2 = shl i8 %zc, 2
+                  %o1 = or i8 %za, %s1
+                  %o2 = or i8 %o1, %s2
+                  ret i8 %o2
+                }
+                """,
+            )
+            Enzyme.Compiler.optimize!(mod, nothing, nothing, nothing, target)
+            ir = string(mod)
+            @test !occursin("julia.cpu.have_fma", ir)
+            expected = (GPUCompiler.have_fma(target, Float16) ? 1 : 0) |
+                (GPUCompiler.have_fma(target, Float32) ? 2 : 0) |
+                (GPUCompiler.have_fma(target, Float64) ? 4 : 0)
+            @test occursin("ret i8 $expected", ir)
+        end
+    end
+
+    if "nvptx" in LLVM.backends()
+        target = GPUCompiler.PTXCompilerTarget(; cap = v"7.5")
+        tt_ad = Tuple{
+            Core.LLVMPtr{Float32, 1},
+            Core.LLVMPtr{Float32, 1},
+            Core.LLVMPtr{Float32, 1},
+            Core.LLVMPtr{Float32, 1},
+        }
+        mi_ad = GPUCompiler.methodinstance(typeof(dfma_kernel_3640!), tt_ad)
+        job_ad = GPUCompiler.CompilerJob(
+            mi_ad, GPUCompiler.CompilerConfig(target, DummyGPUParams3640(); kernel = false)
+        )
+        ir_ad = GPUCompiler.JuliaContext() do ctx
+            mod_ad, _ = GPUCompiler.compile(:llvm, job_ad)
+            string(mod_ad)
+        end
+        @test occursin("llvm.fma.f32", ir_ad)
+        @test !occursin("double", ir_ad)
+        @test !occursin("fma_emulated", ir_ad)
+    end
+end

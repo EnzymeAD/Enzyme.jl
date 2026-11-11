@@ -39,8 +39,59 @@ end
 MarkLoadsDereferenceablePass(enzyme_ctx::Union{EnzymeContext, Nothing}) =
     NewPMFunctionPass("enzyme_mark_loads_dereferenceable", MarkLoadsDereferenceable(enzyme_ctx))
 
+struct EnzymeLowerCPUFeatures{T <: GPUCompiler.AbstractCompilerTarget}
+    target::T
+end
+
+function (pass::EnzymeLowerCPUFeatures)(mod::LLVM.Module)
+    changed = false
+    for f in collect(functions(mod))
+        fn = LLVM.name(f)
+        startswith(fn, "julia.cpu.have_fma.") || continue
+        typnam = @view fn[20:end]
+        has_fma = if typnam == "f16"
+            GPUCompiler.have_fma(pass.target, Float16)
+        elseif typnam == "f32"
+            GPUCompiler.have_fma(pass.target, Float32)
+        elseif typnam == "f64"
+            GPUCompiler.have_fma(pass.target, Float64)
+        else
+            false
+        end
+        ft = function_type(f)
+        has_fma_val = ConstantInt(LLVM.return_type(ft), has_fma)
+        materialized = LLVM.Value[]
+        for use in uses(f)
+            val = user(use)
+            replace_uses!(val, has_fma_val)
+            push!(materialized, val)
+        end
+        for val in materialized
+            @assert isempty(uses(val))
+            LLVM.erase!(val)
+        end
+        @assert isempty(uses(f))
+        LLVM.erase!(f)
+        changed = true
+    end
+    return changed
+end
+
+EnzymeGPULowerCPUFeaturesPass(target::GPUCompiler.AbstractCompilerTarget) =
+    NewPMModulePass("enzyme_gpu_cpu_features", EnzymeLowerCPUFeatures(target))
+
+register_cpu_features!(pb, ::Nothing) = nothing
+register_cpu_features!(pb, ::GPUCompiler.NativeCompilerTarget) = nothing
+register_cpu_features!(pb, target::GPUCompiler.AbstractCompilerTarget) =
+    register!(pb, EnzymeGPULowerCPUFeaturesPass(target))
+
+add_cpu_features!(mpm, ::Nothing) = add!(mpm, CPUFeaturesPass())
+add_cpu_features!(mpm, ::GPUCompiler.NativeCompilerTarget) = add!(mpm, CPUFeaturesPass())
+add_cpu_features!(mpm, target::GPUCompiler.AbstractCompilerTarget) =
+    add!(mpm, EnzymeGPULowerCPUFeaturesPass(target))
+
 # `enzyme_ctx` is the compilation `mod` belongs to, `nothing` outside of one.
-function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enzyme_ctx::Union{EnzymeContext, Nothing}, tti = nothing)
+function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enzyme_ctx::Union{EnzymeContext, Nothing}, tti = nothing, target = nothing)
     @dispose pb = NewPMPassBuilder() begin
         if tti !== nothing
             LLVM.target_transform_info!(pb, tti)
@@ -49,6 +100,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enz
         register!(pb, Addr13NoAliasPass())
         register!(pb, RestoreAllocaType())
         register!(pb, RemoveAlwaysInlineRootsPass())
+        register_cpu_features!(pb, target)
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
@@ -62,7 +114,7 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enz
                 add!(fpm, SimplifyCFGPass())
                 add!(fpm, DCEPass())
             end
-            add!(mpm, CPUFeaturesPass())
+            add_cpu_features!(mpm, target)
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, SROAPass())
                 add!(fpm, MemCpyOptPass())
@@ -83,13 +135,14 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enz
         if tti !== nothing
             LLVM.target_transform_info!(pb, tti)
         end
+        register_cpu_features!(pb, target)
         add!(pb, NewPMAAManager()) do aam
             add!(aam, ScopedNoAliasAA())
             add!(aam, TypeBasedAA())
             add!(aam, BasicAA())
         end
         add!(pb, NewPMModulePassManager()) do mpm
-            add!(mpm, CPUFeaturesPass()) # why is this duplicated?
+            add_cpu_features!(mpm, target) # why is this duplicated?
             add!(mpm, GlobalOptPass())
             add!(mpm, NewPMFunctionPassManager()) do fpm
                 add!(fpm, GVNPass())
@@ -112,13 +165,14 @@ function optimize!(mod::LLVM.Module, tm::Union{LLVM.TargetMachine, Nothing}, enz
             registerEnzymeAndPassPipeline!(pb)
             register!(pb, RestoreAllocaType())
             register!(pb, MarkLoadsDereferenceablePass(enzyme_ctx))
+            register_cpu_features!(pb, target)
             add!(pb, NewPMAAManager()) do aam
                 add!(aam, ScopedNoAliasAA())
                 add!(aam, TypeBasedAA())
                 add!(aam, BasicAA())
             end
             add!(pb, NewPMModulePassManager()) do mpm
-                add!(mpm, CPUFeaturesPass()) # why is this duplicated?
+                add_cpu_features!(mpm, target) # why is this duplicated?
 
                 add!(mpm, NewPMFunctionPassManager()) do fpm
                     add!(fpm, InstCombinePass())
