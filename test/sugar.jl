@@ -677,3 +677,46 @@ end
     # @show J_r_3(u, A, x)
     # @show J_f_3(u, A, x)
 end
+
+function unknown_activity_return_2557(active_var, constant_var, condition)
+    if condition
+        return active_var
+    else
+        return constant_var
+    end
+end
+
+@testset "Issue 2557 runtime activity jacobian aliased Const return" begin
+    for chunk in (nothing, Val(1), Val(2))
+        for mode in (Forward, ForwardWithPrimal, Reverse, ReverseWithPrimal)
+            rmode = Enzyme.set_runtime_activity(mode)
+            c_false = [5.0, 6.0]
+            res_false = if chunk === nothing
+                Enzyme.jacobian(rmode, unknown_activity_return_2557, [1.0, 2.0], Const(c_false), Const(false))
+            else
+                Enzyme.jacobian(rmode, unknown_activity_return_2557, [1.0, 2.0], Const(c_false), Const(false); chunk)
+            end
+            @test c_false == [5.0, 6.0]
+            if mode === ForwardWithPrimal || mode === ReverseWithPrimal
+                @test res_false.derivs[1] == zeros(2, 2)
+                @test res_false.val == [5.0, 6.0]
+            else
+                @test res_false[1] == zeros(2, 2)
+            end
+
+            c_true = [5.0, 6.0]
+            res_true = if chunk === nothing
+                Enzyme.jacobian(rmode, unknown_activity_return_2557, [1.0, 2.0], Const(c_true), Const(true))
+            else
+                Enzyme.jacobian(rmode, unknown_activity_return_2557, [1.0, 2.0], Const(c_true), Const(true); chunk)
+            end
+            @test c_true == [5.0, 6.0]
+            if mode === ForwardWithPrimal || mode === ReverseWithPrimal
+                @test res_true.derivs[1] == [1.0 0.0; 0.0 1.0]
+                @test res_true.val == [1.0, 2.0]
+            else
+                @test res_true[1] == [1.0 0.0; 0.0 1.0]
+            end
+        end
+    end
+end
