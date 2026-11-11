@@ -170,3 +170,24 @@ unrooted_phi_loss(x, n) = unrooted_phi_sum(UnrootedPhiArg(x, true), n)
     @test autodiff(Forward, unrooted_phi_loss, Duplicated(2.0, 1.0), Const(0))[1] == 2.0
     @test_throws Enzyme.Compiler.EnzymeRuntimeExceptionMI autodiff(Reverse, unrooted_phi_loss, Active, Active(2.0), Const(1))
 end
+
+# The second unrootable phi's block is reached only through the first's, so it
+# is dead code once the first block throws (#3856).
+@noinline function unrooted_phi_sum2(s::UnrootedPhiArg, n::Int)
+    acc = 0.0
+    for i in 1:n
+        t = s.flag ? deepcopy(s) : s
+        acc += t.x
+        u = i > 1 ? deepcopy(t) : s
+        acc += u.x
+    end
+    return acc + 2 * s.x
+end
+
+unrooted_phi_loss2(x, n) = unrooted_phi_sum2(UnrootedPhiArg(x, true), n)
+
+@testset "Unrootable phi reached only through another" begin
+    @test autodiff(Reverse, unrooted_phi_loss2, Active, Active(2.0), Const(0))[1][1] == 2.0
+    @test autodiff(Forward, unrooted_phi_loss2, Duplicated(2.0, 1.0), Const(0))[1] == 2.0
+    @test_throws Enzyme.Compiler.EnzymeRuntimeExceptionMI autodiff(Reverse, unrooted_phi_loss2, Active, Active(2.0), Const(1))
+end
