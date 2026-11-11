@@ -1,3 +1,67 @@
+@inline function _newstruct_zero_inactive(x::T) where {T <: Tuple}
+    aref = active_reg_nothrow(T)
+    if aref == AnyState || aref == DupState
+        return x
+    elseif aref == ActiveState
+        return Enzyme.make_zero(x)
+    else
+        return ntuple(Val(length(x))) do i
+            Base.@_inline_meta
+            _newstruct_zero_inactive(x[i])
+        end
+    end
+end
+
+@inline function _newstruct_zero_inactive(x::NamedTuple{names, TT}) where {names, TT}
+    aref = active_reg_nothrow(NamedTuple{names, TT})
+    if aref == AnyState || aref == DupState
+        return x
+    elseif aref == ActiveState
+        return Enzyme.make_zero(x)
+    else
+        return NamedTuple{names, TT}(_newstruct_zero_inactive(Tuple(x)))
+    end
+end
+
+@inline function _newstruct_zero_inactive(x::T) where {T}
+    aref = active_reg_nothrow(T)
+    if aref == AnyState || aref == DupState
+        return x
+    elseif aref == ActiveState
+        return Enzyme.make_zero(x)
+    else
+        @assert !ismutabletype(T)
+        nf = fieldcount(T)
+        if nf == 0
+            return x
+        end
+        all_def = all(
+            ntuple(Val(nf)) do i
+                Base.@_inline_meta
+                isdefined(x, i)
+            end
+        )
+        if all_def
+            return splatnew(
+                T, ntuple(Val(nf)) do i
+                    Base.@_inline_meta
+                    _newstruct_zero_inactive(getfield(x, i))
+                end
+            )
+        else
+            flds = Vector{Any}(undef, nf)
+            for i in 1:nf
+                if isdefined(x, i)
+                    flds[i] = _newstruct_zero_inactive(getfield(x, i))
+                else
+                    nf = i - 1
+                    break
+                end
+            end
+            return ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), T, flds, nf)::T
+        end
+    end
+end
 
 
 @generated function create_shadow_ret(::Val{atup}, ::Val{aref}, primarg::PT, batchshadowarg::BSA, ::Val{RuntimeActivity}) where {atup, aref, PT, BSA, RuntimeActivity}
@@ -6,126 +70,118 @@
             Base.@_inline_meta
             primarg
         end
+    end
+    err_expr = quote
+        Base.@_inline_meta
+        throw(
+            EnzymeRuntimeActivityError{String, Nothing, Nothing}(
+                "Error cannot store inactive but differentiable variable " * string(primarg) * " into active tuple",
+                nothing,
+                nothing,
+            ),
+        )
+    end
+    return if !atup || (BSA === Nothing && PT !== Nothing)
+        if aref == ActiveState
+            return quote
+                Base.@_inline_meta
+                Enzyme.make_zero(primarg)
+            end
+        elseif aref == DupState
+            return RuntimeActivity ? quote
+                    Base.@_inline_meta
+                    primarg
+                end : err_expr
+        else # MixedState
+            return RuntimeActivity ? quote
+                    Base.@_inline_meta
+                    _newstruct_zero_inactive(primarg)
+                end : err_expr
+        end
     else
-        if !atup
-            if (aref == DupState || aref == MixedState) &&
-               if RuntimeActivity
+        if aref == DupState
+            return quote
+                Base.@_inline_meta
+                batchshadowarg
+            end
+        elseif BSA <: Base.RefValue
+            return quote
+                Base.@_inline_meta
+                batchshadowarg[]
+            end
+        elseif aref == ActiveState
+            return RuntimeActivity ? quote
+                    Base.@_inline_meta
+                    Enzyme.make_zero(primarg)
+                end : err_expr
+        else # MixedState
+            return RuntimeActivity ? quote
+                    Base.@_inline_meta
+                    _newstruct_zero_inactive(primarg)
+                end : err_expr
+        end
+    end
+end
+
+@generated function create_shadow_ret_fwd(::Val{atup}, ::Val{aref}, primarg::PT, batchshadowarg::BSA, ::Val{RuntimeActivity}) where {atup, aref, PT, BSA, RuntimeActivity}
+    if aref == AnyState
+        return quote
+            Base.@_inline_meta
+            primarg
+        end
+    end
+    if !atup || (BSA === Nothing && PT !== Nothing)
+        if aref == ActiveState
+            return quote
+                Base.@_inline_meta
+                Enzyme.make_zero(primarg)
+            end
+        elseif aref == DupState
+            if RuntimeActivity
                 return quote
                     Base.@_inline_meta
                     primarg
                 end
-                else
+            else
                 return quote
                     Base.@_inline_meta
                     throw(
                         EnzymeRuntimeActivityError{String, Nothing, Nothing}(
-                        "Error cannot store inactive but differentiable variable "*string(primarg)*" into active tuple",
-                        nothing,
-                        nothing
-                       )
+                            "Error cannot store inactive but differentiable variable " * string(primarg) * " into active tuple",
+                            nothing,
+                            nothing,
+                        ),
                     )
                 end
-              end
             end
-        end
-        if aref == DupState
-
-            if batchshadowarg === Nothing && primarg !== Nothing
-                # in this case the arg is inactive [as we passed nothing for the shadow]. 
-                # However, we still have to return a duplicated value, as it is required by type.
-                if RuntimeActivity
-                    return quote
-                        Base.@_inline_meta
-                        primarg
-                    end
-                else
-                    return quote
-                        Base.@_inline_meta
-                        throw(
-                            EnzymeRuntimeActivityError{String, Nothing, Nothing}(
-                            "Error cannot store inactive but differentiable variable "*string(primarg)*" into active tuple",
+        else # MixedState
+            if RuntimeActivity
+                return quote
+                    Base.@_inline_meta
+                    _newstruct_zero_inactive(primarg)
+                end
+            else
+                return quote
+                    Base.@_inline_meta
+                    throw(
+                        EnzymeRuntimeActivityError{String, Nothing, Nothing}(
+                            "Error cannot store inactive but differentiable variable " * string(primarg) * " into active tuple",
                             nothing,
-                            nothing
-                        )
-                        )
-                    end
-                end
-            else
-                return quote
-                    Base.@_inline_meta
-                    batchshadowarg
-                end
-            end
-        else
-            if batchshadowarg === Nothing && primarg !== Nothing
-                # in this case the arg is inactive [as we passed nothing for the shadow]. 
-                # However, we still have to return a duplicated value, as it is required by type.
-                if aref == ActiveState
-                    return quote
-                        Enzyme.make_zero(primarg)
-                    end
-                else
-                    return quote
-                        Base.@_inline_meta
-                        throw(
-                            EnzymeRuntimeActivityError{String, Nothing, Nothing}(
-                            "Error cannot store inactive but differentiable variable "*string(primarg)*" into active tuple",
                             nothing,
-                            nothing
-                            )
-                        )
-                    end
-                end
-            else
-                return quote
-                    Base.@_inline_meta
-                    batchshadowarg[]
-                end
-            end
-        end
-    end
-
-    if atup && aref != AnyState
-        @assert PT !== DataType
-        if aref == ActiveState
-            return quote
-                Base.@_inline_meta
-                Active(primarg)
-            end
-        elseif aref == MixedState
-            if Width == 1
-                return quote
-                    Base.@_inline_meta
-                    MixedDuplicated(primarg, shadowarg)
-                end
-            else
-                return quote
-                    Base.@_inline_meta
-                    BatchMixedDuplicated(primarg, shadowarg)
-                end
-            end
-        else
-            if Width == 1
-                return quote
-                    Base.@_inline_meta
-                    Duplicated(primarg, shadowarg)
-                end
-            else
-                return quote
-                    Base.@_inline_meta
-                    BatchDuplicated(primarg, shadowarg)
+                        ),
+                    )
                 end
             end
         end
     else
         return quote
             Base.@_inline_meta
-            Const(primarg)
+            batchshadowarg
         end
     end
 end
 
-function body_construct_augfwd(
+function body_construct_fwd(
     N,
     RuntimeActivity,
     Width,
@@ -136,10 +192,98 @@ function body_construct_augfwd(
     tuple,
     @nospecialize(NewType::Union{Nothing, Type})
 )
-    shadow_rets = Vector{Expr}[]
-    results = Expr[quote
-        $(active_refs...)
+    if RuntimeActivity && (tuple || !ismutabletype(NewType))
+        early_ret = if Width == 1
+            :(return nothing)
+        else
+            :(return ReturnType($(Expr(:tuple, fill(:nothing, Width)...))))
+        end
+        early_check = quote
+            if !any(ActivityTup)
+                $early_ret
+            end
+        end
+    else
+        early_check = quote end
     end
+
+    shadow_rets = Vector{Expr}[]
+    results = Expr[
+        early_check,
+        quote
+            $(active_refs...)
+        end,
+    ]
+    @assert length(primtypes) == N
+    @assert length(primargs) == N
+    @assert length(batchshadowargs) == N
+    for i in 1:N
+        @assert length(batchshadowargs[i]) == Width
+        shadow_rets_i = Expr[]
+        aref = Symbol("active_ref_$i")
+        for w in 1:Width
+            expr = Expr(:call, create_shadow_ret_fwd, :(Val(ActivityTup[$i])), :(Val($aref)), primargs[i], batchshadowargs[i][w], Val(RuntimeActivity))
+            push!(shadow_rets_i, expr)
+        end
+        push!(shadow_rets, shadow_rets_i)
+    end
+
+    res_syms = Symbol[]
+    for w in 1:Width
+        sres = Symbol("result_$w")
+        combined = Expr[]
+        for i in 1:N
+            push!(combined, shadow_rets[i][w])
+        end
+        if tuple
+            push!(results, Expr(:(=), sres, Expr(:tuple, combined...)))
+        else
+            push!(results, Expr(:(=), sres, Expr(:new, :NewType, combined...)))
+        end
+        push!(res_syms, sres)
+    end
+
+    if Width == 1
+        push!(results, :(return $(res_syms[1])))
+    else
+        push!(results, :(return ReturnType(($(res_syms...),))))
+    end
+
+    return Expr(:block, results...)
+end
+
+function body_construct_augfwd(
+        N,
+        RuntimeActivity,
+        Width,
+        primtypes,
+        active_refs,
+        primargs,
+        batchshadowargs,
+        tuple,
+        @nospecialize(NewType::Union{Nothing, Type})
+    )
+    if RuntimeActivity && (tuple || !ismutabletype(NewType))
+        early_ret = if Width == 1
+            :(return nothing)
+        else
+            :(return ReturnType($(Expr(:tuple, fill(:nothing, Width)...))))
+        end
+        early_check = quote
+            if !any(ActivityTup)
+                $early_ret
+            end
+        end
+    else
+        early_check = quote end
+    end
+
+    shadow_rets = Vector{Expr}[]
+    results = Expr[
+        early_check,
+        quote
+            $(active_refs...)
+        end,
     ]
     @assert length(primtypes) == N
     @assert length(primargs) == N
@@ -229,12 +373,12 @@ function body_construct_rev(
 
             out = :(
                 # Inactive argument, don't need to update anything
-                if !($shad === nothing && $prim !== nothing)
+                if ActivityTup[$i] && !($shad === nothing && $prim !== nothing) && !($tsym === nothing)
                     if $(Symbol("active_ref_$i")) == MixedState ||
                        $(Symbol("active_ref_$i")) == ActiveState
                         if $shad isa Base.RefValue
                             $shad[] = recursive_add($shad[], $expr, identity, guaranteed_nonactive)
-                        else
+                        elseif !($shad === $prim && $prim !== nothing)
                             throw(EnzymeNonScalarReturnException($shad, ""))
                         end
                     end
@@ -248,7 +392,7 @@ function body_construct_rev(
     @inbounds tapes[1] = if !tuple && ismutabletype(NewType)
         :(tval_1 = tape)
     else
-        :(tval_1 = tape[])
+        :(tval_1 = tape isa Base.RefValue ? tape[] : tape)
     end
     for w = 2:Width
         sym = Symbol("tval_$w")
@@ -256,11 +400,14 @@ function body_construct_rev(
         @inbounds tapes[w] = if !tuple && ismutabletype(NewType)
             :($sym = $df)
         else
-            :($sym = $df[])
+            :($sym = $df isa Base.RefValue ? $df[] : $df)
         end
     end
 
     quote
+        if !any(ActivityTup) || tape === nothing
+            return nothing
+        end
         $(active_refs...)
 
         if any_mixed
@@ -389,6 +536,53 @@ function body_runtime_newstruct_augfwd(
     )
 end
 
+@generated function runtime_tuple_fwd(
+        activity::Type{Val{ActivityTup}},
+        rta::Val{RuntimeActivity},
+        width::Val{Width},
+        RT::Val{ReturnType},
+        allargs...,
+    ) where {ActivityTup, RuntimeActivity, Width, ReturnType}
+    N = div(length(allargs), Width + 1)
+    primargs, _, primtypes, _, _, _, batchshadowargs, _, active_refs, _ =
+        setup_macro_wraps(true, N, Width, :allargs; func = false, mixed_or_active = true)
+    return body_construct_fwd(
+        N,
+        RuntimeActivity,
+        Width,
+        primtypes,
+        active_refs,
+        primargs,
+        batchshadowargs,
+        true,
+        nothing,
+    )
+end
+
+@generated function runtime_newstruct_fwd(
+        activity::Type{Val{ActivityTup}},
+        rta::Val{RuntimeActivity},
+        width::Val{Width},
+        ::Type{NewType},
+        RT::Val{ReturnType},
+        allargs...,
+    ) where {ActivityTup, RuntimeActivity, Width, ReturnType, NewType}
+    N = div(length(allargs), Width + 1)
+    primargs, _, primtypes, _, _, _, batchshadowargs, _, active_refs, _ =
+        setup_macro_wraps(true, N, Width, :allargs; func = false, mixed_or_active = true)
+    return body_construct_fwd(
+        N,
+        RuntimeActivity,
+        Width,
+        primtypes,
+        active_refs,
+        primargs,
+        batchshadowargs,
+        false,
+        NewType,
+    )
+end
+
 @generated function runtime_newstruct_augfwd(
     activity::Type{Val{ActivityTup}},
     rta::Val{RuntimeActivity},
@@ -400,7 +594,7 @@ end
 )::ReturnType where {ActivityTup,MB,RuntimeActivity,Width,ReturnType,NewType}
     N = div(length(allargs), Width + 1)
     primargs, _, primtypes, _, _, wrapped, batchshadowargs, _, active_refs, dfns =
-        setup_macro_wraps(false, N, Width, :allargs; mixed_or_active = true)
+        setup_macro_wraps(false, N, Width, :allargs; func = false, mixed_or_active = true)
     return body_runtime_newstruct_augfwd(
         N,
         RuntimeActivity,
@@ -436,72 +630,298 @@ end
     )
 end
 
+@generated function runtime_newstructt_fwd(
+        activity::Type{Val{ActivityTup}},
+        rta::Val{RuntimeActivity},
+        width::Val{Width},
+        ::Type{NewType},
+        RT::Val{ReturnType},
+        allargs...,
+    ) where {ActivityTup, RuntimeActivity, Width, ReturnType, NewType}
+    _, _, _, _, _, _, batchshadowargs, _, active_refs, _ =
+        setup_macro_wraps(true, 1, Width, :allargs; func = false, mixed_or_active = true)
+    primtup = :(allargs[1])
+    aref = Symbol("active_ref_1")
+    immut = !ismutabletype(NewType)
+    if RuntimeActivity && immut
+        early_ret = if Width == 1
+            :(return nothing)
+        else
+            :(return ReturnType($(Expr(:tuple, fill(:nothing, Width)...))))
+        end
+        early_check = quote
+            if !ActivityTup[1]
+                $early_ret
+            end
+        end
+    else
+        early_check = quote end
+    end
+    results = Expr[
+        early_check,
+        quote
+            $(active_refs...)
+        end,
+    ]
+    res_syms = Symbol[]
+    for w in 1:Width
+        sres = Symbol("result_$w")
+        shad_w = batchshadowargs[1][w]
+        create_expr = Expr(
+            :call,
+            create_shadow_ret_fwd,
+            :(Val(ActivityTup[1])),
+            :(Val($aref)),
+            primtup,
+            shad_w,
+            Val(RuntimeActivity),
+        )
+        if RuntimeActivity && immut
+            lane_expr = quote
+                if !ActivityTup[1] || $shad_w === nothing
+                    nothing
+                else
+                    ccall(:jl_new_structt, Any, (Any, Any), NewType, $create_expr)
+                end
+            end
+        else
+            lane_expr = :(ccall(:jl_new_structt, Any, (Any, Any), NewType, $create_expr))
+        end
+        push!(results, Expr(:(=), sres, lane_expr))
+        push!(res_syms, sres)
+    end
+    if Width == 1
+        push!(results, :(return $(res_syms[1])))
+    else
+        push!(results, :(return ReturnType(($(res_syms...),))))
+    end
+    return Expr(:block, results...)
+end
+
+@generated function runtime_newstructt_augfwd(
+        activity::Type{Val{ActivityTup}},
+        rta::Val{RuntimeActivity},
+        width::Val{Width},
+        ModifiedBetween::Val{MB},
+        ::Type{NewType},
+        RT::Val{ReturnType},
+        allargs...,
+    )::ReturnType where {ActivityTup, MB, RuntimeActivity, Width, ReturnType, NewType}
+    _, _, _, _, _, _, batchshadowargs, _, active_refs, _ =
+        setup_macro_wraps(false, 1, Width, :allargs; func = false, mixed_or_active = true)
+    primtup = :(allargs[1])
+    aref = Symbol("active_ref_1")
+    immut = !ismutabletype(NewType)
+    if RuntimeActivity && immut
+        early_ret = if Width == 1
+            :(return nothing)
+        else
+            :(return ReturnType($(Expr(:tuple, fill(:nothing, Width)...))))
+        end
+        early_check = quote
+            if !ActivityTup[1]
+                $early_ret
+            end
+        end
+    else
+        early_check = quote end
+    end
+    results = Expr[
+        early_check,
+        quote
+            $(active_refs...)
+            areg_new = active_reg_nothrow(NewType)
+            wrap_ref = $(immut) && (areg_new == ActiveState || areg_new == MixedState)
+        end,
+    ]
+    res_syms = Symbol[]
+    for w in 1:Width
+        sres = Symbol("result_$w")
+        shad_w = batchshadowargs[1][w]
+        create_expr = Expr(
+            :call,
+            create_shadow_ret,
+            :(Val(ActivityTup[1])),
+            :(Val($aref)),
+            primtup,
+            shad_w,
+            Val(RuntimeActivity),
+        )
+        raw_expr = quote
+            raw_v = ccall(:jl_new_structt, Any, (Any, Any), NewType, $create_expr)
+            wrap_ref ? Ref(raw_v) : raw_v
+        end
+        if RuntimeActivity && immut
+            lane_expr = quote
+                if !ActivityTup[1]
+                    nothing
+                else
+                    $raw_expr
+                end
+            end
+        else
+            lane_expr = raw_expr
+        end
+        push!(results, Expr(:(=), sres, lane_expr))
+        push!(res_syms, sres)
+    end
+    if Width == 1
+        push!(results, :(return $(res_syms[1])))
+    else
+        push!(results, :(return ReturnType(($(res_syms...),))))
+    end
+    return Expr(:block, results...)
+end
+
+set_fn_max_args(runtime_newstruct_fwd)
 set_fn_max_args(runtime_newstruct_augfwd)
 set_fn_max_args(runtime_newstruct_rev)
+set_fn_max_args(runtime_newstructt_fwd)
+set_fn_max_args(runtime_newstructt_augfwd)
+set_fn_max_args(runtime_tuple_fwd)
 set_fn_max_args(runtime_tuple_augfwd)
 set_fn_max_args(runtime_tuple_rev)
 
 
+function unpack_newstruct_shadow!(B, gutils, orig, sret, width, T_jlvalue, T_prjlvalue)
+    if width == 1
+        shadow = sret
+        if get_runtime_activity(gutils)
+            newval = new_from_original(gutils, orig)
+            is_inactive = icmp!(B, LLVM.API.LLVMIntEQ, shadow, unsafe_to_llvm(B, nothing))
+            shadow = select!(B, is_inactive, newval, shadow)
+            API.moveBefore(newval, shadow, B)
+        end
+        return shadow
+    else
+        AT = LLVM.ArrayType(T_prjlvalue, Int(width))
+        llty = convert(LLVMType, AnyArray(Int(width)))
+        cal = LLVM.addrspacecast!(B, sret, LLVM.PointerType(T_jlvalue, Derived))
+        cal = LLVM.pointercast!(B, cal, LLVM.PointerType(llty, Derived))
+        ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
+        shadow = LLVM.UndefValue(ST)
+        null_jl = unsafe_to_llvm(B, nothing)
+        newval = get_runtime_activity(gutils) ? new_from_original(gutils, orig) : nothing
+        for i in 1:width
+            gep = LLVM.inbounds_gep!(
+                B,
+                AT,
+                cal,
+                [LLVM.ConstantInt(0), LLVM.ConstantInt(i - 1)],
+            )
+            ld = LLVM.load!(B, T_prjlvalue, gep)
+            if get_runtime_activity(gutils)
+                is_inactive = icmp!(B, LLVM.API.LLVMIntEQ, ld, null_jl)
+                ld = select!(B, is_inactive, newval, ld)
+                if i == 1
+                    API.moveBefore(newval, ld, B)
+                end
+            end
+            shadow = insert_value!(B, shadow, ld, i - 1)
+        end
+        return shadow
+    end
+end
+
+function store_normal_as_shadow!(B, gutils, orig, width)
+    normal = new_from_original(gutils, orig)
+    if width == 1
+        return normal
+    else
+        sel = select!(B, LLVM.ConstantInt(LLVM.Int1Type(), 1), normal, normal)
+        API.moveBefore(normal, sel, B)
+        shadowres = UndefValue(
+            LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(normal))),
+        )
+        for idx in 1:width
+            shadowres = insert_value!(B, shadowres, sel, idx - 1)
+        end
+        return shadowres
+    end
+end
+
 # returns if legal and completed
-function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR, enzyme_ctx::EnzymeContext)
+function newstruct_common(fwd, is_tuple, run, offset, B, orig, gutils, normalR, shadowR, enzyme_ctx::EnzymeContext)
     width = get_width(gutils)
 
     world = enzyme_world()
 
     @assert is_constant_value(gutils, operands(orig)[offset])
     ops = @view arg_operands_view(orig)[offset+1:end]
+    if isempty(ops)
+        if !run
+            return true
+        end
+        shadowsin = LLVM.Value[invert_pointer(gutils, operands(orig)[offset], B)]
+        if width == 1
+            if offset != 1
+                pushfirst!(shadowsin, LLVM.operands(orig)[1])
+            end
+            shadowres = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), shadowsin)
+            callconv!(shadowres, callconv(orig))
+        else
+            shadowres =
+                UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+            for idx in 1:width
+                args = LLVM.Value[extract_value!(B, s, idx - 1) for s in shadowsin]
+                if offset != 1
+                    pushfirst!(args, operands(orig)[1])
+                end
+                tmp = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), args)
+                callconv!(tmp, callconv(orig))
+                shadowres = insert_value!(B, shadowres, tmp, idx - 1)
+            end
+        end
+        unsafe_store!(shadowR, shadowres.ref)
+        return true
+    end
+
     icvs = [is_constant_value(gutils, v) for v in ops]
     abs_partial = [abs_typeof(v, enzyme_ctx, true) for v in ops]
     abs = [abs_typeof(v, enzyme_ctx) for v in ops]
     legalRT, structRT = abs_typeof(orig, enzyme_ctx)
 
+    known_immut = is_tuple || (legalRT && ((Base.isconcretetype(structRT) && !ismutabletype(structRT)) || structRT <: Tuple || structRT <: NamedTuple))
+    known_mut = !is_tuple && legalRT && Base.isconcretetype(structRT) && ismutabletype(structRT)
+
+    if !fwd && legalRT && !known_mut && !guaranteed_nonactive(structRT, world; AbstractIsMixed = true)
+        return false
+    end
+
+    if get_runtime_activity(gutils) && !known_immut && !known_mut
+        return false
+    end
+
     @assert length(icvs) == length(abs)
     for (icv, (found_partial, typ_partial, byref_partial), (found, typ, byref), idx) in
         zip(icvs, abs_partial, abs, 1:length(ops))
-        if !fwd
-            # Constants not handled unless known inactive from type
-            if icv
-                if !found_partial
+        if !found_partial
+            return false
+        end
+        if icv
+            if !get_runtime_activity(gutils)
+                if !guaranteed_const_nongen(typ_partial, world)
                     return false
-                end
-                if !get_runtime_activity(gutils)                
-                    if !guaranteed_const_nongen(typ_partial, world)
-                        return false
-                    end
-                else
-                    # In the special case of runtime activity if the argument is constant,
-                    # we still support that, storing the constant value into the struct, so
-                    # long as the struct element we are storing itself contains no direct
-                    # active data [aka is pure duplicated, or const], since we will then
-                    # still preserve the primal === shadow pointer relationships for anything
-                    # stored.
-                    if !guaranteed_nonactive(typ_partial, world; AbstractIsMixed=true)
-                        bypass = false
-                        if legalRT
-                            desc = Base.DataTypeFieldDesc(structRT)
-                            if desc[idx].isptr
-                                bypass = true
-                            end
-                        end
-                        if !bypass
-                            return false
-                        end
-                    end
                 end
             else
-                # if any active [e.g. ActiveState / MixedState] data could exist
-                # err
-                if !found_partial
-                    return false
-                end
                 if !guaranteed_nonactive(typ_partial, world; AbstractIsMixed=true)
                     return false
                 end
+            end
+        else
+            if !guaranteed_nonactive(typ_partial, world; AbstractIsMixed = true)
+                return false
             end
         end
     end
 
     if !run
+        return true
+    end
+
+    if get_runtime_activity(gutils) && known_immut && all(icvs)
+        shadowres = store_normal_as_shadow!(B, gutils, orig, width)
+        unsafe_store!(shadowR, shadowres.ref)
         return true
     end
 
@@ -513,9 +933,36 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR, e
 
         shadowres = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), shadowsin)
         callconv!(shadowres, callconv(orig))
+        if get_runtime_activity(gutils) && known_immut
+            any_act = LLVM.ConstantInt(LLVM.Int1Type(), 0)
+            for (k, op) in enumerate(ops)
+                if !icvs[k]
+                    sh_k = shadowsin[(offset != 1 ? 2 : 1) + k]
+                    any_act = or!(B, any_act, icmp!(B, LLVM.API.LLVMIntNE, new_from_original(gutils, op), sh_k))
+                end
+            end
+            newval = new_from_original(gutils, orig)
+            shadowres = select!(B, any_act, shadowres, newval)
+            API.moveBefore(newval, shadowres, B)
+        end
     else
         shadowres =
             UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+        newval = (get_runtime_activity(gutils) && known_immut) ? new_from_original(gutils, orig) : nothing
+        any_act_all = if get_runtime_activity(gutils) && known_immut && !fwd
+            cond = LLVM.ConstantInt(LLVM.Int1Type(), 0)
+            for idx in 1:width
+                for (k, op) in enumerate(ops)
+                    if !icvs[k]
+                        sh_k = extract_value!(B, shadowsin[1 + k], idx - 1)
+                        cond = or!(B, cond, icmp!(B, LLVM.API.LLVMIntNE, new_from_original(gutils, op), sh_k))
+                    end
+                end
+            end
+            cond
+        else
+            nothing
+        end
         for idx = 1:width
             args = LLVM.Value[extract_value!(B, s, idx - 1) for s in shadowsin]
             if offset != 1
@@ -523,6 +970,24 @@ function newstruct_common(fwd, run, offset, B, orig, gutils, normalR, shadowR, e
             end
             tmp = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), args)
             callconv!(tmp, callconv(orig))
+            if get_runtime_activity(gutils) && known_immut
+                any_act = if fwd
+                    cond = LLVM.ConstantInt(LLVM.Int1Type(), 0)
+                    for (k, op) in enumerate(ops)
+                        if !icvs[k]
+                            sh_k = args[(offset != 1 ? 2 : 1) + k]
+                            cond = or!(B, cond, icmp!(B, LLVM.API.LLVMIntNE, new_from_original(gutils, op), sh_k))
+                        end
+                    end
+                    cond
+                else
+                    any_act_all
+                end
+                tmp = select!(B, any_act, tmp, newval)
+                if idx == 1
+                    API.moveBefore(newval, tmp, B)
+                end
+            end
             shadowres = insert_value!(B, shadowres, tmp, idx - 1)
         end
     end
@@ -548,23 +1013,29 @@ function common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
         return true
     end
 
-    if !newstruct_common(true, true, offset, B, orig, gutils, normalR, shadowR, enzyme_ctx) #=run=#
-        origops = arg_operands_view(orig)
-        ops = origops[offset+1:end]
-        abs_partial = [abs_typeof(v, enzyme_ctx, true) for v in ops]
-        icvs = [is_constant_value(gutils, v) for v in ops]
-        emit_error(
-            B,
+    if !newstruct_common(true, false, true, offset, B, orig, gutils, normalR, shadowR, enzyme_ctx) #=run=#
+        T_jlvalue = LLVM.StructType(LLVMType[])
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+        width = get_width(gutils)
+
+        sret = generic_setup(
             orig,
-            "Enzyme: Not yet implemented, mixed activity for jl_new_struct constants=" *
-            string(icvs) *
-            " " *
-            string(orig) *
-            " " *
-            string(abs_partial) *
-            " " *
-            string([v for v in origops[offset+1:end]]),
-        )
+            runtime_newstruct_fwd,
+            width == 1 ? Any : AnyArray(Int(width)),
+            gutils,
+            offset,
+            B,
+            false,
+            enzyme_ctx;
+            firstconst = true,
+            endcast = false,
+            firstconst_after_tape = true,
+            runtime_activity = true,
+            strong_zero = false,
+        ) #=start=#
+
+        shadow = unpack_newstruct_shadow!(B, gutils, orig, sret, width, T_jlvalue, T_prjlvalue)
+        unsafe_store!(shadowR, shadow.ref)
     end
 
     return false
@@ -587,18 +1058,9 @@ function common_newstructv_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
         return true
     end
 
-    if !newstruct_common(false, true, offset, B, orig, gutils, normalR, shadowR, enzyme_ctx) #=run=#
-        normal =
-            (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) :
-            nothing
-        shadow =
-            (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) :
-            nothing
-
+    if !newstruct_common(false, false, true, offset, B, orig, gutils, normalR, shadowR, enzyme_ctx) #=run=#
         T_jlvalue = LLVM.StructType(LLVMType[])
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-
-
         width = get_width(gutils)
 
         sret = generic_setup(
@@ -616,29 +1078,8 @@ function common_newstructv_augfwd(offset, B, orig, gutils, normalR, shadowR, tap
             strong_zero = false
         ) #=start=#
 
-        if width == 1
-            shadow = sret
-        else
-            AT = LLVM.ArrayType(T_prjlvalue, Int(width))
-            llty = convert(LLVMType, AnyArray(Int(width)))
-            cal = sret
-            cal = LLVM.addrspacecast!(B, cal, LLVM.PointerType(T_jlvalue, Derived))
-            cal = LLVM.pointercast!(B, cal, LLVM.PointerType(llty, Derived))
-            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
-            shadow = LLVM.UndefValue(ST)
-            for i = 1:width
-                gep = LLVM.inbounds_gep!(
-                    B,
-                    AT,
-                    cal,
-                    [LLVM.ConstantInt(0), LLVM.ConstantInt(i - 1)],
-                )
-                ld = LLVM.load!(B, T_prjlvalue, gep)
-                shadow = insert_value!(B, shadow, ld, i - 1)
-            end
-        end
+        shadow = unpack_newstruct_shadow!(B, gutils, orig, sret, width, T_jlvalue, T_prjlvalue)
         unsafe_store!(shadowR, shadow.ref)
-
         unsafe_store!(tapeR, sret.ref)
         return false
     end
@@ -667,9 +1108,35 @@ function common_newstructv_rev(offset, B, orig, gutils, tape)
         return
     end
 
-    if !newstruct_common(false, false, offset, B, orig, gutils, nothing, nothing, enzyme_ctx) #=shadowR=#
+    if !newstruct_common(false, false, false, offset, B, orig, gutils, nothing, nothing, enzyme_ctx) #=shadowR=#
         @assert tape !== C_NULL
         width = get_width(gutils)
+        tape2 = if width != 1
+            res = LLVM.Value[]
+
+            T_jlvalue = LLVM.StructType(LLVMType[])
+            T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+
+            AT = LLVM.ArrayType(T_prjlvalue, Int(width))
+            llty = convert(LLVMType, AnyArray(Int(width)))
+            cal = tape
+            cal = LLVM.addrspacecast!(B, cal, LLVM.PointerType(T_jlvalue, Derived))
+            cal = LLVM.pointercast!(B, cal, LLVM.PointerType(llty, Derived))
+
+            for i in 1:width
+                gep = LLVM.inbounds_gep!(
+                    B,
+                    AT,
+                    cal,
+                    [LLVM.ConstantInt(0), LLVM.ConstantInt(i - 1)],
+                )
+                ld = LLVM.load!(B, T_prjlvalue, gep)
+                push!(res, ld)
+            end
+            res
+        else
+            tape
+        end
         generic_setup(
             orig,
             runtime_newstruct_rev,
@@ -679,7 +1146,7 @@ function common_newstructv_rev(offset, B, orig, gutils, tape)
             B,
             true, enzyme_ctx;
             firstconst = true,
-            tape,
+            tape = tape2,
             firstconst_after_tape = true,
             runtime_activity = false,
             strong_zero = false
@@ -690,7 +1157,46 @@ function common_newstructv_rev(offset, B, orig, gutils, tape)
 end
 
 function common_f_tuple_fwd(offset, B, orig, gutils, normalR, shadowR)
-    common_newstructv_fwd(offset, B, orig, gutils, normalR, shadowR)
+    enzyme_ctx = enzyme_context()
+    needsShadowP = Ref{UInt8}(0)
+    needsPrimalP = Ref{UInt8}(0)
+    activep = API.EnzymeGradientUtilsGetReturnDiffeType(
+        gutils,
+        orig,
+        needsPrimalP,
+        needsShadowP,
+        get_mode(gutils),
+    )
+
+    if (is_constant_value(gutils, orig) || needsShadowP[] == 0) &&
+            is_constant_inst(gutils, orig)
+        return true
+    end
+
+    if !newstruct_common(true, true, true, offset, B, orig, gutils, normalR, shadowR, enzyme_ctx) #=run=#
+        T_jlvalue = LLVM.StructType(LLVMType[])
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+        width = get_width(gutils)
+
+        sret = generic_setup(
+            orig,
+            runtime_tuple_fwd,
+            width == 1 ? Any : AnyArray(Int(width)),
+            gutils,
+            offset + 1,
+            B,
+            false,
+            enzyme_ctx;
+            endcast = false,
+            runtime_activity = true,
+            strong_zero = false,
+        ) #=start=#
+
+        shadow = unpack_newstruct_shadow!(B, gutils, orig, sret, width, T_jlvalue, T_prjlvalue)
+        unsafe_store!(shadowR, shadow.ref)
+    end
+
+    return false
 end
 
 function common_f_tuple_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)::Bool
@@ -709,18 +1215,9 @@ function common_f_tuple_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
         return true
     end
 
-    if !newstruct_common(false, true, offset, B, orig, gutils, normalR, shadowR, enzyme_ctx) #=run=#
-        normal =
-            (unsafe_load(normalR) != C_NULL) ? LLVM.Instruction(unsafe_load(normalR)) :
-            nothing
-        shadow =
-            (unsafe_load(shadowR) != C_NULL) ? LLVM.Instruction(unsafe_load(shadowR)) :
-            nothing
-
+    if !newstruct_common(false, true, true, offset, B, orig, gutils, normalR, shadowR, enzyme_ctx) #=run=#
         T_jlvalue = LLVM.StructType(LLVMType[])
         T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
-
-
         width = get_width(gutils)
 
         sret = generic_setup(
@@ -736,31 +1233,9 @@ function common_f_tuple_augfwd(offset, B, orig, gutils, normalR, shadowR, tapeR)
             strong_zero = false
         ) #=start=#
 
-        if width == 1
-            shadow = sret
-        else
-            AT = LLVM.ArrayType(T_prjlvalue, Int(width))
-            llty = convert(LLVMType, AnyArray(Int(width)))
-            cal = sret
-            cal = LLVM.addrspacecast!(B, cal, LLVM.PointerType(T_jlvalue, Derived))
-            cal = LLVM.pointercast!(B, cal, LLVM.PointerType(llty, Derived))
-            ST = LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig)))
-            shadow = LLVM.UndefValue(ST)
-            for i = 1:width
-                gep = LLVM.inbounds_gep!(
-                    B,
-                    AT,
-                    cal,
-                    [LLVM.ConstantInt(0), LLVM.ConstantInt(i - 1)],
-                )
-                ld = LLVM.load!(B, T_prjlvalue, gep)
-                shadow = insert_value!(B, shadow, ld, i - 1)
-            end
-        end
+        shadow = unpack_newstruct_shadow!(B, gutils, orig, sret, width, T_jlvalue, T_prjlvalue)
         unsafe_store!(shadowR, shadow.ref)
-
         unsafe_store!(tapeR, sret.ref)
-
     end
     return false
 end
@@ -787,7 +1262,7 @@ function common_f_tuple_rev(offset, B, orig, gutils, tape)
         return true
     end
 
-    if !newstruct_common(false, false, offset, B, orig, gutils, nothing, nothing, enzyme_ctx) #=shadowR=#
+    if !newstruct_common(false, true, false, offset, B, orig, gutils, nothing, nothing, enzyme_ctx) #=shadowR=#
         @assert tape !== C_NULL
         width = get_width(gutils)
         tape2 = if width != 1
@@ -861,6 +1336,7 @@ end
 end
 
 @register_fwd function new_structt_fwd(B, orig, gutils, normalR, shadowR)
+    enzyme_ctx = enzyme_context()
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
     activep = API.EnzymeGradientUtilsGetReturnDiffeType(
@@ -879,13 +1355,27 @@ end
     width = get_width(gutils)
 
     @assert is_constant_value(gutils, operands(orig)[1])
-    if is_constant_value(gutils, operands(orig)[2])
-        emit_error(
-            B,
+    if is_constant_value(gutils, operands(orig)[2]) || get_runtime_activity(gutils)
+        T_jlvalue = LLVM.StructType(LLVMType[])
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+        sret = generic_setup(
             orig,
-            "Enzyme: Not yet implemented, mixed activity for jl_new_struct_t" *
-            string(orig),
+            runtime_newstructt_fwd,
+            width == 1 ? Any : AnyArray(Int(width)),
+            gutils,
+            1,
+            B,
+            false,
+            enzyme_ctx;
+            firstconst = true,
+            endcast = false,
+            firstconst_after_tape = true,
+            runtime_activity = true,
+            strong_zero = false,
         )
+        shadowres = unpack_newstruct_shadow!(B, gutils, orig, sret, width, T_jlvalue, T_prjlvalue)
+        unsafe_store!(shadowR, shadowres.ref)
+        return false
     end
 
     shadowsin = invert_pointer(gutils, operands(orig)[2], B)
@@ -930,45 +1420,59 @@ end
     width = get_width(gutils)
 
     @assert is_constant_value(gutils, operands(orig)[1])
-    if is_constant_value(gutils, operands(orig)[2])
-        emit_error(
-            B,
+    if is_constant_value(gutils, operands(orig)[2]) || get_runtime_activity(gutils)
+        T_jlvalue = LLVM.StructType(LLVMType[])
+        T_prjlvalue = LLVM.PointerType(T_jlvalue, Tracked)
+        sret = generic_setup(
             orig,
-            "Enzyme: Not yet implemented, mixed activity for jl_new_struct_t" *
-            string(orig),
+            runtime_newstructt_augfwd,
+            width == 1 ? Any : AnyArray(Int(width)),
+            gutils,
+            1,
+            B,
+            false,
+            enzyme_ctx;
+            firstconst = true,
+            endcast = false,
+            firstconst_after_tape = true,
+            runtime_activity = true,
+            strong_zero = false,
         )
-    end
-
-    shadowsin = invert_pointer(gutils, operands(orig)[2], B)
-    if width == 1
-        vals = [new_from_original(gutils, operands(orig)[1]), val_from_byref_if_mixed(B, gutils, operands(orig)[2], shadowsin, enzyme_ctx)]
-        shadowres = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), vals)
-        callconv!(shadowres, callconv(orig))
-        shadowres = byref_from_val_if_mixed(B, shadowres, enzyme_ctx)
+        shadowres = unpack_newstruct_shadow!(B, gutils, orig, sret, width, T_jlvalue, T_prjlvalue)
     else
-        shadowres =
-            UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
-        for idx = 1:width
-            vals = [
-                new_from_original(gutils, operands(orig)[1]),
-                val_from_byref_if_mixed(B, gutils, operands(orig)[2], extract_value!(B, shadowsin, idx - 1), enzyme_ctx),
-            ]
-            tmp = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), vals)
-            callconv!(tmp, callconv(orig))
-            tmp = byref_from_val_if_mixed(B, tmp, enzyme_ctx)
-            shadowres = insert_value!(B, shadowres, tmp, idx - 1)
+        shadowsin = invert_pointer(gutils, operands(orig)[2], B)
+        if width == 1
+            vals = [new_from_original(gutils, operands(orig)[1]), val_from_byref_if_mixed(B, gutils, operands(orig)[2], shadowsin, enzyme_ctx)]
+            shadowres = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), vals)
+            callconv!(shadowres, callconv(orig))
+            shadowres = byref_from_val_if_mixed(B, shadowres, enzyme_ctx)
+        else
+            shadowres =
+                UndefValue(LLVM.LLVMType(API.EnzymeGetShadowType(width, value_type(orig))))
+            for idx in 1:width
+                vals = [
+                    new_from_original(gutils, operands(orig)[1]),
+                    val_from_byref_if_mixed(B, gutils, operands(orig)[2], extract_value!(B, shadowsin, idx - 1), enzyme_ctx),
+                ]
+                tmp = LLVM.call!(B, called_type(orig), LLVM.called_operand(orig), vals)
+                callconv!(tmp, callconv(orig))
+                tmp = byref_from_val_if_mixed(B, tmp, enzyme_ctx)
+                shadowres = insert_value!(B, shadowres, tmp, idx - 1)
+            end
         end
     end
     unsafe_store!(shadowR, shadowres.ref)
 
-    legal, TT, _ = abs_typeof(orig, enzyme_ctx)
-    if !legal
-        unsafe_store!(tapeR, shadowres.ref)
-    else
-        @assert legal
-        world = enzyme_world()
-        if !guaranteed_nonactive(TT, world)
+    if !is_constant_value(gutils, operands(orig)[2])
+        legal, TT, _ = abs_typeof(orig, enzyme_ctx)
+        if !legal
             unsafe_store!(tapeR, shadowres.ref)
+        else
+            @assert legal
+            world = enzyme_world()
+            if !guaranteed_nonactive(TT, world)
+                unsafe_store!(tapeR, shadowres.ref)
+            end
         end
     end
 
@@ -988,7 +1492,7 @@ end
     end
 end
 
-@generated function runtime_newstructt_rev(::Val{Width}, origres::Type{OR}, revres0::RR0, revarg0::RA0, args::Vararg{Any, N}) where {Width, OR, RR0, RA0, N}
+@generated function runtime_newstructt_rev(::Val{RuntimeActivity}, ::Val{Width}, origres::Type{OR}, revres0::RR0, revarg0::RA0, args::Vararg{Any, N}) where {RuntimeActivity, Width, OR, RR0, RA0, N}
     exprs = Expr[]
     for i in 1:Width
         dres = if i == 1
@@ -1001,7 +1505,18 @@ end
         else
             :(args[$(2*(i-2)+1+1)])
         end
-        if OR == Nothing
+        if OR <: Base.RefValue
+        elseif RuntimeActivity
+            push!(
+                exprs, quote
+                    if $dres isa Base.RefValue && $darg isa Base.RefValue
+                        tmparg = $darg[]
+                        tmpres = $dres[]
+                        $darg[] = recursive_tuple(Val(length(tmparg)), tmparg, tmpres)
+                    end
+                end
+            )
+        elseif OR == Nothing
             push!(exprs, quote
                 @assert $dres isa Base.RefValue
                 if $darg isa Base.RefValue
@@ -1014,8 +1529,8 @@ end
                         string($darg),
                     )
                 end
-            end)
-        elseif OR <: Base.RefValue
+                end
+            )
         else
             push!(exprs, quote
                 if $dres isa Base.RefValue
@@ -1043,8 +1558,8 @@ end
 
 @register_rev function new_structt_rev(B, orig, gutils, tape)
     enzyme_ctx = enzyme_context()
-    if is_constant_value(gutils, orig)
-        return true
+    if is_constant_value(gutils, orig) || is_constant_value(gutils, operands(orig)[2])
+        return nothing
     end
     needsShadowP = Ref{UInt8}(0)
     needsPrimalP = Ref{UInt8}(0)
@@ -1077,6 +1592,7 @@ end
     if torun
         vals = LLVM.Value[
             unsafe_to_llvm(B, runtime_newstructt_rev),
+            unsafe_to_llvm(B, Val(get_runtime_activity(gutils))),
             unsafe_to_llvm(B, Val(Int(width))),
         ]
 
@@ -1087,13 +1603,18 @@ end
         end
 
         shadowsin = lookup_value(gutils, invert_pointer(gutils, operands(orig)[2], B), B)
+        prim_tup = get_runtime_activity(gutils) ? lookup_value(gutils, new_from_original(gutils, operands(orig)[2]), B) : nothing
+        null_jl = get_runtime_activity(gutils) ? unsafe_to_llvm(B, nothing) : nothing
         if width == 1
             push!(vals, tape)
-            push!(vals, shadowsin)
+            darg = get_runtime_activity(gutils) ? select!(B, icmp!(B, LLVM.API.LLVMIntEQ, shadowsin, prim_tup), null_jl, shadowsin) : shadowsin
+            push!(vals, darg)
         else
             for i in 1:width
                 push!(vals, extract_value!(B, tape, i - 1))
-                push!(vals, extract_value!(B, shadowsin, i - 1))
+                sh_i = extract_value!(B, shadowsin, i - 1)
+                darg = get_runtime_activity(gutils) ? select!(B, icmp!(B, LLVM.API.LLVMIntEQ, sh_i, prim_tup), null_jl, sh_i) : sh_i
+                push!(vals, darg)
             end
         end
         emit_apply_generic!(B, vals)
