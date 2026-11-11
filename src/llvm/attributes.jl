@@ -176,6 +176,8 @@ const nofreefns = Set{String}((
     "ijl_array_grow_end",
     "jl_f_getfield",
     "ijl_f_getfield",
+        "jl_f_arrayref",
+        "ijl_f_arrayref",
     "jl_pop_handler",
     "ijl_pop_handler",
     "jl_pop_handler_noexcept",
@@ -673,6 +675,8 @@ function annotate!(mod::LLVM.Module)
     for fname in (
         "jl_f_getfield",
         "ijl_f_getfield",
+            "jl_f_arrayref",
+            "ijl_f_arrayref",
         "jl_get_nth_field_checked",
         "ijl_get_nth_field_checked",
         "jl_f__svec_ref",
