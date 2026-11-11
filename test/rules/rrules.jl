@@ -613,8 +613,37 @@ end
 
 split_scale_loss(v) = sum(Base.inferencebarrier(s -> split_scale(s))(SplitModeArg(2.0, v)))
 
+struct SplitModeSol
+    u::Vector{Float64}
+    a::Float64
+end
+
+@noinline split_sret(v::Vector{Float64}) = SplitModeSol(2 .* v, 1.0)
+
+function EnzymeRules.augmented_primal(
+        config::EnzymeRules.RevConfigWidth{1}, ::Const{typeof(split_sret)},
+        RTA::Type{<:Duplicated}, v
+    )
+    res = split_sret(v.val)
+    primal = EnzymeRules.needs_primal(config) ? res : nothing
+    return EnzymeRules.augmented_rule_return_type(config, RTA)(primal, Enzyme.make_zero(res), nothing)
+end
+
+function EnzymeRules.reverse(
+        config::EnzymeRules.RevConfigWidth{1}, ::Const{typeof(split_sret)},
+        ::Type{<:Duplicated}, tape, v
+    )
+    v.dval .+= fill(2.0, length(v.val))
+    return (nothing,)
+end
+
+split_sret_loss(v) = sum(Base.inferencebarrier(w -> split_sret(w))(v).u)
+
 @testset "Custom rule in split mode through a dynamic call" begin
     @test Enzyme.gradient(Reverse, split_scale_loss, [1.0, 2.0])[1] ≈ [2.0, 2.0]
+    @static if VERSION >= v"1.12"
+        @test Enzyme.gradient(Reverse, split_sret_loss, [1.0, 2.0])[1] ≈ [2.0, 2.0]
+    end
 end
 
 # A hand-written rule whose primal only reads inline fields of a struct argument
