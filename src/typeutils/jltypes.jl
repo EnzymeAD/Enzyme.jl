@@ -91,6 +91,9 @@ function inline_roots_type(@nospecialize(T::Type))::Int
 	   if GPUCompiler.deserves_argbox(T)
 		return 0
 	   end
+        if !allocatedinline(T)
+            return 0
+        end
 	   if Base.isabstracttype(T)
 		return 0
 	   end

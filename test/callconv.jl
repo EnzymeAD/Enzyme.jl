@@ -523,3 +523,112 @@ d3_default_ccall(x) = only(autodiff(Forward, d2_default_ccall, Duplicated(x, 1.0
     @test d3_inline_ccall(x) ≈ d3_default_ccall(x)
     @test sum_d1_inline_ccall([x, x]) ≈ 2 * d1_default_ccall(x)
 end
+
+const FourRootTape2456 = Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}, Vector{Float64}, Float64}
+
+@noinline four_roots_2456(x::Vector{Float64}) = x[1] * x[2]
+
+function Enzyme.EnzymeRules.augmented_primal(
+        config::Enzyme.EnzymeRules.RevConfigWidth{1},
+        func::Const{typeof(four_roots_2456)},
+        ::Type{<:Active},
+        x::Duplicated{Vector{Float64}},
+    )
+    val = func.val(x.val)
+    t = (copy(x.val), copy(x.val), copy(x.val), copy(x.val), 1.0)
+    return Enzyme.EnzymeRules.AugmentedReturn(
+        Enzyme.EnzymeRules.needs_primal(config) ? val : nothing,
+        nothing,
+        t,
+    )
+end
+
+function Enzyme.EnzymeRules.reverse(
+        config::Enzyme.EnzymeRules.RevConfigWidth{1},
+        func::Const{typeof(four_roots_2456)},
+        dret::Active,
+        tape::FourRootTape2456,
+        x::Duplicated{Vector{Float64}},
+    )
+    x.dval[1] += dret.val * (tape[1][2] + tape[4][2]) / 2 * tape[5]
+    x.dval[2] += dret.val * (tape[2][1] + tape[3][1]) / 2 * tape[5]
+    return (nothing,)
+end
+
+outer_four_roots_2456(x::Vector{Float64}) = four_roots_2456(x) + x[1]
+
+@testset "Boxed non-allocatedinline subtape ABI (#2456)" begin
+    fwd4, rev4 = autodiff_thunk(
+        ReverseSplitWithPrimal,
+        Const{typeof(outer_four_roots_2456)},
+        Active,
+        Duplicated{Vector{Float64}},
+    )
+    x = [2.0, 3.0]
+    dx = [0.0, 0.0]
+    tape4, val4, _ = fwd4(Const(outer_four_roots_2456), Duplicated(x, dx))
+    GC.gc(true)
+    rev4(Const(outer_four_roots_2456), Duplicated(x, dx), 1.0, tape4)
+    @test val4 ≈ 8.0
+    @test dx ≈ [4.0, 2.0]
+
+    LL = Enzyme.LLVM
+    LL.Context() do _
+        @static if VERSION > v"1.12-"
+            @test Enzyme.Compiler.inline_roots_type(typeof(tape4)) > 3
+        end
+
+        T_jlval = LL.StructType(LL.LLVMType[])
+        T_gcptr = LL.PointerType(T_jlval, 10)
+        T_arr = LL.ArrayType(LL.Int64Type(), 4096)
+        T_sub = LL.StructType([T_gcptr, LL.Int1Type(), T_arr])
+        T_outer = LL.StructType([T_sub, LL.DoubleType()])
+
+        outer_jlty = Enzyme.Compiler.tape_type(T_outer)
+        sub_jlty = fieldtype(outer_jlty, 1)
+        @test Base.allocatedinline(outer_jlty)
+        @test !Base.allocatedinline(sub_jlty)
+        @test Enzyme.Compiler.has_boxed_subtape(outer_jlty)
+        @test Enzyme.Compiler.inline_roots_type(sub_jlty) == 0
+        @static if VERSION > v"1.12-"
+            @test Enzyme.Compiler.inline_roots_type(outer_jlty) == 1
+        end
+
+        mod = LL.Module("test_2456")
+        T_abi_outer = convert(LL.LLVMType, outer_jlty; allow_boxed = true)
+
+        ft_pack = LL.FunctionType(T_abi_outer, [T_outer])
+        fn_pack = LL.Function(mod, "test_pack", ft_pack)
+        LL.IRBuilder() do B
+            LL.position!(B, LL.BasicBlock(fn_pack, "entry"))
+            packed = Enzyme.Compiler.pack_tape_for_abi(
+                B,
+                first(LL.parameters(fn_pack)),
+                outer_jlty,
+                !Base.allocatedinline(outer_jlty),
+            )
+            LL.ret!(B, packed)
+        end
+
+        ft_unpack = LL.FunctionType(T_outer, [T_abi_outer])
+        fn_unpack = LL.Function(mod, "test_unpack", ft_unpack)
+        LL.IRBuilder() do B
+            LL.position!(B, LL.BasicBlock(fn_unpack, "entry"))
+            unpacked = Enzyme.Compiler.calling_conv_fixup(
+                B,
+                first(LL.parameters(fn_unpack)),
+                T_outer,
+            )
+            LL.ret!(B, unpacked)
+        end
+
+        LL.verify(mod)
+        pack_ir = string(fn_pack)
+        unpack_ir = string(fn_unpack)
+        @test occursin("julia.gc_alloc_obj", pack_ir)
+        @test occursin("julia.write_barrier", pack_ir)
+        @test occursin("zext i1", pack_ir)
+        @test occursin("load", unpack_ir)
+        @test occursin("trunc i8", unpack_ir)
+    end
+end
