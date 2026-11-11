@@ -612,7 +612,80 @@ function rewrite_abi_converter_calls!(mod::LLVM.Module)
     return nothing
 end
 
+function is_fresh_gc_alloc(@nospecialize(base::LLVM.Value), bb::LLVM.BasicBlock)
+    if isa(base, LLVM.AllocaInst)
+        return true
+    end
+    if isa(base, LLVM.CallInst) && LLVM.parent(base) == bb
+        cf = LLVM.called_operand(base)
+        if isa(cf, LLVM.Function)
+            nm = LLVM.name(cf)
+            if nm == "julia.gc_alloc_obj" || nm == "jl_gc_alloc_typed" || nm == "ijl_gc_alloc_typed"
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function has_array_ptr_mutation(mod::LLVM.Module)
+    seen_init_stores = Set{Tuple{LLVM.Value, Int}}()
+    for f in functions(mod), bb in blocks(f), inst in instructions(bb)
+        if isa(inst, LLVM.StoreInst)
+            val = operands(inst)[1]
+            dst = operands(inst)[2]
+            val_ty = value_type(val)
+            dst_ty = value_type(dst)
+            if isa(val_ty, LLVM.PointerType) && addrspace(val_ty) == 0 &&
+                    isa(dst_ty, LLVM.PointerType) && (addrspace(dst_ty) == 10 || addrspace(dst_ty) == 11)
+                dst_base, dst_off = get_base_and_offset(dst)
+                if is_fresh_gc_alloc(dst_base, bb) && !in((dst_base, dst_off), seen_init_stores)
+                    push!(seen_init_stores, (dst_base, dst_off))
+                else
+                    return true
+                end
+            end
+        elseif isa(inst, LLVM.CallInst)
+            cf = LLVM.called_operand(inst)
+            if isa(cf, LLVM.Function)
+                nm = LLVM.name(cf)
+                if startswith(nm, "llvm.memcpy") || startswith(nm, "llvm.memmove")
+                    dst = operands(inst)[1]
+                    dst_ty = value_type(dst)
+                    if isa(dst_ty, LLVM.PointerType) && (addrspace(dst_ty) == 10 || addrspace(dst_ty) == 11)
+                        dst_base, dst_off = get_base_and_offset(dst)
+                        if is_fresh_gc_alloc(dst_base, bb) && !in((dst_base, dst_off), seen_init_stores)
+                            push!(seen_init_stores, (dst_base, dst_off))
+                        else
+                            return true
+                        end
+                    end
+                elseif nm in (
+                        "jl_array_grow_end",
+                        "ijl_array_grow_end",
+                        "jl_array_del_end",
+                        "ijl_array_del_end",
+                        "jl_array_grow_beg",
+                        "ijl_array_grow_beg",
+                        "jl_array_del_beg",
+                        "ijl_array_del_beg",
+                        "jl_array_grow_at",
+                        "ijl_array_grow_at",
+                        "jl_array_del_at",
+                        "ijl_array_del_at",
+                        "jl_array_sizehint",
+                        "ijl_array_sizehint",
+                    )
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
 function force_recompute!(mod::LLVM.Module)
+    mutates_array_ptr = has_array_ptr_mutation(mod)
     for f in functions(mod), bb in blocks(f)
         iter = LLVM.API.LLVMGetFirstInstruction(bb)
         while iter != C_NULL
@@ -625,8 +698,10 @@ function force_recompute!(mod::LLVM.Module)
                     if isa(v, LLVM.CallInst)
                         cf = LLVM.called_operand(v)
                         if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded" && operands(v)[2] == inst
-                            has_loaded = true
-                            break
+                            if !mutates_array_ptr || get_base_and_offset(operands(inst)[1])[1] == get_base_and_offset(operands(v)[1])[1]
+                                has_loaded = true
+                                break
+                            end
                         end
                     end
                     if isa(v, LLVM.BitCastInst)
@@ -635,8 +710,10 @@ function force_recompute!(mod::LLVM.Module)
                             if isa(v2, LLVM.CallInst)
                                 cf = LLVM.called_operand(v2)
                                 if isa(cf, LLVM.Function) && LLVM.name(cf) == "julia.gc_loaded" && operands(v2)[2] == v
-                                    has_loaded = true
-                                    break
+                                    if !mutates_array_ptr || get_base_and_offset(operands(inst)[1])[1] == get_base_and_offset(operands(v2)[1])[1]
+                                        has_loaded = true
+                                        break
+                                    end
                                 end
                             end
                         end
