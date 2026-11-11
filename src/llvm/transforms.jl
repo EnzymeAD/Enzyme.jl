@@ -1667,6 +1667,133 @@ function nodecayed_cut_failed!(f::LLVM.Function, failed::Vector{Tuple{LLVM.PHIIn
     return nothing
 end
 
+# `v` with the steps that do not change its value stripped: pointer bitcasts, and the
+# `add x, 0` / `mul x, 1` that `nodecayed_getparent` builds for zero offsets.
+function nodecayed_strip(@nospecialize(v::LLVM.Value))::LLVM.Value
+    if isa(v, LLVM.BitCastInst) || (isa(v, LLVM.ConstantExpr) && opcode(v) == LLVM.API.LLVMBitCast)
+        return nodecayed_strip(operands(v)[1])
+    end
+    if isa(v, LLVM.Instruction) && (opcode(v) == LLVM.API.LLVMAdd || opcode(v) == LLVM.API.LLVMMul)
+        unit = opcode(v) == LLVM.API.LLVMAdd ? 0 : 1
+        lhs, rhs = operands(v)
+        if isa(rhs, LLVM.ConstantInt) && convert(Int, rhs) == unit
+            return nodecayed_strip(lhs)
+        end
+        if isa(lhs, LLVM.ConstantInt) && convert(Int, lhs) == unit
+            return nodecayed_strip(rhs)
+        end
+    end
+    return v
+end
+
+function nodecayed_undef_or_poison(@nospecialize(v::LLVM.Value))::Bool
+    undeforpoison = isa(v, LLVM.UndefValue)
+    @static if LLVM.version() >= v"12"
+        undeforpoison |= isa(v, LLVM.PoisonValue)
+    end
+    return undeforpoison
+end
+
+# Replace each set of the phis in `live` that take, besides each other, one and the same
+# value by that value.
+#
+# GVN keeps a field it re-reads after a call that may write memory (say the data pointer of a
+# `Const` array, loaded before a loop and again after a call inside it) as a web of phis.
+# `nodecayed_phis!` turns that web into phis of the parent object and of the byte offset,
+# which then only ever carry the one object and offset 0, but through a cycle of phis and
+# bitcasts that it does not fold. Enzyme then cannot recompute the data pointer reloaded from
+# such a phi in the reverse pass, so it caches that addrspace(13) pointer, and fails with
+# "Illegal cached pointer".
+#
+# A set of phis whose operands are each other or one value `V` (undef or poison aside)
+# can only ever hold `V`. Without undef or poison operands `V` also dominates every one of
+# them: each path to one of the phis reaches it with `V`, or with another of them, which it
+# reached before. An undef or poison operand breaks that argument, since its path need not
+# pass `V`. Under `--check-bounds=yes`, for instance, Julia 1.10's `matmul3x3` reaches a
+# block from seven bounds-checked paths, and only one of them carries the array whose data
+# pointer the phi carries; the other six bring undef, and `V`, that load, does not dominate
+# the phi. So only the phis that `V` dominates are replaced, and any other stays a phi,
+# which then takes `V` instead of the replaced ones (an operand of a phi dominates the end of
+# its incoming block, and `V` dominates the block of each replaced phi).
+function fold_redundant_nodecayed_phis!(live::Set{LLVM.PHIInst})
+    isempty(live) && return
+    # `live` holds the phis created in one function.
+    domtree = LLVM.DomTree(LLVM.parent(LLVM.parent(first(live))))
+    fold_redundant_nodecayed_phis!(domtree, live)
+    dispose(domtree)
+    return
+end
+
+nodecayed_dominates(domtree::LLVM.DomTree, @nospecialize(v::LLVM.Value), q::LLVM.PHIInst)::Bool =
+    !isa(v, LLVM.Instruction) || LLVM.dominates(domtree, v, q)
+
+function fold_redundant_nodecayed_phis!(domtree::LLVM.DomTree, live::Set{LLVM.PHIInst})
+    changed = true
+    while changed
+        changed = false
+        for p in collect(live)
+            in(p, live) || continue
+            group = LLVM.PHIInst[p]
+            seen = Set{LLVM.PHIInst}(group)
+            same = nothing
+            ok = true
+            i = 1
+            while ok && i <= length(group)
+                for (v, _) in LLVM.incoming(group[i])
+                    sv = nodecayed_strip(v)
+                    if isa(sv, LLVM.PHIInst) && in(sv, live)
+                        if !in(sv, seen)
+                            push!(seen, sv)
+                            push!(group, sv)
+                        end
+                    elseif nodecayed_undef_or_poison(sv)
+                        continue
+                    elseif same === nothing
+                        same = sv
+                    elseif same != sv
+                        ok = false
+                        break
+                    end
+                end
+                i += 1
+            end
+            (ok && same !== nothing) || continue
+            castable = true
+            for q in group
+                castable &= nodecayed_castable(value_type(same), value_type(q))
+            end
+            castable || continue
+            for q in group
+                nodecayed_dominates(domtree, same, q) || continue
+                repl = same
+                if value_type(repl) != value_type(q)
+                    b = IRBuilder()
+                    position!(b, first_non_phi(LLVM.parent(q)))
+                    repl = bitcast!(b, repl, value_type(q))
+                end
+                replace_uses!(q, repl)
+                LLVM.API.LLVMInstructionEraseFromParent(q)
+                delete!(live, q)
+                changed = true
+            end
+        end
+    end
+    return
+end
+
+# Whether a value of type `from` can stand for one of type `to`, with at most a bitcast.
+function nodecayed_castable(@nospecialize(from::LLVM.LLVMType), @nospecialize(to::LLVM.LLVMType))::Bool
+    from == to && return true
+    return isa(from, LLVM.PointerType) && isa(to, LLVM.PointerType) && addrspace(from) == addrspace(to)
+end
+
+function first_non_phi(bb::LLVM.BasicBlock)::LLVM.Instruction
+    for inst in instructions(bb)
+        isa(inst, LLVM.PHIInst) || return inst
+    end
+    error("block without a terminator")
+end
+
 function nodecayed_phis!(mod::LLVM.Module)
     # Simple handler to fix addrspace 11
     #complex handler for addrspace 13, which itself comes from a load of an
@@ -1735,6 +1862,8 @@ function nodecayed_phis!(mod::LLVM.Module)
 
             nextvs = Dict{LLVM.PHIInst, LLVM.PHIInst}()
             failed = Tuple{LLVM.PHIInst, EnzymeInternalError}[]
+            # The phis created below that are still in the function.
+            created = Set{LLVM.PHIInst}()
             mtodo = Vector{LLVM.PHIInst}[]
             goffsets = Dict{LLVM.PHIInst, LLVM.PHIInst}()
             nonphis = LLVM.Instruction[]
@@ -1772,9 +1901,11 @@ function nodecayed_phis!(mod::LLVM.Module)
                         "nodecayed." * LLVM.name(inst),
                     )
                     nextvs[inst] = nphi
+                    push!(created, nphi)
                     anyV = true
 
                     goffsets[inst] = phi!(nb, offty, "nodecayedoff." * LLVM.name(inst))
+                    push!(created, goffsets[inst])
                 end
                 push!(mtodo, todo)
                 push!(nonphis, nonphi)
@@ -1858,6 +1989,7 @@ function nodecayed_phis!(mod::LLVM.Module)
                             bc = bitcast!(nb, bc, value_type(nphi))
                         end
                         replace_uses!(nphi, bc)
+                        delete!(created, nphi)
                         LLVM.API.LLVMInstructionEraseFromParent(nphi)
                         nphi = bc
                     else
@@ -1904,6 +2036,14 @@ function nodecayed_phis!(mod::LLVM.Module)
                     LLVM.API.LLVMInstructionEraseFromParent(inst)
                 end
             end
+            # The placeholders of the phis that failed above never get incoming
+            # values, so they are not foldable; `nodecayed_cut_failed!` removes them.
+            # Fold first: the cut erases dead code, which can hold phis in `created`.
+            for (inst, _) in failed
+                delete!(created, nextvs[inst])
+                delete!(created, goffsets[inst])
+            end
+            fold_redundant_nodecayed_phis!(created)
             if !isempty(failed)
                 nodecayed_cut_failed!(f, failed)
             end
