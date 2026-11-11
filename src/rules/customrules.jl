@@ -1346,18 +1346,18 @@ end
             @assert ST == fwd_RT
 	    _, prim_sret, prim_roots = get_return_info(RealRt)
             if prim_sret !== nothing
-	        dval_ptr = if !is_constant_value(gutils, operands(orig)[1+orig_swiftself])
+                dval_ptr = if is_constant_value(gutils, operands(orig)[1 + orig_swiftself])
 		    @assert prim_roots !== nothing && VERSION >= v"1.12"
 		    @assert !is_constant_value(gutils, operands(orig)[2+orig_swiftself])
 		    nothing
 		else
 		    invert_pointer(gutils, operands(orig)[1+orig_swiftself], B)
 		end
-                dval = extract_value!(B, res, 1)
+                dval = res
 		
 		droots = if prim_roots !== nothing && VERSION >= v"1.12"
 		    @assert !is_constant_value(gutils, operands(orig)[2+orig_swiftself])
-		    invert_pointer(gutils, operands(orig)[2], B)
+                    invert_pointer(gutils, operands(orig)[2 + orig_swiftself], B)
 	        end
                 
 		for idx = 1:width
