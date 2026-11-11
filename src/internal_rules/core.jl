@@ -15,8 +15,36 @@ function EnzymeRules.forward(
     ::Type{<:BatchDuplicatedNoNeed},
     x::BatchDuplicated{T,N},
 ) where {T,N}
-    ntuple(Val(N)) do _
-        deepcopy(x.dval)
+    return ntuple(Val(N)) do i
+        Base.@_inline_meta
+        deepcopy(x.dval[i])
+    end
+end
+
+@generated function deepcopy_rtact_immutable(
+        copied::RT,
+        primal::RT,
+        seen::S,
+        shadow::RT,
+    )::RT where {RT, S}
+    nf = fieldcount(RT)
+    flds = Expr[]
+    for i in 1:nf
+        push!(
+            flds,
+            :(
+                deepcopy_rtact(
+                    getfield(copied, $i),
+                    getfield(primal, $i),
+                    seen,
+                    getfield(shadow, $i),
+                )
+            ),
+        )
+    end
+    return quote
+        Base.@_inline_meta
+        $(Expr(:new, RT, flds...))
     end
 end
 
@@ -57,6 +85,7 @@ end
             return newa
         elseif RT <: Tuple
             return ntuple(Val(length(shadow))) do i
+                Base.@_inline_meta
                 deepcopy_rtact(copied[i], primal[i], seen, shadow[i])
             end
         end
@@ -79,6 +108,12 @@ end
                         ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), new_shadow, i-1, xi)
                     end
                 end
+            end
+            return new_shadow
+        elseif RT isa DataType && RT.name.n_uninitialized == 0
+            new_shadow = deepcopy_rtact_immutable(copied, primal, seen, shadow)
+            if seen !== nothing
+                seen[shadow] = new_shadow
             end
             return new_shadow
         else
@@ -125,6 +160,7 @@ function EnzymeRules.forward(
 ) where {T,N}
     primal = func.val(x.val)
     return EnzymeRules.forward_rule_return_type(config, RT)(primal, ntuple(Val(N)) do i
+            Base.@_inline_meta
         deepcopy_rtact(primal, x.val, nothing, x.dval[i])
     end)
 end
@@ -149,6 +185,7 @@ function EnzymeRules.forward(
 )
     primal = func.val(x.val)
     return ntuple(Val(EnzymeRules.width(config))) do _
+        Base.@_inline_meta
         Enzyme.make_zero(primal)
     end
 end
@@ -171,6 +208,7 @@ function EnzymeRules.forward(
 )
     primal = func.val(x.val)
     return BatchDuplicated(primal, ntuple(Val(EnzymeRules.width(config))) do _
+            Base.@_inline_meta
         Enzyme.make_zero(primal)
     end)
 end
