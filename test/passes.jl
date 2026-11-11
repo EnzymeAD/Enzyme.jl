@@ -1172,3 +1172,90 @@ end
     @test dres_b2[1] ≈ [1.0, -0.5]
     @test dres_b2[2] ≈ [-2.0, 1.0]
 end
+
+"The load named `name` in `mod`'s function `fname`."
+function find_load(mod::LLVM.Module, fname::String, name::String)
+    for bb in blocks(functions(mod)[fname]), inst in instructions(bb)
+        if isa(inst, LLVM.LoadInst) && LLVM.name(inst) == name
+            return inst
+        end
+    end
+    return nothing
+end
+
+@testset "force_recompute! marks both operands of julia.gc_loaded" begin
+    LLVM.Context() do ctx
+        mod = parse(
+            LLVM.Module,
+            """
+            declare {} addrspace(13)* @julia.gc_loaded({} addrspace(10)*, i8*)
+
+            define double @f({} addrspace(10)* %arr) {
+            top:
+              %p = addrspacecast {} addrspace(10)* %arr to {} addrspace(10)* addrspace(11)*
+              %datap = bitcast {} addrspace(10)* addrspace(11)* %p to i8* addrspace(11)*
+              %data = load i8*, i8* addrspace(11)* %datap, align 8
+              %memp = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %p, i64 1
+              %mem = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %memp, align 8
+              %other = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %p, align 8
+              %loaded = call {} addrspace(13)* @julia.gc_loaded({} addrspace(10)* %mem, i8* %data)
+              %dp = bitcast {} addrspace(13)* %loaded to double addrspace(13)*
+              %v = load double, double addrspace(13)* %dp, align 8
+              ret double %v
+            }
+            """,
+        )
+        Enzyme.Compiler.force_recompute!(mod)
+        @test haskey(metadata(find_load(mod, "f", "data")), "enzyme_nocache")
+        @test haskey(metadata(find_load(mod, "f", "mem")), "enzyme_nocache")
+        # A tracked pointer that is not the memory of a `gc_loaded` is left alone.
+        @test !haskey(metadata(find_load(mod, "f", "other")), "enzyme_nocache")
+        @test !haskey(metadata(find_load(mod, "f", "v")), "enzyme_nocache")
+    end
+end
+
+if VERSION >= v"1.11"
+    @testset "mark_matrix_size_loads!" begin
+        LLVM.Context() do ctx
+            matrix = string(convert(UInt, Enzyme.Compiler.unsafe_to_pointer(Matrix{Float64})))
+            vector = string(convert(UInt, Enzyme.Compiler.unsafe_to_pointer(Vector{Float64})))
+            mut_ref = string(UInt(GPUCompiler.MUT_REF))
+            mod = parse(
+                LLVM.Module,
+                """
+                define i64 @f({} addrspace(10)* "enzymejl_parmtype"="$matrix" "enzymejl_parmtype_ref"="$mut_ref" %mat, {} addrspace(10)* "enzymejl_parmtype"="$vector" "enzymejl_parmtype_ref"="$mut_ref" %vec) {
+                top:
+                  %mp = addrspacecast {} addrspace(10)* %mat to i8 addrspace(11)*
+                  %mdatap = bitcast i8 addrspace(11)* %mp to i8* addrspace(11)*
+                  %mdata = load i8*, i8* addrspace(11)* %mdatap, align 8
+                  %nrowsp8 = getelementptr inbounds i8, i8 addrspace(11)* %mp, i64 16
+                  %nrowsp = bitcast i8 addrspace(11)* %nrowsp8 to i64 addrspace(11)*
+                  %nrows = load i64, i64 addrspace(11)* %nrowsp, align 8
+                  %ncolsp8 = getelementptr inbounds i8, i8 addrspace(11)* %mp, i64 24
+                  %ncolsp = bitcast i8 addrspace(11)* %ncolsp8 to i64 addrspace(11)*
+                  %ncols = load i64, i64 addrspace(11)* %ncolsp, align 8
+                  %pastp8 = getelementptr inbounds i8, i8 addrspace(11)* %mp, i64 32
+                  %pastp = bitcast i8 addrspace(11)* %pastp8 to i64 addrspace(11)*
+                  %past = load i64, i64 addrspace(11)* %pastp, align 8
+                  %vp = addrspacecast {} addrspace(10)* %vec to i8 addrspace(11)*
+                  %vlenp8 = getelementptr inbounds i8, i8 addrspace(11)* %vp, i64 16
+                  %vlenp = bitcast i8 addrspace(11)* %vlenp8 to i64 addrspace(11)*
+                  %vlen = load i64, i64 addrspace(11)* %vlenp, align 8
+                  %s = add i64 %nrows, %ncols
+                  %t = add i64 %s, %vlen
+                  %u = add i64 %t, %past
+                  ret i64 %u
+                }
+                """,
+            )
+            Enzyme.Compiler.mark_matrix_size_loads!(mod)
+            @test haskey(metadata(find_load(mod, "f", "nrows")), "enzyme_nocache")
+            @test haskey(metadata(find_load(mod, "f", "ncols")), "enzyme_nocache")
+            # The data pointer, what lies after the size tuple, and the length
+            # of a vector (which `push!` changes) are not touched.
+            @test !haskey(metadata(find_load(mod, "f", "mdata")), "enzyme_nocache")
+            @test !haskey(metadata(find_load(mod, "f", "past")), "enzyme_nocache")
+            @test !haskey(metadata(find_load(mod, "f", "vlen")), "enzyme_nocache")
+        end
+    end
+end

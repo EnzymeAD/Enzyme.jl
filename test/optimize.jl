@@ -306,6 +306,60 @@ end
     @test bytes(2000) - bytes(10) < 3 * sizeof(Float64) * (2000 - 10)
 end
 
+# A stateful "draw" Enzyme cannot see through: inactive, so its results are
+# constants, but a call that may write anywhere as far as LLVM knows.
+const draw_state = Ref(0)
+function draw_count()
+    draw_state[] += 1
+    return draw_state[] % 7
+end
+EnzymeRules.inactive(::typeof(draw_count), args...) = nothing
+
+function add_jumps!(X, lp)
+    Nsim, Nstep = size(X)
+    @inbounds for i in 1:Nsim
+        n = draw_count()
+        # a loop whose trip count Enzyme cannot bound, with a call in it
+        while n > 0
+            jump = draw_count() / lp
+            for j in 1:Nstep
+                X[i, j] += jump
+            end
+            n -= 1
+        end
+    end
+    return nothing
+end
+function sum_with_jumps(X, lp)
+    draw_state[] = 0
+    add_jumps!(X, lp)
+    return sum(X)
+end
+function sum_with_jumps_grad!(X, dX, lp)
+    return Enzyme.autodiff(Reverse, sum_with_jumps, Active, Duplicated(X, dX), Active(lp))[1][2]
+end
+
+@testset "Array header loads in a dynamic loop are reloaded, not taped" begin
+    X = zeros(50, 4)
+    dX = zero(X)
+    lp = 3.0
+    g = sum_with_jumps_grad!(X, dX, lp)
+    # d/dlp sum(X) = -sum(draws) / lp^2 * Nstep
+    draw_state[] = 0
+    total = 0.0
+    for _ in 1:50
+        n = draw_count()
+        while n > 0
+            total += draw_count()
+            n -= 1
+        end
+    end
+    @test g ≈ -total / lp^2 * 4
+    # The shadow array's memory is reloaded in the reverse pass; taping it once
+    # per inner iteration would allocate a GC-tracked buffer per row.
+    @test (@allocated sum_with_jumps_grad!(X, dX, lp)) == 0
+end
+
 function horner_loop(x, n)
     s = 0.0
     for _ in 1:n
