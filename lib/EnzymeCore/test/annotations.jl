@@ -10,7 +10,7 @@ using EnzymeCore
 
     # `Const` of a type should wrap the type, not collapse to `Const{DataType}`
     ct = Const(Float64)
-    @test ct isa Const{Type{Float64}}
+    @test ct isa Const{Core.Typeof(Float64)}
     @test ct.val === Float64
 end
 
