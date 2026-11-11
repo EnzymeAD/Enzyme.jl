@@ -804,10 +804,36 @@ function emit_methodinstance!(B::LLVM.IRBuilder, @nospecialize(func), args::Vect
     return mi
 end
 
-function emit_writebarrier!(B::LLVM.IRBuilder, T::Vector{LLVM.Value})
+function emit_writebarrier!(
+        B::LLVM.IRBuilder,
+        T::Vector{LLVM.Value};
+        added::Union{Nothing, Vector{LLVM.API.LLVMValueRef}} = nothing,
+    )
     curent_bb = position(B)
     fn = LLVM.parent(curent_bb)
     mod = LLVM.parent(fn)
+    if length(T) > 1
+        ejl_nothing = unsafe_nothing_to_llvm(mod)
+        T = copy(T)
+        for i in 2:length(T)
+            val = T[i]
+            vty = value_type(val)
+            if isa(vty, LLVM.PointerType) && addrspace(vty) == Tracked
+                rep = vty == value_type(ejl_nothing) ? ejl_nothing : const_bitcast(ejl_nothing, vty)
+                if isa(val, LLVM.PointerNull)
+                    T[i] = rep
+                elseif !isa(val, LLVM.GlobalVariable) && !isa(val, LLVM.ConstantExpr)
+                    isz = icmp!(B, LLVM.API.LLVMIntEQ, val, LLVM.null(vty))
+                    sel = select!(B, isz, rep, val)
+                    if added !== nothing
+                        isa(isz, LLVM.Instruction) && push!(added, isz.ref)
+                        isa(sel, LLVM.Instruction) && push!(added, sel.ref)
+                    end
+                    T[i] = sel
+                end
+            end
+        end
+    end
     func, FT = declare_writebarrier!(mod)
     return call!(B, FT, func, T)
 end
