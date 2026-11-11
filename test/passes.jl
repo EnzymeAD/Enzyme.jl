@@ -1172,3 +1172,52 @@ end
     @test dres_b2[1] ≈ [1.0, -0.5]
     @test dres_b2[2] ≈ [-2.0, 1.0]
 end
+
+@testset "Float16 conversions and Windows symbol registration (#1651)" begin
+    JIT = Enzyme.Compiler.JIT
+    lljit = JIT.get_jit()
+    jd = JIT.jit[].jd
+
+    for (name, cands) in JIT.FP16_RUNTIME_SYMBOLS
+        if any(c -> JIT._lookup_runtime_symbol(c) != C_NULL, (name, cands...))
+            @test LLVM.find_symbol(name) != C_NULL
+            @test JIT.lookup(jd, name).ptr != 0
+        end
+    end
+
+    # Unit-test `register_fp16_symbols!` with synthetic `julia__...` symbols.
+    fake_ptr1 = reinterpret(Ptr{Cvoid}, UInt(0x16510001))
+    fake_ptr2 = reinterpret(Ptr{Cvoid}, UInt(0x16510002))
+    LLVM.API.LLVMAddSymbol("julia__test_truncdfhf2_1651", fake_ptr1)
+    LLVM.API.LLVMAddSymbol("julia__test_gnu_f2h_ieee_1651", fake_ptr2)
+    pairs = JIT.symbol_pair_type()[]
+    JIT.register_fp16_symbols!(
+        lljit,
+        jd,
+        pairs;
+        symbols = (
+            "__test_truncdfhf2_1651",
+            ("__test_truncsfhf2_1651", ("julia__test_truncsfhf2_1651", "julia__test_gnu_f2h_ieee_1651")),
+        ),
+    )
+    @test length(pairs) == 2
+    @test LLVM.find_symbol("__test_truncdfhf2_1651") == fake_ptr1
+    @test LLVM.find_symbol("__test_truncsfhf2_1651") == fake_ptr2
+    LLVM.define(jd, LLVM.absolute_symbols(pairs))
+    @test JIT.lookup(jd, "__test_truncdfhf2_1651").ptr == UInt(fake_ptr1)
+    @test JIT.lookup(jd, "__test_truncsfhf2_1651").ptr == UInt(fake_ptr2)
+
+    # End-to-end autodiff through Float16/Float32/Float64 conversions and sin.(x::Vector{Float16}).
+    f_sin_f16(x) = sum(sin.(x))
+    x = Float16[1.0, 2.0, 3.0]
+    dx = zeros(Float16, 3)
+    autodiff(Reverse, f_sin_f16, Active, Duplicated(x, dx))
+    @test dx ≈ cos.(x)
+
+    f_conv_f16(a::Float64, b::Float32) = Float64(Float16(a)) + Float64(Float32(Float16(b)))
+    da, db = autodiff(Reverse, f_conv_f16, Active(1.25), Active(2.5f0))[1]
+    @test da ≈ 1.0 atol = 1.0e-2
+    @test db ≈ 1.0f0 atol = 1.0e-2
+    fw = autodiff(Forward, f_conv_f16, Duplicated(1.25, 1.0), Duplicated(2.5f0, 1.0f0))
+    @test fw[1] ≈ 2.0 atol = 1.0e-2
+end
