@@ -9,7 +9,39 @@ end
 
 function zerosetfn!(x, i::Int, val)
     @inbounds x[i] += val
-    nothing
+    return nothing
+end
+
+function zerosetfn!(x::LinearAlgebra.Diagonal, i::Int, val)
+    row, col = Tuple(CartesianIndices(x)[i])
+    if row == col
+        @inbounds x.diag[row] += val
+    end
+    return nothing
+end
+
+function zerosetfn!(x::LinearAlgebra.UpperTriangular, i::Int, val)
+    row, col = Tuple(CartesianIndices(x)[i])
+    if row <= col
+        @inbounds x.data[row, col] += val
+    end
+    return nothing
+end
+
+function zerosetfn!(x::LinearAlgebra.LowerTriangular, i::Int, val)
+    row, col = Tuple(CartesianIndices(x)[i])
+    if row >= col
+        @inbounds x.data[row, col] += val
+    end
+    return nothing
+end
+
+function zerosetfn!(x::LinearAlgebra.HermOrSym, i::Int, val)
+    row, col = Tuple(CartesianIndices(x)[i])
+    if (x.uplo == 'U') ? (row <= col) : (row >= col)
+        @inbounds x.data[row, col] += val
+    end
+    return nothing
 end
 
 @generated function onehot_internal(fn::F, x::T, startv::Int, lengthv::Int) where {F, T<:AbstractArray}
@@ -138,26 +170,55 @@ end
     onehot_internal(zerosetfn, x, start-1, endl-start+1)
 end
 
-@inline function onehot(x::AbstractArray)
-    N = length(x)
-    ntuple(Val(N)) do i
-        Base.@_inline_meta
-        res = similar(x)
-        for idx = 1:N
-            @inbounds res[idx] = (i == idx) ? 1.0 : 0.0
-        end
-        return res
+@inline function _set_onehot_entry!(res::AbstractArray, idx::Int)
+    @inbounds res[idx] = oneunit(eltype(res))
+    return res
+end
+
+@inline function _set_onehot_entry!(res::LinearAlgebra.Diagonal, idx::Int)
+    row, col = Tuple(CartesianIndices(res)[idx])
+    if row == col
+        @inbounds res.diag[row] = oneunit(eltype(res))
     end
+    return res
+end
+
+@inline function _set_onehot_entry!(res::LinearAlgebra.UpperTriangular, idx::Int)
+    row, col = Tuple(CartesianIndices(res)[idx])
+    if row <= col
+        @inbounds res.data[row, col] = oneunit(eltype(res))
+    end
+    return res
+end
+
+@inline function _set_onehot_entry!(res::LinearAlgebra.LowerTriangular, idx::Int)
+    row, col = Tuple(CartesianIndices(res)[idx])
+    if row >= col
+        @inbounds res.data[row, col] = oneunit(eltype(res))
+    end
+    return res
+end
+
+@inline function _set_onehot_entry!(res::LinearAlgebra.HermOrSym, idx::Int)
+    row, col = Tuple(CartesianIndices(res)[idx])
+    if res.uplo == 'U'
+        @inbounds res.data[min(row, col), max(row, col)] = oneunit(eltype(res))
+    else
+        @inbounds res.data[max(row, col), min(row, col)] = oneunit(eltype(res))
+    end
+    return res
+end
+
+@inline function _onehot_array_elem((x, start), i::Int)
+    res = make_zero(x)
+    return _set_onehot_entry!(res, i + start - 1)
+end
+
+@inline function onehot(x::AbstractArray)
+    return onehot(x, 1, length(x))
 end
 @inline function onehot(x::AbstractArray, start::Int, endl::Int)
-    ntuple(Val(endl - start + 1)) do i
-        Base.@_inline_meta
-        res = similar(x)
-        for idx = 1:length(x)
-            @inbounds res[idx] = (i + start - 1 == idx) ? 1.0 : 0.0
-        end
-        return res
-    end
+    return ntuple(Base.Fix1(_onehot_array_elem, (x, start)), Val(endl - start + 1))
 end
 
 @inline function onehot(::Type{NTuple{N,T}}) where {T,N}
@@ -499,13 +560,13 @@ function Base.convert(::Type{Array{T, N}}, X::TupleArray{T, Length, N}) where {T
     return vals
 end
 
-@inline function tupstack(data::Tuple{Vararg{Array{T}}}, outshape::Tuple{Vararg{Int}}, inshape::Tuple{Vararg{Int}}) where {T}
-	num = prod(outshape)
-	res = Array{T}(undef, outshape..., inshape...)
-	for (i, val) in enumerate(data)
-		Base.unsafe_copyto!(res, num*(i-1)+1, val, 1, Base.reinterpret(UInt, num))
-	end
-	res
+@inline function tupstack(data::Tuple{Vararg{AbstractArray{T}}}, outshape::Tuple{Vararg{Int}}, inshape::Tuple{Vararg{Int}}) where {T}
+    num = prod(outshape)
+    res = Array{T}(undef, outshape..., inshape...)
+    for (i, val) in enumerate(data)
+        copyto!(res, num * (i - 1) + 1, val, 1, num)
+    end
+    return res
 end
 
 @inline specialize_output(output, input) = output
@@ -1085,7 +1146,7 @@ end
             push!(postexprs, Expr(:(=), numv, :(prod($inshape))))
 
             for i in 1:n_out_val
-                push!(postexprs, Expr(:call, :(Base.unsafe_copyto!), resj, :($numv*($i-1)+1), torows[i, j], 1, :(Base.reinterpret(UInt, $numv))))
+                push!(postexprs, Expr(:call, :(Base.copyto!), resj, :($numv * ($i - 1) + 1), torows[i, j], 1, numv))
             end
 
             push!(results, quote

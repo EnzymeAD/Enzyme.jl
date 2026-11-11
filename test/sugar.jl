@@ -676,4 +676,24 @@ end
 
     # @show J_r_3(u, A, x)
     # @show J_f_3(u, A, x)
+
+    @testset "SubArray view and structured matrix onehot/gradient/jacobian (#1821, #1950)" begin
+        base_v = [2.0, 3.0, 4.0]
+        v = view(base_v, 1:2)
+        @test Enzyme.jacobian(Forward, identity, v)[1] ≈ [1.0 0.0; 0.0 1.0]
+        @test Enzyme.jacobian(Reverse, identity, v)[1] ≈ [1.0 0.0; 0.0 1.0]
+        @test Enzyme.gradient(Forward, sum, v)[1] ≈ [1.0, 1.0]
+        @test Enzyme.gradient(Forward, sum, v; chunk = Val(1))[1] ≈ [1.0, 1.0]
+
+        for M in (
+                Diagonal([2.0, 3.0]),
+                UpperTriangular([1.0 2.0; 3.0 4.0]),
+                LowerTriangular([1.0 2.0; 3.0 4.0]),
+                Symmetric([1.0 2.0; 3.0 4.0]),
+                Hermitian([1.0 2.0; 3.0 4.0]),
+            )
+            @test collect(Enzyme.gradient(Forward, sum, M)[1]) ≈ collect(Enzyme.gradient(Reverse, sum, M)[1])
+            @test collect(Enzyme.gradient(Forward, sum, M; chunk = Val(2))[1]) ≈ collect(Enzyme.gradient(Reverse, sum, M)[1])
+        end
+    end
 end
