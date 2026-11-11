@@ -1,14 +1,28 @@
 module EnzymeStaticArraysExt
 
+using LinearAlgebra: LinearAlgebra
 using StaticArrays
 using Enzyme
+
+# For a 1×1 StaticMatrix, `istril` and `istriu` are always `true` (there are no
+# off-diagonal entries), but `LinearAlgebra._isbanded_impl` loops over dynamic ranges that
+# do not constant-fold. In `\(A::AbstractMatrix, B::AbstractVecOrMat)` (called by
+# `v::SVector / m::SMatrix{1, 1}` via `m' \ v'`), leaving those branches alive produces a
+# 3-way Union `Union{Adjoint{T, MVector}, SMatrix, MMatrix}` across the `Diagonal`,
+# `LowerTriangular`/`UpperTriangular`, and `lu` paths.
+Base.Experimental.@overlay Enzyme.Compiler.GPUCompiler.GLOBAL_METHOD_TABLE LinearAlgebra.istriu(
+    ::StaticMatrix{1, 1}
+) = true
+Base.Experimental.@overlay Enzyme.Compiler.GPUCompiler.GLOBAL_METHOD_TABLE LinearAlgebra.istril(
+    ::StaticMatrix{1, 1}
+) = true
 
 @inline function Base.convert(::Type{SArray}, tpa::Enzyme.TupleArray{T, L, N}) where {T, L, N}
     return SArray{Tuple{size(tpa)...}, T, N, L}(tpa.data)
 end
 @inline Base.convert(::Type{StaticArray}, tpa::Enzyme.TupleArray) = convert(SArray, tpa)
 
-@inline function Enzyme.tupstack(rows::Tuple{Vararg{T}}, outshape::Tuple{Vararg{Int}}, inshape::Tuple{Vararg{Int}}) where {T<:StaticArrays.SArray}
+@inline function Enzyme.tupstack(rows::Tuple{Vararg{T}}, outshape::Tuple{Vararg{Int}}, inshape::Tuple{Vararg{Int}}) where {T <: StaticArrays.StaticArray}
     reshape(reduce(hcat, map(vec, rows)), Size(outshape..., inshape...))
 end
 

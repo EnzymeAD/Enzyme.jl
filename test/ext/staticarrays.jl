@@ -109,3 +109,48 @@ hess(x) = jacobian(Forward, grad_forhess, x)[1]
     res = [i == j ? d : 0.0 for i in 1:10, j in 1:10]
     @test jacobian(Forward, grad_forhess, x)[1] ≈ res
 end
+
+@testset "SVector \\ SMatrix (#1805)" begin
+    f_rdiv(v, m) = sum(v / m)
+    v = @SVector [1.0, 2.0, 3.0]
+    m = @SMatrix [2.0;;]
+
+    dv, dm = autodiff(Reverse, f_rdiv, Active, Active(v), Active(m))[1]
+    @test dv isa SVector{3, Float64}
+    @test dm isa SMatrix{1, 1, Float64, 1}
+    @test dv ≈ @SVector [0.5, 0.5, 0.5]
+    @test dm ≈ @SMatrix [-1.5;;]
+
+    dv_dir = @SVector [1.0, -0.5, 2.0]
+    dm_dir = @SMatrix [0.25;;]
+    dfwd = autodiff(Forward, f_rdiv, Duplicated(v, dv_dir), Duplicated(m, dm_dir))[1]
+    @test dfwd ≈ sum(dv .* dv_dir) + sum(dm .* dm_dir)
+
+    @test jacobian(Forward, x -> x / m, v)[1] ≈ [0.5 0.0 0.0; 0.0 0.5 0.0; 0.0 0.0 0.5]
+
+    v0 = @SVector [0.0, 0.0, 0.0]
+    m0 = @SMatrix [1.0;;]
+    @test_throws Enzyme.Compiler.EnzymeNonScalarReturnException autodiff(
+        Reverse, /, Active, Active(v0), Active(m0)
+    )
+
+    f_ldiv_adj(m, v) = sum(m \ v')
+    dm_adj, dv_adj = autodiff(Reverse, f_ldiv_adj, Active, Active(m), Active(v))[1]
+    @test dv_adj ≈ @SVector [0.5, 0.5, 0.5]
+    @test dm_adj ≈ @SMatrix [-1.5;;]
+
+    f_ldiv(v, m) = sum(v \ m)
+    m32 = @SMatrix [1.0 2.0; 3.0 4.0; 5.0 6.0]
+    dv_l, dm_l = autodiff(Reverse, f_ldiv, Active, Active(v), Active(m32))[1]
+    @test dv_l ≈ @SVector [-29 / 98, -51 / 98, -73 / 98]
+    @test dm_l ≈ @SMatrix [1 / 14 1 / 14; 2 / 14 2 / 14; 3 / 14 3 / 14]
+    dm32_dir = @SMatrix [0.5 -1.0; 0.25 0.75; -0.5 1.5]
+    dfwd_l = autodiff(Forward, f_ldiv, Duplicated(v, dv_dir), Duplicated(m32, dm32_dir))[1]
+    @test dfwd_l ≈ sum(dv_l .* dv_dir) + sum(dm_l .* dm32_dir)
+
+    f_rdiv_adj(m, v) = sum(m / v')
+    m23 = @SMatrix [1.0 2.0 3.0; 4.0 5.0 6.0]
+    dm_r, dv_r = autodiff(Reverse, f_rdiv_adj, Active, Active(m23), Active(v))[1]
+    @test dm_r ≈ @SMatrix [1 / 14 2 / 14 3 / 14; 1 / 14 2 / 14 3 / 14]
+    @test dv_r ≈ @SVector [-11 / 98, -43 / 98, -75 / 98]
+end
