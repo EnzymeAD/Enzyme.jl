@@ -663,6 +663,417 @@ function EnzymeRules.reverse(
     return (nothing,)
 end
 
+struct _NoPrimal end
+const _NO_PRIMAL = _NoPrimal()
+
+const _InplaceMakeZeroFn = Union{typeof(EnzymeCore.make_zero!),typeof(EnzymeCore.remake_zero!)}
+
+@inline function _zero_shadow_immutable_rtact!(
+    ::F,
+    shadow::T,
+    primal,
+    seen::Base.IdSet{Any},
+)::T where {F<:_InplaceMakeZeroFn,T<:AbstractFloat}
+    return zero(T)
+end
+
+@inline function _zero_shadow_immutable_rtact!(
+    ::F,
+    shadow::Complex{T},
+    primal,
+    seen::Base.IdSet{Any},
+)::Complex{T} where {F<:_InplaceMakeZeroFn,T<:AbstractFloat}
+    return zero(Complex{T})
+end
+
+@inline function _zero_shadow_immutable_rtact!(
+    func::F,
+    shadow::T,
+    primal,
+    seen::Base.IdSet{Any},
+)::T where {F<:_InplaceMakeZeroFn,T<:Tuple}
+    if Enzyme.Compiler.guaranteed_const(T) || shadow === primal
+        return shadow
+    end
+    same_tup = primal isa Tuple && length(primal) == length(shadow)
+    return ntuple(Val(length(T.parameters))) do i
+        Base.@_inline_meta
+        sv = shadow[i]
+        SBT = Core.Typeof(sv)
+        pv = same_tup ? primal[i] : _NO_PRIMAL
+        if Enzyme.Compiler.guaranteed_const(SBT) || sv === pv
+            sv
+        elseif !ismutabletype(SBT)
+            _zero_shadow_immutable_rtact!(func, sv, pv, seen)
+        else
+            _zero_shadow_inplace_rtact!(func, sv, pv, seen)
+            sv
+        end
+    end
+end
+
+@inline function _zero_shadow_immutable_rtact!(
+    func::F,
+    shadow::NamedTuple{a,b},
+    primal,
+    seen::Base.IdSet{Any},
+)::NamedTuple{a,b} where {F<:_InplaceMakeZeroFn,a,b}
+    if Enzyme.Compiler.guaranteed_const(NamedTuple{a,b}) || shadow === primal
+        return shadow
+    end
+    same_nt = primal isa NamedTuple{a}
+    return NamedTuple{a,b}(
+        ntuple(Val(length(b.parameters))) do i
+            Base.@_inline_meta
+            sv = shadow[a[i]]
+            SBT = Core.Typeof(sv)
+            pv = same_nt ? primal[a[i]] : _NO_PRIMAL
+            if Enzyme.Compiler.guaranteed_const(SBT) || sv === pv
+                sv
+            elseif !ismutabletype(SBT)
+                _zero_shadow_immutable_rtact!(func, sv, pv, seen)
+            else
+                _zero_shadow_inplace_rtact!(func, sv, pv, seen)
+                sv
+            end
+        end,
+    )
+end
+
+function _zero_shadow_immutable_rtact!(
+    func::F,
+    shadow::T,
+    primal,
+    seen::Base.IdSet{Any},
+)::T where {F<:_InplaceMakeZeroFn,T}
+    if Enzyme.Compiler.guaranteed_const(T) || shadow === primal
+        return shadow
+    end
+    nf = fieldcount(T)
+    if nf == 0
+        return shadow
+    end
+    same_ty = Core.Typeof(primal) === T
+    flds = Vector{Any}(undef, nf)
+    for i = 1:nf
+        if isdefined(shadow, i)
+            sv = getfield(shadow, i)
+            SBT = Core.Typeof(sv)
+            pv = (same_ty && isdefined(primal, i)) ? getfield(primal, i) : _NO_PRIMAL
+            flds[i] = if Enzyme.Compiler.guaranteed_const(SBT) || sv === pv
+                sv
+            elseif !ismutabletype(SBT)
+                _zero_shadow_immutable_rtact!(func, sv, pv, seen)
+            else
+                _zero_shadow_inplace_rtact!(func, sv, pv, seen)
+                sv
+            end
+        else
+            nf = i - 1
+            break
+        end
+    end
+    return ccall(:jl_new_structv, Any, (Any, Ptr{Any}, UInt32), T, flds, nf)::T
+end
+
+@inline function _zero_shadow_inplace_rtact!(
+    ::F,
+    shadow::Array{T,N},
+    primal,
+    seen::Base.IdSet{Any},
+)::Nothing where {F<:_InplaceMakeZeroFn,T<:Union{AbstractFloat,Complex{<:AbstractFloat}},N}
+    if shadow === primal || shadow in seen
+        return nothing
+    end
+    push!(seen, shadow)
+    fill!(shadow, zero(T))
+    return nothing
+end
+
+@inline function _zero_shadow_inplace_rtact!(
+    func::F,
+    shadow::Array{T,N},
+    primal,
+    seen::Base.IdSet{Any},
+)::Nothing where {F<:_InplaceMakeZeroFn,T,N}
+    if Enzyme.Compiler.guaranteed_const(T) || shadow === primal || shadow in seen
+        return nothing
+    end
+    push!(seen, shadow)
+    same_arr = primal isa Array && axes(shadow) == axes(primal)
+    for I in eachindex(shadow)
+        if isassigned(shadow, I)
+            sv = shadow[I]
+            SBT = Core.Typeof(sv)
+            pv = (same_arr && isassigned(primal, I)) ? primal[I] : _NO_PRIMAL
+            if Enzyme.Compiler.guaranteed_const(SBT) || sv === pv
+                continue
+            elseif !ismutabletype(SBT)
+                @inbounds shadow[I] = _zero_shadow_immutable_rtact!(func, sv, pv, seen)
+            else
+                _zero_shadow_inplace_rtact!(func, sv, pv, seen)
+            end
+        end
+    end
+    return nothing
+end
+
+@static if VERSION >= v"1.11-"
+    @inline function _zero_shadow_inplace_rtact!(
+        ::F,
+        shadow::GenericMemory{kind,T},
+        primal,
+        seen::Base.IdSet{Any},
+    )::Nothing where {F<:_InplaceMakeZeroFn,kind,T<:Union{AbstractFloat,Complex{<:AbstractFloat}}}
+        if shadow === primal || shadow in seen
+            return nothing
+        end
+        push!(seen, shadow)
+        fill!(shadow, zero(T))
+        return nothing
+    end
+
+    @inline function _zero_shadow_inplace_rtact!(
+        func::F,
+        shadow::GenericMemory{kind,T},
+        primal,
+        seen::Base.IdSet{Any},
+    )::Nothing where {F<:_InplaceMakeZeroFn,kind,T}
+        if Enzyme.Compiler.guaranteed_const(T) || shadow === primal || shadow in seen
+            return nothing
+        end
+        push!(seen, shadow)
+        same_mem = primal isa GenericMemory && length(shadow) == length(primal)
+        for I in eachindex(shadow)
+            if isassigned(shadow, I)
+                sv = shadow[I]
+                SBT = Core.Typeof(sv)
+                pv = (same_mem && isassigned(primal, I)) ? primal[I] : _NO_PRIMAL
+                if Enzyme.Compiler.guaranteed_const(SBT) || sv === pv
+                    continue
+                elseif !ismutabletype(SBT)
+                    @inbounds shadow[I] = _zero_shadow_immutable_rtact!(func, sv, pv, seen)
+                else
+                    _zero_shadow_inplace_rtact!(func, sv, pv, seen)
+                end
+            end
+        end
+        return nothing
+    end
+end
+
+@inline function _zero_shadow_inplace_rtact!(
+    ::F,
+    shadow::Base.RefValue{T},
+    primal,
+    seen::Base.IdSet{Any},
+)::Nothing where {F<:_InplaceMakeZeroFn,T<:Union{AbstractFloat,Complex{<:AbstractFloat}}}
+    if shadow === primal || shadow in seen
+        return nothing
+    end
+    push!(seen, shadow)
+    shadow[] = zero(T)
+    return nothing
+end
+
+@inline function _zero_shadow_inplace_rtact!(
+    func::F,
+    shadow::Base.RefValue{T},
+    primal,
+    seen::Base.IdSet{Any},
+)::Nothing where {F<:_InplaceMakeZeroFn,T}
+    if Enzyme.Compiler.guaranteed_const(T) || shadow === primal || shadow in seen
+        return nothing
+    end
+    push!(seen, shadow)
+    if !isdefined(shadow, :x)
+        return nothing
+    end
+    sv = shadow[]
+    SBT = Core.Typeof(sv)
+    pv = (primal isa Base.RefValue && isdefined(primal, :x)) ? primal[] : _NO_PRIMAL
+    if Enzyme.Compiler.guaranteed_const(SBT) || sv === pv
+        return nothing
+    elseif !ismutabletype(SBT)
+        shadow[] = _zero_shadow_immutable_rtact!(func, sv, pv, seen)
+    else
+        _zero_shadow_inplace_rtact!(func, sv, pv, seen)
+    end
+    return nothing
+end
+
+@inline function _zero_shadow_inplace_rtact!(
+    func::F,
+    shadow::Core.Box,
+    primal,
+    seen::Base.IdSet{Any},
+)::Nothing where {F<:_InplaceMakeZeroFn}
+    if shadow === primal || shadow in seen
+        return nothing
+    end
+    push!(seen, shadow)
+    if !isdefined(shadow, :contents)
+        return nothing
+    end
+    sv = shadow.contents
+    SBT = Core.Typeof(sv)
+    pv = (primal isa Core.Box && isdefined(primal, :contents)) ? primal.contents : _NO_PRIMAL
+    if Enzyme.Compiler.guaranteed_const(SBT) || sv === pv
+        return nothing
+    elseif !ismutabletype(SBT)
+        shadow.contents = _zero_shadow_immutable_rtact!(func, sv, pv, seen)
+    else
+        _zero_shadow_inplace_rtact!(func, sv, pv, seen)
+    end
+    return nothing
+end
+
+@inline function _zero_shadow_inplace_rtact!(
+    func::F,
+    shadow::Dict,
+    primal,
+    seen::Base.IdSet{Any},
+)::Nothing where {F<:_InplaceMakeZeroFn}
+    if shadow === primal || shadow in seen
+        return nothing
+    end
+    push!(seen, shadow)
+    same_dict = primal isa Dict
+    for (k, sv) in shadow
+        SBT = Core.Typeof(sv)
+        pv = (same_dict && haskey(primal, k)) ? primal[k] : _NO_PRIMAL
+        if Enzyme.Compiler.guaranteed_const(SBT) || sv === pv
+            continue
+        elseif !ismutabletype(SBT)
+            shadow[k] = _zero_shadow_immutable_rtact!(func, sv, pv, seen)
+        else
+            _zero_shadow_inplace_rtact!(func, sv, pv, seen)
+        end
+    end
+    return nothing
+end
+
+@inline function _zero_shadow_inplace_rtact!(
+    func::F,
+    shadow::T,
+    primal,
+    seen::Base.IdSet{Any},
+)::Nothing where {F<:_InplaceMakeZeroFn,T}
+    if Enzyme.Compiler.guaranteed_const(T) || shadow === primal || shadow in seen
+        return nothing
+    end
+    nf = fieldcount(T)
+    if nf == 0
+        return nothing
+    end
+    push!(seen, shadow)
+    same_ty = Core.Typeof(primal) === T
+    ntuple(Val(nf)) do i
+        @inline
+        if isdefined(shadow, i)
+            xi = getfield(shadow, i)
+            SBT = Core.Typeof(xi)
+            pi = (same_ty && isdefined(primal, i)) ? getfield(primal, i) : _NO_PRIMAL
+            activitystate = Enzyme.Compiler.active_reg_nothrow(SBT)
+            if activitystate == Enzyme.Compiler.AnyState || xi === pi
+            elseif ismutabletype(T) && !ismutabletype(SBT)
+                yi = _zero_shadow_immutable_rtact!(func, xi, pi, seen)
+                if Base.isconst(T, i)
+                    ccall(:jl_set_nth_field, Cvoid, (Any, Csize_t, Any), shadow, i - 1, yi)
+                else
+                    setfield!(shadow, i, yi)
+                end
+            elseif activitystate == Enzyme.Compiler.DupState
+                _zero_shadow_inplace_rtact!(func, xi, pi, seen)
+            elseif func === EnzymeCore.remake_zero! && activitystate == Enzyme.Compiler.MixedState
+                _zero_shadow_inplace_rtact!(func, xi, pi, seen)
+            elseif func === EnzymeCore.make_zero!
+                msg = "cannot set $xi to zero in-place, as it contains differentiable values in immutable positions\nIf the argument is known to have all immutable positions already zero (e.g. was the result of Enzyme.make_zero), Enzyme.remake_zero! will skip this error check."
+                throw(ArgumentError(msg))
+            end
+        end
+        return nothing
+    end
+    return nothing
+end
+
+@inline function _zero_shadow_inplace!(
+    func::F,
+    shadow,
+    primal,
+    ::Val{false},
+) where {F<:_InplaceMakeZeroFn}
+    func(shadow)
+    return nothing
+end
+
+@inline function _zero_shadow_inplace!(
+    func::F,
+    shadow,
+    primal,
+    ::Val{true},
+) where {F<:_InplaceMakeZeroFn}
+    if shadow === primal
+        return nothing
+    end
+    _zero_shadow_inplace_rtact!(func, shadow, primal, Base.IdSet())
+    return nothing
+end
+
+function EnzymeRules.forward(
+    config::EnzymeRules.FwdConfig,
+    func::Const{F},
+    ::Type{<:Const},
+    prev::Annotation{T},
+) where {F<:_InplaceMakeZeroFn,T}
+    func.val(prev.val)
+    if !(prev isa Const || prev isa Active)
+        rtact = EnzymeRules.runtime_activity(config)
+        if EnzymeRules.width(config) == 1
+            dv = prev isa MixedDuplicated ? prev.dval[] : prev.dval
+            _zero_shadow_inplace!(func.val, dv, prev.val, Val(rtact))
+        else
+            for b = 1:EnzymeRules.width(config)
+                dv = prev isa BatchMixedDuplicated ? prev.dval[b][] : prev.dval[b]
+                _zero_shadow_inplace!(func.val, dv, prev.val, Val(rtact))
+            end
+        end
+    end
+    return nothing
+end
+
+function EnzymeRules.augmented_primal(
+    config::EnzymeRules.RevConfig,
+    func::Const{F},
+    ::Type{<:Const},
+    prev::Annotation{T},
+) where {F<:_InplaceMakeZeroFn,T}
+    func.val(prev.val)
+    return EnzymeRules.AugmentedReturn(nothing, nothing, nothing)
+end
+
+function EnzymeRules.reverse(
+    config::EnzymeRules.RevConfig,
+    func::Const{F},
+    ::Type{<:Const},
+    ::Nothing,
+    prev::Annotation{T},
+) where {F<:_InplaceMakeZeroFn,T}
+    if !(prev isa Const || prev isa Active)
+        rtact = EnzymeRules.runtime_activity(config)
+        if EnzymeRules.width(config) == 1
+            dv = prev isa MixedDuplicated ? prev.dval[] : prev.dval
+            _zero_shadow_inplace!(func.val, dv, prev.val, Val(rtact))
+        else
+            for b = 1:EnzymeRules.width(config)
+                dv = prev isa BatchMixedDuplicated ? prev.dval[b][] : prev.dval[b]
+                _zero_shadow_inplace!(func.val, dv, prev.val, Val(rtact))
+            end
+        end
+    end
+    return (nothing,)
+end
+
 # Locks
 #
 # Taking or releasing a lock carries no derivative information, but the
