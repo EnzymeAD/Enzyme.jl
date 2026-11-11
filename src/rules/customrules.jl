@@ -325,7 +325,7 @@ function enzyme_custom_setup_args(
 
     actives = LLVM.Value[]
 
-    mixeds = Tuple{LLVM.Value,Type,LLVM.Value}[]
+    mixeds = Tuple{LLVM.Value, Type, LLVM.Value, Union{Nothing, LLVM.Value}}[]
     uncacheable = get_uncacheable(gutils, orig)
     mode = get_mode(gutils)
 
@@ -997,7 +997,12 @@ Custom rule for method argument $arg_idx of type $(arg.typ) has mismatch between
                     end
 
                     ival = refal0
-                    push!(mixeds, (ptr_val, arg.typ, refal))
+                    sroots_wb = if reverse && roots_op !== nothing && !is_constant_value(gutils, roots_op)
+                        lookup_value(gutils, invert_pointer(gutils, roots_op, B), B)
+                    else
+                        nothing
+                    end
+                    push!(mixeds, (ptr_val, arg.typ, refal, sroots_wb))
                 end
 
                 @assert ival !== nothing
@@ -2677,17 +2682,27 @@ function enzyme_custom_common_rev(
             idx += 1
         end
 
-        for (ptr_val, argTyp, refal) in mixeds
+        for (ptr_val, argTyp, refal, sroots_wb) in mixeds
             RefTy = argTyp
             if width != 1
                 RefTy = NTuple{Int(width),RefTy}
             end
             curs = load!(B, convert(LLVMType, RefTy), refal, "rules_mixed_prestore")
+            has_inline_roots = inline_roots_type(argTyp) != 0
+            has_boxed_imm_active = _boxed_immutable_has_active_reg(argTyp, Base.IdSet{Type}(), world)
 
             for idx = 1:width
                 evp = (width == 1) ? ptr_val : extract_value!(B, ptr_val, idx - 1)
                 evcur = (width == 1) ? curs : extract_value!(B, curs, idx - 1)
-                store_nonjl_types!(B, evcur, evp)
+                if has_boxed_imm_active && !has_inline_roots
+                    store!(B, evcur, evp)
+                else
+                    store_nonjl_types!(B, evcur, evp)
+                    if has_boxed_imm_active && has_inline_roots && sroots_wb !== nothing
+                        evr = (width == 1) ? sroots_wb : extract_value!(B, sroots_wb, idx - 1)
+                        extract_roots_from_value!(B, evcur, evr)
+                    end
+                end
             end
         end
     end

@@ -1368,7 +1368,7 @@ function rt_jl_getfield_rev(
                 vload = dptr[]
                 dRT = Core.Typeof(vload)
                 dptr[] = recursive_field_add(dRT, vload, Val(symname), dret[])
-            else
+            elseif ismutable(dptr)
                 setfield!(
                     dptr,
                     symname,
@@ -1380,8 +1380,8 @@ function rt_jl_getfield_rev(
                 vload = dptr[]
                 dRT = Core.Typeof(vload)
                 dptr[] = recursive_field_add(dRT, vload, Val(symname), dret[1][])
-            else
-                setfield!(dptr, symname, recursive_add(cur, dret[1][]))
+            elseif ismutable(dptr)
+                setfield!(dptr, symname, recursive_add(cur, dret[1][], identity, guaranteed_nonactive))
             end
             for i = 1:length(dptrs)
                 if dptrs[i] isa Base.RefValue
@@ -1450,7 +1450,7 @@ function idx_jl_getfield_rev(
                 vload = dptr[]
                 dRT = Core.Typeof(vload)
                 dptr[] = recursive_index_add(dRT, vload, Val(symname + 1), dret[])
-            else
+            elseif ismutable(dptr)
                 setfield!(
                     dptr,
                     symname + 1,
@@ -1462,7 +1462,7 @@ function idx_jl_getfield_rev(
                 vload = dptr[]
                 dRT = Core.Typeof(vload)
                 dptr[] = recursive_index_add(dRT, vload, Val(symname + 1), dret[1][])
-            else
+            elseif ismutable(dptr)
                 setfield!(
                     dptr,
                     symname + 1,
