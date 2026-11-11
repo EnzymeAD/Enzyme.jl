@@ -1041,19 +1041,19 @@ end
     origops = LLVM.operands(orig)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     waitfn = find_match(mod, "jl_wait")
-    if waitfn === nothing
-        emit_error(
-            B,
-            orig,
-            "Enzyme: could not find jl_wait fn to create shadow of jl_enq_work",
-        )
-        return nothing
-    end
-    @assert waitfn !== nothing
     shadowtask = lookup_value(gutils, invert_pointer(gutils, origops[1], B), B)
-    cal = LLVM.call!(B, LLVM.function_type(waitfn), waitfn, [shadowtask])
-    debug_from_orig!(gutils, cal, orig)
-    callconv!(cal, callconv(orig))
+    width = get_width(gutils)
+    for idx in 1:width
+        st = (width == 1) ? shadowtask : extract_value!(B, shadowtask, idx - 1)
+        if waitfn !== nothing
+            cal = LLVM.call!(B, LLVM.function_type(waitfn), waitfn, [st])
+            debug_from_orig!(gutils, cal, orig)
+            callconv!(cal, callconv(orig))
+        else
+            cal = emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, Base.wait), st])
+            debug_from_orig!(gutils, cal, orig)
+        end
+    end
     return nothing
 end
 
@@ -1104,18 +1104,18 @@ end
     origops = LLVM.operands(orig)
     mod = LLVM.parent(LLVM.parent(LLVM.parent(orig)))
     enq_work_fn = find_match(mod, "jl_enq_work")
-    if enq_work_fn === nothing
-        emit_error(
-            B,
-            orig,
-            "Enzyme: could not find jl_enq_work fn to create shadow of wait",
-        )
-        return nothing
-    end
-    @assert enq_work_fn !== nothing
     shadowtask = lookup_value(gutils, invert_pointer(gutils, origops[1], B), B)
-    cal = LLVM.call!(B, LLVM.function_type(enq_work_fn), enq_work_fn, [shadowtask])
-    debug_from_orig!(gutils, cal, orig)
-    callconv!(cal, callconv(orig))
+    width = get_width(gutils)
+    for idx in 1:width
+        st = (width == 1) ? shadowtask : extract_value!(B, shadowtask, idx - 1)
+        if enq_work_fn !== nothing
+            cal = LLVM.call!(B, LLVM.function_type(enq_work_fn), enq_work_fn, [st])
+            debug_from_orig!(gutils, cal, orig)
+            callconv!(cal, callconv(orig))
+        else
+            cal = emit_apply_generic!(B, LLVM.Value[unsafe_to_llvm(B, Base.enq_work), st])
+            debug_from_orig!(gutils, cal, orig)
+        end
+    end
     return nothing
 end

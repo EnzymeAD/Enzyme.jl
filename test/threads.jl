@@ -216,3 +216,20 @@ end
     @test only(only(autodiff(set_runtime_activity(Reverse), f_spawn_unused, Active, Active(2.0)))) ≈ 1.0
     @test only(only(autodiff(set_runtime_activity(Reverse), f_spawn_active, Active, Active(3.0)))) ≈ 12.0
 end
+
+@noinline schedule_only_1959(@nospecialize(t)) = Base.enq_work(t::Task)
+@noinline wait_only_1959(@nospecialize(t)) = wait(t::Task)
+
+@testset "enq_work and wait in separate modules (#1959)" begin
+    function f_separate_enq_wait(x)
+        r = Ref(0.0)
+        t = Task() do
+            r[] = x^2 * 3.0
+            return nothing
+        end
+        schedule_only_1959(t)
+        wait_only_1959(t)
+        return r[]
+    end
+    @test only(only(autodiff(set_runtime_activity(Reverse), f_separate_enq_wait, Active, Active(4.0)))) ≈ 24.0
+end
