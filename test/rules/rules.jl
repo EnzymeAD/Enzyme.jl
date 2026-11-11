@@ -225,4 +225,94 @@ end
     @test dst.data == [2.0, 4.0]
 end
 
+function foo_3313(idx::Tuple{NTuple{N1, Int}, NTuple{N2, Int}}, x::Vararg{Vector{Float64}, N}) where {N1, N2, N}
+    return sum(sum.(x))
+end
+
+function EnzymeRules.forward(
+        config,
+        ::Const{typeof(foo_3313)},
+        ::Type{RT},
+        idx::Const,
+        x::Vararg{Union{Duplicated{Vector{Float64}}, BatchDuplicated{Vector{Float64}}}, N},
+    ) where {RT, N}
+    primal = foo_3313(idx.val, map(xi -> xi.val, x)...)
+    if EnzymeRules.width(config) == 1
+        dval = sum(sum(xi.dval) for xi in x)
+    else
+        w = EnzymeRules.width(config)
+        dval = ntuple(b -> sum(sum(xi.dval[b]) for xi in x), Val(w))
+    end
+    if EnzymeRules.needs_primal(config)
+        return EnzymeRules.needs_shadow(config) ? RT(primal, dval) : primal
+    else
+        return EnzymeRules.needs_shadow(config) ? dval : nothing
+    end
+end
+
+function EnzymeRules.augmented_primal(
+        config,
+        ::Const{typeof(foo_3313)},
+        ::Type{<:Active},
+        idx::Const,
+        x::Vararg{Union{Duplicated{Vector{Float64}}, BatchDuplicated{Vector{Float64}}}, N},
+    ) where {N}
+    primal = EnzymeRules.needs_primal(config) ? foo_3313(idx.val, map(xi -> xi.val, x)...) : nothing
+    return EnzymeRules.AugmentedReturn(primal, nothing, nothing)
+end
+
+function EnzymeRules.reverse(
+        config,
+        ::Const{typeof(foo_3313)},
+        dret,
+        tape,
+        idx::Const,
+        x::Vararg{Union{Duplicated{Vector{Float64}}, BatchDuplicated{Vector{Float64}}}, N},
+    ) where {N}
+    if EnzymeRules.width(config) == 1
+        for xi in x
+            xi.dval .+= dret.val
+        end
+    else
+        for b in 1:EnzymeRules.width(config)
+            for xi in x
+                xi.dval[b] .+= dret[b].val
+            end
+        end
+    end
+    return (nothing, ntuple(_ -> nothing, Val(N))...)
+end
+
+bar_3313(idx, x) = foo_3313(idx, x...)
+splat_3313(args...) = foo_3313(args...)
+
+@testset "BITS_REF guaranteed-inactive arg in custom rule (#3313)" begin
+    idx = (ntuple(identity, 2), ntuple(identity, 6))
+    x = ([1.0, 2.0], [3.0, 4.0])
+
+    dx = ([0.0, 0.0], [0.0, 0.0])
+    autodiff(Reverse, bar_3313, Active, Const(idx), Duplicated(x, dx))
+    @test dx[1] ≈ [1.0, 1.0]
+    @test dx[2] ≈ [1.0, 1.0]
+
+    dx1 = ([0.0, 0.0], [0.0, 0.0])
+    dx2 = ([0.0, 0.0], [0.0, 0.0])
+    autodiff(Reverse, bar_3313, Active, Const(idx), BatchDuplicated(x, (dx1, dx2)))
+    @test dx1[1] ≈ [1.0, 1.0]
+    @test dx1[2] ≈ [1.0, 1.0]
+    @test dx2[1] ≈ [1.0, 1.0]
+    @test dx2[2] ≈ [1.0, 1.0]
+
+    vx1 = ([1.0, 2.0], [3.0, 4.0])
+    vx2 = ([5.0, 6.0], [7.0, 8.0])
+    @test autodiff(Forward, bar_3313, Duplicated, Const(idx), Duplicated(x, vx1))[1] ≈ 10.0
+    @test Tuple(autodiff(Forward, bar_3313, BatchDuplicated, Const(idx), BatchDuplicated(x, (vx1, vx2)))[1]) == (10.0, 26.0)
+
+    s_dx1 = [0.0, 0.0]
+    s_dx2 = [0.0, 0.0]
+    autodiff(Reverse, splat_3313, Active, Const(idx), Duplicated(x[1], s_dx1), Duplicated(x[2], s_dx2))
+    @test s_dx1 ≈ [1.0, 1.0]
+    @test s_dx2 ≈ [1.0, 1.0]
+end
+
 end # module ForwardRules

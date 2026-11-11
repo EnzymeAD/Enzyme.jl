@@ -409,6 +409,9 @@ function enzyme_custom_setup_args(
         activity_state = active_reg(arg.typ, world)
 
         activep = API.EnzymeGradientUtilsGetDiffeType(gutils, op, false) #=isforeign=#
+        if activity_state == AnyState
+            activep = API.DFT_CONSTANT
+        end
 	orig_activep = activep
 	any_active_data = mode != API.DEM_ForwardMode && (activity_state == ActiveState || activity_state == MixedState)
 
@@ -420,7 +423,7 @@ function enzyme_custom_setup_args(
 	    
 	    kwarg_inactive = isKWCall && arg.arg_jl_i == 2 && EnzymeRules.is_inactive_kwarg_from_sig(Interpreter.simplify_kw(mi.specTypes); world)
 	    
-	    if kwarg_inactive
+            if kwarg_inactive || activity_state == AnyState
                roots_activep = API.DFT_CONSTANT
             end
 
